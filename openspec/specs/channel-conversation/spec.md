@@ -835,39 +835,62 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 <!-- Reconciled from mcp_new capability: `multimodal-message-storage` -->
 
 ### Requirement: 系统分层保存MVP多模态消息
-系统 SHALL 在PostgreSQL保存消息正文、附件元数据、状态和有界提取文本，并在私有S3兼容对象存储保存原始二进制。原始二进制 MUST NOT 写入PostgreSQL、RabbitMQ、日志或审计payload。
+系统 SHALL 在PostgreSQL保存消息正文、附件元数据、来源状态、可读性状态、精确File/Version绑定及处理/表示血缘，并在File Service管理的私有S3兼容对象存储保存原始二进制和派生表示。完整原始二进制、Markdown、Docling JSON、对象位置和凭据 MUST NOT写入PostgreSQL、RabbitMQ、日志或审计payload；旧Publication兼容路径中既有有界提取文本只可用于历史读取，不得成为启用文档处理Profile后的新事实源。
 
 #### Scenario: 文本和文档一起到达
-- **WHEN** 消息包含文本和一个受支持文档
-- **THEN** 系统保存一条user message、一条attachment记录并把原文件写入私有bucket
+- **WHEN** 消息包含文本和一个受支持文档且命中启用文档处理Profile的应用
+- **THEN** 系统保存一条user message、一条attachment记录、原始File Version和processing run
+- **AND** 原件与后续派生表示均只能由File Service写入私有bucket
 
 #### Scenario: 仅图片到达
-- **WHEN** 消息没有文本但包含受支持图片
-- **THEN** 系统保存消息和图片对象，并明确标记MVP不提供图片内容理解
+- **WHEN** 消息没有文本但包含受支持图片且应用启用文档处理Profile
+- **THEN** 系统保存消息、图片原件和OCR处理状态
+- **AND** 不把OCR能力描述为完整图片内容理解
 
 ### Requirement: MVP只接受现代白名单格式
-系统 SHALL 为现有消息附件兼容链路继续支持JPEG、PNG、WebP、DOCX、XLSX、PPTX和Markdown，并为新的任务工作区链路支持 UTF-8 `.txt`；系统 MUST 根据真实内容探测MIME、校验扩展名、数量、文件大小、解压后大小及结构上限。任务工作区 `.txt` 单文件 MUST 不超过15 MiB，允许输入UTF-8 BOM但不得猜测GBK或UTF-16。系统 MUST 拒绝DOC、XLS、PPT及其他未支持格式。
+系统 SHALL 为启用`docling-text-v1`的任务工作区链路支持PDF、DOCX、XLSX、PPTX、JPEG、PNG和WebP原件，并继续按已冻结文本格式策略支持UTF-8 TXT、LOG和Markdown；系统 MUST 根据真实内容探测MIME、校验格式、数量、文件大小、解压后大小及结构上限。渠道提供文件名时，系统 MUST 保留其安全规范化后的 basename 作为用户可见名称基础；原生图片消息不提供文件名时，系统 MUST 按消息时间和固定 `Asia/Shanghai` 时区生成可读名称，不得伪造原名。对成功安全解码、像素校验并重新编码的JPEG、PNG和WebP，系统 MUST 以规范化后的真实媒体类型与文件签名确定源格式，并使用真实格式的canonical extension创建受治理文件名，同时保留安全规范化后的来源名称作为来源元数据；该兼容行为不得用于PDF、Office或其他格式。同一工作区的同名文件 MUST 使用 ` (2)`、` (3)` 递增后缀消歧，不得暴露内部 attachment ID。源文档单文件 MUST 不超过25MiB；Agent可读文本仍 MUST 不超过15MiB。系统 MUST 拒绝DOC、XLS、PPT、宏文件及其他未支持格式。
 
-#### Scenario: 现代Office附件通过现有兼容校验
-- **WHEN** DOCX、XLSX或PPTX的扩展名、MIME、大小和结构符合现有附件策略
-- **THEN** 系统保存对象并进入现有受限文本提取
-- **AND** 本变更不把该文件加入第一阶段任务工作区编辑能力
+#### Scenario: 渠道提供可用原始文件名
+- **WHEN** 渠道附件提供可安全规范化的原始文件名
+- **THEN** 任务工作区保留其安全basename和经真实内容校正的canonical extension
+- **AND** 同名时使用 ` (2)`、` (3)` 递增后缀，不展示不透明内部标识
+
+#### Scenario: DingTalk原生图片没有原始文件名
+- **WHEN** 原生picture消息只提供`downloadCode`和消息时间
+- **THEN** 系统生成 `图片-YYYYMMDD-HHMMSS.<canonical extension>` 作为用户可见文件名
+- **AND** 时间按`Asia/Shanghai`解释，扩展名由实际文件签名决定
+
+#### Scenario: 现代Office附件通过受治理校验
+- **WHEN** DOCX、XLSX或PPTX的扩展名、MIME、大小和结构符合固定源文件策略且应用启用文档处理Profile
+- **THEN** File Worker通过File Service保存原件并创建异步processing run
+- **AND** 不使用旧正文数据库写入作为该附件的新内容事实
 
 #### Scenario: UTF-8 TXT进入任务工作区
-- **WHEN** `.txt` 内容为有效UTF-8且大小不超过15 MiB
-- **THEN** 系统允许 File Worker通过File Service导入并进入任务工作区链路
+- **WHEN** `.txt`内容为有效UTF-8且大小不超过15MiB
+- **THEN** 系统允许File Worker通过File Service导入并进入现有文本工作区链路
+- **AND** 不为TXT调用Docling
 
 #### Scenario: TXT编码或大小不合法
-- **WHEN** `.txt` 是GBK、UTF-16、无效UTF-8或超过15 MiB
+- **WHEN** `.txt`是GBK、UTF-16、无效UTF-8或超过15MiB
 - **THEN** 系统将attachment标记为REJECTED并保存安全错误码
 
 #### Scenario: 类型伪装或超限
-- **WHEN** 扩展名与真实MIME冲突，或附件数量、大小、解压后大小、行列或幻灯片超过对应策略
-- **THEN** 系统将attachment标记为REJECTED并保存安全错误码
+- **WHEN** PDF或Office扩展名与真实MIME/结构冲突，图片无法安全解码为白名单格式，或附件数量、大小、页数、解压后大小、行列、像素或幻灯片超过对应固定策略
+- **THEN** 系统将attachment或processing run标记为确定拒绝
+- **AND** 不调用模型、不静默截断或降级到宽松解析器
+
+#### Scenario: 渠道把JPEG或WebP命名为PNG
+- **WHEN** 渠道附件名以`.png`结尾，但图片字节可安全解码并规范化为JPEG或WebP且满足全部资源上限
+- **THEN** File Service按规范化后的真实媒体类型和签名保存原件，并把受治理display name改为`.jpg`或`.webp`
+- **AND** 原始渠道名称只作为来源元数据保留，不因错误扩展名拒绝合法图片或覆盖同名文件
 
 #### Scenario: 旧版Office或其他格式到达
-- **WHEN** 消息包含DOC、XLS、PPT、PDF、压缩包、音视频、SVG、脚本、可执行文件或未知格式
+- **WHEN** 消息包含DOC、XLS、PPT、宏文件、压缩包、音视频、SVG、脚本、可执行文件或未知格式
 - **THEN** 系统不解析内容并返回不泄漏内部信息的格式说明
+
+#### Scenario: PDF进入未启用Profile的应用
+- **WHEN** 应用Publication未选择文档处理Profile而消息包含PDF
+- **THEN** 系统不创建processing run并返回当前应用未启用文档读取能力的安全状态
 
 ### Requirement: 下载和对象写入幂等且短期凭证受保护
 系统 SHALL 使用内部attachment ID驱动下载和存储并以SHA-256校验完整性。download code或等价来源凭证只允许使用平台主密钥短期加密落库，MUST NOT保存明文或将明文/密文暴露到队列、日志、审计、API和调试输出，并 MUST 在下载完成、拒绝、失败或过期后清除。session webhook、access token和对象存储凭证 MUST NOT作为attachment来源凭证持久化。
@@ -885,53 +908,84 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 - **THEN** 系统清除加密来源凭证且后续读取只能获得凭证已清除状态
 
 ### Requirement: 文档在受限worker中提取
-系统 SHALL 由非root、无外网、受CPU、内存和时间限制的 File Worker 处理消息附件。现有兼容链路继续提取DOCX段落/表格、XLSX工作表有界单元格、PPTX幻灯片文本和Markdown纯文本；任务工作区 `.txt` 只执行有界UTF-8校验和内容导入。Worker MUST NOT执行公式、宏、嵌入对象、HTML或远程资源，第一阶段 MUST NOT 调用 `docling-serve`。
+系统 SHALL 由非root、禁外网、受CPU、内存、临时空间和时间限制的`file-processing-worker`与内部`docling-serve`处理PDF、DOCX、XLSX、PPTX及图片文字；File Worker只负责来源下载、前置校验和通过File Service导入原件。TXT、LOG和Markdown继续执行现有有界文本校验而不调用Docling。处理组件 MUST NOT执行公式、宏、嵌入对象或远程资源，也不得启用VLM、图片语义描述、自定义模型或插件。
 
-#### Scenario: 现有文档提取成功
-- **WHEN** 受支持Office或Markdown文档在资源上限内完成现有解析
-- **THEN** 系统保存有界纯文本、分段信息、解析器版本和截断状态并标记READY
+#### Scenario: 受支持文档提取成功
+- **WHEN** 受支持PDF或现代Office文档在Profile资源上限内完成处理
+- **THEN** 系统通过File Service保存Markdown和Docling JSON不可变表示并标记可读性为AVAILABLE
+- **AND** 不把完整提取正文写入`attachment_content`或直接注入模型
 
 #### Scenario: TXT校验成功
-- **WHEN** 任务工作区 `.txt` 通过大小和UTF-8校验
+- **WHEN** 任务工作区文本附件通过大小、MIME和UTF-8校验
 - **THEN** File Worker通过File Service保存原始内容并标记可用于精确版本物化
 - **AND** 不声称调用了Docling或其它文档解析器
 
 #### Scenario: 加密、宏格式或损坏文档
 - **WHEN** 文档加密、属于宏格式、包含禁止结构、损坏或触发资源限制
-- **THEN** 系统停止处理并标记REJECTED或FAILED，不向Agent暴露内容
+- **THEN** 系统停止处理并把可读性标记为UNAVAILABLE
+- **AND** 保存安全错误码且不向Agent暴露正文或原始异常
+
+#### Scenario: Docling暂时不可用
+- **WHEN** 原件已安全导入但Docling或processing worker暂时不可用
+- **THEN** processing run进入有限重试且不回退到旧提取器、直接正文注入或假成功
+- **AND** 需要可读正文的本轮由能力门禁给出系统说明，不把无关 Agent Job保持为等待 Docling
 
 ### Requirement: 图片只安全存储而不宣称可理解
-系统 SHALL 对JPEG、PNG和WebP执行真实格式、文件大小和像素限制校验，去除不需要的元数据后保存对象；MVP MUST NOT生成虚构OCR、视觉描述或把图片内容注入Agent。
+系统 SHALL 对JPEG、PNG和WebP执行真实格式、文件大小和像素限制校验，去除不需要的元数据后通过File Service保存原件；仅当应用Publication冻结`docling-text-v1`时，系统 SHALL 允许Docling对图片执行OCR文字提取。系统 MUST NOT把OCR结果等同于架构图、流程图、仪表盘、照片或其它视觉语义理解，也不得调用VLM或生成虚构描述。
 
-#### Scenario: 图片通过校验
-- **WHEN** 图片真实格式、大小和像素符合策略
-- **THEN** 系统保存规范化对象并将内容能力标记为stored_not_interpreted
+#### Scenario: 图片OCR产生文字
+- **WHEN** 图片通过校验、应用启用Profile且OCR生成非空Markdown
+- **THEN** 系统保存只读Markdown和Docling JSON表示并把可读性标记为AVAILABLE或PARTIAL
+- **AND** Agent只可把其中的文字作为不可信数据读取
 
-#### Scenario: 文本加图片消息执行
-- **WHEN** 消息包含可用文本和一张已存储但不可理解的图片
-- **THEN** Agent使用文本执行并明确图片未作为诊断证据
+#### Scenario: 文本加无文字图片消息执行
+- **WHEN** 消息包含可用用户文本且图片OCR结果为NO_TEXT
+- **THEN** Agent使用用户文本执行并收到固定的图片未提取到文字notice
+- **AND** 不声称已经理解图片
 
-#### Scenario: 仅图片消息完成处理
-- **WHEN** 消息只有已存储图片且没有可用文本
-- **THEN** 系统不调用模型并通过原reply route说明MVP暂不支持图片理解
+#### Scenario: 仅图片且没有文字
+- **WHEN** 消息只有图片且OCR为NO_TEXT或UNAVAILABLE
+- **THEN** 系统不调用模型并通过原reply route说明未获得可阅读文字
+
+#### Scenario: 应用未启用文档处理
+- **WHEN** 图片通过安全存储校验但应用Publication的Profile为NONE
+- **THEN** 系统保持不解释图片内容的安全状态
+- **AND** 不因平台部署了Docling而自动扩大该应用能力
+
+#### Scenario: File Service拒绝图片原件导入
+- **WHEN** File Service以稳定安全错误码拒绝图片导入
+- **THEN** File Worker把该机器码保存到`message_attachment.failure_code`并将附件置为确定终态
+- **AND** 不以本地化提示文字替代机器码，不记录File Service原始响应、文件字节或内部异常
 
 ### Requirement: Agent job等待附件达到终态
-系统 SHALL 让包含附件的job等待所有attachment进入READY、REJECTED、FAILED或stored_not_interpreted终态，MUST NOT 在下载或提取中启动模型。
+系统 SHALL 让本轮已绑定附件的Job等待来源下载/导入达到终态；`WAITING_INPUT` MUST NOT 用于等待 Docling 或 `file_processing_run` 非终态。只要本轮绑定附件的来源状态尚未终态，Job可以保持`WAITING_INPUT`。来源终态后，需要`READABLE_CONTENT`且表示仍为PENDING或失败时 MUST 走系统说明而不是释放到`agent.jobs`。AVAILABLE或带非空合规Markdown的PARTIAL可以进入Manifest；NO_TEXT、UNAVAILABLE、REJECTED或FAILED只能形成固定安全notice。无关文字 MUST 创建可执行Job且不得认领处理中文档。
 
 #### Scenario: 部分文档可用
-- **WHEN** 部分附件READY且仍存在文本或可用提取内容
-- **THEN** 系统发布job并在上下文列出不可用附件的安全状态
+- **WHEN** 本轮绑定的部分附件AVAILABLE或PARTIAL且仍存在用户文本或至少一个可用Markdown表示
+- **THEN** 系统冻结可用精确表示并发布同一Job
+- **AND** 在上下文列出不可用或不完整附件的固定安全状态
 
 #### Scenario: 没有可用输入
-- **WHEN** 没有文本且所有附件均不可理解、REJECTED或FAILED
-- **THEN** 系统不调用模型并安全结束job
+- **WHEN** 没有用户文本且所有本轮绑定附件均为NO_TEXT、UNAVAILABLE、REJECTED或FAILED
+- **THEN** 系统不调用模型并安全结束该轮
+
+#### Scenario: 原件已保存但表示仍处理中
+- **WHEN** attachment原件已经形成File Version而processing run仍非终态，且本轮需要可读正文
+- **THEN** 系统不得仅因原件已保存就把attachment视为Agent可读
+- **AND** 不得继续保持`WAITING_INPUT`等待表示；应发送固定未就绪说明且不调用模型
 
 ### Requirement: 附件内容作为不可信数据注入
-系统 SHALL 将提取文本标识为不可信用户数据并限制长度，其中的指令 MUST NOT覆盖系统提示、安全规则、权限或工具策略。
+系统 SHALL 把消息正文、历史兼容提取文本和Docling派生内容全部标识为不可信用户数据，其中的指令 MUST NOT覆盖系统提示、安全规则、权限或工具策略。对启用文档处理Profile的新文档，系统 MUST 只把有界Manifest元数据和固定安全notice交给模型，并由Runtime把精确Markdown表示物化到Job Sandbox；完整Markdown不得在Job开始时直接拼入conversation context。
 
 #### Scenario: 文档包含提示注入
-- **WHEN** 提取文本要求Agent忽略系统规则或调用未授权工具
-- **THEN** Agent将其作为引用数据处理且只读工具和权限策略保持不变
+- **WHEN** Markdown表示要求Agent忽略系统规则或调用未授权工具
+- **THEN** Agent只能通过受限Read、Grep或Glob把它作为引用数据处理
+- **AND** 文件内容不能改变Tool可见性、权限、网络或沙盒边界
+
+#### Scenario: 大文档进入Job
+- **WHEN** 合规Markdown表示接近允许的15MiB上限
+- **THEN** Runtime只物化文件并向模型提供安全相对路径和摘要
+- **AND** conversation context不包含整份文档正文
 
 ### Requirement: 多模态数据支持可重试删除和孤儿核对
 系统 SHALL 为消息附件使用可部署覆盖的保留策略，未配置时 canonical 默认值 MUST 为360天，并从附件原始创建时间计算到期时间。系统 SHALL 按该到期事实标记并通过 File Service 可重试删除原对象与提取内容；一致性核对默认只报告未知孤儿对象而不自动删除。历史附件缺少到期事实时 SHALL 从原始创建时间回填，不得在schema migration事务中直接删除已到期对象。

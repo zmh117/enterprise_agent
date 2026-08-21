@@ -24,7 +24,7 @@ from app.modules.business_application.domain.policies import (
     validate_task_file_attachment_dependency,
     validate_task_file_features,
 )
-from app.modules.document_processing import DOCLING_TEXT_V1
+from app.modules.document_processing import DOCLING_LAYOUT_OCR_V1, DOCLING_TEXT_V1
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
@@ -43,9 +43,18 @@ from backend.tests.test_unified_identity_rbac import (
 
 
 def control_plane_settings() -> object:
+    settings = unified_settings()
     return replace(
-        unified_settings(),
+        settings,
         feature_business_application_control_plane=True,
+        document_processing_worker=replace(
+            settings.document_processing_worker,
+            layout_ocr_enabled=True,
+            layout_profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+            model_artifact_digest=str(
+                DOCLING_LAYOUT_OCR_V1.layout_ocr_options["model_artifact"]["digest"]
+            ),
+        ),
     )
 
 
@@ -734,11 +743,46 @@ def test_document_processing_profile_is_strict_frozen_and_legacy_default_off() -
     assert [item["code"] for item in catalog["document_processing_profiles"]] == [
         "NONE",
         "docling-text-v1",
+        "docling-layout-ocr-v1",
     ]
     assert catalog["document_processing_profiles"][1]["document_processing_status"] == (
         "CONFIGURED_UNAVAILABLE"
     )
     assert "request_options" not in catalog["document_processing_profiles"][1]
+    layout_catalog = catalog["document_processing_profiles"][2]
+    assert layout_catalog["hash"] == DOCLING_LAYOUT_OCR_V1.profile_hash
+    assert layout_catalog["output_kinds"] == [
+        "MARKDOWN",
+        "DOCLING_JSON",
+        "OCR_LAYOUT_JSON",
+    ]
+    assert layout_catalog["capabilities"] == {
+        "office_embedded_image_ocr": True,
+        "coordinates": "TOPLEFT_0_10000",
+        "reading_order": True,
+        "confidence": True,
+        "bounded_geometric_relations": True,
+        "vlm": False,
+        "visual_semantics": False,
+    }
+
+    payload["document_processing_profile_code"] = "docling-layout-ocr-v1"
+    layout_revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="document-processing-profile",
+        expected_revision=int(next_revision["revision"]),
+        payload=payload,
+    )
+    layout_publication = service.publish(
+        actor_id="user_local_admin",
+        code="document-processing-profile",
+        revision_id=str(layout_revision["id"]),
+    )
+    assert layout_publication["snapshot"]["document_processing_profile"] == {
+        "code": "docling-layout-ocr-v1",
+        "version": "1",
+        "hash": DOCLING_LAYOUT_OCR_V1.profile_hash,
+    }
 
 
 def test_document_processing_profile_http_contract_rejects_arbitrary_options() -> None:
@@ -771,6 +815,49 @@ def test_document_processing_profile_http_contract_rejects_arbitrary_options() -
         )
 
     assert response.status_code == 422
+
+
+def test_layout_profile_publication_fails_closed_until_deployment_contract_is_ready() -> None:
+    configured = control_plane_settings()
+    settings = replace(
+        configured,
+        document_processing_worker=replace(
+            configured.document_processing_worker,
+            layout_ocr_enabled=False,
+            layout_profile_hash="",
+            model_artifact_digest="",
+        ),
+    )
+    container = build_test_container(settings, migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="layout-profile-not-ready",
+        name="Layout Profile Not Ready",
+        description="safe",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    payload = draft_payload()
+    enable_file_context_dependencies(container, payload)
+    payload["document_processing_profile_code"] = "docling-layout-ocr-v1"
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="layout-profile-not-ready",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as blocked:
+        service.publish(
+            actor_id="user_local_admin",
+            code="layout-profile-not-ready",
+            revision_id=str(revision["id"]),
+        )
+
+    assert "document_processing_profile_code" in {
+        item["field"] for item in blocked.value.field_errors
+    }
 
 
 def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
@@ -828,6 +915,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
             "113_expand_document_file_processing.sql",
             "114_expand_execution_summary_protocol_v13.sql",
             "115_expand_file_turn_admission.sql",
+            "116_expand_office_embedded_image_layout_ocr.sql",
         ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

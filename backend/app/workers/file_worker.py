@@ -7,8 +7,13 @@ import time
 from pathlib import Path
 
 from app.bootstrap import build_worker_container
+from app.modules.document_processing.repository import DocumentProcessingRepository
 from app.modules.message_bus.infrastructure.rabbitmq_attachment_consumer import (
     RabbitMQAttachmentConsumer,
+)
+from app.modules.message_bus.infrastructure.rabbitmq_file_processing import (
+    DocumentProcessingStageOutboxPublisher,
+    RabbitMQFileProcessingPublisher,
 )
 from app.shared.config import load_settings
 from app.shared.logging import configure_logging, with_correlation
@@ -34,6 +39,10 @@ def main() -> None:
     importer = attachment_service.importer
     if importer is None or not hasattr(importer, "run_maintenance"):
         raise RuntimeError("File lifecycle client is not enabled")
+    stage_outbox = DocumentProcessingStageOutboxPublisher(
+        DocumentProcessingRepository(container.database),
+        RabbitMQFileProcessingPublisher(settings.rabbitmq_url, settings.queue),
+    )
     status_lock = threading.Lock()
     status: dict[str, int | str] = {
         "status": "STARTING",
@@ -63,12 +72,17 @@ def main() -> None:
                         )
                         released += int(outcome == "released")
                 notice = attachment_service.reconcile_file_readiness_notices()
+                stage_result = stage_outbox.publish_pending(limit=100)
                 publish_status(
                     **{
                         **result,
                         "document_processing_jobs_released": released,
                         "file_readiness_notices_expired": int(notice.get("expired") or 0),
                         "file_readiness_notices_notified": int(notice.get("notified") or 0),
+                        "document_stage_outbox_published": int(
+                            stage_result.get("published") or 0
+                        ),
+                        "document_stage_outbox_failed": int(stage_result.get("failed") or 0),
                         "status": "RUNNING",
                         "file_service": "ready",
                         "last_error_class": "",

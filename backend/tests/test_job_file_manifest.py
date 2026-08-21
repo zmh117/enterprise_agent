@@ -690,6 +690,19 @@ def test_job_manifest_explicit_image_reference_auto_materializes_markdown() -> N
         file_id="file-bound-image",
         version_id="version-bound-image",
     )
+    repository.database.execute(
+        """
+        insert into file_representation
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           kind, media_type, encoding, status, size_bytes, content_sha256,
+           object_key, profile_hash, created_at)
+        values ('private-ocr-layout-id', 'run-version-bound-image', 'tenant-a',
+                'file-bound-image', 'version-bound-image', 'OCR_LAYOUT_JSON',
+                'application/json', 'utf-8', 'AVAILABLE', 16, ?,
+                'opaque/private-ocr-layout', ?, ?)
+        """,
+        ("f" * 64, "d" * 64, TIMESTAMP),
+    )
     _insert_job(repository, job_id="job-image-bound", workspace_id=workspace_id)
     service.register_request(
         job_id="job-image-bound",
@@ -706,6 +719,11 @@ def test_job_manifest_explicit_image_reference_auto_materializes_markdown() -> N
     assert item["source_kind"] == "EXPLICIT_REFERENCE"
     assert item["auto_materialize"] == 1
     assert item["representation_id"] == "representation-version-bound-image"
+    runtime = service.runtime_manifest("job-image-bound")
+    serialized = json.dumps(runtime)
+    assert "private-ocr-layout-id" not in serialized
+    assert "OCR_LAYOUT_JSON" not in serialized
+    assert "opaque/private-ocr-layout" not in serialized
 
 
 def test_job_manifest_pending_workspace_image_is_metadata_only() -> None:

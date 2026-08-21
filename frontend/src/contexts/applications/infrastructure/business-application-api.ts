@@ -46,7 +46,7 @@ export const catalogSchema = z.object({
   document_processing_profiles: z
     .array(
       z.object({
-        code: z.enum(["NONE", "docling-text-v1"]),
+        code: z.enum(["NONE", "docling-text-v1", "docling-layout-ocr-v1"]),
         version: z.string(),
         hash: z.string(),
         label: z.string(),

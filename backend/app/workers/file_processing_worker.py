@@ -13,6 +13,7 @@ from typing import Any
 from app.modules.document_processing.file_service_client import (
     DocumentProcessingFileServiceClient,
 )
+from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V1
 from app.modules.document_processing.provider import (
     DoclingServeProvider,
     read_docling_api_key,
@@ -36,16 +37,27 @@ def document_processing_readiness(
     status: dict[str, str],
     heartbeat_age_seconds: float | None,
 ) -> dict[str, Any]:
+    component_names = (
+        "profile_registry",
+        "model_artifact",
+        "rabbitmq",
+        "file_service",
+        "docling",
+    )
     components = {
-        name: "ready" if status.get(name) == "ready" else "unavailable"
-        for name in ("rabbitmq", "file_service", "docling")
+        name: (
+            str(status[name])
+            if status.get(name) in {"ready", "not_required"}
+            else "unavailable"
+        )
+        for name in component_names
     }
     reason_code = "ready"
     if heartbeat_age_seconds is None or heartbeat_age_seconds > READINESS_MAX_HEARTBEAT_AGE_SECONDS:
         reason_code = "file_processing_worker_heartbeat_stale"
     else:
-        for name in ("rabbitmq", "file_service", "docling"):
-            if components[name] != "ready":
+        for name in component_names:
+            if components[name] == "unavailable":
                 reason_code = f"{name}_unavailable"
                 break
     ready = reason_code == "ready"
@@ -87,6 +99,15 @@ def main() -> None:
     worker_settings = settings.document_processing_worker
     if worker_settings.concurrency != 1:
         raise RuntimeError("Phase 1 File Processing Worker concurrency must be 1")
+    layout_options = DOCLING_LAYOUT_OCR_V1.layout_ocr_options
+    if layout_options is None:
+        raise RuntimeError("Document layout OCR Profile is invalid")
+    if worker_settings.layout_ocr_enabled and (
+        worker_settings.layout_profile_hash != DOCLING_LAYOUT_OCR_V1.profile_hash
+        or worker_settings.model_artifact_digest
+        != str(layout_options["model_artifact"]["digest"])
+    ):
+        raise RuntimeError("Document layout OCR deployment digest mismatch")
     token_provider = ServicePrincipalTokenClient(
         base_url=settings.service_principal.identity_base_url,
         allowed_hosts=settings.service_principal.identity_allowed_hosts,
@@ -169,6 +190,8 @@ def main() -> None:
 
     publish_status(
         status="STARTING",
+        profile_registry="ready",
+        model_artifact=("ready" if worker_settings.layout_ocr_enabled else "not_required"),
         rabbitmq="unavailable",
         file_service="unavailable",
         docling="unavailable",

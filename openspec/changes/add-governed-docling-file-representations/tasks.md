@@ -81,7 +81,7 @@
 
 - [x] 10.1 运行受影响模块的 schema、repository、File Service、worker、Runtime、Business Application、渠道和 delivery 聚焦测试，并记录失败与修复证据。
 - [x] 10.2 在 fresh PostgreSQL/RabbitMQ/MinIO/Docling Compose 环境执行脱敏 synthetic E2E，验证七类输入、拒绝边界、超时、重试、重启、幂等与 representation cleanup。
-- [ ] 10.3 执行一条真实的 Runtime→Inbox→Outbox→RabbitMQ→Job→processing worker→Docling→representation→Runtime→Delivery 链路，证明成功与失败路径，而不以容器健康替代业务证据。
+- [x] 10.3 执行一条真实的 Runtime→Inbox→Outbox→RabbitMQ→Job→processing worker→Docling→representation→Runtime→Delivery 链路，证明成功与失败路径，而不以容器健康替代业务证据。
 - [x] 10.4 在默认 `NONE` 下验证零行为变化；再按单个测试 publication 启用 `docling-text-v1`，观察 backlog、资源和错误率后才允许扩大范围。
 - [x] 10.5 对新 profile 路径执行“无新增 `attachment_content`”对账并记录旧数据依赖；本变更不 drop 旧表/列，后续 contract migration 必须另行审批并满足备份、保留期和零引用门禁。
 - [x] 10.6 运行完整相关测试、`openspec validate add-governed-docling-file-representations --strict`、migration/schema 检查和 `git diff --check`，将实现状态与剩余限制写入 evidence，不把设计意图表述为已上线能力。

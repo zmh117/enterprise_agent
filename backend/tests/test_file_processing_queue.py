@@ -8,9 +8,11 @@ from typing import Any
 import pytest
 
 from app.modules.message_bus.application.message_publisher import (
+    AssemblyTaskMessage,
     FileProcessingDisposition,
     FileProcessingTaskMessage,
     FileProcessingTaskResult,
+    PictureProcessingTaskMessage,
 )
 from app.modules.message_bus.infrastructure.rabbitmq_file_processing import (
     RabbitMQFileProcessingConsumer,
@@ -88,6 +90,27 @@ def _message() -> FileProcessingTaskMessage:
         contract_version="file-processing/v1",
         run_id="run-1",
         source_version_id="version-1",
+        profile_hash="a" * 64,
+        attempt=0,
+        correlation_id="correlation-1",
+    )
+
+
+def _picture_message() -> PictureProcessingTaskMessage:
+    return PictureProcessingTaskMessage(
+        contract_version="file-picture-processing/v1",
+        run_id="run-1",
+        picture_item_id="picture-item-1",
+        profile_hash="a" * 64,
+        attempt=0,
+        correlation_id="correlation-1",
+    )
+
+
+def _assembly_message() -> AssemblyTaskMessage:
+    return AssemblyTaskMessage(
+        contract_version="file-processing-assembly/v1",
+        run_id="run-1",
         profile_hash="a" * 64,
         attempt=0,
         correlation_id="correlation-1",
@@ -178,6 +201,85 @@ def test_processing_consumer_quarantines_malformed_input_without_republishing_bo
     dead_body = channel.published[0]["body"]
     assert b"must-not-enter-dead-letter" not in dead_body
     assert json.loads(dead_body) == {
+        "contract_version": "file-processing-dead/v1",
+        "dead_letter_error_code": "processing_message_invalid",
+    }
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_keys"),
+    [
+        (
+            _picture_message(),
+            {
+                "contract_version",
+                "run_id",
+                "picture_item_id",
+                "profile_hash",
+                "attempt",
+                "correlation_id",
+            },
+        ),
+        (
+            _assembly_message(),
+            {
+                "contract_version",
+                "run_id",
+                "profile_hash",
+                "attempt",
+                "correlation_id",
+            },
+        ),
+    ],
+)
+def test_stage_messages_publish_only_frozen_safe_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    message: PictureProcessingTaskMessage | AssemblyTaskMessage,
+    expected_keys: set[str],
+) -> None:
+    channel = _Channel()
+    _pika(monkeypatch, channel)
+
+    RabbitMQFileProcessingPublisher("amqp://test", QueueSettings()).publish_message(message)
+
+    payload = json.loads(channel.published[0]["body"])
+    assert set(payload) == expected_keys
+    encoded = json.dumps(payload).lower()
+    for forbidden in (
+        "base64",
+        "object_key",
+        "bucket",
+        "filename",
+        "ocr_text",
+        "coordinates",
+        "bbox",
+        "token",
+        "url",
+    ):
+        assert forbidden not in encoded
+
+
+@pytest.mark.parametrize(
+    "unsafe_payload",
+    [
+        {**_picture_message().safe_payload(), "object_key": "private/picture.png"},
+        {**_assembly_message().safe_payload(), "ocr_text": "untrusted text"},
+        {**_picture_message().safe_payload(), "picture_item_id": "token-injected"},
+    ],
+)
+def test_stage_consumer_quarantines_forbidden_fields_and_values(
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe_payload: dict[str, str | int],
+) -> None:
+    channel = _Channel(json.dumps(unsafe_payload).encode())
+    _pika(monkeypatch, channel)
+
+    RabbitMQFileProcessingConsumer("amqp://test", QueueSettings()).consume(
+        lambda _: FileProcessingTaskResult(FileProcessingDisposition.ACK)
+    )
+
+    assert channel.acks == [23]
+    assert json.loads(channel.published[0]["body"]) == {
         "contract_version": "file-processing-dead/v1",
         "dead_letter_error_code": "processing_message_invalid",
     }

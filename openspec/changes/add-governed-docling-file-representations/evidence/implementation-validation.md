@@ -25,9 +25,11 @@
   `cpu-benchmark.md` and `synthetic-compose-e2e.md`; concurrency remains one.
 - Source-stream authorization and safe read-audit evidence are implemented and covered by
   focused tests.
-- The real model Runtime-to-Delivery success path remains open because the isolated fresh
-  database has no ready model credential. The historical-publication failure path was
-  observed as `runtime_model_binding_missing`; no real secret was copied into the fixture.
+- The isolated fresh database intentionally has no model credential, so its
+  `runtime_model_binding_missing` failure remains a valid fail-closed fixture. The
+  separate live Runtime-to-Delivery success and governed failure paths were accepted on
+  2026-08-21 and are recorded in `live-runtime-delivery-e2e.md` without business content
+  or credential material.
 - Production rollout remains disabled by default profile `NONE`. The observed
   `docling-text-v1` path was confined to one isolated synthetic publication.
 

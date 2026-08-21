@@ -34,6 +34,9 @@ x-api-env: &api-env
   FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_processing_worker_bootstrap_token
   FILE_PROCESSING_WORKER_INTERNAL_BASE_URL: http://file-processing-worker:9106
   FILE_PROCESSING_WORKER_INTERNAL_ALLOWED_HOSTS: file-processing-worker
+  DOCUMENT_LAYOUT_OCR_ENABLED: "true"
+  DOCUMENT_LAYOUT_OCR_PROFILE_HASH: 261633ba86e2e5db9d271bb5a96ebd7fd2edee330d85ab5bc96dd5e2ad190c5e
+  DOCLING_MODEL_ARTIFACT_DIGEST: sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c
   DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/delivery_worker_bootstrap_token
   SERVICE_PRINCIPAL_TTL_SECONDS: ${SERVICE_PRINCIPAL_TTL_SECONDS:-300}
   # ONES 本人身份验证只由 API 发起；固定 Provider 配置不得下发给
@@ -703,7 +706,10 @@ services:
       start_period: 30s
 
   docling-serve:
-    image: quay.io/docling-project/docling-serve:v1.30.0@sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807
+    build:
+      context: .
+      dockerfile: backend/docker/docling-serve/Dockerfile
+    image: enterprise-agent/docling-serve:v1.30.0-layout-ocr-v1
     restart: unless-stopped
     user: "1001:0"
     read_only: true
@@ -717,6 +723,7 @@ services:
       - |
         api_key="$$(cat /run/secrets/docling_api_key)"
         test -n "$${api_key}"
+        python /opt/enterprise-agent/verify_model_bundle.py
         export DOCLING_SERVE_API_KEY="$${api_key}"
         exec docling-serve run
     environment:
@@ -734,15 +741,24 @@ services:
       DOCLING_SERVE_ALLOW_CUSTOM_VLM_CONFIG: "false"
       DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_DESCRIPTION_CONFIG: "false"
       DOCLING_SERVE_ALLOW_CUSTOM_CODE_FORMULA_CONFIG: "false"
+      DOCLING_SERVE_ALLOW_CUSTOM_TABLE_STRUCTURE_CONFIG: "false"
+      DOCLING_SERVE_ALLOW_CUSTOM_LAYOUT_CONFIG: "false"
+      DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_CLASSIFICATION_CONFIG: "false"
+      DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG: "false"
       DOCLING_SERVE_ALLOWED_SOURCE_TYPES: "[]"
-      DOCLING_SERVE_ALLOWED_TARGET_TYPES: '["inbody"]'
+      DOCLING_SERVE_ALLOWED_TARGET_TYPES: '["inbody","zip"]'
+      DOCLING_SERVE_ALLOWED_IMAGE_EXPORT_MODES: '["placeholder","referenced"]'
       DOCLING_SERVE_MAX_FILE_SIZE: "26214400"
       DOCLING_SERVE_MAX_NUM_PAGES: "300"
       DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT: "600"
       DOCLING_SERVE_SINGLE_USE_RESULTS: "true"
       DOCLING_SERVE_SCRATCH_PATH: /tmp/docling-scratch
       DOCLING_SERVE_ARTIFACTS_PATH: /opt/app-root/src/.cache/docling/models
+      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: "true"
       DOCLING_SERVE_LOG_FORMAT: json
+      DOCLING_SERVE_LOG_LEVEL: WARNING
+      DOCLING_MODEL_ARTIFACT_PATH: /opt/app-root/src/.cache/docling/models
+      DOCLING_MODEL_ARTIFACT_DIGEST: sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
       # torch.compile writes a shared object into the inductor cache and dlopens it,
@@ -813,7 +829,10 @@ services:
       DOCLING_SERVE_CONNECT_TIMEOUT_SECONDS: "5"
       DOCLING_SERVE_POLL_INTERVAL_SECONDS: "2"
       DOCLING_SERVE_TOTAL_TIMEOUT_SECONDS: "600"
-      DOCLING_SERVE_MAX_RESPONSE_BYTES: "83886080"
+      DOCLING_SERVE_MAX_RESPONSE_BYTES: "134217728"
+      DOCUMENT_LAYOUT_OCR_ENABLED: "true"
+      DOCUMENT_LAYOUT_OCR_PROFILE_HASH: 261633ba86e2e5db9d271bb5a96ebd7fd2edee330d85ab5bc96dd5e2ad190c5e
+      DOCLING_MODEL_ARTIFACT_DIGEST: sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c
     secrets:
       - file_processing_worker_bootstrap_token
       - docling_api_key
@@ -842,7 +861,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 512M
+          memory: 2G
           pids: 128
     networks:
       - default

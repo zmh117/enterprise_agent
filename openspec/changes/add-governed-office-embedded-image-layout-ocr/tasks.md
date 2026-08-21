@@ -1,25 +1,25 @@
 ## 1. 实施门禁与固定上游合同
 
-- [ ] 1.1 完成并严格验证`add-governed-docling-file-representations`，将其delta同步到相关canonical specs；若基础change仍未完成、未同步或存在冲突则停止本change实施。
-- [ ] 1.2 基于同步后的canonical、当前migration ledger和dirty worktree重新核对本change的proposal/design/specs，记录实际migration head与受影响模块，确保不覆盖用户未提交改动。
-- [ ] 1.3 使用固定`docling-serve`镜像digest和不含业务数据的合成DOCX/PPTX建立契约探针，验证异步图片artifact bundle、picture ref、父锚点、媒体类型、压缩包结构与有界下载行为；不满足合同时停止实施并更新设计。
-- [ ] 1.4 对合成的典型/边界Office文档执行离线基准，冻结图片软/硬数量、单图与累计像素、block/word/关系/字符、派生字节、deadline、attempt和并发上限，保存非敏感基准证据供Profile canonical payload使用。
+- [x] 1.1 完成并严格验证`add-governed-docling-file-representations`，将其delta同步到相关canonical specs；若基础change仍未完成、未同步或存在冲突则停止本change实施。
+- [x] 1.2 基于同步后的canonical、当前migration ledger和dirty worktree重新核对本change的proposal/design/specs，记录实际migration head与受影响模块，确保不覆盖用户未提交改动。
+- [x] 1.3 使用固定`docling-serve`镜像digest和不含业务数据的合成DOCX/PPTX建立契约探针，验证异步图片artifact bundle、picture ref、父锚点、媒体类型、压缩包结构与有界下载行为；不满足合同时停止实施并更新设计。
+- [x] 1.4 对合成的典型/边界Office文档执行离线基准，冻结图片软/硬数量、单图与累计像素、block/word/关系/字符、派生字节、deadline、attempt和并发上限，保存非敏感基准证据供Profile canonical payload使用。
 
 ## 2. Profile、领域模型与数据库迁移
 
-- [ ] 2.1 为`docling-layout-ocr-v1`定义完整canonical payload、version与hash，显式复制`docling-text-v1`的全部既有格式/正文/表格/安全选项，并增加固定模型digest、布局Schema、关系算法、三种必需输出和已冻结上限。
-- [ ] 2.2 扩展代码Profile目录、序列化和校验，使Publication只能单选`NONE`、`docling-text-v1`或`docling-layout-ocr-v1`，并添加旧Profile code/version/hash完全不变的回归断言。
-- [ ] 2.3 增加`OCR_LAYOUT_JSON` Representation kind、独立media type/schema/编码/大小规则，以及按processing run冻结Profile解析必需输出集合的领域类型和失败关闭校验。
-- [ ] 2.4 设计并实现`document_picture_asset`、`document_picture_occurrence`、`document_picture_processing_item`及必要attempt/staging/cleanup事实，加入tenant/source Version/run/Profile绑定、终态、唯一约束和并发claim字段。
-- [ ] 2.5 为parent processing run增加`PARENT_PARSE`、`PICTURE_OCR`、`ASSEMBLING`阶段和唯一assembly/outbox事实，保持既有公开run状态及历史记录解释不变。
-- [ ] 2.6 追加只做schema与约束变更的forward migration，覆盖新kind、Profile约束、表、索引、外键、检查约束和旧行兼容；migration不得访问对象存储、重写历史run或生成业务内容。
-- [ ] 2.7 实现asset/occurrence/item/attempt/outbox/staging/cleanup repository与事务方法，并以数据库唯一约束验证重复claim、重复完成和并发最后item只产生一个assembly。
+- [x] 2.1 为`docling-layout-ocr-v1`定义完整canonical payload、version与hash，显式复制`docling-text-v1`的全部既有格式/正文/表格/安全选项，并增加固定模型digest、布局Schema、关系算法、三种必需输出和已冻结上限。
+- [x] 2.2 扩展代码Profile目录、序列化和校验，使Publication只能单选`NONE`、`docling-text-v1`或`docling-layout-ocr-v1`，并添加旧Profile code/version/hash完全不变的回归断言。
+- [x] 2.3 增加`OCR_LAYOUT_JSON` Representation kind、独立media type/schema/编码/大小规则，以及按processing run冻结Profile解析必需输出集合的领域类型和失败关闭校验。
+- [x] 2.4 设计并实现`document_picture_asset`、`document_picture_occurrence`、`document_picture_processing_item`及必要attempt/staging/cleanup事实，加入tenant/source Version/run/Profile绑定、终态、唯一约束和并发claim字段。
+- [x] 2.5 为parent processing run增加`PARENT_PARSE`、`PICTURE_OCR`、`ASSEMBLING`阶段和唯一assembly/outbox事实，保持既有公开run状态及历史记录解释不变。
+- [x] 2.6 追加只做schema与约束变更的forward migration，覆盖新kind、Profile约束、表、索引、外键、检查约束和旧行兼容；migration不得访问对象存储、重写历史run或生成业务内容。
+- [x] 2.7 实现asset/occurrence/item/attempt/outbox/staging/cleanup repository与事务方法，并以数据库唯一约束验证重复claim、重复完成和并发最后item只产生一个assembly。
 
 ## 3. Docling Provider与安全图片提取
 
 - [ ] 3.1 扩展Docling Provider的固定请求/响应合同，为新Profile启用DOCX/PPTX图片导出，同时保持HTTP source、remote services、custom config、插件、callback、VLM和运行时模型下载关闭。
 - [ ] 3.2 实现artifact bundle校验器，拒绝超响应/entry/解压总量、绝对路径、路径穿越、symlink、重复名、未知entry、未知媒体类型和picture ref不一致，并确保日志不含文件名、对象键或响应正文。
-- [ ] 3.3 将Docling结构结果映射为稳定picture occurrence：PPTX保存slide/shape与slide bbox，DOCX保存document node/段落或表格单元ref和同父顺序，禁止生成DOCX伪页码坐标。
+- [ ] 3.3 将Docling结构结果映射为稳定picture occurrence：PPTX保存slide、picture self_ref与slide bbox，DOCX保存picture self_ref、可解析的最近父容器ref和同父顺序，禁止要求上游未提供的段落/单元ref或生成DOCX伪页码坐标。
 - [ ] 3.4 安全解码白名单PNG/JPEG/WebP，应用EXIF方向/旋转/裁剪，移除非必要元数据并在模型调用前检查压缩大小、单图/累计像素和派生字节硬上限。
 - [ ] 3.5 生成规范化图片SHA-256，使OCR计算仅能在同一tenant/source Version/run/Profile内复用；为重复图片保留独立occurrence和父锚点，并测试禁止跨tenant内容探测或复用。
 - [ ] 3.6 实现绑定picture item的固定图片OCR提交、轮询和结果适配，保存引擎/model revision与digest但不把图片、OCR正文、坐标、文件名或外部响应写入数据库、消息、日志或审计。

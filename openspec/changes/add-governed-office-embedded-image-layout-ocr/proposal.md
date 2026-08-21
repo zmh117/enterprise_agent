@@ -29,6 +29,6 @@
 ## Impact
 
 - 受影响代码包括文档处理 Profile 注册、Docling Provider/适配层、File Processing Worker、processing run 与 representation staging/finalize、File Service 流式接口、Manifest/Markdown组装、派生内容配额与生命周期、管理端 Profile 展示及运行中心观测。
-- 需要前向 migration 扩展 Profile 约束、Representation kind、OCR Layout provenance/Schema元数据、Profile驱动的必需输出集合及必要索引；具体 migration 版本必须在 apply 时依据最新 schema head 分配。
+- 需要前向 migration 扩展 Profile 约束、Representation kind、OCR Layout provenance/Schema元数据、Profile驱动的必需输出集合及必要索引；2026-08-21 apply preflight确认磁盘与本地Compose ledger的当前head均为`115_expand_file_turn_admission.sql`，因此候选版本为`116`，创建migration前仍须再次确认head未变化。
 - `docling-layout-ocr-v1` 仍通过 Business Application Publication 显式启用，不因部署模型或容器而自动赋予既有应用新能力；Publication一次只选择一个文档处理 Profile，新 Profile 必须包含旧文字 Profile 的全部能力而不是与其叠加选择。
 - Agent Runtime 协议保持现状：Manifest冻结原件和最终 Markdown Representation，Runtime只物化 Markdown。任何未来向多模态模型发送原图或识别视觉语义的能力必须另行提出 change。

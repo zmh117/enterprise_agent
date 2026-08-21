@@ -19,7 +19,7 @@
 - **AND** 不调用VLM、远程图片描述、外部插件或运行时模型下载
 
 ### Requirement: Office内嵌图片使用稳定派生身份和双坐标空间
-系统 SHALL 从精确DOCX/PPTX source Version的Docling结构结果中为每个内嵌栅格图片创建稳定picture occurrence，并 MUST 把可复用的规范化图片asset与其一个或多个父文档出现位置分开建模。PPTX父锚点 MUST 包含slide、稳定shape/ref及图片在slide中的规范化bbox；DOCX父锚点 MUST 包含稳定document node、父段落或表格单元ref及同父节点顺序，且 MUST NOT 声称存在跨渲染环境稳定的页码坐标。图片内部OCR坐标 MUST 使用左上角原点、`0..10000`整数空间，并保留原始/规范化尺寸、方向、旋转和裁剪变换。
+系统 SHALL 从精确DOCX/PPTX source Version的Docling结构结果中为每个内嵌栅格图片创建稳定picture occurrence，并 MUST 把可复用的规范化图片asset与其一个或多个父文档出现位置分开建模。PPTX父锚点 MUST 包含slide、Docling picture `self_ref`形成的稳定shape/ref及图片在slide中的规范化bbox；DOCX父锚点 MUST 包含稳定picture `self_ref`、Docling返回且可解析的最近父容器ref（段落、表格单元、section或body）及同父节点顺序，且 MUST NOT 要求上游未提供的段落/单元ref或声称存在跨渲染环境稳定的页码坐标。图片内部OCR坐标 MUST 使用左上角原点、`0..10000`整数空间，并保留原始/规范化尺寸、方向、旋转和裁剪变换。
 
 #### Scenario: PPTX图片包含文字
 - **WHEN** PPTX第4张slide中的一个picture shape被安全提取并完成OCR
@@ -27,8 +27,8 @@
 - **AND** 两种坐标必须具有不同字段和明确坐标系
 
 #### Scenario: DOCX图片没有稳定页坐标
-- **WHEN** DOCX内联图片只具有稳定文档节点和段落关系
-- **THEN** 系统保存文档节点/父段落/顺序锚点及图片内部OCR坐标
+- **WHEN** DOCX内联图片只有稳定picture ref、可解析的section/body等父容器和顺序关系
+- **THEN** 系统保存该文档节点/父容器/顺序锚点及图片内部OCR坐标
 - **AND** 不通过字体依赖渲染伪造页码或页面bbox
 
 #### Scenario: 相同图片重复出现

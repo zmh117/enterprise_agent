@@ -36,6 +36,7 @@ from app.modules.business_application.domain.policies import (
     verify_publication_snapshot,
 )
 from app.modules.document_processing import (
+    DOCLING_LAYOUT_OCR_V1,
     DOCLING_TEXT_V1,
     DocumentProcessingProfileCode,
     document_processing_profile_snapshot,
@@ -100,6 +101,7 @@ class BusinessApplicationService:
         runtime_evaluator: RuntimeReadinessEvaluator | None = None,
         mcp_tool_composition_service: ApplicationMcpToolCompositionService | None = None,
         runtime_readiness_guard: AgentRuntimeReadinessGuard | None = None,
+        document_layout_ocr_publication_ready: bool = False,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -113,6 +115,7 @@ class BusinessApplicationService:
             runtime_environment="local",
         )
         self.runtime_readiness_guard = runtime_readiness_guard
+        self.document_layout_ocr_publication_ready = document_layout_ocr_publication_ready
         self.mcp_tool_composition_service = (
             mcp_tool_composition_service
             or ApplicationMcpToolCompositionService(repository.database)
@@ -423,6 +426,22 @@ class BusinessApplicationService:
                 error_code="validation_failed",
                 field_errors=errors,
             )
+        if (
+            str(revision.get("document_processing_profile_code") or "")
+            == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value
+            and not self.document_layout_ocr_publication_ready
+        ):
+            raise NonRetryableExecutionError(
+                "Document layout OCR deployment contract is not ready",
+                safe_message="Office 内嵌图片布局 OCR 部署合同尚未就绪",
+                error_code="validation_failed",
+                field_errors=[
+                    {
+                        "field": "document_processing_profile_code",
+                        "message": "布局 OCR Profile、离线模型或处理依赖尚未按固定摘要就绪",
+                    }
+                ],
+            )
         prepared_mcp_tools = self.mcp_tool_composition_service.prepare(
             agent_publication_id=str(revision["agent_publication_id"]),
             raw_tools=revision.get("mcp_tools") or [],
@@ -475,6 +494,16 @@ class BusinessApplicationService:
                 safe_message="未找到业务应用发布版本",
             )
         self._require_python_application_publication(publication)
+        profile, _ = publication_document_processing_profile(publication["snapshot"])
+        if (
+            profile["code"] == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value
+            and not self.document_layout_ocr_publication_ready
+        ):
+            raise NonRetryableExecutionError(
+                "Document layout OCR deployment contract is not ready",
+                safe_message="Office 内嵌图片布局 OCR 部署合同尚未就绪",
+                error_code="runtime_not_ready",
+            )
         if (
             validate_file_format_policy_version(
                 publication["snapshot"].get("file_format_policy_version")
@@ -1059,35 +1088,35 @@ class BusinessApplicationService:
         session_policy: dict[str, Any],
         agent: ComponentReference | None,
     ) -> list[dict[str, str]]:
-        if document_processing_profile_code != DocumentProcessingProfileCode.DOCLING_TEXT_V1.value:
+        if document_processing_profile_code == DocumentProcessingProfileCode.NONE.value:
             return []
         errors: list[dict[str, str]] = []
         if not task_file_features.get("workspace_enabled"):
             errors.append(
                 {
                     "field": "task_file_features.workspace_enabled",
-                    "message": "Docling 文字提取必须启用任务工作区",
+                    "message": "Docling 文档处理必须启用任务工作区",
                 }
             )
         if not task_file_features.get("file_mcp_enabled"):
             errors.append(
                 {
                     "field": "task_file_features.file_mcp_enabled",
-                    "message": "Docling 文字提取必须启用 File MCP",
+                    "message": "Docling 文档处理必须启用 File MCP",
                 }
             )
         if not session_policy.get("attachments_enabled"):
             errors.append(
                 {
                     "field": "session_policy.attachments_enabled",
-                    "message": "Docling 文字提取必须允许消息附件",
+                    "message": "Docling 文档处理必须允许消息附件",
                 }
             )
         if not session_policy.get("continuous_conversation_enabled"):
             errors.append(
                 {
                     "field": "session_policy.continuous_conversation_enabled",
-                    "message": "Docling 文字提取必须启用连续会话",
+                    "message": "Docling 文档处理必须启用连续会话",
                 }
             )
         if agent is None or "1.3" not in agent.runtime_protocol_versions:
@@ -1620,6 +1649,33 @@ class BusinessApplicationService:
                     ),
                 },
                 **document_processing_state(DOCLING_TEXT_V1.code.value),
+            },
+            {
+                "code": DOCLING_LAYOUT_OCR_V1.code.value,
+                "version": DOCLING_LAYOUT_OCR_V1.version,
+                "hash": DOCLING_LAYOUT_OCR_V1.profile_hash,
+                "label": "Docling Office 内嵌图片布局 OCR v1",
+                "source_format_codes": [
+                    item.code.value for item in DOCLING_LAYOUT_OCR_V1.source_formats
+                ],
+                "output_kinds": list(DOCLING_LAYOUT_OCR_V1.output_kinds),
+                "limits": {
+                    "max_source_bytes": DOCLING_LAYOUT_OCR_V1.max_source_bytes,
+                    "max_pdf_pages": DOCLING_LAYOUT_OCR_V1.max_pdf_pages,
+                    "processing_timeout_seconds": (
+                        DOCLING_LAYOUT_OCR_V1.processing_timeout_seconds
+                    ),
+                },
+                "capabilities": {
+                    "office_embedded_image_ocr": True,
+                    "coordinates": "TOPLEFT_0_10000",
+                    "reading_order": True,
+                    "confidence": True,
+                    "bounded_geometric_relations": True,
+                    "vlm": False,
+                    "visual_semantics": False,
+                },
+                **document_processing_state(DOCLING_LAYOUT_OCR_V1.code.value),
             },
         ]
 

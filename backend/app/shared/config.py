@@ -228,6 +228,9 @@ class DocumentProcessingWorkerSettings:
     total_timeout_seconds: int = 600
     max_response_bytes: int = 80 * 1024 * 1024
     concurrency: int = 1
+    layout_ocr_enabled: bool = False
+    layout_profile_hash: str = ""
+    model_artifact_digest: str = ""
 
     def __post_init__(self) -> None:
         if not self.docling_allowed_hosts:
@@ -248,6 +251,20 @@ class DocumentProcessingWorkerSettings:
             raise ValueError("Docling response size bound is invalid")
         if self.concurrency not in {1, 2}:
             raise ValueError("Document processing concurrency must be 1 or 2")
+        if self.layout_ocr_enabled and (
+            len(self.layout_profile_hash) != 64
+            or any(character not in "0123456789abcdef" for character in self.layout_profile_hash)
+        ):
+            raise ValueError("Document layout OCR Profile hash is invalid")
+        if self.layout_ocr_enabled and (
+            len(self.model_artifact_digest) != 71
+            or not self.model_artifact_digest.startswith("sha256:")
+            or any(
+                character not in "0123456789abcdef"
+                for character in self.model_artifact_digest.removeprefix("sha256:")
+            )
+        ):
+            raise ValueError("Document layout OCR model artifact digest is invalid")
 
 
 @dataclass(frozen=True)
@@ -510,6 +527,9 @@ def load_settings() -> Settings:
                 os.getenv("DOCLING_SERVE_MAX_RESPONSE_BYTES", str(80 * 1024 * 1024))
             ),
             concurrency=int(os.getenv("FILE_PROCESSING_WORKER_CONCURRENCY", "1")),
+            layout_ocr_enabled=_env_bool("DOCUMENT_LAYOUT_OCR_ENABLED"),
+            layout_profile_hash=os.getenv("DOCUMENT_LAYOUT_OCR_PROFILE_HASH", ""),
+            model_artifact_digest=os.getenv("DOCLING_MODEL_ARTIFACT_DIGEST", ""),
         ),
         dingtalk=DingTalkSettings(
             secret=os.getenv("DINGTALK_SECRET", ""),

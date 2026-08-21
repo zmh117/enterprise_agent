@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.modules.document_processing.repository import DocumentProcessingRepository
 from app.modules.message_bus.application.message_publisher import (
+    AssemblyTaskMessage,
+    DocumentProcessingStageMessage,
     FileProcessingDisposition,
     FileProcessingTaskHandler,
     FileProcessingTaskMessage,
+    PictureProcessingTaskMessage,
 )
 from app.modules.message_bus.infrastructure.rabbitmq_topology import (
     declare_file_processing_topology,
@@ -22,12 +27,35 @@ logger = logging.getLogger(__name__)
 MAX_PROCESSING_MESSAGE_BYTES = 8 * 1024
 
 
-def _safe_message(value: dict[str, Any], *, redelivered: bool = False) -> FileProcessingTaskMessage:
-    payload = DocumentProcessingRepository.validate_safe_message_payload(value)
-    return FileProcessingTaskMessage(
-        contract_version=str(payload["contract_version"]),
+def _safe_message(
+    value: dict[str, Any], *, redelivered: bool = False
+) -> DocumentProcessingStageMessage:
+    contract = str(value.get("contract_version") or "")
+    if contract == "file-processing/v1":
+        payload = DocumentProcessingRepository.validate_safe_message_payload(value)
+        return FileProcessingTaskMessage(
+            contract_version=contract,
+            run_id=str(payload["run_id"]),
+            source_version_id=str(payload["source_version_id"]),
+            profile_hash=str(payload["profile_hash"]),
+            attempt=int(payload["attempt"]),
+            correlation_id=str(payload["correlation_id"]),
+            redelivered=redelivered,
+        )
+    payload = DocumentProcessingRepository.validate_safe_stage_message_payload(value)
+    if contract == "file-picture-processing/v1":
+        return PictureProcessingTaskMessage(
+            contract_version=contract,
+            run_id=str(payload["run_id"]),
+            picture_item_id=str(payload["picture_item_id"]),
+            profile_hash=str(payload["profile_hash"]),
+            attempt=int(payload["attempt"]),
+            correlation_id=str(payload["correlation_id"]),
+            redelivered=redelivered,
+        )
+    return AssemblyTaskMessage(
+        contract_version=contract,
         run_id=str(payload["run_id"]),
-        source_version_id=str(payload["source_version_id"]),
         profile_hash=str(payload["profile_hash"]),
         attempt=int(payload["attempt"]),
         correlation_id=str(payload["correlation_id"]),
@@ -45,10 +73,12 @@ class RabbitMQFileProcessingPublisher:
             return
         self.publish_message(_safe_message(dict(event["payload"])))
 
-    def publish_message(self, message: FileProcessingTaskMessage) -> None:
+    def publish_message(self, message: DocumentProcessingStageMessage) -> None:
         self._publish(self.queue.file_processing_queue, message.safe_payload())
 
-    def publish_retry(self, message: FileProcessingTaskMessage, *, delay_seconds: int) -> None:
+    def publish_retry(
+        self, message: DocumentProcessingStageMessage, *, delay_seconds: int
+    ) -> None:
         if not 1 <= delay_seconds <= 600:
             raise ValueError("File processing retry delay is invalid")
         payload = message.safe_payload()
@@ -59,7 +89,7 @@ class RabbitMQFileProcessingPublisher:
             expiration_ms=delay_seconds * 1000,
         )
 
-    def publish_dead(self, message: FileProcessingTaskMessage, *, error_code: str) -> None:
+    def publish_dead(self, message: DocumentProcessingStageMessage, *, error_code: str) -> None:
         safe_error = _safe_error_code(error_code)
         self._publish(
             self.queue.file_processing_dead_queue,
@@ -110,6 +140,40 @@ class RabbitMQFileProcessingPublisher:
                 raise RuntimeError("RabbitMQ file processing publish confirm failed")
         finally:
             connection.close()
+
+
+class DocumentProcessingStageOutboxPublisher:
+    def __init__(
+        self,
+        repository: DocumentProcessingRepository,
+        publisher: RabbitMQFileProcessingPublisher,
+    ) -> None:
+        self.repository = repository
+        self.publisher = publisher
+
+    def publish_pending(self, *, limit: int = 100) -> dict[str, int]:
+        claim_token = f"stage-outbox-{uuid.uuid4().hex}"
+        rows = self.repository.claim_stage_outbox(claim_token=claim_token, limit=limit)
+        published = failed = 0
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+                if not isinstance(payload, dict):
+                    raise ValueError("stage payload is not an object")
+                self.publisher.publish_message(_safe_message(payload))
+                self.repository.mark_stage_outbox_published(
+                    outbox_id=str(row["id"]), claim_token=claim_token
+                )
+                published += 1
+            except Exception as exc:
+                self.repository.mark_stage_outbox_failed(
+                    outbox_id=str(row["id"]),
+                    claim_token=claim_token,
+                    error_code=f"stage_publish_{type(exc).__name__.lower()}"[:128],
+                    retry_at=(datetime.now(UTC) + timedelta(seconds=30)).isoformat(),
+                )
+                failed += 1
+        return {"published": published, "failed": failed}
 
 
 class RabbitMQFileProcessingConsumer:

@@ -7,11 +7,12 @@
 
 ## Canonical Specs
 
-- 当前已接受规范的唯一 canonical baseline 是以下 9 个文件：
+- 当前已接受规范的唯一 canonical baseline 是以下 10 个文件：
   - `openspec/specs/identity-access/spec.md`
   - `openspec/specs/agent-model/spec.md`
   - `openspec/specs/business-application/spec.md`
   - `openspec/specs/channel-conversation/spec.md`
+  - `openspec/specs/document-file-processing/spec.md`
   - `openspec/specs/execution-delivery/spec.md`
   - `openspec/specs/builtin-tool-resource/spec.md`
   - `openspec/specs/governed-api-capability/spec.md`

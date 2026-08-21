@@ -68,6 +68,7 @@ from app.modules.delivery.infrastructure.file_delivery_sender import (
     DingTalkFileDeliverySender,
     FileServiceDeliveryClient,
 )
+from app.modules.document_processing import DOCLING_LAYOUT_OCR_V1
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.file_workspace.manifest_service import JobFileManifestService
 from app.modules.file_workspace.repository import FileWorkspaceRepository
@@ -609,6 +610,13 @@ def _build_container(
         IdentitySubjectAdapter(identity_repository),
         business_application_runtime_evaluator,
         runtime_readiness_guard=agent_runtime_readiness_guard,
+        document_layout_ocr_publication_ready=(
+            settings.document_processing_worker.layout_ocr_enabled
+            and settings.document_processing_worker.layout_profile_hash
+            == DOCLING_LAYOUT_OCR_V1.profile_hash
+            and settings.document_processing_worker.model_artifact_digest
+            == str(DOCLING_LAYOUT_OCR_V1.layout_ocr_options["model_artifact"]["digest"])
+        ),
     )
     business_application_resolver = BusinessApplicationResolver(
         business_application_repository,

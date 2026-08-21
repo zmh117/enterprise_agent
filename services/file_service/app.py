@@ -26,7 +26,11 @@ from app.modules.file_workspace.contracts import (
     FILE_TOOL_MANIFEST,
 )
 from app.modules.file_workspace.streaming_service import INTERNAL_TRANSFER_META
-from app.modules.document_processing.profile import DOCLING_TEXT_V1
+from app.modules.document_processing.profile import (
+    DOCLING_LAYOUT_OCR_V1,
+    DOCLING_LAYOUT_OCR_V1_PROFILE_HASH,
+    DOCLING_TEXT_V1,
+)
 from app.shared.exceptions import AppError
 from app.modules.mcp_audit import McpAuditHandle
 from services.file_service.audit import FileMcpAudit
@@ -40,7 +44,7 @@ from services.file_service.principal import FilePrincipalResolver
 
 logger = logging.getLogger(__name__)
 SERVER_VERSION = "0.1.0"
-REQUIRED_SCHEMA_VERSION = 113
+REQUIRED_SCHEMA_VERSION = 116
 MAX_TOOL_RESPONSE_BYTES = 256 * 1024
 
 
@@ -110,6 +114,52 @@ class DocumentProcessingOperations(Protocol):
         stream: Any,
         media_type: str,
     ) -> dict[str, Any]: ...
+
+    def prepare_parent_artifact_transfer(
+        self, *, run_id: str, expected_size_bytes: int, expected_sha256: str
+    ) -> dict[str, Any]: ...
+
+    def upload_parent_artifact(
+        self, *, transfer_id: str, upload_token: str, stream: Any
+    ) -> dict[str, Any]: ...
+
+    def open_parent_artifact(self, *, run_id: str) -> Any: ...
+
+    def prepare_picture_asset_transfer(self, **values: Any) -> dict[str, Any]: ...
+
+    def upload_picture_asset(self, **values: Any) -> dict[str, Any]: ...
+
+    def register_picture_occurrence(self, **values: Any) -> dict[str, Any]: ...
+
+    def register_picture_item(self, **values: Any) -> dict[str, Any]: ...
+
+    def claim_picture_item(self, **values: Any) -> tuple[dict[str, Any], bool]: ...
+
+    def picture_item_context(self, **values: Any) -> dict[str, Any]: ...
+
+    def open_picture_asset(self, *, picture_item_id: str) -> Any: ...
+
+    def mark_picture_submitted(self, **values: Any) -> dict[str, Any]: ...
+
+    def complete_picture_item(self, **values: Any) -> dict[str, Any]: ...
+
+    def retry_picture_item(self, **values: Any) -> dict[str, Any]: ...
+
+    def prepare_picture_result_transfer(self, **values: Any) -> dict[str, Any]: ...
+
+    def upload_picture_result(self, **values: Any) -> dict[str, Any]: ...
+
+    def open_picture_result(self, *, picture_item_id: str) -> Any: ...
+
+    def complete_parent_parse(self, **values: Any) -> dict[str, Any]: ...
+
+    def claim_assembly(self, **values: Any) -> tuple[dict[str, Any], bool]: ...
+
+    def assembly_context(self, **values: Any) -> dict[str, Any]: ...
+
+    def finish_assembly(self, **values: Any) -> dict[str, Any]: ...
+
+    def retry_assembly(self, **values: Any) -> dict[str, Any]: ...
 
     def finalize(
         self,
@@ -336,6 +386,22 @@ def create_app(
                 raise ValueError("File Service schema is not current")
             database.execute("select id from task_workspace where 1 = 0")
             database.execute("select id from managed_file_version where 1 = 0")
+            database.execute("select id from document_picture_asset where 1 = 0")
+            database.execute("select id from document_processing_stage_outbox where 1 = 0")
+            layout_options = DOCLING_LAYOUT_OCR_V1.layout_ocr_options
+            if (
+                layout_options is None
+                or DOCLING_LAYOUT_OCR_V1.profile_hash
+                != DOCLING_LAYOUT_OCR_V1_PROFILE_HASH
+                or layout_options["layout_schema"]
+                != {
+                    "name": "enterprise-agent.office-image-ocr-layout",
+                    "version": "v1",
+                }
+                or tuple(DOCLING_LAYOUT_OCR_V1.output_kinds)
+                != ("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON")
+            ):
+                raise ValueError("File Service layout OCR registry is invalid")
             storage.assert_ready()
             jwks.current()
             if tuple(sorted(FILE_TOOL_MANIFEST)) != (
@@ -362,6 +428,8 @@ def create_app(
                     "principal_jwks": "ready",
                     "tool_manifest": "ready",
                     "streaming_api": "ready",
+                    "layout_ocr_profile_registry": "ready",
+                    "layout_ocr_schema": "ready",
                     "document_processing": (
                         "ready" if document_processing is not None else "not_configured"
                     ),
@@ -632,6 +700,463 @@ def create_app(
         except AppError as exc:
             return _safe_error(exc)
 
+    async def parent_artifact_prepare(request: Request) -> JSONResponse:
+        try:
+            processing_claims(
+                request, "internal:file-service:document-processing:representation:write"
+            )
+            payload = await _request_json_exact(request, {"expected_size_bytes", "expected_sha256"})
+            result = await asyncio.to_thread(
+                processing_service().prepare_parent_artifact_transfer,
+                run_id=str(request.path_params["run_id"]),
+                expected_size_bytes=int(payload["expected_size_bytes"]),
+                expected_sha256=str(payload["expected_sha256"]),
+            )
+            return JSONResponse(_safe_result(result))
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def parent_artifact_upload(request: Request) -> JSONResponse:
+        try:
+            processing_claims(
+                request, "internal:file-service:document-processing:representation:write"
+            )
+            token = str(request.headers.get("x-parent-artifact-upload-token") or "")
+            if not token or len(token) > 4096:
+                raise FilePrincipalError(
+                    "Parent artifact upload token is missing",
+                    safe_message="父Markdown上传授权缺失",
+                    error_code="document_parent_artifact_upload_token_missing",
+                )
+            staged = tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
+            try:
+                async for chunk in request.stream():
+                    staged.write(chunk)
+                staged.seek(0)
+                result = await asyncio.to_thread(
+                    processing_service().upload_parent_artifact,
+                    transfer_id=str(request.path_params["transfer_id"]),
+                    upload_token=token,
+                    stream=staged,
+                )
+            finally:
+                staged.close()
+            return JSONResponse(
+                _safe_result({"transfer_id": str(result["id"]), "status": str(result["status"])})
+            )
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def parent_artifact_content(request: Request) -> StreamingResponse | JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:source:read")
+            stream = await asyncio.to_thread(
+                processing_service().open_parent_artifact,
+                run_id=str(request.path_params["run_id"]),
+            )
+
+            async def content() -> AsyncIterator[bytes]:
+                try:
+                    while chunk := await asyncio.to_thread(stream.read, 64 * 1024):
+                        yield chunk
+                finally:
+                    await asyncio.to_thread(stream.close)
+
+            return StreamingResponse(content(), media_type="text/markdown")
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_asset_prepare(request: Request) -> JSONResponse:
+        try:
+            processing_claims(
+                request, "internal:file-service:document-processing:representation:write"
+            )
+            payload = await _request_json_exact(
+                request,
+                {
+                    "normalized_sha256",
+                    "media_type",
+                    "original_width_pixels",
+                    "original_height_pixels",
+                    "width_pixels",
+                    "height_pixels",
+                    "normalization_transform",
+                    "size_bytes",
+                },
+            )
+            result = await asyncio.to_thread(
+                processing_service().prepare_picture_asset_transfer,
+                run_id=str(request.path_params["run_id"]),
+                normalized_sha256=str(payload["normalized_sha256"]),
+                media_type=str(payload["media_type"]),
+                original_width_pixels=int(payload["original_width_pixels"]),
+                original_height_pixels=int(payload["original_height_pixels"]),
+                width_pixels=int(payload["width_pixels"]),
+                height_pixels=int(payload["height_pixels"]),
+                normalization_transform=dict(payload["normalization_transform"]),
+                size_bytes=int(payload["size_bytes"]),
+            )
+            return JSONResponse(_safe_result(result))
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_asset_upload(request: Request) -> JSONResponse:
+        try:
+            processing_claims(
+                request, "internal:file-service:document-processing:representation:write"
+            )
+            token = str(request.headers.get("x-picture-asset-upload-token") or "")
+            if not token or len(token) > 4096:
+                raise FilePrincipalError(
+                    "Picture asset upload token is missing",
+                    safe_message="图片asset上传授权缺失",
+                    error_code="document_picture_asset_upload_token_missing",
+                )
+            staged = tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
+            try:
+                async for chunk in request.stream():
+                    staged.write(chunk)
+                staged.seek(0)
+                result = await asyncio.to_thread(
+                    processing_service().upload_picture_asset,
+                    transfer_id=str(request.path_params["transfer_id"]),
+                    upload_token=token,
+                    stream=staged,
+                    media_type=str(request.headers.get("content-type") or ""),
+                )
+            finally:
+                staged.close()
+            return JSONResponse(
+                _safe_result(
+                    {
+                        "picture_asset_id": str(result["id"]),
+                        "status": str(result["status"]),
+                    }
+                )
+            )
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_occurrence_register(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:claim")
+            payload = await _request_json_exact(
+                request,
+                {
+                    "picture_asset_id",
+                    "occurrence_index",
+                    "source_format",
+                    "picture_ref",
+                    "parent_ref",
+                    "parent_label",
+                    "parent_ordinal",
+                    "slide_no",
+                    "parent_bbox",
+                    "selection_status",
+                },
+            )
+            result = await asyncio.to_thread(
+                processing_service().register_picture_occurrence,
+                run_id=str(request.path_params["run_id"]),
+                picture_asset_id=str(payload["picture_asset_id"]),
+                occurrence_index=int(payload["occurrence_index"]),
+                source_format=str(payload["source_format"]),
+                picture_ref=str(payload["picture_ref"]),
+                parent_ref=str(payload["parent_ref"]),
+                parent_label=str(payload["parent_label"]),
+                parent_ordinal=int(payload["parent_ordinal"]),
+                slide_no=_optional_int(payload["slide_no"]),
+                parent_bbox=payload["parent_bbox"],
+                selection_status=str(payload["selection_status"]),
+            )
+            return JSONResponse(
+                _safe_result(
+                    {
+                        "occurrence_id": str(result["id"]),
+                        "occurrence_index": int(result["occurrence_index"]),
+                    }
+                )
+            )
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_item_register(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:claim")
+            payload = await _request_json_exact(
+                request,
+                {
+                    "picture_asset_id",
+                    "occurrence_count",
+                    "ocr_engine_code",
+                    "model_revision",
+                    "model_digest",
+                    "correlation_id",
+                },
+            )
+            result = await asyncio.to_thread(
+                processing_service().register_picture_item,
+                run_id=str(request.path_params["run_id"]),
+                picture_asset_id=str(payload["picture_asset_id"]),
+                occurrence_count=int(payload["occurrence_count"]),
+                ocr_engine_code=str(payload["ocr_engine_code"]),
+                model_revision=str(payload["model_revision"]),
+                model_digest=str(payload["model_digest"]),
+                correlation_id=str(payload["correlation_id"]),
+            )
+            return JSONResponse(
+                _safe_result(
+                    {
+                        "picture_item_id": str(result["id"]),
+                        "status": str(result["status"]),
+                    }
+                )
+            )
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_item_claim(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:claim")
+            payload = await _request_json_exact(request, {"claim_token", "claim_expires_at"})
+            item, claimed = await asyncio.to_thread(
+                processing_service().claim_picture_item,
+                picture_item_id=str(request.path_params["picture_item_id"]),
+                claim_token=str(payload["claim_token"]),
+                claim_expires_at=str(payload["claim_expires_at"]),
+            )
+            result = await asyncio.to_thread(
+                processing_service().picture_item_context,
+                picture_item_id=str(item["id"]),
+                claimed=claimed,
+            )
+            return JSONResponse(_safe_result(result))
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_asset_content(request: Request) -> StreamingResponse | JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:source:read")
+            stream = await asyncio.to_thread(
+                processing_service().open_picture_asset,
+                picture_item_id=str(request.path_params["picture_item_id"]),
+            )
+
+            async def content() -> AsyncIterator[bytes]:
+                try:
+                    while chunk := await asyncio.to_thread(stream.read, 64 * 1024):
+                        yield chunk
+                finally:
+                    await asyncio.to_thread(stream.close)
+
+            return StreamingResponse(content(), media_type="application/octet-stream")
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_item_submitted(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:claim")
+            payload = await _request_json_exact(request, {"external_task_id"})
+            result = await asyncio.to_thread(
+                processing_service().mark_picture_submitted,
+                picture_item_id=str(request.path_params["picture_item_id"]),
+                external_task_id=str(payload["external_task_id"]),
+            )
+            return JSONResponse(
+                _safe_result(
+                    {"picture_item_id": str(result["id"]), "status": str(result["status"])}
+                )
+            )
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_result_prepare(request: Request) -> JSONResponse:
+        try:
+            processing_claims(
+                request, "internal:file-service:document-processing:representation:write"
+            )
+            payload = await _request_json_exact(request, {"expected_size_bytes", "expected_sha256"})
+            result = await asyncio.to_thread(
+                processing_service().prepare_picture_result_transfer,
+                picture_item_id=str(request.path_params["picture_item_id"]),
+                expected_size_bytes=int(payload["expected_size_bytes"]),
+                expected_sha256=str(payload["expected_sha256"]),
+            )
+            return JSONResponse(_safe_result(result))
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_result_upload(request: Request) -> JSONResponse:
+        try:
+            processing_claims(
+                request, "internal:file-service:document-processing:representation:write"
+            )
+            token = str(request.headers.get("x-picture-result-upload-token") or "")
+            if not token or len(token) > 4096:
+                raise FilePrincipalError(
+                    "Picture result upload token is missing",
+                    safe_message="图片OCR结果上传授权缺失",
+                    error_code="document_picture_result_upload_token_missing",
+                )
+            staged = tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
+            try:
+                async for chunk in request.stream():
+                    staged.write(chunk)
+                staged.seek(0)
+                result = await asyncio.to_thread(
+                    processing_service().upload_picture_result,
+                    transfer_id=str(request.path_params["transfer_id"]),
+                    upload_token=token,
+                    stream=staged,
+                )
+            finally:
+                staged.close()
+            return JSONResponse(
+                _safe_result({"transfer_id": str(result["id"]), "status": str(result["status"])})
+            )
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_result_content(request: Request) -> StreamingResponse | JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:source:read")
+            stream = await asyncio.to_thread(
+                processing_service().open_picture_result,
+                picture_item_id=str(request.path_params["picture_item_id"]),
+            )
+
+            async def content() -> AsyncIterator[bytes]:
+                try:
+                    while chunk := await asyncio.to_thread(stream.read, 64 * 1024):
+                        yield chunk
+                finally:
+                    await asyncio.to_thread(stream.close)
+
+            return StreamingResponse(content(), media_type="application/json")
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_item_complete(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:complete")
+            payload = await _request_json_exact(
+                request,
+                {
+                    "status",
+                    "result_size_bytes",
+                    "result_sha256",
+                    "error_code",
+                    "correlation_id",
+                },
+            )
+            result = await asyncio.to_thread(
+                processing_service().complete_picture_item,
+                picture_item_id=str(request.path_params["picture_item_id"]),
+                status=str(payload["status"]),
+                result_size_bytes=_optional_int(payload["result_size_bytes"]),
+                result_sha256=str(payload["result_sha256"]),
+                error_code=str(payload["error_code"]),
+                correlation_id=str(payload["correlation_id"]),
+            )
+            return JSONResponse(
+                _safe_result(
+                    {"picture_item_id": str(result["id"]), "status": str(result["status"])}
+                )
+            )
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def picture_item_retry(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:complete")
+            payload = await _request_json_exact(request, {"error_code", "delay_seconds"})
+            result = await asyncio.to_thread(
+                processing_service().retry_picture_item,
+                picture_item_id=str(request.path_params["picture_item_id"]),
+                error_code=str(payload["error_code"]),
+                delay_seconds=int(payload["delay_seconds"]),
+            )
+            return JSONResponse(
+                _safe_result(
+                    {"picture_item_id": str(result["id"]), "status": str(result["status"])}
+                )
+            )
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def parent_parse_complete(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:complete")
+            payload = await _request_json_exact(request, {"correlation_id"})
+            result = await asyncio.to_thread(
+                processing_service().complete_parent_parse,
+                run_id=str(request.path_params["run_id"]),
+                correlation_id=str(payload["correlation_id"]),
+            )
+            return JSONResponse(_safe_processing_run(result))
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def assembly_claim(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:claim")
+            payload = await _request_json_exact(request, {"claim_token"})
+            run, claimed = await asyncio.to_thread(
+                processing_service().claim_assembly,
+                run_id=str(request.path_params["run_id"]),
+                claim_token=str(payload["claim_token"]),
+            )
+            return JSONResponse(
+                _safe_result(
+                    {
+                        "run_id": str(run["id"]),
+                        "profile_hash": str(run["profile_hash"]),
+                        "assembly_status": str(run["assembly_status"]),
+                        "assembly_attempt": int(run["assembly_attempt"]),
+                        "claimed": claimed,
+                    }
+                )
+            )
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def assembly_context(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:source:read")
+            result = await asyncio.to_thread(
+                processing_service().assembly_context,
+                run_id=str(request.path_params["run_id"]),
+            )
+            return JSONResponse(_safe_result(result))
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def assembly_finish(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:complete")
+            payload = await _request_json_exact(request, {"succeeded"})
+            result = await asyncio.to_thread(
+                processing_service().finish_assembly,
+                run_id=str(request.path_params["run_id"]),
+                succeeded=bool(payload["succeeded"]),
+            )
+            return JSONResponse(_safe_processing_run(result))
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def assembly_retry(request: Request) -> JSONResponse:
+        try:
+            processing_claims(request, "internal:file-service:document-processing:complete")
+            payload = await _request_json_exact(request, set())
+            del payload
+            result = await asyncio.to_thread(
+                processing_service().retry_assembly,
+                run_id=str(request.path_params["run_id"]),
+            )
+            return JSONResponse(_safe_processing_run(result))
+        except AppError as exc:
+            return _safe_error(exc)
+
     async def processing_finalize(request: Request) -> JSONResponse:
         try:
             processing_claims(request, "internal:file-service:document-processing:complete")
@@ -773,6 +1298,106 @@ def create_app(
                 "/internal/v1/document-processing/transfers/{transfer_id}/content",
                 representation_upload,
                 methods=["PUT"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/parent-artifact/prepare",
+                parent_artifact_prepare,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/parent-artifact-transfers/{transfer_id}/content",
+                parent_artifact_upload,
+                methods=["PUT"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/parent-artifact",
+                parent_artifact_content,
+                methods=["GET"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/picture-assets/prepare",
+                picture_asset_prepare,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/picture-asset-transfers/{transfer_id}/content",
+                picture_asset_upload,
+                methods=["PUT"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/picture-occurrences",
+                picture_occurrence_register,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/picture-items",
+                picture_item_register,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/picture-items/{picture_item_id}/claim",
+                picture_item_claim,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/picture-items/{picture_item_id}/asset",
+                picture_asset_content,
+                methods=["GET"],
+            ),
+            Route(
+                "/internal/v1/document-processing/picture-items/{picture_item_id}/submitted",
+                picture_item_submitted,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/picture-items/{picture_item_id}/result/prepare",
+                picture_result_prepare,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/picture-result-transfers/{transfer_id}/content",
+                picture_result_upload,
+                methods=["PUT"],
+            ),
+            Route(
+                "/internal/v1/document-processing/picture-items/{picture_item_id}/result",
+                picture_result_content,
+                methods=["GET"],
+            ),
+            Route(
+                "/internal/v1/document-processing/picture-items/{picture_item_id}/complete",
+                picture_item_complete,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/picture-items/{picture_item_id}/retry",
+                picture_item_retry,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/parent-complete",
+                parent_parse_complete,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/assembly/claim",
+                assembly_claim,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/assembly/context",
+                assembly_context,
+                methods=["GET"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/assembly/finish",
+                assembly_finish,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/runs/{run_id}/assembly/retry",
+                assembly_retry,
+                methods=["POST"],
             ),
             Route(
                 "/internal/v1/document-processing/runs/{run_id}/finalize",

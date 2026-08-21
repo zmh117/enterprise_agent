@@ -14,9 +14,18 @@ from app.shared.exceptions import NonRetryableExecutionError
 MIB = 1024 * 1024
 
 
+def _plain_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _plain_value(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_plain_value(item) for item in value]
+    return value
+
+
 class DocumentProcessingProfileCode(StrEnum):
     NONE = "NONE"
     DOCLING_TEXT_V1 = "docling-text-v1"
+    DOCLING_LAYOUT_OCR_V1 = "docling-layout-ocr-v1"
 
 
 class DocumentProcessingStatus(StrEnum):
@@ -68,6 +77,7 @@ class DocumentProcessingProfile:
     max_markdown_bytes: int
     max_docling_json_bytes: int
     max_attempts: int
+    layout_ocr_options: Mapping[str, Any] | None = None
     remote_services_enabled: bool = False
     external_plugins_enabled: bool = False
     custom_vlm_config_enabled: bool = False
@@ -79,7 +89,7 @@ class DocumentProcessingProfile:
 
     @property
     def canonical_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "code": self.code.value,
             "version": self.version,
             "processor_code": self.processor_code,
@@ -117,6 +127,9 @@ class DocumentProcessingProfile:
                 "runtime_model_download_enabled": self.runtime_model_download_enabled,
             },
         }
+        if self.layout_ocr_options is not None:
+            payload["layout_ocr"] = _plain_value(self.layout_ocr_options)
+        return payload
 
     @property
     def profile_hash(self) -> str:
@@ -235,8 +248,135 @@ if DOCLING_TEXT_V1.profile_hash != DOCLING_TEXT_V1_PROFILE_HASH:
     raise RuntimeError("docling-text-v1 canonical profile hash changed")
 
 
+DOCLING_LAYOUT_OCR_V1 = DocumentProcessingProfile(
+    code=DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1,
+    version="1",
+    processor_code="docling-serve",
+    source_formats=DOCLING_TEXT_V1.source_formats,
+    output_kinds=("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON"),
+    request_options=DOCLING_TEXT_V1.request_options,
+    max_source_bytes=DOCLING_TEXT_V1.max_source_bytes,
+    max_pdf_pages=DOCLING_TEXT_V1.max_pdf_pages,
+    processing_timeout_seconds=DOCLING_TEXT_V1.processing_timeout_seconds,
+    max_markdown_bytes=DOCLING_TEXT_V1.max_markdown_bytes,
+    max_docling_json_bytes=DOCLING_TEXT_V1.max_docling_json_bytes,
+    max_attempts=DOCLING_TEXT_V1.max_attempts,
+    layout_ocr_options=MappingProxyType(
+        {
+            "embedded_source_formats": ("DOCX", "PPTX"),
+            "bundle_request_options": {
+                "target_type": "zip",
+                "to_formats": ("md", "json"),
+                "image_export_mode": "referenced",
+                "include_images": True,
+                "include_page_images": False,
+                "do_ocr": True,
+                "force_ocr": False,
+                "do_table_structure": True,
+                "table_mode": "accurate",
+                "abort_on_error": False,
+                "do_picture_description": False,
+                "do_picture_classification": False,
+                "do_chart_extraction": False,
+                "do_code_enrichment": False,
+                "do_formula_enrichment": False,
+            },
+            "picture_ocr_request_options": {
+                "target_type": "inbody",
+                "from_formats": ("image",),
+                "to_formats": ("md", "json"),
+                "image_export_mode": "placeholder",
+                "include_images": False,
+                "include_page_images": False,
+                "do_ocr": True,
+                "force_ocr": False,
+                "ocr_preset": "rapidocr",
+                "do_table_structure": False,
+                "abort_on_error": True,
+                "do_picture_description": False,
+                "do_picture_classification": False,
+                "do_chart_extraction": False,
+                "do_code_enrichment": False,
+                "do_formula_enrichment": False,
+            },
+            "model_artifact": {
+                "code": "docling-v1.30.0-cpu-model-bundle",
+                "revision": "v1.30.0",
+                "digest": (
+                    "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
+                ),
+                "manifest_algorithm": "relative-path-size-content-sha256/v1",
+            },
+            "layout_schema": {
+                "name": "enterprise-agent.office-image-ocr-layout",
+                "version": "v1",
+            },
+            "assembler_version": "office-image-layout-assembler/v1",
+            "relation_algorithm": {
+                "version": "bounded-adjacent-geometry/v1",
+                "allowed_relations": (
+                    "LEFT_OF",
+                    "RIGHT_OF",
+                    "ABOVE",
+                    "BELOW",
+                    "SAME_ROW",
+                    "CONTAINS",
+                ),
+            },
+            "limits": {
+                "soft_picture_occurrences": 32,
+                "hard_picture_occurrences": 128,
+                "max_picture_compressed_bytes": 10 * MIB,
+                "max_picture_pixels": 16_777_216,
+                "max_total_picture_pixels": 67_108_864,
+                "max_derived_bytes": 256 * MIB,
+                "max_bundle_bytes": 128 * MIB,
+                "max_bundle_entries": 512,
+                "max_bundle_uncompressed_bytes": 256 * MIB,
+                "max_blocks_per_picture": 2_048,
+                "max_words_per_picture": 8_192,
+                "max_relations_per_picture": 4_096,
+                "max_characters_per_picture": 262_144,
+                "max_blocks_per_run": 16_384,
+                "max_words_per_run": 65_536,
+                "max_relations_per_run": 65_536,
+                "max_characters_per_run": 4_194_304,
+                "max_ocr_layout_json_bytes": 64 * MIB,
+                "parent_deadline_seconds": 600,
+                "picture_attempt_deadline_seconds": 120,
+                "assembly_deadline_seconds": 120,
+                "run_deadline_seconds": 1_800,
+                "max_parent_attempts": 3,
+                "max_picture_attempts": 3,
+                "max_assembly_attempts": 3,
+                "max_global_docling_concurrency": 1,
+                "max_parent_picture_concurrency": 1,
+            },
+            "security": {
+                "upload_name_policy": "fixed-synthetic-name",
+                "agent_materializes_picture_assets": False,
+                "agent_materializes_ocr_layout_json": False,
+                "vlm_enabled": False,
+                "runtime_options_override_enabled": False,
+            },
+        }
+    ),
+)
+DOCLING_LAYOUT_OCR_V1_PROFILE_HASH = (
+    "261633ba86e2e5db9d271bb5a96ebd7fd2edee330d85ab5bc96dd5e2ad190c5e"
+)
+
+if DOCLING_LAYOUT_OCR_V1.profile_hash != DOCLING_LAYOUT_OCR_V1_PROFILE_HASH:
+    raise RuntimeError("docling-layout-ocr-v1 canonical profile hash changed")
+
+
 PROFILE_REGISTRY: Mapping[DocumentProcessingProfileCode, DocumentProcessingProfile] = (
-    MappingProxyType({DocumentProcessingProfileCode.DOCLING_TEXT_V1: DOCLING_TEXT_V1})
+    MappingProxyType(
+        {
+            DocumentProcessingProfileCode.DOCLING_TEXT_V1: DOCLING_TEXT_V1,
+            DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1: DOCLING_LAYOUT_OCR_V1,
+        }
+    )
 )
 
 
@@ -259,6 +399,30 @@ def resolve_document_processing_profile(
     if code is DocumentProcessingProfileCode.NONE:
         return None
     return PROFILE_REGISTRY[code]
+
+
+def require_document_processing_profile(
+    value: object,
+    *,
+    profile_hash: object | None = None,
+) -> DocumentProcessingProfile:
+    profile = resolve_document_processing_profile(value)
+    if profile is None:
+        raise _profile_error("文档处理Profile未启用")
+    if profile_hash is not None and str(profile_hash) != profile.profile_hash:
+        raise _profile_error("文档处理Profile版本不匹配")
+    return profile
+
+
+def required_output_kinds_for_profile(
+    value: object,
+    *,
+    profile_hash: object | None = None,
+) -> tuple[str, ...]:
+    return require_document_processing_profile(
+        value,
+        profile_hash=profile_hash,
+    ).output_kinds
 
 
 def document_processing_profile_snapshot(value: object) -> dict[str, str]:

@@ -169,6 +169,22 @@ describe("Business Application workbench", () => {
               document_processing_reason_code:
                 "processing_dependencies_unavailable",
             },
+            {
+              code: "docling-layout-ocr-v1",
+              version: "1",
+              hash: "b".repeat(64),
+              label: "Docling Office 内嵌图片布局 OCR v1",
+              source_format_codes: ["PDF", "DOCX", "PPTX", "XLSX"],
+              output_kinds: ["MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON"],
+              limits: {
+                max_source_bytes: 25 * 1024 * 1024,
+                max_pdf_pages: 300,
+                processing_timeout_seconds: 600,
+              },
+              document_processing_status: "CONFIGURED_UNAVAILABLE",
+              document_processing_reason_code:
+                "processing_dependencies_unavailable",
+            },
           ],
           mcp_tools_by_agent_publication: {},
         })
@@ -336,6 +352,11 @@ describe("Business Application workbench", () => {
     expect(
       await screen.findByRole("option", {
         name: "Docling 文字提取 v1",
+      })
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByRole("option", {
+        name: "Docling Office 内嵌图片布局 OCR v1",
       })
     ).toBeInTheDocument()
     expect(screen.queryByLabelText(/Docling URL/i)).not.toBeInTheDocument()

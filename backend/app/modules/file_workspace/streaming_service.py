@@ -740,7 +740,7 @@ class GovernedFileStreamingService:
                 content_sha256 = validated.content_sha256
             else:
                 size_bytes, content_sha256 = await self._copy_attachment_stream(body, content)
-                if document_profile_code == "docling-text-v1":
+                if document_profile_code != "NONE":
                     if self.document_processing is None:
                         self._deny(
                             "document_processing_unavailable",
@@ -830,6 +830,10 @@ class GovernedFileStreamingService:
                 self.document_processing.cleanup_expired_transfers,
                 now=self.now(),
             )
+            picture_cleanup = await asyncio.to_thread(
+                self.document_processing.cleanup_picture_artifacts,
+                now=self.now(),
+            )
             result.update(
                 {
                     "representation_transfers_expired": processing["expired"],
@@ -837,6 +841,10 @@ class GovernedFileStreamingService:
                     "representation_staging_delete_failed": processing["failed"],
                     "document_readability_reconciled": reconciliation["reconciled"],
                     "document_processing_release_job_ids": reconciliation["release_job_ids"],
+                    "document_picture_cleanup_claimed": picture_cleanup["claimed"],
+                    "document_picture_cleanup_deleted": picture_cleanup["deleted"],
+                    "document_picture_cleanup_retried": picture_cleanup["retried"],
+                    "document_picture_cleanup_dead": picture_cleanup["dead"],
                 }
             )
         return result
@@ -1100,6 +1108,7 @@ class GovernedFileStreamingService:
                 source_version_id=version_id,
                 actor_id="file-worker",
                 correlation_id=str(attachment.get("id") or "")[:128],
+                profile_code=self._workspace_document_profile(str(workspace["id"])),
             )
             self.repository.database.execute(
                 """
@@ -1550,7 +1559,7 @@ class GovernedFileStreamingService:
             self._deny("file_workspace_expired", "任务文件工作区已失效")
         assert row is not None
         code = str(row.get("document_processing_profile_code") or "NONE")
-        if code not in {"NONE", "docling-text-v1"}:
+        if code not in {"NONE", "docling-text-v1", "docling-layout-ocr-v1"}:
             self._deny("document_processing_profile_invalid", "文档处理Profile无效")
         return code
 

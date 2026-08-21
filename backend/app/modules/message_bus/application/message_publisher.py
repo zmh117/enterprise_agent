@@ -52,6 +52,51 @@ class FileProcessingTaskMessage:
         }
 
 
+@dataclass(frozen=True)
+class PictureProcessingTaskMessage:
+    contract_version: str
+    run_id: str
+    picture_item_id: str
+    profile_hash: str
+    attempt: int
+    correlation_id: str
+    redelivered: bool = False
+
+    def safe_payload(self) -> dict[str, str | int]:
+        return {
+            "contract_version": self.contract_version,
+            "run_id": self.run_id,
+            "picture_item_id": self.picture_item_id,
+            "profile_hash": self.profile_hash,
+            "attempt": self.attempt,
+            "correlation_id": self.correlation_id,
+        }
+
+
+@dataclass(frozen=True)
+class AssemblyTaskMessage:
+    contract_version: str
+    run_id: str
+    profile_hash: str
+    attempt: int
+    correlation_id: str
+    redelivered: bool = False
+
+    def safe_payload(self) -> dict[str, str | int]:
+        return {
+            "contract_version": self.contract_version,
+            "run_id": self.run_id,
+            "profile_hash": self.profile_hash,
+            "attempt": self.attempt,
+            "correlation_id": self.correlation_id,
+        }
+
+
+DocumentProcessingStageMessage = (
+    FileProcessingTaskMessage | PictureProcessingTaskMessage | AssemblyTaskMessage
+)
+
+
 class FileProcessingDisposition(StrEnum):
     ACK = "ACK"
     RETRY = "RETRY"
@@ -121,4 +166,4 @@ class ChannelEventHandler(Protocol):
 
 
 class FileProcessingTaskHandler(Protocol):
-    def __call__(self, message: FileProcessingTaskMessage) -> FileProcessingTaskResult: ...
+    def __call__(self, message: DocumentProcessingStageMessage) -> FileProcessingTaskResult: ...

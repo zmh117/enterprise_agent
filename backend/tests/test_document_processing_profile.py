@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from app.modules.document_processing import (
+    DOCLING_LAYOUT_OCR_V1,
+    DOCLING_LAYOUT_OCR_V1_PROFILE_HASH,
     DOCLING_TEXT_V1,
     DOCLING_TEXT_V1_PROFILE_HASH,
     DocumentProcessingProfileCode,
@@ -73,6 +75,43 @@ def test_docling_text_v1_provider_options_disable_visual_and_remote_expansion() 
     }.isdisjoint(options)
 
 
+def test_docling_layout_ocr_v1_is_a_complete_fixed_superset() -> None:
+    profile = DOCLING_LAYOUT_OCR_V1
+
+    assert profile.code is DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1
+    assert profile.version == "1"
+    assert profile.source_formats == DOCLING_TEXT_V1.source_formats
+    assert profile.request_options == DOCLING_TEXT_V1.request_options
+    assert profile.output_kinds == ("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON")
+    assert profile.profile_hash == DOCLING_LAYOUT_OCR_V1_PROFILE_HASH
+    assert profile.profile_hash == (
+        "261633ba86e2e5db9d271bb5a96ebd7fd2edee330d85ab5bc96dd5e2ad190c5e"
+    )
+
+    layout = profile.canonical_payload["layout_ocr"]
+    assert layout["embedded_source_formats"] == ["DOCX", "PPTX"]
+    assert layout["bundle_request_options"]["target_type"] == "zip"
+    assert layout["bundle_request_options"]["image_export_mode"] == "referenced"
+    assert layout["picture_ocr_request_options"]["ocr_preset"] == "rapidocr"
+    assert layout["model_artifact"]["digest"] == (
+        "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
+    )
+    assert layout["layout_schema"] == {
+        "name": "enterprise-agent.office-image-ocr-layout",
+        "version": "v1",
+    }
+    assert layout["limits"]["soft_picture_occurrences"] == 32
+    assert layout["limits"]["hard_picture_occurrences"] == 128
+    assert layout["limits"]["max_global_docling_concurrency"] == 1
+    assert layout["security"]["vlm_enabled"] is False
+    assert layout["security"]["runtime_options_override_enabled"] is False
+
+
+def test_docling_text_v1_payload_does_not_inherit_layout_fields() -> None:
+    assert "layout_ocr" not in DOCLING_TEXT_V1.canonical_payload
+    assert DOCLING_TEXT_V1.profile_hash == DOCLING_TEXT_V1_PROFILE_HASH
+
+
 def test_profile_snapshot_preserves_disabled_legacy_default() -> None:
     assert normalize_document_processing_profile_code(None) is DocumentProcessingProfileCode.NONE
     assert resolve_document_processing_profile("NONE") is None
@@ -85,6 +124,11 @@ def test_profile_snapshot_preserves_disabled_legacy_default() -> None:
         "code": "docling-text-v1",
         "version": "1",
         "hash": DOCLING_TEXT_V1.profile_hash,
+    }
+    assert document_processing_profile_snapshot("docling-layout-ocr-v1") == {
+        "code": "docling-layout-ocr-v1",
+        "version": "1",
+        "hash": DOCLING_LAYOUT_OCR_V1.profile_hash,
     }
 
 

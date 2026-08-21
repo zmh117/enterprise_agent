@@ -52,7 +52,7 @@ File Service在创建transfer、校验media type/encoding/schema/大小和原子
 
 - 精确source File/Version、processing run、Profile hash、layout schema version和Assembler version；
 - `picture_occurrence_id`、稳定`picture_ref`、出现顺序和规范化图片SHA-256；
-- 父锚点：PPTX使用`slide_no`、稳定shape/ref和图片在slide中的规范化bbox；DOCX使用Docling/document node ref、父段落/表格单元ref和同父节点顺序，不包含伪造页码；
+- 父锚点：PPTX使用`slide_no`、Docling picture `self_ref`作为稳定shape/ref和图片在slide中的规范化bbox；DOCX使用picture `self_ref`、Docling返回且可解析的最近稳定父容器ref（可能是段落、表格单元、section或body）和同父节点顺序，不要求上游未提供的段落/单元ref，也不包含伪造页码；
 - 图片空间：规范化后宽高、原始宽高、旋转、裁剪/方向变换；
 - OCR block与可选word：稳定局部ID、Unicode文字、`confidence_bp`、`reading_order`、规范化bbox和可选polygon；
 - 有界关系：`LEFT_OF`、`RIGHT_OF`、`ABOVE`、`BELOW`、`SAME_ROW`、`CONTAINS`，以及关系算法version；
@@ -64,7 +64,7 @@ File Service在创建transfer、校验media type/encoding/schema/大小和原子
 
 ### 4. 内嵌图片是派生处理资产，不是工作区File
 
-父Docling任务使用代码固定的图片导出模式取得有界、带picture ref的内部图片artifact bundle。Provider必须对返回包实施总响应大小、entry数量、路径、媒体类型、单entry大小、解压后总量、重复名和symlink边界校验；图片、Base64、文件名和对象路径不得写日志或队列。
+父Docling任务使用代码固定的`target_type=zip`、`image_export_mode=referenced`和`include_images=true`取得有界、带picture ref的内部图片artifact bundle；既有`docling-text-v1`继续使用原`inbody + placeholder`合同。Docling部署可以为固定Provider允许`zip`target，但Worker、用户、管理端和环境变量不得选择target或导出模式。Provider必须对返回包实施总响应大小、entry数量、路径、媒体类型、单entry大小、解压后总量、重复名和symlink边界校验；图片、Base64、文件名和对象路径不得写日志或队列。固定镜像在默认INFO级别会记录上传名和外部task ID，因此生产部署必须把Docling应用/访问日志提升到不输出该字段的受控级别，Provider同时只发送与source display name无关的固定安全上传名。
 
 File Processing Worker安全解码并规范化白名单PNG/JPEG/WebP，去除非必要元数据，校验单图/累计像素和大小，再通过绑定parent run的File Service staging保存`document_picture_asset`。数据库中的asset与occurrence分离：相同规范化SHA-256在同一tenant/source Version/run/Profile内可复用一次OCR计算，但每个DOCX/PPTX出现位置保留独立occurrence和父锚点。不得跨tenant用内容哈希探测或复用业务图片。
 
@@ -114,6 +114,22 @@ OCR文字、空间关系和Assembler输出始终是不可信用户数据；固�
 
 Representation和picture asset不得比source Version更晚可用，并继承tenant、owner、workspace与retention边界。只有File Service解析对象存储凭据；Worker与Docling环境、日志、审计、MQ、错误和健康结果不得泄漏OCR正文、图片、对象键、Secret或业务文件名。
 
+### 10. 第一版Profile资源上限由固定CPU基准冻结
+
+2026-08-21使用固定v1.30.0镜像、4 CPU、单Docling local worker和合成典型/边界DOCX/PPTX完成离线基准。32张不同的1280×720图片在串行picture OCR下耗时约128.4秒，单图最大4.319秒；因此第一版保持保守单转换并发，不用未测并发推断吞吐。
+
+`docling-layout-ocr-v1`固定以下边界并全部进入canonical payload/hash：
+
+- 图片occurrence软上限32，按稳定顺序处理；第33至128个写`SKIPPED_LIMIT`并让parent为`PARTIAL`。图片occurrence硬上限128，超过即在OCR前拒绝整次run；
+- 单图压缩字节上限10 MiB、单图解码像素上限16,777,216、单run累计解码像素上限67,108,864；规范化asset与全部派生对象合计上限256 MiB；
+- artifact ZIP压缩响应上限128 MiB、entry上限512、解压计费上限256 MiB；
+- 每图OCR block上限2,048、word上限8,192、关系上限4,096、字符上限262,144；单run对应总上限为16,384 block、65,536 word、65,536关系和4,194,304字符；
+- `MARKDOWN`保持15 MiB，`DOCLING_JSON`保持64 MiB，`OCR_LAYOUT_JSON`为64 MiB；任一必需输出超限不得发布截断前缀；
+- parent parse deadline 600秒、单picture attempt deadline 120秒、assembly deadline 120秒、parent run总deadline 1,800秒；parent、picture和assembly各最多3次attempt；
+- 默认CPU部署的Docling活动转换全局并发上限1、单parent在途picture item上限1。提高并发、图片数、像素或输出上限必须发布新Profile version/hash并重新基准，不得通过环境变量放宽。
+
+软上限用于可解释的部分成功，硬上限用于防止解压、像素和任务放大。数量、像素、字符、关系和字节分别校验，不能用其中一个额度替代另一个。
+
 ## Risks / Trade-offs
 
 - [坐标让Agent误以为获得完整视觉理解] → Profile、Markdown标题和固定notice统一称“布局OCR”，明确不识别箭头、颜色、图标、照片语义和未提取内容。
@@ -128,7 +144,7 @@ Representation和picture asset不得比source Version更晚可用，并继承ten
 ## Migration Plan
 
 1. 完成、验收并同步`add-governed-docling-file-representations`，确认canonical已包含文档Profile、processing run、representation和Manifest规则；若未满足则停止apply。
-2. 基于最新migration head追加expand migration：Profile约束、`OCR_LAYOUT_JSON` kind与校验、Profile驱动输出集合、picture asset/occurrence/item/attempt、stage/outbox/staging/cleanup事实和索引；migration不得读取、生成或删除对象。
+2. 基于最新migration head追加expand migration：2026-08-21 preflight确认磁盘与本地Compose ledger head均为`115_expand_file_turn_admission.sql`，若创建时head仍未变化则使用`116`；该migration覆盖Profile约束、`OCR_LAYOUT_JSON` kind与校验、Profile驱动输出集合、picture asset/occurrence/item/attempt、stage/outbox/staging/cleanup事实和索引，不得读取、生成或删除对象。
 3. 部署兼容新schema但默认不激活新Profile的File Service、Worker、API与管理端；历史Profile和run保持原终结集合。
 4. 部署固定OCR/layout artifacts与Provider bundle契约，使用合成DOCX/PPTX验证双坐标转换、ZIP/图片拒绝、逐图恢复、去重、部分成功、清理和Secret不泄漏。
 5. 创建仅用于验收的Business Application Publication选择`docling-layout-ocr-v1`，完成新鲜Channel到Markdown物化、Agent分析和原件Delivery链路；不得以容器healthy替代E2E。
@@ -136,7 +152,8 @@ Representation和picture asset不得比source Version更晚可用，并继承ten
 
 回滚时停止创建或激活`docling-layout-ocr-v1` Publication，让新任务继续使用既有`docling-text-v1`或`NONE`；安全终结/排空parent与child队列，保留新增schema、历史run、representation和审计。不得down-migrate、改写旧Publication、删除已发布结果或把新run降级解释为旧Profile结果。
 
-## Open Questions
+## Apply Gate Outcomes
 
-- 上线前基准将决定软处理图片数、单图/累计像素、OCR block/字符、派生总量、子任务并发和deadline的最终固定值；在这些值进入Profile canonical payload与hash前不得激活新Profile。
-- apply前必须用固定`docling-serve`镜像验证异步referenced artifact bundle、picture ref与父锚点在DOCX/PPTX上的精确响应合同；若上游接口不满足有界流式和稳定映射要求，必须先提出受控Provider适配方案，不得在Worker中另写一套OOXML解析器或放宽到任意ZIP处理。
+- 固定镜像referenced ZIP合同已通过，精确结构与设计收紧记录在`evidence/docling-office-picture-bundle-contract.md`。
+- 固定CPU典型/边界基准已通过，上限与原始聚合指标记录在`evidence/layout-ocr-limit-benchmark.md`；这些值必须进入Profile canonical payload与hash后才允许激活新Profile。
+- 后续Office transform fidelity探针发现固定镜像导出原始图片像素，不应用PPTX裁剪/旋转，`include_page_images=true`也不生成可绑定渲染像素。按照apply gate，active数据库migration、目标Publication和目标激活暂停，等待显式选择新的可见像素事实源；详见`evidence/docling-office-picture-bundle-contract.md`。

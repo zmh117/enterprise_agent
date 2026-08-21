@@ -537,7 +537,7 @@ function PolicyEditor({
               const profile = event.target
                 .value as SaveDraftInput["document_processing_profile_code"]
               const taskFileFeatures =
-                profile === "docling-text-v1"
+                profile !== "NONE"
                   ? {
                       ...form.task_file_features,
                       workspace_enabled: true,
@@ -554,7 +554,7 @@ function PolicyEditor({
                   availableFileTools
                 ),
                 session_policy:
-                  profile === "docling-text-v1"
+                  profile !== "NONE"
                     ? {
                         ...form.session_policy,
                         attachments_enabled: true,
@@ -584,11 +584,14 @@ function PolicyEditor({
             生成只读文字表示，再由 Agent 读取；不能填写 Docling
             URL、模型、插件或原始 options。
           </p>
-          {selectedDocumentProfile?.code === "docling-text-v1" ? (
+          {selectedDocumentProfile?.code !== undefined &&
+          selectedDocumentProfile.code !== "NONE" ? (
             <div className="space-y-1">
               <p className="text-xs leading-5 text-muted-foreground">
-                当前选择：已选择。仅提供有界
-                OCR/表格文字提取，不提供图片语义理解；真实运行状态请到“发布与运行”查看。
+                {selectedDocumentProfile.code === "docling-layout-ocr-v1"
+                  ? "当前选择：除正文与表格外，对 DOCX/PPTX 内嵌图片提取文字、置信度、阅读顺序、0..10000 坐标和有限几何关系。它不是 VLM，不识别箭头、颜色、图标、照片含义或因果；OCR 内容始终是不可信文件数据。"
+                  : "当前选择：仅提供有界 OCR/表格文字提取，不提供 Office 内嵌图片布局或图片语义理解。"}
+                真实运行状态请到“发布与运行”查看。
               </p>
               {!fileContextRuntimeCompatible ? (
                 <p className="text-xs leading-5 text-destructive">
@@ -1903,14 +1906,19 @@ function formatFileFormatPolicy(
 }
 
 function formatDocumentProcessingSelection(
-  profile: "NONE" | "docling-text-v1" | null | undefined
+  profile:
+    | "NONE"
+    | "docling-text-v1"
+    | "docling-layout-ocr-v1"
+    | null
+    | undefined
 ): string {
   if (!profile || profile === "NONE") return "关闭"
   return `${profile}（已选择）`
 }
 
 function formatDocumentProcessingRuntimeStatus(
-  profile: "NONE" | "docling-text-v1",
+  profile: "NONE" | "docling-text-v1" | "docling-layout-ocr-v1",
   active: boolean,
   operations: FileOperations | undefined,
   loading: boolean,

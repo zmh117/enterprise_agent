@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+import json
 
 from app.shared.exceptions import NonRetryableExecutionError
 
@@ -19,6 +20,34 @@ class ProcessingRunStatus(StrEnum):
 class RepresentationKind(StrEnum):
     MARKDOWN = "MARKDOWN"
     DOCLING_JSON = "DOCLING_JSON"
+    OCR_LAYOUT_JSON = "OCR_LAYOUT_JSON"
+
+
+class ProcessingStageCode(StrEnum):
+    PARENT_PARSE = "PARENT_PARSE"
+    PICTURE_OCR = "PICTURE_OCR"
+    ASSEMBLING = "ASSEMBLING"
+
+
+class PictureItemStatus(StrEnum):
+    QUEUED = "QUEUED"
+    CLAIMED = "CLAIMED"
+    SUBMITTED = "SUBMITTED"
+    RETRY_WAIT = "RETRY_WAIT"
+    AVAILABLE = "AVAILABLE"
+    NO_TEXT = "NO_TEXT"
+    SKIPPED_LIMIT = "SKIPPED_LIMIT"
+    FAILED = "FAILED"
+
+
+PICTURE_ITEM_TERMINAL_STATUSES = frozenset(
+    {
+        PictureItemStatus.AVAILABLE,
+        PictureItemStatus.NO_TEXT,
+        PictureItemStatus.SKIPPED_LIMIT,
+        PictureItemStatus.FAILED,
+    }
+)
 
 
 class RepresentationStatus(StrEnum):
@@ -91,6 +120,7 @@ PROCESSING_TERMINAL_STATUSES = frozenset(
 REPRESENTATION_MEDIA_TYPES = {
     RepresentationKind.MARKDOWN: "text/markdown",
     RepresentationKind.DOCLING_JSON: "application/json",
+    RepresentationKind.OCR_LAYOUT_JSON: "application/json",
 }
 
 
@@ -117,3 +147,37 @@ def normalize_representation_kind(value: object) -> RepresentationKind:
             safe_message="文档派生表示类型无效",
             error_code="document_representation_kind_invalid",
         ) from exc
+
+
+def decode_required_representation_kinds(value: object) -> tuple[RepresentationKind, ...]:
+    try:
+        decoded = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise NonRetryableExecutionError(
+            "Invalid frozen document representation set",
+            safe_message="文档派生表示集合无效",
+            error_code="document_representation_set_invalid",
+        ) from exc
+    if not isinstance(decoded, list) or not decoded or any(
+        not isinstance(item, str) for item in decoded
+    ):
+        raise NonRetryableExecutionError(
+            "Invalid frozen document representation set",
+            safe_message="文档派生表示集合无效",
+            error_code="document_representation_set_invalid",
+        )
+    try:
+        kinds = tuple(RepresentationKind(item) for item in decoded)
+    except ValueError as exc:
+        raise NonRetryableExecutionError(
+            "Unknown frozen document representation kind",
+            safe_message="文档派生表示集合无效",
+            error_code="document_representation_set_invalid",
+        ) from exc
+    if len(set(kinds)) != len(kinds):
+        raise NonRetryableExecutionError(
+            "Duplicate frozen document representation kind",
+            safe_message="文档派生表示集合无效",
+            error_code="document_representation_set_invalid",
+        )
+    return kinds

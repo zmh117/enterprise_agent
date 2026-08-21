@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Protocol
+import uuid
 
 from app.modules.file_workspace.domain import (
     CleanupResourceType,
@@ -352,6 +353,7 @@ class FileLifecycleService:
             version = self.repository.get_version(resource_id)
             if str(version["status"]) in {"CONTENT_UNAVAILABLE", "DELETED"}:
                 return "complete"
+            self._enqueue_document_private_cleanup(resource_id, timestamp)
             processing_objects = self.repository.database.execute(
                 """
                 select id, object_key, 'representation' as object_kind
@@ -439,11 +441,61 @@ class FileLifecycleService:
              ) or exists (
                select 1 from file_conflict_candidate
                 where candidate_version_id = ? and status = 'OPEN'
+             ) or exists (
+               select 1 from file_processing_run
+                where source_version_id = ?
+                  and status in ('QUEUED', 'SUBMITTED', 'RUNNING', 'RETRY_WAIT')
              )
             """,
-            (version_id, version_id, timestamp, version_id),
+            (version_id, version_id, timestamp, version_id, version_id),
         )
         return row is not None
+
+    def _enqueue_document_private_cleanup(self, version_id: str, timestamp: str) -> None:
+        rows = self.repository.database.execute(
+            """
+            select r.id as processing_run_id, 'PARENT_ARTIFACT' as object_kind,
+                   p.id as object_id, p.staging_object_key as internal_object_key
+              from document_parent_artifact_transfer p
+              join file_processing_run r on r.id = p.processing_run_id
+             where r.source_version_id = ?
+               and p.status in ('OPEN', 'UPLOADING', 'STAGED', 'FINALIZED')
+            union all
+            select r.id as processing_run_id, 'PICTURE_ASSET' as object_kind,
+                   a.id as object_id, a.object_key as internal_object_key
+              from document_picture_asset a
+              join file_processing_run r on r.id = a.processing_run_id
+             where r.source_version_id = ? and a.status in ('STAGING', 'AVAILABLE')
+            union all
+            select r.id as processing_run_id, 'PICTURE_RESULT' as object_kind,
+                   t.id as object_id, t.staging_object_key as internal_object_key
+              from document_picture_result_transfer t
+              join file_processing_run r on r.id = t.processing_run_id
+             where r.source_version_id = ?
+               and t.status in ('OPEN', 'UPLOADING', 'STAGED', 'FINALIZED')
+            """,
+            (version_id, version_id, version_id),
+        )
+        for row in rows:
+            self.repository.database.execute(
+                """
+                insert into document_picture_cleanup_fact
+                  (id, processing_run_id, object_kind, object_id, internal_object_key,
+                   reason_code, status, next_attempt_at, created_at, updated_at)
+                values (?, ?, ?, ?, ?, 'SOURCE_RETENTION_EXPIRED', 'PENDING', ?, ?, ?)
+                on conflict(object_kind, object_id) do nothing
+                """,
+                (
+                    f"document_picture_cleanup_{uuid.uuid4().hex}",
+                    row["processing_run_id"],
+                    row["object_kind"],
+                    row["object_id"],
+                    row["internal_object_key"],
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                ),
+            )
 
     def _job_delivery_blocked(self, job_id: str) -> bool:
         row = self.repository.database.execute_one(
@@ -469,6 +521,9 @@ class FileLifecycleService:
                 "select object_key from file_object_staging where status <> 'DELETED'",
                 "select object_key from file_representation where status = 'AVAILABLE'",
                 "select staging_object_key as object_key from file_representation_transfer where status in ('OPEN', 'UPLOADING', 'STAGED')",
+                "select staging_object_key as object_key from document_parent_artifact_transfer where status in ('OPEN', 'UPLOADING', 'STAGED', 'FINALIZED')",
+                "select object_key from document_picture_asset where status in ('STAGING', 'AVAILABLE')",
+                "select staging_object_key as object_key from document_picture_result_transfer where status in ('OPEN', 'UPLOADING', 'STAGED', 'FINALIZED')",
             )
             for row in self.repository.database.execute(query)
             if row.get("object_key")

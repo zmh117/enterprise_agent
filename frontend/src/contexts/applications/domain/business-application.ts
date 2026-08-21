@@ -92,6 +92,7 @@ const taskFileFeaturesSchema = z.object({
 const documentProcessingProfileCodeSchema = z.enum([
   "NONE",
   "docling-text-v1",
+  "docling-layout-ocr-v1",
 ])
 
 const documentProcessingStateSchema = z.object({
@@ -260,7 +261,10 @@ export type SaveDraftInput = {
   workflow_publication_id: string
   task_workspace_retention_period: "DAY" | "WEEK" | "MONTH"
   file_format_policy_version: "text-v1" | "text-v2"
-  document_processing_profile_code: "NONE" | "docling-text-v1"
+  document_processing_profile_code:
+    | "NONE"
+    | "docling-text-v1"
+    | "docling-layout-ocr-v1"
   task_file_features: {
     workspace_enabled: boolean
     file_mcp_enabled: boolean

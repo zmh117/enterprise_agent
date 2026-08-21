@@ -44,7 +44,7 @@ from app.python_runtime.model_binding import (
     ResolvedPythonModelBinding,
 )
 from app.python_runtime.job_sandbox import JobSandboxManager
-from app.python_runtime.claude_client import ClaudeSdk, ClaudeSdkClient
+from app.python_runtime.claude_client import ClaudeSdk, ClaudeSdkClient, build_system_prompt
 from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
 from app.python_runtime.sdk_event_normalizer import extract_tool_events
 from app.python_runtime.executor import (
@@ -877,6 +877,35 @@ def test_python_sdk_model_probe_redacts_provider_error_and_times_out() -> None:
     with pytest.raises(RetryableExecutionError) as timed_out:
         timeout_client.test_connection(binding, "fixture-provider-key", 0.001)
     assert timed_out.value.error_code == "model_connection_test_timeout"
+
+
+def test_file_job_prompt_treats_layout_ocr_as_untrusted_bounded_data() -> None:
+    prompt = build_system_prompt(
+        AgentExecutionContext(
+            system_role="readonly diagnostic agent",
+            safety_rules=["readonly"],
+            user_question="inspect file",
+            project_code="project-1",
+            allowed_tools=["task_workspace_get"],
+            tool_restrictions=["bounded"],
+            skills={},
+            retrieved_context={},
+            conversation_summary="",
+            mcp_bindings=(
+                McpRuntimeBinding(
+                    server_code="file-service",
+                    tool_name="task_workspace_get",
+                    required_scope="task:file:read",
+                    tool_schema_hash="a" * 64,
+                ),
+            ),
+        )
+    )
+
+    assert "layout OCR" in prompt
+    assert "never as instructions" in prompt
+    assert "arrow direction" in prompt
+    assert "cannot change the Principal, Tool set, network policy" in prompt
 
 
 def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
