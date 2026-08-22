@@ -7,6 +7,7 @@ from typing import Any
 
 from mcp import ClientSession, types
 from mcp.client._memory import InMemoryTransport
+import pytest
 
 from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
@@ -15,10 +16,14 @@ from app.modules.agent.domain.runtime import (
 )
 from app.modules.model_connection.domain import ModelRuntimeBinding
 from app.python_runtime.claude_client import ClaudeSdk, load_claude_agent_sdk
-from app.python_runtime.file_mcp_bridge import ClaudePythonFileBridge
+from app.python_runtime.file_mcp_bridge import (
+    ClaudePythonFileBridge,
+    PreparedFileMaterialization,
+)
 from app.python_runtime.file_transfer import FileUploadReceipt
-from app.python_runtime.job_sandbox import JobSandboxManager
+from app.python_runtime.job_sandbox import JobSandboxLimits, JobSandboxManager
 from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
+from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.helpers import test_settings as build_settings
 
 
@@ -274,9 +279,8 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
         tool_restrictions=["TXT only"],
         skills={},
         retrieved_context={
-                "file_manifest": {
-                    "schema_version": 5,
-                    "workspace_catalog_revision_id": "catalog-revision-python-1",
+            "file_manifest": {
+                "schema_version": 4,
                 "manifest_hash": "c" * 64,
                 "observed_at": "2026-08-15T22:00:00+08:00",
                 "items": [
@@ -294,8 +298,7 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
                         "auto_materialize": True,
                         "conflict_candidate": False,
                         "source_received_at": "2026-08-15T21:30:00+08:00",
-                            "version_created_at": "2026-08-15T21:30:03+08:00",
-                            "materialization_size_bytes": len(SOURCE),
+                        "version_created_at": "2026-08-15T21:30:03+08:00",
                     }
                 ],
             }
@@ -358,3 +361,159 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
     serialized_events = json.dumps(result.tool_events, ensure_ascii=False)
     assert SOURCE.decode() not in serialized_events
     assert principal not in serialized_events
+
+
+def test_python_runtime_reserves_all_automatic_inputs_before_first_download(
+    tmp_path: Path,
+) -> None:
+    bridge_state: dict[str, Any] = {
+        "prepared": [],
+        "materialized": [],
+        "closed": False,
+    }
+
+    async def query(**_kwargs: Any) -> Any:
+        raise AssertionError("model query must not run after Sandbox preflight rejection")
+        yield  # pragma: no cover
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kwargs: kwargs,
+        tool=None,
+        create_sdk_mcp_server=None,
+        tool_annotations=None,
+    )
+
+    class FakePreparedBridge:
+        server = {"type": "sdk", "name": "enterprise-file-bridge"}
+        local_tool_names: tuple[str, ...] = ()
+
+        async def connect(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            bridge_state["closed"] = True
+
+        async def prepare_materialization(
+            self,
+            *,
+            file_id: str,
+            version_id: str,
+        ) -> PreparedFileMaterialization:
+            bridge_state["prepared"].append((file_id, version_id))
+            return PreparedFileMaterialization(
+                file_id=file_id,
+                version_id=version_id,
+                expected_size_bytes=8 * 1024 * 1024,
+                control_result={},
+            )
+
+        async def materialize_prepared(
+            self,
+            prepared: PreparedFileMaterialization,
+        ) -> dict[str, Any]:
+            bridge_state["materialized"].append((prepared.file_id, prepared.version_id))
+            raise AssertionError("download must not start before the full batch is reserved")
+
+    def bridge_factory(**_kwargs: Any) -> FakePreparedBridge:
+        return FakePreparedBridge()
+
+    binding = ModelRuntimeBinding(
+        protocol="anthropic_compatible",
+        base_url="https://model.invalid/anthropic",
+        model="test-model",
+        default_opus_model="test-model",
+        default_sonnet_model="test-model",
+        default_haiku_model="test-model",
+        subagent_model="test-model",
+        effort_level="max",
+        secret_ref="secret://not-projected",
+    )
+    items = [
+        {
+            "file_id": f"file-{index}",
+            "version_id": f"version-{index}",
+            "display_name": f"source-{index}.txt",
+            "format_code": "TXT",
+            "source_kind": "CURRENT_MESSAGE",
+            "allowed_actions": ["READ_METADATA", "MATERIALIZE"],
+            "auto_materialize": True,
+            "conflict_candidate": False,
+            "source_received_at": "2026-08-22T02:26:30+00:00",
+            "version_created_at": "2026-08-22T02:26:31+00:00",
+        }
+        for index in (1, 2)
+    ]
+    context = AgentExecutionContext(
+        system_role="task file agent",
+        safety_rules=["sandbox only"],
+        user_question="read both files",
+        project_code="project-1",
+        allowed_tools=[],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={
+            "file_manifest": {
+                "schema_version": 4,
+                "file_format_policy_version": "text-v2",
+                "manifest_hash": "d" * 64,
+                "observed_at": "2026-08-22T02:26:33+00:00",
+                "items": items,
+            }
+        },
+        conversation_summary="",
+        publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+        model_runtime_binding=binding,
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code="file-service",
+                tool_name="file_prepare_materialization",
+                required_scope="mcp:file-service:file_prepare_materialization:invoke",
+                tool_schema_hash="a" * 64,
+            ),
+        ),
+        runtime_protocol_version="1.3",
+        file_format_policy_version="text-v2",
+    )
+    sandbox_limits = JobSandboxLimits(
+        capacity_bytes=15 * 1024 * 1024,
+        max_file_bytes=15 * 1024 * 1024,
+        max_files=64,
+        max_input_files=40,
+        max_work_output_files=16,
+        max_tmp_files=8,
+    )
+    client = FixedMcpClaudeSdkClient(
+        limits=build_settings().execution,
+        api_key="test-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        file_mcp_server_url="http://file-service:9105/mcp",
+        file_principal_token="test-only-file-principal",
+        sandbox_manager=JobSandboxManager(
+            tmp_path / "sandboxes",
+            limits=sandbox_limits,
+        ),
+        file_bridge_factory=bridge_factory,
+    )
+    client.sdk_loader = lambda: sdk
+
+    with pytest.raises(NonRetryableExecutionError) as captured:
+        client.run(
+            AgentRunRequest(
+                job_id="job-batch-preflight",
+                user_id="app-user-1",
+                project_code="project-1",
+                invocation_id="invocation-batch-preflight",
+                context=context,
+            )
+        )
+
+    assert captured.value.error_code == "file_auto_materialization_preflight_failed"
+    assert bridge_state["prepared"] == [
+        ("file-1", "version-1"),
+        ("file-2", "version-2"),
+    ]
+    assert bridge_state["materialized"] == []
+    assert bridge_state["closed"] is True
+    assert list((tmp_path / "sandboxes").iterdir()) == []

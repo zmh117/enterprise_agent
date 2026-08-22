@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 from contextlib import AsyncExitStack
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Callable, Protocol
 
@@ -17,6 +18,7 @@ from app.python_runtime.file_transfer import (
     FileTransferBoundaryError,
     FileTransferContext,
     FileTransferCoordinator,
+    parse_file_transfer_control,
 )
 from app.python_runtime.file_transfer_http import HttpFileTransferPort
 
@@ -27,6 +29,14 @@ _COMMIT_TOOL = "file_create_commit_intent"
 _MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id"
 _AGENT_TOOL_CALL_ID_META_KEY = "enterprise-agent/agent-tool-call-id"
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+@dataclass(frozen=True)
+class PreparedFileMaterialization:
+    file_id: str
+    version_id: str
+    expected_size_bytes: int
+    control_result: dict[str, Any] = field(repr=False)
 
 
 class PythonRuntimeFileBridge(Protocol):
@@ -43,6 +53,18 @@ class PythonRuntimeFileBridge(Protocol):
         *,
         file_id: str,
         version_id: str,
+    ) -> dict[str, Any]: ...
+
+    async def prepare_materialization(
+        self,
+        *,
+        file_id: str,
+        version_id: str,
+    ) -> PreparedFileMaterialization: ...
+
+    async def materialize_prepared(
+        self,
+        prepared: PreparedFileMaterialization,
     ) -> dict[str, Any]: ...
 
     async def close(self) -> None: ...
@@ -296,6 +318,27 @@ class ClaudePythonFileBridge:
         name: str,
         arguments: dict[str, Any],
     ) -> tuple[types.CallToolResult, dict[str, Any] | None]:
+        remote = await self._call_remote(name, arguments)
+        if _result_is_error(remote) or name not in {_MATERIALIZE_TOOL, _COMMIT_TOOL}:
+            return remote, None
+        envelope = remote.model_dump(by_alias=True, exclude_none=True)
+        bridge_result = await asyncio.to_thread(
+            self._coordinator.process_mcp_control_result,
+            envelope,
+            self._context,
+            materialization_identity=(
+                (str(arguments["file_id"]), str(arguments["version_id"]))
+                if name == _MATERIALIZE_TOOL
+                else None
+            ),
+        )
+        return remote, dict(bridge_result)
+
+    async def _call_remote(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> types.CallToolResult:
         if name not in self._frozen:
             raise FileTransferBoundaryError(
                 "file_tool_not_frozen",
@@ -317,20 +360,48 @@ class ClaudePythonFileBridge:
                 "file_service_unavailable",
                 "File Service returned an unsupported result",
             )
-        if _result_is_error(remote) or name not in {_MATERIALIZE_TOOL, _COMMIT_TOOL}:
-            return remote, None
+        return remote
+
+    async def prepare_materialization(
+        self,
+        *,
+        file_id: str,
+        version_id: str,
+    ) -> PreparedFileMaterialization:
+        remote = await self._call_remote(
+            _MATERIALIZE_TOOL,
+            {"file_id": file_id, "version_id": version_id},
+        )
+        if _result_is_error(remote):
+            raise FileTransferBoundaryError(
+                "file_auto_materialization_denied",
+                "File Service rejected automatic materialization",
+            )
         envelope = remote.model_dump(by_alias=True, exclude_none=True)
+        control = parse_file_transfer_control(envelope)
+        if control.get("action") != "MATERIALIZE":
+            raise FileTransferBoundaryError(
+                "file_transfer_action_unsupported",
+                "automatic materialization requires a materialize transfer",
+            )
+        return PreparedFileMaterialization(
+            file_id=file_id,
+            version_id=version_id,
+            expected_size_bytes=int(control["expected_size_bytes"]),
+            control_result=envelope,
+        )
+
+    async def materialize_prepared(
+        self,
+        prepared: PreparedFileMaterialization,
+    ) -> dict[str, Any]:
         bridge_result = await asyncio.to_thread(
             self._coordinator.process_mcp_control_result,
-            envelope,
+            prepared.control_result,
             self._context,
-            materialization_identity=(
-                (str(arguments["file_id"]), str(arguments["version_id"]))
-                if name == _MATERIALIZE_TOOL
-                else None
-            ),
+            materialization_identity=(prepared.file_id, prepared.version_id),
         )
-        return remote, dict(bridge_result)
+        return dict(bridge_result)
 
     async def materialize(
         self,
@@ -338,16 +409,11 @@ class ClaudePythonFileBridge:
         file_id: str,
         version_id: str,
     ) -> dict[str, Any]:
-        remote, bridge_result = await self._forward_remote(
-            _MATERIALIZE_TOOL,
-            {"file_id": file_id, "version_id": version_id},
+        prepared = await self.prepare_materialization(
+            file_id=file_id,
+            version_id=version_id,
         )
-        if _result_is_error(remote) or bridge_result is None:
-            raise FileTransferBoundaryError(
-                "file_auto_materialization_denied",
-                "File Service rejected automatic materialization",
-            )
-        return bridge_result
+        return await self.materialize_prepared(prepared)
 
     async def connect(self) -> None:
         if self._injected_session:

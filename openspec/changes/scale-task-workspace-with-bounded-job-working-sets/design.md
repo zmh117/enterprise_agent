@@ -63,7 +63,7 @@ Manifest 生成按以下顺序构建：
 
 计划输入超过40项或实际字节总和超过224MiB时，系统返回固定缩小工作集说明，不得通过只物化前缀、跳过大文件或创建随后必然失败的Job来降级。PDF、Office和图片只冻结其精确原始File/Version身份与最终可读Markdown Representation，预检和Sandbox均只计算实际进入`inputs`的Markdown；每个原始File/Version计一个输入。
 
-历史Manifest v1-v4继续按原事实读取且不回填目录revision。Manifest v5增加`workspace_catalog_revision_id`和有界工作集语义，但Agent Worker投影给Runtime 1.2/1.3的文件条目结构保持不变；目录revision只供File Service搜索与授权，因此不需要Runtime协议升级。
+历史Manifest v1-v4继续按原事实读取且不回填目录revision。Manifest v5增加`workspace_catalog_revision_id`和有界工作集语义，但Agent Worker在验证v5 hash后必须投影为Runtime 1.2/1.3已经发布的Manifest v4形状：剥离控制面专用的目录revision与`materialization_size_bytes`，按v4事实重新派生投影hash，并让`prompt.retrieved_context.file_manifest`与Runtime 1.3的`file_context.file_manifest`引用同一投影。目录revision和计划大小只供Control Plane与File Service授权、预检，因此不需要Runtime协议升级，也不得把Manifest v5直接发给Runtime。
 
 备选方案是在Snapshot审计列中旁挂目录revision而继续声称Manifest v4。否决原因是目录revision决定该Job可发现的文件集合，属于Job不可变文件上下文身份；应明确发布Manifest v5，同时保持Runtime协议投影兼容。
 
@@ -107,7 +107,7 @@ Manifest 生成按以下顺序构建：
 
 `JobSandbox`成为本地文件数、分区名额和总字节的唯一执行事实源，固定限制为：`inputs`40、`work/outputs`合计16、`tmp`与内部安全余量8、全Sandbox总计64文件和224MiB；marker、目录和不可见控制元数据不计普通文件数，但其实际磁盘开销仍由部署容量承担。15MiB单文件限制保持不变。
 
-Runtime在首次模型请求前对自动物化批次调用`reserve_input_batch`，以去重File/Version、目标相对路径和Manifest冻结的实际大小一次性验证全部40/64文件数及224MiB容量；任一超限则在下载第一个字节前拒绝整个Job。File MCP按需物化也必须先调用同一预留器，再由`FileTransferCoordinator`下载、校验并提交预留；失败时删除不完整文件并释放预留。Write/Edit调用`reserve_work_output`，内部临时文件调用`reserve_tmp`，不得各自维护不一致的计数器。
+Runtime在首次模型请求前先为全部不同File/Version调用`file_prepare_materialization`，由File Service基于Manifest v5或追加工作集冻结事实，在不会进入模型或Runtime请求schema的隐藏传输控制信息中返回精确预期大小、hash与目标绑定；所有prepare成功后，Runtime才用这些精确大小对整个自动物化批次调用`reserve_input_batch`，一次性验证全部40/64文件数及224MiB容量。任一prepare或整批预留失败都必须在下载第一个字节和创建目标文件前拒绝整个Job；预留成功后才逐项交给`FileTransferCoordinator`下载、校验并提交已有预留。File MCP按需物化也必须先调用同一预留器；失败时删除不完整文件并释放预留。Write/Edit调用`reserve_work_output`，内部临时文件调用`reserve_tmp`，不得各自维护不一致的计数器。
 
 Control Plane在Job创建事务前使用相同代码限制对计划自动物化集合做第一道完整预检，Runtime在本地创建Sandbox后再次验证，形成跨进程防御纵深。224MiB是所有分区共享的字节池，不承诺16个输出都能达到15MiB；输出或临时写入在当时剩余容量不足时仍须在副作用前拒绝。文件数分区则保证40个输入不会耗尽输出和临时文件名额。
 

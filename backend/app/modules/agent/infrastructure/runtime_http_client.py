@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import urllib.error
@@ -51,6 +52,130 @@ IN_PROGRESS_RECOVERY_ATTEMPTS = 12
 IN_PROGRESS_RECOVERY_DELAY_SECONDS = 0.5
 STANDARD_TOOL_MCP_CODE = TOOL_MCP_SERVER_CODE
 FILE_MCP_CODE = FILE_MCP_SERVER_CODE
+
+
+def _manifest_canonical_item(item: Mapping[str, Any]) -> dict[str, Any]:
+    try:
+        allowed_actions = [str(value) for value in item["allowed_actions"]]
+        return {
+            "file_id": str(item["file_id"]),
+            "version_id": str(item["version_id"]),
+            "display_name": str(item["display_name"]),
+            "format_code": str(item.get("format_code") or "TXT"),
+            "source_kind": str(item["source_kind"]),
+            "allowed_actions": allowed_actions,
+            "auto_materialize": bool(item.get("auto_materialize")),
+            "conflict_candidate": bool(item.get("conflict_candidate")),
+            "source_received_at": item.get("source_received_at"),
+            "version_created_at": str(item["version_created_at"]),
+            "representation_id": item.get("representation_id"),
+            "representation_kind": item.get("representation_kind"),
+            "representation_size_bytes": item.get("representation_size_bytes"),
+            "representation_sha256": item.get("representation_sha256"),
+            "representation_format_code": item.get("representation_format_code"),
+            "representation_created_at": item.get("representation_created_at"),
+        }
+    except (KeyError, TypeError) as exc:
+        raise NonRetryableExecutionError(
+            "Manifest v5 cannot be projected into the Runtime contract",
+            safe_message="任务文件清单无效",
+            error_code="file_manifest_runtime_invalid",
+        ) from exc
+
+
+def _manifest_hash(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _project_file_manifest_for_runtime(
+    manifest: Mapping[str, Any], *, protocol_version: str
+) -> dict[str, Any]:
+    """Keep Manifest v5 as a control-plane fact and project the frozen v1.2/v1.3 shape."""
+
+    try:
+        schema_version = int(manifest.get("schema_version") or 0)
+    except (TypeError, ValueError) as exc:
+        raise NonRetryableExecutionError(
+            "Job File Manifest schema version is invalid",
+            safe_message="任务文件清单无效",
+            error_code="file_manifest_runtime_invalid",
+        ) from exc
+    if schema_version != 5:
+        return {
+            **dict(manifest),
+            **(
+                {"items": [dict(item) for item in manifest.get("items") or []]}
+                if isinstance(manifest.get("items"), list)
+                else {}
+            ),
+        }
+    if protocol_version not in {"1.2", "1.3"}:
+        raise NonRetryableExecutionError(
+            "Manifest v5 requires a supported file Runtime contract",
+            safe_message="任务文件清单与 Runtime 协议不兼容",
+            error_code="runtime_file_policy_mismatch",
+        )
+    raw_items = manifest.get("items")
+    catalog_revision_id = manifest.get("workspace_catalog_revision_id")
+    policy_version = str(manifest.get("file_format_policy_version") or "")
+    if (
+        not isinstance(raw_items, list)
+        or any(not isinstance(item, dict) for item in raw_items)
+        or not isinstance(catalog_revision_id, str)
+        or not catalog_revision_id
+        or not policy_version
+    ):
+        raise NonRetryableExecutionError(
+            "Manifest v5 projection facts are invalid",
+            safe_message="任务文件清单无效",
+            error_code="file_manifest_runtime_invalid",
+        )
+    canonical_items = [_manifest_canonical_item(item) for item in raw_items]
+    stored_hash = _manifest_hash(
+        {
+            "schema_version": 5,
+            "workspace_catalog_revision_id": catalog_revision_id,
+            "file_format_policy_version": policy_version,
+            "items": canonical_items,
+        }
+    )
+    if stored_hash != str(manifest.get("manifest_hash") or ""):
+        raise NonRetryableExecutionError(
+            "Manifest v5 hash does not match before Runtime projection",
+            safe_message="任务文件清单无效",
+            error_code="file_manifest_runtime_invalid",
+        )
+    projected_items: list[dict[str, Any]] = []
+    for raw_item in raw_items:
+        projected = dict(raw_item)
+        projected.pop("materialization_size_bytes", None)
+        projected_items.append(projected)
+    projected_hash = _manifest_hash(
+        {
+            "schema_version": 4,
+            "file_format_policy_version": policy_version,
+            "items": canonical_items,
+        }
+    )
+    return {
+        "schema_version": 4,
+        "file_format_policy_version": policy_version,
+        "manifest_hash": projected_hash,
+        "observed_at": manifest.get("observed_at"),
+        "items": projected_items,
+        **(
+            {"readability_notices": list(manifest["readability_notices"])}
+            if "readability_notices" in manifest
+            else {}
+        ),
+    }
 
 
 def _runtime_event_count(value: object) -> int:
@@ -673,6 +798,18 @@ class AgentRuntimeHttpClient:
                 safe_message="当前 Job Runtime 协议版本不受支持",
                 error_code="runtime_protocol_unsupported",
             )
+        retrieved_context = dict(context.retrieved_context)
+        raw_manifest = retrieved_context.get("file_manifest")
+        projected_manifest = (
+            _project_file_manifest_for_runtime(
+                raw_manifest,
+                protocol_version=protocol_version,
+            )
+            if isinstance(raw_manifest, Mapping)
+            else None
+        )
+        if projected_manifest is not None:
+            retrieved_context["file_manifest"] = projected_manifest
         request: dict[str, Any] = {
             "protocol_version": protocol_version,
             "runtime_kind": context.runtime_kind,
@@ -694,7 +831,7 @@ class AgentRuntimeHttpClient:
                 "tool_restrictions": list(context.tool_restrictions),
                 "user_question": context.user_question,
                 "conversation_summary": context.conversation_summary,
-                "retrieved_context": context.retrieved_context,
+                "retrieved_context": retrieved_context,
                 "skills": context.skills,
                 "mcp_unavailable_notices": [
                     {
@@ -713,10 +850,9 @@ class AgentRuntimeHttpClient:
             "mcp_servers": mcp_servers,
         }
         if protocol_version == "1.3":
-            manifest = context.retrieved_context.get("file_manifest")
             request["file_context"] = {
                 "file_format_policy_version": context.file_format_policy_version,
-                "file_manifest": manifest if isinstance(manifest, dict) else None,
+                "file_manifest": projected_manifest,
             }
         request["request_digest"] = canonical_request_digest(request)
         return cast(dict[str, Any], validate_execution_request(request))

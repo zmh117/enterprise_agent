@@ -28,6 +28,7 @@ from app.python_runtime.claude_client import (
 from app.python_runtime.error_mapper import append_cli_stderr
 from app.python_runtime.file_mcp_bridge import (
     LOCAL_FILE_OUTPUT_TOOL,
+    PreparedFileMaterialization,
     PythonRuntimeFileBridge,
     PythonRuntimeFileBridgeFactory,
     create_python_runtime_file_bridge,
@@ -74,7 +75,7 @@ def _validated_runtime_manifest_items(
         source_received_at = item.get("source_received_at")
         version_created_at = item.get("version_created_at")
         representation_id = item.get("representation_id")
-        if schema_version in {2, 3, 4, 5} and (
+        if schema_version in {2, 3, 4} and (
             (source_received_at is not None and not _is_aware_rfc3339(source_received_at))
             or not _is_aware_rfc3339(version_created_at)
             or (
@@ -96,7 +97,6 @@ def _validated_runtime_manifest_items(
         actions = item.get("allowed_actions")
         format_code = item.get("format_code", "TXT")
         has_representation = schema_version >= 4 and representation_id is not None
-        materialization_size = item.get("materialization_size_bytes")
         if (
             not isinstance(file_id, str)
             or _OPAQUE_IDENTIFIER.fullmatch(file_id) is None
@@ -106,19 +106,8 @@ def _validated_runtime_manifest_items(
             or not 1 <= len(display_name) <= 255
             or not isinstance(actions, list)
             or (
-                schema_version >= 5
-                and (
-                    not isinstance(materialization_size, int)
-                    or isinstance(materialization_size, bool)
-                    or materialization_size < 0
-                )
-            )
-            or (
                 not has_representation
-                and (
-                    "MATERIALIZE" not in actions
-                    or format_code not in {"TXT", "LOG", "MARKDOWN"}
-                )
+                and ("MATERIALIZE" not in actions or format_code not in {"TXT", "LOG", "MARKDOWN"})
             )
             or (
                 has_representation
@@ -346,22 +335,20 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             return context
         manifest = context.retrieved_context.get("file_manifest")
         schema_version = manifest.get("schema_version") if isinstance(manifest, dict) else None
-        if not isinstance(manifest, dict) or schema_version not in {1, 2, 3, 4, 5}:
+        if not isinstance(manifest, dict) or schema_version not in {1, 2, 3, 4}:
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest is missing or invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
-        if schema_version in {2, 3, 4, 5} and not _is_aware_rfc3339(
-            manifest.get("observed_at")
-        ):
+        if schema_version in {2, 3, 4} and not _is_aware_rfc3339(manifest.get("observed_at")):
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest observation time is invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
         items = manifest.get("items")
-        maximum_items = 40 if schema_version >= 5 else 20
+        maximum_items = 40 if context.runtime_protocol_version in {"1.2", "1.3"} else 20
         if not isinstance(items, list) or len(items) > maximum_items:
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest items are invalid",
@@ -372,8 +359,10 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         materialized: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         automatic_identities: list[tuple[str, str]] = []
+        prepared_materializations: dict[tuple[str, str], PreparedFileMaterialization] = {}
         sandbox = self._sandbox.get()
-        if schema_version >= 5:
+        automatic_items = [item for item in items if item.get("auto_materialize")]
+        if automatic_items:
             if sandbox is None:
                 raise NonRetryableExecutionError(
                     "Runtime Job Sandbox is unavailable",
@@ -381,18 +370,26 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                     error_code="runtime_sandbox_unavailable",
                 )
             reservations: list[tuple[tuple[str, str], int]] = []
-            for candidate in items:
-                if not candidate.get("auto_materialize"):
-                    continue
-                file_id = str(candidate["file_id"])
-                version_id = str(candidate["version_id"])
-                expected_size = int(candidate["materialization_size_bytes"])
-                identity = (file_id, version_id)
-                if identity not in automatic_identities:
-                    automatic_identities.append(identity)
-                    reservations.append((identity, expected_size))
             try:
+                for candidate in automatic_items:
+                    identity = (str(candidate["file_id"]), str(candidate["version_id"]))
+                    if identity in prepared_materializations:
+                        continue
+                    prepared = await bridge.prepare_materialization(
+                        file_id=identity[0],
+                        version_id=identity[1],
+                    )
+                    prepared_materializations[identity] = prepared
+                    automatic_identities.append(identity)
+                    reservations.append((identity, prepared.expected_size_bytes))
                 sandbox.reserve_input_batch(reservations)
+            except FileTransferBoundaryError as exc:
+                sandbox.rollback_inputs(automatic_identities)
+                raise NonRetryableExecutionError(
+                    f"Runtime automatic input preparation failed: {exc.code}",
+                    safe_message="附件无法安全准备到任务沙盒",
+                    error_code="file_auto_materialization_failed",
+                ) from exc
             except JobSandboxError as exc:
                 raise NonRetryableExecutionError(
                     f"Runtime automatic input preflight failed: {exc.code}",
@@ -416,9 +413,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 continue
             seen.add(identity)
             try:
-                result = await bridge.materialize(
-                    file_id=file_id,
-                    version_id=version_id,
+                result = await bridge.materialize_prepared(
+                    prepared_materializations[identity],
                 )
             except FileTransferBoundaryError as exc:
                 if sandbox is not None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import io
 import urllib.error
@@ -407,6 +408,96 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
     ]
     assert "access_token" not in transport.request["mcp_servers"][0]
     assert "url" not in transport.request["mcp_servers"][0]
+
+
+@pytest.mark.parametrize("protocol_version", ["1.2", "1.3"])
+def test_worker_projects_manifest_v5_without_protocol_change(
+    protocol_version: str,
+) -> None:
+    transport = GoldenTransport()
+    client, _public_pem = _client(transport)
+    canonical_item = {
+        "file_id": "file-source-1",
+        "version_id": "version-source-1",
+        "display_name": "source.txt",
+        "format_code": "TXT",
+        "source_kind": "CURRENT_MESSAGE",
+        "allowed_actions": ["READ_METADATA", "MATERIALIZE"],
+        "auto_materialize": True,
+        "conflict_candidate": False,
+        "source_received_at": "2026-08-22T02:26:30+00:00",
+        "version_created_at": "2026-08-22T02:26:31+00:00",
+        "representation_id": None,
+        "representation_kind": None,
+        "representation_size_bytes": None,
+        "representation_sha256": None,
+        "representation_format_code": None,
+        "representation_created_at": None,
+    }
+    runtime_item = {
+        key: value for key, value in canonical_item.items() if not key.startswith("representation_")
+    }
+    stored_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "schema_version": 5,
+                "workspace_catalog_revision_id": "workspace-catalog-revision-1",
+                "file_format_policy_version": "text-v2",
+                "items": [canonical_item],
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    context = replace(
+        _context(),
+        runtime_protocol_version=protocol_version,
+        file_format_policy_version="text-v2",
+        retrieved_context={
+            "file_manifest": {
+                "schema_version": 5,
+                "workspace_catalog_revision_id": "workspace-catalog-revision-1",
+                "file_format_policy_version": "text-v2",
+                "manifest_hash": stored_hash,
+                "observed_at": "2026-08-22T02:26:33.478129+00:00",
+                "items": [
+                    {
+                        **runtime_item,
+                        "materialization_size_bytes": 128,
+                    }
+                ],
+            }
+        },
+    )
+
+    result = client.run(replace(_request(), context=context))
+
+    assert result.final_answer == "final answer"
+    projected = transport.request["prompt"]["retrieved_context"]["file_manifest"]
+    if protocol_version == "1.3":
+        assert projected == transport.request["file_context"]["file_manifest"]
+    else:
+        assert "file_context" not in transport.request
+    assert projected["schema_version"] == 4
+    assert "workspace_catalog_revision_id" not in projected
+    assert "materialization_size_bytes" not in projected["items"][0]
+    assert projected["items"][0]["file_id"] == "file-source-1"
+    assert (
+        projected["manifest_hash"]
+        == hashlib.sha256(
+            json.dumps(
+                {
+                    "schema_version": 4,
+                    "file_format_policy_version": "text-v2",
+                    "items": [canonical_item],
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    )
 
 
 class _PrincipalTokenIssuer:
