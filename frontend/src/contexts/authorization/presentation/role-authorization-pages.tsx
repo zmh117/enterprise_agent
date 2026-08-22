@@ -974,9 +974,11 @@ function BusinessApplicationCard({
               {application.mcp_tools.map((tool) => (
                 <label
                   key={tool.tool_identifier}
-                  className="flex items-center gap-2 rounded-md border p-3 text-sm"
+                  className="flex items-start gap-3 rounded-md border p-3 text-sm"
                 >
                   <Checkbox
+                    className="mt-0.5"
+                    aria-label={`MCP Tool ${tool.tool_identifier}`}
                     checked={selected.toolIdentifiers.has(
                       tool.tool_identifier
                     )}
@@ -987,10 +989,15 @@ function BusinessApplicationCard({
                       update({ ...selected, toolIdentifiers: identifiers })
                     }}
                   />
-                  <span>
-                    <span>{tool.display_name_zh}</span>
-                    <span className="ml-2 font-mono text-xs text-muted-foreground">
-                      {tool.tool_identifier}
+                  <span className="min-w-0 flex-1">
+                    <span className="block">
+                      <span>{tool.display_name_zh}</span>
+                      <span className="ml-2 font-mono text-xs text-muted-foreground">
+                        {tool.tool_identifier}
+                      </span>
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                      {tool.description.trim() || "暂无工具说明。"}
                     </span>
                   </span>
                 </label>

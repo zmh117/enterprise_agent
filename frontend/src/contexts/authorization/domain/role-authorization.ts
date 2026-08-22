@@ -117,6 +117,7 @@ export const catalogApplicationSchema = z.object({
     z.object({
       tool_identifier: z.string(),
       display_name_zh: z.string().default("MCP Tool"),
+      description: z.string().default(""),
       version_constraint: z.string(),
     }),
   ),

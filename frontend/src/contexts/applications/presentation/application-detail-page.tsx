@@ -868,11 +868,9 @@ function McpToolSelector({
                       ? `调用时解析 ${tool.resource_kind} Resource`
                       : "不需要外部 Resource"}
                   </span>
-                  {tool.description ? (
-                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                      {tool.description}
-                    </span>
-                  ) : null}
+                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                    {tool.description.trim() || "暂无工具说明。"}
+                  </span>
                   {requiredFileTools.has(tool.tool_identifier) ? (
                     <span className="mt-1 block text-xs text-primary">
                       当前任务文件功能必选

@@ -1170,9 +1170,9 @@ function ProfileForm({
               </Field>
             </div>
             <ReadOnlyModelSummary connection={connection} />
-            <Checklist
-              title="MCP 只读工具"
-              items={agent.catalog.mcp_tools.map((tool) => tool.identifier)}
+            <McpToolChecklist
+              title="MCP 工具"
+              items={agent.catalog.mcp_tools}
               selected={form.mcp_tool_ids}
               onToggle={(value) => toggleList("mcp_tool_ids", value)}
             />
@@ -1479,6 +1479,58 @@ function Checklist({
                 onChange={() => onToggle(item)}
               />
               <span className="truncate font-mono text-xs">{item}</span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">目录为空。</p>
+      )}
+    </fieldset>
+  )
+}
+
+function McpToolChecklist({
+  title,
+  items,
+  selected,
+  onToggle,
+}: {
+  title: string
+  items: AgentDetail["catalog"]["mcp_tools"]
+  selected: string[]
+  onToggle: (value: string) => void
+}) {
+  return (
+    <fieldset className="rounded-lg border p-4">
+      <legend className="px-1 text-sm font-medium">{title}</legend>
+      {items.length ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {items.map((item) => (
+            <label
+              key={item.identifier}
+              className="flex min-w-0 items-start gap-3 rounded-md border p-3 text-sm"
+            >
+              <input
+                className="mt-0.5"
+                type="checkbox"
+                aria-label={item.identifier}
+                checked={selected.includes(item.identifier)}
+                onChange={() => onToggle(item.identifier)}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block break-all font-mono text-xs font-medium">
+                  {item.identifier}
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {item.server_code} · {item.read_only ? "只读" : "受控写操作"}
+                  {item.resource_kind
+                    ? ` · 解析 ${item.resource_kind} Resource`
+                    : " · 不需要外部 Resource"}
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                  {item.description.trim() || "暂无工具说明。"}
+                </span>
+              </span>
             </label>
           ))}
         </div>

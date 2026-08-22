@@ -304,6 +304,37 @@ def test_capability_catalog_is_unique_closed_and_platform_admin_has_no_data_bypa
     c.database.close()
 
 
+def test_assignable_catalog_describes_tools_from_legacy_agent_publications() -> None:
+    c = _container()
+    application = _active_application(
+        c,
+        "described-role-tools",
+        capabilities=("query_database",),
+    )
+    frozen = c.database.execute_one(
+        """
+        select model_description from agent_publication_mcp_tool
+         where agent_publication_id = 'agent_publication_default_v1'
+           and tool_identifier = 'query_database'
+        """
+    )
+    assert frozen == {"model_description": ""}
+
+    catalog = c.authorization_center_service.assignable_catalog(actor_id=ADMIN_ID)
+    catalog_application = next(
+        item for item in catalog["applications"] if item["id"] == application["id"]
+    )
+    assert catalog_application["mcp_tools"] == [
+        {
+            "tool_identifier": "query_database",
+            "description": MCP_TOOL_MANIFEST["query_database"].description,
+            "version_constraint": "",
+            "display_name_zh": "只读查询数据库",
+        }
+    ]
+    c.database.close()
+
+
 def test_role_sections_use_independent_revisions_and_dependency_closure() -> None:
     c = _container()
     service = c.authorization_center_service

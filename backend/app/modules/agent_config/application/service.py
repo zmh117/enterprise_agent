@@ -433,6 +433,7 @@ class AgentConfigService:
                     "server_code": MCP_TOOL_MANIFEST[identifier].server_code,
                     "tool_identifier": identifier,
                     "schema_hash": MCP_TOOL_MANIFEST[identifier].schema_hash,
+                    "description": MCP_TOOL_MANIFEST[identifier].description,
                 }
                 for identifier in tool_ids
             ]

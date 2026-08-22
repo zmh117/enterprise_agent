@@ -31,7 +31,10 @@ class ApplicationMcpToolCompositionService:
                     "server_code": str(row["server_code"]),
                     "tool_identifier": str(row["tool_identifier"]),
                     "schema_hash": str(row["schema_hash"]),
-                    "description": str(row.get("model_description") or ""),
+                    "description": (
+                        str(row.get("model_description") or "").strip()
+                        or MCP_TOOL_MANIFEST[str(row["tool_identifier"])].description
+                    ),
                     "resource_kind": MCP_TOOL_MANIFEST[str(row["tool_identifier"])].resource_kind,
                 }
                 for row in rows

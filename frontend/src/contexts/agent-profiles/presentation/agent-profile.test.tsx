@@ -1304,7 +1304,9 @@ describe("Agent Profile management", () => {
       </QueryClientProvider>
     )
 
-    expect(await screen.findByText("MCP 只读工具")).toBeInTheDocument()
+    expect(await screen.findByText("MCP 工具")).toBeInTheDocument()
+    expect(screen.getByText("读取 ER 上下文")).toBeInTheDocument()
+    expect(screen.getByText("只读查询 ONES 工作项")).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole("checkbox", { name: "ones_work_item_search" })
     )

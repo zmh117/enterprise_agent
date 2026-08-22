@@ -631,6 +631,7 @@ describe("Business Application workbench", () => {
     const mcpTool = await screen.findByLabelText(
       "选择 MCP Tool search_merge_requests"
     )
+    expect(screen.getByText("只读查询合并请求")).toBeInTheDocument()
     fireEvent.click(mcpTool)
     expect(mcpTool).toBeChecked()
     const requiredFileTool = screen.getByLabelText(

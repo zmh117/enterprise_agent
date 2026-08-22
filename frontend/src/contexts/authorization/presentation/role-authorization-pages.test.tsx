@@ -347,6 +347,7 @@ describe("角色授权中心", () => {
                 {
                   tool_identifier: "query_database",
                   display_name_zh: "只读查询数据库",
+                  description: "对唯一解析的数据资源执行策略允许的只读 SQL。",
                   version_constraint: "",
                 },
               ],
@@ -371,6 +372,9 @@ describe("角色授权中心", () => {
 
     await screen.findByText("诊断操作员")
     fireEvent.click(screen.getByRole("tab", { name: "业务应用与数据范围" }))
+    expect(
+      await screen.findByText("对唯一解析的数据资源执行策略允许的只读 SQL。")
+    ).toBeInTheDocument()
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "选择 test 环境" })
     )

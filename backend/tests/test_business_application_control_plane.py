@@ -1448,6 +1448,11 @@ def test_mcp_tool_catalog_lists_manifest_tools_and_enforces_agent_binding() -> N
         for item in catalog["mcp_tools_by_agent_publication"]["agent_publication_default_v1"]
     }
     assert {"get_schema_directory", "query_database"} <= python_tools
+    descriptions = {
+        item["tool_identifier"]: item["description"]
+        for item in catalog["mcp_tools_by_agent_publication"]["agent_publication_default_v1"]
+    }
+    assert descriptions["query_database"] == MCP_TOOL_MANIFEST["query_database"].description
 
     valid_revision = service.save_draft(
         actor_id="user_local_admin",

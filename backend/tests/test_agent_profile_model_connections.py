@@ -21,6 +21,7 @@ from app.python_runtime.claude_client import (
 from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,
 )
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.model_connection.domain import (
     DEFAULT_MODEL_CONNECTION_CODE,
     ModelRuntimeBinding,
@@ -422,9 +423,16 @@ def test_agent_publication_persists_manifest_owned_ones_server_code() -> None:
         ("tool-mcp", "get_schema_directory"),
         ("ones-mcp", "ones_work_item_search"),
     }
+    assert {
+        item["tool_identifier"]: item["description"]
+        for item in publication["snapshot"]["mcp_tool_envelope"]
+    } == {
+        identifier: MCP_TOOL_MANIFEST[identifier].description
+        for identifier in ("get_schema_directory", "ones_work_item_search")
+    }
     facts = c.database.execute(
         """
-        select server_code, tool_identifier
+        select server_code, tool_identifier, model_description
           from agent_publication_mcp_tool
          where agent_publication_id = ?
          order by tool_identifier
@@ -432,8 +440,16 @@ def test_agent_publication_persists_manifest_owned_ones_server_code() -> None:
         (publication["id"],),
     )
     assert facts == [
-        {"server_code": "tool-mcp", "tool_identifier": "get_schema_directory"},
-        {"server_code": "ones-mcp", "tool_identifier": "ones_work_item_search"},
+        {
+            "server_code": "tool-mcp",
+            "tool_identifier": "get_schema_directory",
+            "model_description": MCP_TOOL_MANIFEST["get_schema_directory"].description,
+        },
+        {
+            "server_code": "ones-mcp",
+            "tool_identifier": "ones_work_item_search",
+            "model_description": MCP_TOOL_MANIFEST["ones_work_item_search"].description,
+        },
     ]
 
 

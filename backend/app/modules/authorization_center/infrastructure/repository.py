@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.modules.job.infrastructure.repositories import new_id, now_iso
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
@@ -470,8 +471,12 @@ class AuthorizationCenterRepository:
                 self.database.execute(
                     """
                     select exact.tool_identifier,
+                           published.model_description as description,
                            '' as version_constraint
                       from business_application_revision_mcp_tool exact
+                      join agent_publication_mcp_tool published
+                        on published.agent_publication_id = exact.agent_publication_id
+                       and published.tool_identifier = exact.tool_identifier
                      where exact.agent_publication_id = ?
                        and exact.application_revision_id = ?
                      order by exact.selection_order
@@ -482,9 +487,14 @@ class AuthorizationCenterRepository:
                 else []
             )
             for tool in application["mcp_tools"]:
+                identifier = str(tool["tool_identifier"])
                 tool["display_name_zh"] = _BUSINESS_CAPABILITY_NAMES_ZH.get(
-                    str(tool["tool_identifier"]),
+                    identifier,
                     "MCP Tool",
+                )
+                definition = MCP_TOOL_MANIFEST.get(identifier)
+                tool["description"] = str(tool.get("description") or "").strip() or (
+                    definition.description if definition is not None else ""
                 )
         return applications
 
