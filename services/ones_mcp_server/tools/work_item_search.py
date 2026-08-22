@@ -19,6 +19,7 @@ from services.ones_mcp_server.contracts import (
     REQUIRED_SCOPE,
     TOOL_INPUT_SCHEMA,
     TOOL_IDENTIFIER,
+    TOOL_OUTPUT_SCHEMA,
 )
 from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshService
 from services.ones_mcp_server.errors import (
@@ -42,6 +43,7 @@ class OnesWorkItemSearchService:
     tool_identifier = TOOL_IDENTIFIER
     description = "按关键字和类型查询当前用户默认 Team 的 ONES 工作项。"
     input_schema = TOOL_INPUT_SCHEMA
+    output_schema = TOOL_OUTPUT_SCHEMA
     required_scope = REQUIRED_SCOPE
     operation_code = WORK_ITEM_SEARCH_OPERATION_CODE
     read_only = True

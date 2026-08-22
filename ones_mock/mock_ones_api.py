@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
@@ -39,6 +39,7 @@ class MockOnesConfig:
     issue_types: dict[str, dict[str, Any]]
     priorities: dict[str, dict[str, Any]]
     statuses: dict[str, dict[str, Any]]
+    project_roles: tuple[dict[str, Any], ...]
     tasks: tuple[dict[str, Any], ...]
     additional_teams: tuple[dict[str, str], ...] = ()
 
@@ -178,6 +179,24 @@ def load_config(path: str | Path | None = None) -> MockOnesConfig:
     issue_types = _require_mapping(data.get("issue_types"), "issue_types")
     priorities = _require_mapping(data.get("priorities"), "priorities")
     statuses = _require_mapping(data.get("statuses"), "statuses")
+    project_roles_raw = data.get("project_roles") or []
+    if not isinstance(project_roles_raw, list):
+        raise ValueError("project_roles must be a list")
+    project_roles: list[dict[str, Any]] = []
+    for index, item in enumerate(project_roles_raw):
+        role = _require_mapping(item, f"project_roles[{index}]")
+        member_uuids = role.get("member_uuids") or []
+        if not isinstance(member_uuids, list) or any(
+            not isinstance(value, str) or not value for value in member_uuids
+        ):
+            raise ValueError(f"project_roles[{index}].member_uuids must be strings")
+        project_roles.append(
+            {
+                "uuid": _require_str(role.get("uuid"), f"project_roles[{index}].uuid"),
+                "name": _require_str(role.get("name"), f"project_roles[{index}].name"),
+                "member_uuids": list(member_uuids),
+            }
+        )
     tasks_raw = data.get("tasks") or []
     if not isinstance(tasks_raw, list):
         raise ValueError("tasks must be a list")
@@ -252,6 +271,7 @@ def load_config(path: str | Path | None = None) -> MockOnesConfig:
         statuses={
             str(key): _require_mapping(value, f"statuses.{key}") for key, value in statuses.items()
         },
+        project_roles=tuple(project_roles),
         tasks=tuple(tasks),
         additional_teams=additional_teams,
     )
@@ -270,6 +290,10 @@ class LoginRequest(BaseModel):
 class GraphqlRequest(BaseModel):
     query: str = Field(min_length=1)
     variables: dict[str, Any] = Field(default_factory=dict)
+
+
+class TeamUsersRequest(BaseModel):
+    uuids: list[str] = Field(min_length=1, max_length=2000)
 
 
 def _task_fixture(config: MockOnesConfig, task: dict[str, Any]) -> dict[str, Any]:
@@ -473,7 +497,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
     else:
         config = settings
 
-    app = FastAPI(title="Mock ONES API", version="0.2.0")
+    app = FastAPI(title="Mock ONES API", version="0.3.0")
     app.state.ones_mock_config = config
 
     @app.get("/health")
@@ -635,6 +659,118 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 }
             }
         }
+
+    def require_business_user(
+        *,
+        ones_auth_token: str | None,
+        ones_user_id: str | None,
+        referer: str | None,
+        cache_control: str | None,
+    ) -> MockOnesUser:
+        user = config.find_user_by_auth(
+            token=str(ones_auth_token or ""),
+            user_uuid=str(ones_user_id or ""),
+        )
+        if user is None:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "unauthorized", "message": "invalid ONES auth headers"},
+            )
+        if not referer or cache_control != "no-cache":
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_required_headers"},
+            )
+        return user
+
+    @app.get(
+        "/project/api/project/team/{team_uuid}/project/{project_uuid}/role_members"
+    )
+    async def project_role_members(
+        request: Request,
+        team_uuid: str,
+        project_uuid: str,
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+        referer: str | None = Header(default=None, alias="Referer"),
+        cache_control: str | None = Header(default=None, alias="cache-control"),
+    ) -> dict[str, Any]:
+        require_business_user(
+            ones_auth_token=ones_auth_token,
+            ones_user_id=ones_user_id,
+            referer=referer,
+            cache_control=cache_control,
+        )
+        try:
+            request_body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail={"code": "empty_json_body_required"})
+        if request_body != {}:
+            raise HTTPException(status_code=400, detail={"code": "empty_json_body_required"})
+        if team_uuid != config.team_uuid:
+            raise HTTPException(status_code=404, detail={"code": "team_not_found"})
+        if project_uuid == "MOCK-ONES-PROJECT-FORBIDDEN":
+            raise HTTPException(status_code=403, detail={"code": "forbidden"})
+        if project_uuid == "MOCK-ONES-PROJECT-EMPTY":
+            return {"role_members": []}
+        if project_uuid == "MOCK-ONES-PROJECT-MISSING-USER":
+            return {
+                "role_members": [
+                    {
+                        "role": {"uuid": "MOCK-ONES-ROLE-MISSING", "name": "Missing User"},
+                        "members": ["MOCK-ONES-USER-MISSING"],
+                    }
+                ]
+            }
+        if project_uuid != config.project_uuid:
+            raise HTTPException(status_code=404, detail={"code": "project_not_found"})
+        return {
+            "role_members": [
+                {
+                    "role": {
+                        "uuid": role["uuid"],
+                        "name": role["name"],
+                        "built_in": role["uuid"] == "MOCK-ONES-ROLE-MEMBERS",
+                    },
+                    "members": list(role["member_uuids"]),
+                }
+                for role in config.project_roles
+            ]
+        }
+
+    @app.post("/project/api/project/team/{team_uuid}/users")
+    async def team_users(
+        team_uuid: str,
+        payload: TeamUsersRequest = Body(),
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+        referer: str | None = Header(default=None, alias="Referer"),
+        cache_control: str | None = Header(default=None, alias="cache-control"),
+    ) -> dict[str, Any]:
+        require_business_user(
+            ones_auth_token=ones_auth_token,
+            ones_user_id=ones_user_id,
+            referer=referer,
+            cache_control=cache_control,
+        )
+        if team_uuid != config.team_uuid:
+            raise HTTPException(status_code=404, detail={"code": "team_not_found"})
+        users = []
+        for user_uuid in dict.fromkeys(payload.uuids):
+            user = config.user_by_uuid(user_uuid)
+            if user is None:
+                continue
+            users.append(
+                {
+                    "uuid": user.uuid,
+                    "name": user.name,
+                    "email": user.email,
+                    "phone": "",
+                    "avatar": "https://mock.invalid/avatar",
+                    "department_uuids": ["MOCK-DEPARTMENT"],
+                }
+            )
+        return {"users": users}
 
     @app.post("/project/api/project/team/{team_uuid}/items/graphql")
     async def graphql(

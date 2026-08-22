@@ -3,18 +3,13 @@ from __future__ import annotations
 from typing import Any, Final
 
 from services.ones_mcp_server.errors import invalid_provider_response
+from services.ones_mcp_server.provider.graphql.documents import load_graphql_document
 
 
 ISSUE_TYPES: Final = ("demand", "task", "defect")
 WORK_ITEM_SEARCH_OPERATION_CODE: Final = "work_item_search"
 WORK_ITEM_SEARCH_PATH: Final = "/project/api/project/items/graphql"
-WORK_ITEM_SEARCH_DOCUMENT: Final = (
-    "query SearchWorkItems($keyword: String!, $issue_type: String!, $limit: Int!, "
-    "$user_id: String!, $team_id: String!) { "
-    "workItems(keyword: $keyword, issueType: $issue_type, limit: $limit, "
-    "userId: $user_id, teamId: $team_id) { "
-    "items { number name type } total truncated } }"
-)
+WORK_ITEM_SEARCH_DOCUMENT: Final = load_graphql_document("work_item_search.graphql")
 
 
 class WorkItemSearchOperation:

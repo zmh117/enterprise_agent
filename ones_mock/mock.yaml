@@ -17,6 +17,17 @@ project:
   scope_uuid: MOCK-ONES-PROJECT-SCOPE-001
   scope_name_pinyin: mock-manufacturing-project
 
+project_roles:
+  - uuid: MOCK-ONES-ROLE-MEMBERS
+    name: 项目成员
+    member_uuids:
+      - MOCK-ONES-USER-001
+      - MOCK-ONES-USER-002
+  - uuid: MOCK-ONES-ROLE-TESTERS
+    name: Testers
+    member_uuids:
+      - MOCK-ONES-USER-002
+
 # 登录该邮箱时返回故意破坏的合同，供适配器负向测试
 invalid_response_email: invalid.response@example.test
 

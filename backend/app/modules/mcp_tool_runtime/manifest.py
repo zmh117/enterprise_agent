@@ -87,6 +87,33 @@ MCP_TOOL_MANIFEST["ones_work_item_search"] = McpToolDefinition(
     read_only=True,
 )
 
+_ONES_PROJECT_ROLE_MEMBERS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["project_uuid"],
+    "properties": {
+        "project_uuid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": r"^[A-Za-z0-9_-]+$",
+        }
+    },
+}
+
+MCP_TOOL_MANIFEST["ones_list_project_role_members"] = McpToolDefinition(
+    server_code=ONES_MCP_SERVER_CODE,
+    identifier="ones_list_project_role_members",
+    description=(
+        "查询当前平台用户默认 Team 中指定 ONES 项目的角色及成员姓名；"
+        "只接受 project_uuid，不接受 Team、用户、Token、URL、Header 或请求报文。"
+    ),
+    input_schema=_ONES_PROJECT_ROLE_MEMBERS_SCHEMA,
+    schema_hash=mcp_tool_schema_hash(_ONES_PROJECT_ROLE_MEMBERS_SCHEMA),
+    resource_kind="",
+    read_only=True,
+)
+
 for _identifier, _file_tool in FILE_TOOL_MANIFEST.items():
     MCP_TOOL_MANIFEST[_identifier] = McpToolDefinition(
         server_code=FILE_MCP_SERVER_CODE,

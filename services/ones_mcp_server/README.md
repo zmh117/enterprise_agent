@@ -10,7 +10,9 @@ tools over stateless Streamable HTTP. It is not an arbitrary GraphQL or HTTP pro
 - `auth/`: Principal JWT, frozen Job/Publication facts, and ONES identity resolution.
 - `provider/http_client.py`: fixed Provider origin, bounded JSON transport, no redirects.
 - `provider/graphql/`: reusable GraphQL client and code-owned operation registry.
-- `provider/graphql/operations/`: fixed documents, variables, and strict response parsers.
+- `provider/graphql/documents/`: code-owned GraphQL document files.
+- `provider/graphql/operations/`: fixed paths, variables, and strict response parsers.
+- `provider/rest/operations/`: fixed REST methods, paths, request bodies, and response parsers.
 - `credentials/`: 401 refresh, per-credential locking, revision CAS, and refresh audit.
 - `tools/`: MCP Tool validation and business/audit orchestration.
 
@@ -26,6 +28,15 @@ tools over stateless Streamable HTTP. It is not an arbitrary GraphQL or HTTP pro
 5. Extend Principal JWT scope issuance deliberately before publishing the Tool.
 6. Add Mock, Provider failure, refresh, concurrent-call, exact-audit-link, and
    authentication-material exclusion tests.
+
+## Adding a REST-backed Tool
+
+1. Add one code-owned REST operation with the exact Method, relative Path,
+   Headers, request body, and response parser supplied for that ONES interface.
+2. Compose multiple operations only in the owning Tool service with a fixed call
+   order. Do not add a workflow DSL or accept transport fields from Tool input.
+3. Register the Tool in the ONES registry and governed platform manifest, then add
+   exact Mock request and response tests before publication.
 
 `runtime.py` is only a compatibility import surface. New implementation code should
 import the owning module directly.

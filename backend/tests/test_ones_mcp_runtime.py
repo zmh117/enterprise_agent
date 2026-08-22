@@ -35,7 +35,11 @@ from backend.tests.helpers import container, prepare_debug_application_access
 from ones_mock.mock_ones_api import MockOnesSettings, create_app as create_mock_app
 from services.ones_mcp_server.app import create_app as create_mcp_app
 from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
-from services.ones_mcp_server.contracts import validate_provider_target
+from services.ones_mcp_server.contracts import (
+    PROJECT_ROLE_MEMBERS_OUTPUT_SCHEMA,
+    PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
+    validate_provider_target,
+)
 from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshService
 from services.ones_mcp_server.errors import OnesMcpError
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
@@ -44,6 +48,10 @@ from services.ones_mcp_server.provider.graphql.operations.work_item_search impor
     WORK_ITEM_SEARCH_OPERATION,
 )
 from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
+from services.ones_mcp_server.tools.project_role_members import (
+    OnesProjectRoleMemberService,
+)
+from services.ones_mcp_server.tools.registry import OnesToolRegistry
 from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
 
 
@@ -68,9 +76,13 @@ class _MockProviderTransport:
 
     def __call__(self, request: Any, _timeout: float) -> _ProviderResponse:
         target = urlsplit(request.full_url)
-        payload = json.loads(bytes(request.data or b"{}").decode("utf-8"))
         headers = {key: value for key, value in request.header_items()}
-        response = self.client.post(target.path, json=payload, headers=headers)
+        response = self.client.request(
+            request.get_method(),
+            target.path,
+            content=bytes(request.data or b""),
+            headers=headers,
+        )
         if response.status_code >= 400:
             raise HTTPError(
                 request.full_url,
@@ -117,37 +129,47 @@ def _signing_key() -> PrincipalSigningKey:
     )
 
 
-def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
+def _fixture(
+    *,
+    initial_token: str | None = None,
+    capabilities: tuple[str, ...] = (
+        "ones_work_item_search",
+        PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
+    ),
+) -> dict[str, Any]:
     runtime = container()
-    definition = MCP_TOOL_MANIFEST["ones_work_item_search"]
     next_order = runtime.database.execute_one(
         "select coalesce(max(selection_order), -1) + 1 as value "
         "from agent_publication_mcp_tool where agent_publication_id = ?",
         ("agent_publication_default_v1",),
     )
     assert next_order is not None
-    runtime.database.execute(
-        """
-        insert into agent_publication_mcp_tool
-          (agent_publication_id, server_code, tool_identifier, schema_hash,
-           model_description, selection_order, created_at)
-        values (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "agent_publication_default_v1",
-            definition.server_code,
-            definition.identifier,
-            definition.schema_hash,
-            definition.description,
-            int(next_order["value"]),
-            now_iso(),
-        ),
-    )
+    for offset, tool_identifier in enumerate(
+        ("ones_work_item_search", PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER)
+    ):
+        definition = MCP_TOOL_MANIFEST[tool_identifier]
+        runtime.database.execute(
+            """
+            insert into agent_publication_mcp_tool
+              (agent_publication_id, server_code, tool_identifier, schema_hash,
+               model_description, selection_order, created_at)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "agent_publication_default_v1",
+                definition.server_code,
+                definition.identifier,
+                definition.schema_hash,
+                definition.description,
+                int(next_order["value"]) + offset,
+                now_iso(),
+            ),
+        )
     selection = prepare_debug_application_access(
         runtime,
         application_code="ones-mcp-runtime-test",
         role_code="ones-mcp-runtime-reader",
-        capabilities=("ones_work_item_search",),
+        capabilities=capabilities,
     )
     job, _ = runtime.debug_job_access_service.create_job(
         user_id="user_local_admin",
@@ -245,6 +267,18 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
         audit,
         refresh,
     )
+    role_service = OnesProjectRoleMemberService(
+        resolver,
+        provider_http,
+        credentials,
+        audit,
+        refresh,
+    )
+    registry = OnesToolRegistry(
+        authenticate=service.authenticate,
+        tools=(service, role_service),
+        audit=audit,
+    )
     return {
         "runtime": runtime,
         "job": claimed,
@@ -252,11 +286,28 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
         "token": token,
         "claims": service.authenticate(token),
         "service": service,
+        "role_service": role_service,
+        "registry": registry,
         "provider_http": provider_http,
         "login": login,
         "mock": mock,
         "selection": selection,
     }
+
+
+def _list_project_role_members(
+    fixture: dict[str, Any],
+    *,
+    project_uuid: str,
+    correlation_id: str,
+) -> dict[str, Any]:
+    service = fixture["role_service"]
+    return service.invoke(
+        claims=service.authenticate(fixture["token"]),
+        arguments={"project_uuid": project_uuid},
+        correlation_id=correlation_id,
+        invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
+    )
 
 
 def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None:
@@ -355,10 +406,195 @@ def test_ones_mcp_refreshes_stale_token_once_and_retries_mock_query() -> None:
     }
 
 
+def test_project_role_members_joins_fixed_rest_calls_and_audits_only_safe_summaries() -> None:
+    fixture = _fixture()
+    result = _list_project_role_members(
+        fixture,
+        project_uuid=fixture["mock"].config.project_uuid,
+        correlation_id="ones-project-role-members",
+    )
+
+    assert result == {
+        "roles": [
+            {
+                "role_uuid": "MOCK-ONES-ROLE-MEMBERS",
+                "role_name": "项目成员",
+                "members": [
+                    {"uuid": "MOCK-ONES-USER-001", "name": "Mock ONES User"},
+                    {"uuid": "MOCK-ONES-USER-002", "name": "Mock ONES Owner"},
+                ],
+            },
+            {
+                "role_uuid": "MOCK-ONES-ROLE-TESTERS",
+                "role_name": "Testers",
+                "members": [
+                    {"uuid": "MOCK-ONES-USER-002", "name": "Mock ONES Owner"},
+                ],
+            },
+        ],
+        "untrusted_data": True,
+    }
+    rows = fixture["runtime"].database.execute(
+        "select * from mcp_operation_audit where correlation_id = ? order by created_at, id",
+        ("ones-project-role-members",),
+    )
+    provider_rows = [row for row in rows if row["event_kind"] == "PROVIDER"]
+    assert {row["tool_identifier"] for row in rows} == {
+        PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER
+    }
+    assert [json.loads(row["business_request_json"])["operation"] for row in provider_rows] == [
+        "project_role_members",
+        "team_users",
+    ]
+    assert json.loads(provider_rows[0]["business_response_json"])["role_count"] == 2
+    assert json.loads(provider_rows[1]["business_response_json"])["returned_user_count"] == 2
+    evidence = json.dumps(rows, ensure_ascii=False)
+    assert "mock.owner@example.test" not in evidence
+    assert '"phone"' not in evidence
+    assert '"avatar"' not in evidence
+    assert fixture["mock"].password not in evidence
+    assert fixture["mock"].token not in evidence
+
+
+def test_project_role_members_empty_project_skips_team_users_call() -> None:
+    fixture = _fixture()
+    result = _list_project_role_members(
+        fixture,
+        project_uuid="MOCK-ONES-PROJECT-EMPTY",
+        correlation_id="ones-project-role-members-empty",
+    )
+
+    assert result == {"roles": [], "untrusted_data": True}
+    provider_rows = fixture["runtime"].database.execute(
+        "select business_request_json from mcp_operation_audit "
+        "where correlation_id = ? and event_kind = 'PROVIDER'",
+        ("ones-project-role-members-empty",),
+    )
+    assert [json.loads(row["business_request_json"])["operation"] for row in provider_rows] == [
+        "project_role_members"
+    ]
+
+
+def test_project_role_members_fails_closed_when_user_lookup_is_incomplete() -> None:
+    fixture = _fixture()
+
+    with pytest.raises(AppError) as raised:
+        _list_project_role_members(
+            fixture,
+            project_uuid="MOCK-ONES-PROJECT-MISSING-USER",
+            correlation_id="ones-project-role-members-missing-user",
+        )
+
+    assert raised.value.error_code == "ones_provider_schema_invalid"
+    tool_row = fixture["runtime"].database.execute_one(
+        "select status, tool_response_json from mcp_operation_audit "
+        "where correlation_id = ? and event_kind = 'TOOL'",
+        ("ones-project-role-members-missing-user",),
+    )
+    assert tool_row is not None
+    assert tool_row["status"] == "FAILED"
+    assert "roles" not in json.loads(tool_row["tool_response_json"])
+
+
+def test_project_role_members_rejects_extra_identity_fields_before_audit() -> None:
+    fixture = _fixture()
+    service = fixture["role_service"]
+
+    with pytest.raises(AppError) as raised:
+        service.invoke(
+            claims=service.authenticate(fixture["token"]),
+            arguments={
+                "project_uuid": fixture["mock"].config.project_uuid,
+                "team_uuid": "forged-team",
+            },
+            correlation_id="ones-project-role-members-forged-identity",
+            invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
+        )
+
+    assert raised.value.error_code == "ones_tool_input_invalid"
+    assert fixture["runtime"].database.execute(
+        "select * from mcp_operation_audit where correlation_id = ?",
+        ("ones-project-role-members-forged-identity",),
+    ) == []
+
+
+def test_project_role_members_refreshes_stale_token_once() -> None:
+    fixture = _fixture(initial_token="stale-test-token")
+    result = _list_project_role_members(
+        fixture,
+        project_uuid=fixture["mock"].config.project_uuid,
+        correlation_id="ones-project-role-members-refresh",
+    )
+
+    assert len(result["roles"]) == 2
+    assert fixture["login"].calls == 1
+    credential = fixture["runtime"].external_identity_credential_repository.get_by_identity(
+        str(fixture["identity"]["id"])
+    )
+    assert credential is not None
+    assert credential["revision"] == 2
+
+
+def test_project_role_members_maps_provider_forbidden() -> None:
+    fixture = _fixture()
+
+    with pytest.raises(AppError) as raised:
+        _list_project_role_members(
+            fixture,
+            project_uuid="MOCK-ONES-PROJECT-FORBIDDEN",
+            correlation_id="ones-project-role-members-forbidden",
+        )
+
+    assert raised.value.error_code == "ones_provider_forbidden"
+
+
+@pytest.mark.parametrize(
+    ("missing_fact", "error_code"),
+    [
+        ("credential", "ones_credential_reverification_required"),
+        ("default_team", "ones_default_team_invalid"),
+    ],
+)
+def test_project_role_members_requires_current_credential_and_default_team(
+    missing_fact: str,
+    error_code: str,
+) -> None:
+    fixture = _fixture()
+    if missing_fact == "credential":
+        fixture["runtime"].database.execute(
+            "delete from external_identity_credential where external_identity_id = ?",
+            (fixture["identity"]["id"],),
+        )
+    else:
+        fixture["runtime"].database.execute(
+            "update user_external_identity set metadata_json = ? where id = ?",
+            (
+                json.dumps({"team_uuids": [fixture["mock"].team_uuid]}),
+                fixture["identity"]["id"],
+            ),
+        )
+
+    with pytest.raises(AppError) as raised:
+        _list_project_role_members(
+            fixture,
+            project_uuid=fixture["mock"].config.project_uuid,
+            correlation_id=f"ones-project-role-members-no-{missing_fact}",
+        )
+
+    assert raised.value.error_code == error_code
+
+
+def test_existing_job_snapshot_does_not_gain_the_new_project_role_tool() -> None:
+    fixture = _fixture(capabilities=("ones_work_item_search",))
+
+    with pytest.raises(AppError):
+        fixture["role_service"].authenticate(fixture["token"])
+
+
 def test_ones_mcp_v2_stateless_http_requires_bearer_and_supports_both_protocol_eras() -> None:
     fixture = _fixture()
     app = create_mcp_app(
-        fixture["service"],
+        fixture["registry"],
         database=fixture["runtime"].database,
         max_request_bytes=32 * 1024,
         audit_retention_days=30,
@@ -480,6 +716,26 @@ def test_ones_mcp_v2_stateless_http_requires_bearer_and_supports_both_protocol_e
                 },
             },
         )
+        called_role_members = client.post(
+            "/mcp",
+            headers={
+                **auth_headers,
+                "mcp-protocol-version": "2026-07-28",
+                "mcp-method": "tools/call",
+                "mcp-name": PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
+                "x-correlation-id": "ones-role-members-mcp-v2",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {
+                    "_meta": modern_meta,
+                    "name": PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
+                    "arguments": {"project_uuid": fixture["mock"].config.project_uuid},
+                },
+            },
+        )
 
     assert missing.status_code == 401
     assert duplicate.status_code == 401
@@ -489,17 +745,30 @@ def test_ones_mcp_v2_stateless_http_requires_bearer_and_supports_both_protocol_e
     assert initialized.status_code == 200
     assert initialized.json()["result"]["serverInfo"]["name"] == "Enterprise ONES MCP"
     assert "mcp-session-id" not in initialized.headers
-    assert [item["name"] for item in listed.json()["result"]["tools"]] == ["ones_work_item_search"]
+    assert [item["name"] for item in listed.json()["result"]["tools"]] == [
+        PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
+        "ones_work_item_search",
+    ]
+    role_tool = next(
+        item
+        for item in listed.json()["result"]["tools"]
+        if item["name"] == PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER
+    )
+    assert role_tool["outputSchema"] == PROJECT_ROLE_MEMBERS_OUTPUT_SCHEMA
     assert discovered_v2.status_code == 200
     assert discovered_v2.json()["result"]["supportedVersions"] == ["2026-07-28"]
     assert discovered_v2.json()["result"]["capabilities"]["tools"] == {"listChanged": False}
     assert "mcp-session-id" not in discovered_v2.headers
     assert [item["name"] for item in listed_v2.json()["result"]["tools"]] == [
+        PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
         "ones_work_item_search"
     ]
     assert called_v2.status_code == 200, called_v2.text
     assert called_v2.json()["result"]["isError"] is False
     assert called_v2.json()["result"]["structuredContent"]["items"][0]["number"] == 900101
+    assert called_role_members.status_code == 200, called_role_members.text
+    assert called_role_members.json()["result"]["isError"] is False
+    assert len(called_role_members.json()["result"]["structuredContent"]["roles"]) == 2
     assert "mcp-session-id" not in called_v2.headers
 
 
@@ -785,6 +1054,28 @@ def test_ones_mcp_rechecks_current_user_identity_and_tool_grant(
         )
 
     assert raised.value.error_code == error_code
+
+
+def test_project_role_members_rechecks_its_own_current_tool_grant() -> None:
+    fixture = _fixture()
+    fixture["runtime"].database.execute(
+        "delete from rbac_role_application_mcp_tool "
+        "where tool_identifier = ? and application_access_id in ("
+        "select id from rbac_role_application_access where application_id = ?)",
+        (
+            PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
+            fixture["selection"]["application_id"],
+        ),
+    )
+
+    with pytest.raises(AppError) as raised:
+        _list_project_role_members(
+            fixture,
+            project_uuid=fixture["mock"].config.project_uuid,
+            correlation_id="ones-project-role-members-revoked",
+        )
+
+    assert raised.value.error_code == "business_application_denied"
 
 
 def test_ones_mock_has_stable_refresh_identity_and_team_change_controls() -> None:

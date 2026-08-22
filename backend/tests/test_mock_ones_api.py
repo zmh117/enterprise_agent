@@ -213,6 +213,95 @@ class MockOnesApiTests(unittest.TestCase):
             malformed["data"]["workItems"]["items"][0],
         )
 
+    def test_project_role_members_and_team_users_follow_the_exact_rest_contract(self) -> None:
+        role_response = self.client.request(
+            "GET",
+            (
+                f"/project/api/project/team/{self.settings.team_uuid}/project/"
+                f"{self.settings.config.project_uuid}/role_members"
+            ),
+            headers={
+                **self.auth_headers,
+                "Referer": "http://ones-mock:8001",
+                "cache-control": "no-cache",
+                "Content-Type": "application/json",
+            },
+            content=b"{}",
+        )
+        self.assertEqual(200, role_response.status_code)
+        roles = role_response.json()["role_members"]
+        self.assertEqual(2, len(roles))
+        self.assertIn(self.settings.user_uuid, roles[0]["members"])
+        shared_uuid = self.settings.config.users[1].uuid
+        self.assertIn(shared_uuid, roles[0]["members"])
+        self.assertIn(shared_uuid, roles[1]["members"])
+
+        users_response = self.client.post(
+            f"/project/api/project/team/{self.settings.team_uuid}/users",
+            headers={
+                **self.auth_headers,
+                "Referer": "http://ones-mock:8001",
+                "cache-control": "no-cache",
+            },
+            json={"uuids": [self.settings.user_uuid, shared_uuid]},
+        )
+        self.assertEqual(200, users_response.status_code)
+        self.assertEqual(
+            {self.settings.user_uuid, shared_uuid},
+            {user["uuid"] for user in users_response.json()["users"]},
+        )
+        self.assertIn("email", users_response.json()["users"][0])
+
+    def test_project_role_members_requires_auth_headers_and_empty_json_body(self) -> None:
+        path = (
+            f"/project/api/project/team/{self.settings.team_uuid}/project/"
+            f"{self.settings.config.project_uuid}/role_members"
+        )
+        headers = {
+            **self.auth_headers,
+            "Referer": "http://ones-mock:8001",
+            "cache-control": "no-cache",
+            "Content-Type": "application/json",
+        }
+
+        no_body = self.client.request("GET", path, headers=headers)
+        wrong_body = self.client.request("GET", path, headers=headers, content=b'{"x":1}')
+        no_auth = self.client.request(
+            "GET",
+            path,
+            headers={
+                "Referer": "http://ones-mock:8001",
+                "cache-control": "no-cache",
+                "Content-Type": "application/json",
+            },
+            content=b"{}",
+        )
+
+        self.assertEqual(400, no_body.status_code)
+        self.assertEqual(400, wrong_body.status_code)
+        self.assertEqual(401, no_auth.status_code)
+
+    def test_project_role_members_mock_supports_empty_and_missing_user_contracts(self) -> None:
+        def get(project_uuid: str) -> Any:
+            return self.client.request(
+                "GET",
+                (
+                    f"/project/api/project/team/{self.settings.team_uuid}/project/"
+                    f"{project_uuid}/role_members"
+                ),
+                headers={
+                    **self.auth_headers,
+                    "Referer": "http://ones-mock:8001",
+                    "cache-control": "no-cache",
+                    "Content-Type": "application/json",
+                },
+                content=b"{}",
+            )
+
+        self.assertEqual([], get("MOCK-ONES-PROJECT-EMPTY").json()["role_members"])
+        missing = get("MOCK-ONES-PROJECT-MISSING-USER").json()["role_members"]
+        self.assertEqual(["MOCK-ONES-USER-MISSING"], missing[0]["members"])
+
 
 if __name__ == "__main__":
     unittest.main()

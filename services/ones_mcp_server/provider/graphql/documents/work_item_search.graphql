@@ -1,0 +1,1 @@
+query SearchWorkItems($keyword: String!, $issue_type: String!, $limit: Int!, $user_id: String!, $team_id: String!) { workItems(keyword: $keyword, issueType: $issue_type, limit: $limit, userId: $user_id, teamId: $team_id) { items { number name type } total truncated } }

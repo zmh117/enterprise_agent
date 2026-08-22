@@ -14,6 +14,9 @@ import yaml
 from services.ones_mcp_server.contracts import (
     ISSUE_TYPES,
     LOGIN_PATH,
+    PROJECT_ROLE_MEMBERS_INPUT_SCHEMA,
+    PROJECT_ROLE_MEMBERS_OUTPUT_SCHEMA,
+    PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
     SERVER_CODE,
     TOOL_IDENTIFIER,
     TOOL_INPUT_SCHEMA,
@@ -135,7 +138,7 @@ def test_business_principal_migration_has_no_dedicated_issuer_or_single_slot() -
     assert "def principal_token(" not in sources
 
 
-def test_first_phase_ones_contract_is_single_fixed_readonly_tool() -> None:
+def test_ones_contract_exposes_only_code_owned_fixed_readonly_tools() -> None:
     assert SERVER_CODE == "ones-mcp"
     assert TOOL_IDENTIFIER == "ones_work_item_search"
     assert ISSUE_TYPES == ("demand", "task", "defect")
@@ -149,6 +152,34 @@ def test_first_phase_ones_contract_is_single_fixed_readonly_tool() -> None:
     assert definition.server_code == SERVER_CODE
     assert definition.input_schema == TOOL_INPUT_SCHEMA
     assert definition.read_only is True
+    role_definition = MCP_TOOL_MANIFEST[PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER]
+    assert role_definition.server_code == SERVER_CODE
+    assert role_definition.input_schema == PROJECT_ROLE_MEMBERS_INPUT_SCHEMA
+    assert role_definition.read_only is True
+    assert PROJECT_ROLE_MEMBERS_INPUT_SCHEMA["additionalProperties"] is False
+    assert PROJECT_ROLE_MEMBERS_INPUT_SCHEMA["required"] == ["project_uuid"]
+    assert PROJECT_ROLE_MEMBERS_OUTPUT_SCHEMA["properties"]["untrusted_data"] == {
+        "const": True
+    }
+
+
+def test_ones_query_assets_are_static_documents_without_dynamic_query_library() -> None:
+    documents = REPOSITORY_ROOT / "services/ones_mcp_server/provider/graphql/documents"
+    assert {path.name for path in documents.glob("*.graphql")} == {"work_item_search.graphql"}
+    production = _production_sources().lower()
+    for forbidden in (
+        "query_library_list",
+        "library_list.graphql",
+        "dynamic_graphql",
+        "graphql_ast",
+        "query_fingerprint",
+        "query_dependency_index",
+        "reverse_query_dependency",
+        "fastmcp",
+        "graphql_executor_tool",
+        "arbitrary_interface_executor",
+    ):
+        assert forbidden not in production
 
 
 def test_provider_target_requires_https_except_explicit_local_mock() -> None:

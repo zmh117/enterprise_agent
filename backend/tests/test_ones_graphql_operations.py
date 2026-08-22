@@ -6,6 +6,8 @@ from typing import Any
 import pytest
 
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
+from services.ones_mcp_server.provider.graphql import documents
+from services.ones_mcp_server.provider.graphql.documents import load_graphql_document
 from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
 from services.ones_mcp_server.provider.graphql.operations.work_item_search import (
     WORK_ITEM_SEARCH_DOCUMENT,
@@ -118,3 +120,37 @@ def test_graphql_registry_rejects_arbitrary_or_mutating_operations() -> None:
 
     with pytest.raises(KeyError):
         GraphqlOperationRegistry((WORK_ITEM_SEARCH_OPERATION,)).require("caller_supplied")
+
+
+def test_work_item_document_is_loaded_from_the_code_owned_resource() -> None:
+    expected = (
+        "query SearchWorkItems($keyword: String!, $issue_type: String!, $limit: Int!, "
+        "$user_id: String!, $team_id: String!) { "
+        "workItems(keyword: $keyword, issueType: $issue_type, limit: $limit, "
+        "userId: $user_id, teamId: $team_id) { "
+        "items { number name type } total truncated } }"
+    )
+
+    assert WORK_ITEM_SEARCH_DOCUMENT == expected
+    assert load_graphql_document("work_item_search.graphql") == expected
+
+
+def test_graphql_document_loader_fails_for_missing_empty_or_unsafe_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(ValueError, match="missing"):
+        load_graphql_document("missing.graphql")
+    with pytest.raises(ValueError, match="name"):
+        load_graphql_document("../work_item_search.graphql")
+
+    class _EmptyResource:
+        def joinpath(self, _filename: str) -> _EmptyResource:
+            return self
+
+        def read_text(self, *, encoding: str) -> str:
+            assert encoding == "utf-8"
+            return " \n"
+
+    monkeypatch.setattr(documents.resources, "files", lambda _package: _EmptyResource())
+    with pytest.raises(ValueError, match="empty"):
+        load_graphql_document("empty.graphql")

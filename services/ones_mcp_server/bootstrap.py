@@ -18,6 +18,7 @@ from services.ones_mcp_server.provider.graphql.operations.work_item_search impor
 from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
 from services.ones_mcp_server.provider.target import validate_provider_target
 from services.ones_mcp_server.tools.registry import OnesToolRegistry
+from services.ones_mcp_server.tools.project_role_members import OnesProjectRoleMemberService
 from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
 
 
@@ -85,8 +86,15 @@ def build_work_item_search_service(runtime: Container) -> OnesWorkItemSearchServ
 
 def build_tool_registry(runtime: Container) -> OnesToolRegistry:
     work_item_search = build_work_item_search_service(runtime)
+    project_role_members = OnesProjectRoleMemberService(
+        work_item_search.resolver,
+        work_item_search.graphql.http,
+        work_item_search.credentials,
+        work_item_search.audit,
+        work_item_search.credential_refresh,
+    )
     return OnesToolRegistry(
         authenticate=work_item_search.authenticate,
-        tools=(work_item_search,),
+        tools=(work_item_search, project_role_members),
         audit=work_item_search.audit,
     )

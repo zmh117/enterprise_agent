@@ -52,14 +52,37 @@ class OnesProviderHttpClient:
         *,
         headers: dict[str, str],
     ) -> dict[str, Any]:
+        return self._request_json("POST", path, payload, headers=headers)
+
+    def get_json(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
+        return self._request_json("GET", path, payload, headers=headers)
+
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
+        if method not in {"GET", "POST"}:
+            raise ValueError("ONES Provider method is not supported")
         if not path.startswith("/") or "://" in path or "?" in path or "#" in path:
             raise ValueError("ONES Provider path must be a fixed absolute path")
+        if not isinstance(payload, dict):
+            raise ValueError("ONES Provider JSON payload must be an object")
         assert_external_io_allowed("ones_mcp.provider")
         request = Request(
             self.target.base_url + path,
             data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
             headers={"Accept": "application/json", "Content-Type": "application/json", **headers},
-            method="POST",
+            method=method,
         )
         try:
             if self._open_response is not None:

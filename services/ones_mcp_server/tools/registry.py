@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from app.modules.mcp_audit import McpAuditCoordinator
+from app.shared.exceptions import AppError
 from services.ones_mcp_server.errors import OnesMcpError
 
 
@@ -11,10 +12,13 @@ class OnesToolHandler(Protocol):
     tool_identifier: str
     description: str
     input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
     read_only: bool
     destructive: bool
     idempotent: bool
     open_world: bool
+
+    def authenticate(self, token: str) -> dict[str, Any]: ...
 
     def invoke(
         self,
@@ -47,8 +51,35 @@ class OnesToolRegistry:
         self._tools = registered
         self.audit = audit
 
-    def authenticate(self, token: str) -> dict[str, Any]:
-        return self._authenticate(token)
+    def authenticate(
+        self,
+        token: str,
+        *,
+        tool_identifier: str | None = None,
+    ) -> dict[str, Any]:
+        if tool_identifier is None:
+            return self._authenticate(token)
+        return self.require(tool_identifier).authenticate(token)
+
+    def authorized_tools(self, token: str) -> tuple[OnesToolHandler, ...]:
+        authorized: list[OnesToolHandler] = []
+        first_error: AppError | None = None
+        for tool in self.tools:
+            try:
+                tool.authenticate(token)
+                authorized.append(tool)
+            except AppError as exc:
+                if first_error is None:
+                    first_error = exc
+        if not authorized:
+            if first_error is not None:
+                raise first_error
+            raise OnesMcpError(
+                "ONES MCP has no authorized Tool",
+                safe_message="当前任务没有可用的 ONES 工具",
+                error_code="ones_mcp_tool_denied",
+            )
+        return tuple(authorized)
 
     def require(self, tool_identifier: str) -> OnesToolHandler:
         try:

@@ -137,13 +137,14 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
         _params: types.PaginatedRequestParams | None,
     ) -> types.ListToolsResult:
         request = _request(context)
-        registry.authenticate(_bearer(request))
+        authorized_tools = registry.authorized_tools(_bearer(request))
         return types.ListToolsResult(
             tools=[
                 types.Tool(
                     name=tool.tool_identifier,
                     description=tool.description,
                     input_schema=tool.input_schema,
+                    output_schema=tool.output_schema,
                     annotations=types.ToolAnnotations(
                         read_only_hint=tool.read_only,
                         destructive_hint=tool.destructive,
@@ -151,7 +152,7 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
                         open_world_hint=tool.open_world,
                     ),
                 )
-                for tool in registry.tools
+                for tool in authorized_tools
             ]
         )
 
@@ -161,8 +162,11 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
     ) -> types.CallToolResult:
         request = _request(context)
         try:
-            claims = registry.authenticate(_bearer(request))
             tool = registry.require(params.name)
+            claims = registry.authenticate(
+                _bearer(request),
+                tool_identifier=tool.tool_identifier,
+            )
             result = await asyncio.to_thread(
                 tool.invoke,
                 claims=claims,
@@ -195,7 +199,7 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
     return Server(
         "Enterprise ONES MCP",
         version=SERVER_VERSION,
-        instructions="Identity-aware ONES work-item search only.",
+        instructions="Identity-aware, code-registered, read-only ONES tools.",
         on_list_tools=list_tools,
         on_call_tool=call_tool,
     )
