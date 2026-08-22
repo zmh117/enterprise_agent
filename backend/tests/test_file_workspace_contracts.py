@@ -89,6 +89,26 @@ def test_file_tool_manifest_is_fixed_closed_and_contains_no_execution_escape_hat
         assert global_tool.read_only is (not tool.mutating)
 
 
+def test_file_tool_descriptions_define_catalog_document_materialization_handoff() -> None:
+    search = FILE_TOOL_MANIFEST["task_workspace_search_files"].description
+    metadata = FILE_TOOL_MANIFEST["file_get_metadata"].description
+    materialize = FILE_TOOL_MANIFEST["file_prepare_materialization"].description
+
+    assert "直接调用file_prepare_materialization" in search
+    assert "不要先调用file_get_metadata" in search
+    assert "DIRECT_TEXT、AVAILABLE或PARTIAL" in search
+    assert "PROCESSING表示仍在处理" in search
+    assert "NO_TEXT、FAILED和CONTENT_UNAVAILABLE" in search
+    assert "仅查询当前Job初始File Manifest" in metadata
+    assert "不要对task_workspace_search_files返回的目录候选" in metadata
+    assert "初始Manifest条目" in materialize
+    assert "冻结目录候选" in materialize
+    assert "DIRECT_TEXT的TXT、只读LOG和Markdown" in materialize
+    assert "PDF、DOCX、PPTX、XLSX、PNG、JPEG和WebP" in materialize
+    assert "只读Markdown representation" in materialize
+    assert "原始二进制不进入Sandbox" in materialize
+
+
 @pytest.mark.parametrize("forbidden", sorted(FORBIDDEN_INPUT_FIELDS))
 def test_file_tool_schemas_reject_identity_location_and_dynamic_execution_fields(
     forbidden: str,

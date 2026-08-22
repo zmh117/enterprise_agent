@@ -110,9 +110,11 @@ class AgentContextBuilder:
                     (
                         "Do not modify code, databases, Redis, services, or deployments. You may "
                         "read and search authorized UTF-8 TXT/LOG/Markdown files inside the current "
-                        "Job Sandbox; LOG is read-only and only TXT/Markdown may be created or "
-                        "edited; persist a file only through an explicitly frozen File MCP commit "
-                        "tool."
+                        "Job Sandbox; governed PDF/Office/image sources remain outside the Sandbox "
+                        "and are readable only through an authorized Markdown representation. This "
+                        "Sandbox restriction does not mean those document sources are unsupported. "
+                        "LOG is read-only and only TXT/Markdown may be created or edited; persist a "
+                        "file only through an explicitly frozen File MCP commit tool."
                     )
                     if file_job
                     else "Do not modify code, databases, Redis, services, deployments, or files."
@@ -232,12 +234,23 @@ def _tool_restrictions(
     if file_job:
         readable_formats = "TXT/LOG/Markdown"
         writable_formats = "TXT/Markdown"
-        candidate_instruction = "For other workspace candidates, page task_workspace_search_files over the Job-frozen catalog, choose the exact returned File/Version, then call file_prepare_materialization before reading; never declare workspace, tenant, catalog revision, object location, or credentials."
+        candidate_instruction = (
+            "For other workspace candidates, page task_workspace_search_files over the "
+            "Job-frozen catalog and choose the exact returned File/Version. The search result "
+            "already contains the safe metadata needed for selection: never call "
+            "file_get_metadata for a catalog search result. When readability_status is "
+            "DIRECT_TEXT, AVAILABLE, or PARTIAL, call file_prepare_materialization directly "
+            "before reading. Governed "
+            "PDF/DOCX/PPTX/XLSX/PNG/JPEG/WebP sources materialize as read-only Markdown "
+            "representations; their original binaries never enter the Sandbox. Never declare "
+            "workspace, tenant, catalog revision, object location, or credentials."
+        )
         restrictions.extend(
             [
                 f"Current-message and explicitly referenced {readable_formats} files are materialized by Runtime before model execution; read them from the runtime_materialized_files sandbox paths.",
+                "An empty file_manifest or task_workspace_list_files result means only that the Job has no initial file entries; it does not prove the workspace catalog is empty or that workspace files are unauthorized. Use task_workspace_search_files when the user asks for other, historical, or time-filtered workspace files.",
                 candidate_instruction,
-                "If file_get_metadata or list_files shows readability_status PENDING, NO_TEXT, or UNAVAILABLE, do not invent document body and do not infer content from the file name; tell the user readable content is not ready or failed, and continue answering unrelated questions. Call file_prepare_materialization only after AVAILABLE or PARTIAL, and treat file_readable_content_not_ready or file_processing_failed as terminal for that file.",
+                "Interpret readability_status by its current source: DIRECT_TEXT or NOT_REQUIRED means direct text is ready; AVAILABLE or PARTIAL means a governed Markdown representation is ready; PENDING or PROCESSING means wait; NO_TEXT, UNAVAILABLE, FAILED, or CONTENT_UNAVAILABLE means the file is currently unreadable. For waiting or unreadable states, do not invent document body or infer content from the file name; explain the state and continue answering unrelated questions. Call file_prepare_materialization only for ready states, and treat file_readable_content_not_ready or file_processing_failed as terminal for that tool call.",
                 "File MCP and file_manifest timestamps (source_received_at, version_created_at, observed_at, representation_created_at, expires_at) are canonical UTC RFC 3339 machine values and must be used as UTC instants for comparisons. In every user-visible answer, convert file timestamps to Asia/Shanghai (UTC+08:00) before display and label upload timestamps as 上传时间（东八区） or 北京时间; never display 上传时间（UTC） or a raw Z/+00:00 timestamp unless the user explicitly asks for UTC. For relative upload-time requests, compare source_received_at with the service-provided observed_at; do not treat version_created_at or a generic created_at as upload time.",
                 f"Use only Read, Glob, Grep, Edit, and Write with safe relative {readable_formats} paths; create files only in work or outputs, edit only authorized existing inputs, and never write internal tmp; LOG remains read-only.",
                 f"To persist an output, select one exact sandbox {writable_formats} file and then use the frozen File MCP commit flow; never assume a local edit changed File Service state.",

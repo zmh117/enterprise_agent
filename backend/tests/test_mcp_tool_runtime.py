@@ -432,7 +432,13 @@ def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_too
 
 
 def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -> None:
-    registry = _NoPrefetchToolRegistry(["file_prepare_materialization"])
+    registry = _NoPrefetchToolRegistry(
+        [
+            "task_workspace_search_files",
+            "file_get_metadata",
+            "file_prepare_materialization",
+        ]
+    )
     builder = AgentContextBuilder(
         tool_registry=registry,  # type: ignore[arg-type]
         skill_loader=_SkillLoader(),  # type: ignore[arg-type]
@@ -456,7 +462,11 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
 
     context = builder.build(job)  # type: ignore[arg-type]
 
-    assert context.allowed_tools == ["file_prepare_materialization"]
+    assert context.allowed_tools == [
+        "task_workspace_search_files",
+        "file_get_metadata",
+        "file_prepare_materialization",
+    ]
     assert context.retrieved_context["file_manifest"]["items"][0][
         "version_id"
     ] == "version-context-1"
@@ -466,7 +476,16 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
     restrictions = " ".join(context.tool_restrictions)
     assert "runtime_materialized_files" in restrictions
     assert "file_manifest" in restrictions
+    assert "empty file_manifest" in restrictions
+    assert "does not prove the workspace catalog is empty" in restrictions
+    assert "never call file_get_metadata for a catalog search result" in restrictions
+    assert "call file_prepare_materialization directly" in restrictions
+    assert "DIRECT_TEXT, AVAILABLE, or PARTIAL" in restrictions
+    assert "PDF/DOCX/PPTX/XLSX/PNG/JPEG/WebP" in restrictions
+    assert "read-only Markdown representations" in restrictions
     assert "readability_status" in restrictions
+    assert "PENDING or PROCESSING means wait" in restrictions
+    assert "NO_TEXT, UNAVAILABLE, FAILED, or CONTENT_UNAVAILABLE" in restrictions
     assert "file_readable_content_not_ready" in restrictions
     assert "Read, Glob, Grep, Edit, and Write" in restrictions
     assert "source_received_at" in restrictions
@@ -477,6 +496,9 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
     assert "Asia/Shanghai (UTC+08:00)" in restrictions
     assert "上传时间（东八区）" in restrictions
     assert "never display 上传时间（UTC）" in restrictions
+    safety_rules = " ".join(context.safety_rules)
+    assert "governed PDF/Office/image sources" in safety_rules
+    assert "does not mean those document sources are unsupported" in safety_rules
 
 
 def test_text_v2_context_exposes_log_read_only_and_markdown_output_rules() -> None:

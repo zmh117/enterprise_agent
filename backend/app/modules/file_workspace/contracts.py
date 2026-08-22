@@ -206,21 +206,21 @@ FILE_TOOL_MANIFEST: Mapping[str, FileToolDefinition] = MappingProxyType(
         ),
         "task_workspace_search_files": _tool(
             "task_workspace_search_files",
-            "按当前RUNNING Job冻结的工作区目录版本分页搜索安全文件元数据；只接受有界名称、格式、来源时间和可读状态过滤，不返回正文、对象位置或凭据。",
+            "按当前RUNNING Job冻结的工作区目录版本分页搜索安全文件元数据；只接受有界名称、格式、来源时间和可读状态过滤，不返回正文、对象位置或凭据。搜索结果已经包含选择文件所需的安全元数据；对readability_status为DIRECT_TEXT、AVAILABLE或PARTIAL的精确File/Version，需要读取正文时直接调用file_prepare_materialization，不要先调用file_get_metadata。PROCESSING表示仍在处理；NO_TEXT、FAILED和CONTENT_UNAVAILABLE表示当前不可读。",
             _SEARCH_FILES_SCHEMA,
             operation="task_workspace.files.search",
             mutating=False,
         ),
         "file_get_metadata": _tool(
             "file_get_metadata",
-            "查询当前 Job File Manifest 中精确文件版本的安全元数据，并明确返回来源接收时间、版本创建时间和查询边界；这些时间均为 UTC RFC 3339 机器值。",
+            "仅查询当前Job初始File Manifest中精确文件版本的安全元数据，并明确返回来源接收时间、版本创建时间和查询边界；这些时间均为UTC RFC 3339机器值。不要对task_workspace_search_files返回的目录候选调用本工具；搜索结果已包含安全元数据，需要正文时直接调用file_prepare_materialization。",
             dict(_FILE_VERSION_SCHEMA),
             operation="file.metadata.read",
             mutating=False,
         ),
         "file_prepare_materialization": _tool(
             "file_prepare_materialization",
-            "为 Manifest 中获授权的 TXT、只读 LOG 或 Markdown 精确版本创建一次受控物化意图；字节由 Runtime 文件桥传输。",
+            "为当前Job初始Manifest条目或task_workspace_search_files返回的冻结目录候选创建受控物化意图。readability_status为DIRECT_TEXT的TXT、只读LOG和Markdown物化精确文本版本；readability_status为AVAILABLE或PARTIAL的PDF、DOCX、PPTX、XLSX、PNG、JPEG和WebP物化其精确只读Markdown representation，原始二进制不进入Sandbox。字节由Runtime文件桥传输。",
             _MATERIALIZE_SCHEMA,
             operation="file.materialization.prepare",
             mutating=False,
@@ -340,6 +340,9 @@ FILE_ERROR_CATALOG: Mapping[str, FileErrorDefinition] = MappingProxyType(
         "file_access_denied": FileErrorDefinition("NEVER", "无权访问该文件"),
         "file_manifest_version_not_found": FileErrorDefinition(
             "NEVER", "文件版本不在当前任务清单中"
+        ),
+        "file_catalog_candidate_requires_materialization": FileErrorDefinition(
+            "NEVER", "目录搜索结果已包含元数据；需要正文时请直接物化文件"
         ),
         "file_content_unavailable": FileErrorDefinition(
             "NEVER", "文件内容已不可用，请重新发送文件"

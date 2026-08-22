@@ -1319,9 +1319,29 @@ class SchemaHeadValidator:
         self.migrations_dir = migrations_dir
 
     def require_current(self) -> str:
+        return self.require_current_or_previous()
+
+    def require_current_or_previous(
+        self,
+        *,
+        allowed_previous_heads: frozenset[str] = frozenset(),
+    ) -> str:
+        """Validate the exact ledger while allowing an explicit prior release head.
+
+        Normal services call ``require_current`` and remain strict. Maintenance
+        tooling that must run before a contract migration may name the exact prior
+        head it was built to clean up; arbitrary or unknown ledger heads are rejected.
+        """
+
         full_catalog = load_migration_catalog(self.migrations_dir)
         catalog = deployable_migration_catalog(full_catalog)
         expected_head = catalog[-1].version
+        known_heads = {artifact.version for artifact in catalog}
+        unknown_allowed_heads = allowed_previous_heads - known_heads
+        if unknown_allowed_heads:
+            unknown = ", ".join(sorted(unknown_allowed_heads))
+            raise SchemaHeadError(f"Allowed previous schema head is unknown: {unknown}")
+        accepted_heads = {expected_head, *allowed_previous_heads}
         try:
             if not self._ledger_exists():
                 raise SchemaHeadError(
@@ -1351,16 +1371,22 @@ class SchemaHeadValidator:
                     catalog=catalog,
                     manifest=manifest,
                     adoptions=adoptions,
-                    require_full=True,
+                    require_full=not allowed_previous_heads,
                 )
             else:
                 migrator._validate_applied_prefix(records, catalog)
-                current_head = str(records[-1]["version"]) if records else "none"
-                if len(records) != len(catalog):
+                if not allowed_previous_heads and len(records) != len(catalog):
+                    current_head = str(records[-1]["version"]) if records else "none"
                     raise SchemaHeadError(
                         f"Database schema head is {current_head}; expected {expected_head}"
                     )
-            return expected_head
+            current_head = str(records[-1]["version"]) if records else "none"
+            if current_head not in accepted_heads:
+                accepted = ", ".join(sorted(accepted_heads))
+                raise SchemaHeadError(
+                    f"Database schema head is {current_head}; expected one of {accepted}"
+                )
+            return current_head
         except SchemaHeadError:
             raise
         except MigrationDefinitionError as exc:

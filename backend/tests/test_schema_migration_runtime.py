@@ -168,6 +168,32 @@ def test_migration_catalog_rejects_duplicate_versions_before_database_access(
         load_migration_catalog(tmp_path)
 
 
+def test_schema_head_validator_allows_only_an_explicit_previous_head(tmp_path: Path) -> None:
+    migrations = tmp_path / "migrations"
+    migrations.mkdir()
+    (migrations / "001_initial.sql").write_text(
+        "create table example (id text primary key);\n",
+        encoding="utf-8",
+    )
+    database = Database(f"sqlite:///{tmp_path / 'previous-head.db'}")
+    Migrator(database, migrations, migrator_build="previous-head-test").run()
+    (migrations / "002_contract.sql").write_text(
+        "alter table example add column value text;\n",
+        encoding="utf-8",
+    )
+
+    validator = SchemaHeadValidator(database, migrations)
+    assert validator.require_current_or_previous(
+        allowed_previous_heads=frozenset({"001"})
+    ) == "001"
+    with pytest.raises(SchemaHeadError, match="expected 002"):
+        validator.require_current()
+    with pytest.raises(SchemaHeadError, match="unknown"):
+        validator.require_current_or_previous(
+            allowed_previous_heads=frozenset({"999"})
+        )
+
+
 @pytest.mark.parametrize("name", ["099_reused.sql", "100a_reused.sql"])
 def test_baseline_catalog_forbids_reusing_versions_before_101(
     tmp_path: Path,

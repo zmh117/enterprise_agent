@@ -162,6 +162,14 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
         workspace_id="workspace-private",
         logical_name="private.txt",
     )
+    _create_file(
+        repository,
+        file_id="file-catalog-candidate",
+        version_id="version-catalog-candidate",
+        owner=owner,
+        workspace_id="workspace-private",
+        logical_name="catalog-candidate.txt",
+    )
     _create_job(
         database,
         job_id="job-private",
@@ -190,6 +198,7 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
     )
     access = _BusinessAccess()
     authorization = FileAuthorizationService(database, access)
+    application = FileWorkspaceApplicationService(repository, authorization)
     context = authorization.require_job(
         claims=_claims(
             job_id="job-private",
@@ -206,8 +215,21 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
         action=FileAction.MATERIALIZE,
     )["version_id"] == "version-private"
     assert access.calls[-1]["stage"] == "file_principal_resolve"
+    with pytest.raises(PermissionDenied) as catalog_candidate_error:
+        application.invoke(
+            context=context,
+            tool_identifier="file_get_metadata",
+            arguments={
+                "file_id": "file-catalog-candidate",
+                "version_id": "version-catalog-candidate",
+            },
+        )
+    assert (
+        catalog_candidate_error.value.error_code
+        == "file_catalog_candidate_requires_materialization"
+    )
+    assert "file_prepare_materialization" in catalog_candidate_error.value.safe_message
 
-    application = FileWorkspaceApplicationService(repository, authorization)
     workspace = application.invoke(
         context=context,
         tool_identifier="task_workspace_get",
@@ -238,6 +260,14 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
         arguments={},
     )
     assert [item["file_id"] for item in listed_again["items"]] == ["file-private"]
+    with pytest.raises(PermissionDenied) as post_freeze_error:
+        authorization.require_manifest_action(
+            context,
+            file_id="file-after-freeze",
+            version_id="version-after-freeze",
+            action=FileAction.READ_METADATA,
+        )
+    assert post_freeze_error.value.error_code == "file_manifest_item_denied"
 
     metadata = application.invoke(
         context=context,

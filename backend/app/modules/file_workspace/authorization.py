@@ -147,7 +147,21 @@ class FileAuthorizationService:
             """,
             (context.manifest["id"], file_id, version_id),
         )
-        if item is None or str(item.get("tenant_id")) != str(context.claims["tenant_id"]):
+        if item is None:
+            if action is FileAction.READ_METADATA and self._is_frozen_catalog_candidate(
+                context,
+                file_id=file_id,
+                version_id=version_id,
+            ):
+                self._deny(
+                    "file_catalog_candidate_requires_materialization",
+                    safe_message=(
+                        "目录搜索结果已包含安全元数据；需要读取内容时请直接调用 "
+                        "file_prepare_materialization"
+                    ),
+                )
+            self._deny("file_manifest_item_denied")
+        if str(item.get("tenant_id")) != str(context.claims["tenant_id"]):
             self._deny("file_manifest_item_denied")
         assert item is not None
         try:
@@ -370,6 +384,41 @@ class FileAuthorizationService:
         item["allowed_actions_json"] = json.dumps([FileAction.MATERIALIZE.value])
         return item
 
+    def _is_frozen_catalog_candidate(
+        self,
+        context: FileAuthorizationContext,
+        *,
+        file_id: str,
+        version_id: str,
+    ) -> bool:
+        catalog_revision_id = str(
+            context.manifest.get("workspace_catalog_revision_id") or ""
+        )
+        if not catalog_revision_id:
+            return False
+        return (
+            self.database.execute_one(
+                """
+                select 1 as present
+                  from task_workspace_catalog_revision revision
+                  join task_workspace_catalog_member member
+                    on member.workspace_id = revision.workspace_id
+                   and member.valid_from_revision <= revision.revision
+                   and (member.valid_to_revision is null
+                        or member.valid_to_revision > revision.revision)
+                 where revision.id = ? and revision.workspace_id = ?
+                   and member.file_id = ? and member.version_id = ?
+                """,
+                (
+                    catalog_revision_id,
+                    context.workspace["id"],
+                    file_id,
+                    version_id,
+                ),
+            )
+            is not None
+        )
+
     @staticmethod
     def _require_owner(row: dict[str, Any], *, sender_user_id: str) -> None:
         owner_type = WorkspaceOwnerType(str(row.get("owner_type") or ""))
@@ -387,9 +436,9 @@ class FileAuthorizationService:
             FileAuthorizationService._deny("file_group_boundary_denied")
 
     @staticmethod
-    def _deny(code: str) -> Never:
+    def _deny(code: str, *, safe_message: str = "当前任务无权访问该文件") -> Never:
         raise PermissionDenied(
             "File authorization denied",
-            safe_message="当前任务无权访问该文件",
+            safe_message=safe_message,
             error_code=code,
         )

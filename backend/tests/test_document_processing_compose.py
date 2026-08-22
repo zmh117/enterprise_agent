@@ -20,7 +20,7 @@ def test_docling_image_is_digest_pinned_offline_nonroot_and_internal_only() -> N
     service = compose["services"]["docling-serve"]
     environment = service["environment"]
 
-    assert service["image"] == "enterprise-agent/docling-serve:v1.30.0-layout-ocr-v1"
+    assert service["image"] == "enterprise-agent/docling-serve:v1.30.0-layout-ocr-v2"
     assert service["build"] == {
         "context": ".",
         "dockerfile": "backend/docker/docling-serve/Dockerfile",

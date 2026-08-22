@@ -5,19 +5,26 @@ import json
 import sys
 from collections.abc import Sequence
 
-from app.bootstrap import build_worker_container
 from app.modules.file_workspace.open_test_reset import OpenTestFileDomainResetService
 from app.modules.file_workspace.storage import (
     FileObjectStorageSettings,
     MinioFileObjectStorage,
 )
+from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
+from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import load_settings
+from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import AppError
+from app.shared.master_key import load_master_key_settings
+from app.shared.migrations import SchemaHeadValidator
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Guarded destructive reset for open-test file and Job facts"
+        description=(
+            "Guarded destructive reset for open-test file/Job facts and incompatible "
+            "single-contract configuration"
+        )
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("report", help="Print redacted counts and an exact inventory digest")
@@ -29,30 +36,35 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = load_settings()
-    runtime = build_worker_container(
-        settings,
-        seed=False,
-        service_name="file-service",
-    )
-    settings = runtime.settings
-
-    def storage(bucket: str) -> MinioFileObjectStorage:
-        return MinioFileObjectStorage(
-            FileObjectStorageSettings(
-                endpoint_url=settings.file_service.endpoint_url,
-                bucket=bucket,
-                access_key_ref=settings.file_service.access_key_ref,
-                secret_key_ref=settings.file_service.secret_key_ref,
-                region=settings.file_service.region,
-                secure=settings.file_service.secure,
-            ),
-            runtime.platform_config_service.resolve_secret,
+    settings = load_master_key_settings(load_settings())
+    database = Database(settings.database_dsn)
+    try:
+        SchemaHeadValidator(
+            database,
+            default_migrations_dir(),
+        ).require_current_or_previous(
+            allowed_previous_heads=frozenset({"118"}),
+        )
+        secret_provider = EncryptedDbSecretProvider(
+            PlatformConfigRepository(database),
+            master_key=settings.app_config_master_key,
         )
 
-    try:
+        def storage(bucket: str) -> MinioFileObjectStorage:
+            return MinioFileObjectStorage(
+                FileObjectStorageSettings(
+                    endpoint_url=settings.file_service.endpoint_url,
+                    bucket=bucket,
+                    access_key_ref=settings.file_service.access_key_ref,
+                    secret_key_ref=settings.file_service.secret_key_ref,
+                    region=settings.file_service.region,
+                    secure=settings.file_service.secure,
+                ),
+                secret_provider.resolve,
+            )
+
         service = OpenTestFileDomainResetService(
-            runtime.database,
+            database,
             storage(settings.file_service.bucket),
             storage(settings.file_service.legacy_attachment_bucket),
         )
@@ -90,7 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
     finally:
-        runtime.database.close()
+        database.close()
 
 
 if __name__ == "__main__":
