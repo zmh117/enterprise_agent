@@ -35,11 +35,9 @@ from app.modules.authorization_center import (
 )
 from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.attachments.dingtalk_downloader import DingTalkMediaDownloader
-from app.modules.attachments.domain import ObjectStorage
-from app.modules.attachments.extraction import SafeAttachmentExtractor
+from app.modules.attachments.domain import AttachmentImporter
 from app.modules.attachments.file_service_client import FileServiceAttachmentImporter
 from app.modules.attachments.service import AttachmentProcessingService
-from app.modules.attachments.storage import InMemoryObjectStorage
 from app.modules.business_application.application import (
     BusinessApplicationResolver,
     BusinessApplicationService,
@@ -222,7 +220,6 @@ class Container:
     delivery_dispatcher: DeliveryOutboxDispatcher
     agent_executor: AgentExecutor
     retry_service: JobRetryService
-    object_storage: ObjectStorage | None
     attachment_service: AttachmentProcessingService | None
     webhook_trigger_repository: WebhookTriggerRepository
     webhook_event_repository: WebhookEventRepository
@@ -361,6 +358,7 @@ def build_test_container(
     service_name: str = "test-runtime",
     permission_service_factory: PermissionServiceFactory | None = None,
     reuse_migrated_sqlite_template: bool = True,
+    attachment_importer_override: AttachmentImporter | None = None,
 ) -> Container:
     template = (
         _MIGRATED_SQLITE_TEMPLATE_CACHE.get(default_migrations_dir())
@@ -400,6 +398,7 @@ def build_test_container(
         seed=seed,
         use_real_claude=False,
         permission_service_factory=permission_service_factory,
+        attachment_importer_override=attachment_importer_override,
     )
     if seed and configure_seed_secrets:
         _configure_test_seed_secrets(runtime)
@@ -518,6 +517,7 @@ def _build_container(
     use_real_claude: bool,
     permission_service_factory: PermissionServiceFactory | None = None,
     runtime_client_override: AgentRuntimeClient | None = None,
+    attachment_importer_override: AttachmentImporter | None = None,
 ) -> Container:
     database = database or Database(settings.database_dsn)
     if seed:
@@ -1033,14 +1033,10 @@ def _build_container(
         file_delivery_sender=file_delivery_sender,
         file_delivery_service=file_version_delivery_service,
     )
-    object_storage: ObjectStorage | None = InMemoryObjectStorage(
-        settings.file_service.legacy_attachment_bucket
-    )
-    attachment_importer = None
+    attachment_importer = attachment_importer_override
     if service_name == "file-worker" and message_bus is None:
         if not settings.service_principal.enabled:
             raise RuntimeError("File Worker Service Principal is disabled")
-        object_storage = None
         file_worker_token_provider = ServicePrincipalTokenClient(
             base_url=settings.service_principal.identity_base_url,
             allowed_hosts=settings.service_principal.identity_allowed_hosts,
@@ -1055,7 +1051,9 @@ def _build_container(
             timeout_seconds=settings.file_service.internal_timeout_seconds,
         )
     attachment_service: AttachmentProcessingService | None = None
-    if credential_cipher is not None and (service_name == "file-worker" or message_bus is not None):
+    if credential_cipher is not None and service_name == "file-worker":
+        if attachment_importer is None:
+            raise RuntimeError("File Worker attachment importer is unavailable")
 
         def resolve_dingtalk_media_credentials(
             connector_id: str,
@@ -1078,9 +1076,7 @@ def _build_container(
                 robot_code=settings.dingtalk.default_robot_code,
                 timeout_seconds=settings.attachments.timeout_seconds,
             ),
-            storage=object_storage,
             importer=attachment_importer,
-            extractor=SafeAttachmentExtractor(settings.attachments),
             settings=settings.attachments,
             delivery_service=result_delivery_service,
             file_manifest_service=file_manifest_service,
@@ -1158,7 +1154,6 @@ def _build_container(
         delivery_dispatcher=delivery_dispatcher,
         agent_executor=agent_executor,
         retry_service=retry_service,
-        object_storage=object_storage,
         attachment_service=attachment_service,
         webhook_trigger_repository=webhook_trigger_repository,
         webhook_event_repository=webhook_event_repository,

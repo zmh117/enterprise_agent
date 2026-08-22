@@ -51,14 +51,12 @@ def _build_readiness(
     rabbitmq_ready = _check_rabbitmq(settings.rabbitmq_url)
     master_key_ready = bool(settings.app_config_master_key)
     agent_runtimes = _check_agent_runtimes(settings)
-    runtime_assembly_ready = not settings.agent_runtime.retired_configuration_keys
     core_ready = all(
         (
             database_ready,
             schema_ready,
             rabbitmq_ready,
             master_key_ready,
-            runtime_assembly_ready,
         )
     )
     result = {
@@ -69,7 +67,7 @@ def _build_readiness(
             "schema_head": schema_head,
             "rabbitmq": rabbitmq_ready,
             "master_key": master_key_ready,
-            "runtime_assembly": runtime_assembly_ready,
+            "runtime_assembly": True,
             "agent_runtimes": agent_runtimes,
         },
         "tool_mcp": {
@@ -83,7 +81,6 @@ def _build_readiness(
             "default_runtime": "python-v1",
             "supported_runtimes": ["python-v1"],
             "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
-            "retired_configuration_keys": list(settings.agent_runtime.retired_configuration_keys),
         },
         **_runtime_config_status(settings),
     }

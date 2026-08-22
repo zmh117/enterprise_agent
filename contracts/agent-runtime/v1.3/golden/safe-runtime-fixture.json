@@ -23,7 +23,7 @@
     "cache_creation_input_tokens": 0
   },
   "runtime_provenance": {
-    "runtime_kind": "typescript-v1",
+    "runtime_kind": "python-v1",
     "runtime_version": "0.1.0",
     "protocol_version": "1.3",
     "sdk_version": "0.3.226",
@@ -217,7 +217,7 @@
         "permission_denials_count": 0
       },
       "runtime_provenance": {
-        "runtime_kind": "typescript-v1",
+        "runtime_kind": "python-v1",
         "runtime_version": "0.1.0",
         "protocol_version": "1.3",
         "sdk_version": "0.3.226",

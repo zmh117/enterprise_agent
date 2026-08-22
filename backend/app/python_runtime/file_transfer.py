@@ -10,7 +10,6 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Protocol
 
 from app.modules.file_workspace.text_format_policy import (
-    FileFormatPolicyVersion,
     MAX_TEXT_BYTES,
     TextFormatCode,
     TextFormatDefinition,
@@ -37,7 +36,6 @@ class FileTransferContext:
     job_id: str
     workspace_path: Path
     principal_token: str
-    file_format_policy_version: str = "text-v1"
     sandbox: JobSandbox | None = None
 
 
@@ -102,7 +100,6 @@ def _identifier(value: object, field: str) -> str:
 def _relative_text_path(
     value: object,
     *,
-    policy_version: object,
     writable: bool,
 ) -> tuple[str, TextFormatDefinition]:
     if (
@@ -129,10 +126,7 @@ def _relative_text_path(
             "relative_path must remain inside the Job Sandbox",
         )
     try:
-        definition = text_format_for_name(
-            path.name,
-            policy_version=policy_version,
-        )
+        definition = text_format_for_name(path.name)
     except NonRetryableExecutionError as exc:
         raise FileTransferBoundaryError(
             "file_transfer_path_invalid",
@@ -207,7 +201,6 @@ def parse_file_transfer_control(result: object) -> dict[str, object]:
             )
         relative_path, definition = _relative_text_path(
             control.get("relative_path"),
-            policy_version=FileFormatPolicyVersion.TEXT_V2,
             writable=False,
         )
         if definition.code.value != format_code:
@@ -349,7 +342,6 @@ class FileTransferCoordinator:
                 raise FileTransferBoundaryError(exc.code, str(exc)) from exc
         safe_path, definition = _relative_text_path(
             relative_path,
-            policy_version=context.file_format_policy_version,
             writable=True,
         )
         if PurePosixPath(safe_path).parts[0] not in {"work", "outputs"}:
@@ -434,7 +426,6 @@ class FileTransferCoordinator:
             )
         safe_path, definition = _relative_text_path(
             relative_path,
-            policy_version=context.file_format_policy_version,
             writable=False,
         )
         target = _sandbox_path(context.workspace_path, safe_path)
@@ -484,7 +475,6 @@ class FileTransferCoordinator:
         relative_path = str(control["relative_path"])
         _safe_path, definition = _relative_text_path(
             relative_path,
-            policy_version=context.file_format_policy_version,
             writable=False,
         )
         if definition.code.value != str(control.get("format_code") or "TXT"):

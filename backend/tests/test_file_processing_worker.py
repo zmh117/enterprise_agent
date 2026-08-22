@@ -15,7 +15,6 @@ from app.modules.document_processing.file_service_client import (
 from app.modules.document_processing.image_normalization import normalize_picture_asset
 from app.modules.document_processing.layout_ocr import adapt_docling_picture_result
 from app.modules.document_processing.profile import (
-    DOCLING_LAYOUT_OCR_V1,
     DOCLING_LAYOUT_OCR_V2,
     DocumentProcessingProfile,
 )
@@ -50,7 +49,7 @@ RUN = ClaimedDocumentRun(
     tenant_id="tenant-1",
     source_file_id="file-1",
     source_version_id="version-1",
-    profile_code="docling-text-v1",
+    profile_code="docling-layout-ocr-v2",
     profile_hash=MESSAGE.profile_hash,
     required_output_kinds=("MARKDOWN", "DOCLING_JSON"),
     run_deadline_at="",
@@ -77,7 +76,7 @@ LAYOUT_MESSAGE = FileProcessingTaskMessage(
     contract_version="file-processing/v1",
     run_id="run-layout",
     source_version_id="version-layout",
-    profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+    profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
     attempt=0,
     correlation_id="correlation-layout",
 )
@@ -86,8 +85,8 @@ LAYOUT_RUN = replace(
     run_id="run-layout",
     source_file_id="file-layout",
     source_version_id="version-layout",
-    profile_code="docling-layout-ocr-v1",
-    profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+    profile_code="docling-layout-ocr-v2",
+    profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
     required_output_kinds=("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON"),
     run_deadline_at="2026-08-21T12:30:00+00:00",
     assembly_status="PENDING",
@@ -232,7 +231,7 @@ class _LayoutProcessor(_Processor):
 class _LayoutFileService(_FileService):
     def __init__(
         self,
-        profile: DocumentProcessingProfile = DOCLING_LAYOUT_OCR_V1,
+        profile: DocumentProcessingProfile = DOCLING_LAYOUT_OCR_V2,
     ) -> None:
         self.profile = profile
         run = replace(
@@ -378,93 +377,6 @@ def _worker(
     )
 
 
-def test_worker_replays_submit_poll_fetch_stage_and_atomic_finalize() -> None:
-    files = _FileService()
-    processor = _Processor()
-    result = _worker(files, processor)(MESSAGE)
-
-    assert result.disposition is FileProcessingDisposition.ACK
-    assert [name for name, _ in processor.calls] == ["submit", "poll", "poll", "fetch"]
-    assert [name for name, _ in files.calls] == [
-        "claim",
-        "download",
-        "submitted",
-        "upload",
-        "upload",
-        "finalize",
-    ]
-    assert files.calls[3][1][0] == "MARKDOWN"
-    assert files.calls[4][1][0] == "DOCLING_JSON"
-
-
-def test_worker_restart_resumes_persisted_external_task_without_resubmission() -> None:
-    files = _FileService(replace(RUN, status="SUBMITTED", external_task_id="task-existing"))
-    processor = _Processor()
-    processor.poll_states = [ProcessorTaskState.SUCCESS]
-
-    result = _worker(files, processor)(replace(MESSAGE, redelivered=True))
-
-    assert result.disposition is FileProcessingDisposition.ACK
-    assert ("download", "run-1") not in files.calls
-    assert not any(name == "submit" for name, _ in processor.calls)
-    assert processor.calls[0] == ("poll", "task-existing")
-
-
-def test_worker_maps_no_text_without_creating_half_visible_representations() -> None:
-    files = _FileService()
-    processor = _Processor()
-    processor.poll_states = [ProcessorTaskState.SUCCESS]
-    processor.result = replace(RESULT, markdown=b"", no_text=True)
-
-    result = _worker(files, processor)(MESSAGE)
-
-    assert result.disposition is FileProcessingDisposition.ACK
-    assert any(name == "no_text" for name, _ in files.calls)
-    assert not any(name in {"upload", "finalize"} for name, _ in files.calls)
-
-
-def test_worker_retries_bounded_transient_failure_then_dead_letters_at_attempt_limit() -> None:
-    files = _FileService()
-    processor = _Processor()
-    processor.submit_failure = DocumentProcessorFailure(
-        "docling_service_unavailable", retryable=True
-    )
-    result = _worker(files, processor)(MESSAGE)
-    assert result.disposition is FileProcessingDisposition.RETRY
-    assert result.delay_seconds == 30
-    assert files.calls[-1][0] == "retry"
-
-    exhausted_files = _FileService(replace(RUN, attempt=3))
-    exhausted = _worker(exhausted_files, processor)(replace(MESSAGE, attempt=2))
-    assert exhausted.disposition is FileProcessingDisposition.DEAD
-    assert exhausted.error_code == "docling_service_unavailable"
-    assert exhausted_files.calls[-1][0] == "fail"
-
-
-def test_worker_total_timeout_is_retryable_and_never_logs_or_returns_content() -> None:
-    files = _FileService()
-    processor = _Processor()
-    clock = iter((0.0, 601.0))
-    result = _worker(files, processor, monotonic=lambda: next(clock))(MESSAGE)
-    assert result.disposition is FileProcessingDisposition.RETRY
-    assert result.error_code == "docling_processing_timeout"
-    assert "PDF" not in result.error_code
-
-
-def test_worker_maps_unexpected_failure_to_bounded_retry() -> None:
-    files = _FileService()
-    processor = _Processor()
-
-    def unexpected(**_: Any) -> ProcessorTask:
-        raise RuntimeError("confidential document body")
-
-    processor.submit = unexpected  # type: ignore[method-assign]
-    result = _worker(files, processor)(MESSAGE)
-    assert result.disposition is FileProcessingDisposition.RETRY
-    assert result.error_code == "document_processing_unexpected"
-    assert files.calls[-1][0] == "retry"
-
-
 def test_layout_parent_persists_parent_asset_occurrence_item_and_outbox_boundary() -> None:
     files = _LayoutFileService()
     processor = _LayoutProcessor()
@@ -552,7 +464,7 @@ def test_layout_picture_stage_stages_canonical_result_and_completes_item() -> No
         contract_version="file-picture-processing/v1",
         run_id="run-layout",
         picture_item_id="item-layout",
-        profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
         attempt=0,
         correlation_id="correlation-layout",
     )
@@ -604,7 +516,7 @@ def test_layout_picture_attempt_uses_frozen_120_second_deadline() -> None:
         contract_version="file-picture-processing/v1",
         run_id="run-layout",
         picture_item_id="item-layout",
-        profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
         attempt=0,
         correlation_id="correlation-layout",
     )
@@ -623,7 +535,7 @@ def test_layout_run_deadline_is_non_retryable_before_picture_ocr() -> None:
         contract_version="file-picture-processing/v1",
         run_id="run-layout",
         picture_item_id="item-layout",
-        profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
         attempt=0,
         correlation_id="correlation-layout",
     )
@@ -645,7 +557,7 @@ def test_layout_assembly_materializes_only_markdown_and_publishes_three_outputs(
     message = AssemblyTaskMessage(
         contract_version="file-processing-assembly/v1",
         run_id="run-layout",
-        profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
         attempt=0,
         correlation_id="correlation-layout",
     )
@@ -668,7 +580,7 @@ def test_layout_assembly_uses_frozen_120_second_deadline_and_fails_parent() -> N
     message = AssemblyTaskMessage(
         contract_version="file-processing-assembly/v1",
         run_id="run-layout",
-        profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
         attempt=0,
         correlation_id="correlation-layout",
     )

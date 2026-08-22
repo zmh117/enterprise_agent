@@ -105,7 +105,6 @@ def test_txt_stream_validation_accepts_input_bom_and_rejects_output_bom_encoding
     invalid_cases = [
         ([b"\xef\xbb\xbfhello"], "output.txt", "text/plain", True, "file_output_bom_forbidden"),
         (["中文".encode("utf-16")], "input.txt", "text/plain", False, "file_encoding_invalid"),
-        ([b"hello"], "input.md", "text/markdown", False, "file_type_unsupported"),
         ([b"x" * 17], "input.txt", "text/plain", False, "file_too_large"),
         ([b"abc\x00def"], "input.txt", "text/plain", False, "file_type_invalid"),
     ]
@@ -209,7 +208,7 @@ def test_workspace_quota_counts_logical_files_and_only_unretained_temporary_cont
            processor_version, processor_build_digest, profile_code, profile_hash,
            status, source_size_bytes, completed_at, created_by, created_at, updated_at)
         values ('quota-run', 'tenant-a', 'file-0', 'version-0', 'docling-serve',
-                '1.30.0', ?, 'docling-layout-ocr-v1', ?, 'SUCCEEDED', 5, ?,
+                '1.30.0', ?, 'docling-layout-ocr-v2', ?, 'SUCCEEDED', 5, ?,
                 'file-worker', ?, ?)
         """,
         ("sha256:" + "2" * 64, "3" * 64, TIMESTAMP, TIMESTAMP, TIMESTAMP),

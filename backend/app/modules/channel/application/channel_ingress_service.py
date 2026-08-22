@@ -10,6 +10,7 @@ from app.modules.business_application.domain import (
     RuntimeRouteResolution,
 )
 from app.modules.business_application.domain.policies import (
+    document_processing_profile_snapshot,
     publication_document_processing_profile,
 )
 from app.modules.channel.domain.channel_event import ChannelEvent
@@ -96,7 +97,11 @@ class ChannelIngressService:
             else {}
         )
         snapshot = (runtime.get("publication") or {}).get("snapshot") or {}
-        document_processing_profile, _ = publication_document_processing_profile(snapshot)
+        document_processing_profile, _ = (
+            publication_document_processing_profile(snapshot)
+            if runtime
+            else (document_processing_profile_snapshot("NONE"), "fixed_default")
+        )
         session_policy = snapshot.get("session_policy") or {}
         execution_policy = snapshot.get("execution_policy") or {}
         agent = snapshot.get("agent") or {}
@@ -191,7 +196,6 @@ class ChannelIngressService:
             task_workspace_retention_period=str(
                 snapshot.get("task_workspace_retention_period") or "WEEK"
             ),
-            file_format_policy_version=str(snapshot.get("file_format_policy_version") or "text-v1"),
             document_processing_profile_code=document_processing_profile["code"],
             task_file_features={
                 str(key): bool(value)

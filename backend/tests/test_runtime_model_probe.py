@@ -209,18 +209,18 @@ def test_runtime_probe_rejects_urls_outside_deployment_boundary(
         )
 
 
-def test_runtime_probe_rejects_retired_typescript_runtime_kind(tmp_path: Path) -> None:
+def test_runtime_probe_rejects_noncurrent_runtime_kind(tmp_path: Path) -> None:
     token = tmp_path / "probe-token"
     token.write_text("x" * 32, encoding="utf-8")
 
     with pytest.raises(ValueError, match="Only the Python Agent Runtime"):
         RuntimeModelProbeClient(
             RuntimeModelProbeSettings(
-                base_url="http://typescript-agent-runtime:8090",
-                allowed_hosts=("typescript-agent-runtime",),
+                base_url="http://old-agent-runtime:8090",
+                allowed_hosts=("old-agent-runtime",),
                 auth_token_file=str(token),
                 allow_insecure_internal_http=True,
-                runtime_kind="typescript-v1",
+                runtime_kind="old-runtime",
             )
         )
 

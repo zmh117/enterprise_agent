@@ -74,7 +74,7 @@ def test_file_turn_admission_expand_schema() -> None:
         default_migrations_dir(),
         migrator_build="file-turn-admission-schema-test",
     ).run()
-    assert result.head == "118"
+    assert result.head == "119"
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -158,7 +158,7 @@ def test_upgrade_from_114_preserves_existing_delivery_rows(tmp_path: Path) -> No
     _seed_delivery_row(database)
     upgraded = Migrator(
         database,
-        default_migrations_dir(),
+        _catalog_through(tmp_path, 118),
         migrator_build="file-turn-admission-after",
     ).run()
     assert upgraded.applied == ("115", "116", "117", "118")

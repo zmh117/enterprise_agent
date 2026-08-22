@@ -103,7 +103,7 @@ def test_runtime_event_repository_is_idempotent_and_rejects_gap_or_conflict() ->
     with pytest.raises(Exception) as conflict:
         runtime.agent_repository.record_runtime_event(
             job.id,
-            {**event, "payload": {"runtime_kind": "typescript-v1"}},
+            {**event, "payload": {"runtime_kind": "old-runtime"}},
         )
     assert getattr(conflict.value, "error_code", "") == "runtime_event_digest_conflict"
 

@@ -97,7 +97,7 @@ def test_tool_mcp_excludes_tools_owned_by_other_mcp_servers() -> None:
     assert denied.value.code == "tool_mcp_tool_denied"
 
 
-def test_standard_tool_mcp_invokes_python_job_and_rejects_retired_typescript_job() -> None:
+def test_standard_tool_mcp_invokes_current_python_job() -> None:
     runtime, job, service = _runtime_job()
 
     catalog = service.catalog(job.id)
@@ -114,15 +114,6 @@ def test_standard_tool_mcp_invokes_python_job_and_rejects_retired_typescript_job
     assert [item["tool_name"] for item in runtime.agent_repository.list_tool_calls(job.id)] == [
         "get_er_context"
     ]
-
-    runtime.database.execute(
-        "update agent_job set agent_runtime_kind = 'typescript-v1' where id = ?",
-        (job.id,),
-    )
-    with pytest.raises(ToolMcpError) as retired:
-        service.catalog(job.id)
-    assert retired.value.code == "tool_mcp_job_invalid"
-
 
 def test_standard_mcp_http_has_no_auth_protocol_and_rejects_credentials() -> None:
     _runtime, job, service = _runtime_job()

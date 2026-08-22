@@ -132,7 +132,6 @@ def _activate_debug_application(
     agent_publication_id: str,
     mcp_tool_ids: tuple[str, ...] = (),
     task_file_features: dict[str, bool] | None = None,
-    file_format_policy_version: str = "text-v1",
 ) -> dict[str, str]:
     suffix = uuid.uuid4().hex[:8]
     code = f"python-runtime-acceptance-{suffix}"
@@ -169,7 +168,6 @@ def _activate_debug_application(
             "deliveries": [],
             "mcp_tools": list(mcp_tool_ids),
             "task_workspace_retention_period": "DAY",
-            "file_format_policy_version": file_format_policy_version,
             "task_file_features": frozen_file_features,
         },
     )
@@ -646,7 +644,6 @@ def main() -> int:
             agent_publication_id=str(file_publication["id"]),
             mcp_tool_ids=FILE_READ_TOOLS,
             task_file_features=file_features,
-            file_format_policy_version="text-v2",
         )
         file_job_id = _create_debug_job(
             selection=file_selection,

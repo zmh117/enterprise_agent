@@ -69,7 +69,7 @@ export function AgentProfilesPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Agent 配置</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            新建 Agent 统一使用 Python Runtime；历史 TypeScript Agent 仅供查看。
+            新建 Agent 固定使用 Python Runtime。
           </p>
         </div>
         {canCreate ? (
@@ -332,7 +332,6 @@ function Workspace({
     connection.current_revision?.config.model ??
     agent.draft?.config.model_policy.model ??
     ""
-  const retired = agent.management_mode === "read_only_retired"
   return (
     <main className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -372,9 +371,7 @@ function Workspace({
 
       <Card className="border-amber-300/70 bg-amber-50/40 shadow-none dark:bg-amber-950/10">
         <CardContent className="py-4 text-sm text-muted-foreground">
-          {retired
-            ? "TypeScript Agent Runtime 已退役。此 Agent 及历史发布版本仅供查看，不能保存草稿、发布、回退、测试连接或重新激活。"
-            : "发布 Agent 配置只会生成新的 Agent 发布版本，不会自动切换任何业务应用。已激活应用仍使用它自己固定的 Agent 发布版本，需进入应用详情手动更新并重新发布。"}
+          发布 Agent 配置只会生成新的 Agent 发布版本，不会自动切换任何业务应用。已激活应用仍使用它自己固定的 Agent 发布版本，需进入应用详情手动更新并重新发布。
         </CardContent>
       </Card>
 
@@ -391,10 +388,10 @@ function Workspace({
           <ConnectionForm
             connection={connection}
             canManageCredential={
-              agent.permissions.can_manage_credential && !retired
+              agent.permissions.can_manage_credential
             }
             canTestConnection={
-              agent.permissions.can_test_connection && !retired
+              agent.permissions.can_test_connection
             }
           />
         </TabsContent>
@@ -402,7 +399,7 @@ function Workspace({
           <PublicationHistory
             agentCode={agent.definition.code}
             currentId={agent.definition.current_publication_id ?? ""}
-            canPublish={agent.permissions.can_publish && !retired}
+            canPublish={agent.permissions.can_publish}
           />
         </TabsContent>
       </Tabs>
@@ -1392,12 +1389,7 @@ function PublicationHistory({
               </div>
               <Button
                 variant="outline"
-                disabled={
-                  current ||
-                  rollback.isPending ||
-                  !canPublish ||
-                  publication.runtime_kind === "typescript-v1"
-                }
+                disabled={current || rollback.isPending || !canPublish}
                 onClick={() => rollback.mutate(publication.id)}
               >
                 <RotateCcwIcon />
@@ -1412,10 +1404,8 @@ function PublicationHistory({
   )
 }
 
-function runtimeKindLabel(runtimeKind: "python-v1" | "typescript-v1") {
-  return runtimeKind === "typescript-v1"
-    ? "TypeScript Runtime（已退役）"
-    : "Python Runtime"
+function runtimeKindLabel(runtimeKind: "python-v1") {
+  return runtimeKind === "python-v1" ? "Python Runtime" : "Runtime 无效"
 }
 
 function ReadOnlyModelSummary({

@@ -94,10 +94,8 @@ def _manifest_hash(value: object) -> str:
     ).hexdigest()
 
 
-def _project_file_manifest_for_runtime(
-    manifest: Mapping[str, Any], *, protocol_version: str
-) -> dict[str, Any]:
-    """Keep Manifest v5 as a control-plane fact and project the frozen v1.2/v1.3 shape."""
+def _require_current_file_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and pass Manifest v5 to Runtime without projection."""
 
     try:
         schema_version = int(manifest.get("schema_version") or 0)
@@ -108,29 +106,18 @@ def _project_file_manifest_for_runtime(
             error_code="file_manifest_runtime_invalid",
         ) from exc
     if schema_version != 5:
-        return {
-            **dict(manifest),
-            **(
-                {"items": [dict(item) for item in manifest.get("items") or []]}
-                if isinstance(manifest.get("items"), list)
-                else {}
-            ),
-        }
-    if protocol_version not in {"1.2", "1.3"}:
         raise NonRetryableExecutionError(
-            "Manifest v5 requires a supported file Runtime contract",
-            safe_message="任务文件清单与 Runtime 协议不兼容",
-            error_code="runtime_file_policy_mismatch",
+            "Only Manifest schema v5 can enter the current Runtime",
+            safe_message="任务文件清单版本不受支持",
+            error_code="file_manifest_schema_unsupported",
         )
     raw_items = manifest.get("items")
     catalog_revision_id = manifest.get("workspace_catalog_revision_id")
-    policy_version = str(manifest.get("file_format_policy_version") or "")
     if (
         not isinstance(raw_items, list)
         or any(not isinstance(item, dict) for item in raw_items)
         or not isinstance(catalog_revision_id, str)
         or not catalog_revision_id
-        or not policy_version
     ):
         raise NonRetryableExecutionError(
             "Manifest v5 projection facts are invalid",
@@ -142,34 +129,21 @@ def _project_file_manifest_for_runtime(
         {
             "schema_version": 5,
             "workspace_catalog_revision_id": catalog_revision_id,
-            "file_format_policy_version": policy_version,
             "items": canonical_items,
         }
     )
     if stored_hash != str(manifest.get("manifest_hash") or ""):
         raise NonRetryableExecutionError(
-            "Manifest v5 hash does not match before Runtime projection",
+            "Manifest v5 hash does not match before Runtime transfer",
             safe_message="任务文件清单无效",
             error_code="file_manifest_runtime_invalid",
         )
-    projected_items: list[dict[str, Any]] = []
-    for raw_item in raw_items:
-        projected = dict(raw_item)
-        projected.pop("materialization_size_bytes", None)
-        projected_items.append(projected)
-    projected_hash = _manifest_hash(
-        {
-            "schema_version": 4,
-            "file_format_policy_version": policy_version,
-            "items": canonical_items,
-        }
-    )
     return {
-        "schema_version": 4,
-        "file_format_policy_version": policy_version,
-        "manifest_hash": projected_hash,
+        "schema_version": 5,
+        "workspace_catalog_revision_id": catalog_revision_id,
+        "manifest_hash": str(manifest["manifest_hash"]),
         "observed_at": manifest.get("observed_at"),
-        "items": projected_items,
+        "items": [dict(item) for item in raw_items],
         **(
             {"readability_notices": list(manifest["readability_notices"])}
             if "readability_notices" in manifest
@@ -432,7 +406,7 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         readiness = get(base_url, "/ready", accepted_statuses={200, 503})
         identity_ready = (
             version.get("runtime") == settings.runtime_kind
-            and version.get("protocol_version") in {"1.0", "1.1", "1.2", "1.3"}
+            and version.get("protocol_version") == "1.3"
             and isinstance(version.get("runtime_version"), str)
         )
         dependency_ready = (
@@ -737,13 +711,13 @@ class AgentRuntimeHttpClient:
         binding = context.model_runtime_binding
         if binding is None or not binding.connection_revision_id or len(binding.config_hash) != 64:
             raise NonRetryableExecutionError(
-                "TypeScript Runtime requires a frozen model connection revision",
+                "Agent Runtime requires a frozen model connection revision",
                 safe_message="当前 Job 缺少固定模型连接",
                 error_code="runtime_model_binding_missing",
             )
         if not context.publication_id or not context.application_publication_id:
             raise NonRetryableExecutionError(
-                "TypeScript Runtime requires frozen Agent and Application publications",
+                "Agent Runtime requires frozen Agent and Application publications",
                 safe_message="当前 Job 缺少固定发布版本",
                 error_code="runtime_publication_binding_missing",
             )
@@ -791,8 +765,8 @@ class AgentRuntimeHttpClient:
                     "tools": tools,
                 }
             )
-        protocol_version = str(context.runtime_protocol_version or "1.0")
-        if protocol_version not in {"1.0", "1.1", "1.2", "1.3"}:
+        protocol_version = str(context.runtime_protocol_version or "")
+        if protocol_version != "1.3":
             raise NonRetryableExecutionError(
                 "Job runtime protocol version is unsupported",
                 safe_message="当前 Job Runtime 协议版本不受支持",
@@ -800,16 +774,13 @@ class AgentRuntimeHttpClient:
             )
         retrieved_context = dict(context.retrieved_context)
         raw_manifest = retrieved_context.get("file_manifest")
-        projected_manifest = (
-            _project_file_manifest_for_runtime(
-                raw_manifest,
-                protocol_version=protocol_version,
-            )
+        current_manifest = (
+            _require_current_file_manifest(raw_manifest)
             if isinstance(raw_manifest, Mapping)
             else None
         )
-        if projected_manifest is not None:
-            retrieved_context["file_manifest"] = projected_manifest
+        if current_manifest is not None:
+            retrieved_context["file_manifest"] = current_manifest
         request: dict[str, Any] = {
             "protocol_version": protocol_version,
             "runtime_kind": context.runtime_kind,
@@ -849,11 +820,7 @@ class AgentRuntimeHttpClient:
             },
             "mcp_servers": mcp_servers,
         }
-        if protocol_version == "1.3":
-            request["file_context"] = {
-                "file_format_policy_version": context.file_format_policy_version,
-                "file_manifest": projected_manifest,
-            }
+        request["file_context"] = {"file_manifest": current_manifest}
         request["request_digest"] = canonical_request_digest(request)
         return cast(dict[str, Any], validate_execution_request(request))
 

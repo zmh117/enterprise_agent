@@ -13,10 +13,6 @@ from app.modules.document_processing.domain import (
     require_processing_transition,
 )
 from app.modules.document_processing.profile import (
-    DOCLING_TEXT_V1,
-    DOCLING_TEXT_V1_PROFILE_HASH,
-    DOCLING_LAYOUT_OCR_V1,
-    DOCLING_LAYOUT_OCR_V1_PROFILE_HASH,
     DOCLING_LAYOUT_OCR_V2,
     DOCLING_LAYOUT_OCR_V2_PROFILE_HASH,
     DocumentProcessingProfile,
@@ -47,10 +43,6 @@ __all__ = [
     "PROCESSING_TERMINAL_STATUSES",
     "PICTURE_ITEM_TERMINAL_STATUSES",
     "REPRESENTATION_MEDIA_TYPES",
-    "DOCLING_TEXT_V1",
-    "DOCLING_TEXT_V1_PROFILE_HASH",
-    "DOCLING_LAYOUT_OCR_V1",
-    "DOCLING_LAYOUT_OCR_V1_PROFILE_HASH",
     "DOCLING_LAYOUT_OCR_V2",
     "DOCLING_LAYOUT_OCR_V2_PROFILE_HASH",
     "DocumentProcessingProfile",

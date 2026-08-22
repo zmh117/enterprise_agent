@@ -75,7 +75,7 @@ def _validated_runtime_manifest_items(
         source_received_at = item.get("source_received_at")
         version_created_at = item.get("version_created_at")
         representation_id = item.get("representation_id")
-        if schema_version in {2, 3, 4} and (
+        if schema_version == 5 and (
             (source_received_at is not None and not _is_aware_rfc3339(source_received_at))
             or not _is_aware_rfc3339(version_created_at)
             or (
@@ -96,7 +96,7 @@ def _validated_runtime_manifest_items(
         display_name = item.get("display_name")
         actions = item.get("allowed_actions")
         format_code = item.get("format_code", "TXT")
-        has_representation = schema_version >= 4 and representation_id is not None
+        has_representation = representation_id is not None
         if (
             not isinstance(file_id, str)
             or _OPAQUE_IDENTIFIER.fullmatch(file_id) is None
@@ -307,7 +307,6 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 job_id=request.job_id,
                 workspace_path=sandbox.path,
                 principal_token=self._file_principal_token,
-                file_format_policy_version=request.context.file_format_policy_version,
                 sandbox=sandbox,
             ),
             timeout_seconds=float(request.context.timeout_seconds),
@@ -335,21 +334,25 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             return context
         manifest = context.retrieved_context.get("file_manifest")
         schema_version = manifest.get("schema_version") if isinstance(manifest, dict) else None
-        if not isinstance(manifest, dict) or schema_version not in {1, 2, 3, 4}:
+        if (
+            not isinstance(manifest, dict)
+            or schema_version != 5
+            or not isinstance(manifest.get("workspace_catalog_revision_id"), str)
+            or not manifest.get("workspace_catalog_revision_id")
+        ):
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest is missing or invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
-        if schema_version in {2, 3, 4} and not _is_aware_rfc3339(manifest.get("observed_at")):
+        if not _is_aware_rfc3339(manifest.get("observed_at")):
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest observation time is invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
         items = manifest.get("items")
-        maximum_items = 40 if context.runtime_protocol_version in {"1.2", "1.3"} else 20
-        if not isinstance(items, list) or len(items) > maximum_items:
+        if not isinstance(items, list) or len(items) > 40:
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest items are invalid",
                 safe_message="任务文件清单无效",
@@ -407,7 +410,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             display_name = str(item["display_name"])
             actions = list(item["allowed_actions"])
             format_code = item.get("format_code", "TXT")
-            has_representation = schema_version >= 4 and representation_id is not None
+            has_representation = representation_id is not None
             identity = (file_id, version_id)
             if identity in seen:
                 continue

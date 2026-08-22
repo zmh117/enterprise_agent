@@ -116,7 +116,7 @@ def _prepare() -> None:
             (
                 DOCLING_APP,
                 DOCLING_CONVERSATION,
-                "docling-text-v1",
+                "docling-layout-ocr-v2",
                 "robot-docling-redacted",
             ),
         ):
@@ -134,7 +134,6 @@ def _prepare() -> None:
                 attachments_enabled=True,
                 capabilities=capabilities,
                 task_file_features=FEATURES,
-                file_format_policy_version="text-v2",
                 document_processing_profile_code=profile,
             )
             application = runtime.business_application_repository.get_by_code(code)
@@ -149,7 +148,7 @@ def _prepare() -> None:
                 {
                     "prepared": True,
                     "applications": 2,
-                    "profiles": ["NONE", "docling-text-v1"],
+                    "profiles": ["NONE", "docling-layout-ocr-v2"],
                 },
                 sort_keys=True,
             )
@@ -239,8 +238,7 @@ def _prepare_runtime_application() -> None:
                 capabilities=capabilities,
                 agent_publication_id=str(agent_publication["id"]),
                 task_file_features=FEATURES,
-                file_format_policy_version="text-v2",
-                document_processing_profile_code="docling-text-v1",
+                document_processing_profile_code="docling-layout-ocr-v2",
             )
             application = runtime.business_application_repository.get_by_code(RUNTIME_APP)
             grant_test_application_access(

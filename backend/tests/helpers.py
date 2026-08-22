@@ -28,7 +28,6 @@ from backend.tests.support.runtime import (
     DirectJobTestPermissionService,
     container,
     direct_job_permission_service_factory,
-    ensure_historical_typescript_agent,
     test_settings,
 )
 
@@ -45,7 +44,6 @@ __all__ = [
     "dispatch_pending_deliveries",
     "enqueue_job_result_for_delivery",
     "ensure_active_dingtalk_test_enterprise",
-    "ensure_historical_typescript_agent",
     "grant_test_application_access",
     "persisted_agent_job_message",
     "prepare_debug_application_access",

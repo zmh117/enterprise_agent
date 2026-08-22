@@ -435,11 +435,7 @@ class PythonInvocationRegistry:
                 "safe_message": ("Agent Runtime 在执行中重启；为避免重复模型调用，本次执行已失败"),
             },
             "usage": _usage_for_protocol(request, {"input_tokens": 0, "output_tokens": 0}),
-            **(
-                {"accounting": _unavailable_accounting()}
-                if request["protocol_version"] in {"1.2", "1.3"}
-                else {}
-            ),
+            "accounting": _unavailable_accounting(),
             "runtime_provenance": _fallback_provenance(request),
         }
         invocation.commit_event(invocation.prepare_event("terminal", terminal))
@@ -488,11 +484,7 @@ class PythonInvocationRegistry:
             "last_sequence": last_sequence,
             "status": outcome.status,
             "usage": _usage_for_protocol(request, outcome.usage),
-            **(
-                {"accounting": outcome.accounting or _unavailable_accounting()}
-                if request["protocol_version"] in {"1.2", "1.3"}
-                else {}
-            ),
+            "accounting": outcome.accounting or _unavailable_accounting(),
             "runtime_provenance": outcome.runtime_provenance,
         }
         if outcome.status == "SUCCEEDED":
@@ -533,8 +525,6 @@ def _fallback_provenance(request: dict[str, Any]) -> dict[str, Any]:
 def _usage_for_protocol(
     request: dict[str, Any], usage: dict[str, int | None]
 ) -> dict[str, int | None]:
-    if request["protocol_version"] not in {"1.2", "1.3"}:
-        return usage
     return {
         "input_tokens": usage.get("input_tokens"),
         "output_tokens": usage.get("output_tokens"),

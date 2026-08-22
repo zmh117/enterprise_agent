@@ -448,7 +448,7 @@ class AgentRepository:
         execution_policy: dict[str, Any] | None = None,
         model_runtime_provenance: dict[str, Any] | None = None,
         agent_runtime_kind: str = "python-v1",
-        agent_runtime_protocol_version: str = "1.0",
+        agent_runtime_protocol_version: str = "1.3",
         task_workspace_id: str = "",
         quoted_external_message_id: str = "",
     ) -> AgentJob:
@@ -1442,19 +1442,11 @@ class AgentRepository:
             select m.session_id, s.source_connector_id, s.bot_identity,
                    s.source_channel, m.sender_id,
                    coalesce(a.task_workspace_id, j.task_workspace_id) as task_workspace_id,
-                   coalesce(j.internal_user_id, m.sender_id, s.requester_id) as internal_user_id,
-                   coalesce(fr.file_format_policy_version,
-                            bap.file_format_policy_version,
-                            'text-v1') as file_format_policy_version
+                   coalesce(j.internal_user_id, m.sender_id, s.requester_id) as internal_user_id
               from message_attachment a
               join agent_message m on m.id = a.message_id
               join agent_session s on s.id = m.session_id
               left join agent_job j on j.id = a.job_id
-              left join agent_job_file_request fr on fr.job_id = j.id
-              left join task_workspace tw
-                on tw.id = coalesce(a.task_workspace_id, j.task_workspace_id)
-              left join business_application_publication bap
-                on bap.id = tw.business_application_publication_id
              where a.id = ?
             """,
             (attachment_id,),
@@ -1957,41 +1949,6 @@ class AgentRepository:
         )
         return self.get_attachment(attachment_id)
 
-    def save_attachment_content(
-        self,
-        *,
-        attachment_id: str,
-        plain_text: str,
-        segments: list[dict[str, Any]],
-        parser_version: str,
-        truncated: bool,
-    ) -> None:
-        content_id = new_id("attachment_content")
-        self.database.execute(
-            """
-            insert into attachment_content
-              (id, attachment_id, plain_text, segments_json, parser_version,
-               char_count, truncated, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?)
-            on conflict(attachment_id) do update set
-              plain_text = excluded.plain_text,
-              segments_json = excluded.segments_json,
-              parser_version = excluded.parser_version,
-              char_count = excluded.char_count,
-              truncated = excluded.truncated
-            """,
-            (
-                content_id,
-                attachment_id,
-                plain_text,
-                json.dumps(segments, ensure_ascii=False),
-                parser_version,
-                len(plain_text),
-                int(truncated),
-                now_iso(),
-            ),
-        )
-
     def list_messages(self, session_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
         rows = self.database.execute(
             """
@@ -2006,29 +1963,6 @@ class AgentRepository:
         return [
             {**row, "safe_metadata": self._json_from_text(row.get("safe_metadata_json") or "{}")}
             for row in reversed(rows)
-        ]
-
-    def list_attachment_context(self, job_id: str, *, max_chars: int) -> list[dict[str, Any]]:
-        rows = self.database.execute(
-            """
-            select a.id, a.file_name, a.status, a.failure_code, c.plain_text, c.truncated
-            from message_attachment a
-            left join attachment_content c on c.attachment_id = a.id
-            where a.job_id = ? order by a.ordinal
-            """,
-            (job_id,),
-        )
-        return [
-            {
-                "attachment_id": row["id"],
-                "file_name": row["file_name"],
-                "status": row["status"],
-                "failure_code": row.get("failure_code") or "",
-                "text": str(row.get("plain_text") or "")[:max_chars],
-                "truncated": bool(row.get("truncated"))
-                or len(str(row.get("plain_text") or "")) > max_chars,
-            }
-            for row in rows
         ]
 
     def list_expired_attachments(self, now: str) -> list[MessageAttachment]:
@@ -2052,9 +1986,6 @@ class AgentRepository:
             where id = ?
             """,
             (now_iso(), now_iso(), attachment_id),
-        )
-        self.database.execute(
-            "delete from attachment_content where attachment_id = ?", (attachment_id,)
         )
 
     def update_session_summary(
@@ -3236,7 +3167,7 @@ class AgentRepository:
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             "agent_runtime_kind": row.get("agent_runtime_kind") or "python-v1",
-            "agent_runtime_protocol_version": (row.get("agent_runtime_protocol_version") or "1.0"),
+            "agent_runtime_protocol_version": (row.get("agent_runtime_protocol_version") or "1.3"),
             "tool_call_count": int(row.get("execution_policy_tool_call_count") or 0),
             "execution_policy_exhausted": bool(row.get("execution_policy_exhausted") or False),
             "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
@@ -3437,7 +3368,7 @@ class AgentRepository:
               and (
                 status = ?
                 or (status = ? and next_retry_at is not null and next_retry_at <= ?)
-                or (? = 1 and status = ? and agent_runtime_kind in ('python-v1', 'typescript-v1'))
+                or (? = 1 and status = ? and agent_runtime_kind = 'python-v1')
               )
             returning {_JOB_COLUMNS_SQL}
             """,
@@ -3791,7 +3722,7 @@ class AgentRepository:
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             agent_runtime_kind=row.get("agent_runtime_kind") or "python-v1",
-            agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.0"),
+            agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.3"),
             task_workspace_id=str(row.get("task_workspace_id") or ""),
         )
 

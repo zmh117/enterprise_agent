@@ -32,7 +32,6 @@ class BoundedConversationSummarizer:
 class ConversationContext:
     summary: str
     recent_messages: list[dict[str, object]]
-    attachments: list[dict[str, object]]
     truncated: bool
 
     def prompt_text(self) -> str:
@@ -102,10 +101,6 @@ class ConversationContextService:
                 messages = messages[-recent_message_limit:]
         else:
             messages = messages[-recent_message_limit:]
-        attachments = self.repository.list_attachment_context(
-            job.id,
-            max_chars=self.settings.max_attachment_context_chars,
-        )
         summary, messages, truncated = _fit_budget(
             summary,
             messages,
@@ -114,8 +109,7 @@ class ConversationContextService:
         return ConversationContext(
             summary=summary,
             recent_messages=messages,
-            attachments=attachments,
-            truncated=truncated or any(bool(item.get("truncated")) for item in attachments),
+            truncated=truncated,
         )
 
 

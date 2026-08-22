@@ -43,11 +43,9 @@ from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.lifecycle_service import FileLifecycleService
 from app.modules.file_workspace.storage import InternalStoredObject
 from app.modules.file_workspace.text_format_policy import (
-    FileFormatPolicyVersion,
     TextFormatDefinition,
     TextStreamValidator,
     get_text_format_policy,
-    normalize_file_format_policy_version,
     text_format_for_name,
     validate_format_action,
 )
@@ -197,17 +195,12 @@ class GovernedFileStreamingService:
             extension = ".md"
             allowed_actions = [FileAction.MATERIALIZE.value]
         else:
-            policy_version = normalize_file_format_policy_version(
-                context.manifest.get("file_format_policy_version")
-            )
             definition = validate_format_action(
-                policy_version=policy_version,
                 format_code=str(item.get("format_code") or "TXT"),
                 action=FileAction.MATERIALIZE,
             )
             requested_definition = text_format_for_name(
                 requested,
-                policy_version=policy_version,
             )
             if requested_definition.code is not definition.code:
                 self._deny("file_format_mismatch", "文件名与冻结格式不一致")
@@ -269,16 +262,11 @@ class GovernedFileStreamingService:
         target_file_id = str(arguments.get("file_id") or "") or None
         base_version_id = str(arguments.get("base_version_id") or "") or None
         user_intent = CommitUserIntent(str(arguments["user_intent"]))
-        policy_version = normalize_file_format_policy_version(
-            context.manifest.get("file_format_policy_version")
-        )
         display_name = str(arguments["display_name"])
         definition = text_format_for_name(
             display_name,
-            policy_version=policy_version,
         )
         validate_format_action(
-            policy_version=policy_version,
             format_code=definition.code,
             action=FileAction.COMMIT,
         )
@@ -329,7 +317,6 @@ class GovernedFileStreamingService:
             "display_name": display_name,
             "user_intent": user_intent.value,
             "delivery_mode": delivery_mode.value,
-            "file_format_policy_version": policy_version.value,
             "format_code": definition.code.value,
         }
         metadata_hash = hashlib.sha256(
@@ -350,7 +337,6 @@ class GovernedFileStreamingService:
             delivery_mode=CommitDeliveryMode(canonical["delivery_mode"]),
             metadata_hash=metadata_hash,
             expires_at=expires_at,
-            file_format_policy_version=policy_version.value,
             format_code=definition.code.value,
         )
         return {
@@ -581,13 +567,10 @@ class GovernedFileStreamingService:
                 safe_message="文件交付信息无效",
                 error_code="file_delivery_artifact_invalid",
             ) from exc
-        definition = get_text_format_policy(FileFormatPolicyVersion.TEXT_V2).by_code(
+        definition = get_text_format_policy().by_code(
             str(version.get("format_code") or "TXT")
         )
-        named = text_format_for_name(
-            display_name,
-            policy_version=FileFormatPolicyVersion.TEXT_V2,
-        )
+        named = text_format_for_name(display_name)
         file_row = self.repository.get_file(str(binding["file_id"]))
         if (
             named.code is not definition.code
@@ -631,11 +614,7 @@ class GovernedFileStreamingService:
         )
         intent = self.repository.get_commit_intent_by_commit_id(commit_id)
         self._require_commit_binding(intent, claims=claims, context=context)
-        policy_version = normalize_file_format_policy_version(
-            intent.get("file_format_policy_version")
-        )
         definition = validate_format_action(
-            policy_version=policy_version,
             format_code=str(intent.get("format_code") or "TXT"),
             action=FileAction.COMMIT,
         )
@@ -647,7 +626,6 @@ class GovernedFileStreamingService:
                 display_name=str(intent["display_name"]),
                 media_type=definition.canonical_media_type,
                 agent_output=True,
-                policy_version=policy_version,
                 expected_format=definition.code,
             )
             intent = self.repository.begin_commit_upload(
@@ -791,15 +769,12 @@ class GovernedFileStreamingService:
                 )
         definition: TextFormatDefinition | None = None
         document_source: ValidatedDocumentSource | None = None
-        policy_version = FileFormatPolicyVersion.TEXT_V1
         document_profile_code = "NONE"
         if workspace_id:
-            policy_version = self._workspace_policy(workspace_id)
             document_profile_code = self._workspace_document_profile(workspace_id)
             try:
                 definition = text_format_for_name(
                     str(row["file_name"]),
-                    policy_version=policy_version,
                 )
             except NonRetryableExecutionError:
                 definition = None
@@ -812,7 +787,6 @@ class GovernedFileStreamingService:
                     display_name=str(row["file_name"]),
                     media_type=media_type,
                     agent_output=False,
-                    policy_version=policy_version,
                     expected_format=definition.code,
                 )
                 size_bytes = validated.size_bytes
@@ -1343,17 +1317,12 @@ class GovernedFileStreamingService:
             workspace = self.repository.get_workspace(str(intent["workspace_id"]))
             if str(workspace["status"]) != "ACTIVE":
                 self._deny("file_workspace_expired", "任务文件工作区已失效")
-            policy_version = normalize_file_format_policy_version(
-                intent.get("file_format_policy_version")
-            )
             definition = validate_format_action(
-                policy_version=policy_version,
                 format_code=str(intent.get("format_code") or "TXT"),
                 action=FileAction.COMMIT,
             )
             named = text_format_for_name(
                 str(intent["display_name"]),
-                policy_version=policy_version,
             )
             if named.code is not definition.code:
                 self._deny("file_format_mismatch", "文件名与提交格式不一致")
@@ -1382,9 +1351,7 @@ class GovernedFileStreamingService:
             or str(base_version.get("file_id") or "") != file_id
         ):
             self._deny("file_format_mismatch", "修改文件时不得改变文件格式")
-        definition = get_text_format_policy(intent.get("file_format_policy_version")).by_code(
-            format_code
-        )
+        definition = get_text_format_policy().by_code(format_code)
         version_id = _opaque("file_version")
         version_number = self._next_version_number(file_id)
         conflict = current_version_id != base_version_id
@@ -1435,7 +1402,7 @@ class GovernedFileStreamingService:
         file_id = _opaque("managed_file")
         version_id = _opaque("file_version")
         owner = self._owner(workspace)
-        definition = get_text_format_policy(intent.get("file_format_policy_version")).by_code(
+        definition = get_text_format_policy().by_code(
             str(intent.get("format_code") or "TXT")
         )
         self.repository.create_file(
@@ -1507,9 +1474,6 @@ class GovernedFileStreamingService:
                 "size_bytes": int(intent["size_bytes"]),
                 "content_sha256": str(intent["content_sha256"]),
                 "format_code": str(intent.get("format_code") or "TXT"),
-                "file_format_policy_version": str(
-                    intent.get("file_format_policy_version") or "text-v1"
-                ),
             },
         )
         return self._commit_receipt(intent, version_id=version_id, status=status.value)
@@ -1621,22 +1585,6 @@ class GovernedFileStreamingService:
         )
         return int(cast(dict[str, Any], row)["value"])
 
-    def _workspace_policy(self, workspace_id: str) -> FileFormatPolicyVersion:
-        row = self.repository.database.execute_one(
-            """
-            select p.file_format_policy_version
-              from task_workspace w
-              join business_application_publication p
-                on p.id = w.business_application_publication_id
-             where w.id = ?
-            """,
-            (workspace_id,),
-        )
-        if row is None:
-            self._deny("file_workspace_expired", "任务文件工作区已失效")
-        assert row is not None
-        return normalize_file_format_policy_version(row.get("file_format_policy_version"))
-
     def _workspace_document_profile(self, workspace_id: str) -> str:
         row = self.repository.database.execute_one(
             """
@@ -1654,8 +1602,6 @@ class GovernedFileStreamingService:
         code = str(row.get("document_processing_profile_code") or "NONE")
         if code not in {
             "NONE",
-            "docling-text-v1",
-            "docling-layout-ocr-v1",
             "docling-layout-ocr-v2",
         }:
             self._deny("document_processing_profile_invalid", "文档处理Profile无效")
@@ -1685,10 +1631,6 @@ class GovernedFileStreamingService:
         if (
             str(intent["job_id"]) != str(claims["job_id"])
             or str(intent["workspace_id"]) != str(context.workspace["id"])
-            or normalize_file_format_policy_version(intent.get("file_format_policy_version"))
-            is not normalize_file_format_policy_version(
-                context.manifest.get("file_format_policy_version")
-            )
         ):
             GovernedFileStreamingService._deny(
                 "file_commit_binding_mismatch", "文件提交与当前任务不匹配"

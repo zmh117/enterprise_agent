@@ -74,7 +74,6 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
             "default_runtime": "python-v1",
             "supported_runtimes": ["python-v1"],
             "protocol_version": "1.3",
-            "retired_configuration_keys": [],
         }
         assert ready["runtime_config"] == {
             "source": runtime.settings.runtime_config_source,
@@ -131,31 +130,6 @@ def test_unavailable_runtime_is_reported_without_disabling_management_api(monkey
         assert status["core"]["agent_runtimes"]["python-v1"]["master_key"] == "unavailable"
         assert status["claude_invoked"] is False
         assert status["mcp_invoked"] is False
-    finally:
-        runtime.database.close()
-
-
-def test_retired_typescript_configuration_fails_runtime_assembly_closed(
-    monkeypatch,
-) -> None:
-    runtime = container()
-    try:
-        monkeypatch.setattr(main, "_check_rabbitmq", lambda _url: True)
-        settings = replace(
-            runtime.settings,
-            agent_runtime=replace(
-                runtime.settings.agent_runtime,
-                retired_configuration_keys=("TYPESCRIPT_AGENT_RUNTIME_URL",),
-            ),
-        )
-
-        status = main._build_readiness(settings, database=runtime.database)
-
-        assert status["status"] == "not_ready"
-        assert status["core"]["runtime_assembly"] is False
-        assert status["runtime_selection"]["retired_configuration_keys"] == [
-            "TYPESCRIPT_AGENT_RUNTIME_URL"
-        ]
     finally:
         runtime.database.close()
 

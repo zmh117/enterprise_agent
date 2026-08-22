@@ -170,7 +170,7 @@ class _AgentConfigService:
             "snapshot": {
                 "skills": [],
                 "model_policy": {},
-                "supported_runtime_protocol_versions": ["1.0", "1.1", "1.2", "1.3"],
+                "supported_runtime_protocol_versions": ["1.3"],
             },
         }
 
@@ -179,7 +179,8 @@ class _FileManifestService:
     def runtime_manifest(self, job_id: str) -> dict[str, Any]:
         assert job_id == "job-file-context"
         return {
-            "schema_version": 1,
+            "schema_version": 5,
+            "workspace_catalog_revision_id": "workspace-catalog-1",
             "manifest_hash": "f" * 64,
             "items": [
                 {
@@ -195,12 +196,12 @@ class _FileManifestService:
         }
 
 
-class _TextV2FileManifestService:
+class _CurrentFileManifestService:
     def runtime_manifest(self, job_id: str) -> dict[str, Any]:
         assert job_id == "job-file-context-v2"
         return {
-            "schema_version": 3,
-            "file_format_policy_version": "text-v2",
+            "schema_version": 5,
+            "workspace_catalog_revision_id": "workspace-catalog-v2",
             "manifest_hash": "e" * 64,
             "observed_at": "2026-08-17T00:00:00Z",
             "items": [],
@@ -395,7 +396,7 @@ def test_tool_restrictions_do_not_disclose_unassigned_tool_identifiers() -> None
     assert "get_schema_directory" not in database_only_text
 
 
-@pytest.mark.parametrize("runtime_kind", ["python-v1", "typescript-v1"])
+@pytest.mark.parametrize("runtime_kind", ["python-v1"])
 def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_tools(
     runtime_kind: str,
 ) -> None:
@@ -415,7 +416,7 @@ def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_too
         agent_revision=1,
         agent_config_hash="agent-config-hash",
         agent_runtime_kind=runtime_kind,
-        agent_runtime_protocol_version="1.0",
+            agent_runtime_protocol_version="1.3",
         business_application_publication_id="application-publication-1",
     )
 
@@ -448,7 +449,7 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
         agent_revision=1,
         agent_config_hash="agent-config-hash",
         agent_runtime_kind="python-v1",
-        agent_runtime_protocol_version="1.2",
+        agent_runtime_protocol_version="1.3",
         business_application_publication_id="application-publication-1",
         task_workspace_id="task-workspace-1",
     )
@@ -459,7 +460,7 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
     assert context.retrieved_context["file_manifest"]["items"][0][
         "version_id"
     ] == "version-context-1"
-    assert "UTF-8 TXT files only inside the current Job Sandbox" in " ".join(
+    assert "UTF-8 TXT/LOG/Markdown files inside the current Job Sandbox" in " ".join(
         context.safety_rules
     )
     restrictions = " ".join(context.tool_restrictions)
@@ -483,7 +484,7 @@ def test_text_v2_context_exposes_log_read_only_and_markdown_output_rules() -> No
         tool_registry=_NoPrefetchToolRegistry(["file_prepare_materialization"]),  # type: ignore[arg-type]
         skill_loader=_SkillLoader(),  # type: ignore[arg-type]
         agent_config_service=_AgentConfigService("python-v1"),  # type: ignore[arg-type]
-        file_manifest_service=_TextV2FileManifestService(),  # type: ignore[arg-type]
+        file_manifest_service=_CurrentFileManifestService(),  # type: ignore[arg-type]
     )
     job = SimpleNamespace(
         id="job-file-context-v2",
@@ -497,15 +498,12 @@ def test_text_v2_context_exposes_log_read_only_and_markdown_output_rules() -> No
         agent_runtime_kind="python-v1",
         agent_runtime_protocol_version="1.3",
         business_application_publication_id="application-publication-v2",
-        business_application_route_decision={
-            "file_format_policy_version": "text-v2"
-        },
+        business_application_route_decision={},
         task_workspace_id="task-workspace-v2",
     )
 
     context = builder.build(job)  # type: ignore[arg-type]
 
-    assert context.file_format_policy_version == "text-v2"
     combined = " ".join([*context.safety_rules, *context.tool_restrictions])
     assert "TXT/LOG/Markdown" in combined
     assert "LOG is read-only" in combined
@@ -519,7 +517,7 @@ def test_context_filters_stale_file_tools_when_job_has_no_workspace() -> None:
     builder = AgentContextBuilder(
         tool_registry=registry,  # type: ignore[arg-type]
         skill_loader=_SkillLoader(),  # type: ignore[arg-type]
-        agent_config_service=_AgentConfigService("typescript-v1"),  # type: ignore[arg-type]
+        agent_config_service=_AgentConfigService("python-v1"),  # type: ignore[arg-type]
     )
     job = SimpleNamespace(
         id="job-stale-file-snapshot-without-workspace",
@@ -530,8 +528,8 @@ def test_context_filters_stale_file_tools_when_job_has_no_workspace() -> None:
         agent_publication_id="agent-publication-1",
         agent_revision=1,
         agent_config_hash="agent-config-hash",
-        agent_runtime_kind="typescript-v1",
-        agent_runtime_protocol_version="1.2",
+        agent_runtime_kind="python-v1",
+        agent_runtime_protocol_version="1.3",
         business_application_publication_id="application-publication-1",
         task_workspace_id="",
     )

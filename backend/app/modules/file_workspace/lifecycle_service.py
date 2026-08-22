@@ -400,9 +400,14 @@ class FileLifecycleService:
             job_id = str(attachment.get("job_id") or "")
             if self._job_delivery_blocked(job_id):
                 return "defer"
-            managed_version_id = str(
-                attachment.get("managed_file_version_id") or ""
+            binding = self.repository.database.execute_one(
+                """
+                select version_id from message_attachment_file_binding
+                 where attachment_id = ?
+                """,
+                (resource_id,),
             )
+            managed_version_id = str((binding or {}).get("version_id") or "")
             if managed_version_id and self._version_protected(
                 managed_version_id, timestamp
             ):

@@ -9,7 +9,7 @@ from PIL import Image, UnidentifiedImageError
 from pypdf import PdfReader
 
 from app.modules.document_processing.profile import (
-    DOCLING_TEXT_V1,
+    DOCLING_LAYOUT_OCR_V2,
     DocumentSourceDefinition,
     DocumentSourceFormatCode,
 )
@@ -33,11 +33,11 @@ def validate_document_source(
     declared_size_bytes: int,
     allow_image_extension_canonicalization: bool = False,
 ) -> ValidatedDocumentSource:
-    if declared_size_bytes < 1 or declared_size_bytes > DOCLING_TEXT_V1.max_source_bytes:
+    if declared_size_bytes < 1 or declared_size_bytes > DOCLING_LAYOUT_OCR_V2.max_source_bytes:
         _reject("document_source_size_exceeded", "文档原件大小必须在 1 字节到 25 MiB 之间")
     extension = Path(display_name).suffix.lower()
     extension_definition = next(
-        (item for item in DOCLING_TEXT_V1.source_formats if extension in item.extensions),
+        (item for item in DOCLING_LAYOUT_OCR_V2.source_formats if extension in item.extensions),
         None,
     )
     if extension_definition is None:
@@ -57,7 +57,7 @@ def validate_document_source(
         media_definition = next(
             (
                 item
-                for item in DOCLING_TEXT_V1.source_formats
+                for item in DOCLING_LAYOUT_OCR_V2.source_formats
                 if item.code in image_codes
                 and normalized_media_type in item.accepted_media_types
             ),
@@ -115,7 +115,7 @@ def _validate_pdf(stream: BinaryIO) -> int:
         raise _error("document_source_malformed", "PDF 文件结构无效") from exc
     if page_count < 1:
         _reject("document_source_empty", "PDF 不包含页面")
-    if page_count > DOCLING_TEXT_V1.max_pdf_pages:
+    if page_count > DOCLING_LAYOUT_OCR_V2.max_pdf_pages:
         _reject("document_source_page_limit_exceeded", "PDF 页数超过 300 页上限")
     return page_count
 

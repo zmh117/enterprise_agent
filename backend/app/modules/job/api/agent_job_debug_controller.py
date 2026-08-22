@@ -242,7 +242,6 @@ def build_agent_job_debug_router() -> Any:
                 "file_workspace": _file_workspace_evidence(
                     container,
                     job_id=job_id,
-                    route_decision=dict(job.get("business_application_route_decision") or {}),
                 ),
                 "deliveries": {
                     "events": delivery_events,
@@ -264,23 +263,19 @@ def _file_workspace_evidence(
     container: Container,
     *,
     job_id: str,
-    route_decision: dict[str, Any],
 ) -> dict[str, Any]:
     snapshot = container.database.execute_one(
         """
-        select id, schema_version, file_format_policy_version
+        select id, schema_version
           from agent_job_file_snapshot
          where job_id = ?
         """,
         (job_id,),
     )
     if snapshot is None:
-        routed_policy = str(route_decision.get("file_format_policy_version") or "")
         return {
             "enabled": False,
             "manifest_schema_version": None,
-            "file_format_policy_version": routed_policy or "text-v1",
-            "policy_source": "job_route_decision" if routed_policy else "legacy_default",
             "formats": [],
         }
     rows = container.database.execute(
@@ -319,9 +314,7 @@ def _file_workspace_evidence(
         )
     return {
         "enabled": True,
-        "manifest_schema_version": int(snapshot.get("schema_version") or 1),
-        "file_format_policy_version": str(snapshot.get("file_format_policy_version") or "text-v1"),
-        "policy_source": "job_file_manifest",
+        "manifest_schema_version": int(snapshot.get("schema_version") or 5),
         "formats": [
             {
                 **entry,

@@ -91,8 +91,6 @@ const taskFileFeaturesSchema = z.object({
 
 const documentProcessingProfileCodeSchema = z.enum([
   "NONE",
-  "docling-text-v1",
-  "docling-layout-ocr-v1",
   "docling-layout-ocr-v2",
 ])
 
@@ -114,9 +112,6 @@ export const revisionSchema = documentProcessingStateSchema
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
       .default("WEEK"),
-    file_format_policy_version: z
-      .enum(["text-v1", "text-v2"])
-      .default("text-v1"),
     document_processing_profile_code: documentProcessingProfileCodeSchema.default(
       "NONE"
     ),
@@ -149,41 +144,21 @@ export const publicationSchema = runtimeStateSchema
     config_hash: z.string(),
     published_by: z.string(),
     published_at: z.string(),
-    retirement_status: z.enum(["supported", "retired"]).default("supported"),
     snapshot: z.record(z.string(), z.unknown()).optional(),
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
       .default("WEEK"),
     task_workspace_retention_source: z
-      .enum(["publication_snapshot", "legacy_default"])
-      .default("legacy_default"),
-    file_format_policy_version: z
-      .enum(["text-v1", "text-v2"])
-      .default("text-v1"),
-    file_format_policy_source: z
-      .enum(["publication_snapshot", "legacy_default"])
-      .default("legacy_default"),
+      .literal("publication_snapshot")
+      .default("publication_snapshot"),
     document_processing_profile_code: documentProcessingProfileCodeSchema.default(
       "NONE"
     ),
     document_processing_profile_version: z.string().default(""),
     document_processing_profile_hash: z.string().default(""),
     document_processing_profile_source: z
-      .enum(["publication_snapshot", "legacy_default"])
-      .default("legacy_default"),
-    file_format_compatibility: z
-      .object({
-        status: z.enum(["READY", "INCOMPATIBLE"]),
-        required_runtime_protocol: z.string(),
-        runtime_protocol_compatible: z.boolean(),
-        file_mcp_schema_compatible: z.boolean(),
-      })
-      .default({
-        status: "READY",
-        required_runtime_protocol: "1.2-or-earlier",
-        runtime_protocol_compatible: true,
-        file_mcp_schema_compatible: true,
-      }),
+      .literal("publication_snapshot")
+      .default("publication_snapshot"),
     task_file_features: taskFileFeaturesSchema.default({
       workspace_enabled: false,
       file_mcp_enabled: false,
@@ -191,8 +166,8 @@ export const publicationSchema = runtimeStateSchema
       default_file_delivery_enabled: false,
     }),
     task_file_features_source: z
-      .enum(["publication_snapshot", "legacy_default"])
-      .default("legacy_default"),
+      .literal("publication_snapshot")
+      .default("publication_snapshot"),
   })
   .passthrough()
 
@@ -226,9 +201,6 @@ export const applicationSummarySchema = runtimeStateSchema
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
       .default("WEEK"),
-    file_format_policy_version: z
-      .enum(["text-v1", "text-v2"])
-      .default("text-v1"),
     document_processing_profile_code: documentProcessingProfileCodeSchema.default(
       "NONE"
     ),
@@ -261,11 +233,8 @@ export type SaveDraftInput = {
   agent_publication_id: string
   workflow_publication_id: string
   task_workspace_retention_period: "DAY" | "WEEK" | "MONTH"
-  file_format_policy_version: "text-v1" | "text-v2"
   document_processing_profile_code:
     | "NONE"
-    | "docling-text-v1"
-    | "docling-layout-ocr-v1"
     | "docling-layout-ocr-v2"
   task_file_features: {
     workspace_enabled: boolean

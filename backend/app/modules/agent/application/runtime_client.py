@@ -5,7 +5,7 @@ from typing import Protocol
 from app.modules.agent.domain.runtime import AgentRunRequest, AgentRunResult
 from app.shared.exceptions import NonRetryableExecutionError
 
-SUPPORTED_RUNTIME_PROTOCOLS = frozenset({"1.0", "1.1", "1.2", "1.3"})
+SUPPORTED_RUNTIME_PROTOCOLS = frozenset({"1.3"})
 SUPPORTED_RUNTIME_KIND = "python-v1"
 
 
@@ -26,12 +26,6 @@ class GuardedAgentRuntimeClient:
     def _resolve(self, request: AgentRunRequest) -> AgentRuntimeClient:
         runtime_kind = request.context.runtime_kind
         protocol_version = request.context.runtime_protocol_version
-        if runtime_kind == "typescript-v1":
-            raise NonRetryableExecutionError(
-                "Job references the retired TypeScript Agent Runtime",
-                safe_message="Job 固定的 TypeScript Agent Runtime 已退役",
-                error_code="typescript_agent_runtime_retired",
-            )
         if runtime_kind != SUPPORTED_RUNTIME_KIND:
             raise NonRetryableExecutionError(
                 "Job contains an unsupported Agent Runtime kind",

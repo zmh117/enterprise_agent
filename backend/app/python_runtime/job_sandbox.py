@@ -12,9 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, Never
 
 from app.modules.file_workspace.text_format_policy import (
-    FileFormatPolicyVersion,
     get_text_format_policy,
-    normalize_file_format_policy_version,
     text_format_for_name,
 )
 from app.shared.exceptions import NonRetryableExecutionError
@@ -104,7 +102,6 @@ class JobSandbox:
     job_id: str
     path: Path
     limits: JobSandboxLimits
-    file_format_policy_version: FileFormatPolicyVersion = FileFormatPolicyVersion.TEXT_V1
     _budget_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _pending: dict[str, _PendingReservation] = field(default_factory=dict, repr=False)
     _input_tokens: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
@@ -589,10 +586,7 @@ class JobSandbox:
         ):
             self._deny("sandbox_path_invalid", "sandbox path escaped its Job boundary")
         try:
-            definition = text_format_for_name(
-                path.name,
-                policy_version=self.file_format_policy_version,
-            )
+            definition = text_format_for_name(path.name)
         except NonRetryableExecutionError:
             self._deny("sandbox_file_type_denied", "file format is not allowed")
         if write and path.parts[:2] == ("inputs", "readonly"):
@@ -669,7 +663,7 @@ class JobSandbox:
             )
         allowed = tuple(
             definition.extension
-            for definition in get_text_format_policy(self.file_format_policy_version).formats
+            for definition in get_text_format_policy().formats
         )
         lowered = value.lower()
         if not lowered.endswith(allowed) and not any(
@@ -724,8 +718,6 @@ class JobSandboxManager:
     def create(
         self,
         job_id: str,
-        *,
-        file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
     ) -> JobSandbox:
         self._identifier(job_id)
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -747,9 +739,6 @@ class JobSandboxManager:
             job_id=job_id,
             path=path,
             limits=self.limits,
-            file_format_policy_version=normalize_file_format_policy_version(
-                file_format_policy_version
-            ),
         )
 
     def cleanup_residuals(self, is_job_running: Callable[[str], bool]) -> list[str]:

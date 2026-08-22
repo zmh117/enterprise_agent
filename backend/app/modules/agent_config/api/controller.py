@@ -72,7 +72,7 @@ class AgentCreateRequest(StrictRequest):
         max_length=120,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
-    runtime_kind: Literal["python-v1", "typescript-v1"]
+    runtime_kind: Literal["python-v1"]
 
 
 class RevisionRequest(BaseModel):
@@ -166,13 +166,6 @@ def build_agent_config_router() -> APIRouter:
             agent["permissions"]["can_test_connection"] = agent["permissions"][
                 "can_manage_credential"
             ]
-            if agent.get("management_mode") == "read_only_retired":
-                agent["permissions"] = {
-                    "can_edit_profile": False,
-                    "can_publish": False,
-                    "can_manage_credential": False,
-                    "can_test_connection": False,
-                }
             return {"agent": agent}
         except Exception as exc:
             raise handle_exception(exc) from exc

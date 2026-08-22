@@ -74,7 +74,7 @@ export const modelDraftTestResultSchema = z.object({
   detail: z.string(),
 })
 
-export const runtimeKindSchema = z.enum(["python-v1", "typescript-v1"])
+export const runtimeKindSchema = z.literal("python-v1")
 
 export const agentDefinitionSchema = z.object({
   id: z.string(),
@@ -155,7 +155,7 @@ export const agentPublicationSchema = z.object({
   id: z.string(),
   revision: z.number(),
   config_hash: z.string(),
-  runtime_kind: z.enum(["python-v1", "typescript-v1"]).default("python-v1"),
+  runtime_kind: z.literal("python-v1").default("python-v1"),
   snapshot: agentConfigSchema.passthrough(),
   published_at: z.string(),
   published_by: z.string(),
@@ -167,10 +167,7 @@ export const agentDetailSchema = z.object({
   definition: agentDefinitionSchema,
   draft: agentRevisionSchema.nullable(),
   current_publication: agentPublicationSchema.nullable(),
-  management_mode: z
-    .enum(["editable", "read_only_retired"])
-    .default("editable"),
-  retirement_status: z.enum(["supported", "retired"]).default("supported"),
+  management_mode: z.literal("editable").default("editable"),
   permissions: z
     .object({
       can_edit_profile: z.boolean(),
@@ -220,11 +217,8 @@ export const agentSummarySchema = z.object({
   project_code: z.string(),
   status: z.string(),
   revision: z.number(),
-  runtime_kind: z.enum(["python-v1", "typescript-v1"]).default("python-v1"),
-  management_mode: z
-    .enum(["editable", "read_only_retired"])
-    .default("editable"),
-  retirement_status: z.enum(["supported", "retired"]).default("supported"),
+  runtime_kind: z.literal("python-v1").default("python-v1"),
+  management_mode: z.literal("editable").default("editable"),
   current_publication: z
     .object({
       id: z.string(),

@@ -25,7 +25,6 @@ _PAYLOAD_KEYS = {
     "size_bytes",
     "content_sha256",
     "format_code",
-    "file_format_policy_version",
     "contract_version",
     "run_id",
     "source_version_id",

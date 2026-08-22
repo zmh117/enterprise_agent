@@ -17,9 +17,9 @@ from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
 
 DEFAULT_AGENT_CODE = "default-diagnostic-agent"
-SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1", "typescript-v1"})
+SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1"})
 WRITABLE_RUNTIME_KIND = "python-v1"
-SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = ("1.2", "1.3")
+SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = ("1.3",)
 AGENT_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 PROJECT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FORBIDDEN_CONFIG_KEYS = {
@@ -81,7 +81,6 @@ class AgentConfigService:
 
     def get(self, agent_code: str = DEFAULT_AGENT_CODE) -> dict[str, Any]:
         definition = self.repository.get_definition(agent_code)
-        retired = _is_retired_typescript_definition(definition)
         latest = self.repository.latest_revision(str(definition["id"]))
         current = None
         if definition.get("current_publication_id"):
@@ -91,8 +90,7 @@ class AgentConfigService:
             "draft": latest,
             "current_publication": current,
             "catalog": self.catalog(),
-            "management_mode": "read_only_retired" if retired else "editable",
-            "retirement_status": "retired" if retired else "supported",
+            "management_mode": "editable",
             "model_connections": (
                 self.model_connection_service.list_connections()
                 if self.model_connection_service is not None
@@ -103,7 +101,6 @@ class AgentConfigService:
     def list_agents(self) -> list[dict[str, Any]]:
         values: list[dict[str, Any]] = []
         for definition in self.repository.list_definitions():
-            retired = _is_retired_typescript_definition(definition)
             publication = None
             if definition.get("current_publication_id"):
                 publication = self.repository.get_publication(
@@ -135,8 +132,7 @@ class AgentConfigService:
             values.append(
                 {
                     **definition,
-                    "management_mode": "read_only_retired" if retired else "editable",
-                    "retirement_status": "retired" if retired else "supported",
+                    "management_mode": "editable",
                     "current_publication": (
                         {
                             "id": publication["id"],
@@ -514,8 +510,7 @@ class AgentConfigService:
 
     def rollback(self, *, actor_id: str, agent_code: str, publication_id: str) -> dict[str, Any]:
         selected = self.publication(publication_id)
-        if str(selected.get("runtime_kind") or "") != WRITABLE_RUNTIME_KIND:
-            _raise_typescript_runtime_retired()
+        _require_writable_runtime_kind(str(selected.get("runtime_kind") or ""))
         model_connection = (selected.get("snapshot") or {}).get("model_connection") or {}
         if model_connection and self.model_connection_service is not None:
             self.model_connection_service.runtime_binding(
@@ -563,7 +558,7 @@ class AgentConfigService:
 
     def _verified_publication(self, publication: dict[str, Any]) -> dict[str, Any]:
         schema_version = int(publication.get("schema_version") or 0)
-        if schema_version not in {1, 2, 3}:
+        if schema_version != 3:
             raise NonRetryableExecutionError(
                 "Unsupported Agent publication schema",
                 safe_message="不支持此 Agent 配置结构版本",
@@ -585,23 +580,13 @@ class AgentConfigService:
                 safe_message="Agent Runtime 发布事实完整性校验失败",
                 error_code="agent_publication_runtime_mismatch",
             )
-        if schema_version == 1:
-            if runtime_kind != "python-v1" or snapshot.get("runtime_kind") not in {
-                None,
-                "python-v1",
-            }:
-                raise NonRetryableExecutionError(
-                    "Legacy Agent publication runtime is invalid",
-                    safe_message="旧 Agent Runtime 发布事实无效",
-                    error_code="agent_publication_runtime_mismatch",
-                )
-        elif snapshot.get("runtime_kind") != runtime_kind:
+        if snapshot.get("runtime_kind") != runtime_kind:
             raise NonRetryableExecutionError(
                 "Agent publication snapshot runtime mismatch",
                 safe_message="Agent Runtime 发布快照完整性校验失败",
                 error_code="agent_publication_runtime_mismatch",
             )
-        if schema_version == 3 and snapshot.get("supported_runtime_protocol_versions") != list(
+        if snapshot.get("supported_runtime_protocol_versions") != list(
             SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
         ):
             raise NonRetryableExecutionError(
@@ -911,15 +896,9 @@ def _normalize_definition_fields(
     }
 
 
-def _is_retired_typescript_definition(definition: dict[str, Any]) -> bool:
-    return str(definition.get("runtime_kind") or "") == "typescript-v1"
-
-
 def _require_writable_runtime_kind(runtime_kind: str) -> None:
     if runtime_kind == WRITABLE_RUNTIME_KIND:
         return
-    if runtime_kind == "typescript-v1":
-        _raise_typescript_runtime_retired()
     raise NonRetryableExecutionError(
         "Agent Definition runtime is unsupported",
         safe_message="Agent Runtime 配置无效",
@@ -929,14 +908,6 @@ def _require_writable_runtime_kind(runtime_kind: str) -> None:
 
 def _require_writable_definition(definition: dict[str, Any]) -> None:
     _require_writable_runtime_kind(str(definition.get("runtime_kind") or ""))
-
-
-def _raise_typescript_runtime_retired() -> None:
-    raise NonRetryableExecutionError(
-        "TypeScript Agent Runtime is retired for new control-plane writes",
-        safe_message="TypeScript Agent Runtime 已退役；历史记录仅供查看，请迁移到 Python Runtime",
-        error_code="typescript_agent_runtime_retired",
-    )
 
 
 def agent_config_hash(config: dict[str, Any]) -> str:

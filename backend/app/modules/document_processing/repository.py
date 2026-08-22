@@ -2070,10 +2070,6 @@ class DocumentProcessingRepository:
                 )
                 if changed:
                     reconciled += 1
-                    self.database.execute(
-                        "delete from attachment_content where attachment_id = ?",
-                        (str(row["id"]),),
-                    )
         release_rows = self.database.execute(
             """
             select distinct a.job_id

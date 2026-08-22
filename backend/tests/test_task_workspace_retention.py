@@ -14,6 +14,7 @@ from app.modules.business_application.domain.policies import (
 from app.modules.file_workspace.domain import RetentionPeriod
 from app.modules.file_workspace.lifecycle import task_workspace_expires_at
 from app.modules.business_application.domain.runtime import RuntimeReadinessEvaluator
+from app.modules.document_processing.profile import document_processing_profile_snapshot
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -42,11 +43,11 @@ def test_workspace_expiry_uses_fixed_asia_shanghai_natural_boundary(
     assert task_workspace_expires_at(created, period) == expiry
 
 
-def test_retention_policy_defaults_and_legacy_publication_are_explicit() -> None:
+def test_retention_policy_defaults_are_fixed_to_publication_snapshot() -> None:
     assert validate_task_workspace_retention_period(None) == "WEEK"
     assert publication_workspace_retention({"schema_version": 1}) == (
         "WEEK",
-        "legacy_default",
+        "publication_snapshot",
     )
     assert publication_workspace_retention(
         {"schema_version": 2, "task_workspace_retention_period": "MONTH"}
@@ -67,19 +68,24 @@ def test_workspace_expiry_rejects_naive_datetime() -> None:
         task_workspace_expires_at(datetime(2026, 8, 14), RetentionPeriod.DAY)
 
 
-def test_v2_publication_requires_explicit_frozen_policy_but_v1_is_compatible() -> None:
-    legacy = {"schema_version": 1, "application": {"id": "legacy"}}
-    assert verify_publication_snapshot(
-        legacy, schema_version=1, expected_hash=snapshot_hash(legacy)
-    )
-
-    invalid_v2 = {"schema_version": 2, "application": {"id": "invalid"}}
+def test_current_publication_requires_complete_schema_v6_snapshot() -> None:
+    invalid_v2 = {"schema_version": 6, "application": {"id": "invalid"}}
     assert not verify_publication_snapshot(
-        invalid_v2, schema_version=2, expected_hash=snapshot_hash(invalid_v2)
+        invalid_v2, schema_version=6, expected_hash=snapshot_hash(invalid_v2)
     )
-    valid_v2 = {**invalid_v2, "task_workspace_retention_period": "DAY"}
+    valid_v2 = {
+        **invalid_v2,
+        "task_workspace_retention_period": "DAY",
+        "task_file_features": {
+            "workspace_enabled": False,
+            "file_mcp_enabled": False,
+            "runtime_file_edit_enabled": False,
+            "default_file_delivery_enabled": False,
+        },
+        "document_processing_profile": document_processing_profile_snapshot("NONE"),
+    }
     assert verify_publication_snapshot(
-        valid_v2, schema_version=2, expected_hash=snapshot_hash(valid_v2)
+        valid_v2, schema_version=6, expected_hash=snapshot_hash(valid_v2)
     )
 
 

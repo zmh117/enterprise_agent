@@ -95,9 +95,9 @@ def normalize_tool_events(
             tool_origin = "unknown"
             server_code = None
             tool_name = full_tool_name
-        protocol_version = str(request.get("protocol_version") or "1.0")
-        if protocol_version == "1.0" and tool_origin != "mcp":
-            continue
+        protocol_version = str(request.get("protocol_version") or "")
+        if protocol_version != "1.3":
+            raise ValueError("only runtime protocol 1.3 is supported")
         tool_call_id = str(event.get("tool_call_id") or "")
         if not tool_call_id:
             continue
@@ -117,22 +117,21 @@ def normalize_tool_events(
             "response_summary": {"available": bool(event.get("response_summary"))},
             "duration_ms": max(0, int(event.get("duration_ms") or 0)),
         }
-        if protocol_version in {"1.1", "1.2", "1.3"}:
-            item.update(
-                {
-                    "tool_origin": tool_origin,
-                    "mcp_call_id": (
-                        str(event["mcp_call_id"])
-                        if tool_origin == "mcp" and event.get("mcp_call_id")
-                        else None
-                    ),
-                    "persisted_tool_call_id": (
-                        str(event["persisted_tool_call_id"])
-                        if tool_origin == "mcp" and event.get("persisted_tool_call_id")
-                        else None
-                    ),
-                }
-            )
+        item.update(
+            {
+                "tool_origin": tool_origin,
+                "mcp_call_id": (
+                    str(event["mcp_call_id"])
+                    if tool_origin == "mcp" and event.get("mcp_call_id")
+                    else None
+                ),
+                "persisted_tool_call_id": (
+                    str(event["persisted_tool_call_id"])
+                    if tool_origin == "mcp" and event.get("persisted_tool_call_id")
+                    else None
+                ),
+            }
+        )
         if status in {"FAILED", "DENIED"}:
             item["failure"] = {
                 "code": str(event.get("error_code") or "runtime_tool_failed"),

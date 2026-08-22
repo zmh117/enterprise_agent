@@ -25,7 +25,7 @@ from app.modules.document_processing.layout_ocr import (
     build_no_text_picture_result,
 )
 from app.modules.document_processing.profile import (
-    DOCLING_TEXT_V1,
+    DOCLING_LAYOUT_OCR_V2,
     DocumentProcessingProfile,
     require_document_processing_profile,
     require_layout_ocr_profile_by_hash,
@@ -66,9 +66,9 @@ class FileProcessingWorkerService:
     ) -> None:
         if not 0.1 <= poll_interval_seconds <= 30:
             raise ValueError("File processing poll interval is invalid")
-        if not 1 <= total_timeout_seconds <= DOCLING_TEXT_V1.processing_timeout_seconds:
+        if not 1 <= total_timeout_seconds <= DOCLING_LAYOUT_OCR_V2.processing_timeout_seconds:
             raise ValueError("File processing total timeout is invalid")
-        if max_attempts != DOCLING_TEXT_V1.max_attempts:
+        if max_attempts != DOCLING_LAYOUT_OCR_V2.max_attempts:
             raise ValueError("File processing max attempts must match the frozen profile")
         if not 1 <= retry_base_seconds <= total_timeout_seconds:
             raise ValueError("File processing retry base is invalid")
@@ -685,7 +685,7 @@ class FileProcessingWorkerService:
         if retryable and attempt < self.max_attempts:
             delay = min(
                 self.retry_base_seconds * (2 ** max(attempt - 1, 0)),
-                DOCLING_TEXT_V1.processing_timeout_seconds,
+                DOCLING_LAYOUT_OCR_V2.processing_timeout_seconds,
             )
             try:
                 self.file_service.retry(

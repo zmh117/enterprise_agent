@@ -203,7 +203,6 @@ def test_python_text_v2_sandbox_allows_markdown_write_and_denies_log_mutation(
 ) -> None:
     sandbox = _manager(tmp_path).create(
         "job-text-v2",
-        file_format_policy_version="text-v2",
     )
     try:
         (sandbox.path / "inputs/service.log").write_text("line\n", encoding="utf-8")

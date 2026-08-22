@@ -87,7 +87,7 @@ function executionSummary(overrides: Record<string, unknown> = {}) {
     failure_code: null,
     failure_summary: null,
     retry_exhausted: false,
-    source_protocol_version: "1.2",
+    source_protocol_version: "1.3",
     ...overrides,
   }
 }
@@ -147,7 +147,7 @@ function fileOperations(overrides: Record<string, unknown> = {}) {
             application_id: "application-safe",
             application_code: "diagnostic-safe",
             publication_id: "publication-safe",
-            profile_code: "docling-text-v1",
+            profile_code: "docling-layout-ocr-v2",
             status: "FAILED",
             count: 1,
             total_attempts: 2,
@@ -166,7 +166,7 @@ function fileOperations(overrides: Record<string, unknown> = {}) {
             application_id: "application-safe",
             application_code: "diagnostic-safe",
             publication_id: "publication-safe",
-            profile_code: "docling-text-v1",
+            profile_code: "docling-layout-ocr-v2",
             profile_hash: "a".repeat(64),
             status: "FAILED",
             attempt: 2,
@@ -185,7 +185,7 @@ function fileOperations(overrides: Record<string, unknown> = {}) {
             application_id: "application-safe",
             application_code: "diagnostic-safe",
             publication_id: "publication-safe",
-            profile_code: "docling-text-v1",
+            profile_code: "docling-layout-ocr-v2",
             profile_hash: "a".repeat(64),
             status: "FAILED",
             attempt: 2,
@@ -340,7 +340,7 @@ describe("runtime provenance records", () => {
     expect(screen.getByText(/retry 3 · dead 4/)).toBeInTheDocument()
     expect(screen.getByText(/Docling 就绪/)).toBeInTheDocument()
     expect(screen.getByText("处理分组")).toBeInTheDocument()
-    expect(screen.getByText(/diagnostic-safe · docling-text-v1 · FAILED/)).toBeInTheDocument()
+    expect(screen.getByText(/diagnostic-safe · docling-layout-ocr-v2 · FAILED/)).toBeInTheDocument()
     expect(screen.getByText("最近失败")).toBeInTheDocument()
     expect(screen.getByText(/docling_format_rejected/)).toBeInTheDocument()
     expect(
@@ -457,8 +457,7 @@ describe("runtime provenance records", () => {
         },
         file_workspace: {
           enabled: true,
-          manifest_schema_version: 3,
-          file_format_policy_version: "text-v2",
+          manifest_schema_version: 5,
           policy_source: "job_file_manifest",
           formats: [
             {
@@ -500,8 +499,7 @@ describe("runtime provenance records", () => {
     expect(screen.getByText("1 次 API 重试")).toBeInTheDocument()
     expect(screen.getByText("模型轮次 / Runtime 调用")).toBeInTheDocument()
     expect(screen.getByText("2 次 / 1 次")).toBeInTheDocument()
-    expect(screen.getByText("text-v2")).toBeInTheDocument()
-    expect(screen.getByText(/Manifest v3/)).toBeInTheDocument()
+    expect(screen.getByText(/Manifest v5/)).toBeInTheDocument()
     expect(screen.getByText("只读并发送既有精确版本")).toBeInTheDocument()
     expect(screen.getByText(/不渲染正文/)).toBeInTheDocument()
   })
@@ -522,8 +520,7 @@ describe("runtime provenance records", () => {
         },
         file_workspace: {
           enabled: true,
-          manifest_schema_version: 4,
-          file_format_policy_version: "text-v2",
+          manifest_schema_version: 5,
           policy_source: "job_file_manifest",
           formats: [
             {

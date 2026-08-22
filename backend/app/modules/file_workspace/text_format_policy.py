@@ -17,11 +17,6 @@ UTF8_BOM = codecs.BOM_UTF8
 UTF16_BOMS = (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)
 
 
-class FileFormatPolicyVersion(StrEnum):
-    TEXT_V1 = "text-v1"
-    TEXT_V2 = "text-v2"
-
-
 class TextFormatCode(StrEnum):
     TXT = "TXT"
     LOG = "LOG"
@@ -43,7 +38,6 @@ class TextFormatDefinition:
 
 @dataclass(frozen=True, slots=True)
 class TextFormatPolicy:
-    version: FileFormatPolicyVersion
     formats: tuple[TextFormatDefinition, ...]
 
     def by_code(self, code: str | TextFormatCode) -> TextFormatDefinition:
@@ -111,57 +105,28 @@ _MARKDOWN = TextFormatDefinition(
     actions=_FULL_ACTIONS,
 )
 
-FORMAT_POLICIES: dict[FileFormatPolicyVersion, TextFormatPolicy] = {
-    FileFormatPolicyVersion.TEXT_V1: TextFormatPolicy(
-        version=FileFormatPolicyVersion.TEXT_V1,
-        formats=(_TXT,),
-    ),
-    FileFormatPolicyVersion.TEXT_V2: TextFormatPolicy(
-        version=FileFormatPolicyVersion.TEXT_V2,
-        formats=(_TXT, _LOG, _MARKDOWN),
-    ),
-}
+CURRENT_TEXT_FORMAT_POLICY = TextFormatPolicy(formats=(_TXT, _LOG, _MARKDOWN))
 
 
-def normalize_file_format_policy_version(
-    value: object,
-    *,
-    default: FileFormatPolicyVersion = FileFormatPolicyVersion.TEXT_V1,
-) -> FileFormatPolicyVersion:
-    normalized = str(value or default.value).strip().lower()
-    try:
-        return FileFormatPolicyVersion(normalized)
-    except ValueError as exc:
-        _deny("file_format_policy_unknown", "文件格式策略版本不受支持", cause=exc)
-
-
-def get_text_format_policy(value: object) -> TextFormatPolicy:
-    return FORMAT_POLICIES[normalize_file_format_policy_version(value)]
+def get_text_format_policy() -> TextFormatPolicy:
+    return CURRENT_TEXT_FORMAT_POLICY
 
 
 def text_format_for_name(
     display_name: str,
-    *,
-    policy_version: object,
 ) -> TextFormatDefinition:
-    return get_text_format_policy(policy_version).for_name(display_name)
+    return get_text_format_policy().for_name(display_name)
 
 
 def validate_format_action(
     *,
-    policy_version: object,
     format_code: str | TextFormatCode,
     action: FileAction,
 ) -> TextFormatDefinition:
-    definition = get_text_format_policy(policy_version).by_code(format_code)
+    definition = get_text_format_policy().by_code(format_code)
     if action not in definition.actions:
         _deny("file_format_read_only", "此文件格式只允许读取和发送")
     return definition
-
-
-def policy_runtime_protocol_version(policy_version: object) -> str:
-    version = normalize_file_format_policy_version(policy_version)
-    return "1.3" if version is FileFormatPolicyVersion.TEXT_V2 else "1.2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,13 +153,11 @@ class TextStreamValidator:
         display_name: str,
         media_type: str,
         agent_output: bool,
-        policy_version: object = FileFormatPolicyVersion.TEXT_V1,
         expected_format: str | TextFormatCode | None = None,
     ) -> TextValidationResult:
         definition = self._require_metadata(
             display_name=display_name,
             media_type=media_type,
-            policy_version=policy_version,
             expected_format=expected_format,
             agent_output=agent_output,
         )
@@ -213,13 +176,11 @@ class TextStreamValidator:
         display_name: str,
         media_type: str,
         agent_output: bool,
-        policy_version: object = FileFormatPolicyVersion.TEXT_V1,
         expected_format: str | TextFormatCode | None = None,
     ) -> TextValidationResult:
         definition = self._require_metadata(
             display_name=display_name,
             media_type=media_type,
-            policy_version=policy_version,
             expected_format=expected_format,
             agent_output=agent_output,
         )
@@ -332,11 +293,10 @@ class TextStreamValidator:
         *,
         display_name: str,
         media_type: str,
-        policy_version: object,
         expected_format: str | TextFormatCode | None,
         agent_output: bool,
     ) -> TextFormatDefinition:
-        definition = text_format_for_name(display_name, policy_version=policy_version)
+        definition = text_format_for_name(display_name)
         normalized_media_type = media_type.split(";", 1)[0].strip().lower()
         if normalized_media_type not in definition.accepted_media_types:
             _deny("file_mime_invalid", "文件扩展名与 MIME 类型不一致")

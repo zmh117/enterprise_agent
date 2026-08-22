@@ -400,13 +400,11 @@ class AdminReadRepository:
                    a.media_type, a.file_name,
                    a.declared_mime, a.detected_mime, a.declared_size, a.size_bytes,
                    a.status, a.failure_code, a.retry_count, a.sha256,
-                   a.object_bucket, a.object_key, a.created_at, a.updated_at,
-                   c.char_count, c.truncated, substr(c.plain_text, 1, 4000) as text_preview
+                   a.object_bucket, a.object_key, a.created_at, a.updated_at
             from message_attachment a
             join agent_message m on m.id = a.message_id
             join agent_session s on s.id = m.session_id
             left join agent_job j on j.id = a.job_id
-            left join attachment_content c on c.attachment_id = a.id
             where a.created_at >= ? and a.created_at < ?
             order by a.created_at desc, a.id desc limit ?
             """,
@@ -425,13 +423,11 @@ class AdminReadRepository:
                    a.media_type, a.file_name,
                    a.declared_mime, a.detected_mime, a.declared_size, a.size_bytes,
                    a.status, a.failure_code, a.retry_count, a.sha256,
-                   a.object_bucket, a.object_key, a.created_at, a.updated_at,
-                   c.char_count, c.truncated, substr(c.plain_text, 1, 4000) as text_preview
+                   a.object_bucket, a.object_key, a.created_at, a.updated_at
             from message_attachment a
             join agent_message m on m.id = a.message_id
             join agent_session s on s.id = m.session_id
             left join agent_job j on j.id = a.job_id
-            left join attachment_content c on c.attachment_id = a.id
             where a.id = ?
             """,
             (attachment_id,),
@@ -619,7 +615,6 @@ class AdminReadRepository:
             hashlib.sha256(f"{bucket}/{key}".encode()).hexdigest()[:16] if bucket or key else ""
         )
         item["storage_configured"] = bool(bucket and key)
-        item["text_preview"] = str(item.get("text_preview") or "")[:4000]
         return _safe_times(item)
 
 
@@ -764,7 +759,7 @@ def _execution_summary(item: dict[str, Any]) -> dict[str, Any]:
         "failure_code": item.pop(f"{prefix}failure_code", None),
         "failure_summary": item.pop(f"{prefix}failure_summary", None),
         "retry_exhausted": bool(item.pop(f"{prefix}retry_exhausted", 0) or False),
-        "source_protocol_version": str(item.pop(f"{prefix}source_protocol_version", "") or "1.0"),
+        "source_protocol_version": str(item.pop(f"{prefix}source_protocol_version", "") or "1.3"),
     }
 
 

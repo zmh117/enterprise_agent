@@ -159,7 +159,7 @@ function agentPayload(
 
 function createdAgentPayload(
   code: string,
-  runtimeKind: "python-v1" | "typescript-v1"
+  runtimeKind: "python-v1"
 ) {
   return {
     definition: {
@@ -217,21 +217,6 @@ describe("Agent Profile management", () => {
             model_connection_status: "missing_revision",
             active_application_count: 1,
           },
-          {
-            id: "agent_2",
-            code: "typescript-diagnostic-agent",
-            name: "TypeScript 诊断 Agent",
-            description: "",
-            project_code: "default",
-            status: "enabled",
-            revision: 1,
-            runtime_kind: "typescript-v1",
-            management_mode: "read_only_retired",
-            retirement_status: "retired",
-            current_publication: null,
-            model_connection_status: "legacy_global_connection",
-            active_application_count: 0,
-          },
         ],
       })
     )
@@ -239,17 +224,12 @@ describe("Agent Profile management", () => {
     renderWithQuery(<AgentProfilesPage />)
 
     expect(await screen.findByText("默认诊断 Agent")).toBeInTheDocument()
-    expect(screen.getByText("TypeScript 诊断 Agent")).toBeInTheDocument()
     expect(screen.getByText("Python Runtime")).toBeInTheDocument()
-    expect(screen.getByText("TypeScript Runtime（已退役）")).toBeInTheDocument()
     expect(screen.getByText("r3")).toBeInTheDocument()
     expect(screen.getByText("引用版本已删除，请重新配置")).toBeInTheDocument()
     expect(
       screen.getAllByRole("link", { name: "进入配置" })[0]
     ).toHaveAttribute("href", "/agent-profiles/default-diagnostic-agent")
-    expect(
-      screen.getAllByRole("link", { name: "进入配置" })[1]
-    ).toHaveAttribute("href", "/agent-profiles/typescript-diagnostic-agent")
   })
 
   it("renders an actionable empty state and creates a Python Agent", async () => {
@@ -427,86 +407,6 @@ describe("Agent Profile management", () => {
 
     expect(await screen.findByText("Agent 编码已存在")).toBeInTheDocument()
     expect(code).toHaveValue("duplicate-agent")
-  })
-
-  it("loads a historical TypeScript Agent as retired and read-only", async () => {
-    const payload = agentPayload().agent
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation((input) => {
-        const url = String(input)
-        if (url.includes("/model-connections/")) {
-          return response({ connection: modelConnection })
-        }
-        if (url.endsWith("/draft")) {
-          return response({ revision: payload.draft })
-        }
-        return response({
-          agent: {
-            ...payload,
-            definition: {
-              ...payload.definition,
-              id: "agent_2",
-              code: "typescript-diagnostic-agent",
-              name: "TypeScript 诊断 Agent",
-              runtime_kind: "typescript-v1",
-            },
-            management_mode: "read_only_retired",
-            retirement_status: "retired",
-          },
-        })
-      })
-
-    render(
-      <QueryClientProvider
-        client={
-          new QueryClient({
-            defaultOptions: {
-              queries: { retry: false },
-              mutations: { retry: false },
-            },
-          })
-        }
-      >
-        <MemoryRouter
-          initialEntries={["/agent-profiles/typescript-diagnostic-agent"]}
-        >
-          <Routes>
-            <Route
-              path="/agent-profiles/:code"
-              element={<AgentProfilePage />}
-            />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    )
-
-    expect(await screen.findByText("TypeScript 诊断 Agent")).toBeInTheDocument()
-    expect(screen.getByText("TypeScript Runtime（已退役）")).toBeInTheDocument()
-    expect(
-      screen.getByText(/TypeScript Agent Runtime 已退役/)
-    ).toBeInTheDocument()
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "/api/admin/agents/typescript-diagnostic-agent",
-      expect.any(Object)
-    )
-
-    expect(screen.getByRole("textbox", { name: "业务角色" })).toBeDisabled()
-    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled()
-    expect(screen.getByRole("button", { name: "发布 Agent" })).toBeDisabled()
-    fireEvent.click(screen.getByRole("tab", { name: "模型连接" }))
-    expect(
-      screen.getByRole("button", {
-        name: "通过 Python Runtime 测试当前连接",
-      })
-    ).toBeDisabled()
-    expect(
-      fetchSpy.mock.calls.some(
-        ([input, init]) =>
-          String(input).includes("typescript-diagnostic-agent") &&
-          ["PUT", "POST"].includes(String(init?.method))
-      )
-    ).toBe(false)
   })
 
   it("shows the saved model connection without exposing a raw credential", async () => {

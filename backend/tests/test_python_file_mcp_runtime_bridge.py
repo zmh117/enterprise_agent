@@ -280,7 +280,8 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
         skills={},
         retrieved_context={
             "file_manifest": {
-                "schema_version": 4,
+                "schema_version": 5,
+                "workspace_catalog_revision_id": "workspace-catalog-python-1",
                 "manifest_hash": "c" * 64,
                 "observed_at": "2026-08-15T22:00:00+08:00",
                 "items": [
@@ -288,6 +289,7 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
                         "file_id": "file-python-1",
                         "version_id": "version-python-0",
                         "display_name": "source-python.txt",
+                        "format_code": "TXT",
                         "source_kind": "CURRENT_MESSAGE",
                         "allowed_actions": [
                             "READ_METADATA",
@@ -299,6 +301,7 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
                         "conflict_candidate": False,
                         "source_received_at": "2026-08-15T21:30:00+08:00",
                         "version_created_at": "2026-08-15T21:30:03+08:00",
+                        "materialization_size_bytes": 7,
                     }
                 ],
             }
@@ -322,7 +325,7 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
             ),
         ),
         max_tool_calls=8,
-        runtime_protocol_version="1.2",
+        runtime_protocol_version="1.3",
     )
     principal = "test-only-python-file-principal"
     client = FixedMcpClaudeSdkClient(
@@ -441,6 +444,7 @@ def test_python_runtime_reserves_all_automatic_inputs_before_first_download(
             "conflict_candidate": False,
             "source_received_at": "2026-08-22T02:26:30+00:00",
             "version_created_at": "2026-08-22T02:26:31+00:00",
+            "materialization_size_bytes": 7,
         }
         for index in (1, 2)
     ]
@@ -454,8 +458,8 @@ def test_python_runtime_reserves_all_automatic_inputs_before_first_download(
         skills={},
         retrieved_context={
             "file_manifest": {
-                "schema_version": 4,
-                "file_format_policy_version": "text-v2",
+                "schema_version": 5,
+                "workspace_catalog_revision_id": "workspace-catalog-python-2",
                 "manifest_hash": "d" * 64,
                 "observed_at": "2026-08-22T02:26:33+00:00",
                 "items": items,
@@ -474,7 +478,6 @@ def test_python_runtime_reserves_all_automatic_inputs_before_first_download(
             ),
         ),
         runtime_protocol_version="1.3",
-        file_format_policy_version="text-v2",
     )
     sandbox_limits = JobSandboxLimits(
         capacity_bytes=15 * 1024 * 1024,

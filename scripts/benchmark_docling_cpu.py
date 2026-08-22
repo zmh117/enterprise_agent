@@ -9,7 +9,7 @@ import os
 import time
 from pathlib import Path
 
-from app.modules.document_processing.profile import DOCLING_TEXT_V1
+from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V2
 from app.modules.document_processing.provider import (
     DoclingServeProvider,
     DocumentProcessorFailure,
@@ -59,7 +59,7 @@ def _run(path: Path, *, poll_seconds: float, timeout_seconds: int) -> dict[str, 
             filename=path.name,
             media_type=media_type,
             format_code=format_code,
-            profile=DOCLING_TEXT_V1,
+            profile=DOCLING_LAYOUT_OCR_V2,
         )
     while task.state not in {ProcessorTaskState.SUCCESS, ProcessorTaskState.FAILURE}:
         elapsed = time.monotonic() - started
@@ -69,7 +69,7 @@ def _run(path: Path, *, poll_seconds: float, timeout_seconds: int) -> dict[str, 
         task = provider.poll(task.task_id)
     if task.state is ProcessorTaskState.FAILURE:
         raise DocumentProcessorFailure("docling_conversion_failed", retryable=False)
-    result = provider.fetch(task.task_id, profile=DOCLING_TEXT_V1)
+    result = provider.fetch(task.task_id, profile=DOCLING_LAYOUT_OCR_V2)
     elapsed = time.monotonic() - started
     return {
         "sample": path.name,

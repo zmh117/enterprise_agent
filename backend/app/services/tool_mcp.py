@@ -100,7 +100,7 @@ class JobToolService:
         if (
             job.status != JobStatus.RUNNING
             or job.agent_runtime_kind not in SUPPORTED_RUNTIMES
-            or job.agent_runtime_protocol_version not in {"1.0", "1.1", "1.2", "1.3"}
+            or job.agent_runtime_protocol_version != "1.3"
         ):
             raise ToolMcpError("tool_mcp_job_invalid", "当前 Job 不允许调用工具")
         return job

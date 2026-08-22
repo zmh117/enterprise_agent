@@ -36,7 +36,7 @@ const executionSummarySchema = z.object({
   failure_code: z.string().nullable(),
   failure_summary: z.string().nullable(),
   retry_exhausted: z.boolean().default(false),
-  source_protocol_version: z.string().default("1.0"),
+  source_protocol_version: z.string().default("1.3"),
 })
 
 const unavailableExecutionSummary = {
@@ -60,7 +60,7 @@ const unavailableExecutionSummary = {
   failure_code: null,
   failure_summary: null,
   retry_exhausted: false,
-  source_protocol_version: "1.0",
+  source_protocol_version: "1.3",
 }
 
 export const runtimeJobSchema = z
@@ -286,12 +286,6 @@ const DOCUMENT_FILE_FORMAT_CODES = [
 const fileWorkspaceSchema = z.object({
   enabled: z.boolean(),
   manifest_schema_version: z.number().int().nullable(),
-  file_format_policy_version: z.enum(["text-v1", "text-v2"]),
-  policy_source: z.enum([
-    "job_file_manifest",
-    "job_route_decision",
-    "legacy_default",
-  ]),
   formats: z.array(
     z.object({
       format_code: z.string().min(1).max(32),
@@ -321,8 +315,6 @@ export const runtimeJobDetailSchema = z
     file_workspace: fileWorkspaceSchema.default({
       enabled: false,
       manifest_schema_version: null,
-      file_format_policy_version: "text-v1",
-      policy_source: "legacy_default",
       formats: [],
     }),
     deliveries: deliveryTimelineSchema,

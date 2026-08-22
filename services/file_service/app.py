@@ -27,9 +27,8 @@ from app.modules.file_workspace.contracts import (
 )
 from app.modules.file_workspace.streaming_service import INTERNAL_TRANSFER_META
 from app.modules.document_processing.profile import (
-    DOCLING_LAYOUT_OCR_V1,
-    DOCLING_LAYOUT_OCR_V1_PROFILE_HASH,
-    DOCLING_TEXT_V1,
+    DOCLING_LAYOUT_OCR_V2,
+    DOCLING_LAYOUT_OCR_V2_PROFILE_HASH,
 )
 from app.shared.exceptions import AppError
 from app.modules.mcp_audit import McpAuditHandle
@@ -44,7 +43,7 @@ from services.file_service.principal import FilePrincipalResolver
 
 logger = logging.getLogger(__name__)
 SERVER_VERSION = "0.1.0"
-REQUIRED_SCHEMA_VERSION = 118
+REQUIRED_SCHEMA_VERSION = 119
 MAX_TOOL_RESPONSE_BYTES = 256 * 1024
 
 
@@ -388,17 +387,17 @@ def create_app(
             database.execute("select id from managed_file_version where 1 = 0")
             database.execute("select id from document_picture_asset where 1 = 0")
             database.execute("select id from document_processing_stage_outbox where 1 = 0")
-            layout_options = DOCLING_LAYOUT_OCR_V1.layout_ocr_options
+            layout_options = DOCLING_LAYOUT_OCR_V2.layout_ocr_options
             if (
                 layout_options is None
-                or DOCLING_LAYOUT_OCR_V1.profile_hash
-                != DOCLING_LAYOUT_OCR_V1_PROFILE_HASH
+                or DOCLING_LAYOUT_OCR_V2.profile_hash
+                != DOCLING_LAYOUT_OCR_V2_PROFILE_HASH
                 or layout_options["layout_schema"]
                 != {
                     "name": "enterprise-agent.office-image-ocr-layout",
-                    "version": "v1",
+                    "version": "v2",
                 }
-                or tuple(DOCLING_LAYOUT_OCR_V1.output_kinds)
+                or tuple(DOCLING_LAYOUT_OCR_V2.output_kinds)
                 != ("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON")
             ):
                 raise ValueError("File Service layout OCR registry is invalid")
@@ -670,7 +669,7 @@ def create_app(
             try:
                 async for chunk in request.stream():
                     size += len(chunk)
-                    if size > DOCLING_TEXT_V1.max_docling_json_bytes:
+                    if size > DOCLING_LAYOUT_OCR_V2.max_docling_json_bytes:
                         raise FilePrincipalError(
                             "Representation request exceeds the size bound",
                             safe_message="派生表示超过大小上限",

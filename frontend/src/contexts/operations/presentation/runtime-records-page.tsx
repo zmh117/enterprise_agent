@@ -496,14 +496,11 @@ function FileWorkspacePolicyPanel({
   value: FileWorkspaceEvidence
 }) {
   const frozen = new Map(value.formats.map((item) => [item.format_code, item]))
-  const matrix =
-    value.file_format_policy_version === "text-v2"
-      ? [
-          ["TXT", "读取、创建、编辑、提交、发送"],
-          ["LOG", "只读并发送既有精确版本"],
-          ["MARKDOWN", "读取、创建、编辑、提交、发送；不渲染正文"],
-        ]
-      : [["TXT", "读取、创建、编辑、提交、发送"]]
+  const matrix = [
+    ["TXT", "读取、创建、编辑、提交、发送"],
+    ["LOG", "只读并发送既有精确版本"],
+    ["MARKDOWN", "读取、创建、编辑、提交、发送；不渲染正文"],
+  ]
   const documentFormats = DOCUMENT_RUNTIME_FILE_FORMATS.filter((format) =>
     frozen.has(format)
   )
@@ -520,14 +517,14 @@ function FileWorkspacePolicyPanel({
     <Card className="mt-4 shadow-none">
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
-          文件格式策略
-          <Badge variant="outline">{value.file_format_policy_version}</Badge>
+          文件规则
+          <Badge variant="outline">平台固定</Badge>
           <Badge variant={value.enabled ? "secondary" : "outline"}>
             {value.enabled ? "已冻结 Job Manifest" : "未创建文件清单"}
           </Badge>
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          来源 {filePolicySourceLabel(value.policy_source)}
+          来源 当前平台规则
           {value.manifest_schema_version
             ? ` · Manifest v${value.manifest_schema_version}`
             : ""}
@@ -596,12 +593,6 @@ function FileWorkspacePolicyPanel({
       </CardContent>
     </Card>
   )
-}
-
-function filePolicySourceLabel(source: string) {
-  if (source === "job_file_manifest") return "Job File Manifest"
-  if (source === "job_route_decision") return "Job 路由快照"
-  return "历史默认 text-v1"
 }
 
 function ExecutionAccountingPanel({ summary }: { summary: ExecutionSummary }) {

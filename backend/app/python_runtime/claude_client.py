@@ -184,10 +184,7 @@ class ClaudeSdkClient:
         binding: ModelRuntimeBinding,
         api_key: str,
     ) -> AgentRunResult:
-        sandbox = self.sandbox_manager.create(
-            request.job_id,
-            file_format_policy_version=request.context.file_format_policy_version,
-        )
+        sandbox = self.sandbox_manager.create(request.job_id)
         token = self._sandbox.set(sandbox)
         try:
             return await self._run_in_sandbox_async(request, binding, api_key)
@@ -222,10 +219,9 @@ class ClaudeSdkClient:
         async def consume() -> None:
             nonlocal final_answer
             async for message in sdk.query(prompt=prompt, options=options):
-                if request.context.runtime_protocol_version in {"1.2", "1.3"}:
-                    audit.consume(message)
-                    self.last_runtime_events = list(audit.events)
-                    self.last_accounting = dict(audit.accounting)
+                audit.consume(message)
+                self.last_runtime_events = list(audit.events)
+                self.last_accounting = dict(audit.accounting)
                 error_result = result_error_details(message)
                 if error_result is not None:
                     detail, inconsistent = error_result

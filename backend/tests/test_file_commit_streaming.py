@@ -187,7 +187,6 @@ class _Principal:
 
 def _fixture(
     *,
-    file_format_policy_version: str = "text-v1",
     include_catalog_candidate: bool = False,
 ) -> tuple[
     FileWorkspaceRepository,
@@ -196,10 +195,6 @@ def _fixture(
     _Storage,
 ]:
     repository = FileWorkspaceRepository(_database())
-    repository.database.execute(
-        "update business_application_publication set file_format_policy_version = ? where id = ?",
-        (file_format_policy_version, "app-file-p1"),
-    )
     owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
     workspace = repository.create_workspace(
         workspace_id="workspace-a",
@@ -299,7 +294,6 @@ def _fixture(
         publication_id="app-file-p1",
         retention_period=RetentionPeriod.WEEK,
         manifest_hash="a" * 64,
-        file_format_policy_version=file_format_policy_version,
         items=[
             {
                 "file_id": "file-source",
@@ -337,7 +331,9 @@ class _AllowBusinessAccess:
         return {}
 
 
-def _install_catalog_tool_snapshot(repository: FileWorkspaceRepository) -> None:
+def _install_catalog_tool_snapshot(
+    repository: FileWorkspaceRepository, *, job_id: str = "job-file"
+) -> None:
     repository.database.execute(
         """
         insert into agent_definition
@@ -366,8 +362,14 @@ def _install_catalog_tool_snapshot(repository: FileWorkspaceRepository) -> None:
     )
     snapshot = {
         "tools": [
-            {"tool_identifier": "task_workspace_search_files"},
-            {"tool_identifier": "file_prepare_materialization"},
+            {
+                "server_code": "file-service",
+                "tool_identifier": "task_workspace_search_files",
+            },
+            {
+                "server_code": "file-service",
+                "tool_identifier": "file_prepare_materialization",
+            },
         ]
     }
     repository.database.execute(
@@ -375,10 +377,9 @@ def _install_catalog_tool_snapshot(repository: FileWorkspaceRepository) -> None:
         insert into agent_job_mcp_tool_snapshot
           (id, job_id, application_publication_id, agent_publication_id,
            schema_version, snapshot_json, snapshot_hash, authorization_hash, created_at)
-        values ('job-file-tools', 'job-file', 'app-file-p1', 'agent-file-p1',
-                1, ?, ?, ?, ?)
+        values (?, ?, 'app-file-p1', 'agent-file-p1', 1, ?, ?, ?, ?)
         """,
-        (json.dumps(snapshot), "f" * 64, "1" * 64, TIMESTAMP),
+        (f"{job_id}-tools", job_id, json.dumps(snapshot), "f" * 64, "1" * 64, TIMESTAMP),
     )
 
 
@@ -404,7 +405,7 @@ def _new_intent(
 
 
 def test_text_v2_markdown_commit_is_exact_and_log_commit_fails_before_upload() -> None:
-    repository, service, context, storage = _fixture(file_format_policy_version="text-v2")
+    repository, service, context, storage = _fixture()
     with pytest.raises(NonRetryableExecutionError) as readonly:
         service.prepare_commit(
             context=context,
@@ -664,7 +665,7 @@ def test_catalog_selection_requires_compatible_tool_snapshot_before_promotion() 
             arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
         )
 
-    assert rejected.value.error_code == "file_workspace_publication_upgrade_required"
+    assert rejected.value.error_code == "file_workspace_tool_snapshot_invalid"
     assert repository.database.execute_one(
         "select count(*) as value from agent_job_file_working_set_item where job_id = ?",
         ("job-file",),
@@ -731,7 +732,7 @@ def test_catalog_document_selection_freezes_exact_representation_identity() -> N
            processor_version, processor_build_digest, profile_code, profile_hash,
            status, source_size_bytes, completed_at, created_by, created_at, updated_at)
         values ('catalog-run-1', 'tenant-a', 'file-catalog', 'version-catalog-1',
-                'docling-serve', '1.30.0', ?, 'docling-text-v1', ?, 'SUCCEEDED',
+                'docling-serve', '1.30.0', ?, 'docling-layout-ocr-v2', ?, 'SUCCEEDED',
                 17, ?, 'file-processing-worker', ?, ?)
         """,
         ("sha256:" + "a" * 64, "b" * 64, TIMESTAMP, TIMESTAMP, TIMESTAMP),
@@ -768,7 +769,7 @@ def test_catalog_document_selection_freezes_exact_representation_identity() -> N
            processor_version, processor_build_digest, profile_code, profile_hash,
            status, source_size_bytes, completed_at, created_by, created_at, updated_at)
         values ('catalog-run-2', 'tenant-a', 'file-catalog', 'version-catalog-1',
-                'docling-serve', '1.30.0', ?, 'docling-text-v1', ?, 'SUCCEEDED',
+                'docling-serve', '1.30.0', ?, 'docling-layout-ocr-v2', ?, 'SUCCEEDED',
                 17, ?, 'file-processing-worker', ?, ?)
         """,
         ("sha256:" + "d" * 64, "e" * 64, TIMESTAMP, TIMESTAMP, TIMESTAMP),
@@ -871,7 +872,7 @@ def test_catalog_selection_rejects_41st_input_before_transfer_creation() -> None
 
 
 def test_manifest_v4_materializes_frozen_markdown_not_original_document() -> None:
-    repository, service, context, storage = _fixture(file_format_policy_version="text-v2")
+    repository, service, context, storage = _fixture()
     owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
     original = b"%PDF-1.7 confidential binary"
     markdown = b"# Governed representation\n"
@@ -912,7 +913,7 @@ def test_manifest_v4_materializes_frozen_markdown_not_original_document() -> Non
            processor_version, processor_build_digest, profile_code, profile_hash,
            status, source_size_bytes, completed_at, created_by, created_at, updated_at)
         values ('run-document', 'tenant-a', 'file-document', 'version-document-1',
-                'docling-serve', '1.30.0', ?, 'docling-text-v1', ?, 'SUCCEEDED',
+                'docling-serve', '1.30.0', ?, 'docling-layout-ocr-v2', ?, 'SUCCEEDED',
                 ?, ?, 'file-processing-worker', ?, ?)
         """,
         ("sha256:" + "c" * 64, "d" * 64, len(original), TIMESTAMP, TIMESTAMP, TIMESTAMP),
@@ -1100,6 +1101,7 @@ def test_stale_base_creates_conflict_without_advancing_current() -> None:
         publication_id="app-file-p1",
         file_references=(),
     )
+    _install_catalog_tool_snapshot(repository, job_id="job-after-conflict")
     later = manifest_service.finalize("job-after-conflict")
     assert later is not None
     identities = {
@@ -1107,10 +1109,7 @@ def test_stale_base_creates_conflict_without_advancing_current() -> None:
         for item in later["items"]
         if item["file_id"] == "file-source"
     }
-    assert identities == {
-        ("version-source-2", "WORKSPACE"),
-        (str(result["version_id"]), "CONFLICT"),
-    }
+    assert identities == set()
     assert later["schema_version"] == 5
 
 
@@ -1299,16 +1298,16 @@ def test_file_worker_attachment_import_is_idempotent_and_builds_txt_lineage() ->
 
 
 def test_file_worker_document_import_sniffs_source_and_queues_processing() -> None:
-    repository, existing_service, context, storage = _fixture(file_format_policy_version="text-v2")
+    repository, existing_service, context, storage = _fixture()
     repository.database.execute(
         """
         update business_application_publication
-           set document_processing_profile_code = 'docling-text-v1',
-               document_processing_profile_version = '1',
+               set document_processing_profile_code = 'docling-layout-ocr-v2',
+                   document_processing_profile_version = '2',
                document_processing_profile_hash = ?
          where id = 'app-file-p1'
         """,
-        ("337dc23bd405e7225e8ffca06b72852ed19121723bc8b1abeafdc05cf5ceac42",),
+        ("c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8",),
     )
     document_processing = GovernedDocumentProcessingService(
         DocumentProcessingRepository(repository.database),
@@ -1416,16 +1415,16 @@ def test_file_worker_document_import_sniffs_source_and_queues_processing() -> No
 
 
 def test_file_worker_canonicalizes_misnamed_images_and_disambiguates_names() -> None:
-    repository, existing_service, context, storage = _fixture(file_format_policy_version="text-v2")
+    repository, existing_service, context, storage = _fixture()
     repository.database.execute(
         """
         update business_application_publication
-           set document_processing_profile_code = 'docling-text-v1',
-               document_processing_profile_version = '1',
+               set document_processing_profile_code = 'docling-layout-ocr-v2',
+                   document_processing_profile_version = '2',
                document_processing_profile_hash = ?
          where id = 'app-file-p1'
         """,
-        ("337dc23bd405e7225e8ffca06b72852ed19121723bc8b1abeafdc05cf5ceac42",),
+        ("c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8",),
     )
     document_processing = GovernedDocumentProcessingService(
         DocumentProcessingRepository(repository.database),

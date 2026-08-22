@@ -55,7 +55,6 @@ STABLE_PROBE_ERROR_CODES = frozenset(
         "model_connection_probe_envelope_invalid",
         "model_connection_credential_unavailable",
         "model_connection_rotation_required",
-        "typescript_agent_runtime_retired",
         "revision_conflict",
         "credential_ownership_conflict",
         "validation_failed",
@@ -1341,12 +1340,6 @@ def _model_discovery_error() -> NonRetryableExecutionError:
 def _require_python_probe_runtime(runtime_kind: str) -> None:
     if runtime_kind == "python-v1":
         return
-    if runtime_kind == "typescript-v1":
-        raise NonRetryableExecutionError(
-            "TypeScript Agent Runtime model probes are retired",
-            safe_message="TypeScript Agent Runtime 已退役，请使用 Python Runtime 重新检测",
-            error_code="typescript_agent_runtime_retired",
-        )
     raise NonRetryableExecutionError(
         f"Unsupported model probe Runtime: {runtime_kind}",
         safe_message="模型连接测试 Runtime 类型无效",
@@ -1374,9 +1367,6 @@ def _safe_probe_error(exc: Exception) -> NonRetryableExecutionError:
         "model_connection_test_timeout": "模型连接测试超时",
         "model_connection_test_failed": "模型连接测试失败，请检查模型和 Credential",
         "model_connection_test_unavailable": "模型连接测试运行时不可用",
-        "typescript_agent_runtime_retired": (
-            "TypeScript Agent Runtime 已退役，请使用 Python Runtime 重新检测"
-        ),
     }
     return NonRetryableExecutionError(
         "Model connection probe failed",

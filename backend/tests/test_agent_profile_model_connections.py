@@ -366,10 +366,7 @@ def test_agent_publication_pins_connection_and_job_records_safe_provenance() -> 
         revision_id=str(draft["id"]),
     )
     assert publication["schema_version"] == 3
-    assert publication["snapshot"]["supported_runtime_protocol_versions"] == [
-        "1.2",
-        "1.3",
-    ]
+    assert publication["snapshot"]["supported_runtime_protocol_versions"] == ["1.3"]
     assert publication["snapshot"]["model_connection"]["revision_id"] == connection_revision["id"]
     assert "credential" not in publication["snapshot"]["model_connection"]
 
@@ -685,7 +682,7 @@ def test_saved_connection_probe_delegates_fixed_revision_to_python_runtime() -> 
         def probe(self, **kwargs: Any) -> dict[str, Any]:
             observed.update(kwargs)
             return {
-                "protocol_version": "1.0",
+                "protocol_version": "1.3",
                 "probe_id": "probe-safe-result",
                 "success": True,
                 "connection_revision_id": revision["id"],
@@ -725,7 +722,7 @@ def test_saved_connection_probe_delegates_fixed_revision_to_python_runtime() -> 
     assert "secret" not in json.dumps(result).lower()
 
 
-def test_saved_connection_probe_rejects_retired_typescript_runtime() -> None:
+def test_saved_connection_probe_rejects_noncurrent_runtime() -> None:
     c = container()
     revision = ready_connection(c)
     observed: list[str] = []
@@ -748,15 +745,15 @@ def test_saved_connection_probe_rejects_retired_typescript_runtime() -> None:
     c.model_connection_service.runtime_probes = {"python-v1": Probe("python-v1")}
     c.model_connection_service.redirect_checker = lambda *_args, **_kwargs: None
 
-    with pytest.raises(NonRetryableExecutionError) as retired:
+    with pytest.raises(NonRetryableExecutionError) as rejected:
         c.model_connection_service.test_saved_revision(
             actor_id=ADMIN_ID,
             revision_id=str(revision["id"]),
-            runtime_kind="typescript-v1",
+            runtime_kind="old-runtime",
         )
 
     assert observed == []
-    assert retired.value.error_code == "typescript_agent_runtime_retired"
+    assert rejected.value.error_code == "model_connection_test_runtime_invalid"
 
 
 @pytest.mark.parametrize(
@@ -805,7 +802,7 @@ def test_admin_api_returns_stable_error_for_retired_typescript_probe() -> None:
             assert kwargs["revision_id"] == revision["id"]
             assert kwargs["config_hash"] == revision["config_hash"]
             return {
-                "protocol_version": "1.0",
+                "protocol_version": "1.3",
                 "probe_id": "probe-api-result",
                 "success": True,
                 "connection_revision_id": revision["id"],
@@ -830,11 +827,10 @@ def test_admin_api_returns_stable_error_for_retired_typescript_probe() -> None:
             f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}"
             f"/revisions/{revision['id']}/test",
             headers={"origin": "http://admin.test", "x-csrf-token": csrf},
-            json={"runtime_kind": "typescript-v1", "timeout_seconds": 12},
+            json={"runtime_kind": "old-runtime", "timeout_seconds": 12},
         )
 
-    assert response.status_code == 400
-    assert response.json()["detail"]["code"] == "typescript_agent_runtime_retired"
+    assert response.status_code == 422
 
 
 def test_concurrent_jobs_do_not_leak_process_environment_between_connections() -> None:

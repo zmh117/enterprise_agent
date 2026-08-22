@@ -373,7 +373,6 @@ class FileWorkspaceRepository:
         retention_period: RetentionPeriod,
         manifest_hash: str,
         items: Iterable[dict[str, Any]],
-        file_format_policy_version: str = "text-v1",
         workspace_catalog_revision_id: str | None = None,
     ) -> dict[str, Any]:
         from app.modules.file_workspace.quota import WorkspaceQuotaService
@@ -413,13 +412,13 @@ class FileWorkspaceRepository:
                 insert into agent_job_file_snapshot
                   (id, job_id, workspace_id, tenant_id, principal_user_id,
                    business_application_publication_id, retention_period,
-                   schema_version, file_format_policy_version, manifest_hash,
+                   schema_version, manifest_hash,
                    workspace_catalog_revision_id, active_file_limit,
                    billable_bytes_limit, quota_config_revision,
                    active_file_limit_source, billable_bytes_limit_source,
                    job_input_limit, sandbox_file_limit, sandbox_capacity_bytes,
                    sandbox_limit_version, created_at)
-                values (?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?, ?, ?, ?, ?, ?,
+                values (?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?, ?, ?, ?, ?,
                         40, 64, 234881024, 'sandbox-v2', ?)
                 """,
                 (
@@ -430,7 +429,6 @@ class FileWorkspaceRepository:
                     principal_user_id,
                     publication_id,
                     retention_period.value,
-                    file_format_policy_version,
                     manifest_hash,
                     catalog_revision_id,
                     quota.active_file_limit,
@@ -529,7 +527,6 @@ class FileWorkspaceRepository:
         publication_id: str,
         retention_period: RetentionPeriod,
         explicit_references: Iterable[dict[str, Any]],
-        file_format_policy_version: str = "text-v1",
     ) -> dict[str, Any]:
         timestamp = _now()
         references = [
@@ -545,8 +542,8 @@ class FileWorkspaceRepository:
             insert into agent_job_file_request
               (job_id, workspace_id, tenant_id, principal_user_id,
                business_application_publication_id, retention_period,
-               file_format_policy_version, explicit_references_json, status, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+               explicit_references_json, status, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
             on conflict(job_id) do nothing
             """,
             (
@@ -556,7 +553,6 @@ class FileWorkspaceRepository:
                 principal_user_id,
                 publication_id,
                 retention_period.value,
-                file_format_policy_version,
                 _json(references),
                 timestamp,
             ),
@@ -568,7 +564,6 @@ class FileWorkspaceRepository:
             "principal_user_id": principal_user_id,
             "business_application_publication_id": publication_id,
             "retention_period": retention_period.value,
-            "file_format_policy_version": file_format_policy_version,
             "explicit_references_json": _json(references),
         }
         if any(str(request.get(key) or "") != value for key, value in expected.items()):
@@ -887,9 +882,9 @@ class FileWorkspaceRepository:
             "file_prepare_materialization",
         }.issubset(identifiers):
             raise NonRetryableExecutionError(
-                "Job Tool Snapshot is not compatible with catalog promotion",
-                safe_message="当前任务发布版本不支持按需选择文件",
-                error_code="file_workspace_publication_upgrade_required",
+                "Job Tool Snapshot lacks current catalog promotion tools",
+                safe_message="当前任务缺少按需选择文件能力",
+                error_code="file_workspace_tool_snapshot_invalid",
             )
 
     def create_commit_intent(
@@ -907,7 +902,6 @@ class FileWorkspaceRepository:
         expires_at: str,
         target_file_id: str | None = None,
         base_version_id: str | None = None,
-        file_format_policy_version: str = "text-v1",
         format_code: str = "TXT",
     ) -> dict[str, Any]:
         timestamp = _now()
@@ -916,9 +910,9 @@ class FileWorkspaceRepository:
             insert into file_commit_intent
               (id, commit_id, job_id, workspace_id, target_file_id,
                base_version_id, sandbox_entry_handle, display_name, user_intent,
-               delivery_mode, file_format_policy_version, format_code,
+               delivery_mode, format_code,
                metadata_hash, status, expires_at, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INTENT', ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INTENT', ?, ?, ?)
             """,
             (
                 intent_id,
@@ -931,7 +925,6 @@ class FileWorkspaceRepository:
                 display_name,
                 user_intent.value,
                 delivery_mode.value,
-                file_format_policy_version,
                 format_code,
                 metadata_hash,
                 expires_at,
@@ -2040,11 +2033,10 @@ class FileWorkspaceRepository:
             self.database.execute(
                 """
                 update message_attachment
-                   set managed_file_id = ?, managed_file_version_id = ?,
-                       expires_at = ?
+                   set expires_at = ?
                  where id = ?
                 """,
-                (file_id, version_id, retention_expires_at, attachment_id),
+                (retention_expires_at, attachment_id),
             )
 
     def _required(self, table: str, identity: str, safe_message: str) -> dict[str, Any]:

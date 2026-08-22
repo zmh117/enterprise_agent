@@ -1,8 +1,8 @@
 {
   "protocol_version": "1.3",
-  "runtime_kind": "typescript-v1",
+  "runtime_kind": "python-v1",
   "invocation_id": "invocation-1",
-  "request_digest": "470dcfcc6b99f59d060089320dfbdae089f453790cb44b48b5fbe527ced4076e",
+  "request_digest": "4c4b59f02eaec7967e6185b954a99364b908223a83649cde7d98bcc635fb0c81",
   "job_id": "job-1",
   "app_user_id": "app-user-1",
   "project_code": "project-1",
@@ -45,7 +45,6 @@
     }
   ],
   "file_context": {
-    "file_format_policy_version": "text-v2",
     "file_manifest": null
   }
 }

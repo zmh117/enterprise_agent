@@ -210,7 +210,6 @@ class BusinessApplicationRepository:
         agent_publication_id: str,
         workflow_publication_id: str,
         task_workspace_retention_period: str,
-        file_format_policy_version: str,
         document_processing_profile_code: str,
         task_file_features: dict[str, bool],
         session_policy: dict[str, Any],
@@ -245,13 +244,12 @@ class BusinessApplicationRepository:
                 insert into business_application_revision
                   (id, application_id, revision, status, agent_publication_id,
                    workflow_publication_id, task_workspace_retention_period,
-                   file_format_policy_version,
                    document_processing_profile_code,
                    task_file_features_json,
                    session_policy_json,
                    execution_policy_json, validation_json, config_hash,
                    created_by, created_at, updated_at)
-                values (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?,
+                values (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?,
                         '{"valid":false,"errors":[]}', ?, ?, ?, ?)
                 """,
                 (
@@ -261,7 +259,6 @@ class BusinessApplicationRepository:
                     agent_publication_id or None,
                     workflow_publication_id or None,
                     task_workspace_retention_period,
-                    file_format_policy_version,
                     document_processing_profile_code,
                     json_text(task_file_features),
                     json_text(session_policy),
@@ -393,14 +390,14 @@ class BusinessApplicationRepository:
                 """
                 insert into business_application_publication
                   (id, application_id, revision_id, revision, schema_version,
-                   task_workspace_retention_period, file_format_policy_version,
+                   task_workspace_retention_period,
                    document_processing_profile_code,
                    document_processing_profile_version,
                    document_processing_profile_hash,
                    snapshot_json, config_hash,
                    task_file_features_json,
                    published_by, published_at)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     publication_id,
@@ -409,7 +406,6 @@ class BusinessApplicationRepository:
                     revision,
                     int(snapshot["schema_version"]),
                     str(snapshot["task_workspace_retention_period"]),
-                    str(snapshot["file_format_policy_version"]),
                     str(snapshot["document_processing_profile"]["code"]),
                     str(snapshot["document_processing_profile"]["version"]),
                     str(snapshot["document_processing_profile"]["hash"]),
@@ -679,18 +675,12 @@ class BusinessApplicationRepository:
             value["task_workspace_retention_period"] = str(
                 (value["draft"] or {}).get("task_workspace_retention_period", "WEEK")
             )
-            value["file_format_policy_version"] = str(
-                (value["draft"] or {}).get("file_format_policy_version", "text-v1")
-            )
             value["document_processing_profile_code"] = str(
                 (value["draft"] or {}).get("document_processing_profile_code", "NONE")
             )
         else:
             value["task_workspace_retention_period"] = str(
                 row.get("task_workspace_retention_period") or "WEEK"
-            )
-            value["file_format_policy_version"] = str(
-                row.get("file_format_policy_version") or "text-v1"
             )
             value["document_processing_profile_code"] = str(
                 row.get("document_processing_profile_code") or "NONE"
@@ -730,7 +720,6 @@ class BusinessApplicationRepository:
             "task_workspace_retention_period": str(
                 row.get("task_workspace_retention_period") or "WEEK"
             ),
-            "file_format_policy_version": str(row.get("file_format_policy_version") or "text-v1"),
             "document_processing_profile_code": str(
                 row.get("document_processing_profile_code") or "NONE"
             ),
@@ -785,9 +774,6 @@ class BusinessApplicationRepository:
         feature_source = (
             "publication_snapshot" if "task_file_features" in snapshot else "legacy_default"
         )
-        policy_source = (
-            "publication_snapshot" if "file_format_policy_version" in snapshot else "legacy_default"
-        )
         document_profile = snapshot.get("document_processing_profile")
         document_profile_source = (
             "publication_snapshot"
@@ -811,10 +797,6 @@ class BusinessApplicationRepository:
                 snapshot.get("task_workspace_retention_period") or "WEEK"
             ),
             "task_workspace_retention_source": source,
-            "file_format_policy_version": str(
-                snapshot.get("file_format_policy_version") or "text-v1"
-            ),
-            "file_format_policy_source": policy_source,
             "document_processing_profile_code": str(document_profile.get("code") or "NONE"),
             "document_processing_profile_version": str(document_profile.get("version") or ""),
             "document_processing_profile_hash": str(document_profile.get("hash") or ""),

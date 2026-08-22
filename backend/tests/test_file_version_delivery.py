@@ -335,7 +335,6 @@ def test_explicit_delivery_accepts_exact_version_committed_by_current_job() -> N
 
 def test_text_v2_log_delivery_uses_existing_exact_version_without_commit() -> None:
     repository, streaming, context, storage = _fixture(
-        file_format_policy_version="text-v2"
     )
     _enable_file_delivery(repository)
     log_content = b"immutable diagnostic log\n"
@@ -433,7 +432,6 @@ def test_text_v2_log_delivery_uses_existing_exact_version_without_commit() -> No
 
 def test_text_v2_markdown_default_delivery_and_workspace_only_remain_distinct() -> None:
     repository, streaming, context, _storage = _fixture(
-        file_format_policy_version="text-v2"
     )
     _enable_file_delivery(repository)
     streaming.delivery_intents = FileVersionDeliveryService(

@@ -24,10 +24,8 @@ from app.modules.file_workspace.domain import (
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.text_format_policy import (
     MAX_TEXT_BYTES,
-    FileFormatPolicyVersion,
     TextFormatCode,
     get_text_format_policy,
-    normalize_file_format_policy_version,
     text_format_for_name,
 )
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
@@ -78,35 +76,19 @@ TXT_OUTPUT_ACTION_MARKERS = (
 )
 
 
-def is_task_text_name(value: str, *, policy_version: object) -> bool:
+def is_task_text_name(value: str) -> bool:
     try:
-        text_format_for_name(value, policy_version=policy_version)
+        text_format_for_name(value)
     except NonRetryableExecutionError:
         return False
     return True
 
 
-def is_task_txt_name(value: str) -> bool:
-    """Legacy text-v1 compatibility helper; new callers pass a policy."""
-    return is_task_text_name(value, policy_version=FileFormatPolicyVersion.TEXT_V1)
-
-
-def is_explicit_txt_output_request(message: str) -> bool:
-    """Legacy text-v1 compatibility helper."""
-
-    return is_explicit_text_output_request(
-        message,
-        policy_version=FileFormatPolicyVersion.TEXT_V1,
-    )
-
-
-def is_explicit_text_output_request(message: str, *, policy_version: object) -> bool:
+def is_explicit_text_output_request(message: str) -> bool:
     """Conservative format+action signal for pre-creating a workspace."""
 
     normalized = "".join(message.lower().split())
-    format_markers = list(TXT_OUTPUT_FORMAT_MARKERS)
-    if normalize_file_format_policy_version(policy_version) is FileFormatPolicyVersion.TEXT_V2:
-        format_markers.extend(MARKDOWN_OUTPUT_FORMAT_MARKERS)
+    format_markers = [*TXT_OUTPUT_FORMAT_MARKERS, *MARKDOWN_OUTPUT_FORMAT_MARKERS]
     if not any(marker in normalized for marker in format_markers):
         return False
     return any(marker in normalized for marker in TXT_OUTPUT_ACTION_MARKERS)
@@ -139,15 +121,10 @@ class JobFileManifestService:
         attachments: tuple[object, ...],
         file_references: tuple[ChannelFileReference, ...],
         requests_file_output: bool,
-        file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
         force_create: bool = False,
     ) -> dict[str, Any] | None:
-        policy_version = normalize_file_format_policy_version(file_format_policy_version)
         has_text_input = any(
-            is_task_text_name(
-                str(getattr(item, "file_name", "")),
-                policy_version=policy_version,
-            )
+            is_task_text_name(str(getattr(item, "file_name", "")))
             or Path(str(getattr(item, "file_name", ""))).suffix.lower() in DOCUMENT_INPUT_SUFFIXES
             for item in attachments
         ) or bool(file_references)
@@ -216,7 +193,6 @@ class JobFileManifestService:
         requester_id: str,
         publication_id: str,
         file_references: tuple[ChannelFileReference, ...],
-        file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
     ) -> dict[str, Any]:
         return self.repository.register_job_file_request(
             job_id=job_id,
@@ -225,9 +201,6 @@ class JobFileManifestService:
             principal_user_id=requester_id,
             publication_id=publication_id,
             retention_period=RetentionPeriod(str(workspace["retention_period"])),
-            file_format_policy_version=normalize_file_format_policy_version(
-                file_format_policy_version
-            ).value,
             explicit_references=(
                 {
                     "file_id": item.file_id,
@@ -257,15 +230,11 @@ class JobFileManifestService:
             items = self._manifest_items(job_id, pending, workspace)
             canonical = [self._canonical_item(item) for item in items]
             self._preflight_working_set(canonical)
-            policy_version = normalize_file_format_policy_version(
-                pending.get("file_format_policy_version")
-            ).value
             manifest_hash = hashlib.sha256(
                 json.dumps(
                     {
                         "schema_version": 5,
                         "workspace_catalog_revision_id": str(catalog["id"]),
-                        "file_format_policy_version": policy_version,
                         "items": canonical,
                     },
                     ensure_ascii=True,
@@ -281,7 +250,6 @@ class JobFileManifestService:
                 principal_user_id=str(pending["principal_user_id"]),
                 publication_id=str(pending["business_application_publication_id"]),
                 retention_period=RetentionPeriod(str(pending["retention_period"])),
-                file_format_policy_version=policy_version,
                 manifest_hash=manifest_hash,
                 items=canonical,
                 workspace_catalog_revision_id=str(catalog["id"]),
@@ -293,9 +261,13 @@ class JobFileManifestService:
         """Project the immutable Job snapshot into the bounded Runtime contract."""
 
         snapshot = self.repository.get_job_snapshot(job_id)
-        policy_version = normalize_file_format_policy_version(
-            snapshot.get("file_format_policy_version")
-        )
+        schema_version = int(snapshot.get("schema_version") or 0)
+        if schema_version != 5:
+            raise NonRetryableExecutionError(
+                "Only Job File Manifest schema v5 is supported",
+                safe_message="任务文件清单版本不受支持",
+                error_code="file_manifest_schema_unsupported",
+            )
         projected: list[dict[str, Any]] = []
         for item in snapshot.get("items") or []:
             try:
@@ -356,7 +328,7 @@ class JobFileManifestService:
                         error_code="file_manifest_actions_invalid",
                     )
             else:
-                definition = get_text_format_policy(policy_version).by_code(format_code)
+                definition = get_text_format_policy().by_code(format_code)
                 if not frozen_actions.issubset(definition.actions):
                     raise NonRetryableExecutionError(
                         "Job File Manifest actions exceed the frozen format policy",
@@ -380,69 +352,27 @@ class JobFileManifestService:
                         else None
                     ),
                     "version_created_at": str(item.get("version_created_at") or ""),
-                    **(
-                        {
-                            "materialization_size_bytes": int(
-                                item["representation_size_bytes"]
-                                if representation_id
-                                else self.repository.get_version(str(item["version_id"]))[
-                                    "size_bytes"
-                                ]
-                            )
-                        }
-                        if int(snapshot.get("schema_version") or 1) >= 5
-                        else {}
+                    "materialization_size_bytes": int(
+                        item["representation_size_bytes"]
+                        if representation_id
+                        else self.repository.get_version(str(item["version_id"]))["size_bytes"]
                     ),
                     **representation,
                 }
             )
         canonical = [self._canonical_item(item) for item in projected]
-        schema_version = int(snapshot.get("schema_version") or 1)
-        if schema_version >= 5:
-            catalog_revision_id = str(
-                snapshot.get("workspace_catalog_revision_id") or ""
+        catalog_revision_id = str(snapshot.get("workspace_catalog_revision_id") or "")
+        if not catalog_revision_id:
+            raise NonRetryableExecutionError(
+                "Manifest v5 catalog revision is missing",
+                safe_message="任务文件清单无效",
+                error_code="file_manifest_invalid",
             )
-            if not catalog_revision_id:
-                raise NonRetryableExecutionError(
-                    "Manifest v5 catalog revision is missing",
-                    safe_message="任务文件清单无效",
-                    error_code="file_manifest_invalid",
-                )
-            hash_value: object = {
-                "schema_version": 5,
-                "workspace_catalog_revision_id": catalog_revision_id,
-                "file_format_policy_version": policy_version.value,
-                "items": canonical,
-            }
-        elif schema_version >= 4:
-            hash_value: object = {
-                "schema_version": 4,
-                "file_format_policy_version": policy_version.value,
-                "items": canonical,
-            }
-        elif schema_version >= 3:
-            for canonical_item in canonical:
-                for key in (
-                    "representation_id",
-                    "representation_kind",
-                    "representation_size_bytes",
-                    "representation_sha256",
-                    "representation_format_code",
-                    "representation_created_at",
-                ):
-                    canonical_item.pop(key, None)
-            hash_value = {
-                "schema_version": 3,
-                "file_format_policy_version": policy_version.value,
-                "items": canonical,
-            }
-        else:
-            for canonical_item in canonical:
-                canonical_item.pop("format_code", None)
-                for key in tuple(canonical_item):
-                    if key.startswith("representation_"):
-                        canonical_item.pop(key, None)
-            hash_value = canonical
+        hash_value: object = {
+            "schema_version": 5,
+            "workspace_catalog_revision_id": catalog_revision_id,
+            "items": canonical,
+        }
         actual_hash = hashlib.sha256(
             json.dumps(
                 hash_value,
@@ -468,16 +398,7 @@ class JobFileManifestService:
         )
         return {
             "schema_version": schema_version,
-            **(
-                {
-                    "workspace_catalog_revision_id": str(
-                        snapshot["workspace_catalog_revision_id"]
-                    )
-                }
-                if schema_version >= 5
-                else {}
-            ),
-            "file_format_policy_version": policy_version.value,
+            "workspace_catalog_revision_id": str(snapshot["workspace_catalog_revision_id"]),
             "manifest_hash": str(snapshot["manifest_hash"]),
             "observed_at": to_utc_rfc3339(snapshot.get("created_at")) or "",
             "items": [canonicalize_file_time_fields(item) for item in projected],
@@ -497,54 +418,7 @@ class JobFileManifestService:
             ),
         }
 
-    def require_publication_workspace_compatibility(
-        self,
-        *,
-        workspace_id: str,
-        publication_id: str,
-        planned_new_files: int = 0,
-    ) -> None:
-        """Fail before Job creation when a legacy Publication cannot discover the workspace."""
-
-        if self._publication_has_catalog_search(publication_id):
-            return
-        lock_suffix = " for update" if self.repository.database.engine == "postgres" else ""
-        workspace = self.repository.database.execute_one(
-            f"select id from task_workspace where id = ?{lock_suffix}",
-            (workspace_id,),
-        )
-        if workspace is None:
-            raise NonRetryableExecutionError(
-                "Task workspace is unavailable",
-                safe_message="任务文件工作区不可用",
-                error_code="file_workspace_unavailable",
-            )
-        row = self.repository.database.execute_one(
-            """
-            select count(*) as value from task_workspace_file
-             where workspace_id = ? and status = 'ACTIVE'
-            """,
-            (workspace_id,),
-        )
-        active_count = int((row or {}).get("value") or 0)
-        if active_count + max(0, planned_new_files) > 20:
-            raise NonRetryableExecutionError(
-                "Application Publication lacks frozen catalog search for a large workspace",
-                safe_message="当前应用发布版本不支持超过 20 个文件的工作区，请先升级发布版本",
-                error_code="file_workspace_publication_upgrade_required",
-            )
-
     def has_pending_text_attachments(self, job_id: str) -> bool:
-        request = (
-            self.repository.database.execute_one(
-                "select file_format_policy_version from agent_job_file_request where job_id = ?",
-                (job_id,),
-            )
-            or {}
-        )
-        policy_version = normalize_file_format_policy_version(
-            request.get("file_format_policy_version")
-        )
         rows = self.repository.database.execute(
             """
             select file_name, status from message_attachment
@@ -553,18 +427,11 @@ class JobFileManifestService:
             (job_id,),
         )
         return any(
-            is_task_text_name(
-                str(row.get("file_name") or ""),
-                policy_version=policy_version,
-            )
+            is_task_text_name(str(row.get("file_name") or ""))
             and str(row.get("status") or "")
             not in {"READY", "REJECTED", "FAILED", "stored_not_interpreted"}
             for row in rows
         )
-
-    def has_pending_txt_attachments(self, job_id: str) -> bool:
-        """Compatibility alias; behavior follows the request's frozen policy."""
-        return self.has_pending_text_attachments(job_id)
 
     @staticmethod
     def _owner(
@@ -672,47 +539,22 @@ class JobFileManifestService:
         workspace: dict[str, Any],
     ) -> list[dict[str, Any]]:
         workspace_id = str(workspace["id"])
-        policy_version = normalize_file_format_policy_version(
-            request.get("file_format_policy_version")
-        )
-        catalog_search_enabled = self._publication_has_catalog_search(
-            str(request.get("business_application_publication_id") or "")
-        )
-        # Compatible Publications discover unselected files through the frozen
-        # catalog. Legacy Publications retain their bounded <=20 Manifest view.
-        regular = (
-            []
-            if catalog_search_enabled
-            else self.repository.database.execute(
-                """
-                select wf.file_id, wf.selected_version_id as version_id,
-                       wf.logical_name as display_name, f.tenant_id, f.owner_type,
-                       f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
-                       f.owner_conversation_id, f.status as file_status,
-                       f.format_code as file_format_code,
-                       v.status as version_status, v.format_code as version_format_code,
-                       v.media_type, v.encoding, v.size_bytes, f.source_received_at,
-                       v.created_at as version_created_at
-                  from task_workspace_file wf
-                  join managed_file f on f.id = wf.file_id
-                  join managed_file_version v on v.id = wf.selected_version_id
-                 where wf.workspace_id = ? and wf.status = 'ACTIVE'
-                 order by wf.logical_name, wf.file_id
-                 limit 20
-                """,
-                (workspace_id,),
+        if not self._job_has_catalog_search(job_id):
+            raise NonRetryableExecutionError(
+                "Job Tool Snapshot lacks current catalog search",
+                safe_message="当前任务缺少文件目录查询能力",
+                error_code="file_workspace_tool_snapshot_invalid",
             )
-        )
+        regular: list[dict[str, Any]] = []
         by_identity: dict[tuple[str, str], dict[str, Any]] = {}
         for row in regular:
             self._require_file_boundary(row, workspace)
             identity = (str(row["file_id"]), str(row["version_id"]))
-            if self._eligible_text(row, policy_version=policy_version):
+            if self._eligible_text(row):
                 by_identity[identity] = self._item(
                     row,
                     source_kind=SnapshotSourceKind.WORKSPACE,
                     auto_materialize=False,
-                    policy_version=policy_version,
                 )
             elif self._eligible_document(row):
                 by_identity[identity] = self._document_item(
@@ -750,13 +592,12 @@ class JobFileManifestService:
                     source_kind=SnapshotSourceKind.EXPLICIT_REFERENCE,
                 )
                 continue
-            if self._eligible_text(reference_row, policy_version=policy_version):
+            if self._eligible_text(reference_row):
                 item = self._item(
                     reference_row,
                     source_kind=SnapshotSourceKind.EXPLICIT_REFERENCE,
                     auto_materialize=auto_materialize,
                     conflict_candidate=bool(reference_row.get("conflict_candidate")),
-                    policy_version=policy_version,
                 )
             elif self._eligible_document(reference_row):
                 item = self._document_item(
@@ -807,10 +648,7 @@ class JobFileManifestService:
             (workspace_id, job_id),
         )
         for row in text_attachments:
-            is_text = is_task_text_name(
-                str(row.get("attachment_name") or ""),
-                policy_version=policy_version,
-            )
+            is_text = is_task_text_name(str(row.get("attachment_name") or ""))
             is_document = str(row.get("readability_status") or "NOT_REQUIRED") != "NOT_REQUIRED"
             if not is_text and not is_document:
                 continue
@@ -893,7 +731,7 @@ class JobFileManifestService:
                 }
                 by_identity[(str(row["file_id"]), str(row["version_id"]))] = item
                 continue
-            if not self._eligible_text(row, policy_version=policy_version):
+            if not self._eligible_text(row):
                 raise NonRetryableExecutionError(
                     "Imported task TXT attachment is invalid",
                     safe_message="文本附件不符合任务工作区要求",
@@ -903,44 +741,18 @@ class JobFileManifestService:
                 row,
                 source_kind=SnapshotSourceKind.CURRENT_MESSAGE,
                 auto_materialize=True,
-                policy_version=policy_version,
             )
 
-        conflicts = (
-            []
-            if catalog_search_enabled
-            else self.repository.database.execute(
-                """
-                select c.file_id, c.candidate_version_id as version_id,
-                       wf.logical_name as display_name, f.tenant_id, f.owner_type,
-                       f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
-                       f.owner_conversation_id, f.status as file_status,
-                       f.format_code as file_format_code,
-                       v.status as version_status, v.format_code as version_format_code,
-                       v.media_type, v.encoding, v.size_bytes, f.source_received_at,
-                       v.created_at as version_created_at
-                  from file_conflict_candidate c
-                  join task_workspace_file wf
-                    on wf.workspace_id = ? and wf.file_id = c.file_id
-                   and wf.status = 'ACTIVE'
-                  join managed_file f on f.id = c.file_id
-                  join managed_file_version v on v.id = c.candidate_version_id
-                 where c.status = 'OPEN'
-                 order by c.created_at, c.id
-                """,
-                (workspace_id,),
-            )
-        )
+        conflicts: list[dict[str, Any]] = []
         for row in conflicts:
             self._require_file_boundary(row, workspace)
             identity = (str(row["file_id"]), str(row["version_id"]))
-            if self._eligible_text(row, policy_version=policy_version):
+            if self._eligible_text(row):
                 by_identity[identity] = self._item(
                     row,
                     source_kind=SnapshotSourceKind.CONFLICT,
                     auto_materialize=False,
                     conflict_candidate=True,
-                    policy_version=policy_version,
                 )
             elif self._eligible_document(row):
                 by_identity[identity] = self._document_item(
@@ -978,21 +790,25 @@ class JobFileManifestService:
                 ]
         return items
 
-    def _publication_has_catalog_search(self, publication_id: str) -> bool:
-        if not publication_id:
+    def _job_has_catalog_search(self, job_id: str) -> bool:
+        if not job_id:
             return False
-        return bool(
-            self.repository.database.execute_one(
-                """
-                select 1 as present
-                  from business_application_publication_mcp_tool
-                 where application_publication_id = ?
-                   and server_code = 'file-service'
-                   and tool_identifier = 'task_workspace_search_files'
-                """,
-                (publication_id,),
-            )
+        row = self.repository.database.execute_one(
+            "select snapshot_json from agent_job_mcp_tool_snapshot where job_id = ?",
+            (job_id,),
         )
+        try:
+            snapshot = json.loads(str((row or {}).get("snapshot_json") or "{}"))
+            tools = snapshot.get("tools") if isinstance(snapshot, dict) else None
+            return isinstance(tools, list) and any(
+                isinstance(item, dict)
+                and str(item.get("server_code") or "") == "file-service"
+                and str(item.get("tool_identifier") or "")
+                == "task_workspace_search_files"
+                for item in tools
+            )
+        except (AttributeError, TypeError, json.JSONDecodeError):
+            return False
 
     def _reference_row(
         self, *, workspace_id: str, file_id: str, version_id: str
@@ -1129,10 +945,9 @@ class JobFileManifestService:
         source_kind: SnapshotSourceKind,
         auto_materialize: bool,
         conflict_candidate: bool = False,
-        policy_version: object = FileFormatPolicyVersion.TEXT_V1,
     ) -> dict[str, Any]:
         format_code = TextFormatCode(str(row.get("file_format_code") or "TXT"))
-        definition = get_text_format_policy(policy_version).by_code(format_code)
+        definition = get_text_format_policy().by_code(format_code)
         allowed = definition.actions
         if conflict_candidate:
             allowed = allowed.intersection(CONFLICT_ACTIONS)
@@ -1228,12 +1043,9 @@ class JobFileManifestService:
         )
 
     @staticmethod
-    def _eligible_text(row: dict[str, Any], *, policy_version: object) -> bool:
+    def _eligible_text(row: dict[str, Any]) -> bool:
         try:
-            definition = text_format_for_name(
-                str(row.get("display_name") or ""),
-                policy_version=policy_version,
-            )
+            definition = text_format_for_name(str(row.get("display_name") or ""))
         except NonRetryableExecutionError:
             return False
         return (

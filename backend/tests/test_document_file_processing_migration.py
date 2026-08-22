@@ -18,7 +18,7 @@ def _migrated_database() -> Database:
         default_migrations_dir(),
         migrator_build="document-file-processing-schema-test",
     ).run()
-    assert result.head == "118"
+    assert result.head == "119"
     return database
 
 
@@ -51,7 +51,7 @@ def _insert_processing_run(
     database: Database,
     *,
     run_id: str = "run-a",
-    profile_code: str = "docling-text-v1",
+    profile_code: str = "docling-layout-ocr-v2",
 ) -> None:
     database.execute(
         """
@@ -150,7 +150,7 @@ def test_document_processing_expand_schema_and_defaults() -> None:
         "select sql from sqlite_master where type = 'table' and name = 'agent_job_file_snapshot'"
     )
     assert snapshot_sql is not None
-    assert "schema_version IN (1, 2, 3, 4, 5)" in str(snapshot_sql["sql"])
+    assert "schema_version = 5" in str(snapshot_sql["sql"])
 
     revision_info = {
         str(row["name"]): row for row in database.execute(
@@ -228,10 +228,10 @@ def test_processing_run_and_representation_constraints_are_source_bound() -> Non
     )
 
 
-def test_layout_ocr_picture_facts_are_run_bound_and_unique() -> None:
+def test_current_layout_ocr_picture_facts_are_run_bound_and_unique() -> None:
     database = _migrated_database()
     _insert_source_file(database)
-    _insert_processing_run(database, profile_code="docling-layout-ocr-v1")
+    _insert_processing_run(database, profile_code="docling-layout-ocr-v2")
     database.execute(
         """
         insert into document_picture_asset
@@ -241,7 +241,7 @@ def test_layout_ocr_picture_facts_are_run_bound_and_unique() -> None:
            height_pixels, normalization_transform_json, size_bytes, object_key, status,
            created_at, updated_at)
         values ('asset-a', 'run-a', 'tenant-a', 'file-source', 'version-source-1',
-                'docling-layout-ocr-v1', ?, ?, 'image/png', 32, 24, 32, 24,
+                'docling-layout-ocr-v2', ?, ?, 'image/png', 32, 24, 32, 24,
                 '{"version":"exif-orientation/v1"}', 256,
                 'private/pictures/asset-a', 'AVAILABLE', ?, ?)
         """,

@@ -14,7 +14,6 @@ from app.modules.admin.infrastructure import AdminJobQuery, AdminReadRepository
 from app.modules.job.application.create_agent_job_service import _execution_scope_hash
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.exceptions import NonRetryableExecutionError
-from backend.tests.helpers import ensure_historical_typescript_agent
 from backend.tests.test_unified_identity_rbac import csrf_headers, login, unified_settings
 
 
@@ -274,7 +273,6 @@ def test_dashboard_api_is_authorized_bounded_and_does_not_probe_resources(
 def test_agent_skill_and_channel_catalogs_support_editable_agents() -> None:
     settings = unified_settings()
     container = build_test_container(settings, migrate=True, seed=True)
-    ensure_historical_typescript_agent(container)
     container.database.execute(
         """
         insert into agent_definition
@@ -296,7 +294,7 @@ def test_agent_skill_and_channel_catalogs_support_editable_agents() -> None:
     assert agents.status_code == skills.status_code == 200
     agents_by_code = {agent["code"]: agent for agent in agents.json()["agents"]}
     assert agents_by_code["default-diagnostic-agent"]["management_mode"] == "editable"
-    assert agents_by_code["typescript-diagnostic-agent"]["management_mode"] == ("read_only_retired")
+    assert set(agents_by_code) == {"default-diagnostic-agent", "secondary-agent"}
     assert all("content" not in item for item in skills.json()["skills"])
     email = next(item for item in channel_providers.json()["providers"] if item["code"] == "email")
     assert email["available"] is False
@@ -703,7 +701,7 @@ def test_job_repository_applies_scope_and_execution_filters_in_sqlite() -> None:
         insert into agent_job_execution_summary
           (job_id, accounting_status, model_usage_json, execution_status,
            execution_failure_stage, source_protocol_version, created_at, updated_at)
-        values (?, 'COMPLETE', ?, 'FAILED', 'MODEL_API', '1.2', ?, ?)
+        values (?, 'COMPLETE', ?, 'FAILED', 'MODEL_API', '1.3', ?, ?)
         """,
         (
             job.id,

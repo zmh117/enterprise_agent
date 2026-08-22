@@ -192,7 +192,7 @@ class ExecutionAuditRepository:
                     execution_status == ExecutionStatus.FAILED
                     and int(job.get("retry_count") or 0) >= int(job.get("max_retry_count") or 0)
                 ),
-                "source_protocol_version": str(job.get("agent_runtime_protocol_version") or "1.0"),
+                "source_protocol_version": str(job.get("agent_runtime_protocol_version") or "1.3"),
                 "created_at": timestamp,
                 "updated_at": timestamp,
             }
@@ -563,7 +563,7 @@ def _unavailable_summary(job_id: str) -> dict[str, Any]:
         "failure_code": None,
         "failure_summary": None,
         "retry_exhausted": False,
-        "source_protocol_version": "1.0",
+        "source_protocol_version": "1.3",
         "created_at": None,
         "updated_at": None,
     }

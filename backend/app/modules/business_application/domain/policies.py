@@ -16,16 +16,11 @@ from app.modules.document_processing import (
     document_processing_profile_snapshot,
     normalize_document_processing_profile_code,
 )
-from app.modules.file_workspace.text_format_policy import (
-    FileFormatPolicyVersion,
-    normalize_file_format_policy_version,
-)
 from app.shared.exceptions import NonRetryableExecutionError
 
 CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$")
 ENVIRONMENTS = {"local"}
 TASK_WORKSPACE_RETENTION_PERIODS = {"DAY", "WEEK", "MONTH"}
-FILE_FORMAT_POLICY_VERSIONS = {item.value for item in FileFormatPolicyVersion}
 TASK_FILE_FEATURE_FIELDS = {
     "workspace_enabled",
     "file_mcp_enabled",
@@ -159,16 +154,6 @@ def validate_task_workspace_retention_period(value: object) -> str:
     return normalized
 
 
-def validate_file_format_policy_version(value: object) -> str:
-    try:
-        return normalize_file_format_policy_version(value).value
-    except NonRetryableExecutionError as exc:
-        raise validation_error(
-            "file_format_policy_version",
-            "只允许 text-v1 或 text-v2",
-        ) from exc
-
-
 def validate_document_processing_profile_code(value: object) -> str:
     return normalize_document_processing_profile_code(value).value
 
@@ -231,27 +216,12 @@ def validate_task_file_attachment_dependency(
 
 
 def publication_task_file_features(snapshot: dict[str, Any]) -> tuple[dict[str, bool], str]:
-    if "task_file_features" not in snapshot:
-        return dict(DEFAULT_TASK_FILE_FEATURES), "legacy_default"
     return validate_task_file_features(snapshot.get("task_file_features")), "publication_snapshot"
 
 
 def publication_workspace_retention(snapshot: dict[str, Any]) -> tuple[str, str]:
-    """Resolve legacy policy without mutating the immutable snapshot or its hash."""
-    if "task_workspace_retention_period" not in snapshot:
-        return "WEEK", "legacy_default"
     return (
         validate_task_workspace_retention_period(snapshot.get("task_workspace_retention_period")),
-        "publication_snapshot",
-    )
-
-
-def publication_file_format_policy(snapshot: dict[str, Any]) -> tuple[str, str]:
-    """Resolve immutable legacy publications without rewriting their hash."""
-    if "file_format_policy_version" not in snapshot:
-        return FileFormatPolicyVersion.TEXT_V1.value, "legacy_default"
-    return (
-        validate_file_format_policy_version(snapshot.get("file_format_policy_version")),
         "publication_snapshot",
     )
 
@@ -260,8 +230,6 @@ def publication_document_processing_profile(
     snapshot: dict[str, Any],
 ) -> tuple[dict[str, str], str]:
     value = snapshot.get("document_processing_profile")
-    if value is None:
-        return document_processing_profile_snapshot(None), "legacy_default"
     if not isinstance(value, dict):
         raise validation_error(
             "document_processing_profile",
@@ -282,49 +250,27 @@ def verify_publication_snapshot(
     schema_version: int,
     expected_hash: str,
 ) -> bool:
-    if schema_version not in {1, 2, 3, 4, 5} or not verify_snapshot(
-        snapshot, expected_hash
-    ):
+    if schema_version != 6 or snapshot.get("schema_version") != 6:
         return False
-    if schema_version == 1:
-        return True
-    if schema_version == 2:
-        return (
-            snapshot.get("schema_version") == 2
-            and snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
-        )
+    if not verify_snapshot(snapshot, expected_hash):
+        return False
     try:
         features_valid = validate_task_file_features(
             snapshot.get("task_file_features")
         ) == snapshot.get("task_file_features")
     except NonRetryableExecutionError:
         return False
-    if schema_version == 3:
-        return (
-            snapshot.get("schema_version") == 3
-            and snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
-            and features_valid
-        )
-    v4_valid = (
-        snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
-        and snapshot.get("file_format_policy_version") in FILE_FORMAT_POLICY_VERSIONS
-        and features_valid
-    )
-    if schema_version == 4:
-        return snapshot.get("schema_version") == 4 and v4_valid
     try:
         profile, profile_source = publication_document_processing_profile(snapshot)
     except NonRetryableExecutionError:
         return False
     return (
-        snapshot.get("schema_version") == 5
-        and v4_valid
+        snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
+        and features_valid
         and profile_source == "publication_snapshot"
         and profile["code"]
         in {
             DocumentProcessingProfileCode.NONE.value,
-            DocumentProcessingProfileCode.DOCLING_TEXT_V1.value,
-            DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value,
             DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value,
         }
     )

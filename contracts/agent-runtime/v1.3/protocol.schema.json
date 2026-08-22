@@ -14,10 +14,7 @@
       "pattern": "^[a-f0-9]{64}$"
     },
     "RuntimeKind": {
-      "enum": [
-        "python-v1",
-        "typescript-v1"
-      ]
+      "const": "python-v1"
     },
     "SafeMessage": {
       "type": "string",
@@ -1515,9 +1512,6 @@
         }
       ]
     },
-    "FileFormatPolicyVersion": {
-      "const": "text-v2"
-    },
     "TextFormatCode": {
       "enum": [
         "TXT",
@@ -1562,7 +1556,8 @@
         "auto_materialize",
         "conflict_candidate",
         "source_received_at",
-        "version_created_at"
+        "version_created_at",
+        "materialization_size_bytes"
       ],
       "properties": {
         "file_id": {
@@ -1620,6 +1615,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 64
+        },
+        "materialization_size_bytes": {
+          "type": "integer",
+          "minimum": 0
         },
         "representation_id": {
           "$ref": "#/$defs/Identifier"
@@ -1685,20 +1684,17 @@
       "additionalProperties": false,
       "required": [
         "schema_version",
-        "file_format_policy_version",
+        "workspace_catalog_revision_id",
         "manifest_hash",
         "observed_at",
         "items"
       ],
       "properties": {
         "schema_version": {
-          "enum": [
-            3,
-            4
-          ]
+          "const": 5
         },
-        "file_format_policy_version": {
-          "$ref": "#/$defs/FileFormatPolicyVersion"
+        "workspace_catalog_revision_id": {
+          "$ref": "#/$defs/Identifier"
         },
         "manifest_hash": {
           "$ref": "#/$defs/Sha256Digest"
@@ -1722,46 +1718,15 @@
             "$ref": "#/$defs/JobFileReadabilityNotice"
           }
         }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "schema_version": {
-                "const": 3
-              }
-            },
-            "required": [
-              "schema_version"
-            ]
-          },
-          "then": {
-            "properties": {
-              "items": {
-                "items": {
-                  "not": {
-                    "required": [
-                      "representation_id"
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        }
-      ]
+      }
     },
     "FileContext": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "file_format_policy_version",
         "file_manifest"
       ],
       "properties": {
-        "file_format_policy_version": {
-          "$ref": "#/$defs/FileFormatPolicyVersion"
-        },
         "file_manifest": {
           "oneOf": [
             {

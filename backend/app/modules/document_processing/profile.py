@@ -24,8 +24,6 @@ def _plain_value(value: Any) -> Any:
 
 class DocumentProcessingProfileCode(StrEnum):
     NONE = "NONE"
-    DOCLING_TEXT_V1 = "docling-text-v1"
-    DOCLING_LAYOUT_OCR_V1 = "docling-layout-ocr-v1"
     DOCLING_LAYOUT_OCR_V2 = "docling-layout-ocr-v2"
 
 
@@ -214,199 +212,153 @@ _WEBP = DocumentSourceDefinition(
 )
 
 
-DOCLING_TEXT_V1 = DocumentProcessingProfile(
-    code=DocumentProcessingProfileCode.DOCLING_TEXT_V1,
-    version="1",
-    processor_code="docling-serve",
-    source_formats=(_PDF, _DOCX, _PPTX, _XLSX, _PNG, _JPEG, _WEBP),
-    output_kinds=("MARKDOWN", "DOCLING_JSON"),
-    request_options=MappingProxyType(
-        {
-            "from_formats": ["pdf", "docx", "pptx", "xlsx", "image"],
-            "to_formats": ["md", "json"],
-            "image_export_mode": "placeholder",
+_CURRENT_REQUEST_OPTIONS = MappingProxyType(
+    {
+        "from_formats": ["pdf", "docx", "pptx", "xlsx", "image"],
+        "to_formats": ["md", "json"],
+        "image_export_mode": "placeholder",
+        "do_ocr": True,
+        "force_ocr": False,
+        "do_table_structure": True,
+        "table_mode": "accurate",
+        "abort_on_error": False,
+        "include_images": False,
+        "do_picture_description": False,
+        "do_code_enrichment": False,
+        "do_formula_enrichment": False,
+    }
+)
+
+_CURRENT_LAYOUT_OCR_OPTIONS = MappingProxyType(
+    {
+        "embedded_source_formats": ("DOCX", "PPTX"),
+        "bundle_request_options": {
+            "target_type": "zip",
+            "to_formats": ("md", "json"),
+            "image_export_mode": "referenced",
+            "include_images": True,
+            "include_page_images": False,
             "do_ocr": True,
             "force_ocr": False,
             "do_table_structure": True,
             "table_mode": "accurate",
             "abort_on_error": False,
-            "include_images": False,
             "do_picture_description": False,
+            "do_picture_classification": False,
+            "do_chart_extraction": False,
             "do_code_enrichment": False,
             "do_formula_enrichment": False,
-        }
-    ),
+        },
+        "picture_ocr_request_options": {
+            "target_type": "inbody",
+            "from_formats": ("image",),
+            "to_formats": ("md", "json"),
+            "image_export_mode": "placeholder",
+            "include_images": False,
+            "include_page_images": False,
+            "do_ocr": True,
+            "force_ocr": False,
+            "ocr_preset": "rapidocr",
+            "do_table_structure": False,
+            "abort_on_error": True,
+            "do_picture_description": False,
+            "do_picture_classification": False,
+            "do_chart_extraction": False,
+            "do_code_enrichment": False,
+            "do_formula_enrichment": False,
+        },
+        "picture_pixel_basis": {
+            "source": "docling-referenced-embedded-media",
+            "image_exif_orientation_applied": True,
+            "office_display_crop_rotation_flip_applied": False,
+        },
+        "model_artifact": {
+            "code": "docling-v1.30.0-cpu-model-bundle",
+            "revision": "v1.30.0",
+            "digest": (
+                "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
+            ),
+            "manifest_algorithm": "relative-path-size-content-sha256/v1",
+        },
+        "layout_schema": {
+            "name": "enterprise-agent.office-image-ocr-layout",
+            "version": "v2",
+        },
+        "picture_result_schema": {
+            "name": "enterprise-agent.office-picture-ocr-result",
+            "version": "v2",
+        },
+        "confidence_contract": {
+            "source": "docling-text-item-or-provenance",
+            "unit": "basis-points",
+            "missing_value": None,
+            "aggregate_fallback_enabled": False,
+        },
+        "assembler_version": "office-image-layout-assembler/v2",
+        "relation_algorithm": {
+            "version": "bounded-adjacent-geometry/v1",
+            "allowed_relations": (
+                "LEFT_OF",
+                "RIGHT_OF",
+                "ABOVE",
+                "BELOW",
+                "SAME_ROW",
+                "CONTAINS",
+            ),
+        },
+        "limits": {
+            "soft_picture_occurrences": 32,
+            "hard_picture_occurrences": 128,
+            "max_picture_compressed_bytes": 10 * MIB,
+            "max_picture_pixels": 16_777_216,
+            "max_total_picture_pixels": 67_108_864,
+            "max_derived_bytes": 256 * MIB,
+            "max_bundle_bytes": 128 * MIB,
+            "max_bundle_entries": 512,
+            "max_bundle_uncompressed_bytes": 256 * MIB,
+            "max_blocks_per_picture": 2_048,
+            "max_words_per_picture": 8_192,
+            "max_relations_per_picture": 4_096,
+            "max_characters_per_picture": 262_144,
+            "max_blocks_per_run": 16_384,
+            "max_words_per_run": 65_536,
+            "max_relations_per_run": 65_536,
+            "max_characters_per_run": 4_194_304,
+            "max_ocr_layout_json_bytes": 64 * MIB,
+            "parent_deadline_seconds": 600,
+            "picture_attempt_deadline_seconds": 120,
+            "assembly_deadline_seconds": 120,
+            "run_deadline_seconds": 1_800,
+            "max_parent_attempts": 3,
+            "max_picture_attempts": 3,
+            "max_assembly_attempts": 3,
+            "max_global_docling_concurrency": 1,
+            "max_parent_picture_concurrency": 1,
+        },
+        "security": {
+            "upload_name_policy": "fixed-synthetic-name",
+            "agent_materializes_picture_assets": False,
+            "agent_materializes_ocr_layout_json": False,
+            "vlm_enabled": False,
+            "runtime_options_override_enabled": False,
+        },
+    }
+)
+
+DOCLING_LAYOUT_OCR_V2 = DocumentProcessingProfile(
+    code=DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2,
+    version="2",
+    processor_code="docling-serve",
+    source_formats=(_PDF, _DOCX, _PPTX, _XLSX, _PNG, _JPEG, _WEBP),
+    output_kinds=("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON"),
+    request_options=_CURRENT_REQUEST_OPTIONS,
     max_source_bytes=25 * MIB,
     max_pdf_pages=300,
     processing_timeout_seconds=600,
     max_markdown_bytes=15 * MIB,
     max_docling_json_bytes=64 * MIB,
     max_attempts=3,
-)
-DOCLING_TEXT_V1_PROFILE_HASH = "337dc23bd405e7225e8ffca06b72852ed19121723bc8b1abeafdc05cf5ceac42"
-
-if DOCLING_TEXT_V1.profile_hash != DOCLING_TEXT_V1_PROFILE_HASH:
-    raise RuntimeError("docling-text-v1 canonical profile hash changed")
-
-
-DOCLING_LAYOUT_OCR_V1 = DocumentProcessingProfile(
-    code=DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1,
-    version="1",
-    processor_code="docling-serve",
-    source_formats=DOCLING_TEXT_V1.source_formats,
-    output_kinds=("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON"),
-    request_options=DOCLING_TEXT_V1.request_options,
-    max_source_bytes=DOCLING_TEXT_V1.max_source_bytes,
-    max_pdf_pages=DOCLING_TEXT_V1.max_pdf_pages,
-    processing_timeout_seconds=DOCLING_TEXT_V1.processing_timeout_seconds,
-    max_markdown_bytes=DOCLING_TEXT_V1.max_markdown_bytes,
-    max_docling_json_bytes=DOCLING_TEXT_V1.max_docling_json_bytes,
-    max_attempts=DOCLING_TEXT_V1.max_attempts,
-    layout_ocr_options=MappingProxyType(
-        {
-            "embedded_source_formats": ("DOCX", "PPTX"),
-            "bundle_request_options": {
-                "target_type": "zip",
-                "to_formats": ("md", "json"),
-                "image_export_mode": "referenced",
-                "include_images": True,
-                "include_page_images": False,
-                "do_ocr": True,
-                "force_ocr": False,
-                "do_table_structure": True,
-                "table_mode": "accurate",
-                "abort_on_error": False,
-                "do_picture_description": False,
-                "do_picture_classification": False,
-                "do_chart_extraction": False,
-                "do_code_enrichment": False,
-                "do_formula_enrichment": False,
-            },
-            "picture_ocr_request_options": {
-                "target_type": "inbody",
-                "from_formats": ("image",),
-                "to_formats": ("md", "json"),
-                "image_export_mode": "placeholder",
-                "include_images": False,
-                "include_page_images": False,
-                "do_ocr": True,
-                "force_ocr": False,
-                "ocr_preset": "rapidocr",
-                "do_table_structure": False,
-                "abort_on_error": True,
-                "do_picture_description": False,
-                "do_picture_classification": False,
-                "do_chart_extraction": False,
-                "do_code_enrichment": False,
-                "do_formula_enrichment": False,
-            },
-            "picture_pixel_basis": {
-                "source": "docling-referenced-embedded-media",
-                "image_exif_orientation_applied": True,
-                "office_display_crop_rotation_flip_applied": False,
-            },
-            "model_artifact": {
-                "code": "docling-v1.30.0-cpu-model-bundle",
-                "revision": "v1.30.0",
-                "digest": (
-                    "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
-                ),
-                "manifest_algorithm": "relative-path-size-content-sha256/v1",
-            },
-            "layout_schema": {
-                "name": "enterprise-agent.office-image-ocr-layout",
-                "version": "v1",
-            },
-            "assembler_version": "office-image-layout-assembler/v1",
-            "relation_algorithm": {
-                "version": "bounded-adjacent-geometry/v1",
-                "allowed_relations": (
-                    "LEFT_OF",
-                    "RIGHT_OF",
-                    "ABOVE",
-                    "BELOW",
-                    "SAME_ROW",
-                    "CONTAINS",
-                ),
-            },
-            "limits": {
-                "soft_picture_occurrences": 32,
-                "hard_picture_occurrences": 128,
-                "max_picture_compressed_bytes": 10 * MIB,
-                "max_picture_pixels": 16_777_216,
-                "max_total_picture_pixels": 67_108_864,
-                "max_derived_bytes": 256 * MIB,
-                "max_bundle_bytes": 128 * MIB,
-                "max_bundle_entries": 512,
-                "max_bundle_uncompressed_bytes": 256 * MIB,
-                "max_blocks_per_picture": 2_048,
-                "max_words_per_picture": 8_192,
-                "max_relations_per_picture": 4_096,
-                "max_characters_per_picture": 262_144,
-                "max_blocks_per_run": 16_384,
-                "max_words_per_run": 65_536,
-                "max_relations_per_run": 65_536,
-                "max_characters_per_run": 4_194_304,
-                "max_ocr_layout_json_bytes": 64 * MIB,
-                "parent_deadline_seconds": 600,
-                "picture_attempt_deadline_seconds": 120,
-                "assembly_deadline_seconds": 120,
-                "run_deadline_seconds": 1_800,
-                "max_parent_attempts": 3,
-                "max_picture_attempts": 3,
-                "max_assembly_attempts": 3,
-                "max_global_docling_concurrency": 1,
-                "max_parent_picture_concurrency": 1,
-            },
-            "security": {
-                "upload_name_policy": "fixed-synthetic-name",
-                "agent_materializes_picture_assets": False,
-                "agent_materializes_ocr_layout_json": False,
-                "vlm_enabled": False,
-                "runtime_options_override_enabled": False,
-            },
-        }
-    ),
-)
-DOCLING_LAYOUT_OCR_V1_PROFILE_HASH = (
-    "3d7fc7efe62fbd1cc42bd1d00f944a97fa722699eb4b59041398a87a2ebb57ad"
-)
-
-if DOCLING_LAYOUT_OCR_V1.profile_hash != DOCLING_LAYOUT_OCR_V1_PROFILE_HASH:
-    raise RuntimeError("docling-layout-ocr-v1 canonical profile hash changed")
-
-
-_DOCLING_LAYOUT_OCR_V2_OPTIONS = _plain_value(DOCLING_LAYOUT_OCR_V1.layout_ocr_options)
-_DOCLING_LAYOUT_OCR_V2_OPTIONS["layout_schema"] = {
-    "name": "enterprise-agent.office-image-ocr-layout",
-    "version": "v2",
-}
-_DOCLING_LAYOUT_OCR_V2_OPTIONS["picture_result_schema"] = {
-    "name": "enterprise-agent.office-picture-ocr-result",
-    "version": "v2",
-}
-_DOCLING_LAYOUT_OCR_V2_OPTIONS["confidence_contract"] = {
-    "source": "docling-text-item-or-provenance",
-    "unit": "basis-points",
-    "missing_value": None,
-    "aggregate_fallback_enabled": False,
-}
-_DOCLING_LAYOUT_OCR_V2_OPTIONS["assembler_version"] = "office-image-layout-assembler/v2"
-
-DOCLING_LAYOUT_OCR_V2 = DocumentProcessingProfile(
-    code=DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2,
-    version="2",
-    processor_code=DOCLING_LAYOUT_OCR_V1.processor_code,
-    source_formats=DOCLING_LAYOUT_OCR_V1.source_formats,
-    output_kinds=DOCLING_LAYOUT_OCR_V1.output_kinds,
-    request_options=DOCLING_LAYOUT_OCR_V1.request_options,
-    max_source_bytes=DOCLING_LAYOUT_OCR_V1.max_source_bytes,
-    max_pdf_pages=DOCLING_LAYOUT_OCR_V1.max_pdf_pages,
-    processing_timeout_seconds=DOCLING_LAYOUT_OCR_V1.processing_timeout_seconds,
-    max_markdown_bytes=DOCLING_LAYOUT_OCR_V1.max_markdown_bytes,
-    max_docling_json_bytes=DOCLING_LAYOUT_OCR_V1.max_docling_json_bytes,
-    max_attempts=DOCLING_LAYOUT_OCR_V1.max_attempts,
-    layout_ocr_options=MappingProxyType(_DOCLING_LAYOUT_OCR_V2_OPTIONS),
+    layout_ocr_options=_CURRENT_LAYOUT_OCR_OPTIONS,
 )
 DOCLING_LAYOUT_OCR_V2_PROFILE_HASH = (
     "c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8"
@@ -419,8 +371,6 @@ if DOCLING_LAYOUT_OCR_V2.profile_hash != DOCLING_LAYOUT_OCR_V2_PROFILE_HASH:
 PROFILE_REGISTRY: Mapping[DocumentProcessingProfileCode, DocumentProcessingProfile] = (
     MappingProxyType(
         {
-            DocumentProcessingProfileCode.DOCLING_TEXT_V1: DOCLING_TEXT_V1,
-            DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1: DOCLING_LAYOUT_OCR_V1,
             DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2: DOCLING_LAYOUT_OCR_V2,
         }
     )

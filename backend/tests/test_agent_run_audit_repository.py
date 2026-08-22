@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 
 import pytest
 
@@ -20,7 +19,7 @@ from app.shared.migrations import Migrator
 def _database(
     tmp_path: Path,
     *,
-    protocol_version: str = "1.2",
+    protocol_version: str = "1.3",
 ) -> tuple[Database, str]:
     database = Database(f"sqlite:///{tmp_path / 'agent-run-audit.db'}")
     Migrator(database, default_migrations_dir(), migrator_build="agent-run-audit-repository-test").run()
@@ -51,12 +50,12 @@ def _database(
 
 def _events() -> list[dict[str, object]]:
     fixture = json.loads(
-        Path("contracts/agent-runtime/v1.2/golden/safe-runtime-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.3/golden/safe-runtime-fixture.json").read_text(
             encoding="utf-8"
         )
     )
     identity = {
-        "protocol_version": "1.2",
+        "protocol_version": "1.3",
         "invocation_id": "invocation-1",
         "request_digest": fixture["terminal_event"]["request_digest"],
     }
@@ -66,7 +65,7 @@ def _events() -> list[dict[str, object]]:
             "sequence": 1,
             "event_type": "execution_started",
             "timestamp": "2026-08-12T00:00:00Z",
-            "payload": {"runtime_kind": "typescript-v1"},
+            "payload": {"runtime_kind": "python-v1"},
         },
         fixture["runtime_initialized_event"],
         fixture["model_call_event"],
@@ -220,105 +219,6 @@ def test_summary_accepts_current_runtime_protocol_v13(tmp_path: Path) -> None:
 
     assert summary["source_protocol_version"] == "1.3"
     assert summary["accounting_status"] == "UNAVAILABLE"
-
-
-def test_protocol_v13_migration_preserves_existing_execution_summary(
-    tmp_path: Path,
-) -> None:
-    source_migrations = default_migrations_dir()
-    staged_migrations = tmp_path / "migrations"
-    staged_migrations.mkdir()
-    shutil.copy2(
-        source_migrations / "legacy-v1-manifest.json",
-        staged_migrations / "legacy-v1-manifest.json",
-    )
-    for source in source_migrations.glob("*.sql"):
-        if int(source.name.split("_", 1)[0]) <= 113:
-            shutil.copy2(source, staged_migrations / source.name)
-
-    database = Database(f"sqlite:///{tmp_path / 'protocol-v13-migration.db'}")
-    first = Migrator(
-        database,
-        staged_migrations,
-        migrator_build="protocol-v13-before",
-    ).run()
-    assert first.head == "113"
-
-    timestamp = "2026-08-18T00:00:00+00:00"
-    database.execute(
-        """
-        insert into agent_session
-          (id, project_code, created_at, updated_at, source_channel,
-           source_connector_id, external_conversation_id, requester_id, session_key)
-        values ('protocol-v13-session', 'default', ?, ?, 'test', 'connector-test',
-                'protocol-v13-conversation', 'audit-user', 'protocol-v13-session')
-        """,
-        (timestamp, timestamp),
-    )
-    database.execute(
-        """
-        insert into agent_job
-          (id, session_id, idempotency_key, project_code, status, created_at,
-           source_channel, source_connector_id, requester_id,
-           agent_runtime_protocol_version)
-        values ('protocol-v13-job', 'protocol-v13-session', 'protocol-v13-job',
-                'default', 'FAILED', ?, 'test', 'connector-test', 'audit-user', '1.2')
-        """,
-        (timestamp,),
-    )
-    database.execute(
-        """
-        insert into agent_job_execution_summary
-          (job_id, accounting_status, observed_model_turn_count, api_retry_count,
-           runtime_invocation_count, model_usage_json, execution_status,
-           failure_code, retry_exhausted, source_protocol_version,
-           created_at, updated_at)
-        values ('protocol-v13-job', 'PARTIAL', 2, 1, 1, '[]', 'FAILED',
-                'safe_failure', 1, '1.2', ?, ?)
-        """,
-        (timestamp, timestamp),
-    )
-
-    shutil.copy2(
-        source_migrations / "114_expand_execution_summary_protocol_v13.sql",
-        staged_migrations / "114_expand_execution_summary_protocol_v13.sql",
-    )
-    upgraded = Migrator(
-        database,
-        staged_migrations,
-        migrator_build="protocol-v13-after",
-    ).run()
-
-    assert upgraded.applied == ("114",)
-    assert database.execute_one(
-        """
-        select accounting_status, observed_model_turn_count, api_retry_count,
-               runtime_invocation_count, execution_status, failure_code,
-               retry_exhausted, source_protocol_version, created_at
-          from agent_job_execution_summary
-         where job_id = 'protocol-v13-job'
-        """
-    ) == {
-        "accounting_status": "PARTIAL",
-        "observed_model_turn_count": 2,
-        "api_retry_count": 1,
-        "runtime_invocation_count": 1,
-        "execution_status": "FAILED",
-        "failure_code": "safe_failure",
-        "retry_exhausted": 1,
-        "source_protocol_version": "1.2",
-        "created_at": timestamp,
-    }
-
-    database.execute(
-        """
-        update agent_job
-           set agent_runtime_protocol_version = '1.3'
-         where id = 'protocol-v13-job'
-        """
-    )
-    summary = ExecutionAuditRepository(database).rebuild_summary("protocol-v13-job")
-    assert summary["source_protocol_version"] == "1.3"
 
 
 def test_multi_invocation_retry_replay_and_rebuild_never_double_count(

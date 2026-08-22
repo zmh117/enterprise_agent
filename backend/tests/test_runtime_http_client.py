@@ -68,7 +68,7 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.0",
+                    "protocol_version": "1.3",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
                 }
@@ -103,7 +103,7 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.0",
+                    "protocol_version": "1.3",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
                 }
@@ -257,15 +257,9 @@ class GoldenTransport:
                     "request_summary": {"project_code": "project-1"},
                     "response_summary": {"count": 1},
                     "duration_ms": 10,
-                    **(
-                        {
-                            "tool_origin": "mcp",
-                            "mcp_call_id": "mcp-call-1",
-                            "persisted_tool_call_id": "agent-tool-call-1",
-                        }
-                        if self.request["protocol_version"] != "1.0"
-                        else {}
-                    ),
+                    "tool_origin": "mcp",
+                    "mcp_call_id": "mcp-call-1",
+                    "persisted_tool_call_id": "agent-tool-call-1",
                 },
             },
         ]
@@ -278,19 +272,12 @@ class GoldenTransport:
             "usage": {
                 "input_tokens": 10,
                 "output_tokens": 4,
-                **(
-                    {
-                        "cache_read_input_tokens": 0,
-                        "cache_creation_input_tokens": 0,
-                    }
-                    if self.request["protocol_version"] in {"1.2", "1.3"}
-                    else {}
-                ),
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
             },
             "runtime_provenance": provenance,
         }
-        if self.request["protocol_version"] in {"1.2", "1.3"}:
-            terminal["accounting"] = {
+        terminal["accounting"] = {
                 "status": "COMPLETE",
                 "duration_ms": 20,
                 "duration_api_ms": 10,
@@ -304,7 +291,7 @@ class GoldenTransport:
                 "model_usage": [],
                 "estimated_cost_usd": 0.001,
                 "permission_denials_count": 0,
-            }
+        }
         if self.terminal_status == "SUCCEEDED":
             terminal["final_answer"] = "final answer"
         else:
@@ -410,10 +397,7 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
     assert "url" not in transport.request["mcp_servers"][0]
 
 
-@pytest.mark.parametrize("protocol_version", ["1.2", "1.3"])
-def test_worker_projects_manifest_v5_without_protocol_change(
-    protocol_version: str,
-) -> None:
+def test_worker_passes_manifest_v5_without_projection() -> None:
     transport = GoldenTransport()
     client, _public_pem = _client(transport)
     canonical_item = {
@@ -442,7 +426,6 @@ def test_worker_projects_manifest_v5_without_protocol_change(
             {
                 "schema_version": 5,
                 "workspace_catalog_revision_id": "workspace-catalog-revision-1",
-                "file_format_policy_version": "text-v2",
                 "items": [canonical_item],
             },
             ensure_ascii=True,
@@ -452,13 +435,11 @@ def test_worker_projects_manifest_v5_without_protocol_change(
     ).hexdigest()
     context = replace(
         _context(),
-        runtime_protocol_version=protocol_version,
-        file_format_policy_version="text-v2",
+        runtime_protocol_version="1.3",
         retrieved_context={
             "file_manifest": {
                 "schema_version": 5,
                 "workspace_catalog_revision_id": "workspace-catalog-revision-1",
-                "file_format_policy_version": "text-v2",
                 "manifest_hash": stored_hash,
                 "observed_at": "2026-08-22T02:26:33.478129+00:00",
                 "items": [
@@ -475,21 +456,18 @@ def test_worker_projects_manifest_v5_without_protocol_change(
 
     assert result.final_answer == "final answer"
     projected = transport.request["prompt"]["retrieved_context"]["file_manifest"]
-    if protocol_version == "1.3":
-        assert projected == transport.request["file_context"]["file_manifest"]
-    else:
-        assert "file_context" not in transport.request
-    assert projected["schema_version"] == 4
-    assert "workspace_catalog_revision_id" not in projected
-    assert "materialization_size_bytes" not in projected["items"][0]
+    assert projected == transport.request["file_context"]["file_manifest"]
+    assert projected["schema_version"] == 5
+    assert projected["workspace_catalog_revision_id"] == "workspace-catalog-revision-1"
+    assert projected["items"][0]["materialization_size_bytes"] == 128
     assert projected["items"][0]["file_id"] == "file-source-1"
     assert (
         projected["manifest_hash"]
         == hashlib.sha256(
             json.dumps(
                 {
-                    "schema_version": 4,
-                    "file_format_policy_version": "text-v2",
+                    "schema_version": 5,
+                    "workspace_catalog_revision_id": "workspace-catalog-revision-1",
                     "items": [canonical_item],
                 },
                 ensure_ascii=True,
@@ -601,7 +579,7 @@ def test_worker_issues_a_separate_file_principal_for_file_mcp() -> None:
         request,
         context=replace(
             request.context,
-            runtime_protocol_version="1.2",
+            runtime_protocol_version="1.3",
             allowed_tools=["file_prepare_materialization"],
             mcp_bindings=(
                 McpRuntimeBinding(
@@ -645,7 +623,7 @@ def test_worker_projects_two_business_principals_to_distinct_runtime_headers() -
         _request(),
         context=replace(
             _request().context,
-            runtime_protocol_version="1.1",
+            runtime_protocol_version="1.3",
             allowed_tools=["ones_work_item_search", TEST_BUSINESS_TOOL_IDENTIFIER],
             mcp_bindings=(
                 McpRuntimeBinding(
@@ -689,7 +667,7 @@ def test_worker_projects_business_and_file_principals_to_separate_headers() -> N
         _request(),
         context=replace(
             _request().context,
-            runtime_protocol_version="1.2",
+            runtime_protocol_version="1.3",
             allowed_tools=["ones_work_item_search", "file_prepare_materialization"],
             mcp_bindings=(
                 McpRuntimeBinding(
@@ -899,7 +877,7 @@ def test_worker_cancels_same_invocation_when_terminal_reconnect_also_fails(
     assert raised.value.error_code == "runtime_transport_error"
     assert transport.calls == 2
     assert transport.cancel_payload == {
-        "protocol_version": "1.0",
+        "protocol_version": "1.3",
         "invocation_id": "job-1.attempt-0",
         "request_digest": transport.cancel_payload["request_digest"],
         "reason": reason,

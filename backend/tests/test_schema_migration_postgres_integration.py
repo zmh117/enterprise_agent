@@ -112,7 +112,7 @@ def test_postgres_admin_job_query_uses_json_filters_and_keyset_limit(
             insert into agent_job_execution_summary
               (job_id, accounting_status, model_usage_json, execution_status,
                source_protocol_version, created_at, updated_at)
-            values (?, 'COMPLETE', ?, 'SUCCEEDED', '1.2', ?, ?)
+            values (?, 'COMPLETE', ?, 'SUCCEEDED', '1.3', ?, ?)
             """,
             (
                 job.id,
@@ -230,7 +230,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "118"
+        assert result.head == "119"
         assert result.applied == (
             "100",
             "101",
@@ -251,6 +251,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "116",
             "117",
             "118",
+            "119",
         )
         assert database.execute_one(
             """
@@ -260,9 +261,9 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 125}
-        assert comments["table_count"] == 125
-        assert comments["column_count"] == 1631
+        ) == {"count": 124}
+        assert comments["table_count"] == 124
+        assert comments["column_count"] == 1616
     finally:
         database.close()
 
@@ -280,7 +281,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "118"
+        assert result.head == "119"
         assert result.applied == (
             "100",
             "101",
@@ -301,9 +302,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "116",
             "117",
             "118",
+            "119",
         )
-        assert comments["table_count"] == 125
-        assert comments["column_count"] == 1631
+        assert comments["table_count"] == 124
+        assert comments["column_count"] == 1616
         assert {
             "dingding_conversation_id",
             "dingding_user_id",
@@ -363,6 +365,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "116",
             "117",
             "118",
+            "119",
         ),
     ]
     database = Database(postgres_database_dsn)
@@ -387,6 +390,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "116",
             "117",
             "118",
+            "119",
         ]
     finally:
         database.close()
@@ -501,9 +505,9 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
                     "permission_denials_count": 0,
                 },
                 "runtime_provenance": {
-                    "runtime_kind": "typescript-v1",
+                    "runtime_kind": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.2",
+                    "protocol_version": "1.3",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
                     "model_connection_revision_id": "revision-1",

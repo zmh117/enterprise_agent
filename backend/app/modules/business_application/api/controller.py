@@ -91,9 +91,8 @@ class RevisionResponse(BaseModel):
     agent_publication_id: str = ""
     workflow_publication_id: str = ""
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
-    file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
     document_processing_profile_code: Literal[
-        "NONE", "docling-text-v1", "docling-layout-ocr-v1", "docling-layout-ocr-v2"
+        "NONE", "docling-layout-ocr-v2"
     ] = "NONE"
     document_processing_status: Literal[
         "DISABLED", "CONFIGURED_UNAVAILABLE", "READY"
@@ -123,25 +122,21 @@ class PublicationResponse(RuntimeStateResponse):
     published_by: str
     published_at: str
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
-    task_workspace_retention_source: Literal["publication_snapshot", "legacy_default"] = (
-        "legacy_default"
-    )
-    file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
-    file_format_policy_source: Literal["publication_snapshot", "legacy_default"] = "legacy_default"
+    task_workspace_retention_source: Literal["publication_snapshot"] = "publication_snapshot"
     document_processing_profile_code: Literal[
-        "NONE", "docling-text-v1", "docling-layout-ocr-v1", "docling-layout-ocr-v2"
+        "NONE", "docling-layout-ocr-v2"
     ] = "NONE"
     document_processing_profile_version: str = ""
     document_processing_profile_hash: str = ""
-    document_processing_profile_source: Literal[
-        "publication_snapshot", "legacy_default"
-    ] = "legacy_default"
+    document_processing_profile_source: Literal["publication_snapshot"] = (
+        "publication_snapshot"
+    )
     document_processing_status: Literal[
         "DISABLED", "CONFIGURED_UNAVAILABLE", "READY"
     ] = "DISABLED"
     document_processing_reason_code: str = "profile_disabled"
     task_file_features: TaskFileFeaturesResponse = Field(default_factory=TaskFileFeaturesResponse)
-    task_file_features_source: Literal["publication_snapshot", "legacy_default"] = "legacy_default"
+    task_file_features_source: Literal["publication_snapshot"] = "publication_snapshot"
 
 
 class DeploymentResponse(RuntimeStateResponse):
@@ -170,9 +165,8 @@ class ApplicationSummaryResponse(RuntimeStateResponse):
     latest_publication_revision: int | None = None
     active_environments: list[str] = Field(default_factory=list)
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
-    file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
     document_processing_profile_code: Literal[
-        "NONE", "docling-text-v1", "docling-layout-ocr-v1", "docling-layout-ocr-v2"
+        "NONE", "docling-layout-ocr-v2"
     ] = "NONE"
     document_processing_status: Literal[
         "DISABLED", "CONFIGURED_UNAVAILABLE", "READY"
@@ -217,8 +211,8 @@ class ComponentReferenceResponse(BaseModel):
     project_code: str
     status: str
     config_hash: str
-    runtime_kind: Literal["python-v1", "typescript-v1"] | None = None
-    runtime_protocol_versions: list[Literal["1.0", "1.1", "1.2", "1.3"]] | None = None
+    runtime_kind: Literal["python-v1"] | None = None
+    runtime_protocol_versions: list[Literal["1.3"]] | None = None
     direction: str = ""
     component_type: str = ""
 
@@ -309,9 +303,8 @@ class SaveDraftRequest(StrictRequest):
     agent_publication_id: str = Field(default="", max_length=200)
     workflow_publication_id: str = Field(default="", max_length=200)
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
-    file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
     document_processing_profile_code: Literal[
-        "NONE", "docling-text-v1", "docling-layout-ocr-v1", "docling-layout-ocr-v2"
+        "NONE", "docling-layout-ocr-v2"
     ] = "NONE"
     task_file_features: TaskFileFeaturesResponse = Field(default_factory=TaskFileFeaturesResponse)
     session_policy: SessionPolicyRequest = Field(default_factory=SessionPolicyRequest)

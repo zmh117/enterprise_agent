@@ -12,7 +12,6 @@ from app.modules.file_workspace.domain import (
 )
 from app.modules.file_workspace.text_format_policy import (
     get_text_format_policy,
-    normalize_file_format_policy_version,
     text_format_for_name,
 )
 from app.shared.database import Database
@@ -172,17 +171,13 @@ class FileAuthorizationService:
             if frozen_actions != DOCUMENT_MANIFEST_ACTIONS or action not in frozen_actions:
                 self._deny("file_manifest_action_denied")
         else:
-            policy_version = normalize_file_format_policy_version(
-                context.manifest.get("file_format_policy_version")
-            )
-            definition = get_text_format_policy(policy_version).by_code(
+            definition = get_text_format_policy().by_code(
                 str(item.get("format_code") or "TXT")
             )
             if not frozen_actions.issubset(definition.actions):
                 self._deny("file_manifest_actions_invalid")
             named = text_format_for_name(
                 str(item.get("display_name") or ""),
-                policy_version=policy_version,
             )
             if (
                 named.code is not definition.code
@@ -353,10 +348,7 @@ class FileAuthorizationService:
         ):
             self._deny("file_representation_denied")
         if not has_representation:
-            policy = normalize_file_format_policy_version(
-                context.manifest.get("file_format_policy_version")
-            )
-            definition = get_text_format_policy(policy).by_code(
+            definition = get_text_format_policy().by_code(
                 str(item.get("format_code") or "TXT")
             )
             if FileAction.MATERIALIZE not in definition.actions:

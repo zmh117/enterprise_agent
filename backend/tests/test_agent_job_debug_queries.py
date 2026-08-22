@@ -380,15 +380,11 @@ def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() 
         creator_user_id=str(creator["id"]),
         idempotency_key="model-audit-evidence",
     )
-    runtime.database.execute(
-        "update agent_job set agent_runtime_protocol_version = '1.2' where id = ?",
-        (job_id,),
-    )
     audit = ExecutionAuditRepository(runtime.database)
     audit.record_runtime_event(
         job_id,
         {
-            "protocol_version": "1.2",
+            "protocol_version": "1.3",
             "invocation_id": f"{job_id}.attempt-0",
             "request_digest": "a" * 64,
             "sequence": 1,
@@ -420,7 +416,7 @@ def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() 
     audit.record_runtime_event(
         job_id,
         {
-            "protocol_version": "1.2",
+            "protocol_version": "1.3",
             "invocation_id": f"{job_id}.attempt-0",
             "request_digest": "a" * 64,
             "sequence": 2,
@@ -475,8 +471,6 @@ def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() 
     assert evidence.json()["file_workspace"] == {
         "enabled": False,
         "manifest_schema_version": None,
-        "file_format_policy_version": "text-v1",
-        "policy_source": "job_route_decision",
         "formats": [],
     }
     projected = model_calls.json()["items"][0]

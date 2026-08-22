@@ -2,7 +2,7 @@
   "protocol_version": "1.3",
   "runtime_kind": "python-v1",
   "invocation_id": "invocation-file-manifest-1",
-  "request_digest": "6c3ecc180e1ad969e5e7fe8444cde70464e96317474efda98eee661f7488a9d8",
+  "request_digest": "41a4c878a8b10873d1d4bb16ca5b958f4614d4e4edb7ecd213710d25b62e8012",
   "job_id": "job-file-manifest-1",
   "app_user_id": "app-user-1",
   "project_code": "project-1",
@@ -45,11 +45,10 @@
     }
   ],
   "file_context": {
-    "file_format_policy_version": "text-v2",
     "file_manifest": {
-      "schema_version": 4,
-      "file_format_policy_version": "text-v2",
-      "manifest_hash": "b8ae49f15a9568641c7af14b5f77090fa3f45ffff9781356546d1a9f4977f737",
+      "schema_version": 5,
+      "workspace_catalog_revision_id": "workspace-catalog-revision-1",
+      "manifest_hash": "1639b3d60362145ec514a391fa0396cf65de8668f056e16da7b46510cef9daf6",
       "observed_at": "2026-08-18T07:44:33.552408+00:00",
       "items": [
         {
@@ -65,7 +64,8 @@
           "auto_materialize": true,
           "conflict_candidate": false,
           "source_received_at": "2026-08-18T07:44:20.000000+00:00",
-          "version_created_at": "2026-08-18T07:44:21.000000+00:00"
+          "version_created_at": "2026-08-18T07:44:21.000000+00:00",
+          "materialization_size_bytes": 1024
         },
         {
           "file_id": "file-document-1",
@@ -82,6 +82,7 @@
           "conflict_candidate": false,
           "source_received_at": "2026-08-18T07:44:22.000000+00:00",
           "version_created_at": "2026-08-18T07:44:23.000000+00:00",
+          "materialization_size_bytes": 2048,
           "representation_id": "file-representation-1",
           "representation_kind": "MARKDOWN",
           "representation_size_bytes": 2048,

@@ -9,11 +9,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from app.modules.document_processing.profile import (
-    DOCLING_LAYOUT_OCR_V1,
-    DOCLING_LAYOUT_OCR_V2,
-    DOCLING_TEXT_V1,
-)
+from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V2
 from app.modules.document_processing.provider import (
     DoclingServeProvider,
     DocumentProcessorFailure,
@@ -104,12 +100,12 @@ def test_docling_provider_uses_only_async_multipart_poll_and_result_contract() -
         filename="sample.pdf",
         media_type="application/pdf",
         format_code="PDF",
-        profile=DOCLING_TEXT_V1,
+        profile=DOCLING_LAYOUT_OCR_V2,
     )
     assert task.task_id == "task-1"
     assert task.state is ProcessorTaskState.PENDING
     assert provider.poll(task.task_id).state is ProcessorTaskState.SUCCESS
-    result = provider.fetch(task.task_id, profile=DOCLING_TEXT_V1)
+    result = provider.fetch(task.task_id, profile=DOCLING_LAYOUT_OCR_V2)
     assert result.markdown == b"# Governed output\n"
     assert result.page_count == 1
     assert result.processing_time_ms == 1250
@@ -142,10 +138,6 @@ def test_layout_v2_provider_accepts_unambiguous_successful_no_text_result() -> N
     assert result.partial is False
     assert result.markdown == b""
     assert result.docling_json == b"{}"
-
-    with pytest.raises(DocumentProcessorFailure) as captured:
-        provider.fetch_picture("task-empty-v1", profile=DOCLING_LAYOUT_OCR_V1)
-    assert captured.value.error_code == "docling_picture_result_invalid"
 
 
 @pytest.mark.parametrize(
@@ -187,7 +179,7 @@ def test_docling_provider_rejects_malformed_or_schema_drifted_results(
 ) -> None:
     provider = _provider(lambda _: httpx.Response(200, json=response))
     with pytest.raises(DocumentProcessorFailure) as captured:
-        provider.fetch("task-1", profile=DOCLING_TEXT_V1)
+        provider.fetch("task-1", profile=DOCLING_LAYOUT_OCR_V2)
     assert captured.value.error_code == error_code
     assert captured.value.retryable is retryable
 
@@ -295,11 +287,11 @@ def test_layout_provider_uses_fixed_upload_name_and_validates_picture_bundle(
             else "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         ),
         format_code=source_format,
-        profile=DOCLING_LAYOUT_OCR_V1,
+        profile=DOCLING_LAYOUT_OCR_V2,
     )
     result = provider.fetch_bundle(
         task.task_id,
-        profile=DOCLING_LAYOUT_OCR_V1,
+        profile=DOCLING_LAYOUT_OCR_V2,
         source_format=source_format,
     )
     assert result.markdown == b"# Parent text\n"
@@ -336,7 +328,7 @@ def test_layout_bundle_rejects_path_traversal_and_unknown_entries(
     with pytest.raises(DocumentProcessorFailure) as captured:
         provider.fetch_bundle(
             "task-layout",
-            profile=DOCLING_LAYOUT_OCR_V1,
+            profile=DOCLING_LAYOUT_OCR_V2,
             source_format="DOCX",
         )
     assert captured.value.error_code == error_code
@@ -361,7 +353,7 @@ def test_layout_bundle_rejects_symlink_entry() -> None:
     with pytest.raises(DocumentProcessorFailure) as captured:
         provider.fetch_bundle(
             "task-layout",
-            profile=DOCLING_LAYOUT_OCR_V1,
+            profile=DOCLING_LAYOUT_OCR_V2,
             source_format="DOCX",
         )
     assert captured.value.error_code == "docling_bundle_entry_unsafe"

@@ -190,7 +190,7 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
         assert runtime.agent_repository.count_rows("agent_job") == before_denied
 
 
-def test_debug_create_projects_frozen_task_file_policy_into_job() -> None:
+def test_debug_create_projects_current_task_file_contract_into_job() -> None:
     runtime = _container()
     task_file_features = {
         "workspace_enabled": True,
@@ -205,12 +205,12 @@ def test_debug_create_projects_frozen_task_file_policy_into_job() -> None:
         capabilities=(
             "task_workspace_get",
             "task_workspace_list_files",
+            "task_workspace_search_files",
             "file_get_metadata",
             "file_prepare_materialization",
         ),
         attachments_enabled=True,
         task_file_features=task_file_features,
-        file_format_policy_version="text-v2",
     )
 
     job, _ = runtime.debug_job_access_service.create_job(
@@ -227,7 +227,6 @@ def test_debug_create_projects_frozen_task_file_policy_into_job() -> None:
     assert job.task_workspace_id
     assert job.agent_runtime_protocol_version == "1.3"
     assert job.business_application_route_decision["task_file_features"] == (task_file_features)
-    assert job.business_application_route_decision["file_format_policy_version"] == ("text-v2")
     frozen_tools = runtime.mcp_tool_snapshot_service.verify(job.id)
     assert {
         item["tool_identifier"]
@@ -235,7 +234,8 @@ def test_debug_create_projects_frozen_task_file_policy_into_job() -> None:
         if item["server_code"] == "file-service"
     } == {
         "task_workspace_get",
-        "task_workspace_list_files",
+            "task_workspace_list_files",
+            "task_workspace_search_files",
         "file_get_metadata",
         "file_prepare_materialization",
     }

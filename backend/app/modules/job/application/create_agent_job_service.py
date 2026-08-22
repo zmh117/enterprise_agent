@@ -26,11 +26,6 @@ from app.modules.file_workspace.manifest_service import (
     is_explicit_text_output_request,
     is_task_text_name,
 )
-from app.modules.file_workspace.text_format_policy import (
-    FileFormatPolicyVersion,
-    normalize_file_format_policy_version,
-    policy_runtime_protocol_version,
-)
 from app.modules.job.application.file_context import (
     CurrentMessageAttachment,
     GateDecision,
@@ -71,10 +66,9 @@ TERMINAL_ATTACHMENT_STATUSES = {"READY", "REJECTED", "FAILED", "stored_not_inter
 def _is_supported_workspace_attachment(
     file_name: str,
     *,
-    policy_version: object,
     document_processing_profile_code: object,
 ) -> bool:
-    if is_task_text_name(file_name, policy_version=policy_version):
+    if is_task_text_name(file_name):
         return True
     profile = resolve_document_processing_profile(document_processing_profile_code)
     if profile is None:
@@ -128,7 +122,6 @@ class CreateAgentJobCommand:
     enterprise_id: str = ""
     sender_staff_id: str = ""
     task_workspace_retention_period: str = "WEEK"
-    file_format_policy_version: str = "text-v1"
     document_processing_profile_code: str = "NONE"
     task_file_features: dict[str, bool] = field(default_factory=dict)
     file_references: tuple[ChannelFileReference, ...] = ()
@@ -262,11 +255,9 @@ class CreateAgentJobService:
                 safe_message="此业务应用未启用任务文件工作区",
                 error_code="attachment_stage_workspace_disabled",
             )
-        policy_version = normalize_file_format_policy_version(command.file_format_policy_version)
         if not all(
             _is_supported_workspace_attachment(
                 item.file_name,
-                policy_version=policy_version,
                 document_processing_profile_code=command.document_processing_profile_code,
             )
             for item in command.attachments
@@ -284,7 +275,6 @@ class CreateAgentJobService:
         self._validate_attachments(
             command.attachments,
             enabled=attachments_enabled,
-            file_format_policy_version=policy_version,
             document_processing_profile_code=command.document_processing_profile_code,
         )
         if self.credential_cipher is None:
@@ -378,7 +368,6 @@ class CreateAgentJobService:
                 attachments=command.attachments,
                 file_references=(),
                 requests_file_output=False,
-                file_format_policy_version=policy_version,
             )
             if workspace is None:
                 raise NonRetryableExecutionError(
@@ -472,11 +461,9 @@ class CreateAgentJobService:
             if command.attachments_enabled is None
             else command.attachments_enabled
         )
-        policy_version = normalize_file_format_policy_version(command.file_format_policy_version)
         self._validate_attachments(
             command.attachments,
             enabled=attachments_enabled,
-            file_format_policy_version=policy_version,
             document_processing_profile_code=command.document_processing_profile_code,
         )
         requester_id = command.effective_requester_id
@@ -548,7 +535,7 @@ class CreateAgentJobService:
         agent_revision = 0
         agent_config_hash = ""
         agent_runtime_kind = "python-v1"
-        agent_runtime_protocol_version = "1.0"
+        agent_runtime_protocol_version = "1.3"
         agent_snapshot: dict[str, Any] = {}
         model_runtime_provenance: dict[str, Any] = {
             "legacy": True,
@@ -599,26 +586,18 @@ class CreateAgentJobService:
             agent_revision = int(publication["revision"])
             agent_config_hash = str(publication["config_hash"])
             agent_runtime_kind = str(publication.get("runtime_kind") or "")
-            if agent_runtime_kind == "typescript-v1":
-                raise NonRetryableExecutionError(
-                    "TypeScript Agent Runtime publications cannot create new Jobs",
-                    safe_message=("TypeScript Agent Runtime 已退役；请先迁移到 Python Publication"),
-                    error_code="typescript_agent_runtime_retired",
-                )
             if agent_runtime_kind != "python-v1":
                 raise NonRetryableExecutionError(
                     "Pinned Agent publication runtime is unsupported",
                     safe_message="固定的 Agent Runtime 配置无效",
                     error_code="agent_runtime_kind_unsupported",
                 )
-            agent_runtime_protocol_version = policy_runtime_protocol_version(policy_version)
+            agent_runtime_protocol_version = "1.3"
             agent_snapshot = dict(publication.get("snapshot") or {})
             supported_protocols = tuple(
                 str(item) for item in agent_snapshot.get("supported_runtime_protocol_versions", [])
             )
-            if not supported_protocols:
-                supported_protocols = ("1.0", "1.1", "1.2")
-            if agent_runtime_protocol_version not in supported_protocols:
+            if supported_protocols != ("1.3",):
                 raise NonRetryableExecutionError(
                     "Pinned Agent publication does not support the required Runtime protocol",
                     safe_message="固定的 Agent 发布版本不支持文件策略所需 Runtime 协议",
@@ -794,12 +773,8 @@ class CreateAgentJobService:
                     file_references=command.file_references,
                     requests_file_output=(
                         command.requests_file_output
-                        or is_explicit_text_output_request(
-                            command.user_message,
-                            policy_version=command.file_format_policy_version,
-                        )
+                        or is_explicit_text_output_request(command.user_message)
                     ),
-                    file_format_policy_version=command.file_format_policy_version,
                 )
                 if (
                     self.file_manifest_service is not None
@@ -833,7 +808,6 @@ class CreateAgentJobService:
                     attachments=command.attachments,
                     file_references=command.file_references,
                     requests_file_output=False,
-                    file_format_policy_version=command.file_format_policy_version,
                     force_create=True,
                 )
             if gate.action == "system_notice":
@@ -846,15 +820,6 @@ class CreateAgentJobService:
                     decision=file_decision,
                     correlation_id=correlation_id,
                     requester_id=requester_id,
-                )
-            if file_workspace is not None and bool(
-                command.task_file_features.get("file_mcp_enabled")
-            ):
-                assert self.file_manifest_service is not None
-                self.file_manifest_service.require_publication_workspace_compatibility(
-                    workspace_id=str(file_workspace["id"]),
-                    publication_id=command.business_application_publication_id,
-                    planned_new_files=len(command.attachments),
                 )
             bound_attachment_ids = tuple(
                 item.attachment_id
@@ -906,9 +871,6 @@ class CreateAgentJobService:
                         if command.task_file_features
                         else {}
                     ),
-                    "file_format_policy_version": normalize_file_format_policy_version(
-                        command.file_format_policy_version
-                    ).value,
                     "authorization_snapshot": business_authorization_snapshot,
                     "runtime_authorization": runtime_authorization_snapshot,
                     "file_turn_dependencies": file_turn_payload,
@@ -1021,7 +983,6 @@ class CreateAgentJobService:
                     requester_id=requester_id,
                     publication_id=command.business_application_publication_id,
                     file_references=tuple(manifest_references),
-                    file_format_policy_version=command.file_format_policy_version,
                 )
                 if not self.file_manifest_service.has_pending_text_attachments(job.id):
                     file_manifest = self.file_manifest_service.finalize(job.id) or {}
@@ -1252,7 +1213,6 @@ class CreateAgentJobService:
         attachments: tuple[ChannelAttachment, ...],
         *,
         enabled: bool,
-        file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
         document_processing_profile_code: object = "NONE",
     ) -> None:
         if attachments and not enabled:
@@ -1285,10 +1245,7 @@ class CreateAgentJobService:
                     "attachment_source_missing", safe_message="缺少附件来源"
                 )
             size = int(attachment.declared_size or 0)
-            is_workspace_text = is_task_text_name(
-                attachment.file_name,
-                policy_version=file_format_policy_version,
-            )
+            is_workspace_text = is_task_text_name(attachment.file_name)
             max_file_bytes = (
                 15 * 1024 * 1024 if is_workspace_text else self.attachment_settings.max_file_bytes
             )

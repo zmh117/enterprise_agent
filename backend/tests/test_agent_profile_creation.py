@@ -153,25 +153,7 @@ def test_builtin_agent_bootstrap_is_idempotent_and_preserves_existing_state() ->
     assert runtime.database.execute("select id from agent_publication") == []
 
 
-def test_builtin_agent_bootstrap_fails_closed_on_runtime_drift() -> None:
-    runtime = build_test_container(make_test_settings(), migrate=True, seed=False)
-    bootstrapper = AgentConfigBootstrapper(
-        runtime.agent_config_service.repository,
-        runtime.audit_service,
-    )
-    bootstrapper.ensure_builtin_agents(model="claude-sonnet-4-20250514")
-    runtime.database.execute(
-        "update agent_definition set runtime_kind = 'typescript-v1' where code = ?",
-        ("default-diagnostic-agent",),
-    )
-
-    with pytest.raises(NonRetryableExecutionError) as rejected:
-        bootstrapper.ensure_builtin_agents(model="claude-sonnet-4-20250514")
-
-    assert rejected.value.error_code == "agent_runtime_kind_mismatch"
-
-
-def test_agent_creation_api_reports_permission_and_retires_typescript_runtime() -> None:
+def test_agent_creation_api_reports_permission_and_creates_python_runtime() -> None:
     settings = unified_settings()
     runtime = build_test_container(settings, migrate=True, seed=True)
     app = create_app(settings, container_factory=lambda _: runtime)
@@ -184,26 +166,11 @@ def test_agent_creation_api_reports_permission_and_retires_typescript_runtime() 
             headers=csrf_headers(csrf),
             json=_creation_payload(code="api-python-agent"),
         )
-        typescript = client.post(
-            "/api/admin/agents",
-            headers=csrf_headers(csrf),
-            json=_creation_payload(
-                code="api-typescript-agent",
-                runtime_kind="typescript-v1",
-            ),
-        )
-        typescript_missing = (
-            runtime.agent_config_service.repository.find_definition("api-typescript-agent") is None
-        )
-
     assert listed.status_code == 200
     assert listed.json()["permissions"] == {"can_create": True}
     assert python.status_code == 200
-    assert typescript.status_code == 400
     assert python.json()["definition"]["runtime_kind"] == "python-v1"
-    assert typescript.json()["detail"]["code"] == "typescript_agent_runtime_retired"
     assert python.json()["draft"]["revision"] == 1
-    assert typescript_missing
 
 
 def test_agent_creation_api_rejects_conflict_runtime_and_platform_fields() -> None:

@@ -24,7 +24,7 @@ from app.modules.document_processing.layout_ocr import validate_layout_represent
 from app.modules.document_processing.layout_ocr import validate_picture_result
 from app.modules.document_processing.provider import DocumentProcessorFailure
 from app.modules.document_processing.profile import (
-    DOCLING_TEXT_V1,
+    DOCLING_LAYOUT_OCR_V2,
     DocumentProcessingProfileCode,
     require_document_processing_profile,
 )
@@ -152,7 +152,7 @@ class GovernedDocumentProcessingService:
         source_version_id: str,
         actor_id: str,
         correlation_id: str,
-        profile_code: str = DocumentProcessingProfileCode.DOCLING_TEXT_V1.value,
+        profile_code: str = DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value,
     ) -> dict[str, Any]:
         profile = require_document_processing_profile(profile_code)
         requested_at = datetime.now(UTC)
@@ -276,7 +276,7 @@ class GovernedDocumentProcessingService:
         delay_seconds: int,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        if not 1 <= delay_seconds <= DOCLING_TEXT_V1.processing_timeout_seconds:
+        if not 1 <= delay_seconds <= DOCLING_LAYOUT_OCR_V2.processing_timeout_seconds:
             self._deny("document_processing_retry_delay_invalid", "文档处理重试延迟无效")
         if not error_code or not error_code.replace("_", "").isalnum():
             self._deny("document_processing_error_code_invalid", "文档处理错误分类无效")

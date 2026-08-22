@@ -19,14 +19,12 @@ from app.modules.business_application.domain.policies import (
     normalize_routing_key,
     publication_document_processing_profile,
     reject_dangerous_content,
-    required_file_mcp_tools,
     snapshot_hash,
     validate_code,
     validate_delivery,
     validate_document_processing_profile_code,
     validate_environment,
     validate_execution_policy,
-    validate_file_format_policy_version,
     validate_session_policy,
     validate_task_file_attachment_dependency,
     validate_task_file_features,
@@ -36,9 +34,7 @@ from app.modules.business_application.domain.policies import (
     verify_publication_snapshot,
 )
 from app.modules.document_processing import (
-    DOCLING_LAYOUT_OCR_V1,
     DOCLING_LAYOUT_OCR_V2,
-    DOCLING_TEXT_V1,
     DocumentProcessingProfileCode,
     document_processing_profile_snapshot,
     document_processing_state,
@@ -53,31 +49,16 @@ from app.modules.business_application.domain.runtime import (
 )
 from app.modules.business_application.infrastructure import BusinessApplicationRepository
 from app.modules.identity.application.authorization import AuthorizationEvaluator
-from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 WRITABLE_AGENT_RUNTIME_KIND = "python-v1"
-
-
-class _RetirementMigrationDryRunRollback(Exception):
-    def __init__(self, report: dict[str, Any]) -> None:
-        super().__init__("rollback validated TypeScript Runtime retirement dry-run")
-        self.report = report
 
 
 def _require_python_runtime_kind(runtime_kind: str) -> None:
     if runtime_kind == WRITABLE_AGENT_RUNTIME_KIND:
         return
-    if runtime_kind == "typescript-v1":
-        raise NonRetryableExecutionError(
-            "TypeScript Agent Runtime Business Application references are retired",
-            safe_message=(
-                "TypeScript Agent Runtime 已退役；请创建引用 Python Publication 的新版本"
-            ),
-            error_code="typescript_agent_runtime_retired",
-        )
     raise NonRetryableExecutionError(
         "Business Application Agent Runtime is unsupported",
         safe_message="业务应用引用的 Agent Runtime 无效",
@@ -233,9 +214,6 @@ class BusinessApplicationService:
         task_workspace_retention_period = validate_task_workspace_retention_period(
             payload.get("task_workspace_retention_period")
         )
-        file_format_policy_version = validate_file_format_policy_version(
-            payload.get("file_format_policy_version")
-        )
         document_processing_profile_code = validate_document_processing_profile_code(
             payload.get("document_processing_profile_code")
         )
@@ -287,23 +265,10 @@ class BusinessApplicationService:
                 error_code="validation_failed",
                 field_errors=[*document_profile_errors, *file_tool_errors],
             )
-        compatibility_errors = self._file_policy_compatibility_errors(
-            file_format_policy_version=file_format_policy_version,
-            task_file_features=task_file_features,
-            agent=selected_agent,
-        )
-        if compatibility_errors:
-            raise NonRetryableExecutionError(
-                "File format policy is incompatible with the selected publication",
-                safe_message="文件格式策略与 Agent Runtime 发布版本不兼容",
-                error_code="validation_failed",
-                field_errors=compatibility_errors,
-            )
         normalized = {
             "agent_publication_id": agent_publication_id,
             "workflow_publication_id": str(payload.get("workflow_publication_id") or "").strip(),
             "task_workspace_retention_period": task_workspace_retention_period,
-            "file_format_policy_version": file_format_policy_version,
             "document_processing_profile_code": document_processing_profile_code,
             "task_file_features": task_file_features,
             "session_policy": session_policy,
@@ -320,7 +285,6 @@ class BusinessApplicationService:
             agent_publication_id=str(normalized["agent_publication_id"]),
             workflow_publication_id=str(normalized["workflow_publication_id"]),
             task_workspace_retention_period=task_workspace_retention_period,
-            file_format_policy_version=file_format_policy_version,
             document_processing_profile_code=document_processing_profile_code,
             task_file_features=task_file_features,
             session_policy=session_policy,
@@ -428,18 +392,6 @@ class BusinessApplicationService:
                 field_errors=errors,
             )
         profile_code = str(revision.get("document_processing_profile_code") or "")
-        if profile_code == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value:
-            raise NonRetryableExecutionError(
-                "Document layout OCR v1 is deprecated for new publications",
-                safe_message="Office 内嵌图片布局 OCR v1 已停止新发布，请选择 v2",
-                error_code="validation_failed",
-                field_errors=[
-                    {
-                        "field": "document_processing_profile_code",
-                        "message": "布局 OCR v1 仅保留历史解释，新发布必须使用 v2",
-                    }
-                ],
-            )
         if (
             profile_code == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
             and not self.document_layout_ocr_publication_ready
@@ -508,12 +460,6 @@ class BusinessApplicationService:
             )
         self._require_python_application_publication(publication)
         profile, _ = publication_document_processing_profile(publication["snapshot"])
-        if profile["code"] == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value:
-            raise NonRetryableExecutionError(
-                "Document layout OCR v1 cannot be reactivated",
-                safe_message="Office 内嵌图片布局 OCR v1 已停止重新激活，请发布 v2",
-                error_code="runtime_not_ready",
-            )
         if (
             profile["code"] == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
             and not self.document_layout_ocr_publication_ready
@@ -523,20 +469,6 @@ class BusinessApplicationService:
                 safe_message="Office 内嵌图片布局 OCR 部署合同尚未就绪",
                 error_code="runtime_not_ready",
             )
-        if (
-            validate_file_format_policy_version(
-                publication["snapshot"].get("file_format_policy_version")
-            )
-            == "text-v2"
-        ):
-            cutover_errors = self.mcp_tool_composition_service.text_v2_cutover_errors()
-            if cutover_errors:
-                raise NonRetryableExecutionError(
-                    "text-v2 cutover preflight found active legacy File MCP Jobs",
-                    safe_message="text-v2 切换预检未通过",
-                    error_code="validation_failed",
-                    field_errors=cutover_errors,
-                )
         if self.runtime_readiness_guard is not None:
             agent = dict(publication["snapshot"].get("agent") or {})
             runtime_kind = str(agent.get("runtime_kind") or "")
@@ -550,288 +482,6 @@ class BusinessApplicationService:
             publication_id=publication_id,
             expected_revision=expected_revision,
         )
-
-    def migrate_retired_typescript_publication(
-        self,
-        *,
-        actor_id: str,
-        source_application_publication_id: str,
-        source_agent_publication_id: str,
-        target_python_agent_publication_id: str,
-        environment: str,
-        expected_application_revision: int,
-        expected_deployment_revision: int,
-        correlation_id: str,
-        apply: bool = False,
-    ) -> dict[str, Any]:
-        """Create and activate a new Python-backed Application publication.
-
-        The source publications and both optimistic-lock revisions are exact
-        operator inputs. Dry-run executes the same transactional path and then
-        rolls it back, so compatibility checks cannot drift from apply mode.
-        """
-
-        context = self._retirement_migration_context(
-            source_application_publication_id=source_application_publication_id,
-            source_agent_publication_id=source_agent_publication_id,
-            target_python_agent_publication_id=target_python_agent_publication_id,
-            environment=environment,
-            expected_application_revision=expected_application_revision,
-            expected_deployment_revision=expected_deployment_revision,
-        )
-        target_runtime_kind = str(context["target_agent"].runtime_kind or "")
-        if self.runtime_readiness_guard is not None:
-            self.runtime_readiness_guard.require_ready(target_runtime_kind)
-        if (
-            validate_file_format_policy_version(
-                context["source_publication"]["snapshot"].get("file_format_policy_version")
-            )
-            == "text-v2"
-        ):
-            cutover_errors = self.mcp_tool_composition_service.text_v2_cutover_errors()
-            if cutover_errors:
-                raise NonRetryableExecutionError(
-                    "text-v2 cutover preflight found active legacy File MCP Jobs",
-                    safe_message="text-v2 切换预检未通过",
-                    error_code="validation_failed",
-                    field_errors=cutover_errors,
-                )
-        try:
-            return self._migrate_retired_typescript_publication(
-                actor_id=actor_id,
-                source_application_publication_id=source_application_publication_id,
-                source_agent_publication_id=source_agent_publication_id,
-                target_python_agent_publication_id=target_python_agent_publication_id,
-                environment=environment,
-                expected_application_revision=expected_application_revision,
-                expected_deployment_revision=expected_deployment_revision,
-                correlation_id=correlation_id,
-                apply=apply,
-            )
-        except _RetirementMigrationDryRunRollback as rollback:
-            return rollback.report
-
-    @operation_unit_of_work(lambda service: service.repository.database)
-    def _migrate_retired_typescript_publication(
-        self,
-        *,
-        actor_id: str,
-        source_application_publication_id: str,
-        source_agent_publication_id: str,
-        target_python_agent_publication_id: str,
-        environment: str,
-        expected_application_revision: int,
-        expected_deployment_revision: int,
-        correlation_id: str,
-        apply: bool,
-    ) -> dict[str, Any]:
-        context = self._retirement_migration_context(
-            source_application_publication_id=source_application_publication_id,
-            source_agent_publication_id=source_agent_publication_id,
-            target_python_agent_publication_id=target_python_agent_publication_id,
-            environment=environment,
-            expected_application_revision=expected_application_revision,
-            expected_deployment_revision=expected_deployment_revision,
-        )
-        application = context["application"]
-        source_publication = context["source_publication"]
-        source_snapshot = dict(source_publication["snapshot"])
-        target_agent = context["target_agent"]
-        payload = self._retirement_migration_payload(
-            source_snapshot=source_snapshot,
-            target_agent_publication_id=target_agent.id,
-        )
-        revision = self.save_draft(
-            actor_id=actor_id,
-            code=str(application["code"]),
-            expected_revision=expected_application_revision,
-            payload=payload,
-        )
-        publication = self._publish(
-            actor_id=actor_id,
-            code=str(application["code"]),
-            revision_id=str(revision["id"]),
-        )
-        deployment = self._activate_in_unit_of_work(
-            actor_id=actor_id,
-            code=str(application["code"]),
-            environment=environment,
-            publication_id=str(publication["id"]),
-            expected_revision=expected_deployment_revision,
-        )
-        report = {
-            "status": "migrated" if apply else "ready",
-            "write_performed": apply,
-            "application": {
-                "id": application["id"],
-                "code": application["code"],
-                "environment": validate_environment(environment),
-            },
-            "source": {
-                "application_publication_id": source_application_publication_id,
-                "application_revision": source_publication["revision"],
-                "application_config_hash": source_publication["config_hash"],
-                "agent_publication_id": source_agent_publication_id,
-                "runtime_kind": "typescript-v1",
-            },
-            "target": {
-                "agent_publication_id": target_python_agent_publication_id,
-                "agent_revision": target_agent.revision,
-                "agent_config_hash": target_agent.config_hash,
-                "runtime_kind": "python-v1",
-                "application_revision": revision["revision"],
-                "application_config_hash": revision["config_hash"],
-                "application_publication_id": str(publication["id"]) if apply else "",
-                "application_publication_hash": publication["config_hash"],
-                "deployment_revision": deployment["revision"],
-            },
-            "correlation_id": correlation_id,
-            "sensitive_values_exposed": False,
-        }
-        if not apply:
-            raise _RetirementMigrationDryRunRollback(report)
-        self.audit_service.record(
-            "typescript_runtime.application_migrated",
-            status="SUCCEEDED",
-            summary="Business Application migrated from retired TypeScript Runtime",
-            actor_id=actor_id,
-            payload={
-                "application_id": application["id"],
-                "application_code": application["code"],
-                "environment": validate_environment(environment),
-                "source_application_publication_id": source_application_publication_id,
-                "source_agent_publication_id": source_agent_publication_id,
-                "target_agent_publication_id": target_python_agent_publication_id,
-                "target_application_publication_id": publication["id"],
-                "target_application_config_hash": publication["config_hash"],
-                "expected_application_revision": expected_application_revision,
-                "expected_deployment_revision": expected_deployment_revision,
-                "correlation_id": correlation_id,
-                "result": "migrated",
-            },
-        )
-        return report
-
-    def _retirement_migration_context(
-        self,
-        *,
-        source_application_publication_id: str,
-        source_agent_publication_id: str,
-        target_python_agent_publication_id: str,
-        environment: str,
-        expected_application_revision: int,
-        expected_deployment_revision: int,
-    ) -> dict[str, Any]:
-        normalized_environment = validate_environment(environment)
-        source_publication = self._verified_publication(source_application_publication_id)
-        application = self.repository.get_by_id(str(source_publication["application_id"]))
-        if int(application["revision"]) != expected_application_revision:
-            raise self.repository.revision_conflict(int(application["revision"]))
-        source_revision = self.repository.get_revision(str(source_publication["revision_id"]))
-        source_snapshot = dict(source_publication["snapshot"])
-        source_snapshot_agent = dict(source_snapshot.get("agent") or {})
-        source_snapshot_application = dict(source_snapshot.get("application") or {})
-        if (
-            str(source_revision.get("agent_publication_id") or "") != source_agent_publication_id
-            or str(source_snapshot_agent.get("id") or "") != source_agent_publication_id
-        ):
-            raise NonRetryableExecutionError(
-                "Source Application publication does not reference the exact Agent publication",
-                safe_message="源应用发布版本与源 Agent 发布版本不匹配",
-                error_code="retirement_migration_source_reference_mismatch",
-            )
-        if str(source_snapshot_application.get("id") or "") != str(application["id"]):
-            raise NonRetryableExecutionError(
-                "Source Application publication ownership is inconsistent",
-                safe_message="源应用发布版本归属不一致",
-                error_code="retirement_migration_source_integrity_error",
-            )
-        source_agent = self.agent_reader.resolve(source_agent_publication_id)
-        if str(source_agent.runtime_kind or "") != "typescript-v1":
-            raise NonRetryableExecutionError(
-                "Source Agent publication is not a retired TypeScript publication",
-                safe_message="源 Agent 发布版本不是已退役的 TypeScript 版本",
-                error_code="retirement_migration_source_runtime_mismatch",
-            )
-        target_agent = self.agent_reader.resolve(target_python_agent_publication_id)
-        _require_python_agent_publication(target_agent)
-        if source_agent.id == target_agent.id:
-            raise NonRetryableExecutionError(
-                "Source and target Agent publications must differ",
-                safe_message="源和目标 Agent 发布版本不能相同",
-                error_code="retirement_migration_target_invalid",
-            )
-        deployment = self.repository.get_deployment(str(application["id"]), normalized_environment)
-        if (
-            deployment is None
-            or not bool(deployment["active"])
-            or str(deployment["publication_id"]) != source_application_publication_id
-        ):
-            raise NonRetryableExecutionError(
-                "Active deployment does not reference the exact source publication",
-                safe_message="活动部署与指定的源应用发布版本不匹配",
-                error_code="retirement_migration_deployment_mismatch",
-            )
-        if int(deployment["revision"]) != expected_deployment_revision:
-            raise self.repository.revision_conflict(int(deployment["revision"]))
-        return {
-            "application": application,
-            "source_publication": source_publication,
-            "source_agent": source_agent,
-            "target_agent": target_agent,
-            "deployment": deployment,
-        }
-
-    @staticmethod
-    def _retirement_migration_payload(
-        *,
-        source_snapshot: dict[str, Any],
-        target_agent_publication_id: str,
-    ) -> dict[str, Any]:
-        workflow = dict(source_snapshot.get("workflow") or {})
-        return {
-            "agent_publication_id": target_agent_publication_id,
-            "workflow_publication_id": str(workflow.get("id") or ""),
-            "task_workspace_retention_period": source_snapshot.get(
-                "task_workspace_retention_period"
-            ),
-            "file_format_policy_version": source_snapshot.get("file_format_policy_version"),
-            "task_file_features": dict(source_snapshot.get("task_file_features") or {}),
-            "session_policy": dict(source_snapshot.get("session_policy") or {}),
-            "execution_policy": dict(source_snapshot.get("execution_policy") or {}),
-            "triggers": [
-                {
-                    key: value
-                    for key, value in dict(trigger).items()
-                    if key
-                    in {
-                        "trigger_type",
-                        "connector_id",
-                        "routing_key",
-                        "actor_policy",
-                        "service_account_user_id",
-                        "enabled",
-                        "config",
-                    }
-                }
-                for trigger in source_snapshot.get("triggers") or []
-            ],
-            "deliveries": [
-                {
-                    key: value
-                    for key, value in dict(delivery).items()
-                    if key
-                    in {
-                        "delivery_type",
-                        "connector_id",
-                        "enabled",
-                        "config",
-                    }
-                }
-                for delivery in source_snapshot.get("deliveries") or []
-            ],
-            "mcp_tools": list(source_snapshot.get("mcp_tools") or []),
-        }
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def _activate_in_unit_of_work(
@@ -999,7 +649,7 @@ class BusinessApplicationService:
                 errors.append(
                     {
                         "field": "agent_publication_id",
-                        "message": "TypeScript Agent Runtime 已退役，请选择 Python Publication",
+                        "message": "仅允许选择 Python Runtime Publication",
                     }
                 )
         workflow_id = str(revision.get("workflow_publication_id") or "")
@@ -1064,15 +714,6 @@ class BusinessApplicationService:
                 selected_tools=list(revision.get("mcp_tools") or []),
             )
         )
-        errors.extend(
-            self._file_policy_compatibility_errors(
-                file_format_policy_version=validate_file_format_policy_version(
-                    revision.get("file_format_policy_version")
-                ),
-                task_file_features=validate_task_file_features(revision.get("task_file_features")),
-                agent=agent,
-            )
-        )
         try:
             document_processing_profile_code = validate_document_processing_profile_code(
                 revision.get("document_processing_profile_code")
@@ -1092,11 +733,6 @@ class BusinessApplicationService:
                 agent=agent,
             )
         )
-        if (
-            validate_file_format_policy_version(revision.get("file_format_policy_version"))
-            == "text-v2"
-        ):
-            errors.extend(self.mcp_tool_composition_service.text_v2_cutover_errors())
         return errors, components
 
     @staticmethod
@@ -1143,39 +779,6 @@ class BusinessApplicationService:
                 {
                     "field": "agent_publication_id",
                     "message": "所选 Agent 发布版本不支持 Docling 文件上下文 Runtime 能力",
-                }
-            )
-        return errors
-
-    @staticmethod
-    def _file_policy_compatibility_errors(
-        *,
-        file_format_policy_version: str,
-        task_file_features: dict[str, bool],
-        agent: ComponentReference | None,
-    ) -> list[dict[str, str]]:
-        if file_format_policy_version != "text-v2":
-            return []
-        errors: list[dict[str, str]] = []
-        if not task_file_features.get("workspace_enabled"):
-            errors.append(
-                {
-                    "field": "file_format_policy_version",
-                    "message": "text-v2 只能用于已启用的任务工作区",
-                }
-            )
-        if not task_file_features.get("file_mcp_enabled"):
-            errors.append(
-                {
-                    "field": "task_file_features.file_mcp_enabled",
-                    "message": "text-v2 必须启用 File MCP 并冻结精确 Tool schema",
-                }
-            )
-        if agent is None or "1.3" not in agent.runtime_protocol_versions:
-            errors.append(
-                {
-                    "field": "agent_publication_id",
-                    "message": "所选 Agent 发布版本未声明支持 Runtime protocol v1.3",
                 }
             )
         return errors
@@ -1243,9 +846,6 @@ class BusinessApplicationService:
             "workflow": component(components.get("workflow")),
             "task_workspace_retention_period": str(
                 revision.get("task_workspace_retention_period") or "WEEK"
-            ),
-            "file_format_policy_version": validate_file_format_policy_version(
-                revision.get("file_format_policy_version")
             ),
             "document_processing_profile": document_processing_profile_snapshot(
                 revision.get("document_processing_profile_code")
@@ -1357,9 +957,6 @@ class BusinessApplicationService:
                 "task_workspace_retention_period": (publication or revision or {}).get(
                     "task_workspace_retention_period", "WEEK"
                 ),
-                "file_format_policy_version": (publication or revision or {}).get(
-                    "file_format_policy_version", "text-v1"
-                ),
                 "document_processing_profile_code": (
                     publication or revision or {}
                 ).get("document_processing_profile_code", "NONE"),
@@ -1408,10 +1005,6 @@ class BusinessApplicationService:
                 application.get("task_workspace_retention_period")
                 or (application.get("draft") or {}).get("task_workspace_retention_period", "WEEK")
             ),
-            "file_format_policy_version": validate_file_format_policy_version(
-                application.get("file_format_policy_version")
-                or (application.get("draft") or {}).get("file_format_policy_version")
-            ),
             "document_processing_profile_code": validate_document_processing_profile_code(
                 application.get("document_processing_profile_code")
                 or (application.get("draft") or {}).get(
@@ -1452,9 +1045,6 @@ class BusinessApplicationService:
         }
 
     def _snapshot_summary(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        file_format_policy_version = validate_file_format_policy_version(
-            snapshot.get("file_format_policy_version")
-        )
         document_profile, document_profile_source = (
             publication_document_processing_profile(snapshot)
         )
@@ -1470,12 +1060,6 @@ class BusinessApplicationService:
             "task_workspace_retention_period": str(
                 snapshot.get("task_workspace_retention_period") or "WEEK"
             ),
-            "file_format_policy_version": file_format_policy_version,
-            "file_format_policy_source": (
-                "publication_snapshot"
-                if "file_format_policy_version" in snapshot
-                else "legacy_default"
-            ),
             "document_processing_profile": document_profile,
             "document_processing_profile_code": document_profile["code"],
             "document_processing_profile_version": document_profile["version"],
@@ -1483,58 +1067,11 @@ class BusinessApplicationService:
             "document_processing_profile_source": document_profile_source,
             **document_processing_state(document_profile["code"]),
             "task_file_features": validate_task_file_features(snapshot.get("task_file_features")),
-            "file_format_compatibility": self._file_format_compatibility(
-                snapshot,
-                policy_version=file_format_policy_version,
-            ),
-            "task_workspace_retention_source": (
-                "publication_snapshot"
-                if "task_workspace_retention_period" in snapshot
-                else "legacy_default"
-            ),
+            "task_workspace_retention_source": "publication_snapshot",
             "runtime_readiness": self.runtime_evaluator.evaluate(
                 snapshot=snapshot,
                 deployment=None,
             ).to_dict(),
-            "retirement_status": (
-                "retired"
-                if str((snapshot.get("agent") or {}).get("runtime_kind") or "") == "typescript-v1"
-                else "supported"
-            ),
-        }
-
-    @staticmethod
-    def _file_format_compatibility(
-        snapshot: dict[str, Any], *, policy_version: str
-    ) -> dict[str, Any]:
-        if policy_version == "text-v1":
-            return {
-                "status": "READY",
-                "required_runtime_protocol": "1.2-or-earlier",
-                "runtime_protocol_compatible": True,
-                "file_mcp_schema_compatible": True,
-            }
-        agent_value = snapshot.get("agent")
-        agent = agent_value if isinstance(agent_value, dict) else {}
-        protocols = {str(value) for value in agent.get("runtime_protocol_versions") or []}
-        features = validate_task_file_features(snapshot.get("task_file_features"))
-        required_tools = required_file_mcp_tools(features)
-        selected_tools = {
-            str(item.get("tool_identifier") or ""): str(item.get("schema_hash") or "")
-            for item in snapshot.get("mcp_tools") or []
-            if isinstance(item, dict) and str(item.get("server_code") or "") == "file-service"
-        }
-        schema_compatible = bool(required_tools) and all(
-            identifier in MCP_TOOL_MANIFEST
-            and selected_tools.get(identifier) == MCP_TOOL_MANIFEST[identifier].schema_hash
-            for identifier in required_tools
-        )
-        runtime_compatible = "1.3" in protocols
-        return {
-            "status": ("READY" if runtime_compatible and schema_compatible else "INCOMPATIBLE"),
-            "required_runtime_protocol": "1.3",
-            "runtime_protocol_compatible": runtime_compatible,
-            "file_mcp_schema_compatible": schema_compatible,
         }
 
     def _deployment_with_readiness(self, deployment: dict[str, Any]) -> dict[str, Any]:
@@ -1589,8 +1126,6 @@ class BusinessApplicationService:
         return {
             **publication,
             "snapshot": snapshot_summary,
-            "retirement_status": snapshot_summary["retirement_status"],
-            "file_format_compatibility": snapshot_summary["file_format_compatibility"],
             "document_processing_profile_code": snapshot_summary[
                 "document_processing_profile_code"
             ],
@@ -1651,56 +1186,6 @@ class BusinessApplicationService:
                 "output_kinds": [],
                 "selectable": True,
                 **document_processing_state(DocumentProcessingProfileCode.NONE.value),
-            },
-            {
-                "code": DOCLING_TEXT_V1.code.value,
-                "version": DOCLING_TEXT_V1.version,
-                "hash": DOCLING_TEXT_V1.profile_hash,
-                "label": "Docling 文字提取 v1",
-                "source_format_codes": [
-                    item.code.value for item in DOCLING_TEXT_V1.source_formats
-                ],
-                "output_kinds": list(DOCLING_TEXT_V1.output_kinds),
-                "selectable": True,
-                "limits": {
-                    "max_source_bytes": DOCLING_TEXT_V1.max_source_bytes,
-                    "max_pdf_pages": DOCLING_TEXT_V1.max_pdf_pages,
-                    "processing_timeout_seconds": (
-                        DOCLING_TEXT_V1.processing_timeout_seconds
-                    ),
-                },
-                **document_processing_state(DOCLING_TEXT_V1.code.value),
-            },
-            {
-                "code": DOCLING_LAYOUT_OCR_V1.code.value,
-                "version": DOCLING_LAYOUT_OCR_V1.version,
-                "hash": DOCLING_LAYOUT_OCR_V1.profile_hash,
-                "label": "Docling Office 内嵌图片布局 OCR v1",
-                "source_format_codes": [
-                    item.code.value for item in DOCLING_LAYOUT_OCR_V1.source_formats
-                ],
-                "output_kinds": list(DOCLING_LAYOUT_OCR_V1.output_kinds),
-                "selectable": False,
-                "limits": {
-                    "max_source_bytes": DOCLING_LAYOUT_OCR_V1.max_source_bytes,
-                    "max_pdf_pages": DOCLING_LAYOUT_OCR_V1.max_pdf_pages,
-                    "processing_timeout_seconds": (
-                        DOCLING_LAYOUT_OCR_V1.processing_timeout_seconds
-                    ),
-                },
-                "capabilities": {
-                    "office_embedded_image_ocr": True,
-                    "coordinates": "TOPLEFT_0_10000",
-                    "reading_order": True,
-                    "confidence": True,
-                    "bounded_geometric_relations": True,
-                    "picture_pixel_basis": "RAW_EMBEDDED_MEDIA_AFTER_EXIF",
-                    "office_display_transform_applied": False,
-                    "vlm": False,
-                    "visual_semantics": False,
-                },
-                "document_processing_status": "CONFIGURED_UNAVAILABLE",
-                "document_processing_reason_code": "profile_deprecated",
             },
             {
                 "code": DOCLING_LAYOUT_OCR_V2.code.value,

@@ -12,8 +12,7 @@ from pypdf import PdfWriter
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.document_processing import (
-    DOCLING_LAYOUT_OCR_V1,
-    DOCLING_TEXT_V1,
+    DOCLING_LAYOUT_OCR_V2,
     DocumentProcessingRepository,
     GovernedDocumentProcessingService,
     PictureItemStatus,
@@ -243,7 +242,7 @@ def test_processing_request_is_idempotent_and_outbox_payload_is_bounded() -> Non
     )
     assert repeated["id"] == run["id"]
     assert run["status"] == "QUEUED"
-    assert run["profile_hash"] == DOCLING_TEXT_V1.profile_hash
+    assert run["profile_hash"] == DOCLING_LAYOUT_OCR_V2.profile_hash
     events = database.execute(
         "select * from file_domain_outbox where event_type = 'file.processing.requested'"
     )
@@ -253,7 +252,7 @@ def test_processing_request_is_idempotent_and_outbox_payload_is_bounded() -> Non
         "attempt": 0,
         "contract_version": "file-processing/v1",
         "correlation_id": "correlation-safe",
-        "profile_hash": DOCLING_TEXT_V1.profile_hash,
+        "profile_hash": DOCLING_LAYOUT_OCR_V2.profile_hash,
         "run_id": run["id"],
         "source_version_id": version_id,
     }
@@ -287,9 +286,9 @@ def test_layout_profile_freezes_three_outputs_deadline_and_unique_picture_assemb
         source_version_id=version_id,
         actor_id="file-worker",
         correlation_id="layout-run",
-        profile_code="docling-layout-ocr-v1",
+        profile_code="docling-layout-ocr-v2",
     )
-    assert run["profile_hash"] == DOCLING_LAYOUT_OCR_V1.profile_hash
+    assert run["profile_hash"] == DOCLING_LAYOUT_OCR_V2.profile_hash
     assert json.loads(str(run["required_output_kinds_json"])) == [
         "MARKDOWN",
         "DOCLING_JSON",
@@ -582,9 +581,17 @@ def test_submitted_run_reaches_every_terminal_state_like_the_real_worker_order()
     docling_json = json.dumps(
         {"schema_name": "DoclingDocument", "texts": []}, sort_keys=True
     ).encode()
+    layout = assemble_layout_representation(
+        source_file_id=file_id,
+        source_version_id=version_id,
+        run_id=str(run["id"]),
+        profile=DOCLING_LAYOUT_OCR_V2,
+        occurrences=[],
+    )
     for kind, media_type, content in (
         ("MARKDOWN", "text/markdown", markdown),
         ("DOCLING_JSON", "application/json", docling_json),
+        ("OCR_LAYOUT_JSON", "application/json", layout),
     ):
         prepared = service.prepare_representation_transfer(
             run_id=str(run["id"]),
@@ -662,10 +669,18 @@ def test_two_staged_outputs_become_visible_atomically_and_finalize_is_idempotent
     docling_json = json.dumps(
         {"schema_name": "DoclingDocument", "texts": []}, sort_keys=True
     ).encode()
+    layout = assemble_layout_representation(
+        source_file_id=file_id,
+        source_version_id=version_id,
+        run_id=str(run["id"]),
+        profile=DOCLING_LAYOUT_OCR_V2,
+        occurrences=[],
+    )
     staged = {}
     for kind, media_type, content in (
         ("MARKDOWN", "text/markdown", markdown),
         ("DOCLING_JSON", "application/json", docling_json),
+        ("OCR_LAYOUT_JSON", "application/json", layout),
     ):
         prepared = service.prepare_representation_transfer(
             run_id=str(run["id"]),
@@ -691,6 +706,7 @@ def test_two_staged_outputs_become_visible_atomically_and_finalize_is_idempotent
     assert {item["kind"] for item in representations} == {
         "MARKDOWN",
         "DOCLING_JSON",
+        "OCR_LAYOUT_JSON",
     }
     assert {item["status"] for item in representations} == {"AVAILABLE"}
     assert service.repository.get_run(str(run["id"]))["status"] == "SUCCEEDED"
@@ -703,7 +719,7 @@ def test_two_staged_outputs_become_visible_atomically_and_finalize_is_idempotent
     )
     assert completion is not None
     assert json.loads(str(completion["payload_json"]))["status"] == "SUCCEEDED"
-    assert len(storage.objects) == 3
+    assert len(storage.objects) == 4
     repeated = service.finalize(
         run_id=str(run["id"]),
         partial=False,
@@ -729,7 +745,7 @@ def test_layout_profile_requires_and_atomically_publishes_all_three_outputs() ->
         source_version_id=version_id,
         actor_id="file-worker",
         correlation_id="layout-output",
-        profile_code="docling-layout-ocr-v1",
+        profile_code="docling-layout-ocr-v2",
     )
     with service.repository.database.unit_of_work():
         assert service.repository.claim_due_run(worker_id="layout-worker") is not None
@@ -737,7 +753,7 @@ def test_layout_profile_requires_and_atomically_publishes_all_three_outputs() ->
         source_file_id=file_id,
         source_version_id=version_id,
         run_id=str(run["id"]),
-        profile=DOCLING_LAYOUT_OCR_V1,
+        profile=DOCLING_LAYOUT_OCR_V2,
         occurrences=[],
     )
     outputs = (
@@ -781,7 +797,7 @@ def test_layout_finalize_binds_every_occurrence_and_cleans_private_artifacts() -
         source_version_id=version_id,
         actor_id="file-worker",
         correlation_id="layout-cleanup",
-        profile_code="docling-layout-ocr-v1",
+        profile_code="docling-layout-ocr-v2",
     )
     with database.unit_of_work():
         assert service.repository.claim_due_run(worker_id="layout-worker") is not None
@@ -820,7 +836,7 @@ def test_layout_finalize_binds_every_occurrence_and_cleans_private_artifacts() -
     picture = normalize_picture_asset(
         raw_picture.getvalue(),
         declared_media_type="image/png",
-        profile=DOCLING_LAYOUT_OCR_V1,
+        profile=DOCLING_LAYOUT_OCR_V2,
     )
     asset_prepared = service.prepare_picture_asset_transfer(
         run_id=str(run["id"]),
@@ -879,7 +895,7 @@ def test_layout_finalize_binds_every_occurrence_and_cleans_private_artifacts() -
             }
         ).encode(),
         picture=picture,
-        profile=DOCLING_LAYOUT_OCR_V1,
+        profile=DOCLING_LAYOUT_OCR_V2,
     )
     result_prepared = service.prepare_picture_result_transfer(
         picture_item_id=str(item["id"]),
@@ -908,7 +924,7 @@ def test_layout_finalize_binds_every_occurrence_and_cleans_private_artifacts() -
         source_file_id=file_id,
         source_version_id=version_id,
         run_id=str(run["id"]),
-        profile=DOCLING_LAYOUT_OCR_V1,
+        profile=DOCLING_LAYOUT_OCR_V2,
         occurrences=[occurrence],
     )
     markdown = append_layout_ocr_markdown(parent, layout)
@@ -965,7 +981,7 @@ def test_layout_upload_rejects_omitted_frozen_picture_occurrence() -> None:
         source_version_id=version_id,
         actor_id="file-worker",
         correlation_id="layout-binding",
-        profile_code="docling-layout-ocr-v1",
+        profile_code="docling-layout-ocr-v2",
     )
     with database.unit_of_work():
         assert service.repository.claim_due_run(worker_id="layout-worker") is not None
@@ -1019,7 +1035,7 @@ def test_layout_upload_rejects_omitted_frozen_picture_occurrence() -> None:
         source_file_id=file_id,
         source_version_id=version_id,
         run_id=str(run["id"]),
-        profile=DOCLING_LAYOUT_OCR_V1,
+        profile=DOCLING_LAYOUT_OCR_V2,
         occurrences=[],
     )
     prepared = service.prepare_representation_transfer(
@@ -1164,9 +1180,17 @@ def test_representation_cleanup_follows_source_version_lifecycle() -> None:
     )
     with database.unit_of_work():
         service.repository.claim_due_run(worker_id="processing-worker-1")
+    layout = assemble_layout_representation(
+        source_file_id=file_id,
+        source_version_id=version_id,
+        run_id=str(run["id"]),
+        profile=DOCLING_LAYOUT_OCR_V2,
+        occurrences=[],
+    )
     for kind, media_type, content in (
         ("MARKDOWN", "text/markdown", b"safe text"),
         ("DOCLING_JSON", "application/json", b'{"texts": []}'),
+        ("OCR_LAYOUT_JSON", "application/json", layout),
     ):
         prepared = service.prepare_representation_transfer(
             run_id=str(run["id"]),
@@ -1216,7 +1240,7 @@ def test_representation_cleanup_follows_source_version_lifecycle() -> None:
     assert all(str(item["object_key"]) not in storage.objects for item in representations)
     retained_run = service.repository.get_run(str(run["id"]))
     assert retained_run["processor_build_digest"] == PROCESSOR_DIGEST
-    assert retained_run["profile_hash"] == DOCLING_TEXT_V1.profile_hash
+    assert retained_run["profile_hash"] == DOCLING_LAYOUT_OCR_V2.profile_hash
     assert {item["content_sha256"] for item in retired} == {
         item["content_sha256"] for item in representations
     }
@@ -1236,7 +1260,7 @@ def test_source_version_cleanup_waits_for_nonterminal_document_processing() -> N
         source_version_id=version_id,
         actor_id="file-worker",
         correlation_id="retention-boundary",
-        profile_code="docling-layout-ocr-v1",
+        profile_code="docling-layout-ocr-v2",
     )
     service.file_repository.remove_active_workspace_files(
         workspace_id="document-workspace",

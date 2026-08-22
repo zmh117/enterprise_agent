@@ -375,7 +375,6 @@ def test_python_text_v2_selects_markdown_and_keeps_log_read_only(tmp_path: Path)
         job_id="job-text-v2",
         workspace_path=tmp_path,
         principal_token="principal",
-        file_format_policy_version="text-v2",
     )
     (tmp_path / "outputs").mkdir()
     (tmp_path / "outputs/report.md").write_text("# report\n", encoding="utf-8")
@@ -413,7 +412,6 @@ def test_python_upload_revalidates_markdown_before_streaming(
         job_id="job-text-v2",
         workspace_path=tmp_path,
         principal_token="principal-token-not-for-json",
-        file_format_policy_version="text-v2",
     )
     (tmp_path / "outputs").mkdir()
     target = tmp_path / "outputs/report.md"

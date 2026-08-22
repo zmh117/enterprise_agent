@@ -57,8 +57,7 @@ class AgentExecutionContext:
     mcp_bindings: tuple[McpRuntimeBinding, ...] = ()
     mcp_unavailable_notices: tuple[McpUnavailableNotice, ...] = ()
     runtime_kind: str = "python-v1"
-    runtime_protocol_version: str = "1.0"
-    file_format_policy_version: str = "text-v1"
+    runtime_protocol_version: str = "1.3"
 
 
 @dataclass(frozen=True)

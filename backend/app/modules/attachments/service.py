@@ -7,15 +7,12 @@ from typing import Any
 
 from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.attachments.domain import (
-    AttachmentExtractor,
     AttachmentImporter,
     MediaDownloader,
-    ObjectStorage,
 )
-from app.modules.attachments.extraction import SafeAttachmentExtractor
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
-from app.modules.document_processing.profile import DOCLING_TEXT_V1
+from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V2
 from app.modules.file_workspace.manifest_service import JobFileManifestService
 from app.modules.file_workspace.text_format_policy import get_text_format_policy
 from app.modules.job.application.file_context import (
@@ -45,10 +42,8 @@ class AttachmentProcessingService:
         audit_service: AuditService,
         credential_cipher: AttachmentCredentialCipher,
         downloader: MediaDownloader,
-        storage: ObjectStorage | None,
-        extractor: AttachmentExtractor,
         settings: AttachmentSettings,
-        importer: AttachmentImporter | None = None,
+        importer: AttachmentImporter,
         delivery_service: ResultDeliveryService | None = None,
         file_manifest_service: JobFileManifestService | None = None,
     ) -> None:
@@ -57,9 +52,7 @@ class AttachmentProcessingService:
         self.audit_service = audit_service
         self.credential_cipher = credential_cipher
         self.downloader = downloader
-        self.storage = storage
         self.importer = importer
-        self.extractor = extractor
         self.settings = settings
         self.delivery_service = delivery_service
         self.file_manifest_service = file_manifest_service
@@ -90,20 +83,27 @@ class AttachmentProcessingService:
                 robot_code=str(context["bot_identity"]),
             )
             suffix = Path(attachment.file_name).suffix.lower()
-            policy = get_text_format_policy(context.get("file_format_policy_version"))
+            policy = get_text_format_policy()
             text_definition = next(
                 (item for item in policy.formats if item.extension == suffix),
                 None,
             )
             document_definition = next(
-                (item for item in DOCLING_TEXT_V1.source_formats if suffix in item.extensions),
+                (
+                    item
+                    for item in DOCLING_LAYOUT_OCR_V2.source_formats
+                    if suffix in item.extensions
+                ),
                 None,
             )
-            workspace_import = self.importer is not None and bool(
-                context.get("task_workspace_id")
-            )
-            task_text = workspace_import and text_definition is not None
-            governed_document = workspace_import and document_definition is not None
+            if not context.get("task_workspace_id"):
+                raise NonRetryableExecutionError(
+                    "Attachment has no task workspace",
+                    safe_message="当前业务应用未启用任务工作区",
+                    error_code="file_workspace_unavailable",
+                )
+            task_text = text_definition is not None
+            governed_document = document_definition is not None
             if task_text:
                 fallback_mime = {
                     ".txt": "text/plain",
@@ -129,109 +129,31 @@ class AttachmentProcessingService:
                         attachment.declared_mime or document_definition.canonical_media_type
                     )
             else:
-                detected_mime = self.extractor.inspect(
-                    file_name=attachment.file_name,
-                    data=data,
+                raise NonRetryableExecutionError(
+                    "Attachment format is unsupported by the current file contract",
+                    safe_message="当前任务工作区不支持此文件格式",
+                    error_code="file_type_unsupported",
                 )
-            if detected_mime.startswith("image/"):
-                if not isinstance(self.extractor, SafeAttachmentExtractor):
-                    raise NonRetryableExecutionError(
-                        "Image normalizer unavailable", safe_message="图片校验暂时不可用"
-                    )
-                data, detected_mime = self.extractor.normalize_image(data=data)
             digest = hashlib.sha256(data).hexdigest()
-            object_bucket: str | None = None
-            object_key: str | None = None
-            document_readability_pending = False
-            if self.importer is not None:
-                assert self.importer is not None
-                imported = self.importer.import_content(
-                    attachment_id=attachment.id,
-                    data=data,
-                    content_type=detected_mime,
+            imported = self.importer.import_content(
+                attachment_id=attachment.id,
+                data=data,
+                content_type=detected_mime,
+            )
+            if imported.size_bytes != len(data) or imported.sha256 != digest:
+                raise RetryableExecutionError(
+                    "File Service receipt does not match downloaded bytes",
+                    safe_message="附件导入回执不匹配",
+                    error_code="file_service_receipt_mismatch",
                 )
-                if imported.size_bytes != len(data) or imported.sha256 != digest:
-                    raise RetryableExecutionError(
-                        "File Service receipt does not match downloaded bytes",
-                        safe_message="附件导入回执不匹配",
-                        error_code="file_service_receipt_mismatch",
-                    )
-                stored_size = imported.size_bytes
-                document_readability_pending = imported.readability_status == "PENDING"
-            else:
-                if self.storage is None:
-                    raise RetryableExecutionError(
-                        "Attachment storage boundary is unavailable",
-                        safe_message="附件导入服务暂时不可用",
-                        error_code="file_service_unavailable",
-                    )
-                extension = Path(attachment.file_name).suffix.lower().lstrip(".") or "bin"
-                legacy_object_key = f"attachments/{attachment.id}/{digest}.{extension}"
-                stored = self.storage.put(
-                    key=legacy_object_key,
-                    data=data,
-                    content_type=detected_mime,
-                    sha256=digest,
-                )
-                stored_size = stored.size_bytes
-                object_bucket = stored.bucket
-                object_key = stored.key
-            if task_text:
-                self.repository.update_attachment(
-                    attachment_id,
-                    status="READY",
-                    detected_mime=detected_mime,
-                    size_bytes=stored_size,
-                    sha256=digest,
-                    object_bucket=object_bucket,
-                    object_key=object_key,
-                    clear_credential=True,
-                )
-            elif document_readability_pending:
-                # Governed document processing owns extraction for this source.
-                # The source download is terminal, while Job release remains gated
-                # by the separately persisted readability state.
-                self.repository.update_attachment(
-                    attachment_id,
-                    status="READY",
-                    detected_mime=detected_mime,
-                    size_bytes=stored_size,
-                    sha256=digest,
-                    object_bucket=object_bucket,
-                    object_key=object_key,
-                    clear_credential=True,
-                )
-            elif detected_mime.startswith("image/"):
-                self.repository.update_attachment(
-                    attachment_id,
-                    status="stored_not_interpreted",
-                    detected_mime=detected_mime,
-                    size_bytes=stored_size,
-                    sha256=digest,
-                    object_bucket=object_bucket,
-                    object_key=object_key,
-                    clear_credential=True,
-                )
-            else:
-                self.repository.update_attachment(
-                    attachment_id,
-                    status="EXTRACTING",
-                    detected_mime=detected_mime,
-                    size_bytes=stored_size,
-                    sha256=digest,
-                    object_bucket=object_bucket,
-                    object_key=object_key,
-                    clear_credential=True,
-                )
-                content = self.extractor.extract(file_name=attachment.file_name, data=data)
-                self.repository.save_attachment_content(
-                    attachment_id=attachment_id,
-                    plain_text=content.text,
-                    segments=content.segments,
-                    parser_version=content.parser_version,
-                    truncated=content.truncated,
-                )
-                self.repository.update_attachment(attachment_id, status="READY")
+            self.repository.update_attachment(
+                attachment_id,
+                status="READY",
+                detected_mime=detected_mime,
+                size_bytes=imported.size_bytes,
+                sha256=digest,
+                clear_credential=True,
+            )
             self.audit_service.record(
                 "attachment.processed",
                 status="SUCCEEDED",

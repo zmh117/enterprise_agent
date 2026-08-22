@@ -260,10 +260,7 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
               draft?.task_workspace_retention_period ?? "WEEK（新草稿默认）",
             ],
             ["任务文件能力", formatTaskFileFeatures(draft?.task_file_features)],
-            [
-              "直接文本文件策略",
-              formatFileFormatPolicy(draft?.file_format_policy_version),
-            ],
+            ["直接文本文件规则", "TXT/Markdown 可读写，LOG 只读"],
             [
               "文档解析/OCR",
               formatDocumentProcessingSelection(
@@ -428,7 +425,6 @@ function PolicyEditor({
   )
   const fileContextRuntimeCompatible =
     selectedAgent?.runtime_protocol_versions.includes("1.3") === true
-  const textV2Cutover = catalog?.text_v2_cutover_preflight
   const selectedDocumentProfile = catalog?.document_processing_profiles.find(
     (item) => item.code === form.document_processing_profile_code
   )
@@ -463,65 +459,18 @@ function PolicyEditor({
             自然周期固定到期，活动不会滚动延期；不影响聊天附件的 360 天保留。
           </p>
         </Field>
-        <Field label="直接文本文件策略" htmlFor="policy-file-format">
-          <select
-            id="policy-file-format"
-            className={selectClass}
-            value={form.file_format_policy_version}
-            onChange={(event) => {
-              const policy = event.target
-                .value as SaveDraftInput["file_format_policy_version"]
-              const taskFileFeatures =
-                policy === "text-v2"
-                  ? {
-                      ...form.task_file_features,
-                      workspace_enabled: true,
-                      file_mcp_enabled: true,
-                    }
-                  : form.task_file_features
-              setForm({
-                ...form,
-                file_format_policy_version: policy,
-                task_file_features: taskFileFeatures,
-                mcp_tools: selectRequiredFileMcpTools(
-                  form.mcp_tools,
-                  taskFileFeatures,
-                  availableFileTools
-                ),
-                session_policy:
-                  policy === "text-v2"
-                    ? {
-                        ...form.session_policy,
-                        attachments_enabled: true,
-                        continuous_conversation_enabled: true,
-                      }
-                    : form.session_policy,
-              })
-            }}
-          >
-            <option value="text-v1">text-v1 · TXT 全能力</option>
-            <option value="text-v2">
-              text-v2 · TXT/Markdown 全能力，LOG 只读
-            </option>
-          </select>
+        <Field label="直接文本文件规则">
+          <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+            TXT/Markdown 可读写，LOG 只读
+          </div>
           <p className="text-xs leading-5 text-muted-foreground">
             TXT、LOG、Markdown 由 Agent 通过任务工作区直接读取，不进入
-            Docling；代码注册的固定矩阵会在发布后冻结。Markdown
+            Docling。该规则由平台固定，不属于应用 Publication 配置；Markdown
             始终按不可信纯文本处理，不在管理端渲染。
           </p>
-          {form.file_format_policy_version === "text-v2" &&
-          !fileContextRuntimeCompatible ? (
+          {!fileContextRuntimeCompatible ? (
             <p className="text-xs leading-5 text-destructive">
-              所选 Agent 发布版本未声明支持 Runtime protocol v1.3，不能发布
-              text-v2。
-            </p>
-          ) : null}
-          {form.file_format_policy_version === "text-v2" &&
-          textV2Cutover?.ready === false ? (
-            <p className="text-xs leading-5 text-destructive">
-              切换预检发现 {textV2Cutover.blocking_job_count} 个仍引用旧 File
-              MCP Schema 的活动或待重试 Job；排空或隔离前不能发布或激活
-              text-v2。
+              所选 Agent 发布版本未声明支持 Runtime protocol v1.3。
             </p>
           ) : null}
         </Field>
@@ -592,11 +541,7 @@ function PolicyEditor({
           selectedDocumentProfile.code !== "NONE" ? (
             <div className="space-y-1">
               <p className="text-xs leading-5 text-muted-foreground">
-                {selectedDocumentProfile.code === "docling-layout-ocr-v2"
-                  ? "当前选择：除正文与表格外，对 DOCX/PPTX 原始内嵌图片提取文字、阅读顺序、0..10000 坐标和有限几何关系；仅在上游提供时显示置信度，否则明确标注为未提供。仅应用图片自身 EXIF 方向，不应用 Office 显示裁剪、旋转或翻转，因此可能提取页面上已裁掉的区域。它不是 VLM，不识别箭头、颜色、图标、照片含义或因果；OCR 内容始终是不可信文件数据。"
-                  : selectedDocumentProfile.code === "docling-layout-ocr-v1"
-                    ? "当前选择的是仅保留历史解释的布局 OCR v1；该版本会把上游缺失置信度误判为图片失败，不能新发布或重新激活，请切换到 v2。"
-                  : "当前选择：仅提供有界 OCR/表格文字提取，不提供 Office 内嵌图片布局或图片语义理解。"}
+                当前选择：除正文与表格外，对 DOCX/PPTX 原始内嵌图片提取文字、阅读顺序、0..10000 坐标和有限几何关系；仅在上游提供时显示置信度，否则明确标注为未提供。仅应用图片自身 EXIF 方向，不应用 Office 显示裁剪、旋转或翻转，因此可能提取页面上已裁掉的区域。它不是 VLM，不识别箭头、颜色、图标、照片含义或因果；OCR 内容始终是不可信文件数据。
                 真实运行状态请到“发布与运行”查看。
               </p>
               {!fileContextRuntimeCompatible ? (
@@ -1369,10 +1314,7 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
             "任务文件能力",
             formatTaskFileFeatures(revision?.task_file_features),
           ],
-          [
-            "直接文本文件策略",
-            formatFileFormatPolicy(revision?.file_format_policy_version),
-          ],
+          ["直接文本文件规则", "TXT/Markdown 可读写，LOG 只读"],
           [
             "文档解析/OCR",
             formatDocumentProcessingSelection(
@@ -1479,11 +1421,6 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                       <Badge variant="outline" className="shrink-0">
                         r{publication.revision}
                       </Badge>
-                      {publication.retirement_status === "retired" ? (
-                        <Badge variant="secondary" className="shrink-0">
-                          TypeScript Runtime 已退役 · 只读
-                        </Badge>
-                      ) : null}
                       <span className="min-w-0 font-mono text-sm leading-5 font-medium break-all">
                         {publication.id}
                       </span>
@@ -1509,52 +1446,19 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                       />
                       <PublicationMetadata
                         label="工作区周期"
-                        value={`${publication.task_workspace_retention_period} · ${
-                          publication.task_workspace_retention_source ===
-                          "legacy_default"
-                            ? "历史兼容默认"
-                            : "发布快照"
-                        }`}
+                        value={`${publication.task_workspace_retention_period} · 发布快照`}
                       />
                       <PublicationMetadata
                         label="任务文件能力"
-                        value={`${formatTaskFileFeatures(
-                          publication.task_file_features
-                        )} · ${
-                          publication.task_file_features_source ===
-                          "legacy_default"
-                            ? "历史兼容默认"
-                            : "发布快照"
-                        }`}
+                        value={`${formatTaskFileFeatures(publication.task_file_features)} · 发布快照`}
                       />
                       <PublicationMetadata
-                        label="直接文本文件策略"
-                        value={`${formatFileFormatPolicy(
-                          publication.file_format_policy_version
-                        )} · ${
-                          publication.file_format_policy_source ===
-                          "legacy_default"
-                            ? "历史兼容默认"
-                            : "发布快照"
-                        }`}
-                      />
-                      <PublicationMetadata
-                        label="格式兼容状态"
-                        value={
-                          publication.file_format_compatibility.status ===
-                          "READY"
-                            ? `就绪 · Runtime ${publication.file_format_compatibility.required_runtime_protocol}`
-                            : "不兼容 · Runtime 或 File MCP Schema 已漂移"
-                        }
+                        label="直接文本文件规则"
+                        value="平台固定 · TXT/Markdown 可读写，LOG 只读"
                       />
                       <PublicationMetadata
                         label="文档解析/OCR Profile"
-                        value={`${publication.document_processing_profile_code} · ${
-                          publication.document_processing_profile_source ===
-                          "legacy_default"
-                            ? "历史兼容默认"
-                            : `v${publication.document_processing_profile_version}`
-                        }`}
+                        value={`${publication.document_processing_profile_code} · v${publication.document_processing_profile_version}`}
                       />
                       <PublicationMetadata
                         label="文档解析/OCR 运行状态"
@@ -1584,15 +1488,12 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                     className="w-full sm:w-auto"
                     disabled={
                       application.status !== "enabled" ||
-                      activate.isPending ||
-                      publication.retirement_status === "retired"
+                      activate.isPending
                     }
                     title={
-                      publication.retirement_status === "retired"
-                        ? "历史 TypeScript Application Publication 不能重新激活"
-                        : application.status === "enabled"
-                          ? `激活到 ${environment}`
-                          : "应用停用或归档时不能激活"
+                      application.status === "enabled"
+                        ? `激活到 ${environment}`
+                        : "应用停用或归档时不能激活"
                     }
                     onClick={() => {
                       const action =
@@ -1738,12 +1639,16 @@ function Field({
   children,
 }: {
   label: string
-  htmlFor: string
+  htmlFor?: string
   children: React.ReactNode
 }) {
   return (
     <div className="space-y-2">
-      <Label htmlFor={htmlFor}>{label}</Label>
+      {htmlFor ? (
+        <Label htmlFor={htmlFor}>{label}</Label>
+      ) : (
+        <div className="text-sm leading-none font-medium">{label}</div>
+      )}
       {children}
     </div>
   )
@@ -1771,7 +1676,6 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
     workflow_publication_id: draft?.workflow_publication_id ?? "",
     task_workspace_retention_period:
       draft?.task_workspace_retention_period ?? "WEEK",
-    file_format_policy_version: draft?.file_format_policy_version ?? "text-v1",
     document_processing_profile_code:
       draft?.document_processing_profile_code ?? "NONE",
     task_file_features: taskFileFeatures,
@@ -1901,19 +1805,9 @@ function formatTaskFileFeatures(
   return enabled.length ? enabled.join("、") : "全部关闭"
 }
 
-function formatFileFormatPolicy(
-  policy: "text-v1" | "text-v2" | null | undefined
-): string {
-  return policy === "text-v2"
-    ? "text-v2（TXT/Markdown 全能力，LOG 只读）"
-    : "text-v1（TXT 全能力）"
-}
-
 function formatDocumentProcessingSelection(
   profile:
     | "NONE"
-    | "docling-text-v1"
-    | "docling-layout-ocr-v1"
     | "docling-layout-ocr-v2"
     | null
     | undefined
@@ -1925,8 +1819,6 @@ function formatDocumentProcessingSelection(
 function formatDocumentProcessingRuntimeStatus(
   profile:
     | "NONE"
-    | "docling-text-v1"
-    | "docling-layout-ocr-v1"
     | "docling-layout-ocr-v2",
   active: boolean,
   operations: FileOperations | undefined,
@@ -1994,8 +1886,7 @@ function formatDate(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
-function applicationRuntimeLabel(runtimeKind?: "python-v1" | "typescript-v1") {
-  if (runtimeKind === "typescript-v1") return "TypeScript Runtime（已退役）"
+function applicationRuntimeLabel(runtimeKind?: "python-v1") {
   if (runtimeKind === "python-v1") return "Python Runtime"
   return "Runtime 未标注"
 }

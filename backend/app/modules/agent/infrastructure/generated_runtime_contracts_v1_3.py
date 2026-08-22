@@ -8,7 +8,7 @@ from typing import Literal, NotRequired, TypedDict
 from jsonschema import Draft202012Validator
 
 PROTOCOL_VERSION = "1.3"
-CONTRACT_SCHEMA_SHA256 = "a05b4afe6259433e28aa0dc7c3aa2552ff984a1f909a88ed3b270a656bc454f0"
+CONTRACT_SCHEMA_SHA256 = "67d89960ad67945a17057eb388572314c94dd068661c7f3ff13c8d5b194d6867"
 CONTRACT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[5]
     / "contracts"
@@ -19,9 +19,8 @@ CONTRACT_SCHEMA_PATH = (
 
 Identifier = str
 Sha256Digest = str
-RuntimeKind = Literal["python-v1", "typescript-v1"]
+RuntimeKind = Literal["python-v1"]
 SafeMessage = str
-FileFormatPolicyVersion = Literal["text-v2"]
 TextFormatCode = Literal["TXT", "LOG", "MARKDOWN"]
 DocumentSourceFormatCode = Literal["PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"]
 RepresentationKind = Literal["MARKDOWN"]
@@ -132,6 +131,7 @@ class JobFileManifestItem(TypedDict):
     conflict_candidate: bool
     source_received_at: str | None
     version_created_at: str
+    materialization_size_bytes: int
     representation_id: NotRequired[Identifier]
     representation_kind: NotRequired[RepresentationKind]
     representation_size_bytes: NotRequired[int]
@@ -147,8 +147,8 @@ class JobFileReadabilityNotice(TypedDict):
 
 
 class JobFileManifest(TypedDict):
-    schema_version: Literal[3, 4]
-    file_format_policy_version: FileFormatPolicyVersion
+    schema_version: Literal[5]
+    workspace_catalog_revision_id: Identifier
     manifest_hash: Sha256Digest
     observed_at: str
     items: list[JobFileManifestItem]
@@ -156,7 +156,6 @@ class JobFileManifest(TypedDict):
 
 
 class FileContext(TypedDict):
-    file_format_policy_version: FileFormatPolicyVersion
     file_manifest: JobFileManifest | None
 
 

@@ -112,7 +112,6 @@ class FakePythonExecutor:
             usage={"input_tokens": 3, "output_tokens": 2},
             runtime_provenance=provenance,
             runtime_events=(
-                (
                     {
                         "event_type": "runtime_initialized",
                         "payload": {"model_id": "claude-safe-model", "mcp_servers": []},
@@ -140,12 +139,8 @@ class FakePythonExecutor:
                             "error_summary": None,
                         },
                     },
-                )
-                if request["protocol_version"] in {"1.2", "1.3"}
-                else ()
             ),
-            accounting=(
-                {
+            accounting={
                     "status": "COMPLETE",
                     "duration_ms": 20,
                     "duration_api_ms": 10,
@@ -159,23 +154,14 @@ class FakePythonExecutor:
                     "model_usage": [],
                     "estimated_cost_usd": 0.001,
                     "permission_denials_count": 0,
-                }
-                if request["protocol_version"] in {"1.2", "1.3"}
-                else None
-            ),
+            },
             tool_events=(
                 {
                     "tool_call_id": "tool-call-1",
                     "server_code": "ones-mcp",
-                    **(
-                        {
-                            "tool_origin": "mcp",
-                            "mcp_call_id": None,
-                            "persisted_tool_call_id": None,
-                        }
-                        if request["protocol_version"] != "1.0"
-                        else {}
-                    ),
+                    "tool_origin": "mcp",
+                    "mcp_call_id": "mcp-call-1",
+                    "persisted_tool_call_id": "agent-tool-call-1",
                     "tool_name": "ones_work_item_search",
                     "status": "SUCCEEDED",
                     "request_summary": {"project_code": "project-1"},
@@ -249,15 +235,15 @@ def _keys() -> tuple[bytes, bytes]:
 
 
 def _request() -> dict[str, Any]:
-    path = Path("contracts/agent-runtime/v1/golden/execution-request.json")
+    path = Path("contracts/agent-runtime/v1.3/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["request_digest"] = canonical_request_digest(request)
     return request
 
 
-def _request_v12() -> dict[str, Any]:
-    path = Path("contracts/agent-runtime/v1.2/golden/execution-request.json")
+def _current_request() -> dict[str, Any]:
+    path = Path("contracts/agent-runtime/v1.3/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"] = []
@@ -266,8 +252,8 @@ def _request_v12() -> dict[str, Any]:
 
 
 def _request_for_version(protocol_version: str) -> dict[str, Any]:
-    folder = "v1" if protocol_version == "1.0" else f"v{protocol_version}"
-    path = Path(f"contracts/agent-runtime/{folder}/golden/execution-request.json")
+    assert protocol_version == "1.3"
+    path = Path("contracts/agent-runtime/v1.3/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"] = []
@@ -333,6 +319,8 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
     assert first_events == second_events
     assert [event["event_type"] for event in first_events] == [
         "execution_started",
+        "runtime_initialized",
+        "model_call",
         "tool_event",
         "terminal",
     ]
@@ -358,7 +346,7 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
 
 
 @pytest.mark.parametrize("protocol_version", SUPPORTED_RUNTIME_PROTOCOL_VERSIONS)
-def test_python_runtime_accepts_replays_and_rejects_digest_conflict_for_all_versions(
+def test_python_runtime_accepts_replays_and_rejects_digest_conflict_for_current_version(
     tmp_path: Path,
     protocol_version: str,
 ) -> None:
@@ -391,13 +379,13 @@ def test_python_runtime_accepts_replays_and_rejects_digest_conflict_for_all_vers
     assert conflict.json()["code"] == "runtime_invocation_conflict"
 
 
-def test_python_runtime_v12_streams_observability_before_accounting_terminal(
+def test_python_runtime_streams_observability_before_accounting_terminal(
     tmp_path: Path,
 ) -> None:
     executor = FakePythonExecutor()
     dependencies, private_key = _dependencies(tmp_path, executor)
     client = TestClient(create_app(dependencies))
-    request = _request_v12()
+    request = _current_request()
 
     response = client.post(
         "/internal/v1/executions",
@@ -488,7 +476,7 @@ def test_python_runtime_http_keeps_dual_business_tokens_out_of_request_and_ledge
     dependencies, private_key = _dependencies(tmp_path, executor)
     dependencies.server_policies = business_mcp_test_policies()
     request = json.loads(
-        Path("contracts/agent-runtime/v1.1/golden/execution-request.json").read_text(
+        Path("contracts/agent-runtime/v1.3/golden/execution-request.json").read_text(
             encoding="utf-8"
         )
     )
@@ -655,7 +643,7 @@ def test_python_runtime_restart_fails_orphan_without_replaying_model(
     ledger = PythonTerminalLedger(database)
     assert ledger.claim(request, "runtime-before-restart").status == "CLAIMED"
     started = {
-        "protocol_version": "1.0",
+        "protocol_version": "1.3",
         "invocation_id": request["invocation_id"],
         "request_digest": request["request_digest"],
         "sequence": 1,
@@ -760,14 +748,14 @@ def test_python_runtime_readiness_fails_closed_on_sandbox_v2_config_drift(
     assert response.json()["sandbox_max_input_files"] == 39
 
 
-def test_python_runtime_model_probe_accepts_legacy_v1_request_with_current_response(
+def test_python_runtime_model_probe_accepts_only_current_request(
     tmp_path: Path,
 ) -> None:
     executor = FakePythonExecutor()
     dependencies, _private_key = _dependencies(tmp_path, executor)
     client = TestClient(create_app(dependencies))
     probe = {
-        "protocol_version": "1.0",
+        "protocol_version": "1.3",
         "runtime_kind": "python-v1",
         "probe_id": "probe-legacy-1",
         "model_connection": {"revision_id": "revision-1", "config_hash": "a" * 64},
@@ -1017,9 +1005,9 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
     assert "internal" not in captured["mcp_servers"]
 
 
-def test_python_sdk_projects_same_v12_observability_fixture_as_typescript() -> None:
+def test_python_sdk_projects_current_observability_fixture() -> None:
     fixture = json.loads(
-        Path("contracts/agent-runtime/v1.2/golden/sdk-observability-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.3/golden/sdk-observability-fixture.json").read_text(
             encoding="utf-8"
         )
     )
@@ -1052,7 +1040,7 @@ def test_python_sdk_projects_same_v12_observability_fixture_as_typescript() -> N
         skills={},
         retrieved_context={},
         conversation_summary="",
-        runtime_protocol_version="1.2",
+        runtime_protocol_version="1.3",
     )
     client = ClaudeSdkClient(
         model="claude-safe-model",
@@ -1087,7 +1075,7 @@ def test_python_sdk_projects_same_v12_observability_fixture_as_typescript() -> N
 
 def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
     fixture = json.loads(
-        Path("contracts/agent-runtime/v1.2/golden/sdk-observability-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.3/golden/sdk-observability-fixture.json").read_text(
             encoding="utf-8"
         )
     )
@@ -1135,7 +1123,7 @@ def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
                 skills={},
                 retrieved_context={},
                 conversation_summary="",
-                runtime_protocol_version="1.2",
+                runtime_protocol_version="1.3",
             ),
         )
     )
@@ -1286,7 +1274,7 @@ def test_python_runtime_builds_isolated_sdk_config_for_two_business_servers() ->
                 tool_schema_hash="d" * 64,
             ),
         ),
-        runtime_protocol_version="1.1",
+        runtime_protocol_version="1.3",
     )
     request = AgentRunRequest(
         job_id="job-dual-business",
@@ -1381,9 +1369,11 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
         tool_restrictions=["TXT only"],
         skills={},
         retrieved_context={
-            "file_manifest": {
-                "schema_version": 1,
-                "manifest_hash": "e" * 64,
+                "file_manifest": {
+                    "schema_version": 5,
+                    "workspace_catalog_revision_id": "workspace-catalog-file-job",
+                    "manifest_hash": "e" * 64,
+                    "observed_at": "2026-08-22T00:00:00Z",
                 "items": [],
             }
         },
@@ -1399,7 +1389,7 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
                 tool_schema_hash="d" * 64,
             ),
         ),
-        runtime_protocol_version="1.2",
+        runtime_protocol_version="1.3",
     )
     file_principal = "file-principal-token-not-for-events"
     bridge_capture: dict[str, Any] = {}
@@ -1559,7 +1549,7 @@ def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> Non
         calls,
     )
     request = _request()
-    request["protocol_version"] = "1.1"
+    request["protocol_version"] = "1.3"
 
     normalized = normalize_tool_events([*started, *completed], request)
 
@@ -1668,7 +1658,7 @@ def test_python_test_only_fake_provider_calls_ones_concurrently_with_exact_meta(
         fake_provider_mode=True,
     )
     request = _request()
-    request["protocol_version"] = "1.1"
+    request["protocol_version"] = "1.3"
     request["prompt"]["user_question"] = "[smoke:mcp:ones-mcp-concurrent] verify exact metadata"
     result = executor.execute(
         request,
@@ -1761,7 +1751,7 @@ def test_python_test_only_fake_provider_isolates_second_business_server_token(
         fake_provider_mode=True,
     )
     request = _request()
-    request["protocol_version"] = "1.1"
+    request["protocol_version"] = "1.3"
     request["mcp_servers"] = [
         {
             "server_code": TEST_BUSINESS_SERVER_CODE,
@@ -1943,7 +1933,7 @@ def test_python_runtime_decrypts_draft_probe_once_without_persisting_credential(
         ).encode("utf-8")
     ).hexdigest()
     request: dict[str, Any] = {
-        "protocol_version": "1.0",
+        "protocol_version": "1.3",
         "runtime_kind": "python-v1",
         "probe_id": "probe-python-draft-test",
         "config_hash": config_hash,
@@ -2002,7 +1992,7 @@ def test_python_runtime_draft_probe_accepts_allowlisted_internal_http_gateway(
         ).encode("utf-8")
     ).hexdigest()
     request: dict[str, Any] = {
-        "protocol_version": "1.0",
+        "protocol_version": "1.3",
         "runtime_kind": "python-v1",
         "probe_id": "probe-python-draft-gateway",
         "config_hash": config_hash,

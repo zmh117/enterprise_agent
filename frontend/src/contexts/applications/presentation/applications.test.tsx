@@ -154,22 +154,6 @@ describe("Business Application workbench", () => {
               document_processing_reason_code: "profile_disabled",
             },
             {
-              code: "docling-text-v1",
-              version: "1",
-              hash: "a".repeat(64),
-              label: "Docling 文字提取 v1",
-              source_format_codes: ["PDF", "DOCX", "PPTX", "XLSX"],
-              output_kinds: ["MARKDOWN", "DOCLING_JSON"],
-              limits: {
-                max_source_bytes: 25 * 1024 * 1024,
-                max_pdf_pages: 300,
-                processing_timeout_seconds: 600,
-              },
-              document_processing_status: "CONFIGURED_UNAVAILABLE",
-              document_processing_reason_code:
-                "processing_dependencies_unavailable",
-            },
-            {
               code: "docling-layout-ocr-v2",
               version: "2",
               hash: "b".repeat(64),
@@ -289,7 +273,7 @@ describe("Business Application workbench", () => {
               application_id: "business_app_test",
               revision_id: "revision_1",
               revision: 12,
-              schema_version: 1,
+              schema_version: 6,
               config_hash:
                 "eab3972fbb59cfa878ab403632149082cc7f90a46d8405b64f6d463aee72c08f",
               published_by: "user_1354ddf6d1e547faad514fec57a0a3fb",
@@ -302,10 +286,9 @@ describe("Business Application workbench", () => {
               message: "入口已接管",
               runtime_components: {},
               affected_routes: [],
-              legacy_fallback_enabled: false,
-              document_processing_profile_code: "docling-text-v1",
-              document_processing_profile_version: "1",
-              document_processing_profile_hash: "a".repeat(64),
+              document_processing_profile_code: "docling-layout-ocr-v2",
+              document_processing_profile_version: "2",
+              document_processing_profile_hash: "b".repeat(64),
               document_processing_profile_source: "publication_snapshot",
               document_processing_status: "CONFIGURED_UNAVAILABLE",
               document_processing_reason_code:
@@ -347,13 +330,11 @@ describe("Business Application workbench", () => {
     expect(
       await screen.findByText(/请先选择 Agent 发布版本/)
     ).toBeInTheDocument()
-    expect(screen.getByLabelText("直接文本文件策略")).toBeInTheDocument()
+    expect(screen.getByText("TXT/Markdown 可读写，LOG 只读")).toBeInTheDocument()
     expect(screen.getByLabelText("文档解析/OCR Profile")).toBeInTheDocument()
     expect(
-      await screen.findByRole("option", {
-        name: "Docling 文字提取 v1",
-      })
-    ).toBeInTheDocument()
+      screen.queryByRole("option", { name: /Docling 文字提取 v1/ })
+    ).not.toBeInTheDocument()
     expect(
       await screen.findByRole("option", {
         name: "Docling Office 内嵌图片布局 OCR v2",
@@ -420,18 +401,7 @@ describe("Business Application workbench", () => {
               status: "enabled",
               config_hash: "agent-hash",
               runtime_kind: "python-v1",
-              runtime_protocol_versions: ["1.2"],
-              direction: "",
-              component_type: "agent_publication",
-            },
-            {
-              id: "agent_publication_typescript_v1",
-              code: "typescript-diagnostic-agent",
-              revision: 1,
-              project_code: "default",
-              status: "enabled",
-              config_hash: "typescript-agent-hash",
-              runtime_kind: "typescript-v1",
+              runtime_protocol_versions: ["1.3"],
               direction: "",
               component_type: "agent_publication",
             },
@@ -460,17 +430,6 @@ describe("Business Application workbench", () => {
               output_kinds: [],
               document_processing_status: "DISABLED",
               document_processing_reason_code: "profile_disabled",
-            },
-            {
-              code: "docling-text-v1",
-              version: "1",
-              hash: "a".repeat(64),
-              label: "Docling 文字提取 v1",
-              source_format_codes: ["PDF", "DOCX", "PPTX", "XLSX"],
-              output_kinds: ["MARKDOWN", "DOCLING_JSON"],
-              document_processing_status: "CONFIGURED_UNAVAILABLE",
-              document_processing_reason_code:
-                "processing_dependencies_unavailable",
             },
             {
               code: "docling-layout-ocr-v2",
@@ -596,7 +555,7 @@ describe("Business Application workbench", () => {
     const attachments = screen.getByLabelText("允许消息附件")
     expect(attachments).not.toBeChecked()
     fireEvent.change(screen.getByLabelText("文档解析/OCR Profile"), {
-      target: { value: "docling-text-v1" },
+      target: { value: "docling-layout-ocr-v2" },
     })
     expect(screen.getByRole("checkbox", { name: "任务工作区" })).toBeChecked()
     expect(screen.getByRole("checkbox", { name: "File MCP" })).toBeChecked()
@@ -604,9 +563,6 @@ describe("Business Application workbench", () => {
     expect(attachments).toHaveAttribute("aria-disabled", "true")
     expect(continuousConversation).toBeChecked()
     expect(continuousConversation).toHaveAttribute("aria-disabled", "true")
-    expect(
-      screen.getByText(/不能发布 Docling 文件上下文/)
-    ).toBeInTheDocument()
     const documentProcessingProfile = screen.getByLabelText(
       "文档解析/OCR Profile"
     )
@@ -625,9 +581,6 @@ describe("Business Application workbench", () => {
         )
       })
     ).toBeInTheDocument()
-    fireEvent.change(documentProcessingProfile, {
-      target: { value: "docling-text-v1" },
-    })
     const mcpTool = await screen.findByLabelText(
       "选择 MCP Tool search_merge_requests"
     )
@@ -648,7 +601,7 @@ describe("Business Application workbench", () => {
           continuous_conversation_enabled: true,
           attachments_enabled: true,
         },
-        document_processing_profile_code: "docling-text-v1",
+        document_processing_profile_code: "docling-layout-ocr-v2",
         task_file_features: {
           workspace_enabled: true,
           file_mcp_enabled: true,

@@ -683,9 +683,6 @@ def _agent_request(request: dict[str, Any], binding: Any) -> AgentRunRequest:
         mcp_bindings=tools,
         runtime_kind=PYTHON_RUNTIME_KIND,
         runtime_protocol_version=str(request["protocol_version"]),
-        file_format_policy_version=str(
-            (request.get("file_context") or {}).get("file_format_policy_version", "text-v1")
-        ),
     )
     return AgentRunRequest(
         job_id=str(request["job_id"]),

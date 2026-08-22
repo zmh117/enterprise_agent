@@ -34,12 +34,28 @@ from app.modules.message_bus.infrastructure.rabbitmq_attachment_consumer import 
 )
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
 from app.shared.config import AttachmentSettings, QueueSettings
-from app.shared.exceptions import NonRetryableExecutionError
-from backend.tests.test_continuous_multimodal_conversations import (
+from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from backend.tests.support.file_workspace import (
     FakeDownloader,
-    RetryingDownloader,
+    file_workspace_command_kwargs,
     multimodal_container,
 )
+
+
+class RetryingDownloader:
+    def download(
+        self,
+        *,
+        download_code: str,
+        max_bytes: int,
+        connector_id: str = "",
+        robot_code: str = "",
+    ) -> bytes:
+        del download_code, max_bytes, connector_id, robot_code
+        raise RetryableExecutionError(
+            "temporary",
+            safe_message="temporary download failure",
+        )
 
 
 class _Method:
@@ -223,6 +239,7 @@ def test_attachment_source_idempotency_and_all_terminal_release_boundary() -> No
             conversation_type="direct",
             bot_identity="robot-redacted",
             attachments=attachments,
+            **file_workspace_command_kwargs(runtime),
         )
     )
     tasks = list(runtime.message_bus.attachments)
@@ -273,6 +290,7 @@ def test_attachment_retry_reuses_source_identity_and_keeps_job_waiting() -> None
             source_connector_id="connector-dingtalk-stream-default",
             conversation_type="direct",
             bot_identity="robot-redacted",
+            **file_workspace_command_kwargs(runtime),
             attachments=(
                 ChannelAttachment(
                     media_type="document",
@@ -314,6 +332,7 @@ def test_attachment_rejection_persists_machine_error_code() -> None:
             source_connector_id="connector-dingtalk-stream-default",
             conversation_type="direct",
             bot_identity="robot-redacted",
+            **file_workspace_command_kwargs(runtime),
             attachments=(
                 ChannelAttachment(
                     media_type="document",

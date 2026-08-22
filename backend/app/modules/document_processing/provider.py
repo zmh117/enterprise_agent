@@ -247,7 +247,7 @@ class DoclingServeProvider:
         return self._task(response, expected_task_id=task_id)
 
     def fetch(self, task_id: str, *, profile: DocumentProcessingProfile) -> DocumentProcessorResult:
-        if profile.code is not DocumentProcessingProfileCode.DOCLING_TEXT_V1:
+        if profile.code is not DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2:
             raise DocumentProcessorFailure("document_profile_mismatch", retryable=False)
         _require_task_id(task_id)
         value = self._request("GET", f"/v1/result/{quote(task_id, safe='')}")
