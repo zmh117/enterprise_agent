@@ -35,10 +35,8 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError, ToolPolicyError
 from app.shared.migrations import Migrator
-from backend.tests.helpers import (
-    ensure_active_dingtalk_test_enterprise,
-    grant_test_application_access,
-)
+from backend.tests.support.authorization import grant_test_application_access
+from backend.tests.support.channels import ensure_active_dingtalk_test_enterprise
 from backend.tests.test_unified_identity_rbac import (
     csrf_headers,
     login,
@@ -962,14 +960,14 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "109_allow_file_service_mcp_publications.sql",
         "110_expand_file_source_received_time.sql",
         "111_expand_text_file_format_policy.sql",
-            "112_expand_resource_revision_scope_bindings.sql",
-            "113_expand_document_file_processing.sql",
-            "114_expand_execution_summary_protocol_v13.sql",
-            "115_expand_file_turn_admission.sql",
-            "116_expand_office_embedded_image_layout_ocr.sql",
-            "117_expand_docling_layout_ocr_v2.sql",
-            "118_expand_bounded_workspace_working_sets.sql",
-        ]
+        "112_expand_resource_revision_scope_bindings.sql",
+        "113_expand_document_file_processing.sql",
+        "114_expand_execution_summary_protocol_v13.sql",
+        "115_expand_file_turn_admission.sql",
+        "116_expand_office_embedded_image_layout_ocr.sql",
+        "117_expand_docling_layout_ocr_v2.sql",
+        "118_expand_bounded_workspace_working_sets.sql",
+    ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
         "application_publication_id",

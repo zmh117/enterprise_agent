@@ -54,7 +54,7 @@ from app.python_runtime.file_transfer import (
 )
 from app.python_runtime.job_sandbox import JobSandboxManager
 from app.shared.config import DeliverySettings
-from backend.tests.test_continuous_multimodal_conversations import (
+from backend.tests.support.file_workspace import (
     FakeDownloader,
     RecordingAttachmentImporter,
     load_fixture,
@@ -551,9 +551,7 @@ def _seed_png_with_session_attachment(
     display_name: str,
     received_at: str,
 ) -> None:
-    workspace = runtime.database.execute_one(
-        "select * from task_workspace where status = 'ACTIVE'"
-    )
+    workspace = runtime.database.execute_one("select * from task_workspace where status = 'ACTIVE'")
     assert workspace is not None
     file_repository.create_file(
         file_id=file_id,
@@ -731,9 +729,7 @@ def test_old_publication_keeps_document_profile_none_behavior() -> None:
         "downloadCode": "legacy-none-docx",
         "fileName": "legacy.docx",
         "fileSize": 1024,
-        "contentType": (
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ),
+        "contentType": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
     }
 
     rejected = runtime.dingtalk_stream_message_service.handle_callback(
@@ -782,12 +778,8 @@ def test_document_duplicate_ingress_and_job_replay_do_not_duplicate_facts() -> N
     assert len(runtime.message_bus.attachments) == 1
 
     task = runtime.message_bus.attachments.popleft()
-    runtime.attachment_service.downloader = FakeDownloader(
-        {"document-replay-pdf": source}
-    )
-    assert runtime.attachment_service.process(task.attachment_id, task.correlation_id) == (
-        "staged"
-    )
+    runtime.attachment_service.downloader = FakeDownloader({"document-replay-pdf": source})
+    assert runtime.attachment_service.process(task.attachment_id, task.correlation_id) == ("staged")
     attachment = runtime.database.execute_one(
         """
         select a.file_processing_run_id, b.file_id, b.version_id
@@ -912,9 +904,7 @@ def test_docling_profile_imports_pdf_when_dingtalk_omits_content_type() -> None:
     importer = RecordingDocumentImporter()
     runtime.attachment_service.importer = importer
     runtime.attachment_service.storage = None
-    runtime.attachment_service.downloader = FakeDownloader(
-        {"pdf-empty-mime": b"%PDF-1.4\n%%EOF\n"}
-    )
+    runtime.attachment_service.downloader = FakeDownloader({"pdf-empty-mime": b"%PDF-1.4\n%%EOF\n"})
 
     outcome = runtime.attachment_service.process(task.attachment_id, "docling-pdf-no-mime")
 
@@ -1653,9 +1643,9 @@ def test_blocked_turn_notifies_once_without_replaying_and_ordinary_upload_stays_
     assert ready["id"] != first_notice["id"]
     assert "已经生成" in ready["markdown"]
     assert runtime.agent_repository.count_rows("agent_job") == 0
-    assert runtime.database.execute_one(
-        "select status from file_readiness_blocked_turn"
-    ) == {"status": "NOTIFIED"}
+    assert runtime.database.execute_one("select status from file_readiness_blocked_turn") == {
+        "status": "NOTIFIED"
+    }
 
     runtime.database.execute(
         """
@@ -1704,9 +1694,7 @@ def test_today_image_question_binds_ready_workspace_png_and_unrelated_text_does_
     task = runtime.message_bus.attachments.popleft()
     runtime.attachment_service.process(task.attachment_id, task.correlation_id)
 
-    workspace = runtime.database.execute_one(
-        "select * from task_workspace where status = 'ACTIVE'"
-    )
+    workspace = runtime.database.execute_one("select * from task_workspace where status = 'ACTIVE'")
     assert workspace is not None
     owner_type = WorkspaceOwnerType(str(workspace["owner_type"]))
     if owner_type is WorkspaceOwnerType.PRIVATE_USER:

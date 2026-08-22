@@ -1,4 +1,4 @@
-.PHONY: check compile format-check lint typecheck test unittest frontend-check openspec-validate schema-baseline-check docs-link-check smoke-db-backed-config
+.PHONY: check compile format-check lint typecheck test test-fast test-full test-unit test-contract test-integration test-acceptance test-migration unittest frontend-check openspec-validate schema-baseline-check docs-link-check smoke-db-backed-config
 
 compile:
 	python3 -m compileall backend
@@ -13,7 +13,30 @@ typecheck:
 	.venv/bin/mypy backend/app
 
 test:
-	.venv/bin/pytest backend/tests
+	$(MAKE) test-full
+
+test-fast:
+	@echo "PR fast suite: unit + contract only; this is not full acceptance."
+	.venv/bin/pytest -q --durations=20 -m "unit or contract" backend/tests
+
+test-full:
+	@echo "Full local backend regression: all classified tiers; external integrations may skip explicitly."
+	.venv/bin/pytest -q --durations=30 backend/tests
+
+test-unit:
+	.venv/bin/pytest -q --durations=20 -m unit backend/tests
+
+test-contract:
+	.venv/bin/pytest -q --durations=20 -m contract backend/tests
+
+test-integration:
+	.venv/bin/pytest -q --durations=20 -m integration backend/tests
+
+test-acceptance:
+	.venv/bin/pytest -q --durations=20 -m acceptance backend/tests
+
+test-migration:
+	.venv/bin/pytest -q --durations=20 -m migration backend/tests
 
 frontend-check:
 	cd frontend && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build

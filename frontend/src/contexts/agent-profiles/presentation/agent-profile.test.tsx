@@ -14,24 +14,11 @@ import {
   AgentProfilesPage,
 } from "@/contexts/agent-profiles/presentation/agent-profile-page"
 import type { AgentConfig } from "@/contexts/agent-profiles/domain/agent-profile"
-
-function response(body: unknown) {
-  return Promise.resolve(
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    })
-  )
-}
-
-function errorResponse(status: number, detail: unknown) {
-  return Promise.resolve(
-    new Response(JSON.stringify({ detail }), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    })
-  )
-}
+import {
+  jsonErrorResponse as errorResponse,
+  jsonResponse as response,
+} from "@/test/http"
+import { renderWithQuery } from "@/test/render-with-query"
 
 const config = {
   business_role: "诊断助手",
@@ -249,19 +236,7 @@ describe("Agent Profile management", () => {
       })
     )
 
-    render(
-      <QueryClientProvider
-        client={
-          new QueryClient({
-            defaultOptions: { queries: { retry: false } },
-          })
-        }
-      >
-        <MemoryRouter>
-          <AgentProfilesPage />
-        </MemoryRouter>
-      </QueryClientProvider>
-    )
+    renderWithQuery(<AgentProfilesPage />)
 
     expect(await screen.findByText("默认诊断 Agent")).toBeInTheDocument()
     expect(screen.getByText("TypeScript 诊断 Agent")).toBeInTheDocument()
@@ -290,27 +265,15 @@ describe("Agent Profile management", () => {
         })
       })
 
-    render(
-      <QueryClientProvider
-        client={
-          new QueryClient({
-            defaultOptions: {
-              queries: { retry: false },
-              mutations: { retry: false },
-            },
-          })
-        }
-      >
-        <MemoryRouter initialEntries={["/agent-profiles"]}>
-          <Routes>
-            <Route path="/agent-profiles" element={<AgentProfilesPage />} />
-            <Route
-              path="/agent-profiles/:code"
-              element={<p>已进入新建 Agent 详情</p>}
-            />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
+    renderWithQuery(
+      <Routes>
+        <Route path="/agent-profiles" element={<AgentProfilesPage />} />
+        <Route
+          path="/agent-profiles/:code"
+          element={<p>已进入新建 Agent 详情</p>}
+        />
+      </Routes>,
+      { initialEntries: ["/agent-profiles"] }
     )
 
     expect(await screen.findByText("还没有 Agent")).toBeInTheDocument()

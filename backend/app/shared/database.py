@@ -60,14 +60,22 @@ class _SQLiteConnectionPool:
         min_size: int,
         max_size: int,
         timeout_seconds: float,
+        template_path: Path | None = None,
     ) -> None:
         raw_path = dsn.removeprefix("sqlite:///")
         self._is_memory = raw_path == ":memory:"
+        if template_path is not None and not self._is_memory:
+            raise ValueError("sqlite_template_path requires sqlite:///:memory:")
+        if template_path is not None and not template_path.is_file():
+            raise ValueError("sqlite_template_path must reference an existing file")
         self._path = (
             f"file:enterprise_agent_{uuid.uuid4().hex}?mode=memory&cache=shared"
             if self._is_memory
             else raw_path
         )
+        self._template_path = template_path
+        self._template_loaded = False
+        self._template_lock = threading.Lock()
         self._timeout_seconds = timeout_seconds
         self._max_size = max_size
         self._idle: LifoQueue[sqlite3.Connection] = LifoQueue(maxsize=max_size)
@@ -86,6 +94,15 @@ class _SQLiteConnectionPool:
             timeout=self._timeout_seconds,
             uri=self._is_memory,
         )
+        if self._template_path is not None:
+            with self._template_lock:
+                if not self._template_loaded:
+                    source = sqlite3.connect(str(self._template_path))
+                    try:
+                        source.backup(connection)
+                    finally:
+                        source.close()
+                    self._template_loaded = True
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(f"PRAGMA busy_timeout = {max(1, int(self._timeout_seconds * 1000))}")
@@ -345,6 +362,7 @@ class Database:
         pool_min_size: int = DEFAULT_POOL_MIN_SIZE,
         pool_max_size: int = DEFAULT_POOL_MAX_SIZE,
         pool_timeout_seconds: float = DEFAULT_POOL_TIMEOUT_SECONDS,
+        sqlite_template_path: Path | None = None,
     ) -> None:
         if pool_min_size < 0:
             raise ValueError("pool_min_size must be non-negative")
@@ -354,9 +372,16 @@ class Database:
             raise ValueError("pool_timeout_seconds must be positive")
         self.dsn = dsn
         self.engine = "sqlite" if dsn.startswith("sqlite://") else "postgres"
+        if sqlite_template_path is not None and self.engine != "sqlite":
+            raise ValueError("sqlite_template_path requires a SQLite DSN")
+        if sqlite_template_path is not None and dsn != "sqlite:///:memory:":
+            raise ValueError("sqlite_template_path requires sqlite:///:memory:")
+        if sqlite_template_path is not None and not sqlite_template_path.is_file():
+            raise ValueError("sqlite_template_path must reference an existing file")
         self._pool_min_size = pool_min_size
         self._pool_max_size = pool_max_size
         self._pool_timeout_seconds = pool_timeout_seconds
+        self._sqlite_template_path = sqlite_template_path
         self._pool: _ConnectionPool | None = None
         self._pool_lock = threading.Lock()
         self._sqlite_transaction_lock = threading.RLock()
@@ -377,15 +402,21 @@ class Database:
             return self._pool
         with self._pool_lock:
             if self._pool is None:
-                pool_type = (
-                    _SQLiteConnectionPool if self.engine == "sqlite" else _PostgresConnectionPool
-                )
-                self._pool = pool_type(
-                    self.dsn,
-                    min_size=self._pool_min_size,
-                    max_size=self._pool_max_size,
-                    timeout_seconds=self._pool_timeout_seconds,
-                )
+                if self.engine == "sqlite":
+                    self._pool = _SQLiteConnectionPool(
+                        self.dsn,
+                        min_size=self._pool_min_size,
+                        max_size=self._pool_max_size,
+                        timeout_seconds=self._pool_timeout_seconds,
+                        template_path=self._sqlite_template_path,
+                    )
+                else:
+                    self._pool = _PostgresConnectionPool(
+                        self.dsn,
+                        min_size=self._pool_min_size,
+                        max_size=self._pool_max_size,
+                        timeout_seconds=self._pool_timeout_seconds,
+                    )
         return self._pool
 
     @property

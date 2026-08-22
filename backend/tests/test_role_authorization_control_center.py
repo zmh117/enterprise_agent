@@ -28,10 +28,8 @@ from app.shared.exceptions import (
     PermissionDenied,
     ToolPolicyError,
 )
-from backend.tests.helpers import (
-    _ensure_agent_publication_mcp_tools,
-    enqueue_job_result_for_delivery,
-)
+from backend.tests.support.applications import ensure_agent_publication_mcp_tools
+from backend.tests.support.delivery import enqueue_job_result_for_delivery
 from backend.tests.test_business_application_control_plane import draft_payload
 
 
@@ -108,7 +106,7 @@ def _active_application(
     capabilities: tuple[str, ...] = (),
 ) -> dict[str, object]:
     service = c.business_application_service
-    mcp_tools = _ensure_agent_publication_mcp_tools(c, capabilities)
+    mcp_tools = ensure_agent_publication_mcp_tools(c, capabilities)
     application = service.create(
         actor_id=ADMIN_ID,
         code=code,

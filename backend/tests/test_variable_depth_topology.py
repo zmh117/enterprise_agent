@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
+from app.bootstrap import build_test_container
 from app.modules.authorization_center.infrastructure.repository import (
     AuthorizationCenterRepository,
 )
@@ -14,21 +12,18 @@ from app.modules.platform_config.application.validation import (
 from app.modules.platform_config.infrastructure.repository import (
     PlatformConfigRepository,
 )
-from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NotFound
+from backend.tests.helpers import test_settings as make_test_settings
 
 
 @pytest.fixture
 def topology_repository() -> PlatformConfigRepository:
-    temporary = tempfile.TemporaryDirectory()
-    database = Database(f"sqlite:///{Path(temporary.name) / 'topology.db'}")
-    database.run_migrations(default_migrations_dir())
-    repository = PlatformConfigRepository(database)
+    runtime = build_test_container(make_test_settings(), migrate=True, seed=False)
+    repository = PlatformConfigRepository(runtime.database)
     try:
         yield repository
     finally:
-        database.close()
-        temporary.cleanup()
+        runtime.database.close()
 
 
 def test_topology_supports_environment_base_and_workshop_leaves_without_virtual_nodes(

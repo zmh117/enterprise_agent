@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import hashlib
 import os
+from pathlib import Path
+import tempfile
+import threading
 import time
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.conversation_context import ConversationContextService
@@ -153,8 +157,9 @@ from app.modules.platform_config.application.secrets import EncryptedDbSecretPro
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
-from app.shared.migrations import Migrator
+from app.shared.migrations import Migrator, load_migration_catalog
 from app.shared.runtime_config_loader import load_settings_with_db_overlay
+from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME
 from app.modules.workflow.application import WorkflowService
 from app.modules.workflow.infrastructure import WorkflowRepository
 from app.modules.webhook.application import (
@@ -240,6 +245,70 @@ PermissionServiceFactory = Callable[
 ]
 
 
+@dataclass(frozen=True)
+class _MigratedSQLiteTemplate:
+    identity: str
+    path: Path
+
+
+def _migration_catalog_identity(migrations_dir: Path) -> str:
+    digest = hashlib.sha256()
+    for artifact in load_migration_catalog(migrations_dir):
+        digest.update(artifact.version.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(artifact.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(artifact.checksum.encode("ascii"))
+        digest.update(b"\0")
+    manifest_path = migrations_dir / LEGACY_MANIFEST_FILENAME
+    if manifest_path.is_file():
+        digest.update(hashlib.sha256(manifest_path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+class _MigratedSQLiteTemplateCache:
+    """Process-local immutable migration templates for the explicit test builder."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._templates: dict[tuple[Path, str], _MigratedSQLiteTemplate] = {}
+        self._temporary_directories: list[tempfile.TemporaryDirectory[str]] = []
+
+    def get(self, migrations_dir: Path) -> _MigratedSQLiteTemplate:
+        resolved_dir = migrations_dir.resolve()
+        identity = _migration_catalog_identity(resolved_dir)
+        key = (resolved_dir, identity)
+        with self._lock:
+            existing = self._templates.get(key)
+            if existing is not None:
+                return existing
+
+            temporary_directory = tempfile.TemporaryDirectory(
+                prefix="enterprise-agent-test-schema-"
+            )
+            template_path = Path(temporary_directory.name) / "migrated.sqlite3"
+            database = Database(f"sqlite:///{template_path}")
+            try:
+                Migrator(
+                    database,
+                    resolved_dir,
+                    migrator_build="test-template",
+                ).run()
+            except Exception:
+                database.close()
+                temporary_directory.cleanup()
+                raise
+            database.close()
+            template_path.chmod(0o400)
+            template = _MigratedSQLiteTemplate(identity=identity, path=template_path)
+            self._temporary_directories.append(temporary_directory)
+            self._templates[key] = template
+            return template
+
+
+_MIGRATED_SQLITE_TEMPLATE_CACHE = _MigratedSQLiteTemplateCache()
+
+
 def build_api_container(settings: Settings, *, seed: bool = False) -> Container:
     settings = load_settings_with_db_overlay(settings, service_name="api-server")
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
@@ -291,10 +360,21 @@ def build_test_container(
     configure_seed_secrets: bool = True,
     service_name: str = "test-runtime",
     permission_service_factory: PermissionServiceFactory | None = None,
+    reuse_migrated_sqlite_template: bool = True,
 ) -> Container:
-    database = Database(settings.database_dsn)
+    template = (
+        _MIGRATED_SQLITE_TEMPLATE_CACHE.get(default_migrations_dir())
+        if migrate
+        and reuse_migrated_sqlite_template
+        and settings.database_dsn == "sqlite:///:memory:"
+        else None
+    )
+    database = Database(
+        settings.database_dsn,
+        sqlite_template_path=template.path if template is not None else None,
+    )
     try:
-        if migrate:
+        if migrate and template is None:
             Migrator(
                 database,
                 default_migrations_dir(),

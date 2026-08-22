@@ -74,5 +74,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 pythonpath = ["."]
 markers = [
-  "integration: opt-in tests that require external runtimes or credentials",
+  "unit: pure domain tests without a migrated database or external service",
+  "contract: in-process API, repository, runtime adapter, or protocol contract tests",
+  "integration: tests that require an explicitly enabled external runtime or service",
+  "acceptance: multi-component business-chain, rejection, or recovery acceptance tests",
+  "migration: schema baseline, migrator, ledger, checksum, or upgrade-path tests",
 ]

@@ -65,13 +65,12 @@ from app.shared.model_probe_envelope import (
     ModelProbeEnvelopeCipher,
     ModelProbeEnvelopeError,
 )
-from backend.tests.helpers import test_settings as build_settings
-from backend.tests.helpers import container
 from backend.tests.business_mcp_fixtures import (
     TEST_BUSINESS_SERVER_CODE,
     TEST_BUSINESS_TOOL_IDENTIFIER,
     business_mcp_test_policies,
 )
+from backend.tests.support.runtime import container, test_settings as build_settings
 
 
 class FakePythonExecutor:
