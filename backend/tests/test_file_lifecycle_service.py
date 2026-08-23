@@ -25,9 +25,7 @@ def test_workspace_expiry_defers_running_job_then_retries_physical_cleanup() -> 
     assert deferred["workspaces_deferred"] == 1
     assert repository.get_workspace("workspace-a")["status"] == "ACTIVE"
 
-    repository.database.execute(
-        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
-    )
+    repository.database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-file'")
     storage.fail_delete = True
     first = lifecycle.run_once()
     assert first["workspaces_expired"] == 1
@@ -39,9 +37,7 @@ def test_workspace_expiry_defers_running_job_then_retries_physical_cleanup() -> 
     clock[0] += timedelta(hours=2)
     recovered = lifecycle.run_once()
     assert recovered["cleanup_completed"] >= 1
-    assert repository.get_version("version-source-1")["status"] == (
-        "CONTENT_UNAVAILABLE"
-    )
+    assert repository.get_version("version-source-1")["status"] == ("CONTENT_UNAVAILABLE")
 
 
 def test_unknown_orphans_are_reported_not_deleted_and_missing_refs_are_counted() -> None:
@@ -91,9 +87,7 @@ def test_expired_chat_attachment_content_is_deleted_and_cannot_be_recovered() ->
         )
     )
     version_id = str(receipt["version_id"])
-    repository.database.execute(
-        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
-    )
+    repository.database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-file'")
     repository.database.execute(
         "update task_workspace set expires_at = ? where id = 'workspace-a'",
         ((NOW - timedelta(days=1)).isoformat(),),
@@ -169,46 +163,8 @@ def _insert_expired_attachment(
     database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-file'")
 
 
-def test_expired_legacy_attachment_is_deleted_only_from_legacy_bucket() -> None:
-    repository, _streaming, _context, storage = _fixture()
-    legacy_storage = type(storage)()
-    legacy_key = "attachments/legacy-expired/content.txt"
-    legacy_storage.objects[legacy_key] = b"legacy\n"
-    _insert_expired_attachment(
-        repository,
-        attachment_id="attachment-legacy-expired",
-        object_bucket="agent-attachments",
-        object_key=legacy_key,
-    )
-    main_before = dict(storage.objects)
-
-    result = FileLifecycleService(
-        repository,
-        storage,
-        legacy_attachment_storage=legacy_storage,
-        legacy_attachment_bucket="agent-attachments",
-        now=lambda: NOW,
-    ).run_once()
-
-    assert result["cleanup_completed"] >= 1
-    assert legacy_key not in legacy_storage.objects
-    assert storage.objects == main_before
-    assert repository.database.execute_one(
-        """
-        select status, object_bucket, object_key, content_deleted_at
-          from message_attachment where id = 'attachment-legacy-expired'
-        """
-    ) == {
-        "status": "DELETED",
-        "object_bucket": "",
-        "object_key": "",
-        "content_deleted_at": NOW.isoformat(),
-    }
-
-
 def test_unmanaged_attachment_bucket_retries_without_claiming_content_deleted() -> None:
     repository, _streaming, _context, storage = _fixture()
-    legacy_storage = type(storage)()
     unknown_key = "outside/unknown.txt"
     _insert_expired_attachment(
         repository,
@@ -217,19 +173,15 @@ def test_unmanaged_attachment_bucket_retries_without_claiming_content_deleted() 
         object_key=unknown_key,
     )
     main_before = dict(storage.objects)
-    legacy_before = dict(legacy_storage.objects)
 
     result = FileLifecycleService(
         repository,
         storage,
-        legacy_attachment_storage=legacy_storage,
-        legacy_attachment_bucket="agent-attachments",
         now=lambda: NOW,
     ).run_once()
 
     assert result["cleanup_retried"] >= 1
     assert storage.objects == main_before
-    assert legacy_storage.objects == legacy_before
     assert repository.database.execute_one(
         """
         select status, object_bucket, object_key, content_deleted_at

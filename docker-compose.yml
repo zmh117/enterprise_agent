@@ -172,15 +172,12 @@ services:
             ;;
         esac;
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
-        mc mb --ignore-existing "local/$${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET}" &&
-        mc anonymous set none "local/$${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET}" &&
         mc mb --ignore-existing "local/$${FILE_STORAGE_BUCKET}" &&
         mc anonymous set none "local/$${FILE_STORAGE_BUCKET}"
     environment:
       APP_ENV: ${APP_ENV:-local}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-enterprise_agent}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-enterprise_agent_change_me}
-      FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET: ${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET:-agent-attachments}
       FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
     depends_on:
       minio:
@@ -300,7 +297,6 @@ services:
       PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
       FILE_STORAGE_ENDPOINT_URL: ${FILE_STORAGE_ENDPOINT_URL:-http://minio:9000}
       FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
-      FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET: ${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET:-agent-attachments}
       FILE_STORAGE_ACCESS_KEY_REF: ${FILE_STORAGE_ACCESS_KEY_REF:-secret://platform/minio-file-access-key}
       FILE_STORAGE_SECRET_KEY_REF: ${FILE_STORAGE_SECRET_KEY_REF:-secret://platform/minio-file-secret-key}
       FILE_STORAGE_REGION: ${FILE_STORAGE_REGION:-us-east-1}

@@ -66,7 +66,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         service = OpenTestFileDomainResetService(
             database,
             storage(settings.file_service.bucket),
-            storage(settings.file_service.legacy_attachment_bucket),
         )
         result = (
             service.report()

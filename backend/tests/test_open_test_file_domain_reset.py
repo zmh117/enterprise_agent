@@ -168,8 +168,7 @@ def test_reset_report_is_redacted_stable_and_requires_exact_confirmation(
 ) -> None:
     database = _database(tmp_path)
     current = FakeStorage(("managed/a",))
-    legacy = FakeStorage(("legacy/b",))
-    service = OpenTestFileDomainResetService(database, current, legacy)
+    service = OpenTestFileDomainResetService(database, current)
 
     first = service.report()
     second = service.report()
@@ -177,9 +176,7 @@ def test_reset_report_is_redacted_stable_and_requires_exact_confirmation(
     assert first == second
     assert first["ready"] is True
     assert first["managed_object_count"] == 1
-    assert first["legacy_managed_object_count"] == 1
     assert "managed/a" not in str(first)
-    assert "legacy/b" not in str(first)
     with pytest.raises(NonRetryableExecutionError) as rejected:
         service.apply(
             expected_digest=str(first["inventory_digest"]),
@@ -192,7 +189,6 @@ def test_postgres_reset_truncates_polymorphic_file_domain_tables() -> None:
     database = FakePostgresDatabase()
     service = OpenTestFileDomainResetService(  # type: ignore[arg-type]
         database,
-        FakeStorage(),
         FakeStorage(),
     )
 
@@ -210,7 +206,7 @@ def test_reset_rejects_nonterminal_work_and_inventory_drift(tmp_path: Path) -> N
     database = _database(tmp_path)
     _insert_job(database, status="PENDING")
     current = FakeStorage()
-    service = OpenTestFileDomainResetService(database, current, FakeStorage())
+    service = OpenTestFileDomainResetService(database, current)
     report = service.report()
 
     assert report["ready"] is False
@@ -248,14 +244,13 @@ def test_reset_rejects_only_claimed_cleanup_work(tmp_path: Path) -> None:
     report = OpenTestFileDomainResetService(
         database,
         FakeStorage(),
-        FakeStorage(),
     ).report()
 
     assert report["ready"] is False
     assert report["blockers"]["cleanup_work"] == 1
 
 
-def test_reset_deletes_drained_database_roots_and_both_object_namespaces(
+def test_reset_deletes_drained_database_roots_and_managed_objects(
     tmp_path: Path,
 ) -> None:
     database = _database(tmp_path)
@@ -272,8 +267,7 @@ def test_reset_deletes_drained_database_roots_and_both_object_namespaces(
         (timestamp, timestamp, timestamp, timestamp),
     )
     current = FakeStorage(("managed/a", "managed/b"))
-    legacy = FakeStorage(("legacy/c",))
-    service = OpenTestFileDomainResetService(database, current, legacy)
+    service = OpenTestFileDomainResetService(database, current)
     report = service.report()
 
     assert report["ready"] is True
@@ -285,9 +279,8 @@ def test_reset_deletes_drained_database_roots_and_both_object_namespaces(
     )
 
     assert result["status"] == "APPLIED"
-    assert result["deleted_managed_objects"] == 3
+    assert result["deleted_managed_objects"] == 2
     assert current.deleted == ["managed/a", "managed/b"]
-    assert legacy.deleted == ["legacy/c"]
     assert database.execute_one("select count(*) as count from agent_job") == {"count": 0}
     assert database.execute_one("select count(*) as count from file_cleanup_fact") == {"count": 0}
     assert service.report()["ready"] is True
@@ -348,7 +341,7 @@ def test_reset_deletes_only_publications_outside_current_runtime_contract(
         revision=2,
         agent_publication_id="current-protocol-publication",
     )
-    service = OpenTestFileDomainResetService(database, FakeStorage(), FakeStorage())
+    service = OpenTestFileDomainResetService(database, FakeStorage())
 
     report = service.report()
 

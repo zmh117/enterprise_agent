@@ -9,6 +9,21 @@ from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
 
 
+_CANONICAL_MEDIA_TYPE_BY_EXTENSION = {
+    ".txt": "text/plain",
+    ".log": "text/plain",
+    ".md": "text/markdown",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".webp": "image/webp",
+    ".json": "application/json",
+}
+
+
 class SecretResolver(Protocol):
     def __call__(self, ref: str) -> str: ...
 
@@ -100,10 +115,12 @@ class MinioFileObjectStorage:
         self._bucket = settings.bucket
 
     @staticmethod
-    def new_object_key(*, kind: str) -> str:
+    def new_object_key(*, kind: str, canonical_extension: str) -> str:
         if kind not in {"version", "staging", "attachment"}:
             raise ValueError("Unsupported managed object kind")
-        return f"managed/{kind}/{secrets.token_hex(24)}"
+        if canonical_extension not in _CANONICAL_MEDIA_TYPE_BY_EXTENSION:
+            raise ValueError("Unsupported managed object extension")
+        return f"managed/{kind}/{secrets.token_hex(24)}{canonical_extension}"
 
     def put_stream(
         self,
@@ -113,12 +130,26 @@ class MinioFileObjectStorage:
         content_type: str,
         content_sha256: str,
         size_bytes: int,
+        canonical_extension: str,
         internal_object_key: str | None = None,
     ) -> InternalStoredObject:
         if len(content_sha256) != 64 or size_bytes < 0:
             raise ValueError("Managed object metadata is invalid")
-        key = internal_object_key or self.new_object_key(kind=kind)
-        if not key.startswith(f"managed/{kind}/") or len(key) > 1024:
+        key = internal_object_key or self.new_object_key(
+            kind=kind,
+            canonical_extension=canonical_extension,
+        )
+        prefix = f"managed/{kind}/"
+        leaf = key.removeprefix(prefix)
+        opaque_id = leaf[: -len(canonical_extension)] if leaf.endswith(canonical_extension) else ""
+        if (
+            not key.startswith(prefix)
+            or len(key) > 1024
+            or len(opaque_id) != 48
+            or any(character not in "0123456789abcdef" for character in opaque_id)
+            or content_type.split(";", 1)[0].strip().lower()
+            != _CANONICAL_MEDIA_TYPE_BY_EXTENSION.get(canonical_extension)
+        ):
             raise ValueError("Managed object key is outside its fixed namespace")
         assert_external_io_allowed("file_storage.put_stream")
         self._client.put_object(

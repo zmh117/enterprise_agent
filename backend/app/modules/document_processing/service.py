@@ -42,7 +42,7 @@ PICTURE_TRANSFER_TTL = timedelta(minutes=10)
 
 class DocumentObjectStoragePort(Protocol):
     @staticmethod
-    def new_object_key(*, kind: str) -> str: ...
+    def new_object_key(*, kind: str, canonical_extension: str) -> str: ...
 
     def put_stream(
         self,
@@ -52,6 +52,7 @@ class DocumentObjectStoragePort(Protocol):
         content_type: str,
         content_sha256: str,
         size_bytes: int,
+        canonical_extension: str,
         internal_object_key: str | None = None,
     ) -> InternalStoredObject: ...
 
@@ -441,7 +442,12 @@ class GovernedDocumentProcessingService:
         issued_at = now or datetime.now(UTC)
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        staging_object_key = self.storage.new_object_key(kind="staging")
+        staging_object_key = self.storage.new_object_key(
+            kind="staging",
+            canonical_extension=(
+                ".md" if representation_kind is RepresentationKind.MARKDOWN else ".json"
+            ),
+        )
         expires_at = (issued_at + REPRESENTATION_TRANSFER_TTL).isoformat()
         workspace_id = self._workspace_for_run(run)
         operation_id = f"representation:{run_id}:{representation_kind.value}"
@@ -521,7 +527,10 @@ class GovernedDocumentProcessingService:
             token_hash=hashlib.sha256(token.encode()).hexdigest(),
             expected_size_bytes=expected_size_bytes,
             expected_sha256=expected_sha256,
-            staging_object_key=self.storage.new_object_key(kind="staging"),
+            staging_object_key=self.storage.new_object_key(
+                kind="staging",
+                canonical_extension=".md",
+            ),
             expires_at=expires_at,
         )
         if not created:
@@ -570,6 +579,7 @@ class GovernedDocumentProcessingService:
             content_type="text/markdown",
             content_sha256=hashlib.sha256(body).hexdigest(),
             size_bytes=len(body),
+            canonical_extension=".md",
             internal_object_key=str(transfer["staging_object_key"]),
         )
         result = self.repository.finalize_parent_artifact_transfer(
@@ -607,6 +617,15 @@ class GovernedDocumentProcessingService:
         size_bytes: int,
         now: datetime | None = None,
     ) -> dict[str, Any]:
+        normalized_media_type = media_type.split(";", 1)[0].strip().lower()
+        canonical_extension = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+        }.get(normalized_media_type)
+        if canonical_extension is None:
+            self._deny("document_picture_media_type_invalid", "内嵌图片媒体类型无效")
+        assert canonical_extension is not None
         run = self.repository.get_run(run_id)
         profile = require_document_processing_profile(
             run["profile_code"], profile_hash=run["profile_hash"]
@@ -637,10 +656,8 @@ class GovernedDocumentProcessingService:
         if (
             not isinstance(normalization_transform, dict)
             or set(normalization_transform) != expected_transform
-            or normalization_transform.get("version")
-            != "embedded-media-exif-orientation/v1"
-            or normalization_transform.get("pixel_basis")
-            != "RAW_EMBEDDED_MEDIA_AFTER_EXIF"
+            or normalization_transform.get("version") != "embedded-media-exif-orientation/v1"
+            or normalization_transform.get("pixel_basis") != "RAW_EMBEDDED_MEDIA_AFTER_EXIF"
             or normalization_transform.get("office_display_transform_applied") is not False
             or normalization_transform.get("source_origin") != "TOPLEFT"
             or normalization_transform.get("target_origin") != "TOPLEFT"
@@ -664,11 +681,14 @@ class GovernedDocumentProcessingService:
             expires_at=expires_at,
             now=issued_at.isoformat(),
         )
-        object_key = self.storage.new_object_key(kind="staging")
+        object_key = self.storage.new_object_key(
+            kind="staging",
+            canonical_extension=canonical_extension,
+        )
         asset, _ = self.repository.create_or_get_picture_asset(
             run_id=run_id,
             normalized_sha256=normalized_sha256,
-            media_type=media_type,
+            media_type=normalized_media_type,
             original_width_pixels=original_width_pixels,
             original_height_pixels=original_height_pixels,
             width_pixels=width_pixels,
@@ -707,9 +727,7 @@ class GovernedDocumentProcessingService:
     ) -> dict[str, Any]:
         transfer = self.repository.get_picture_asset_transfer(transfer_id)
         self._verify_transfer_token(transfer, upload_token=upload_token, now=now)
-        if media_type.split(";", 1)[0].strip().lower() != str(
-            transfer["expected_media_type"]
-        ):
+        if media_type.split(";", 1)[0].strip().lower() != str(transfer["expected_media_type"]):
             self._deny("document_picture_media_type_invalid", "内嵌图片媒体类型无效")
         body = self._bounded_stream(
             stream,
@@ -723,6 +741,11 @@ class GovernedDocumentProcessingService:
             content_type=str(transfer["expected_media_type"]),
             content_sha256=hashlib.sha256(body).hexdigest(),
             size_bytes=len(body),
+            canonical_extension={
+                "image/png": ".png",
+                "image/jpeg": ".jpg",
+                "image/webp": ".webp",
+            }[str(transfer["expected_media_type"])],
             internal_object_key=str(transfer["staging_object_key"]),
         )
         result = self.repository.finalize_picture_asset_transfer(
@@ -749,9 +772,7 @@ class GovernedDocumentProcessingService:
         row, _ = self.repository.create_or_get_picture_occurrence(
             **values,
             parent_bbox_json=(
-                json.dumps(bbox, sort_keys=True, separators=(",", ":"))
-                if bbox is not None
-                else ""
+                json.dumps(bbox, sort_keys=True, separators=(",", ":")) if bbox is not None else ""
             ),
             selection_status=selection_status,
         )
@@ -794,9 +815,7 @@ class GovernedDocumentProcessingService:
             "original_height_pixels": int(asset["original_height_pixels"]),
             "width_pixels": int(asset["width_pixels"]),
             "height_pixels": int(asset["height_pixels"]),
-            "normalization_transform": json.loads(
-                str(asset["normalization_transform_json"])
-            ),
+            "normalization_transform": json.loads(str(asset["normalization_transform_json"])),
         }
 
     def open_picture_asset(self, *, picture_item_id: str) -> BinaryIO:
@@ -898,7 +917,10 @@ class GovernedDocumentProcessingService:
             token_hash=hashlib.sha256(token.encode()).hexdigest(),
             expected_size_bytes=expected_size_bytes,
             expected_sha256=expected_sha256,
-            staging_object_key=self.storage.new_object_key(kind="staging"),
+            staging_object_key=self.storage.new_object_key(
+                kind="staging",
+                canonical_extension=".json",
+            ),
             expires_at=expires_at,
         )
         result = {
@@ -944,6 +966,7 @@ class GovernedDocumentProcessingService:
             content_type="application/json",
             content_sha256=hashlib.sha256(body).hexdigest(),
             size_bytes=len(body),
+            canonical_extension=".json",
             internal_object_key=str(transfer["staging_object_key"]),
         )
         result_row = self.repository.finalize_picture_result_transfer(
@@ -973,9 +996,7 @@ class GovernedDocumentProcessingService:
         return self.storage.open_stream(internal_object_key=str(transfer["staging_object_key"]))
 
     def complete_parent_parse(self, *, run_id: str, correlation_id: str) -> dict[str, Any]:
-        return self.repository.complete_parent_parse(
-            run_id=run_id, correlation_id=correlation_id
-        )
+        return self.repository.complete_parent_parse(run_id=run_id, correlation_id=correlation_id)
 
     def claim_assembly(self, *, run_id: str, claim_token: str) -> tuple[dict[str, Any], bool]:
         return self.repository.claim_assembly(run_id=run_id, claim_token=claim_token)
@@ -1096,6 +1117,7 @@ class GovernedDocumentProcessingService:
                 content_type=expected_media_type,
                 content_sha256=content_sha256,
                 size_bytes=size,
+                canonical_extension=(".md" if kind is RepresentationKind.MARKDOWN else ".json"),
                 internal_object_key=str(transfer["staging_object_key"]),
             )
         staged_transfer = self.repository.mark_transfer_staged(
@@ -1176,8 +1198,7 @@ class GovernedDocumentProcessingService:
             actor_id="file-processing-worker",
             extra={
                 "representation_sizes": {
-                    str(item["kind"]): int(item["size_bytes"])
-                    for item in representations
+                    str(item["kind"]): int(item["size_bytes"]) for item in representations
                 }
             },
         )
@@ -1269,9 +1290,7 @@ class GovernedDocumentProcessingService:
         deleted = retried = dead = 0
         for cleanup in claimed:
             try:
-                self.storage.delete(
-                    internal_object_key=str(cleanup["internal_object_key"])
-                )
+                self.storage.delete(internal_object_key=str(cleanup["internal_object_key"]))
                 self.repository.complete_picture_cleanup(cleanup_id=str(cleanup["id"]))
                 deleted += 1
             except Exception as exc:
@@ -1280,8 +1299,7 @@ class GovernedDocumentProcessingService:
                     cleanup_id=str(cleanup["id"]),
                     error_code=f"cleanup_{type(exc).__name__.lower()}"[:128],
                     next_attempt_at=(
-                        reference_time
-                        + timedelta(seconds=min(3600, (2**attempts) * 15))
+                        reference_time + timedelta(seconds=min(3600, (2**attempts) * 15))
                     ).isoformat(),
                 )
                 if str(result["status"]) == "DEAD":
@@ -1363,9 +1381,7 @@ class GovernedDocumentProcessingService:
             "processing_time_ms": run.get("processing_time_ms"),
             "business_application_id": context["business_application_id"],
             "business_application_code": context["business_application_code"],
-            "business_application_publication_id": context[
-                "business_application_publication_id"
-            ],
+            "business_application_publication_id": context["business_application_publication_id"],
         }
         if extra:
             payload.update(extra)
@@ -1440,23 +1456,15 @@ class GovernedDocumentProcessingService:
                     safe_message="布局OCR表示无效",
                     error_code=exc.error_code,
                 ) from exc
-            if (
-                layout["source"]
-                != {
-                    "file_id": str(run["source_file_id"]),
-                    "version_id": str(run["source_version_id"]),
-                }
-                or layout["processing"]["run_id"] != str(run["id"])
-            ):
+            if layout["source"] != {
+                "file_id": str(run["source_file_id"]),
+                "version_id": str(run["source_version_id"]),
+            } or layout["processing"]["run_id"] != str(run["id"]):
                 self._deny("document_layout_identity_mismatch", "布局OCR表示身份不匹配")
-            expected_occurrences = self.assembly_context(run_id=str(run["id"]))[
-                "occurrences"
-            ]
+            expected_occurrences = self.assembly_context(run_id=str(run["id"]))["occurrences"]
             if len(layout["pictures"]) != len(expected_occurrences):
                 self._deny("document_layout_occurrence_mismatch", "布局OCR图片出现位置不完整")
-            for actual, expected in zip(
-                layout["pictures"], expected_occurrences, strict=True
-            ):
+            for actual, expected in zip(layout["pictures"], expected_occurrences, strict=True):
                 if (
                     actual["occurrence_index"] != expected["occurrence_index"]
                     or actual["picture_ref"] != expected["picture_ref"]
@@ -1474,9 +1482,7 @@ class GovernedDocumentProcessingService:
                         picture_item_id=str(expected["picture_item_id"])
                     )
                     try:
-                        result = validate_picture_result(
-                            result_stream.read(), profile=profile
-                        )
+                        result = validate_picture_result(result_stream.read(), profile=profile)
                     finally:
                         result_stream.close()
                     expected_layout = {
@@ -1550,10 +1556,9 @@ class GovernedDocumentProcessingService:
 
     @classmethod
     def _verify_expected_body(cls, transfer: dict[str, Any], body: bytes) -> None:
-        if (
-            len(body) != int(transfer["expected_size_bytes"])
-            or hashlib.sha256(body).hexdigest() != str(transfer["expected_sha256"])
-        ):
+        if len(body) != int(transfer["expected_size_bytes"]) or hashlib.sha256(
+            body
+        ).hexdigest() != str(transfer["expected_sha256"]):
             cls._deny("document_transfer_digest_mismatch", "上传内容大小或摘要不一致")
 
     @staticmethod

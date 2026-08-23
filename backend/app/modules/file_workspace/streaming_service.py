@@ -64,7 +64,7 @@ class FilePrincipalPort(Protocol):
 
 class FileObjectStoragePort(Protocol):
     @staticmethod
-    def new_object_key(*, kind: str) -> str: ...
+    def new_object_key(*, kind: str, canonical_extension: str) -> str: ...
 
     def put_stream(
         self,
@@ -74,6 +74,7 @@ class FileObjectStoragePort(Protocol):
         content_type: str,
         content_sha256: str,
         size_bytes: int,
+        canonical_extension: str,
         internal_object_key: str | None = None,
     ) -> InternalStoredObject: ...
 
@@ -162,9 +163,7 @@ class GovernedFileStreamingService:
             item = self.authorization.require_working_set_materialization(
                 context, file_id=file_id, version_id=version_id
             )
-            representation = {
-                "representation_id": item.get("representation_id")
-            }
+            representation = {"representation_id": item.get("representation_id")}
         is_representation = bool(representation.get("representation_id"))
         if is_representation:
             if from_initial_manifest:
@@ -477,9 +476,7 @@ class GovernedFileStreamingService:
                     "object_key": str(item["object_key"]),
                 }
             else:
-                content = self.repository.require_content_available(
-                    str(transfer["version_id"])
-                )
+                content = self.repository.require_content_available(str(transfer["version_id"]))
         else:
             self.authorization.require_manifest_action(
                 context,
@@ -567,9 +564,7 @@ class GovernedFileStreamingService:
                 safe_message="文件交付信息无效",
                 error_code="file_delivery_artifact_invalid",
             ) from exc
-        definition = get_text_format_policy().by_code(
-            str(version.get("format_code") or "TXT")
-        )
+        definition = get_text_format_policy().by_code(str(version.get("format_code") or "TXT"))
         named = text_format_for_name(display_name)
         file_row = self.repository.get_file(str(binding["file_id"]))
         if (
@@ -650,7 +645,10 @@ class GovernedFileStreamingService:
             try:
                 staging = self.repository.get_staging_for_intent(str(intent["id"]))
                 if staging is None:
-                    object_key = self.storage.new_object_key(kind="staging")
+                    object_key = self.storage.new_object_key(
+                        kind="staging",
+                        canonical_extension=definition.extension,
+                    )
                     try:
                         staging = self.repository.create_staging(
                             intent_id=str(intent["id"]), object_key=object_key
@@ -670,6 +668,7 @@ class GovernedFileStreamingService:
                         content_type=definition.canonical_media_type,
                         content_sha256=validated.content_sha256,
                         size_bytes=validated.size_bytes,
+                        canonical_extension=definition.extension,
                         internal_object_key=str(staging["object_key"]),
                     )
                     staging = self.repository.update_staging(
@@ -688,9 +687,7 @@ class GovernedFileStreamingService:
                 )
                 raise
         try:
-            result = self._publish(
-                intent_id=str(intent["id"]), staging_id=str(staging["id"])
-            )
+            result = self._publish(intent_id=str(intent["id"]), staging_id=str(staging["id"]))
             self.quota.finalize_reservation(
                 reservation_id,
                 committed=True,
@@ -827,7 +824,15 @@ class GovernedFileStreamingService:
                     now=_iso(self.now()),
                 )
                 reservation_id = str(reservation["id"])
-            object_key = self.storage.new_object_key(kind="attachment")
+            canonical_extension = (
+                definition.extension
+                if definition is not None
+                else (document_source.canonical_extension if document_source is not None else "")
+            )
+            object_key = self.storage.new_object_key(
+                kind="attachment",
+                canonical_extension=canonical_extension,
+            )
             content.seek(0)
             try:
                 await asyncio.to_thread(
@@ -845,6 +850,7 @@ class GovernedFileStreamingService:
                     ),
                     content_sha256=content_sha256,
                     size_bytes=size_bytes,
+                    canonical_extension=canonical_extension,
                     internal_object_key=object_key,
                 )
             except Exception:
@@ -1402,9 +1408,7 @@ class GovernedFileStreamingService:
         file_id = _opaque("managed_file")
         version_id = _opaque("file_version")
         owner = self._owner(workspace)
-        definition = get_text_format_policy().by_code(
-            str(intent.get("format_code") or "TXT")
-        )
+        definition = get_text_format_policy().by_code(str(intent.get("format_code") or "TXT"))
         self.repository.create_file(
             file_id=file_id,
             tenant_id=str(workspace["tenant_id"]),
@@ -1628,9 +1632,8 @@ class GovernedFileStreamingService:
         claims: dict[str, Any],
         context: FileAuthorizationContext,
     ) -> None:
-        if (
-            str(intent["job_id"]) != str(claims["job_id"])
-            or str(intent["workspace_id"]) != str(context.workspace["id"])
+        if str(intent["job_id"]) != str(claims["job_id"]) or str(intent["workspace_id"]) != str(
+            context.workspace["id"]
         ):
             GovernedFileStreamingService._deny(
                 "file_commit_binding_mismatch", "文件提交与当前任务不匹配"

@@ -173,9 +173,7 @@ def test_exact_file_delivery_retries_without_agent_rerun_or_duplicate_file() -> 
     repository, streaming, context, _storage = _fixture()
     _enable_file_delivery(repository)
     agent_repository = AgentRepository(repository.database)
-    delivery = FileVersionDeliveryService(
-        repository, agent_repository, DeliverySettings()
-    )
+    delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
     streaming.delivery_intents = delivery
     commit_id = _new_intent(streaming, context, handle="delivered-output")
     committed = asyncio.run(
@@ -218,9 +216,7 @@ def test_exact_file_delivery_retries_without_agent_rerun_or_duplicate_file() -> 
         },
     )
     workspace_only_commit = str(
-        workspace_only["__file_transfer_meta"]["enterprise-agent/file-transfer"][
-            "commit_id"
-        ]
+        workspace_only["__file_transfer_meta"]["enterprise-agent/file-transfer"]["commit_id"]
     )
     asyncio.run(
         streaming.upload_commit(
@@ -233,9 +229,7 @@ def test_exact_file_delivery_retries_without_agent_rerun_or_duplicate_file() -> 
         "select count(*) as value from delivery_outbox where delivery_kind = 'FILE_VERSION'"
     ) == {"value": 1}
 
-    repository.database.execute(
-        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
-    )
+    repository.database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-file'")
     sender = _ResponseLostSender(streaming)
     delivery_runtime = SimpleNamespace(
         connector_registry=_ConnectorRegistry(),
@@ -334,11 +328,13 @@ def test_explicit_delivery_accepts_exact_version_committed_by_current_job() -> N
 
 
 def test_text_v2_log_delivery_uses_existing_exact_version_without_commit() -> None:
-    repository, streaming, context, storage = _fixture(
-    )
+    repository, streaming, context, storage = _fixture()
     _enable_file_delivery(repository)
     log_content = b"immutable diagnostic log\n"
-    object_key = storage.new_object_key(kind="attachment")
+    object_key = storage.new_object_key(
+        kind="attachment",
+        canonical_extension=".log",
+    )
     storage.objects[object_key] = log_content
     repository.create_file(
         file_id="file-log",
@@ -419,20 +415,18 @@ def test_text_v2_log_delivery_uses_existing_exact_version_without_commit() -> No
     )
 
     assert repeated == first
-    assert delivery.exact_binding(first["delivery_id"])["file_version_id"] == (
-        "version-log-1"
+    assert delivery.exact_binding(first["delivery_id"])["file_version_id"] == ("version-log-1")
+    assert (
+        repository.database.execute_one("select count(*) as value from managed_file_version")
+        == before_versions
     )
-    assert repository.database.execute_one(
-        "select count(*) as value from managed_file_version"
-    ) == before_versions
-    assert repository.database.execute_one(
-        "select count(*) as value from file_commit_intent"
-    ) == {"value": 0}
+    assert repository.database.execute_one("select count(*) as value from file_commit_intent") == {
+        "value": 0
+    }
 
 
 def test_text_v2_markdown_default_delivery_and_workspace_only_remain_distinct() -> None:
-    repository, streaming, context, _storage = _fixture(
-    )
+    repository, streaming, context, _storage = _fixture()
     _enable_file_delivery(repository)
     streaming.delivery_intents = FileVersionDeliveryService(
         repository,
@@ -461,9 +455,7 @@ def test_text_v2_markdown_default_delivery_and_workspace_only_remain_distinct() 
         },
     )
     workspace_only_commit = str(
-        workspace_only["__file_transfer_meta"]["enterprise-agent/file-transfer"][
-            "commit_id"
-        ]
+        workspace_only["__file_transfer_meta"]["enterprise-agent/file-transfer"]["commit_id"]
     )
     retained = asyncio.run(
         streaming.upload_commit(
@@ -514,9 +506,7 @@ def test_stream_session_file_delivery_uses_originating_stream_connector() -> Non
         ),
     )
     agent_repository = AgentRepository(repository.database)
-    delivery = FileVersionDeliveryService(
-        repository, agent_repository, DeliverySettings()
-    )
+    delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
     streaming.delivery_intents = delivery
     asyncio.run(
         streaming.upload_commit(
@@ -525,9 +515,7 @@ def test_stream_session_file_delivery_uses_originating_stream_connector() -> Non
             body=_body(b"stream delivery\n"),
         )
     )
-    repository.database.execute(
-        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
-    )
+    repository.database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-file'")
     connector_registry = _StreamFileConnectorRegistry()
     sender = _CaptureFileSender()
     dispatcher = DeliveryOutboxDispatcher(
@@ -586,9 +574,7 @@ def test_workspace_expiry_waits_for_file_delivery_then_cleans_after_terminal_fai
     repository, streaming, context, storage = _fixture()
     _enable_file_delivery(repository)
     agent_repository = AgentRepository(repository.database)
-    delivery = FileVersionDeliveryService(
-        repository, agent_repository, DeliverySettings()
-    )
+    delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
     streaming.delivery_intents = delivery
     asyncio.run(
         streaming.upload_commit(
@@ -601,9 +587,7 @@ def test_workspace_expiry_waits_for_file_delivery_then_cleans_after_terminal_fai
         "select id from delivery_outbox where delivery_kind = 'FILE_VERSION'"
     )
     assert event is not None
-    repository.database.execute(
-        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
-    )
+    repository.database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-file'")
     repository.database.execute(
         "update task_workspace set expires_at = ? where id = 'workspace-a'",
         ((NOW - timedelta(minutes=1)).isoformat(),),
@@ -652,9 +636,7 @@ def test_terminal_file_delivery_failure_enqueues_one_non_recursive_notice(
         (json.dumps({"type": "test_text", "target": {}}),),
     )
     agent_repository = AgentRepository(repository.database)
-    file_delivery = FileVersionDeliveryService(
-        repository, agent_repository, DeliverySettings()
-    )
+    file_delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
     streaming.delivery_intents = file_delivery
     committed = asyncio.run(
         streaming.upload_commit(
@@ -664,9 +646,7 @@ def test_terminal_file_delivery_failure_enqueues_one_non_recursive_notice(
         )
     )
     original_id = str(committed["delivery_id"])
-    repository.database.execute(
-        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
-    )
+    repository.database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-file'")
     if expected_status == "DEAD":
         repository.database.execute(
             "update delivery_outbox set max_attempts = 1 where id = ?",
@@ -730,9 +710,7 @@ def test_dispatcher_reconciles_crash_gap_for_terminal_file_delivery_notice() -> 
         (json.dumps({"type": "test_text", "target": {}}),),
     )
     agent_repository = AgentRepository(repository.database)
-    file_delivery = FileVersionDeliveryService(
-        repository, agent_repository, DeliverySettings()
-    )
+    file_delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
     streaming.delivery_intents = file_delivery
     committed = asyncio.run(
         streaming.upload_commit(
@@ -741,9 +719,7 @@ def test_dispatcher_reconciles_crash_gap_for_terminal_file_delivery_notice() -> 
             body=_body(b"crash gap file\n"),
         )
     )
-    repository.database.execute(
-        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
-    )
+    repository.database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-file'")
     source_delivery_id = str(committed["delivery_id"])
     repository.database.execute(
         """
@@ -759,10 +735,7 @@ def test_dispatcher_reconciles_crash_gap_for_terminal_file_delivery_notice() -> 
         job_id="job-file",
         artifact_type="file_delivery_failure_notification",
         name=f"file-delivery-failure-{source_delivery_id}.txt",
-        content=(
-            "文件已保存到工作区，但回发失败。"
-            "你可以稍后要求我重新发送该文件。"
-        ),
+        content=("文件已保存到工作区，但回发失败。你可以稍后要求我重新发送该文件。"),
     )
     text_adapter = _CaptureTextAdapter()
     delivery_runtime = ResultDeliveryService(

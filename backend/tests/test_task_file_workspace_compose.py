@@ -12,7 +12,9 @@ def _compose() -> dict[str, object]:
     return yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
 
 
-def test_compose_has_one_file_service_one_attachment_consumer_and_separate_processing_pair() -> None:
+def test_compose_has_one_file_service_one_attachment_consumer_and_separate_processing_pair() -> (
+    None
+):
     compose = _compose()
     services = compose["services"]
 
@@ -59,9 +61,7 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
     for name in ("minio", "minio-init"):
         service = services[name]
         assert service["environment"]["APP_ENV"] == "${APP_ENV:-local}"
-        assert service["environment"]["MINIO_ROOT_USER"] == (
-            "${MINIO_ROOT_USER:-enterprise_agent}"
-        )
+        assert service["environment"]["MINIO_ROOT_USER"] == ("${MINIO_ROOT_USER:-enterprise_agent}")
         assert service["environment"]["MINIO_ROOT_PASSWORD"] == (
             "${MINIO_ROOT_PASSWORD:-enterprise_agent_change_me}"
         )
@@ -85,9 +85,7 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
         "${FILE_STORAGE_SECRET_KEY_REF:-secret://platform/"
     )
     assert file_environment["FILE_STORAGE_BUCKET"] == ("${FILE_STORAGE_BUCKET:-agent-files}")
-    assert file_environment["FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET"] == (
-        "${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET:-agent-attachments}"
-    )
+    assert "FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET" not in file_environment
     assert "MINIO_ROOT_USER" not in file_environment
     assert "MINIO_ROOT_PASSWORD" not in file_environment
 
@@ -104,6 +102,10 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
         assert "MINIO_ROOT_PASSWORD" not in environment, name
         assert "FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET" not in environment, name
         assert "minio" not in service.get("depends_on", {}), name
+
+    minio_init = services["minio-init"]
+    assert "agent-attachments" not in str(minio_init)
+    assert "FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET" not in minio_init["environment"]
 
 
 def test_only_file_workspace_infrastructure_defines_the_minio_client() -> None:

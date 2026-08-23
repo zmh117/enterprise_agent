@@ -223,6 +223,7 @@ def test_minio_adapter_only_resolves_platform_refs_and_generates_opaque_keys() -
         content_type="text/plain",
         content_sha256="2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
         size_bytes=5,
+        canonical_extension=".txt",
     )
     assert resolved == [
         "secret://platform/minio-access",
@@ -230,6 +231,7 @@ def test_minio_adapter_only_resolves_platform_refs_and_generates_opaque_keys() -
     ]
     assert fake.put is not None
     assert str(fake.put["Key"]).startswith("managed/version/")
+    assert str(fake.put["Key"]).endswith(".txt")
     assert "credential-value-never-returned" not in repr(stored)
     assert "managed/version/" not in repr(stored)
     assert settings.safe_projection() == {
@@ -242,6 +244,27 @@ def test_minio_adapter_only_resolves_platform_refs_and_generates_opaque_keys() -
     storage.assert_ready()
     assert fake.ready
 
+    with pytest.raises(ValueError, match="fixed namespace"):
+        storage.put_stream(
+            io.BytesIO(b"hello"),
+            kind="version",
+            content_type="text/plain",
+            content_sha256=("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+            size_bytes=5,
+            canonical_extension=".txt",
+            internal_object_key="managed/version/customer-report.txt",
+        )
+
+    with pytest.raises(ValueError, match="fixed namespace"):
+        storage.put_stream(
+            io.BytesIO(b"hello"),
+            kind="version",
+            content_type="application/json",
+            content_sha256=("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+            size_bytes=5,
+            canonical_extension=".txt",
+        )
+
     with pytest.raises(ValueError):
         FileObjectStorageSettings(
             endpoint_url="http://user:password@minio:9000/bucket",
@@ -251,12 +274,9 @@ def test_minio_adapter_only_resolves_platform_refs_and_generates_opaque_keys() -
         )
 
 
-def test_file_service_requires_distinct_managed_and_legacy_private_buckets() -> None:
-    with pytest.raises(ValueError, match="distinct buckets"):
-        FileServiceSettings(
-            bucket="same-private-bucket",
-            legacy_attachment_bucket="same-private-bucket",
-        )
+def test_file_service_requires_managed_private_bucket() -> None:
+    with pytest.raises(ValueError, match="bucket name"):
+        FileServiceSettings(bucket="")
 
 
 class _Database:

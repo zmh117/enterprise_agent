@@ -141,7 +141,6 @@ def create_default_app() -> Any:
     )
     service_verifier = FileWorkerPrincipalVerifier(jwks)
     storage: MinioFileObjectStorage | _UnavailableStorage
-    legacy_storage: MinioFileObjectStorage | None = None
     storage_readiness: _StorageReadiness | _UnavailableStorage
     try:
         storage = MinioFileObjectStorage(
@@ -155,18 +154,7 @@ def create_default_app() -> Any:
             ),
             runtime.platform_config_service.resolve_secret,
         )
-        legacy_storage = MinioFileObjectStorage(
-            FileObjectStorageSettings(
-                endpoint_url=settings.file_service.endpoint_url,
-                bucket=settings.file_service.legacy_attachment_bucket,
-                access_key_ref=settings.file_service.access_key_ref,
-                secret_key_ref=settings.file_service.secret_key_ref,
-                region=settings.file_service.region,
-                secure=settings.file_service.secure,
-            ),
-            runtime.platform_config_service.resolve_secret,
-        )
-        storage_readiness = _StorageReadiness(storage, legacy_storage)
+        storage_readiness = _StorageReadiness(storage)
     except Exception:
         storage = _UnavailableStorage()
         storage_readiness = storage
@@ -200,8 +188,6 @@ def create_default_app() -> Any:
             lifecycle=FileLifecycleService(
                 repository,
                 storage,
-                legacy_attachment_storage=legacy_storage,
-                legacy_attachment_bucket=settings.file_service.legacy_attachment_bucket,
                 domain_outbox=FileDomainOutboxPublisher(
                     repository,
                     CompositeFileDomainEventSink(

@@ -54,9 +54,9 @@ class _Storage:
         self.objects: dict[str, bytes] = {}
         self.sequence = 0
 
-    def new_object_key(self, *, kind: str) -> str:
+    def new_object_key(self, *, kind: str, canonical_extension: str) -> str:
         self.sequence += 1
-        return f"managed/{kind}/opaque-{self.sequence}"
+        return f"managed/{kind}/opaque-{self.sequence}{canonical_extension}"
 
     def put_stream(
         self,
@@ -66,13 +66,18 @@ class _Storage:
         content_type: str,
         content_sha256: str,
         size_bytes: int,
+        canonical_extension: str,
         internal_object_key: str | None = None,
     ) -> InternalStoredObject:
         del content_type
         body = stream.read()
         assert len(body) == size_bytes
         assert hashlib.sha256(body).hexdigest() == content_sha256
-        key = internal_object_key or self.new_object_key(kind=kind)
+        key = internal_object_key or self.new_object_key(
+            kind=kind,
+            canonical_extension=canonical_extension,
+        )
+        assert key.endswith(canonical_extension)
         self.objects[key] = body
         return InternalStoredObject(key, size_bytes, content_sha256)
 
@@ -150,7 +155,10 @@ def _source(
     body = _pdf_bytes(2)
     file_id = "managed_file_document_source"
     version_id = "managed_file_version_document_source"
-    object_key = storage.new_object_key(kind="attachment")
+    object_key = storage.new_object_key(
+        kind="attachment",
+        canonical_extension=".pdf",
+    )
     storage.objects[object_key] = body
     owner = FileOwner(
         owner_type=WorkspaceOwnerType.PRIVATE_USER,
@@ -297,7 +305,10 @@ def test_layout_profile_freezes_three_outputs_deadline_and_unique_picture_assemb
     assert run["run_deadline_at"]
     with database.unit_of_work():
         assert service.repository.claim_due_run(worker_id="layout-parent") is not None
-        object_key = storage.new_object_key(kind="picture")
+        object_key = storage.new_object_key(
+            kind="picture",
+            canonical_extension=".png",
+        )
         asset, created = service.repository.create_or_get_picture_asset(
             run_id=str(run["id"]),
             normalized_sha256="b" * 64,
@@ -417,9 +428,7 @@ def test_layout_profile_freezes_three_outputs_deadline_and_unique_picture_assemb
         result_sha256="e" * 64,
         correlation_id="layout-run-replay",
     )
-    outbox = database.execute(
-        "select * from document_processing_stage_outbox order by event_type"
-    )
+    outbox = database.execute("select * from document_processing_stage_outbox order by event_type")
     assert [row["event_type"] for row in outbox] == [
         "ASSEMBLY_REQUESTED",
         "PICTURE_OCR_REQUESTED",
@@ -519,9 +528,7 @@ def test_source_stream_grant_binds_tenant_principal_run_and_expiry() -> None:
          order by created_at, id
         """
     )
-    assert [row["event_type"] for row in audit_rows].count(
-        "file.document.source_grant.issued"
-    ) == 1
+    assert [row["event_type"] for row in audit_rows].count("file.document.source_grant.issued") == 1
     assert [row["event_type"] for row in audit_rows].count(
         "file.document.source_stream.opened"
     ) == 1
@@ -878,9 +885,7 @@ def test_layout_finalize_binds_every_occurrence_and_cleans_private_artifacts() -
         model_digest="sha256:" + "d" * 64,
         correlation_id="layout-cleanup",
     )
-    service.complete_parent_parse(
-        run_id=str(run["id"]), correlation_id="layout-cleanup"
-    )
+    service.complete_parent_parse(run_id=str(run["id"]), correlation_id="layout-cleanup")
     service.claim_picture_item(
         picture_item_id=str(item["id"]),
         claim_token="picture-claim",
@@ -953,9 +958,7 @@ def test_layout_finalize_binds_every_occurrence_and_cleans_private_artifacts() -
         processing_time_ms=200,
     )
 
-    cleanup = database.execute(
-        "select * from document_picture_cleanup_fact order by object_kind"
-    )
+    cleanup = database.execute("select * from document_picture_cleanup_fact order by object_kind")
     assert [row["object_kind"] for row in cleanup] == [
         "PARENT_ARTIFACT",
         "PICTURE_ASSET",
@@ -963,13 +966,24 @@ def test_layout_finalize_binds_every_occurrence_and_cleans_private_artifacts() -
     ]
     private_keys = {str(row["internal_object_key"]) for row in cleanup}
     assert private_keys <= storage.objects.keys()
+    assert {
+        row["object_kind"]: str(row["internal_object_key"]).rsplit(".", 1)[-1] for row in cleanup
+    } == {
+        "PARENT_ARTIFACT": "md",
+        "PICTURE_ASSET": "png",
+        "PICTURE_RESULT": "json",
+    }
     result = service.cleanup_picture_artifacts(now=NOW + timedelta(minutes=1))
     assert result == {"claimed": 3, "deleted": 3, "retried": 0, "dead": 0}
     assert private_keys.isdisjoint(storage.objects)
     assert all(str(row["object_key"]) in storage.objects for row in representations)
-    assert service.repository.get_picture_asset(
-        str(asset_prepared["picture_asset_id"])
-    )["status"] == "CONTENT_UNAVAILABLE"
+    assert {
+        str(row["kind"]): str(row["object_key"]).rsplit(".", 1)[-1] for row in representations
+    } == {"MARKDOWN": "md", "DOCLING_JSON": "json", "OCR_LAYOUT_JSON": "json"}
+    assert (
+        service.repository.get_picture_asset(str(asset_prepared["picture_asset_id"]))["status"]
+        == "CONTENT_UNAVAILABLE"
+    )
     assert service.cleanup_picture_artifacts(now=NOW + timedelta(minutes=2))["claimed"] == 0
 
 
@@ -1244,12 +1258,15 @@ def test_representation_cleanup_follows_source_version_lifecycle() -> None:
     assert {item["content_sha256"] for item in retired} == {
         item["content_sha256"] for item in representations
     }
-    assert database.execute_one(
-        """
+    assert (
+        database.execute_one(
+            """
         select count(*) as value from audit_event
          where event_type like 'file.document.%'
         """
-    ) == audit_count_before
+        )
+        == audit_count_before
+    )
 
 
 def test_source_version_cleanup_waits_for_nonterminal_document_processing() -> None:
@@ -1291,9 +1308,7 @@ def test_source_version_cleanup_waits_for_nonterminal_document_processing() -> N
         now=lambda: NOW + timedelta(hours=2),
     ).run_once()
     assert int(completed["cleanup_completed"]) >= 1
-    assert service.file_repository.get_version(version_id)["status"] == (
-        "CONTENT_UNAVAILABLE"
-    )
+    assert service.file_repository.get_version(version_id)["status"] == ("CONTENT_UNAVAILABLE")
 
 
 def _pdf_bytes(page_count: int) -> bytes:

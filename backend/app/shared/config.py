@@ -189,7 +189,6 @@ class FileServiceSettings:
     internal_timeout_seconds: int = 30
     endpoint_url: str = "http://minio:9000"
     bucket: str = "agent-files"
-    legacy_attachment_bucket: str = "agent-attachments"
     access_key_ref: str = "secret://platform/minio-file-access-key"
     secret_key_ref: str = "secret://platform/minio-file-secret-key"
     region: str = "us-east-1"
@@ -200,10 +199,8 @@ class FileServiceSettings:
     document_processor_build_digest: str = ""
 
     def __post_init__(self) -> None:
-        if not self.bucket or not self.legacy_attachment_bucket:
-            raise ValueError("File storage bucket names are required")
-        if self.bucket == self.legacy_attachment_bucket:
-            raise ValueError("Managed files and legacy attachments require distinct buckets")
+        if not self.bucket:
+            raise ValueError("File storage bucket name is required")
         if bool(self.document_processor_version) != bool(self.document_processor_build_digest):
             raise ValueError("Document processor version and digest must be configured together")
         if self.document_processor_build_digest and (
@@ -473,9 +470,6 @@ def load_settings() -> Settings:
             internal_timeout_seconds=int(os.getenv("FILE_SERVICE_INTERNAL_TIMEOUT_SECONDS", "30")),
             endpoint_url=os.getenv("FILE_STORAGE_ENDPOINT_URL", "http://minio:9000"),
             bucket=os.getenv("FILE_STORAGE_BUCKET", "agent-files"),
-            legacy_attachment_bucket=os.getenv(
-                "FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET", "agent-attachments"
-            ),
             access_key_ref=os.getenv(
                 "FILE_STORAGE_ACCESS_KEY_REF",
                 "secret://platform/minio-file-access-key",

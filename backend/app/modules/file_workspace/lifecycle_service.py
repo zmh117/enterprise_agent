@@ -34,8 +34,6 @@ class FileLifecycleService:
         repository: FileWorkspaceRepository,
         storage: FileLifecycleStorage,
         *,
-        legacy_attachment_storage: FileLifecycleStorage | None = None,
-        legacy_attachment_bucket: str = "",
         now: Callable[[], datetime] = _now,
         batch_size: int = 100,
         domain_outbox: FileDomainOutboxPublisher | None = None,
@@ -44,8 +42,6 @@ class FileLifecycleService:
             raise ValueError("File lifecycle batch size is invalid")
         self.repository = repository
         self.storage = storage
-        self.legacy_attachment_storage = legacy_attachment_storage
-        self.legacy_attachment_bucket = legacy_attachment_bucket
         self.now = now
         self.batch_size = batch_size
         self.domain_outbox = domain_outbox
@@ -54,9 +50,7 @@ class FileLifecycleService:
         timestamp = self.now().isoformat()
         expired, deferred = self._expire_workspaces(timestamp)
         discovered = self._discover_cleanup(timestamp)
-        completed, retried, dead = self._process_cleanup(
-            timestamp=timestamp, worker_id=worker_id
-        )
+        completed, retried, dead = self._process_cleanup(timestamp=timestamp, worker_id=worker_id)
         unknown, missing = self._reconcile_objects()
         cleaned = self._finish_workspaces()
         outbox = (
@@ -81,8 +75,9 @@ class FileLifecycleService:
 
     def metrics(self) -> dict[str, int | str]:
         now = self.now().isoformat()
-        counts = self.repository.database.execute_one(
-            """
+        counts = (
+            self.repository.database.execute_one(
+                """
             select
               sum(case when status in ('PENDING', 'RETRY') then 1 else 0 end) as cleanup_backlog,
               sum(case when resource_type = 'STAGING_OBJECT' and status in ('PENDING', 'RETRY') then 1 else 0 end) as staging_backlog,
@@ -90,21 +85,32 @@ class FileLifecycleService:
               min(case when status in ('PENDING', 'RETRY') then next_attempt_at end) as earliest_due
             from file_cleanup_fact
             """
-        ) or {}
-        workspace = self.repository.database.execute_one(
-            """
+            )
+            or {}
+        )
+        workspace = (
+            self.repository.database.execute_one(
+                """
             select count(*) as value from task_workspace
              where status = 'ACTIVE' and expires_at <= ?
             """,
-            (now,),
-        ) or {}
-        retained = self.repository.database.execute_one(
-            "select count(*) as value from file_retention_fact where expires_at <= ?",
-            (now,),
-        ) or {}
-        conflicts = self.repository.database.execute_one(
-            "select count(*) as value from file_conflict_candidate where status = 'OPEN'",
-        ) or {}
+                (now,),
+            )
+            or {}
+        )
+        retained = (
+            self.repository.database.execute_one(
+                "select count(*) as value from file_retention_fact where expires_at <= ?",
+                (now,),
+            )
+            or {}
+        )
+        conflicts = (
+            self.repository.database.execute_one(
+                "select count(*) as value from file_conflict_candidate where status = 'OPEN'",
+            )
+            or {}
+        )
         return {
             "cleanup_backlog": int(counts.get("cleanup_backlog") or 0),
             "staging_backlog": int(counts.get("staging_backlog") or 0),
@@ -275,9 +281,7 @@ class FileLifecycleService:
         )
         return True
 
-    def _process_cleanup(
-        self, *, timestamp: str, worker_id: str
-    ) -> tuple[int, int, int]:
+    def _process_cleanup(self, *, timestamp: str, worker_id: str) -> tuple[int, int, int]:
         completed = retried = dead = 0
         rows = self.repository.database.execute(
             """
@@ -339,9 +343,7 @@ class FileLifecycleService:
             if str(staging["status"]) == "PUBLISHED":
                 return "complete"
             self.storage.delete(internal_object_key=str(staging["object_key"]))
-            self.repository.update_staging(
-                staging_id=resource_id, status=StagingStatus.DELETED
-            )
+            self.repository.update_staging(staging_id=resource_id, status=StagingStatus.DELETED)
             return "complete"
         if resource_type is CleanupResourceType.FILE_VERSION:
             if self._version_protected(resource_id, timestamp):
@@ -408,15 +410,11 @@ class FileLifecycleService:
                 (resource_id,),
             )
             managed_version_id = str((binding or {}).get("version_id") or "")
-            if managed_version_id and self._version_protected(
-                managed_version_id, timestamp
-            ):
+            if managed_version_id and self._version_protected(managed_version_id, timestamp):
                 return "defer"
             object_key = str(attachment.get("object_key") or "")
             if object_key:
-                self._attachment_storage(attachment).delete(
-                    internal_object_key=object_key
-                )
+                self._attachment_storage(attachment).delete(internal_object_key=object_key)
             self.repository.database.execute(
                 """
                 update message_attachment
@@ -544,42 +542,17 @@ class FileLifecycleService:
         stored = set(self.storage.list_keys())
         unknown = len(stored - managed_references)
         missing = sum(
-            not self.storage.exists(internal_object_key=key)
-            for key in managed_references
+            not self.storage.exists(internal_object_key=key) for key in managed_references
         )
-        legacy_references = {
-            str(row["object_key"])
-            for row in attachment_rows
-            if self.legacy_attachment_bucket
-            and str(row.get("object_bucket") or "") == self.legacy_attachment_bucket
-        }
-        if self.legacy_attachment_storage is not None:
-            legacy_stored = set(self.legacy_attachment_storage.list_keys())
-            unknown += len(legacy_stored - legacy_references)
-            missing += sum(
-                not self.legacy_attachment_storage.exists(internal_object_key=key)
-                for key in legacy_references
-            )
-        else:
-            missing += len(legacy_references)
-        known_buckets = {"file-service", self.legacy_attachment_bucket}
         missing += sum(
-            str(row.get("object_bucket") or "") not in known_buckets
-            for row in attachment_rows
+            str(row.get("object_bucket") or "") != "file-service" for row in attachment_rows
         )
         return unknown, missing
 
-    def _attachment_storage(
-        self, attachment: dict[str, Any]
-    ) -> FileLifecycleStorage:
+    def _attachment_storage(self, attachment: dict[str, Any]) -> FileLifecycleStorage:
         bucket = str(attachment.get("object_bucket") or "")
         if bucket == "file-service":
             return self.storage
-        if (
-            self.legacy_attachment_storage is not None
-            and bucket == self.legacy_attachment_bucket
-        ):
-            return self.legacy_attachment_storage
         raise RuntimeError("Attachment object belongs to an unmanaged storage boundary")
 
     def _finish_workspaces(self) -> int:

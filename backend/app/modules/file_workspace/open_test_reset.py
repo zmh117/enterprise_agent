@@ -71,17 +71,14 @@ class OpenTestFileDomainResetService:
         self,
         database: Database,
         storage: ManagedObjectStorage,
-        legacy_attachment_storage: ManagedObjectStorage,
     ) -> None:
         self.database = database
         self.storage = storage
-        self.legacy_attachment_storage = legacy_attachment_storage
 
     def report(self) -> dict[str, Any]:
         tables = self._reset_tables()
         table_counts = {table: self._count(table) for table in sorted(tables)}
         current_keys = self.storage.list_keys()
-        legacy_keys = self.legacy_attachment_storage.list_keys()
         blockers = {
             name: self._conditional_count(table, predicate)
             for name, (table, predicate) in _NON_TERMINAL_CHECKS.items()
@@ -94,8 +91,7 @@ class OpenTestFileDomainResetService:
             "schema_head": self._schema_head(),
             "table_counts": table_counts,
             "managed_object_count": len(current_keys),
-            "legacy_managed_object_count": len(legacy_keys),
-            "managed_object_digest": self._object_digest(current_keys, legacy_keys),
+            "managed_object_digest": self._object_digest(current_keys),
             "blockers": blockers,
             "legacy_contract_counts": legacy_contract_counts,
         }
@@ -117,11 +113,8 @@ class OpenTestFileDomainResetService:
             self._deny("open_test_reset_not_drained", "仍有非终态任务或待发布事件，拒绝重置")
 
         current_keys = self.storage.list_keys()
-        legacy_keys = self.legacy_attachment_storage.list_keys()
         for key in current_keys:
             self.storage.delete(internal_object_key=key)
-        for key in legacy_keys:
-            self.legacy_attachment_storage.delete(internal_object_key=key)
 
         self._clear_database_rows()
         self._delete_legacy_contract_configuration()
@@ -129,20 +122,13 @@ class OpenTestFileDomainResetService:
         after = self.report()
         remaining_rows = sum(after["table_counts"].values())
         remaining_legacy_contracts = sum(after["legacy_contract_counts"].values())
-        if (
-            remaining_rows
-            or remaining_legacy_contracts
-            or after["managed_object_count"]
-            or after["legacy_managed_object_count"]
-        ):
+        if remaining_rows or remaining_legacy_contracts or after["managed_object_count"]:
             self._deny("open_test_reset_incomplete", "文件域重置未完整清空")
         return {
             "status": "APPLIED",
             "deleted_database_rows": sum(before["table_counts"].values()),
             "deleted_legacy_contract_rows": sum(before["legacy_contract_counts"].values()),
-            "deleted_managed_objects": (
-                before["managed_object_count"] + before["legacy_managed_object_count"]
-            ),
+            "deleted_managed_objects": before["managed_object_count"],
             "verification_digest": after["inventory_digest"],
         }
 
@@ -412,10 +398,8 @@ class OpenTestFileDomainResetService:
         return str((row or {}).get("version") or "")
 
     @staticmethod
-    def _object_digest(current_keys: list[str], legacy_keys: list[str]) -> str:
-        identities = [*(f"current:{key}" for key in current_keys)]
-        identities.extend(f"legacy:{key}" for key in legacy_keys)
-        return hashlib.sha256("\n".join(sorted(identities)).encode("utf-8")).hexdigest()
+    def _object_digest(current_keys: list[str]) -> str:
+        return hashlib.sha256("\n".join(sorted(current_keys)).encode("utf-8")).hexdigest()
 
     @staticmethod
     def _canonical(value: object) -> str:

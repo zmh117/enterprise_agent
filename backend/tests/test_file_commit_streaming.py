@@ -67,9 +67,9 @@ class _Storage:
         self.fail_delete = False
         self.sequence = 0
 
-    def new_object_key(self, *, kind: str) -> str:
+    def new_object_key(self, *, kind: str, canonical_extension: str) -> str:
         self.sequence += 1
-        return f"managed/{kind}/opaque-{self.sequence}"
+        return f"managed/{kind}/opaque-{self.sequence}{canonical_extension}"
 
     def put_stream(
         self,
@@ -79,6 +79,7 @@ class _Storage:
         content_type: str,
         content_sha256: str,
         size_bytes: int,
+        canonical_extension: str,
         internal_object_key: str | None = None,
     ) -> InternalStoredObject:
         assert kind in {"staging", "attachment"}
@@ -92,7 +93,11 @@ class _Storage:
         }
         if self.fail_put:
             raise OSError("simulated object write failure")
-        key = internal_object_key or self.new_object_key(kind=kind)
+        key = internal_object_key or self.new_object_key(
+            kind=kind,
+            canonical_extension=canonical_extension,
+        )
+        assert key.endswith(canonical_extension)
         content = bytes(stream.read())
         assert len(content) == size_bytes
         self.objects[key] = content
@@ -228,7 +233,7 @@ def _fixture(
     )
     storage = _Storage()
     source = b"source"
-    source_key = storage.new_object_key(kind="staging")
+    source_key = storage.new_object_key(kind="staging", canonical_extension=".txt")
     storage.objects[source_key] = source
     repository.create_version(
         version_id="version-source-1",
@@ -254,7 +259,10 @@ def _fixture(
     )
     if include_catalog_candidate:
         candidate = b"catalog candidate"
-        candidate_key = storage.new_object_key(kind="attachment")
+        candidate_key = storage.new_object_key(
+            kind="attachment",
+            canonical_extension=".txt",
+        )
         storage.objects[candidate_key] = candidate
         repository.create_file(
             file_id="file-catalog",
@@ -589,7 +597,9 @@ def test_materialization_is_exact_version_job_bound_and_retryable() -> None:
     assert retry_media_type == "application/octet-stream"
 
 
-def test_catalog_selection_appends_once_and_reuses_exact_transfer_without_manifest_mutation() -> None:
+def test_catalog_selection_appends_once_and_reuses_exact_transfer_without_manifest_mutation() -> (
+    None
+):
     repository, service, context, _storage = _fixture(include_catalog_candidate=True)
     _install_catalog_tool_snapshot(repository)
     service.authorization = FileAuthorizationService(
@@ -754,9 +764,7 @@ def test_catalog_document_selection_freezes_exact_representation_identity() -> N
         context=context,
         arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
     )
-    assert first[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["expected_sha256"] == (
-        "c" * 64
-    )
+    assert first[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["expected_sha256"] == ("c" * 64)
     repository.database.execute(
         "update file_representation set status = 'CONTENT_UNAVAILABLE', content_deleted_at = ? "
         "where id = 'catalog-representation-1'",
@@ -878,8 +886,14 @@ def test_manifest_v4_materializes_frozen_markdown_not_original_document() -> Non
     markdown = b"# Governed representation\n"
     original_sha256 = hashlib.sha256(original).hexdigest()
     representation_sha256 = hashlib.sha256(markdown).hexdigest()
-    original_key = storage.new_object_key(kind="attachment")
-    representation_key = storage.new_object_key(kind="representation")
+    original_key = storage.new_object_key(
+        kind="attachment",
+        canonical_extension=".pdf",
+    )
+    representation_key = storage.new_object_key(
+        kind="representation",
+        canonical_extension=".md",
+    )
     storage.objects[original_key] = original
     storage.objects[representation_key] = markdown
     repository.create_file(
@@ -1034,7 +1048,10 @@ def test_stale_base_creates_conflict_without_advancing_current() -> None:
         },
     )
     commit_id = str(prepared[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["commit_id"])
-    concurrent_key = storage.new_object_key(kind="staging")
+    concurrent_key = storage.new_object_key(
+        kind="staging",
+        canonical_extension=".txt",
+    )
     storage.objects[concurrent_key] = b"concurrent"
     repository.create_version(
         version_id="version-source-2",
@@ -1172,7 +1189,10 @@ def test_three_file_partial_conflict_never_rolls_back_successful_versions() -> N
         },
     )
     stale_commit = str(stale[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["commit_id"])
-    concurrent_key = storage.new_object_key(kind="staging")
+    concurrent_key = storage.new_object_key(
+        kind="staging",
+        canonical_extension=".txt",
+    )
     storage.objects[concurrent_key] = b"new current"
     repository.create_version(
         version_id="version-source-concurrent",
@@ -1272,6 +1292,8 @@ def test_file_worker_attachment_import_is_idempotent_and_builds_txt_lineage() ->
     assert "object_key" not in imported
     version = repository.get_version(str(imported["version_id"]))
     assert version["source_kind"] == "MESSAGE_ATTACHMENT"
+    assert str(version["object_key"]).endswith(".txt")
+    assert "input.txt" not in str(version["object_key"])
     assert repository.get_file(str(imported["file_id"]))["source_received_at"] == TIMESTAMP
     assert repository.database.execute_one(
         "select provider, source_type, source_id from file_external_reference where version_id = ?",
@@ -1503,7 +1525,10 @@ def test_unreadable_document_rejects_materialization_but_allows_original_deliver
     repository, service, context, storage = _fixture()
     owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
     original = b"%PDF-1.4 pending source\n"
-    object_key = storage.new_object_key(kind="attachment")
+    object_key = storage.new_object_key(
+        kind="attachment",
+        canonical_extension=".pdf",
+    )
     storage.objects[object_key] = original
     repository.create_file(
         file_id="file-pending-pdf",
