@@ -737,7 +737,7 @@ def test_repository_is_append_only_and_enforces_revision_conflicts() -> None:
     )
     assert first["revision"] == 2
 
-    ordered_payload = draft_payload(mcp_tools=["get_business_flow_context", "get_er_context"])
+    ordered_payload = draft_payload(mcp_tools=["query_database", "get_schema_directory"])
     ordered_payload["triggers"] = [
         {
             "trigger_type": "dingtalk_private",
@@ -766,8 +766,8 @@ def test_repository_is_append_only_and_enforces_revision_conflicts() -> None:
         "second-route",
     ]
     assert [item["tool_identifier"] for item in ordered["mcp_tools"]] == [
-        "get_business_flow_context",
-        "get_er_context",
+        "query_database",
+        "get_schema_directory",
     ]
 
 
@@ -1105,6 +1105,24 @@ def test_mcp_tool_catalog_lists_manifest_tools_and_enforces_agent_binding() -> N
         project_code="default",
         owner_user_id="user_local_admin",
     )
+    container.database.execute(
+        """
+        update agent_publication_mcp_tool
+           set model_description = 'Legacy English description.'
+         where agent_publication_id = 'agent_publication_default_v1'
+           and tool_identifier = 'query_database'
+        """
+    )
+    container.database.execute(
+        """
+        insert into agent_publication_mcp_tool
+          (agent_publication_id, server_code, tool_identifier, schema_hash,
+           model_description, selection_order, created_at)
+        values ('agent_publication_default_v1', 'tool-mcp', 'get_er_context',
+                ?, 'Legacy retired tool.', 99, CURRENT_TIMESTAMP)
+        """,
+        ("1" * 64,),
+    )
 
     catalog = service.catalog(
         actor_id="user_local_admin",
@@ -1118,6 +1136,7 @@ def test_mcp_tool_catalog_lists_manifest_tools_and_enforces_agent_binding() -> N
         for item in catalog["mcp_tools_by_agent_publication"]["agent_publication_default_v1"]
     }
     assert {"get_schema_directory", "query_database"} <= python_tools
+    assert "get_er_context" not in python_tools
     descriptions = {
         item["tool_identifier"]: item["description"]
         for item in catalog["mcp_tools_by_agent_publication"]["agent_publication_default_v1"]

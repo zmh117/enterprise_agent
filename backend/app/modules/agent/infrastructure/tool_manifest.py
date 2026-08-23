@@ -39,28 +39,10 @@ _PLACEMENT_PROPERTY: dict[str, Any] = {
 
 
 TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "get_er_context": {
-        "description": "Search compact ER graph context for relevant tables, fields, enums, and relationships.",
-        "schema": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    },
-    "get_business_flow_context": {
-        "description": "Search compact business-flow context for relevant process nodes and flow evidence.",
-        "schema": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    },
     "get_schema_directory": {
         "description": (
-            "Return the allowed read-only schema directory for a target environment/base/workshop. "
-            "Use this before writing SQL. Only query tables and columns listed by this tool."
+            "返回目标环境、基地或车间允许访问的只读数据库结构目录。"
+            "编写 SQL 前应先调用本工具，且只能查询本工具列出的表和字段。"
         ),
         "schema": {
             "type": "object",
@@ -79,9 +61,9 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "query_loki": {
         "description": (
-            "Query bounded Loki logs with exact-match label selectors and a small result limit. "
-            "Use selector for labels such as cluster, service_name, container, region, or service; "
-            "for example {'cluster': 'mes-cluster'}."
+            "使用精确匹配的标签选择器和有界结果数量查询 Loki 日志。"
+            "selector 可使用 cluster、service_name、container、region 或 service 等标签，"
+            "例如 {'cluster': 'mes-cluster'}。"
         ),
         "schema": {
             "type": "object",
@@ -107,8 +89,8 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "diagnose_loki_labels": {
         "description": (
-            "List bounded Loki label names visible for the resolved environment/base/workshop. "
-            "Use this when a Loki query returns no logs or the correct service label is unclear."
+            "列出已解析环境、基地或车间范围内可见的有界 Loki 标签名称。"
+            "当 Loki 查询无结果或服务标签不明确时使用。"
         ),
         "schema": {
             "type": "object",
@@ -123,8 +105,8 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "diagnose_loki_label_values": {
         "description": (
-            "List bounded values for an allowed Loki label such as service, service_name, "
-            "container, cluster, region, or workshop."
+            "列出允许的 Loki 标签的有界取值，例如 service、service_name、"
+            "container、cluster、region 或 workshop。"
         ),
         "schema": {
             "type": "object",
@@ -150,8 +132,8 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "diagnose_loki_probe": {
         "description": (
-            "Probe a bounded Loki selector and keyword to explain empty results. "
-            "Returns stream_count, line_count, and safe empty-result hints."
+            "使用有界的 Loki 标签选择器和关键词探测无结果原因；"
+            "返回 stream_count、line_count 和安全的空结果提示。"
         ),
         "schema": {
             "type": "object",
@@ -173,8 +155,8 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "query_database": {
         "description": (
-            "Run policy-approved read-only SQL against the uniquely resolved MCP Resource. "
-            "Provide structured addressing when a Job target includes a base or workshop."
+            "对唯一解析的 MCP Resource 执行策略允许的只读 SQL。"
+            "当 Job 目标包含基地或车间时，应提供结构化定位信息。"
         ),
         "schema": {
             "type": "object",
@@ -190,7 +172,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
     },
     "query_redis_get": {
-        "description": "Read one approved Redis key from the uniquely resolved MCP Resource.",
+        "description": "从唯一解析的 MCP Resource 读取一个策略允许的 Redis Key。",
         "schema": {
             "type": "object",
             "properties": {
@@ -204,7 +186,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
     },
     "query_redis_scan": {
-        "description": "Scan approved Redis key prefixes with a bounded limit.",
+        "description": "按策略允许的 Redis Key 前缀执行有界扫描。",
         "schema": {
             "type": "object",
             "properties": {

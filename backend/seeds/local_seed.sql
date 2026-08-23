@@ -79,8 +79,8 @@ INSERT INTO agent_revision
    created_by, created_at, updated_at)
 VALUES
   ('agent_revision_default_v1', 'agent_default_diagnostic', 1, 'published',
-   '{"business_role":"Enterprise internal read-only diagnostic Agent","business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","model_policy":{"model":"claude-sonnet-4-20250514"},"execution":{"max_turns":12,"timeout_seconds":300},"tools":["get_er_context","get_business_flow_context","get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"],"skills":[],"routing":{"project_code":"default"},"channels":{"ingress":["connector-dingtalk-stream-default"],"delivery":["connector-dingtalk-enterprise-default"]}}',
-   'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
+   '{"business_role":"Enterprise internal read-only diagnostic Agent","business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","model_policy":{"model":"claude-sonnet-4-20250514"},"execution":{"max_turns":12,"timeout_seconds":300},"tools":["get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"],"skills":[],"routing":{"project_code":"default"},"channels":{"ingress":["connector-dingtalk-stream-default"],"delivery":["connector-dingtalk-enterprise-default"]}}',
+   '10d416a6387ed3e14e36613e6782a7a1b1b5d3647f962fb1435b195a658d4441',
    '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
    CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
@@ -91,8 +91,8 @@ INSERT INTO agent_publication
 VALUES
   ('agent_publication_default_v1', 'agent_default_diagnostic',
    'agent_revision_default_v1', 1, 3,
-   '{"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent","channels":{"delivery":["connector-dingtalk-enterprise-default"],"ingress":["connector-dingtalk-stream-default"]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"python-v1","skills":[],"supported_runtime_protocol_versions":["1.3"],"tools":["get_er_context","get_business_flow_context","get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"]}',
-   '0f40f94593f38a821f17c787a9d46ec5e95cc187e6b58f82d186a7d5189ff49e',
+   '{"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent","channels":{"delivery":["connector-dingtalk-enterprise-default"],"ingress":["connector-dingtalk-stream-default"]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"python-v1","skills":[],"supported_runtime_protocol_versions":["1.3"],"tools":["get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"]}',
+   '0e02e5fef13c7156dd2a7b1d80ff3c1efc58e83b4c30d123ef734e75e2a310a6',
    'python-v1', 'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
@@ -103,13 +103,11 @@ VALUES
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_label_values', 'dbdd1fb7009090387f2479f3e71ab691b67be3ea7fe76345e76c2468610b2796', '', 0, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_labels', '3fdb9c6cd548513b660a2995cbc5273878e896843aec6c9c6e9b6c1f40d71a27', '', 1, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_probe', 'f4f6881d4884b3111e905525c05dbc7f5fd0fb209f7dd3c5163a5d88b999bce1', '', 2, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'get_business_flow_context', '10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26', '', 3, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'get_er_context', '10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26', '', 4, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'get_schema_directory', '7502f1b28fc46291047e9c9d5bc6ba910363596af55aed85a163ea3dc105a1ca', '', 5, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_database', '9b2fdee7c913e746f58b8149305990f5601044ad7c30b08bc7d4b017d53f6113', '', 6, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_loki', 'ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108', '', 7, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_get', 'e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50', '', 8, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_scan', 'f617799ffcb621770965e8bf02042e71ebfc80ba814c05a2b94a4ad0e15d0770', '', 9, CURRENT_TIMESTAMP)
+  ('agent_publication_default_v1', 'tool-mcp', 'get_schema_directory', '7502f1b28fc46291047e9c9d5bc6ba910363596af55aed85a163ea3dc105a1ca', '', 3, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_database', '9b2fdee7c913e746f58b8149305990f5601044ad7c30b08bc7d4b017d53f6113', '', 4, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_loki', 'ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108', '', 5, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_get', 'e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50', '', 6, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_scan', 'f617799ffcb621770965e8bf02042e71ebfc80ba814c05a2b94a4ad0e15d0770', '', 7, CURRENT_TIMESTAMP)
 ON CONFLICT(agent_publication_id, tool_identifier) DO NOTHING;
 
 INSERT INTO agent_channel_binding
@@ -163,10 +161,10 @@ INSERT INTO webhook_trigger_publication
 VALUES
   ('webhook_trigger_publication_grafana_v1', 'webhook_trigger_grafana_default',
    'webhook_trigger_revision_grafana_v1', 1, 1,
-   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"0f40f94593f38a821f17c787a9d46ec5e95cc187e6b58f82d186a7d5189ff49e","read_only_tools":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_business_flow_context","get_er_context","get_schema_directory","query_database","query_loki","query_redis_get","query_redis_scan"]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
+   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"0e02e5fef13c7156dd2a7b1d80ff3c1efc58e83b4c30d123ef734e75e2a310a6","read_only_tools":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_schema_directory","query_database","query_loki","query_redis_get","query_redis_scan"]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
    'fc5f064e955301b104fe7577f1a1c52c9656890e622de40514fa5fdc3d6313de',
    'agent_publication_default_v1', 1,
-   '0f40f94593f38a821f17c787a9d46ec5e95cc187e6b58f82d186a7d5189ff49e',
+   '0e02e5fef13c7156dd2a7b1d80ff3c1efc58e83b4c30d123ef734e75e2a310a6',
    'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 

@@ -25,7 +25,6 @@ from app.shared.exceptions import NotFound
 ACTOR_USERNAME = "admin"
 AGENT_CODE = "default-diagnostic-agent"
 RUNTIME_KIND = "python-v1"
-READONLY_TOOL = "get_er_context"
 ONES_TOOL = "ones_work_item_search"
 FILE_TOOL = "task_workspace_get"
 FILE_READ_TOOLS = (
@@ -575,7 +574,7 @@ def main() -> int:
             )
 
         sensitive_values = _configure_ones_mock_identity(runtime, actor_id)
-        mcp_tools = (READONLY_TOOL, ONES_TOOL)
+        mcp_tools = (ONES_TOOL,)
         mcp_publication = _publish_agent(
             runtime,
             actor_id,
@@ -589,7 +588,6 @@ def main() -> int:
             mcp_tool_ids=mcp_tools,
         )
         mcp_scenarios = (
-            ("tool-mcp", READONLY_TOOL, "[smoke:mcp:tool-mcp]", 1, False),
             (
                 "ones-mcp",
                 ONES_TOOL,

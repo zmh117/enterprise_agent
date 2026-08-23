@@ -183,12 +183,7 @@ def multimodal_container(
         FileWorkspaceRepository(container.database)
     )
     normalized_task_file_features = validate_task_file_features(task_file_features)
-    tool_identifiers = tuple(
-        sorted(
-            {"get_er_context", "get_business_flow_context"}
-            | set(required_file_mcp_tools(normalized_task_file_features))
-        )
-    )
+    tool_identifiers = tuple(sorted(required_file_mcp_tools(normalized_task_file_features)))
     activate_dingtalk_test_application(
         container,
         code="multimodal-test-application",

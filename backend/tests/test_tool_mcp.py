@@ -3,10 +3,14 @@ from __future__ import annotations
 import pytest
 from starlette.testclient import TestClient
 
+from app.bootstrap import Container
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.job.infrastructure.repositories import now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.mcp_audit import McpAuditCoordinator
+from app.modules.platform_config.application.governed_resources import (
+    ResourceVerificationOutcome,
+)
 from app.shared.exceptions import ToolPolicyError
 from app.services.tool_mcp import (
     JobToolService,
@@ -17,7 +21,67 @@ from app.services.tool_mcp import (
 from backend.tests.helpers import container, prepare_debug_application_access
 
 
-def _runtime_job(*, capabilities: tuple[str, ...] = ("get_er_context",)):
+TOOL_NAME = "get_schema_directory"
+TOOL_ARGUMENTS = {
+    "environment": "local",
+    "base": "debug-base",
+    "query": "order",
+    "limit": 10,
+}
+
+
+class _PassingMysqlVerifier:
+    def verify(self, **_: object) -> ResourceVerificationOutcome:
+        return ResourceVerificationOutcome(
+            status="PASSED",
+            provider_contract_version="mysql_v1",
+            checks={"connection": "passed", "readonly": True},
+        )
+
+
+def _publish_database_resource(runtime: Container) -> None:
+    platform_config_service = runtime.platform_config_service
+    platform_config_service.create_platform_secret(
+        {
+            "code": "tool_mcp_test_password",
+            "value": "test-only-password",
+        },
+        actor_id="user_local_admin",
+    )
+    resource_service = platform_config_service.governed_resources
+    resource_service.create_resource(
+        {
+            "code": "tool_mcp_test_database",
+            "name": "Tool MCP Test Database",
+            "resource_kind": "database",
+            "scope_type": "base",
+            "environment_code": "local",
+            "base_code": "debug-base",
+            "provider_type": "mysql",
+            "config": {
+                "host": "mysql.test.internal",
+                "port": 3306,
+                "database": "diagnostics",
+                "username": "readonly",
+            },
+            "secret_refs": {
+                "password_ref": "secret://platform/tool_mcp_test_password",
+            },
+        },
+        actor_id="user_local_admin",
+    )
+    resource_service.verify_draft(
+        "tool_mcp_test_database",
+        actor_id="user_local_admin",
+        verifier=_PassingMysqlVerifier(),
+    )
+    resource_service.publish_draft(
+        "tool_mcp_test_database",
+        actor_id="user_local_admin",
+    )
+
+
+def _runtime_job(*, capabilities: tuple[str, ...] = (TOOL_NAME,)):
     runtime = container()
     if "ones_work_item_search" in capabilities:
         definition = MCP_TOOL_MANIFEST["ones_work_item_search"]
@@ -50,6 +114,8 @@ def _runtime_job(*, capabilities: tuple[str, ...] = ("get_er_context",)):
         role_code="tool-mcp-role",
         capabilities=capabilities,
     )
+    if TOOL_NAME in capabilities:
+        _publish_database_resource(runtime)
     job, _ = runtime.debug_job_access_service.create_job(
         user_id="user_local_admin",
         display_name="Administrator",
@@ -87,11 +153,9 @@ def _request_identity(job, correlation_id: str) -> ToolRequestIdentity:
 
 
 def test_tool_mcp_excludes_tools_owned_by_other_mcp_servers() -> None:
-    _runtime, job, service = _runtime_job(
-        capabilities=("get_er_context", "ones_work_item_search")
-    )
+    _runtime, job, service = _runtime_job(capabilities=(TOOL_NAME, "ones_work_item_search"))
 
-    assert [item.name for item in service.catalog(job.id)] == ["get_er_context"]
+    assert [item.name for item in service.catalog(job.id)] == [TOOL_NAME]
     with pytest.raises(ToolMcpError) as denied:
         service.descriptor(job.id, "ones_work_item_search")
     assert denied.value.code == "tool_mcp_tool_denied"
@@ -101,19 +165,20 @@ def test_standard_tool_mcp_invokes_current_python_job() -> None:
     runtime, job, service = _runtime_job()
 
     catalog = service.catalog(job.id)
-    assert [item.name for item in catalog] == ["get_er_context"]
-    selected_job, descriptor = service.descriptor(job.id, "get_er_context")
+    assert [item.name for item in catalog] == [TOOL_NAME]
+    selected_job, descriptor = service.descriptor(job.id, TOOL_NAME)
     result = service.invoke(
         job=selected_job,
         descriptor=descriptor,
-        arguments={"query": "order"},
+        arguments=TOOL_ARGUMENTS,
         request_identity=_request_identity(job, "tool-call-1"),
     )
 
     assert result.payload["security"]["trust"] == "untrusted_internal_evidence"
     assert [item["tool_name"] for item in runtime.agent_repository.list_tool_calls(job.id)] == [
-        "get_er_context"
+        TOOL_NAME
     ]
+
 
 def test_standard_mcp_http_has_no_auth_protocol_and_rejects_credentials() -> None:
     _runtime, job, service = _runtime_job()
@@ -164,7 +229,7 @@ def test_standard_mcp_http_has_no_auth_protocol_and_rejects_credentials() -> Non
                 "jsonrpc": "2.0",
                 "id": 4,
                 "method": "tools/call",
-                "params": {"name": "get_er_context", "arguments": {"query": "order"}},
+                "params": {"name": TOOL_NAME, "arguments": TOOL_ARGUMENTS},
             },
         )
 
@@ -174,30 +239,33 @@ def test_standard_mcp_http_has_no_auth_protocol_and_rejects_credentials() -> Non
     assert credential_rejected.json() == {"error": "tool_mcp_credentials_forbidden"}
     assert initialized.status_code == 200
     assert initialized.json()["result"]["serverInfo"]["name"] == "Enterprise Tool MCP"
-    assert [item["name"] for item in listed.json()["result"]["tools"]] == ["get_er_context"]
+    assert [item["name"] for item in listed.json()["result"]["tools"]] == [TOOL_NAME]
     assert called.status_code == 200
     assert called.json()["result"]["isError"] is False
     assert set(called.json()["result"]["_meta"]) == {
         "enterprise-agent/mcp-call-id",
         "enterprise-agent/agent-tool-call-id",
     }
-    assert len(
-        _runtime.database.execute(
-            "select id from mcp_operation_audit where job_id = ?",
-            (job.id,),
-        )
-    ) == 2
+    audit_events = _runtime.database.execute(
+        "select event_kind, status from mcp_operation_audit where job_id = ?",
+        (job.id,),
+    )
+    assert {(item["event_kind"], item["status"]) for item in audit_events} == {
+        ("AUTHORIZATION", "SUCCEEDED"),
+        ("RESOURCE", "SUCCEEDED"),
+        ("TOOL", "SUCCEEDED"),
+    }
 
 
 def test_tool_mcp_repeated_same_name_calls_keep_distinct_exact_links() -> None:
     runtime, job, service = _runtime_job()
-    selected_job, descriptor = service.descriptor(job.id, "get_er_context")
+    selected_job, descriptor = service.descriptor(job.id, TOOL_NAME)
 
     def invoke(index: int):
         return service.invoke(
             job=selected_job,
             descriptor=descriptor,
-            arguments={"query": f"order-{index}"},
+            arguments={**TOOL_ARGUMENTS, "query": f"order-{index}"},
             request_identity=_request_identity(job, f"tool-concurrent-{index}"),
         )
 
@@ -228,7 +296,7 @@ def test_tool_mcp_audit_failure_closes_before_tool_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _runtime, job, service = _runtime_job()
-    selected_job, descriptor = service.descriptor(job.id, "get_er_context")
+    selected_job, descriptor = service.descriptor(job.id, TOOL_NAME)
     executed = False
 
     def reject_audit(*_args, **_kwargs):
@@ -250,7 +318,7 @@ def test_tool_mcp_audit_failure_closes_before_tool_execution(
         service.invoke(
             job=selected_job,
             descriptor=descriptor,
-            arguments={"query": "order"},
+            arguments=TOOL_ARGUMENTS,
             request_identity=_request_identity(job, "tool-audit-down"),
         )
 

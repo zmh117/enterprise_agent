@@ -29,7 +29,7 @@ const config = {
     model_connection_revision_id: "model_revision_1",
   },
   execution: { max_turns: 12, timeout_seconds: 300 },
-  mcp_tool_ids: ["get_er_context"],
+  mcp_tool_ids: ["get_schema_directory"],
   skills: [],
   routing: { project_code: "default" },
   channels: {
@@ -137,8 +137,8 @@ function agentPayload(
         mcp_tools: [
           {
             server_code: "tool-mcp",
-            identifier: "get_er_context",
-            description: "读取 ER 上下文",
+            identifier: "get_schema_directory",
+            description: "查看数据库结构目录",
             schema_hash: "a".repeat(64),
             resource_kind: "graph",
             read_only: true,
@@ -556,7 +556,7 @@ describe("Agent Profile management", () => {
             },
             catalog: {
               models: ["deepseek-v4-flash"],
-              tools: ["get_er_context"],
+              tools: ["get_schema_directory"],
               skills: [],
               connectors: [
                 {
@@ -803,7 +803,7 @@ describe("Agent Profile management", () => {
             },
             catalog: {
               models: ["deepseek-v4-flash"],
-              tools: ["get_er_context"],
+              tools: ["get_schema_directory"],
               skills: [],
               connectors: [],
             },
@@ -1168,7 +1168,7 @@ describe("Agent Profile management", () => {
     )
 
     expect(await screen.findByText("MCP 工具")).toBeInTheDocument()
-    expect(screen.getByText("读取 ER 上下文")).toBeInTheDocument()
+    expect(screen.getByText("查看数据库结构目录")).toBeInTheDocument()
     expect(screen.getByText("只读查询 ONES 工作项")).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole("checkbox", { name: "ones_work_item_search" })
@@ -1177,7 +1177,7 @@ describe("Agent Profile management", () => {
 
     await waitFor(() =>
       expect(savedConfig).toMatchObject({
-        mcp_tool_ids: ["get_er_context", "ones_work_item_search"],
+        mcp_tool_ids: ["get_schema_directory", "ones_work_item_search"],
       })
     )
   })

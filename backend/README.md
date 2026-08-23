@@ -25,8 +25,6 @@ API Capability、Handler、API Connection、Resource Mapping、Tool Release 生�
 
 代码 Manifest 当前包含：
 
-- `get_er_context`
-- `get_business_flow_context`
 - `get_schema_directory`
 - `query_database`
 - `query_redis_get`

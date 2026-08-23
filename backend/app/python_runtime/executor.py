@@ -270,16 +270,6 @@ class PythonRuntimeExecutor:
             cancel_event.wait(timeout=5)
         if cancel_event.is_set():
             return self._cancelled(provenance)
-        if "[smoke:mcp:tool-mcp]" in question:
-            return self._execute_fake_mcp(
-                request,
-                provenance,
-                server_code="tool-mcp",
-                tool_name="get_er_context",
-                arguments={"query": "enterprise agent acceptance"},
-                bearer_token="",
-                call_count=1,
-            )
         if "[smoke:mcp:file-service]" in question:
             file_principal_token = secret_context.file_principal_token if secret_context else ""
             if not file_principal_token:

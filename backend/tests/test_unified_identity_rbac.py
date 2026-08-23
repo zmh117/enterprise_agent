@@ -379,7 +379,7 @@ def test_admin_api_revision_conflicts_and_typed_agent_draft_errors() -> None:
                         "api_key": "must-not-be-accepted",
                     },
                     "execution": {"max_turns": 12, "timeout_seconds": 300},
-                    "tools": ["get_er_context"],
+                    "tools": ["query_database"],
                     "skills": [],
                     "routing": {"project_code": "default"},
                     "channels": {

@@ -60,37 +60,6 @@ class DirectReadOnlyToolExecutor:
         )
         self.redis = RealRedisGateway()
 
-    def get_er_context(self, query: str, context: ToolRequestContext) -> ToolResult:
-        del context
-        addressing = self.resolver.directory()
-        summary = {
-            "query": query,
-            "addressing": addressing,
-            "tables": [],
-            "fields": [],
-            "relationships": [],
-            "note": "Use the Resource address and get_schema_directory before querying data.",
-        }
-        return ToolResult(
-            summary=summary,
-            raw={"resource_count": len(addressing["resources"])},
-        )
-
-    def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult:
-        del context
-        addressing = self.resolver.directory()
-        summary = {
-            "query": query,
-            "addressing": addressing,
-            "nodes": [],
-            "edges": [],
-            "note": "Business-flow graph is not connected; use available read-only evidence.",
-        }
-        return ToolResult(
-            summary=summary,
-            raw={"resource_count": len(addressing["resources"])},
-        )
-
     def get_schema_directory(
         self,
         context: ToolRequestContext,

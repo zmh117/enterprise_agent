@@ -1040,7 +1040,7 @@ def test_postgres_concurrent_same_name_mcp_calls_keep_exact_links(
                     invocation_id=f"{job.id}.attempt-0",
                     actor_user_id="mcp-concurrent-user",
                     server_code="tool-mcp",
-                    tool_identifier="get_er_context",
+                    tool_identifier="query_database",
                 ),
                 business_request={"query": f"order-{index}"},
             )

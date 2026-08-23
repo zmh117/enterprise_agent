@@ -10,8 +10,6 @@ from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 
 _BUSINESS_CAPABILITY_NAMES_ZH = {
-    "get_er_context": "查看 ER 模型上下文",
-    "get_business_flow_context": "查看业务流程上下文",
     "get_schema_directory": "查看数据库结构目录",
     "diagnose_loki_labels": "诊断日志标签",
     "diagnose_loki_label_values": "诊断日志标签值",
@@ -486,16 +484,18 @@ class AuthorizationCenterRepository:
                 if revision
                 else []
             )
+            application["mcp_tools"] = [
+                tool
+                for tool in application["mcp_tools"]
+                if str(tool["tool_identifier"]) in MCP_TOOL_MANIFEST
+            ]
             for tool in application["mcp_tools"]:
                 identifier = str(tool["tool_identifier"])
                 tool["display_name_zh"] = _BUSINESS_CAPABILITY_NAMES_ZH.get(
                     identifier,
                     "MCP Tool",
                 )
-                definition = MCP_TOOL_MANIFEST.get(identifier)
-                tool["description"] = str(tool.get("description") or "").strip() or (
-                    definition.description if definition is not None else ""
-                )
+                tool["description"] = MCP_TOOL_MANIFEST[identifier].description
         return applications
 
     def application_tool_is_effective(self, application_id: str, tool_identifier: str) -> bool:

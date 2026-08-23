@@ -294,8 +294,8 @@ def test_job_tool_call_api_projects_exact_runtime_and_mcp_identity() -> None:
     )
     tool_call_id = runtime.agent_repository.add_tool_call(
         job_id=job_id,
-        tool_name="get_er_context",
-        request_payload={"query": "order"},
+        tool_name="query_database",
+        request_payload={"sql": "select 1"},
         response_summary={"count": 1},
         status="SUCCEEDED",
         duration_ms=4,
@@ -319,7 +319,7 @@ def test_job_tool_call_api_projects_exact_runtime_and_mcp_identity() -> None:
     assert len(tool_calls) == 1
     projected = tool_calls[0]
     assert projected["id"] == tool_call_id
-    assert projected["request_payload"] == {"query": "order"}
+    assert projected["request_payload"] == {"sql": "select 1"}
     assert projected["response_summary"] == {"count": 1}
     assert projected["invocation_id"] == f"{job_id}.attempt-0"
     assert projected["runtime_tool_call_id"] == "sdk-tool-use-projection"

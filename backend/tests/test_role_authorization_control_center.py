@@ -317,6 +317,43 @@ def test_assignable_catalog_describes_tools_from_legacy_agent_publications() -> 
         """
     )
     assert frozen == {"model_description": ""}
+    c.database.execute(
+        """
+        update agent_publication_mcp_tool
+           set model_description = 'Legacy English description.'
+         where agent_publication_id = 'agent_publication_default_v1'
+           and tool_identifier = 'query_database'
+        """
+    )
+    application_revision = c.database.execute_one(
+        """
+        select id from business_application_revision
+         where application_id = ?
+         order by revision desc limit 1
+        """,
+        (application["id"],),
+    )
+    assert application_revision is not None
+    c.database.execute(
+        """
+        insert into agent_publication_mcp_tool
+          (agent_publication_id, server_code, tool_identifier, schema_hash,
+           model_description, selection_order, created_at)
+        values ('agent_publication_default_v1', 'tool-mcp', 'get_er_context',
+                ?, 'Legacy retired tool.', 99, CURRENT_TIMESTAMP)
+        """,
+        ("1" * 64,),
+    )
+    c.database.execute(
+        """
+        insert into business_application_revision_mcp_tool
+          (application_revision_id, agent_publication_id, server_code,
+           tool_identifier, schema_hash, selection_order, created_at)
+        values (?, 'agent_publication_default_v1', 'tool-mcp',
+                'get_er_context', ?, 99, CURRENT_TIMESTAMP)
+        """,
+        (application_revision["id"], "1" * 64),
+    )
 
     catalog = c.authorization_center_service.assignable_catalog(actor_id=ADMIN_ID)
     catalog_application = next(

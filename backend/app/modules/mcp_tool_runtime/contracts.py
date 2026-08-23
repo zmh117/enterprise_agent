@@ -27,10 +27,6 @@ class ReadOnlyToolExecutor(Protocol):
     It is deliberately not an HTTP client and has no token or configurable URL.
     """
 
-    def get_er_context(self, query: str, context: ToolRequestContext) -> ToolResult: ...
-
-    def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult: ...
-
     def get_schema_directory(
         self,
         context: ToolRequestContext,
@@ -141,14 +137,6 @@ class FakeReadOnlyToolExecutor:
         self.calls.append((name, values))
         summary = {"source": "fake-tool-mcp", **values}
         return ToolResult(summary=summary, raw={})
-
-    def get_er_context(self, query: str, context: ToolRequestContext) -> ToolResult:
-        return self._result("get_er_context", query=query, project_code=context.project_code)
-
-    def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult:
-        return self._result(
-            "get_business_flow_context", query=query, project_code=context.project_code
-        )
 
     def __getattr__(self, name: str) -> Any:
         def invoke(*args: Any, **kwargs: Any) -> ToolResult:

@@ -296,11 +296,7 @@ class ReadOnlyToolService:
         elif tool_name == "diagnose_loki_label_values":
             assert_loki_label(str(arguments.get("label", "")))
             assert_loki_diagnostic_bounds(arguments, self.limits)
-        elif tool_name not in {
-            "get_er_context",
-            "get_business_flow_context",
-            "get_schema_directory",
-        }:
+        elif tool_name != "get_schema_directory":
             raise ToolPolicyError(f"Tool {tool_name} is not registered for read-only MVP")
 
     def _execute(
@@ -320,16 +316,6 @@ class ReadOnlyToolService:
             correlation_id=correlation_id_var.get(),
             tool_call_id=tool_call_id,
         )
-        if tool_name == "get_er_context":
-            return self.tool_executor.get_er_context(
-                query=str(arguments.get("query", "")),
-                context=context,
-            )
-        if tool_name == "get_business_flow_context":
-            return self.tool_executor.get_business_flow_context(
-                query=str(arguments.get("query", "")),
-                context=context,
-            )
         if tool_name == "get_schema_directory":
             addressing = _addressing_from_arguments(arguments)
             if not addressing.get("environment"):

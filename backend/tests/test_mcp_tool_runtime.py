@@ -40,6 +40,21 @@ _EXECUTION_POLICY = {
 }
 
 
+def test_mcp_tool_manifest_descriptions_use_chinese() -> None:
+    descriptions = [definition.description for definition in MCP_TOOL_MANIFEST.values()]
+
+    assert descriptions
+    assert all(_contains_chinese(value) for value in descriptions)
+
+
+def test_unimplemented_context_placeholders_are_not_registered() -> None:
+    assert {"get_er_context", "get_business_flow_context"}.isdisjoint(MCP_TOOL_MANIFEST)
+
+
+def _contains_chinese(value: str) -> bool:
+    return any("\u4e00" <= character <= "\u9fff" for character in value)
+
+
 class _RowsDatabase:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
@@ -427,8 +442,8 @@ def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_too
     assert context.retrieved_context == {"conversation": {}}
     serialized = json.dumps(context.retrieved_context, ensure_ascii=False)
     assert "tool_not_assigned" not in serialized
-    assert "get_er_context" not in serialized
-    assert "get_business_flow_context" not in serialized
+    assert "query_database" not in serialized
+    assert "query_loki" not in serialized
 
 
 def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -> None:
