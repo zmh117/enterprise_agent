@@ -3,24 +3,24 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_emergency_master_key_runbook_is_offline_atomic_and_single_key() -> None:
+def test_master_key_runbook_refuses_incomplete_reencryption() -> None:
     path = (
         Path(__file__).resolve().parents[2]
         / "docs"
         / "operations"
-        / "emergency-master-key-reencryption.md"
+        / "platform-master-key.md"
     )
     text = path.read_text(encoding="utf-8")
 
     for required in (
-        "完整维护窗口",
-        "停止 API",
-        "一个数据库事务",
-        "回滚整个事务",
-        "原子 rename",
-        "配对恢复单元",
-        "不得同时保留两把在线 Key",
-        "不提供 Web",
-        "不实行 Master Key 有效期、定期轮换、在线多 Key keyring",
+        "没有覆盖全部密文域的受支持重加密工具",
+        "platform_secret_version",
+        "external_identity_credential",
+        "pending challenge",
+        "message_attachment",
+        "channel_ingress_event",
+        "只能停机、隔离、备份并执行事件响应",
+        "不得执行数据库重加密或替换 Key 文件",
+        "不提供 Web 管理、多 Key keyring",
     ):
         assert required in text

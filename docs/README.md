@@ -41,21 +41,14 @@
 - [Compose PostgreSQL 18 / RabbitMQ 4 升级与恢复](operations/compose-postgres18-rabbitmq4-upgrade.md)
 - [Agent 重试与失败投递](operations/agent-retry-failure-delivery.md)
 - [平台 Master Key](operations/platform-master-key.md)
-- [Master Key 紧急离线重加密草案（当前不可执行）](operations/emergency-master-key-reencryption.md)
 - [钉钉测试数据重建](operations/dingtalk-test-data-rebuild.md)
-- [Task File Workspace 切换记录（历史）](operations/task-file-workspace-cutover.md)
 - [受治理文档处理](operations/governed-document-processing.md)
-- [TypeScript Agent Runtime 退役记录（历史）](operations/typescript-agent-runtime-retirement.md)
-- [Schema 事实源收敛记录（历史）](operations/schema-fact-source-consolidation.md)
-- [Docling Layout OCR 切换记录（历史）](operations/docling-layout-ocr-cutover.md)
 
 ## 验证与参考
 
-- [Compose PostgreSQL 18 / RabbitMQ 4 验收快照](verification/compose-postgres18-rabbitmq4-verification.md)
-- [Task File Workspace 合成验收证据](verification/task-file-workspace-synthetic-acceptance.md)
-- [ChatGPT 项目上下文](reference/chatgpt-context/README.md)
+- [Task File Workspace Sandbox 容量基线](verification/task-file-workspace-sandbox-capacity.md)
+- [ChatGPT 项目上下文（单文件）](reference/enterprise-agent-project-context-for-chatgpt.md)
 - [ADR 状态索引](reference/decisions/README.md)
-- [文档移动清单](reference/document-inventory.md)
 
 ## 历史归档
 
