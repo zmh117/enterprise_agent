@@ -286,17 +286,17 @@
 - **AND** 用户不能查看完整Token或撤销他人Session
 
 ### Requirement: 导航展示与后端能力保持一致
-系统 SHALL 根据当前用户能力展示用户、外部身份、Connection和其它管理入口，但 MUST NOT 把前端隐藏导航作为授权机制。
+系统 SHALL 根据当前用户能力展示用户、外部身份和其它真实管理入口，但 MUST NOT 把前端隐藏导航作为授权机制，也不得展示当前没有 API 与页面的通用 Connection、Claim 或冲突治理入口。
 
 #### Scenario: 身份管理员登录
-- **WHEN** 用户具有identity管理权限但没有其它平台管理权限
+- **WHEN** 用户具有 identity 管理权限但没有其它平台管理权限
 - **THEN** 前端显示允许的用户与外部身份入口并隐藏无权限命令
-- **AND** 后端仍对每个请求执行对象级RBAC
+- **AND** 后端仍对每个请求执行对象级 RBAC
 
 #### Scenario: 普通用户登录
 - **WHEN** 用户只有自己的安全设置和外部身份自助验证权限
 - **THEN** 前端只显示个人安全与“我的外部身份”
-- **AND** 不显示其它用户、Connection和冲突治理数据
+- **AND** 不显示其它用户或不存在的 Connection、Claim 与冲突治理页面
 
 ### Requirement: 认证页面满足安全可用性要求
 系统 SHALL 为登录、Session恢复、无权限、过期、限流和后端不可用提供明确状态，并 MUST 满足桌面、窄屏、键盘和辅助技术使用要求。
@@ -338,23 +338,23 @@ The system SHALL check connector ingress authorization and the access policy app
 - **THEN** the system rejects job creation, records a safe reason, and returns an understandable binding or account-status prompt
 
 ### Requirement: Tool access is policy checked
-The system SHALL check tool allowlists, source access, read-only risk policy and the governance policy applicable to each Tool before execution. For a governed API Capability, the system MUST check the frozen Agent Capability Envelope, Application Capability Allowlist, exact Release status, current user Provider availability, External Execution Subject Snapshot and current personal credential; it MUST NOT require a separate per-user or per-role Capability Code `use` grant.
+系统 SHALL 在执行前校验 Tool allowlist、只读或受控写策略、Agent Publication Envelope、Business Application MCP Tool 子集、当前角色 Tool grant、Job 冻结的 Tool/schema、资源范围以及目标 MCP Server 的身份策略。业务 MCP Tool MUST 同时满足发布交集、当前角色授权、有效 Job Principal 和 Provider 身份/Credential 前置条件；任一维度不得成为其它维度的替代或扩大授权。
 
 #### Scenario: Allowed read-only tool call
-- **WHEN** Agent requests an enabled internal read-only tool within the user's allowed scope
-- **THEN** the system executes the tool call and records the policy decision
+- **WHEN** Agent 请求的 Tool 位于 Job 冻结快照、两个 Publication 交集和当前角色 Tool grant 内，且资源范围与 MCP 身份校验均通过
+- **THEN** 系统执行调用并记录各授权维度的决策
 
 #### Scenario: Disallowed tool call
-- **WHEN** Agent requests a disabled tool, out-of-scope source, non-read-only operation, or Tool outside the current publication snapshot
-- **THEN** the system rejects the tool call and records the policy decision
+- **WHEN** Tool 已禁用、超出资源范围、不在任一发布集合、不在当前角色 grant、schema 漂移或身份前置条件失败
+- **THEN** 系统在目标操作前拒绝并记录安全决策
 
-#### Scenario: Governed Capability is fully allowed
-- **WHEN** the exact Capability Release belongs to both the frozen Agent Envelope and Application Allowlist, remains runnable, and the current user binding, Team and Token are valid
-- **THEN** the system executes the call and records each governance dimension without checking a separate Capability role grant
+#### Scenario: Application did not allow Tool
+- **WHEN** Agent Publication Envelope 包含 Tool 但 Business Application 未选择它
+- **THEN** 系统在 MCP 或 Provider 网络访问前拒绝
 
-#### Scenario: Application did not allow Capability
-- **WHEN** the Agent Envelope includes the Release but the Application Allowlist does not
-- **THEN** the system rejects the call before external network access and records the missing application authorization dimension
+#### Scenario: Role did not grant Tool
+- **WHEN** 两个 Publication 都包含 Tool 但当前用户的有效角色没有对应 Tool grant
+- **THEN** 系统拒绝签发或调用且不得因身份已绑定而放行
 
 ### Requirement: Audit events are persisted across the execution chain
 系统 SHALL 持久化覆盖 Channel receipt、身份解析、connector/RBAC 决策、Job 创建、队列发布确认、Worker claim、工具调用、Claude 安全错误分类、retry 调度、retry 回流、显式恢复、终态结果、delivery attempt/chunk 和最终投递状态的审计事件，并使用 Job 与 correlation ID 串联全链路。
@@ -388,27 +388,25 @@ The system SHALL check tool allowlists, source access, read-only risk policy and
 - **THEN** 审计记录 connector、external event ID、忽略原因和安全 payload 摘要
 
 ### Requirement: Tool calls are recorded with safe summaries
-The system SHALL persist tool call records with sanitized request payload summaries, bounded normalized response summaries, status, duration, risk level, audit linkage, and exact MCP Tool or external Capability outcome details when available. For governed external APIs, the system MUST record Release and attempt metadata but MUST NOT persist authentication material, raw HTTP request/response bodies or unbounded external content.
+系统 SHALL 持久化 Tool Call 的脱敏请求摘要、有界规范化响应摘要、状态、耗时、风险级别、审计关联以及实际 MCP Server、Tool identifier、schema hash、资源或 Provider attempt 事实。系统 MUST NOT 持久化认证材料、原始 HTTP 请求/响应正文或无界外部内容，也不得记录已删除的 Capability Release 或 Handler 作为当前执行来源。
 
 #### Scenario: Database tool succeeds
-- **WHEN** `query_database` returns evidence through `tool-mcp`
-- **THEN** the system records the tool identifier/schema hash, sanitized request summary, bounded response summary, duration, status, risk level, related audit event and actual Resource Revision metadata
+- **WHEN** `query_database` 通过 `tool-mcp` 返回证据
+- **THEN** 系统记录 Tool identifier/schema hash、脱敏请求摘要、有界响应摘要、耗时、状态、风险级别、审计事件和实际 Resource Revision 元数据
 
 #### Scenario: Tool call returns sensitive or large data
-- **WHEN** a tool response contains sensitive fields or exceeds inline storage limits
-- **THEN** the system stores a masked or summarized response in PostgreSQL and avoids persisting raw sensitive payloads in the tool call row
+- **WHEN** Tool 响应包含敏感字段或超过内联存储上限
+- **THEN** 系统在 PostgreSQL 中只保存掩码或摘要结果
+- **AND** 不在 Tool Call 行保存原始敏感载荷
 
 #### Scenario: Tool MCP rejects a call
-- **WHEN** `tool-mcp` rejects a tool call because of Job provenance, authorization, resource resolution, data-source policy, query policy or malformed parameters
-- **THEN** the system records a failed tool call with a safe rejection reason, duration, risk level and audit event without exposing resource secrets
+- **WHEN** `tool-mcp` 因 Job 来源、授权、资源解析、数据源策略、查询策略或参数错误拒绝调用
+- **THEN** 系统记录安全拒绝原因、耗时、风险级别和审计事件且不暴露资源 Secret
 
-#### Scenario: Governed external API call succeeds after retry
-- **WHEN** a QUERY Capability succeeds after one or more HTTP attempts
-- **THEN** the system records one linked Tool Call and separate safe attempt metadata containing identifiers, classification, duration, size and status, without raw body, Token, Cookie or authentication Header
-
-#### Scenario: Governed external output is INTERNAL
-- **WHEN** a Capability returns bounded normalized INTERNAL data
-- **THEN** the Tool Call summary preserves user, Application Publication, Capability Release and classification provenance and remains subject to the existing Job access boundary
+#### Scenario: Business MCP call succeeds after retry
+- **WHEN** 代码固定业务 MCP Tool 在一次或多次 Provider attempt 后成功
+- **THEN** 系统记录一条关联 Tool Call 和独立安全 attempt 事实
+- **AND** 事实包含 Server/Tool/schema、分类、耗时、大小与状态但不含原始正文、Token、Cookie 或认证 Header
 
 ### Requirement: Agent artifacts are persisted
 The system SHALL persist final reports and other approved Agent artifacts with job linkage and artifact type.
@@ -675,15 +673,16 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 系统整体回滚并报告安全错误，不留下部分清理状态
 
 ### Requirement: 重建保留跨域运行历史
-钉钉测试数据重建 MUST 保留平台人员、角色、登录会话、ONES 身份与个人凭据、API Capability、Agent、业务应用主体，以及全部 Agent Job、Tool 调用结果和投递记录；历史发布中的旧连接引用 SHALL 只标记为不可运行历史来源，不得被静默改写到新连接。
+钉钉测试数据重建 MUST 保留平台人员、角色、登录会话、ONES 身份与个人 Credential、Agent、业务应用与 MCP Tool 发布配置，以及全部 Agent Job、Tool Call 结果和 Delivery 记录；历史 Publication 中的旧 connector 引用 SHALL 只标记为不可运行历史来源，不得被静默改写到新 connector。
 
-#### Scenario: 清理存在历史 Job 的旧连接
-- **WHEN** 待清理钉钉连接已经产生 Agent Job、Tool 调用和投递记录
-- **THEN** 系统保留这些运行记录，使其旧连接来源可审计但不可继续路由
+#### Scenario: 清理存在历史Job的旧连接
+- **WHEN** 待清理钉钉 connector 已经产生 Agent Job、Tool Call 和 Delivery 记录
+- **THEN** 系统保留这些运行记录，使其旧 connector 来源可审计但不可继续路由
 
 #### Scenario: 清理后重新接入
-- **WHEN** 重建成功后管理员创建企业和新应用连接
-- **THEN** 既有业务应用主体仍存在，但必须显式选择新连接并重新发布，不得自动把历史发布改指新连接
+- **WHEN** 重建成功后管理员创建企业和新应用 connector
+- **THEN** 既有业务应用主体仍存在，但必须显式选择新 connector 并重新发布
+- **AND** 不得自动把历史 Publication 改指新 connector
 
 
 <!-- Reconciled from mcp_new capability: `dingtalk-identity-governance` -->
@@ -857,15 +856,22 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 系统 SHALL 返回冲突错误，不得自动覆盖或迁移绑定
 
 ### Requirement: ONES 身份通过服务端登录验证
-系统 SHALL 使用服务端固定且独立于 API Connection、Capability 与 MCP 的受信 ONES 身份配置，由当前用户本人提交邮箱与一次性密码完成验证，并使用响应中的用户 UUID 作为外部身份标识。管理员不得为其他用户输入邮箱密码或代为验证。
-
-#### Scenario: ONES 凭据验证成功
-- **WHEN** 当前用户提交有效邮箱与一次性密码
-- **THEN** 系统调用固定登录端点，严格校验响应，并经无 Token Challenge 保存 User ID、显示名称、Team、默认 Team 和验证时间
-
+系统 SHALL 允许已认证的人类用户本人使用服务端配置的受信任 ONES 实例和固定登录端点验证自己的 ONES 邮箱与密码，并 SHALL 使用响应中的用户 UUID 作为外部身份标识。管理员只能查看、停用和审计，不得代用户提交邮箱、密码、Token、Team 或目标 URL。
+#### Scenario: ONES凭据验证成功
+- **WHEN** 当前用户提交自己的 ONES 邮箱和有效密码
+- **THEN** 系统调用固定 `/project/api/project/auth/login`，校验响应结构，并创建短期 challenge，包含已验证用户 UUID、显示名称、Team 候选和加密登录材料/Token
 #### Scenario: 管理员尝试代用户验证
 - **WHEN** 管理员在人员管理上下文提交他人的邮箱密码
 - **THEN** 系统拒绝且不访问 ONES 登录端点
+#### Scenario: ONES凭据无效
+- **WHEN** ONES 登录接口拒绝邮箱或密码
+- **THEN** 系统返回安全验证失败，不创建身份或当前 credential；审计可记录提交邮箱、actor 和安全错误码，但不得记录密码、Token 或 Provider 认证响应原文
+#### Scenario: 客户端提交可信字段
+- **WHEN** 请求包含手工 ONES UUID、Token、Team、目标 URL、Header 或 Provider 配置
+- **THEN** 系统拒绝请求，可信身份与凭据字段只能来自固定 Adapter 响应和后续 Team 确认
+#### Scenario: ONES身份属于其它用户
+- **WHEN** 经验证 ONES UUID 已绑定另一内部用户
+- **THEN** 系统返回冲突，不覆盖、转移或共享身份和 credential
 
 ### Requirement: ONES 验证网络边界受控
 
@@ -890,13 +896,6 @@ The system SHALL audit user creation and disablement, password/session security 
 
 - **WHEN** 登录响应缺少用户 UUID 或响应字段类型不正确
 - **THEN** 系统 SHALL 视为验证失败且不得创建或更新身份
-
-### Requirement: ONES 凭据和令牌不得持久化
-系统 MUST NOT 将 ONES 邮箱、明文密码、登录 Token 或原始登录响应保存到数据库、缓存、日志、审计、API 响应或前端持久层；旧 External API Credential 不得作为身份绑定依赖恢复。
-
-#### Scenario: ONES 登录成功并返回令牌
-- **WHEN** ONES 登录响应包含用户令牌
-- **THEN** 系统在当前请求内丢弃令牌，仅保留允许的身份与 Team 字段
 
 ### Requirement: 外部身份生命周期可管理
 系统 SHALL 区分提供方治理动作：钉钉身份继续由管理员按受信候选进行启停和软解绑；ONES 身份由本人绑定、重新验证和软解绑，管理员只可查看、停用和审计，不得启用、代验证或代解绑 ONES。
@@ -934,42 +933,40 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 系统 MUST NOT 因该绑定自动调用需求、任务、缺陷或其他 ONES 业务接口
 
 ### Requirement: 外部身份写操作受统一安全控制
-
-所有外部身份绑定和状态变更接口 SHALL 复用现有管理端认证、CSRF、`identity:manage` 权限和安全审计机制。
-
+本人 ONES 绑定、重验和解绑 SHALL 使用当前登录用户、CSRF、防重放 challenge、revision 和安全审计；管理员对身份的只读/停用操作 SHALL 使用管理端认证与细粒度身份权限。服务账号不得绑定个人 Provider 身份。
 #### Scenario: 无身份管理权限发起绑定
 
 - **WHEN** 已认证用户不具备 `identity:manage` 权限却提交绑定请求
 - **THEN** 系统 SHALL 拒绝请求且不得访问 ONES 登录端点或修改身份数据
-
 #### Scenario: 成功或失败的身份管理操作
 
 - **WHEN** 管理员执行钉钉或 ONES 绑定、启用、停用或解绑
 - **THEN** 系统 SHALL 写入不含凭据和令牌的审计事件，记录操作者、目标用户、提供方、动作和结果
+#### Scenario: 用户绑定本人ONES
+- **WHEN** 已认证人类用户携带有效 CSRF 发起并确认自己的 ONES challenge
+- **THEN** 系统只修改该用户的 ONES 身份和 credential
+#### Scenario: 管理员代绑ONES
+- **WHEN** 管理员尝试为其它用户提交 ONES 邮箱、密码或确认 challenge
+- **THEN** 系统拒绝请求且不得访问 ONES 登录端点
+#### Scenario: 成功或失败的身份操作
+- **WHEN** 用户绑定/重验/解绑或管理员停用 ONES 身份
+- **THEN** 系统记录操作者、目标身份、动作、credential revision、结果和安全错误码，不记录任何认证材料
 
 ### Requirement: ONES Mock 支持身份绑定验证
-
-开发测试环境 SHALL 提供独立 Docker Compose ONES Mock，用于验证成功登录、无效凭据和异常响应，不得依赖真实 ONES 凭据。
-
+开发测试环境 SHALL 提供独立 ONES Mock，用于验证成功登录、无效凭据、异常响应、工作项查询和 Token 失效后的重新登录，不得依赖真实 ONES 凭据。
 #### Scenario: 使用 Mock 完成 ONES 绑定
 
 - **WHEN** 测试环境启动 ONES Mock 并使用约定测试账号发起绑定
 - **THEN** 系统 SHALL 完成服务端验证并创建符合字段白名单的 ONES 身份
-
-#### Scenario: Mock 返回无效凭据
-
-- **WHEN** 测试使用错误密码调用 ONES Mock
-- **THEN** 系统 SHALL 返回验证失败且数据库中不得出现该次失败产生的身份记录
-
-### Requirement: 本阶段不接入 ONES 业务能力
-ONES 身份绑定 SHALL 独立于工具运行时，不创建 API Capability、API Connection、业务调用 Token 或 MCP Tool 调用凭据。未来 ONES MCP 凭据必须由独立规格定义。
-
-#### Scenario: 完成 ONES 身份绑定
-- **WHEN** 用户完成绑定或重新验证
-- **THEN** 系统只更新身份事实，不授予或触发任何 ONES 业务调用能力
-
-
-<!-- Reconciled from mcp_new capability: `external-identity-presentation` -->
+#### Scenario: Mock返回无效凭据
+- **WHEN** 测试使用错误密码调用 Mock
+- **THEN** 系统返回验证失败且数据库不出现该次失败产生的身份或 credential
+#### Scenario: 使用Mock完成ONES绑定与查询
+- **WHEN** 测试使用约定账号完成本人绑定、选择默认 Team 并通过 `ones-mcp` 查询
+- **THEN** 系统创建字段白名单内的身份和加密 credential，并返回 Mock 的有界工作项结果
+#### Scenario: Mock拒绝旧Token
+- **WHEN** Mock 使已保存 Token 返回401但邮箱密码仍有效
+- **THEN** `ones-mcp` 自动登录、更新加密 Token、最多重试一次并留下完整查询业务原文及无认证秘密的凭据生命周期审计
 
 ### Requirement: 本人和治理接口使用不同身份投影
 系统 MUST 根据“我的外部身份”和“人员管理 → 用户详情”两个入口分别返回本人投影和治理投影，不得返回完整数据库行后仅依赖前端隐藏越权字段；即使管理员查看自己的人员记录，人员详情仍 MUST 使用治理投影。
@@ -1047,25 +1044,38 @@ ONES 身份绑定 SHALL 独立于工具运行时，不创建 API Capability、AP
 - **THEN** 系统非破坏转换为名称为空的结构化候选，保留默认 Team 和个人凭据，并在下次重新验证后刷新名称
 
 ### Requirement: ONES 身份与凭据状态分别治理
-ONES 身份页面 MUST 只治理身份绑定状态；用于旧 API Capability 的个人业务调用凭据状态、Revision、最近调用事实和错误码 MUST 删除，且身份不得因 Credential 不存在而显示为不可用。
+ONES 身份页面 SHALL 分别治理身份绑定状态与个人业务调用 Credential 状态。本人和管理员的安全投影 MUST 可以展示 `configured`、Credential status、revision、verified time、token refresh time、last used time 以及 reauth/disabled/unbound 时间；不得返回登录邮箱、密码、Token、密文、nonce、认证 Header 或可恢复认证材料。Credential 缺失或非 active 时，身份事实仍可查询，但 ONES Tool 调用 MUST 失败关闭并提示本人重新验证。
 
-#### Scenario: 身份已启用且没有个人业务调用凭据
-- **WHEN** 当前 ONES 身份已启用并具有已验证 Team
-- **THEN** 本人摘要显示身份已绑定，不提示缺少 Credential 或要求为业务调用重新验证
+#### Scenario: 身份已启用且Credential可用
+- **WHEN** 当前 ONES 身份已启用、具有已验证 Team 且 Credential 为 active
+- **THEN** 本人摘要显示身份和安全 Credential 状态
+- **AND** 不显示任何认证材料
+
+#### Scenario: 身份存在但Credential不可用
+- **WHEN** 当前身份存在但 Credential 缺失、需重新认证、已停用或已解绑
+- **THEN** 页面保留身份事实并显示安全状态
+- **AND** 新 ONES Tool 调用在 Provider 访问前失败关闭
 
 ### Requirement: ONES 默认摘要只展示业务字段
-ONES 本人与治理摘要 SHALL 展示用户名称、身份状态、默认 Team、最近验证和适用操作；MUST NOT 展示 API Connection、个人 Credential、MCP 状态或调用错误。
+ONES 本人与治理摘要 SHALL 展示用户名称、身份状态、默认 Team、最近验证、适用操作和个人 Credential 的安全状态元数据；MUST NOT 展示 API Connection、登录邮箱、密码、Token、密文、nonce、完整认证错误正文或任意 Provider 原始响应。
 
-#### Scenario: ONES 身份已绑定
-- **WHEN** 页面加载具有默认 Team 的当前身份
-- **THEN** 默认卡展示身份与 Team 事实，不展示 Connection/Credential Revision
+#### Scenario: ONES身份已绑定
+- **WHEN** 页面加载具有默认 Team 和 Credential 的当前身份
+- **THEN** 默认卡展示身份、Team、Credential status、revision 和安全时间事实
+- **AND** 不展示可用于认证或恢复 Credential 的材料
 
 ### Requirement: ONES 账户详情按本人和管理员划分
-系统 SHALL 允许本人展开自己的 ONES User ID 和全部已验证 Team；管理员治理详情 SHALL 只展示身份记录 ID、Revision、状态和验证时间，MUST NOT 显示邮箱密码表单、API Connection、个人 Credential 或代用户重新验证入口。
+系统 SHALL 允许本人查看自己的 ONES User ID、全部已验证 Team 和个人 Credential 安全状态；管理员治理详情 SHALL 展示身份记录 ID、revision、状态、验证时间以及同样的安全 Credential 元数据，但 MUST NOT 显示登录邮箱、密码、Token、密文、认证 Header 或代用户填写凭据的入口。重新验证只能由本人会话发起。
 
-#### Scenario: 管理员展开 ONES 技术详情
+#### Scenario: 本人展开ONES详情
+- **WHEN** 当前用户查看自己的 ONES 身份
+- **THEN** 系统返回 User ID、Team 候选和 Credential 安全状态
+- **AND** 不返回任何认证材料
+
+#### Scenario: 管理员展开ONES技术详情
 - **WHEN** 具备身份治理权限的管理员查看他人 ONES 身份
-- **THEN** 系统只返回允许的身份元数据和审计事实
+- **THEN** 系统只返回允许的身份、Credential 安全元数据和审计事实
+- **AND** 不提供代用户重新验证或读取 Credential 的能力
 
 ### Requirement: 身份响应根本不包含认证材料
 本人和治理外部身份接口 MUST NOT 返回 Token、密码、可逆密文、认证 Header、Client Secret、Session Webhook、Verification Challenge 内部 Token 或原始外部响应；前端不得通过日志或其他管理接口拼接这些材料。
@@ -1135,341 +1145,142 @@ ONES 本人与治理摘要 SHALL 展示用户名称、身份状态、默认 Team
 - **AND** 不展示任何可用于访问外部系统的凭据值
 
 
-<!-- Reconciled from mcp_new capability: `identity-authorization-bootstrap-reset` -->
-
-### Requirement: 重置只能通过受控运维入口执行
-系统 SHALL 仅允许具有主机和数据库运维权限的操作者通过专用命令执行身份与授权重置，MUST NOT 提供可由普通 Web 会话、Agent、Channel 或公开 API 直接触发的重置接口。执行前 MUST 确认角色授权控制中心所需迁移已全部应用。
-
-#### Scenario: Web 管理员尝试触发重置
-- **WHEN** 任意 Web 会话请求身份与授权重置
-- **THEN** 系统拒绝请求，不创建重置操作，也不改变身份或授权数据
-
-#### Scenario: 数据库版本不满足要求
-- **WHEN** 运维命令发现角色授权控制中心迁移未完成或数据库版本不匹配
-- **THEN** 预检失败并返回中文安全说明，不进入准备或执行阶段
-
-### Requirement: 重置范围必须明确且完整
-系统 SHALL 删除全部旧人员账号、服务账号、密码凭据、外部身份绑定、登录会话、角色、角色成员关系、角色管理能力、角色业务应用授权、角色业务能力与数据范围、旧 `permission_policy` 和旧 `platform_access_grant`。系统 MUST 保留业务应用、Agent Profile/Revision/Publication、渠道、Connector、运行与投递记录、钉钉未绑定候选消息和审计历史。
-
-#### Scenario: 预检展示影响范围
-- **WHEN** 操作者执行重置演练
-- **THEN** 系统按实体类型输出待删除数量、待保留数量和依赖处置数量，不输出用户名以外的敏感身份信息、消息正文或任何凭据
-
-#### Scenario: 重置成功后检查旧事实
-- **WHEN** 重置操作完成
-- **THEN** 除本次初始化产生的新主体和授权事实外，所有旧身份与授权表均不存在旧记录，受保护业务配置和历史记录仍可查询
-
-### Requirement: 引用旧主体的依赖必须先安全改写
-系统 SHALL 在删除旧主体前枚举所有数据库外键和逻辑引用。历史记录 MUST 固化不含敏感信息的主体快照并改为允许主体被删除；仍在使用旧服务账号的 Trigger Binding 或 Webhook Trigger MUST 原子改绑到新建的停用服务账号并保持入口停用，业务应用 owner 等可选引用 MUST 清空并进入待重配清单。系统 MUST NOT 使用匿名主体、平台管理员或旧主体 ID 作为隐式回退。
-
-#### Scenario: Webhook 历史事件引用旧服务账号
-- **WHEN** 历史 Webhook Event 引用即将删除的服务账号
-- **THEN** 系统先保存不可变的安全主体摘要，再解除强外键引用，并保留事件、Job 和审计链路
-
-#### Scenario: 启用的 Trigger 引用旧服务账号
-- **WHEN** 现有 Trigger Binding 或 Webhook Trigger 使用即将删除的服务账号
-- **THEN** 系统创建新的停用服务账号、改写运行配置引用、停用入口并在中文重配清单中标记原因
-
-#### Scenario: 发现未知强依赖
-- **WHEN** 预检发现没有处置规则的非空外键或逻辑主体引用
-- **THEN** 系统阻止准备和执行，报告表名、字段和安全摘要，不进行部分删除
-
-### Requirement: 执行前必须创建并验证可恢复备份
-系统 SHALL 在准备阶段创建 PostgreSQL 自包含备份，记录数据库版本、迁移版本、文件大小和 SHA-256 摘要，并 MUST 使用恢复工具验证备份目录可读。备份路径和元数据可以记录，数据库密码、连接 Secret 和备份内容不得进入日志或审计。
-
-#### Scenario: 备份验证成功
-- **WHEN** 备份创建完成且恢复工具能够列出其目录
-- **THEN** 重置操作进入 `PREPARED`，并固定本次影响清单摘要和备份摘要
-
-#### Scenario: 备份失败或不可读
-- **WHEN** 备份命令失败、文件为空、摘要不一致或恢复工具无法读取
-- **THEN** 重置操作保持未执行，系统退出维护准备并显示中文失败说明
-
-### Requirement: 重置采用两阶段确认和全局维护锁
-系统 SHALL 将预检/准备与执行分为两个阶段。执行阶段 MUST 校验未过期的重置操作 ID、准备时影响清单摘要、操作者在交互式终端输入的指定确认短语，以及全局维护锁。维护锁生效后 MUST 阻止新登录、身份绑定、授权写入、Channel/Webhook 入站创建 Job 和结果投递，并等待或停止现有写入者。
-
-#### Scenario: 数据在准备后发生变化
-- **WHEN** 执行时重新计算的影响清单摘要与准备阶段不同
-- **THEN** 系统拒绝执行并要求重新预检和准备
-
-#### Scenario: 确认短语错误
-- **WHEN** 操作者未在交互式终端输入与操作 ID 对应的确认短语
-- **THEN** 系统不获取执行锁、不删除数据，并返回中文提示
-
-#### Scenario: 存在未停止的写入者
-- **WHEN** 维护锁生效后仍有 API、Worker 或 Runtime 持有写入租约
-- **THEN** 系统在有界等待后中止执行，不开始删除事务
-
-### Requirement: 身份与授权重置必须原子提交
-系统 SHALL 在单个数据库事务中完成历史引用改写、旧身份与授权删除、替代服务账号创建与依赖停用、新平台管理员和系统角色创建、严格模式配置写入以及重置台账更新。任一步骤失败时 MUST 回滚整个事务，不得留下部分清理或多个平台管理员。
-
-#### Scenario: 删除过程中发生外键错误
-- **WHEN** 任一旧主体因未处理引用而无法删除
-- **THEN** 整个事务回滚，原身份、授权、入口状态和模式保持不变，操作标记为失败
-
-#### Scenario: 相同操作重复执行
-- **WHEN** 已成功或正在执行的操作 ID 再次收到执行请求
-- **THEN** 系统拒绝重复执行，不生成第二套管理员、服务账号或凭据
-
-### Requirement: 初始化唯一的平台管理员
-系统 SHALL 在重置事务中创建且仅创建一个启用的人员账号，用户名固定为 `platform-admin`，并创建或重建唯一的受保护系统角色 `platform-admin` 及其启用成员关系。该角色 MUST 获得全部当前及未来 Web 管理能力，但 MUST NOT 获得任何业务应用、工具、环境、基地或车间访问权限。
-
-#### Scenario: 管理员初始化完成
-- **WHEN** 重置事务提交
-- **THEN** 系统恰有一个启用人员账号属于受保护 `platform-admin` 角色，且该账号的业务应用有效授权集合为空
-
-#### Scenario: 初始化不变量不成立
-- **WHEN** 事务内验证发现人员管理员数量不是一、系统角色不受保护或存在业务授权
-- **THEN** 系统回滚重置事务并标记验证失败
-
-### Requirement: 初始凭据必须一次性安全交付
-系统 SHALL 使用密码学安全随机源生成满足当前强度策略的初始密码，只在进程内存和操作者指定的全新凭据文件中短暂出现。凭据文件 MUST 使用独占创建和 `0600` 权限、位于仓库外的明确绝对路径，并在数据库中仅保存 Argon2 哈希；明文 MUST NOT 出现在命令参数、标准输出、标准错误、日志、审计、API 响应、代码、测试快照或 OpenSpec 产物中。
-
-#### Scenario: 凭据文件已存在或权限不安全
-- **WHEN** 操作者指定的输出文件已存在、位于仓库内或无法保证仅属主可读写
-- **THEN** 系统在生成密码前拒绝执行，不覆盖文件
-
-#### Scenario: 数据库事务失败
-- **WHEN** 凭据文件已安全写入但数据库事务未提交
-- **THEN** 系统使该凭据不可用于登录并安全清理临时文件；若进程异常退出，恢复检查必须将未成功操作对应文件标记为无效
-
-#### Scenario: 执行成功
-- **WHEN** 重置事务和凭据文件持久化均成功
-- **THEN** 命令只返回操作 ID、凭据文件路径和安全校验摘要，不返回初始密码
-
-### Requirement: 首次登录必须修改初始密码
-系统 SHALL 为新平台管理员密码凭据保存 `must_change_password` 或等价状态。使用一次性初始密码登录后，系统 MUST 只允许访问改密、退出和必要的会话校验接口；成功改密必须清除强制状态、撤销该账号全部会话并使凭据文件中的初始密码失效。
-
-#### Scenario: 首次登录访问角色页面
-- **WHEN** 新平台管理员尚未修改初始密码便访问角色与授权页面
-- **THEN** 后端拒绝业务请求，前端跳转到中文首次改密页面
-
-#### Scenario: 首次改密成功
-- **WHEN** 用户提交正确初始密码和符合策略的新密码
-- **THEN** 系统更新 Argon2 哈希、清除强制改密状态、撤销旧会话并要求用新密码重新登录
-
-### Requirement: 重置完成后只允许严格角色授权
-系统 SHALL 在事务提交后将业务应用授权模式切换为 `strict_application_role`，并 MUST 禁止旧用户、旧角色、直接用户策略、旧项目或 Agent allowlist 参与新的授权决定。替代服务账号在管理员重新启用并显式分配业务角色前不得触发应用。
-
-#### Scenario: 旧钉钉身份再次发消息
-- **WHEN** 已删除绑定的钉钉用户再次向机器人发送消息
-- **THEN** 系统将其作为未绑定候选处理，不创建 Agent Job，并返回或记录中文绑定提示
-
-#### Scenario: 新平台管理员尝试运行应用
-- **WHEN** 仅有 `platform-admin` 角色的新管理员尝试运行任一业务应用
-- **THEN** 系统以中文提示“当前用户无权使用该业务应用”，且不回退到旧授权
-
-#### Scenario: 停用替代服务账号触发 Webhook
-- **WHEN** 重置后尚未重新配置的 Webhook 入口收到请求
-- **THEN** 系统拒绝入口且不创建 Agent Job，不使用平台管理员或匿名主体执行
-
-### Requirement: 重置必须具有可验证台账和安全审计
-系统 SHALL 为每次重置保存不可变操作台账，至少包含状态、阶段时间、数据库与迁移版本、影响清单摘要、备份摘要、替代主体数量、停用依赖数量、最终不变量和错误码。审计 MUST 使用系统运维主体快照，不依赖被删除用户，并 MUST NOT 保存密码、Token、Secret、模型 API Key、消息正文或完整外部身份标识。
-
-#### Scenario: 重置成功
-- **WHEN** 全部提交后验证通过
-- **THEN** 操作台账标记 `SUCCEEDED`，审计记录删除计数、保留计数、唯一管理员和严格模式结果
-
-#### Scenario: 重置失败
-- **WHEN** 准备、执行或验证任一阶段失败
-- **THEN** 操作台账记录失败阶段和安全错误码，日志与用户提示不暴露敏感内容
-
-### Requirement: 成功后的恢复必须遵循显式手册
-系统 SHALL 提供经过演练的恢复命令和检查清单。事务提交前的错误 MUST 自动回滚；提交后的恢复 MUST 进入维护模式、先导出重置后安全审计、校验备份摘要、恢复完整数据库、重建容器并重新验证身份和授权模式，MUST NOT 仅把系统切回兼容模式作为回滚。
-
-#### Scenario: 操作者恢复已成功的重置
-- **WHEN** 操作者使用匹配本次操作的已验证备份执行恢复
-- **THEN** 系统恢复重置前数据库状态，并要求完成迁移、容器健康和授权链路验证后才退出维护模式
-
-### Requirement: 所有运维与用户可见提示使用中文
-系统 SHALL 对预检报告、危险确认、维护状态、首次改密、登录限制、授权拒绝、重配清单和恢复检查使用中文；稳定 ID、状态码、表名、字段名和安全 `error_code` 可以保留英文。
-
-#### Scenario: 内部命令异常
-- **WHEN** 重置命令遇到未预期异常
-- **THEN** 操作者只看到中文安全说明和可关联的操作 ID，内部堆栈不得通过 Web 页面或 Channel 返回
 
 
-<!-- Reconciled from mcp_new capability: `multi-provider-external-identity-management` -->
 
-### Requirement: 外部身份Connection定义受信Provider实例
-系统 SHALL 持久化外部身份Connection的稳定编码、Provider、tenant/instance、验证模式、状态和受控连接引用，并 MUST 区分DingTalk Channel Connector与ONES业务系统Connection。
 
-#### Scenario: 注册钉钉Connection
-- **WHEN** 管理员选择启用且允许ingress的钉钉企业Stream Connector
-- **THEN** 系统创建或读取引用该Connector的DingTalk身份Connection
-- **AND** 不复制AppSecret或Stream凭据
 
-#### Scenario: 注册ONES Connection
-- **WHEN** 有Connection管理权限的管理员提交受支持ONES Provider、唯一实例编码和通过allowlist校验的Base URL
-- **THEN** 系统保存非敏感Connection配置与revision
-- **AND** 不允许配置任意登录Path、Method、Header或请求模板
 
-#### Scenario: 禁用Connection
-- **WHEN** 管理员禁用一个Connection
-- **THEN** 该Connection下的身份不能用于新的解析或验证
-- **AND** 已有Identity、Claim和审计历史保持不变
+
+
+
+
+
+
+
+
 
 ### Requirement: 一个内部自然人可以关联多个Provider身份
-系统 SHALL 允许同一启用自然人关联多个钉钉企业、ONES实例和未来Provider身份，并 MUST 禁止服务账号绑定个人外部身份。
+系统 SHALL 允许同一启用自然人关联不同 provider 与 tenant 范围的外部身份，并 MUST 禁止服务账号绑定个人外部身份。当前 ONES 自助绑定在代码固定实例内每个用户最多只有一个非 unbound 身份；换绑必须通过本人重新验证和显式确认完成。
 
 #### Scenario: 用户同时关联钉钉和ONES
-- **WHEN** 同一内部用户拥有已验证钉钉身份和已验证ONES身份
-- **THEN** 两个外部身份都指向同一个内部用户ID
-- **AND** 各自保留独立Provider、Connection、subject、状态和用途
+- **WHEN** 同一内部用户拥有已验证钉钉身份和已验证 ONES 身份
+- **THEN** 两个外部身份都指向同一个内部用户 ID
+- **AND** 各自保留独立 provider、tenant、subject、状态和用途
 
-#### Scenario: 用户关联两个ONES实例
-- **WHEN** 用户分别验证两个不同Connection上的ONES账号
-- **THEN** 系统创建两个独立身份映射
-- **AND** 不因外部UUID文本相同而跨实例合并
+#### Scenario: 用户换绑ONES账号
+- **WHEN** 用户验证的 ONES subject 与当前非 unbound ONES 身份不同
+- **THEN** 系统要求显式换绑确认并原子软解绑旧身份与 Credential
+- **AND** 每个用户继续只有一个当前 ONES 身份
 
 #### Scenario: 服务账号尝试绑定
-- **WHEN** 管理员或服务账号尝试为`account_type=service`创建外部身份或Claim
+- **WHEN** 服务账号尝试进行 ONES 自助绑定
 - **THEN** 系统拒绝操作并记录安全审计
 
 ### Requirement: 外部主体在受信范围内唯一绑定
-系统 MUST 使用Provider、tenant/Connection范围和external subject ID唯一识别外部身份，MUST NOT依据姓名、昵称、邮箱或手机号自动关联。
+系统 MUST 使用 `provider + tenant_code + external_subject_id` 唯一识别外部身份，DingTalk 身份可以另外保存受控 connector 引用；系统 MUST NOT 依据姓名、昵称、邮箱或手机号自动关联，也不得引入不存在的 Connection 或 Claim 作为授权事实。
 
 #### Scenario: 唯一外部主体首次绑定
-- **WHEN** 验证结果中的subject在该Provider和Connection范围内尚未绑定
+- **WHEN** 验证结果中的 subject 在该 provider 和 tenant 范围内尚未绑定
 - **THEN** 系统原子创建指向目标内部用户的身份
 
 #### Scenario: 相同主体绑定同一用户
 - **WHEN** 同一用户再次验证已经属于自己的外部主体
-- **THEN** 系统幂等刷新验证时间和受控Provider上下文
+- **THEN** 系统幂等刷新验证时间和受控 provider 上下文
 - **AND** 不创建重复身份
 
 #### Scenario: 相同主体属于另一个用户
-- **WHEN** 验证结果中的subject已经绑定其它内部用户
-- **THEN** 系统保留原身份并把当前Claim标记为conflict
-- **AND** 不自动覆盖、合并或转移身份
+- **WHEN** provider、tenant 和 subject 唯一键已经属于其它内部用户
+- **THEN** 系统保留原身份并拒绝当前绑定
+- **AND** 不依据显示字段自动覆盖、合并或转移身份
 
-### Requirement: 身份可用状态和验证状态分别治理
-系统 SHALL 分别维护管理员enabled/disabled状态与pending/verified/conflict/revoked验证状态，只有启用用户、启用Connection、启用Identity和verified状态同时满足时身份才可信。
+### Requirement: 外部身份状态与ONES凭据状态分别治理
+系统 SHALL 在 `user_external_identity` 上保存 `enabled`、`disabled` 或 `unbound` 状态、revision 与 `verified_at`，并结合内部用户状态以及 provider 所需的当前上下文判断身份是否可用。ONES 个人 Credential SHALL 使用独立生命周期状态；系统不得声称当前存在通用 pending/conflict/revoked Claim 状态机或 Connection 状态机。
 
-#### Scenario: pending身份
-- **WHEN** 管理员只创建尚未完成Provider证明的关联Claim
-- **THEN** 页面显示pending且系统不把它用于Channel或业务主体解析
+#### Scenario: enabled身份
+- **WHEN** 内部用户启用、外部身份为 enabled 且 provider 所需前置条件有效
+- **THEN** 系统可以把该身份用于对应受控主体解析
 
-#### Scenario: verified身份被禁用
-- **WHEN** 管理员禁用一个verified身份
+#### Scenario: 身份被禁用或解绑
+- **WHEN** 外部身份状态为 disabled 或 unbound
 - **THEN** 该身份停止解析新请求
 - **AND** 其它身份、内部用户和历史记录不受影响
 
-#### Scenario: Connection重新启用
-- **WHEN** 管理员重新启用Connection但Identity本身仍disabled
-- **THEN** 该身份继续不可用直到显式启用
+#### Scenario: ONES Credential不可用
+- **WHEN** ONES 身份 enabled 但个人 Credential 非 active
+- **THEN** 身份事实仍可查询但 ONES Tool 调用失败关闭
 
-### Requirement: Claim承载待验证和冲突流程
-系统 SHALL 使用带revision的Claim记录pending、verified、conflict、rejected、expired和cancelled流程，并 MUST 保留验证与冲突治理的安全历史。
-
-#### Scenario: 管理员创建待验证Claim
-- **WHEN** 管理员为启用自然人选择受信Connection并创建Claim
-- **THEN** 系统保存pending Claim及创建人
-- **AND** 不要求或保存外部系统密码
-
-#### Scenario: 用户完成自己的Claim
-- **WHEN** 当前登录用户对属于自己的pending Claim完成Provider验证
-- **THEN** 系统事务创建或刷新Identity并把Claim标记为verified
-
-#### Scenario: 管理员查看冲突
-- **WHEN** Claim进入conflict
-- **THEN** 有冲突治理权限的管理员能看到当前绑定和Claim的安全摘要
-- **AND** 看不到验证密码、Provider Token或原始响应
-
-#### Scenario: 并发处理Claim
-- **WHEN** 两个操作者基于相同旧revision处理Claim
-- **THEN** 系统只接受第一个更新并向第二个返回409
 
 ### Requirement: 冲突处理不得一键强制转移身份
-系统 SHALL 允许管理员保留现有绑定、拒绝或取消冲突Claim，并 MUST 要求身份转移经过显式停用旧绑定和目标用户重新验证的多步流程。
+系统 MUST 依赖 provider、tenant 与 subject 唯一约束阻止外部主体跨用户覆盖。当前 ONES 用户更换自己的账号时，系统 SHALL 要求新登录验证和显式 `replace_existing` 确认，并在一个事务中软解绑该用户旧身份与 Credential 后保存新绑定；系统不得提供管理员一键绕过唯一约束的强制转移命令。
 
-#### Scenario: 保留现有绑定
-- **WHEN** 管理员确认现有内部用户归属正确
-- **THEN** 系统拒绝冲突Claim并保留原Identity
+#### Scenario: 外部主体已属于另一个用户
+- **WHEN** 新绑定命中已属于其它内部用户的唯一外部主体
+- **THEN** 系统拒绝绑定并保留原身份
 
-#### Scenario: 需要转移归属
-- **WHEN** 管理员判断原Identity归属错误
-- **THEN** 系统要求先使用expected revision撤销旧Identity，再让目标用户重新验证
-- **AND** 不提供绕过唯一约束的强制覆盖命令
+#### Scenario: 本人换绑另一个ONES主体
+- **WHEN** 用户完成新主体验证但未显式确认替换
+- **THEN** 系统返回稳定的换绑确认要求且不改变当前身份
 
-### Requirement: 现有钉钉绑定平滑迁移到通用模型
-系统 SHALL 为既有启用钉钉Connector建立Connection，并 MUST 将现有钉钉身份标记为verified/admin_asserted而不改变其内部用户、tenant、subject、connector和enabled状态。
+#### Scenario: 本人确认换绑
+- **WHEN** 同一用户提交有效 Challenge 并显式确认替换当前 ONES 身份
+- **THEN** 系统原子软解绑旧身份和 Credential 并保存新身份与 Credential
 
-#### Scenario: 迁移既有钉钉用户
-- **WHEN** 迁移发现可唯一对应启用Connector的现有钉钉身份
-- **THEN** 系统关联Connection并保留当前解析语义
-
-#### Scenario: 现有身份无法找到Connector
-- **WHEN** 迁移无法唯一确定可信Connection
-- **THEN** 系统不伪造verified映射并生成待人工处理报告
-- **AND** 不把该身份错误关联到其它tenant
 
 ### Requirement: 身份管理API与Web使用真实数据和细粒度权限
-系统 SHALL 提供Connection、Provider、用户Identity、Claim、Conflict以及个人Identity的管理API和页面，并 MUST 根据用户自身或identity管理权限限制范围。
+系统 SHALL 提供真实用户外部身份的当前与历史查询，以及当前实现的 ONES 本人验证、确认、解绑和管理员安全查看能力；DingTalk 身份绑定与换绑继续使用其受限管理员权限。API 与页面 MUST 根据本人或身份治理权限限制范围，并 MUST NOT 暴露不存在的 Connection、Claim 或 Conflict 管理入口。
 
 #### Scenario: 管理员查看用户详情
 - **WHEN** 有用户与身份管理权限的管理员查看内部用户
-- **THEN** 页面显示角色摘要、Identity、Claim、验证方法、最近验证时间、团队/租户上下文和状态
-- **AND** 不显示Secret或完整Provider响应
+- **THEN** 页面显示角色摘要、外部身份、provider/tenant、最近验证、Team、状态和允许的 Credential 安全元数据
+- **AND** 不显示 Secret 或完整 provider 响应
 
 #### Scenario: 用户查看自己的身份
 - **WHEN** 普通用户进入“我的外部身份”
-- **THEN** 页面只返回当前用户的Identity与Claim
+- **THEN** 页面只返回当前用户的真实外部身份及允许的本人操作
 - **AND** 用户不能通过修改路径或请求体读取其它用户
 
-#### Scenario: 前端发生revision冲突
-- **WHEN** Identity、Claim或Connection写请求返回409
-- **THEN** 页面要求刷新并展示数据已变化
-- **AND** 不静默覆盖服务器状态
+#### Scenario: 本人操作revision冲突
+- **WHEN** 身份或 Credential 写入基于过期 revision
+- **THEN** API 返回稳定冲突并要求重新读取当前状态
+- **AND** 不静默覆盖服务器事实
 
 ### Requirement: 身份关联不授予额外业务权限
-系统 MUST 把外部身份映射仅作为可信主体解析，MUST NOT因为成功关联钉钉、ONES或其它Provider而自动创建角色、平台数据范围、Business Application或API Capability权限。
+系统 MUST 把外部身份映射仅作为可信主体解析，MUST NOT 因为成功关联钉钉、ONES 或其它 provider 而自动创建角色、平台数据范围、Business Application 访问或 MCP Tool grant。
 
 #### Scenario: ONES身份验证成功
-- **WHEN** 用户成功关联ONES账号
-- **THEN** 用户的内部角色和平台权限保持原样
-- **AND** ONES原生项目权限仍由ONES或未来API平台判断
+- **WHEN** 用户成功关联 ONES 账号
+- **THEN** 用户的内部角色、应用访问和 MCP Tool grant 保持原样
+- **AND** ONES 原生项目权限仍由 ONES Provider 判断
 
 #### Scenario: 群聊成员身份不同
-- **WHEN** 同一钉钉群中的两名发送人关联不同内部用户和ONES身份
+- **WHEN** 同一钉钉群中的两名发送人关联不同内部用户和 ONES 身份
 - **THEN** 系统按每条消息的发送人解析主体
-- **AND** 不创建群级共享ONES身份或权限
+- **AND** 不创建群级共享 ONES 身份或权限
 
 ### Requirement: 外部身份管理不得暴露凭据和敏感载荷
-系统 MUST 在数据库、API、页面、日志和审计中排除密码、Session Token、CSRF值、Provider Token、AppSecret、完整Webhook URL和原始外部响应。
+系统 MUST 在 API、页面、Prompt、RabbitMQ、日志、审计和错误中排除密码、Session Token、CSRF 值、Provider Token、AppSecret、完整 Webhook URL、Principal JWT、Authorization/Cookie、私钥、密文和 nonce。数据库 MAY 只在专用 Credential 与短期 Challenge 表中保存使用平台主密钥用途绑定加密的 Provider 登录材料与 Token，不得把明文或密文复制到 Identity metadata、公开投影或审计。受 `audit:*:read` 和保留期保护的审计 MAY 原样保存邮箱/User ID 及有界 Provider 业务请求/响应，但不得保存 Provider 认证请求/响应原文。
 
-#### Scenario: 查看身份与验证历史
-- **WHEN** 用户或管理员查看Identity、Claim或Verification Attempt
-- **THEN** 系统只返回Provider、Connection、subject、受控上下文、状态、方法和时间
-- **AND** 不返回任何可重放的认证材料
+#### Scenario: 查看身份与验证状态
+- **WHEN** 用户或管理员查看 Identity、Challenge 公开结果或 Credential 安全状态
+- **THEN** 系统只返回 provider、tenant、subject、受控上下文、配置状态、revision 和安全时间
+- **AND** 不返回明文、密文、nonce、key ID、Authorization Header 或任何可重放认证材料
 
+#### Scenario: 检查数据库明文
+- **WHEN** ONES 本人绑定、查询和 Token 自动刷新完成
+- **THEN** 密码与 Token 只存在于 AES-GCM 密文列且不出现在其它业务表或 JSON metadata
+- **AND** 登录邮箱只可作为受控身份事实进入授权审计字段
 
-<!-- Reconciled from mcp_new capability: `ones-identity-verification` -->
-
-### Requirement: ONES验证只通过受信Connection发起
-这里的受信 Connection SHALL 收敛为服务端固定的 ONES 身份提供方配置，而不是已退役的通用 API Connection。系统 MUST 使用固定 Base URL、代码内固定登录 Path 和主机白名单执行验证，不接受浏览器或请求体提供 URL、Method、Path、Header、代理、API Connection Revision 或 MCP Server。
+### Requirement: ONES验证只通过服务端固定身份Provider发起
+ONES 身份验证 SHALL 只通过服务端固定的身份 Provider 配置发起。系统 MUST 使用固定 Base URL、代码内固定登录 Path 和主机 allowlist，不接受浏览器或请求体提供 URL、Method、Path、Header、代理、旧 API Connection Revision 或 MCP Server。
 
 #### Scenario: 身份提供方未配置
-- **WHEN** 固定 ONES 身份配置不可用
+- **WHEN** 固定 ONES 身份 Provider 配置不可用
 - **THEN** 系统拒绝验证且不尝试旧 API Connection 或任意 MCP 地址
 
-### Requirement: ONES验证材料只存在于单次请求内
-系统 MUST 把ONES email和password作为短生命周期Verification Proof，并 MUST NOT将password或登录响应Token写入数据库、Identity、Claim、Verification Attempt、Cache、日志、审计、API响应或浏览器持久化存储。
-
-#### Scenario: 验证成功
-- **WHEN** ONES返回包含用户UUID、Token和团队的成功响应
-- **THEN** Adapter提取允许字段并丢弃Token和原始响应
-- **AND** Service、Repository和前端只接收不含Token的规范化主体
-
-#### Scenario: 验证失败
-- **WHEN** ONES拒绝email/password
-- **THEN** 系统返回统一凭据失败错误并清空前端密码字段
-- **AND** 错误和审计不包含email、password、Token或上游正文
-
-#### Scenario: 运行日志扫描
-- **WHEN** 成功或失败验证完成
-- **THEN** 日志只包含correlation ID、Connection、actor、outcome和安全错误码
-- **AND** 不包含请求体或响应体
+#### Scenario: 请求尝试覆盖Provider
+- **WHEN** 浏览器请求包含 URL、Path、Method、Header 或代理配置
+- **THEN** 严格请求 schema 拒绝未知字段且不发起外部请求
 
 ### Requirement: ONES响应被严格校验并规范化
 系统 SHALL 限制响应大小、要求JSON并校验`user.uuid`、可选展示字段和`teams[].uuid`，MUST 拒绝缺少稳定subject或团队上下文的响应。
@@ -1488,49 +1299,40 @@ ONES 本人与治理摘要 SHALL 展示用户名称、身份状态、默认 Team
 - **THEN** 系统中止解析并返回安全上游协议错误
 
 ### Requirement: ONES网络访问执行出站安全策略
-系统 MUST 校验Connection scheme、Host和allowlist，禁止重定向和环境代理继承，并 SHALL 应用连接超时、读取超时与响应上限。
+系统 MUST 校验固定 ONES 身份 Provider Base URL 的 scheme、Host 和 allowlist，禁止重定向和环境代理继承，并 SHALL 应用连接超时、读取超时与响应上限。
 
-#### Scenario: 生产HTTPS连接
-- **WHEN** 生产Connection使用allowlist中的HTTPS Host
-- **THEN** 系统允许固定登录请求并执行证书校验
+#### Scenario: 生产HTTPS配置
+- **WHEN** 生产环境使用 allowlist 中的 HTTPS Host
+- **THEN** 系统允许代码固定登录请求并执行证书校验
 
-#### Scenario: 生产HTTP连接
-- **WHEN** 生产Connection使用HTTP或Host不在allowlist
-- **THEN** 系统拒绝保存或调用该Connection
+#### Scenario: 生产HTTP配置
+- **WHEN** 生产环境配置 HTTP 或 Host 不在 allowlist
+- **THEN** 系统拒绝初始化该 Provider 且不发起调用
 
-#### Scenario: 本地Mock连接
-- **WHEN** 开发环境显式允许insecure local且Host命中本地开发allowlist
-- **THEN** 系统可以调用独立ONES Mock
+#### Scenario: 本地Mock配置
+- **WHEN** 开发环境显式允许 insecure local 且 Host 命中本地开发 allowlist
+- **THEN** 系统可以调用独立 ONES Mock
 - **AND** 该例外不能在生产配置中默认启用
 
 #### Scenario: 上游重定向
-- **WHEN** ONES登录端点返回重定向
-- **THEN** Adapter拒绝跟随并返回安全连接错误
+- **WHEN** ONES 登录端点返回重定向
+- **THEN** Provider adapter 拒绝跟随并返回安全连接错误
 
-### Requirement: ONES验证具备限流和安全失败分类
-系统 SHALL 按内部用户、Connection和来源地址限制验证频率，并 MUST 将凭据失败、限流、超时、连接失败和协议错误映射为不泄露上游细节的稳定错误码。
-
-#### Scenario: 连续错误密码
-- **WHEN** 用户在窗口期内超过允许的失败次数
-- **THEN** 系统暂时拒绝新的ONES验证并返回429或等效限流错误
-- **AND** 不再向ONES发送登录请求直到窗口恢复
-
-#### Scenario: ONES超时
-- **WHEN** 连接或读取超过配置时限
-- **THEN** 系统返回可重试上游不可用错误
-- **AND** Claim保持pending且不创建Identity
-
-#### Scenario: ONES返回401
-- **WHEN** 上游拒绝登录
-- **THEN** 系统返回统一`ones_credentials_invalid`或等效错误
-- **AND** 不说明邮箱是否存在
 
 ### Requirement: 成功验证原子绑定ONES身份
-系统 MUST 使用不含 Token 的短时单次身份 Challenge，在确认默认 Team 时原子校验当前用户、唯一 subject、候选 Team 和现有 Identity，然后创建或刷新 Identity 并消费 Challenge。
+系统 MUST 先验证 ONES 登录并创建包含用途绑定加密认证材料的短时单次 Challenge；确认默认 Team 时 MUST 原子校验当前用户、唯一 subject、候选 Team 和现有 Identity，然后创建或刷新 Identity、创建或轮换 active 个人 Credential 并消费 Challenge。
 
 #### Scenario: 新ONES主体验证成功
 - **WHEN** 当前用户确认合法 Challenge 和候选 Team
-- **THEN** 系统创建 verified/provider_login Identity 并保存最新 Team、默认 Team 和验证时间，不创建个人业务调用 Credential
+- **THEN** 系统创建 enabled Identity、保存最新 Team、默认 Team 和验证时间，并创建 active 加密 Credential
+
+#### Scenario: 换绑需要显式确认
+- **WHEN** Challenge subject 与当前 ONES 身份不同且请求未设置 `replace_existing`
+- **THEN** 系统拒绝确认并保留当前 Identity 与 Credential
+
+#### Scenario: Credential保存失败
+- **WHEN** Identity 可写但 Credential 加密或持久化失败
+- **THEN** 绑定事务回滚且不产生部分身份或部分 Credential
 
 ### Requirement: ONES团队上下文不等于授权
 系统 SHALL 保存经过验证的 Team ID/名称、默认 Team 和最近验证时间作为身份上下文，MUST NOT把 Team 自动转为内部角色、数据范围、Capability、MCP Tool 授权或业务调用 Token。
@@ -1879,23 +1681,19 @@ ONES 本人与治理摘要 SHALL 展示用户名称、身份状态、默认 Team
 <!-- Reconciled from mcp_new capability: `unbound-dingtalk-identity-discovery` -->
 
 ### Requirement: 未绑定钉钉消息形成安全发现候选
-
-系统 SHALL 只为通过渠道认证和规范化、已持久化且明确因钉钉身份从未绑定、身份已停用或解绑、或所属用户已停用而被拒绝的新消息创建发现候选，并 MUST NOT 因此创建 Agent Job、发布 Job 消息、调用模型或 API Capability。
+系统 SHALL 只为通过渠道认证和规范化、已持久化且明确因钉钉身份从未绑定、身份已停用或解绑、或所属用户已停用而被拒绝的新消息创建发现候选，并 MUST NOT 因此创建 Agent Job、发布 Job 消息、调用模型或调用任意 MCP Tool。
 
 #### Scenario: 从未绑定用户发送私聊消息
-
-- **WHEN** 部署本功能后，一个没有历史钉钉身份的用户向已启用机器人发送私聊消息
-- **THEN** 系统 SHALL 返回现有未授权提示、创建或更新该用户的发现候选，且不得创建 Agent Job
+- **WHEN** 一个没有历史钉钉身份的用户向已启用机器人发送私聊消息
+- **THEN** 系统返回现有未授权提示、创建或更新该用户的发现候选且不得创建 Agent Job
 
 #### Scenario: 从未绑定用户发送群聊消息
-
-- **WHEN** 部署本功能后，一个没有历史钉钉身份的用户在群聊中向已启用机器人发送消息
-- **THEN** 系统 SHALL 创建或更新同一身份候选并记录安全群会话标识，且不得触发 Agent 执行
+- **WHEN** 一个没有历史钉钉身份的用户在群聊中向已启用机器人发送消息
+- **THEN** 系统创建或更新同一身份候选并记录安全群会话标识且不得触发 Agent 执行
 
 #### Scenario: 不符合身份发现条件的入口失败
-
-- **WHEN** 钉钉事件因连接器认证失败、格式错误、缺少 `senderStaffId` 或非身份授权原因被拒绝
-- **THEN** 系统 MUST NOT 创建身份发现候选，且不得泄露事件是否对应现有人员
+- **WHEN** 钉钉事件因 connector 认证失败、格式错误、缺少 `senderStaffId` 或非身份授权原因被拒绝
+- **THEN** 系统 MUST NOT 创建身份发现候选且不得泄露事件是否对应现有人员
 
 ### Requirement: 候选按租户和钉钉用户聚合且幂等
 
@@ -2345,3 +2143,364 @@ ONES 本人与治理摘要 SHALL 展示用户名称、身份状态、默认 Team
 #### Scenario: 两个管理员同时编辑草稿
 - **WHEN** 后提交者使用已经过期的 expected revision 保存
 - **THEN** API 返回冲突，页面展示当前版本已变化并允许刷新比较
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/agent-audit-permission` -->
+
+### Requirement: Principal JWT生命周期必须安全审计
+系统 SHALL 审计 Principal JWT 的签发成功、签发拒绝和 MCP 验证拒绝，记录 issuer、kid、audience、完整 scope、jti、Job、actor、结果和安全错误码；MUST NOT 保存 JWT 原文、签名、Authorization Header 或私钥材料。
+
+#### Scenario: JWT签发成功
+- **WHEN** Identity Service 为运行 Job 签发 `aud=ones-mcp` 的短期 JWT
+- **THEN** 审计记录 Job、actor、audience、完整 scope、kid、jti 和过期时间，不记录 JWT 原文
+
+#### Scenario: JWT验证失败
+- **WHEN** ONES MCP 收到伪造、过期、错误 audience 或未知 kid 的 JWT
+- **THEN** 审计记录稳定拒绝分类且不读取/记录 Provider credential
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/agent-audit-permission` -->
+
+### Requirement: ONES MCP查询与Provider尝试必须关联审计
+系统 SHALL 把 Agent Tool Call、MCP 操作、Provider 查询 attempt 和可选 Token refresh 使用 correlation ID、Job、session、principal jti、actor、external identity、Team 和 credential revision 串联。
+
+#### Scenario: 查询首次成功
+- **WHEN** ONES 查询第一次 Provider attempt 成功
+- **THEN** 审计链包含 Tool、完整有界业务请求、Provider attempt、完整有界业务响应、耗时和最终状态
+
+#### Scenario: 401刷新后成功
+- **WHEN** 首次查询401、自动登录成功且重试查询成功
+- **THEN** 审计链记录两个查询 attempt、一次 credential refresh、revision 变化和最终成功，不记录登录材料或 Token
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/agent-audit-permission` -->
+
+### Requirement: ONES身份审计保留原始身份字段但不得泄漏认证秘密
+本人绑定、重验、解绑、管理员停用、自动 Token refresh 和 REAUTH_REQUIRED 事件 SHALL 原样保存内部 actor、ONES 邮箱/User ID、identity/credential ID、revision、Team 标识、状态、时间和错误码；密码、Token、Principal JWT、Authorization/Cookie、密文、nonce、JWKS 私钥和 Provider 认证请求/响应原文 MUST 被排除。
+
+#### Scenario: 扫描绑定与刷新审计
+- **WHEN** 测试完成成功绑定、查询、Token 刷新和刷新失败
+- **THEN** `audit_event` 和 `mcp_operation_audit` 包含预期邮箱/User ID 与完整有界查询业务载荷，所有审计、Runtime event 和日志均不包含已知测试密码、Token、Principal JWT、Authorization/Cookie、密文或 nonce
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/dingtalk-ones-identity-binding` -->
+
+### Requirement: ONES登录材料和Token只允许加密持久化
+系统 SHALL 使用平台主密钥、随机 nonce 和 credential/challenge 绑定 AAD 加密 ONES 邮箱、密码和 Token；明文 MUST 只在当前请求或 Provider 调用内存中短暂存在。确认绑定后 SHALL 原子写入当前 credential 并清除 challenge 密文。
+
+#### Scenario: 确认默认Team
+- **WHEN** 用户确认未过期 challenge 中的默认 Team
+- **THEN** 身份绑定、credential 写入、challenge 消费和审计在同一事务完成
+
+#### Scenario: Challenge过期
+- **WHEN** challenge 已过期或已消费
+- **THEN** 系统拒绝确认，不创建当前 credential，并不得从 challenge 恢复登录材料
+
+#### Scenario: 公开投影
+- **WHEN** 用户或管理员查看 ONES 状态
+- **THEN** 响应最多显示 credential 是否已配置、状态、revision 和安全时间，不显示邮箱、密码、Token、密文或 nonce
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/dingtalk-ones-identity-binding` -->
+
+### Requirement: ONES身份状态参与MCP查询解析
+`ones-mcp` SHALL 只为有效 Principal JWT 对应的启用内部用户解析其唯一启用 ONES 身份、默认 Team 和 ACTIVE credential，并在任何事实缺失或冲突时失败关闭。
+
+#### Scenario: 已绑定用户查询ONES
+- **WHEN** 有效 Job 的当前用户已完成新凭据重验且 Tool 已授权
+- **THEN** MCP 以该用户的 ONES User ID、默认 Team 和当前 Token 执行查询
+
+#### Scenario: 只有历史身份事实
+- **WHEN** 用户存在迁移前 ONES 身份但没有 ACTIVE credential
+- **THEN** MCP 返回需要本人重新验证的安全提示且不调用 ONES
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/multi-provider-external-identity-management` -->
+
+### Requirement: Provider凭据必须与外部身份独立治理
+系统 SHALL 为支持运行时调用的外部身份保存一条独立当前 credential，包含 Provider、状态、revision、加密登录材料、加密 Token、验证/刷新时间和安全错误码；身份绑定本身 MUST NOT 自动授予 Agent、Application、MCP Tool 或业务数据权限。
+
+#### Scenario: 用户同时绑定钉钉和ONES
+- **WHEN** 同一内部用户具备钉钉身份和 ONES 身份
+- **THEN** 只有 ONES 身份可以关联 ONES credential，钉钉身份解析和权限保持独立
+
+#### Scenario: 身份停用
+- **WHEN** 外部身份或内部用户被停用
+- **THEN** 运行时不得解析或解密其 credential，即使 credential 行仍为 ACTIVE
+
+#### Scenario: 身份软解绑
+- **WHEN** 用户软解绑 ONES 身份
+- **THEN** 系统把 credential 标记为 UNBOUND 并清除登录和 Token 密文，同时保留不含秘密的审计事实
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/multi-provider-external-identity-management` -->
+
+### Requirement: Provider Adapter必须代码注册并限制能力
+统一身份模块 SHALL 使用代码注册的 Provider Adapter 实现验证和 Token 生命周期；客户端、管理员或模型 MUST NOT 创建任意登录 URL、Header、OAuth 模板、脚本或通用认证执行器。
+
+#### Scenario: ONES Adapter执行验证
+- **WHEN** 用户发起 ONES 本人绑定
+- **THEN** 系统只使用代码固定的 ONES 登录路径、响应 schema、host allowlist、超时和大小限制
+
+#### Scenario: 请求未知Provider
+- **WHEN** 客户端请求未注册 Provider 或自定义认证模板
+- **THEN** 系统拒绝请求且不执行外部网络访问
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/ones-identity-verification` -->
+
+### Requirement: ONES验证材料必须以加密Challenge转交
+ONES Adapter SHALL 返回严格规范化的主体、Team 和 Token；Identity Service MUST 在同一请求内把邮箱、密码和 Token 加密写入短期 challenge，且公开 challenge 投影只包含主体、Team、验证时间、过期时间和状态。
+
+#### Scenario: 验证成功
+- **WHEN** ONES 返回包含用户 UUID、Token 和 Team 的合法响应
+- **THEN** 系统创建不回显秘密的加密 challenge，等待用户选择默认 Team
+
+#### Scenario: 验证失败
+- **WHEN** ONES 拒绝邮箱/密码或响应不合法
+- **THEN** 系统不创建 challenge credential、当前 credential 或身份，并返回统一安全错误
+
+#### Scenario: 运行日志扫描
+- **WHEN** 成功或失败验证完成
+- **THEN** 日志只包含 correlation ID、Provider instance、actor、outcome 和安全错误码
+- **AND** 不包含请求体、响应体、邮箱、密码或 Token
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/ones-identity-verification` -->
+
+### Requirement: ONES凭据确认必须原子且可重验
+确认 challenge 时，系统 SHALL 在一个事务中消费 challenge、创建或更新 ONES 身份、选择已验证 Team、创建或轮换 current credential 并记录审计；同一 ONES subject 的重验 MUST 增加 credential revision。
+
+#### Scenario: 首次确认
+- **WHEN** 用户确认有效 challenge 中的 Team
+- **THEN** 系统创建启用身份与 revision 1 的 ACTIVE credential
+
+#### Scenario: 同一用户重验
+- **WHEN** 已绑定用户再次验证同一 ONES subject
+- **THEN** 系统更新允许的身份事实、轮换 credential 并使旧密文版本不可用
+
+#### Scenario: 换绑其它subject
+- **WHEN** 验证返回与当前绑定不同的 subject
+- **THEN** 系统要求显式换绑确认，并在成功后使旧 identity credential 失效
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/ones-identity-verification` -->
+
+### Requirement: ONES Token必须支持安全自动刷新
+运行时 SHALL 在 ONES 查询首次返回401后使用当前 ACTIVE credential 的加密邮箱/密码重新登录，校验 subject 和 Team 后条件更新 Token；原调用最多重试一次。
+
+#### Scenario: 自动刷新成功
+- **WHEN** 旧 Token 失效但登录材料有效且 subject/Team 未变化
+- **THEN** 系统更新 Token 密文、credential revision 和刷新时间，并重试一次查询
+
+#### Scenario: 自动刷新失败
+- **WHEN** 登录失败、subject 改变、Team 消失或重试仍401
+- **THEN** 系统把 credential 标记为 REAUTH_REQUIRED、停止重试并要求用户本人重新验证
+
+#### Scenario: 并发刷新
+- **WHEN** 多个请求同时发现同一 credential Token 失效
+- **THEN** 系统以进程锁和 revision 条件更新收敛到最新 Token，不用旧 revision 覆盖新值
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/principal-jwt-authentication` -->
+
+### Requirement: Principal JWT 必须由受信 Job 事实派生
+Identity Service SHALL 只为当前运行中的 Agent Job 签发 Principal JWT，并 MUST 从 Job、内部用户、Agent/Application Publication、MCP Tool 快照和当前授权事实派生 `sub`、`aud` 与 `scope`；调用方不得提交这些 claims 的最终值。
+
+#### Scenario: Worker为ONES Tool申请JWT
+- **WHEN** Worker 执行包含 `ones-mcp:ones_work_item_search` 的运行中 Job
+- **THEN** Identity Service 签发 `sub` 等于该 Job 内部用户、`aud=ones-mcp` 且 scope 只包含查询 Tool 所需权限的 JWT
+
+#### Scenario: 请求扩大scope
+- **WHEN** 调用方请求 Job 快照之外的 scope、其它用户或其它 audience
+- **THEN** Identity Service 拒绝签发并记录安全审计，且不返回任何 JWT
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/principal-jwt-authentication` -->
+
+### Requirement: Principal JWT 必须使用短期非对称签名
+Identity Service MUST 使用 Ed25519 私钥和 `alg=EdDSA` 签发 JWT，MCP MUST 使用按 `kid` 选择的 JWKS 公钥验证；JWT 最长有效期 SHALL 为五分钟，并包含 `iss`、`sub`、`aud`、`azp`、`job_id`、`session_id`、Publication、scope、授权摘要、`jti`、`iat`、`nbf` 和 `exp`。
+
+#### Scenario: 合法JWT被ONES MCP接受
+- **WHEN** JWT 使用活动私钥签名、`kid` 存在、claims 完整且尚未过期
+- **THEN** ONES MCP 验证签名、issuer、audience、时间和查询 scope 后建立平台 Principal
+
+#### Scenario: HS256或未知kid
+- **WHEN** JWT 使用 HS256、`alg=none`、未知 `kid` 或共享密钥签名
+- **THEN** ONES MCP 拒绝请求且不读取身份、凭据或调用 ONES
+
+#### Scenario: JWT过期
+- **WHEN** `exp` 已到或 `nbf` 尚未到
+- **THEN** ONES MCP 返回统一认证失败且不刷新 ONES Token
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/principal-jwt-authentication` -->
+
+### Requirement: Principal JWT 不得携带Provider凭据
+Principal JWT MUST NOT 包含外部身份 ID、ONES User ID、Team、邮箱、密码、ONES Token、平台 Secret、模型密钥或其它可重放 Provider 凭据。
+
+#### Scenario: 检查签发claims
+- **WHEN** 测试解码签发的 JWT payload
+- **THEN** payload 只包含平台 Principal、Job、Publication、scope、授权摘要和标准时间 claims
+- **AND** 不包含 identity、credential、email、password、team 或 provider token 字段
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/principal-jwt-authentication` -->
+
+### Requirement: Runtime只在内存转交Principal JWT
+Worker SHALL 通过不进入执行 JSON 的内部 Header 把 Principal JWT 交给 Runtime；Runtime MUST 只在当前 invocation 内存中保存它，并只向匹配 audience 的固定 MCP 服务发送 Bearer Header。
+
+#### Scenario: Runtime调用ones-mcp
+- **WHEN** Job 快照包含 ONES 查询且 Runtime 收到合法 Principal JWT
+- **THEN** Runtime 只向固定 `ones-mcp` 请求加入该 Bearer Token
+- **AND** `tool-mcp` 请求不携带该 Token
+
+#### Scenario: 检查digest和ledger
+- **WHEN** 同一 invocation 使用重新签发但 claims 等价的短期 JWT 重试
+- **THEN** request digest 保持不变，Runtime request/terminal ledger、事件和日志均不包含 JWT
+
+<!-- Integrated from archived change: `2026-08-23-add-identity-aware-ones-mcp/specs/principal-jwt-authentication` -->
+
+### Requirement: MCP必须实时复核可撤权事实
+成功验证 JWT 后，ONES MCP SHALL 重新读取 Job、用户、外部身份和冻结 Tool 快照，并 MUST 在任一事实已停用、过期、不匹配或发生 schema drift 时失败关闭。
+
+#### Scenario: 用户在JWT有效期内被停用
+- **WHEN** JWT 尚未过期但 `sub` 对应用户已停用
+- **THEN** ONES MCP 在外部调用前拒绝请求并记录撤权审计
+
+#### Scenario: JWT与Job用户不一致
+- **WHEN** JWT `sub`、`job_id` 和数据库 Job 的内部用户不一致
+- **THEN** ONES MCP 拒绝请求且不尝试寻找其它身份
+
+<!-- Integrated from archived change: `2026-08-23-unify-mcp-operation-audit/specs/identity-access` -->
+
+### Requirement: ones-mcp 必须使用通用 MCP 操作审计契约
+身份感知的 `ones-mcp` SHALL 使用与其它平台 MCP Server 相同的 `mcp_call_id`、Agent Tool Call 和 `mcp_operation_audit` 契约，同时记录适用的 `TOOL`、`AUTHORIZATION`、`PROVIDER` 与 `CREDENTIAL` 证据。ONES 专用身份、Team、Credential Revision 与 Provider Attempt 必须作为可选扩展上下文，不得使通用审计字段依赖 ONES。
+
+#### Scenario: ONES 查询成功
+- **WHEN** 已绑定且已授权用户成功调用 `ones_work_item_search`
+- **THEN** 系统保存一条 Agent Tool Call、同一 `mcp_call_id` 下的 TOOL 与 PROVIDER 证据，并精确关联真实 SDK Tool Use
+
+#### Scenario: ONES 调用未进入 Provider
+- **WHEN** Principal、身份绑定、默认 Team、Tool scope 或业务应用权限校验失败
+- **THEN** 系统保存适用的拒绝证据且不创建伪造的 Provider 成功事件
+
+#### Scenario: ONES Token 刷新后重试
+- **WHEN** Provider 首次返回未授权并触发一次受控 Token 刷新和重试
+- **THEN** CREDENTIAL 与两个 PROVIDER Attempt 共享同一 `mcp_call_id`，并记录各自状态、尝试次数和 Credential Revision
+
+<!-- Integrated from archived change: `2026-08-23-unify-mcp-operation-audit/specs/identity-access` -->
+
+### Requirement: ONES MCP 关联标识不得来自 Principal 或 Agent 输入
+`ones-mcp` SHALL 由服务端生成 `mcp_call_id` 和 `agent_tool_call_id`，并通过 MCP `CallToolResult._meta` 返回 Runtime。Principal JWT、Agent 参数和 Provider 响应中的同名字段 MUST NOT 被采用为平台关联标识。
+
+#### Scenario: Agent 参数伪造关联标识
+- **WHEN** Agent Tool Input 包含平台保留关联字段
+- **THEN** Schema 或服务端拒绝该输入，并且不会关联或覆盖任何现有审计记录
+
+<!-- Integrated from archived change: `2026-08-23-unify-mcp-operation-audit/specs/identity-access` -->
+
+### Requirement: ONES MCP 审计保留业务证据但隔离认证材料
+`ones-mcp` SHALL 在授权读取与配置大小边界内保留 Tool 和 Provider 的业务请求、业务响应及错误证据；MUST NOT 保存 Principal JWT、ONES Token、密码、Authorization/Cookie Header、Credential 密文、Nonce 或私钥。管理员读取通用 MCP 审计仍 MUST 经过 `audit:*:read` 并记录读取审计。
+
+#### Scenario: 管理员读取 ONES MCP 审计
+- **WHEN** 具备 `audit:*:read` 的管理员查询 MCP 审计详情
+- **THEN** 响应返回有界业务证据与关联标识，并记录本次读取行为
+
+#### Scenario: 审计载荷包含 ONES Token
+- **WHEN** Provider 请求、响应或异常对象中包含 Token 或认证 Header
+- **THEN** 系统不得持久化该认证材料，且调用按安全审计策略失败或排除非法字段
+
+<!-- Integrated from archived change: `2026-08-23-harden-management-and-runtime-boundaries/specs/identity-access` -->
+
+### Requirement: 管理面必须形成统一认证授权响应矩阵
+系统 SHALL 对所有管理 Router、平台配置、Agent Workflow 和调试 Job 入口使用同一管理面装配与可信 principal 边界。管理面关闭时端点 MUST 不注册；管理面开启时未认证、无 action 权限和已授权请求 MUST 分别得到 401、403 和成功响应。
+
+#### Scenario: 管理面关闭
+- **WHEN** `FEATURE_WEB_ADMIN=false` 且客户端请求任一管理 API、Workflow 或调试 Job 入口
+- **THEN** 系统返回 404，且不得读取管理数据或执行写操作
+
+#### Scenario: 管理面开启但未登录
+- **WHEN** `FEATURE_WEB_ADMIN=true` 且请求没有有效 Session principal
+- **THEN** 系统返回 401，不得把客户端 Header 解释为 actor
+
+#### Scenario: 已登录但没有 action 权限
+- **WHEN** 有效内部 principal 请求未获授权的管理 read、edit、publish 或 manage 操作
+- **THEN** 系统返回 403 且记录安全权限拒绝
+
+#### Scenario: 已登录且具有 action 权限
+- **WHEN** 有效内部 principal 具有目标资源和 action 权限并满足写请求 CSRF
+- **THEN** 系统执行操作并以该 principal 的内部用户 ID 记录 actor
+
+<!-- Integrated from archived change: `2026-08-23-harden-management-and-runtime-boundaries/specs/identity-access` -->
+
+### Requirement: 测试 actor Header 必须由显式测试适配器控制
+系统 MUST NOT 在生产管理路径信任 `x-admin-user-id`、`x-agent-user-id` 或等价客户端 actor Header。Header 身份注入只可在 local/test/testing 环境且显式启用测试身份功能时由认证 adapter 解析，并仍须执行相同 action 授权。
+
+#### Scenario: 生产请求伪造 actor Header
+- **WHEN** 非测试环境的未认证请求仅提交已存在管理员的 actor Header
+- **THEN** 系统返回 401，且不执行或审计为该管理员
+
+#### Scenario: 显式测试适配器注入身份
+- **WHEN** test 环境显式启用测试身份 Header 并提交启用用户标识
+- **THEN** 系统构造 `auth_source=test-header` principal 并继续执行正常 action 判定
+
+<!-- Integrated from archived change: `2026-08-23-generalize-business-mcp-principal-jwt/specs/identity-access` -->
+
+### Requirement: 身份服务按业务 MCP Server 签发 Job Principal JWT
+平台身份服务 SHALL 提供统一的业务 MCP Principal 签发能力，输入只能是内部 `job_id` 和代码固定的 `server_code`。签发服务 MUST 读取并验证 RUNNING Job、有效内部用户、Session、Agent Publication、Business Application Publication、Job MCP 工具快照和 authorization hash，只筛选该 Server 冻结且 schema 未漂移的 Tool，并在逐项复核现有 Business Application Tool 授权后生成排序、唯一且非空的 `mcp:<server_code>:<tool_identifier>:invoke` scope。JWT MUST 使用统一 Principal Ed25519 信任根，TTL不得超过300秒，并绑定固定issuer、`aud=server_code`、authorized party、主体、Job、Session、两个Publication、完整scope、authorization hash、JTI和时间声明。
+
+#### Scenario: 为 ONES Job 签发通用业务 Principal
+- **WHEN** RUNNING Job冻结了合法 `ones-mcp` Tool且当前用户仍具有对应业务Tool授权
+- **THEN** 身份服务签发 `aud=ones-mcp` 且scope只包含该Job冻结 ONES Tool的短时JWT
+- **AND** 签发调用使用统一业务MCP方法而不是ONES专用方法
+
+#### Scenario: 同一 Job 包含两个业务 MCP
+- **WHEN** RUNNING Job冻结了两个代码固定业务MCP Server各自的合法Tool
+- **THEN** 身份服务可分别按两个`server_code`签发两个audience不同、scope互不混合的Principal JWT
+
+#### Scenario: Server 不允许使用业务 Principal
+- **WHEN** 调用方请求为`tool-mcp`、`file-service`、未知Server或未声明为`business-principal-jwt`的Server签发业务Principal
+- **THEN** 身份服务在签名前失败关闭并写入不含Token的拒绝审计
+
+#### Scenario: 冻结工具集合无效
+- **WHEN** 指定业务Server在Job快照中没有Tool、存在重复Tool、schema或Server漂移、authorization hash无效或任一Tool不再授权
+- **THEN** 身份服务拒绝签发且不得缩小、扩大、猜测或跨Server补充scope
+
+#### Scenario: JWT 包含下游凭据
+- **WHEN** 待签发claims包含ONES Token、钉钉Token、密码、Cookie、MCP URL、Header、Tool参数、Prompt或其它下游Secret
+- **THEN** 签发失败且审计、日志和错误不得记录原值
+
+<!-- Integrated from archived change: `2026-08-23-generalize-business-mcp-principal-jwt/specs/identity-access` -->
+
+### Requirement: 业务 MCP Principal 验证固定 audience 和完整 Job 事实
+每个业务MCP Server MUST 使用自身代码固定的expected audience验证Principal JWT，不得从未验证claims、请求参数、Tool输入或Header后缀选择信任策略。验证 MUST 覆盖EdDSA算法、JWKS kid、issuer、audience、authorized party、claims白名单、TTL、时间、JTI和required scope，并重新读取当前RUNNING Job、有效用户、Session、两个Publication、冻结Tool/schema和authorization hash；token的scope MUST 恰好等于该Server在当前Job快照中已授权的scope集合。
+
+#### Scenario: 正确 audience 调用冻结 Tool
+- **WHEN** 业务MCP收到平台签发、audience匹配且包含当前Tool精确scope的有效JWT
+- **THEN** 服务在复核当前Job、用户、Publication、快照和授权摘要后进入业务调用
+
+#### Scenario: ONES token 被送往另一业务 MCP
+- **WHEN** `aud=ones-mcp`的JWT被送往expected audience为其它Server的业务MCP
+- **THEN** 服务在读取Provider Credential或访问上游业务系统前拒绝
+
+#### Scenario: token scope 是快照的子集或超集
+- **WHEN** JWT scope与该Server当前冻结且已授权的完整Tool scope集合不完全一致
+- **THEN** 服务失败关闭且不得仅因当前调用Tool出现在scope中而继续
+
+#### Scenario: 下游 Provider Credential 与平台 Principal 分离
+- **WHEN** 业务MCP需要使用ONES、钉钉或其它Provider Credential访问上游
+- **THEN** 服务根据已验证平台主体和自身固定身份规则解析凭据，且Provider Credential不得来自Principal JWT、Prompt或Tool参数
+
+<!-- Integrated from archived change: `2026-08-23-generalize-business-mcp-principal-jwt/specs/identity-access` -->
+
+### Requirement: File Principal 保持独立签发与验证边界
+`file-service`的用户/Job Principal MUST 继续由专用File签发路径绑定租户、任务工作区和精确文件操作权限，并由独立File验证策略复核；通用业务MCP签发器、业务token映射或业务audience验证器 MUST NOT替代、包装或放宽该路径。
+
+#### Scenario: 同一 Job 同时使用业务 MCP 和 File MCP
+- **WHEN** Job同时冻结业务MCP Tool和File Tool
+- **THEN** 平台分别签发按Server隔离的业务Principal和独立File Principal
+- **AND** 两类令牌不得互相作为fallback或通过对方验证策略
+
+#### Scenario: 通用业务签发器收到 file-service
+- **WHEN** 调用方以`server_code=file-service`请求通用业务Principal
+- **THEN** 身份服务拒绝并要求使用现有File专用签发路径
+
+### Requirement: ONES 身份绑定不得自动授予业务 MCP 能力
+ONES 身份绑定 SHALL 只建立当前内部用户的外部主体、Team 与加密个人 Credential 事实，不得自动创建角色、Business Application Tool 授权、Job 或业务 MCP Principal。只有经 Agent/Application 发布交集和角色 Tool 授权的 ONES Tool 被当前 RUNNING Job 冻结后，平台才可为该 Job 签发 `ones-mcp` 短时 Principal；MCP 服务再按已验证主体解析对应个人 Credential。
+
+#### Scenario: 完成ONES身份绑定
+- **WHEN** 用户完成绑定或重新验证但没有经 Business Application 发布、角色授权并冻结到 Job 的 ONES Tool
+- **THEN** 系统只更新身份与 Credential 事实
+- **AND** 不授予、不签发也不触发任何 ONES 业务调用能力
+
+#### Scenario: 已绑定用户执行授权ONES Job
+- **WHEN** 用户身份有效且当前 RUNNING Job 冻结了经发布和授权的 `ones-mcp` Tool
+- **THEN** 身份服务可按业务 MCP 规范为该 Job 签发短时 Principal
+- **AND** 该签发不得反向改变用户绑定、内部角色或数据范围

@@ -54,15 +54,22 @@
 - **THEN** 系统阻止外部请求、记录非重试配置错误，且不泄露完整 URL
 
 ### Requirement: Connector configuration supports DingTalk, Grafana, email, webhook, and none
-系统 SHALL 至少能表达 DingTalk webhook robot、DingTalk enterprise robot、Grafana alert webhook、email、generic webhook 和 none 这些 connector 或 route 类型。
+系统 SHALL 至少能表达 DingTalk enterprise Stream ingress、DingTalk callback ingress、DingTalk enterprise robot delivery、DingTalk webhook robot delivery、Grafana alert webhook、email、generic webhook 和 none 这些代码注册 connector 或 route 类型。每种 connector 的方向 MUST 由代码注册表固定，配置不得把 ingress-only 类型改成 delivery，也不得把 delivery-only 类型改成 ingress。
 
-#### Scenario: DingTalk connector is both ingress and delivery
-- **WHEN** DingTalk connector 同时配置 `allow_ingress=true` 和 `allow_delivery=true`
-- **THEN** 系统允许该 connector 接收用户问题并发送结果
+#### Scenario: DingTalk enterprise Stream connector is ingress only
+- **WHEN** 配置使用 `dingtalk_enterprise_stream`
+- **THEN** 系统允许该 connector 接收受信 Stream 消息
+- **AND** 拒绝把它作为 Delivery connector
+
+#### Scenario: DingTalk webhook robot is delivery only
+- **WHEN** 配置使用 `dingtalk_webhook_robot`
+- **THEN** 系统允许该 connector 发送群消息
+- **AND** 拒绝把它作为用户问题 ingress
 
 #### Scenario: Grafana connector is ingress only
-- **WHEN** Grafana connector 配置 `allow_ingress=true` 且 `allow_delivery=false`
-- **THEN** 系统允许 Grafana 告警创建 job，但拒绝把结果投递回 Grafana connector
+- **WHEN** 配置使用 Grafana alert webhook
+- **THEN** 系统允许合法告警创建 Job
+- **AND** 拒绝把结果投递回该 ingress connector
 
 ### Requirement: DingTalk enterprise App connector uses secret references
 系统 SHALL 使用 connector 配置表达钉钉企业 App 的 Client ID 和 Client Secret，真实值 MUST 通过环境变量或受控 secret reference 解析，不能明文写入 job、audit、delivery attempt 或仓库文件。
@@ -98,15 +105,19 @@
 - **THEN** 系统拒绝入口授权并记录安全审计事件
 
 ### Requirement: 公共入站 Connector 必须配置强制认证策略
-系统 SHALL 要求受管 Webhook ingress Connector 使用 Bearer Token 或 HMAC-SHA256 secret reference，MUST NOT 在 secret 为空、无法解析或认证策略未知时允许请求。
+系统 SHALL 要求受管 Grafana 和 Generic Webhook ingress Connector 使用唯一的强 Bearer Token secret reference，MUST NOT 在 secret 为空、无法解析、认证模式不是 `bearer_v1` 或认证失败时允许请求。
 
 #### Scenario: Connector secret 正常解析
-- **WHEN** 已发布 Trigger 引用启用的 ingress Connector 和可解析 secret
-- **THEN** 系统可以使用该 secret 执行配置的认证策略且审计只记录引用
+- **WHEN** 已发布 Trigger 引用启用的 ingress Connector、`bearer_v1` 和可解析的唯一 Token
+- **THEN** 系统使用标准 `Authorization: Bearer` 执行认证且审计只记录引用和安全结果
 
 #### Scenario: Connector secret 配置为空
 - **WHEN** 公共 Webhook Connector 没有 secret reference
-- **THEN** Trigger 校验/发布失败，运行时也拒绝请求
+- **THEN** Trigger 校验或发布失败，运行时也拒绝请求
+
+#### Scenario: 请求使用HMAC认证
+- **WHEN** 请求或配置声明 HMAC、timestamp、nonce 或签名 Header
+- **THEN** 系统拒绝该认证模式且不进入 payload 归一化或 Job 创建
 
 ### Requirement: Connector 认证和 Delivery 方向保持隔离
 系统 SHALL 分别校验 Trigger 来源 Connector 的 `allow_ingress` 和固定结果 Connector 的 `allow_delivery`，外部 payload MUST NOT 改变任一 Connector ID 或方向。
@@ -119,12 +130,6 @@
 - **WHEN** 草稿把钉钉 webhook 机器人等 delivery-only Connector 配置为 ingress
 - **THEN** 发布校验拒绝该配置
 
-### Requirement: HMAC Connector 配置声明签名协议版本
-系统 SHALL 为 HMAC ingress Connector 保存签名版本、时间戳 header、nonce header、签名 header 和允许时间窗，MUST 使用受支持的 canonical body 规则。
-
-#### Scenario: 未知签名版本
-- **WHEN** Trigger 引用未注册的 HMAC 签名协议版本
-- **THEN** 系统拒绝发布而不是猜测厂商签名格式
 
 ### Requirement: Connector 缺少 Secret 时必须进入 MISCONFIGURED
 已配置 Connector 的必需 Secret 缺失、禁用或无法解析时，系统 MUST 保留配置与历史，将 Connector 标为 MISCONFIGURED，并停用 ingress 和 delivery；不得生成 Secret、使用空值或 fail open。
@@ -317,17 +322,18 @@ Grafana 和 Generic Webhook Connector MUST 使用标准 `Authorization: Bearer`�
 - **AND** 请求向钉钉原会话发送安全配置错误
 
 ### Requirement: 应用会话上下文按业务应用隔离
-系统 MUST 将命中的稳定 Business Application ID 纳入会话复用边界，并 SHALL 按应用 Publication 中已接线的 Session Policy 构造会话。
-
+系统 MUST 将稳定 Business Application ID、命中的 Application Publication ID 和 execution scope hash 纳入会话复用边界，并 SHALL 按该 Publication 中已接线的 Session Policy 构造会话。Application Publication 或 execution scope 变化时 MUST 创建新会话，历史会话保持只读可追溯。
 #### Scenario: 同一钉钉会话命中不同应用
 - **WHEN** 两条事件具有相同外部 conversation ID 但命中不同 Business Application
 - **THEN** 系统创建或复用不同的 Agent Session
 - **AND** 两个应用的最近消息与会话摘要不相互泄露
-
 #### Scenario: 同一应用升级Publication
 - **WHEN** 同一应用激活新 Publication 后收到同一外部会话的新消息
-- **THEN** 系统可继续复用该应用的会话
-- **AND** 新 Job 单独保存新 Publication provenance
+- **THEN** 系统为新 Publication 创建新 Agent Session
+- **AND** 旧 Session、消息和摘要保持历史只读，不进入新 Publication 的上下文
+#### Scenario: 应用执行范围发生变化
+- **WHEN** 同一应用 Publication 的有效 execution scope hash 与既有 Session 不同
+- **THEN** 系统创建隔离 Session 并按新范围重新执行授权和上下文边界校验
 
 ### Requirement: Channel入口对路由阻塞发送安全失败结果
 系统 SHALL 将命中后的非重试配置错误交给已注册的 Channel 拒绝通知能力，MUST NOT 因失败通知异常而创建 Agent Job 或将配置错误改为可重试执行错误。
@@ -366,7 +372,7 @@ Grafana 和 Generic Webhook Connector MUST 使用标准 `Authorization: Bearer`�
 - **WHEN** 系统无法在身份拒绝事务中安全提交发现投影
 - **THEN** 系统 SHALL 保持 fail-closed、不得创建 Agent Job，并返回不含消息正文或敏感信息的可重试错误分类
 
-### Requirement: 外部 Webhook 本次不得要求 HMAC 或 HTTPS
+### Requirement: 外部Webhook当前使用强Bearer且本地HTTP不代表生产安全
 本地/Compose 阶段 Webhook 契约 MUST 只要求强 Bearer Token，不实现 HMAC、timestamp、nonce 或 HTTPS；运行边界必须标明仅限本地功能测试。
 
 #### Scenario: Grafana 在本地 Compose 调用 HTTP
@@ -476,16 +482,23 @@ The system SHALL send the final Agent report or failure notice through the confi
 - **WHEN** an Agent job reaches FAILED or TIMEOUT
 - **THEN** the system sends a failure notice with a safe failure reason to the configured DingTalk delivery target
 
-### Requirement: DingTalk robots can be configured for ingress and delivery
-The system SHALL support DingTalk enterprise robots and DingTalk webhook robots as configurable connectors that can allow ingress, delivery, or both.
+### Requirement: DingTalk ingress与delivery使用不同Connector类型
+系统 SHALL 通过不同代码注册 connector 类型区分钉钉 ingress 与 delivery：enterprise Stream 和 callback 类型只用于 ingress，enterprise robot 与 webhook robot 只用于 delivery。系统 MUST NOT 允许同一钉钉 connector 通过配置获得代码未声明的另一方向。
 
-#### Scenario: DingTalk robot is ingress enabled
-- **WHEN** a DingTalk robot connector is configured with `allow_ingress=true`
-- **THEN** valid messages from that connector can create Agent jobs through the Channel ingress service
+#### Scenario: DingTalk Stream ingress
+- **WHEN** 已启用的 `dingtalk_enterprise_stream` 收到合法企业消息
+- **THEN** 消息可以进入 Channel ingress 服务
+- **AND** 该 connector 不能作为结果投递目标
 
-#### Scenario: DingTalk robot is delivery enabled
-- **WHEN** a DingTalk robot connector is configured with `allow_delivery=true`
-- **THEN** Agent results can be delivered through that connector's DingTalk adapter
+#### Scenario: DingTalk enterprise robot delivery
+- **WHEN** Agent 结果使用 `dingtalk_enterprise_robot` delivery route
+- **THEN** 结果可以通过对应 delivery adapter 投递
+- **AND** 该 connector 不能接收用户问题创建 Job
+
+#### Scenario: DingTalk webhook robot delivery
+- **WHEN** Agent 结果使用 `dingtalk_webhook_robot` delivery route
+- **THEN** 结果可以通过对应群机器人 adapter 投递
+- **AND** 任何把它配置为 ingress 的请求均失败关闭
 
 ### Requirement: DingTalk enterprise App can receive final Agent results
 系统 SHALL 支持通过钉钉企业 App 出口将最终报告或失败通知发送回配置的钉钉目标，目标可以来自 reply route 或 connector 默认配置。
@@ -836,61 +849,69 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 
 ### Requirement: 系统分层保存MVP多模态消息
 系统 SHALL 在PostgreSQL保存消息正文、附件元数据、来源状态、可读性状态、精确File/Version绑定及处理/表示血缘，并在File Service管理的私有S3兼容对象存储保存原始二进制和派生表示。完整原始二进制、Markdown、Docling JSON、对象位置和凭据 MUST NOT写入PostgreSQL、RabbitMQ、日志或审计payload；旧Publication兼容路径中既有有界提取文本只可用于历史读取，不得成为启用文档处理Profile后的新事实源。
-
 #### Scenario: 文本和文档一起到达
 - **WHEN** 消息包含文本和一个受支持文档且命中启用文档处理Profile的应用
 - **THEN** 系统保存一条user message、一条attachment记录、原始File Version和processing run
 - **AND** 原件与后续派生表示均只能由File Service写入私有bucket
-
 #### Scenario: 仅图片到达
 - **WHEN** 消息没有文本但包含受支持图片且应用启用文档处理Profile
 - **THEN** 系统保存消息、图片原件和OCR处理状态
 - **AND** 不把OCR能力描述为完整图片内容理解
 
 ### Requirement: MVP只接受现代白名单格式
-系统 SHALL 为启用`docling-text-v1`的任务工作区链路支持PDF、DOCX、XLSX、PPTX、JPEG、PNG和WebP原件，并继续按已冻结文本格式策略支持UTF-8 TXT、LOG和Markdown；系统 MUST 根据真实内容探测MIME、校验格式、数量、文件大小、解压后大小及结构上限。渠道提供文件名时，系统 MUST 保留其安全规范化后的 basename 作为用户可见名称基础；原生图片消息不提供文件名时，系统 MUST 按消息时间和固定 `Asia/Shanghai` 时区生成可读名称，不得伪造原名。对成功安全解码、像素校验并重新编码的JPEG、PNG和WebP，系统 MUST 以规范化后的真实媒体类型与文件签名确定源格式，并使用真实格式的canonical extension创建受治理文件名，同时保留安全规范化后的来源名称作为来源元数据；该兼容行为不得用于PDF、Office或其他格式。同一工作区的同名文件 MUST 使用 ` (2)`、` (3)` 递增后缀消歧，不得暴露内部 attachment ID。源文档单文件 MUST 不超过25MiB；Agent可读文本仍 MUST 不超过15MiB。系统 MUST 拒绝DOC、XLS、PPT、宏文件及其他未支持格式。
-
+系统 SHALL 按代码固定`text-v2`支持UTF-8 TXT、LOG和Markdown，并仅在Publication冻结`docling-layout-ocr-v2`时支持PDF、DOCX、XLSX、PPTX、JPEG、PNG和WebP原件；系统 MUST 根据真实内容探测MIME、校验格式、数量、文件大小、解压后大小及结构上限。渠道提供文件名时，系统 MUST 保留其安全规范化后的 basename 作为用户可见名称基础；原生图片消息不提供文件名时，系统 MUST 按消息时间和固定 `Asia/Shanghai` 时区生成可读名称，不得伪造原名。对成功安全解码、像素校验并重新编码的JPEG、PNG和WebP，系统 MUST 以规范化后的真实媒体类型与文件签名确定源格式，并使用真实格式的canonical extension创建受治理文件名，同时保留安全规范化后的来源名称作为来源元数据；该兼容行为不得用于PDF、Office或其他格式。同一工作区的同名文件 MUST 使用 ` (2)`、` (3)` 递增后缀消歧，不得暴露内部 attachment ID。源文档单文件 MUST 不超过25MiB；Agent可读文本仍 MUST 不超过15MiB。系统 MUST 拒绝DOC、XLS、PPT、宏文件及其他未支持格式。
 #### Scenario: 渠道提供可用原始文件名
 - **WHEN** 渠道附件提供可安全规范化的原始文件名
 - **THEN** 任务工作区保留其安全basename和经真实内容校正的canonical extension
 - **AND** 同名时使用 ` (2)`、` (3)` 递增后缀，不展示不透明内部标识
-
 #### Scenario: DingTalk原生图片没有原始文件名
 - **WHEN** 原生picture消息只提供`downloadCode`和消息时间
 - **THEN** 系统生成 `图片-YYYYMMDD-HHMMSS.<canonical extension>` 作为用户可见文件名
 - **AND** 时间按`Asia/Shanghai`解释，扩展名由实际文件签名决定
-
 #### Scenario: 现代Office附件通过受治理校验
 - **WHEN** DOCX、XLSX或PPTX的扩展名、MIME、大小和结构符合固定源文件策略且应用启用文档处理Profile
 - **THEN** File Worker通过File Service保存原件并创建异步processing run
 - **AND** 不使用旧正文数据库写入作为该附件的新内容事实
-
 #### Scenario: UTF-8 TXT进入任务工作区
 - **WHEN** `.txt`内容为有效UTF-8且大小不超过15MiB
 - **THEN** 系统允许File Worker通过File Service导入并进入现有文本工作区链路
 - **AND** 不为TXT调用Docling
-
 #### Scenario: TXT编码或大小不合法
 - **WHEN** `.txt`是GBK、UTF-16、无效UTF-8或超过15MiB
 - **THEN** 系统将attachment标记为REJECTED并保存安全错误码
-
 #### Scenario: 类型伪装或超限
 - **WHEN** PDF或Office扩展名与真实MIME/结构冲突，图片无法安全解码为白名单格式，或附件数量、大小、页数、解压后大小、行列、像素或幻灯片超过对应固定策略
 - **THEN** 系统将attachment或processing run标记为确定拒绝
 - **AND** 不调用模型、不静默截断或降级到宽松解析器
-
 #### Scenario: 渠道把JPEG或WebP命名为PNG
 - **WHEN** 渠道附件名以`.png`结尾，但图片字节可安全解码并规范化为JPEG或WebP且满足全部资源上限
 - **THEN** File Service按规范化后的真实媒体类型和签名保存原件，并把受治理display name改为`.jpg`或`.webp`
 - **AND** 原始渠道名称只作为来源元数据保留，不因错误扩展名拒绝合法图片或覆盖同名文件
-
 #### Scenario: 旧版Office或其他格式到达
 - **WHEN** 消息包含DOC、XLS、PPT、宏文件、压缩包、音视频、SVG、脚本、可执行文件或未知格式
 - **THEN** 系统不解析内容并返回不泄漏内部信息的格式说明
-
 #### Scenario: PDF进入未启用Profile的应用
 - **WHEN** 应用Publication未选择文档处理Profile而消息包含PDF
 - **THEN** 系统不创建processing run并返回当前应用未启用文档读取能力的安全状态
+#### Scenario: 现代Office附件通过现有兼容校验
+- **WHEN** DOCX、XLSX或PPTX的扩展名、MIME、大小和结构符合现有附件策略
+- **THEN** 系统保存对象并进入现有受限文本提取
+- **AND** 该文件不进入直接文本任务工作区编辑能力
+#### Scenario: text-v2文本进入任务工作区
+- **WHEN** `.txt`、`.log`或`.md`内容为有效UTF-8、无NUL且大小不超过15 MiB
+- **THEN** 系统按冻结策略和format操作矩阵允许File Worker通过File Service导入
+- **AND** `.log`只获得读取与既有精确版本交付能力
+#### Scenario: 上游以通用MIME声明LOG
+- **WHEN** 文件名为`.log`、声明MIME为`application/octet-stream`且真实内容通过严格UTF-8文本验证
+- **THEN** `text-v2`可以把它规范化为`LOG`
+- **AND** 任何NUL、二进制或编码失败仍必须拒绝
+#### Scenario: Markdown声明允许的文本MIME
+- **WHEN** 文件名为`.md`、声明MIME为`text/markdown`或`text/plain`且真实内容为合法UTF-8
+- **THEN** `text-v2`可以把它规范化为`MARKDOWN`
+- **AND** File Worker不渲染HTML、执行链接或抓取远程资源
+#### Scenario: 文本编码或大小不合法
+- **WHEN** `.txt`、`.log`或`.md`是GBK、UTF-16、无效UTF-8、包含NUL、二进制内容或超过15 MiB
+- **THEN** 系统将attachment标记为REJECTED并保存安全错误码
 
 ### Requirement: 下载和对象写入幂等且短期凭证受保护
 系统 SHALL 使用内部attachment ID驱动下载和存储并以SHA-256校验完整性。download code或等价来源凭证只允许使用平台主密钥短期加密落库，MUST NOT保存明文或将明文/密文暴露到队列、日志、审计、API和调试输出，并 MUST 在下载完成、拒绝、失败或过期后清除。session webhook、access token和对象存储凭证 MUST NOT作为attachment来源凭证持久化。
@@ -909,49 +930,50 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 
 ### Requirement: 文档在受限worker中提取
 系统 SHALL 由非root、禁外网、受CPU、内存、临时空间和时间限制的`file-processing-worker`与内部`docling-serve`处理PDF、DOCX、XLSX、PPTX及图片文字；File Worker只负责来源下载、前置校验和通过File Service导入原件。TXT、LOG和Markdown继续执行现有有界文本校验而不调用Docling。处理组件 MUST NOT执行公式、宏、嵌入对象或远程资源，也不得启用VLM、图片语义描述、自定义模型或插件。
-
 #### Scenario: 受支持文档提取成功
 - **WHEN** 受支持PDF或现代Office文档在Profile资源上限内完成处理
 - **THEN** 系统通过File Service保存Markdown和Docling JSON不可变表示并标记可读性为AVAILABLE
 - **AND** 不把完整提取正文写入`attachment_content`或直接注入模型
-
 #### Scenario: TXT校验成功
 - **WHEN** 任务工作区文本附件通过大小、MIME和UTF-8校验
 - **THEN** File Worker通过File Service保存原始内容并标记可用于精确版本物化
 - **AND** 不声称调用了Docling或其它文档解析器
-
 #### Scenario: 加密、宏格式或损坏文档
 - **WHEN** 文档加密、属于宏格式、包含禁止结构、损坏或触发资源限制
 - **THEN** 系统停止处理并把可读性标记为UNAVAILABLE
 - **AND** 保存安全错误码且不向Agent暴露正文或原始异常
-
 #### Scenario: Docling暂时不可用
 - **WHEN** 原件已安全导入但Docling或processing worker暂时不可用
 - **THEN** processing run进入有限重试且不回退到旧提取器、直接正文注入或假成功
 - **AND** 需要可读正文的本轮由能力门禁给出系统说明，不把无关 Agent Job保持为等待 Docling
+#### Scenario: 现有文档提取成功
+- **WHEN** 受支持Office或旧兼容Markdown文档在资源上限内完成现有解析
+- **THEN** 系统保存有界纯文本、分段信息、解析器版本和截断状态并标记READY
+#### Scenario: 任务工作区文本校验成功
+- **WHEN** `text-v2`任务工作区`.txt/.log/.md`通过策略、大小和UTF-8校验
+- **THEN** File Worker通过File Service保存原始内容并标记可用于精确版本物化
+- **AND** 不声称调用Docling、渲染Markdown或执行其它文档解析器
+#### Scenario: 加密、主动内容或损坏文档
+- **WHEN** 文档加密、属于宏格式、包含禁止结构、损坏或触发资源限制
+- **THEN** 系统停止处理并标记REJECTED或FAILED，不向Agent暴露内容
 
 ### Requirement: 图片只安全存储而不宣称可理解
-系统 SHALL 对JPEG、PNG和WebP执行真实格式、文件大小和像素限制校验，去除不需要的元数据后通过File Service保存原件；仅当应用Publication冻结`docling-text-v1`时，系统 SHALL 允许Docling对图片执行OCR文字提取。系统 MUST NOT把OCR结果等同于架构图、流程图、仪表盘、照片或其它视觉语义理解，也不得调用VLM或生成虚构描述。
-
+系统 SHALL 对JPEG、PNG和WebP执行真实格式、文件大小和像素限制校验，去除不需要的元数据后通过File Service保存原件；仅当应用Publication冻结`docling-layout-ocr-v2`时，系统 SHALL 允许Docling对图片执行OCR文字提取。系统 MUST NOT把OCR结果等同于架构图、流程图、仪表盘、照片或其它视觉语义理解，也不得调用VLM或生成虚构描述。
 #### Scenario: 图片OCR产生文字
 - **WHEN** 图片通过校验、应用启用Profile且OCR生成非空Markdown
 - **THEN** 系统保存只读Markdown和Docling JSON表示并把可读性标记为AVAILABLE或PARTIAL
 - **AND** Agent只可把其中的文字作为不可信数据读取
-
 #### Scenario: 文本加无文字图片消息执行
 - **WHEN** 消息包含可用用户文本且图片OCR结果为NO_TEXT
 - **THEN** Agent使用用户文本执行并收到固定的图片未提取到文字notice
 - **AND** 不声称已经理解图片
-
 #### Scenario: 仅图片且没有文字
 - **WHEN** 消息只有图片且OCR为NO_TEXT或UNAVAILABLE
 - **THEN** 系统不调用模型并通过原reply route说明未获得可阅读文字
-
 #### Scenario: 应用未启用文档处理
 - **WHEN** 图片通过安全存储校验但应用Publication的Profile为NONE
 - **THEN** 系统保持不解释图片内容的安全状态
 - **AND** 不因平台部署了Docling而自动扩大该应用能力
-
 #### Scenario: File Service拒绝图片原件导入
 - **WHEN** File Service以稳定安全错误码拒绝图片导入
 - **THEN** File Worker把该机器码保存到`message_attachment.failure_code`并将附件置为确定终态
@@ -959,16 +981,13 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 
 ### Requirement: Agent job等待附件达到终态
 系统 SHALL 让本轮已绑定附件的Job等待来源下载/导入达到终态；`WAITING_INPUT` MUST NOT 用于等待 Docling 或 `file_processing_run` 非终态。只要本轮绑定附件的来源状态尚未终态，Job可以保持`WAITING_INPUT`。来源终态后，需要`READABLE_CONTENT`且表示仍为PENDING或失败时 MUST 走系统说明而不是释放到`agent.jobs`。AVAILABLE或带非空合规Markdown的PARTIAL可以进入Manifest；NO_TEXT、UNAVAILABLE、REJECTED或FAILED只能形成固定安全notice。无关文字 MUST 创建可执行Job且不得认领处理中文档。
-
 #### Scenario: 部分文档可用
 - **WHEN** 本轮绑定的部分附件AVAILABLE或PARTIAL且仍存在用户文本或至少一个可用Markdown表示
 - **THEN** 系统冻结可用精确表示并发布同一Job
 - **AND** 在上下文列出不可用或不完整附件的固定安全状态
-
 #### Scenario: 没有可用输入
 - **WHEN** 没有用户文本且所有本轮绑定附件均为NO_TEXT、UNAVAILABLE、REJECTED或FAILED
 - **THEN** 系统不调用模型并安全结束该轮
-
 #### Scenario: 原件已保存但表示仍处理中
 - **WHEN** attachment原件已经形成File Version而processing run仍非终态，且本轮需要可读正文
 - **THEN** 系统不得仅因原件已保存就把attachment视为Agent可读
@@ -976,12 +995,10 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 
 ### Requirement: 附件内容作为不可信数据注入
 系统 SHALL 把消息正文、历史兼容提取文本和Docling派生内容全部标识为不可信用户数据，其中的指令 MUST NOT覆盖系统提示、安全规则、权限或工具策略。对启用文档处理Profile的新文档，系统 MUST 只把有界Manifest元数据和固定安全notice交给模型，并由Runtime把精确Markdown表示物化到Job Sandbox；完整Markdown不得在Job开始时直接拼入conversation context。
-
 #### Scenario: 文档包含提示注入
 - **WHEN** Markdown表示要求Agent忽略系统规则或调用未授权工具
 - **THEN** Agent只能通过受限Read、Grep或Glob把它作为引用数据处理
 - **AND** 文件内容不能改变Tool可见性、权限、网络或沙盒边界
-
 #### Scenario: 大文档进入Job
 - **WHEN** 合规Markdown表示接近允许的15MiB上限
 - **THEN** Runtime只物化文件并向模型提供安全相对路径和摘要
@@ -1009,38 +1026,38 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 - **AND** migration事务不直接删除MinIO对象
 
 ### Requirement: 公共 Webhook 入口只接收有界 JSON 请求
-系统 SHALL 通过不可预测的 `public_id` 解析已启用 Trigger publication，并 MUST 在处理前执行 HTTPS 部署约束、Content-Type、请求大小、JSON 结构深度和集合数量限制。
+系统 SHALL 通过不可预测的 `public_id` 解析已启用 Trigger publication，并 MUST 在处理前执行 Content-Type、请求大小、JSON 结构深度和集合数量限制。本地/Compose HTTP 入口只用于功能测试；当前应用代码不得宣称或替代生产反向代理的 HTTPS 终止。
 
-#### Scenario: 合法 JSON 请求
+#### Scenario: 合法JSON请求
 - **WHEN** 已发布 Trigger 收到符合上限的 `application/json` 请求
-- **THEN** 系统继续执行该 Trigger 的认证和映射流程
+- **THEN** 系统继续执行该 Trigger 的 Bearer 认证和映射流程
 
-#### Scenario: 超大或非 JSON 请求
+#### Scenario: 超大或非JSON请求
 - **WHEN** 请求超过配置上限或 Content-Type/JSON 结构不受支持
-- **THEN** 系统拒绝请求、记录安全错误摘要且不创建 Agent job
+- **THEN** 系统拒绝请求、记录安全错误摘要且不创建 Agent Job
 
-#### Scenario: 未知 public ID
+#### Scenario: 未知public ID
 - **WHEN** 请求使用不存在或已轮换的 public ID
 - **THEN** 系统返回统一拒绝响应且不泄漏 Trigger 是否曾经存在
 
-### Requirement: Webhook 认证必须 fail closed 并支持防重放
-系统 SHALL 支持 Bearer Token 和 HMAC-SHA256 认证，MUST 使用 secret reference 解析密钥并做常量时间比较；HMAC 请求还 MUST 校验时间窗和一次性 nonce。
+### Requirement: Webhook认证必须使用强Bearer并失败关闭
+系统 SHALL 只支持 `bearer_v1`，并 MUST 使用 secret reference 解析每个 binding 唯一的强 Bearer Token 后做常量时间比较。Token 缺失、无法解析、格式错误、不匹配或认证模式未知时 MUST 失败关闭。当前实现没有 HMAC、timestamp、nonce 或独立防重放状态；事件重复由认证后的 external event identity 幂等处理。
 
-#### Scenario: Bearer Token 验证成功
-- **WHEN** Authorization header 中的 Bearer Token 与已发布配置引用的 secret 匹配
+#### Scenario: Bearer Token验证成功
+- **WHEN** `Authorization` Header 中的 Bearer Token 与已发布 binding 引用的 secret 匹配
 - **THEN** 系统记录认证成功并继续解析事件
 
-#### Scenario: Secret 缺失或解析失败
-- **WHEN** Trigger 的 secret 无法解析或请求未提供必需凭证
+#### Scenario: Secret缺失或解析失败
+- **WHEN** Trigger 的 secret 无法解析或请求未提供合法 Bearer 凭证
 - **THEN** 系统拒绝请求且不得退化成匿名允许
 
-#### Scenario: HMAC 请求被重放
-- **WHEN** 相同 Trigger 在有效时间窗内再次收到相同 nonce
-- **THEN** 系统拒绝重放、记录安全错误且不创建第二个 event/job
+#### Scenario: 非Bearer认证
+- **WHEN** 请求或配置声明 HMAC、timestamp、nonce 或其它认证模式
+- **THEN** 系统在 payload 映射和 Job 创建前拒绝
 
-#### Scenario: HMAC 时间戳过期
-- **WHEN** 请求时间戳超出已发布的允许时间窗
-- **THEN** 系统拒绝签名，即使摘要本身匹配
+#### Scenario: 已认证事件重复投递
+- **WHEN** 同一 binding 再次收到相同 external event identity 的已认证事件
+- **THEN** Inbox 幂等返回既有事实且不创建第二个 Event 或 Job
 
 ### Requirement: 第三方 payload 通过声明式配置归一化
 系统 SHALL 使用 Trigger publication 中的 typed adapter、JSON Pointer、声明式条件和有界模板生成内部 Channel event，MUST 将提取内容标记为不可信外部数据。
@@ -1131,17 +1148,21 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 - **THEN** 系统原子切换当前 publication 指针并保留全部历史快照
 
 ### Requirement: Trigger 发布前必须执行完整安全校验
-系统 SHALL 在发布前校验 adapter schema、认证 secret reference、服务账号、Agent publication、routing 约束、来源 Connector、固定 Delivery、幂等和限流配置，任何依赖无效时 MUST 拒绝发布。
+系统 SHALL 在发布前校验 adapter schema、`bearer_v1` secret reference、服务账号、Agent Publication、routing 约束、来源 Connector、固定 Delivery、幂等和限流配置，任何依赖无效或认证模式不是 Bearer 时 MUST 拒绝发布。
 
-#### Scenario: 发布完整有效的 Grafana Trigger
-- **WHEN** 草稿引用启用的 ingress Connector、可解析 secret、启用服务账号、默认诊断 Agent publication 和允许的钉钉 Delivery
-- **THEN** 系统创建不可变 Trigger publication并记录 revision、schema version、config hash 和发布人
+#### Scenario: 发布完整有效的Grafana Trigger
+- **WHEN** 草稿引用启用的 ingress Connector、可解析 Bearer secret、启用服务账号、默认诊断 Agent Publication 和允许的钉钉 Delivery
+- **THEN** 系统创建不可变 Trigger Publication 并记录 revision、schema version、config hash 和发布人
 
-#### Scenario: 发布缺少认证 secret 的 Trigger
-- **WHEN** 草稿选择 Bearer 或 HMAC 认证但 secret reference 为空或不可解析
-- **THEN** 系统返回字段级校验错误且不创建 publication
+#### Scenario: 发布缺少认证secret的Trigger
+- **WHEN** 草稿选择 Bearer 认证但 secret reference 为空或不可解析
+- **THEN** 系统返回字段级校验错误且不创建 Publication
 
-#### Scenario: 发布越界 routing 映射
+#### Scenario: 发布HMAC Trigger
+- **WHEN** 草稿选择 HMAC 或其它非 `bearer_v1` 认证
+- **THEN** 系统返回字段级校验错误且不创建 Publication
+
+#### Scenario: 发布越界routing映射
 - **WHEN** `project_code`、`environment`、`base` 或 `workshop` 使用 payload 提取但没有非空 allowlist
 - **THEN** 系统拒绝发布并指出无界 routing 字段
 
@@ -1183,55 +1204,74 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 - **THEN** UI 只展示默认诊断 Agent 的有效 publication，后端快照仍保存通用 Agent code 和 publication ID
 
 ### Requirement: 管理 API 和页面不得泄漏敏感材料
-系统 SHALL 只返回 secret reference、凭证状态和脱敏摘要，MUST NOT 返回 Bearer token、HMAC secret、完整 Webhook URL 中的敏感参数、密码材料或原始测试 payload。
+系统 SHALL 只返回 secret reference、Bearer 凭证配置状态和脱敏摘要，MUST NOT 返回 Bearer Token、完整 Webhook URL 中的敏感参数、密码材料或原始测试 payload，也不得展示不存在的 HMAC 配置与 nonce 状态。
 
-#### Scenario: 管理员读取 Trigger 详情
+#### Scenario: 管理员读取Trigger详情
 - **WHEN** 管理员打开认证配置
-- **THEN** 页面仅显示认证类型、secret reference 和是否可解析，不显示 secret value
+- **THEN** 页面仅显示固定 Bearer 认证类型、secret reference 和是否可解析
+- **AND** 不显示 secret value
 
-#### Scenario: 管理员轮换 public ID
+#### Scenario: 管理员轮换public ID
 - **WHEN** 授权管理员确认轮换公共入口标识
-- **THEN** 系统生成新的不可预测 public ID、立即拒绝旧 ID 并记录审计事件
+- **THEN** API 只返回新的 public ID 和失效时间等非 secret 事实
+- **AND** 不返回认证 Token
 
 ### Requirement: Channel 文件输入绑定任务工作区
-Channel ingress SHALL 把没有非空文字的受支持 `.txt` 消息作为附件暂存事件：解析真实身份和 Business Application Publication，创建或复用当前 Channel Session 与活动任务工作区，持久化并异步导入附件，但 MUST NOT 创建 Agent Job、Job Dispatch、Result Delivery、占位文字指令或用户回复。同一 Session 中连续到达的纯附件消息 SHALL 进入同一未消费附件集。第一条后续非空文字消息 MUST 在创建唯一 Agent Job 的事务中原子认领该集合；已经认领的附件 MUST NOT 被后续无关 Job 再次自动认领，但其文件版本可以继续作为工作区候选。消息附件身份与任务工作区引用 MUST 分离，工作区过期不得提前删除仍在独立保留期内的原始附件。
-
+Channel ingress SHALL 把没有非空文字的受支持附件消息作为附件暂存事件：解析真实身份和 Business Application Publication，创建或复用当前 Channel Session 与活动任务工作区，持久化并异步导入附件，但 MUST NOT 创建 Agent Job、Job Dispatch、Result Delivery、占位文字指令或用户回复。同一 Session 中连续到达的纯附件消息 SHALL 进入同一任务工作区，各自形成精确文件版本候选。后续非空文字 MUST 只认领本轮确定性绑定命中的附件或版本；系统 MUST NOT 因出现非空文字就原子认领该 Session/工作区下全部 `job_id` 为空的附件。未被本轮绑定的附件 MUST 保持未挂接 Agent Job，其文件版本继续作为工作区候选。消息附件身份与任务工作区引用 MUST 分离，工作区过期不得提前删除仍在独立保留期内的原始附件。
 #### Scenario: 连续发送多个纯附件消息
-- **WHEN** 已授权用户在同一钉钉会话依次发送三个合法 `.txt` 且都没有非空文字
+- **WHEN** 已授权用户在同一钉钉会话依次发送三个合法文件且都没有非空文字
 - **THEN** 系统创建或复用当前任务工作区并异步导入三个附件
 - **AND** 不创建 Agent Job、Job Dispatch、Result Delivery 或用户回复
-
 #### Scenario: 后续文字统一触发
-- **WHEN** 用户随后在同一 Session 发送非空文字指令
-- **THEN** 系统只创建一个 Agent Job并原子认领此前尚未消费的三个附件
-- **AND** Job File Manifest冻结每个可用附件的精确版本并根据该文字只回复一次
-
+- **WHEN** 用户随后在同一Session发送非空文字指令
+- **THEN** 系统只创建一个Agent Job并原子认领此前尚未消费的三个附件
+- **AND** Job File Manifest冻结每个可用附件的精确版本、format和允许操作并只回复一次
 #### Scenario: 文字先于附件导入完成
 - **WHEN** 后续文字到达时一个或多个已暂存附件仍在导入
-- **THEN** 系统创建同一个 `WAITING_INPUT` Job并绑定完整待处理集合
-- **AND** File Worker只在该集合全部进入安全终态后释放该 Job一次，不为单个附件创建额外 Job
-
+- **THEN** 系统创建同一个`WAITING_INPUT` Job并绑定完整待处理集合
+- **AND** File Worker只在该集合全部进入安全终态后释放该Job一次，不为单个附件创建额外Job
 #### Scenario: 已消费附件不会再次自动认领
-- **WHEN** 已有文字 Job认领并处理暂存附件后，用户再发送无显式文件引用的普通文字
-- **THEN** 新 Job不再次把这些附件作为本次新上传文件自动物化
+- **WHEN** 已有文字Job认领并处理暂存附件后，用户再发送无显式文件引用的普通文字
+- **THEN** 新Job不再次把这些附件作为本次新上传文件自动物化
 - **AND** 文件仍可作为当前工作区的有界候选按需选择
-
 #### Scenario: 工作区先于附件到期
 - **WHEN** 任务工作区到期但关联消息附件仍在360天保留期内
 - **THEN** 系统删除工作区临时内容并保留消息附件及其消息来源关系
+#### Scenario: 连续发送三种纯文本附件
+- **WHEN** 已授权用户在同一钉钉会话依次发送合法`.txt`、`.log`和`.md`且都没有非空文字，并命中`text-v2`
+- **THEN** 系统创建或复用当前任务工作区并异步导入三个附件
+- **AND** 不创建Agent Job、Job Dispatch、Result Delivery或用户回复
+#### Scenario: 后续无关文字不认领暂存附件
+- **WHEN** 用户随后在同一 Session 发送不含附件、引用、精确文件名或近指代的非空文字
+- **THEN** 系统创建一个 Agent Job 且不认领此前暂存附件
+- **AND** 三个文件版本仍作为当前工作区的有界候选
+#### Scenario: 后续文字显式绑定其中一个附件
+- **WHEN** 用户随后发送引用了第二个暂存文件消息的非空文字，或文字包含该文件的精确显示名
+- **THEN** 系统只认领被绑定的那一个附件
+- **AND** 其余暂存附件继续保持未挂接 Agent Job
+#### Scenario: 本轮绑定附件的来源仍在导入
+- **WHEN** 本轮绑定的附件来源下载或导入尚未进入安全终态
+- **THEN** 系统可为该绑定集合创建同一个 `WAITING_INPUT` Job
+- **AND** File Worker 只在该绑定集合的来源状态全部进入安全终态后唤醒一次门禁，不为单个附件创建额外 Agent Job，也不得把未绑定附件并入该集合
 
 ### Requirement: Stream 入站冻结同会话文件交付事实
-钉钉 Stream 入站在普通回复使用 `sessionWebhook` 时，MUST 同时从受信回调冻结会话类型、来源 Stream Connector、`robotCode`，并按私聊冻结实际 `senderStaffId`、按群聊冻结 `openConversationId`，供同一 Job 的精确文件版本交付使用。文件交付不得从模型参数获取这些事实，也不得因为复用来源应用凭据而把 Stream Connector 开放为通用 Delivery Connector。
-
+钉钉Stream入站在普通回复使用`sessionWebhook`时，MUST同时从受信回调冻结会话类型、来源Stream Connector、`robotCode`，并按私聊冻结实际`senderStaffId`、按群聊冻结`openConversationId`，供同一Job的精确文件版本交付使用。文件交付不得从模型参数获取这些事实，也不得因为复用来源应用凭据而把Stream Connector开放为通用Delivery Connector。新提交的`.txt/.md`与当前Manifest中获授权的既有`.txt/.log/.md`精确版本都必须使用相同冻结reply route；交付`.log`不得创建或修改文件版本。
 #### Scenario: 私聊生成文件
 - **WHEN** 私聊 Stream 消息触发的 Job 成功提交一个新 TXT
 - **THEN** 文件 Delivery 使用冻结的实际发送人和来源 Stream 应用调用私聊机器人文件消息接口
 - **AND** 普通文字最终回复仍使用原 `sessionWebhook`
-
 #### Scenario: 群聊生成文件
 - **WHEN** 群聊 Stream 消息触发的 Job 成功提交一个新 TXT
 - **THEN** 文件 Delivery 使用冻结的 `openConversationId`、`robotCode` 和来源 Stream 应用调用群机器人文件消息接口
 - **AND** 不把文件发送到默认群或其它 Connector
+#### Scenario: 私聊生成Markdown文件
+- **WHEN** 私聊Stream消息触发的Job成功提交一个新Markdown版本
+- **THEN** 文件Delivery使用冻结的实际发送人和来源Stream应用调用私聊机器人文件消息接口
+- **AND** 普通文字最终回复仍使用原`sessionWebhook`
+#### Scenario: 群聊原样交付LOG
+- **WHEN** 群聊Job按用户请求交付Manifest中获授权的既有LOG精确版本
+- **THEN** 文件Delivery使用冻结的`openConversationId`、`robotCode`和来源Stream应用调用群机器人文件消息接口
+- **AND** 不修改LOG、创建新版本或把文件发送到其它Connector
 
 ### Requirement: 群聊工作区使用实际发送人和群会话双边界
 钉钉群聊的任务工作区 MUST 使用受信企业、Connector 和规范化 conversation ID 作为共享会话边界，并在每条消息创建 Job 前使用实际 `senderStaffId` 解析内部用户和业务应用访问。群成员可共同编辑同群工作区文件，但系统 MUST NOT 保存群成员清单、复制钉钉逐成员 ACL、共享个人外部凭据或允许跨群文件访问。
@@ -1246,9 +1286,141 @@ Channel ingress SHALL 把没有非空文字的受支持 `.txt` 消息作为附�
 - **AND** 不向其暴露工作区文件名或内容
 
 ### Requirement: File Worker 兼容现有附件队列
-系统 MUST 用 `file-worker` 替换 `attachment-worker` 服务名，同时继续消费现有附件队列和兼容在途消息。File Worker SHALL 使用短期来源凭证下载附件并通过 File Service 内部流式接口导入，MUST NOT 获得 MinIO 凭据或直接写对象存储；附件下载终态仍须清除来源凭证。尚未被文字认领的纯附件只进入 `staged` 终态而不释放或创建 Job；已经绑定唯一 `WAITING_INPUT` Job 的附件集合全部进入安全终态后，File Worker才释放该 Job一次。
-
+系统 MUST 用 `file-worker` 替换 `attachment-worker` 服务名，同时继续消费现有附件队列和兼容在途消息。File Worker SHALL 使用短期来源凭证下载附件并通过 File Service 内部流式接口导入，MUST NOT 获得 MinIO 凭据或直接写对象存储；附件下载终态仍须清除来源凭证。尚未被本轮绑定认领的纯附件只进入 `staged` 终态而不释放或创建 Job。已经绑定唯一 `WAITING_INPUT` Job 的**本轮绑定**附件集合在来源导入全部进入安全终态后，File Worker 才唤醒该 Job 一次；唤醒后 MUST 重新执行能力门禁，MUST NOT 仅因可读表示仍为 `PENDING` 而继续保持 `WAITING_INPUT` 或释放到 `agent.jobs`。
 #### Scenario: 切换时存在旧附件消息
 - **WHEN** 部署切换到 `file-worker` 时原附件队列仍有合法消息
 - **THEN** File Worker 使用原幂等 attachment ID继续处理
 - **AND** 不产生重复消息、附件、对象或 Job
+#### Scenario: 来源导入完成后表示仍在处理
+- **WHEN** 本轮 `WAITING_INPUT` Job 绑定的文档原件已保存但 Markdown 表示仍为 `PENDING`，且所需能力为 `READABLE_CONTENT`
+- **THEN** 系统发送固定未就绪说明并安全终结该 Job，不发布到 Agent 队列
+- **AND** 不把该终结表现为 `agent_runtime_error`
+
+### Requirement: Agent Session 必须使用通用 Channel 身份事实
+系统 SHALL 以通用 `source_channel`、Connector ID、外部 conversation ID、内部 requester ID、会话类型、Project、Business Application ID、Application Publication ID 和 execution scope hash 作为 Agent Session 的持久化及复用事实。完成 contract 后，系统 MUST NOT 读取或写入钉钉专用 conversation/user 影子列来补全这些事实。
+
+#### Scenario: 钉钉事件创建新会话
+- **WHEN** 一个通过身份和应用路由校验的钉钉事件需要创建 Agent Session
+- **THEN** 系统将钉钉来源归一为通用 Channel、Connector、conversation 与 requester 字段
+- **AND** 后续上下文读取不依赖钉钉专用影子列
+
+#### Scenario: 通用会话事实缺失
+- **WHEN** contract 后的新入站事件无法唯一解析通用 Connector、conversation、requester、应用 Publication 或执行范围
+- **THEN** 系统在创建 Session 和 Job 前失败关闭
+- **AND** 不得通过旧影子字段或当前可变配置猜测缺失事实
+
+<!-- Integrated from archived change: `2026-08-23-decouple-document-readiness-from-agent-turns/specs/channel-conversation` -->
+
+### Requirement: 每条文字消息按确定性证据绑定文件依赖
+系统 MUST 在创建 Agent Job 或给出本轮系统说明之前，为当前非空文字解析本轮依赖的精确 `file_version` 以及所需能力。绑定 MUST 只使用下列硬证据，且按此优先顺序命中即停：当前消息自身附件；钉钉引用/回复目标消息上已持久化的附件；当前任务工作区内规范化后全等（含扩展名）且唯一的 `display_name`；代码注册的近指代词且工作区内最近一次来源导入成功的文件版本唯一。系统 MUST NOT 使用隐式意图分类器、语义相似度或「刚上传过文件」本身作为绑定证据。无硬证据时本轮文件依赖集合 MUST 为空。近指代或多个同名命中无法得到唯一版本时，系统 MUST 发出固定澄清说明且 MUST NOT 创建 Agent Job、MUST NOT 猜测绑定。
+
+本轮所需能力 MUST 属于 `METADATA`、`ORIGINAL` 或 `READABLE_CONTENT`。当前消息带附件且同时有非空问题时默认 `READABLE_CONTENT`，除非文字命中代码注册的元数据或原件模式。问文件名、大小、格式或上传时间只要求 `METADATA`；要求转发或下载原件只要求 `ORIGINAL`；总结、抽取、统计或询问正文要求 `READABLE_CONTENT`。能力拿不准时 MUST 偏向 `READABLE_CONTENT`；绑定对象拿不准时 MUST 偏向不绑定。钉钉 `originalMsgId` MUST 随用户消息持久化，以便解析被引消息上的附件；系统 MUST NOT 只把引用正文拼进 prompt 而不建立文件绑定。
+
+#### Scenario: 本条消息同时上传文档并提问
+- **WHEN** 用户在同一条钉钉消息中发送受支持文档和非空问题
+- **THEN** 系统把该消息附件的精确版本列入本轮依赖
+- **AND** 所需能力为 `READABLE_CONTENT`，除非文字只命中元数据或原件模式
+
+#### Scenario: 用户回复带文件的历史消息
+- **WHEN** 用户通过钉钉引用一条已成功导入附件的历史消息并发送非空文字
+- **THEN** 系统用持久化的 `originalMsgId` 解析到被引消息附件的精确版本并列入本轮依赖
+- **AND** 不把工作区里其它未引用文件自动列入本轮依赖
+
+#### Scenario: 文字出现精确文件名
+- **WHEN** 用户文字包含工作区中恰好一份文件的完整显示名（含扩展名）
+- **THEN** 系统绑定该文件当前精确版本
+- **AND** 子串、无扩展名或工作区内重名 MUST 不自动绑定
+
+#### Scenario: 近指代指向唯一最近活动文件
+- **WHEN** 用户文字命中代码注册近指代词，且当前工作区最近一次来源导入成功的文件版本唯一
+- **THEN** 系统绑定该版本
+- **AND** 不扫描其它会话或其它工作区
+
+#### Scenario: 近指代在多份文件之间歧义
+- **WHEN** 用户说「这个表」但工作区存在多份最近导入且无法唯一确定的表格文件
+- **THEN** 系统通过原 reply route 发出固定澄清说明
+- **AND** 不创建 Agent Job，也不把任一候选标为已消费
+
+#### Scenario: 无硬证据的后续问题
+- **WHEN** 用户刚上传过文档，随后发送不含附件、引用、精确文件名或近指代的普通问题
+- **THEN** 本轮文件依赖集合为空
+- **AND** 系统不得因工作区存在处理中文档而拒绝创建 Agent Job
+
+<!-- Integrated from archived change: `2026-08-23-decouple-document-readiness-from-agent-turns/specs/channel-conversation` -->
+
+### Requirement: 文件能力未就绪时用系统说明结束本轮
+当本轮依赖需要某精确版本的 `READABLE_CONTENT`，且该版本可读性为 `PENDING` 或处理失败终态时，系统 MUST 通过原 reply route 发送固定中文 Markdown 说明，MUST NOT 调用模型，MUST NOT 把该轮释放到 `agent.jobs`。说明 MUST 只包含安全文件名和允许的状态短语（正在生成可读内容 / 可读内容生成失败），MUST NOT 包含对象键、Docling task ID、堆栈、内部 run ID 或 `agent_runtime_error` JSON。需要 `METADATA` 或 `ORIGINAL` 且原件已安全入库时，系统 MUST NOT 因 Markdown 表示未就绪而阻挡本轮。纯附件且无非空文字的行为保持既有暂存、不回复。
+
+#### Scenario: 处理中询问文档内容
+- **WHEN** 本轮已绑定一份 `readability_status=PENDING` 的文档且所需能力为 `READABLE_CONTENT`
+- **THEN** 系统不创建或不释放 Agent Job 到 Agent 队列
+- **AND** 用户收到固定说明：该文件正在生成可读内容，其它问题可以继续发送
+
+#### Scenario: 处理失败后询问文档内容
+- **WHEN** 本轮已绑定文档且可读性为 `NO_TEXT`、`UNAVAILABLE` 或处理 `FAILED`
+- **THEN** 系统不调用模型
+- **AND** 用户收到固定失败说明，而不是 Agent 运行时错误 JSON
+
+#### Scenario: 处理中询问文件名
+- **WHEN** 本轮绑定文档只需要 `METADATA` 且原件已形成 File Version
+- **THEN** 系统创建 Agent Job 并允许回答元数据
+- **AND** 不把未就绪 Markdown 自动物化进该 Job
+
+<!-- Integrated from archived change: `2026-08-23-recall-retained-files-by-time-window/specs/channel-conversation` -->
+
+### Requirement: 时段硬证据可召回仍在保留期的历史附件
+系统 MUST 在创建 Agent Job 或给出本轮系统说明之前，把代码可解析的时段作为文件绑定硬证据。时段证据 MUST 排在当前消息自身附件、钉钉引用/回复目标附件、规范化后全等且唯一的完整 `display_name` 之后。当文字同时命中时段词与近指代词时，系统 MUST 按时段窗口召回，MUST NOT 用当前活动工作区里最近一份文件顶替窗口内的版本。系统 MUST NOT 使用隐式意图分类器、语义相似度或大模型日期理解作为绑定证据。
+
+时段硬证据 MUST 同时满足：
+
+1. 文字命中代码注册的时段模式；
+2. 文字同时命中代码注册的文件指代词（至少覆盖「文件 / 附件 / 图 / 图片 / 文档 / 表 / 材料」及常见扩展名）。
+
+仅有日期或「附近有什么安排」而没有文件指代词时，本轮文件依赖集合 MUST 保持为空，系统 MUST NOT 因出现日期就召回附件。
+
+已注册时段 MUST 至少覆盖：
+
+- 「上周 / 上星期 / 这周 / 本周」：按 Asia/Shanghai **自然周**，周一 `00:00` 含、下周一 `00:00` 不含，与任务工作区 `WEEK` 到期时钟对齐；
+- 「上月 / 上个月」：上一个日历月；
+- 「今天 / 今日 / 昨天 / 昨日」：上海自然日；
+- 可解析的日历日与闭区间，例如 `8月12日`、`8月12号`、`2026年8月12日`、`2026-08-12`、`8月10日到15日`、`8月10日至15日`。缺省年份 MUST 取当前上海年；若该日期尚未到来，MUST 解释为上一年同一日。「附近」MUST NOT 把单日扩成模糊窗口。
+
+过滤字段 MUST 是原始聊天附件的 `source_received_at`，MUST NOT 使用 File Worker 导入完成时间、版本创建时间、工作区加入时间或 Manifest 冻结时间。召回范围 MUST 限制为同一 Channel Session、同一私聊所有者或同一群会话归属边界、聊天附件保留未到期、精确版本记录仍在的附件。系统 MUST NOT 跨 Session、跨群或跨租户召回。
+
+窗口内唯一且所需能力已就绪时，系统 MUST 绑定该精确版本。窗口内多份且所需能力为 `READABLE_CONTENT` 或无法唯一确定时，系统 MUST 发出固定澄清说明且 MUST NOT 创建 Agent Job、MUST NOT 猜测其中一份。窗口内多份且所需能力仅为 `METADATA` 时，系统 MUST 把不超过工作区文件数量上限（20）的命中版本全部列入本轮依赖且不得自动物化正文；超过该上限时 MUST 发出缩小范围的固定说明且 MUST NOT 创建 Agent Job。窗口内零份仍可访问文件时，系统 MUST 发出固定说明且 MUST NOT 创建 Agent Job。
+
+#### Scenario: 自然周「上周的图」召回唯一附件
+- **WHEN** 当前上海时间为某周周一之后，用户发送「上周的图什么内容」，且同一 Session 在上一自然周恰好有一份仍在 360 天保留期内的图片附件
+- **THEN** 系统绑定该附件当时的精确版本
+- **AND** 不把已到期工作区改回 `ACTIVE`，也不把该文件重新 `link` 进当前工作区
+
+#### Scenario: 日历日与日期区间
+- **WHEN** 用户发送「8月12日的文件」或「8月10日到15日的附件」且文字含文件指代词
+- **THEN** 系统只绑定 `source_received_at` 落在对应上海自然日或闭区间内、仍可访问的精确版本
+- **AND** 不把「附近」解释为额外前后缓冲天
+
+#### Scenario: 无文件指代词的日期闲聊不召回
+- **WHEN** 用户发送「8月12日附近有什么安排」或「上周怎么样」，文字不含文件指代词、附件、引用、精确文件名或近指代
+- **THEN** 本轮文件依赖集合为空
+- **AND** 系统不得因出现日期而查询或冻结历史附件
+
+#### Scenario: 时段词优先于当前工作区近指代
+- **WHEN** 用户发送「上周这张图」，当前活动工作区另有一份最近上传的图片，上一自然周也有一份仍可访问的图片
+- **THEN** 系统按上周窗口绑定历史图片
+- **AND** 不得把当前工作区最近图片当作本轮依赖
+
+#### Scenario: 窗口内多份内容问题必须澄清
+- **WHEN** 用户询问「上周的文件什么内容」，窗口内有两份以上仍可访问文件
+- **THEN** 系统通过原 reply route 发出固定澄清说明，列出有界安全文件名
+- **AND** 不创建 Agent Job，也不把任一候选标为已消费
+
+#### Scenario: 窗口内多份只问元数据
+- **WHEN** 用户询问「上周发了哪些文件」，窗口内有不超过 20 份仍可访问文件
+- **THEN** 系统把这些精确版本列入本轮 `METADATA` 依赖
+- **AND** 不得把整窗正文标为自动物化
+
+#### Scenario: 空窗固定说明
+- **WHEN** 用户询问「上周的附件」且同一 Session 该自然周没有仍可访问的文件
+- **THEN** 系统通过原 reply route 发出固定说明：该时段没有仍可访问的文件
+- **AND** 不创建 Agent Job
+- **AND** 说明 MUST NOT 写成「没发过文件」或「会话里从来没有文件」

@@ -9,12 +9,10 @@
 
 ### Requirement: 原型提供Agent应用平台静态Shell
 系统 SHALL 将现有通用模板替换为中文“Agent应用平台”Shell，并展示总览、业务应用、Agent配置、MCP工具、运行中心和系统管理的目标导航；除总览外的未实现模块 MUST 明确标记为规划中或不可操作。
-
 #### Scenario: 查看平台原型导航
 - **WHEN** 用户打开前端根页面
 - **THEN** 页面展示Agent应用平台品牌、分组侧栏和总览内容
 - **AND** 不展示Acme、Revenue、Visitors、Documents、Projects等模板术语
-
 #### Scenario: 查看未实现模块
 - **WHEN** 用户查看业务应用之外的规划菜单或动作
 - **THEN** 页面以规划中、禁用或说明文本表达尚未实现
@@ -22,7 +20,6 @@
 
 ### Requirement: Dashboard明确区分原型数据与真实运行数据
 系统 MUST 在页面全局和使用示例指标的区域标记“原型数据”或等效说明，所有人员、标识、数量、时间和运行记录 SHALL 使用非敏感虚构数据。
-
 #### Scenario: 查看概览指标
 - **WHEN** 用户查看业务应用、Agent Profile、MCP Tool和示例运行指标
 - **THEN** 页面明确说明指标为静态原型
@@ -30,12 +27,10 @@
 
 ### Requirement: Dashboard展示目标控制面全景
 系统 SHALL 在单一Dashboard中展示平台概览、代表性业务应用、完整调用链、Workflow预览、MCP Tool预览、示例运行记录、安全边界、外部身份关系和建设状态。
-
 #### Scenario: 评审一次请求的目标链路
 - **WHEN** 用户查看平台调用链区域
 - **THEN** 页面按Channel、Business Application、Workflow、Agent Runtime、`tool-mcp`、Published Resource Revision和Delivery的顺序展示关系
 - **AND** 能区分Agent Runtime、标准MCP传输和只读资源适配器的职责
-
 #### Scenario: 评审系统建设状态
 - **WHEN** 用户查看建设状态区域
 - **THEN** 页面区分概念原型、后端已有基础、需要适配和尚未实现的能力
@@ -71,17 +66,27 @@
 <!-- Reconciled from mcp_new capability: `agent-profile-model-connection-management` -->
 
 ### Requirement: Web必须提供默认Agent Profile管理入口
-系统 SHALL 在管理 Web 增加“Agent 配置 / Agent Profile”菜单、Profile 列表和详情页，并 MUST 使用真实管理 API 展示草稿、当前 Publication、Effective Config、校验结果和 Publication 历史。第一版 MUST 只允许编辑现有 `default-diagnostic-agent`，MUST NOT 提供新建、复制或删除 Agent Profile。
-
+系统 SHALL 在管理 Web 增加“Agent 配置 / Agent Profile”菜单、Profile 列表、创建入口和详情页，并 MUST 使用真实管理 API 展示草稿、当前 Publication、Effective Config、校验结果和 Publication 历史。具备 Agent 全局编辑权限的管理员 SHALL 能够创建 Agent；系统 MUST NOT 提供删除、复制或修改既有 Agent code 与 Runtime kind 的动作。
 #### Scenario: 管理员打开Agent Profile列表
 - **WHEN** 具备 Agent 读取权限的管理员打开 Agent Profile 菜单
-- **THEN** 页面从后端加载 Agent 定义、当前 Publication 和管理模式
-- **AND** 默认诊断 Agent 显示为可编辑，其他 Agent 显示为只读
-
+- **THEN** 页面从后端加载 Agent 定义、当前 Publication、Runtime kind 和管理权限
+- **AND** 每个 Agent 按当前用户权限显示可编辑或只读状态
 #### Scenario: 管理员尝试修改非默认Agent
 - **WHEN** 管理员打开非 `default-diagnostic-agent` 的详情
 - **THEN** 页面不展示可提交的保存、发布或回滚动作
 - **AND** 后端继续拒绝该 Agent 的写请求
+#### Scenario: Agent列表为空
+- **WHEN** 后端返回空 Agent 列表
+- **THEN** 页面展示明确空状态而不是空白网格
+- **AND** 具备 Agent 全局编辑权限的管理员可以从空状态打开新建表单
+#### Scenario: 管理员打开新建Agent表单
+- **WHEN** 具备 Agent 全局编辑权限的管理员点击“新建 Agent”
+- **THEN** 页面允许填写 code、名称、说明和项目编码，Runtime固定为`python-v1`
+- **AND** 页面明确提示 code 创建后不可修改且创建不会自动发布
+#### Scenario: 无编辑权限的用户查看列表
+- **WHEN** 仅具备 Agent 读取权限的用户打开 Agent Profile 列表
+- **THEN** 页面不提供可提交的新建动作
+- **AND** 后端继续拒绝该用户直接提交的创建请求
 
 ### Requirement: Agent Profile必须管理限定的Anthropic-compatible模型配置
 系统 SHALL 允许默认 Agent Profile 配置一个 `anthropic_compatible` 模型连接，并 SHALL 以规范化字段管理 Base URL、主模型、Opus/Sonnet/Haiku 默认模型、Subagent 模型和 effort level。系统 MUST 将一个 API Key Credential 同时映射为运行时所需的 `ANTHROPIC_API_KEY` 与 `ANTHROPIC_AUTH_TOKEN`，MUST NOT 要求用户重复保存相同密钥。
@@ -167,19 +172,22 @@
 - **THEN** Runtime 在调用 Provider 前失败关闭并返回稳定配置漂移错误
 
 ### Requirement: Agent Profile模型连接操作必须授权和审计
-系统 SHALL 复用统一 RBAC：读取 Profile 需要 Agent read/edit 权限，保存草稿需要 Agent edit 权限，发布和回滚需要 Agent publish 权限，创建或轮换 Key 及执行真实连接测试需要 Secret 管理权限。所有写操作和连接测试 MUST 记录不含敏感值的审计事件。
-
+系统 SHALL 复用统一 RBAC：读取 Profile 需要 Agent read/edit 权限，创建 Agent 需要 `agent:*:edit` 全局权限，保存草稿需要目标 Agent edit 权限，发布和回滚需要目标 Agent publish 权限，创建或轮换 Key 及执行真实连接测试需要 Secret 管理权限。所有写操作和连接测试 MUST 记录不含敏感值的审计事件。
 #### Scenario: 无Secret权限的用户更新Key
 - **WHEN** 仅具有 Agent edit 权限的用户提交 Key 创建、轮换或连接测试请求
 - **THEN** 系统拒绝请求且不访问外部模型服务
-
 #### Scenario: 发布审计
 - **WHEN** 管理员发布包含模型连接的 Agent Publication
 - **THEN** 审计记录 Agent code、Publication ID、模型连接 revision、config hash、模型和脱敏 Provider Host
 - **AND** 审计不包含 Key、Secret ref、Prompt 或模型响应
-
-
-<!-- Reconciled from mcp_new capability: `agent-workflow-template-config` -->
+#### Scenario: 无全局编辑权限的用户创建Agent
+- **WHEN** 用户具备某个既有 Agent 的编辑权限但不具备 `agent:*:edit` 全局权限并提交创建请求
+- **THEN** 系统拒绝请求且不写入 Agent Definition 或 Draft
+- **AND** 权限拒绝通过统一 RBAC 审计记录
+#### Scenario: 创建Agent审计
+- **WHEN** 管理员成功创建 Agent
+- **THEN** 审计记录 actor、Agent code、Runtime kind、项目编码和初始 Draft revision
+- **AND** 审计不包含模型凭据、Secret、Prompt 或业务消息
 
 ### Requirement: Agent workflow templates are persisted
 系统 SHALL 在 PostgreSQL 中持久化 Agent 诊断流程模板，并 MUST 支持草稿、已发布、禁用等状态。
@@ -378,25 +386,31 @@
 <!-- Reconciled from mcp_new capability: `multi-agent-configuration` -->
 
 ### Requirement: Agent 定义按多 Agent 模型持久化
-系统 SHALL 持久化多个 Agent 定义，每个定义具有稳定 code、名称、说明、项目范围、状态、当前发布指针和创建后不可变的 `runtime_kind`。系统 MUST 初始化固定 `python-v1` 的默认诊断 Agent；所有新 Agent Definition MUST 固定为 `python-v1`。历史 `typescript-v1` Agent Definition SHALL 保持原始 runtime kind 和引用可读，但 MUST NOT 再创建草稿、发布、回滚为当前版本或产生新 Job。
+系统 SHALL 持久化多个 Agent 定义，每个定义具有稳定 code、名称、说明、项目范围、状态、当前发布指针和创建后不可变的 `runtime_kind`。系统 MUST 在 deployment bootstrap 中仅幂等初始化固定 `python-v1` 的默认诊断 Agent，并 SHALL 只允许受权管理员创建 `python-v1` 业务 Agent。退役前已经持久化的 `typescript-v1` Definition、Publication、终态 Job 和审计事实 MUST 保留原始 runtime kind 并只读展示；系统不得新建、编辑、发布、回滚或执行 TypeScript Agent，也不得通过修改同一 Agent 的 runtime kind 完成 Runtime 切换。
 
 #### Scenario: 默认Python Agent初始化
-- **WHEN** 系统完成 migration 和 seed
+- **WHEN** 系统完成 migration 和 Agent bootstrap
 - **THEN** 系统存在稳定 code 为 `default-diagnostic-agent` 且 runtime kind 为 `python-v1` 的 Agent
-- **AND** 系统不再创建新的 `typescript-diagnostic-agent` 或其它 `typescript-v1` Agent
+- **AND** 系统不创建 `typescript-diagnostic-agent` 或其它 `typescript-v1` Agent
 
-#### Scenario: 后端读取指定Agent
-- **WHEN** API 或运行时按 Agent code 请求配置
-- **THEN** repository 按通用多 Agent 模型返回对应定义及历史 runtime kind，而不是依赖单例配置表
+#### Scenario: 创建Python Agent
+- **WHEN** 具备权限的管理员提交唯一合法 code、名称、项目编码和 `python-v1`
+- **THEN** 系统创建 classification 为 `business`、status 为 `enabled` 的 Agent Definition
+- **AND** Definition 的 runtime kind 固定为 `python-v1`
 
-#### Scenario: 创建TypeScript Agent
-- **WHEN** 管理员或旧客户端请求创建 runtime kind 为 `typescript-v1` 的 Agent
-- **THEN** 系统以稳定的不支持错误拒绝且不创建 Definition 或草稿
+#### Scenario: 旧客户端创建TypeScript Agent
+- **WHEN** 旧客户端提交 `typescript-v1` 或其它非 `python-v1` runtime kind
+- **THEN** 系统拒绝请求且不创建 Definition 或 Draft
 
 #### Scenario: 读取历史TypeScript Agent
 - **WHEN** 管理员查看退役前已存在的 `typescript-v1` Agent
-- **THEN** API 返回其只读定义、Publication 和 runtime 标签
+- **THEN** API 返回其原始只读 Definition、Publication 和 runtime 标签
 - **AND** 不允许编辑、发布、回滚为当前版本或用于新执行
+
+#### Scenario: 重复运行Agent bootstrap
+- **WHEN** 已存在固定 Agent、用户 Draft 或 Publication 后再次运行 Agent bootstrap
+- **THEN** 系统不覆盖既有名称、配置、版本、Publication 或业务应用引用
+- **AND** 固定 code 对应的 runtime kind 不一致时 bootstrap 失败关闭
 
 ### Requirement: Agent 草稿与发布快照分离
 系统 SHALL 为 Python Agent 保存可编辑草稿 revision，并 MUST 在发布时创建包含完整有效配置、不可变 `python-v1` runtime kind、schema version 和 config hash 的不可变 publication snapshot。草稿不得覆盖 Definition 的 runtime kind；历史 TypeScript snapshot 只可读取，不得作为新草稿或 Publication 的种子。
@@ -480,3 +494,73 @@ Agent 管理 API 与前端 SHALL 只允许创建、编辑、校验、发布和�
 #### Scenario: 旧客户端提交TypeScript Runtime
 - **WHEN** 旧客户端在创建、草稿、发布或回滚请求中提交 `typescript-v1`
 - **THEN** API 失败关闭并返回稳定迁移提示，不静默改写为 Python
+
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/agent-model` -->
+
+### Requirement: Workflow 草稿图必须只有一个可变事实源
+系统 SHALL 将 `agent_workflow_node` 与 `agent_workflow_edge` 的规范化记录作为 Workflow 草稿图的唯一可变事实源；完成兼容切换后，模板记录中的 `graph_json` MUST NOT 参与草稿读取、校验、hash 或发布，也 MUST NOT 继续双写。
+
+#### Scenario: 编辑草稿节点和连线
+- **WHEN** 管理端新增、移动、修改或删除 Workflow 节点或边
+- **THEN** 系统只更新规范化 node/edge 记录及必要的模板元数据
+- **AND** 草稿重新读取后与本次编辑完全一致
+
+#### Scenario: 兼容图副本与规范化记录不一致
+- **WHEN** contract 前核对发现模板 `graph_json` 与规范化 node/edge 记录不等价
+- **THEN** 迁移失败关闭并输出不含业务配置正文的差异摘要
+- **AND** 系统不得根据时间戳或非确定性规则静默选择其中一份覆盖另一份
+
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/agent-model` -->
+
+### Requirement: Workflow 发布快照必须从规范化草稿原子生成
+系统 MUST 在一个一致的数据库读取边界内，从模板元数据和规范化 node/edge 草稿生成确定性 graph snapshot、schema version 与 config hash，并 SHALL 将该 snapshot 保存为不可变的已发布运行事实。发布后编辑草稿不得改变历史 snapshot。
+
+#### Scenario: 发布规范化 Workflow 草稿
+- **WHEN** 管理端发布通过校验的 Workflow 草稿
+- **THEN** 系统从规范化 node/edge 记录生成一个确定排序的不可变 snapshot 和 hash
+- **AND** Runtime 后续只读取固定 publication snapshot
+
+#### Scenario: 发布期间草稿并发变化
+- **WHEN** 生成 publication snapshot 时草稿 revision 已被并发更新
+- **THEN** 系统拒绝本次发布或基于同一已锁定 revision 完整发布
+- **AND** 不得产生混合两个 revision 的 snapshot
+
+<!-- Integrated from archived change: `2026-08-23-add-agent-profile-creation/specs/agent-model` -->
+
+### Requirement: Agent创建必须原子生成初始草稿
+系统 MUST 在同一数据库事务中创建 `python-v1` Agent Definition 与 r1 Draft。初始 Draft SHALL 使用平台固定的非敏感默认配置和所选项目范围，MUST NOT 接受客户端指定 Publication、状态、classification、created_by、任意模型凭据或 Runtime 覆盖，并 MUST NOT 自动发布或改变运行路由。
+
+#### Scenario: 成功创建Agent
+- **WHEN** 受权管理员提交合法、唯一且 runtime kind 为 `python-v1` 的 Agent 创建请求
+- **THEN** 系统原子创建 Definition 和归属该 Definition 的 r1 Draft
+- **AND** `current_publication_id` 为空且不存在因本次创建产生的业务应用引用
+
+#### Scenario: Agent code重复
+- **WHEN** 两个请求串行或并发提交同一 Agent code
+- **THEN** 至多一个请求创建 Definition 与 r1 Draft
+- **AND** 其他请求返回稳定 `agent_code_conflict`，不产生孤立 Definition 或 Draft
+
+#### Scenario: 创建请求包含平台控制字段
+- **WHEN** 客户端提交 status、classification、current publication、created_by、Draft config 或其他未声明字段
+- **THEN** API 拒绝请求且不写入任何 Agent 记录
+
+#### Scenario: 创建请求使用非法Runtime
+- **WHEN** 客户端提交 `typescript-v1` 或其它非 `python-v1` runtime kind
+- **THEN** API 返回字段级校验错误且不创建 Definition 或 Draft
+
+<!-- Integrated from archived change: `2026-08-23-harden-management-and-runtime-boundaries/specs/agent-model` -->
+
+### Requirement: Workflow 管理必须使用 Agent 权限矩阵
+系统 SHALL 将 Workflow 模板、节点、边和发布记录视为 Agent 管理资产。读取 MUST 要求 `agent/read`，草稿新增、修改、启停 MUST 要求 `agent/edit`，发布 MUST 要求 `agent/publish`；Workflow API MUST NOT 复用平台配置 manage 作为通用管理员权限。
+
+#### Scenario: 只有 Agent 读取权限
+- **WHEN** 已登录用户只有 `agents.read`
+- **THEN** 用户可以读取 Workflow 模板、节点、边和最新 Publication，但修改和发布返回 403
+
+#### Scenario: 具有 Agent 编辑权限
+- **WHEN** 已登录用户具有 `agents.edit` 但没有 `agents.publish`
+- **THEN** 用户可以保存草稿和修改图，但发布返回 403
+
+#### Scenario: 具有 Agent 发布权限
+- **WHEN** 已登录用户具有 `agents.publish` 且发布内容通过校验
+- **THEN** 系统创建不可变 Workflow Publication 并记录当前 principal actor

@@ -33,23 +33,19 @@
 
 ### Requirement: 测试数据 profile 不得隐式发布工具资源
 `agent-test-data` profile SHALL 只提供确定性的 MySQL、SQL Server 和各自 Redis 数据服务及播种能力；它 MUST NOT 通过已删除的 YAML runtime topology 隐式创建或绑定工具资源。需要执行真实 Tool Call 时，验收流程 MUST 通过受治理的资源管理或显式 bootstrap 创建、验证并发布对应 Resource Revision。
-
 #### Scenario: 仅启动测试数据 profile
 - **WHEN** 操作者启动并播种 `agent-test-data` profile
 - **THEN** 四个测试数据服务可验证，但平台不会因此自动出现可调用 Published Resource Revision
-
 #### Scenario: 执行真实测试工具调用
 - **WHEN** 验收需要查询 `agent_test/mysql` 或 `agent_test/sqlserver`
 - **THEN** 流程先创建使用 Secret reference 和只读账户的 Published Resource Revision，再由 `tool-mcp` 按目标唯一解析
 
 ### Requirement: 环境变量模板覆盖运行与播种凭据
 `.env.example` SHALL 声明测试镜像、宿主端口、数据库初始化凭据、只读运行凭据、两个 Redis 的只读凭据及播种凭据，并使用明显的本地占位值；本地 `.env` MAY 提供可运行配置。Compose SHALL 只向播种服务传递管理/播种凭据；`tool-mcp` MUST 通过 Published Resource Revision 的 `secret://platform/<code>` 在基础设施适配器内解析只读凭据，不得直接接收测试数据库管理凭据。
-
 #### Scenario: tool-mcp 连接测试基地
 - **WHEN** `tool-mcp` 为 `agent_test/mysql` 或 `agent_test/sqlserver` 解析唯一 Published Resource Revision
 - **THEN** 它只在对应资源适配器内获得该数据源的只读数据库或 Redis 凭据
 - **THEN** 数据库管理凭据与 Redis 播种用户凭据不出现在 Runtime、Worker 或 MCP Tool 参数中
-
 #### Scenario: 示例配置可安全提交
 - **WHEN** `.env.example` 被提交到版本库
 - **THEN** 其中只包含本地开发占位值和说明
@@ -236,16 +232,13 @@
 
 ### Requirement: 普通部署只暴露三个顶层功能开关
 系统 SHALL 将 `FEATURE_WEB_ADMIN`、`FEATURE_PUBLISHED_AGENT_RUNTIME` 和 `FEATURE_REAL_CLAUDE` 作为普通部署模板中的顶层 `FEATURE_*` 配置。标准 `tool-mcp` 是否可执行由固定服务部署、Agent/Application Tool 子集、当前授权和 Published Resource Revision 共同决定，不得恢复独立真实工具开关。
-
 #### Scenario: 查看普通部署模板
 - **WHEN** 部署人员查看 `.env.example`、Compose 示例或普通部署文档
 - **THEN** 系统只将三个顶层功能开关列为需要决策的 `FEATURE_*` 配置
-
 #### Scenario: 开启管理后台
 - **WHEN** `FEATURE_WEB_ADMIN=true`
 - **THEN** 系统同时启用管理 Web、统一身份、Web Session、RBAC 和业务应用控制面
 - **AND** 系统不自动开启已发布 Agent Runtime 或真实模型
-
 #### Scenario: 关闭管理后台
 - **WHEN** `FEATURE_WEB_ADMIN=false`
 - **THEN** 系统不暴露管理 Web 和管理 API
@@ -253,12 +246,10 @@
 
 ### Requirement: 数据面安全闸门保持独立
 系统 MUST 独立解析 `FEATURE_PUBLISHED_AGENT_RUNTIME` 和 `FEATURE_REAL_CLAUDE`，任何管理面开关、旧兼容开关或数据库策略均不得将部署环境中关闭的闸门变为开启。标准 `tool-mcp` 不使用独立功能开关，必须同时通过 Job 状态、Tool publication 子集、当前授权、唯一资源解析和只读策略。
-
 #### Scenario: 管理后台开启但数据面能力关闭
 - **WHEN** `FEATURE_WEB_ADMIN=true` 且 `FEATURE_PUBLISHED_AGENT_RUNTIME=false`、`FEATURE_REAL_CLAUDE=false`
 - **THEN** 管理员可以配置和发布资源
 - **AND** 系统不执行已发布 Agent 或调用真实模型
-
 #### Scenario: 未授权调用真实工具
 - **WHEN** 请求缺少有效 RUNNING Job、发布 Tool 子集、当前 Tool grant、数据范围或唯一 Published Resource Revision
 - **THEN** `tool-mcp` 失败关闭且不访问上游资源
@@ -472,19 +463,15 @@
 
 ### Requirement: Registry exposes stable runtime revision
 系统 SHALL 为 Environment/Base/Workshop topology、Resource Identity 和 Resource Revision 暴露规范化 revision 或 content hash，用于审计管理变更和证明每次 Tool Call 的实际资源事实。Resource Revision 的 content hash MUST 同时覆盖 Provider 连接配置、Secret references 和数据范围 bindings；系统 MUST NOT 生成 Application Resource Mapping、独立范围 Policy Revision、activation generation 或 Job-frozen Resource Revision。
-
 #### Scenario: Configuration changes revision
 - **WHEN** Environment/Base/Workshop 或 Resource 发布新的不可变 revision
 - **THEN** 对应 revision/hash 发生变化，既有 Published Revision 内容保持不变
-
 #### Scenario: Tool Call reports revision
 - **WHEN** `tool-mcp` 为一次调用解析唯一 Published Resource Revision
 - **THEN** Tool Call 与 MCP Operation Audit 包含 Tool identifier/schema hash、Resource ID/revision/content hash 和实际 placement 的安全摘要
-
 #### Scenario: Resource draft changes only
 - **WHEN** 管理员修改尚未发布的 Resource Draft
 - **THEN** 既有 Published Revision 与当前 Tool Call 解析结果不发生变化
-
 #### Scenario: Resource scope binding changes
 - **WHEN** 管理员修改 Draft 中的 DB table prefix、Redis namespace 或 Loki selector conditions
 - **THEN** 同一个 Draft revision 和 content hash 变化，旧技术验证失效且 Published Revision 保持不变
@@ -546,54 +533,42 @@ Registry MUST 以单一 schema 定义管理 API、前端表单、验证器和运
 
 ### Requirement: Registry must separate Resource Identity, Draft, verification and Revision state
 Registry MUST 分别持久化 Resource Identity、Resource Draft、Verification Evidence 和不可变 Published Resource Revision；连接与数据范围属于同一 Draft/Revision，运行 Tool Call 的当前解析与健康事实不得覆盖任一治理状态。
-
 #### Scenario: Published resource call fails
 - **WHEN** Resource Revision 已发布但当前 Secret、驱动或上游连接失败
 - **THEN** Registry 保留 Published Revision，并通过验证摘要或最近 Tool Call 安全错误展示运行事实，不创建 Effective generation 或 Last Known Good
-
 #### Scenario: Resource data scope changes after verification
 - **WHEN** Resource Draft 的连接配置、Secret reference 或 `scope_bindings` 变化
 - **THEN** 旧 Verification Evidence 失效，但上一 Published Revision 保持不变
 
 ### Requirement: Resource Identity 与 Resource Revision 生命周期必须独立管理
 系统 SHALL 分别管理稳定 Resource Identity 的 `enabled`、`disabled`、`archived` 状态和不可变 Resource Revision 的 `PUBLISHED`、`DISABLED`、`ARCHIVED` 状态；Revision 生命周期动作 MUST NOT 隐式改写 Identity，管理 API 和界面 MUST 分开展示并筛选两层状态。
-
 #### Scenario: 归档最新 Resource Revision
 - **WHEN** 管理员把一个 Loki Resource 的最新 Revision 从 DISABLED 归档
 - **THEN** 该 Revision 变为 ARCHIVED，Resource Identity 保持 enabled，并仍可显式从该历史 Revision 复制新 Draft
-
 #### Scenario: 停用 Resource Identity
 - **WHEN** 管理员使用当前 Identity revision 显式停用一个 enabled Resource Identity
 - **THEN** Identity 变为 disabled，后续创建、保存、验证和发布 Draft 均被阻止，既有 Resource Revision 和历史 Tool Call 不被改写，新的资源调用不能再解析该 Identity
-
 #### Scenario: 恢复 Resource Identity
 - **WHEN** 管理员使用当前 Identity revision 显式恢复一个 disabled Resource Identity
 - **THEN** Identity 变为 enabled 并允许后续 Draft 管理，历史 Revision 状态保持不变
-
 #### Scenario: 安全归档 Resource Identity
 - **WHEN** disabled Identity 没有活动 Draft 且没有 PUBLISHED Revision
 - **THEN** 管理员可以用当前 Identity revision 把它归档为不可恢复终态并记录审计
-
 #### Scenario: Identity 仍有治理依赖
 - **WHEN** 管理员尝试归档仍有活动 Draft 或 PUBLISHED Revision 的 Identity
 - **THEN** 系统失败关闭并返回不含 Secret 的依赖摘要，不改变 Identity 或任何 Revision
-
 #### Scenario: Identity 并发状态已变化
 - **WHEN** 生命周期请求携带的 expected Identity revision 已过期
 - **THEN** 系统以并发冲突拒绝请求，要求刷新后重试
 
 ### Requirement: Registry must enforce optional placement representation
 Registry SHALL 只在 Resource Identity 实际存在物理位置差异时保存 `cloud` 或 `edge` placement；无 placement 的 Resource address MUST 保存为缺省值而非字符串占位，并且单个 Resource Identity 不得同时包含多个 placement。
-
 #### Scenario: Save non-placement resource
 - **WHEN** 管理端保存一个没有云边差异的 Redis Resource Identity
 - **THEN** Registry 持久化缺省 placement 并拒绝 `none`、`standalone` 或 `default`
-
 #### Scenario: Save one placement value
 - **WHEN** 管理端保存 edge Resource Identity
 - **THEN** Registry 只保存枚举值 `edge`，不把它写入 Environment/Base/Workshop code
-
-<!-- Reconciled from mcp_new capability: `platform-runtime-acceptance` -->
 
 ### Requirement: JavaScript 构建与 CI 必须统一使用 npm
 仓库 SHALL 以现有 npm lockfile 为唯一 JavaScript 依赖锁，CI 和容器构建 MUST 使用 `npm ci`，不得继续引用不存在或非权威的 pnpm lockfile。
@@ -735,11 +710,9 @@ Registry SHALL 只在 Resource Identity 实际存在物理位置差异时保存 
 
 ### Requirement: 工具资源运行时只能消费 PostgreSQL 已发布版本
 DB、Redis、Loki runtime MUST 只消费 PostgreSQL 中启用 Resource Identity 的 Published Resource Revision；YAML、环境变量、Application Resource Mapping 或代码默认连接不得在数据库资源无效时成为回退。
-
 #### Scenario: 数据库存在唯一有效发布版本
 - **WHEN** `tool-mcp` 按资源类型、业务目标和可选 placement 解析一次 Tool Call
 - **THEN** 它只消费唯一 Published Revision 及其 `secret://platform/` 引用，并记录实际版本
-
 #### Scenario: 发布版本无效但旧 YAML 可用
 - **WHEN** Published Revision 无法解析且部署目录仍残留旧 YAML
 - **THEN** Tool Call 必须失败关闭，不得读取 YAML、旧 Revision 或第一候选
@@ -755,11 +728,9 @@ DB、Redis、Loki runtime MUST 只消费 PostgreSQL 中启用 Resource Identity 
 
 ### Requirement: 只有一次性 Migrator 可以修改平台 schema
 系统 MUST 由独立 one-shot Migrator 应用 schema migration；API、Worker、Dispatcher、Agent Runtime、`tool-mcp`、ONES MCP 和 File Service MUST NOT 在自身启动或请求处理中执行 migration。
-
 #### Scenario: Compose 启动平台
 - **WHEN** Docker Compose 启动新版本平台
 - **THEN** Migrator 必须先成功退出，依赖 schema 的业务服务随后才可启动
-
 #### Scenario: 业务服务直接启动
 - **WHEN** 任一业务服务启动且数据库 schema 未达到代码要求的 head
 - **THEN** 服务必须启动失败并返回不含敏感信息的版本差异
@@ -1016,16 +987,12 @@ Compose 和受支持的部署脚本 MUST 按“schema migration、初始管理�
 
 ### Requirement: Real model safety mode shall be visible in documentation
 系统 SHALL 在 README 或测试文档中明确说明 `FEATURE_REAL_CLAUDE=true` 与 DeepSeek/Claude API 环境变量的风险边界和推荐测试数据策略。
-
 #### Scenario: 开发者启用真实模型
 - **WHEN** 开发者准备设置 `FEATURE_REAL_CLAUDE=true`
 - **THEN** 文档 SHALL 提醒该模式会调用外部模型 API，并要求使用合成或脱敏数据
-
 #### Scenario: 只验证工具链
 - **WHEN** 开发者只需要验证 `python-agent-runtime -> tool-mcp -> Published Resource Revision` 链路
 - **THEN** 文档 SHALL 提供不调用真实外部模型的受控测试路径
-
-<!-- Reconciled from mcp_new capability: `canonical-baseline-governance` -->
 
 ### Requirement: Canonical 主规格是唯一当前规范基线
 仓库 SHALL 仅将 `openspec/specs/<canonical-domain>/spec.md` 视为当前已接受规范的 canonical baseline。Active change、archive、proposal、design、tasks、evidence、ADR 和运行手册 MUST NOT 覆盖 canonical Requirement；需要改变当前规范时 MUST 通过明确的 OpenSpec change 更新 canonical specs。
@@ -1109,12 +1076,10 @@ Compose 和受支持的部署脚本 MUST 按“schema migration、初始管理�
 
 ### Requirement: Compose 部署 File Service 并以 File Worker 替换附件 Worker
 默认Compose SHALL 保持`file-service`与替换旧`attachment-worker`的`file-worker`，并新增内部`docling-serve`和独立`file-processing-worker`；不得长期并存两个附件消费者，也不得新增独立`file-mcp`容器。`file-service`同时承载内部REST与File MCP接口；`file-worker`继续消费原附件队列并承担来源下载/导入、工作区过期、保留内容和提交暂存清理；`file-processing-worker`只消费文档处理队列并编排Docling；现有Agent Worker和Delivery Dispatcher继续独立运行。
-
 #### Scenario: 从现有部署升级
 - **WHEN** 现有附件或processing队列中存在ready/unacked消息并部署新版本
 - **THEN** `file-worker`保持兼容附件队列，`file-processing-worker`按独立版本化拓扑消费processing消息
 - **AND** 不因服务变化删除队列、丢失消息、重复导入原件或发布重复representation
-
 #### Scenario: Compose服务清单检查
 - **WHEN** 运维启动启用文档处理的默认文件工作区部署
 - **THEN** 服务包含`file-service`、`file-worker`、`file-processing-worker`和`docling-serve`
@@ -1137,27 +1102,22 @@ Compose、Secret usage 和运行配置 MUST 只向 `file-service` 提供 MinIO e
 - **AND** 不向长期运行服务暴露 bootstrap 值，重复启动保留相同值，值不同则失败而不自动轮换
 
 ### Requirement: File Service与File Worker具有真实就绪和积压观测
-File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、Principal JWKS、Manifest v4、representation staging和内部流式接口依赖；File Worker readiness MUST 验证附件RabbitMQ队列契约、File Service内部API和清理调度；File Processing Worker readiness MUST 验证独立processing队列、File Service、角色Principal和Docling `/ready`；Docling readiness MUST 验证模型与内部编排器可处理请求。平台运维视图 SHALL 展示附件、processing run、representation staging、重试/dead-letter、提交暂存、工作区过期、保留清理和File Domain Outbox的安全积压计数与最近结果，不得仅以容器running或`/health`声明可用。
-
+File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、Principal JWKS、Manifest v5、representation staging和内部流式接口依赖；File Worker readiness MUST 验证附件RabbitMQ队列契约、File Service内部API和清理调度；File Processing Worker readiness MUST 验证独立processing队列、File Service、角色Principal和Docling `/ready`；Docling readiness MUST 验证模型与内部编排器可处理请求。平台运维视图 SHALL 展示附件、processing run、representation staging、重试/dead-letter、提交暂存、工作区过期、保留清理和File Domain Outbox的安全积压计数与最近结果，不得仅以容器running或`/health`声明可用。
 #### Scenario: MinIO进程可达但bucket无权限
 - **WHEN** File Service能连接MinIO endpoint但无法读取或写入受控bucket
 - **THEN** readiness返回失败并阻止文件与文档处理能力被宣称为已接线
-
 #### Scenario: File Worker存在清理积压
 - **WHEN** 到期内容因瞬时错误等待重试
 - **THEN** 运维状态显示有界积压、最早到期时间和安全错误分类
 - **AND** 不显示文件名、正文、对象键或凭据
-
 #### Scenario: 文档处理存在积压
 - **WHEN** processing run、retry或dead-letter超过受控告警阈值
 - **THEN** 运维状态显示数量、最早创建/重试时间、状态、processor/Profile和安全错误分类
 - **AND** 不显示文件名、Markdown、JSON、原始错误或凭据
-
 #### Scenario: File Domain Outbox存在待发布事件
 - **WHEN** 附件导入、processing run、representation或文件版本事务已提交领域事件但发布尚未完成
 - **THEN** 维护/Dispatcher链路按事件类型幂等发布并把Outbox标记为`PUBLISHED`
 - **AND** 运维状态显示待发布数量、最早事件时间和安全失败码，不显示文件名、正文、对象键或凭据
-
 #### Scenario: 历史Outbox积压升级后恢复
 - **WHEN** 升级前已有长期`PENDING`文件领域事件
 - **THEN** 下一次维护周期按确定顺序幂等发布并清空可处理积压
@@ -1165,60 +1125,63 @@ File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、
 
 ### Requirement: Compose完整配置Service Principal签发与刷新链路
 默认Compose MUST 只维护一套平台Principal签名私钥和公开JWKS：现有平台API身份模块与Agent Worker只在需要签发对应Token时挂载同一私钥，File Service、ONES MCP及后续MCP只挂载同一公开`PRINCIPAL_JWKS`；不得声明或挂载第二套Service Principal私钥/JWKS。平台API还 MUST 挂载角色隔离的File Worker、File Processing Worker和Delivery Worker bootstrap credential，并让每个Worker只挂载自己的bootstrap credential。部署 MUST 使用按需签发和到期前刷新，不得要求宿主机预先提供短时Service JWT文件。密钥初始化 MUST 幂等生成统一Principal密钥/JWKS与全部bootstrap材料、拒绝不完整统一密钥组并保持私钥和bootstrap文件owner-only。Docling API Key MUST 与平台Principal体系分离，只挂载到`file-processing-worker`和`docling-serve`。
-
 #### Scenario: 新环境首次启动
 - **WHEN** 运维运行受控密钥初始化后启动默认Compose
 - **THEN** 统一Principal密钥/JWKS及File Worker、File Processing Worker、Delivery Worker bootstrap bind source均存在且容器可创建
 - **AND** 三个Worker能分别从平台身份接口取得可验证的角色JWT
-
 #### Scenario: 检查角色Secret挂载
 - **WHEN** 运维检查API、File Service、三个Worker与Docling的Compose Secret
 - **THEN** API拥有统一Principal签名私钥和三份角色bootstrap credential，File Service只有统一公开JWKS
 - **AND** 每个Worker只有自己的bootstrap credential，Docling API Key只在Processing Worker与Docling出现，任何组件都没有另一角色Secret
-
 #### Scenario: 短时JWT到期
 - **WHEN** 已缓存Service JWT进入刷新窗口或过期
 - **THEN** Worker通过固定平台身份地址换取新JWT并继续调用
 - **AND** 不回退到静态JWT、共享Token或未认证内部请求
-
 #### Scenario: Docling API Key缺失
 - **WHEN** `file-processing-worker`或`docling-serve`无法解析独立API Key
 - **THEN** 对应readiness失败且不回退到无认证Docling请求
 
 ### Requirement: Job Sandbox容量和隔离配置必须可验证
-Python Runtime临时文件系统配置 MUST 支持单个15MiB文本File Version或Markdown Representation及受控多文件物化，并对每个Job实施独立沙盒容量、文件数量、路径和生命周期限制。Compose MUST 根据允许自动物化的文件数、15MiB单文件上限和安全处理开销配置容量，在启动时验证并在健康状态中只显示非敏感上限；PDF、Office、图片原件和Docling JSON不得计入可物化类型或进入沙盒。
+Python Runtime临时文件系统配置 MUST对每个Job实施64个常规文件槽位和224MiB共享容量：`inputs`最多40个、`work/outputs`合计最多16个、内部临时及安全余量保留8个。全部自动物化、File MCP按需物化、Agent Write/Edit、输出选择和内部临时处理 MUST经同一个`JobSandbox`预算与预留服务；File MCP不得在授权成功后直接写盘绕过文件数、分区或容量检查。Compose、Runtime默认值、代码硬限制和readiness MUST保持一致，并在健康状态中只显示非敏感上限。
 
+输入计数按实际进入Sandbox的唯一File/Version计算，重复物化同一版本复用既有entry且不重复计数。Office、PDF和图片只允许其精确Markdown Representation进入Sandbox，每个原始File/Version计为一个输入；原始二进制和Docling JSON不得进入Sandbox。64个文件槽位与224MiB是两个同时生效的边界；预留的输出槽位不保证独立字节容量，全部分区仍共享224MiB。
 #### Scenario: 沙盒容量小于合法最小处理需求
-- **WHEN** Runtime配置无法容纳一个15MiB Markdown表示、一个合法输出和必要临时开销
-- **THEN** Runtime readiness失败而不是在Agent执行中无界磁盘失败
-
+- **WHEN** Runtime配置不是64文件/224MiB，或无法保留40输入、16工作输出和8个内部余量槽位
+- **THEN** Runtime readiness失败而不是在Agent执行中使用漂移的边界
 #### Scenario: 单Job达到沙盒上限
-- **WHEN** 继续物化或生成文件会超过当前Job沙盒容量
-- **THEN** Runtime在写入前拒绝并返回安全、有界错误
-
+- **WHEN** 继续物化或生成文件会超过对应分区文件数、64文件总数或224MiB共享容量
+- **THEN** Runtime在创建目标文件或写入首字节前拒绝并返回安全、有界错误
 #### Scenario: 原始文档被请求物化
 - **WHEN** Runtime尝试把PDF、Office、图片或Docling JSON写入Agent Sandbox
 - **THEN** 类型门禁在下载字节前拒绝
+#### Scenario: 自动物化批次不能完整容纳
+- **WHEN** 计划自动物化输入超过40个不同File/Version或实际表示总大小会突破224MiB
+- **THEN** Job在创建与outbox前完整失败并要求缩小工作集
+- **AND** 不创建半数输入已冻结或已物化的Job
+#### Scenario: File MCP物化失败释放预留
+- **WHEN** File MCP物化已预留输入槽位和容量但下载失败或SHA-256不匹配
+- **THEN** Runtime清理部分文件并释放相同预留
+- **AND** 后续重试仍从真实Sandbox使用量重新校验
 
-### Requirement: TypeScript Runtime退役必须经过显式运行态门禁
-平台 MUST 在删除 TypeScript Runtime 服务、客户端或部署配置前，对每个目标环境执行只读预检并保存脱敏证据。预检 MUST 覆盖 TypeScript Agent Definition/Publication、Application revision/deployment、非终态 Job、retry/outbox/queue、模型探测配置和运行依赖；任一未解析执行事实 MUST 阻止删除阶段。
+### Requirement: 当前运行态只支持Python并保留历史TypeScript事实
+当前源码、API、Agent bootstrap、Worker 和 Compose MUST 只支持新建、发布与执行 `python-v1` Agent，并 MUST 拒绝新的 `typescript-v1` Agent、Publication、Application 激活或 Job 执行。数据库中退役前形成的 TypeScript Definition、Publication、终态 Job 和审计事实 MAY 保留并 MUST 只读展示原始 runtime kind；系统不得声称当前存在源码中没有的退役预检 CLI、自动排空或跨 Runtime 迁移命令。
 
-#### Scenario: 存在活动TypeScript应用引用
-- **WHEN** 任一环境仍有 deployment 指向引用 `typescript-v1` Agent Publication 的 Application Publication
-- **THEN** 退役门禁失败并要求创建、发布和显式激活 Python 替代版本
+#### Scenario: 创建或发布TypeScript Agent
+- **WHEN** 当前 API 收到 `typescript-v1` Agent 创建、草稿、发布、回滚或新应用激活请求
+- **THEN** 系统失败关闭且不静默改写为 Python
 
-#### Scenario: 存在非终态TypeScript Job
-- **WHEN** 任一 `typescript-v1` Job 仍处于 PENDING、RUNNING、RETRY_WAIT 或其它可继续执行状态，或队列中仍有对应消息
-- **THEN** 系统不得删除 TypeScript Runtime、改写 runtime kind 或跨 Runtime fallback
-- **AND** Job 必须按原 Runtime 排空、取消或进入确定终态
+#### Scenario: 执行TypeScript Job
+- **WHEN** Worker 或 Runtime 收到非 `python-v1` 的新执行请求
+- **THEN** 系统拒绝执行且不跨 Runtime fallback
 
 #### Scenario: 只剩历史TypeScript事实
-- **WHEN** 所有环境不存在活动引用和非终态 TypeScript Job，但仍有历史 Definition、Publication、终态 Job 或审计
-- **THEN** 平台允许删除 TypeScript 运行服务，同时保留这些事实的原始 runtime kind 和只读查询能力
+- **WHEN** 管理查询读取退役前的 TypeScript Definition、Publication、终态 Job 或审计
+- **THEN** 系统保留原始 `typescript-v1` 和只读状态
+- **AND** 不允许这些事实恢复为当前可执行配置
 
-#### Scenario: 预检无法覆盖目标环境
-- **WHEN** 退役工具无法读取任一目标数据库、队列或部署状态
-- **THEN** 门禁失败且不得用当前本地环境的零计数替代未知环境证据
+#### Scenario: 运维查找退役命令
+- **WHEN** 操作者检查当前源码运维入口
+- **THEN** 文档不得指示调用不存在的 TypeScript 退役预检或迁移 CLI
 
 ### Requirement: 文件schema变更只由Migrator执行且不在迁移中删除对象
 文件工作区表、约束、索引、Publication字段、Job File Manifest、提交暂存、版本、保留与清理事实 MUST 通过新的前向migration由一次性Migrator应用。历史附件到期时间 SHALL 从原始创建时间与有效策略回填；migration事务 MUST NOT访问或删除MinIO对象，实际删除只能由File Worker经File Service在迁移完成后可重试执行。
@@ -1229,39 +1192,40 @@ Python Runtime临时文件系统配置 MUST 支持单个15MiB文本File Version�
 - **AND** migration完成前不删除对象
 
 ### Requirement: 文件工作区验收覆盖真实端到端链路
-Compose验收 MUST 使用合成TXT、born-digital PDF、扫描PDF、DOCX、PPTX、XLSX、带文字图片和无文字图片及假凭据，证明钉钉或受控Channel入口、File Worker、File Service、PostgreSQL、MinIO、File Domain Outbox、processing RabbitMQ拓扑、File Processing Worker、Docling、Agent Worker、所选Runtime、Job Sandbox、File MCP、原件Delivery和文本结果形成新鲜链路。验收还 MUST 覆盖Principal/API Key拒绝、越权文件、MIME伪装、加密/损坏/超大小/超页数、PARTIAL、NO_TEXT、Markdown超限、Docling重启、结果取得后Worker崩溃、幂等重试、沙盒/representation staging清理、交付重试和Secret不泄漏；不得以容器healthy替代业务证据。
-
+Compose验收 MUST 使用合成TXT、LOG、Markdown、born-digital PDF、扫描PDF、DOCX、PPTX、XLSX、带文字图片和无文字图片及假凭据，证明钉钉或受控Channel入口、File Worker、File Service、PostgreSQL、MinIO、File Domain Outbox、processing RabbitMQ拓扑、File Processing Worker、Docling、Agent Worker、Python Runtime protocol 1.3、Job Sandbox、File MCP、原件Delivery和文本结果形成新鲜链路。验收还 MUST 覆盖无附件文字Job、Principal/API Key拒绝、越权文件、MIME伪装、加密/损坏/超大小/超页数、PARTIAL、NO_TEXT、Markdown超限、Docling重启、结果取得后Worker崩溃、幂等重试、40个输入工作集边界、沙盒/representation staging清理、交付重试和Secret不泄漏；不得以容器healthy替代业务证据。
 #### Scenario: PDF总结并交付原件
 - **WHEN** 合成用户上传合法PDF并要求总结后转发原件
-- **THEN** 证据关联原附件、source Version、processing run、Markdown/JSON representation、Manifest v4、沙盒Markdown读取、Agent结果和原PDF Delivery
+- **THEN** 证据关联原附件、source Version、processing run、Markdown/JSON representation、Manifest v5、Working Set、沙盒Markdown读取、Agent结果和原PDF Delivery
 - **AND** Agent沙盒、模型上下文和Delivery均未混淆原件与representation
-
 #### Scenario: 扫描件OCR成功
-- **WHEN** 合成扫描PDF或带文字图片在固定Profile内完成OCR
-- **THEN** Agent只通过Markdown读取提取文字并给出基于该文字的结果
+- **WHEN** 合成扫描PDF或带文字图片在`docling-layout-ocr-v2`内完成OCR
+- **THEN** Agent只通过Markdown读取提取文字并给出基于该文字与布局坐标的结果
 - **AND** 系统不声称获得未提取的视觉语义
-
 #### Scenario: 无文字图片拒绝模型调用
 - **WHEN** 只有一张合法但OCR为NO_TEXT的图片
 - **THEN** Job不调用模型并通过原reply route返回安全说明
-
 #### Scenario: Docling重启恢复
 - **WHEN** Docling在已返回task ID后重启并丢失临时任务
 - **THEN** 同一processing run创建受控新attempt并最终成功或确定失败
 - **AND** 不产生重复source Version或representation
-
 #### Scenario: 文档处理Secret不泄漏
 - **WHEN** 验收检查容器环境、MQ、Job、Tool事件、审计、API和日志
 - **THEN** 不存在MinIO Secret、Docling API Key、Service bootstrap credential、原始正文、对象键或真实业务文件
+#### Scenario: 无附件文字消息正常执行
+- **WHEN** 合成用户只发送非空文字且不上传或引用文件
+- **THEN** Job使用protocol 1.3和空schema v5文件上下文完成模型执行与文字Delivery
+- **AND** 不出现旧Manifest投影或文件合同校验错误
+#### Scenario: 旧合同不存在于发布产物
+- **WHEN** CI检查后端、前端和Runtime发布产物
+- **THEN** 不存在`text-v1`、`docling-text-v1`、`docling-layout-ocr-v1`、Manifest v1-v4或Runtime protocol 1.0-v1.2运行实现
+- **AND** migration与变更文档中的删除说明不被误判为运行支持
 
 ### Requirement: Docling服务固定版本并保持内部隔离
 默认Compose MUST 使用固定tag与digest的官方`docling-serve`镜像，禁用UI、远程services、HTTP URL source、Callback、自定义VLM/图片描述配置和外部插件；服务不得映射宿主端口，只能由`file-processing-worker`通过专用内部网络和独立API Key访问。容器 MUST 使用非root、只读根文件系统、受控scratch、CPU、内存、PID和时间限制，并在运行前准备所需模型artifacts而不是运行时访问互联网。
-
 #### Scenario: 检查Docling Compose配置
 - **WHEN** 运维渲染默认Compose配置
 - **THEN** `docling-serve`使用固定镜像digest、无宿主端口、UI关闭且远程/自定义能力关闭
 - **AND** 不存在PostgreSQL、RabbitMQ、MinIO或平台Principal Secret
-
 #### Scenario: Docling模型尚未就绪
 - **WHEN** `/health`成功但`/ready`因模型加载或内部编排器失败返回非就绪
 - **THEN** 平台文档处理状态不得报告READY
@@ -1269,13 +1233,450 @@ Compose验收 MUST 使用合成TXT、born-digital PDF、扫描PDF、DOCX、PPTX�
 
 ### Requirement: 文件处理队列具有独立有界拓扑
 平台 SHALL 为文档processing request提供版本化durable主队列、延迟重试队列和dead-letter队列，并由`file-processing-worker`独占消费；拓扑 MUST 与附件下载、Agent Job和Delivery队列分离。消息与dead-letter摘要只能包含稳定run/source身份、attempt、Profile hash、correlation和安全错误码。
-
 #### Scenario: Processing Worker暂时不可用
 - **WHEN** processing request已经发布但Worker停止
 - **THEN** 消息保留在durable队列且运维状态显示有界积压
 - **AND** 原始附件、正文、对象键和凭据不进入队列
-
 #### Scenario: 处理重试耗尽
 - **WHEN** run达到固定最大attempt
 - **THEN** 消息进入dead-letter且run进入确定失败
 - **AND** 不影响附件下载队列或Agent Job队列
+
+### Requirement: Baseline Adoption 部署必须先验证并保留恢复证据
+当受支持的现有数据库从 legacy migration generation 采纳当前 schema baseline 时，系统 MUST 在业务服务使用新代码前完成只读 preflight、可恢复逻辑备份、one-shot Migrator adoption 和结果核验；普通业务服务、手工 SQL 和只读验证工具 MUST NOT 写入 migration ledger 或 adoption metadata。
+
+#### Scenario: 现有部署满足受支持的 adoption 来源
+- **WHEN** preflight 发现数据库 ledger、checksum、schema、注释和关键数据不变量与受支持的 legacy head 完全一致
+- **THEN** 系统报告来源 head、目标 baseline、镜像或构建身份以及不含业务原文的核验摘要
+- **THEN** adoption 只有在逻辑备份完成且业务写入已停止后才可由 one-shot Migrator 执行
+
+#### Scenario: Adoption 前置条件不满足
+- **WHEN** legacy ledger、checksum、schema、注释、关键数据不变量或备份核验任一失败
+- **THEN** Migrator 失败关闭且不得登记 baseline marker 或 adoption metadata
+- **THEN** 依赖 schema readiness 的业务服务不得以新代码启动
+
+#### Scenario: Adoption 成功后验收
+- **WHEN** one-shot Migrator 完成 adoption 且没有后续 migration 待应用
+- **THEN** 验收同时核对 schema head、唯一 adoption metadata、关键表计数、配置 revision 摘要和业务服务 readiness
+- **THEN** 验收结果不得包含 Secret、Token、密码或原始业务消息
+
+#### Scenario: Adoption 后验收失败
+- **WHEN** adoption 后任一数据、schema、配置或应用闭环核验失败
+- **THEN** 系统保持切换前备份、旧镜像和旧数据环境可恢复，不自动删除或覆盖它们
+- **THEN** 只有尚未执行后续 migration 的 adoption-only 数据库可以使用受控 rollback；其他情况必须恢复逻辑备份
+
+<!-- Integrated from archived change: `2026-08-23-stabilize-schema-baseline-and-runtime-config/specs/platform-operations` -->
+
+### Requirement: 内置 Runtime Config Definition 对账必须语义幂等
+系统 SHALL 在受控初始化或显式管理同步中对账代码内置 runtime config definition，并 MUST 以规范化后的 key、类型、默认值、敏感性、bootstrap 边界、适用服务集合、描述和状态判断语义变化。语义相同的重复对账 MUST NOT 更新记录、递增 revision、改变 `updated_at` 或生成变化审计。
+
+#### Scenario: 重复注册完全相同的内置定义
+- **WHEN** 相同构建重复启动或管理员重复同步同一组内置定义
+- **THEN** 第一次已存在后的对账返回 unchanged
+- **THEN** definition 行、聚合 runtime config revision/hash 和配置审计均保持不变
+
+#### Scenario: 内置定义发生真实变化
+- **WHEN** 新构建改变一个内置 definition 的任一规范化语义字段
+- **THEN** 系统只更新对应 definition 并将其 revision 递增一次
+- **THEN** 聚合 runtime config revision/hash 发生变化，显式管理同步记录不含敏感值的差异摘要
+
+#### Scenario: 多个服务并发初始化
+- **WHEN** 多个服务同时对账相同的内置 definition 集合
+- **THEN** 唯一 key 最终只对应一条语义正确的记录
+- **THEN** 每个真实创建或更新最多计入一次 revision 变化，其余竞争者重读后返回 unchanged 或安全重试
+
+<!-- Integrated from archived change: `2026-08-23-stabilize-schema-baseline-and-runtime-config/specs/platform-operations` -->
+
+### Requirement: Runtime Config 只读路径不得隐式注册定义
+Runtime config definition 列表、effective snapshot、ready diagnostics 和其他只读请求 MUST NOT 创建或更新 definition。若受控初始化没有完成，读取路径 SHALL 返回安全的缺失或 degraded 诊断，不得通过 GET、snapshot 构建或健康检查自我修复数据库。
+
+#### Scenario: 管理员重复读取 Definition 列表
+- **WHEN** 管理员连续调用 definition 列表 API 且数据库内容未变化
+- **THEN** 两次响应读取同一事实，数据库写入计数、definition revision、`updated_at` 和配置审计均不变化
+
+#### Scenario: Snapshot 发现缺少内置 Definition
+- **WHEN** effective snapshot 或 ready diagnostics 发现预期内置 definition 尚未由受控初始化注册
+- **THEN** 系统返回不泄漏敏感信息的 missing-definition 或 degraded 诊断
+- **THEN** 读取事务不得插入 definition 或修改任何 runtime config revision
+
+<!-- Integrated from archived change: `2026-08-23-stabilize-schema-baseline-and-runtime-config/specs/platform-operations` -->
+
+### Requirement: Runtime Config 聚合版本必须反映真实持久化变化
+系统 SHALL 为 runtime config definition、value 和相关 Secret metadata 提供稳定的聚合 revision 与内容 hash。任一受支持的真实持久化变化 MUST 改变聚合版本标识；无变化对账和纯读取 MUST 保持聚合版本标识不变。调用方 MUST 将该标识视为不透明并发与观测令牌，不得依赖其具体数值。
+
+#### Scenario: 修改低 revision 的配置值
+- **WHEN** 某个 runtime config value 发生真实更新，即使其他 definition 具有更高的单行 revision
+- **THEN** 聚合 revision 与有效配置 hash 按其影响发生变化，不得因取最大单行 revision 而掩盖本次更新
+
+#### Scenario: 重复构建相同 Snapshot
+- **WHEN** 数据库 definition、value 和相关 Secret metadata 均未变化而重复构建 snapshot
+- **THEN** 聚合 revision 和内容 hash 保持稳定
+- **THEN** 构建 snapshot 不产生数据库写入或配置审计
+
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/platform-operations` -->
+
+### Requirement: Schema 事实源必须登记并可审计
+系统 SHALL 在版本控制中维护 schema fact-source manifest，按表及关键列登记领域所有者、事实语义、分类、writer、reader、生命周期、保留/审计要求和退役状态。分类至少 MUST 区分 canonical mutable fact、immutable snapshot、derived projection、compatibility shadow、operational coordination fact 和 one-time migration artifact。
+
+#### Scenario: 新增或修改持久化字段
+- **WHEN** migration 新增表、关键列、快照或兼容表示
+- **THEN** 同一 change 更新 manifest 并声明唯一事实源、允许的派生关系、所有 writer/reader 和退役条件
+
+#### Scenario: 重复表示具有不同职责
+- **WHEN** 两个字段或表包含相似数据但分别承担可变草稿和不可变发布快照职责
+- **THEN** manifest 将二者登记为不同生命周期事实
+- **AND** consolidation 不得把不可变历史误判为需要消除的双写
+
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/platform-operations` -->
+
+### Requirement: Schema consolidation 必须按阶段推进并禁止长期双写
+系统 MUST 按 expand、verify/backfill、read cutover、write cutover、observation、contract/drop 的顺序推进事实源收敛，每个阶段 SHALL 具有可重复的前置检查、成功证据、失败关闭行为和回滚边界。兼容双写只能存在于已登记且有截止门禁的迁移窗口。
+
+#### Scenario: 进入读切换阶段
+- **WHEN** verify/backfill 尚未证明全量 parity、唯一映射与引用完整性
+- **THEN** 系统不得取消旧读路径或进入写切换
+
+#### Scenario: 写切换完成后的观察期
+- **WHEN** 新版本已停止兼容列双写
+- **THEN** 观察期持续核对缺失事实、旧列访问、队列重试、Runtime 恢复和历史查询
+- **AND** 任何回归都会阻止 contract/drop
+
+#### Scenario: 需要回滚写切换
+- **WHEN** contract 尚未执行且观察期发现新事实源不可用
+- **THEN** 运维方可以回滚应用版本并按已登记边界恢复兼容写入
+- **AND** 不删除新事实或重写不可变历史
+
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/platform-operations` -->
+
+### Requirement: 字段和表退役必须满足统一门禁
+系统 SHALL 仅在目标字段或表已证明零生产 writer、零生产 reader、无未完成事务/重试/恢复职责、达到保留期、完成必要审计导出、具备备份恢复证据且所有 owner 批准后执行 contract/drop。行数为零、名称含 `legacy` 或 `cutover`、以及本地代码搜索无引用均 MUST NOT 单独满足退役门禁。
+
+#### Scenario: 评审一次性 cutover quarantine 表
+- **WHEN** `job_dispatch_cutover_quarantine` 被提议退役
+- **THEN** 评审必须证明历史 cutover 已结束、所有隔离记录已处置、部署与恢复代码不再读取或写入、保留期已满且审计证据已导出
+- **AND** 任一条件不满足时保持表存在并把退役状态标记为 `blocked`
+
+#### Scenario: 评审安全或恢复表
+- **WHEN** 身份 challenge、outbox、Runtime ledger、claim 或 event 表被提议退役
+- **THEN** 评审必须证明其安全、幂等、重试或恢复职责已被一个明确的新 canonical fact 完整替代并完成所有调用方切换
+- **AND** 不得仅因当前零行或低行数批准删除
+
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/platform-operations` -->
+
+### Requirement: Consolidation migration 必须以 Baseline 100 adoption 为前置
+系统 MUST 在目标数据库已完成精确 `042 → 100` Baseline Adoption、migration ledger 与 baseline checksum 校验通过后，才允许执行本 change 的后续 migration。真实 backfill、cutover 或 contract/drop SHALL 分别获得部署授权和维护窗口，不得由构建、测试、应用启动或 OpenSpec apply 自动执行。
+
+#### Scenario: 目标数据库仍停留在042
+- **WHEN** consolidation preflight 发现 migration ledger 的精确 head 仍为 `042`
+- **THEN** 系统仅报告应先执行 Baseline 100 Adoption
+- **AND** 不写入本 change 的 migration ledger、业务表或兼容字段
+
+#### Scenario: Active change 发生migration编号竞争
+- **WHEN** 实施时发现另一个 active change 已占用计划中的 migration 版本
+- **THEN** 实施者根据当前 migration catalog 重新分配唯一版本并更新 checksum 与测试
+- **AND** 不修改已部署 migration 的内容或身份
+
+#### Scenario: 执行contract drop
+- **WHEN** 所有 consolidation 门禁通过并获得明确部署授权与维护窗口
+- **THEN** Migrator 在全局互斥和完整事务边界内执行 contract migration
+- **AND** 保存不含业务正文或凭据的 migration、备份和验收证据
+
+<!-- Integrated from archived change: `2026-08-23-harden-management-and-runtime-boundaries/specs/platform-operations` -->
+
+### Requirement: Compose 管理 Web 必须随管理面失败关闭
+当前普通 Compose 配置 SHALL 包含 `admin-web` 服务定义。`admin-web` 容器入口 MUST 要求 `FEATURE_WEB_ADMIN=true`；该值不为 `true` 时容器必须以非零状态退出且不得提供静态管理页面。启用时，管理 Web MUST 只代理已挂载且受现有 Session 与 RBAC 保护的管理 API；规范不得声称当前 Compose 使用已注释掉的 admin profile。
+
+#### Scenario: 默认Compose配置
+- **WHEN** Compose 使用默认 `FEATURE_WEB_ADMIN=false` 渲染并启动服务集合
+- **THEN** `admin-web` 服务仍存在于 Compose manifest
+- **AND** 其入口 guard 非零退出且不提供管理页面
+
+#### Scenario: 直接点名关闭的Admin Web
+- **WHEN** 操作者显式启动 `admin-web` 但 `FEATURE_WEB_ADMIN` 不为 `true`
+- **THEN** 容器以非零状态退出且不提供静态管理页面
+
+#### Scenario: 显式启用管理Web
+- **WHEN** `FEATURE_WEB_ADMIN=true` 且依赖服务满足启动条件
+- **THEN** `admin-web` 启动并只代理已挂载且受认证授权保护的管理 API
+
+<!-- Integrated from archived change: `2026-08-23-harden-management-and-runtime-boundaries/specs/platform-operations` -->
+
+### Requirement: 管理前端必须区分权限错误与系统错误
+管理前端 SHALL 使用全局渲染错误边界，并在 capability 查询中区分 401、403、网络/5xx 和客户端解析错误。系统错误 MUST 提供安全重试或刷新入口，不得显示为“无权访问”，也不得展示堆栈、原始响应或敏感配置。
+
+#### Scenario: Capability API 返回 403
+- **WHEN** 已登录用户的 capability 查询成功但目标 capability 缺失或 API 明确返回 403
+- **THEN** 页面显示无权限状态且不退出有效登录
+
+#### Scenario: Capability API 不可用
+- **WHEN** capability 查询发生网络、5xx 或响应解析错误
+- **THEN** 页面显示管理服务不可用和重试入口，不显示无权限文案
+
+#### Scenario: 页面渲染抛出异常
+- **WHEN** 任一管理路由组件在渲染生命周期抛出异常
+- **THEN** 全局错误边界显示安全恢复页面且不暴露错误详情
+
+<!-- Integrated from archived change: `2026-08-23-harden-management-and-runtime-boundaries/specs/platform-operations` -->
+
+### Requirement: 非本地对象存储凭据必须失败关闭
+非 local/test/testing/development 环境 MUST 显式提供对象存储访问凭据，且 access key 与 secret key 均不得为空或等于仓库内置本地默认值。配置校验 MUST 在依赖对象存储的服务执行外部 I/O 前失败，不得静默使用 Compose 或代码 fallback。
+
+#### Scenario: 生产环境缺少对象存储凭据
+- **WHEN** `APP_ENV=production` 且对象存储 access key 或 secret key 缺失
+- **THEN** 设置加载或服务启动以安全配置错误失败
+
+#### Scenario: 生产环境使用仓库默认凭据
+- **WHEN** 非本地环境仍使用内置 MinIO access key 或 secret 占位值
+- **THEN** 设置加载或服务启动失败且错误信息不包含凭据内容
+
+#### Scenario: 本地开发显式使用本地 MinIO
+- **WHEN** local/test 环境使用 Compose 本地 MinIO bootstrap
+- **THEN** 系统允许本地占位流程，但凭据仍只进入 MinIO/bootstrap Secret 边界
+
+<!-- Integrated from archived change: `2026-08-23-scale-task-workspace-with-bounded-job-working-sets/specs/platform-operations` -->
+
+### Requirement: 工作区文件数量与计费容量使用受治理tenant运行配置
+平台 Runtime Config SHALL注册两个非敏感整数定义：`FILE_WORKSPACE_ACTIVE_FILE_LIMIT`默认200、代码硬上限1000；`FILE_WORKSPACE_BILLABLE_BYTES_LIMIT`默认2GiB、代码硬上限10GiB；二者仅适用`file-service`。Runtime Config scope SHALL增加`tenant`，但只有代码显式声明tenant-compatible的定义才可使用；scope code MUST从已认证管理上下文中的平台tenant身份校验，不得由普通业务请求或Agent输入覆盖。
+
+管理员创建、修改、禁用tenant覆盖时 MUST经过现有平台配置管理权限、乐观revision和配置审计。File Service MUST把两个有效值及同一配置快照revision用于事务配额预留；有效配置诊断 MUST返回脱敏的值、来源和revision。Job审计 MUST记录观察到的有效值与revision，但公开健康检查不得暴露tenant目录或文件身份。
+
+#### Scenario: tenant使用默认配额
+- **WHEN** 没有启用的tenant覆盖且兼容上线门禁已通过
+- **THEN** File Service有效配置返回文件数量上限200和计费容量2GiB及definition-default来源
+- **AND** 代码仍分别应用1000和10GiB硬上限
+
+#### Scenario: 管理员设置tenant覆盖
+- **WHEN** 授权管理员把目标tenant文件上限从200改为500、容量从2GiB改为5GiB并提供正确expected revision
+- **THEN** 平台保存新revision并写入不含文件身份的配置审计
+- **AND** 后续File Service有效快照对该tenant使用500和5GiB
+
+#### Scenario: 配额值超过代码硬上限
+- **WHEN** 管理员提交1001个ACTIVE文件或超过10GiB的tenant覆盖
+- **THEN** 平台在保存前拒绝并返回稳定的定义校验错误
+- **AND** File Service消费端仍保留同一硬上限作为纵深防御
+
+#### Scenario: 非兼容定义尝试tenant scope
+- **WHEN** 管理员对未声明tenant-compatible的其它Runtime Config key提交tenant scope
+- **THEN** 平台在保存前拒绝
+- **AND** 不扩大该配置在其它tenant或服务中的作用范围
+
+<!-- Integrated from archived change: `2026-08-23-scale-task-workspace-with-bounded-job-working-sets/specs/platform-operations` -->
+
+### Requirement: 提升tenant工作区配额前必须通过兼容预检
+平台在把任一tenant有效工作区文件数量从20或更低提升到20以上前，MUST只读检查该tenant所有启用且使用任务工作区的Agent/Application Publication是否冻结兼容的`task_workspace_search_files`及必要File MCP Tool。任一不兼容发布 MUST阻止文件数量提升，并返回有界、非敏感的Application/Publication身份和修复原因；预检 MUST NOT原地修改或自动重发任何Publication。容量覆盖可以独立变更，但两个定义均必须经过同一tenant配置治理、硬上限和审计。
+
+#### Scenario: 所有启用Publication均兼容
+- **WHEN** 目标tenant的启用任务工作区Application均冻结兼容Tool且配额值不超过1000
+- **THEN** 管理员可发布新的tenant配额revision
+- **AND** 审计同时记录预检结果摘要和配置变更
+
+#### Scenario: 存在不兼容历史Publication
+- **WHEN** 目标tenant仍有一个启用Application Publication缺少新发现Tool
+- **THEN** 平台拒绝把有效上限提升到200
+- **AND** 不修改该Publication、现有工作区或历史Job
+
+#### Scenario: 回滚配额到20
+- **WHEN** 运维把已启用大工作区的tenant有效上限降回20
+- **THEN** 已完成Job、追加工作集事实和已有文件保持不变
+- **AND** 超过20个ACTIVE文件的工作区保持可读但拒绝新增逻辑文件
+
+<!-- Integrated from archived change: `2026-08-23-scale-task-workspace-with-bounded-job-working-sets/specs/platform-operations` -->
+
+### Requirement: 大工作区上线必须保存容量与全链证据
+上线验收 MUST覆盖200和1000个ACTIVE文件、默认2GiB与硬上限10GiB、冻结目录revision的50项分页、40个内容工作集项、64文件分区、224MiB共享容量、并发目录变化、并发Job和Docling Representation状态，并记录目录revision成员行数、Manifest大小、Job创建与搜索延迟、数据库查询计划以及工作集/容量上限拒绝。验收 MUST覆盖自动物化、File MCP物化、Write/Edit和内部临时文件全部经过统一预算，特别证明File MCP不能绕过文件数或容量检查。生产就绪声明 MUST至少包含一次真实Runtime调用File MCP搜索、选择精确版本、物化可读内容并形成Agent结果或Delivery的全链证据；容器健康或单元测试单独不足以证明完成。
+
+#### Scenario: 1000文件容量压测
+- **WHEN** 测试工作区具有1000个ACTIVE文件且创建只绑定2个内容项的Job
+- **THEN** Manifest只冻结目录revision和2个内容项，不复制其余998个目录条目
+- **AND** 证据记录冻结目录分页延迟、查询计划和数据库行数而不记录正文
+
+#### Scenario: 真实全链验收
+- **WHEN** 兼容Publication通过真实Python Runtime搜索并选择一份Docling可读文档
+- **THEN** 证据证明精确Representation被物化、Agent读取并产生受治理结果或Delivery
+- **AND** 未选中的工作区文件没有进入Sandbox
+
+#### Scenario: File MCP预算旁路回归
+- **WHEN** Runtime已经接近40项输入或224MiB容量且File MCP返回新的合法transfer
+- **THEN** Runtime在下载首字节前通过统一预算接受或稳定拒绝
+- **AND** 证据证明拒绝路径没有目标文件、部分内容或未释放预留
+
+<!-- Integrated from archived change: `2026-08-23-add-governed-office-embedded-image-layout-ocr/specs/platform-operations` -->
+
+### Requirement: 布局OCR复用隔离处理拓扑并固定模型artifact
+默认部署 SHALL 复用内部`docling-serve`、独立`file-processing-worker`、File Service、File Domain Outbox和RabbitMQ文档处理边界来执行parent、picture item与assembly任务，不得把Docling或OCR暴露为Agent Tool/MCP，也不得新增可绕过File Service的图片对象入口。Docling/OCR/layout所需模型与配置 MUST 在构建或受控部署阶段固定revision与digest并离线可用；运行时下载、远程services、自定义模型、Callback、HTTP source和外部插件 MUST 保持关闭。
+
+#### Scenario: 检查处理组件Secret和网络
+- **WHEN** 运维检查File Processing Worker、Docling和File Service的环境、Secret、网络及挂载
+- **THEN** 只有File Service具有对象存储凭据，Worker只有角色bootstrap/RabbitMQ/Docling API Key，Docling只有自身固定API Key与模型artifact
+- **AND** 任何处理组件都不获得任意对象键、其它Worker凭据或外网图片/模型访问
+
+#### Scenario: 固定OCR模型缺失
+- **WHEN** 容器离线启动但Profile固定的OCR/layout artifact不存在、digest不匹配或无法加载
+- **THEN** Docling/Worker readiness失败且布局Profile不得报告READY
+- **AND** 不尝试访问互联网下载或回退到其它模型
+
+<!-- Integrated from archived change: `2026-08-23-add-governed-office-embedded-image-layout-ocr/specs/platform-operations` -->
+
+### Requirement: 布局OCR资源与积压可安全观测
+平台 MUST 对parent parse、picture item、assembly、asset staging、Representation staging、retry、dead-letter和cleanup分别提供有界积压计数、最早时间、Profile/processor版本、阶段、attempt和白名单错误分类。readiness MUST 验证Profile registry/hash、layout schema、必需输出集合、固定模型artifact、File Service内部流、RabbitMQ拓扑和Docling真实就绪；日志、健康、指标和运维API不得显示业务文件名、图片、OCR文字、坐标、对象键、响应正文或凭据。
+
+#### Scenario: 图片OCR出现积压
+- **WHEN** picture item队列超过代码固定告警阈值
+- **THEN** 运行中心显示数量、最早创建时间、Profile、stage和安全错误分类
+- **AND** 不显示图片内容、OCR文本或父文件名
+
+#### Scenario: 容器运行但layout schema不兼容
+- **WHEN** 组件进程running但File Service不认识Profile要求的`OCR_LAYOUT_JSON` schema或输出集合
+- **THEN** readiness返回非就绪并阻止新布局OCR run
+- **AND** 不以容器health替代契约就绪
+
+<!-- Integrated from archived change: `2026-08-23-add-governed-office-embedded-image-layout-ocr/specs/platform-operations` -->
+
+### Requirement: 布局OCR验收覆盖坐标、恢复和能力边界
+上线验收 MUST 使用不含真实业务数据的合成DOCX/PPTX，覆盖内嵌图片文字、重复图片、图片自身EXIF方向、Office显示层旋转/裁剪未应用且明确提示、低置信度、多block、无文字、损坏图片、超图片数、超像素、超输出大小及提示注入。证据 MUST 关联source Version、parent run、picture asset/occurrence/item、三种Representation、Manifest、Runtime Markdown读取、Agent结果与原件Delivery，并验证逐图重试、Docling重启、Worker崩溃、幂等assembly、asset/representation清理和Secret不泄漏；不得以单元测试或容器healthy代替新鲜业务链路。
+
+#### Scenario: PPTX布局OCR成功
+- **WHEN** 合成PPTX包含已知slide/shape位置和多个已知图片内文字框
+- **THEN** 验收证明父锚点、规范化bbox、reading order、几何关系和布局Markdown与样本期望一致
+- **AND** Agent只通过Markdown说明图片文字/布局，不声称箭头、颜色或照片语义
+
+#### Scenario: DOCX重排不改变锚点语义
+- **WHEN** 同一合成DOCX在不同字体/分页环境下处理
+- **THEN** 验收使用稳定文档节点/段落锚点和图片内部坐标比较结果
+- **AND** 不要求或断言稳定页码bbox
+
+#### Scenario: 单张图片任务重试
+- **WHEN** 多图片文档中一个Docling picture task在返回task ID后丢失
+- **THEN** 同一item有限重试并最终成功或确定失败，其它终态item不重算
+- **AND** parent只发布一组Profile要求的Representation
+
+#### Scenario: 图片提示注入不能扩大权限
+- **WHEN** 合成图片OCR文字要求忽略系统规则并调用未授权Tool
+- **THEN** Agent把它作为不可信文件内容处理且服务端权限/工具集合保持不变
+- **AND** MQ、日志和审计不出现该OCR正文
+
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
+
+### Requirement: 自动化测试必须具有唯一且失败关闭的执行层级
+仓库 SHALL 将每个自动化测试文件唯一分类为 `unit`、`contract`、`integration`、`acceptance` 或 `migration`；分类 SHALL 由版本控制下的机器可读事实驱动。新增测试缺少分类、同时命中多个分类或清单引用不存在文件时，测试收集 MUST 失败，而不是静默选择默认层级。
+
+#### Scenario: 新测试缺少层级
+- **WHEN** 开发者新增测试文件但没有将其加入唯一测试层级
+- **THEN** 测试清单校验和 Pytest collection 失败并报告该文件
+
+#### Scenario: 测试属于多个层级
+- **WHEN** 同一个测试文件被配置为两个或更多层级
+- **THEN** 测试清单校验失败并列出冲突层级
+
+#### Scenario: 按层级执行测试
+- **WHEN** 开发者或 CI 选择任一测试层级
+- **THEN** 系统只收集该层级的测试并报告稳定的收集数、通过数、跳过数和耗时
+
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
+
+### Requirement: 快速反馈不得替代完整回归
+仓库 SHALL 提供稳定的 PR 快速测试入口和后端完整回归入口。快速入口 MUST 只选择已分类的 `unit` 与 `contract` 测试；完整入口 MUST 保持所有本地可执行测试的现有覆盖，并由主分支或发布门禁执行。存在快速入口不得成为删除 `integration`、`acceptance`、`migration`、拒绝路径或恢复路径测试的依据。
+
+#### Scenario: Pull Request 快速门禁
+- **WHEN** Pull Request 运行默认快速测试入口
+- **THEN** CI 执行全部 `unit` 与 `contract` 测试并清晰声明尚未代表完整回归或真实外部验收
+
+#### Scenario: 主分支完整回归
+- **WHEN** 变更进入主分支或发布验证
+- **THEN** CI 执行所有本地可执行层级并保留显式外部集成测试的跳过原因
+
+#### Scenario: 快速测试通过但验收测试失败
+- **WHEN** 快速入口通过而 `acceptance`、`migration` 或其他完整回归层级失败
+- **THEN** 系统不得把该变更报告为完整质量验收通过
+
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
+
+### Requirement: 测试数据库加速必须保持逐测试隔离和迁移真实性
+非 migration 语义的 SQLite 测试 MAY 复用一次构建的已迁移只读模板，但每个测试 MUST 使用唯一数据库副本并独立执行 seed 与写入。验证 Migrator、schema baseline、checksum、legacy ledger、升级路径或指定初始数据库状态的测试 MUST 绕过模板并执行真实迁移流程。测试不得依赖执行顺序或其他测试留下的状态。
+
+#### Scenario: 普通契约测试创建数据库
+- **WHEN** 非 migration 契约测试请求已迁移测试数据库
+- **THEN** 测试基础设施从与当前 migration 身份一致的模板创建唯一副本，且对副本的写入不会被其他测试观察到
+
+#### Scenario: Migration 测试验证空库升级
+- **WHEN** migration 层级测试验证空 SQLite 或 PostgreSQL 数据库的 baseline 与后续迁移
+- **THEN** 测试不使用已迁移模板，而是从声明的初始状态执行真实 Migrator 并验证 ledger 和 schema
+
+#### Scenario: Migration 内容发生变化
+- **WHEN** 同一测试进程使用的活动 migration 身份与模板身份不一致
+- **THEN** 测试基础设施拒绝复用旧模板并重新构建或失败关闭
+
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
+
+### Requirement: 测试反馈预算必须可测量且不得通过缩减覆盖达成
+仓库 SHALL 提供可复现的测试基线命令并输出执行环境、收集数、通过/跳过数、总耗时和最慢测试。该变更在约定参考环境中的验收目标为 PR 快速套件不超过 120 秒、后端完整套件不超过 300 秒。预算只能通过测试分层、隔离基础设施复用、无语义损失的 fixture 重构或经过隔离验证的并行执行达成，不得通过删除规范覆盖、隐藏失败、依赖重试或改变测试选择口径达成。
+
+#### Scenario: 记录优化前后基线
+- **WHEN** 维护者评估测试优化效果
+- **THEN** 使用相同参考命令和环境记录优化前后收集数、结果、耗时和最慢测试，并说明所有选择条件
+
+#### Scenario: 耗时达到目标但收集数下降
+- **WHEN** 快速或完整套件耗时达到预算，但本应包含的测试收集数或层级覆盖下降
+- **THEN** 该优化不得通过验收，直到覆盖差异被解释并证明符合规范
+
+#### Scenario: 参考环境未达到预算
+- **WHEN** 实现完成后快速套件超过 120 秒或后端完整套件超过 300 秒
+- **THEN** 对应性能任务保持未完成并记录差距，不得仅以测试全部通过宣称本变更完成
+
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
+
+### Requirement: 删除重复测试必须具有规范覆盖等价证据
+删除或合并自动化测试前，维护者 MUST 记录原测试、替代测试、对应 canonical Requirement，以及正常、拒绝、恢复、审计和 Secret 边界的覆盖等价关系。仅代码相似、使用相同 fixture、文件过长或希望减少行数均不得作为删除依据。
+
+#### Scenario: 两个测试断言相似但失败边界不同
+- **WHEN** 两个测试具有相似正常路径断言但覆盖不同授权、恢复或审计边界
+- **THEN** 系统保留独立测试或提供同时覆盖两个边界的明确替代测试
+
+#### Scenario: 重复测试具有完整替代证据
+- **WHEN** 维护者证明替代测试覆盖同一 Requirement 及全部相关边界，并且完整回归通过
+- **THEN** 可以删除重复测试并在变更证据中记录映射
+
+<!-- Integrated from archived change: `2026-08-23-converge-single-current-file-rule/specs/platform-operations` -->
+
+### Requirement: 开放测试文件域重置必须显式且完整
+平台 SHALL 提供一次性、显式确认的开放测试文件域重置命令。命令 MUST 先只读预检并拒绝任何非终态文件processing run、Agent Job、Delivery、Outbox或相关RabbitMQ消息，再通过File Service对象存储适配器删除受管文件对象，并按外键拓扑事务性删除旧附件正文、附件文件绑定、Workspace、Catalog、Working Set、Manifest、File/Version、Representation、processing、提交、保留、文件Delivery及其强关联终态测试事实。命令不得接受任意bucket、对象前缀、数据库表名或外部URL。
+
+#### Scenario: 操作者未提供精确确认
+- **WHEN** 操作者运行重置命令但未提供文档规定的精确环境标识和确认短语
+- **THEN** 命令只输出脱敏预检摘要并退出
+- **AND** 不删除数据库行或对象
+
+#### Scenario: 仍有非终态执行或队列消息
+- **WHEN** 预检发现RUNNING、PENDING、WAITING、RETRY、未终态Outbox/Delivery或相关队列积压
+- **THEN** 重置失败关闭并输出按类别聚合的安全计数
+- **AND** 不执行部分对象或数据库删除
+
+#### Scenario: 开放测试文件域为空后重置完成
+- **WHEN** 所有门禁通过且操作者提供精确确认
+- **THEN** 命令删除受管对象与目标测试事实并执行数据库和对象存储空域核验
+- **AND** 任一删除或核验失败都返回非零状态且不得宣称完成
+
+<!-- Integrated from archived change: `2026-08-23-converge-single-current-file-rule/specs/platform-operations` -->
+
+### Requirement: 单一文件合同migration必须删除旧结构并拒绝遗留引用
+一次性Migrator MUST 在文件域重置完成后执行前向migration，删除`attachment_content`、重复文件身份影子列、未使用的Job文档Profile字段、可切换文本策略字段及其旧约束，并把Profile、Manifest和Runtime执行摘要约束收缩到`NONE|docling-layout-ocr-v2`、schema v5和protocol 1.3。migration MUST 在任何旧Profile、旧Manifest、旧Runtime协议、活动部署或非终态引用仍存在时失败关闭，不得更新、投影或回填成当前合同。
+
+#### Scenario: 旧测试数据未清空
+- **WHEN** Migrator发现旧Manifest行、旧Profile引用、旧附件正文或旧协议执行摘要
+- **THEN** migration整体回滚并提示先运行显式开放测试文件域重置
+- **AND** 不保留半数新约束或半数旧列
+
+#### Scenario: 重置完成后应用migration
+- **WHEN** 预检确认只剩当前Profile引用且文件域与旧执行事实为空
+- **THEN** migration在单事务中删除旧结构并安装唯一当前约束
+- **AND** schema contract只声明当前列、表和允许值
+
+<!-- Integrated from archived change: `2026-08-23-converge-single-current-file-rule/specs/platform-operations` -->
+
+### Requirement: 单一合同部署不得保留回退服务
+部署编排 SHALL 一次性重建API、File Service、File/Processing Worker、Agent Worker、Python Runtime和管理端，并且不得并行运行包含旧Profile、旧Manifest或旧Runtime协议的镜像。入口恢复前 MUST 验证所有消费者、生产者、数据库约束和管理端bundle来自同一构建版本。
+
+#### Scenario: 仍有旧Worker镜像消费队列
+- **WHEN** 部署预检发现任一旧Agent Worker、File Worker、Processing Worker或Runtime实例仍注册或消费
+- **THEN** 入口流量不得恢复
+- **AND** 系统不依靠双写、版本协商或重试到旧服务维持运行

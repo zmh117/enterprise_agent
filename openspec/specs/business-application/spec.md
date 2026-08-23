@@ -1,7 +1,7 @@
 # business-application Specification
 
 ## Purpose
-定义业务应用对 Agent、Capability、内置工具、入口、权限和运行策略的装配、发布与路由契约。
+定义业务应用对 Agent、Workflow、代码注册 MCP Tool、入口、权限、文件策略和运行策略的装配、发布与路由契约。
 ## Requirements
 
 <!-- Reconciled from mcp_new capability: `application-tool-resource-composition` -->
@@ -106,35 +106,35 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **AND** 不显示虚构业务应用、模拟成功数据或本变更内的登录表单
 
 ### Requirement: Web支持受控的应用编辑、校验和发布
-系统 SHALL 为有权限用户提供严格表单来创建应用、编辑草稿、请求校验、发布和管理环境激活，并 MUST 根据权限、revision和校验结果控制动作可用性。
+系统 SHALL 为有权限用户提供严格表单来创建应用、编辑草稿、请求校验、发布和管理环境激活，并 MUST 根据权限、revision和校验结果控制动作可用性。页面 MUST 使用服务端统一评估器返回的 `runtime_wired`、`runtime_status` 和逐组件状态展示真实接线情况，不得把已接管或仅存储的组件统一描述为“尚未接线”。
 
 #### Scenario: 保存应用草稿
-- **WHEN** 用户选择合法Agent Publication、Workflow Publication、Trigger、Delivery和策略并提交
-- **THEN** 页面发送当前expected revision并展示服务器返回的新revision
-- **AND** 页面不会将Secret、底层URL或任意工具配置提交给API
+- **WHEN** 用户选择合法 Agent Publication、Workflow Publication、Trigger、Delivery、MCP Tool 子集和策略并提交
+- **THEN** 页面发送当前 expected revision 并展示服务器返回的新 revision
+- **AND** 页面不会将 Secret、底层 URL 或任意工具配置提交给 API
 
 #### Scenario: 校验失败后修正
-- **WHEN** API返回字段和组件校验错误
+- **WHEN** API 返回字段和组件校验错误
 - **THEN** 页面在对应配置区域展示错误并保留用户可安全重试的输入
 - **AND** 发布和激活动作保持禁用
 
-#### Scenario: 发布但尚未运行时接线
+#### Scenario: 发布或激活应用
 - **WHEN** 用户成功发布或激活应用
-- **THEN** 页面更新publication与deployment状态
-- **AND** 明确提示该基础版本尚未接管钉钉或Webhook运行时
+- **THEN** 页面更新 Publication、Deployment 与服务端返回的真实运行时接线状态
+- **AND** 页面分别展示已接线、部分接线、仅存储或阻塞的组件及稳定原因
 
-### Requirement: Capability和数据源安全边界在真实页面中保持有效
-系统 MUST 只展示受目录治理的API Capability引用，第一版在目录未接入时 MUST 禁止录入任意Capability、HTTP、SQL、Redis命令、LogQL、Shell和底层连接配置。
+### Requirement: MCP Tool和数据源安全边界在真实页面中保持有效
+系统 MUST 只展示 Agent Publication Envelope 中代码 Manifest 注册的 MCP Tool，并只允许 Business Application 选择该集合的精确子集。页面 MUST NOT 提供任意 Capability、Handler、MCP Server、HTTP、SQL、Redis、LogQL、Shell、底层连接或可执行模板录入入口。
 
-#### Scenario: 查看Capability组成区域
+#### Scenario: 查看MCP Tool组成区域
 - **WHEN** 用户查看或编辑应用组成
-- **THEN** 页面显示Capability目录尚未接入和当前列表为空的状态
-- **AND** 不提供自由文本URL、SQL、Redis、Loki或工具名输入框
+- **THEN** 页面显示所选 Agent Publication 允许的代码注册 MCP Tool
+- **AND** 不提供自由文本 URL、SQL、Redis、Loki、Server 或工具名输入框
 
 #### Scenario: 查看Channel和Delivery引用
-- **WHEN** 页面展示需要凭据的connector
-- **THEN** 只显示connector名称、ID、方向和配置状态
-- **AND** 不显示Secret URI解析结果、Token、密码或完整Webhook URL
+- **WHEN** 页面展示需要凭据的 connector
+- **THEN** 只显示 connector 名称、ID、方向和配置状态
+- **AND** 不显示 Secret URI 解析结果、Token、密码或完整 Webhook URL
 
 ### Requirement: 业务应用工作区满足响应式和可访问性要求
 系统 SHALL 在桌面和窄屏下保持列表、详情、表单、校验错误、版本历史和环境状态可读，并 MUST 为状态、禁用原因和异步操作提供文本语义。
@@ -152,7 +152,7 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 <!-- Reconciled from mcp_new capability: `business-application-control-plane` -->
 
 ### Requirement: 系统持久化稳定的业务应用聚合
-系统 SHALL 为每个 Business Application 持久化唯一编码、名称、描述、项目范围、负责人、生命周期状态和当前修订信息，并 MUST 将业务应用作为 Agent、Workflow、Channel 和未来 API Capability 的装配边界。
+系统 SHALL 为每个 Business Application 持久化唯一编码、名称、描述、项目范围、负责人、生命周期状态和当前修订信息，并 MUST 将业务应用作为 Agent Publication、Workflow Publication、Trigger、Delivery、会话与执行策略、文档处理配置以及 MCP Tool 子集的装配边界。
 
 #### Scenario: 创建业务应用
 - **WHEN** 有创建权限的内部用户提交合法且未被占用的应用编码、名称和项目范围
@@ -165,10 +165,10 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **AND** 已存在应用及其草稿保持不变
 
 ### Requirement: 业务应用通过草稿修订装配版本化组件
-系统 SHALL 使用草稿修订保存一个 Agent Publication、零个或一个 Workflow Publication、Trigger Binding、Delivery Binding、会话策略、执行策略和 API Capability 引用，并 MUST NOT 直接引用可变的 Agent 或 Workflow 草稿。
+系统 SHALL 使用草稿修订保存一个 Agent Publication、零个或一个 Workflow Publication、任务工作区与文档处理配置、Trigger Binding、Delivery Binding、会话策略、执行策略和 Agent Publication Envelope 内的 MCP Tool 子集，并 MUST NOT 直接引用可变的 Agent 或 Workflow 草稿。草稿请求 MUST 拒绝未知字段以及旧 API Capability、Handler、Connection 或 Resource Mapping 引用。
 
 #### Scenario: 保存完整应用草稿
-- **WHEN** 用户为业务应用选择已发布 Agent、已发布 Workflow、合法 Trigger 和 Delivery，并保存策略
+- **WHEN** 用户为业务应用选择已发布 Agent、已发布 Workflow、合法 Trigger、Delivery、MCP Tool 子集并保存策略
 - **THEN** 系统创建新的应用草稿 revision 并保存各组件的稳定引用
 - **AND** 先前 revision 的内容保持不变
 
@@ -176,10 +176,9 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **WHEN** 用户提交 Agent Revision 或 Workflow 草稿而不是 Publication
 - **THEN** 系统拒绝该引用并返回对应字段错误
 
-#### Scenario: Capability目录尚未接入
-- **WHEN** 应用草稿包含非空 API Capability 编码而当前没有可解析的 Capability Catalog
-- **THEN** 系统可以保存该草稿引用用于后续补全
-- **AND** 系统 MUST 在发布校验中将其标记为未解析并阻止发布
+#### Scenario: 提交旧平台对象字段
+- **WHEN** 旧客户端提交 API Capability、Handler、Connection、Resource Mapping 或任意实现字段
+- **THEN** 严格请求 schema 拒绝该字段且不保存草稿
 
 ### Requirement: 应用策略采用严格的受控结构
 系统 SHALL 对 Trigger、Actor、Session、Execution 和 Delivery 策略执行严格 schema 校验，MUST 拒绝未知字段、未知枚举、越界限制、任意 URL、底层查询语言和敏感凭据。
@@ -329,7 +328,7 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **THEN** Workflow 保持 `stored_only`
 - **AND** 整体 `runtime_status` 保持 `partially_wired`
 
-### Requirement: 本变更不得实现retention清理
+### Requirement: retention_days当前仅保存且不执行自动清理
 系统 MUST NOT 因本变更新增按 `retention_days` 删除或归档会话、消息、摘要、附件、Job、工具调用或审计事件的 Worker、定时任务或队列。
 
 #### Scenario: retention_days已经到期
@@ -337,23 +336,6 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **THEN** 本变更不自动删除或归档该会话数据
 - **AND** 管理端继续把该字段标记为尚未接线的治理能力
 
-### Requirement: 迁移必须删除不兼容旧Job及关联运行数据
-系统 MUST 在维护窗口中删除迁移前没有 v1 Execution Policy 快照的旧 Agent Job，并 MUST 同步清理依赖这些 Job 的 session、message、step、tool call、artifact、delivery、attachment、关联 Webhook 运行事件和 Job 级 audit 数据。系统 MUST 保留用户、外部身份、RBAC、Agent、Business Application、Publication、Deployment、Connector、Secret 和其他控制面配置。
-
-#### Scenario: 测试数据库包含旧Job
-- **WHEN** 执行本变更数据库迁移且现有 Agent Job 没有 v1 Execution Policy 快照
-- **THEN** 系统按外键安全顺序删除旧 Job 及其关联运行数据
-- **AND** 迁移结束后 `agent_job` 不存在缺少合法策略快照的记录
-
-#### Scenario: 旧Job包含附件对象
-- **WHEN** 被删除的旧 Job 关联 MinIO 中的附件或运行产物对象
-- **THEN** 一次性维护清理流程删除对应对象和数据库元数据
-- **AND** 不留下能够被新会话继续引用的孤儿附件
-
-#### Scenario: 保留控制面配置
-- **WHEN** 旧运行数据清理完成
-- **THEN** 已配置用户、身份绑定、Agent Publication、Business Application Publication、local Deployment 和 Connector 仍然存在
-- **AND** 管理员无需重新建立控制面配置
 
 <!-- Reconciled from mcp_new capability: `business-application-publication` -->
 
@@ -595,7 +577,7 @@ Business Application 管理 API 与前端 SHALL 允许管理员从有效 Python 
 - **AND** 响应明确指出数据面闸门未开启
 
 ### Requirement: 第一阶段运行时只接管受支持的钉钉Trigger
-系统 MUST 只将 `dingtalk_private + CURRENT_SENDER` 和 `dingtalk_group + CURRENT_SENDER` 标记为第一阶段可执行 Trigger，并 SHALL 将 Webhook、Workflow 和 API Capability 等未接线路径明确标记为 `stored_only` 或 `unsupported`。
+系统 MUST 只将 `dingtalk_private + CURRENT_SENDER` 和 `dingtalk_group + CURRENT_SENDER` 标记为当前可执行 Trigger，并 SHALL 将 Webhook 和未执行的 Workflow 路径明确标记为 `stored_only` 或 `unsupported`。MCP Tool 可用性 MUST 由已发布 Agent/Application 交集和当前授权独立判断，不得沿用旧 API Capability 目录状态。
 
 #### Scenario: 评估钉钉私聊应用
 - **WHEN** Publication 包含合法 `dingtalk_private` Trigger 和当前发送人 actor policy
@@ -603,13 +585,13 @@ Business Application 管理 API 与前端 SHALL 允许管理员从有效 Python 
 
 #### Scenario: 评估Webhook Trigger
 - **WHEN** Publication 包含 Webhook Trigger
-- **THEN** 本变更不让 Business Application Resolver 接管该 Webhook
+- **THEN** Business Application Resolver 不接管该 Webhook
 - **AND** 管理端状态明确为 `stored_only` 而不是已生效
 
-#### Scenario: Publication包含非空Capability
-- **WHEN** 应用引用尚未接入目录的 API Capability
-- **THEN** 现有发布校验继续阻止发布
-- **AND** 系统不得将其映射为数据库、Redis、Loki 或其他内部工具
+#### Scenario: Publication包含未授权MCP Tool
+- **WHEN** 应用选择的 MCP Tool 不在 Agent Publication Envelope 或当前业务授权内
+- **THEN** 发布或执行校验失败关闭
+- **AND** 系统不得将其映射为任意数据库、Redis、Loki 或动态内部工具
 
 ### Requirement: 活动路由解析是确定性的三态结果
 系统 SHALL 将运行时路由解析结果建模为 `matched`、`not_matched` 或 `blocked`，并 MUST 使用部署环境、Trigger type、受信 connector ID 和规范化 routing key 唯一解析活动应用。
@@ -827,40 +809,115 @@ Business Application 草稿与管理前端 MUST 显式保存并展示 `session_p
 - **AND** 不创建看似可用但Job快照不含File MCP的Publication
 
 ### Requirement: Business Application发布冻结文档处理Profile
-Business Application Revision SHALL 选择一个代码发布的`document_processing_profile_code`，默认值 MUST 为`NONE`；Publication MUST 冻结解析后的Profile code与hash。运行时只能使用Job固定Publication中的Profile，不得重新读取Draft、当前最新Profile或环境变量来扩大可处理格式和处理选项。
-
-#### Scenario: 旧Publication没有文档处理字段
-- **WHEN** 系统读取本变更前创建且没有文档处理字段的Publication
-- **THEN** 稳定解释为`NONE`
-- **AND** 不调用Docling或创建文档representation
-
-#### Scenario: 新Publication选择DoclingProfile
-- **WHEN** 发布者选择当前已安装的`docling-text-v1`并完成发布
-- **THEN** Publication冻结该Profile的code与hash
-- **AND** 后续Profile发布不改变既有Publication或已创建Job
-
+Business Application Revision SHALL 只允许选择`NONE`或代码发布的`docling-layout-ocr-v2`，默认值 MUST 为`NONE`；Publication MUST 冻结解析后的Profile code与hash。`docling-layout-ocr-v2` MUST 以独立完整定义注册，不得从已删除Profile继承options或hash。运行时只能使用Job固定Publication中的Profile，不得重新读取Draft、当前最新Profile或环境变量来扩大可处理格式和处理选项。
 #### Scenario: 管理端提交任意处理器配置
-- **WHEN** Revision payload包含任意Docling URL、HTTP source、Callback、模型、VLM、插件、原始options或未知Profile code
+- **WHEN** Revision payload包含任意Docling URL、HTTP source、Callback、模型、VLM、插件、原始options、`docling-text-v1`、`docling-layout-ocr-v1`或未知Profile code
 - **THEN** 系统拒绝保存或发布
 - **AND** 不把该配置转发到Worker或Docling
+#### Scenario: Publication关闭文档处理
+- **WHEN** 发布者选择`NONE`并完成发布
+- **THEN** Publication冻结文档处理关闭状态
+- **AND** 不调用Docling或创建文档representation
+#### Scenario: 新Publication选择当前DoclingProfile
+- **WHEN** 发布者选择当前唯一已安装的`docling-layout-ocr-v2`并完成发布
+- **THEN** Publication冻结该Profile的code与独立完整hash
+- **AND** 后续代码发布不改变既有Publication或已创建Job
+#### Scenario: 当前数据库仍引用旧Profile
+- **WHEN** 单一合同migration发现任何Revision、Publication、Deployment或非终态Job仍引用已删除Profile
+- **THEN** migration失败关闭并报告安全引用计数
+- **AND** 不把旧code在线解释或回退成当前Profile
 
 ### Requirement: 文档处理能力保持显式运行接线状态
-业务应用管理与运行状态 SHALL 区分`DISABLED`、`CONFIGURED_UNAVAILABLE`和`READY`：`NONE`为`DISABLED`；选择已安装Profile但processing worker、Docling readiness、队列或File Service依赖不可用时为`CONFIGURED_UNAVAILABLE`；只有Profile、依赖和安全闸门均可用时才能报告`READY`。该状态不得因容器进程running或管理后台开启而误报。
-
-#### Scenario: Publication启用Profile但Docling未就绪
-- **WHEN** 应用Publication选择`docling-text-v1`且Docling模型仍在加载或readiness失败
-- **THEN** 文档处理状态为`CONFIGURED_UNAVAILABLE`
-- **AND** 新文档Job保持安全等待或按固定超时失败，不回退旧提取器
-
+业务应用管理与运行状态 SHALL 区分`DISABLED`、`CONFIGURED_UNAVAILABLE`和`READY`：`NONE`为`DISABLED`；选择`docling-layout-ocr-v2`但processing worker、Docling readiness、队列或File Service依赖不可用时为`CONFIGURED_UNAVAILABLE`；只有固定Profile、依赖和安全闸门均可用时才能报告`READY`。该状态不得因容器进程running或管理后台开启而误报。
 #### Scenario: 未选择Profile的应用正常运行
 - **WHEN** 应用Publication的Profile为`NONE`
-- **THEN** 其它已发布Channel、Agent和文本文件能力继续按原配置运行
+- **THEN** 其它已发布Channel、Agent和直接文本能力继续按固定`text-v2`运行
 - **AND** 系统不为该应用创建Docling processing run
-
 #### Scenario: 配置选择与实时运行状态分区展示
 - **WHEN** 管理员查看Business Application的组成配置
-- **THEN** 管理端分别展示“直接文本文件策略”和“文档解析/OCR Profile”，并明确TXT、LOG、Markdown不进入Docling
-- **AND** 组成配置只表达当前Profile选择，不根据静态默认值推断processing worker、Docling、队列或File Service的实时状态
+- **THEN** 管理端展示固定直接文本规则和`NONE`/`docling-layout-ocr-v2`文档处理选择，并明确TXT、LOG、Markdown不进入Docling
+- **AND** 不展示文件格式策略选择或任何旧Profile
 - **WHEN** 管理员查看已激活Publication的发布与运行信息
 - **THEN** 文档解析/OCR运行状态来自File Processing Worker、Docling、processing队列和File Service的实时安全探针
 - **AND** Publication未激活、探针失败或状态无法取得时不得报告`READY`
+#### Scenario: Publication启用当前Profile但Docling未就绪
+- **WHEN** 应用Publication选择`docling-layout-ocr-v2`且Docling模型仍在加载或readiness失败
+- **THEN** 文档处理状态为`CONFIGURED_UNAVAILABLE`
+- **AND** 新文档Job保持安全等待或按固定超时失败，不回退任何旧提取器
+
+### Requirement: 文档处理 Profile 必须在控制面闭合依赖
+Business Application 草稿选择 `docling-layout-ocr-v2` 时，系统 MUST 在保存草稿、发布校验和激活前同时验证任务工作区、File MCP、消息附件、连续会话、所需 File MCP 读取工具以及所选 Python Agent Publication 的文件上下文 Runtime 兼容性。任一依赖缺失时 MUST 返回稳定字段级错误且不得创建部分草稿、Publication 或 Deployment；历史不可变快照不得被追溯改写。
+#### Scenario: Docling Profile 缺少任务工作区
+- **WHEN** 客户端提交 `document_processing_profile_code=docling-text-v1` 且 `workspace_enabled=false`
+- **THEN** 后端以任务工作区字段级错误拒绝保存
+- **AND** 不把错误推迟到附件 Job 创建阶段
+#### Scenario: Docling Profile 缺少 File MCP 或读取工具
+- **WHEN** Docling Profile 已选择但 File MCP 未启用、Agent Publication 未冻结所需读取工具或 Application 未选择这些工具
+- **THEN** 后端以对应 feature、Agent Publication 或 MCP Tool 字段级错误拒绝保存和发布
+#### Scenario: Docling Profile 会话依赖关闭
+- **WHEN** Docling Profile 已选择但消息附件或连续会话任一关闭
+- **THEN** 后端以对应 `session_policy` 字段级错误拒绝保存
+#### Scenario: 管理端选择 Docling Profile
+- **WHEN** 管理员在组成配置中选择 `docling-layout-ocr-v2`
+- **THEN** 前端同时开启任务工作区、File MCP、消息附件和连续会话并选择当前 Agent Publication 可用的必需 File MCP 读取工具
+- **AND** Agent Publication 缺少 Runtime 或工具能力时展示阻塞原因而不宣称配置可运行
+
+### Requirement: 大工作区Application Publication必须冻结兼容文件发现Tool
+新建或发布启用任务工作区的Application Publication时，若其面向的tenant有效工作区文件上限可能超过20，系统 MUST要求所选Agent Publication Tool Envelope包含`task_workspace_search_files`固定identifier/schema hash，并要求Application显式选择该Tool及既有必要File MCP Tool。缺少兼容Tool时发布或Job创建 MUST失败关闭，不得回退为全工作区Manifest或不完整文件认知。
+
+工作区文件数量与计费容量配额属于平台/tenant治理策略，Application Publication MUST NOT保存、复制或覆盖文件数默认200/硬上限1000、容量默认2GiB/硬上限10GiB，亦不得保存单Job 40项输入或Sandbox 64文件/224MiB运行上限。Publication只冻结是否具备有界发现和物化能力；每个Job另行冻结当时观察到的配置revision与目录revision。
+
+#### Scenario: 发布兼容大工作区Application
+- **WHEN** Agent Tool Envelope包含新发现Tool且Application显式选择全部必要File MCP Tool
+- **THEN** 发布校验允许形成新的不可变Application Publication
+- **AND** Publication保存精确Tool identifier/schema hash但不保存tenant配额数值
+
+#### Scenario: 缺少发现Tool却面向大工作区
+- **WHEN** tenant有效上限超过20且Application Publication未冻结兼容发现Tool
+- **THEN** 系统拒绝发布或拒绝在超过20个ACTIVE文件的工作区创建Job
+- **AND** 不把数百个文件写回Manifest作为兼容fallback
+
+#### Scenario: tenant配额后来发生变化
+- **WHEN** 已发布Application保持不变而tenant文件数配额从200降低到100，或容量配额从2GiB降低到1GiB
+- **THEN** Publication身份和Tool Snapshot保持不变
+- **AND** File Service按当前tenant有效配额处理后续文件创建与内容占用，并在Job审计记录配置revision
+
+#### Scenario: Job运行边界调整
+- **WHEN** 平台在兼容代码范围内调整单Job输入、Sandbox分区或总容量配置
+- **THEN** 既有Application Publication身份和hash保持不变
+- **AND** 新Job按平台运行边界预检并冻结观察到的非敏感限制，不把运行配额写入Publication
+
+#### Scenario: 历史Publication处理小工作区
+- **WHEN** 历史Publication没有新发现Tool且当前工作区ACTIVE文件数不超过20
+- **THEN** 系统保持既有Manifest-only兼容行为
+- **AND** 不向该Job授予运行中动态选择Manifest外文件的能力
+
+<!-- Integrated from archived change: `2026-08-23-add-governed-office-embedded-image-layout-ocr/specs/business-application` -->
+
+### Requirement: 管理端准确展示布局OCR能力边界
+管理端 SHALL 把`docling-layout-ocr-v2`展示为“Office内嵌图片布局OCR v2”，并 MUST 说明它提取文字、坐标、阅读顺序、几何关系和上游可用时的置信度，置信度未提供时会明确标注，而不提供VLM、箭头、颜色、图标、照片语义或精确图表因果。管理端 MUST 同时说明OCR使用Office包内原始嵌入图片、仅应用图片自身EXIF方向、不应用Office显示裁剪/旋转/翻转且结果可能包含已裁掉区域。管理端只能选择代码Profile，不得输入Docling URL、OCR引擎、模型、prompt、坐标阈值或原始options；依赖未全部就绪时不得显示READY。
+
+#### Scenario: 管理员查看Profile说明
+- **WHEN** 管理员在Business Application组成配置中选择布局OCR Profile
+- **THEN** 页面显示固定能力、原始图片像素基准、Office显示变换未应用、可能包含已裁掉区域的限制和非VLM边界
+- **AND** 不把OCR坐标描述为完整图片语义理解
+
+#### Scenario: OCR模型artifact缺失
+- **WHEN** 新Profile已注册但固定OCR/layout artifacts或处理依赖未就绪
+- **THEN** 管理端显示已配置但依赖未就绪并阻止激活或运行态READY
+- **AND** 不从静态Profile注册推断真实可用
+
+<!-- Integrated from archived change: `2026-08-23-converge-single-current-file-rule/specs/business-application` -->
+
+### Requirement: Business Application不得配置直接文本规则版本
+Business Application Revision、Publication、canonical snapshot、管理API和管理端 MUST NOT 暴露或持久化可切换的直接文本规则版本。所有启用任务文件能力的应用 SHALL 使用平台代码固定的`text-v2`行为；调用方提交文件格式策略字段 MUST 被识别为不允许的未知字段，而不是被忽略或兼容解释。
+
+#### Scenario: 创建应用草稿
+- **WHEN** 管理员创建或编辑启用任务文件能力的应用草稿
+- **THEN** 页面只读说明TXT/Markdown可读写且LOG只读
+- **AND** 请求与持久化快照均不包含`file_format_policy_version`或等价切换字段
+
+#### Scenario: 旧客户端提交文本策略
+- **WHEN** 客户端提交`text-v1`、`text-v2`或任意文件格式策略选择字段
+- **THEN** 管理API返回字段级合同错误
+- **AND** 不静默丢弃、不保存兼容影子值且不创建Revision
