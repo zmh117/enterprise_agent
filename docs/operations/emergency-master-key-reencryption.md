@@ -1,13 +1,21 @@
 # Master Key 紧急离线重加密
 
+> 状态：当前不是可执行 Runbook。仓库没有受支持的 Master Key 重加密 CLI，而下文旧流程
+> 只覆盖 `platform_secret_version`，没有覆盖当前同一 Master Key 加密的 ONES
+> `external_identity_credential` / pending challenge、`message_attachment` 下载凭据和
+> `channel_ingress_event` reply credential。直接按下文换 Key 会导致仍存续密文无法解密。
+> 在另行实现并验证覆盖全部密文域的原子工具前，只能执行停机、隔离、备份和事件响应，
+> 不得执行数据库重加密或替换 Key 文件。
+
 本文只适用于 Master Key 疑似泄漏、文件损坏但仍有可用备份，或受控恢复演练。
 平台不实行 Master Key 有效期、定期轮换、在线多 Key keyring，也不提供 Web
 查看、下载、编辑或轮换入口。
 
 ## 硬性前提
 
-- 安排完整维护窗口；停止 API、tool-mcp、Agent Runtime、Agent Worker、Job/Delivery
-  Dispatcher、Webhook、DingTalk 与 Attachment 服务，只保留 PostgreSQL；
+- 安排完整维护窗口；停止 API、tool-mcp、ones-mcp、Python Agent Runtime、Agent
+  Worker、Job/Delivery Dispatcher、Webhook、DingTalk、File、File Processing 与
+  Delivery 服务，只保留 PostgreSQL；
 - 先确认 Job、Job Dispatch、Delivery 与 Webhook Outbox 已排空或已记录精确状态；
 - 对 PostgreSQL 做可恢复备份，并分别备份旧 Master Key 文件；
 - 新 Key 必须在隔离环境生成，使用
@@ -45,10 +53,11 @@ where s.status = 'enabled'
 `missing_active_version` 必须为 0。保存 Secret 数量、版本数量和算法分组，不保存
 查询出的 `ciphertext`、`nonce` 或 `key_id`。
 
-## 离线批量重加密
+## 旧流程草案（不可按当前代码执行）
 
-离线维护程序必须是一次性、经过代码复核的受控程序，不得复用在线 Web 进程。
-它必须在一个数据库事务中完成以下操作：
+如果后续补齐受支持工具，它必须在一个数据库事务和同一维护窗口内覆盖所有仍存续的
+Master-Key 密文域，而不能只处理 Platform Secret。下列步骤只保留旧 Platform Secret
+草案语义，不构成当前执行授权：
 
 1. 从两个独立的只读文件分别加载旧 Key 和新 Key，并执行与启动流程相同的格式/
    权限检查；
@@ -77,7 +86,7 @@ where s.status = 'enabled'
 3. 先运行 one-shot Migrator/schema head 校验；
 4. 只启动 API 与 tool-mcp，确认 `/ready` 正常，Secret metadata
    列表可读，且相关资源没有解密错误；
-5. 依次启动 Worker、Dispatcher、Webhook、DingTalk 与 Attachment 服务；
+5. 依次启动 Worker、Dispatcher、Webhook、DingTalk、File、File Processing 与 Delivery 服务；
 6. 检查 `platform_secret_change_event`、资源 readiness 和审计，确认没有 Secret
    明文、密文或 Key 出现在日志/API/Job/tool-call 中；
 7. 完成一次受控的数据库、Redis、Loki 与 Connector 只读验证后结束维护窗口。

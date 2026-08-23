@@ -28,9 +28,9 @@ docker compose up -d --build api-server rabbitmq postgres
 docker compose up -d --build dingtalk-runtime channel-dispatch-worker
 ```
 
-`docker-compose.yml` 已移除旧的 `dingtalk-stream-ingress` 服务。禁止同时手工
-启动旧 Python Stream Worker和新的 TypeScript Runtime，否则同一个钉钉应用
-可能产生重复连接和重复事件。
+`docker-compose.yml` 已移除旧的 `dingtalk-stream-ingress` 服务。当前仓库只提供
+`dingtalk-runtime` 这条 Stream 接入路径；不要从历史镜像另行启动旧 Worker，否则同一
+钉钉应用可能产生重复连接和重复事件。
 
 ## 后续新增机器人
 
@@ -101,7 +101,9 @@ Runtime -> channel_ingress_event -> channel_ingress_outbox
         -> Agent Job -> Agent Worker -> Delivery
 ```
 
-## 回滚
+## 停用与恢复
 
-如需临时回滚，先停止 `dingtalk-runtime`，确认租约释放和全部连接断开，再单独
-恢复旧 Worker。任何时刻只允许一种 Stream Runtime 连接同一组钉钉应用。
+需要停止接入时，在管理面停用目标 Connector，等待 reconcile 停止对应 Client；需要
+停掉整个 Runtime 时，先停止 `dingtalk-runtime` 并确认租约释放。恢复使用当前
+`dingtalk-runtime` 和受管 Connector revision。仓库没有可直接切回的旧
+`dingtalk-stream-ingress` 服务，不能把历史 Worker 当作当前回滚步骤。

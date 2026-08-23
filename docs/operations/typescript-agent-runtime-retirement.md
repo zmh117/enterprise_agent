@@ -1,5 +1,10 @@
 # TypeScript Agent Runtime 分阶段退役
 
+> 状态：已完成的历史退役记录，不是当前 Runbook。当前 checkout 已删除
+> `typescript_runtime_retirement` CLI、TypeScript Agent Runtime 源码/镜像与 Compose
+> 服务；新 Agent/Publication/Job 只接受 `python-v1`。下文命令用于解释 2026-08-17 的
+> 迁移证据，当前环境不得执行。历史 `typescript-v1` 数据仍按只读兼容事实保留。
+
 本文只描述部署与回滚门禁。历史 `typescript-v1` Definition、Publication、终态 Job、Runtime Event 和审计不会被改写或删除，数据库 CHECK/枚举继续允许读取该值。
 
 ## 阶段 1：部署冻结版本

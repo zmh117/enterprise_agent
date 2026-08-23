@@ -2,9 +2,10 @@
 
 ## 适用范围
 
-当前管理面只开放 `default-diagnostic-agent`，运行时只支持 Claude Agent SDK
-使用 Anthropic-compatible 协议。默认连接为
-`default-deepseek-anthropic`。模型连接独立于 Agent、MCP Tool、Channel 和 Workflow。
+当前管理面可以创建和治理多个 `python-v1` Agent；`default-diagnostic-agent` 是本地
+bootstrap 内置项，不是唯一可管理 Agent。运行时只支持 Python Claude Agent SDK 使用
+Anthropic-compatible 协议。默认模型连接为 `default-deepseek-anthropic`。模型连接独立
+于 Agent、MCP Tool、Channel 和 Workflow。
 
 ## 配置与凭据边界
 
@@ -36,9 +37,9 @@ Provider 侧轮换的新 Key，连接才会变为 `ready`。
 仅轮换同一连接的 Key 不需要重发 Agent Publication。后续 Job 和 retry 会在
 每个 attempt 开始时解析新的 active Secret version。
 
-历史 Agent Publication 不可修改。迁移前缺少模型连接的 Publication 标记为
-`legacy_global_connection`，仍从 DB-backed runtime config/env 读取旧的全局
-模型配置。回滚到这类版本会恢复旧语义。
+历史 Agent Publication 不可修改。代码仍能只读解释迁移前缺少模型连接的
+`legacy_global_connection` Publication，并从旧全局配置读取；该分支只用于已有历史
+快照，不是新 Agent/Publication 可选择的配置。
 
 ## 业务应用不会自动切换
 

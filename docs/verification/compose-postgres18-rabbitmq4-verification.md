@@ -89,7 +89,9 @@ runtime_config.source: database
 runtime_config.degraded: false
 ```
 
-该段为历史升级快照；当前运行拓扑应检查 `tool-mcp`、两个 Agent Runtime、`api-server` 和 `agent-worker`。DeepSeek secret 通过部署环境安全 rotate 回数据库，过程中不得输出 secret 明文。
+该段为 2026-07-12 历史升级快照；当前运行拓扑只有 `python-agent-runtime`，并应同时
+检查 `tool-mcp`、`ones-mcp`、File Service/文档处理、`api-server`、各 Dispatcher 和
+`agent-worker`。当时的 Secret 处置只属于该次记录，不能推定当前 Secret 状态。
 
 ## 5. Retry / Dead-letter 一致性
 

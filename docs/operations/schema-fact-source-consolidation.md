@@ -1,5 +1,11 @@
 # Schema 事实源收敛与兼容字段退役
 
+> 状态：已完成阶段的历史迁移记录，不是当前 schema Runbook。当前 migration catalog 为
+> `100..119`，普通空库最终 head 为 `119`；下文 `head=102/103`、旧列回填和 contract
+> cutover 命令只解释当时的迁移边界。当前服务不得按本文把数据库降回 102/103，也不得
+> 重复执行旧回填。当前建库/升级见 `schema-baseline-bootstrap.md` 与
+> `schema-baseline-upgrade.md`。
+
 本手册治理 `agent_session`、`agent_job` 与 Workflow 草稿图的分阶段收敛。它本身不授权任何真实数据库写入。代码合并、镜像构建、测试通过、服务启动或 OpenSpec apply 都不构成 Baseline Adoption、回填、切换或 contract/drop 授权；每次写操作仍需明确目标、已验证备份、维护窗口和操作人批准。
 
 ## Evidence labels

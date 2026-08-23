@@ -15,7 +15,9 @@ WebhookIngressService
   -> ResultDeliveryService / delivery_attempt / chunks
 ```
 
-现有统一身份/RBAC提供 `app_user`、角色、permission policy、平台范围 grant和管理 session；默认诊断 Agent 已提供 definition、revision、publication、工具/Skill/Channel binding。Webhook 使用 `account_type=service` 的专用内部账号复用这些权限，不再使用可伪造的固定字符串 `grafana`。
+现有统一身份/RBAC提供 `app_user`、角色、管理能力、业务应用访问、应用内 MCP Tool
+identifier/data scope 和 Web Session。Webhook 使用 `account_type=service` 的专用内部账号
+复用这些权限，不使用可伪造的固定字符串主体。
 
 现有 connector 兼容输入：
 
@@ -28,7 +30,7 @@ WebhookIngressService
 
 `app.modules.webhook` 只负责 Trigger 配置、公共请求认证、声明式映射、Inbox/Outbox 和 dispatcher。它可以调用 `ChannelIngressService`，但不得直接导入 Agent executor、内部工具实现或 Delivery adapter。
 
-第一版固定名称：
+当前固定名称：
 
 - Trigger schema：`grafana_alertmanager_v1`、`generic_json_v1`
 - 认证：仅 `bearer_v1`
@@ -45,7 +47,8 @@ WebhookIngressService
 - Grafana 只处理 `firing`；`resolved` 只记录为 ignored。
 - 一个 `groupKey` 或稳定 fingerprint group 只创建一个 job。
 - 外部 payload 不能覆盖服务账号、Agent、工具、Connector、secret 或 Delivery target。
-- 第一版只使用代码注册的现有只读工具；动态 HTTP API 工具另立 change。
+- 只使用代码注册并由 Agent/Application Publication 冻结的 MCP Tool；当前没有动态
+  HTTP API Tool、Handler 或任意 Server 配置。
 
 ## 安全与排障证据
 
@@ -65,8 +68,9 @@ webhook_event auth/filter/status
 ## 启动和发布
 
 1. 启用 ingress Connector，并为每个 binding 配置独立、至少 32 字符的高熵
-   Bearer Token 引用。默认 Grafana connector 当前兼容读取
-   `env:GRAFANA_WEBHOOK_TOKEN`；SQL seed 和 Trigger snapshot 均不保存值。
+   Bearer Token 引用。当前新配置和 local seed 都使用
+   `secret://platform/grafana_webhook_token`；`env:` 不可直接作为运行引用，必须先受控
+   导入凭据中心。Trigger snapshot 不保存明文值。
 2. 启动 `api-server`、`rabbitmq`、`agent-worker`、`webhook-worker` 和固定 Delivery 所需配置。
 3. 管理员在 `/admin/webhooks` 创建草稿，完成 preview、validate 后再 publish。新 Trigger 会创建一个不可登录的 service account；需通过统一 RBAC 明确授予 Agent、project、工具和平台数据范围。
 4. 只有已启用 Trigger、已启用 service account、已发布 Trigger revision 和固定 Agent publication 同时有效时，公共 URL 才接受事件。
@@ -98,8 +102,8 @@ curl -i \
   http://127.0.0.1:8000/webhooks/v1/<public_id>
 ```
 
-当前只用于本地/Compose HTTP 功能验证，不实现 HMAC、timestamp、nonce 或 HTTPS，
-也不能表述为公网生产安全。生产网络安全边界需在后续独立任务中实现。
+当前应用层只实现 Bearer，不实现 HMAC、timestamp 或 nonce。Compose 的 HTTP 入口只适合
+本地功能验证，不能表述为公网生产安全；仓库代码也未提供生产 TLS 终止。
 
 ## 通用 JSON Trigger
 
@@ -114,7 +118,8 @@ curl -i \
 - dispatcher 重投递先检查 event 是否已有 job；Delivery 失败只重试投递，不重新运行 Agent。
 - 无 job 的 rejected/ignored/dispatch-failed 事件按 `WEBHOOK_EVENT_RETENTION_DAYS` 清理，已有 job/audit/delivery 证据不级联删除。
 - 安全负路径只记录 public ID hash、payload hash、大小、error code 和远端地址 hash。普通日志、数据库和队列不得出现原始 Authorization、签名、完整 endpoint 或 payload 正文。
-- Trigger 列表返回最近事件状态及累计 accepted/rejected/failed 计数，作为第一版无额外 Prometheus 依赖的运维指标；事件详情和结构化日志用于继续下钻。
+- Trigger 列表返回最近事件状态及累计 accepted/rejected/failed 计数；当前不依赖额外
+  Prometheus 指标，事件详情和结构化日志用于继续下钻。
 
 常用检查：
 

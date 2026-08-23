@@ -2,6 +2,10 @@
 
 日期：2026-08-17。证据级别：仓库内 synthetic acceptance；不包含真实业务文件、真实 Secret、真实钉钉调用或目标环境部署声明。
 
+> 当前解释：这是日期化历史证据。当前代码固定 `text-v2`、Manifest schema v5 和 Runtime
+> protocol v1.3，并已增加 200 文件/2 GiB 默认配额及 `docling-layout-ocr-v2`；下文当时的
+> v1.2 兼容描述不能作为当前可执行合同。
+
 ## 新鲜链路
 
 `backend/tests/test_task_file_workspace_synthetic_acceptance.py` 使用合成 UTF-8 TXT/LOG/Markdown、内存对象存储和假钉钉 Delivery，贯通：
@@ -43,4 +47,8 @@ DingTalk sanitized Channel event
 
 ## Deployment-gated
 
-真实 PostgreSQL、MinIO、RabbitMQ、平台 Secret provider、短时服务 Principal 轮换、容器网络以及真实钉钉上传/发送仍须按 `docs/operations/task-file-workspace-cutover.md` 在目标环境单独验收。容器 health 不得替代上述业务链证据。
+真实 PostgreSQL、MinIO、RabbitMQ、平台 Secret provider、短时服务 Principal 轮换、
+容器网络、Docling 以及真实钉钉上传/发送仍须按当前
+[`task-file-workspaces`](../architecture/task-file-workspaces.md) 与
+[`governed-document-processing`](../operations/governed-document-processing.md) 边界在目标
+环境单独验收。容器 health 不得替代上述业务链证据。

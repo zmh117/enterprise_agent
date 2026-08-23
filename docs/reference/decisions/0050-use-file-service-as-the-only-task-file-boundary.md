@@ -1,5 +1,9 @@
 # 以 File Service 作为任务文件唯一边界
 
+> 状态：File Service/MinIO 唯一入口仍有效；“不部署 docling-server”只代表当时第一阶段。
+> 当前 Compose 已部署 `docling-serve` 与 `file-processing-worker`，它们仍不能直接访问
+> MinIO；File MCP 仍内置于 File Service。正文保留演进起点。
+
 任务文件采用两层模型：可跨多个 Job 的逻辑 Task Workspace 持久化在 PostgreSQL 和 MinIO；每个 Job 的物理 Sandbox 位于所选 Runtime 容器 tmpfs，并在所有终态清理。File Service 同时承载固定 File MCP 和内部流式 API，是文件身份、版本、配额、生命周期、授权、审计与 MinIO 对象的唯一入口。
 
 第一阶段净新增 `file-service` 容器，以 `file-worker` 替换 `attachment-worker` 并继续消费原附件队列，Delivery Worker 保持独立。不部署独立 `file-mcp` 或 `docling-server`。File Worker、Agent Worker、Runtime、Delivery 和前端都不持有 MinIO 凭据；Worker 只使用平台身份服务轮换的短时、角色隔离 Principal JWT 调用 File Service。

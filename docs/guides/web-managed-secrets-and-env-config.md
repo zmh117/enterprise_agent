@@ -86,13 +86,13 @@ GET  /api/platform/runtime-config/env-migration
 
 ## 生效语义
 
-第一版是启动时读取 DB overlay：
+当前服务在启动时读取 DB overlay：
 
 ```text
 代码默认值 < env fallback < DB global < DB service < DB business scope
 ```
 
-修改配置后，重启对应服务生效。后续 Web 平台可以在此基础上增加发布、reload 和拖拽编排配置。
+修改配置后，重启对应服务生效。当前没有通用热 reload、配置发布编排或拖拽编排。
 
 Snapshot 和 `/api/ready` 暴露 `revision` 与 `config_hash`：
 
@@ -105,5 +105,6 @@ Snapshot 和 `/api/ready` 暴露 `revision` 与 `config_hash`：
 
 - API 响应、审计、日志、Agent prompt、tool call 摘要不得包含 secret 明文。
 - 普通 `config_json` 和 runtime `value_json` 拒绝疑似 password/token/api key 明文。
-- `vault:` / `kms:` provider 已保留扩展点，第一版默认 provider 是 `encrypted_db`。
-- 本 change 不增加改代码、删 Redis、执行 SQL 更新、重启服务等写操作能力。
+- 新绑定只接受 `secret://platform/<code>`。`env:` 必须先通过受控导入进入凭据中心；
+  `vault:` / `kms:` 当前未实现并会被服务端拒绝。
+- Runtime Config 不提供改代码、删 Redis、执行任意 SQL 或由 Web 直接重启服务的能力。

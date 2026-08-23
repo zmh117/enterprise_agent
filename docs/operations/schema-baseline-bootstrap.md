@@ -1,4 +1,4 @@
-# 空库 Baseline 100 与初始管理员
+# 空库 Baseline 100、当前迁移 119 与初始管理员
 
 本文适用于全新空数据库。Schema、初始管理员和本地业务样例是三个独立步骤，禁止把用户或 fixture 写入 baseline SQL。
 
@@ -20,7 +20,9 @@ docker compose ps
 docker compose logs migrator
 ```
 
-空库直接执行 `100_baseline_v1.sql`，账本 head 为 `100`。如果不存在任何启用的平台管理员，bootstrap 创建：
+空库先执行 `100_baseline_v1.sql`，再顺序执行当前 forward migration `101..119`；当前
+checkout 的账本 head 必须为 `119`。Baseline `100` 是建库起点，不是当前 deployable
+head。如果不存在任何启用的平台管理员，bootstrap 创建：
 
 - 用户名：`admin`
 - 显示名称：`Administrator`
@@ -54,4 +56,6 @@ join rbac_role r on r.id = ur.role_id and r.status = 'enabled'
 where r.code = 'platform-admin';
 ```
 
-新库只能看到 `100`，管理员结果必须至少一行。不要查询或输出 `user_password_credential.password_hash` 作为常规验收证据。
+当前 checkout 的新库应看到连续 `100..119`，最终行为 `119`；缺号、重复、未知版本或
+checksum 不一致都必须失败关闭。管理员结果必须至少一行。不要查询或输出
+`user_password_credential.password_hash` 作为常规验收证据。

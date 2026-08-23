@@ -1,6 +1,13 @@
-# Legacy 042 升级、Baseline Adoption 与回滚
+# Legacy 042 → Baseline 100 → 当前迁移 119
 
-当前迁移代际以 `100_baseline_v1.sql` 为起点。新版本直接建库；旧数据库只有在账本精确到 `042` 且结构、约束、索引和 PostgreSQL 注释与不可变 manifest 一致时，才能只登记等价 marker。
+当前迁移代际以 `100_baseline_v1.sql` 为起点，当前 checkout head 为 `119`。全新空库直接
+执行 `100..119`；旧数据库只有在账本精确到 `042` 且结构、约束、索引和 PostgreSQL
+注释与不可变 manifest 一致时，才能先登记等价的 baseline `100` marker。
+
+**重要：当前代码明确拒绝使用包含 `101+` 的 catalog 直接 adoption `042`。** Adoption
+必须在只包含 migration `100` 的、单独授权的 baseline-only build 中完成并验证；之后
+再切换到当前 build 推进 `101..119`。若没有这份精确 artifact、checksum 和恢复演练，
+当前 checkout 不能完成 legacy adoption，必须停止。
 
 ## 固定升级顺序
 
@@ -22,12 +29,13 @@ Baseline adoption 必须按以下顺序执行，不得把容器 `healthy` 当作
 先停止新的入口，确认队列已排空，再停止其余写进程。实际服务集合以 `docker compose config --services` 为准；当前 Compose 可使用：
 
 ```bash
-docker compose stop api-server dingtalk-runtime admin-web
-# 按部署的 RabbitMQ 监控确认 normal/retry 队列已排空
+docker compose stop api-server dingtalk-runtime admin-web \
+  webhook-worker channel-dispatch-worker file-worker file-processing-worker
+# 按部署的 RabbitMQ 和 PostgreSQL Outbox 监控确认全部在途工作已排空
 docker compose stop \
   agent-worker job-dispatch-worker delivery-dispatch-worker webhook-worker \
-  channel-dispatch-worker file-worker \
-  python-agent-runtime tool-mcp
+  channel-dispatch-worker file-worker file-processing-worker \
+  python-agent-runtime tool-mcp ones-mcp file-service docling-serve
 ```
 
 保持 PostgreSQL 运行，使用基础设施脚本创建逻辑备份：
@@ -48,10 +56,12 @@ scripts/compose_infra_upgrade.sh backup-postgres
 
 ## 精确 042 Preflight 与 Adoption
 
-build 身份只能使用 release/commit 等非敏感标识：
+build 身份只能使用 release/commit 等非敏感标识。以下命令必须在“catalog 只有
+`100_baseline_v1.sql`”的 baseline-only checkout/image 中执行，不能直接在当前
+`100..119` checkout 中执行：
 
 ```bash
-export MIGRATOR_BUILD="$(git rev-parse --verify HEAD)"
+export MIGRATOR_BUILD="<baseline-only-build-id>"
 docker compose build migrator
 docker compose run --rm --no-deps migrator \
   python -m app.cli.baseline_adoption preflight --build "$MIGRATOR_BUILD" \
@@ -81,24 +91,40 @@ docker compose run --rm --no-deps migrator \
 
 成功输出必须包含 `status=adoption-verified`、`schema_head=100`、唯一 marker、唯一 metadata、与 adoption 时一致的关键表计数、runtime config revision 摘要，以及 `business_start_gate=schema-verified`。preflight 与 verify 之间只有 marker/metadata 可以变化；关键业务计数、schema/comment fingerprint 和 runtime config 摘要必须一致。
 
-然后执行 Compose 原有受控 bootstrap/grant，并启动服务：
+Baseline-only verify 通过后，保留维护窗口并切换到当前 `100..119` build。对于 adopted
+legacy 数据库，migration `103` 仍要求外部受控流程写入内容安全的 contract approval；
+当前仓库没有“自我批准”命令。批准、备份或 parity gate 缺失时，当前 migrator 必须
+停止在 DDL 前，不得伪造记录或跳过 `103`。
+
+完成 gate 后运行当前 migrator，并要求最终 head 为 `119`：
 
 ```bash
 docker compose up --force-recreate migrator
+docker compose logs migrator
+```
+
+然后启动当前服务：
+
+```bash
 docker compose up -d \
-  tool-mcp python-agent-runtime \
+  tool-mcp ones-mcp file-service python-agent-runtime \
   api-server agent-worker job-dispatch-worker delivery-dispatch-worker \
-  webhook-worker channel-dispatch-worker file-worker dingtalk-runtime admin-web
+  webhook-worker channel-dispatch-worker file-worker \
+  docling-serve file-processing-worker dingtalk-runtime admin-web
 curl --noproxy '*' -fsS http://127.0.0.1:8000/api/ready
 ```
 
-`/api/ready` 必须同时报告 schema current，runtime config 不得因缺失 definition 处于 degraded。若受控初始化确实创建了缺失 definition，记录初始化前后的不透明 revision/hash；随后连续两次读取 snapshot/ready 时 revision/hash 必须稳定且不得新增配置审计。
+`/api/ready` 必须报告 schema current/head `119`，runtime config 不得因缺失 definition
+处于 degraded。若受控初始化确实创建了缺失 definition，记录初始化前后的不透明
+revision/hash；随后连续两次读取 snapshot/ready 时 revision/hash 必须稳定且不得新增
+配置审计。
 
 最后完成一次符合该环境业务验收脚本的最小闭环，至少形成 `ingress/inbox -> outbox -> queue -> job/worker -> delivery/audit` 的同一 correlation 证据。不得只检查容器状态或只证明消息进入队列。
 
 ## 回滚边界
 
-如果只完成 adoption 且没有应用任何 `101+` migration，且 verify 或最小闭环失败，可以在业务写入仍停止时受控移除 marker 和 metadata：
+如果只完成 adoption 且没有应用任何 `101+` migration，且 baseline verify 失败，可以在
+业务写入仍停止时受控移除 marker 和 metadata：
 
 ```bash
 docker compose run --rm migrator \

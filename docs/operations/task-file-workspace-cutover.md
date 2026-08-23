@@ -1,5 +1,12 @@
 # Task File Workspace 切换与运行手册
 
+> 状态：历史切换记录，不是当前部署步骤。当前 checkout 已经使用 `file-service`、
+> `file-worker`、Manifest v5、固定 `text-v2`、tenant 默认 200 文件/2 GiB，并已包含
+> `docling-serve` 与 `file-processing-worker`；旧 `attachment-worker`、回填 CLI、
+> `text-v1/text-v2` 切换和 migration 118 分阶段步骤不再适用于当前环境。当前边界见
+> `docs/architecture/task-file-workspaces.md`，文档处理见
+> `docs/operations/governed-document-processing.md`。
+
 本手册不授权真实环境写入。执行前必须确认目标、备份、镜像 digest、migration head、短时服务 Principal 签发/轮换和回滚窗口。不得把 JWT、MinIO 或钉钉凭据写入命令、工单或证据。
 
 ## 目标拓扑

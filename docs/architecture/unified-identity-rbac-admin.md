@@ -28,11 +28,11 @@ ONES_IDENTITY_ALLOW_INSECURE_LOCAL=true
 只配置明确可信的 Origin，不使用通配符。测试身份请求头只允许测试进程内部启用，
 生产误配会导致启动失败。
 
-启动管理端与 API：
+启动管理端与 API（当前 Compose 没有 `admin` profile）：
 
 ```bash
-FEATURE_WEB_ADMIN=true docker compose --profile admin up -d --build \
-  postgres rabbitmq api-server admin-web
+FEATURE_WEB_ADMIN=true docker compose up -d --build \
+  postgres rabbitmq migrator api-server admin-web
 ```
 
 访问 `http://localhost:8080`。`admin-web` 由 Nginx 提供静态资源，并把同源 `/api` 代理到 `api-server`。空库的 schema migration 不插入用户；独立 bootstrap 在 local/test 缺少密码文件时创建开发账号 `admin` / `111111111111`，首次登录后应立即修改密码。生产环境没有固定默认密码。
@@ -64,11 +64,15 @@ CLI 固定创建 `admin` / `Administrator`；也可在 TTY 中二次确认交互
 匹配的受信候选恢复给原人员。应用观察只记录首次／最近受信时间，用于解释该身份曾
 从哪些应用出现，不表示应用授权。
 
-ONES 本人验证从一次登录响应提取 User ID、`user.name`、Team 名称与 ID。邮箱、密码、
-登录 Token 和原始响应只存在于本次验证请求中，不进入数据库、Challenge、缓存、日志、
-审计或 API 响应。平台只保存身份事实、默认 Team 和验证时间，不保存长期业务调用凭据。
-重新验证会整体替换 Team 候选；切换默认 Team 必须重新验证。未来 ONES MCP 的调用凭据
-必须独立设计，不能反向污染身份绑定模型。
+ONES 本人验证从固定登录响应提取 User ID、`user.name`、Team 名称与 ID。邮箱、密码和
+登录 Token 不以明文进入日志、审计或 API 响应，但会先以 purpose-bound AES-256-GCM
+密文保存在短时、单次 Challenge 中；确认默认 Team 后，服务原子创建或更新
+`external_identity_credential`，继续加密保存登录材料与 Token，供当前用户的
+`ones-mcp` 只读调用和一次受控刷新使用。Challenge 中的密文随后清空。
+
+页面只展示身份、默认 Team、凭据状态/revision、安全时间和安全错误码。重新验证会
+刷新身份/Team 候选和当前凭据；切换默认 Team 必须重新验证。第二次 401、身份变化或
+Team 变化会进入 `REAUTH_REQUIRED`，不会回退旧 Token 或其他用户凭据。
 
 系统不会按昵称、手机号或邮箱自动匹配，也不会在收到未知钉钉用户时自动创建账号。
 企业未验证、Corp ID 不一致、候选不可信、身份冲突、已解绑或已停用时，在创建
@@ -102,7 +106,7 @@ Session Webhook 或 Challenge 内部字段。
 - `audit:read`
 - environment / base / workshop 明确数据范围
 
-Agent 最终可用工具是以下集合的交集：代码 MCP Manifest、Agent Publication Envelope、Application Publication 显式子集、角色的应用内 Tool 授权、当前数据范围和已发布 Resource Revision。Web 管理员能给 Agent 分配工具，不代表任意用户都能调用这些工具。
+Agent 最终可用工具是以下集合的交集：代码 MCP Manifest、Agent Publication Envelope、Application Publication 显式子集、角色的应用内 Tool 授权和当前数据范围。DB/Redis/Loki 还要求调用时唯一解析已发布 Resource Revision；ONES 还要求当前用户存在唯一启用身份、默认 Team 和 ACTIVE 加密凭据。Web 管理员能给 Agent 分配工具，不代表任意用户都能调用这些工具。
 
 ## Web session 安全
 

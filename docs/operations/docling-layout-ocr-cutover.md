@@ -1,5 +1,9 @@
 # Docling Office 内嵌图片布局 OCR 上线与回滚
 
+> 状态：migration 116/117 与 Profile 切换的历史记录，不是当前上线步骤。当前 checkout
+> head 为 `119`，新 Revision 只接受 `NONE` 或 `docling-layout-ocr-v2`；当前启动、健康、
+> 重试和验收见 `governed-document-processing.md`。下文 116→117 兼容窗口仅用于审计。
+
 本手册当前只允许新发布代码 Profile `docling-layout-ocr-v2`。`docling-layout-ocr-v1`仅保留历史快照与在途任务解释，不得新发布或重新激活。部署 Profile、模型和 schema 不会自动赋予既有 Application 新能力；只有冻结精确 code/version/hash 的新 Publication 才能使用该能力。
 
 ## 能力边界

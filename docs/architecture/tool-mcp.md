@@ -1,9 +1,10 @@
 # 标准 MCP 工具服务
 
-`tool-mcp` 是两个 Agent Runtime 共用的固定标准 MCP Server。
+`tool-mcp` 是当前唯一 Python Agent Runtime 使用的固定标准 MCP Server。历史
+`typescript-v1` Publication 不再执行，也不会连接该服务。
 
 ```text
-Agent Runtime
+Python Agent Runtime
   -> tool-mcp (Streamable HTTP)
   -> Job MCP Tool Snapshot
   -> 当前角色/应用/数据范围复核
@@ -29,7 +30,11 @@ Agent Runtime
 ## 安全边界
 
 - MCP Server code 固定为 `tool-mcp`，Runtime 不能提交任意 URL。
-- 不设置 MCP 专用 Token、JWT、HS256 signing key、RBAC 或 Resource Mapping。
+- 服务端镜像使用 `mcp==2.0.0`；Runtime 是协议客户端。部署地址固定，不提供动态
+  Server 注册或 stdio 旁路。
+- `tool-mcp` 使用当前 Job/调用上下文，不设置 MCP 专用用户 Token、JWT、HS256 signing
+  key、第二套 RBAC 或 Resource Mapping。不要把 ONES/File Principal JWT 的身份模型
+  误套到此服务。
 - Runtime Grant 仅用于 Worker 调用 Agent Runtime，不传给 `tool-mcp`。
 - 所有工具必须只读且有界；Secret、Prompt 和无界响应不得进入日志或审计。
 - Tool schema drift、Job 终态、撤权、资源停用和范围不匹配均拒绝执行。

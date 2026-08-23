@@ -1,5 +1,8 @@
 # 冻结版本化文本格式策略而不是扩大全局后缀白名单
 
+> 状态：格式操作矩阵仍有效，但 Publication 可选择 `text-v1/text-v2` 的设计已被当前
+> 固定 `text-v2` 合同取代。当前 Manifest 只接受 schema v5，不提供旧策略回退。
+
 任务文件格式能力采用代码注册且不可由管理端编辑的 `text-v1/text-v2` 策略。Business Application Publication、Job 路由事实与 Job File Manifest 冻结策略版本；Manifest 还冻结每个精确文件版本的规范化 format code 和允许操作。历史 Publication 缺失该字段时稳定解释为 `text-v1`，不会因代码升级追溯获得新格式能力。
 
 `text-v1` 保持 TXT 全生命周期。`text-v2` 固定 TXT 全生命周期、LOG 只读及既有精确版本交付、Markdown 全生命周期；`.markdown` 不进入工作区。三者必须同时通过扩展名、允许 MIME、严格 UTF-8 内容与 15 MiB 上限校验。输入可带 UTF-8 BOM，Agent 输出禁止 BOM；NUL、无效 UTF-8 和二进制伪装失败关闭。Markdown 始终作为不可信纯文本存储与附件交付，不渲染 HTML、不解析链接、不抓取远程资源。

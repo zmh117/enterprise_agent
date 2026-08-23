@@ -12,4 +12,7 @@
 8. `08-design-decisions.md`
 9. `09-chatgpt-collaboration-guide.md`
 
-旧 API Capability/Handler/Connection、Resource Mapping 和 Internal API Platform 已永久退役。历史 OpenSpec/ADR 只能作为考古材料，不能覆盖当前代码、主规格和活动变更。
+旧 API Capability/Handler/Connection、Resource Mapping 和 Internal API Platform 已
+永久退役。历史 OpenSpec/ADR 只能作为考古材料。当前已接受规范以仓库 `AGENTS.md` 指定
+的 10 个 canonical specs 为唯一 baseline；active change 只在被明确指定或执行
+OpenSpec 工作流时读取，不能静默覆盖 canonical Requirement 或代码事实。

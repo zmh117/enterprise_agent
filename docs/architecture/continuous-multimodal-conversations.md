@@ -1,91 +1,92 @@
-# 钉钉连续对话与多模态附件MVP
+# 连续会话与渠道文件输入
 
-## 组件边界
+本文只描述渠道消息如何进入 Session、Task Workspace 和 Agent Job。文件格式、版本、
+Docling Representation、Sandbox 与交付细节以
+[受治理任务文件工作区](task-file-workspaces.md) 为准。
 
-- PostgreSQL 18是session、message、附件元数据、提取文本、滚动摘要、job和审计的唯一事实源。
-- RabbitMQ 4只传`job_id`、`attachment_id`和`correlation_id`，不传文件、聊天正文或媒体凭证。
-- MinIO/S3私有bucket保存原始附件。对象key使用内部attachment ID和SHA-256，不使用用户文件名。
-- 本阶段不使用Agent专用Redis、pgvector、Qdrant、OpenSearch、Weaviate、Tika、LibreOffice、ClamAV、OCR或视觉模型。
+## 事实边界
 
-## 会话边界
+- PostgreSQL 保存 Channel Ingress、Session、Message、Attachment、Workspace、Job、
+  Outbox、Delivery 和审计事实。
+- RabbitMQ 只传稳定 ID、attempt 和 correlation，不传聊天正文、文件字节、下载凭据、
+  对象位置或模型凭据。
+- File Service 是原件、不可变版本和派生 Representation 的唯一对象存储入口；应用、
+  Worker、Runtime 与 MCP JSON 不直接访问 MinIO。
+- 文档解析由受治理的 `file-processing-worker -> docling-serve` 链完成，不在 Channel
+  Ingress 或 Agent Worker 内同步解析。
 
-- 群聊：Channel + connector + project + 群conversation ID。
-- 私聊：Channel + connector + project + 用户ID + 机器人身份。
-- 相同外部ID出现在不同群/私聊、connector或project时不会共享上下文。
-- 上下文由PostgreSQL滚动摘要、最近消息和READY附件文本组成，按配置预算裁剪。
+## Session 归属
 
-## 附件支持
+- 群聊按受信企业、Connector、Business Application route 和群 conversation ID 隔离；
+  文件 Workspace 可在同群已授权用户间共享，但每条消息使用实际发送人重新鉴权。
+- 私聊按 Connector、Business Application route、会话和当前内部用户隔离。
+- 相同外部 ID 出现在不同企业、Connector、群/私聊或应用路由时不会共享 Session。
+- 上下文由持久消息、受控摘要、最近消息和本 Job Manifest/Working Set 组成，按预算裁剪；
+  不把整个 Workspace 或原始附件正文无界注入 Prompt。
 
-支持：
-
-- JPEG、PNG、WebP：校验、去元数据并存储，状态为`stored_not_interpreted`；不作为诊断证据。
-- DOCX：提取段落和表格文本。
-- XLSX：只读、`data_only`，按工作表和行列上限提取，不执行公式。
-- PPTX：按幻灯片提取文本。
-- MD/Markdown：以UTF-8纯文本读取，不渲染HTML或远程资源。
-
-拒绝：DOC、XLS、PPT、PDF、压缩包、音视频、SVG、脚本、可执行文件、宏/嵌入对象、加密/损坏或超限文档。
-
-图片加文本时Agent只使用文本；仅图片时不调用模型并明确提示MVP暂不理解图片。
-
-## 凭证安全
-
-钉钉 download code 使用 `APP_CONFIG_MASTER_KEY_FILE` 指向的固定 Master Key，以 AES-GCM 短期加密落库，RabbitMQ 只传 attachment ID。下载完成、拒绝、最终失败或过期后清除密文。明文/密文、临时 URL、access token 和 session webhook 不得出现在 API、调试接口、日志或审计中。
-
-## 本地启动
-
-在业务应用草稿的 `session_policy` 中设置并显式发布：
-
-```json
-{
-  "continuous_conversation_enabled": true,
-  "attachments_enabled": true
-}
-```
-
-Compose 内的 MinIO 基础设施凭据与 File Service 配置分离：
-
-```dotenv
-MINIO_ROOT_USER=enterprise_agent
-MINIO_ROOT_PASSWORD=<local-infrastructure-secret>
-FILE_STORAGE_ENDPOINT_URL=http://minio:9000
-FILE_STORAGE_BUCKET=agent-files
-FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET=agent-attachments
-FILE_STORAGE_ACCESS_KEY_REF=secret://platform/minio-file-access-key
-FILE_STORAGE_SECRET_KEY_REF=secret://platform/minio-file-secret-key
-```
-
-上述 MinIO 默认只用于 local/test/testing/development。非本地环境必须显式提供
-非空且不等于仓库占位值的 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`，Compose
-MinIO 入口会在外部 I/O 前失败关闭。应用不再加载对象存储直连配置；File Service
-只通过平台 Secret Reference 解析对象存储凭据。
-
-启动附件profile和钉钉入口：
-
-```bash
-docker compose --profile attachments --profile dingtalk-stream up -d --build
-docker compose --profile attachments ps
-docker compose --profile attachments logs --tail=100 file-worker file-service
-```
-
-MinIO API 宿主机默认端口 **19000**，控制台 **19001**（容器内仍是 9000/9001）。若需改映射，设置 `MINIO_API_PORT` / `MINIO_CONSOLE_PORT`。Bucket 由 `minio-init` 幂等创建并保持匿名访问关闭；只有 File Service 通过平台 Secret Reference 解析 MinIO 凭据，File Worker 不直连对象存储。
-
-## 处理与恢复
+## 纯附件与后续文字
 
 ```text
-PENDING -> DOWNLOADING -> EXTRACTING -> READY
-                                └----> stored_not_interpreted
-PENDING/DOWNLOADING/EXTRACTING -> REJECTED | FAILED
+附件消息
+  -> Channel Ingress 持久化
+  -> File Worker 导入 File Service
+  -> 可选 Docling 异步生成 Representation
+  -> 暂存到当前 Session/Workspace
+
+后续非空文字
+  -> 只绑定本轮确定的附件/引用
+  -> 创建或复用 Session/Workspace
+  -> 冻结 Manifest v5 / Working Set
+  -> 能力就绪后发布 Agent Job
 ```
 
-附件job先进入`WAITING_INPUT`。全部附件终态且存在文本或READY内容后原子转为`PENDING`并只发布一次Agent任务。瞬时下载失败进入延迟重试队列，超过重试次数进入附件死信队列。
+纯附件不会为每个文件创建占位 Agent Job 或逐个回复。连续发送多个附件后，第一条相关
+非空文字可以绑定本轮文件；已认领附件不会被后续无关文字重复消费。未被本轮绑定且仍在
+处理的文档保留为目录候选，不应阻塞无文件依赖的文字请求。
 
-孤儿对象核对默认只报告，不自动删除未知对象；过期清理只有对象删除成功后才把数据库记录标记为`DELETED`。
+如果本轮明确绑定的输入仍在导入或缺少必需 Representation，Job 可以保持
+`WAITING_INPUT`；能力到达安全终态后只释放一次。失败、拒绝或处理不可用必须返回稳定
+安全结果，不得把原始二进制直接交给 Agent 作为降级路径。
 
-## 后续升级
+## 格式与 Profile
 
-1. 长期记忆：PostgreSQL增加memory事实表、证据和生命周期，再按需要安装pgvector。
-2. 缓存：测量到会话读取负载、限流或流式状态需求后再增加独立Redis/Valkey；PostgreSQL仍是事实源。
-3. 向量扩容：向量规模和延迟影响事务库后再接Qdrant。
-4. 全文检索：出现海量文档、中文分词、高亮和复杂聚合后再接OpenSearch。
-5. 文件能力：需要旧Office或开放下载时，再引入隔离Tika/LibreOffice和恶意软件扫描；需要理解图片时再接OCR/视觉模型。
+直接文本固定支持 TXT、只读 LOG 和 `.md`。PDF、DOCX、XLSX、PPTX、PNG、JPEG、WebP
+只有在命中的 Application Publication 冻结 `docling-layout-ocr-v2` 时才进入文档处理；
+Profile 为 `NONE` 时明确未启用。原始文档和图片不会进入 Agent Sandbox，Agent 读取的
+是冻结的精确 Markdown Representation。
+
+图片/OCR结果是外部不可信证据，不等同于完整视觉理解。Office 内嵌图片按原始图片像素
+处理，不宣称应用了页面显示层裁剪、旋转或翻转。
+
+## 凭据与内容安全
+
+钉钉下载 code 在必要存续期内使用平台 Master Key 加密；下载完成、拒绝、最终失败或
+过期后按生命周期清理。明文/密文、临时 URL、access token、session webhook、文件
+正文、对象键和 Docling API Key 不得进入普通日志、RabbitMQ 或审计摘要。
+
+## 当前 Compose
+
+文件与文档处理服务已在当前 Compose 定义中，不使用旧 `attachments` 或
+`dingtalk-stream` profile：
+
+```bash
+docker compose up -d --build \
+  minio minio-init file-service file-worker \
+  docling-serve file-processing-worker dingtalk-runtime
+```
+
+实际启动还依赖 migrator、PostgreSQL、RabbitMQ、API、受控 Secret/JWKS 和对应健康门禁；
+不要把上述服务列表当成可脱离基础设施独立运行的完整命令。
+
+## 验收
+
+至少验证一条新鲜链路：
+
+```text
+DingTalk -> Ingress/Outbox -> File import -> optional processing
+  -> Manifest/Working Set -> Python Runtime -> File MCP
+  -> Job terminal -> Delivery exact version
+```
+
+同时检查重复消息、处理中/失败输入、权限撤销、Sandbox 清理、提交冲突和 Delivery 重试。
+MinIO/Docling 容器 healthy 或合成测试通过都不能单独证明真实钉钉与模型 E2E。

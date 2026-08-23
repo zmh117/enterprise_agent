@@ -2,19 +2,25 @@
 
 ```text
 Admin Web --------------------> API Control Plane
-DingTalk/Webhook/Debug --------> Ingress + Dispatch
+DingTalk/Webhook/Debug --------> Ingress + Outbox/Dispatch
                                       |
                               PostgreSQL/RabbitMQ
                                       |
                                   Agent Worker
-                              /                     \
-                    Python Agent Runtime   TypeScript Agent Runtime
-                              \                     /
-                                   tool-mcp
                                       |
-                         Published Resource + Secret
+                             Python Agent Runtime
+                          /            |             \
+                    tool-mcp        ones-mcp       File MCP
+                       |               |              |
+               Published Resource  User credential  File Service
+                                                    /          \
+                                             MinIO       Docling pipeline
 ```
 
-Worker 不内嵌 Claude SDK，也不执行工具；它根据 Agent Publication 的 `runtime_kind` 调用对应 Runtime。两个 Runtime 都只接收固定 `tool-mcp` 工具描述。`tool-mcp` 负责 Job 快照、实时授权、资源唯一解析和有界只读执行。
+Worker 不内嵌 Claude SDK，也不执行工具；它只调用 `python-v1` Runtime。历史
+`typescript-v1` 事实只读且不可创建新 Job。Runtime 只连接 Publication/Job 冻结的固定
+MCP Server 和 Tool。
 
-Control Plane 保存身份、角色、配置、发布、资源、Secret metadata 和审计；工具数据访问只发生在 `tool-mcp` 的适配器边界。
+Control Plane 保存身份、角色、配置、发布、资源、Secret metadata、Job/File provenance
+和审计。DB/Redis/Loki 访问发生在 `tool-mcp`；ONES Provider 访问发生在 `ones-mcp`；
+MinIO 访问只发生在 File Service。

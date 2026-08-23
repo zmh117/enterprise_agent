@@ -1,101 +1,108 @@
 # 受治理文档处理运维
 
-## 净新增拓扑
-
-本能力只增加两个运行服务：
+## 当前拓扑
 
 ```text
-File Service Outbox -> RabbitMQ file-processing queue
-  -> file-processing-worker -> Docling Serve
-  -> File Service representation staging/finalize
+File Service persistent outbox
+  -> RabbitMQ agent.file.processing.queue
+  -> file-processing-worker
+  -> docling-serve
+  -> File Service staging/finalize
+  -> immutable Representations
 ```
 
-- `file-processing-worker` 只能访问 RabbitMQ、Identity API、File Service 和专用内部
-  Docling 网络。它没有 PostgreSQL、MinIO、平台 Master Key 或用户 Bearer Token。
+- `file-processing-worker` 访问 RabbitMQ、Identity API、File Service 和专用 Docling 网络；
+  不持有 PostgreSQL、MinIO、平台 Master Key 或用户 Bearer Token。
 - `docling-serve` 只加入 `document-processing` 内部网络，不发布宿主端口，不持有
-  PostgreSQL、RabbitMQ、MinIO 或模型供应商凭据。
+  PostgreSQL、RabbitMQ、MinIO 或模型 Provider 凭据。
 - File Service 仍是唯一持久对象存储边界。Docling 只接收 Worker 通过内部 multipart
   上传的单个原件，结果由 Worker 回传 File Service。
-- 第一阶段不引入 Redis、RQ、Ray 或 `file-mcp`。Docling 使用 local engine，处理
-  Worker 并发固定为 1。
+- 当前没有 Redis、RQ、Ray 或独立 `file-mcp`。处理 Worker 并发固定为 1。
 
-## 固定发布物与安全配置
+## 当前 Profile 与格式
 
-Compose 固定官方多架构镜像，并通过环境配置强制 CPU 执行：
+新 Business Application Revision 只接受：
+
+- `NONE`：不处理 PDF/Office/图片；
+- `docling-layout-ocr-v2`：处理 PDF、DOCX、XLSX、PPTX、PNG、JPEG、WebP。
+
+`docling-text-v1` 和 `docling-layout-ocr-v1` 只可能出现在历史 migration/publication/run
+解释中，不得由当前 API 新建、发布或重新激活。当前 migration head 为 `119`；不要按
+旧 migration 113/116/117 cutover 步骤判断当前 schema 是否完整。
+
+源文件最大 25 MiB，PDF 最多 300 页，单次处理上限 600 秒。Agent 只读取最终 Markdown
+Representation；原件、Docling JSON、OCR Layout JSON、图片 asset 和 occurrence 不进入
+Sandbox。Office 内嵌图片按原始图片像素处理，不宣称应用页面显示层裁剪、旋转或翻转。
+
+## 固定镜像与安全配置
+
+Compose 当前固定：
 
 ```text
 quay.io/docling-project/docling-serve:v1.30.0
 sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807
 ```
 
-镜像使用上游非 root UID 1001、只读根文件系统、受限 tmpfs、CPU/内存/PID 限制。
-远程 services、外部插件、自定义 VLM/图片描述/公式配置、UI、管理接口和运行时模型
-下载均关闭；只允许 `inbody` target。输入上限为 25 MiB、PDF 300 页、处理 600 秒。
-
-当前发布核验已确认版本、multi-arch digest、amd64/arm64 manifest、MIT 许可证和
-SLSA provenance。上游 v1.30.0 没有发布官方 SBOM；针对固定 digest 已在本地生成
-SPDX JSON 并记录流哈希，但该结果只能作为补偿证据，不能表述为官方 SBOM。要求供应商
-SBOM 或制品留存的生产门禁仍未满足，详见 OpenSpec change 的 `evidence/preflight.md`。
+镜像使用非 root UID 1001、只读根文件系统、受限 tmpfs 和资源限制。远程 service、外部
+插件、自定义 VLM/图片描述、UI、任意 URL 和运行时模型下载关闭，只允许 `inbody`
+target。部署若改变 tag/digest、模型 artifact 或 Profile hash，必须重新核验，不能沿用
+仓库内旧证据。
 
 ## Secret 自举
-
-使用既有脚本生成或补齐角色隔离的文件凭据：
 
 ```bash
 scripts/bootstrap_agent_runtime_secrets.sh /absolute/secret/directory
 ```
 
-新增文件：
+文档处理使用两个角色隔离文件：
 
-- `file-processing-worker-bootstrap-token`：Worker 向 Identity API 换取不超过 300 秒的
-  Service Principal JWT；
+- `file-processing-worker-bootstrap-token`：换取最长 300 秒的 Service Principal JWT；
 - `docling-api-key`：只挂载到 `file-processing-worker` 与 `docling-serve`。
 
-脚本不会覆盖已存在文件。所有新增凭据文件权限必须为 `0400`，不得写入 `.env`、日志、
-RabbitMQ 消息、审计 payload 或数据库。
+脚本不会覆盖完整已有材料；半套密钥或权限不合规时失败关闭。凭据不能写入 `.env`、
+RabbitMQ、审计 payload、普通日志或证据文件。
 
-## 启动与门禁
-
-1. 先执行 migration 113，确认 File Service `/ready` 返回 200。
-2. 执行 `docker compose config --quiet`，确认 Compose 结构有效。
-3. 启动 `docling-serve`，等待 `/ready` 成功；首次加载内置模型可能较慢。
-4. 启动 `file-processing-worker`。其健康检查要求 RabbitMQ、File Service、Docling 均
-   可用，状态文件和 heartbeat 在容器 tmpfs 中。
-5. 业务应用仍默认 `NONE`。只对一个测试 publication 发布 `docling-text-v1`，再观察
-   backlog、延迟、失败率、内存峰值和 DLQ。
-
-不得仅凭容器 healthy 宣布业务能力完成。发布证据必须覆盖一条真实
-Runtime→Inbox→Outbox→RabbitMQ→Job→processing worker→Docling→representation→
-Runtime→Delivery 链路，以及失败、重试、重启和清理路径。
-
-脱敏验收必须使用 `docker-compose.synthetic-e2e.yml`，并显式设置独立 project：
+## 启动与就绪检查
 
 ```bash
-docker compose -p enterprise_agent_docling_e2e \
-  -f docker-compose.yml -f docker-compose.synthetic-e2e.yml config --quiet
+docker compose config --quiet
+docker compose up -d --build \
+  postgres rabbitmq migrator file-service \
+  docling-serve file-processing-worker file-worker
+docker compose ps
 ```
 
-不能只传 `-p` 后沿用基础 Compose 的全局具名卷；overlay 必须保留独立的
-`enterprise_agent_docling_e2e_postgres18_data`、RabbitMQ 和 MinIO 卷名。验收脚本只允许
-读取其生成的 synthetic 样本目录，不得挂载或下载真实业务附件。完整命令和安全输出字段
-见 change 的 `evidence/synthetic-compose-e2e.md`。
+要求：
 
-## 重试、DLQ 与处置
+1. migrator 最终 head 为 `119`；
+2. File Service `/ready` 成功且 Principal JWKS、对象存储、processing outbox 可用；
+3. Docling `/ready` 成功且固定模型 artifact/digest 可用；
+4. Processing Worker 同时报告 RabbitMQ、File Service、Docling ready；
+5. 目标 Application Publication 明确冻结 `docling-layout-ocr-v2` 的 code/version/hash。
 
-- 处理消息只包含 run/source version/profile hash/attempt/correlation ID，不包含文档、
-  对象地址、签名授权或凭据。
-- 网络、超时和服务故障按 30 秒指数退避，最多 3 个 attempt；格式拒绝、结构超限和
-  无法恢复的 schema 错误直接进入稳定终态并投递安全 DLQ 摘要。
-- Worker 重启时优先恢复 File Service 中持久化的 Docling task ID，避免重复 submit。
-- `NO_TEXT` 不创建伪 Markdown；任一表示未完成时不得原子暴露成功结果。
-- DLQ 和日志只保留稳定错误码及 ID。原始文档、完整提取文本、API Key 和 source grant
-  一律不得进入诊断面。
+Profile 配置存在但依赖不就绪时，管理面必须显示 `CONFIGURED_UNAVAILABLE`，不能伪造
+`READY`。
 
-## 当前发布限制
+## 重试与清理
 
-- ARM64 CPU 脱敏样本基准已覆盖七类格式与 25 MiB/300 页联合边界；边界文件耗时
-  246.5 秒，容器生命周期峰值约 3.27 GiB，因此并发继续固定为 1，不得直接扩大或启用 GPU。
-- 上游未发布官方 SBOM；若生产门禁要求供应商 SBOM 或可下载制品，必须先补齐并重新核验 digest。
-- Fresh Compose synthetic E2E 已完成，但真实模型 Runtime→Delivery 成功链仍缺少隔离环境
-  的 ready 模型连接。在补齐该证据前，管理面必须显示
-  `CONFIGURED_UNAVAILABLE`，不得显示 `READY`。
+- RabbitMQ 消息只含 run/source version/profile hash/attempt/correlation ID，不含文档、
+  对象位置、签名授权或凭据。
+- 网络、超时和服务故障按有限退避重试；格式拒绝、结构超限和 schema 错误进入稳定终态。
+- Worker 重启优先恢复 File Service 持久化的外部 task ID，避免重复 submit。
+- `NO_TEXT` 不创建伪 Markdown；必需 Representation 未全部完成时不得暴露成功结果。
+- 原件 staging、Docling 临时 task、图片 asset 和中间结果按各自生命周期清理；清理失败
+  保持可重试事实，不通过删除数据库行伪装完成。
+
+## 验收边界
+
+至少用无业务数据的合成 PDF、DOCX、XLSX、PPTX 和图片验证：
+
+```text
+Publication -> Attachment ingress -> File import -> Processing outbox
+  -> Worker/Docling -> Markdown/JSON/Layout representations
+  -> Manifest v5 -> Python Runtime Markdown -> Agent result
+  -> exact source file Delivery
+```
+
+同时覆盖幂等、重试、部分失败、超限、重启恢复、权限撤销和清理。容器 healthy、单元测试
+或历史 synthetic E2E 不能证明当前目标环境、真实模型和真实钉钉 Delivery 已验收。

@@ -17,7 +17,11 @@ PostgreSQL 18 官方镜像默认数据目录为：
 
 Compose 必须把命名卷挂载到 `/var/lib/postgresql`。PostgreSQL 16 的物理数据目录不能直接交给 PostgreSQL 18 启动，本仓库采用逻辑 `pg_dump` / `pg_restore` 迁移。
 
-RabbitMQ 4 的本地迁移采用“排空 Agent 队列后创建新 broker”的方式。脚本不会 purge 队列，不会删除卷。如果 normal、retry、dead 任一队列存在 ready/unacked 消息，切换保护会失败。
+RabbitMQ 4 的本地迁移采用“排空队列后创建新 broker”的方式。脚本不会 purge 队列，
+不会删除卷。当前 `compose_infra_upgrade.sh` 的自动切换保护只检查 Agent job/retry/dead
+三类历史管理队列；它不会替代对 Channel、Webhook、Attachment、File Processing 和
+Delivery/数据库 Outbox 的人工盘点。任一当前业务队列或持久 Outbox 仍有在途工作时都
+不得切换。
 
 ## 2. 工具说明
 
@@ -58,7 +62,10 @@ docker compose up -d api-server agent-worker
 docker compose ps
 ```
 
-`migrator` 必须成功完成 `baseline 100 -> initial admin bootstrap -> runtime grants`；依赖服务使用 `service_completed_successfully`，禁止跳过。Schema 代际、legacy 042 adoption 和管理员 Secret 输入见 [Schema Baseline 升级手册](schema-baseline-upgrade.md) 与 [空库手册](schema-baseline-bootstrap.md)。
+`migrator` 必须成功完成空库 `100..119 -> initial admin bootstrap -> runtime grants`；
+依赖服务使用 `service_completed_successfully`，禁止跳过。Schema 代际、legacy 042 adoption
+和管理员 Secret 输入见 [Schema Baseline 升级手册](schema-baseline-upgrade.md) 与
+[空库手册](schema-baseline-bootstrap.md)。
 
 检查版本和运行状态：
 
@@ -95,7 +102,8 @@ scripts/compose_infra_upgrade.sh preflight
 先停止所有会创建新任务的入口：
 
 ```bash
-docker compose stop api-server dingtalk-stream-ingress
+docker compose stop api-server dingtalk-runtime webhook-worker channel-dispatch-worker \
+  file-worker file-processing-worker
 ```
 
 让 `agent-worker` 继续运行，直到 normal/retry 队列处理完成。然后停止 worker 并再次检查：
@@ -105,7 +113,16 @@ docker compose stop agent-worker
 scripts/compose_infra_upgrade.sh preflight --require-empty-rabbitmq
 ```
 
-如果 dead queue 非空，先通过 PostgreSQL job/audit 数据和 RabbitMQ Management UI 对账。需要保留 broker 内消息时不要继续本流程，应设计 RabbitMQ 3.13 feature flags + 4.x 原地升级或 blue/green 消息迁移。
+再列出全部实际队列并逐项与 PostgreSQL Outbox/Job/File Processing/Delivery 事实对账：
+
+```bash
+docker compose exec -T rabbitmq rabbitmqctl -q list_queues \
+  name messages_ready messages_unacknowledged consumers
+```
+
+如果任何 dead/retry/normal 队列或持久 Outbox 非空，不要继续。本脚本的
+`--require-empty-rabbitmq` 通过并不证明新增队列已排空。需要保留 broker 内消息时，应
+设计 RabbitMQ 3.13 feature flags + 4.x 原地升级或 blue/green 消息迁移。
 
 ### 4.3 备份 PostgreSQL 16
 
@@ -187,7 +204,8 @@ SMOKE_BUILD=false scripts/smoke_rabbitmq4.sh
 
 回滚原则：
 
-1. 立即停止 `api-server`、`dingtalk-stream-ingress` 和 `agent-worker`，阻止新写入。
+1. 立即停止 `api-server`、`dingtalk-runtime`、Webhook/Channel/File 入口 Worker、
+   `job-dispatch-worker` 和 `agent-worker`，阻止新写入与新执行。
 2. 停止 PostgreSQL 18 和 RabbitMQ 4。
 3. 使用 preflight/metadata 记录的旧镜像和旧卷重新启动旧基础设施。
 4. 启动应用前检查旧 PostgreSQL 数据和 RabbitMQ 队列。

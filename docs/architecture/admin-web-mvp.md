@@ -1,71 +1,86 @@
-# Admin Web MVP
+# Admin Web 当前实现
 
-管理端采用 pnpm workspace 与受控 shadcn/ui 组件，入口位于 `frontend/apps/admin-web`。
+Admin Web 是单一 Vite + React + TypeScript 应用，代码位于 `frontend/src/`。仓库使用
+`frontend/package.json` 与 `frontend/package-lock.json`，没有 pnpm workspace、
+`frontend/apps/admin-web` 或独立共享 package。
 
 ## 目录边界
 
 ```text
-frontend/
-  apps/admin-web/               # 路由、会话、管理端页面
-    src/app/                    # Providers、错误边界与后台 Shell
-    src/contexts/identity/      # 登录、内部用户、钉钉身份与会话
-    src/contexts/authorization/ # 角色、权限策略与审计
-    src/contexts/agent-management/ # 默认 Agent 草稿与发布
-    src/contexts/webhooks/      # Webhook 生命周期与事件证据
-    src/contexts/catalog/       # Skill、工具资源、Channel
-    src/contexts/operations/    # Dashboard、队列、Job、会话、附件
-    src/shared/presentation/    # 基于 shadcn 的跨上下文组合组件
-  packages/api-client/          # HTTP、CSRF、correlation id、错误与分页契约
-  packages/ui/                  # 无业务依赖的 shadcn/ui 组件和主题
-  packages/config/              # 共享 TypeScript 配置
+frontend/src/
+  app/                         # Providers、路由、错误边界与后台 Shell
+  contexts/
+    agent-profiles/            # Python Agent 与模型连接
+    applications/              # Business Application 与受管渠道
+    auth/                      # 登录、当前 Session 与能力门禁
+    authorization/             # 角色、成员、应用/工具/数据范围授权
+    dingtalk-identity-discovery/
+    external-identities/       # 本人外部身份
+    operations/                # Job、会话、文件与运行状态
+    overview/
+    platform-governance/       # Tool Manifest、Resource、Secret、Runtime Config
+    users/
+    workflows/
+  shared/api/                  # HTTP、CSRF、correlation id 与错误契约
+  shared/presentation/         # 跨领域展示组件
+  components/ui/               # shadcn/ui 组件
 ```
 
-新页面按 `domain -> application -> infrastructure -> presentation` 依赖方向组织。共享 UI 不得引用业务 context，presentation 不得直接依赖裸 HTTP DTO。
+前端会通过同源 `/api` 调用后端，不是静态 Mock-only 原型。页面可见性只改善交互；
+服务端 Session、RBAC、CSRF、revision 和字段校验仍是授权事实。
 
 ## 本地开发与验证
 
-需要 Node.js 22 与 pnpm 11.9.0：
+容器构建使用 Node.js 22 和 npm：
 
 ```bash
 cd frontend
-corepack enable
-pnpm install --frozen-lockfile
-pnpm dev
+npm ci
+npm run dev
 ```
 
 完整前端检查：
 
 ```bash
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
+npm run lint
+npm run typecheck
+npm run test
+npm run build
 ```
 
-容器验证：
+Compose 中 `admin-web` 属于默认服务集合，但镜像入口要求显式开启功能：
 
 ```bash
-FEATURE_WEB_ADMIN=true docker compose --profile admin up -d --build \
-  postgres rabbitmq api-server admin-web
+FEATURE_WEB_ADMIN=true docker compose up -d --build \
+  postgres rabbitmq migrator api-server admin-web
 ```
 
-`admin-web` 同时受 `admin` profile 与 `FEATURE_WEB_ADMIN=true` 约束；默认
-Compose 不启动或映射管理 Web，显式点名但关闭 feature flag 时镜像入口也会拒绝启动。
+仓库当前没有 `admin` Compose profile。`FEATURE_WEB_ADMIN=false` 时，API 不注册管理
+路由，`admin-web` 容器入口也会退出；显式点名服务不能绕过该开关。
 
-## MVP 权限与安全边界
+## 当前管理边界
 
-- 页面可见性只改善交互；所有读写权限与租户/项目/环境/基地/车间范围仍由服务端校验。
-- Web 只允许编辑和发布 `default-diagnostic-agent`；底层继续按多 Agent definition/revision/publication 建模。
-- Skill Catalog 只读，不提供上传、编辑或删除 Skill 文件。
-- API 工具只接受 registry 中的 database、Redis、Loki 类型；数据库只显示 PostgreSQL、MySQL、SQL Server，不显示 Oracle。
-- 连接测试必须由用户显式触发，只执行 `SELECT 1`、`PING` 或 `GET /ready`，并使用短超时、目标 allowlist、脱敏错误和审计。
-- Secret 只在写入接口接收明文，资源与 Connector 只保存并展示 `env:`、`secret://`、`vault:` 或 `kms:` 引用。
-- 工具和 Channel 表单可以选择已有受控 Secret，或创建 encrypted-db Secret；创建提交后前端立即清空明文状态，后续只保留 `secret://...` 引用。
-- Channel 只开放已实现的钉钉 Stream、Callback、Enterprise Delivery 与 Webhook Delivery；邮件和企业微信显示 unavailable 且不可创建。
-- 队列、会话、附件、Job/Delivery 页面只读。队列页不提供 purge/delete/publish/replay，附件读取不会启动 DOCX/XLSX/PPTX/Markdown 提取。
+- 可以创建和治理多个 `python-v1` Agent；`default-diagnostic-agent` 只是 bootstrap
+  内置 Agent，不是唯一可管理 Agent。历史 `typescript-v1` 事实只读。
+- Agent、Workflow、Business Application、Resource 和 Webhook 使用追加式 Revision 与
+  不可变 Publication；前端必须携带 expected revision，不能覆盖历史快照。
+- 工具目录来自代码 MCP Manifest，只读展示；不提供动态 Handler、Release、任意 MCP
+  Server 或任意 URL/脚本实现。
+- DB、Redis、Loki Resource 在同一 Draft 中配置连接、数据范围与
+  `secret://platform/<code>`，再执行验证和发布。Oracle 已有代码 Provider；是否可用
+  由驱动和 Resource 验证结果决定，不应从 UI 文档中宣称全局禁用。
+- 新 Secret 绑定只接受 `secret://platform/<code>`。`env:` 需要先显式导入，
+  `vault:` / `kms:` 当前未实现并会被拒绝。
+- 渠道包含受管钉钉企业/应用连接和 Webhook；队列、Job、Delivery、文件处理与审计页面
+  主要用于治理和只读诊断，不提供无界 purge、任意 replay 或直接数据库写入。
+- 文档处理状态来自 File Service、RabbitMQ 与 Docling readiness；读取文件运维页不会
+  隐式启动新的解析任务。
 
-## 数据库迁移与回滚
+## 部署与验收
 
-迁移 `009_admin_web_read_models.sql` 只增加管理查询索引和 `integration_connector.revision`。发布顺序：先迁移数据库，再部署 API，最后部署 Web。
+数据库 schema 由 `migrator` 统一推进，Admin Web 没有独立的当前迁移。发布时先运行
+migrator，再更新 API 和 Web。回退前端镜像不会回退 schema，也不能删除 Job、Session、
+File、Delivery 或审计事实。
 
-回滚时先回退 Web 镜像，再回退 API。新增索引和 `integration_connector.revision` 字段可保留，不影响旧服务；如果必须删除，先确认没有新版本实例和 Connector 写请求，再按 [历史 Admin Web 迁移基线](../archive/implementation-baselines/admin-web-migration-baseline.md) 的逆向 SQL 执行。回滚不得清理 Agent Job、Session、Message、Delivery 或 RabbitMQ 消息。
+容器可访问只证明静态资源和代理启动。业务验收至少还要覆盖登录/CSRF、一个受授权读
+请求、一个带 revision 的治理写请求，以及对应数据库与审计事实。
