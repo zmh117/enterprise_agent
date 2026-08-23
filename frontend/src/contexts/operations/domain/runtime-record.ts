@@ -293,6 +293,15 @@ const fileWorkspaceSchema = z.object({
       allowed_actions: z.array(z.string()),
     })
   ),
+  output_commits: z
+    .array(
+      z.object({
+        format_code: z.string().min(1).max(32),
+        status: z.string().min(1).max(32),
+        commit_count: z.number().int().nonnegative(),
+      })
+    )
+    .default([]),
 })
 
 export const runtimeJobDetailSchema = z
@@ -316,6 +325,7 @@ export const runtimeJobDetailSchema = z
       enabled: false,
       manifest_schema_version: null,
       formats: [],
+      output_commits: [],
     }),
     deliveries: deliveryTimelineSchema,
     webhook_events: z.array(z.record(z.string(), z.unknown())).default([]),

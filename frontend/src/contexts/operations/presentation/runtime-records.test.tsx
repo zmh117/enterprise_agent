@@ -471,6 +471,13 @@ describe("runtime provenance records", () => {
               allowed_actions: ["MATERIALIZE", "EDIT", "COMMIT", "DELIVER"],
             },
           ],
+          output_commits: [
+            {
+              format_code: "MARKDOWN",
+              status: "COMMITTED",
+              commit_count: 1,
+            },
+          ],
         },
         deliveries: { events: [], attempts: [], chunks: [] },
         webhook_events: [],
@@ -502,6 +509,9 @@ describe("runtime provenance records", () => {
     expect(screen.getByText(/Manifest v5/)).toBeInTheDocument()
     expect(screen.getByText("只读并发送既有精确版本")).toBeInTheDocument()
     expect(screen.getByText(/不渲染正文/)).toBeInTheDocument()
+    expect(screen.getByText("本 Job 输出提交")).toBeInTheDocument()
+    expect(screen.getByText(/· 1 个 · COMMITTED/)).toBeInTheDocument()
+    expect(screen.getByText(/不回写输入/)).toBeInTheDocument()
   })
 
   it("renders document source formats in job evidence instead of failing closed to fixture copy", async () => {
@@ -553,7 +563,7 @@ describe("runtime provenance records", () => {
     expect(screen.queryByText("管理服务不可用")).not.toBeInTheDocument()
     expect(screen.getByText("PNG")).toBeInTheDocument()
     expect(screen.getByText("DOCX")).toBeInTheDocument()
-    expect(screen.getByText(/当前清单 4 个文件/)).toBeInTheDocument()
+    expect(screen.getByText(/输入 Manifest 4 个文件/)).toBeInTheDocument()
     expect(
       screen.getAllByText(/原件不进沙盒/).length
     ).toBeGreaterThan(0)

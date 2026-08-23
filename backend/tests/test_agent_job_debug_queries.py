@@ -7,6 +7,15 @@ from fastapi.testclient import TestClient
 
 from app.bootstrap import Container, build_test_container
 from app.main import create_app
+from app.modules.file_workspace.domain import (
+    CommitDeliveryMode,
+    CommitIntentStatus,
+    CommitUserIntent,
+    FileOwner,
+    RetentionPeriod,
+    WorkspaceOwnerType,
+)
+from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.infrastructure.execution_audit_repository import (
     ExecutionAuditRepository,
@@ -365,6 +374,101 @@ def test_application_operator_can_read_attributed_job() -> None:
     runtime.database.close()
 
 
+def test_job_evidence_separates_input_manifest_from_output_commit_summary() -> None:
+    runtime = _container()
+    application = _active_application(runtime, "file-output-evidence-application")
+    creator = _create_user(runtime, "file-output-evidence-owner")
+    _grant_role(
+        runtime,
+        code="file-output-evidence-owner-role",
+        user_id=str(creator["id"]),
+        admin_capability="agent.debug.execute",
+    )
+    job_id = _create_debug_job(
+        runtime=runtime,
+        creator_user_id=str(creator["id"]),
+        idempotency_key="file-output-evidence",
+    )
+    job_row = runtime.database.execute_one(
+        "select session_id from agent_job where id = ?",
+        (job_id,),
+    )
+    assert job_row is not None
+    repository = FileWorkspaceRepository(runtime.database)
+    repository.create_workspace(
+        workspace_id="workspace-file-output-evidence",
+        tenant_id="tenant-file-output-evidence",
+        session_id=str(job_row["session_id"]),
+        owner=FileOwner(
+            WorkspaceOwnerType.PRIVATE_USER,
+            user_id=str(creator["id"]),
+        ),
+        publication_id=str(application["publication"]["id"]),
+        retention_period=RetentionPeriod.WEEK,
+        expires_at="2030-08-30T00:00:00+00:00",
+        actor_id=str(creator["id"]),
+    )
+    runtime.database.execute(
+        "update agent_job set task_workspace_id = ? where id = ?",
+        ("workspace-file-output-evidence", job_id),
+    )
+    repository.create_job_snapshot(
+        snapshot_id="snapshot-file-output-evidence",
+        job_id=job_id,
+        workspace_id="workspace-file-output-evidence",
+        tenant_id="tenant-file-output-evidence",
+        principal_user_id=str(creator["id"]),
+        publication_id=str(application["publication"]["id"]),
+        retention_period=RetentionPeriod.WEEK,
+        manifest_hash="c" * 64,
+        items=[],
+    )
+    repository.create_commit_intent(
+        intent_id="intent-file-output-evidence",
+        commit_id="commit-file-output-evidence",
+        job_id=job_id,
+        workspace_id="workspace-file-output-evidence",
+        sandbox_entry_handle="sandbox-file-output-evidence",
+        display_name="output-summary.md",
+        user_intent=CommitUserIntent.GENERATE,
+        delivery_mode=CommitDeliveryMode.DEFAULT,
+        format_code="MARKDOWN",
+        metadata_hash="d" * 64,
+        expires_at="2030-08-30T00:00:00+00:00",
+    )
+    repository.transition_commit_intent(
+        "intent-file-output-evidence",
+        CommitIntentStatus.UPLOADING,
+    )
+    repository.transition_commit_intent(
+        "intent-file-output-evidence",
+        CommitIntentStatus.COMMITTED,
+    )
+
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
+        response = client.get(
+            f"/api/agent/jobs/{job_id}/evidence",
+            headers=_headers("file-output-evidence-owner"),
+        )
+
+    assert response.status_code == 200
+    file_workspace = response.json()["file_workspace"]
+    assert file_workspace == {
+        "enabled": True,
+        "manifest_schema_version": 5,
+        "formats": [],
+        "output_commits": [
+            {
+                "format_code": "MARKDOWN",
+                "status": "COMMITTED",
+                "commit_count": 1,
+            }
+        ],
+    }
+    assert "output-summary.md" not in str(file_workspace)
+    runtime.database.close()
+
+
 def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() -> None:
     runtime = _container()
     creator = _create_user(runtime, "model-audit-owner")
@@ -472,6 +576,7 @@ def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() 
         "enabled": False,
         "manifest_schema_version": None,
         "formats": [],
+        "output_commits": [],
     }
     projected = model_calls.json()["items"][0]
     assert projected["provider_request_id"] == "request-safe-1"

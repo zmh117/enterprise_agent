@@ -264,6 +264,24 @@ def _file_workspace_evidence(
     *,
     job_id: str,
 ) -> dict[str, Any]:
+    output_rows = container.database.execute(
+        """
+        select format_code, status, count(*) as commit_count
+          from file_commit_intent
+         where job_id = ?
+         group by format_code, status
+         order by format_code, status
+        """,
+        (job_id,),
+    )
+    output_commits = [
+        {
+            "format_code": str(row["format_code"]),
+            "status": str(row["status"]),
+            "commit_count": int(row["commit_count"]),
+        }
+        for row in output_rows
+    ]
     snapshot = container.database.execute_one(
         """
         select id, schema_version
@@ -277,6 +295,7 @@ def _file_workspace_evidence(
             "enabled": False,
             "manifest_schema_version": None,
             "formats": [],
+            "output_commits": output_commits,
         }
     rows = container.database.execute(
         """
@@ -322,6 +341,7 @@ def _file_workspace_evidence(
             }
             for _code, entry in sorted(formats.items())
         ],
+        "output_commits": output_commits,
     }
 
 

@@ -542,7 +542,7 @@ function FileWorkspacePolicyPanel({
                   {capability}
                 </dd>
                 <dd className="mt-2 text-xs">
-                  当前清单 {item?.file_count ?? 0} 个文件
+                  输入 Manifest {item?.file_count ?? 0} 个文件
                   {item?.allowed_actions.length
                     ? ` · ${item.allowed_actions.join(" / ")}`
                     : ""}
@@ -562,7 +562,7 @@ function FileWorkspacePolicyPanel({
                     元数据、保留、发送原件；可读正文只走 Markdown 表示，原件不进沙盒
                   </dd>
                   <dd className="mt-2 text-xs">
-                    当前清单 {item?.file_count ?? 0} 个文件
+                    输入 Manifest {item?.file_count ?? 0} 个文件
                     {item?.allowed_actions.length
                       ? ` · ${item.allowed_actions.join(" / ")}`
                       : ""}
@@ -581,7 +581,7 @@ function FileWorkspacePolicyPanel({
                   清单已冻结该格式，页面仅展示计数和允许动作。
                 </dd>
                 <dd className="mt-2 text-xs">
-                  当前清单 {item.file_count} 个文件
+                  输入 Manifest {item.file_count} 个文件
                   {item.allowed_actions.length
                     ? ` · ${item.allowed_actions.join(" / ")}`
                     : ""}
@@ -589,6 +589,28 @@ function FileWorkspacePolicyPanel({
               </div>
             ))}
           </dl>
+        ) : null}
+        {value.output_commits.length ? (
+          <div className="rounded-lg border p-3 text-sm">
+            <p className="font-medium">本 Job 输出提交</p>
+            <dl className="mt-2 space-y-1 text-xs">
+              {value.output_commits.map((item) => (
+                <div
+                  key={`${item.format_code}:${item.status}`}
+                  className="flex flex-wrap items-center gap-1"
+                >
+                  <dt>{item.format_code}</dt>
+                  <dd>
+                    · {item.commit_count} 个 · {item.status}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-2 text-xs text-muted-foreground">
+              来源 File Commit Intent；仅展示格式、数量和状态，不回写输入
+              Manifest。
+            </p>
+          </div>
         ) : null}
       </CardContent>
     </Card>
