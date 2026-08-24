@@ -156,7 +156,7 @@
 - **AND** 已发布业务应用及已入队 Job 保持各自固定版本
 
 ### Requirement: 模型连接测试必须使用真实受限Runtime并防止SSRF
-系统 SHALL 提供模型连接测试动作，测试 MUST 使用保存后的模型连接和 active Secret，通过独立 Python Runtime 的官方 Claude Agent SDK 路径执行无工具、单轮、短超时探测。Python API MUST 先执行 RBAC、HTTPS、Provider host allowlist、userinfo、fragment、重定向、回环、链路本地和私网目标校验；Runtime MUST 再按固定 revision/config hash 解析连接。响应 MUST 只包含 Provider Host、模型、Runtime/SDK 版本、耗时和安全结果，不得包含 Key、Secret ref、Prompt、模型响应正文或内部异常详情。
+系统 SHALL 提供模型连接测试动作，测试 MUST 使用保存后的模型连接和 active Secret，通过独立 Python Runtime 的官方 Claude Agent SDK 路径执行无工具、单轮、短超时探测。Python API MUST 先执行 RBAC、HTTPS、Provider host allowlist、userinfo、fragment、重定向、回环、链路本地和私网目标校验；重定向校验只允许下述永久同源尾斜杠规范化例外。Runtime MUST 再按固定 revision/config hash 解析连接。响应 MUST 只包含 Provider Host、模型、Runtime/SDK 版本、耗时和安全结果，不得包含 Key、Secret ref、Prompt、模型响应正文或内部异常详情。
 
 #### Scenario: 测试已保存DeepSeek连接
 - **WHEN** Secret 管理员测试已保存、host 被允许且 revision/config hash 固定的 DeepSeek Anthropic-compatible 连接
@@ -257,7 +257,7 @@
 - **AND** 管理员必须从相应步骤重新检测
 
 ### Requirement: 系统必须从固定契约的DeepSeek服务发现模型
-系统 SHALL 只接受满足部署 allowlist 的 DeepSeek 官方 HTTPS Anthropic Base URL 或内部 Anthropic-compatible 网关。官方地址 MUST 通过移除末尾 `/anthropic`、追加 `/models` 确定性派生模型发现 URL；内部网关 Base path MUST 精确为 `/api`，模型发现 URL MUST 固定为 `/api/v1/models`，且原始 Base URL MUST 原样交给 Claude Agent SDK，使消息请求固定落在 `/api/v1/messages`。系统 MUST 拒绝 userinfo、query、fragment、未批准 host、非法或不兼容 path 和 redirect；官方目标还 MUST 拒绝非 443 端口以及解析到回环、链路本地、私网或保留 IP 的地址，内部网关只允许部署白名单中的 HTTP 或 HTTPS 主机。
+系统 SHALL 只接受满足部署 allowlist 的 DeepSeek 官方 HTTPS Anthropic Base URL 或内部 Anthropic-compatible 网关。官方地址 MUST 通过移除末尾 `/anthropic`、追加 `/models` 确定性派生模型发现 URL；内部网关 Base path MUST 精确为 `/api`，模型发现 URL MUST 固定为 `/api/v1/models`，且原始 Base URL MUST 原样交给 Claude Agent SDK，使消息请求固定落在 `/api/v1/messages`。系统 MUST 拒绝 userinfo、query、fragment、未批准 host、非法或不兼容 path 和 redirect；唯一例外是 Base URL 无凭据 `HEAD` 预检返回 `301` 或 `308`，且 `Location` 解析后与原地址保持相同 scheme、host 和有效 port，不含 userinfo、query 或 fragment，唯一路径差异为增加末尾 `/`。系统对该例外 MUST 只判定为可接受规范化，不得跟随跳转、改写已保存 Base URL 或把 Credential 发送到 `Location`。`302`、`307`、跨 scheme/host/port、其它 path 变化及缺失或歧义 `Location` 仍 MUST 拒绝。官方目标还 MUST 拒绝非 443 端口以及解析到回环、链路本地、私网或保留 IP 的地址，内部网关只允许部署白名单中的 HTTP 或 HTTPS 主机。
 
 #### Scenario: 从官方Anthropic URL发现模型
 - **WHEN** 管理员提交 `https://api.deepseek.com/anthropic` 和有效 Credential
@@ -268,6 +268,11 @@
 - **WHEN** 管理员提交部署白名单中的 `http://aikeyhub.gateway.mdzy/api` 和有效 Credential
 - **THEN** 系统请求 `http://aikeyhub.gateway.mdzy/api/v1/models` 发现模型
 - **AND** Claude Agent SDK 使用同一 Base URL 请求 `http://aikeyhub.gateway.mdzy/api/v1/messages` 完成真实配置测试
+
+#### Scenario: 接受同源永久尾斜杠规范化
+- **WHEN** Base URL 无凭据 `HEAD` 预检对 `http://aikeyhub.gateway.mdzy/api` 返回 `301` 或 `308`，且 `Location` 仅为同源 `http://aikeyhub.gateway.mdzy/api/`
+- **THEN** Python API 接受该预检结果并继续使用原始 `/api` Base URL 执行后续受限模型测试
+- **AND** 不跟随跳转、不改写保存值，也不允许 `302`、`307`、跨源或其它路径重定向
 
 #### Scenario: 拒绝未批准或路径不兼容的网关
 - **WHEN** 管理员提交未在部署白名单中的第三方 host、自定义模型列表 URL、内部网关 `/api/v1` Base URL 或其它不符合规则的地址

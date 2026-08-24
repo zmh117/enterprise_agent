@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any, NoReturn, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.authorization import AuthorizationEvaluator
@@ -1483,18 +1483,71 @@ def _assert_provider_does_not_redirect(base_url: str, timeout_seconds: int) -> N
         method="HEAD",
         headers={"User-Agent": "enterprise-agent-connection-check/1"},
     )
+    location = ""
     try:
         response = opener.open(request, timeout=timeout_seconds)
         status = int(getattr(response, "status", 200) or 200)
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            location = str(headers.get("Location") or "")
     except urllib.error.HTTPError as exc:
         status = int(exc.code)
+        if exc.headers is not None:
+            location = str(exc.headers.get("Location") or "")
     except (OSError, urllib.error.URLError):
         # The SDK probe remains the authoritative availability test. This
         # preflight exists only to reject redirects before credentials are used.
         return
     if 300 <= status < 400:
+        if _is_permanent_same_origin_trailing_slash_redirect(
+            base_url=base_url,
+            status=status,
+            location=location,
+        ):
+            return
         raise NonRetryableExecutionError(
             "Model provider Base URL redirects",
             safe_message="模型提供方 Base URL 不能发生重定向",
             error_code="model_connection_redirect_rejected",
         )
+
+
+def _is_permanent_same_origin_trailing_slash_redirect(
+    *,
+    base_url: str,
+    status: int,
+    location: str,
+) -> bool:
+    if (
+        status not in {301, 308}
+        or not location
+        or location != location.strip()
+        or any(ord(character) < 32 for character in location)
+    ):
+        return False
+    try:
+        source = urlsplit(base_url)
+        target = urlsplit(urljoin(base_url, location))
+        source_port = source.port or (443 if source.scheme.lower() == "https" else 80)
+        target_port = target.port or (443 if target.scheme.lower() == "https" else 80)
+    except ValueError:
+        return False
+    if (
+        source.username is not None
+        or source.password is not None
+        or target.username is not None
+        or target.password is not None
+        or source.query
+        or source.fragment
+        or target.query
+        or target.fragment
+    ):
+        return False
+    return (
+        source.scheme.lower() == target.scheme.lower()
+        and (source.hostname or "").lower() == (target.hostname or "").lower()
+        and source_port == target_port
+        and bool(source.path)
+        and not source.path.endswith("/")
+        and target.path == f"{source.path}/"
+    )

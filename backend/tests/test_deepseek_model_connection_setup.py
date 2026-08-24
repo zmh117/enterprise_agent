@@ -15,6 +15,7 @@ from app.main import create_app
 from app.modules.model_connection.api import controller as model_connection_controller
 from app.modules.model_connection.application.service import (
     MAX_DISCOVERY_BYTES,
+    _assert_provider_does_not_redirect,
     _deepseek_models_url,
     _fetch_deepseek_models,
 )
@@ -235,6 +236,75 @@ class _Opener:
         if isinstance(self.outcome, BaseException):
             raise self.outcome
         return self.outcome
+
+
+@pytest.mark.parametrize(
+    ("status", "location"),
+    [
+        (301, "/api/"),
+        (308, "http://aikeyhub.gateway.mdzy/api/"),
+    ],
+)
+def test_provider_base_url_preflight_allows_only_permanent_same_origin_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    location: str,
+) -> None:
+    base_url = "http://aikeyhub.gateway.mdzy/api"
+    redirect = urllib.error.HTTPError(
+        base_url,
+        status,
+        "redirect",
+        {"Location": location},
+        None,
+    )
+    opener = _Opener(redirect)
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *args: opener)
+
+    _assert_provider_does_not_redirect(base_url, 5)
+
+    assert opener.request is not None
+    assert opener.request.get_method() == "HEAD"
+
+
+@pytest.mark.parametrize(
+    ("status", "location"),
+    [
+        (302, "/api/"),
+        (307, "/api/"),
+        (301, "https://aikeyhub.gateway.mdzy/api/"),
+        (301, "http://aikeyhub.gateway.mdzy:8080/api/"),
+        (301, "http://other.gateway.mdzy/api/"),
+        (301, "/api/v2/"),
+        (301, "/api/?source=redirect"),
+        (301, ""),
+        (308, "/api/ "),
+        (308, "http://user@aikeyhub.gateway.mdzy/api/"),
+    ],
+)
+def test_provider_base_url_preflight_rejects_every_other_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    location: str,
+) -> None:
+    base_url = "http://aikeyhub.gateway.mdzy/api"
+    redirect = urllib.error.HTTPError(
+        base_url,
+        status,
+        "redirect",
+        {"Location": location},
+        None,
+    )
+    monkeypatch.setattr(
+        urllib.request,
+        "build_opener",
+        lambda *args: _Opener(redirect),
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as rejected:
+        _assert_provider_does_not_redirect(base_url, 5)
+
+    assert rejected.value.error_code == "model_connection_redirect_rejected"
 
 
 def test_bounded_discovery_client_uses_bearer_and_projects_safe_errors(
