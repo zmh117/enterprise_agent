@@ -256,18 +256,23 @@
 - **THEN** 页面清除所有受影响的发现或测试结果
 - **AND** 管理员必须从相应步骤重新检测
 
-### Requirement: 系统必须只发现DeepSeek官方服务的模型
-系统 SHALL 只接受满足部署 allowlist 的 DeepSeek 官方 HTTPS Anthropic Base URL，并 MUST 通过移除末尾 `/anthropic`、追加 `/models` 确定性派生模型发现 URL。系统 MUST 拒绝 userinfo、query、fragment、非 443 端口、未批准 host、非法 path、redirect，以及解析到回环、链路本地、私网或保留 IP 的目标。
+### Requirement: 系统必须从固定契约的DeepSeek服务发现模型
+系统 SHALL 只接受满足部署 allowlist 的 DeepSeek 官方 HTTPS Anthropic Base URL 或内部 Anthropic-compatible 网关。官方地址 MUST 通过移除末尾 `/anthropic`、追加 `/models` 确定性派生模型发现 URL；内部网关 Base path MUST 精确为 `/api`，模型发现 URL MUST 固定为 `/api/v1/models`，且原始 Base URL MUST 原样交给 Claude Agent SDK，使消息请求固定落在 `/api/v1/messages`。系统 MUST 拒绝 userinfo、query、fragment、未批准 host、非法或不兼容 path 和 redirect；官方目标还 MUST 拒绝非 443 端口以及解析到回环、链路本地、私网或保留 IP 的地址，内部网关只允许部署白名单中的 HTTP 或 HTTPS 主机。
 
 #### Scenario: 从官方Anthropic URL发现模型
 - **WHEN** 管理员提交 `https://api.deepseek.com/anthropic` 和有效 Credential
 - **THEN** 系统请求同一官方服务的 `https://api.deepseek.com/models`
 - **AND** 返回去重、受限且不含 Credential 的模型 ID 列表
 
-#### Scenario: 拒绝第三方或自定义发现地址
-- **WHEN** 管理员提交第三方 Anthropic-compatible host、自定义模型列表 URL 或不符合规则的 Base URL
+#### Scenario: 从内部Anthropic-compatible网关发现并测试模型
+- **WHEN** 管理员提交部署白名单中的 `http://aikeyhub.gateway.mdzy/api` 和有效 Credential
+- **THEN** 系统请求 `http://aikeyhub.gateway.mdzy/api/v1/models` 发现模型
+- **AND** Claude Agent SDK 使用同一 Base URL 请求 `http://aikeyhub.gateway.mdzy/api/v1/messages` 完成真实配置测试
+
+#### Scenario: 拒绝未批准或路径不兼容的网关
+- **WHEN** 管理员提交未在部署白名单中的第三方 host、自定义模型列表 URL、内部网关 `/api/v1` Base URL 或其它不符合规则的地址
 - **THEN** 系统在外部请求前以稳定字段错误拒绝
-- **AND** 不尝试猜测第三方 `/models` 路径
+- **AND** 不尝试猜测其它第三方模型发现或消息路径
 
 #### Scenario: 模型列表响应不安全
 - **WHEN** DeepSeek 模型列表为空、格式错误、超出响应大小或模型数量上限

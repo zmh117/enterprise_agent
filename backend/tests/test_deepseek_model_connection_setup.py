@@ -186,10 +186,11 @@ def test_allowlisted_internal_http_gateway_url_is_accepted() -> None:
         service.dns_resolver = lambda *args, **kwargs: [(2, 1, 6, "", ("10.20.30.40", 80))]
         normalized = service.normalize_base_url(gateway + "/", validate_dns=True)
         assert normalized == gateway
-        assert _deepseek_models_url(normalized) == "http://aikeyhub.gateway.mdzy/api/models"
+        assert _deepseek_models_url(normalized) == "http://aikeyhub.gateway.mdzy/api/v1/models"
 
         for value in (
             "http://aikeyhub.gateway.mdzy",
+            "http://aikeyhub.gateway.mdzy/api/v1",
             "http://user@aikeyhub.gateway.mdzy/api",
             "http://aikeyhub.gateway.mdzy/api?token=1",
             "ftp://aikeyhub.gateway.mdzy/api",

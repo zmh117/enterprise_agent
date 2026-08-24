@@ -11,6 +11,7 @@ from app.shared.database import assert_external_io_allowed
 
 OFFICIAL_PROVIDER_HOST = "api.deepseek.com"
 ANTHROPIC_PATH_SUFFIX = "/anthropic"
+INTERNAL_GATEWAY_BASE_PATH = "/api"
 
 
 class ProviderUrlError(ValueError):
@@ -26,11 +27,11 @@ def normalize_provider_base_url(value: str) -> str:
 def provider_models_url(base_url: str) -> str:
     parsed = urlsplit(base_url)
     path = parsed.path or ""
-    if path.endswith(ANTHROPIC_PATH_SUFFIX):
+    if (parsed.hostname or "").lower() == OFFICIAL_PROVIDER_HOST:
         prefix = path[: -len(ANTHROPIC_PATH_SUFFIX)]
         models_path = f"{prefix}/models"
     else:
-        models_path = f"{path.rstrip('/')}/models"
+        models_path = f"{path.rstrip('/')}/v1/models"
     return urlunsplit((parsed.scheme, parsed.netloc, models_path, "", ""))
 
 
@@ -104,8 +105,8 @@ def _validate_official_provider_url(parsed: Any, port: int | None, path: str) ->
 def _validate_allowlisted_gateway_url(parsed: Any, path: str) -> None:
     if parsed.scheme not in {"http", "https"}:
         raise ProviderUrlError("必须是不包含凭据、查询参数或片段的 HTTP 或 HTTPS 地址")
-    if not path or path == "/":
-        raise ProviderUrlError("内部模型网关 Base URL 必须包含路径，例如 /api")
+    if path != INTERNAL_GATEWAY_BASE_PATH:
+        raise ProviderUrlError("内部模型网关 Base URL 路径必须为 /api")
 
 
 def _default_port(scheme: str) -> int:
