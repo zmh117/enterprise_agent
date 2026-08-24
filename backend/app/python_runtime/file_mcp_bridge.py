@@ -192,9 +192,12 @@ class ClaudePythonFileBridge:
                         {
                             "name": LOCAL_FILE_OUTPUT_TOOL,
                             "description": (
-                                "Select one existing writable work/ or outputs/ text file as "
-                                "the exact file for a later commit intent. LOG is read-only. "
-                                "Returns metadata and an opaque handle, never file content."
+                                "文件持久化步骤1/2：选择当前Linux容器Job Sandbox中已存在且可写的"
+                                "work/或outputs/下TXT或Markdown。relative_path必须是使用/的POSIX"
+                                "相对路径（如work/result.md）；即使宿主机是Windows，也不得使用盘符、"
+                                "绝对路径或反斜杠。返回SELECTED只表示取得后续提交所需的不透明"
+                                "sandbox_entry_handle，不等于已保存、已提交或已交付；成功后必须继续调用"
+                                "file_create_commit_intent。LOG只读；不返回正文。"
                             ),
                             "inputSchema": {
                                 "type": "object",

@@ -227,7 +227,7 @@ FILE_TOOL_MANIFEST: Mapping[str, FileToolDefinition] = MappingProxyType(
         ),
         "file_create_commit_intent": _tool(
             "file_create_commit_intent",
-            "为显式选中的沙盒 TXT 或 Markdown 创建提交意图；LOG 永远只读；Runtime流式上传后返回精确file_id/version_id，DEFAULT还返回交付回执，PENDING仅表示已排队；不在MCP JSON中传输正文。",
+            "文件持久化步骤2/2：新生成TXT或Markdown必须先调用select_sandbox_output，再使用其返回的sandbox_entry_handle调用本工具；已物化且允许编辑的输入可使用既有handle。新文件使用user_intent=GENERATE且不传file_id/base_version_id；修改既有版本时提供对应file_id/base_version_id。用户要求发送时使用delivery_mode=DEFAULT，只有明确要求仅保存到工作区时才使用WORKSPACE_ONLY。DEFAULT会自动创建交付；delivery_status=PENDING表示已排队，不要再调用file_deliver_version。LOG永远只读；不在MCP JSON中传输正文。",
             _COMMIT_SCHEMA,
             operation="file.commit.prepare",
             mutating=True,
@@ -241,7 +241,7 @@ FILE_TOOL_MANIFEST: Mapping[str, FileToolDefinition] = MappingProxyType(
         ),
         "file_deliver_version": _tool(
             "file_deliver_version",
-            "把已授权的既有或WORKSPACE_ONLY精确版本交付到冻结reply route；DEFAULT提交已经自动排队时不要重复调用，PENDING仅表示已排队。",
+            "仅用于把当前Manifest中具有DELIVER授权的既有精确版本，或当前Job以WORKSPACE_ONLY成功提交的精确版本，交付到冻结reply route；必须传精确file_id/version_id。新生成文件使用DEFAULT提交后已自动创建交付，delivery_status=PENDING表示已排队，此时不要调用本工具。",
             dict(_FILE_VERSION_SCHEMA),
             operation="file.version.deliver",
             mutating=True,

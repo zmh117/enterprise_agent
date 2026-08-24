@@ -109,6 +109,21 @@ def test_file_tool_descriptions_define_catalog_document_materialization_handoff(
     assert "原始二进制不进入Sandbox" in materialize
 
 
+def test_file_tool_descriptions_define_commit_and_delivery_handoff() -> None:
+    commit = FILE_TOOL_MANIFEST["file_create_commit_intent"].description
+    deliver = FILE_TOOL_MANIFEST["file_deliver_version"].description
+
+    assert "文件持久化步骤2/2" in commit
+    assert "必须先调用select_sandbox_output" in commit
+    assert "delivery_mode=DEFAULT" in commit
+    assert "只有明确要求仅保存到工作区" in commit
+    assert "delivery_status=PENDING表示已排队" in commit
+    assert "不要再调用file_deliver_version" in commit
+    assert "当前Job以WORKSPACE_ONLY成功提交" in deliver
+    assert "必须传精确file_id/version_id" in deliver
+    assert "新生成文件使用DEFAULT提交后已自动创建交付" in deliver
+
+
 @pytest.mark.parametrize("forbidden", sorted(FORBIDDEN_INPUT_FIELDS))
 def test_file_tool_schemas_reject_identity_location_and_dynamic_execution_fields(
     forbidden: str,

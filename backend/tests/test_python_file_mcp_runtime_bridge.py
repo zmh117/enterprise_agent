@@ -118,6 +118,14 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
         async with InMemoryTransport(instance) as streams:
             async with ClientSession(*streams) as session:
                 await session.initialize()
+                descriptions = {
+                    tool.name: tool.description for tool in (await session.list_tools()).tools
+                }
+                select_description = descriptions["select_sandbox_output"] or ""
+                assert "文件持久化步骤1/2" in select_description
+                assert "宿主机是Windows" in select_description
+                assert "返回SELECTED只表示" in select_description
+                assert "必须继续调用file_create_commit_intent" in select_description
                 sandbox = Path(options["cwd"])
                 materialized_path = sandbox / "inputs/source-python.txt"
                 assert materialized_path.read_bytes() == SOURCE
