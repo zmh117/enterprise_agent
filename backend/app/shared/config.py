@@ -207,7 +207,7 @@ class FileServiceSettings:
             len(self.document_processor_build_digest) != 71
             or not self.document_processor_build_digest.startswith("sha256:")
         ):
-            raise ValueError("Document processor image digest is invalid")
+            raise ValueError("Document processor build digest is invalid")
 
 
 @dataclass(frozen=True)

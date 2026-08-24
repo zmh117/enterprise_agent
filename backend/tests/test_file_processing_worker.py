@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import zipfile
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -96,9 +97,52 @@ LAYOUT_RUN = replace(
 )
 
 
+def _minimal_docx(*, null_placeholder: bool = False) -> bytes:
+    relationship = ""
+    drawing = ""
+    if null_placeholder:
+        relationship = (
+            '<Relationship Id="rIdNull" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+            'Target="../NULL"/>'
+        )
+        drawing = """
+<w:p><w:r><w:drawing>
+  <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+    <wp:extent cx="635" cy="0"/>
+    <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+      <a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rIdNull"/>
+    </a:graphic>
+  </wp:inline>
+</w:drawing></w:r></w:p>
+"""
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w") as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+        )
+        archive.writestr(
+            "word/document.xml",
+            (
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+                f'wordprocessingml/2006/main"><w:body>{drawing}</w:body></w:document>'
+            ),
+        )
+        archive.writestr(
+            "word/_rels/document.xml.rels",
+            (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+                f'relationships">{relationship}</Relationships>'
+            ),
+        )
+    return output.getvalue()
+
+
 class _FileService:
-    def __init__(self, run: ClaimedDocumentRun = RUN) -> None:
+    def __init__(self, run: ClaimedDocumentRun = RUN, *, source: bytes | None = None) -> None:
         self.run = run
+        self.source = source
         self.calls: list[tuple[str, Any]] = []
 
     def claim(self, message: FileProcessingTaskMessage) -> ClaimedDocumentRun:
@@ -107,6 +151,10 @@ class _FileService:
 
     def download_source(self, run: ClaimedDocumentRun) -> bytes:
         self.calls.append(("download", run.run_id))
+        if self.source is not None:
+            return self.source
+        if run.format_code == "DOCX":
+            return _minimal_docx()
         return b"%PDF-1.7\n"
 
     def mark_submitted(self, run_id: str, external_task_id: str) -> None:
@@ -134,9 +182,11 @@ class _Processor:
         self.submit_failure: DocumentProcessorFailure | None = None
         self.result = RESULT
         self.calls: list[tuple[str, Any]] = []
+        self.submitted_source: bytes | None = None
 
     def submit(self, **values: Any) -> ProcessorTask:
         self.calls.append(("submit", values["filename"]))
+        self.submitted_source = values["stream"].read()
         if self.submit_failure is not None:
             raise self.submit_failure
         return ProcessorTask("task-1", ProcessorTaskState.PENDING)
@@ -395,6 +445,36 @@ def test_layout_parent_persists_parent_asset_occurrence_item_and_outbox_boundary
     assert "occurrence" in names
     assert "picture_item" in names
     assert names[-1] == "parent_complete"
+
+
+def test_layout_parent_submits_normalized_docx_without_changing_downloaded_source() -> None:
+    source = _minimal_docx(null_placeholder=True)
+    files = _LayoutFileService()
+    files.source = source
+    processor = _LayoutProcessor()
+
+    result = _worker(files, processor)(LAYOUT_MESSAGE)
+
+    assert result.disposition is FileProcessingDisposition.ACK
+    assert processor.submitted_source is not None
+    assert processor.submitted_source != source
+    with zipfile.ZipFile(io.BytesIO(processor.submitted_source)) as archive:
+        assert b"../NULL" not in archive.read("word/_rels/document.xml.rels")
+        assert b"rIdNull" not in archive.read("word/document.xml")
+    assert files.source == source
+
+
+def test_layout_parent_resumes_external_task_without_downloading_or_resubmitting() -> None:
+    files = _LayoutFileService()
+    files.run = replace(files.run, external_task_id="existing-task")
+    processor = _LayoutProcessor()
+
+    result = _worker(files, processor)(LAYOUT_MESSAGE)
+
+    assert result.disposition is FileProcessingDisposition.ACK
+    assert not any(name == "download" for name, _ in files.calls)
+    assert processor.submitted_source is None
+    assert processor.calls[0] == ("poll", "existing-task")
 
 
 def _bundle_with_repeated_picture_occurrences(count: int) -> DocumentProcessorBundleResult:

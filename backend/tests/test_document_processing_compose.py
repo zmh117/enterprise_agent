@@ -7,6 +7,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 DIGEST = "sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807"
+PROCESSOR_VERSION = "v1.30.0+wps-null-zero-drawing.v1"
+PROCESSOR_BUILD_DIGEST = "sha256:ea15a6fc35b991249180d9265e1a3406448855fe8134c61fc7d26dd046b93429"
 MODEL_DIGEST = "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
 PROFILE_HASH = "c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8"
 
@@ -68,6 +70,13 @@ def test_docling_image_is_digest_pinned_offline_nonroot_and_internal_only() -> N
     assert "DOCLING_SERVE_API_KEY" not in environment
     assert "/run/secrets/docling_api_key" in service["command"][0]
     assert "verify_model_bundle.py" in service["command"][0]
+
+
+def test_file_service_freezes_docling_and_docx_compatibility_build_identity() -> None:
+    file_service = _compose()["services"]["file-service"]
+
+    assert file_service["environment"]["DOCUMENT_PROCESSOR_VERSION"] == PROCESSOR_VERSION
+    assert file_service["environment"]["DOCUMENT_PROCESSOR_BUILD_DIGEST"] == PROCESSOR_BUILD_DIGEST
 
 
 def test_processing_worker_has_only_queue_file_service_identity_and_docling_boundaries() -> None:

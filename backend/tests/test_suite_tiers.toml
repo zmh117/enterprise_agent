@@ -60,6 +60,7 @@ contract = [
   "test_dingtalk_media_downloader.py",
   "test_dingtalk_test_data_rebuild.py",
   "test_docling_provider.py",
+  "test_docx_compatibility_normalization.py",
   "test_document_layout_ocr.py",
   "test_document_processing_compose.py",
   "test_document_processing_internal_api.py",

@@ -36,6 +36,9 @@ from app.modules.document_processing.provider import (
     ProcessorTask,
     ProcessorTaskState,
 )
+from app.modules.document_processing.source_validation import (
+    normalize_docx_null_image_placeholders,
+)
 from app.modules.message_bus.application.message_publisher import (
     AssemblyTaskMessage,
     DocumentProcessingStageMessage,
@@ -187,6 +190,10 @@ class FileProcessingWorkerService:
         if run.external_task_id:
             return self.processor.poll(run.external_task_id)
         source = self.file_service.download_source(run)
+        source = normalize_docx_null_image_placeholders(
+            source,
+            format_code=run.format_code,
+        )
         task = self.processor.submit(
             stream=io.BytesIO(source),
             filename=run.display_name,

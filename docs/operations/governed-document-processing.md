@@ -43,6 +43,20 @@ quay.io/docling-project/docling-serve:v1.30.0
 sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807
 ```
 
+File Service 冻结的处理器身份同时覆盖该镜像和代码内置的 DOCX 兼容算法：
+
+```text
+processor version: v1.30.0+wps-null-zero-drawing.v1
+processor build digest: sha256:ea15a6fc35b991249180d9265e1a3406448855fe8134c61fc7d26dd046b93429
+digest input: docling-serve@sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807|wps-null-zero-drawing/v1
+```
+
+兼容算法只在首次提交 Docling 前移除指向不存在 `../NULL`、且全部引用均为零宽或零高
+DrawingML 图片占位的关系与节点。规范化副本仅存在于 Worker 内存，原始 File Version、
+内容哈希和交付字节不变；可见图片、外部关系、混合关系或无法证明安全的结构以
+`docx_null_image_placeholder_unsafe` 非重试失败。该算法升级必须改变 processor build
+digest，但不得因为此兼容修复改变 `docling-layout-ocr-v2` Profile hash。
+
 镜像使用非 root UID 1001、只读根文件系统、受限 tmpfs 和资源限制。远程 service、外部
 插件、自定义 VLM/图片描述、UI、任意 URL 和运行时模型下载关闭，只允许 `inbody`
 target。部署若改变 tag/digest、模型 artifact 或 Profile hash，必须重新核验，不能沿用

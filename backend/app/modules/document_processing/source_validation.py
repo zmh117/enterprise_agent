@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import io
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
+from xml.dom import Node
+from xml.dom import minidom
+from xml.parsers.expat import ExpatError
 
 from PIL import Image, UnidentifiedImageError
 from pypdf import PdfReader
@@ -16,6 +20,25 @@ from app.modules.document_processing.profile import (
 from app.shared.exceptions import NonRetryableExecutionError
 
 
+_OOXML_MAX_ARCHIVE_ENTRIES = 20_000
+_OOXML_MAX_EXPANDED_BYTES = 200 * 1024 * 1024
+_DOCX_COMPAT_XML_MAX_BYTES = 16 * 1024 * 1024
+_DOCX_COMPAT_MAX_RELATIONSHIPS = 128
+_DOCX_COMPAT_MAX_REFERENCES = 128
+_DOCX_DOCUMENT_PART = "word/document.xml"
+_DOCX_RELATIONSHIPS_PART = "word/_rels/document.xml.rels"
+_OOXML_IMAGE_RELATIONSHIP = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+)
+_PACKAGE_RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_OFFICE_RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_DRAWINGML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_WORDPROCESSINGML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_WORDPROCESSING_DRAWING_NS = (
+    "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ValidatedDocumentSource:
     format_code: DocumentSourceFormatCode
@@ -23,6 +46,95 @@ class ValidatedDocumentSource:
     canonical_extension: str
     size_bytes: int
     page_count: int | None
+
+
+def normalize_docx_null_image_placeholders(
+    source: bytes,
+    *,
+    format_code: str,
+) -> bytes:
+    """Remove only missing WPS ../NULL image relationships used by zero-size drawings."""
+    if format_code != DocumentSourceFormatCode.DOCX.value:
+        return source
+    if not source or len(source) > DOCLING_LAYOUT_OCR_V2.max_source_bytes:
+        _reject("document_source_size_exceeded", "文档原件大小必须在 1 字节到 25 MiB 之间")
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(source)) as archive:
+            infos = archive.infolist()
+            _require_ooxml_archive_bounds(infos)
+            names = {item.filename for item in infos}
+            if _DOCX_RELATIONSHIPS_PART not in names:
+                return source
+            if sum(item.filename == _DOCX_RELATIONSHIPS_PART for item in infos) != 1:
+                return source
+
+            relationship_info = archive.getinfo(_DOCX_RELATIONSHIPS_PART)
+            _require_docx_compat_xml_size(relationship_info.file_size)
+            relationship_xml = archive.read(relationship_info)
+            if b"../NULL" not in relationship_xml:
+                return source
+            relationship_document = _parse_docx_compat_xml(relationship_xml)
+            relationships = [
+                element
+                for element in relationship_document.getElementsByTagNameNS(
+                    _PACKAGE_RELATIONSHIPS_NS,
+                    "Relationship",
+                )
+                if element.getAttribute("Type") == _OOXML_IMAGE_RELATIONSHIP
+                and element.getAttribute("Target") == "../NULL"
+            ]
+            if not relationships or "NULL" in names:
+                return source
+            if len(relationships) > _DOCX_COMPAT_MAX_RELATIONSHIPS:
+                _reject(
+                    "document_source_archive_limit_exceeded",
+                    "Office 文档兼容关系数量超限",
+                )
+            if (
+                _DOCX_DOCUMENT_PART not in names
+                or sum(item.filename == _DOCX_DOCUMENT_PART for item in infos) != 1
+            ):
+                _reject_docx_null_placeholder_unsafe()
+
+            document_info = archive.getinfo(_DOCX_DOCUMENT_PART)
+            _require_docx_compat_xml_size(document_info.file_size)
+            document_xml = archive.read(document_info)
+            document = _parse_docx_compat_xml(document_xml)
+            drawings = _require_safe_docx_null_placeholders(
+                document,
+                relationships=relationships,
+            )
+
+            for drawing in drawings:
+                if drawing.parentNode is None:
+                    _reject_docx_null_placeholder_unsafe()
+                drawing.parentNode.removeChild(drawing)
+            for relationship in relationships:
+                if relationship.parentNode is None:
+                    _reject_docx_null_placeholder_unsafe()
+                relationship.parentNode.removeChild(relationship)
+
+            replacements = {
+                _DOCX_DOCUMENT_PART: document.toxml(encoding="UTF-8"),
+                _DOCX_RELATIONSHIPS_PART: relationship_document.toxml(encoding="UTF-8"),
+            }
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, mode="w") as normalized:
+                for info in infos:
+                    content = replacements.get(info.filename)
+                    if content is None:
+                        content = archive.read(info)
+                    normalized.writestr(info, content)
+    except NonRetryableExecutionError:
+        raise
+    except (zipfile.BadZipFile, KeyError, OSError, RuntimeError) as exc:
+        raise _error("document_source_malformed", "Office 文件结构无效") from exc
+
+    normalized_source = output.getvalue()
+    if len(normalized_source) > DOCLING_LAYOUT_OCR_V2.max_source_bytes:
+        _reject("document_source_size_exceeded", "规范化文档超过 25 MiB 上限")
+    return normalized_source
 
 
 def validate_document_source(
@@ -130,8 +242,7 @@ def _validate_ooxml(stream: BinaryIO, definition: DocumentSourceDefinition) -> N
         with zipfile.ZipFile(stream) as archive:
             infos = archive.infolist()
             names = {item.filename for item in infos}
-            if len(infos) > 20_000 or sum(item.file_size for item in infos) > 200 * 1024 * 1024:
-                _reject("document_source_archive_limit_exceeded", "Office 文档展开规模超限")
+            _require_ooxml_archive_bounds(infos)
             if "[Content_Types].xml" not in names or required_part not in names:
                 _reject("document_source_signature_mismatch", "Office 文件结构与扩展名不一致")
             if any(name.lower().endswith("vbaproject.bin") for name in names):
@@ -142,6 +253,158 @@ def _validate_ooxml(stream: BinaryIO, definition: DocumentSourceDefinition) -> N
         raise
     except (zipfile.BadZipFile, OSError, RuntimeError) as exc:
         raise _error("document_source_malformed", "Office 文件结构无效") from exc
+
+
+def _require_ooxml_archive_bounds(infos: list[zipfile.ZipInfo]) -> None:
+    if (
+        len(infos) > _OOXML_MAX_ARCHIVE_ENTRIES
+        or sum(item.file_size for item in infos) > _OOXML_MAX_EXPANDED_BYTES
+    ):
+        _reject("document_source_archive_limit_exceeded", "Office 文档展开规模超限")
+
+
+def _require_docx_compat_xml_size(size_bytes: int) -> None:
+    if size_bytes < 1 or size_bytes > _DOCX_COMPAT_XML_MAX_BYTES:
+        _reject(
+            "document_source_archive_limit_exceeded",
+            "Office 文档兼容 XML 大小超限",
+        )
+
+
+def _parse_docx_compat_xml(content: bytes) -> minidom.Document:
+    lowered = content.lower()
+    if b"<!doctype" in lowered or b"<!entity" in lowered:
+        _reject_docx_null_placeholder_unsafe()
+    try:
+        return minidom.parseString(content)
+    except (ExpatError, ValueError) as exc:
+        raise _error(
+            "docx_null_image_placeholder_unsafe",
+            "DOCX 图片占位结构不安全",
+        ) from exc
+
+
+def _require_safe_docx_null_placeholders(
+    document: minidom.Document,
+    *,
+    relationships: list[minidom.Element],
+) -> list[minidom.Element]:
+    drawings: dict[int, minidom.Element] = {}
+    reference_count = 0
+    for relationship in relationships:
+        if relationship.getAttribute("TargetMode").lower() == "external":
+            _reject_docx_null_placeholder_unsafe()
+        relationship_id = relationship.getAttribute("Id")
+        if not relationship_id:
+            _reject_docx_null_placeholder_unsafe()
+        referenced_blips: list[minidom.Element] = []
+        for element in document.getElementsByTagName("*"):
+            for attribute_index in range(element.attributes.length):
+                attribute = element.attributes.item(attribute_index)
+                if (
+                    attribute is not None
+                    and attribute.namespaceURI == _OFFICE_RELATIONSHIPS_NS
+                    and attribute.value == relationship_id
+                ):
+                    if not (
+                        element.namespaceURI == _DRAWINGML_NS
+                        and element.localName == "blip"
+                        and attribute.localName == "embed"
+                    ):
+                        _reject_docx_null_placeholder_unsafe()
+                    referenced_blips.append(element)
+        if not referenced_blips:
+            _reject_docx_null_placeholder_unsafe()
+        reference_count += len(referenced_blips)
+        if reference_count > _DOCX_COMPAT_MAX_REFERENCES:
+            _reject(
+                "document_source_archive_limit_exceeded",
+                "Office 文档兼容引用数量超限",
+            )
+        for blip in referenced_blips:
+            drawing = _ancestor_element(
+                blip,
+                namespace=_WORDPROCESSINGML_NS,
+                local_name="drawing",
+            )
+            container = _ancestor_drawing_container(blip)
+            if drawing is None or container is None:
+                _reject_docx_null_placeholder_unsafe()
+            if not _drawing_references_only(drawing, relationship_id):
+                _reject_docx_null_placeholder_unsafe()
+            extents = container.getElementsByTagNameNS(
+                _WORDPROCESSING_DRAWING_NS,
+                "extent",
+            )
+            if len(extents) != 1:
+                _reject_docx_null_placeholder_unsafe()
+            try:
+                width = int(extents[0].getAttribute("cx"))
+                height = int(extents[0].getAttribute("cy"))
+            except ValueError:
+                _reject_docx_null_placeholder_unsafe()
+            if width < 0 or height < 0 or (width != 0 and height != 0):
+                _reject_docx_null_placeholder_unsafe()
+            drawings[id(drawing)] = drawing
+    return list(drawings.values())
+
+
+def _ancestor_element(
+    element: minidom.Element,
+    *,
+    namespace: str,
+    local_name: str,
+) -> minidom.Element | None:
+    current = element.parentNode
+    while current is not None:
+        if (
+            current.nodeType == Node.ELEMENT_NODE
+            and current.namespaceURI == namespace
+            and current.localName == local_name
+        ):
+            return current  # type: ignore[return-value]
+        current = current.parentNode
+    return None
+
+
+def _ancestor_drawing_container(element: minidom.Element) -> minidom.Element | None:
+    current = element.parentNode
+    while current is not None:
+        if (
+            current.nodeType == Node.ELEMENT_NODE
+            and current.namespaceURI == _WORDPROCESSING_DRAWING_NS
+            and current.localName in {"inline", "anchor"}
+        ):
+            return current  # type: ignore[return-value]
+        current = current.parentNode
+    return None
+
+
+def _drawing_references_only(
+    drawing: minidom.Element,
+    relationship_id: str,
+) -> bool:
+    references: list[tuple[minidom.Element, str, str | None]] = []
+    elements = [drawing, *drawing.getElementsByTagName("*")]
+    for element in elements:
+        for attribute_index in range(element.attributes.length):
+            attribute = element.attributes.item(attribute_index)
+            if attribute is not None and attribute.namespaceURI == _OFFICE_RELATIONSHIPS_NS:
+                references.append((element, attribute.value, attribute.localName))
+    return bool(references) and all(
+        element.namespaceURI == _DRAWINGML_NS
+        and element.localName == "blip"
+        and value == relationship_id
+        and local_name == "embed"
+        for element, value, local_name in references
+    )
+
+
+def _reject_docx_null_placeholder_unsafe() -> None:
+    _reject(
+        "docx_null_image_placeholder_unsafe",
+        "DOCX 图片占位结构不安全",
+    )
 
 
 def _validate_image(stream: BinaryIO, definition: DocumentSourceDefinition) -> None:
