@@ -178,46 +178,120 @@ def test_environment_scoped_resource_atomically_creates_an_explicit_missing_envi
         runtime.database.close()
 
 
-def test_missing_environment_autocreate_is_rejected_for_base_scope() -> None:
+def test_base_scoped_resource_atomically_creates_an_explicit_missing_topology() -> None:
     runtime = container()
     _grant_platform_config_management(runtime, "user_local_admin")
     service = runtime.platform_config_service.governed_resources
     try:
-        with pytest.raises(NonRetryableExecutionError) as rejected:
-            service.create_resource(
-                {
-                    "code": "invalid_custom_base_redis",
-                    "name": "Invalid Custom Base Redis",
-                    "resource_kind": "redis",
-                    "scope_type": "base",
-                    "environment_code": "missing_base_environment",
-                    "base_code": "missing_base",
-                    "create_environment_if_missing": True,
-                    "provider_type": "redis",
-                    "config": {
-                        "host": "redis.internal",
-                        "port": 6379,
-                        "database": 0,
-                        "username": "",
-                        "tls": {"enabled": False, "verify_certificate": True},
-                    },
-                    "secret_refs": {},
+        created = service.create_resource(
+            {
+                "code": "custom_base_redis",
+                "name": "Custom Base Redis",
+                "resource_kind": "redis",
+                "scope_type": "base",
+                "environment_code": "custom_base_environment",
+                "base_code": "custom_base",
+                "workshop_code": "",
+                "create_environment_if_missing": True,
+                "create_base_if_missing": True,
+                "base_engine_if_missing": "mysql",
+                "provider_type": "redis",
+                "config": {
+                    "host": "redis.internal",
+                    "port": 6379,
+                    "database": 0,
+                    "username": "",
+                    "tls": {"enabled": False, "verify_certificate": True},
                 },
-                actor_id="user_local_admin",
-            )
+                "secret_refs": {},
+            },
+            actor_id="user_local_admin",
+            correlation_id="custom-base-test",
+        )
 
-        assert rejected.value.error_code == "resource_environment_autocreate_scope_invalid"
-        assert (
-            runtime.platform_config_service.repository.get_environment_by_code(
-                "missing_base_environment"
-            )
-            is None
+        environment = runtime.platform_config_service.repository.get_environment_by_code(
+            "custom_base_environment"
+        )
+        base = runtime.platform_config_service.repository.get_base_by_code(
+            environment_code="custom_base_environment",
+            code="custom_base",
+        )
+        assert environment is not None
+        assert base is not None
+        assert base["engine"] == "mysql"
+        assert created["resource"]["environment_id"] == environment["id"]
+        assert created["resource"]["base_id"] == base["id"]
+        audits = runtime.platform_config_service.repository.list_config_audit(limit=20)
+        assert {
+            (item["entity_type"], item["action"], item["correlation_id"])
+            for item in audits
+        }.issuperset(
+            {
+                ("environment", "create_from_tool_resource", "custom-base-test"),
+                ("base", "create_from_tool_resource", "custom-base-test"),
+            }
         )
     finally:
         runtime.database.close()
 
 
-def test_created_environment_rolls_back_when_resource_creation_fails(
+def test_workshop_scoped_resource_atomically_creates_an_explicit_missing_topology() -> None:
+    runtime = container()
+    _grant_platform_config_management(runtime, "user_local_admin")
+    service = runtime.platform_config_service.governed_resources
+    try:
+        created = service.create_resource(
+            {
+                "code": "custom_workshop_redis",
+                "name": "Custom Workshop Redis",
+                "resource_kind": "redis",
+                "scope_type": "workshop",
+                "environment_code": "custom_workshop_environment",
+                "base_code": "custom_workshop_base",
+                "workshop_code": "custom_workshop",
+                "create_environment_if_missing": True,
+                "create_base_if_missing": True,
+                "create_workshop_if_missing": True,
+                "base_engine_if_missing": "sqlserver",
+                "provider_type": "redis",
+                "config": {
+                    "host": "redis.internal",
+                    "port": 6379,
+                    "database": 0,
+                    "username": "",
+                    "tls": {"enabled": False, "verify_certificate": True},
+                },
+                "secret_refs": {},
+            },
+            actor_id="user_local_admin",
+            correlation_id="custom-workshop-test",
+        )
+
+        base = runtime.platform_config_service.repository.get_base_by_code(
+            environment_code="custom_workshop_environment",
+            code="custom_workshop_base",
+        )
+        workshop = runtime.platform_config_service.repository.get_workshop_by_code(
+            environment_code="custom_workshop_environment",
+            base_code="custom_workshop_base",
+            code="custom_workshop",
+        )
+        assert base is not None
+        assert base["engine"] == "sqlserver"
+        assert workshop is not None
+        assert created["resource"]["workshop_id"] == workshop["id"]
+        audits = runtime.platform_config_service.repository.list_config_audit(limit=20)
+        assert any(
+            item["entity_type"] == "workshop"
+            and item["action"] == "create_from_tool_resource"
+            and item["correlation_id"] == "custom-workshop-test"
+            for item in audits
+        )
+    finally:
+        runtime.database.close()
+
+
+def test_created_topology_rolls_back_when_resource_creation_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = container()
@@ -232,14 +306,17 @@ def test_created_environment_rolls_back_when_resource_creation_fails(
         with pytest.raises(RuntimeError, match="simulated resource insert failure"):
             service.create_resource(
                 {
-                    "code": "rollback_custom_environment_redis",
-                    "name": "Rollback Custom Environment Redis",
+                    "code": "rollback_custom_workshop_redis",
+                    "name": "Rollback Custom Workshop Redis",
                     "resource_kind": "redis",
-                    "scope_type": "environment",
+                    "scope_type": "workshop",
                     "environment_code": "rollback_custom_environment",
-                    "base_code": "",
-                    "workshop_code": "",
+                    "base_code": "rollback_custom_base",
+                    "workshop_code": "rollback_custom_workshop",
                     "create_environment_if_missing": True,
+                    "create_base_if_missing": True,
+                    "create_workshop_if_missing": True,
+                    "base_engine_if_missing": "mysql",
                     "provider_type": "redis",
                     "config": {
                         "host": "redis.internal",
@@ -256,6 +333,13 @@ def test_created_environment_rolls_back_when_resource_creation_fails(
         assert (
             runtime.platform_config_service.repository.get_environment_by_code(
                 "rollback_custom_environment"
+            )
+            is None
+        )
+        assert (
+            runtime.platform_config_service.repository.get_base_by_code(
+                environment_code="rollback_custom_environment",
+                code="rollback_custom_base",
             )
             is None
         )

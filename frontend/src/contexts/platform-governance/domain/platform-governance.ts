@@ -194,4 +194,7 @@ export type ResourceFormInput = {
   secret_refs: Record<string, string>
   scope_bindings: Array<Record<string, unknown>>
   create_environment_if_missing?: boolean
+  create_base_if_missing?: boolean
+  create_workshop_if_missing?: boolean
+  base_engine_if_missing?: "postgresql" | "mysql" | "sqlserver" | "oracle"
 }

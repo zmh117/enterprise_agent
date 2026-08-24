@@ -159,6 +159,7 @@ function emptyForm(): ResourceFormInput {
     config: { ...defaultConfigs.mysql },
     secret_refs: {},
     scope_bindings: [],
+    base_engine_if_missing: "mysql",
   }
 }
 
@@ -763,14 +764,40 @@ function ResourceFormSheet({
     (secret) => secret.configured
   )
   const normalizedEnvironmentCode = form.environment_code.trim()
+  const normalizedBaseCode = form.base_code.trim()
+  const normalizedWorkshopCode = form.workshop_code.trim()
   const environmentExists = (options.environments.data ?? []).some(
     (item) => item.code === normalizedEnvironmentCode
   )
+  const baseExists = (options.bases.data ?? []).some(
+    (item) =>
+      item.environment_code === normalizedEnvironmentCode &&
+      item.code === normalizedBaseCode
+  )
+  const workshopExists = (options.workshops.data ?? []).some(
+    (item) =>
+      item.environment_code === normalizedEnvironmentCode &&
+      item.base_code === normalizedBaseCode &&
+      item.code === normalizedWorkshopCode
+  )
   const createsEnvironment =
     !resource &&
-    form.scope_type === "environment" &&
+    form.scope_type !== "global" &&
     Boolean(normalizedEnvironmentCode) &&
     !environmentExists
+  const createsBase =
+    !resource &&
+    (form.scope_type === "base" || form.scope_type === "workshop") &&
+    Boolean(normalizedEnvironmentCode) &&
+    Boolean(normalizedBaseCode) &&
+    !baseExists
+  const createsWorkshop =
+    !resource &&
+    form.scope_type === "workshop" &&
+    Boolean(normalizedEnvironmentCode) &&
+    Boolean(normalizedBaseCode) &&
+    Boolean(normalizedWorkshopCode) &&
+    !workshopExists
   const providerContracts = options.providerContracts.data ?? []
   const providerOptions = providerContracts.length
     ? providerContracts
@@ -825,15 +852,27 @@ function ResourceFormSheet({
 
   function submit(event: FormEvent) {
     event.preventDefault()
-    const normalized = {
+    const normalized: ResourceFormInput = {
       ...form,
       environment_code: normalizedEnvironmentCode,
-      base_code: form.base_code.trim(),
-      workshop_code: form.workshop_code.trim(),
+      base_code: normalizedBaseCode,
+      workshop_code: normalizedWorkshopCode,
       config: { ...form.config },
     }
     if (createsEnvironment) normalized.create_environment_if_missing = true
     else delete normalized.create_environment_if_missing
+    if (createsBase) {
+      normalized.create_base_if_missing = true
+      normalized.base_engine_if_missing =
+        form.resource_kind === "database"
+          ? (form.provider_type as "mysql" | "sqlserver" | "oracle")
+          : (form.base_engine_if_missing ?? "mysql")
+    } else {
+      delete normalized.create_base_if_missing
+      delete normalized.base_engine_if_missing
+    }
+    if (createsWorkshop) normalized.create_workshop_if_missing = true
+    else delete normalized.create_workshop_if_missing
     if (normalized.provider_type === "oracle") {
       if (oracleAddressType === "sid") {
         delete normalized.config.service_name
@@ -963,7 +1002,6 @@ function ResourceFormSheet({
                 options={options.environments.data ?? []}
                 allowCustomValue={!resource}
                 customValueExists={environmentExists}
-                customValueScopeSupported={form.scope_type === "environment"}
                 onChange={(environmentCode) =>
                   setForm({
                     ...form,
@@ -980,6 +1018,8 @@ function ResourceFormSheet({
                 value={form.base_code}
                 disabled={Boolean(resource)}
                 options={bases}
+                allowCustomValue={!resource}
+                customValueExists={baseExists}
                 onChange={(baseCode) =>
                   setForm({
                     ...form,
@@ -995,10 +1035,47 @@ function ResourceFormSheet({
                 value={form.workshop_code}
                 disabled={Boolean(resource)}
                 options={workshops}
+                allowCustomValue={!resource}
+                customValueExists={workshopExists}
                 onChange={(workshopCode) =>
                   setForm({ ...form, workshop_code: workshopCode })
                 }
               />
+            ) : null}
+            {createsBase && form.resource_kind === "redis" ? (
+              <Field>
+                <FieldLabel htmlFor="new-base-engine">
+                  新基地默认数据库引擎
+                </FieldLabel>
+                <Select
+                  value={form.base_engine_if_missing ?? "mysql"}
+                  onValueChange={(value) =>
+                    setForm({
+                      ...form,
+                      base_engine_if_missing: value as NonNullable<
+                        ResourceFormInput["base_engine_if_missing"]
+                      >,
+                    })
+                  }
+                >
+                  <SelectTrigger
+                    id="new-base-engine"
+                    aria-label="新基地默认数据库引擎"
+                    className="w-full"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="mysql">MySQL</SelectItem>
+                    <SelectItem value="sqlserver">SQL Server</SelectItem>
+                    <SelectItem value="oracle">Oracle</SelectItem>
+                    <SelectItem value="postgresql">PostgreSQL</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  基地拓扑要求默认数据库引擎；该字段不改变当前 Redis 连接。
+                </FieldDescription>
+              </Field>
             ) : null}
           </FieldGroup>
 
@@ -1081,7 +1158,6 @@ function TopologyCombobox({
   options,
   allowCustomValue = false,
   customValueExists = true,
-  customValueScopeSupported = true,
   onChange,
 }: {
   label: string
@@ -1090,7 +1166,6 @@ function TopologyCombobox({
   options: TopologyItem[]
   allowCustomValue?: boolean
   customValueExists?: boolean
-  customValueScopeSupported?: boolean
   onChange: (value: string) => void
 }) {
   const optionCodes = options.map((option) => option.code)
@@ -1155,18 +1230,12 @@ function TopologyCombobox({
       )}
       {allowCustomValue ? (
         customValue ? (
-          <FieldDescription
-            className={
-              customValueScopeSupported ? "text-amber-700" : "text-destructive"
-            }
-          >
-            {customValueScopeSupported
-              ? `环境“${value.trim()}”尚不存在，保存 Draft 时将同时创建。`
-              : "新环境只能用于环境级作用域；基地或车间作用域必须选择已有环境。"}
+          <FieldDescription className="text-amber-700">
+            {label}“{value.trim()}”尚不存在，保存 Draft 时将同时创建。
           </FieldDescription>
         ) : (
           <FieldDescription>
-            可选择已有环境，也可直接输入环境编码。
+            可选择已有{label}，也可直接输入{label}编码。
           </FieldDescription>
         )
       ) : null}

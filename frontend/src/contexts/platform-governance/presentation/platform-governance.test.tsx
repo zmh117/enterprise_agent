@@ -431,7 +431,7 @@ describe("Phase 5 platform governance UI", () => {
     expect(screen.getByLabelText("Port")).toHaveAttribute("type", "number")
   })
 
-  it("accepts a custom environment code and explains the topology boundary", async () => {
+  it("accepts a custom environment code and explains that save creates it", async () => {
     let createBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
@@ -488,9 +488,7 @@ describe("Phase 5 platform governance UI", () => {
 
     expect(environment).toHaveValue("customer_prod")
     expect(
-      screen.getByText(
-        "新环境只能用于环境级作用域；基地或车间作用域必须选择已有环境。"
-      )
+      screen.getByText("环境“customer_prod”尚不存在，保存 Draft 时将同时创建。")
     ).toBeInTheDocument()
 
     const resourceName = screen.getByLabelText("资源名称")
@@ -535,6 +533,114 @@ describe("Phase 5 platform governance UI", () => {
         base_code: "",
         workshop_code: "",
         create_environment_if_missing: true,
+      })
+    )
+  })
+
+  it("accepts custom base and workshop codes and creates the missing hierarchy on save", async () => {
+    let createBody: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/api/platform/resources") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>
+        return response({
+          resource: { id: "resource-custom-workshop" },
+          draft: {
+            id: "draft-custom-workshop",
+            resource_id: "resource-custom-workshop",
+            draft_revision: 1,
+            provider_type: "redis",
+            config: {
+              host: "redis.internal",
+              port: 6379,
+              database: 0,
+              username: "",
+              tls: { enabled: false, verify_certificate: true },
+            },
+            secret_refs: {},
+            status: "DRAFT",
+            updated_at: "2026-08-24T00:00:00Z",
+          },
+        })
+      }
+      if (url.includes("/api/platform/resources")) {
+        return response({ resources: [] })
+      }
+      if (url.includes("/api/platform/secrets")) {
+        return response({ secrets: [] })
+      }
+      if (url.includes("/api/platform/environments")) {
+        return response({
+          environments: [
+            {
+              id: "environment-local",
+              code: "local",
+              display_name: "本地环境",
+              status: "enabled",
+            },
+          ],
+        })
+      }
+      if (url.includes("/api/platform/bases")) return response({ bases: [] })
+      return response({ workshops: [] })
+    })
+    renderWithQuery(<ToolResourcesPage />)
+
+    expect(
+      await screen.findByText("当前筛选下没有工具资源")
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "新建资源" }))
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Provider" }))
+    const redisProvider = await screen.findByRole("option", { name: "Redis" })
+    fireEvent.pointerDown(redisProvider, { pointerType: "mouse", button: 0 })
+    fireEvent.click(redisProvider)
+
+    fireEvent.click(screen.getByRole("combobox", { name: "作用域层级" }))
+    const workshopScope = await screen.findByRole("option", { name: "车间" })
+    fireEvent.pointerDown(workshopScope, { pointerType: "mouse", button: 0 })
+    fireEvent.click(workshopScope)
+
+    fireEvent.change(screen.getByLabelText("环境"), {
+      target: { value: "local" },
+    })
+    fireEvent.change(screen.getByLabelText("基地"), {
+      target: { value: "new_base" },
+    })
+    fireEvent.change(screen.getByLabelText("车间"), {
+      target: { value: "new_workshop" },
+    })
+
+    expect(
+      screen.getByText("基地“new_base”尚不存在，保存 Draft 时将同时创建。")
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("车间“new_workshop”尚不存在，保存 Draft 时将同时创建。")
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("combobox", { name: "新基地默认数据库引擎" })
+    ).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText("资源编码"), {
+      target: { value: "custom_workshop_redis" },
+    })
+    fireEvent.change(screen.getByLabelText("资源名称"), {
+      target: { value: "Custom Workshop Redis" },
+    })
+    fireEvent.change(screen.getByLabelText("Host"), {
+      target: { value: "redis.internal" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "保存 Draft" }))
+
+    await waitFor(() =>
+      expect(createBody).toMatchObject({
+        scope_type: "workshop",
+        environment_code: "local",
+        base_code: "new_base",
+        workshop_code: "new_workshop",
+        create_base_if_missing: true,
+        create_workshop_if_missing: true,
+        base_engine_if_missing: "mysql",
       })
     )
   })

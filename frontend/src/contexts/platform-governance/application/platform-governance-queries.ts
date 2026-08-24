@@ -114,6 +114,8 @@ export function useCreateGovernedResource() {
       Promise.all([
         client.invalidateQueries({ queryKey: resourceKey }),
         client.invalidateQueries({ queryKey: environmentKey }),
+        client.invalidateQueries({ queryKey: ["platform-governance", "bases"] }),
+        client.invalidateQueries({ queryKey: ["platform-governance", "workshops"] }),
       ]),
   })
 }

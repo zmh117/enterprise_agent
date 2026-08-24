@@ -234,6 +234,52 @@ class PlatformConfigRepository:
         )
         return self.get_base(entity_id)
 
+    def create_base_if_missing(
+        self,
+        *,
+        environment_code: str,
+        code: str,
+        engine: str,
+        display_name: str = "",
+    ) -> tuple[dict[str, Any], bool]:
+        """Create an enabled base without mutating an existing one."""
+        environment_code = validate_topology_code(
+            environment_code,
+            field="environment_code",
+            level="Environment",
+        )
+        code = validate_topology_code(
+            code,
+            field="base_code",
+            level="Base",
+        )
+        environment = self._require_environment(environment_code)
+        timestamp = now_iso()
+        entity_id = new_id("base")
+        inserted = self.database.execute(
+            """
+            insert into platform_base
+              (id, environment_id, code, display_name, engine, status, aliases_json,
+               metadata_json, revision, created_at, updated_at)
+            values (?, ?, ?, ?, ?, 'enabled', '[]', '{}', 1, ?, ?)
+            on conflict(environment_id, code) do nothing
+            returning id
+            """,
+            (
+                entity_id,
+                environment["id"],
+                code,
+                display_name,
+                engine,
+                timestamp,
+                timestamp,
+            ),
+        )
+        base = self.get_base_by_code(environment_code=environment_code, code=code)
+        if base is None:
+            raise RuntimeError(f"Platform base creation failed: {environment_code}/{code}")
+        return base, bool(inserted)
+
     def list_bases(
         self, *, environment_code: str | None = None, include_disabled: bool = True
     ) -> list[dict[str, Any]]:
@@ -375,6 +421,56 @@ class PlatformConfigRepository:
             ),
         )
         return self.get_workshop(entity_id)
+
+    def create_workshop_if_missing(
+        self,
+        *,
+        environment_code: str,
+        base_code: str,
+        code: str,
+        display_name: str = "",
+    ) -> tuple[dict[str, Any], bool]:
+        """Create an enabled workshop without mutating an existing one."""
+        environment_code = validate_topology_code(
+            environment_code,
+            field="environment_code",
+            level="Environment",
+        )
+        base_code = validate_topology_code(
+            base_code,
+            field="base_code",
+            level="Base",
+        )
+        code = validate_topology_code(
+            code,
+            field="workshop_code",
+            level="Workshop",
+        )
+        base = self._require_base(environment_code=environment_code, code=base_code)
+        timestamp = now_iso()
+        entity_id = new_id("workshop")
+        inserted = self.database.execute(
+            """
+            insert into platform_workshop
+              (id, base_id, code, display_name, table_prefix, redis_key_prefix,
+               loki_labels_json, status, aliases_json, metadata_json, revision,
+               created_at, updated_at)
+            values (?, ?, ?, ?, '', '', '{}', 'enabled', '[]', '{}', 1, ?, ?)
+            on conflict(base_id, code) do nothing
+            returning id
+            """,
+            (entity_id, base["id"], code, display_name, timestamp, timestamp),
+        )
+        workshop = self.get_workshop_by_code(
+            environment_code=environment_code,
+            base_code=base_code,
+            code=code,
+        )
+        if workshop is None:
+            raise RuntimeError(
+                f"Platform workshop creation failed: {environment_code}/{base_code}/{code}"
+            )
+        return workshop, bool(inserted)
 
     def list_workshops(
         self,

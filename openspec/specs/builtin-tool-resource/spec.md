@@ -130,6 +130,21 @@ DB、Redis、Loki Resource Draft SHALL 在同一个内容哈希中保存 Provide
 - **WHEN** 管理员查看已发布的 DB、Redis 或 Loki Resource Revision
 - **THEN** 页面只读展示该版本的连接安全摘要和数据范围，并要求从该版本创建 Draft 后才能修改
 
+### Requirement: New Resource can create explicitly entered topology nodes atomically
+“新建工具资源”的 Environment、Base 和 Workshop 字段 SHALL 同时支持从启用目录下拉选择和手动输入精确业务编码。管理员手动输入不存在的节点并保存初始 Resource Draft 时，系统 SHALL 按 Environment → Base → Workshop 的父子顺序在同一事务内创建明确缺失的节点、记录平台配置审计并绑定新 Resource；MUST NOT 猜测或批量生成未输入的拓扑。新 Base MUST 具有明确的默认数据库引擎；数据库 Resource 可使用当前数据库 Provider，Redis Resource 必须提交受支持的引擎选择。
+#### Scenario: 手动输入缺失基地并保存
+- **WHEN** 具有 `platform_config:manage` 的管理员选择或输入 Environment，并在 Base 字段输入该 Environment 下尚不存在的精确编码后保存基地级 Resource Draft
+- **THEN** 系统在同一事务内创建启用 Base、记录审计、创建 Resource 与初始 Draft，并让该 Resource 绑定新 Base
+#### Scenario: 手动输入缺失车间并保存
+- **WHEN** 管理员在车间级 Resource 中输入缺失的 Environment、Base 或 Workshop 精确编码
+- **THEN** 系统只创建该精确父子路径中缺失的节点，随后创建 Resource 与初始 Draft
+#### Scenario: Resource Draft 创建失败
+- **WHEN** 拓扑节点补建后 Resource 或初始 Draft 创建失败
+- **THEN** 同一事务回滚本次补建的 Environment、Base 和 Workshop，不留下半完成拓扑
+#### Scenario: 输入编码已存在但停用
+- **WHEN** 手动输入的任一拓扑编码在对应父节点下已存在但处于停用状态
+- **THEN** 系统拒绝保存且不得新建同编码替代节点或自动启用原节点
+
 ### Requirement: Loki Draft discovers arbitrary exact labels before unified publish
 Loki Resource Draft SHALL 在连接测试成功后有界发现当前可见 label keys，并允许管理员按此前已选精确条件逐级发现任意 key 的候选 values。平台 target 与 Loki label 不要求同名；管理员 MUST 将一个 Environment 或 Environment/Base 目标显式映射到一个或多个唯一 key 的精确 `key=value` AND 条件。
 #### Scenario: 平台基地使用不同名称的 Loki labels

@@ -32,6 +32,7 @@ from .validation import (
     assert_no_secret_payload,
     normalize_json_object,
     validate_code,
+    validate_engine,
     validate_resource_placement,
     validate_secret_ref,
 )
@@ -188,17 +189,36 @@ class GovernedResourceService:
                 error_code="resource_scope_invalid",
             )
         create_environment_if_missing = payload.get("create_environment_if_missing", False)
-        if not isinstance(create_environment_if_missing, bool):
+        create_base_if_missing = payload.get("create_base_if_missing", False)
+        create_workshop_if_missing = payload.get("create_workshop_if_missing", False)
+        for field_name, field_value, safe_name in (
+            ("create_environment_if_missing", create_environment_if_missing, "环境"),
+            ("create_base_if_missing", create_base_if_missing, "基地"),
+            ("create_workshop_if_missing", create_workshop_if_missing, "车间"),
+        ):
+            if not isinstance(field_value, bool):
+                raise NonRetryableExecutionError(
+                    f"{field_name} must be boolean",
+                    safe_message=f"自动创建{safe_name}参数无效",
+                    error_code="resource_topology_autocreate_invalid",
+                )
+        if create_environment_if_missing and scope_type == "global":
             raise NonRetryableExecutionError(
-                "create_environment_if_missing must be boolean",
-                safe_message="自动创建环境参数无效",
-                error_code="resource_environment_autocreate_invalid",
+                "Global Resource cannot create an Environment",
+                safe_message="全局资源不能自动创建环境",
+                error_code="resource_topology_autocreate_scope_invalid",
             )
-        if create_environment_if_missing and scope_type != "environment":
+        if create_base_if_missing and scope_type not in {"base", "workshop"}:
             raise NonRetryableExecutionError(
-                "Missing Environment can only be created for an Environment-scoped Resource",
-                safe_message="新环境只能直接用于环境级工具资源；基地或车间作用域必须选择已有拓扑",
-                error_code="resource_environment_autocreate_scope_invalid",
+                "Only Base or Workshop Resource can create a Base",
+                safe_message="只有基地级或车间级资源可以自动创建基地",
+                error_code="resource_topology_autocreate_scope_invalid",
+            )
+        if create_workshop_if_missing and scope_type != "workshop":
+            raise NonRetryableExecutionError(
+                "Only Workshop Resource can create a Workshop",
+                safe_message="只有车间级资源可以自动创建车间",
+                error_code="resource_topology_autocreate_scope_invalid",
             )
         environment_code = ""
         base_code = ""
@@ -247,6 +267,87 @@ class GovernedResourceService:
                         action="create_from_tool_resource",
                         actor_id=actor_id,
                         after=environment,
+                        correlation_id=correlation_id,
+                    )
+            if create_base_if_missing:
+                environment = self.config_repository.get_environment_by_code(
+                    environment_code
+                )
+                if not environment or environment.get("status") != "enabled":
+                    raise NonRetryableExecutionError(
+                        "Platform Environment for Base is unavailable",
+                        safe_message="新基地所属环境不存在或已停用",
+                        error_code="resource_environment_unavailable",
+                    )
+                provider_type = str(payload.get("provider_type") or "").lower()
+                base_engine = validate_engine(
+                    str(
+                        payload.get("base_engine_if_missing")
+                        or (provider_type if resource_kind == "database" else "")
+                    )
+                )
+                existing_base = self.config_repository.get_base_by_code(
+                    environment_code=environment_code,
+                    code=base_code,
+                )
+                if existing_base and existing_base.get("status") != "enabled":
+                    raise NonRetryableExecutionError(
+                        "Platform Base exists but is disabled",
+                        safe_message="输入的基地已存在但处于停用状态，请先启用该基地",
+                        error_code="resource_base_disabled",
+                    )
+                base, created_base = self.config_repository.create_base_if_missing(
+                    environment_code=environment_code,
+                    code=base_code,
+                    engine=base_engine,
+                    display_name=base_code,
+                )
+                if created_base:
+                    self.config_repository.record_config_audit(
+                        entity_type="base",
+                        entity_id=str(base["id"]),
+                        action="create_from_tool_resource",
+                        actor_id=actor_id,
+                        after=base,
+                        correlation_id=correlation_id,
+                    )
+            if create_workshop_if_missing:
+                base = self.config_repository.get_base_by_code(
+                    environment_code=environment_code,
+                    code=base_code,
+                )
+                if not base or base.get("status") != "enabled":
+                    raise NonRetryableExecutionError(
+                        "Platform Base for Workshop is unavailable",
+                        safe_message="新车间所属基地不存在或已停用",
+                        error_code="resource_base_unavailable",
+                    )
+                existing_workshop = self.config_repository.get_workshop_by_code(
+                    environment_code=environment_code,
+                    base_code=base_code,
+                    code=workshop_code,
+                )
+                if existing_workshop and existing_workshop.get("status") != "enabled":
+                    raise NonRetryableExecutionError(
+                        "Platform Workshop exists but is disabled",
+                        safe_message="输入的车间已存在但处于停用状态，请先启用该车间",
+                        error_code="resource_workshop_disabled",
+                    )
+                workshop, created_workshop = (
+                    self.config_repository.create_workshop_if_missing(
+                        environment_code=environment_code,
+                        base_code=base_code,
+                        code=workshop_code,
+                        display_name=workshop_code,
+                    )
+                )
+                if created_workshop:
+                    self.config_repository.record_config_audit(
+                        entity_type="workshop",
+                        entity_id=str(workshop["id"]),
+                        action="create_from_tool_resource",
+                        actor_id=actor_id,
+                        after=workshop,
                         correlation_id=correlation_id,
                     )
             environment_id, base_id, workshop_id = self.config_repository.resolve_scope_ids(
