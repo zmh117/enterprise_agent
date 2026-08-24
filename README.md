@@ -42,6 +42,12 @@ docker compose -f ones_mock/docker-compose.ones-mock.yml up --build -d
 docker compose up --build
 ```
 
+Windows Docker Desktop 部署同样使用上述命令。仓库通过 `.gitattributes` 强制所有
+Shell 脚本使用 LF，避免 Linux 镜像把 CRLF shebang 解析为 `bash\r`。Windows 文件共享
+无法稳定表达 Unix Secret 权限时，后端镜像只把白名单文件复制到容器自己的
+`${TMPDIR:-/tmp}/ea-secrets`，收紧为目录 `0700`、文件 `0400` 后再启动应用；原始宿主机
+Secret 不会被修改。具体安全边界见[平台固定 Master Key](docs/operations/platform-master-key.md)。
+
 `ones-mock` 是独立的本地开发服务，通过宿主机 `127.0.0.1:19121` 发布；主 Compose
 不再定义该服务，容器通过 `http://host.docker.internal:19121` 访问它。该 Mock 用于
 ONES 本人绑定、Token 刷新和 `ones_work_item_search` 验收。生产部署必须显式覆盖为

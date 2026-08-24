@@ -40,6 +40,23 @@ Compose 只把该文件只读挂载为 `/run/secrets/app_config_master_key`。�
 API、Worker 和 tool-mcp 在文件缺失、权限过宽、格式错误时
 拒绝启动，不生成临时 Key，也不回退到 `APP_CONFIG_MASTER_KEY` 明文环境变量。
 
+## Windows Docker Desktop 权限规范化
+
+Windows 文件共享可能把宿主 Secret 在 Linux 容器内呈现为 `0777`，不能满足上述
+只读校验。所有继承后端 `python-deps` 镜像的服务在应用启动前执行固定 ENTRYPOINT：
+
+- 只读取代码白名单中的 `*_FILE` 环境变量，不枚举 `/run/secrets`；
+- 只接受存在的绝对路径、regular file，拒绝符号链接；
+- 把文件复制到 `${TMPDIR:-/tmp}/ea-secrets`，目录设为 `0700`、文件设为 `0400`；
+- 将同一个环境变量改指向临时副本后，以 `exec` 启动原容器命令；
+- 不输出路径、文件内容、摘要或其它 Secret 派生值。
+
+`python-agent-runtime` 的 `TMPDIR` 已固定为 tmpfs
+`/tmp/python-agent-runtime`，因此副本位于
+`/tmp/python-agent-runtime/ea-secrets`。其它只读后端服务使用各自挂载的 `/tmp`
+tmpfs。脚本不会搜索 HOME、`/dev/shm` 或其它候选目录；目标目录不可写时容器失败关闭。
+临时副本不改变宿主 Secret，且随容器临时文件系统生命周期消失。
+
 ## 备份
 
 - 至少保留两份加密离线备份，分别由不同受控位置保管；

@@ -132,6 +132,7 @@ contract = [
   "test_variable_depth_topology.py",
   "test_webhook_api.py",
   "test_webhook_mapping_security.py",
+  "test_windows_container_compatibility.py",
   "test_webhook_trigger_service.py",
   "test_workflow_config.py",
   "test_workflow_fact_sources.py",

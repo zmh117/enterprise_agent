@@ -4,10 +4,13 @@ FROM node:22-trixie-slim AS node-runtime
 
 FROM python:3.12-slim AS python-deps
 WORKDIR /app
+COPY backend/docker/normalize_secrets_entrypoint.sh /usr/local/bin/normalize-secrets-entrypoint
+RUN chmod 0555 /usr/local/bin/normalize-secrets-entrypoint
 COPY pyproject.toml /app/
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'setuptools>=69', 'wheel', *deps])"
 ENV PYTHONPATH=/app/backend
+ENTRYPOINT ["/usr/local/bin/normalize-secrets-entrypoint"]
 
 FROM python-deps AS claude-runtime
 COPY --from=node-runtime /usr/local/ /usr/local/
