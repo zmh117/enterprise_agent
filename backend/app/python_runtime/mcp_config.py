@@ -22,6 +22,7 @@ from app.shared.mcp_server_policy import (
     validate_mcp_server_policies,
 )
 from app.python_runtime.claude_client import (
+    CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES,
     ClaudeSdkClient,
     build_system_prompt,
 )
@@ -556,6 +557,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             ],
             permission_mode="default",
             max_turns=context.max_turns,
+            max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES,
             cwd=sandbox.path,
             setting_sources=[],
             skills=[],

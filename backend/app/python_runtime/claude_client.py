@@ -57,6 +57,9 @@ from app.python_runtime.sdk_event_normalizer import (
     unavailable_accounting,
 )
 
+CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES = 64 * 1024 * 1024
+
+
 @dataclass(frozen=True)
 class ClaudeSdk:
     query: Callable[..., AsyncIterator[Any]]
@@ -362,6 +365,7 @@ class ClaudeSdkClient:
                     ],
                     permission_mode="dontAsk",
                     max_turns=1,
+                    max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES,
                     cwd=workspace,
                     setting_sources=[],
                     skills=[],
@@ -515,6 +519,7 @@ class ClaudeSdkClient:
             ],
             permission_mode="dontAsk",
             max_turns=context.max_turns,
+            max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES,
             cwd=sandbox.path,
             setting_sources=[],
             skills=[],

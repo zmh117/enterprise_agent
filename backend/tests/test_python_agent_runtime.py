@@ -816,6 +816,7 @@ def test_python_sdk_model_probe_is_single_turn_toolless_and_bounded() -> None:
     assert captured["tools"] == []
     assert captured["allowed_tools"] == []
     assert captured["max_turns"] == 1
+    assert captured["max_buffer_size"] == 64 * 1024 * 1024
     assert captured["setting_sources"] == []
     assert captured["skills"] == []
     assert {"Bash", "Write", "Edit", "WebFetch", "WebSearch"} <= set(captured["disallowed_tools"])
@@ -992,6 +993,7 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
         }
     }
     assert captured["allowed_tools"] == []
+    assert captured["max_buffer_size"] == 64 * 1024 * 1024
     assert (
         asyncio.run(
             captured["can_use_tool"](
