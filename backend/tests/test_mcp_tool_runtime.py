@@ -220,6 +220,13 @@ class _CurrentFileManifestService:
             "manifest_hash": "e" * 64,
             "observed_at": "2026-08-17T00:00:00Z",
             "items": [],
+            "readability_notices": [
+                {
+                    "file_name": "failed.docx",
+                    "status": "UNAVAILABLE",
+                    "error_code": "docling_conversion_failed",
+                }
+            ],
         }
 
 
@@ -545,6 +552,8 @@ def test_text_v2_context_exposes_log_read_only_and_markdown_output_rules() -> No
     assert "TXT/LOG/Markdown" in combined
     assert "LOG is read-only" in combined
     assert "TXT/Markdown" in combined
+    assert "safe file-status metadata" in combined
+    assert "do not claim access to the file body" in combined
 
 
 def test_context_filters_stale_file_tools_when_job_has_no_workspace() -> None:

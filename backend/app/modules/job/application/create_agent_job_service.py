@@ -1081,6 +1081,10 @@ class CreateAgentJobService:
         )
         decision = resolve_file_context(
             text=command.resolver_text or command.user_message,
+            requests_file_output=(
+                command.requests_file_output
+                or is_explicit_text_output_request(command.user_message)
+            ),
             current_attachments=tuple(
                 CurrentMessageAttachment(file_name=item.file_name, ordinal=ordinal)
                 for ordinal, item in enumerate(command.attachments, start=1)
@@ -1106,6 +1110,7 @@ class CreateAgentJobService:
                 message_external_id=str(row.get("message_external_id") or ""),
                 source_status=str(row.get("source_status") or ""),
                 readability_status=str(row.get("readability_status") or "NOT_REQUIRED"),
+                error_code=str(row.get("error_code") or ""),
                 source_ready_at=(
                     str(row["source_ready_at"]) if row.get("source_ready_at") else None
                 ),

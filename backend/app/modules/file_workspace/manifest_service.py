@@ -387,36 +387,92 @@ class JobFileManifestService:
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_invalid",
             )
-        readability_rows = self.repository.database.execute(
-            """
-            select file_name, readability_status, readability_error_code
-              from message_attachment
-             where job_id = ? and readability_status in ('PARTIAL', 'NO_TEXT', 'UNAVAILABLE')
-             order by ordinal, id
-            """,
-            (job_id,),
-        )
+        readability_notices = self._readability_notices(job_id)
         return {
             "schema_version": schema_version,
             "workspace_catalog_revision_id": str(snapshot["workspace_catalog_revision_id"]),
             "manifest_hash": str(snapshot["manifest_hash"]),
             "observed_at": to_utc_rfc3339(snapshot.get("created_at")) or "",
             "items": [canonicalize_file_time_fields(item) for item in projected],
-            **(
-                {
-                    "readability_notices": [
-                        {
-                            "file_name": str(row.get("file_name") or "")[:255],
-                            "status": str(row["readability_status"]),
-                            "error_code": str(row.get("readability_error_code") or "")[:128],
-                        }
-                        for row in readability_rows
-                    ]
-                }
-                if readability_rows
-                else {}
-            ),
+            **({"readability_notices": readability_notices} if readability_notices else {}),
         }
+
+    def _readability_notices(self, job_id: str) -> list[dict[str, str]]:
+        rows = self.repository.database.execute(
+            """
+            select file_name, status as source_status, readability_status,
+                   coalesce(nullif(readability_error_code, ''), failure_code, '')
+                     as error_code
+              from message_attachment
+             where job_id = ?
+               and (
+                 readability_status in ('PARTIAL', 'NO_TEXT', 'UNAVAILABLE')
+                 or status in ('REJECTED', 'FAILED')
+               )
+             order by ordinal, id
+            """,
+            (job_id,),
+        )
+        notices = []
+        for row in rows:
+            status = str(row.get("readability_status") or "")
+            if status not in {"PARTIAL", "NO_TEXT", "UNAVAILABLE"}:
+                status = "UNAVAILABLE"
+            notices.append(
+                {
+                    "file_name": str(row.get("file_name") or "")[:255],
+                    "status": status,
+                    "error_code": str(row.get("error_code") or "")[:128],
+                }
+            )
+        job = self.repository.database.execute_one(
+            """
+            select business_application_route_decision_json
+              from agent_job where id = ?
+            """,
+            (job_id,),
+        )
+        try:
+            route_decision = json.loads(
+                str((job or {}).get("business_application_route_decision_json") or "{}")
+            )
+        except json.JSONDecodeError:
+            route_decision = {}
+        dependencies = (
+            route_decision.get("file_turn_dependencies") if isinstance(route_decision, dict) else []
+        )
+        for dependency in dependencies if isinstance(dependencies, list) else []:
+            if not isinstance(dependency, dict):
+                continue
+            status = str(dependency.get("readability_status") or "")
+            if status not in {"PARTIAL", "NO_TEXT", "UNAVAILABLE"}:
+                if str(dependency.get("source_status") or "") not in {"REJECTED", "FAILED"}:
+                    continue
+                status = "UNAVAILABLE"
+            notices.append(
+                {
+                    "file_name": str(dependency.get("display_name") or "")[:255],
+                    "status": status,
+                    "error_code": str(
+                        dependency.get("error_code")
+                        or dependency.get("readability_error_code")
+                        or dependency.get("failure_code")
+                        or ""
+                    )[:128],
+                }
+            )
+        unique: list[dict[str, str]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for notice in notices:
+            identity = (
+                notice["file_name"],
+                notice["status"],
+                notice["error_code"],
+            )
+            if identity not in seen:
+                seen.add(identity)
+                unique.append(notice)
+        return unique
 
     def has_pending_text_attachments(self, job_id: str) -> bool:
         rows = self.repository.database.execute(

@@ -442,6 +442,13 @@ def test_worker_passes_manifest_v5_without_projection() -> None:
                 "workspace_catalog_revision_id": "workspace-catalog-revision-1",
                 "manifest_hash": stored_hash,
                 "observed_at": "2026-08-22T02:26:33.478129+00:00",
+                "readability_notices": [
+                    {
+                        "file_name": "failed.docx",
+                        "status": "UNAVAILABLE",
+                        "error_code": "docling_conversion_failed",
+                    }
+                ],
                 "items": [
                     {
                         **runtime_item,
@@ -461,6 +468,13 @@ def test_worker_passes_manifest_v5_without_projection() -> None:
     assert projected["workspace_catalog_revision_id"] == "workspace-catalog-revision-1"
     assert projected["items"][0]["materialization_size_bytes"] == 128
     assert projected["items"][0]["file_id"] == "file-source-1"
+    assert projected["readability_notices"] == [
+        {
+            "file_name": "failed.docx",
+            "status": "UNAVAILABLE",
+            "error_code": "docling_conversion_failed",
+        }
+    ]
     assert (
         projected["manifest_hash"]
         == hashlib.sha256(

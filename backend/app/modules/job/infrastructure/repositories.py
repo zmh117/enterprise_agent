@@ -1521,6 +1521,8 @@ class AgentRepository:
                    coalesce(m.external_message_id, '') as message_external_id,
                    a.status as source_status,
                    a.readability_status as readability_status,
+                   coalesce(nullif(a.readability_error_code, ''), a.failure_code, '')
+                     as error_code,
                    a.finished_at as source_ready_at,
                    f.source_received_at as source_received_at,
                    f.status as file_status,
@@ -1556,6 +1558,14 @@ class AgentRepository:
                       order by a.readability_updated_at desc, a.id desc
                       limit 1
                    ), 'NOT_REQUIRED') as readability_status,
+                   coalesce((
+                     select coalesce(nullif(a.readability_error_code, ''), a.failure_code, '')
+                       from message_attachment_file_binding b
+                       join message_attachment a on a.id = b.attachment_id
+                      where b.version_id = wf.selected_version_id
+                      order by a.readability_updated_at desc, a.id desc
+                      limit 1
+                   ), '') as error_code,
                    v.created_at as source_ready_at,
                    f.source_received_at as source_received_at,
                    f.status as file_status,
@@ -1587,6 +1597,8 @@ class AgentRepository:
                    coalesce(m.external_message_id, '') as message_external_id,
                    a.status as source_status,
                    a.readability_status as readability_status,
+                   coalesce(nullif(a.readability_error_code, ''), a.failure_code, '')
+                     as error_code,
                    a.finished_at as source_ready_at,
                    f.source_received_at as source_received_at,
                    f.status as file_status,

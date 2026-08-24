@@ -168,6 +168,10 @@ METADATA_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"传了哪些",
         r"有哪些(文件|附件|图)",
         r"有什么(文件|附件)",
+        r"(为什么|为何).{0,24}(生成失败|处理失败|解析失败|不可读)",
+        r"(生成失败|处理失败|解析失败|不可读).{0,12}(原因|怎么回事|为什么)",
+        r"(处理|解析|转换|可读).{0,8}状态",
+        r"(错误码|失败原因|处理错误)",
         r"file\s*name",
         r"how\s+big",
         r"what\s+format",
@@ -223,6 +227,7 @@ class WorkspaceFileCandidate:
     message_external_id: str = ""
     source_status: str = ""
     readability_status: str = "NOT_REQUIRED"
+    error_code: str = ""
     source_ready_at: str | None = None
     source_received_at: str | None = None
     content_available: bool = True
@@ -244,6 +249,7 @@ class FileDependency:
     display_name: str = ""
     source_status: str = ""
     readability_status: str = "NOT_REQUIRED"
+    error_code: str = ""
     source_received_at: str | None = None
     content_available: bool = True
 
@@ -366,6 +372,7 @@ def _parse_time_window(text: str, *, now: datetime | None = None) -> TimeWindowP
 def resolve_file_context(
     *,
     text: str,
+    requests_file_output: bool = False,
     current_attachments: tuple[CurrentMessageAttachment, ...] = (),
     explicit_references: tuple[tuple[str, str], ...] = (),
     quoted_external_message_id: str = "",
@@ -457,6 +464,8 @@ def resolve_file_context(
 
     if skip_deixis:
         return ResolverDecision(dependencies=(), quote_unresolved=True)
+    if requests_file_output and has_generic_deixis(text) and not has_plural_deixis(text):
+        return ResolverDecision(dependencies=())
     recent_count = explicit_recent_file_count(text)
     if recent_count is not None:
         unique: dict[tuple[str, str], WorkspaceFileCandidate] = {}
@@ -585,10 +594,12 @@ def evaluate_file_gate(decision: ResolverDecision) -> GateDecision:
         if _source_pending(item):
             waiting_source.append(item)
             continue
+        if item.required_capability == "METADATA":
+            continue
         if item.source_status in {"REJECTED", "FAILED"}:
             failed.append(item)
             continue
-        if item.required_capability in {"METADATA", "ORIGINAL"}:
+        if item.required_capability == "ORIGINAL":
             continue
         if item.readability_status in READABLE_FAILED:
             failed.append(item)
@@ -601,7 +612,7 @@ def evaluate_file_gate(decision: ResolverDecision) -> GateDecision:
             reason_code="file_source_pending",
             dependencies=decision.dependencies,
         )
-    if failed:
+    if failed and len(failed) == len(decision.dependencies):
         return GateDecision(
             action="system_notice",
             reason_code="file_processing_failed",
@@ -871,6 +882,7 @@ def _dependency_from_candidate(
         reason=reason,
         source_status=item.source_status,
         readability_status=item.readability_status,
+        error_code=item.error_code,
         source_received_at=item.source_received_at,
         content_available=item.content_available,
     )
@@ -939,6 +951,7 @@ def file_dependency_payload(item: FileDependency) -> dict[str, str]:
         "reason": item.reason,
         "source_status": item.source_status,
         "readability_status": item.readability_status,
+        "error_code": item.error_code,
         "source_received_at": item.source_received_at or "",
         "content_available": "true" if item.content_available else "false",
     }
@@ -962,6 +975,7 @@ def file_dependency_from_payload(value: dict[str, object]) -> FileDependency:
         display_name=str(value.get("display_name") or ""),
         source_status=str(value.get("source_status") or ""),
         readability_status=str(value.get("readability_status") or "NOT_REQUIRED"),
+        error_code=str(value.get("error_code") or ""),
         source_received_at=received or None,
         content_available=content_available,
     )

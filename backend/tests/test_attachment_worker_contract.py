@@ -299,6 +299,103 @@ def test_attachment_source_idempotency_and_all_terminal_release_boundary() -> No
     )
 
 
+def test_mixed_ready_and_rejected_attachments_release_job_with_safe_notice() -> None:
+    runtime = multimodal_container(
+        task_file_features={"workspace_enabled": True, "file_mcp_enabled": True}
+    )
+    attachments = (
+        ChannelAttachment(
+            media_type="document",
+            file_name="ready.md",
+            source_credential="download-ready",
+        ),
+        ChannelAttachment(
+            media_type="document",
+            file_name="invalid.md",
+            source_credential="download-invalid",
+        ),
+    )
+    job = runtime.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="attachment-partial-release",
+            requester_id="user_local_admin",
+            external_conversation_id="attachment-partial-release",
+            external_event_id="attachment-partial-release-event",
+            external_message_id="attachment-partial-release-message",
+            user_message="分析这两个文件，并说明无法覆盖的部分",
+            source_channel="dingding_stream",
+            source_connector_id="connector-dingtalk-stream-default",
+            conversation_type="direct",
+            bot_identity="robot-redacted",
+            attachments=attachments,
+            **{
+                **file_workspace_command_kwargs(runtime),
+                "task_file_features": {
+                    "workspace_enabled": True,
+                    "file_mcp_enabled": True,
+                },
+            },
+        )
+    )
+    tasks = list(runtime.message_bus.attachments)
+    runtime.attachment_service.downloader = FakeDownloader(  # type: ignore[union-attr]
+        {
+            "download-ready": b"ready",
+            "download-invalid": b"invalid",
+        }
+    )
+
+    assert runtime.attachment_service.process(tasks[0].attachment_id, "c-ready") == "waiting"  # type: ignore[union-attr]
+    runtime.attachment_service.importer = _RejectingImporter(  # type: ignore[union-attr]
+        safe_message="文件必须使用 UTF-8 编码",
+        error_code="file_encoding_invalid",
+    )
+    assert runtime.attachment_service.process(tasks[1].attachment_id, "c-invalid") == "released"  # type: ignore[union-attr]
+
+    released_job = runtime.agent_repository.get_job(job.id)
+    assert released_job.status == JobStatus.PENDING
+    context = runtime.agent_executor.context_builder.build(released_job)
+    assert context.retrieved_context["file_manifest"]["readability_notices"] == [
+        {
+            "file_name": "invalid.md",
+            "status": "UNAVAILABLE",
+            "error_code": "file_encoding_invalid",
+        }
+    ]
+
+    follow_up = runtime.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="attachment-rejected-follow-up",
+            requester_id="user_local_admin",
+            external_conversation_id="attachment-partial-release",
+            external_event_id="attachment-rejected-follow-up-event",
+            external_message_id="attachment-rejected-follow-up-message",
+            user_message="《invalid.md》的失败原因是什么？",
+            source_channel="dingding_stream",
+            source_connector_id="connector-dingtalk-stream-default",
+            conversation_type="direct",
+            bot_identity="robot-redacted",
+            **{
+                **file_workspace_command_kwargs(runtime),
+                "task_file_features": {
+                    "workspace_enabled": True,
+                    "file_mcp_enabled": True,
+                },
+            },
+        )
+    )
+
+    follow_up_context = runtime.agent_executor.context_builder.build(follow_up)
+    assert follow_up.status == JobStatus.PENDING
+    assert follow_up_context.retrieved_context["file_manifest"]["readability_notices"] == [
+        {
+            "file_name": "invalid.md",
+            "status": "UNAVAILABLE",
+            "error_code": "file_encoding_invalid",
+        }
+    ]
+
+
 def test_attachment_retry_reuses_source_identity_and_keeps_job_waiting() -> None:
     runtime = multimodal_container()
     runtime.attachment_service.settings = AttachmentSettings(  # type: ignore[union-attr]

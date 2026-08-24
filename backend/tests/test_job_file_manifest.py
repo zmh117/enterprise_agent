@@ -1103,6 +1103,84 @@ def test_job_manifest_keeps_pending_unselected_image_out_of_initial_items() -> N
     assert runtime["items"] == []
 
 
+def test_runtime_manifest_exposes_safe_notice_for_referenced_failed_document() -> None:
+    repository, service = _service()
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    workspace_id = str(workspace["id"])
+    _create_png(
+        repository,
+        workspace_id=workspace_id,
+        file_id="file-failed-image",
+        version_id="version-failed-image",
+        logical_name="失败图片.png",
+        with_representation=False,
+    )
+    _insert_job(repository, job_id="job-failed-image", workspace_id=workspace_id)
+    repository.database.execute(
+        """
+        update agent_job
+           set business_application_route_decision_json = ?
+         where id = 'job-failed-image'
+        """,
+        (
+            json.dumps(
+                {
+                    "file_turn_dependencies": [
+                        {
+                            "file_id": "file-failed-image",
+                            "version_id": "version-failed-image",
+                            "display_name": "失败图片.png",
+                            "required_capability": "READABLE_CONTENT",
+                            "reason": "FILENAME",
+                            "source_status": "READY",
+                            "readability_status": "UNAVAILABLE",
+                            "error_code": "docling_conversion_failed",
+                        }
+                    ]
+                }
+            ),
+        ),
+    )
+    service.register_request(
+        job_id="job-failed-image",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(
+            ChannelFileReference(
+                file_id="file-failed-image",
+                version_id="version-failed-image",
+            ),
+        ),
+    )
+    service.finalize("job-failed-image")
+
+    runtime = service.runtime_manifest("job-failed-image")
+
+    assert runtime["readability_notices"] == [
+        {
+            "file_name": "失败图片.png",
+            "status": "UNAVAILABLE",
+            "error_code": "docling_conversion_failed",
+        }
+    ]
+
+
 def test_manifest_recalls_unlinked_retained_version_without_restoring_old_workspace() -> None:
     repository, service = _service()
     old_workspace = service.resolve_workspace(

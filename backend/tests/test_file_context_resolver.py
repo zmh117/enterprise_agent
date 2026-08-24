@@ -7,6 +7,7 @@ from app.modules.job.application.file_context import (
     CurrentMessageAttachment,
     WorkspaceFileCandidate,
     evaluate_file_gate,
+    file_dependency_payload,
     infer_capability,
     parse_time_window,
     resolve_file_context,
@@ -411,6 +412,115 @@ def test_processing_failed_is_system_notice() -> None:
     gate = evaluate_file_gate(decision)
     assert gate.action == "system_notice"
     assert gate.reason_code == "file_processing_failed"
+
+
+def test_failed_file_status_question_reaches_agent_as_metadata() -> None:
+    decision = resolve_file_context(
+        text="《项目计划.xlsx》为什么可读内容生成失败？",
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="f1",
+                version_id="v1",
+                display_name="项目计划.xlsx",
+                source_status="READY",
+                readability_status="UNAVAILABLE",
+            ),
+        ),
+    )
+
+    gate = evaluate_file_gate(decision)
+
+    assert decision.dependencies[0].required_capability == "METADATA"
+    assert gate.action == "enqueue_job"
+    assert gate.reason_code == "file_capability_ready"
+
+
+def test_failed_file_dependency_preserves_safe_machine_error_code() -> None:
+    decision = resolve_file_context(
+        text="《项目计划.xlsx》的失败原因是什么？",
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="f1",
+                version_id="v1",
+                display_name="项目计划.xlsx",
+                source_status="READY",
+                readability_status="UNAVAILABLE",
+                error_code="docling_conversion_failed",
+            ),
+        ),
+    )
+
+    payload = file_dependency_payload(decision.dependencies[0])
+
+    assert payload["error_code"] == "docling_conversion_failed"
+
+
+def test_rejected_file_failure_question_reaches_agent_with_safe_metadata() -> None:
+    decision = resolve_file_context(
+        text="《M102200001(1).txt》的失败原因是什么？",
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="",
+                version_id="",
+                display_name="M102200001(1).txt",
+                source_status="REJECTED",
+                readability_status="UNAVAILABLE",
+                error_code="file_encoding_invalid",
+            ),
+        ),
+    )
+
+    gate = evaluate_file_gate(decision)
+
+    assert gate.action == "enqueue_job"
+    assert gate.dependencies[0].error_code == "file_encoding_invalid"
+
+
+def test_mixed_ready_and_failed_files_reach_agent_with_both_dependencies() -> None:
+    decision = resolve_file_context(
+        text="对比 正常.xlsx 和 失败.xlsx 的内容，并说明无法覆盖的部分",
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="f-ready",
+                version_id="v-ready",
+                display_name="正常.xlsx",
+                source_status="READY",
+                readability_status="AVAILABLE",
+            ),
+            WorkspaceFileCandidate(
+                file_id="f-failed",
+                version_id="v-failed",
+                display_name="失败.xlsx",
+                source_status="READY",
+                readability_status="UNAVAILABLE",
+            ),
+        ),
+    )
+
+    gate = evaluate_file_gate(decision)
+
+    assert gate.action == "enqueue_job"
+    assert {item.version_id for item in gate.dependencies} == {"v-ready", "v-failed"}
+
+
+def test_explicit_output_request_does_not_bind_generic_deixis_to_failed_input() -> None:
+    decision = resolve_file_context(
+        text="生成 test.md，输出这个文件的完整目录",
+        requests_file_output=True,
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="f-failed",
+                version_id="v-failed",
+                display_name="历史失败日志.log",
+                source_status="READY",
+                readability_status="UNAVAILABLE",
+                source_ready_at="2026-08-24T15:00:00+00:00",
+            ),
+        ),
+    )
+
+    assert decision.dependencies == ()
+    assert evaluate_file_gate(decision).action == "enqueue_job"
 
 
 def test_parse_time_window_natural_week_and_calendar_dates() -> None:

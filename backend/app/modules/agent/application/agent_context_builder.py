@@ -122,9 +122,11 @@ class AgentContextBuilder:
                 "Every conclusion must cite evidence or state uncertainty.",
                 *(
                     [
-                        "One or more document inputs are partial or unavailable. Use only the "
-                        "materialized readable representations, disclose missing coverage, and "
-                        "never infer or fabricate omitted content."
+                        "One or more document inputs are partial or unavailable. The "
+                        "readability_notices are safe file-status metadata: you may explain their "
+                        "listed status and error_code, but do not claim access to the file body. "
+                        "Use only materialized readable representations, disclose missing "
+                        "coverage, and never infer or fabricate omitted content."
                     ]
                     if file_manifest and file_manifest.get("readability_notices")
                     else []
