@@ -26,7 +26,8 @@ import pytest
 from app.modules.agent.application.agent_context_builder import (
     ATTACHMENT_ONLY_USER_QUESTION,
 )
-from app.modules.channel.domain.channel_event import ChannelAttachment
+from app.modules.channel.domain.channel_event import ChannelAttachment, ReplyRoute
+from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.message_bus.infrastructure.rabbitmq_attachment_consumer import (
@@ -110,12 +111,37 @@ class _Connection:
 
 
 class _RejectingImporter:
+    def __init__(
+        self,
+        *,
+        safe_message: str = "附件导入被拒绝",
+        error_code: str = "document_source_media_type_mismatch",
+    ) -> None:
+        self.safe_message = safe_message
+        self.error_code = error_code
+
     def import_content(self, **_kwargs: object) -> object:
         raise NonRetryableExecutionError(
             "File Service rejected attachment import",
-            safe_message="附件导入被拒绝",
-            error_code="document_source_media_type_mismatch",
+            safe_message=self.safe_message,
+            error_code=self.error_code,
         )
+
+
+class _CaptureDeliveryAdapter(DeliveryAdapter):
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    def send(
+        self,
+        *,
+        connector: object,
+        route: ReplyRoute,
+        title: str,
+        text: str,
+    ) -> None:
+        del connector, route
+        self.sent.append((title, text))
 
 
 def _install_fake_pika(monkeypatch: pytest.MonkeyPatch, channel: _Channel) -> _Connection:
@@ -359,3 +385,76 @@ def test_attachment_rejection_persists_machine_error_code() -> None:
         "failure_code": "document_source_media_type_mismatch",
     }
     assert runtime.agent_repository.get_job(job.id).status == JobStatus.FAILED
+
+
+def test_staged_noncompliant_attachment_notifies_the_originating_conversation_once() -> None:
+    runtime = multimodal_container(
+        task_file_features={"workspace_enabled": True, "file_mcp_enabled": True}
+    )
+    application = runtime.business_application_repository.get_by_code(
+        "multimodal-test-application"
+    )
+    command_kwargs = file_workspace_command_kwargs(runtime)
+    command_kwargs.update(
+        {
+            "business_application_id": str(application["id"]),
+            "business_application_code": "multimodal-test-application",
+            "conversation_mode": "channel",
+            "continuous_conversation_enabled": True,
+            "attachments_enabled": True,
+            "task_file_features": {
+                "workspace_enabled": True,
+                "file_mcp_enabled": True,
+            },
+        }
+    )
+    intake = runtime.create_agent_job_service.stage_attachments(
+        CreateAgentJobCommand(
+            idempotency_key="staged-invalid-encoding",
+            requester_id="user_local_admin",
+            external_conversation_id="staged-invalid-encoding-conversation",
+            external_event_id="staged-invalid-encoding-event",
+            external_message_id="staged-invalid-encoding-message",
+            user_message="",
+            source_channel="dingding_stream",
+            source_connector_id="connector-dingtalk-stream-default",
+            conversation_type="direct",
+            bot_identity="robot-redacted",
+            attachments=(
+                ChannelAttachment(
+                    media_type="document",
+                    file_name="M102200001(1).txt",
+                    source_credential="download-invalid-encoding",
+                ),
+            ),
+            **command_kwargs,
+        )
+    )
+    runtime.attachment_service.downloader = FakeDownloader(  # type: ignore[union-attr]
+        {"download-invalid-encoding": b"invalid-source-bytes"}
+    )
+    runtime.attachment_service.importer = _RejectingImporter(  # type: ignore[union-attr]
+        safe_message="文件必须使用 UTF-8 编码",
+        error_code="file_encoding_invalid",
+    )
+    adapter = _CaptureDeliveryAdapter()
+    runtime.result_delivery_service.adapters["dingtalk_conversation"] = adapter
+
+    assert runtime.attachment_service.process(  # type: ignore[union-attr]
+        intake.attachment_ids[0], "correlation-invalid-encoding"
+    ) == "staged"
+    runtime.delivery_dispatcher.dispatch_pending(limit=10)
+
+    assert adapter.sent == [
+        (
+            "文件未进入工作区",
+            "文件 `M102200001(1).txt` 未进入工作区：文件必须使用 UTF-8 编码。"
+            "请修正后重新发送。",
+        )
+    ]
+
+    assert runtime.attachment_service.process(  # type: ignore[union-attr]
+        intake.attachment_ids[0], "correlation-invalid-encoding-retry"
+    ) == "staged"
+    runtime.delivery_dispatcher.dispatch_pending(limit=10)
+    assert len(adapter.sent) == 1

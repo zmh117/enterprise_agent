@@ -261,11 +261,19 @@ class FileWorkspaceApplicationService:
         )
         has_more = len(rows) > limit
         visible = rows[:limit]
-        return {
+        response: dict[str, Any] = {
             "items": [self._metadata(row) for row in visible],
             "next_cursor": str(visible[-1]["cursor"]) if has_more and visible else "",
             "observed_at": _observed_at(),
         }
+        if not visible:
+            response["empty_result"] = {
+                "reason_code": "job_initial_manifest_empty",
+                "result_scope": "job_initial_manifest",
+                "required_next_tool": "task_workspace_search_files",
+                "required_next_arguments": {"limit": 20},
+            }
+        return response
 
     def _encode_search_cursor(
         self,

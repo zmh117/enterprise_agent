@@ -731,6 +731,18 @@ def test_manifest_v5_catalog_search_keeps_frozen_keyset_pages_stable() -> None:
         repository,
         authorization=object(),  # type: ignore[arg-type]
     )
+    listed = application.invoke(
+        context=context,
+        tool_identifier="task_workspace_list_files",
+        arguments={},
+    )
+    assert listed["items"] == []
+    assert listed["empty_result"] == {
+        "reason_code": "job_initial_manifest_empty",
+        "result_scope": "job_initial_manifest",
+        "required_next_tool": "task_workspace_search_files",
+        "required_next_arguments": {"limit": 20},
+    }
     first = application.invoke(
         context=context,
         tool_identifier="task_workspace_search_files",

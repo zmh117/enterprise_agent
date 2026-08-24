@@ -480,7 +480,7 @@ Job File Manifest、File MCP 响应和 Runtime 文件上下文中的 `source_rec
 ### Requirement: 工作区文件目录支持有界一致分页发现
 File Service SHALL提供只读工作区目录发现能力，使用当前RUNNING Job的Principal、Publication、workspace和Manifest冻结的`workspace_catalog_revision_id`解析授权范围，并以游标分页返回默认20、最多50项安全元数据。查询 MUST只接受代码注册的名称、格式、来源接收时间和可读状态过滤，结果 MUST包含精确`file_id + version_id`、安全显示名、格式、大小、机器时间、可读状态、`observed_at`和冻结目录revision；MUST NOT包含正文、对象位置、Bucket、凭据或跨工作区数据。模型输入 MUST NOT声明workspace、tenant或revision身份。
 
-工作区目录 MUST具有不可变revision身份和时间化成员事实。ACTIVE成员、逻辑名或选中版本发生变化时 MUST在同一事务创建下一revision并保留仍被Job引用的旧revision查询能力；不得为每个Job复制整个目录。分页cursor MUST绑定workspace、过滤摘要、`workspace_catalog_revision_id`和最后排序键。同一Job在当前目录变化后 MUST仍按冻结revision无重复无漏项地继续分页；新成员或新版本只可由后续Job的新revision发现。现有`task_workspace_list_files` MUST继续只列当前Job初始Manifest/工作集语义，新目录发现 MUST使用独立Tool identifier和schema hash。
+工作区目录 MUST具有不可变revision身份和时间化成员事实。ACTIVE成员、逻辑名或选中版本发生变化时 MUST在同一事务创建下一revision并保留仍被Job引用的旧revision查询能力；不得为每个Job复制整个目录。分页cursor MUST绑定workspace、过滤摘要、`workspace_catalog_revision_id`和最后排序键。同一Job在当前目录变化后 MUST仍按冻结revision无重复无漏项地继续分页；新成员或新版本只可由后续Job的新revision发现。现有`task_workspace_list_files` MUST继续只列当前Job初始Manifest/工作集语义，新目录发现 MUST使用独立Tool identifier和schema hash；当该Tool返回空`items`时，响应 MUST包含`job_initial_manifest_empty`机器原因、`job_initial_manifest`结果范围以及必须继续调用`task_workspace_search_files`的有界参数提示，且不得因此读取目录、增加Manifest条目或扩大授权。
 
 #### Scenario: 分页发现1000个ACTIVE文件
 - **WHEN** 授权Job以limit 50遍历一个含1000个ACTIVE文件的工作区且目录revision保持不变

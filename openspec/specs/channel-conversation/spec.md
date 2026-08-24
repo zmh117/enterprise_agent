@@ -879,6 +879,7 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 #### Scenario: TXT编码或大小不合法
 - **WHEN** `.txt`是GBK、UTF-16、无效UTF-8或超过15MiB
 - **THEN** 系统将attachment标记为REJECTED并保存安全错误码
+- **AND** 对已建立受治理回复路由的纯附件暂存事件，系统按attachment身份幂等投递安全通知，说明该文件未进入工作区、展示安全文件名与安全原因并要求修正后重新发送
 #### Scenario: 类型伪装或超限
 - **WHEN** PDF或Office扩展名与真实MIME/结构冲突，图片无法安全解码为白名单格式，或附件数量、大小、页数、解压后大小、行列、像素或幻灯片超过对应固定策略
 - **THEN** 系统将attachment或processing run标记为确定拒绝

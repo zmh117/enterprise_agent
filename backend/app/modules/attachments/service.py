@@ -13,6 +13,7 @@ from app.modules.attachments.domain import (
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V2
+from app.modules.file_workspace.contracts import FILE_ERROR_CATALOG
 from app.modules.file_workspace.manifest_service import JobFileManifestService
 from app.modules.file_workspace.text_format_policy import get_text_format_policy
 from app.modules.job.application.file_context import (
@@ -208,8 +209,43 @@ class AttachmentProcessingService:
     def _release_attachment_if_ready(self, attachment_id: str, correlation_id: str) -> str:
         attachment = self.repository.get_attachment(attachment_id)
         if not attachment.job_id:
+            if attachment.status == "REJECTED":
+                self._notify_staged_attachment_rejection(attachment, correlation_id)
             return "staged"
         return self._release_if_ready(attachment.job_id, correlation_id)
+
+    def _notify_staged_attachment_rejection(
+        self,
+        attachment: Any,
+        correlation_id: str,
+    ) -> None:
+        if self.delivery_service is None:
+            return
+        context = self.repository.attachment_session_context(attachment.id)
+        session = self.repository.get_session(str(context["session_id"]))
+        definition = FILE_ERROR_CATALOG.get(str(attachment.failure_code or ""))
+        reason = (
+            definition.safe_message if definition else "文件不符合当前任务工作区策略"
+        )
+        display_name = " ".join(
+            Path(str(attachment.file_name or "该文件")).name.replace("`", "'").split()
+        )[:255]
+        self.delivery_service.enqueue_system_notice(
+            idempotency_key=f"attachment-rejected:{attachment.id}",
+            session_id=session.id,
+            reply_route=session.reply_route or {"type": "none"},
+            title="文件未进入工作区",
+            markdown=(
+                f"文件 `{display_name or '该文件'}` 未进入工作区：{reason}。"
+                "请修正后重新发送。"
+            ),
+            reason_code=str(attachment.failure_code or "attachment_processing_rejected"),
+            correlation_id=correlation_id,
+            application_publication_id=session.application_publication_id,
+            principal_user_id=session.requester_id,
+            notice_kind="attachment_rejected",
+            task_workspace_id=str(context.get("task_workspace_id") or ""),
+        )
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def _release_if_ready(self, job_id: str, correlation_id: str) -> str:
