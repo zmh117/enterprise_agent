@@ -13,13 +13,17 @@ from typing import Any
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     PermissionResultAllow,
+    SystemMessage,
     UserMessage,
     create_sdk_mcp_server,
     query,
 )
+from mcp import types
+from mcp.server import Server
 
 from app.python_runtime.claude_client import streaming_user_prompt
 from app.python_runtime.job_sandbox import JobSandboxManager
+from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
 
 
 MCP_CALL_ID = "mcp_contract_probe"
@@ -62,9 +66,7 @@ class _McpHandler(_QuietHandler):
             return
         if method == "initialize":
             result = {
-                "protocolVersion": request.get("params", {}).get(
-                    "protocolVersion", "2025-06-18"
-                ),
+                "protocolVersion": request.get("params", {}).get("protocolVersion", "2025-06-18"),
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "audit-contract-probe", "version": "1.0.0"},
             }
@@ -126,8 +128,7 @@ class _ModelHandler(_QuietHandler):
         )
         events = self._final_events(request) if has_tool_result else self._tool_events(request)
         payload = "".join(
-            f"event: {event_name}\ndata: {json.dumps(data)}\n\n"
-            for event_name, data in events
+            f"event: {event_name}\ndata: {json.dumps(data)}\n\n" for event_name, data in events
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
@@ -137,9 +138,7 @@ class _ModelHandler(_QuietHandler):
         self.wfile.write(payload)
 
     @classmethod
-    def _tool_events(
-        cls, request: dict[str, Any]
-    ) -> list[tuple[str, dict[str, Any]]]:
+    def _tool_events(cls, request: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         return [
             ("message_start", cls._message_start(request, "message-contract-tool")),
             (
@@ -176,9 +175,7 @@ class _ModelHandler(_QuietHandler):
         ]
 
     @classmethod
-    def _final_events(
-        cls, request: dict[str, Any]
-    ) -> list[tuple[str, dict[str, Any]]]:
+    def _final_events(cls, request: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         return [
             ("message_start", cls._message_start(request, "message-contract-final")),
             (
@@ -230,9 +227,7 @@ class _BuiltinWriteModelHandler(_ModelHandler):
     tool_name = "Write"
 
     @classmethod
-    def _tool_events(
-        cls, request: dict[str, Any]
-    ) -> list[tuple[str, dict[str, Any]]]:
+    def _tool_events(cls, request: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         tool_input = {
             "file_path": "outputs/runtime-write.txt",
             "content": "written by the real Claude CLI",
@@ -274,6 +269,22 @@ class _BuiltinWriteModelHandler(_ModelHandler):
             ),
             ("message_stop", {"type": "message_stop"}),
         ]
+
+
+class _SdkFileCommitModelHandler(_ModelHandler):
+    tool_name = "mcp__file_service__file_create_commit_intent"
+
+    @classmethod
+    def _tool_events(cls, request: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        events = super()._tool_events(request)
+        tool_input = {
+            "sandbox_entry_handle": "sandbox-entry-contract-probe",
+            "display_name": "result.md",
+            "user_intent": "GENERATE",
+            "delivery_mode": "DEFAULT",
+        }
+        events[2][1]["delta"]["partial_json"] = json.dumps(tool_input)
+        return events
 
 
 class _LocalHttpServer:
@@ -357,9 +368,7 @@ def test_python_claude_cli_executes_permission_checked_builtin_write(
         _context: Any,
     ) -> PermissionResultAllow:
         permission_calls.append(tool_name)
-        return PermissionResultAllow(
-            updated_input=sandbox.authorize_tool(tool_name, tool_input)
-        )
+        return PermissionResultAllow(updated_input=sandbox.authorize_tool(tool_name, tool_input))
 
     with _LocalHttpServer(_BuiltinWriteModelHandler) as model:
 
@@ -419,6 +428,115 @@ def test_python_claude_cli_executes_permission_checked_builtin_write(
     assert permission_calls == ["Write"], tool_results
     output = sandbox.path / "outputs/runtime-write.txt"
     assert output.exists(), tool_results
-    assert output.read_text(encoding="utf-8") == (
-        "written by the real Claude CLI"
+    assert output.read_text(encoding="utf-8") == ("written by the real Claude CLI")
+
+
+def test_python_claude_cli_registers_all_tools_from_mcp2_sdk_server() -> None:
+    _SdkFileCommitModelHandler.requests = []
+    calls: list[str] = []
+    initialized_tool_sets: list[set[str]] = []
+
+    async def list_tools(_context: Any, _params: Any) -> types.ListToolsResult:
+        tools = [
+            types.Tool.model_validate(
+                {
+                    "name": name,
+                    "description": definition.description,
+                    "inputSchema": dict(definition.input_schema),
+                }
+            )
+            for name, definition in FILE_TOOL_MANIFEST.items()
+        ]
+        tools.append(
+            types.Tool(
+                name="select_sandbox_output",
+                description="Select one governed sandbox output.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "relative_path": {"type": "string"},
+                    },
+                    "required": ["relative_path"],
+                    "additionalProperties": False,
+                },
+            )
+        )
+        return types.ListToolsResult(tools=tools)
+
+    async def call_tool(
+        _context: Any,
+        params: types.CallToolRequestParams,
+    ) -> types.CallToolResult:
+        calls.append(params.name)
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text='{"status":"COMMITTED"}')]
+        )
+
+    server = Server(
+        "runtime-file-bridge-probe",
+        version="1.0.0",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
+
+    with _LocalHttpServer(_SdkFileCommitModelHandler) as model:
+
+        async def collect() -> list[UserMessage]:
+            messages: list[UserMessage] = []
+            async for message in query(
+                prompt="Commit the selected sandbox output.",
+                options=ClaudeAgentOptions(
+                    model="contract-model",
+                    max_turns=2,
+                    permission_mode="bypassPermissions",
+                    tools=[],
+                    allowed_tools=[_SdkFileCommitModelHandler.tool_name],
+                    mcp_servers={
+                        "file_service": {
+                            "type": "sdk",
+                            "name": "runtime-file-bridge-probe",
+                            "instance": server,
+                        }
+                    },
+                    strict_mcp_config=True,
+                    setting_sources=[],
+                    skills=[],
+                    env={
+                        "ANTHROPIC_BASE_URL": model.url,
+                        "ANTHROPIC_API_KEY": "contract-test-key",
+                        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                    },
+                ),
+            ):
+                if isinstance(message, UserMessage):
+                    messages.append(message)
+                if isinstance(message, SystemMessage) and message.subtype == "init":
+                    initialized_tool_sets.append(
+                        {
+                            str(name)
+                            for name in message.data.get("tools", [])
+                            if isinstance(name, str)
+                        }
+                    )
+            return messages
+
+        user_messages = asyncio.run(collect())
+
+    model_tools = {
+        str(tool.get("name"))
+        for request in _SdkFileCommitModelHandler.requests
+        for tool in request.get("tools", [])
+        if isinstance(tool, dict)
+    }
+    required_tools = {
+        "mcp__file_service__select_sandbox_output",
+        "mcp__file_service__file_create_commit_intent",
+    }
+    assert initialized_tool_sets and required_tools <= initialized_tool_sets[0]
+    assert required_tools <= model_tools
+    assert calls == ["file_create_commit_intent"]
+    assert len(user_messages) == 1
+    assert "No such tool available" not in json.dumps(
+        user_messages[0].tool_use_result,
+        ensure_ascii=False,
     )

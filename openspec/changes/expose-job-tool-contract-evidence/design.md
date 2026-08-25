@@ -68,6 +68,8 @@ Runtime effective 工具必须标记 `frozen_mcp`、`runtime_derived` 或 `sdk_b
 
 派生工具无需出现在 Job Snapshot 或 File MCP `tools/list` 中，但必须能追溯到其授权前提；前提不满足却进入 effective 集合时按 `UNAUTHORIZED_EFFECTIVE` 失败关闭。SDK 内置 Tool 同样由固定策略和 Runtime 配置约束，不得因为没有 MCP Server 而误报远端缺失。
 
+File Tool的输入Schema还必须通过真实bundled CLI注册回归。Claude CLI可能接受MCP `tools/list`，却静默排除含其不支持组合关键字的单个Tool；因此直接用`InMemoryTransport`调用Server只能证明bridge handler存在，不能证明CLI已暴露该Tool。对CLI Schema子集无法表达的跨字段不变量，保持File Service在副作用前的代码校验，并由真实CLI测试断言生产Tool清单和提交ToolUse均可达。
+
 ### 4. Prompt 的可调用工具声明从 Runtime effective registry 生成
 
 Prompt 模板提供显式 `template_version`。所有肯定式的“当前可调用工具”和文件交付步骤由已验证的 Runtime effective registry 渲染；静态 Prompt 不再人工维护一份 `Available internal tools` 名单。渲染器同时生成：

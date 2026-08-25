@@ -50,6 +50,8 @@ Python Runtime SHALL 在File MCP校验和代码内工具注册完成后构造唯
 
 `select_sandbox_output` MUST仅在Job冻结`file_create_commit_intent`且文件格式策略允许时注册为`runtime_derived`；它不需要出现在Job MCP Snapshot或File MCP `tools/list`中。未获冻结或策略授权的工具进入Runtime effective时 MUST标记`UNAUTHORIZED_EFFECTIVE`并失败关闭；Prompt当前可调用声明包含Runtime effective中不存在的工具时 MUST标记`PROMPT_OVERCLAIM`并在模型调用前失败关闭。静态Prompt不得人工维护第二份当前可调用工具名单。
 
+File MCP输入Schema MUST使用当前固定Claude Agent SDK及其bundled CLI能够完整注册的受支持子集。无法由该子集表达的跨字段业务不变量 MUST由File Service在创建Intent或其它副作用前重新校验，不得为了兼容CLI而取消业务约束。发布合同测试 MUST启动真实bundled CLI，使用生产File Tool名称、描述和输入Schema，并证明`file_create_commit_intent`同时出现在CLI初始化工具清单和实际ToolUse路由中；仅直接调用进程内MCP Session不构成该事实的验收证据。
+
 #### Scenario: Runtime派生输出选择器
 - **WHEN** Job冻结且live校验通过`file_create_commit_intent`并允许TXT或Markdown输出
 - **THEN** Runtime effective包含来源为`runtime_derived`的`select_sandbox_output`及其SDK精确名称
@@ -64,6 +66,11 @@ Python Runtime SHALL 在File MCP校验和代码内工具注册完成后构造唯
 - **WHEN** SDK审批配置引用一个未进入Runtime effective的工具
 - **THEN** 系统不得据此把该工具判为存在或`MATCH`
 - **AND** 未授权或陈旧审批引用按安全合同错误处理并记录来源
+
+#### Scenario: CLI无法注册提交工具Schema
+- **WHEN** File MCP live与Job Snapshot匹配，但当前SDK或bundled CLI会因提交工具输入Schema而把`file_create_commit_intent`从初始化工具清单移除
+- **THEN** 真实CLI发布合同测试失败且对应Runtime镜像不得晋级
+- **AND** 系统不得用`allowed_tools`、Prompt声明或直接内存Session调用把该工具判为CLI可调用
 
 ### Requirement: 运行记录必须展示确定的工具契约对账
 授权用户读取运行记录时，列表 SHALL 展示Job工具契约汇总状态`MATCH`、`DRIFT`或`NOT_OBSERVED`，详情 SHALL 按invocation展示组件构建身份、Job frozen、File MCP live、Runtime effective、Prompt模板版本与contract hash以及逐工具状态矩阵。状态 MUST由保存的Snapshot和Runtime事件确定计算，不得采用模型文字回答、当前MCP状态回填历史或客户端自行推断。

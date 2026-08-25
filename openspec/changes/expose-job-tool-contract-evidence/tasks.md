@@ -39,6 +39,7 @@
 - [x] 6.1 更新并运行protocol 1.4合同生成一致性、JSON Schema、golden、Worker/Python Runtime双端和发布产物负向测试，证明1.0至1.3没有可执行解析、协商或恢复分支。
 - [x] 6.2 增加Build Identity与跨平台合同测试，证明同revision/build ID和toolset hash在arm64/amd64 digest不同时仍可比较，并证明缺失必需身份、伪造tag或组件跨发布会失败。
 - [x] 6.3 增加File bridge、Prompt renderer、Runtime event、repository、运行记录API/UI的聚焦回归，并执行相关静态检查、migration测试、`docker compose config --quiet`、strict OpenSpec校验和`git diff --check`。
+- [x] 6.3a 增加使用生产File Tool名称、描述和Schema的真实bundled Claude CLI注册/ToolUse回归；移除CLI会静默过滤的提交Schema组合关键字，并把`file_id/base_version_id`成对约束保留在File Service副作用前校验。
 - [ ] 6.4 在维护窗口预检并排空或显式取消所有非终态protocol 1.3 Job、outbox、delivery和队列事实；任一安全计数非零时停止切换，不运行双协议消费者。
 - [ ] 6.5 使用同一发布清单整体重建API、File Service、File/Processing Worker、Agent Worker、Python Runtime和管理端，创建新的protocol 1.4 Agent/Application Publication，并验证各组件revision/build ID/platform及可得digest。
 - [ ] 6.6 运行无附件文字Job、File MCP读取、`select_sandbox_output → file_create_commit_intent → file_deliver_version`、缺失提交工具失败关闭和断线恢复的新鲜Compose E2E，核对运行记录四层事实与实际ToolUse/ToolResult后再恢复入口。

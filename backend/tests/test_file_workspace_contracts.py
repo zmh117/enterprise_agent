@@ -133,7 +133,7 @@ def test_file_tool_schemas_reject_identity_location_and_dynamic_execution_fields
         _validate(schema, {forbidden: "forbidden"})
 
 
-def test_file_commit_schema_distinguishes_new_file_and_existing_version() -> None:
+def test_file_commit_schema_is_claude_cli_compatible() -> None:
     schema = FILE_TOOL_MANIFEST["file_create_commit_intent"].input_schema
     base = {
         "sandbox_entry_handle": "entry-1",
@@ -154,8 +154,8 @@ def test_file_commit_schema_distinguishes_new_file_and_existing_version() -> Non
             "base_version_id": "version-1",
         },
     )
-    with pytest.raises(jsonschema.ValidationError):
-        _validate(schema, {**base, "file_id": "file-1"})
+    assert not {"oneOf", "anyOf", "allOf", "not"} & set(schema)
+    _validate(schema, {**base, "file_id": "file-1"})
     with pytest.raises(jsonschema.ValidationError):
         _validate(schema, {**base, "url": "https://example.invalid"})
 

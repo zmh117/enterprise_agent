@@ -181,17 +181,6 @@ _COMMIT_SCHEMA: dict[str, Any] = {
             "enum": ["DEFAULT", "WORKSPACE_ONLY"],
         },
     },
-    "oneOf": [
-        {"required": ["file_id", "base_version_id"]},
-        {
-            "not": {
-                "anyOf": [
-                    {"required": ["file_id"]},
-                    {"required": ["base_version_id"]},
-                ]
-            }
-        },
-    ],
 }
 
 

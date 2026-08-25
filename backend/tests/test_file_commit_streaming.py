@@ -412,6 +412,38 @@ def _new_intent(
     return str(control["commit_id"])
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"file_id": "file-1"},
+        {"base_version_id": "version-1"},
+    ],
+)
+def test_commit_target_identity_must_be_complete_before_intent_creation(
+    target: dict[str, str],
+) -> None:
+    repository, service, context, storage = _fixture()
+    before_objects = dict(storage.objects)
+
+    with pytest.raises(NonRetryableExecutionError) as error:
+        service.prepare_commit(
+            context=context,
+            arguments={
+                "sandbox_entry_handle": "partial-target",
+                "display_name": "result.txt",
+                "user_intent": "GENERATE",
+                "delivery_mode": "WORKSPACE_ONLY",
+                **target,
+            },
+        )
+
+    assert error.value.error_code == "file_commit_target_required"
+    assert storage.objects == before_objects
+    assert repository.database.execute_one("select count(*) as value from file_commit_intent") == {
+        "value": 0
+    }
+
+
 def test_text_v2_markdown_commit_is_exact_and_log_commit_fails_before_upload() -> None:
     repository, service, context, storage = _fixture()
     with pytest.raises(NonRetryableExecutionError) as readonly:

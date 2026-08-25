@@ -260,6 +260,11 @@ class GovernedFileStreamingService:
     ) -> dict[str, Any]:
         target_file_id = str(arguments.get("file_id") or "") or None
         base_version_id = str(arguments.get("base_version_id") or "") or None
+        if (target_file_id is None) != (base_version_id is None):
+            self._deny(
+                "file_commit_target_required",
+                "file_id与base_version_id必须同时提供",
+            )
         user_intent = CommitUserIntent(str(arguments["user_intent"]))
         display_name = str(arguments["display_name"])
         definition = text_format_for_name(
