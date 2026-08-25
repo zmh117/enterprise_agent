@@ -75,7 +75,7 @@ def _insert_job(database: Database, *, status: str) -> None:
            source_channel, source_connector_id, requester_id,
            agent_runtime_kind, agent_runtime_protocol_version)
         values ('reset-job', 'reset-session', 'reset-job', 'default', ?, ?,
-                'test', 'connector-test', 'reset-user', 'python-v1', '1.3')
+                'test', 'connector-test', 'reset-user', 'python-v1', '1.4')
         """,
         (status, timestamp),
     )
@@ -305,13 +305,13 @@ def test_reset_deletes_only_publications_outside_current_runtime_contract(
         database,
         publication_id="old-protocol-publication",
         revision=1,
-        protocols=["1.2", "1.3"],
+        protocols=["1.2", "1.4"],
     )
     _insert_agent_publication(
         database,
         publication_id="current-protocol-publication",
         revision=2,
-        protocols=["1.3"],
+        protocols=["1.4"],
     )
     database.execute(
         """

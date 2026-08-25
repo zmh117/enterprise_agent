@@ -112,7 +112,7 @@ def test_postgres_admin_job_query_uses_json_filters_and_keyset_limit(
             insert into agent_job_execution_summary
               (job_id, accounting_status, model_usage_json, execution_status,
                source_protocol_version, created_at, updated_at)
-            values (?, 'COMPLETE', ?, 'SUCCEEDED', '1.3', ?, ?)
+            values (?, 'COMPLETE', ?, 'SUCCEEDED', '1.4', ?, ?)
             """,
             (
                 job.id,
@@ -230,7 +230,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "119"
+        assert result.head == "120"
         assert result.applied == (
             "100",
             "101",
@@ -252,6 +252,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "117",
             "118",
             "119",
+            "120",
         )
         assert database.execute_one(
             """
@@ -263,7 +264,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             """
         ) == {"count": 124}
         assert comments["table_count"] == 124
-        assert comments["column_count"] == 1616
+        assert comments["column_count"] == 1622
     finally:
         database.close()
 
@@ -281,7 +282,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "119"
+        assert result.head == "120"
         assert result.applied == (
             "100",
             "101",
@@ -303,9 +304,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "117",
             "118",
             "119",
+            "120",
         )
         assert comments["table_count"] == 124
-        assert comments["column_count"] == 1616
+        assert comments["column_count"] == 1622
         assert {
             "dingding_conversation_id",
             "dingding_user_id",
@@ -366,6 +368,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "117",
             "118",
             "119",
+            "120",
         ),
     ]
     database = Database(postgres_database_dsn)
@@ -391,6 +394,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "117",
             "118",
             "119",
+            "120",
         ]
     finally:
         database.close()
@@ -426,14 +430,14 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
                agent_runtime_protocol_version)
             values ('postgres-audit-job', 'postgres-audit-session',
                     'postgres-audit-job', 'default', 'SUCCEEDED', ?, 'test',
-                    'connector-test', 'audit-user', '1.3')
+                    'connector-test', 'audit-user', '1.4')
             """,
             (timestamp,),
         )
         repository = ExecutionAuditRepository(database)
         digest = "a" * 64
         model_event = {
-            "protocol_version": "1.3",
+            "protocol_version": "1.4",
             "invocation_id": "postgres-invocation",
             "request_digest": digest,
             "sequence": 1,
@@ -470,14 +474,14 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
             },
         }
         terminal = {
-            "protocol_version": "1.3",
+            "protocol_version": "1.4",
             "invocation_id": "postgres-invocation",
             "request_digest": digest,
             "sequence": 3,
             "event_type": "terminal",
             "timestamp": timestamp,
             "payload": {
-                "protocol_version": "1.3",
+                "protocol_version": "1.4",
                 "invocation_id": "postgres-invocation",
                 "request_digest": digest,
                 "last_sequence": 3,
@@ -507,7 +511,7 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
                 "runtime_provenance": {
                     "runtime_kind": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.3",
+                    "protocol_version": "1.4",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
                     "model_connection_revision_id": "revision-1",

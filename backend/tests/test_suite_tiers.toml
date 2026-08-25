@@ -1,5 +1,6 @@
 [tiers]
 unit = [
+  "test_build_identity.py",
   "test_business_mcp_principal_policy.py",
   "test_database_driver_boundaries.py",
   "test_database_unit_of_work.py",
@@ -121,6 +122,7 @@ contract = [
   "test_runtime_http_client.py",
   "test_runtime_model_probe.py",
   "test_runtime_readiness.py",
+  "test_runtime_v14_cutover_preflight.py",
   "test_schema_inspectors.py",
   "test_service_principal_identity.py",
   "test_session_job_message_fact_sources.py",

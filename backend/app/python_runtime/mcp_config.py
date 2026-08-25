@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
@@ -28,7 +28,6 @@ from app.python_runtime.claude_client import (
 )
 from app.python_runtime.error_mapper import append_cli_stderr
 from app.python_runtime.file_mcp_bridge import (
-    LOCAL_FILE_OUTPUT_TOOL,
     PreparedFileMaterialization,
     PythonRuntimeFileBridge,
     PythonRuntimeFileBridgeFactory,
@@ -43,7 +42,9 @@ from app.python_runtime.job_sandbox import (
 )
 from app.python_runtime.tool_policy import contains_forbidden_tool_input
 from app.shared.config import ExecutionSettings
+from app.shared.build_identity import BuildIdentity, build_identity_from_environment
 from app.shared.exceptions import NonRetryableExecutionError
+from app.python_runtime.tool_contract import build_tool_contract_observation
 
 
 _OPAQUE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -151,6 +152,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         sandbox_manager: JobSandboxManager | None = None,
         cancellation_event: threading.Event | None = None,
         file_bridge_factory: PythonRuntimeFileBridgeFactory = (create_python_runtime_file_bridge),
+        runtime_build_identity: BuildIdentity | None = None,
+        tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         super().__init__(
             model="",
@@ -196,6 +199,13 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         self._file_principal_token = file_principal_token
         self._file_bridge_factory = file_bridge_factory
         self._file_bridge: PythonRuntimeFileBridge | None = None
+        self._runtime_build_identity = runtime_build_identity or build_identity_from_environment(
+            "python-runtime"
+        )
+        self.last_tool_contract_observation: dict[str, Any] = {}
+        self._tool_contract_observer = tool_contract_observer
+        self._tool_contract_observed = False
+        self._effective_context: AgentExecutionContext | None = None
 
     @staticmethod
     def _shared_headers(request: AgentRunRequest) -> dict[str, str]:
@@ -288,6 +298,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             if item.server_code == FILE_MCP_SERVER_CODE
         )
         if not file_bindings:
+            self._set_tool_contract_observation(request, None)
+            self._require_matching_tool_contract()
             return servers
         sandbox = self._sandbox.get()
         if sandbox is None:
@@ -304,6 +316,11 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 "Authorization": f"Bearer {self._file_principal_token}",
             },
             frozen_tool_names=file_bindings,
+            frozen_tool_schema_hashes={
+                item.tool_name: item.tool_schema_hash
+                for item in request.context.mcp_bindings
+                if item.server_code == FILE_MCP_SERVER_CODE
+            },
             context=FileTransferContext(
                 job_id=request.job_id,
                 workspace_path=sandbox.path,
@@ -312,14 +329,77 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             ),
             timeout_seconds=float(request.context.timeout_seconds),
         )
-        await bridge.connect()
         self._file_bridge = bridge
+        try:
+            await bridge.connect()
+        except FileTransferBoundaryError as exc:
+            self._set_tool_contract_observation(request, bridge)
+            raise NonRetryableExecutionError(
+                f"File MCP tool-contract preflight failed: {exc.code}",
+                safe_message="当前 Job 的文件工具契约与运行时不一致",
+                error_code=exc.code,
+            ) from exc
+        self._set_tool_contract_observation(request, bridge)
+        self._require_matching_tool_contract()
         servers[mcp_sdk_server_alias(FILE_MCP_SERVER_CODE)] = bridge.server
         return servers
+
+    def _require_matching_tool_contract(self) -> None:
+        if self.last_tool_contract_observation.get("status") != "MATCH":
+            status_codes = {
+                "MISSING_REMOTE": "runtime_tool_contract_missing_remote",
+                "SCHEMA_MISMATCH": "runtime_tool_contract_schema_mismatch",
+                "REMOTE_NOT_OBSERVED": "runtime_tool_contract_remote_not_observed",
+                "UNAUTHORIZED_EFFECTIVE": "runtime_tool_contract_unauthorized_effective",
+                "PROMPT_OVERCLAIM": "runtime_tool_contract_prompt_overclaim",
+            }
+            row_statuses = {
+                str(row.get("status") or "")
+                for row in self.last_tool_contract_observation.get("rows") or []
+                if isinstance(row, dict)
+            }
+            error_code = next(
+                (status_codes[status] for status in status_codes if status in row_statuses),
+                "runtime_tool_contract_build_mismatch",
+            )
+            raise NonRetryableExecutionError(
+                "Runtime component or Tool contract drift detected",
+                safe_message="当前 Job 的工具或组件版本契约不一致",
+                error_code=error_code,
+            )
+
+    def _set_tool_contract_observation(
+        self,
+        request: AgentRunRequest,
+        bridge: PythonRuntimeFileBridge | None,
+    ) -> None:
+        observation = build_tool_contract_observation(
+            request.context,
+            file_live=(bridge.live_observation if bridge is not None else None),
+            runtime_build_identity=self._runtime_build_identity,
+        )
+        self.last_tool_contract_observation = observation
+        prompt = dict(observation["prompt"])
+        self._effective_context = replace(
+            request.context,
+            prompt_template_version=str(prompt["template_version"]),
+            effective_tool_names=tuple(str(value) for value in prompt["declared_tools"]),
+            prompt_contract_hash=str(prompt["contract_hash"]),
+        )
+        if self._tool_contract_observed:
+            raise NonRetryableExecutionError(
+                "Runtime Tool contract observation was emitted more than once",
+                safe_message="Runtime 工具契约观测无效",
+                error_code="runtime_tool_contract_observation_invalid",
+            )
+        self._tool_contract_observed = True
+        if self._tool_contract_observer is not None:
+            self._tool_contract_observer(dict(observation))
 
     async def _close_mcp_server(self) -> None:
         bridge = self._file_bridge
         self._file_bridge = None
+        self._effective_context = None
         if bridge is not None:
             try:
                 await bridge.close()
@@ -330,6 +410,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         self,
         context: AgentExecutionContext,
     ) -> AgentExecutionContext:
+        context = self._effective_context or context
         bridge = self._file_bridge
         if bridge is None:
             return context
@@ -474,21 +555,10 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         cli_stderr: list[str],
         binding: Any,
     ) -> Any:
-        exact_tools = []
-        for item in context.mcp_bindings:
-            alias = mcp_sdk_server_alias(
-                item.server_code,
-                policies=self._server_policies,
-            )
-            exact_tools.append(f"mcp__{alias}__{item.tool_name}")
-        if not context.mcp_bindings:
-            exact_tools = [f"mcp__tool_mcp__{name}" for name in context.allowed_tools]
-        if self._file_bridge is not None and LOCAL_FILE_OUTPUT_TOOL in (
-            self._file_bridge.local_tool_names
-        ):
-            exact_tools.append(f"mcp__file_service__{LOCAL_FILE_OUTPUT_TOOL}")
-        exact_tool_set = frozenset(exact_tools)
-        file_job = any(item.server_code == FILE_MCP_SERVER_CODE for item in context.mcp_bindings)
+        exact_tool_set = frozenset(
+            name for name in context.effective_tool_names if name not in FILE_TOOL_NAMES
+        )
+        file_job = any(name in FILE_TOOL_NAMES for name in context.effective_tool_names)
         sandbox = self._sandbox.get()
         if sandbox is None:
             raise NonRetryableExecutionError(
@@ -540,7 +610,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             system_prompt=build_system_prompt(context),
             mcp_servers=server,
             strict_mcp_config=True,
-            tools=list(FILE_TOOL_NAMES) if file_job else [],
+            tools=[name for name in FILE_TOOL_NAMES if name in context.effective_tool_names],
             allowed_tools=[],
             disallowed_tools=[
                 tool

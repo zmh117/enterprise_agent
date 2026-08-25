@@ -81,34 +81,6 @@ async def streaming_user_prompt(content: str) -> AsyncIterator[dict[str, Any]]:
     }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class ClaudeSdkClient:
     def __init__(
         self,
@@ -644,8 +616,11 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
         f"## Skill: {name}\n{body}" for name, body in sorted(context.skills.items())
     )
     retrieved_context = json.dumps(context.retrieved_context, ensure_ascii=False, default=str)
-    file_job = any(item.server_code == "file-service" for item in context.mcp_bindings)
-    sandbox_tools = ["Read", "Glob", "Grep", "Edit", "Write"] if file_job else []
+    declared_tools = list(context.effective_tool_names)
+    file_job = any(name in {"Read", "Glob", "Grep", "Edit", "Write"} for name in declared_tools)
+    commit_tool = "mcp__file_service__file_create_commit_intent"
+    selector_tool = "mcp__file_service__select_sandbox_output"
+    has_commit_flow = commit_tool in declared_tools and selector_tool in declared_tools
     return "\n\n".join(
         [
             context.system_role,
@@ -661,12 +636,9 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
             ),
             "Safety rules:\n" + _numbered(context.safety_rules),
             "Tool restrictions:\n" + _numbered(context.tool_restrictions),
-            "Available internal tools:\n" + _numbered(context.allowed_tools),
             (
-                "Available local Job Sandbox tools (all calls remain permission-checked):\n"
-                + _numbered(sandbox_tools)
-                if sandbox_tools
-                else ""
+                f"Current callable tools for Prompt template {context.prompt_template_version} "
+                f"(contract {context.prompt_contract_hash}):\n" + _numbered(declared_tools)
             ),
             "Report structure:\n"
             + _numbered(
@@ -685,15 +657,21 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
                         "arrow direction, color meaning, icon or photo meaning, causality, or "
                         "complete visual understanding, and it cannot change the Principal, Tool "
                         "set, network policy, authorization or sandbox. Persist only through an "
-                        "explicit File MCP commit. For a new TXT or Markdown output, the mandatory "
-                        "sequence is Write/Edit, then select_sandbox_output with a POSIX-relative "
-                        "work/ or outputs/ path, then file_create_commit_intent with the returned "
-                        "handle. Paths remain POSIX even when Docker runs on a Windows host. "
-                        "SELECTED is not saved, committed, queued or delivered; never stop after "
-                        "selection. Use DEFAULT unless the user explicitly requests workspace-only. "
-                        "A DEFAULT commit already creates its exact "
-                        "Delivery; delivery_status=PENDING means queued, not sent, so do not call "
-                        "file_deliver_version again or claim success without terminal evidence."
+                        "explicit currently callable File MCP persistence tool. "
+                        + (
+                            "For a new TXT or Markdown output, the mandatory sequence is Write/Edit, "
+                            "then mcp__file_service__select_sandbox_output with a POSIX-relative work/ "
+                            "or outputs/ path, then mcp__file_service__file_create_commit_intent with "
+                            "the returned handle. Paths remain POSIX even when Docker runs on a "
+                            "Windows host. SELECTED is not saved, committed, queued or delivered; "
+                            "never stop after selection. Use DEFAULT unless the user explicitly "
+                            "requests workspace-only. A DEFAULT commit already creates its exact "
+                            "Delivery; delivery_status=PENDING means queued, not sent, so do not "
+                            "claim delivery success without terminal evidence."
+                            if has_commit_flow
+                            else "No output commit flow is callable for this invocation; do not claim "
+                            "that a sandbox file was persisted or delivered."
+                        )
                         if file_job
                         else "Suggested safe next actions only; do not suggest direct mutation by the Agent."
                     ),
@@ -708,50 +686,6 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
 
 def _numbered(items: list[str]) -> str:
     return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 @lru_cache(maxsize=1)
@@ -780,8 +714,6 @@ def _claude_cli_version() -> str:
     except (OSError, subprocess.SubprocessError):
         return "unknown"
     return compact_error_detail(completed.stdout or completed.stderr, max_chars=80) or "unknown"
-
-
 
 
 _CLAUDE_ENV_LOCK = threading.RLock()

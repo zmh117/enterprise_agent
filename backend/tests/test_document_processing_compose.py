@@ -7,7 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 DIGEST = "sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807"
-PROCESSOR_VERSION = "v1.30.0+wps-null-zero-drawing.v1"
+PROCESSOR_VERSION = "v1.40.0+wps-null-zero-drawing.v1"
 PROCESSOR_BUILD_DIGEST = "sha256:ea15a6fc35b991249180d9265e1a3406448855fe8134c61fc7d26dd046b93429"
 MODEL_DIGEST = "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
 PROFILE_HASH = "c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8"
@@ -22,13 +22,13 @@ def test_docling_image_is_digest_pinned_offline_nonroot_and_internal_only() -> N
     service = compose["services"]["docling-serve"]
     environment = service["environment"]
 
-    assert service["image"] == "enterprise-agent/docling-serve:v1.30.0-layout-ocr-v2"
+    assert service["image"] == "enterprise-agent/docling-serve:v1.40.0-layout-ocr-v2"
     assert service["build"] == {
         "context": ".",
         "dockerfile": "backend/docker/docling-serve/Dockerfile",
     }
     dockerfile = (ROOT / service["build"]["dockerfile"]).read_text(encoding="utf-8")
-    assert f"FROM quay.io/docling-project/docling-serve:v1.30.0@{DIGEST}" in dockerfile
+    assert f"FROM quay.io/docling-project/docling-serve:v1.40.0@{DIGEST}" in dockerfile
     assert "verify_model_bundle.py" in dockerfile
     assert service["user"] == "1001:0"
     assert service["read_only"] is True

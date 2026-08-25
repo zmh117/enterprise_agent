@@ -7,7 +7,7 @@ from typing import Any
 
 import jwt
 
-from app.modules.agent.infrastructure.generated_runtime_contracts_v1_3 import validate_contract
+from app.modules.agent.infrastructure.generated_runtime_contracts_v1_4 import validate_contract
 
 
 class RuntimeGrantError(ValueError):

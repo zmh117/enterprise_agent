@@ -379,7 +379,7 @@ def test_layout_profile_freezes_three_outputs_deadline_and_unique_picture_assemb
             picture_asset_id=str(asset["id"]),
             occurrence_count=2,
             ocr_engine_code="docling-rapidocr",
-            model_revision="v1.30.0",
+            model_revision="v1.40.0",
             model_digest="sha256:" + "d" * 64,
             correlation_id="layout-run",
         )
@@ -390,7 +390,7 @@ def test_layout_profile_freezes_three_outputs_deadline_and_unique_picture_assemb
         picture_asset_id=str(asset["id"]),
         occurrence_count=2,
         ocr_engine_code="docling-rapidocr",
-        model_revision="v1.30.0",
+        model_revision="v1.40.0",
         model_digest="sha256:" + "d" * 64,
         correlation_id="layout-run-replay",
     )
@@ -881,7 +881,7 @@ def test_layout_finalize_binds_every_occurrence_and_cleans_private_artifacts() -
         picture_asset_id=str(asset_prepared["picture_asset_id"]),
         occurrence_count=1,
         ocr_engine_code="docling-rapidocr",
-        model_revision="v1.30.0",
+        model_revision="v1.40.0",
         model_digest="sha256:" + "d" * 64,
         correlation_id="layout-cleanup",
     )
@@ -1041,7 +1041,7 @@ def test_layout_upload_rejects_omitted_frozen_picture_occurrence() -> None:
             picture_asset_id=str(asset["id"]),
             occurrence_count=1,
             ocr_engine_code="docling-rapidocr",
-            model_revision="v1.30.0",
+            model_revision="v1.40.0",
             model_digest="sha256:" + "d" * 64,
             correlation_id="layout-binding",
         )

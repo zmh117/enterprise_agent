@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.bootstrap import Container
+from app.modules.admin.infrastructure import AdminReadRepository
 from app.modules.identity.api.dependencies import (
     current_principal,
     handle_exception,
@@ -242,6 +243,9 @@ def build_agent_job_debug_router() -> Any:
                 "file_workspace": _file_workspace_evidence(
                     container,
                     job_id=job_id,
+                ),
+                "tool_contract": AdminReadRepository(container.database).tool_contract_evidence(
+                    job_id
                 ),
                 "deliveries": {
                     "events": delivery_events,

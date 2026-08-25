@@ -12,6 +12,7 @@ from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.build_identity import BuildIdentity, BuildIdentityError
 
 
 ATTACHMENT_ONLY_USER_QUESTION = (
@@ -42,6 +43,17 @@ class AgentContextBuilder:
                 safe_message="历史任务缺少可执行的输入消息",
                 error_code="legacy_message_unavailable",
             )
+        try:
+            control_plane_build_identity = BuildIdentity.from_dict(
+                job.control_plane_build_identity or {},
+                expected_component="control-plane",
+            ).to_dict()
+        except BuildIdentityError as exc:
+            raise NonRetryableExecutionError(
+                "Job Control Plane build identity is invalid",
+                safe_message="当前 Job 缺少有效的构建身份",
+                error_code="build_identity_invalid",
+            ) from exc
         execution_policy = JobExecutionPolicySnapshot.from_dict(job.execution_policy)
         publication = self._publication(job)
         snapshot = publication.get("snapshot") if publication else {}
@@ -91,9 +103,9 @@ class AgentContextBuilder:
                     error_code="file_manifest_runtime_unavailable",
                 )
             file_manifest = self.file_manifest_service.runtime_manifest(job.id)
-        if job.agent_runtime_protocol_version != "1.3":
+        if job.agent_runtime_protocol_version != "1.4":
             raise NonRetryableExecutionError(
-                "Only Runtime protocol 1.3 is supported",
+                "Only Runtime protocol 1.4 is supported",
                 safe_message="当前 Job Runtime 协议版本不受支持",
                 error_code="runtime_protocol_unsupported",
             )
@@ -173,6 +185,7 @@ class AgentContextBuilder:
             application_publication_id=(job.business_application_publication_id),
             runtime_kind=job.agent_runtime_kind,
             runtime_protocol_version=job.agent_runtime_protocol_version,
+            control_plane_build_identity=control_plane_build_identity,
         )
 
     def _publication(self, job: AgentJob) -> dict[str, Any]:
@@ -186,8 +199,8 @@ class AgentContextBuilder:
             str(item)
             for item in publication_snapshot.get("supported_runtime_protocol_versions", [])
         )
-        if supported_protocols != ("1.3",):
-            raise RuntimeError("Agent publication does not freeze Runtime protocol 1.3 only")
+        if supported_protocols != ("1.4",):
+            raise RuntimeError("Agent publication does not freeze Runtime protocol 1.4 only")
         if (
             int(publication["revision"]) != int(job.agent_revision or 0)
             or str(publication["config_hash"]) != job.agent_config_hash

@@ -144,6 +144,10 @@ def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     assert "modules/delivery" not in python_runtime_section
     assert "modules/message_bus" not in python_runtime_section
     assert "generated_runtime_contracts*.py" in python_runtime_section
+    assert "COPY contracts/agent-runtime/v1.4 /app/contracts/agent-runtime/v1.4" in (
+        python_runtime_section
+    )
+    assert "COPY contracts/agent-runtime /app/contracts/agent-runtime" not in dockerfile
     assert "backend/app/modules/file_workspace/__init__.py" not in python_runtime_section
     assert "backend/app/modules/file_workspace/contracts.py" in python_runtime_section
     assert "backend/app/modules/file_workspace/domain.py" in python_runtime_section
@@ -163,10 +167,32 @@ def test_ci_builds_python_single_runtime_deployment_images() -> None:
     assert "agent-runtime:" not in workflow
     assert "runtime-images:" in workflow
     assert (
-        "docker compose build api-server agent-worker python-agent-runtime dingtalk-runtime"
+        "docker compose build api-server file-service agent-worker python-agent-runtime dingtalk-runtime"
         in workflow
     )
     assert "typescript-agent-runtime" not in workflow
+
+
+def test_release_build_identity_is_injected_into_all_observed_components() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    expected_args = {
+        "BUILD_SOURCE_REVISION": "${BUILD_SOURCE_REVISION:-local-dev}",
+        "BUILD_ID": "${BUILD_ID:-local-dev}",
+        "BUILD_IMAGE_DIGEST": "${BUILD_IMAGE_DIGEST:-}",
+    }
+
+    for service_name in (
+        "api-server",
+        "file-service",
+        "agent-worker",
+        "python-agent-runtime",
+    ):
+        assert compose["services"][service_name]["build"]["args"] == expected_args
+
+    dockerfile = (ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
+    assert "ARG TARGETPLATFORM=linux/unknown" in dockerfile
+    assert "ENV BUILD_PLATFORM=${TARGETPLATFORM}" in dockerfile
+    assert "docker.sock" not in dockerfile
 
 
 def test_runtime_migrator_applies_and_verifies_service_grants_after_schema() -> None:

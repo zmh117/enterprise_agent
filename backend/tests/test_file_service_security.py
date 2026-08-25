@@ -20,7 +20,12 @@ from app.modules.identity.application.principal_jwt import (
     PrincipalSigningKey,
 )
 from app.shared.config import FileServiceSettings
-from services.file_service.app import create_app
+from app.shared.build_identity import BuildIdentity
+from services.file_service.app import (
+    BUILD_IDENTITY_CAPABILITY,
+    create_app,
+    create_file_server,
+)
 from services.file_service.auth import (
     FILE_PRINCIPAL_AUDIENCE,
     FILE_SERVICE_AUDIENCE,
@@ -282,7 +287,7 @@ def test_file_service_requires_managed_private_bucket() -> None:
 class _Database:
     def execute_one(self, query: str) -> dict[str, Any]:
         if "schema_migration" in query:
-            return {"version": "119"}
+            return {"version": "120"}
         return {"ready": 1}
 
     def execute(self, query: str) -> list[dict[str, Any]]:
@@ -331,9 +336,17 @@ def test_file_service_health_readiness_and_transport_fail_closed_without_secrets
         jwks=_Ready(),  # type: ignore[arg-type]
     )
     with TestClient(app) as client:
-        assert client.get("/health").json() == {
+        health = client.get("/health").json()
+        assert health == {
             "status": "ok",
             "server_code": "file-service",
+            "runtime_protocol_version": "1.4",
+            "build_identity": {
+                "component": "file-service",
+                "source_revision": "test-revision",
+                "build_id": "test-build",
+                "platform": "linux/amd64",
+            },
         }
         readiness = client.get("/ready")
         assert readiness.status_code == 200
@@ -351,6 +364,39 @@ def test_file_service_health_readiness_and_transport_fail_closed_without_secrets
         )
         assert attachment.status_code == 403
         assert "not persisted" not in attachment.text
+
+
+def test_file_mcp_initialize_exposes_only_namespaced_safe_build_identity() -> None:
+    server = create_file_server(
+        _NeverCalledPrincipal(),  # type: ignore[arg-type]
+        _NeverCalledApplication(),  # type: ignore[arg-type]
+        build_identity=BuildIdentity(
+            component="file-service",
+            source_revision="revision-1",
+            build_id="build-1",
+            platform="linux/amd64",
+            image_digest=f"sha256:{'a' * 64}",
+        ),
+    )
+
+    options = server.create_initialization_options()
+    assert options.capabilities.experimental == {
+        BUILD_IDENTITY_CAPABILITY: {
+            "component": "file-service",
+            "source_revision": "revision-1",
+            "build_id": "build-1",
+            "platform": "linux/amd64",
+            "image_digest": f"sha256:{'a' * 64}",
+        }
+    }
+    serialized = str(options.capabilities.experimental)
+    assert "token" not in serialized.lower()
+    assert "secret" not in serialized.lower()
+
+    with pytest.raises(ValueError, match="Reserved"):
+        server.create_initialization_options(
+            experimental_capabilities={BUILD_IDENTITY_CAPABILITY: {}},
+        )
 
 
 def test_file_service_readiness_fails_closed_when_document_processing_is_configured_but_absent() -> (
@@ -372,6 +418,8 @@ def test_file_service_readiness_fails_closed_when_document_processing_is_configu
 
     assert readiness.status_code == 503
     assert readiness.json()["status"] == "degraded"
+    assert readiness.json()["runtime_protocol_version"] == "1.4"
+    assert readiness.json()["build_identity"]["component"] == "file-service"
     assert "master" not in readiness.text.lower()
 
 

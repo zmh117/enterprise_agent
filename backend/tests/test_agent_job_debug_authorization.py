@@ -225,7 +225,7 @@ def test_debug_create_projects_current_task_file_contract_into_job() -> None:
     )
 
     assert job.task_workspace_id
-    assert job.agent_runtime_protocol_version == "1.3"
+    assert job.agent_runtime_protocol_version == "1.4"
     assert job.business_application_route_decision["task_file_features"] == (task_file_features)
     frozen_tools = runtime.mcp_tool_snapshot_service.verify(job.id)
     assert {
@@ -234,8 +234,8 @@ def test_debug_create_projects_current_task_file_contract_into_job() -> None:
         if item["server_code"] == "file-service"
     } == {
         "task_workspace_get",
-            "task_workspace_list_files",
-            "task_workspace_search_files",
+        "task_workspace_list_files",
+        "task_workspace_search_files",
         "file_get_metadata",
         "file_prepare_materialization",
     }

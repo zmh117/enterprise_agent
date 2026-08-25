@@ -164,9 +164,7 @@ class AdminReadRepository:
 
         if query.cursor_created_at or query.cursor_id:
             clauses.append("(j.created_at < ? or (j.created_at = ? and j.id < ?))")
-            params.extend(
-                (query.cursor_created_at, query.cursor_created_at, query.cursor_id)
-            )
+            params.extend((query.cursor_created_at, query.cursor_created_at, query.cursor_id))
 
         bounded_limit = max(1, min(int(query.limit), 1000))
         params.append(bounded_limit + (1 if include_extra else 0))
@@ -194,6 +192,18 @@ class AdminReadRepository:
                          j.id || '.attempt-' || cast(j.retry_count as text))
                      as observed_execution_policy_tool_call_count,
                    j.execution_policy_exhausted,
+                   j.agent_runtime_protocol_version,
+                   j.control_plane_build_identity_json,
+                   j.tool_contract_status,
+                   j.tool_contract_last_invocation_id,
+                   j.tool_contract_observation_hash,
+                   j.prompt_template_version,
+                   j.prompt_contract_hash,
+                   (select e.payload_json from agent_runtime_event e
+                     where e.job_id = j.id
+                       and e.event_type = 'tool_contract_observed'
+                     order by e.created_at desc, e.id desc limit 1)
+                     as tool_contract_last_observation_json,
                    j.created_at, j.started_at, j.finished_at,
                    s.accounting_status as audit_accounting_status,
                    s.observed_model_turn_count as audit_observed_model_turn_count,
@@ -348,6 +358,18 @@ class AdminReadRepository:
                          j.id || '.attempt-' || cast(j.retry_count as text))
                      as observed_execution_policy_tool_call_count,
                    j.execution_policy_exhausted,
+                   j.agent_runtime_protocol_version,
+                   j.control_plane_build_identity_json,
+                   j.tool_contract_status,
+                   j.tool_contract_last_invocation_id,
+                   j.tool_contract_observation_hash,
+                   j.prompt_template_version,
+                   j.prompt_contract_hash,
+                   (select e.payload_json from agent_runtime_event e
+                     where e.job_id = j.id
+                       and e.event_type = 'tool_contract_observed'
+                     order by e.created_at desc, e.id desc limit 1)
+                     as tool_contract_last_observation_json,
                    j.created_at, j.started_at, j.finished_at,
                    s.accounting_status as audit_accounting_status,
                    s.observed_model_turn_count as audit_observed_model_turn_count,
@@ -458,6 +480,18 @@ class AdminReadRepository:
                          j.id || '.attempt-' || cast(j.retry_count as text))
                      as observed_execution_policy_tool_call_count,
                    j.execution_policy_exhausted,
+                   j.agent_runtime_protocol_version,
+                   j.control_plane_build_identity_json,
+                   j.tool_contract_status,
+                   j.tool_contract_last_invocation_id,
+                   j.tool_contract_observation_hash,
+                   j.prompt_template_version,
+                   j.prompt_contract_hash,
+                   (select e.payload_json from agent_runtime_event e
+                     where e.job_id = j.id
+                       and e.event_type = 'tool_contract_observed'
+                     order by e.created_at desc, e.id desc limit 1)
+                     as tool_contract_last_observation_json,
                    j.error_message, j.last_error_code,
                    j.created_at, j.started_at, j.finished_at,
                    s.accounting_status as audit_accounting_status,
@@ -547,6 +581,7 @@ class AdminReadRepository:
                 for row in tools
                 if row.get("mcp_call_id")
             ],
+            "tool_contract": self.tool_contract_evidence(job_id),
             "deliveries": {
                 "events": [_safe_times(row) for row in delivery_events],
                 "attempts": [_safe_times(row) for row in delivery_attempts],
@@ -558,6 +593,63 @@ class AdminReadRepository:
                 "max": int(job.get("max_retry_count") or 0),
                 "waiting": job["status"] == "RETRY_WAIT",
             },
+        }
+
+    def tool_contract_evidence(self, job_id: str) -> dict[str, Any]:
+        """Return only immutable, bounded Tool-contract audit facts."""
+        job = self.database.execute_one(
+            """
+            select agent_runtime_protocol_version, tool_contract_status,
+                   tool_contract_last_invocation_id,
+                   tool_contract_observation_hash, prompt_template_version,
+                   prompt_contract_hash, control_plane_build_identity_json
+              from agent_job where id = ?
+            """,
+            (job_id,),
+        )
+        if job is None:
+            return _empty_tool_contract_evidence()
+        snapshot_row = self.database.execute_one(
+            """
+            select id, schema_version, snapshot_json, snapshot_hash, created_at
+              from agent_job_mcp_tool_snapshot where job_id = ?
+            """,
+            (job_id,),
+        )
+        snapshot: dict[str, Any] | None = None
+        if snapshot_row is not None:
+            snapshot_value = _json_object(snapshot_row.get("snapshot_json"))
+            snapshot = {
+                "id": str(snapshot_row.get("id") or ""),
+                "schema_version": int(snapshot_row.get("schema_version") or 1),
+                "snapshot_hash": str(snapshot_row.get("snapshot_hash") or "")[:64],
+                "created_at": _iso_value(snapshot_row.get("created_at")),
+                "tools": _frozen_tool_entries(snapshot_value.get("tools")),
+            }
+        event_rows = self.database.execute(
+            """
+            select invocation_id, request_digest, sequence, payload_json, created_at
+              from agent_runtime_event
+             where job_id = ? and event_type = 'tool_contract_observed'
+             order by created_at, id
+            """,
+            (job_id,),
+        )
+        observations = [_tool_contract_observation_projection(row) for row in event_rows]
+        observed_status = _aggregate_tool_contract_status(observations)
+        summary = _tool_contract_summary(
+            job,
+            last_observation=(observations[-1] if observations else None),
+            status_override=observed_status,
+        )
+        return {
+            "summary": summary,
+            "snapshot": snapshot,
+            "observations": observations,
+            "notice": _tool_contract_notice(
+                protocol_version=str(job.get("agent_runtime_protocol_version") or ""),
+                status=observed_status,
+            ),
         }
 
     @staticmethod
@@ -595,6 +687,20 @@ class AdminReadRepository:
         item["business_application_runtime_status"] = str(
             item.get("business_application_runtime_status") or "legacy_unattributed"
         )
+        last_observation = _json_object(item.pop("tool_contract_last_observation_json", {}))
+        item["tool_contract"] = _tool_contract_summary(
+            item,
+            last_observation=last_observation or None,
+        )
+        item.pop("control_plane_build_identity_json", None)
+        for field in (
+            "tool_contract_status",
+            "tool_contract_last_invocation_id",
+            "tool_contract_observation_hash",
+            "prompt_template_version",
+            "prompt_contract_hash",
+        ):
+            item.pop(field, None)
         item["execution_summary"] = _execution_summary(item)
         return _safe_times(item)
 
@@ -642,9 +748,7 @@ def _job_scope_clause(database: Database, scope: AdminScope) -> tuple[str, list[
     if scope.global_access:
         return "", []
 
-    owner_clause = (
-        "coalesce(nullif(j.internal_user_id, ''), nullif(j.requester_id, ''), '') = ?"
-    )
+    owner_clause = "coalesce(nullif(j.internal_user_id, ''), nullif(j.requester_id, ''), '') = ?"
     owner_params: list[Any] = [scope.user_id]
     allow_matches: list[tuple[str, list[Any]]] = []
     deny_matches: list[tuple[str, list[Any]]] = []
@@ -664,9 +768,7 @@ def _job_scope_clause(database: Database, scope: AdminScope) -> tuple[str, list[
             match_params.append(expected)
         match = f"({' and '.join(match_clauses)})" if match_clauses else "(1 = 1)"
         target = (
-            deny_matches
-            if str(grant.get("effect") or "allow").lower() == "deny"
-            else allow_matches
+            deny_matches if str(grant.get("effect") or "allow").lower() == "deny" else allow_matches
         )
         target.append((match, match_params))
 
@@ -689,8 +791,7 @@ def _job_scope_clause(database: Database, scope: AdminScope) -> tuple[str, list[
 def _json_text_expression(database: Database, column: str, key: str) -> str:
     if database.engine == "sqlite":
         return (
-            "json_extract(case when json_valid("
-            f"{column}) then {column} else '{{}}' end, '$.{key}')"
+            f"json_extract(case when json_valid({column}) then {column} else '{{}}' end, '$.{key}')"
         )
     return f"(coalesce(nullif({column}, ''), '{{}}')::jsonb ->> '{key}')"
 
@@ -717,6 +818,204 @@ def _json_object(value: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _empty_tool_contract_evidence() -> dict[str, Any]:
+    return {
+        "summary": {
+            "status": "NOT_OBSERVED",
+            "last_invocation_id": "",
+            "observation_hash": "",
+            "prompt_template_version": "",
+            "prompt_contract_hash": "",
+            "component_build_identities": [],
+        },
+        "snapshot": None,
+        "observations": [],
+        "notice": "尚无工具契约观测；NOT_OBSERVED 不代表健康。",
+    }
+
+
+def _tool_contract_summary(
+    value: dict[str, Any],
+    *,
+    last_observation: dict[str, Any] | None,
+    status_override: str = "",
+) -> dict[str, Any]:
+    status = status_override or str(value.get("tool_contract_status") or "NOT_OBSERVED")
+    if status not in {"MATCH", "DRIFT", "NOT_OBSERVED"}:
+        status = "NOT_OBSERVED"
+    identities: list[dict[str, str]] = []
+    if last_observation:
+        identities = _build_identity_entries(last_observation.get("component_build_identities"))
+    control_identity = _safe_build_identity_projection(
+        _json_object(value.get("control_plane_build_identity_json"))
+    )
+    if control_identity and not any(
+        item.get("component") == control_identity.get("component") for item in identities
+    ):
+        identities.insert(0, control_identity)
+    prompt = _json_object((last_observation or {}).get("prompt"))
+    return {
+        "status": status,
+        "last_invocation_id": str(
+            value.get("tool_contract_last_invocation_id")
+            or (last_observation or {}).get("invocation_id")
+            or ""
+        )[:128],
+        "observation_hash": str(
+            value.get("tool_contract_observation_hash")
+            or (last_observation or {}).get("observation_hash")
+            or ""
+        )[:64],
+        "prompt_template_version": str(
+            value.get("prompt_template_version") or prompt.get("template_version") or ""
+        )[:128],
+        "prompt_contract_hash": str(
+            value.get("prompt_contract_hash") or prompt.get("contract_hash") or ""
+        )[:64],
+        "component_build_identities": identities[:4],
+    }
+
+
+def _tool_contract_observation_projection(row: dict[str, Any]) -> dict[str, Any]:
+    payload = _json_object(row.get("payload_json"))
+    live = _json_object(payload.get("file_mcp_live"))
+    prompt = _json_object(payload.get("prompt"))
+    status = str(payload.get("status") or "NOT_OBSERVED")
+    if status not in {"MATCH", "DRIFT", "NOT_OBSERVED"}:
+        status = "NOT_OBSERVED"
+    return {
+        "invocation_id": str(row.get("invocation_id") or "")[:128],
+        "request_digest": str(row.get("request_digest") or "")[:64],
+        "sequence": int(row.get("sequence") or 0),
+        "created_at": _iso_value(row.get("created_at")),
+        "status": status,
+        "observation_hash": str(payload.get("observation_hash") or "")[:64],
+        "snapshot_hash": str(payload.get("snapshot_hash") or "")[:64],
+        "component_build_identities": _build_identity_entries(
+            payload.get("component_build_identities")
+        ),
+        "job_frozen": _frozen_tool_entries(payload.get("frozen_tools")),
+        "file_mcp_live": {
+            "status": str(live.get("status") or "NOT_OBSERVED")[:32],
+            "toolset_hash": str(live.get("toolset_hash") or "")[:64],
+            "build_identity": _safe_build_identity_projection(
+                _json_object(live.get("build_identity"))
+            ),
+            "tools": _live_tool_entries(live.get("tools")),
+        },
+        "runtime_effective": _effective_tool_entries(payload.get("effective_tools")),
+        "prompt": {
+            "template_version": str(prompt.get("template_version") or "")[:128],
+            "contract_hash": str(prompt.get("contract_hash") or "")[:64],
+            "declared_tools": [
+                str(item)[:256]
+                for item in prompt.get("declared_tools") or []
+                if isinstance(item, str)
+            ][:128],
+        },
+        "matrix": _tool_status_entries(payload.get("rows")),
+    }
+
+
+def _aggregate_tool_contract_status(observations: list[dict[str, Any]]) -> str:
+    if not observations:
+        return "NOT_OBSERVED"
+    statuses = {str(item.get("status") or "NOT_OBSERVED") for item in observations}
+    if "DRIFT" in statuses:
+        return "DRIFT"
+    return "MATCH" if statuses == {"MATCH"} else "NOT_OBSERVED"
+
+
+def _tool_contract_notice(*, protocol_version: str, status: str) -> str:
+    if status != "NOT_OBSERVED":
+        return "工具契约状态来自该 Job 的冻结快照与不可变 Runtime 事件。"
+    if protocol_version == "1.3":
+        return "历史 protocol 1.3 Job 未记录工具契约；NOT_OBSERVED 不代表健康。"
+    return "尚无 protocol 1.4 工具契约观测；NOT_OBSERVED 不代表健康。"
+
+
+def _frozen_tool_entries(value: Any) -> list[dict[str, str]]:
+    return [
+        {
+            "server_code": str(item.get("server_code") or "")[:128],
+            "tool_name": str(item.get("tool_name") or item.get("tool_identifier") or "")[:128],
+            "schema_hash": str(item.get("schema_hash") or "")[:64],
+        }
+        for item in value or []
+        if isinstance(item, dict)
+    ][:128]
+
+
+def _live_tool_entries(value: Any) -> list[dict[str, str]]:
+    return [
+        {
+            **_frozen_tool_entries([item])[0],
+            "status": str(item.get("status") or "")[:32],
+        }
+        for item in value or []
+        if isinstance(item, dict)
+    ][:128]
+
+
+def _effective_tool_entries(value: Any) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        entry = {
+            "server_code": str(item.get("server_code") or "")[:128],
+            "tool_name": str(item.get("tool_name") or "")[:128],
+            "sdk_tool_name": str(item.get("sdk_tool_name") or "")[:256],
+            "origin": str(item.get("origin") or "")[:32],
+            "schema_hash": str(item.get("schema_hash") or "")[:64],
+            "authorization_status": str(item.get("authorization_status") or "")[:32],
+        }
+        if item.get("dependency_tool_name"):
+            entry["dependency_tool_name"] = str(item["dependency_tool_name"])[:128]
+        entries.append(entry)
+    return entries[:128]
+
+
+def _tool_status_entries(value: Any) -> list[dict[str, str]]:
+    return [
+        {
+            "server_code": str(item.get("server_code") or "")[:128],
+            "tool_name": str(item.get("tool_name") or "")[:128],
+            "status": str(item.get("status") or "")[:32],
+        }
+        for item in value or []
+        if isinstance(item, dict)
+    ][:256]
+
+
+def _build_identity_entries(value: Any) -> list[dict[str, str]]:
+    return [
+        identity
+        for item in value or []
+        if isinstance(item, dict)
+        for identity in [_safe_build_identity_projection(item)]
+        if identity
+    ][:4]
+
+
+def _safe_build_identity_projection(value: dict[str, Any]) -> dict[str, str]:
+    if not value:
+        return {}
+    identity = {
+        key: str(value.get(key) or "")[:128]
+        for key in ("component", "source_revision", "build_id", "platform")
+    }
+    if not all(identity.values()):
+        return {}
+    if value.get("image_digest"):
+        identity["image_digest"] = str(value["image_digest"])[:71]
+    return identity
+
+
+def _iso_value(value: Any) -> str:
+    return value.isoformat() if isinstance(value, datetime) else str(value or "")[:64]
 
 
 def _execution_summary(item: dict[str, Any]) -> dict[str, Any]:
@@ -759,7 +1058,7 @@ def _execution_summary(item: dict[str, Any]) -> dict[str, Any]:
         "failure_code": item.pop(f"{prefix}failure_code", None),
         "failure_summary": item.pop(f"{prefix}failure_summary", None),
         "retry_exhausted": bool(item.pop(f"{prefix}retry_exhausted", 0) or False),
-        "source_protocol_version": str(item.pop(f"{prefix}source_protocol_version", "") or "1.3"),
+        "source_protocol_version": str(item.pop(f"{prefix}source_protocol_version", "") or "1.4"),
     }
 
 

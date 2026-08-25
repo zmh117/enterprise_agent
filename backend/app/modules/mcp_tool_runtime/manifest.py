@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -16,6 +14,7 @@ from app.shared.mcp_server_policy import (
     require_mcp_server_policy,
     validate_mcp_server_policies,
 )
+from app.shared.tool_contract import tool_schema_hash
 
 
 _RESOURCE_KINDS = {
@@ -42,13 +41,7 @@ class McpToolDefinition:
 
 
 def mcp_tool_schema_hash(input_schema: dict[str, Any]) -> str:
-    encoded = json.dumps(
-        input_schema,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return tool_schema_hash(input_schema)
 
 
 MCP_TOOL_MANIFEST: dict[str, McpToolDefinition] = {

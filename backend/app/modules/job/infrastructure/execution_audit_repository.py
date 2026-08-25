@@ -33,6 +33,113 @@ class ExecutionAuditRepository:
             self._runtime_events.record_runtime_event(job_id, event)
             if event.get("event_type") == "model_call":
                 self._upsert_model_call(job_id, event)
+            elif event.get("event_type") == "tool_contract_observed":
+                self._project_tool_contract(job_id, event)
+
+    def _project_tool_contract(self, job_id: str, event: dict[str, Any]) -> None:
+        payload = _dict_payload(event.get("payload"))
+        status = str(payload.get("status") or "")
+        if status not in {"MATCH", "DRIFT", "NOT_OBSERVED"}:
+            raise NonRetryableExecutionError(
+                "Runtime Tool contract status is invalid",
+                safe_message="Runtime 工具契约状态无效",
+                error_code="runtime_tool_contract_observation_invalid",
+            )
+        current = self.database.execute_one(
+            "select tool_contract_status from agent_job where id = ?",
+            (job_id,),
+        )
+        if current is None:
+            raise NonRetryableExecutionError(
+                "Agent Job does not exist",
+                safe_message="未找到 Agent 任务",
+                error_code="agent_job_not_found",
+            )
+        projected_status = (
+            "DRIFT"
+            if str(current.get("tool_contract_status") or "") == "DRIFT" or status == "DRIFT"
+            else status
+        )
+        prompt = _dict_payload(payload.get("prompt"))
+        self.database.execute(
+            """
+            update agent_job
+               set tool_contract_status = ?,
+                   tool_contract_last_invocation_id = ?,
+                   tool_contract_observation_hash = ?,
+                   prompt_template_version = ?,
+                   prompt_contract_hash = ?
+             where id = ?
+            """,
+            (
+                projected_status,
+                str(event.get("invocation_id") or "")[:128],
+                str(payload.get("observation_hash") or "")[:64],
+                str(prompt.get("template_version") or "")[:128],
+                str(prompt.get("contract_hash") or "")[:64],
+                job_id,
+            ),
+        )
+
+    def rebuild_tool_contract_projection(self, job_id: str) -> dict[str, str]:
+        with self.database.unit_of_work():
+            rows = self.database.execute(
+                """
+                select invocation_id, payload_json
+                  from agent_runtime_event
+                 where job_id = ? and event_type = 'tool_contract_observed'
+                 order by created_at, id
+                """,
+                (job_id,),
+            )
+            status = "NOT_OBSERVED"
+            last_invocation_id = ""
+            observation_hash = ""
+            template_version = ""
+            prompt_contract_hash = ""
+            for row in rows:
+                payload = _dict_payload(json.loads(str(row["payload_json"])))
+                observed = str(payload.get("status") or "NOT_OBSERVED")
+                if status != "DRIFT":
+                    status = "DRIFT" if observed == "DRIFT" else observed
+                last_invocation_id = str(row.get("invocation_id") or "")
+                observation_hash = str(payload.get("observation_hash") or "")
+                prompt = _dict_payload(payload.get("prompt"))
+                template_version = str(prompt.get("template_version") or "")
+                prompt_contract_hash = str(prompt.get("contract_hash") or "")
+            updated = self.database.execute_one(
+                """
+                update agent_job
+                   set tool_contract_status = ?,
+                       tool_contract_last_invocation_id = ?,
+                       tool_contract_observation_hash = ?,
+                       prompt_template_version = ?,
+                       prompt_contract_hash = ?
+                 where id = ?
+                returning id
+                """,
+                (
+                    status,
+                    last_invocation_id,
+                    observation_hash,
+                    template_version,
+                    prompt_contract_hash,
+                    job_id,
+                ),
+            )
+            if updated is None:
+                raise NonRetryableExecutionError(
+                    "Agent Job does not exist",
+                    safe_message="未找到 Agent 任务",
+                    error_code="agent_job_not_found",
+                )
+        return {
+            "status": status,
+            "last_invocation_id": last_invocation_id,
+            "observation_hash": observation_hash,
+            "prompt_template_version": template_version,
+            "prompt_contract_hash": prompt_contract_hash,
+        }
 
     def _upsert_model_call(self, job_id: str, event: dict[str, Any]) -> None:
         payload = _dict_payload(event.get("payload"))
@@ -135,6 +242,7 @@ class ExecutionAuditRepository:
         )
 
     def rebuild_summary(self, job_id: str) -> dict[str, Any]:
+        self.rebuild_tool_contract_projection(job_id)
         with self.database.unit_of_work():
             job = self.database.execute_one(
                 """
@@ -192,7 +300,7 @@ class ExecutionAuditRepository:
                     execution_status == ExecutionStatus.FAILED
                     and int(job.get("retry_count") or 0) >= int(job.get("max_retry_count") or 0)
                 ),
-                "source_protocol_version": str(job.get("agent_runtime_protocol_version") or "1.3"),
+                "source_protocol_version": str(job.get("agent_runtime_protocol_version") or "1.4"),
                 "created_at": timestamp,
                 "updated_at": timestamp,
             }
@@ -563,7 +671,7 @@ def _unavailable_summary(job_id: str) -> dict[str, Any]:
         "failure_code": None,
         "failure_summary": None,
         "retry_exhausted": False,
-        "source_protocol_version": "1.3",
+        "source_protocol_version": "1.4",
         "created_at": None,
         "updated_at": None,
     }

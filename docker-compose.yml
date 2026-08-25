@@ -2,6 +2,11 @@ x-database-env: &database-env
   DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
   APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
 
+x-release-build-args: &release-build-args
+  BUILD_SOURCE_REVISION: ${BUILD_SOURCE_REVISION:-local-dev}
+  BUILD_ID: ${BUILD_ID:-local-dev}
+  BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
+
 x-runtime-env: &runtime-env
   <<: *database-env
   APP_ENV: ${APP_ENV:-local}
@@ -283,6 +288,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: file-service
+      args: *release-build-args
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -345,6 +351,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: python-agent-runtime
+      args: *release-build-args
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -414,6 +421,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: api-server
+      args: *release-build-args
     command:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
@@ -502,6 +510,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: agent-worker
+      args: *release-build-args
     command: ["python", "-m", "app.workers.agent_job_worker"]
     environment:
       <<: *worker-env

@@ -74,7 +74,7 @@ def test_file_turn_admission_expand_schema() -> None:
         default_migrations_dir(),
         migrator_build="file-turn-admission-schema-test",
     ).run()
-    assert result.head == "119"
+    assert result.head == "120"
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -88,14 +88,12 @@ def test_file_turn_admission_expand_schema() -> None:
     }
     assert "quoted_external_message_id" in message_columns
     outbox = {
-        str(row["name"]): row
-        for row in database.execute("pragma table_info(delivery_outbox)")
+        str(row["name"]): row for row in database.execute("pragma table_info(delivery_outbox)")
     }
     assert int(outbox["job_id"]["notnull"]) == 0
     assert int(outbox["result_artifact_id"]["notnull"]) == 0
     attempt = {
-        str(row["name"]): row
-        for row in database.execute("pragma table_info(delivery_attempt)")
+        str(row["name"]): row for row in database.execute("pragma table_info(delivery_attempt)")
     }
     assert int(attempt["job_id"]["notnull"]) == 0
     sql = database.execute_one(
@@ -170,7 +168,5 @@ def test_upgrade_from_114_preserves_existing_delivery_rows(tmp_path: Path) -> No
         "result_artifact_id": "artifact-notice",
         "delivery_kind": "RESULT",
     }
-    quoted = {
-        str(row["name"]) for row in database.execute("pragma table_info(agent_message)")
-    }
+    quoted = {str(row["name"]) for row in database.execute("pragma table_info(agent_message)")}
     assert "quoted_external_message_id" in quoted

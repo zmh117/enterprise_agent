@@ -7,7 +7,7 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Protocol
@@ -39,6 +39,7 @@ from app.python_runtime.mcp_config import (
 )
 from app.python_runtime.tool_policy import normalize_tool_events
 from app.shared.config import ExecutionSettings
+from app.shared.build_identity import BuildIdentity, build_identity_from_environment
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
 from .model_binding import PythonModelBindingResolver
@@ -69,6 +70,7 @@ class PythonExecutionOutcome:
     tool_events: tuple[dict[str, Any], ...] = ()
     accounting: dict[str, Any] | None = None
     failure: dict[str, str] | None = None
+    tool_contract_observation: dict[str, Any] | None = None
 
 
 class PythonRuntimeExecutor:
@@ -85,6 +87,7 @@ class PythonRuntimeExecutor:
         cli_version: str | None = None,
         fake_provider_mode: bool = False,
         sandbox_manager: JobSandboxManager | None = None,
+        build_identity: BuildIdentity | None = None,
     ) -> None:
         self._bindings = binding_resolver
         self._limits = limits
@@ -121,6 +124,11 @@ class PythonRuntimeExecutor:
         )
         self._fake_provider_mode = fake_provider_mode
         self._sandbox_manager = sandbox_manager
+        self._build_identity = build_identity or build_identity_from_environment("python-runtime")
+
+    @property
+    def build_identity(self) -> BuildIdentity:
+        return self._build_identity
 
     @property
     def sdk_version(self) -> str:
@@ -135,6 +143,7 @@ class PythonRuntimeExecutor:
         request: dict[str, Any],
         cancel_event: threading.Event,
         secret_context: InvocationSecretContextPort | None = None,
+        tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> PythonExecutionOutcome:
         resolved = self._bindings.resolve(
             str(request["model_connection"]["revision_id"]),
@@ -150,7 +159,7 @@ class PythonRuntimeExecutor:
                 provenance,
                 secret_context,
             )
-        run_request = _agent_request(request, resolved.binding)
+        run_request = agent_request_from_runtime_request(request, resolved.binding)
         client = FixedMcpClaudeSdkClient(
             limits=self._limits,
             api_key=resolved.api_key,
@@ -162,6 +171,8 @@ class PythonRuntimeExecutor:
             server_policies=self._server_policies,
             sandbox_manager=self._sandbox_manager,
             cancellation_event=cancel_event,
+            runtime_build_identity=self._build_identity,
+            tool_contract_observer=tool_contract_observer,
         )
         try:
             result = client.run(run_request)
@@ -182,10 +193,18 @@ class PythonRuntimeExecutor:
                     "retry_class": "TRANSIENT",
                     "safe_message": str(exc.safe_message or "模型运行暂时失败"),
                 },
+                tool_contract_observation=dict(client.last_tool_contract_observation),
             )
         except NonRetryableExecutionError as exc:
             if str(exc.error_code or "") == "runtime_cancelled":
                 return self._cancelled(provenance)
+            failure_code = str(exc.error_code or "runtime_configuration_error")
+            if failure_code == "runtime_tool_contract_remote_not_observed":
+                retry_class = "TRANSIENT"
+            elif failure_code.startswith("runtime_tool_contract_"):
+                retry_class = "NEVER"
+            else:
+                retry_class = "CONFIGURATION"
             return PythonExecutionOutcome(
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
@@ -198,10 +217,11 @@ class PythonRuntimeExecutor:
                     server_policies=self._server_policies,
                 ),
                 failure={
-                    "code": str(exc.error_code or "runtime_configuration_error"),
-                    "retry_class": "CONFIGURATION",
+                    "code": failure_code,
+                    "retry_class": retry_class,
                     "safe_message": str(exc.safe_message or "模型运行配置不可用"),
                 },
+                tool_contract_observation=dict(client.last_tool_contract_observation),
             )
         if cancel_event.is_set():
             return self._cancelled(provenance)
@@ -217,6 +237,7 @@ class PythonRuntimeExecutor:
                 request,
                 server_policies=self._server_policies,
             ),
+            tool_contract_observation=dict(client.last_tool_contract_observation),
         )
 
     def probe(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -619,6 +640,7 @@ class PythonRuntimeExecutor:
             "protocol_version": request["protocol_version"],
             "sdk_version": self._sdk_version,
             "cli_version": self._cli_version,
+            "runtime_build_identity": self._build_identity.to_dict(),
             "model_connection_revision_id": request["model_connection"]["revision_id"],
             "model_connection_config_hash": request["model_connection"]["config_hash"],
         }
@@ -637,7 +659,10 @@ class PythonRuntimeExecutor:
         )
 
 
-def _agent_request(request: dict[str, Any], binding: Any) -> AgentRunRequest:
+def agent_request_from_runtime_request(
+    request: dict[str, Any],
+    binding: Any,
+) -> AgentRunRequest:
     tools = tuple(
         McpRuntimeBinding(
             server_code=str(server["server_code"]),
@@ -673,6 +698,10 @@ def _agent_request(request: dict[str, Any], binding: Any) -> AgentRunRequest:
         mcp_bindings=tools,
         runtime_kind=PYTHON_RUNTIME_KIND,
         runtime_protocol_version=str(request["protocol_version"]),
+        job_tool_snapshot_hash=str(request["job_tool_snapshot_hash"]),
+        control_plane_build_identity=dict(request["control_plane_build_identity"]),
+        worker_build_identity=dict(request["worker_build_identity"]),
+        prompt_template_version=str(prompt["template_version"]),
     )
     return AgentRunRequest(
         job_id=str(request["job_id"]),

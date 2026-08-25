@@ -1,0 +1,236 @@
+{
+  "protocol_version": "1.4",
+  "tool_event": {
+    "tool_call_id": "tool-call-1",
+    "tool_origin": "mcp",
+    "server_code": "tool-mcp",
+    "mcp_call_id": "mcp-call-1",
+    "persisted_tool_call_id": "agent-tool-call-1",
+    "tool_name": "ones_work_item_search",
+    "status": "SUCCEEDED",
+    "request_summary": {
+      "project_code": "project-1"
+    },
+    "response_summary": {
+      "count": 1
+    },
+    "duration_ms": 42
+  },
+  "usage": {
+    "input_tokens": 100,
+    "output_tokens": 30,
+    "cache_read_input_tokens": 20,
+    "cache_creation_input_tokens": 0
+  },
+  "runtime_provenance": {
+    "runtime_kind": "python-v1",
+    "runtime_version": "0.1.0",
+    "protocol_version": "1.4",
+    "sdk_version": "0.3.226",
+    "cli_version": "2.1.326",
+    "runtime_build_identity": {
+      "component": "python-runtime",
+      "source_revision": "revision-abc123",
+      "build_id": "build-20260825-1",
+      "platform": "linux/amd64"
+    },
+    "model_connection_revision_id": "model-connection-revision-1",
+    "model_connection_config_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "failure": {
+    "code": "runtime_model_rate_limited",
+    "retry_class": "TRANSIENT",
+    "safe_message": "模型服务当前繁忙，请稍后重试"
+  },
+  "runtime_initialization": {
+    "model_id": "claude-safe-model",
+    "mcp_servers": [
+      {
+        "server_code": "tool-mcp",
+        "status": "CONNECTED"
+      },
+      {
+        "server_code": "ones-mcp",
+        "status": "FAILED"
+      }
+    ]
+  },
+  "model_call": {
+    "model_call_id": "message-safe-1",
+    "provider_request_id": "request-safe-1",
+    "provider_message_id": "message-safe-1",
+    "model_id": "claude-safe-model",
+    "status": "SUCCEEDED",
+    "started_at": "2026-08-12T00:00:00Z",
+    "completed_at": "2026-08-12T00:00:01Z",
+    "duration_ms": 1000,
+    "duration_source": "SDK_OBSERVED",
+    "usage": {
+      "input_tokens": 120,
+      "output_tokens": 32,
+      "cache_read_input_tokens": 16,
+      "cache_creation_input_tokens": 8
+    },
+    "stop_reason": "end_turn",
+    "error_code": null,
+    "error_summary": null
+  },
+  "api_retry": {
+    "attempt": 1,
+    "max_retries": 3,
+    "retry_delay_ms": 750,
+    "error_status": 429,
+    "error_code": "rate_limit"
+  },
+  "accounting": {
+    "status": "COMPLETE",
+    "duration_ms": 2400,
+    "duration_api_ms": 1800,
+    "num_turns": 1,
+    "usage": {
+      "input_tokens": 120,
+      "output_tokens": 32,
+      "cache_read_input_tokens": 16,
+      "cache_creation_input_tokens": 8
+    },
+    "model_usage": [
+      {
+        "model_id": "claude-safe-model",
+        "canonical_model": "claude-safe-model",
+        "provider": "firstParty",
+        "usage": {
+          "input_tokens": 120,
+          "output_tokens": 32,
+          "cache_read_input_tokens": 16,
+          "cache_creation_input_tokens": 8
+        },
+        "estimated_cost_usd": 0.012345
+      }
+    ],
+    "estimated_cost_usd": 0.012345,
+    "permission_denials_count": 0
+  },
+  "runtime_initialized_event": {
+    "protocol_version": "1.4",
+    "invocation_id": "invocation-1",
+    "request_digest": "8427f5f6bc0dd490f41dd9b6e5b5338e337b6972a4bfb883bde1d0d7f951be76",
+    "sequence": 2,
+    "event_type": "runtime_initialized",
+    "timestamp": "2026-08-12T00:00:00Z",
+    "payload": {
+      "model_id": "claude-safe-model",
+      "mcp_servers": [
+        {
+          "server_code": "tool-mcp",
+          "status": "CONNECTED"
+        },
+        {
+          "server_code": "ones-mcp",
+          "status": "FAILED"
+        }
+      ]
+    }
+  },
+  "model_call_event": {
+    "protocol_version": "1.4",
+    "invocation_id": "invocation-1",
+    "request_digest": "8427f5f6bc0dd490f41dd9b6e5b5338e337b6972a4bfb883bde1d0d7f951be76",
+    "sequence": 3,
+    "event_type": "model_call",
+    "timestamp": "2026-08-12T00:00:01Z",
+    "payload": {
+      "model_call_id": "message-safe-1",
+      "provider_request_id": "request-safe-1",
+      "provider_message_id": "message-safe-1",
+      "model_id": "claude-safe-model",
+      "status": "SUCCEEDED",
+      "started_at": "2026-08-12T00:00:00Z",
+      "completed_at": "2026-08-12T00:00:01Z",
+      "duration_ms": 1000,
+      "duration_source": "SDK_OBSERVED",
+      "usage": {
+        "input_tokens": 120,
+        "output_tokens": 32,
+        "cache_read_input_tokens": 16,
+        "cache_creation_input_tokens": 8
+      },
+      "stop_reason": "end_turn",
+      "error_code": null,
+      "error_summary": null
+    }
+  },
+  "api_retry_event": {
+    "protocol_version": "1.4",
+    "invocation_id": "invocation-1",
+    "request_digest": "8427f5f6bc0dd490f41dd9b6e5b5338e337b6972a4bfb883bde1d0d7f951be76",
+    "sequence": 4,
+    "event_type": "api_retry",
+    "timestamp": "2026-08-12T00:00:01Z",
+    "payload": {
+      "attempt": 1,
+      "max_retries": 3,
+      "retry_delay_ms": 750,
+      "error_status": 429,
+      "error_code": "rate_limit"
+    }
+  },
+  "terminal_event": {
+    "protocol_version": "1.4",
+    "invocation_id": "invocation-1",
+    "request_digest": "8427f5f6bc0dd490f41dd9b6e5b5338e337b6972a4bfb883bde1d0d7f951be76",
+    "sequence": 5,
+    "event_type": "terminal",
+    "timestamp": "2026-08-12T00:00:03Z",
+    "payload": {
+      "protocol_version": "1.4",
+      "invocation_id": "invocation-1",
+      "request_digest": "8427f5f6bc0dd490f41dd9b6e5b5338e337b6972a4bfb883bde1d0d7f951be76",
+      "last_sequence": 5,
+      "status": "SUCCEEDED",
+      "final_answer": "safe result",
+      "usage": {
+        "input_tokens": 120,
+        "output_tokens": 32,
+        "cache_read_input_tokens": 16,
+        "cache_creation_input_tokens": 8
+      },
+      "accounting": {
+        "status": "COMPLETE",
+        "duration_ms": 2400,
+        "duration_api_ms": 1800,
+        "num_turns": 1,
+        "usage": {
+          "input_tokens": 120,
+          "output_tokens": 32,
+          "cache_read_input_tokens": 16,
+          "cache_creation_input_tokens": 8
+        },
+        "model_usage": [
+          {
+            "model_id": "claude-safe-model",
+            "canonical_model": "claude-safe-model",
+            "provider": "firstParty",
+            "usage": {
+              "input_tokens": 120,
+              "output_tokens": 32,
+              "cache_read_input_tokens": 16,
+              "cache_creation_input_tokens": 8
+            },
+            "estimated_cost_usd": 0.012345
+          }
+        ],
+        "estimated_cost_usd": 0.012345,
+        "permission_denials_count": 0
+      },
+      "runtime_provenance": {
+        "runtime_kind": "python-v1",
+        "runtime_version": "0.1.0",
+        "protocol_version": "1.4",
+        "sdk_version": "0.3.226",
+        "cli_version": "2.1.326",
+        "model_connection_revision_id": "model-connection-revision-1",
+        "model_connection_config_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  }
+}

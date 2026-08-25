@@ -193,9 +193,7 @@ def test_admin_api_configures_connection_atomically_and_removes_legacy_routes() 
     c.model_connection_service.model_discoverer = lambda models_url, api_key, timeout_seconds: [
         {"id": "deepseek-v4-flash"}
     ]
-    c.model_connection_service.runtime_probes = {
-        "python-v1": SuccessfulPythonDraftProbe()
-    }
+    c.model_connection_service.runtime_probes = {"python-v1": SuccessfulPythonDraftProbe()}
     app = create_app(settings, container_factory=lambda _: c)
     with TestClient(app) as client:
         login = client.post(
@@ -366,7 +364,7 @@ def test_agent_publication_pins_connection_and_job_records_safe_provenance() -> 
         revision_id=str(draft["id"]),
     )
     assert publication["schema_version"] == 3
-    assert publication["snapshot"]["supported_runtime_protocol_versions"] == ["1.3"]
+    assert publication["snapshot"]["supported_runtime_protocol_versions"] == ["1.4"]
     assert publication["snapshot"]["model_connection"]["revision_id"] == connection_revision["id"]
     assert "credential" not in publication["snapshot"]["model_connection"]
 
@@ -682,7 +680,7 @@ def test_saved_connection_probe_delegates_fixed_revision_to_python_runtime() -> 
         def probe(self, **kwargs: Any) -> dict[str, Any]:
             observed.update(kwargs)
             return {
-                "protocol_version": "1.3",
+                "protocol_version": "1.4",
                 "probe_id": "probe-safe-result",
                 "success": True,
                 "connection_revision_id": revision["id"],
@@ -802,7 +800,7 @@ def test_admin_api_returns_stable_error_for_retired_typescript_probe() -> None:
             assert kwargs["revision_id"] == revision["id"]
             assert kwargs["config_hash"] == revision["config_hash"]
             return {
-                "protocol_version": "1.3",
+                "protocol_version": "1.4",
                 "probe_id": "probe-api-result",
                 "success": True,
                 "connection_revision_id": revision["id"],

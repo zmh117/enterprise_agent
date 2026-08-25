@@ -26,7 +26,7 @@ class AgentPublicationAdapter:
             and definition_runtime_kind == runtime_kind
             and snapshot_hash(snapshot) == str(publication.get("config_hash") or "")
             and snapshot.get("runtime_kind") == runtime_kind
-            and snapshot.get("supported_runtime_protocol_versions") == ["1.3"]
+            and snapshot.get("supported_runtime_protocol_versions") == ["1.4"]
         )
         if not integrity_valid:
             raise NonRetryableExecutionError(
@@ -46,7 +46,7 @@ class AgentPublicationAdapter:
             ),
             config_hash=str(publication["config_hash"]),
             runtime_kind=runtime_kind,
-            runtime_protocol_versions=("1.3",),
+            runtime_protocol_versions=("1.4",),
             component_type="agent_publication",
         )
 

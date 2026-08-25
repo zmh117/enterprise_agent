@@ -11,6 +11,7 @@ from app.modules.agent.infrastructure.runtime_http_client import (
     probe_runtime_readiness,
 )
 from app.shared.config import Settings, load_settings, synchronize_feature_configuration
+from app.shared.build_identity import build_identity_from_environment
 from app.shared.database import Database
 from app.shared.database import default_migrations_dir
 from app.shared.logging import configure_logging, set_correlation_id
@@ -25,6 +26,8 @@ class FallbackApp:
 def _build_health(settings: Settings) -> dict[str, Any]:
     return {
         "status": "ok",
+        "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
+        "build_identity": build_identity_from_environment("control-plane").to_dict(),
         "claude_invoked": False,
     }
 
@@ -61,6 +64,8 @@ def _build_readiness(
     )
     result = {
         "status": "ready" if core_ready else "not_ready",
+        "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
+        "build_identity": build_identity_from_environment("control-plane").to_dict(),
         "core": {
             "database": database_ready,
             "schema": schema_ready,
@@ -139,6 +144,7 @@ def _check_agent_runtime(
             "protocol_version": "",
             "sdk_version": "",
             "cli_version": "",
+            "build_identity": None,
             "model_invoked": False,
             "mcp_invoked": False,
         }

@@ -724,12 +724,8 @@ class BusinessApplicationService:
         errors.extend(
             self._document_processing_compatibility_errors(
                 document_processing_profile_code=document_processing_profile_code,
-                task_file_features=validate_task_file_features(
-                    revision.get("task_file_features")
-                ),
-                session_policy=validate_session_policy(
-                    dict(revision.get("session_policy") or {})
-                ),
+                task_file_features=validate_task_file_features(revision.get("task_file_features")),
+                session_policy=validate_session_policy(dict(revision.get("session_policy") or {})),
                 agent=agent,
             )
         )
@@ -774,7 +770,7 @@ class BusinessApplicationService:
                     "message": "Docling 文档处理必须启用连续会话",
                 }
             )
-        if agent is None or "1.3" not in agent.runtime_protocol_versions:
+        if agent is None or "1.4" not in agent.runtime_protocol_versions:
             errors.append(
                 {
                     "field": "agent_publication_id",
@@ -957,9 +953,9 @@ class BusinessApplicationService:
                 "task_workspace_retention_period": (publication or revision or {}).get(
                     "task_workspace_retention_period", "WEEK"
                 ),
-                "document_processing_profile_code": (
-                    publication or revision or {}
-                ).get("document_processing_profile_code", "NONE"),
+                "document_processing_profile_code": (publication or revision or {}).get(
+                    "document_processing_profile_code", "NONE"
+                ),
                 "task_file_features": (publication or revision or {}).get(
                     "task_file_features", validate_task_file_features(None)
                 ),
@@ -1007,15 +1003,11 @@ class BusinessApplicationService:
             ),
             "document_processing_profile_code": validate_document_processing_profile_code(
                 application.get("document_processing_profile_code")
-                or (application.get("draft") or {}).get(
-                    "document_processing_profile_code"
-                )
+                or (application.get("draft") or {}).get("document_processing_profile_code")
             ),
             **document_processing_state(
                 application.get("document_processing_profile_code")
-                or (application.get("draft") or {}).get(
-                    "document_processing_profile_code"
-                )
+                or (application.get("draft") or {}).get("document_processing_profile_code")
             ),
             **readiness.to_dict(),
         }
@@ -1045,8 +1037,8 @@ class BusinessApplicationService:
         }
 
     def _snapshot_summary(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        document_profile, document_profile_source = (
-            publication_document_processing_profile(snapshot)
+        document_profile, document_profile_source = publication_document_processing_profile(
+            snapshot
         )
         return {
             "schema_version": snapshot.get("schema_version"),
@@ -1138,12 +1130,8 @@ class BusinessApplicationService:
             "document_processing_profile_source": snapshot_summary[
                 "document_processing_profile_source"
             ],
-            "document_processing_status": snapshot_summary[
-                "document_processing_status"
-            ],
-            "document_processing_reason_code": snapshot_summary[
-                "document_processing_reason_code"
-            ],
+            "document_processing_status": snapshot_summary["document_processing_status"],
+            "document_processing_reason_code": snapshot_summary["document_processing_reason_code"],
             **readiness.to_dict(),
         }
 

@@ -31,6 +31,10 @@ from app.modules.model_connection.domain import (
     ModelRuntimeBinding,
 )
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from app.shared.build_identity import BuildIdentity
+from app.shared.tool_contract import canonical_json_sha256
+from app.python_runtime.executor import agent_request_from_runtime_request
+from app.python_runtime.tool_contract import build_tool_contract_observation
 from backend.tests.business_mcp_fixtures import (
     TEST_BUSINESS_SERVER_CODE,
     TEST_BUSINESS_TOOL_IDENTIFIER,
@@ -68,12 +72,32 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.3",
+                    "protocol_version": "1.4",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
+                    "build_identity": {
+                        "component": "python-runtime",
+                        "source_revision": "test-revision",
+                        "build_id": "test-build",
+                        "platform": "linux/arm64",
+                        "image_digest": f"sha256:{'1' * 64}",
+                    },
                 }
             )
-        return _PassiveResponse({"ready": True, "database": "ready", "master_key": "ready"})
+        return _PassiveResponse(
+            {
+                "ready": True,
+                "database": "ready",
+                "master_key": "ready",
+                "build_identity": {
+                    "component": "python-runtime",
+                    "source_revision": "test-revision",
+                    "build_id": "test-build",
+                    "platform": "linux/arm64",
+                    "image_digest": f"sha256:{'1' * 64}",
+                },
+            }
+        )
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     result = probe_runtime_readiness(
@@ -87,6 +111,7 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
     assert result["ready"] is True
     assert result["model_invoked"] is False
     assert result["mcp_invoked"] is False
+    assert result["build_identity"]["platform"] == "linux/arm64"
     assert paths == [
         "http://agent-runtime:9102/version",
         "http://agent-runtime:9102/ready",
@@ -103,13 +128,29 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.3",
+                    "protocol_version": "1.4",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
+                    "build_identity": {
+                        "component": "python-runtime",
+                        "source_revision": "test-revision",
+                        "build_id": "test-build",
+                        "platform": "linux/amd64",
+                    },
                 }
             )
         body = json.dumps(
-            {"ready": False, "database": "ready", "master_key": "unavailable"}
+            {
+                "ready": False,
+                "database": "ready",
+                "master_key": "unavailable",
+                "build_identity": {
+                    "component": "python-runtime",
+                    "source_revision": "test-revision",
+                    "build_id": "test-build",
+                    "platform": "linux/amd64",
+                },
+            }
         ).encode("utf-8")
         raise urllib.error.HTTPError(
             request.full_url,
@@ -134,6 +175,38 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
     assert result["master_key"] == "unavailable"
     assert result["model_invoked"] is False
     assert result["mcp_invoked"] is False
+
+
+def test_passive_runtime_readiness_fails_closed_without_build_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request: Any, timeout: int) -> _PassiveResponse:
+        del timeout
+        if request.full_url.endswith("/version"):
+            return _PassiveResponse(
+                {
+                    "runtime": "python-v1",
+                    "runtime_version": "0.1.0",
+                    "protocol_version": "1.4",
+                    "sdk_version": "0.3.226",
+                    "cli_version": "2.1.226",
+                }
+            )
+        return _PassiveResponse({"ready": True, "database": "ready", "master_key": "ready"})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    result = probe_runtime_readiness(
+        RuntimeClientSettings(
+            base_url="http://agent-runtime:9102",
+            allowed_runtime_hosts=("agent-runtime",),
+            allow_insecure_internal_http=True,
+        )
+    )
+
+    assert result["ready"] is False
+    assert result["identity"] == "invalid"
+    assert result["build_identity"] is None
 
 
 def _private_key() -> tuple[bytes, bytes]:
@@ -188,6 +261,13 @@ def _context() -> AgentExecutionContext:
             ),
         ),
         runtime_kind="python-v1",
+        job_tool_snapshot_hash="f" * 64,
+        control_plane_build_identity={
+            "component": "control-plane",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
     )
 
 
@@ -208,6 +288,12 @@ def _provenance(request: dict[str, Any]) -> dict[str, Any]:
         "protocol_version": request["protocol_version"],
         "sdk_version": "0.3.226",
         "cli_version": "2.1.226",
+        "runtime_build_identity": {
+            "component": "python-runtime",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
         "model_connection_revision_id": request["model_connection"]["revision_id"],
         "model_connection_config_hash": request["model_connection"]["config_hash"],
     }
@@ -232,6 +318,50 @@ class GoldenTransport:
         self.request = json.loads(body)
         self.headers = headers
         provenance = _provenance(self.request)
+        file_tools = [
+            {
+                "server_code": "file-service",
+                "tool_name": str(tool["tool_name"]),
+                "schema_hash": str(tool["tool_schema_hash"]),
+                "status": "MATCH",
+            }
+            for server in self.request["mcp_servers"]
+            if server["server_code"] == "file-service"
+            for tool in server["tools"]
+        ]
+        file_live = (
+            {
+                "status": "OBSERVED",
+                "tools": file_tools,
+                "toolset_hash": canonical_json_sha256(
+                    [
+                        {
+                            "tool_name": item["tool_name"],
+                            "schema_hash": item["schema_hash"],
+                        }
+                        for item in file_tools
+                    ]
+                ),
+                "build_identity": {
+                    "component": "file-service",
+                    "source_revision": "test-revision",
+                    "build_id": "test-build",
+                    "platform": "linux/amd64",
+                },
+            }
+            if file_tools
+            else None
+        )
+        observation = build_tool_contract_observation(
+            agent_request_from_runtime_request(self.request, None).context,
+            file_live=file_live,
+            runtime_build_identity=BuildIdentity(
+                "python-runtime",
+                "test-revision",
+                "test-build",
+                "linux/amd64",
+            ),
+        )
         events = [
             {
                 "protocol_version": self.request["protocol_version"],
@@ -247,6 +377,15 @@ class GoldenTransport:
                 "invocation_id": self.request["invocation_id"],
                 "request_digest": self.request["request_digest"],
                 "sequence": 2,
+                "event_type": "tool_contract_observed",
+                "timestamp": "2026-08-09T00:00:01Z",
+                "payload": observation,
+            },
+            {
+                "protocol_version": self.request["protocol_version"],
+                "invocation_id": self.request["invocation_id"],
+                "request_digest": self.request["request_digest"],
+                "sequence": 3,
                 "event_type": "tool_event",
                 "timestamp": "2026-08-09T00:00:01Z",
                 "payload": {
@@ -267,7 +406,7 @@ class GoldenTransport:
             "protocol_version": self.request["protocol_version"],
             "invocation_id": self.request["invocation_id"],
             "request_digest": self.request["request_digest"],
-            "last_sequence": 3,
+            "last_sequence": 4,
             "status": self.terminal_status,
             "usage": {
                 "input_tokens": 10,
@@ -278,19 +417,19 @@ class GoldenTransport:
             "runtime_provenance": provenance,
         }
         terminal["accounting"] = {
-                "status": "COMPLETE",
-                "duration_ms": 20,
-                "duration_api_ms": 10,
-                "num_turns": 1,
-                "usage": {
-                    "input_tokens": 10,
-                    "output_tokens": 4,
-                    "cache_read_input_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                },
-                "model_usage": [],
-                "estimated_cost_usd": 0.001,
-                "permission_denials_count": 0,
+            "status": "COMPLETE",
+            "duration_ms": 20,
+            "duration_api_ms": 10,
+            "num_turns": 1,
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 4,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+            "model_usage": [],
+            "estimated_cost_usd": 0.001,
+            "permission_denials_count": 0,
         }
         if self.terminal_status == "SUCCEEDED":
             terminal["final_answer"] = "final answer"
@@ -305,7 +444,7 @@ class GoldenTransport:
                 "protocol_version": self.request["protocol_version"],
                 "invocation_id": self.request["invocation_id"],
                 "request_digest": self.request["request_digest"],
-                "sequence": 3,
+                "sequence": 4,
                 "event_type": "terminal",
                 "timestamp": "2026-08-09T00:00:02Z",
                 "payload": terminal,
@@ -368,7 +507,7 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
     assert result.final_answer == "final answer"
     assert result.runtime_provenance["runtime_kind"] == "python-v1"
     assert len(result.tool_events) == 1
-    assert [event["sequence"] for event in persisted_events] == [1, 2, 3]
+    assert [event["sequence"] for event in persisted_events] == [1, 2, 3, 4]
     runtime_claims = jwt.decode(
         transport.headers["Authorization"].removeprefix("Bearer "),
         public_pem,
@@ -435,7 +574,7 @@ def test_worker_passes_manifest_v5_without_projection() -> None:
     ).hexdigest()
     context = replace(
         _context(),
-        runtime_protocol_version="1.3",
+        runtime_protocol_version="1.4",
         retrieved_context={
             "file_manifest": {
                 "schema_version": 5,
@@ -593,7 +732,7 @@ def test_worker_issues_a_separate_file_principal_for_file_mcp() -> None:
         request,
         context=replace(
             request.context,
-            runtime_protocol_version="1.3",
+            runtime_protocol_version="1.4",
             allowed_tools=["file_prepare_materialization"],
             mcp_bindings=(
                 McpRuntimeBinding(
@@ -637,7 +776,7 @@ def test_worker_projects_two_business_principals_to_distinct_runtime_headers() -
         _request(),
         context=replace(
             _request().context,
-            runtime_protocol_version="1.3",
+            runtime_protocol_version="1.4",
             allowed_tools=["ones_work_item_search", TEST_BUSINESS_TOOL_IDENTIFIER],
             mcp_bindings=(
                 McpRuntimeBinding(
@@ -681,7 +820,7 @@ def test_worker_projects_business_and_file_principals_to_separate_headers() -> N
         _request(),
         context=replace(
             _request().context,
-            runtime_protocol_version="1.3",
+            runtime_protocol_version="1.4",
             allowed_tools=["ones_work_item_search", "file_prepare_materialization"],
             mcp_bindings=(
                 McpRuntimeBinding(
@@ -763,6 +902,60 @@ class BrokenSequenceTransport(GoldenTransport):
 
 def test_worker_rejects_sequence_gap_before_committing_terminal() -> None:
     client, _ = _client(BrokenSequenceTransport())
+
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        client.run(_request())
+
+    assert raised.value.error_code == "runtime_protocol_error"
+
+
+def _resequence_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for sequence, event in enumerate(events, start=1):
+        event["sequence"] = sequence
+        if event["event_type"] == "terminal":
+            event["payload"]["last_sequence"] = sequence
+    return events
+
+
+class MissingToolContractTransport(GoldenTransport):
+    def stream(self, **kwargs: Any) -> Iterator[bytes]:
+        events = [json.loads(line) for line in super().stream(**kwargs)]
+        events = [event for event in events if event["event_type"] != "tool_contract_observed"]
+        yield from (f"{json.dumps(event)}\n".encode() for event in _resequence_events(events))
+
+
+class DuplicateToolContractTransport(GoldenTransport):
+    def stream(self, **kwargs: Any) -> Iterator[bytes]:
+        events = [json.loads(line) for line in super().stream(**kwargs)]
+        observation = next(
+            event for event in events if event["event_type"] == "tool_contract_observed"
+        )
+        events.insert(2, json.loads(json.dumps(observation)))
+        yield from (f"{json.dumps(event)}\n".encode() for event in _resequence_events(events))
+
+
+class DriftSucceededTransport(GoldenTransport):
+    def stream(self, **kwargs: Any) -> Iterator[bytes]:
+        events = [json.loads(line) for line in super().stream(**kwargs)]
+        events = [event for event in events if event["event_type"] != "tool_event"]
+        observation = next(
+            event for event in events if event["event_type"] == "tool_contract_observed"
+        )
+        payload = observation["payload"]
+        payload["status"] = "DRIFT"
+        unhashed = {key: value for key, value in payload.items() if key != "observation_hash"}
+        payload["observation_hash"] = canonical_json_sha256(unhashed)
+        yield from (f"{json.dumps(event)}\n".encode() for event in _resequence_events(events))
+
+
+@pytest.mark.parametrize(
+    "transport",
+    [MissingToolContractTransport(), DuplicateToolContractTransport(), DriftSucceededTransport()],
+)
+def test_worker_rejects_missing_duplicate_or_nonmatching_tool_contract(
+    transport: GoldenTransport,
+) -> None:
+    client, _ = _client(transport)
 
     with pytest.raises(NonRetryableExecutionError) as raised:
         client.run(_request())
@@ -891,7 +1084,7 @@ def test_worker_cancels_same_invocation_when_terminal_reconnect_also_fails(
     assert raised.value.error_code == "runtime_transport_error"
     assert transport.calls == 2
     assert transport.cancel_payload == {
-        "protocol_version": "1.3",
+        "protocol_version": "1.4",
         "invocation_id": "job-1.attempt-0",
         "request_digest": transport.cancel_payload["request_digest"],
         "reason": reason,

@@ -14,15 +14,18 @@ from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.migrations import Migrator
+from app.shared.tool_contract import canonical_json_sha256
 
 
 def _database(
     tmp_path: Path,
     *,
-    protocol_version: str = "1.3",
+    protocol_version: str = "1.4",
 ) -> tuple[Database, str]:
     database = Database(f"sqlite:///{tmp_path / 'agent-run-audit.db'}")
-    Migrator(database, default_migrations_dir(), migrator_build="agent-run-audit-repository-test").run()
+    Migrator(
+        database, default_migrations_dir(), migrator_build="agent-run-audit-repository-test"
+    ).run()
     timestamp = "2026-08-12T00:00:00+00:00"
     database.execute(
         """
@@ -50,12 +53,12 @@ def _database(
 
 def _events() -> list[dict[str, object]]:
     fixture = json.loads(
-        Path("contracts/agent-runtime/v1.3/golden/safe-runtime-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.4/golden/safe-runtime-fixture.json").read_text(
             encoding="utf-8"
         )
     )
     identity = {
-        "protocol_version": "1.3",
+        "protocol_version": "1.4",
         "invocation_id": "invocation-1",
         "request_digest": fixture["terminal_event"]["request_digest"],
     }
@@ -212,13 +215,197 @@ def test_summary_preserves_unknowns_when_terminal_accounting_is_unavailable(
     assert summary["estimated_cost_usd"] is None
 
 
-def test_summary_accepts_current_runtime_protocol_v13(tmp_path: Path) -> None:
-    database, job_id = _database(tmp_path, protocol_version="1.3")
+def test_summary_accepts_current_runtime_protocol_v14(tmp_path: Path) -> None:
+    database, job_id = _database(tmp_path, protocol_version="1.4")
 
     summary = ExecutionAuditRepository(database).rebuild_summary(job_id)
 
-    assert summary["source_protocol_version"] == "1.3"
+    assert summary["source_protocol_version"] == "1.4"
     assert summary["accounting_status"] == "UNAVAILABLE"
+
+
+def _tool_contract_event(
+    *,
+    invocation_id: str,
+    request_digest: str,
+    status: str,
+) -> dict[str, object]:
+    row_status = "MISSING_REMOTE" if status == "DRIFT" else "MATCH"
+    observation = {
+        "snapshot_hash": "f" * 64,
+        "status": status,
+        "frozen_tools": [
+            {
+                "server_code": "file-service",
+                "tool_name": "file_create_commit_intent",
+                "schema_hash": "a" * 64,
+            }
+        ],
+        "file_mcp_live": {
+            "status": "OBSERVED",
+            "tools": (
+                []
+                if status == "DRIFT"
+                else [
+                    {
+                        "server_code": "file-service",
+                        "tool_name": "file_create_commit_intent",
+                        "schema_hash": "a" * 64,
+                        "status": "MATCH",
+                    }
+                ]
+            ),
+            "toolset_hash": "b" * 64,
+            "build_identity": {
+                "component": "file-service",
+                "source_revision": "revision-1",
+                "build_id": "build-1",
+                "platform": "linux/amd64",
+            },
+        },
+        "effective_tools": (
+            []
+            if status == "DRIFT"
+            else [
+                {
+                    "server_code": "file-service",
+                    "tool_name": "file_create_commit_intent",
+                    "sdk_tool_name": "mcp__file_service__file_create_commit_intent",
+                    "origin": "frozen_mcp",
+                    "schema_hash": "a" * 64,
+                    "authorization_status": "ALLOWED",
+                }
+            ]
+        ),
+        "prompt": {
+            "template_version": "agent-system-prompt-v2",
+            "contract_hash": "c" * 64,
+            "declared_tools": (
+                [] if status == "DRIFT" else ["mcp__file_service__file_create_commit_intent"]
+            ),
+        },
+        "rows": [
+            {
+                "server_code": "file-service",
+                "tool_name": "file_create_commit_intent",
+                "status": row_status,
+            }
+        ],
+        "component_build_identities": [
+            {
+                "component": component,
+                "source_revision": "revision-1",
+                "build_id": "build-1",
+                "platform": "linux/amd64",
+            }
+            for component in (
+                "control-plane",
+                "agent-worker",
+                "python-runtime",
+                "file-service",
+            )
+        ],
+    }
+    payload = {
+        "observation_hash": canonical_json_sha256(observation),
+        **observation,
+    }
+    return {
+        "protocol_version": "1.4",
+        "invocation_id": invocation_id,
+        "request_digest": request_digest,
+        "sequence": 2,
+        "event_type": "tool_contract_observed",
+        "timestamp": "2026-08-12T00:00:01Z",
+        "payload": payload,
+    }
+
+
+def _execution_started_for(event: dict[str, object]) -> dict[str, object]:
+    return {
+        "protocol_version": "1.4",
+        "invocation_id": event["invocation_id"],
+        "request_digest": event["request_digest"],
+        "sequence": 1,
+        "event_type": "execution_started",
+        "timestamp": "2026-08-12T00:00:00Z",
+        "payload": {"runtime_kind": "python-v1"},
+    }
+
+
+def test_tool_contract_projection_is_sticky_and_rebuildable(tmp_path: Path) -> None:
+    database, job_id = _database(tmp_path)
+    repository = ExecutionAuditRepository(database)
+    drift = _tool_contract_event(
+        invocation_id="invocation-drift",
+        request_digest="d" * 64,
+        status="DRIFT",
+    )
+    match = _tool_contract_event(
+        invocation_id="invocation-match",
+        request_digest="e" * 64,
+        status="MATCH",
+    )
+
+    repository.record_runtime_event(job_id, _execution_started_for(drift))
+    repository.record_runtime_event(job_id, drift)
+    repository.record_runtime_event(job_id, _execution_started_for(match))
+    repository.record_runtime_event(job_id, match)
+    projected = database.execute_one(
+        """
+        select tool_contract_status, tool_contract_last_invocation_id,
+               tool_contract_observation_hash
+          from agent_job where id = ?
+        """,
+        (job_id,),
+    )
+    rebuilt = repository.rebuild_tool_contract_projection(job_id)
+
+    assert projected is not None
+    assert projected["tool_contract_status"] == "DRIFT"
+    assert projected["tool_contract_last_invocation_id"] == "invocation-match"
+    assert projected["tool_contract_observation_hash"] == match["payload"]["observation_hash"]
+    assert rebuilt == {
+        "status": "DRIFT",
+        "last_invocation_id": "invocation-match",
+        "observation_hash": match["payload"]["observation_hash"],
+        "prompt_template_version": "agent-system-prompt-v2",
+        "prompt_contract_hash": "c" * 64,
+    }
+
+
+def test_tool_contract_event_replay_rejects_changed_observation(tmp_path: Path) -> None:
+    database, job_id = _database(tmp_path)
+    repository = ExecutionAuditRepository(database)
+    original = _tool_contract_event(
+        invocation_id="invocation-1",
+        request_digest="d" * 64,
+        status="MATCH",
+    )
+    repository.record_runtime_event(job_id, _execution_started_for(original))
+    repository.record_runtime_event(job_id, original)
+    repository.record_runtime_event(job_id, original)
+    conflict = _tool_contract_event(
+        invocation_id="invocation-1",
+        request_digest="d" * 64,
+        status="DRIFT",
+    )
+
+    with pytest.raises(NonRetryableExecutionError, match="conflicts"):
+        repository.record_runtime_event(job_id, conflict)
+
+    assert len(AgentRepository(database).list_runtime_events(job_id)) == 2
+
+
+def test_historical_protocol_v13_without_observation_stays_not_observed(
+    tmp_path: Path,
+) -> None:
+    database, job_id = _database(tmp_path, protocol_version="1.3")
+
+    projected = ExecutionAuditRepository(database).rebuild_tool_contract_projection(job_id)
+
+    assert projected["status"] == "NOT_OBSERVED"
+    assert projected["last_invocation_id"] == ""
 
 
 def test_multi_invocation_retry_replay_and_rebuild_never_double_count(
@@ -289,9 +476,7 @@ def test_runtime_event_projection_omits_execution_content_and_secret_material(
     repository = ExecutionAuditRepository(database)
     events = _events()
     events[-1]["payload"]["final_answer"] = "full-answer-must-not-persist"
-    events[-1]["payload"]["raw_sdk_message"] = {
-        "authorization": "secret-must-not-persist"
-    }
+    events[-1]["payload"]["raw_sdk_message"] = {"authorization": "secret-must-not-persist"}
     for event in events:
         repository.record_runtime_event(job_id, event)
 
@@ -306,31 +491,52 @@ def test_runtime_event_projection_omits_execution_content_and_secret_material(
     ("event", "expected"),
     [
         (
-            {"event_type": "terminal", "payload": {"status": "FAILED", "failure": {"code": "runtime_transport_error"}}},
+            {
+                "event_type": "terminal",
+                "payload": {"status": "FAILED", "failure": {"code": "runtime_transport_error"}},
+            },
             ExecutionFailureStage.RUNTIME_START,
         ),
         (
-            {"event_type": "terminal", "payload": {"status": "FAILED", "failure": {"code": "runtime_protocol_error"}}},
+            {
+                "event_type": "terminal",
+                "payload": {"status": "FAILED", "failure": {"code": "runtime_protocol_error"}},
+            },
             ExecutionFailureStage.RUNTIME_PROTOCOL,
         ),
         (
-            {"event_type": "runtime_initialized", "payload": {"mcp_servers": [{"server_code": "ones-mcp", "status": "FAILED"}]}},
+            {
+                "event_type": "runtime_initialized",
+                "payload": {"mcp_servers": [{"server_code": "ones-mcp", "status": "FAILED"}]},
+            },
             ExecutionFailureStage.MCP_CONNECTION,
         ),
         (
-            {"event_type": "model_call", "payload": {"status": "FAILED", "error_code": "runtime_model_api_error"}},
+            {
+                "event_type": "model_call",
+                "payload": {"status": "FAILED", "error_code": "runtime_model_api_error"},
+            },
             ExecutionFailureStage.MODEL_API,
         ),
         (
-            {"event_type": "tool_event", "payload": {"status": "DENIED", "error_code": "tool_denied"}},
+            {
+                "event_type": "tool_event",
+                "payload": {"status": "DENIED", "error_code": "tool_denied"},
+            },
             ExecutionFailureStage.TOOL_PERMISSION,
         ),
         (
-            {"event_type": "tool_event", "payload": {"status": "FAILED", "error_code": "tool_failed"}},
+            {
+                "event_type": "tool_event",
+                "payload": {"status": "FAILED", "error_code": "tool_failed"},
+            },
             ExecutionFailureStage.TOOL_EXECUTION,
         ),
         (
-            {"event_type": "terminal", "payload": {"status": "FAILED", "failure": {"code": "other_typed_error"}}},
+            {
+                "event_type": "terminal",
+                "payload": {"status": "FAILED", "failure": {"code": "other_typed_error"}},
+            },
             ExecutionFailureStage.UNKNOWN,
         ),
     ],

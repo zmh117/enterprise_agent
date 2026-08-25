@@ -21,9 +21,14 @@ from app.python_runtime.file_mcp_bridge import (
     PreparedFileMaterialization,
 )
 from app.python_runtime.file_transfer import FileUploadReceipt
+from app.python_runtime.file_transfer import (
+    FileTransferBoundaryError,
+    FileTransferContext,
+)
 from app.python_runtime.job_sandbox import JobSandboxLimits, JobSandboxManager
 from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
 from app.shared.exceptions import NonRetryableExecutionError
+from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
 from backend.tests.helpers import test_settings as build_settings
 
 
@@ -38,6 +43,40 @@ class _RemoteFileSession:
     def __init__(self) -> None:
         self.calls = 0
         self.read_timeouts: list[object] = []
+
+    async def initialize(self) -> types.InitializeResult:
+        return types.InitializeResult.model_validate(
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                    "tools": {},
+                    "experimental": {
+                        "enterprise-agent/build-identity-v1": {
+                            "component": "file-service",
+                            "source_revision": "test-revision",
+                            "build_id": "test-build",
+                            "platform": "linux/amd64",
+                        }
+                    },
+                },
+                "serverInfo": {"name": "file-service", "version": "test-build"},
+            }
+        )
+
+    async def list_tools(self, **_kwargs: Any) -> types.ListToolsResult:
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name=name,
+                    description=FILE_TOOL_MANIFEST[name].description,
+                    inputSchema=dict(FILE_TOOL_MANIFEST[name].input_schema),
+                )
+                for name in (
+                    "file_prepare_materialization",
+                    "file_create_commit_intent",
+                )
+            ]
+        )
 
     async def call_tool(
         self,
@@ -94,6 +133,124 @@ class _TransferPort:
             delivery_id="",
             delivery_status="NOT_REQUESTED",
         )
+
+
+class _ContractSession(_RemoteFileSession):
+    def __init__(
+        self,
+        *,
+        tool_names: tuple[str, ...],
+        changed_schema_tool: str = "",
+    ) -> None:
+        super().__init__()
+        self.tool_names = tool_names
+        self.changed_schema_tool = changed_schema_tool
+
+    async def list_tools(self, **_kwargs: Any) -> types.ListToolsResult:
+        tools: list[types.Tool] = []
+        for name in self.tool_names:
+            schema = dict(FILE_TOOL_MANIFEST[name].input_schema)
+            if name == self.changed_schema_tool:
+                schema = {**schema, "runtimeContractChanged": True}
+            tools.append(
+                types.Tool(
+                    name=name,
+                    description=FILE_TOOL_MANIFEST[name].description,
+                    inputSchema=schema,
+                )
+            )
+        return types.ListToolsResult(tools=tools)
+
+
+def _contract_bridge(
+    tmp_path: Path,
+    *,
+    remote: _ContractSession,
+    frozen_tool_names: tuple[str, ...],
+) -> ClaudePythonFileBridge:
+    sandbox = JobSandboxManager(tmp_path / "contract-sandboxes").create("job-contract")
+    return ClaudePythonFileBridge(
+        sdk=load_claude_agent_sdk(),
+        mcp_server_url="http://file-service:9105/mcp",
+        headers={"Authorization": "Bearer test-only-file-principal"},
+        frozen_tool_names=frozen_tool_names,
+        frozen_tool_schema_hashes={
+            name: FILE_TOOL_MANIFEST[name].schema_hash for name in frozen_tool_names
+        },
+        context=FileTransferContext(
+            job_id="job-contract",
+            workspace_path=sandbox.path,
+            principal_token="test-only-file-principal",
+            sandbox=sandbox,
+        ),
+        timeout_seconds=30,
+        remote_session=remote,
+    )
+
+
+@pytest.mark.parametrize(
+    ("remote", "expected_code", "expected_status"),
+    [
+        (
+            _ContractSession(tool_names=("file_prepare_materialization",)),
+            "runtime_tool_contract_missing_remote",
+            "MISSING_REMOTE",
+        ),
+        (
+            _ContractSession(
+                tool_names=("file_create_commit_intent",),
+                changed_schema_tool="file_create_commit_intent",
+            ),
+            "runtime_tool_contract_schema_mismatch",
+            "SCHEMA_MISMATCH",
+        ),
+    ],
+)
+def test_file_bridge_fails_before_model_for_missing_or_changed_frozen_tool(
+    tmp_path: Path,
+    remote: _ContractSession,
+    expected_code: str,
+    expected_status: str,
+) -> None:
+    bridge = _contract_bridge(
+        tmp_path,
+        remote=remote,
+        frozen_tool_names=("file_create_commit_intent",),
+    )
+
+    with pytest.raises(FileTransferBoundaryError) as captured:
+        import asyncio
+
+        asyncio.run(bridge.connect())
+
+    assert captured.value.code == expected_code
+    statuses = {item["tool_name"]: item["status"] for item in bridge.live_observation["tools"]}
+    if expected_status == "MISSING_REMOTE":
+        assert "file_create_commit_intent" not in statuses
+    else:
+        assert statuses["file_create_commit_intent"] == expected_status
+    assert bridge.live_observation["status"] == "OBSERVED"
+
+
+def test_file_bridge_marks_unfrozen_remote_tool_extra_and_does_not_freeze_it(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    bridge = _contract_bridge(
+        tmp_path,
+        remote=_ContractSession(tool_names=("file_create_commit_intent", "file_retain_version")),
+        frozen_tool_names=("file_create_commit_intent",),
+    )
+
+    asyncio.run(bridge.connect())
+
+    rows = {item["tool_name"]: item["status"] for item in bridge.live_observation["tools"]}
+    assert rows == {
+        "file_create_commit_intent": "MATCH",
+        "file_retain_version": "EXTRA_REMOTE_IGNORED",
+    }
+    assert "file_retain_version" not in bridge._frozen
 
 
 def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result(
@@ -323,17 +480,30 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
                 server_code="file-service",
                 tool_name="file_prepare_materialization",
                 required_scope="mcp:file-service:file_prepare_materialization:invoke",
-                tool_schema_hash="a" * 64,
+                tool_schema_hash=FILE_TOOL_MANIFEST["file_prepare_materialization"].schema_hash,
             ),
             McpRuntimeBinding(
                 server_code="file-service",
                 tool_name="file_create_commit_intent",
                 required_scope="mcp:file-service:file_create_commit_intent:invoke",
-                tool_schema_hash="b" * 64,
+                tool_schema_hash=FILE_TOOL_MANIFEST["file_create_commit_intent"].schema_hash,
             ),
         ),
         max_tool_calls=8,
-        runtime_protocol_version="1.3",
+        runtime_protocol_version="1.4",
+        job_tool_snapshot_hash="f" * 64,
+        control_plane_build_identity={
+            "component": "control-plane",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
+        worker_build_identity={
+            "component": "agent-worker",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
     )
     principal = "test-only-python-file-principal"
     client = FixedMcpClaudeSdkClient(
@@ -398,6 +568,24 @@ def test_python_runtime_reserves_all_automatic_inputs_before_first_download(
     class FakePreparedBridge:
         server = {"type": "sdk", "name": "enterprise-file-bridge"}
         local_tool_names: tuple[str, ...] = ()
+        live_observation = {
+            "status": "OBSERVED",
+            "tools": [
+                {
+                    "server_code": "file-service",
+                    "tool_name": "file_prepare_materialization",
+                    "schema_hash": FILE_TOOL_MANIFEST["file_prepare_materialization"].schema_hash,
+                    "status": "MATCH",
+                }
+            ],
+            "toolset_hash": "e" * 64,
+            "build_identity": {
+                "component": "file-service",
+                "source_revision": "test-revision",
+                "build_id": "test-build",
+                "platform": "linux/amd64",
+            },
+        }
 
         async def connect(self) -> None:
             return None
@@ -482,10 +670,23 @@ def test_python_runtime_reserves_all_automatic_inputs_before_first_download(
                 server_code="file-service",
                 tool_name="file_prepare_materialization",
                 required_scope="mcp:file-service:file_prepare_materialization:invoke",
-                tool_schema_hash="a" * 64,
+                tool_schema_hash=FILE_TOOL_MANIFEST["file_prepare_materialization"].schema_hash,
             ),
         ),
-        runtime_protocol_version="1.3",
+        runtime_protocol_version="1.4",
+        job_tool_snapshot_hash="f" * 64,
+        control_plane_build_identity={
+            "component": "control-plane",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
+        worker_build_identity={
+            "component": "agent-worker",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
     )
     sandbox_limits = JobSandboxLimits(
         capacity_bytes=15 * 1024 * 1024,

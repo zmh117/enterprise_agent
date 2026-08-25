@@ -45,11 +45,10 @@ def test_repository_fact_source_manifest_is_valid_and_catalog_backed() -> None:
         ),
     }
     assert len(manifest["entries"]) >= 35
-    assert {
-        entry["classification"] for entry in manifest["entries"]
-    } == {
+    assert {entry["classification"] for entry in manifest["entries"]} == {
         "canonical_mutable_fact",
         "immutable_snapshot",
+        "derived_projection",
         "compatibility_shadow",
         "operational_coordination_fact",
         "one_time_migration_artifact",
@@ -115,9 +114,7 @@ def test_manifest_rejects_unknown_classification(tmp_path: Path) -> None:
 def test_manifest_rejects_compatibility_shadow_without_exit_gate(tmp_path: Path) -> None:
     manifest = copy.deepcopy(load_fact_source_manifest())
     shadow = next(
-        entry
-        for entry in manifest["entries"]
-        if entry["classification"] == "compatibility_shadow"
+        entry for entry in manifest["entries"] if entry["classification"] == "compatibility_shadow"
     )
     shadow["retirement"] = {
         "status": "retained",
@@ -135,9 +132,7 @@ def test_manifest_rejects_compatibility_shadow_without_exit_gate(tmp_path: Path)
 def test_manifest_rejects_immutable_snapshot_without_source_contract(tmp_path: Path) -> None:
     manifest = copy.deepcopy(load_fact_source_manifest())
     snapshot = next(
-        entry
-        for entry in manifest["entries"]
-        if entry["classification"] == "immutable_snapshot"
+        entry for entry in manifest["entries"] if entry["classification"] == "immutable_snapshot"
     )
     snapshot.pop("source_contract")
 

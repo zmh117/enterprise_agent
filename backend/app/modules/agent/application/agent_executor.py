@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.agent_result_service import AgentResultService
@@ -87,9 +88,10 @@ class AgentExecutor:
                 return persisted.result
             return ""
         job = claimed
+        mcp_tool_snapshot: dict[str, object] | None = None
         if self.mcp_tool_snapshot_service is not None:
             try:
-                self.mcp_tool_snapshot_service.verify(job.id)
+                mcp_tool_snapshot = self.mcp_tool_snapshot_service.verify(job.id)
             except Exception as exc:
                 if fail_on_error:
                     self.status_service.fail(
@@ -169,6 +171,16 @@ class AgentExecutor:
         )
         try:
             context = self.context_builder.build(job)
+            if mcp_tool_snapshot is None:
+                raise PermissionDenied(
+                    "Job MCP Tool Snapshot is unavailable",
+                    safe_message="此 Job 缺少 MCP 工具快照",
+                    error_code="mcp_tool_snapshot_missing",
+                )
+            context = replace(
+                context,
+                job_tool_snapshot_hash=str(mcp_tool_snapshot["snapshot_hash"]),
+            )
             self.repository.add_step(
                 job_id=job.id,
                 step_type="tool_call",
@@ -343,9 +355,7 @@ class AgentExecutor:
                 status=str(event.get("status", "SUCCEEDED")),
                 duration_ms=duration,
                 risk_level=str(event.get("risk_level", "medium")),
-                mcp_call_id=(
-                    str(event.get("mcp_call_id")) if event.get("mcp_call_id") else None
-                ),
+                mcp_call_id=(str(event.get("mcp_call_id")) if event.get("mcp_call_id") else None),
                 persisted_tool_call_id=(
                     str(event.get("persisted_tool_call_id"))
                     if event.get("persisted_tool_call_id")

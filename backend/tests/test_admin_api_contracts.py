@@ -701,7 +701,7 @@ def test_job_repository_applies_scope_and_execution_filters_in_sqlite() -> None:
         insert into agent_job_execution_summary
           (job_id, accounting_status, model_usage_json, execution_status,
            execution_failure_stage, source_protocol_version, created_at, updated_at)
-        values (?, 'COMPLETE', ?, 'FAILED', 'MODEL_API', '1.3', ?, ?)
+        values (?, 'COMPLETE', ?, 'FAILED', 'MODEL_API', '1.4', ?, ?)
         """,
         (
             job.id,

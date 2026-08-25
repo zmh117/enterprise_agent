@@ -40,6 +40,11 @@ from app.shared.mcp_server_policy import (
 from app.shared.config import Settings, load_settings
 from app.shared.database import Database
 from app.shared.master_key import load_master_key_settings
+from app.shared.build_identity import (
+    BuildIdentity,
+    BuildIdentityError,
+    build_identity_from_environment,
+)
 
 from .grant import RuntimeGrantError, RuntimeGrantVerifier
 from .invocations import (
@@ -71,10 +76,14 @@ class PythonRuntimeDependencies:
     server_policies: Mapping[str, McpServerPolicy] = field(
         default_factory=lambda: MCP_SERVER_POLICIES
     )
+    build_identity: BuildIdentity | None = None
 
 
 def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI:
     runtime = dependencies or _default_dependencies()
+    runtime_build_identity = runtime.build_identity or build_identity_from_environment(
+        "python-runtime"
+    )
     cleanup_stop = threading.Event()
     cleanup_thread: threading.Thread | None = None
 
@@ -164,11 +173,15 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         )
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
+            **runtime_build_identity.to_dict(),
+        }
 
     @app.get("/version")
-    def version() -> dict[str, str]:
+    def version() -> dict[str, Any]:
         return {
             "runtime": PYTHON_RUNTIME_KIND,
             "runtime_version": PYTHON_RUNTIME_VERSION,
@@ -176,6 +189,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             "supported_protocol_versions": ",".join(SUPPORTED_RUNTIME_PROTOCOL_VERSIONS),
             "sdk_version": runtime.executor.sdk_version,
             "cli_version": runtime.executor.cli_version,
+            "build_identity": runtime_build_identity.to_dict(),
         }
 
     @app.get("/ready")
@@ -222,6 +236,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             database_status == "ready"
             and master_key_status == "ready"
             and sandbox_status == "ready"
+            and runtime_build_identity.component == "python-runtime"
         )
         return JSONResponse(
             status_code=200 if is_ready else 503,
@@ -236,6 +251,8 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
                 "sandbox_max_input_files": sandbox_max_input_files,
                 "sandbox_max_work_output_files": sandbox_max_work_output_files,
                 "sandbox_max_tmp_files": sandbox_max_tmp_files,
+                "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
+                "build_identity": runtime_build_identity.to_dict(),
             },
         )
 
@@ -258,6 +275,36 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
                 status_code=400,
                 detail={"code": "runtime_kind_mismatch", "message": "Runtime 请求目标不匹配"},
             )
+        for component, expected in (
+            (validated["control_plane_build_identity"], "control-plane"),
+            (validated["worker_build_identity"], "agent-worker"),
+        ):
+            try:
+                if not isinstance(component, Mapping):
+                    raise BuildIdentityError("Build identity must be an object")
+                identity = BuildIdentity.from_dict(
+                    component,
+                    expected_component=expected,
+                )
+            except BuildIdentityError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "runtime_build_identity_invalid",
+                        "message": "Runtime 组件构建身份无效",
+                    },
+                ) from exc
+            if (
+                identity.source_revision != runtime_build_identity.source_revision
+                or identity.build_id != runtime_build_identity.build_id
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "runtime_build_identity_mismatch",
+                        "message": "Runtime 组件构建身份不一致",
+                    },
+                )
         runtime.grant_verifier.verify(_bearer(authorization), validated)
         invocation = runtime.registry.acquire(
             validated,
@@ -424,15 +471,11 @@ def _default_dependencies() -> PythonRuntimeDependencies:
             max_file_bytes=int(
                 os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES", str(15 * 1024 * 1024))
             ),
-            max_input_files=int(
-                os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_INPUT_FILES", "40")
-            ),
+            max_input_files=int(os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_INPUT_FILES", "40")),
             max_work_output_files=int(
                 os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_WORK_OUTPUT_FILES", "16")
             ),
-            max_tmp_files=int(
-                os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_TMP_FILES", "8")
-            ),
+            max_tmp_files=int(os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_TMP_FILES", "8")),
         ),
     )
     if (
@@ -460,6 +503,7 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         ),
         fake_provider_mode=_fake_provider_mode(settings.environment),
         sandbox_manager=sandbox_manager,
+        build_identity=build_identity_from_environment("python-runtime"),
     )
     ledger = PythonTerminalLedger(
         database,
@@ -477,6 +521,7 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         model_probe_token=model_probe_token,
         settings=settings,
         sandbox_manager=sandbox_manager,
+        build_identity=executor.build_identity,
     )
 
 

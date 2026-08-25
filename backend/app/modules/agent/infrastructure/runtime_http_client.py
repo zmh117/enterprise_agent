@@ -40,10 +40,16 @@ from app.shared.mcp_server_policy import (
     validate_mcp_server_policies,
 )
 from app.shared.database import assert_external_io_allowed
+from app.shared.build_identity import (
+    BuildIdentity,
+    BuildIdentityError,
+    build_identity_from_environment,
+)
 from app.shared.exceptions import (
     NonRetryableExecutionError,
     RetryableExecutionError,
 )
+from app.shared.tool_contract import canonical_json_sha256
 
 MAX_EVENT_LINE_BYTES = 65_536
 MAX_STREAM_BYTES = 2_097_152
@@ -404,10 +410,39 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         base_url = settings.base_url.strip().rstrip("/")
         version = get(base_url, "/version", accepted_statuses={200})
         readiness = get(base_url, "/ready", accepted_statuses={200, 503})
+        expected_release = build_identity_from_environment("control-plane")
+        runtime_identity: BuildIdentity | None = None
+        readiness_identity: BuildIdentity | None = None
+        try:
+            version_identity = version.get("build_identity")
+            ready_identity = readiness.get("build_identity")
+            if not isinstance(version_identity, dict) or not isinstance(
+                ready_identity,
+                dict,
+            ):
+                raise BuildIdentityError("Runtime build identity is missing")
+            runtime_identity = BuildIdentity.from_dict(
+                version_identity,
+                expected_component="python-runtime",
+            )
+            readiness_identity = BuildIdentity.from_dict(
+                ready_identity,
+                expected_component="python-runtime",
+            )
+        except BuildIdentityError:
+            runtime_identity = None
+            readiness_identity = None
+        build_identity_ready = (
+            runtime_identity is not None
+            and readiness_identity == runtime_identity
+            and runtime_identity.source_revision == expected_release.source_revision
+            and runtime_identity.build_id == expected_release.build_id
+        )
         identity_ready = (
             version.get("runtime") == settings.runtime_kind
-            and version.get("protocol_version") == "1.3"
+            and version.get("protocol_version") == "1.4"
             and isinstance(version.get("runtime_version"), str)
+            and build_identity_ready
         )
         dependency_ready = (
             readiness.get("ready") is True
@@ -424,6 +459,9 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
             "protocol_version": (str(version.get("protocol_version")) if identity_ready else ""),
             "sdk_version": str(version.get("sdk_version")) if identity_ready else "",
             "cli_version": str(version.get("cli_version")) if identity_ready else "",
+            "build_identity": (
+                runtime_identity.to_dict() if runtime_identity is not None else None
+            ),
             "model_invoked": False,
             "mcp_invoked": False,
         }
@@ -438,6 +476,7 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
             "protocol_version": "",
             "sdk_version": "",
             "cli_version": "",
+            "build_identity": None,
             "model_invoked": False,
             "mcp_invoked": False,
         }
@@ -453,6 +492,7 @@ class AgentRuntimeHttpClient:
         event_sink: Callable[[str, dict[str, Any]], None] | None = None,
         principal_token_issuer: PrincipalTokenIssuerPort | None = None,
         server_policies: Mapping[str, McpServerPolicy] | None = None,
+        worker_build_identity: BuildIdentity | None = None,
     ) -> None:
         self.settings = settings
         self.execution_url = settings.execution_url()
@@ -460,6 +500,9 @@ class AgentRuntimeHttpClient:
         self.transport = transport or UrlLibRuntimeTransport()
         self.event_sink = event_sink
         self.principal_token_issuer = principal_token_issuer
+        self.worker_build_identity = worker_build_identity or build_identity_from_environment(
+            "agent-worker"
+        )
         self._server_policies = MappingProxyType(
             dict(MCP_SERVER_POLICIES if server_policies is None else server_policies)
         )
@@ -567,6 +610,7 @@ class AgentRuntimeHttpClient:
         tool_events: list[dict[str, Any]] = []
         total_bytes = 0
         terminal: dict[str, Any] | None = None
+        tool_contract_status: str | None = None
         expected_sequence = 1
         stream = iter(
             self.transport.stream(
@@ -612,6 +656,48 @@ class AgentRuntimeHttpClient:
                 )
             expected_sequence += 1
             events.append(event)
+            event_type = str(event["event_type"])
+            if tool_contract_status is None and event_type not in {
+                "execution_started",
+                "tool_contract_observed",
+            }:
+                raise self._protocol_error(
+                    "Runtime event preceded the Tool contract observation",
+                    tool_events,
+                )
+            if event["event_type"] == "tool_contract_observed":
+                if tool_contract_status is not None:
+                    raise self._protocol_error(
+                        "Runtime emitted more than one Tool contract observation",
+                        tool_events,
+                    )
+                observation = dict(event["payload"])
+                observation_hash = str(observation.pop("observation_hash", ""))
+                identities = observation.get("component_build_identities") or []
+                if (
+                    observation_hash != canonical_json_sha256(observation)
+                    or observation.get("snapshot_hash") != request["job_tool_snapshot_hash"]
+                    or observation.get("prompt", {}).get("template_version")
+                    != request["prompt"]["template_version"]
+                    or request["control_plane_build_identity"] not in identities
+                    or request["worker_build_identity"] not in identities
+                ):
+                    raise self._protocol_error(
+                        "Runtime Tool contract observation identity mismatch",
+                        tool_events,
+                    )
+                tool_contract_status = str(observation.get("status") or "")
+            elif tool_contract_status != "MATCH" and event_type in {
+                "runtime_initialized",
+                "model_call",
+                "api_retry",
+                "tool_event",
+                "assistant_text",
+            }:
+                raise self._protocol_error(
+                    "Runtime continued execution after Tool contract drift",
+                    tool_events,
+                )
             if self.event_sink is not None:
                 self.event_sink(run_request.job_id, event)
             if event["event_type"] == "tool_event":
@@ -631,6 +717,16 @@ class AgentRuntimeHttpClient:
                 error_code="runtime_terminal_missing",
                 diagnostics={"runtime_events_observed": len(events)},
             )
+        if tool_contract_status is None:
+            raise self._protocol_error(
+                "Runtime terminal omitted the Tool contract observation",
+                tool_events,
+            )
+        if tool_contract_status != "MATCH" and terminal.get("status") == "SUCCEEDED":
+            raise self._protocol_error(
+                "Runtime succeeded despite Tool contract drift",
+                tool_events,
+            )
         if int(terminal["last_sequence"]) != expected_sequence - 1:
             raise self._protocol_error("Runtime terminal sequence mismatch", tool_events)
         provenance = dict(terminal["runtime_provenance"])
@@ -642,7 +738,13 @@ class AgentRuntimeHttpClient:
                 runtime_events=[
                     event
                     for event in events
-                    if event["event_type"] in {"runtime_initialized", "model_call", "api_retry"}
+                    if event["event_type"]
+                    in {
+                        "tool_contract_observed",
+                        "runtime_initialized",
+                        "model_call",
+                        "api_retry",
+                    }
                 ],
                 execution_accounting=dict(terminal.get("accounting") or {}),
             )
@@ -662,7 +764,13 @@ class AgentRuntimeHttpClient:
                 "runtime_events": [
                     event
                     for event in events
-                    if event["event_type"] in {"runtime_initialized", "model_call", "api_retry"}
+                    if event["event_type"]
+                    in {
+                        "tool_contract_observed",
+                        "runtime_initialized",
+                        "model_call",
+                        "api_retry",
+                    }
                 ],
                 "execution_accounting": dict(terminal.get("accounting") or {}),
             },
@@ -721,6 +829,23 @@ class AgentRuntimeHttpClient:
                 safe_message="当前 Job 缺少固定发布版本",
                 error_code="runtime_publication_binding_missing",
             )
+        if len(context.job_tool_snapshot_hash) != 64:
+            raise NonRetryableExecutionError(
+                "Agent Runtime requires the frozen Job MCP Tool Snapshot hash",
+                safe_message="当前 Job 缺少 MCP 工具快照完整性信息",
+                error_code="mcp_tool_snapshot_missing",
+            )
+        try:
+            control_plane_build_identity = BuildIdentity.from_dict(
+                context.control_plane_build_identity,
+                expected_component="control-plane",
+            ).to_dict()
+        except ValueError as exc:
+            raise NonRetryableExecutionError(
+                "Agent Runtime requires a valid Control Plane build identity",
+                safe_message="当前 Job 构建身份无效",
+                error_code="build_identity_invalid",
+            ) from exc
         grouped: dict[str, list[McpRuntimeBinding]] = {}
         for binding_item in self._runtime_bindings(run_request):
             if binding_item.server_code not in self.settings.allowed_mcp_server_codes:
@@ -766,7 +891,7 @@ class AgentRuntimeHttpClient:
                 }
             )
         protocol_version = str(context.runtime_protocol_version or "")
-        if protocol_version != "1.3":
+        if protocol_version != "1.4":
             raise NonRetryableExecutionError(
                 "Job runtime protocol version is unsupported",
                 safe_message="当前 Job Runtime 协议版本不受支持",
@@ -791,11 +916,15 @@ class AgentRuntimeHttpClient:
             "project_code": run_request.project_code,
             "agent_publication_id": context.publication_id,
             "application_publication_id": context.application_publication_id,
+            "job_tool_snapshot_hash": context.job_tool_snapshot_hash,
+            "control_plane_build_identity": control_plane_build_identity,
+            "worker_build_identity": self.worker_build_identity.to_dict(),
             "model_connection": {
                 "revision_id": binding.connection_revision_id,
                 "config_hash": binding.config_hash,
             },
             "prompt": {
+                "template_version": context.prompt_template_version,
                 "system_role": context.system_role,
                 "safety_rules": list(context.safety_rules),
                 "business_instructions": context.business_instructions,

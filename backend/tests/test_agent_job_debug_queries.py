@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.bootstrap import Container, build_test_container
 from app.main import create_app
+from app.modules.admin.infrastructure import AdminReadRepository
+from app.modules.agent.domain.runtime import AgentExecutionContext, McpRuntimeBinding
 from app.modules.file_workspace.domain import (
     CommitDeliveryMode,
     CommitIntentStatus,
@@ -16,11 +19,15 @@ from app.modules.file_workspace.domain import (
     WorkspaceOwnerType,
 )
 from app.modules.file_workspace.repository import FileWorkspaceRepository
+from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.infrastructure.execution_audit_repository import (
     ExecutionAuditRepository,
 )
 from app.shared.config import IdentitySettings, Settings
+from app.shared.build_identity import BuildIdentity
+from app.shared.tool_contract import canonical_json_sha256
+from app.python_runtime.tool_contract import build_tool_contract_observation
 from backend.tests.helpers import (
     activate_dingtalk_test_application,
     direct_job_permission_service_factory,
@@ -488,7 +495,7 @@ def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() 
     audit.record_runtime_event(
         job_id,
         {
-            "protocol_version": "1.3",
+            "protocol_version": "1.4",
             "invocation_id": f"{job_id}.attempt-0",
             "request_digest": "a" * 64,
             "sequence": 1,
@@ -520,7 +527,7 @@ def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() 
     audit.record_runtime_event(
         job_id,
         {
-            "protocol_version": "1.3",
+            "protocol_version": "1.4",
             "invocation_id": f"{job_id}.attempt-0",
             "request_digest": "a" * 64,
             "sequence": 2,
@@ -588,4 +595,230 @@ def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() 
     assert "raw_sdk_message" not in serialized
     assert "must-not-project" not in serialized
     assert "runtime_events" not in serialized
+    runtime.database.close()
+
+
+def test_job_evidence_reconciles_snapshot_and_all_invocations_without_raw_payloads() -> None:
+    runtime = _container()
+    creator = _create_user(runtime, "tool-contract-owner")
+    _grant_role(
+        runtime,
+        code="tool-contract-owner-role",
+        user_id=str(creator["id"]),
+        admin_capability="agent.debug.execute",
+    )
+    job_id = _create_debug_job(
+        runtime=runtime,
+        creator_user_id=str(creator["id"]),
+        idempotency_key="tool-contract-evidence",
+    )
+    snapshot_row = runtime.database.execute_one(
+        "select snapshot_json from agent_job_mcp_tool_snapshot where job_id = ?",
+        (job_id,),
+    )
+    assert snapshot_row is not None
+    snapshot = json.loads(str(snapshot_row["snapshot_json"]))
+    snapshot["tools"] = [
+        {
+            "server_code": "file-service",
+            "tool_identifier": "file_create_commit_intent",
+            "schema_hash": FILE_TOOL_MANIFEST["file_create_commit_intent"].schema_hash,
+            "resource_kind": "task_file_workspace",
+        }
+    ]
+    snapshot_hash = canonical_json_sha256(snapshot)
+    runtime.database.execute(
+        """
+        update agent_job_mcp_tool_snapshot
+           set snapshot_json = ?, snapshot_hash = ?
+         where job_id = ?
+        """,
+        (
+            json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            snapshot_hash,
+            job_id,
+        ),
+    )
+    identity = {
+        "source_revision": "revision-1",
+        "build_id": "build-1",
+        "platform": "linux/amd64",
+    }
+    context = AgentExecutionContext(
+        system_role="file agent",
+        safety_rules=["sandbox"],
+        user_question="create file",
+        project_code="default",
+        allowed_tools=["file_create_commit_intent"],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code="file-service",
+                tool_name="file_create_commit_intent",
+                required_scope="mcp:file-service:file_create_commit_intent:invoke",
+                tool_schema_hash=FILE_TOOL_MANIFEST["file_create_commit_intent"].schema_hash,
+            ),
+        ),
+        job_tool_snapshot_hash=snapshot_hash,
+        control_plane_build_identity={"component": "control-plane", **identity},
+        worker_build_identity={"component": "agent-worker", **identity},
+    )
+    runtime_identity = BuildIdentity(component="python-runtime", **identity)
+    extra_tool = {
+        "server_code": "file-service",
+        "tool_name": "file_retain_version",
+        "schema_hash": FILE_TOOL_MANIFEST["file_retain_version"].schema_hash,
+        "status": "EXTRA_REMOTE_IGNORED",
+    }
+    file_identity = {"component": "file-service", **identity}
+    observations = [
+        build_tool_contract_observation(
+            context,
+            file_live={
+                "status": "OBSERVED",
+                "tools": [extra_tool],
+                "toolset_hash": "a" * 64,
+                "build_identity": file_identity,
+            },
+            runtime_build_identity=runtime_identity,
+        ),
+        build_tool_contract_observation(
+            context,
+            file_live={
+                "status": "OBSERVED",
+                "tools": [
+                    {
+                        "server_code": "file-service",
+                        "tool_name": "file_create_commit_intent",
+                        "schema_hash": FILE_TOOL_MANIFEST["file_create_commit_intent"].schema_hash,
+                        "status": "MATCH",
+                    },
+                    extra_tool,
+                ],
+                "toolset_hash": "b" * 64,
+                "build_identity": file_identity,
+            },
+            runtime_build_identity=runtime_identity,
+        ),
+    ]
+    audit = ExecutionAuditRepository(runtime.database)
+    for index, observation in enumerate(observations, start=1):
+        invocation_id = f"{job_id}.attempt-{index}"
+        request_digest = str(index) * 64
+        audit.record_runtime_event(
+            job_id,
+            {
+                "protocol_version": "1.4",
+                "invocation_id": invocation_id,
+                "request_digest": request_digest,
+                "sequence": 1,
+                "event_type": "execution_started",
+                "timestamp": "2026-08-24T00:00:00Z",
+                "payload": {"runtime_kind": "python-v1"},
+            },
+        )
+        audit.record_runtime_event(
+            job_id,
+            {
+                "protocol_version": "1.4",
+                "invocation_id": invocation_id,
+                "request_digest": request_digest,
+                "sequence": 2,
+                "event_type": "tool_contract_observed",
+                "timestamp": "2026-08-24T00:00:01Z",
+                "payload": observation,
+            },
+        )
+
+    listed = next(
+        item
+        for item in AdminReadRepository(runtime.database).jobs_in_window(
+            "2020-01-01T00:00:00+00:00",
+            "2030-01-01T00:00:00+00:00",
+        )
+        if item["id"] == job_id
+    )
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
+        response = client.get(
+            f"/api/agent/jobs/{job_id}/evidence",
+            headers=_headers("tool-contract-owner"),
+        )
+
+    assert response.status_code == 200
+    evidence = response.json()["tool_contract"]
+    assert evidence["summary"]["status"] == "DRIFT"
+    assert len(evidence["observations"]) == 2
+    assert evidence["observations"][0]["matrix"] == [
+        {
+            "server_code": "file-service",
+            "tool_name": "file_create_commit_intent",
+            "status": "MISSING_REMOTE",
+        },
+        {
+            "server_code": "file-service",
+            "tool_name": "file_retain_version",
+            "status": "EXTRA_REMOTE_IGNORED",
+        },
+    ]
+    latest = evidence["observations"][1]
+    assert any(
+        item["origin"] == "runtime_derived" and item["tool_name"] == "select_sandbox_output"
+        for item in latest["runtime_effective"]
+    )
+    assert any(
+        item["status"] == "EXTRA_REMOTE_IGNORED" for item in latest["file_mcp_live"]["tools"]
+    )
+    assert listed["tool_contract"]["status"] == "DRIFT"
+    assert listed["tool_contract"]["last_invocation_id"].endswith("attempt-2")
+    serialized = json.dumps(evidence, ensure_ascii=False)
+    for forbidden in (
+        "inputSchema",
+        "description",
+        "Authorization",
+        "principal_token",
+        "prompt_text",
+        "raw_payload",
+    ):
+        assert forbidden not in serialized
+    runtime.database.close()
+
+
+def test_historical_v13_job_detail_says_not_observed_is_not_health() -> None:
+    runtime = _container()
+    creator = _create_user(runtime, "historical-tool-contract-owner")
+    _grant_role(
+        runtime,
+        code="historical-tool-contract-owner-role",
+        user_id=str(creator["id"]),
+        admin_capability="agent.debug.execute",
+    )
+    job_id = _create_debug_job(
+        runtime=runtime,
+        creator_user_id=str(creator["id"]),
+        idempotency_key="historical-tool-contract",
+    )
+    runtime.database.execute(
+        """
+        update agent_job
+           set status = 'SUCCEEDED', agent_runtime_protocol_version = '1.3'
+         where id = ?
+        """,
+        (job_id,),
+    )
+
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
+        response = client.get(
+            f"/api/agent/jobs/{job_id}/evidence",
+            headers=_headers("historical-tool-contract-owner"),
+        )
+
+    assert response.status_code == 200
+    evidence = response.json()["tool_contract"]
+    assert evidence["summary"]["status"] == "NOT_OBSERVED"
+    assert evidence["observations"] == []
+    assert "不代表健康" in evidence["notice"]
+    assert "protocol 1.3" in evidence["notice"]
     runtime.database.close()

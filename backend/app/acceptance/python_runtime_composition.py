@@ -651,7 +651,7 @@ def main() -> int:
         job_ids.append(file_job_id)
         file_job = _wait_for_job(runtime, file_job_id, expected=JobStatus.SUCCEEDED)
         file_delivery = _wait_for_delivery(runtime, file_job_id)
-        if not file_job.task_workspace_id or file_job.agent_runtime_protocol_version != "1.3":
+        if not file_job.task_workspace_id or file_job.agent_runtime_protocol_version != "1.4":
             raise RuntimeError("File Service acceptance Job did not freeze its workspace")
         _assert_chain_evidence(runtime, file_job_id)
         _assert_mcp_evidence(

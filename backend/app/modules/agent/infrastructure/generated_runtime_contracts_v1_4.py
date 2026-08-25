@@ -1,4 +1,4 @@
-# Generated from contracts/agent-runtime/v1.3. Do not edit.
+# Generated from contracts/agent-runtime/v1.4. Do not edit.
 from __future__ import annotations
 
 import json
@@ -7,13 +7,13 @@ from typing import Literal, NotRequired, TypedDict
 
 from jsonschema import Draft202012Validator
 
-PROTOCOL_VERSION = "1.3"
-CONTRACT_SCHEMA_SHA256 = "67d89960ad67945a17057eb388572314c94dd068661c7f3ff13c8d5b194d6867"
+PROTOCOL_VERSION = "1.4"
+CONTRACT_SCHEMA_SHA256 = "e93f3a7e10b31c869d9abde956ac2f12783f01d7a2dac35ddc78e9b19986a544"
 CONTRACT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[5]
     / "contracts"
     / "agent-runtime"
-    / "v1.3"
+    / "v1.4"
     / "protocol.schema.json"
 )
 
@@ -33,11 +33,20 @@ RuntimeEvent = (
     | dict[str, object]
     | dict[str, object]
     | dict[str, object]
+    | dict[str, object]
 )
 
 
 class JsonSummary(TypedDict):
     pass
+
+
+class BuildIdentity(TypedDict):
+    component: Identifier
+    source_revision: Identifier
+    build_id: Identifier
+    platform: str
+    image_digest: NotRequired[str]
 
 
 class ExecutionLimits(TypedDict):
@@ -47,6 +56,7 @@ class ExecutionLimits(TypedDict):
 
 
 class Prompt(TypedDict):
+    template_version: Identifier
     system_role: str
     safety_rules: list[str]
     business_instructions: str
@@ -64,7 +74,7 @@ class ModelConnectionBinding(TypedDict):
 
 
 class ModelProbeRequest(TypedDict):
-    protocol_version: Literal["1.3"]
+    protocol_version: Literal["1.4"]
     runtime_kind: RuntimeKind
     probe_id: Identifier
     model_connection: ModelConnectionBinding
@@ -79,7 +89,7 @@ class ModelProbeCredentialEnvelope(TypedDict):
 
 
 class DraftModelProbeRequest(TypedDict):
-    protocol_version: Literal["1.3"]
+    protocol_version: Literal["1.4"]
     runtime_kind: RuntimeKind
     probe_id: Identifier
     config_hash: Sha256Digest
@@ -93,7 +103,7 @@ class ModelProbeFailure(TypedDict):
 
 
 class ModelProbeResponse(TypedDict):
-    protocol_version: Literal["1.3"]
+    protocol_version: Literal["1.4"]
     runtime_kind: RuntimeKind
     probe_id: Identifier
     success: bool
@@ -159,8 +169,8 @@ class FileContext(TypedDict):
     file_manifest: JobFileManifest | None
 
 
-class AgentExecutionRequestV13(TypedDict):
-    protocol_version: Literal["1.3"]
+class AgentExecutionRequestV14(TypedDict):
+    protocol_version: Literal["1.4"]
     runtime_kind: RuntimeKind
     invocation_id: Identifier
     request_digest: Sha256Digest
@@ -169,6 +179,9 @@ class AgentExecutionRequestV13(TypedDict):
     project_code: Identifier
     agent_publication_id: Identifier
     application_publication_id: Identifier
+    job_tool_snapshot_hash: Sha256Digest
+    control_plane_build_identity: BuildIdentity
+    worker_build_identity: BuildIdentity
     model_connection: ModelConnectionBinding
     prompt: Prompt
     limits: ExecutionLimits
@@ -256,9 +269,10 @@ class ExecutionAccounting(TypedDict):
 class RuntimeProvenance(TypedDict):
     runtime_kind: RuntimeKind
     runtime_version: str
-    protocol_version: Literal["1.3"]
+    protocol_version: Literal["1.4"]
     sdk_version: str
     cli_version: str
+    runtime_build_identity: BuildIdentity
     model_connection_revision_id: Identifier
     model_connection_config_hash: Sha256Digest
 
@@ -283,8 +297,71 @@ class ToolEvent(TypedDict):
     failure: NotRequired[RuntimeFailure]
 
 
+class ToolContractFrozenTool(TypedDict):
+    server_code: Identifier
+    tool_name: Identifier
+    schema_hash: Sha256Digest
+
+
+class ToolContractLiveTool(TypedDict):
+    server_code: Identifier
+    tool_name: Identifier
+    schema_hash: Sha256Digest
+    status: Literal["MATCH", "SCHEMA_MISMATCH", "EXTRA_REMOTE_IGNORED"]
+
+
+class ToolContractEffectiveTool(TypedDict):
+    server_code: Identifier
+    tool_name: Identifier
+    sdk_tool_name: str
+    origin: Literal["frozen_mcp", "runtime_derived", "sdk_builtin"]
+    schema_hash: Sha256Digest
+    authorization_status: Literal["ALLOWED", "DENIED"]
+    dependency_tool_name: NotRequired[Identifier]
+
+
+class ToolContractRow(TypedDict):
+    server_code: Identifier
+    tool_name: Identifier
+    status: Literal[
+        "MATCH",
+        "MISSING_REMOTE",
+        "SCHEMA_MISMATCH",
+        "EXTRA_REMOTE_IGNORED",
+        "REMOTE_NOT_OBSERVED",
+        "UNAUTHORIZED_EFFECTIVE",
+        "PROMPT_OVERCLAIM",
+        "RUNTIME_DERIVED",
+    ]
+
+
+class PromptToolContract(TypedDict):
+    template_version: Identifier
+    contract_hash: Sha256Digest
+    declared_tools: list[str]
+
+
+class FileMcpLiveObservation(TypedDict):
+    status: Literal["OBSERVED", "NOT_OBSERVED"]
+    tools: list[ToolContractLiveTool]
+    toolset_hash: NotRequired[Sha256Digest]
+    build_identity: NotRequired[BuildIdentity]
+
+
+class ToolContractObservation(TypedDict):
+    observation_hash: Sha256Digest
+    snapshot_hash: Sha256Digest
+    status: Literal["MATCH", "DRIFT", "NOT_OBSERVED"]
+    frozen_tools: list[ToolContractFrozenTool]
+    file_mcp_live: FileMcpLiveObservation
+    effective_tools: list[ToolContractEffectiveTool]
+    prompt: PromptToolContract
+    rows: list[ToolContractRow]
+    component_build_identities: list[BuildIdentity]
+
+
 class TerminalResult(TypedDict):
-    protocol_version: Literal["1.3"]
+    protocol_version: Literal["1.4"]
     invocation_id: Identifier
     request_digest: Sha256Digest
     last_sequence: int
@@ -297,7 +374,7 @@ class TerminalResult(TypedDict):
 
 
 class CancelRequest(TypedDict):
-    protocol_version: Literal["1.3"]
+    protocol_version: Literal["1.4"]
     invocation_id: Identifier
     request_digest: Sha256Digest
     reason: Literal["JOB_CANCELLED", "WORKER_TIMEOUT", "CLIENT_DISCONNECTED", "WORKER_SHUTDOWN"]

@@ -60,7 +60,11 @@ jobs:
       (needs.backend-full.result == 'success' || needs.backend-full.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose build api-server agent-worker python-agent-runtime dingtalk-runtime
+      - name: Build release-identifiable Runtime images
+        env:
+          BUILD_SOURCE_REVISION: ${{ github.sha }}
+          BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: docker compose build api-server file-service agent-worker python-agent-runtime dingtalk-runtime
 
   admin-web:
     runs-on: ubuntu-latest

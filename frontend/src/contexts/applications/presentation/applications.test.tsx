@@ -330,7 +330,9 @@ describe("Business Application workbench", () => {
     expect(
       await screen.findByText(/请先选择 Agent 发布版本/)
     ).toBeInTheDocument()
-    expect(screen.getByText("TXT/Markdown 可读写，LOG 只读")).toBeInTheDocument()
+    expect(
+      screen.getByText("TXT/Markdown 可读写，LOG 只读")
+    ).toBeInTheDocument()
     expect(screen.getByLabelText("文档解析/OCR Profile")).toBeInTheDocument()
     expect(
       screen.queryByRole("option", { name: /Docling 文字提取 v1/ })
@@ -401,7 +403,7 @@ describe("Business Application workbench", () => {
               status: "enabled",
               config_hash: "agent-hash",
               runtime_kind: "python-v1",
-              runtime_protocol_versions: ["1.3"],
+              runtime_protocol_versions: ["1.4"],
               direction: "",
               component_type: "agent_publication",
             },
@@ -563,9 +565,8 @@ describe("Business Application workbench", () => {
     expect(attachments).toHaveAttribute("aria-disabled", "true")
     expect(continuousConversation).toBeChecked()
     expect(continuousConversation).toHaveAttribute("aria-disabled", "true")
-    const documentProcessingProfile = screen.getByLabelText(
-      "文档解析/OCR Profile"
-    )
+    const documentProcessingProfile =
+      screen.getByLabelText("文档解析/OCR Profile")
     fireEvent.change(documentProcessingProfile, {
       target: { value: "docling-layout-ocr-v2" },
     })

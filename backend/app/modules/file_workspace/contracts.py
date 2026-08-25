@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
+
+from app.shared.tool_contract import tool_schema_hash
 
 
 FILE_MCP_SERVER_CODE = "file-service"
@@ -44,13 +44,7 @@ class FileToolDefinition:
 
 
 def _schema_hash(schema: Mapping[str, Any]) -> str:
-    encoded = json.dumps(
-        schema,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return tool_schema_hash(schema)
 
 
 def _tool(
@@ -111,8 +105,16 @@ _SEARCH_FILES_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "string",
                 "enum": [
-                    "TXT", "LOG", "MARKDOWN", "PDF", "DOCX", "PPTX", "XLSX",
-                    "PNG", "JPEG", "WEBP",
+                    "TXT",
+                    "LOG",
+                    "MARKDOWN",
+                    "PDF",
+                    "DOCX",
+                    "PPTX",
+                    "XLSX",
+                    "PNG",
+                    "JPEG",
+                    "WEBP",
                 ],
             },
         },
@@ -125,8 +127,13 @@ _SEARCH_FILES_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "string",
                 "enum": [
-                    "DIRECT_TEXT", "PROCESSING", "AVAILABLE", "PARTIAL", "NO_TEXT",
-                    "FAILED", "CONTENT_UNAVAILABLE",
+                    "DIRECT_TEXT",
+                    "PROCESSING",
+                    "AVAILABLE",
+                    "PARTIAL",
+                    "NO_TEXT",
+                    "FAILED",
+                    "CONTENT_UNAVAILABLE",
                 ],
             },
         },

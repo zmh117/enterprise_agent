@@ -80,8 +80,14 @@ class AgentJob:
     execution_policy_exhausted: bool = False
     model_runtime_provenance: dict[str, Any] | None = None
     agent_runtime_kind: str = "python-v1"
-    agent_runtime_protocol_version: str = "1.3"
+    agent_runtime_protocol_version: str = "1.4"
     task_workspace_id: str = ""
+    control_plane_build_identity: dict[str, str] | None = None
+    tool_contract_status: str = "NOT_OBSERVED"
+    tool_contract_last_invocation_id: str = ""
+    tool_contract_observation_hash: str = ""
+    prompt_template_version: str = ""
+    prompt_contract_hash: str = ""
 
 
 @dataclass(frozen=True)

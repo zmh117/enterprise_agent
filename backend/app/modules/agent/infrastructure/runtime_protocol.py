@@ -4,13 +4,13 @@ import hashlib
 import json
 from typing import Any, cast
 
-from app.modules.agent.infrastructure.generated_runtime_contracts_v1_3 import (
-    AgentExecutionRequestV13,
-    CONTRACT_SCHEMA_PATH as CONTRACT_SCHEMA_PATH_V13,
-    validate_contract as validate_v13_contract,
+from app.modules.agent.infrastructure.generated_runtime_contracts_v1_4 import (
+    AgentExecutionRequestV14,
+    CONTRACT_SCHEMA_PATH as CONTRACT_SCHEMA_PATH_V14,
+    validate_contract as validate_v14_contract,
 )
 
-CURRENT_RUNTIME_PROTOCOL_VERSION = "1.3"
+CURRENT_RUNTIME_PROTOCOL_VERSION = "1.4"
 SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = (CURRENT_RUNTIME_PROTOCOL_VERSION,)
 
 
@@ -36,9 +36,9 @@ def validate_execution_request(
     payload: object,
     *,
     encoded_bytes: int | None = None,
-) -> AgentExecutionRequestV13:
+) -> AgentExecutionRequestV14:
     protocol_version = _protocol_version(payload)
-    contract_path = CONTRACT_SCHEMA_PATH_V13
+    contract_path = CONTRACT_SCHEMA_PATH_V14
     limits_path = contract_path.with_name("limits.json")
     limits = json.loads(limits_path.read_text(encoding="utf-8"))
     size = encoded_bytes
@@ -51,7 +51,7 @@ def validate_execution_request(
         )
     try:
         validate_runtime_contract(
-            "AgentExecutionRequestV13",
+            "AgentExecutionRequestV14",
             payload,
             protocol_version=protocol_version,
         )
@@ -66,7 +66,7 @@ def validate_execution_request(
             "request digest does not match the canonical request body",
         )
     return cast(
-        AgentExecutionRequestV13,
+        AgentExecutionRequestV14,
         payload,
     )
 
@@ -80,7 +80,7 @@ def validate_runtime_contract(
     version = protocol_version or _protocol_version(payload)
     if version != CURRENT_RUNTIME_PROTOCOL_VERSION:
         raise ValueError(f"unsupported runtime protocol version: {version}")
-    validate_v13_contract(definition_name, payload)
+    validate_v14_contract(definition_name, payload)
 
 
 def _protocol_version(payload: object) -> str:
@@ -90,7 +90,7 @@ def _protocol_version(payload: object) -> str:
             return str(value)
     raise RuntimeProtocolError(
         "runtime_protocol_unsupported",
-        "only runtime protocol 1.3 is supported",
+        "only runtime protocol 1.4 is supported",
     )
 
 
@@ -99,7 +99,7 @@ def _validate_file_context(payload: dict[str, Any]) -> None:
     if not isinstance(context, dict):
         raise RuntimeProtocolError(
             "runtime_file_context_invalid",
-            "runtime v1.3 requires a frozen file context",
+            "runtime v1.4 requires a frozen file context",
         )
     manifest = context.get("file_manifest")
     if manifest is None:
@@ -111,7 +111,7 @@ def _validate_file_context(payload: dict[str, Any]) -> None:
     ):
         raise RuntimeProtocolError(
             "runtime_file_manifest_invalid",
-            "runtime protocol 1.3 requires manifest schema v5",
+            "runtime protocol 1.4 requires manifest schema v5",
         )
     document_actions = {"READ_METADATA", "RETAIN", "DELIVER"}
     matrix = {

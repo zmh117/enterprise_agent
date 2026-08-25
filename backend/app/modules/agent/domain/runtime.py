@@ -57,7 +57,13 @@ class AgentExecutionContext:
     mcp_bindings: tuple[McpRuntimeBinding, ...] = ()
     mcp_unavailable_notices: tuple[McpUnavailableNotice, ...] = ()
     runtime_kind: str = "python-v1"
-    runtime_protocol_version: str = "1.3"
+    runtime_protocol_version: str = "1.4"
+    job_tool_snapshot_hash: str = ""
+    control_plane_build_identity: dict[str, str] = field(default_factory=dict)
+    prompt_template_version: str = "agent-system-prompt-v2"
+    worker_build_identity: dict[str, str] = field(default_factory=dict)
+    effective_tool_names: tuple[str, ...] = ()
+    prompt_contract_hash: str = ""
 
 
 @dataclass(frozen=True)

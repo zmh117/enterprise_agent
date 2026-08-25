@@ -60,8 +60,149 @@ function job(overrides: Record<string, unknown> = {}) {
     execution_policy_exhausted: false,
     last_error_code: "",
     execution_summary: executionSummary(),
+    tool_contract: toolContractSummary(),
     created_at: "2026-07-24T10:00:00+00:00",
     ...overrides,
+  }
+}
+
+function toolContractSummary(overrides: Record<string, unknown> = {}) {
+  return {
+    status: "MATCH",
+    last_invocation_id: "invocation-2",
+    observation_hash: "a".repeat(64),
+    prompt_template_version: "agent-system-prompt-v2",
+    prompt_contract_hash: "b".repeat(64),
+    component_build_identities: [
+      {
+        component: "control-plane",
+        source_revision: "revision-1",
+        build_id: "build-1",
+        platform: "linux/amd64",
+      },
+    ],
+    ...overrides,
+  }
+}
+
+function toolContractEvidence() {
+  const identity = {
+    source_revision: "revision-1",
+    build_id: "build-1",
+    platform: "linux/amd64",
+  }
+  const frozen = {
+    server_code: "file-service",
+    tool_name: "file_create_commit_intent",
+    schema_hash: "c".repeat(64),
+  }
+  const observation = (status: "MATCH" | "DRIFT", index: number) => ({
+    invocation_id: `invocation-${index}`,
+    request_digest: String(index).repeat(64),
+    sequence: 2,
+    created_at: `2026-07-24T10:00:0${index}+00:00`,
+    status,
+    observation_hash: String(index + 2).repeat(64),
+    snapshot_hash: "d".repeat(64),
+    component_build_identities: [
+      { component: "control-plane", ...identity },
+      { component: "agent-worker", ...identity },
+      { component: "python-runtime", ...identity },
+      {
+        component: "file-service",
+        ...identity,
+        image_digest: `sha256:${"e".repeat(64)}`,
+      },
+    ],
+    job_frozen: [frozen],
+    file_mcp_live: {
+      status: "OBSERVED",
+      toolset_hash: "f".repeat(64),
+      build_identity: { component: "file-service", ...identity },
+      tools:
+        status === "DRIFT"
+          ? [
+              {
+                server_code: "file-service",
+                tool_name: "file_retain_version",
+                schema_hash: "9".repeat(64),
+                status: "EXTRA_REMOTE_IGNORED",
+              },
+            ]
+          : [
+              { ...frozen, status: "MATCH" },
+              {
+                server_code: "file-service",
+                tool_name: "file_retain_version",
+                schema_hash: "9".repeat(64),
+                status: "EXTRA_REMOTE_IGNORED",
+              },
+            ],
+    },
+    runtime_effective:
+      status === "DRIFT"
+        ? []
+        : [
+            {
+              ...frozen,
+              sdk_tool_name: "mcp__file_service__file_create_commit_intent",
+              origin: "frozen_mcp",
+              authorization_status: "ALLOWED",
+            },
+            {
+              server_code: "file-service",
+              tool_name: "select_sandbox_output",
+              sdk_tool_name: "mcp__file_service__select_sandbox_output",
+              origin: "runtime_derived",
+              schema_hash: "8".repeat(64),
+              authorization_status: "ALLOWED",
+              dependency_tool_name: "file_create_commit_intent",
+            },
+          ],
+    prompt: {
+      template_version: "agent-system-prompt-v2",
+      contract_hash: "b".repeat(64),
+      declared_tools:
+        status === "DRIFT"
+          ? []
+          : [
+              "mcp__file_service__file_create_commit_intent",
+              "mcp__file_service__select_sandbox_output",
+            ],
+    },
+    matrix: [
+      {
+        server_code: "file-service",
+        tool_name: "file_create_commit_intent",
+        status: status === "DRIFT" ? "MISSING_REMOTE" : "MATCH",
+      },
+      {
+        server_code: "file-service",
+        tool_name: "file_retain_version",
+        status: "EXTRA_REMOTE_IGNORED",
+      },
+      ...(status === "MATCH"
+        ? [
+            {
+              server_code: "file-service",
+              tool_name: "select_sandbox_output",
+              status: "RUNTIME_DERIVED",
+            },
+          ]
+        : []),
+    ],
+  })
+  return {
+    summary: toolContractSummary({ status: "DRIFT" }),
+    snapshot: {
+      id: "snapshot-1",
+      schema_version: 1,
+      snapshot_hash: "d".repeat(64),
+      created_at: "2026-07-24T10:00:00+00:00",
+      tools: [frozen],
+    },
+    observations: [observation("DRIFT", 1), observation("MATCH", 2)],
+    notice: "工具契约状态来自该 Job 的冻结快照与不可变 Runtime 事件。",
   }
 }
 
@@ -340,7 +481,9 @@ describe("runtime provenance records", () => {
     expect(screen.getByText(/retry 3 · dead 4/)).toBeInTheDocument()
     expect(screen.getByText(/Docling 就绪/)).toBeInTheDocument()
     expect(screen.getByText("处理分组")).toBeInTheDocument()
-    expect(screen.getByText(/diagnostic-safe · docling-layout-ocr-v2 · FAILED/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/diagnostic-safe · docling-layout-ocr-v2 · FAILED/)
+    ).toBeInTheDocument()
     expect(screen.getByText("最近失败")).toBeInTheDocument()
     expect(screen.getByText(/docling_format_rejected/)).toBeInTheDocument()
     expect(
@@ -360,6 +503,14 @@ describe("runtime provenance records", () => {
             business_application_code: "",
             business_application_publication_id: "",
             business_application_runtime_status: "legacy_unattributed",
+            tool_contract: toolContractSummary({
+              status: "NOT_OBSERVED",
+              last_invocation_id: "",
+              observation_hash: "",
+              prompt_template_version: "",
+              prompt_contract_hash: "",
+              component_build_identities: [],
+            }),
           }),
         ],
         page: { limit: 50, has_more: false, next_cursor: null },
@@ -378,6 +529,8 @@ describe("runtime provenance records", () => {
     expect(screen.getAllByText("legacy_unattributed").length).toBeGreaterThan(0)
     expect(screen.getAllByText(/总耗时 2.40 秒/).length).toBeGreaterThan(0)
     expect(screen.getAllByText("claude-safe-model").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("MATCH").length).toBeGreaterThan(0)
+    expect(screen.getByText("NOT_OBSERVED（不等于健康）")).toBeInTheDocument()
   })
 
   it("filters jobs by local time, username and application name", async () => {
@@ -514,6 +667,121 @@ describe("runtime provenance records", () => {
     expect(screen.getByText(/不回写输入/)).toBeInTheDocument()
   })
 
+  it("shows immutable per-invocation Tool contract layers and drift history", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job({ tool_contract: toolContractSummary({ status: "DRIFT" }) }),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [],
+        execution_summary: executionSummary(),
+        model_calls: {
+          items: [],
+          limit: 50,
+          has_more: false,
+          next_cursor: null,
+        },
+        file_workspace: {
+          enabled: false,
+          manifest_schema_version: null,
+          formats: [],
+          output_commits: [],
+        },
+        tool_contract: toolContractEvidence(),
+        deliveries: { events: [], attempts: [], chunks: [] },
+        webhook_events: [],
+      })
+    )
+
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+
+    expect(await screen.findByText("工具契约对账")).toBeInTheDocument()
+    expect(screen.getAllByText("DRIFT").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("A. Job frozen")).toHaveLength(2)
+    expect(screen.getAllByText("B. File MCP live")).toHaveLength(2)
+    expect(screen.getAllByText("C. Runtime effective")).toHaveLength(2)
+    expect(screen.getAllByText("D. Prompt declaration")).toHaveLength(2)
+    expect(screen.getAllByText("EXTRA_REMOTE_IGNORED").length).toBeGreaterThan(
+      0
+    )
+    expect(screen.getByText("RUNTIME_DERIVED")).toBeInTheDocument()
+    expect(screen.getByText(/Runtime 派生 · ALLOWED/)).toBeInTheDocument()
+    expect(screen.getAllByText("control-plane")).toHaveLength(2)
+    expect(screen.getAllByText("python-runtime")).toHaveLength(2)
+    expect(
+      screen.getAllByRole("button", { name: /复制/ }).length
+    ).toBeGreaterThan(0)
+    expect(screen.queryByText(/raw-provider-secret/)).not.toBeInTheDocument()
+  })
+
+  it("states that historical NOT_OBSERVED is not a health result", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job({
+          tool_contract: toolContractSummary({
+            status: "NOT_OBSERVED",
+            last_invocation_id: "",
+            observation_hash: "",
+            prompt_template_version: "",
+            prompt_contract_hash: "",
+            component_build_identities: [],
+          }),
+        }),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [],
+        execution_summary: executionSummary({ source_protocol_version: "1.3" }),
+        model_calls: {
+          items: [],
+          limit: 50,
+          has_more: false,
+          next_cursor: null,
+        },
+        file_workspace: {
+          enabled: false,
+          manifest_schema_version: null,
+          formats: [],
+          output_commits: [],
+        },
+        tool_contract: {
+          summary: toolContractSummary({
+            status: "NOT_OBSERVED",
+            last_invocation_id: "",
+            observation_hash: "",
+            prompt_template_version: "",
+            prompt_contract_hash: "",
+            component_build_identities: [],
+          }),
+          snapshot: null,
+          observations: [],
+          notice:
+            "历史 protocol 1.3 Job 未记录工具契约；NOT_OBSERVED 不代表健康。",
+        },
+        deliveries: { events: [], attempts: [], chunks: [] },
+        webhook_events: [],
+      })
+    )
+
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+
+    expect(
+      await screen.findByText(
+        "历史 protocol 1.3 Job 未记录工具契约；NOT_OBSERVED 不代表健康。"
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getAllByText("NOT_OBSERVED（不等于健康）").length
+    ).toBeGreaterThan(0)
+  })
+
   it("renders document source formats in job evidence instead of failing closed to fixture copy", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       response({
@@ -564,9 +832,7 @@ describe("runtime provenance records", () => {
     expect(screen.getByText("PNG")).toBeInTheDocument()
     expect(screen.getByText("DOCX")).toBeInTheDocument()
     expect(screen.getByText(/输入 Manifest 4 个文件/)).toBeInTheDocument()
-    expect(
-      screen.getAllByText(/原件不进沙盒/).length
-    ).toBeGreaterThan(0)
+    expect(screen.getAllByText(/原件不进沙盒/).length).toBeGreaterThan(0)
   })
 
   it("does not reuse fixture copy when job evidence cannot be parsed", async () => {

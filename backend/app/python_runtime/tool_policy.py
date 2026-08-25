@@ -96,8 +96,8 @@ def normalize_tool_events(
             server_code = None
             tool_name = full_tool_name
         protocol_version = str(request.get("protocol_version") or "")
-        if protocol_version != "1.3":
-            raise ValueError("only runtime protocol 1.3 is supported")
+        if protocol_version != "1.4":
+            raise ValueError("only runtime protocol 1.4 is supported")
         tool_call_id = str(event.get("tool_call_id") or "")
         if not tool_call_id:
             continue

@@ -32,9 +32,7 @@ const componentReferenceSchema = z.object({
     (value) => (value === "" || value === null ? undefined : value),
     z.literal("python-v1").optional()
   ),
-  runtime_protocol_versions: z
-    .array(z.literal("1.3"))
-    .default([]),
+  runtime_protocol_versions: z.array(z.literal("1.4")).default([]),
   direction: z.string(),
   component_type: z.string(),
 })
@@ -46,10 +44,7 @@ export const catalogSchema = z.object({
   document_processing_profiles: z
     .array(
       z.object({
-        code: z.enum([
-          "NONE",
-          "docling-layout-ocr-v2",
-        ]),
+        code: z.enum(["NONE", "docling-layout-ocr-v2"]),
         version: z.string(),
         hash: z.string(),
         label: z.string(),

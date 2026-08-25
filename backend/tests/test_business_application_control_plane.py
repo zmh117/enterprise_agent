@@ -111,7 +111,7 @@ def enable_file_context_dependencies(container: object, payload: dict[str, objec
     assert agent_row is not None
     agent_snapshot = json.loads(str(agent_row["snapshot_json"]))
     agent_snapshot["runtime_kind"] = "python-v1"
-    agent_snapshot["supported_runtime_protocol_versions"] = ["1.3"]
+    agent_snapshot["supported_runtime_protocol_versions"] = ["1.4"]
     container.database.execute(
         """
         update agent_publication
@@ -505,6 +505,7 @@ def test_document_processing_profile_is_strict_and_frozen() -> None:
         "visual_semantics": False,
     }
 
+
 def test_document_processing_profile_http_contract_rejects_arbitrary_options() -> None:
     settings = control_plane_settings()
     container = build_test_container(settings, migrate=True, seed=True)
@@ -639,6 +640,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "117_expand_docling_layout_ocr_v2.sql",
         "118_expand_bounded_workspace_working_sets.sql",
         "119_contract_single_current_file_rule.sql",
+        "120_expand_runtime_tool_contract_evidence.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

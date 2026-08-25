@@ -50,9 +50,11 @@ from app.python_runtime.sdk_event_normalizer import extract_tool_events
 from app.python_runtime.executor import (
     PythonExecutionOutcome,
     PythonRuntimeExecutor,
+    agent_request_from_runtime_request,
 )
 from app.python_runtime.error_mapper import redact_sensitive_text as redact_runtime_error
 from app.python_runtime.tool_policy import normalize_tool_events
+from app.python_runtime.tool_contract import build_tool_contract_observation
 from app.python_runtime.service import (
     PythonRuntimeDependencies,
     _principal_secret_context,
@@ -60,6 +62,7 @@ from app.python_runtime.service import (
 )
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from app.shared.build_identity import BuildIdentity
 from app.shared.migrations import Migrator
 from app.shared.model_probe_envelope import (
     ModelProbeEnvelopeCipher,
@@ -88,9 +91,23 @@ class FakePythonExecutor:
         request: dict[str, Any],
         cancel_event: threading.Event,
         secret_context: Any,
+        tool_contract_observer: Any = None,
     ) -> PythonExecutionOutcome:
         self.requests.append(request)
         self.mcp_principal_tokens.append(dict(secret_context.mcp_principal_tokens))
+        if tool_contract_observer is not None:
+            tool_contract_observer(
+                build_tool_contract_observation(
+                    agent_request_from_runtime_request(request, None).context,
+                    file_live=None,
+                    runtime_build_identity=BuildIdentity(
+                        component="python-runtime",
+                        source_revision="test-revision",
+                        build_id="test-build",
+                        platform="linux/amd64",
+                    ),
+                )
+            )
         self.started.set()
         if self.block_until_cancelled:
             cancel_event.wait(timeout=2)
@@ -112,48 +129,48 @@ class FakePythonExecutor:
             usage={"input_tokens": 3, "output_tokens": 2},
             runtime_provenance=provenance,
             runtime_events=(
-                    {
-                        "event_type": "runtime_initialized",
-                        "payload": {"model_id": "claude-safe-model", "mcp_servers": []},
-                    },
-                    {
-                        "event_type": "model_call",
-                        "payload": {
-                            "model_call_id": "python-message-safe-1",
-                            "provider_request_id": None,
-                            "provider_message_id": "python-message-safe-1",
-                            "model_id": "claude-safe-model",
-                            "status": "SUCCEEDED",
-                            "started_at": None,
-                            "completed_at": "2026-08-12T00:00:01Z",
-                            "duration_ms": None,
-                            "duration_source": "UNAVAILABLE",
-                            "usage": {
-                                "input_tokens": 3,
-                                "output_tokens": 2,
-                                "cache_read_input_tokens": 0,
-                                "cache_creation_input_tokens": 0,
-                            },
-                            "stop_reason": "end_turn",
-                            "error_code": None,
-                            "error_summary": None,
+                {
+                    "event_type": "runtime_initialized",
+                    "payload": {"model_id": "claude-safe-model", "mcp_servers": []},
+                },
+                {
+                    "event_type": "model_call",
+                    "payload": {
+                        "model_call_id": "python-message-safe-1",
+                        "provider_request_id": None,
+                        "provider_message_id": "python-message-safe-1",
+                        "model_id": "claude-safe-model",
+                        "status": "SUCCEEDED",
+                        "started_at": None,
+                        "completed_at": "2026-08-12T00:00:01Z",
+                        "duration_ms": None,
+                        "duration_source": "UNAVAILABLE",
+                        "usage": {
+                            "input_tokens": 3,
+                            "output_tokens": 2,
+                            "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0,
                         },
+                        "stop_reason": "end_turn",
+                        "error_code": None,
+                        "error_summary": None,
                     },
+                },
             ),
             accounting={
-                    "status": "COMPLETE",
-                    "duration_ms": 20,
-                    "duration_api_ms": 10,
-                    "num_turns": 1,
-                    "usage": {
-                        "input_tokens": 3,
-                        "output_tokens": 2,
-                        "cache_read_input_tokens": 0,
-                        "cache_creation_input_tokens": 0,
-                    },
-                    "model_usage": [],
-                    "estimated_cost_usd": 0.001,
-                    "permission_denials_count": 0,
+                "status": "COMPLETE",
+                "duration_ms": 20,
+                "duration_api_ms": 10,
+                "num_turns": 1,
+                "usage": {
+                    "input_tokens": 3,
+                    "output_tokens": 2,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                },
+                "model_usage": [],
+                "estimated_cost_usd": 0.001,
+                "permission_denials_count": 0,
             },
             tool_events=(
                 {
@@ -235,7 +252,7 @@ def _keys() -> tuple[bytes, bytes]:
 
 
 def _request() -> dict[str, Any]:
-    path = Path("contracts/agent-runtime/v1.3/golden/execution-request.json")
+    path = Path("contracts/agent-runtime/v1.4/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["request_digest"] = canonical_request_digest(request)
@@ -243,7 +260,7 @@ def _request() -> dict[str, Any]:
 
 
 def _current_request() -> dict[str, Any]:
-    path = Path("contracts/agent-runtime/v1.3/golden/execution-request.json")
+    path = Path("contracts/agent-runtime/v1.4/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"] = []
@@ -252,8 +269,8 @@ def _current_request() -> dict[str, Any]:
 
 
 def _request_for_version(protocol_version: str) -> dict[str, Any]:
-    assert protocol_version == "1.3"
-    path = Path("contracts/agent-runtime/v1.3/golden/execution-request.json")
+    assert protocol_version == "1.4"
+    path = Path("contracts/agent-runtime/v1.4/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"] = []
@@ -268,6 +285,12 @@ def _provenance(request: dict[str, Any]) -> dict[str, Any]:
         "protocol_version": request["protocol_version"],
         "sdk_version": "0.2.134",
         "cli_version": "2.1.226",
+        "runtime_build_identity": {
+            "component": "python-runtime",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
         "model_connection_revision_id": request["model_connection"]["revision_id"],
         "model_connection_config_hash": request["model_connection"]["config_hash"],
     }
@@ -319,6 +342,7 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
     assert first_events == second_events
     assert [event["event_type"] for event in first_events] == [
         "execution_started",
+        "tool_contract_observed",
         "runtime_initialized",
         "model_call",
         "tool_event",
@@ -379,6 +403,38 @@ def test_python_runtime_accepts_replays_and_rejects_digest_conflict_for_current_
     assert conflict.json()["code"] == "runtime_invocation_conflict"
 
 
+def test_python_runtime_rejects_invalid_or_cross_release_component_identity(
+    tmp_path: Path,
+) -> None:
+    executor = FakePythonExecutor()
+    dependencies, private_key = _dependencies(tmp_path, executor)
+    client = TestClient(create_app(dependencies))
+
+    cross_release = _current_request()
+    cross_release["worker_build_identity"]["build_id"] = "different-build"
+    cross_release["request_digest"] = canonical_request_digest(cross_release)
+    mismatch = client.post(
+        "/internal/v1/executions",
+        json=cross_release,
+        headers={"Authorization": f"Bearer {_token(private_key, cross_release)}"},
+    )
+
+    invalid = _current_request()
+    invalid["control_plane_build_identity"]["component"] = "agent-worker"
+    invalid["request_digest"] = canonical_request_digest(invalid)
+    malformed = client.post(
+        "/internal/v1/executions",
+        json=invalid,
+        headers={"Authorization": f"Bearer {_token(private_key, invalid)}"},
+    )
+
+    assert mismatch.status_code == 409
+    assert mismatch.json()["detail"]["code"] == "runtime_build_identity_mismatch"
+    assert malformed.status_code == 400
+    assert malformed.json()["detail"]["code"] == "runtime_build_identity_invalid"
+    assert executor.requests == []
+
+
 def test_python_runtime_streams_observability_before_accounting_terminal(
     tmp_path: Path,
 ) -> None:
@@ -402,6 +458,7 @@ def test_python_runtime_streams_observability_before_accounting_terminal(
     events = [json.loads(line) for line in response.text.strip().splitlines()]
     assert [event["event_type"] for event in events] == [
         "execution_started",
+        "tool_contract_observed",
         "runtime_initialized",
         "model_call",
         "tool_event",
@@ -476,7 +533,7 @@ def test_python_runtime_http_keeps_dual_business_tokens_out_of_request_and_ledge
     dependencies, private_key = _dependencies(tmp_path, executor)
     dependencies.server_policies = business_mcp_test_policies()
     request = json.loads(
-        Path("contracts/agent-runtime/v1.3/golden/execution-request.json").read_text(
+        Path("contracts/agent-runtime/v1.4/golden/execution-request.json").read_text(
             encoding="utf-8"
         )
     )
@@ -635,6 +692,27 @@ def test_python_runtime_cancel_wins_once_and_ledger_recovers_after_restart(
     assert replacement.requests == []
 
 
+def test_python_runtime_streams_tool_contract_before_executor_continues(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    executor = FakePythonExecutor(block_until_cancelled=True)
+    registry = PythonInvocationRegistry(executor, PythonTerminalLedger(database))
+    invocation = registry.acquire(_request())
+
+    assert executor.started.wait(timeout=1)
+    assert [event["event_type"] for event in invocation.events()] == [
+        "execution_started",
+        "tool_contract_observed",
+    ]
+    assert invocation.events()[1]["payload"]["status"] == "MATCH"
+
+    assert invocation.cancel() is True
+    events = list(invocation.stream())
+    assert events[-1]["event_type"] == "terminal"
+    assert events[-1]["payload"]["status"] == "CANCELLED"
+
+
 def test_python_runtime_restart_fails_orphan_without_replaying_model(
     tmp_path: Path,
 ) -> None:
@@ -643,7 +721,7 @@ def test_python_runtime_restart_fails_orphan_without_replaying_model(
     ledger = PythonTerminalLedger(database)
     assert ledger.claim(request, "runtime-before-restart").status == "CLAIMED"
     started = {
-        "protocol_version": "1.3",
+        "protocol_version": "1.4",
         "invocation_id": request["invocation_id"],
         "request_digest": request["request_digest"],
         "sequence": 1,
@@ -662,11 +740,13 @@ def test_python_runtime_restart_fails_orphan_without_replaying_model(
     events = recovered.events()
 
     assert replacement.requests == []
-    assert len(events) == 2
+    assert len(events) == 3
     assert events[0] == started
-    assert events[1]["event_type"] == "terminal"
-    assert events[1]["payload"]["status"] == "FAILED"
-    assert events[1]["payload"]["failure"] == {
+    assert events[1]["event_type"] == "tool_contract_observed"
+    assert events[1]["payload"]["status"] == "MATCH"
+    assert events[2]["event_type"] == "terminal"
+    assert events[2]["payload"]["status"] == "FAILED"
+    assert events[2]["payload"]["failure"] == {
         "code": "runtime_orphaned_invocation",
         "retry_class": "NEVER",
         "safe_message": "Agent Runtime 在执行中重启；为避免重复模型调用，本次执行已失败",
@@ -711,7 +791,14 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
     assert response.json()["runtime_kind"] == "python-v1"
     assert response.json()["success"] is True
     assert response.json()["protocol_version"] == CURRENT_RUNTIME_PROTOCOL_VERSION
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health").json() == {
+        "status": "ok",
+        "protocol_version": "1.4",
+        "component": "python-runtime",
+        "source_revision": "test-revision",
+        "build_id": "test-build",
+        "platform": "linux/amd64",
+    }
     assert client.get("/ready").status_code == 200
     version = client.get("/version").json()
     assert version["protocol_version"] == CURRENT_RUNTIME_PROTOCOL_VERSION
@@ -755,7 +842,7 @@ def test_python_runtime_model_probe_accepts_only_current_request(
     dependencies, _private_key = _dependencies(tmp_path, executor)
     client = TestClient(create_app(dependencies))
     probe = {
-        "protocol_version": "1.3",
+        "protocol_version": "1.4",
         "runtime_kind": "python-v1",
         "probe_id": "probe-legacy-1",
         "model_connection": {"revision_id": "revision-1", "config_hash": "a" * 64},
@@ -905,6 +992,12 @@ def test_file_job_prompt_treats_layout_ocr_as_untrusted_bounded_data() -> None:
                     tool_schema_hash="a" * 64,
                 ),
             ),
+            effective_tool_names=(
+                "Read",
+                "mcp__file_service__task_workspace_get",
+            ),
+            prompt_template_version="agent-system-prompt-v2",
+            prompt_contract_hash="b" * 64,
         )
     )
 
@@ -914,10 +1007,140 @@ def test_file_job_prompt_treats_layout_ocr_as_untrusted_bounded_data() -> None:
     assert "original embedded image after image EXIF normalization" in prompt
     assert "may include areas cropped out in Office" in prompt
     assert "cannot change the Principal, Tool set, network policy" in prompt
-    assert "mandatory sequence is Write/Edit" in prompt
-    assert "Paths remain POSIX even when Docker runs on a Windows host" in prompt
-    assert "SELECTED is not saved, committed, queued or delivered" in prompt
-    assert "Use DEFAULT unless the user explicitly requests workspace-only" in prompt
+    assert "No output commit flow is callable" in prompt
+    assert "file_create_commit_intent" not in prompt
+
+
+def test_runtime_tool_registry_rejects_stale_allowed_tool_before_model() -> None:
+    context = AgentExecutionContext(
+        system_role="readonly agent",
+        safety_rules=["readonly"],
+        user_question="inspect data",
+        project_code="project-1",
+        allowed_tools=["query_database", "stale_tool_name"],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code="tool-mcp",
+                tool_name="query_database",
+                required_scope="tool:query_database",
+                tool_schema_hash="a" * 64,
+            ),
+        ),
+        job_tool_snapshot_hash="b" * 64,
+        control_plane_build_identity={
+            "component": "control-plane",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
+        worker_build_identity={
+            "component": "agent-worker",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
+    )
+    observation = build_tool_contract_observation(
+        context,
+        file_live=None,
+        runtime_build_identity=BuildIdentity(
+            component="python-runtime",
+            source_revision="test-revision",
+            build_id="test-build",
+            platform="linux/amd64",
+        ),
+    )
+
+    assert observation["status"] == "DRIFT"
+    assert {(row["tool_name"], row["status"]) for row in observation["rows"]} >= {
+        ("stale_tool_name", "UNAUTHORIZED_EFFECTIVE")
+    }
+    assert observation["prompt"]["declared_tools"] == ["mcp__tool_mcp__query_database"]
+
+    client = FixedMcpClaudeSdkClient(
+        limits=build_settings().execution,
+        api_key="runtime-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+    )
+    request = AgentRunRequest(
+        job_id="job-stale-tool",
+        user_id="user-1",
+        project_code="project-1",
+        invocation_id="invocation-stale-tool",
+        context=context,
+    )
+    with pytest.raises(NonRetryableExecutionError) as captured:
+        asyncio.run(client._open_mcp_server(request, object()))
+
+    assert captured.value.error_code == "runtime_tool_contract_unauthorized_effective"
+
+
+def test_runtime_tool_registry_marks_required_file_live_failure_as_drift() -> None:
+    context = AgentExecutionContext(
+        system_role="file agent",
+        safety_rules=["bounded"],
+        user_question="inspect file",
+        project_code="project-1",
+        allowed_tools=["file_create_commit_intent"],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code="file-service",
+                tool_name="file_create_commit_intent",
+                required_scope="file:commit",
+                tool_schema_hash="a" * 64,
+            ),
+        ),
+        job_tool_snapshot_hash="b" * 64,
+        control_plane_build_identity={
+            "component": "control-plane",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
+        worker_build_identity={
+            "component": "agent-worker",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
+    )
+
+    observation = build_tool_contract_observation(
+        context,
+        file_live=None,
+        runtime_build_identity=BuildIdentity(
+            component="python-runtime",
+            source_revision="test-revision",
+            build_id="test-build",
+            platform="linux/amd64",
+        ),
+    )
+
+    assert observation["status"] == "DRIFT"
+    assert observation["file_mcp_live"] == {"status": "NOT_OBSERVED", "tools": []}
+    assert observation["rows"] == [
+        {
+            "server_code": "file-service",
+            "tool_name": "file_create_commit_intent",
+            "status": "REMOTE_NOT_OBSERVED",
+        }
+    ]
+    assert {item["origin"] for item in observation["effective_tools"]} == {"sdk_builtin"}
+    assert set(observation["prompt"]["declared_tools"]) == {
+        "Read",
+        "Glob",
+        "Grep",
+        "Edit",
+        "Write",
+    }
 
 
 def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
@@ -933,6 +1156,24 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
         conversation_summary="",
         publication_id="agent-publication-1",
         application_publication_id="application-publication-1",
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code="tool-mcp",
+                tool_name="get_schema_directory",
+                required_scope="tool:get_schema_directory",
+                tool_schema_hash="a" * 64,
+            ),
+            McpRuntimeBinding(
+                server_code="tool-mcp",
+                tool_name="query_database",
+                required_scope="tool:query_database",
+                tool_schema_hash="b" * 64,
+            ),
+        ),
+        effective_tool_names=(
+            "mcp__tool_mcp__get_schema_directory",
+            "mcp__tool_mcp__query_database",
+        ),
     )
     request = AgentRunRequest(
         job_id="job-1",
@@ -1013,7 +1254,7 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
 
 def test_python_sdk_projects_current_observability_fixture() -> None:
     fixture = json.loads(
-        Path("contracts/agent-runtime/v1.3/golden/sdk-observability-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.4/golden/sdk-observability-fixture.json").read_text(
             encoding="utf-8"
         )
     )
@@ -1046,7 +1287,7 @@ def test_python_sdk_projects_current_observability_fixture() -> None:
         skills={},
         retrieved_context={},
         conversation_summary="",
-        runtime_protocol_version="1.3",
+        runtime_protocol_version="1.4",
     )
     client = ClaudeSdkClient(
         model="claude-safe-model",
@@ -1081,7 +1322,7 @@ def test_python_sdk_projects_current_observability_fixture() -> None:
 
 def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
     fixture = json.loads(
-        Path("contracts/agent-runtime/v1.3/golden/sdk-observability-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.4/golden/sdk-observability-fixture.json").read_text(
             encoding="utf-8"
         )
     )
@@ -1129,7 +1370,7 @@ def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
                 skills={},
                 retrieved_context={},
                 conversation_summary="",
-                runtime_protocol_version="1.3",
+                runtime_protocol_version="1.4",
             ),
         )
     )
@@ -1167,6 +1408,7 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
                 tool_schema_hash="c" * 64,
             ),
         ),
+        effective_tool_names=("mcp__ones_mcp__ones_work_item_search",),
     )
     request = AgentRunRequest(
         job_id="job-1",
@@ -1280,7 +1522,20 @@ def test_python_runtime_builds_isolated_sdk_config_for_two_business_servers() ->
                 tool_schema_hash="d" * 64,
             ),
         ),
-        runtime_protocol_version="1.3",
+        runtime_protocol_version="1.4",
+        job_tool_snapshot_hash="f" * 64,
+        control_plane_build_identity={
+            "component": "control-plane",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
+        worker_build_identity={
+            "component": "agent-worker",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
     )
     request = AgentRunRequest(
         job_id="job-dual-business",
@@ -1375,11 +1630,11 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
         tool_restrictions=["TXT only"],
         skills={},
         retrieved_context={
-                "file_manifest": {
-                    "schema_version": 5,
-                    "workspace_catalog_revision_id": "workspace-catalog-file-job",
-                    "manifest_hash": "e" * 64,
-                    "observed_at": "2026-08-22T00:00:00Z",
+            "file_manifest": {
+                "schema_version": 5,
+                "workspace_catalog_revision_id": "workspace-catalog-file-job",
+                "manifest_hash": "e" * 64,
+                "observed_at": "2026-08-22T00:00:00Z",
                 "items": [],
             }
         },
@@ -1395,7 +1650,20 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
                 tool_schema_hash="d" * 64,
             ),
         ),
-        runtime_protocol_version="1.3",
+        runtime_protocol_version="1.4",
+        job_tool_snapshot_hash="f" * 64,
+        control_plane_build_identity={
+            "component": "control-plane",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
+        worker_build_identity={
+            "component": "agent-worker",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
     )
     file_principal = "file-principal-token-not-for-events"
     bridge_capture: dict[str, Any] = {}
@@ -1403,6 +1671,24 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
     class FakeFileBridge:
         server = {"type": "sdk", "name": "enterprise-file-bridge"}
         local_tool_names = ("select_sandbox_output",)
+        live_observation = {
+            "status": "OBSERVED",
+            "tools": [
+                {
+                    "server_code": "file-service",
+                    "tool_name": "file_create_commit_intent",
+                    "schema_hash": "d" * 64,
+                    "status": "MATCH",
+                }
+            ],
+            "toolset_hash": "e" * 64,
+            "build_identity": {
+                "component": "file-service",
+                "source_revision": "test-revision",
+                "build_id": "test-build",
+                "platform": "linux/amd64",
+            },
+        }
 
         async def connect(self) -> None:
             bridge_capture["connected"] = True
@@ -1509,6 +1795,19 @@ def test_python_runtime_cancellation_interrupts_sdk_and_cleans_sandbox(
                         retrieved_context={},
                         conversation_summary="",
                         model_runtime_binding=binding,
+                        job_tool_snapshot_hash="0" * 64,
+                        control_plane_build_identity={
+                            "component": "control-plane",
+                            "source_revision": "test-revision",
+                            "build_id": "test-build",
+                            "platform": "linux/amd64",
+                        },
+                        worker_build_identity={
+                            "component": "agent-worker",
+                            "source_revision": "test-revision",
+                            "build_id": "test-build",
+                            "platform": "linux/amd64",
+                        },
                     ),
                 )
             )
@@ -1555,7 +1854,7 @@ def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> Non
         calls,
     )
     request = _request()
-    request["protocol_version"] = "1.3"
+    request["protocol_version"] = "1.4"
 
     normalized = normalize_tool_events([*started, *completed], request)
 
@@ -1664,7 +1963,7 @@ def test_python_test_only_fake_provider_calls_ones_concurrently_with_exact_meta(
         fake_provider_mode=True,
     )
     request = _request()
-    request["protocol_version"] = "1.3"
+    request["protocol_version"] = "1.4"
     request["prompt"]["user_question"] = "[smoke:mcp:ones-mcp-concurrent] verify exact metadata"
     result = executor.execute(
         request,
@@ -1757,7 +2056,7 @@ def test_python_test_only_fake_provider_isolates_second_business_server_token(
         fake_provider_mode=True,
     )
     request = _request()
-    request["protocol_version"] = "1.3"
+    request["protocol_version"] = "1.4"
     request["mcp_servers"] = [
         {
             "server_code": TEST_BUSINESS_SERVER_CODE,
@@ -1842,7 +2141,7 @@ def test_python_test_only_fake_provider_calls_file_service_with_file_principal(
         fake_provider_mode=True,
     )
     request = _request()
-    request["protocol_version"] = "1.3"
+    request["protocol_version"] = "1.4"
     request["prompt"]["user_question"] = "[smoke:mcp:file-service] verify exact metadata"
     request["mcp_servers"] = [
         {
@@ -1939,7 +2238,7 @@ def test_python_runtime_decrypts_draft_probe_once_without_persisting_credential(
         ).encode("utf-8")
     ).hexdigest()
     request: dict[str, Any] = {
-        "protocol_version": "1.3",
+        "protocol_version": "1.4",
         "runtime_kind": "python-v1",
         "probe_id": "probe-python-draft-test",
         "config_hash": config_hash,
@@ -1998,7 +2297,7 @@ def test_python_runtime_draft_probe_accepts_allowlisted_internal_http_gateway(
         ).encode("utf-8")
     ).hexdigest()
     request: dict[str, Any] = {
-        "protocol_version": "1.3",
+        "protocol_version": "1.4",
         "runtime_kind": "python-v1",
         "probe_id": "probe-python-draft-gateway",
         "config_hash": config_hash,

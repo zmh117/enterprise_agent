@@ -36,7 +36,7 @@ const executionSummarySchema = z.object({
   failure_code: z.string().nullable(),
   failure_summary: z.string().nullable(),
   retry_exhausted: z.boolean().default(false),
-  source_protocol_version: z.string().default("1.3"),
+  source_protocol_version: z.string().default("1.4"),
 })
 
 const unavailableExecutionSummary = {
@@ -60,7 +60,33 @@ const unavailableExecutionSummary = {
   failure_code: null,
   failure_summary: null,
   retry_exhausted: false,
-  source_protocol_version: "1.3",
+  source_protocol_version: "1.4",
+}
+
+const buildIdentitySchema = z.object({
+  component: z.string(),
+  source_revision: z.string(),
+  build_id: z.string(),
+  platform: z.string(),
+  image_digest: z.string().optional(),
+})
+
+const toolContractSummarySchema = z.object({
+  status: z.enum(["MATCH", "DRIFT", "NOT_OBSERVED"]),
+  last_invocation_id: z.string().default(""),
+  observation_hash: z.string().default(""),
+  prompt_template_version: z.string().default(""),
+  prompt_contract_hash: z.string().default(""),
+  component_build_identities: z.array(buildIdentitySchema).default([]),
+})
+
+const unavailableToolContractSummary = {
+  status: "NOT_OBSERVED" as const,
+  last_invocation_id: "",
+  observation_hash: "",
+  prompt_template_version: "",
+  prompt_contract_hash: "",
+  component_build_identities: [],
 }
 
 export const runtimeJobSchema = z
@@ -130,6 +156,9 @@ export const runtimeJobSchema = z
     execution_policy_exhausted: z.boolean().default(false),
     execution_summary: executionSummarySchema.default(
       unavailableExecutionSummary
+    ),
+    tool_contract: toolContractSummarySchema.default(
+      unavailableToolContractSummary
     ),
     last_error_code: z.string().default(""),
     error_summary: z.string().default(""),
@@ -304,6 +333,69 @@ const fileWorkspaceSchema = z.object({
     .default([]),
 })
 
+const frozenToolContractEntrySchema = z.object({
+  server_code: z.string(),
+  tool_name: z.string(),
+  schema_hash: z.string(),
+})
+
+const liveToolContractEntrySchema = frozenToolContractEntrySchema.extend({
+  status: z.string(),
+})
+
+const effectiveToolContractEntrySchema = frozenToolContractEntrySchema.extend({
+  sdk_tool_name: z.string(),
+  origin: z.enum(["frozen_mcp", "runtime_derived", "sdk_builtin"]),
+  authorization_status: z.string(),
+  dependency_tool_name: z.string().optional(),
+})
+
+const toolContractObservationSchema = z.object({
+  invocation_id: z.string(),
+  request_digest: z.string(),
+  sequence: z.number().int().positive(),
+  created_at: z.string(),
+  status: z.enum(["MATCH", "DRIFT", "NOT_OBSERVED"]),
+  observation_hash: z.string(),
+  snapshot_hash: z.string(),
+  component_build_identities: z.array(buildIdentitySchema),
+  job_frozen: z.array(frozenToolContractEntrySchema),
+  file_mcp_live: z.object({
+    status: z.string(),
+    toolset_hash: z.string(),
+    build_identity: buildIdentitySchema.or(z.object({})),
+    tools: z.array(liveToolContractEntrySchema),
+  }),
+  runtime_effective: z.array(effectiveToolContractEntrySchema),
+  prompt: z.object({
+    template_version: z.string(),
+    contract_hash: z.string(),
+    declared_tools: z.array(z.string()),
+  }),
+  matrix: z.array(
+    z.object({
+      server_code: z.string(),
+      tool_name: z.string(),
+      status: z.string(),
+    })
+  ),
+})
+
+const toolContractEvidenceSchema = z.object({
+  summary: toolContractSummarySchema,
+  snapshot: z
+    .object({
+      id: z.string(),
+      schema_version: z.number().int(),
+      snapshot_hash: z.string(),
+      created_at: z.string(),
+      tools: z.array(frozenToolContractEntrySchema),
+    })
+    .nullable(),
+  observations: z.array(toolContractObservationSchema),
+  notice: z.string(),
+})
+
 export const runtimeJobDetailSchema = z
   .object({
     job: runtimeJobSchema,
@@ -326,6 +418,12 @@ export const runtimeJobDetailSchema = z
       manifest_schema_version: null,
       formats: [],
       output_commits: [],
+    }),
+    tool_contract: toolContractEvidenceSchema.default({
+      summary: unavailableToolContractSummary,
+      snapshot: null,
+      observations: [],
+      notice: "尚无工具契约观测；NOT_OBSERVED 不代表健康。",
     }),
     deliveries: deliveryTimelineSchema,
     webhook_events: z.array(z.record(z.string(), z.unknown())).default([]),
@@ -516,6 +614,7 @@ export type DeliveryAttempt = z.infer<typeof deliveryAttemptSchema>
 export type DeliveryChunk = z.infer<typeof deliveryChunkSchema>
 export type JobDispatch = z.infer<typeof jobDispatchSchema>
 export type FileWorkspaceEvidence = z.infer<typeof fileWorkspaceSchema>
+export type ToolContractEvidence = z.infer<typeof toolContractEvidenceSchema>
 export type FileOperations = z.infer<typeof fileOperationsSchema>
 export const TEXT_RUNTIME_FILE_FORMATS = TEXT_FILE_FORMAT_CODES
 export const DOCUMENT_RUNTIME_FILE_FORMATS = DOCUMENT_FILE_FORMAT_CODES

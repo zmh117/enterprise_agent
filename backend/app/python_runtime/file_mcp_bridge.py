@@ -14,6 +14,13 @@ from mcp.client import streamable_http as streamable_http_module
 from mcp.server import Server
 
 from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
+from app.shared.build_identity import BuildIdentity, BuildIdentityError
+from app.shared.tool_contract import (
+    MAX_TOOL_CONTRACT_ITEMS,
+    ToolContractValueError,
+    canonical_json_sha256,
+    tool_schema_hash,
+)
 from app.python_runtime.file_transfer import (
     FileTransferBoundaryError,
     FileTransferContext,
@@ -29,6 +36,7 @@ _COMMIT_TOOL = "file_create_commit_intent"
 _MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id"
 _AGENT_TOOL_CALL_ID_META_KEY = "enterprise-agent/agent-tool-call-id"
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_BUILD_IDENTITY_CAPABILITY = "enterprise-agent/build-identity-v1"
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,9 @@ class PythonRuntimeFileBridge(Protocol):
 
     @property
     def local_tool_names(self) -> tuple[str, ...]: ...
+
+    @property
+    def live_observation(self) -> dict[str, Any]: ...
 
     async def connect(self) -> None: ...
 
@@ -142,6 +153,7 @@ class ClaudePythonFileBridge:
         mcp_server_url: str,
         headers: dict[str, str],
         frozen_tool_names: tuple[str, ...],
+        frozen_tool_schema_hashes: dict[str, str] | None = None,
         context: FileTransferContext,
         timeout_seconds: float,
         async_client_factory: Callable[..., Any] | None = None,
@@ -158,6 +170,12 @@ class ClaudePythonFileBridge:
         self._mcp_server_url = mcp_server_url
         self._headers = dict(headers)
         self._frozen = frozen
+        self._frozen_hashes = {
+            name: str(
+                (frozen_tool_schema_hashes or {}).get(name) or FILE_TOOL_MANIFEST[name].schema_hash
+            )
+            for name in frozen
+        }
         self._context = context
         self._timeout_seconds = timeout_seconds
         self._async_client_factory = async_client_factory
@@ -172,6 +190,10 @@ class ClaudePythonFileBridge:
             )
         )
         self.local_tool_names = (LOCAL_FILE_OUTPUT_TOOL,) if _COMMIT_TOOL in frozen else ()
+        self.live_observation: dict[str, Any] = {
+            "status": "NOT_OBSERVED",
+            "tools": [],
+        }
         self.server = self._build_server(sdk)
 
     def _build_server(self, sdk: Any) -> Any:
@@ -387,10 +409,16 @@ class ClaudePythonFileBridge:
                 "file_transfer_action_unsupported",
                 "automatic materialization requires a materialize transfer",
             )
+        expected_size_bytes = control.get("expected_size_bytes")
+        if not isinstance(expected_size_bytes, int) or isinstance(expected_size_bytes, bool):
+            raise FileTransferBoundaryError(
+                "file_transfer_control_invalid",
+                "automatic materialization expected size is invalid",
+            )
         return PreparedFileMaterialization(
             file_id=file_id,
             version_id=version_id,
-            expected_size_bytes=int(control["expected_size_bytes"]),
+            expected_size_bytes=expected_size_bytes,
             control_result=envelope,
         )
 
@@ -420,6 +448,8 @@ class ClaudePythonFileBridge:
 
     async def connect(self) -> None:
         if self._injected_session:
+            assert self._session is not None
+            await self._observe_live_contract(self._session, initialize=True)
             return
         if self._stack is not None:
             raise RuntimeError("File MCP bridge is already connected")
@@ -453,12 +483,132 @@ class ClaudePythonFileBridge:
                     read_timeout_seconds=_session_timeout(self._timeout_seconds),
                 )
             )
-            await session.initialize()
+            initialization = await session.initialize()
+            await self._observe_live_contract(
+                session,
+                initialize=False,
+                initialization=initialization,
+            )
         except Exception:
             await stack.aclose()
             raise
         self._stack = stack
         self._session = session
+
+    async def _observe_live_contract(
+        self,
+        session: Any,
+        *,
+        initialize: bool,
+        initialization: Any | None = None,
+    ) -> None:
+        try:
+            if initialize:
+                initialization = await session.initialize()
+            build_identity = self._file_build_identity(initialization)
+            cursor: str | None = None
+            seen_cursors: set[str] = set()
+            live: dict[str, str] = {}
+            while True:
+                params = types.PaginatedRequestParams(cursor=cursor) if cursor else None
+                page = await session.list_tools(params=params)
+                for tool in page.tools:
+                    name = str(tool.name or "")
+                    if _IDENTIFIER.fullmatch(name) is None or name in live:
+                        raise FileTransferBoundaryError(
+                            "runtime_tool_contract_observation_invalid",
+                            "File MCP tools/list contains an invalid or duplicate name",
+                        )
+                    try:
+                        live[name] = tool_schema_hash(tool.input_schema)
+                    except ToolContractValueError as exc:
+                        raise FileTransferBoundaryError(
+                            "runtime_tool_contract_observation_invalid",
+                            "File MCP tools/list contains an invalid schema",
+                        ) from exc
+                    if len(live) > MAX_TOOL_CONTRACT_ITEMS:
+                        raise FileTransferBoundaryError(
+                            "runtime_tool_contract_observation_invalid",
+                            "File MCP tools/list exceeds its item boundary",
+                        )
+                next_cursor = str(page.next_cursor or "")
+                if not next_cursor:
+                    break
+                if next_cursor in seen_cursors or len(next_cursor) > 256:
+                    raise FileTransferBoundaryError(
+                        "runtime_tool_contract_observation_invalid",
+                        "File MCP tools/list pagination is invalid",
+                    )
+                seen_cursors.add(next_cursor)
+                cursor = next_cursor
+            rows: list[dict[str, str]] = []
+            for name in sorted(live):
+                expected = self._frozen_hashes.get(name)
+                status = (
+                    "EXTRA_REMOTE_IGNORED"
+                    if expected is None
+                    else "MATCH"
+                    if expected == live[name]
+                    else "SCHEMA_MISMATCH"
+                )
+                rows.append(
+                    {
+                        "server_code": "file-service",
+                        "tool_name": name,
+                        "schema_hash": live[name],
+                        "status": status,
+                    }
+                )
+            self.live_observation = {
+                "status": "OBSERVED",
+                "tools": rows,
+                "toolset_hash": canonical_json_sha256(
+                    [{"tool_name": name, "schema_hash": live[name]} for name in sorted(live)]
+                ),
+                "build_identity": build_identity.to_dict(),
+            }
+            missing = sorted(set(self._frozen) - set(live))
+            mismatched = sorted(
+                name
+                for name in set(self._frozen) & set(live)
+                if self._frozen_hashes[name] != live[name]
+            )
+            if missing:
+                raise FileTransferBoundaryError(
+                    "runtime_tool_contract_missing_remote",
+                    "File MCP is missing a frozen Job tool",
+                )
+            if mismatched:
+                raise FileTransferBoundaryError(
+                    "runtime_tool_contract_schema_mismatch",
+                    "File MCP schema differs from the frozen Job tool",
+                )
+        except FileTransferBoundaryError:
+            raise
+        except Exception as exc:
+            raise FileTransferBoundaryError(
+                "runtime_tool_contract_remote_not_observed",
+                "File MCP live contract could not be observed",
+            ) from exc
+
+    @staticmethod
+    def _file_build_identity(initialization: Any | None) -> BuildIdentity:
+        try:
+            capabilities = getattr(initialization, "capabilities", None)
+            experimental = getattr(capabilities, "experimental", None)
+            value = (
+                experimental.get(_BUILD_IDENTITY_CAPABILITY)
+                if isinstance(experimental, dict)
+                else None
+            )
+            if not isinstance(value, dict):
+                raise BuildIdentityError("File MCP build identity is missing")
+            return BuildIdentity.from_dict(value, expected_component="file-service")
+        except (BuildIdentityError, ValueError) as exc:
+            raise FileTransferBoundaryError(
+                "runtime_tool_contract_observation_invalid",
+                "File MCP build identity is invalid",
+            ) from exc
 
     async def close(self) -> None:
         if self._injected_session:

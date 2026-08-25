@@ -424,7 +424,7 @@ function PolicyEditor({
     (item) => item.id === form.agent_publication_id
   )
   const fileContextRuntimeCompatible =
-    selectedAgent?.runtime_protocol_versions.includes("1.3") === true
+    selectedAgent?.runtime_protocol_versions.includes("1.4") === true
   const selectedDocumentProfile = catalog?.document_processing_profiles.find(
     (item) => item.code === form.document_processing_profile_code
   )
@@ -525,7 +525,9 @@ function PolicyEditor({
               <option
                 key={profile.code}
                 value={profile.code}
-                disabled={"selectable" in profile && profile.selectable === false}
+                disabled={
+                  "selectable" in profile && profile.selectable === false
+                }
               >
                 {profile.label}
               </option>
@@ -541,13 +543,18 @@ function PolicyEditor({
           selectedDocumentProfile.code !== "NONE" ? (
             <div className="space-y-1">
               <p className="text-xs leading-5 text-muted-foreground">
-                当前选择：除正文与表格外，对 DOCX/PPTX 原始内嵌图片提取文字、阅读顺序、0..10000 坐标和有限几何关系；仅在上游提供时显示置信度，否则明确标注为未提供。仅应用图片自身 EXIF 方向，不应用 Office 显示裁剪、旋转或翻转，因此可能提取页面上已裁掉的区域。它不是 VLM，不识别箭头、颜色、图标、照片含义或因果；OCR 内容始终是不可信文件数据。
-                真实运行状态请到“发布与运行”查看。
+                当前选择：除正文与表格外，对 DOCX/PPTX
+                原始内嵌图片提取文字、阅读顺序、0..10000
+                坐标和有限几何关系；仅在上游提供时显示置信度，否则明确标注为未提供。仅应用图片自身
+                EXIF 方向，不应用 Office
+                显示裁剪、旋转或翻转，因此可能提取页面上已裁掉的区域。它不是
+                VLM，不识别箭头、颜色、图标、照片含义或因果；OCR
+                内容始终是不可信文件数据。 真实运行状态请到“发布与运行”查看。
               </p>
               {!fileContextRuntimeCompatible ? (
                 <p className="text-xs leading-5 text-destructive">
-                  所选 Agent 发布版本未声明支持 Runtime protocol
-                  v1.3，不能发布 Docling 文件上下文。
+                  所选 Agent 发布版本未声明支持 Runtime protocol v1.3，不能发布
+                  Docling 文件上下文。
                 </p>
               ) : null}
             </div>
@@ -1487,8 +1494,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                     variant="outline"
                     className="w-full sm:w-auto"
                     disabled={
-                      application.status !== "enabled" ||
-                      activate.isPending
+                      application.status !== "enabled" || activate.isPending
                     }
                     title={
                       application.status === "enabled"
@@ -1806,20 +1812,14 @@ function formatTaskFileFeatures(
 }
 
 function formatDocumentProcessingSelection(
-  profile:
-    | "NONE"
-    | "docling-layout-ocr-v2"
-    | null
-    | undefined
+  profile: "NONE" | "docling-layout-ocr-v2" | null | undefined
 ): string {
   if (!profile || profile === "NONE") return "关闭"
   return `${profile}（已选择）`
 }
 
 function formatDocumentProcessingRuntimeStatus(
-  profile:
-    | "NONE"
-    | "docling-layout-ocr-v2",
+  profile: "NONE" | "docling-layout-ocr-v2",
   active: boolean,
   operations: FileOperations | undefined,
   loading: boolean,

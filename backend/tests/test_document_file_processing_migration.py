@@ -18,7 +18,7 @@ def _migrated_database() -> Database:
         default_migrations_dir(),
         migrator_build="document-file-processing-schema-test",
     ).run()
-    assert result.head == "119"
+    assert result.head == "120"
     return database
 
 
@@ -96,8 +96,7 @@ def test_document_processing_expand_schema_and_defaults() -> None:
     } <= tables
 
     run_columns = {
-        str(row["name"])
-        for row in database.execute("pragma table_info(file_processing_run)")
+        str(row["name"]) for row in database.execute("pragma table_info(file_processing_run)")
     }
     assert {
         "stage_code",
@@ -118,8 +117,7 @@ def test_document_processing_expand_schema_and_defaults() -> None:
         for row in database.execute("pragma table_info(business_application_publication)")
     }
     attachment_columns = {
-        str(row["name"])
-        for row in database.execute("pragma table_info(message_attachment)")
+        str(row["name"]) for row in database.execute("pragma table_info(message_attachment)")
     }
     snapshot_item_columns = {
         str(row["name"])
@@ -153,18 +151,15 @@ def test_document_processing_expand_schema_and_defaults() -> None:
     assert "schema_version = 5" in str(snapshot_sql["sql"])
 
     revision_info = {
-        str(row["name"]): row for row in database.execute(
-            "pragma table_info(business_application_revision)"
-        )
+        str(row["name"]): row
+        for row in database.execute("pragma table_info(business_application_revision)")
     }
     publication_info = {
-        str(row["name"]): row for row in database.execute(
-            "pragma table_info(business_application_publication)"
-        )
+        str(row["name"]): row
+        for row in database.execute("pragma table_info(business_application_publication)")
     }
     attachment_info = {
-        str(row["name"]): row
-        for row in database.execute("pragma table_info(message_attachment)")
+        str(row["name"]): row for row in database.execute("pragma table_info(message_attachment)")
     }
     assert str(revision_info["document_processing_profile_code"]["dflt_value"]) == "'NONE'"
     assert str(publication_info["document_processing_profile_code"]["dflt_value"]) == "'NONE'"
@@ -206,9 +201,7 @@ def test_processing_run_and_representation_constraints_are_source_bound() -> Non
         )
 
     with pytest.raises(sqlite3.IntegrityError):
-        database.execute(
-            "update file_processing_run set status = 'UNKNOWN' where id = 'run-a'"
-        )
+        database.execute("update file_processing_run set status = 'UNKNOWN' where id = 'run-a'")
     with pytest.raises(sqlite3.IntegrityError):
         database.execute(
             "update file_representation set kind = 'SOURCE' where id = 'representation-md'"
@@ -265,7 +258,7 @@ def test_current_layout_ocr_picture_facts_are_run_bound_and_unique() -> None:
            attempt, ocr_engine_code, model_revision, model_digest,
            created_at, updated_at)
         values ('item-a', 'run-a', 'asset-a', 'QUEUED', 1, 0,
-                'docling-easyocr', 'docling-serve-v1.30.0', ?, ?, ?)
+                'docling-easyocr', 'docling-serve-v1.40.0', ?, ?, ?)
         """,
         ("sha256:" + "a" * 64, TIMESTAMP, TIMESTAMP),
     )
@@ -277,7 +270,7 @@ def test_current_layout_ocr_picture_facts_are_run_bound_and_unique() -> None:
                attempt, ocr_engine_code, model_revision, model_digest,
                created_at, updated_at)
             values ('item-b', 'run-a', 'asset-a', 'QUEUED', 1, 0,
-                    'docling-easyocr', 'docling-serve-v1.30.0', ?, ?, ?)
+                    'docling-easyocr', 'docling-serve-v1.40.0', ?, ?, ?)
             """,
             ("sha256:" + "a" * 64, TIMESTAMP, TIMESTAMP),
         )
@@ -311,6 +304,8 @@ def test_layout_ocr_v2_profile_constraints_accept_v2_and_reject_unknown_codes() 
         database.execute(
             "update document_picture_asset set profile_code = 'docling-layout-ocr-v3' where id = 'asset-v2'"
         )
+
+
 def test_processing_schema_has_retry_lookup_and_cleanup_indexes() -> None:
     database = _migrated_database()
     indexes = {

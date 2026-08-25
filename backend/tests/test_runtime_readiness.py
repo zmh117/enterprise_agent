@@ -17,6 +17,13 @@ def test_health_is_liveness_only_and_never_checks_dependencies() -> None:
     )
     assert main._build_health(settings) == {
         "status": "ok",
+        "protocol_version": "1.4",
+        "build_identity": {
+            "component": "control-plane",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        },
         "claude_invoked": False,
     }
 
@@ -39,6 +46,13 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
             database=runtime.database,
         )
         assert ready["status"] == "ready"
+        assert ready["protocol_version"] == "1.4"
+        assert ready["build_identity"] == {
+            "component": "control-plane",
+            "source_revision": "test-revision",
+            "build_id": "test-build",
+            "platform": "linux/amd64",
+        }
         assert ready["core"] == {
             "database": True,
             "schema": True,
@@ -57,6 +71,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
                     "protocol_version": "",
                     "sdk_version": "",
                     "cli_version": "",
+                    "build_identity": None,
                     "model_invoked": False,
                     "mcp_invoked": False,
                 }
@@ -73,7 +88,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["runtime_selection"] == {
             "default_runtime": "python-v1",
             "supported_runtimes": ["python-v1"],
-            "protocol_version": "1.3",
+            "protocol_version": "1.4",
         }
         assert ready["runtime_config"] == {
             "source": runtime.settings.runtime_config_source,

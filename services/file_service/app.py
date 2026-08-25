@@ -31,6 +31,7 @@ from app.modules.document_processing.profile import (
     DOCLING_LAYOUT_OCR_V2_PROFILE_HASH,
 )
 from app.shared.exceptions import AppError
+from app.shared.build_identity import BuildIdentity, build_identity_from_environment
 from app.modules.mcp_audit import McpAuditHandle
 from services.file_service.audit import FileMcpAudit
 from services.file_service.auth import (
@@ -43,8 +44,31 @@ from services.file_service.principal import FilePrincipalResolver
 
 logger = logging.getLogger(__name__)
 SERVER_VERSION = "0.1.0"
-REQUIRED_SCHEMA_VERSION = 119
+REQUIRED_SCHEMA_VERSION = 120
 MAX_TOOL_RESPONSE_BYTES = 256 * 1024
+BUILD_IDENTITY_CAPABILITY = "enterprise-agent/build-identity-v1"
+
+
+class BuildIdentifiedFileServer(Server):
+    def __init__(self, *args: Any, build_identity: BuildIdentity, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._build_identity = build_identity
+
+    def create_initialization_options(
+        self,
+        notification_options: Any = None,
+        experimental_capabilities: dict[str, dict[str, Any]] | None = None,
+        extensions: dict[str, dict[str, Any]] | None = None,
+    ) -> Any:
+        capabilities = dict(experimental_capabilities or {})
+        if BUILD_IDENTITY_CAPABILITY in capabilities:
+            raise ValueError("Reserved File MCP build identity capability")
+        capabilities[BUILD_IDENTITY_CAPABILITY] = self._build_identity.to_dict()
+        return super().create_initialization_options(
+            notification_options=notification_options,
+            experimental_capabilities=capabilities,
+            extensions=extensions,
+        )
 
 
 class FileStreamingOperations(Protocol):
@@ -244,7 +268,10 @@ def create_file_server(
     principal: FilePrincipalResolver,
     application: FileWorkspaceApplicationService,
     audit: FileMcpAudit | None = None,
+    build_identity: BuildIdentity | None = None,
 ) -> Server:
+    resolved_build_identity = build_identity or build_identity_from_environment("file-service")
+
     async def list_tools(
         context: ServerRequestContext,
         _params: types.PaginatedRequestParams | None,
@@ -331,8 +358,9 @@ def create_file_server(
                 is_error=True,
             )
 
-    return Server(
+    return BuildIdentifiedFileServer(
         "Enterprise File Service",
+        build_identity=resolved_build_identity,
         version=SERVER_VERSION,
         instructions="Governed Job-bound task file tools only.",
         on_list_tools=list_tools,
@@ -359,7 +387,13 @@ def create_app(
         "127.0.0.1:9105",
     ),
 ) -> FileServiceSecurityMiddleware:
-    server = create_file_server(principal, application, audit)
+    build_identity = build_identity_from_environment("file-service")
+    server = create_file_server(
+        principal,
+        application,
+        audit,
+        build_identity=build_identity,
+    )
     manager = StreamableHTTPSessionManager(
         app=server,
         json_response=True,
@@ -373,7 +407,14 @@ def create_app(
     )
 
     async def health(_: Request) -> JSONResponse:
-        return JSONResponse({"status": "ok", "server_code": FILE_MCP_SERVER_CODE})
+        return JSONResponse(
+            {
+                "status": "ok",
+                "server_code": FILE_MCP_SERVER_CODE,
+                "runtime_protocol_version": "1.4",
+                "build_identity": build_identity.to_dict(),
+            }
+        )
 
     async def readiness(_: Request) -> JSONResponse:
         try:
@@ -390,8 +431,7 @@ def create_app(
             layout_options = DOCLING_LAYOUT_OCR_V2.layout_ocr_options
             if (
                 layout_options is None
-                or DOCLING_LAYOUT_OCR_V2.profile_hash
-                != DOCLING_LAYOUT_OCR_V2_PROFILE_HASH
+                or DOCLING_LAYOUT_OCR_V2.profile_hash != DOCLING_LAYOUT_OCR_V2_PROFILE_HASH
                 or layout_options["layout_schema"]
                 != {
                     "name": "enterprise-agent.office-image-ocr-layout",
@@ -433,6 +473,8 @@ def create_app(
                     "document_processing": (
                         "ready" if document_processing is not None else "not_configured"
                     ),
+                    "runtime_protocol_version": "1.4",
+                    "build_identity": build_identity.to_dict(),
                 }
             )
         except Exception:
@@ -441,6 +483,8 @@ def create_app(
                     "status": "degraded",
                     "server_code": FILE_MCP_SERVER_CODE,
                     "dependency": "unavailable",
+                    "runtime_protocol_version": "1.4",
+                    "build_identity": build_identity.to_dict(),
                 },
                 status_code=503,
             )

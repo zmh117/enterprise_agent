@@ -10,12 +10,14 @@ from app.modules.job.domain.agent_job import AgentJob, AgentSession, MessageAtta
 from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 from app.modules.job.domain.job_dispatch import JobDispatchEvent, JobDispatchStatus
 from app.modules.job.domain.job_status import JobStatus, can_transition
+from app.shared.build_identity import build_identity_from_environment
 from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
 from app.shared.secret_redaction import (
     redact_sensitive_text,
     sanitize_for_persistence,
 )
+from app.shared.tool_contract import canonical_json_sha256
 
 
 _SESSION_COLUMN_NAMES = (
@@ -99,6 +101,12 @@ _JOB_COLUMN_NAMES = (
     "agent_runtime_protocol_version",
     "task_workspace_id",
     "input_message_id",
+    "control_plane_build_identity_json",
+    "tool_contract_status",
+    "tool_contract_last_invocation_id",
+    "tool_contract_observation_hash",
+    "prompt_template_version",
+    "prompt_contract_hash",
 )
 _SESSION_COLUMNS_SQL = ", ".join(_SESSION_COLUMN_NAMES)
 _JOB_COLUMNS_SQL = ", ".join(_JOB_COLUMN_NAMES)
@@ -128,6 +136,8 @@ def _safe_runtime_event_payload(event_type: str, value: object) -> dict[str, Any
                 if isinstance(item, dict)
             ][:64],
         }
+    if event_type == "tool_contract_observed":
+        return _safe_tool_contract_observation(payload)
     if event_type == "model_call":
         return {
             "model_call_id": str(payload.get("model_call_id") or "")[:200],
@@ -216,6 +226,115 @@ def _safe_runtime_accounting(value: dict[str, Any]) -> dict[str, Any]:
         )
     result["model_usage"] = result["model_usage"][:64]
     return result
+
+
+def _safe_tool_contract_observation(payload: dict[str, Any]) -> dict[str, Any]:
+    supplied_hash = str(payload.get("observation_hash") or "")
+    unhashed = {key: value for key, value in payload.items() if key != "observation_hash"}
+    if len(supplied_hash) != 64 or canonical_json_sha256(unhashed) != supplied_hash:
+        raise NonRetryableExecutionError(
+            "Runtime Tool contract observation hash is invalid",
+            safe_message="Runtime 工具契约观测无效",
+            error_code="runtime_tool_contract_observation_invalid",
+        )
+    frozen = [
+        {
+            "server_code": str(item.get("server_code") or "")[:128],
+            "tool_name": str(item.get("tool_name") or "")[:128],
+            "schema_hash": str(item.get("schema_hash") or "")[:64],
+        }
+        for item in payload.get("frozen_tools") or []
+        if isinstance(item, dict)
+    ][:128]
+    live_source = payload.get("file_mcp_live")
+    live_value = live_source if isinstance(live_source, dict) else {}
+    live: dict[str, Any] = {
+        "status": str(live_value.get("status") or "NOT_OBSERVED")[:32],
+        "tools": [
+            {
+                "server_code": str(item.get("server_code") or "")[:128],
+                "tool_name": str(item.get("tool_name") or "")[:128],
+                "schema_hash": str(item.get("schema_hash") or "")[:64],
+                "status": str(item.get("status") or "")[:32],
+            }
+            for item in live_value.get("tools") or []
+            if isinstance(item, dict)
+        ][:128],
+    }
+    if live_value.get("toolset_hash"):
+        live["toolset_hash"] = str(live_value["toolset_hash"])[:64]
+    if isinstance(live_value.get("build_identity"), dict):
+        live["build_identity"] = _safe_build_identity(live_value["build_identity"])
+    effective = [
+        {
+            **{
+                "server_code": str(item.get("server_code") or "")[:128],
+                "tool_name": str(item.get("tool_name") or "")[:128],
+                "sdk_tool_name": str(item.get("sdk_tool_name") or "")[:256],
+                "origin": str(item.get("origin") or "")[:32],
+                "schema_hash": str(item.get("schema_hash") or "")[:64],
+                "authorization_status": str(item.get("authorization_status") or "")[:32],
+            },
+            **(
+                {"dependency_tool_name": str(item["dependency_tool_name"])[:128]}
+                if item.get("dependency_tool_name")
+                else {}
+            ),
+        }
+        for item in payload.get("effective_tools") or []
+        if isinstance(item, dict)
+    ][:128]
+    prompt_source = payload.get("prompt")
+    prompt_value = prompt_source if isinstance(prompt_source, dict) else {}
+    prompt = {
+        "template_version": str(prompt_value.get("template_version") or "")[:128],
+        "contract_hash": str(prompt_value.get("contract_hash") or "")[:64],
+        "declared_tools": [str(value)[:256] for value in prompt_value.get("declared_tools") or []][
+            :128
+        ],
+    }
+    rows = [
+        {
+            "server_code": str(item.get("server_code") or "")[:128],
+            "tool_name": str(item.get("tool_name") or "")[:128],
+            "status": str(item.get("status") or "")[:32],
+        }
+        for item in payload.get("rows") or []
+        if isinstance(item, dict)
+    ][:256]
+    identities = [
+        _safe_build_identity(item)
+        for item in payload.get("component_build_identities") or []
+        if isinstance(item, dict)
+    ][:4]
+    safe = {
+        "observation_hash": supplied_hash,
+        "snapshot_hash": str(payload.get("snapshot_hash") or "")[:64],
+        "status": str(payload.get("status") or "NOT_OBSERVED")[:32],
+        "frozen_tools": frozen,
+        "file_mcp_live": live,
+        "effective_tools": effective,
+        "prompt": prompt,
+        "rows": rows,
+        "component_build_identities": identities,
+    }
+    if safe != payload:
+        raise NonRetryableExecutionError(
+            "Runtime Tool contract observation contains unsafe or invalid fields",
+            safe_message="Runtime 工具契约观测无效",
+            error_code="runtime_tool_contract_observation_invalid",
+        )
+    return safe
+
+
+def _safe_build_identity(value: dict[str, Any]) -> dict[str, str]:
+    safe = {
+        key: str(value.get(key) or "")[:128]
+        for key in ("component", "source_revision", "build_id", "platform")
+    }
+    if value.get("image_digest"):
+        safe["image_digest"] = str(value["image_digest"])[:71]
+    return safe
 
 
 def _runtime_token_usage(value: object) -> dict[str, int | None]:
@@ -448,7 +567,7 @@ class AgentRepository:
         execution_policy: dict[str, Any] | None = None,
         model_runtime_provenance: dict[str, Any] | None = None,
         agent_runtime_kind: str = "python-v1",
-        agent_runtime_protocol_version: str = "1.3",
+        agent_runtime_protocol_version: str = "1.4",
         task_workspace_id: str = "",
         quoted_external_message_id: str = "",
     ) -> AgentJob:
@@ -492,6 +611,7 @@ class AgentRepository:
         normalized_execution_policy = JobExecutionPolicySnapshot.from_dict(
             execution_policy
         ).to_dict()
+        control_plane_build_identity = build_identity_from_environment("control-plane").to_dict()
         with self.database.unit_of_work():
             inserted = self.database.execute_one(
                 """
@@ -508,9 +628,10 @@ class AgentRepository:
                    business_application_runtime_status,
                    business_application_route_decision_json, execution_policy_json,
                    model_runtime_provenance_json, agent_runtime_kind,
-                   agent_runtime_protocol_version, task_workspace_id, input_message_id)
+                   agent_runtime_protocol_version, task_workspace_id, input_message_id,
+                   control_plane_build_identity_json)
                 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?)
                 on conflict(idempotency_key) do nothing
                 returning id
                 """,
@@ -554,6 +675,12 @@ class AgentRepository:
                     agent_runtime_kind,
                     agent_runtime_protocol_version,
                     task_workspace_id or None,
+                    json.dumps(
+                        control_plane_build_identity,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
                 ),
             )
             if inserted is None:
@@ -621,6 +748,7 @@ class AgentRepository:
             not in {
                 "execution_started",
                 "runtime_initialized",
+                "tool_contract_observed",
                 "model_call",
                 "api_retry",
                 "tool_event",
@@ -718,6 +846,7 @@ class AgentRepository:
             "protocol_version",
             "sdk_version",
             "cli_version",
+            "runtime_build_identity",
             "model_connection_revision_id",
             "model_connection_config_hash",
         }
@@ -1481,11 +1610,7 @@ class AgentRepository:
         job_id: str,
         attachment_ids: tuple[str, ...] | list[str] = (),
     ) -> list[MessageAttachment]:
-        ids = [
-            item
-            for item in attachment_ids
-            if item and not str(item).startswith("current:")
-        ]
+        ids = [item for item in attachment_ids if item and not str(item).startswith("current:")]
         if not ids:
             return []
         timestamp = now_iso()
@@ -1642,9 +1767,7 @@ class AgentRepository:
                 merged[key] = payload
         return list(merged.values())
 
-    def get_system_notice_by_idempotency_key(
-        self, idempotency_key: str
-    ) -> dict[str, Any] | None:
+    def get_system_notice_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
         if not idempotency_key:
             return None
         row = self.database.execute_one(
@@ -3179,7 +3302,7 @@ class AgentRepository:
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             "agent_runtime_kind": row.get("agent_runtime_kind") or "python-v1",
-            "agent_runtime_protocol_version": (row.get("agent_runtime_protocol_version") or "1.3"),
+            "agent_runtime_protocol_version": (row.get("agent_runtime_protocol_version") or "1.4"),
             "tool_call_count": int(row.get("execution_policy_tool_call_count") or 0),
             "execution_policy_exhausted": bool(row.get("execution_policy_exhausted") or False),
             "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
@@ -3596,9 +3719,7 @@ class AgentRepository:
             file_processing_run_id=str(row.get("file_processing_run_id") or ""),
             readability_error_code=str(row.get("readability_error_code") or ""),
             readability_updated_at=(
-                str(row["readability_updated_at"])
-                if row.get("readability_updated_at")
-                else None
+                str(row["readability_updated_at"]) if row.get("readability_updated_at") else None
             ),
         )
 
@@ -3734,8 +3855,16 @@ class AgentRepository:
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             agent_runtime_kind=row.get("agent_runtime_kind") or "python-v1",
-            agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.3"),
+            agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.4"),
             task_workspace_id=str(row.get("task_workspace_id") or ""),
+            control_plane_build_identity=self._json_from_text(
+                row.get("control_plane_build_identity_json") or "{}"
+            ),
+            tool_contract_status=str(row.get("tool_contract_status") or "NOT_OBSERVED"),
+            tool_contract_last_invocation_id=str(row.get("tool_contract_last_invocation_id") or ""),
+            tool_contract_observation_hash=str(row.get("tool_contract_observation_hash") or ""),
+            prompt_template_version=str(row.get("prompt_template_version") or ""),
+            prompt_contract_hash=str(row.get("prompt_contract_hash") or ""),
         )
 
     def _tool_call_from_row(self, row: dict[str, Any]) -> dict[str, Any]:

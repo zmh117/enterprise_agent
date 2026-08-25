@@ -30,6 +30,7 @@ import {
   type ModelCall,
   type ModelCallPage,
   type RuntimeJob,
+  type ToolContractEvidence,
 } from "@/contexts/operations/domain/runtime-record"
 import {
   listRuntimeJobModelCalls,
@@ -232,13 +233,16 @@ function FileOperationsPanel({ value }: { value: FileOperations }) {
                 key={`${group.tenant_id}:${group.application_id}:${group.profile_code}:${group.status}`}
               >
                 <p className="font-medium">
-                  {group.application_code || group.application_id || "未归因应用"} ·{" "}
-                  {group.profile_code} · {group.status}
+                  {group.application_code ||
+                    group.application_id ||
+                    "未归因应用"}{" "}
+                  · {group.profile_code} · {group.status}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   tenant {group.tenant_id} · {group.count} 个 · attempt{" "}
-                  {group.total_attempts} · 输入 {formatFileBytes(group.source_size_bytes)} ·
-                  输出 {formatFileBytes(group.output_size_bytes)}
+                  {group.total_attempts} · 输入{" "}
+                  {formatFileBytes(group.source_size_bytes)} · 输出{" "}
+                  {formatFileBytes(group.output_size_bytes)}
                 </p>
               </li>
             ))}
@@ -251,8 +255,8 @@ function FileOperationsPanel({ value }: { value: FileOperations }) {
               <li key={run.run_id}>
                 <p className="font-mono text-xs">{run.run_id}</p>
                 <p className="text-xs text-muted-foreground">
-                  {run.application_code || "未归因应用"} · {run.error_code || "unknown"} ·
-                  attempt {run.attempt}
+                  {run.application_code || "未归因应用"} ·{" "}
+                  {run.error_code || "unknown"} · attempt {run.attempt}
                 </p>
               </li>
             ))}
@@ -363,19 +367,25 @@ function JobRow({ job }: { job: RuntimeJob }) {
           {job.tool_call_count} 次
         </p>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Badge variant="secondary">{jobStatusLabel(job.status)}</Badge>
-        <Badge variant="outline">
-          {accountingStatusLabel(summary.accounting_status)}
-        </Badge>
-        {summary.display_failure_stage ? (
-          <Badge variant="destructive">
-            {failureStageLabel(summary.display_failure_stage)}
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="secondary">{jobStatusLabel(job.status)}</Badge>
+          <Badge variant="outline">
+            {accountingStatusLabel(summary.accounting_status)}
           </Badge>
-        ) : null}
-        <Badge variant="outline">
-          {runtimeStatusLabel(job.business_application_runtime_status)}
-        </Badge>
+          {summary.display_failure_stage ? (
+            <Badge variant="destructive">
+              {failureStageLabel(summary.display_failure_stage)}
+            </Badge>
+          ) : null}
+          <Badge variant="outline">
+            {runtimeStatusLabel(job.business_application_runtime_status)}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">工具契约</span>
+          <ToolContractStatusBadge status={job.tool_contract.status} />
+        </div>
       </div>
     </article>
   )
@@ -450,6 +460,7 @@ export function RuntimeJobDetailPage() {
           ]}
         />
       </div>
+      <ToolContractPanel value={query.data.tool_contract} />
       <FileWorkspacePolicyPanel value={query.data.file_workspace} />
       <ExecutionAccountingPanel summary={query.data.execution_summary} />
       <ModelCallsPanel
@@ -490,11 +501,339 @@ export function RuntimeJobDetailPage() {
   )
 }
 
-function FileWorkspacePolicyPanel({
-  value,
+function ToolContractPanel({ value }: { value: ToolContractEvidence }) {
+  return (
+    <Card className="mt-4 shadow-none">
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          工具契约对账
+          <ToolContractStatusBadge status={value.summary.status} />
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">{value.notice}</p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+          <Metric
+            label="最后观测 Invocation"
+            value={value.summary.last_invocation_id || "未观测"}
+          />
+          <Metric
+            label="Prompt 模板"
+            value={value.summary.prompt_template_version || "未观测"}
+          />
+          <LongCopyMetric
+            label="观测 Hash"
+            value={value.summary.observation_hash}
+          />
+          <LongCopyMetric
+            label="Prompt Contract Hash"
+            value={value.summary.prompt_contract_hash}
+          />
+        </dl>
+        <section className="rounded-lg border p-3">
+          <h3 className="text-sm font-medium">Job Frozen Snapshot</h3>
+          {value.snapshot ? (
+            <div className="mt-2 space-y-2 text-xs">
+              <LongCopyMetric
+                label={`Snapshot v${value.snapshot.schema_version}`}
+                value={value.snapshot.snapshot_hash}
+              />
+              <ToolNameList
+                items={value.snapshot.tools.map((tool) => ({
+                  key: `${tool.server_code}:${tool.tool_name}`,
+                  name: `${tool.server_code} / ${tool.tool_name}`,
+                  detail: tool.schema_hash,
+                }))}
+                empty="冻结快照中没有工具。"
+              />
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">
+              此 Job 没有 MCP Tool Snapshot。
+            </p>
+          )}
+        </section>
+        {value.observations.map((observation) => (
+          <article
+            key={`${observation.invocation_id}:${observation.sequence}`}
+            className="space-y-4 rounded-lg border p-3"
+          >
+            <header className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-mono text-xs font-medium break-all">
+                  {observation.invocation_id}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {formatDate(observation.created_at)} · event sequence{" "}
+                  {observation.sequence}
+                </p>
+              </div>
+              <ToolContractStatusBadge status={observation.status} />
+            </header>
+            <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+              <LongCopyMetric
+                label="Observation Hash"
+                value={observation.observation_hash}
+              />
+              <LongCopyMetric
+                label="Snapshot Hash"
+                value={observation.snapshot_hash}
+              />
+              <LongCopyMetric
+                label="Request Digest"
+                value={observation.request_digest}
+              />
+            </dl>
+            <section>
+              <h4 className="text-sm font-medium">组件构建身份</h4>
+              <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                {observation.component_build_identities.map((identity) => (
+                  <div
+                    key={identity.component}
+                    className="rounded-md bg-muted/40 p-2 text-xs"
+                  >
+                    <p className="font-medium">{identity.component}</p>
+                    <p className="mt-1 break-all text-muted-foreground">
+                      revision {identity.source_revision} · build{" "}
+                      {identity.build_id}
+                    </p>
+                    <p className="break-all text-muted-foreground">
+                      {identity.platform}
+                    </p>
+                    {identity.image_digest ? (
+                      <LongCopyValue value={identity.image_digest} />
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </section>
+            <div className="grid gap-3 xl:grid-cols-2">
+              <ToolContractLayer title="A. Job frozen">
+                <ToolNameList
+                  items={observation.job_frozen.map((tool) => ({
+                    key: `${tool.server_code}:${tool.tool_name}`,
+                    name: `${tool.server_code} / ${tool.tool_name}`,
+                    detail: tool.schema_hash,
+                  }))}
+                  empty="无冻结工具"
+                />
+              </ToolContractLayer>
+              <ToolContractLayer title="B. File MCP live">
+                <p className="mb-2 text-xs text-muted-foreground">
+                  {observation.file_mcp_live.status}
+                </p>
+                <LongCopyMetric
+                  label="Live toolset hash"
+                  value={observation.file_mcp_live.toolset_hash}
+                />
+                <ToolNameList
+                  items={observation.file_mcp_live.tools.map((tool) => ({
+                    key: `${tool.server_code}:${tool.tool_name}`,
+                    name: `${tool.server_code} / ${tool.tool_name}`,
+                    detail: `${tool.status} · ${tool.schema_hash}`,
+                  }))}
+                  empty="未取得 File MCP live tools/list"
+                />
+              </ToolContractLayer>
+              <ToolContractLayer title="C. Runtime effective">
+                <ToolNameList
+                  items={observation.runtime_effective.map((tool) => ({
+                    key: tool.sdk_tool_name,
+                    name: tool.sdk_tool_name,
+                    detail: `${toolContractOriginLabel(tool.origin)} · ${tool.authorization_status} · ${tool.schema_hash}`,
+                  }))}
+                  empty="无有效工具"
+                />
+              </ToolContractLayer>
+              <ToolContractLayer title="D. Prompt declaration">
+                <p className="text-xs text-muted-foreground">
+                  模板 {observation.prompt.template_version || "未知"}
+                </p>
+                <LongCopyMetric
+                  label="Contract hash"
+                  value={observation.prompt.contract_hash}
+                />
+                <ToolNameList
+                  items={observation.prompt.declared_tools.map((name) => ({
+                    key: name,
+                    name,
+                    detail: "Prompt declared callable",
+                  }))}
+                  empty="Prompt 未声明可调用工具"
+                />
+              </ToolContractLayer>
+            </div>
+            <section>
+              <h4 className="text-sm font-medium">逐工具状态矩阵</h4>
+              {observation.matrix.length ? (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-left text-xs">
+                    <thead className="border-b text-muted-foreground">
+                      <tr>
+                        <th className="pb-2 font-medium">服务</th>
+                        <th className="pb-2 font-medium">工具</th>
+                        <th className="pb-2 font-medium">状态</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {observation.matrix.map((row) => (
+                        <tr
+                          key={`${row.server_code}:${row.tool_name}:${row.status}`}
+                        >
+                          <td className="py-2 pr-3">{row.server_code}</td>
+                          <td className="py-2 pr-3 font-mono break-all">
+                            {row.tool_name}
+                          </td>
+                          <td className="py-2">
+                            <Badge
+                              variant={
+                                row.status === "MATCH" ||
+                                row.status === "RUNTIME_DERIVED"
+                                  ? "secondary"
+                                  : row.status === "EXTRA_REMOTE_IGNORED"
+                                    ? "outline"
+                                    : "destructive"
+                              }
+                            >
+                              {row.status}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  无逐工具状态。
+                </p>
+              )}
+            </section>
+          </article>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ToolContractLayer({
+  title,
+  children,
 }: {
-  value: FileWorkspaceEvidence
+  title: string
+  children: ReactNode
 }) {
+  return (
+    <section className="min-w-0 rounded-md bg-muted/30 p-3">
+      <h4 className="mb-2 text-sm font-medium">{title}</h4>
+      {children}
+    </section>
+  )
+}
+
+function ToolNameList({
+  items,
+  empty,
+}: {
+  items: Array<{ key: string; name: string; detail: string }>
+  empty: string
+}) {
+  if (!items.length) {
+    return <p className="text-xs text-muted-foreground">{empty}</p>
+  }
+  return (
+    <ul className="mt-2 space-y-2">
+      {items.map((item) => (
+        <li key={item.key} className="min-w-0 text-xs">
+          <LongCopyValue value={item.name} />
+          <p
+            className="mt-1 font-mono break-all text-muted-foreground"
+            title={item.detail}
+          >
+            {boundedValue(item.detail)}
+          </p>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function LongCopyMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-1">
+        <LongCopyValue value={value} />
+      </dd>
+    </div>
+  )
+}
+
+function LongCopyValue({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false)
+  if (!value)
+    return <span className="text-xs text-muted-foreground">未观测</span>
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="min-w-0 truncate font-mono text-xs" title={value}>
+        {boundedValue(value)}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-6 shrink-0 px-2 text-xs"
+        aria-label={`复制 ${value}`}
+        onClick={() => {
+          void navigator.clipboard?.writeText(value).then(() => {
+            setCopied(true)
+            window.setTimeout(() => setCopied(false), 1200)
+          })
+        }}
+      >
+        {copied ? "已复制" : "复制"}
+      </Button>
+    </span>
+  )
+}
+
+function ToolContractStatusBadge({
+  status,
+}: {
+  status: "MATCH" | "DRIFT" | "NOT_OBSERVED"
+}) {
+  return (
+    <Badge
+      variant={
+        status === "MATCH"
+          ? "secondary"
+          : status === "DRIFT"
+            ? "destructive"
+            : "outline"
+      }
+    >
+      {status === "MATCH"
+        ? "MATCH"
+        : status === "DRIFT"
+          ? "DRIFT"
+          : "NOT_OBSERVED（不等于健康）"}
+    </Badge>
+  )
+}
+
+function toolContractOriginLabel(
+  value: "frozen_mcp" | "runtime_derived" | "sdk_builtin"
+) {
+  if (value === "runtime_derived") return "Runtime 派生"
+  if (value === "sdk_builtin") return "SDK 内建"
+  return "冻结 MCP"
+}
+
+function boundedValue(value: string) {
+  return value.length > 72 ? `${value.slice(0, 34)}…${value.slice(-24)}` : value
+}
+
+function FileWorkspacePolicyPanel({ value }: { value: FileWorkspaceEvidence }) {
   const frozen = new Map(value.formats.map((item) => [item.format_code, item]))
   const matrix = [
     ["TXT", "读取、创建、编辑、提交、发送"],
@@ -559,7 +898,8 @@ function FileWorkspacePolicyPanel({
                 <div key={format} className="rounded-lg border p-3">
                   <dt className="font-medium">{format}</dt>
                   <dd className="mt-1 text-xs text-muted-foreground">
-                    元数据、保留、发送原件；可读正文只走 Markdown 表示，原件不进沙盒
+                    元数据、保留、发送原件；可读正文只走 Markdown
+                    表示，原件不进沙盒
                   </dd>
                   <dd className="mt-2 text-xs">
                     输入 Manifest {item?.file_count ?? 0} 个文件

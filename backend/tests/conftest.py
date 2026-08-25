@@ -49,3 +49,6 @@ def local_webhook_test_secret(monkeypatch: pytest.MonkeyPatch) -> None:
         "https://oapi.dingtalk.com/robot/send?access_token=test-token",
     )
     monkeypatch.setenv("DINGTALK_WEBHOOK_ROBOT_SECRET", "test-robot-secret")
+    monkeypatch.setenv("BUILD_SOURCE_REVISION", "test-revision")
+    monkeypatch.setenv("BUILD_ID", "test-build")
+    monkeypatch.setenv("BUILD_PLATFORM", "linux/amd64")

@@ -7,12 +7,14 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from app.modules.agent.infrastructure.runtime_protocol import validate_runtime_contract
+from app.shared.build_identity import BuildIdentity, build_identity_from_environment
 from app.shared.database import Database
 
-from .executor import PythonExecutionOutcome
+from .executor import PythonExecutionOutcome, agent_request_from_runtime_request
+from .tool_contract import build_tool_contract_observation
 
 
 class InvocationSecretContextPort(Protocol):
@@ -29,6 +31,7 @@ class PythonRuntimeExecutor(Protocol):
         request: dict[str, Any],
         cancel_event: threading.Event,
         secret_context: InvocationSecretContextPort,
+        tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> PythonExecutionOutcome: ...
 
 
@@ -423,11 +426,19 @@ class PythonInvocationRegistry:
 
     def _fail_orphaned(self, invocation: RuntimeInvocation) -> None:
         request = invocation.request
+        if not any(
+            event.get("event_type") == "tool_contract_observed" for event in invocation.events()
+        ):
+            self._persist_and_emit(
+                invocation,
+                "tool_contract_observed",
+                self._fallback_tool_contract_observation(request),
+            )
         terminal = {
             "protocol_version": request["protocol_version"],
             "invocation_id": request["invocation_id"],
             "request_digest": request["request_digest"],
-            "last_sequence": 1,
+            "last_sequence": len(invocation.events()) + 1,
             "status": "FAILED",
             "failure": {
                 "code": "runtime_orphaned_invocation",
@@ -436,7 +447,10 @@ class PythonInvocationRegistry:
             },
             "usage": _usage_for_protocol(request, {"input_tokens": 0, "output_tokens": 0}),
             "accounting": _unavailable_accounting(),
-            "runtime_provenance": _fallback_provenance(request),
+            "runtime_provenance": _fallback_provenance(
+                request,
+                self._runtime_build_identity(),
+            ),
         }
         invocation.commit_event(invocation.prepare_event("terminal", terminal))
         self._ledger.save(request, invocation.events())
@@ -448,23 +462,69 @@ class PythonInvocationRegistry:
 
     def _run(self, invocation: RuntimeInvocation) -> None:
         request = invocation.request
-        self._persist_and_emit(invocation, "execution_started", _fallback_provenance(request))
+        self._persist_and_emit(
+            invocation,
+            "execution_started",
+            _fallback_provenance(request, self._runtime_build_identity()),
+        )
+        observed_tool_contract: dict[str, Any] | None = None
+
+        def observe_tool_contract(payload: dict[str, Any]) -> None:
+            nonlocal observed_tool_contract
+            if observed_tool_contract is not None:
+                raise InvocationConflictError("Tool contract was observed more than once")
+            observed_tool_contract = dict(payload)
+            self._persist_and_emit(
+                invocation,
+                "tool_contract_observed",
+                observed_tool_contract,
+            )
+
         try:
             outcome = self._executor.execute(
                 request,
                 invocation.cancel_event,
                 invocation.secret_context,
+                observe_tool_contract,
             )
         except Exception:
             outcome = PythonExecutionOutcome(
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
-                runtime_provenance=_fallback_provenance(request),
+                runtime_provenance=_fallback_provenance(
+                    request,
+                    self._runtime_build_identity(),
+                ),
                 failure={
                     "code": "runtime_internal_error",
                     "retry_class": "TRANSIENT",
                     "safe_message": "Python Agent Runtime 暂时不可用",
                 },
+            )
+        if observed_tool_contract is None:
+            observation = (
+                dict(outcome.tool_contract_observation)
+                if outcome.tool_contract_observation
+                else self._fallback_tool_contract_observation(request)
+            )
+            observe_tool_contract(observation)
+        elif (
+            outcome.tool_contract_observation
+            and dict(outcome.tool_contract_observation) != observed_tool_contract
+        ):
+            outcome = PythonExecutionOutcome(
+                status="FAILED",
+                usage={"input_tokens": 0, "output_tokens": 0},
+                runtime_provenance=_fallback_provenance(
+                    request,
+                    self._runtime_build_identity(),
+                ),
+                failure={
+                    "code": "runtime_tool_contract_observation_invalid",
+                    "retry_class": "NEVER",
+                    "safe_message": "Runtime 工具契约观测不一致",
+                },
+                tool_contract_observation=observed_tool_contract,
             )
         for runtime_event in outcome.runtime_events:
             event_type = str(runtime_event.get("event_type") or "")
@@ -499,6 +559,23 @@ class PythonInvocationRegistry:
         self._ledger.save(request, invocation.events())
         invocation.mark_persisted()
 
+    def _runtime_build_identity(self) -> BuildIdentity:
+        value = getattr(self._executor, "build_identity", None)
+        if isinstance(value, BuildIdentity):
+            return value
+        return build_identity_from_environment("python-runtime")
+
+    def _fallback_tool_contract_observation(
+        self,
+        request: dict[str, Any],
+    ) -> dict[str, Any]:
+        context = agent_request_from_runtime_request(request, None).context
+        return build_tool_contract_observation(
+            context,
+            file_live=None,
+            runtime_build_identity=self._runtime_build_identity(),
+        )
+
     def _persist_and_emit(
         self,
         invocation: RuntimeInvocation,
@@ -510,13 +587,17 @@ class PythonInvocationRegistry:
         invocation.commit_event(event)
 
 
-def _fallback_provenance(request: dict[str, Any]) -> dict[str, Any]:
+def _fallback_provenance(
+    request: dict[str, Any],
+    runtime_build_identity: BuildIdentity,
+) -> dict[str, Any]:
     return {
         "runtime_kind": "python-v1",
         "runtime_version": "0.1.0",
         "protocol_version": request["protocol_version"],
         "sdk_version": "0.2.134",
         "cli_version": "2.1.226",
+        "runtime_build_identity": runtime_build_identity.to_dict(),
         "model_connection_revision_id": request["model_connection"]["revision_id"],
         "model_connection_config_hash": request["model_connection"]["config_hash"],
     }

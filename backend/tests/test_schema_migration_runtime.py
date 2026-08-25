@@ -61,6 +61,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("117", "117_expand_docling_layout_ocr_v2.sql"),
         ("118", "118_expand_bounded_workspace_working_sets.sql"),
         ("119", "119_contract_single_current_file_rule.sql"),
+        ("120", "120_expand_runtime_tool_contract_evidence.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -84,6 +85,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "117",
         "118",
         "119",
+        "120",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -114,7 +116,7 @@ def test_agent_run_audit_expand_keeps_job_lifecycle_separate() -> None:
         for row in database.execute("pragma table_info(agent_job)")
         if row["name"] == "agent_runtime_protocol_version"
     )
-    assert str(protocol["dflt_value"]).strip("'") == "1.3"
+    assert str(protocol["dflt_value"]).strip("'") == "1.4"
     summary_fks = database.execute("pragma foreign_key_list(agent_job_execution_summary)")
     model_fks = database.execute("pragma foreign_key_list(agent_model_call)")
     assert any(row["table"] == "agent_job" and row["on_delete"] == "CASCADE" for row in summary_fks)
@@ -183,15 +185,11 @@ def test_schema_head_validator_allows_only_an_explicit_previous_head(tmp_path: P
     )
 
     validator = SchemaHeadValidator(database, migrations)
-    assert validator.require_current_or_previous(
-        allowed_previous_heads=frozenset({"001"})
-    ) == "001"
+    assert validator.require_current_or_previous(allowed_previous_heads=frozenset({"001"})) == "001"
     with pytest.raises(SchemaHeadError, match="expected 002"):
         validator.require_current()
     with pytest.raises(SchemaHeadError, match="unknown"):
-        validator.require_current_or_previous(
-            allowed_previous_heads=frozenset({"999"})
-        )
+        validator.require_current_or_previous(allowed_previous_heads=frozenset({"999"}))
 
 
 @pytest.mark.parametrize("name", ["099_reused.sql", "100a_reused.sql"])
@@ -244,7 +242,7 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "119"
+    assert first.head == "120"
     assert first.baselined == 0
     assert first.applied == (
         "100",
@@ -267,8 +265,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
         "117",
         "118",
         "119",
+        "120",
     )
-    assert second.head == "119"
+    assert second.head == "120"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -286,7 +285,7 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         include_schema_contract=True,
     ).run()
 
-    assert result.head == "119"
+    assert result.head == "120"
     assert result.applied == (
         "100",
         "101",
@@ -308,8 +307,9 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         "117",
         "118",
         "119",
+        "120",
     )
-    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "119"
+    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "120"
     assert (
         Migrator(
             database,
@@ -380,7 +380,23 @@ def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
     ).run()
 
     assert upgraded.applied == (
-        "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "117", "118", "119"
+        "104",
+        "105",
+        "106",
+        "107",
+        "108",
+        "109",
+        "110",
+        "111",
+        "112",
+        "113",
+        "114",
+        "115",
+        "116",
+        "117",
+        "118",
+        "119",
+        "120",
     )
     assert repeated.applied == ()
     assert database.execute_one(
@@ -519,7 +535,20 @@ def test_unified_mcp_audit_migration_preserves_legacy_rows_without_guessing_link
     ).run()
 
     assert upgraded.applied == (
-        "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "117", "118"
+        "105",
+        "106",
+        "107",
+        "108",
+        "109",
+        "110",
+        "111",
+        "112",
+        "113",
+        "114",
+        "115",
+        "116",
+        "117",
+        "118",
     )
     row = database.execute_one("select * from mcp_operation_audit where id = 'legacy-ones-audit'")
     assert row is not None
@@ -593,6 +622,78 @@ def _record_contract_approval(database: Database) -> None:
     )
 
 
+def _insert_protocol_v13_job(database: Database, *, status: str) -> None:
+    timestamp = "2026-08-24T00:00:00+00:00"
+    database.execute(
+        """
+        insert into agent_session
+          (id, project_code, created_at, updated_at, source_channel,
+           source_connector_id, external_conversation_id, requester_id,
+           session_key)
+        values ('migration-120-session', 'default', ?, ?, 'test',
+                'connector-test', 'migration-120-conversation',
+                'migration-120-user', 'migration-120-session-key')
+        """,
+        (timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into agent_job
+          (id, session_id, idempotency_key, project_code, status, created_at,
+           source_channel, source_connector_id, requester_id,
+           agent_runtime_protocol_version)
+        values ('migration-120-job', 'migration-120-session',
+                'migration-120-job-key', 'default', ?, ?, 'test',
+                'connector-test', 'migration-120-user', '1.3')
+        """,
+        (status, timestamp),
+    )
+
+
+def test_runtime_v14_migration_preserves_terminal_v13_history(tmp_path: Path) -> None:
+    database = Database(f"sqlite:///{tmp_path / 'terminal-v13.db'}")
+    through_119 = _migrations_through(tmp_path, "119")
+    Migrator(database, through_119, migrator_build="v13-terminal-fixture").run()
+    _insert_protocol_v13_job(database, status="SUCCEEDED")
+
+    result = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="v14-migration-test",
+    ).run()
+
+    row = database.execute_one(
+        """
+        select agent_runtime_protocol_version, tool_contract_status
+          from agent_job where id = 'migration-120-job'
+        """
+    )
+    assert result.head == "120"
+    assert row == {
+        "agent_runtime_protocol_version": "1.3",
+        "tool_contract_status": "NOT_OBSERVED",
+    }
+
+
+def test_runtime_v14_migration_blocks_nonterminal_v13_job(tmp_path: Path) -> None:
+    database = Database(f"sqlite:///{tmp_path / 'running-v13.db'}")
+    through_119 = _migrations_through(tmp_path, "119")
+    Migrator(database, through_119, migrator_build="v13-running-fixture").run()
+    _insert_protocol_v13_job(database, status="RUNNING")
+
+    with pytest.raises(MigrationExecutionError, match="120 failed"):
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="v14-migration-test",
+        ).run()
+
+    assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "119"
+    assert "tool_contract_status" not in {
+        row["name"] for row in database.execute("pragma table_info(agent_job)")
+    }
+
+
 def test_existing_database_contract_requires_separate_approval(tmp_path: Path) -> None:
     database = Database("sqlite:///:memory:")
     through_102 = _migrations_through(tmp_path, "102")
@@ -620,7 +721,24 @@ def test_existing_database_contract_requires_separate_approval(tmp_path: Path) -
     ).run()
 
     assert result.applied == (
-        "103", "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "117", "118", "119"
+        "103",
+        "104",
+        "105",
+        "106",
+        "107",
+        "108",
+        "109",
+        "110",
+        "111",
+        "112",
+        "113",
+        "114",
+        "115",
+        "116",
+        "117",
+        "118",
+        "119",
+        "120",
     )
     assert "user_message" not in {
         row["name"] for row in database.execute("pragma table_info(agent_job)")
@@ -939,7 +1057,7 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert all(re.search(r"[\u3400-\u9fff]", table_comments[table]) for table in owned_tables)
     assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
     assert len(owned_tables) == 124
-    assert len(owned_columns) == 1616
+    assert len(owned_columns) == 1622
     database.close()
 
 
@@ -1145,7 +1263,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 119",
+        match="ledger is missing; expected head 120",
     ):
         SchemaHeadValidator(
             database,
