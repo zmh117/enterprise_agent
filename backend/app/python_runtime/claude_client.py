@@ -580,8 +580,8 @@ class ClaudeSdkClient:
         errors = getattr(exc, "errors", None)
         return {
             "exception_class": exc.__class__.__name__[:120],
-            "sdk_version": _package_version(),
-            "cli_version": _claude_cli_version(),
+            "sdk_version": claude_sdk_version(),
+            "cli_version": claude_cli_version(),
             "model_policy_ref": (binding.model if binding else self.model)[:120],
             "provider_host": provider_host(binding.base_url if binding else self.base_url),
             "subtype": bounded_safe_diagnostic(subtype),
@@ -608,7 +608,7 @@ def load_claude_agent_sdk() -> ClaudeSdk:
 
 
 def is_claude_cli_available() -> bool:
-    return shutil.which("claude") is not None or shutil.which("claude-code") is not None
+    return claude_cli_version() not in {"unknown", "unavailable"}
 
 
 def build_system_prompt(context: AgentExecutionContext) -> str:
@@ -689,7 +689,7 @@ def _numbered(items: list[str]) -> str:
 
 
 @lru_cache(maxsize=1)
-def _package_version() -> str:
+def claude_sdk_version() -> str:
     for package in ("claude-agent-sdk", "claude-code-sdk"):
         try:
             return importlib.metadata.version(package)[:80]
@@ -699,7 +699,14 @@ def _package_version() -> str:
 
 
 @lru_cache(maxsize=1)
-def _claude_cli_version() -> str:
+def claude_cli_version() -> str:
+    try:
+        module = importlib.import_module("claude_agent_sdk._cli_version")
+        bundled = compact_error_detail(getattr(module, "__cli_version__", ""), max_chars=80)
+        if bundled:
+            return bundled
+    except (ImportError, AttributeError):
+        pass
     executable = shutil.which("claude") or shutil.which("claude-code")
     if not executable:
         return "unavailable"

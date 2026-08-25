@@ -557,6 +557,16 @@ class AgentConfigService:
         return self._verified_publication(publication)
 
     def _verified_publication(self, publication: dict[str, Any]) -> dict[str, Any]:
+        publication = self._verified_publication_integrity(publication)
+        if self._runtime_protocol_compatibility(publication) != "current":
+            raise NonRetryableExecutionError(
+                "Agent publication Runtime protocol support is invalid",
+                safe_message="Agent Runtime 协议发布事实完整性校验失败",
+                error_code="agent_publication_runtime_protocol_mismatch",
+            )
+        return publication
+
+    def _verified_publication_integrity(self, publication: dict[str, Any]) -> dict[str, Any]:
         schema_version = int(publication.get("schema_version") or 0)
         if schema_version != 3:
             raise NonRetryableExecutionError(
@@ -586,14 +596,6 @@ class AgentConfigService:
                 safe_message="Agent Runtime 发布快照完整性校验失败",
                 error_code="agent_publication_runtime_mismatch",
             )
-        if snapshot.get("supported_runtime_protocol_versions") != list(
-            SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
-        ):
-            raise NonRetryableExecutionError(
-                "Agent publication Runtime protocol support is invalid",
-                safe_message="Agent Runtime 协议发布事实完整性校验失败",
-                error_code="agent_publication_runtime_protocol_mismatch",
-            )
         if "mcp_tool_envelope" in snapshot:
             envelope = snapshot.get("mcp_tool_envelope")
             if not isinstance(envelope, list):
@@ -608,15 +610,31 @@ class AgentConfigService:
             )
         return publication
 
+    @staticmethod
+    def _runtime_protocol_compatibility(publication: dict[str, Any]) -> str:
+        protocols = (publication.get("snapshot") or {}).get("supported_runtime_protocol_versions")
+        if protocols == list(SUPPORTED_RUNTIME_PROTOCOL_VERSIONS):
+            return "current"
+        if protocols == ["1.3"]:
+            return "historical_read_only"
+        raise NonRetryableExecutionError(
+            "Agent publication Runtime protocol support is invalid",
+            safe_message="Agent Runtime 协议发布事实完整性校验失败",
+            error_code="agent_publication_runtime_protocol_mismatch",
+        )
+
     def connector_allowed(self, *, publication_id: str, direction: str, connector_id: str) -> bool:
         return connector_id in self.repository.publication_connectors(publication_id, direction)
 
     def publications(self, agent_code: str) -> list[dict[str, Any]]:
         definition = self.repository.get_definition(agent_code)
-        values = [
-            self._verified_publication(value)
-            for value in self.repository.list_publications(str(definition["id"]))
-        ]
+        values = []
+        for value in self.repository.list_publications(str(definition["id"])):
+            publication = self._verified_publication_integrity(value)
+            publication["runtime_protocol_compatibility"] = self._runtime_protocol_compatibility(
+                publication
+            )
+            values.append(publication)
         for publication in values:
             publication["active_applications"] = (
                 self.model_connection_service.repository.active_application_usage(

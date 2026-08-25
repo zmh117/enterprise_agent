@@ -161,6 +161,9 @@ export const agentPublicationSchema = z.object({
   published_by: z.string(),
   active_applications: z.array(activeApplicationSchema).optional(),
   model_runtime_mode: z.string().optional(),
+  runtime_protocol_compatibility: z
+    .enum(["current", "historical_read_only"])
+    .optional(),
 })
 
 export const agentDetailSchema = z.object({

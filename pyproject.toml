@@ -40,7 +40,9 @@ database = [
   "redis>=5.0",
 ]
 python-runtime = [
-  "claude-agent-sdk==0.2.134",
+  # Dependabot updates this exact pin daily; Runtime contract CI gates promotion.
+  "claude-agent-sdk==0.2.144",
+  "mcp==2.0.0",
 ]
 # Governed MCP servers use the stateless MCP v2 HTTP transport in isolated images.
 # Agent runtimes remain protocol clients and do not install either server dependency.

@@ -536,6 +536,62 @@ def test_agent_publication_is_idempotent_and_published_revision_stays_published(
     ) == {"count": 1}
 
 
+def test_agent_publication_history_keeps_v13_read_only_without_making_it_executable() -> None:
+    settings, c = web_container()
+    historical = c.agent_config_service.repository.current_publication(AGENT_CODE)
+    historical_snapshot = dict(historical["snapshot"])
+    historical_snapshot["supported_runtime_protocol_versions"] = ["1.3"]
+    historical_hash = hashlib.sha256(
+        json.dumps(
+            historical_snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    c.database.execute(
+        "update agent_publication set snapshot_json = ?, config_hash = ? where id = ?",
+        (
+            json.dumps(historical_snapshot, ensure_ascii=False, sort_keys=True),
+            historical_hash,
+            historical["id"],
+        ),
+    )
+
+    connection_revision = ready_connection(c)
+    agent = c.agent_config_service.get(AGENT_CODE)
+    draft = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=int(agent["draft"]["revision"]),
+        config=agent_config(str(connection_revision["id"])),
+    )
+    current = c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(draft["id"]),
+    )
+    with pytest.raises(NonRetryableExecutionError) as rejected:
+        c.agent_config_service.publication(str(historical["id"]))
+    assert rejected.value.error_code == "agent_publication_runtime_protocol_mismatch"
+
+    app = create_app(settings, container_factory=lambda _: c)
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "111111111111"},
+        )
+        assert login.status_code == 200
+        response = client.get(f"/api/admin/agents/{AGENT_CODE}/publications")
+
+    assert response.status_code == 200, response.text
+    publications = response.json()["publications"]
+    assert [item["id"] for item in publications] == [current["id"], historical["id"]]
+    assert publications[0]["runtime_protocol_compatibility"] == "current"
+    assert publications[1]["runtime_protocol_compatibility"] == "historical_read_only"
+    assert publications[1]["snapshot"]["supported_runtime_protocol_versions"] == ["1.3"]
+
+
 def test_connection_revision_is_immutable_while_credential_rotation_is_active() -> None:
     c = container()
     first = ready_connection(c)

@@ -50,13 +50,30 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  python-runtime-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m venv .venv
+      - run: .venv/bin/pip install -e '.[dev,python-runtime]'
+      - name: Verify pinned Claude Agent SDK and Runtime MCP contract
+        run: >-
+          .venv/bin/pytest -q
+          backend/tests/test_agent_runtime_compose_security.py
+          backend/tests/test_python_file_mcp_runtime_bridge.py
+          backend/tests/test_mcp_meta_fidelity.py
+
   runtime-images:
     runs-on: ubuntu-latest
-    needs: [backend-fast, backend-full, dingtalk-runtime]
+    needs: [backend-fast, backend-full, dingtalk-runtime, python-runtime-contract]
     if: >-
       always() &&
       needs.backend-fast.result == 'success' &&
       needs.dingtalk-runtime.result == 'success' &&
+      needs.python-runtime-contract.result == 'success' &&
       (needs.backend-full.result == 'success' || needs.backend-full.result == 'skipped')
     steps:
       - uses: actions/checkout@v4

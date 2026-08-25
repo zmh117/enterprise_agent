@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -37,6 +38,8 @@ _MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id"
 _AGENT_TOOL_CALL_ID_META_KEY = "enterprise-agent/agent-tool-call-id"
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _BUILD_IDENTITY_CAPABILITY = "enterprise-agent/build-identity-v1"
+_MISSING_MCP_FIELD = object()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -122,11 +125,35 @@ def _result_structured_content(result: types.CallToolResult) -> Any | None:
 
 
 def _session_timeout(seconds: float) -> Any:
-    # MCP 2.x uses float seconds while the MCP 1.x bundled with the current
-    # Claude Agent SDK still requires datetime.timedelta.
+    # MCP 2.x uses float seconds while legacy MCP 1.x requires
+    # datetime.timedelta; tolerate mixed-version rollout windows.
     if getattr(streamable_http_module, "httpx2", None) is not None:
         return seconds
     return timedelta(seconds=seconds)
+
+
+def _mcp_tool_input_schema(tool: Any) -> Any:
+    # MCP 1.x Pydantic models expose JSON aliases, while MCP 2.x exposes
+    # snake_case attributes. Keep the Runtime tolerant of mixed-version rollout
+    # windows even though its image is pinned to the governed MCP 2.x line.
+    value = getattr(tool, "input_schema", _MISSING_MCP_FIELD)
+    if value is _MISSING_MCP_FIELD:
+        value = getattr(tool, "inputSchema", _MISSING_MCP_FIELD)
+    if value is _MISSING_MCP_FIELD:
+        raise ToolContractValueError("MCP Tool input schema field is missing")
+    return value
+
+
+def _mcp_list_tools_next_cursor(page: Any) -> str:
+    value = getattr(page, "next_cursor", _MISSING_MCP_FIELD)
+    if value is _MISSING_MCP_FIELD:
+        value = getattr(page, "nextCursor", _MISSING_MCP_FIELD)
+    if value is _MISSING_MCP_FIELD or (value is not None and not isinstance(value, str)):
+        raise FileTransferBoundaryError(
+            "runtime_tool_contract_observation_invalid",
+            "File MCP tools/list pagination is invalid",
+        )
+    return value or ""
 
 
 def _safe_error(code: str) -> types.CallToolResult:
@@ -502,17 +529,21 @@ class ClaudePythonFileBridge:
         initialize: bool,
         initialization: Any | None = None,
     ) -> None:
+        observation_stage = "initialize"
         try:
             if initialize:
                 initialization = await session.initialize()
+            observation_stage = "build_identity"
             build_identity = self._file_build_identity(initialization)
             cursor: str | None = None
             seen_cursors: set[str] = set()
             live: dict[str, str] = {}
             while True:
                 params = types.PaginatedRequestParams(cursor=cursor) if cursor else None
+                observation_stage = "list_tools"
                 page = await session.list_tools(params=params)
                 for tool in page.tools:
+                    observation_stage = "tool_name"
                     name = str(tool.name or "")
                     if _IDENTIFIER.fullmatch(name) is None or name in live:
                         raise FileTransferBoundaryError(
@@ -520,7 +551,8 @@ class ClaudePythonFileBridge:
                             "File MCP tools/list contains an invalid or duplicate name",
                         )
                     try:
-                        live[name] = tool_schema_hash(tool.input_schema)
+                        observation_stage = "tool_schema"
+                        live[name] = tool_schema_hash(_mcp_tool_input_schema(tool))
                     except ToolContractValueError as exc:
                         raise FileTransferBoundaryError(
                             "runtime_tool_contract_observation_invalid",
@@ -531,7 +563,8 @@ class ClaudePythonFileBridge:
                             "runtime_tool_contract_observation_invalid",
                             "File MCP tools/list exceeds its item boundary",
                         )
-                next_cursor = str(page.next_cursor or "")
+                observation_stage = "pagination"
+                next_cursor = _mcp_list_tools_next_cursor(page)
                 if not next_cursor:
                     break
                 if next_cursor in seen_cursors or len(next_cursor) > 256:
@@ -583,9 +616,19 @@ class ClaudePythonFileBridge:
                     "runtime_tool_contract_schema_mismatch",
                     "File MCP schema differs from the frozen Job tool",
                 )
-        except FileTransferBoundaryError:
+        except FileTransferBoundaryError as exc:
+            logger.warning(
+                "File MCP live contract observation rejected stage=%s error_code=%s",
+                observation_stage,
+                exc.code,
+            )
             raise
         except Exception as exc:
+            logger.warning(
+                "File MCP live contract observation failed stage=%s error_type=%s",
+                observation_stage,
+                type(exc).__name__,
+            )
             raise FileTransferBoundaryError(
                 "runtime_tool_contract_remote_not_observed",
                 "File MCP live contract could not be observed",

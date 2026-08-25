@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tomllib
 
 import yaml
 
@@ -60,7 +61,7 @@ def test_python_runtime_and_standard_mcp_are_hardened_and_secret_scoped() -> Non
     assert python_runtime["environment"]["DATABASE_DSN"].startswith(
         "${AGENT_RUNTIME_DATABASE_DSN:-postgresql://agent_runtime_reader:"
     )
-    assert python_runtime["environment"]["PYTHON_AGENT_RUNTIME_CLI_VERSION"] == "2.1.226"
+    assert "PYTHON_AGENT_RUNTIME_CLI_VERSION" not in python_runtime["environment"]
     assert python_runtime["environment"]["HOME"] == "/tmp/python-agent-runtime"
     assert python_runtime["environment"]["TMPDIR"] == "/tmp/python-agent-runtime"
     assert python_runtime["environment"]["CLAUDE_CONFIG_DIR"] == (
@@ -153,24 +154,56 @@ def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     assert "backend/app/modules/file_workspace/domain.py" in python_runtime_section
     assert "backend/app/modules/file_workspace/text_format_policy.py" in python_runtime_section
     assert "import app.modules.agent.infrastructure.runtime_protocol" in python_runtime_section
+    assert "node-runtime" not in dockerfile
+    assert "@anthropic-ai/claude-code" not in python_runtime_section
 
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     base_dependencies = pyproject.split("[project.optional-dependencies]", 1)[0]
     assert "claude-agent-sdk" not in base_dependencies
     assert '"mcp' not in base_dependencies
-    assert '"claude-agent-sdk==0.2.134"' in pyproject
+    project = tomllib.loads(pyproject)
+    runtime_dependencies = project["project"]["optional-dependencies"]["python-runtime"]
+    assert len(runtime_dependencies) == 2
+    assert runtime_dependencies[0].startswith("claude-agent-sdk==")
+    assert runtime_dependencies[0].count("==") == 1
+    assert runtime_dependencies[1] == "mcp==2.0.0"
 
 
 def test_ci_builds_python_single_runtime_deployment_images() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "agent-runtime:" not in workflow
+    assert "python-runtime-contract:" in workflow
+    assert ".[dev,python-runtime]" in workflow
+    assert "needs.python-runtime-contract.result == 'success'" in workflow
     assert "runtime-images:" in workflow
     assert (
         "docker compose build api-server file-service agent-worker python-agent-runtime dingtalk-runtime"
         in workflow
     )
     assert "typescript-agent-runtime" not in workflow
+
+
+def test_dependabot_tracks_only_claude_agent_sdk_daily() -> None:
+    config = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text(encoding="utf-8"))
+
+    assert config == {
+        "version": 2,
+        "updates": [
+            {
+                "package-ecosystem": "pip",
+                "directory": "/",
+                "schedule": {
+                    "interval": "daily",
+                    "timezone": "Asia/Shanghai",
+                    "time": "09:00",
+                },
+                "allow": [{"dependency-name": "claude-agent-sdk"}],
+                "open-pull-requests-limit": 1,
+                "labels": ["dependencies", "python-runtime"],
+            }
+        ],
+    }
 
 
 def test_release_build_identity_is_injected_into_all_observed_components() -> None:

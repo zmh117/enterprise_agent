@@ -162,6 +162,54 @@ class _ContractSession(_RemoteFileSession):
         return types.ListToolsResult(tools=tools)
 
 
+class _McpV1Tool:
+    def __init__(self, *, name: str, input_schema: dict[str, Any]) -> None:
+        self.name = name
+        self.inputSchema = input_schema
+
+
+class _McpV1ListToolsResult:
+    def __init__(
+        self,
+        *,
+        tools: list[_McpV1Tool],
+        next_cursor: str | None = None,
+    ) -> None:
+        self.tools = tools
+        self.nextCursor = next_cursor
+
+
+class _McpV1ContractSession(_RemoteFileSession):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cursors: list[str | None] = []
+
+    async def list_tools(self, *, params: Any = None) -> _McpV1ListToolsResult:
+        cursor = getattr(params, "cursor", None)
+        self.cursors.append(cursor)
+        if cursor is None:
+            return _McpV1ListToolsResult(
+                tools=[
+                    _McpV1Tool(
+                        name="file_create_commit_intent",
+                        input_schema=dict(
+                            FILE_TOOL_MANIFEST["file_create_commit_intent"].input_schema
+                        ),
+                    )
+                ],
+                next_cursor="next-page",
+            )
+        assert cursor == "next-page"
+        return _McpV1ListToolsResult(
+            tools=[
+                _McpV1Tool(
+                    name="file_retain_version",
+                    input_schema=dict(FILE_TOOL_MANIFEST["file_retain_version"].input_schema),
+                )
+            ]
+        )
+
+
 def _contract_bridge(
     tmp_path: Path,
     *,
@@ -251,6 +299,28 @@ def test_file_bridge_marks_unfrozen_remote_tool_extra_and_does_not_freeze_it(
         "file_retain_version": "EXTRA_REMOTE_IGNORED",
     }
     assert "file_retain_version" not in bridge._frozen
+
+
+def test_file_bridge_observes_mcp_v1_camel_case_tool_fields_and_pagination(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    remote = _McpV1ContractSession()
+    bridge = _contract_bridge(
+        tmp_path,
+        remote=remote,  # type: ignore[arg-type]
+        frozen_tool_names=("file_create_commit_intent",),
+    )
+
+    asyncio.run(bridge.connect())
+
+    rows = {item["tool_name"]: item["status"] for item in bridge.live_observation["tools"]}
+    assert rows == {
+        "file_create_commit_intent": "MATCH",
+        "file_retain_version": "EXTRA_REMOTE_IGNORED",
+    }
+    assert remote.cursors == [None, "next-page"]
 
 
 def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result(

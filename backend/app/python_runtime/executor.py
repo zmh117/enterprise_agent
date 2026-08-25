@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-import importlib.metadata
 import json
-import os
 import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Protocol
 from urllib.request import Request, urlopen
@@ -33,6 +31,7 @@ from app.shared.mcp_server_policy import (
     validate_mcp_server_policies,
 )
 from app.python_runtime.job_sandbox import JobSandboxManager
+from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version
 from app.python_runtime.mcp_config import (
     FixedMcpClaudeSdkClient,
     fixed_mcp_server_url,
@@ -118,10 +117,8 @@ class PythonRuntimeExecutor:
             file_mcp_server_url,
             server_code="file-service",
         )
-        self._sdk_version: str = sdk_version or importlib.metadata.version("claude-agent-sdk")
-        self._cli_version: str = (
-            cli_version or os.getenv("PYTHON_AGENT_RUNTIME_CLI_VERSION", "2.1.226") or "2.1.226"
-        )
+        self._sdk_version: str = sdk_version or claude_sdk_version()
+        self._cli_version: str = cli_version or claude_cli_version()
         self._fake_provider_mode = fake_provider_mode
         self._sandbox_manager = sandbox_manager
         self._build_identity = build_identity or build_identity_from_environment("python-runtime")
@@ -152,13 +149,6 @@ class PythonRuntimeExecutor:
         provenance = self._provenance(request)
         if cancel_event.is_set():
             return self._cancelled(provenance)
-        if self._fake_provider_mode:
-            return self._execute_fake_provider(
-                request,
-                cancel_event,
-                provenance,
-                secret_context,
-            )
         run_request = agent_request_from_runtime_request(request, resolved.binding)
         client = FixedMcpClaudeSdkClient(
             limits=self._limits,
@@ -175,6 +165,17 @@ class PythonRuntimeExecutor:
             tool_contract_observer=tool_contract_observer,
         )
         try:
+            if self._fake_provider_mode:
+                client.observe_tool_contract(run_request)
+                return replace(
+                    self._execute_fake_provider(
+                        request,
+                        cancel_event,
+                        provenance,
+                        secret_context,
+                    ),
+                    tool_contract_observation=dict(client.last_tool_contract_observation),
+                )
             result = client.run(run_request)
         except RetryableExecutionError as exc:
             return PythonExecutionOutcome(

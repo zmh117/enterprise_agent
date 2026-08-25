@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: daily
+      timezone: Asia/Shanghai
+      time: "09:00"
+    allow:
+      - dependency-name: claude-agent-sdk
+    open-pull-requests-limit: 1
+    labels:
+      - dependencies
+      - python-runtime

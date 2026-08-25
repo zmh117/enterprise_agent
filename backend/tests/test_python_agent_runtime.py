@@ -24,6 +24,7 @@ from app.modules.agent.infrastructure.runtime_protocol import (
     canonical_request_digest,
 )
 from app.modules.agent.infrastructure.runtime_http_client import RuntimeGrantIssuer
+from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
 from app.modules.mcp_tool_runtime import ONES_MCP_SERVER_CODE
 from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
@@ -71,6 +72,7 @@ from app.shared.model_probe_envelope import (
 from backend.tests.business_mcp_fixtures import (
     TEST_BUSINESS_SERVER_CODE,
     TEST_BUSINESS_TOOL_IDENTIFIER,
+    business_mcp_test_manifest,
     business_mcp_test_policies,
 )
 from backend.tests.support.runtime import container, test_settings as build_settings
@@ -1890,7 +1892,7 @@ def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> N
         cli_version="2.1.226",
         fake_provider_mode=True,
     )
-    first = _request()
+    first = _current_request()
     first["invocation_id"] = f"{first['job_id']}.attempt-0"
     first["prompt"]["user_question"] = "[smoke:retry-once] verify retry"
     retry = executor.execute(first, threading.Event())
@@ -1902,6 +1904,8 @@ def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> N
     assert retry.failure and retry.failure["retry_class"] == "TRANSIENT"
     assert succeeded.status == "SUCCEEDED"
     assert succeeded.final_answer == "Python Runtime fake-provider smoke completed."
+    assert succeeded.tool_contract_observation
+    assert succeeded.tool_contract_observation["status"] == "MATCH"
     assert len(resolver.calls) == 2
     assert "binding-secret" not in json.dumps([retry.__dict__, succeeded.__dict__])
 
@@ -2060,7 +2064,17 @@ def test_python_test_only_fake_provider_isolates_second_business_server_token(
     request["mcp_servers"] = [
         {
             "server_code": TEST_BUSINESS_SERVER_CODE,
-            "tools": [{"tool_name": TEST_BUSINESS_TOOL_IDENTIFIER}],
+            "tools": [
+                {
+                    "tool_name": TEST_BUSINESS_TOOL_IDENTIFIER,
+                    "required_scope": (
+                        f"mcp:{TEST_BUSINESS_SERVER_CODE}:{TEST_BUSINESS_TOOL_IDENTIFIER}:invoke"
+                    ),
+                    "tool_schema_hash": business_mcp_test_manifest()[
+                        TEST_BUSINESS_TOOL_IDENTIFIER
+                    ].schema_hash,
+                }
+            ],
         }
     ]
     request["prompt"]["user_question"] = (
@@ -2131,6 +2145,19 @@ def test_python_test_only_fake_provider_calls_file_service_with_file_principal(
         )
 
     monkeypatch.setattr("app.python_runtime.executor.urlopen", fake_urlopen)
+
+    def observe_file_contract(
+        client: FixedMcpClaudeSdkClient,
+        _request: AgentRunRequest,
+    ) -> dict[str, Any]:
+        observation = {"status": "MATCH"}
+        client.last_tool_contract_observation = observation
+        return observation
+
+    monkeypatch.setattr(
+        "app.python_runtime.executor.FixedMcpClaudeSdkClient.observe_tool_contract",
+        observe_file_contract,
+    )
     executor = PythonRuntimeExecutor(
         cast(PythonModelBindingResolver, FakePythonBindingResolver()),
         limits=build_settings().execution,
@@ -2146,7 +2173,13 @@ def test_python_test_only_fake_provider_calls_file_service_with_file_principal(
     request["mcp_servers"] = [
         {
             "server_code": "file-service",
-            "tools": [{"tool_name": "task_workspace_get"}],
+            "tools": [
+                {
+                    "tool_name": "task_workspace_get",
+                    "required_scope": "mcp:file-service:task_workspace_get:invoke",
+                    "tool_schema_hash": FILE_TOOL_MANIFEST["task_workspace_get"].schema_hash,
+                }
+            ],
         }
     ]
     file_principal = "test-only-file-principal-token"

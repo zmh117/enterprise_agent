@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import threading
 from collections.abc import Mapping
@@ -206,6 +207,49 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         self._tool_contract_observer = tool_contract_observer
         self._tool_contract_observed = False
         self._effective_context: AgentExecutionContext | None = None
+
+    def observe_tool_contract(self, request: AgentRunRequest) -> dict[str, Any]:
+        """Run the production MCP preflight without starting a model request."""
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self._observe_tool_contract_async(request))
+        result: dict[str, Any] | None = None
+        error: BaseException | None = None
+
+        def runner() -> None:
+            nonlocal result, error
+            try:
+                result = asyncio.run(self._observe_tool_contract_async(request))
+            except BaseException as exc:
+                error = exc
+
+        thread = threading.Thread(target=runner, name="file-mcp-contract-observer")
+        thread.start()
+        thread.join()
+        if error is not None:
+            raise error
+        if result is None:
+            raise NonRetryableExecutionError(
+                "Runtime Tool contract observation did not return a result",
+                safe_message="Runtime 工具契约观测无效",
+                error_code="runtime_tool_contract_observation_invalid",
+            )
+        return result
+
+    async def _observe_tool_contract_async(self, request: AgentRunRequest) -> dict[str, Any]:
+        sandbox = self.sandbox_manager.create(request.job_id)
+        token = self._sandbox.set(sandbox)
+        try:
+            await self._open_mcp_server(request, self._load_sdk())
+            return dict(self.last_tool_contract_observation)
+        finally:
+            try:
+                await self._close_mcp_server()
+            finally:
+                self._sandbox.reset(token)
+                sandbox.cleanup()
 
     @staticmethod
     def _shared_headers(request: AgentRunRequest) -> dict[str, str]:

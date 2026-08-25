@@ -157,10 +157,7 @@ function agentPayload(
   }
 }
 
-function createdAgentPayload(
-  code: string,
-  runtimeKind: "python-v1"
-) {
+function createdAgentPayload(code: string, runtimeKind: "python-v1") {
   return {
     definition: {
       id: `agent-${code}`,
@@ -483,6 +480,7 @@ describe("Agent Profile management", () => {
                 published_at: "2026-07-25T00:00:00+08:00",
                 published_by: "user_local_admin",
                 model_runtime_mode: "pinned_connection",
+                runtime_protocol_compatibility: "current",
                 active_applications: [],
               },
               {
@@ -493,6 +491,7 @@ describe("Agent Profile management", () => {
                 published_at: "2026-07-24T00:00:00+08:00",
                 published_by: "user_local_admin",
                 model_runtime_mode: "legacy_global_connection",
+                runtime_protocol_compatibility: "current",
                 active_applications: [
                   {
                     code: "default-diagnostic-application",
@@ -502,6 +501,17 @@ describe("Agent Profile management", () => {
                     href: "/applications/default-diagnostic-application",
                   },
                 ],
+              },
+              {
+                id: "agent_publication_historical_v13",
+                revision: 12,
+                config_hash: "historical-publication-hash",
+                snapshot: config,
+                published_at: "2026-07-23T00:00:00+08:00",
+                published_by: "user_local_admin",
+                model_runtime_mode: "legacy_global_connection",
+                runtime_protocol_compatibility: "historical_read_only",
+                active_applications: [],
               },
             ],
           })
@@ -689,6 +699,11 @@ describe("Agent Profile management", () => {
     const rollbackButtons = screen.getAllByRole("button", {
       name: "回退 Agent",
     })
+    expect(screen.getByText("历史协议 · 只读")).toBeInTheDocument()
+    expect(rollbackButtons).toHaveLength(3)
+    expect(
+      rollbackButtons.filter((button) => !button.hasAttribute("disabled"))
+    ).toHaveLength(1)
     const enabledRollback = rollbackButtons.find(
       (button) => !button.hasAttribute("disabled")
     )

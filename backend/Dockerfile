@@ -1,7 +1,5 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-trixie-slim AS node-runtime
-
 FROM python:3.12-slim AS python-deps
 ARG BUILD_SOURCE_REVISION=local-dev
 ARG BUILD_ID=local-dev
@@ -21,13 +19,8 @@ ENV PYTHONPATH=/app/backend
 ENTRYPOINT ["/usr/local/bin/normalize-secrets-entrypoint"]
 
 FROM python-deps AS claude-runtime
-COPY --from=node-runtime /usr/local/ /usr/local/
 RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=cache,target=/root/.npm \
-    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['python-runtime']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
-    && node --version \
-    && npm --version \
-    && npm install -g @anthropic-ai/claude-code@2.1.226
+    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['python-runtime']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])"
 
 FROM python-deps AS database-deps
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -152,7 +145,7 @@ COPY backend/app/modules/platform_config/infrastructure/__init__.py backend/app/
 COPY contracts/agent-runtime/v1.4 /app/contracts/agent-runtime/v1.4
 RUN groupadd --system --gid 10002 python-runtime \
     && useradd --system --uid 10002 --gid 10002 --no-create-home python-runtime \
-    && python -c "import app.python_runtime; import app.python_runtime.file_mcp_bridge; import app.python_runtime.file_transfer_http; import app.modules.agent.infrastructure.runtime_protocol; import claude_agent_sdk"
+    && python -c "import app.python_runtime; import app.python_runtime.file_transfer_http; import app.modules.agent.infrastructure.runtime_protocol; from mcp import types; from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version; from app.python_runtime.file_mcp_bridge import _mcp_list_tools_next_cursor, _mcp_tool_input_schema; assert claude_sdk_version() != 'unknown'; assert claude_cli_version() not in {'unknown', 'unavailable'}; assert _mcp_tool_input_schema(types.Tool(name='probe', inputSchema={})) == {}; assert _mcp_list_tools_next_cursor(types.ListToolsResult(tools=[])) == ''"
 USER 10002:10002
 CMD ["python", "-m", "uvicorn", "app.python_runtime.service:create_app", "--factory", "--host", "0.0.0.0", "--port", "8091"]
 

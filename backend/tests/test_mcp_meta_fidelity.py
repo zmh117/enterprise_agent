@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import tomllib
 from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.metadata import version
@@ -319,7 +320,9 @@ def _assert_fidelity(tool_use_result: object, model_requests: list[dict[str, Any
 
 
 def test_python_claude_agent_sdk_preserves_remote_mcp_result_meta() -> None:
-    assert version("claude-agent-sdk") == "0.2.134"
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    declared = project["project"]["optional-dependencies"]["python-runtime"][0]
+    assert version("claude-agent-sdk") == declared.removeprefix("claude-agent-sdk==")
     _ModelHandler.requests = []
     with ExitStack() as stack:
         mcp = stack.enter_context(_LocalHttpServer(_McpHandler))

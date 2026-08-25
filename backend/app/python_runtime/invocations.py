@@ -13,6 +13,7 @@ from app.modules.agent.infrastructure.runtime_protocol import validate_runtime_c
 from app.shared.build_identity import BuildIdentity, build_identity_from_environment
 from app.shared.database import Database
 
+from .claude_client import claude_cli_version, claude_sdk_version
 from .executor import PythonExecutionOutcome, agent_request_from_runtime_request
 from .tool_contract import build_tool_contract_observation
 
@@ -595,8 +596,8 @@ def _fallback_provenance(
         "runtime_kind": "python-v1",
         "runtime_version": "0.1.0",
         "protocol_version": request["protocol_version"],
-        "sdk_version": "0.2.134",
-        "cli_version": "2.1.226",
+        "sdk_version": claude_sdk_version(),
+        "cli_version": claude_cli_version(),
         "runtime_build_identity": runtime_build_identity.to_dict(),
         "model_connection_revision_id": request["model_connection"]["revision_id"],
         "model_connection_config_hash": request["model_connection"]["config_hash"],
