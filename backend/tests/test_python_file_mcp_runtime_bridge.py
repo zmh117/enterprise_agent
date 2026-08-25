@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from claude_agent_sdk import AssistantMessage, ToolResultBlock, ToolUseBlock, UserMessage
 from mcp import ClientSession, types
 from mcp.client._memory import InMemoryTransport
 import pytest
@@ -444,31 +445,21 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
                         generated,
                     ),
                 ):
-                    yield {
-                        "type": "assistant",
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": tool_use_id,
-                                "name": name,
-                                "input": {},
-                            }
+                    dumped = result.model_dump(by_alias=True, exclude_none=True)
+                    yield AssistantMessage(
+                        content=[ToolUseBlock(id=tool_use_id, name=name, input={})],
+                        model="test-model",
+                    )
+                    yield UserMessage(
+                        tool_use_result=dumped,
+                        content=[
+                            ToolResultBlock(
+                                tool_use_id=tool_use_id,
+                                content=dumped["content"],
+                                is_error=result.is_error,
+                            )
                         ],
-                    }
-                    yield {
-                        "type": "user",
-                        "tool_use_result": result.model_dump(by_alias=True, exclude_none=True),
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_use_id,
-                                "content": result.model_dump(by_alias=True, exclude_none=True)[
-                                    "content"
-                                ],
-                                "is_error": result.is_error,
-                            }
-                        ],
-                    }
+                    )
         yield {
             "type": "result",
             "subtype": "success",
@@ -610,6 +601,14 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
     assert len(transfer.uploaded) == 2
     assert not Path(captured["cwd"]).exists()
     serialized_events = json.dumps(result.tool_events, ensure_ascii=False)
+    assert [(item["tool_name"], item["status"]) for item in result.tool_events] == [
+        ("mcp__file_service__file_create_commit_intent", "STARTED"),
+        ("mcp__file_service__file_create_commit_intent", "SUCCEEDED"),
+        ("mcp__file_service__select_sandbox_output", "STARTED"),
+        ("mcp__file_service__select_sandbox_output", "SUCCEEDED"),
+        ("mcp__file_service__file_create_commit_intent", "STARTED"),
+        ("mcp__file_service__file_create_commit_intent", "SUCCEEDED"),
+    ]
     assert SOURCE.decode() not in serialized_events
     assert principal not in serialized_events
 

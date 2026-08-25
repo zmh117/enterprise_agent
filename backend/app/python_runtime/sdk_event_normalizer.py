@@ -282,7 +282,7 @@ def http_status_or_none(value: Any) -> int | None:
 def extract_text_blocks(message: Any) -> list[str]:
     texts = []
     for block in content_blocks(message):
-        block_type = sdk_value(block, "type")
+        block_type = sdk_block_type(block)
         text = sdk_value(block, "text")
         if block_type == "text" and isinstance(text, str):
             texts.append(text)
@@ -308,14 +308,16 @@ def extract_tool_events(
     events = []
     metadata = platform_tool_metadata(message)
     for block in content_blocks(message):
-        block_type = sdk_value(block, "type")
+        block_type = sdk_block_type(block)
         if block_type not in {"tool_use", "tool_result"}:
             continue
         tool_call_id = str(sdk_value(block, "id") or sdk_value(block, "tool_use_id") or "")
         if not tool_call_id:
             continue
         if block_type == "tool_use":
-            tool_name = str(sdk_value(block, "name") or sdk_value(block, "tool_name") or "unknown_tool")
+            tool_name = str(
+                sdk_value(block, "name") or sdk_value(block, "tool_name") or "unknown_tool"
+            )
             request_payload = safe_file_tool_request(tool_name, sdk_value(block, "input") or {})
             call_index[tool_call_id] = {
                 "tool_name": tool_name,
@@ -336,9 +338,7 @@ def extract_tool_events(
             {
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
-                "request_payload": bounded_payload(
-                    request_payload, limits.max_tool_response_chars
-                ),
+                "request_payload": bounded_payload(request_payload, limits.max_tool_response_chars),
                 "response_summary": bounded_payload(response, limits.max_tool_response_chars),
                 "status": status,
                 "duration_ms": 0,
@@ -400,9 +400,26 @@ def identifier_or_none(value: Any) -> str | None:
 
 def content_blocks(message: Any) -> list[Any]:
     content = sdk_value(message, "content")
+    if not isinstance(content, list):
+        nested = sdk_value(message, "message")
+        content = sdk_value(nested, "content")
     if isinstance(content, list):
         return content
     return []
+
+
+def sdk_block_type(block: Any) -> str:
+    explicit = sdk_value(block, "type")
+    if isinstance(explicit, str):
+        return explicit
+    return {
+        "TextBlock": "text",
+        "ThinkingBlock": "thinking",
+        "ToolUseBlock": "tool_use",
+        "ToolResultBlock": "tool_result",
+        "ServerToolUseBlock": "server_tool_use",
+        "ServerToolResultBlock": "server_tool_result",
+    }.get(type(block).__name__, "")
 
 
 def sdk_value(source: Any, key: str) -> Any:
@@ -423,4 +440,3 @@ def risk_level(tool_name: str) -> str:
     if tool_name.startswith("get_") or tool_name.startswith("diagnose_loki"):
         return "low"
     return "low" if tool_name == "query_loki" else "medium"
-

@@ -12,6 +12,13 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from claude_agent_sdk import (
+    AssistantMessage,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
+)
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import HTTPException
@@ -47,7 +54,7 @@ from app.python_runtime.model_binding import (
 from app.python_runtime.job_sandbox import JobSandboxLimits, JobSandboxManager
 from app.python_runtime.claude_client import ClaudeSdk, ClaudeSdkClient, build_system_prompt
 from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
-from app.python_runtime.sdk_event_normalizer import extract_tool_events
+from app.python_runtime.sdk_event_normalizer import extract_text_blocks, extract_tool_events
 from app.python_runtime.executor import (
     PythonExecutionOutcome,
     PythonRuntimeExecutor,
@@ -1880,6 +1887,155 @@ def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> Non
         ("sdk_builtin", None),
         ("unknown", None),
     ]
+
+
+def test_python_runtime_extracts_real_sdk_block_objects_without_file_content() -> None:
+    calls: dict[str, dict[str, Any]] = {}
+    limits = build_settings().execution
+    started = extract_tool_events(
+        AssistantMessage(
+            content=[
+                TextBlock(text="writing"),
+                ToolUseBlock(
+                    id="sdk-write-real-1",
+                    name="Write",
+                    input={
+                        "file_path": "outputs/result.md",
+                        "content": "sensitive generated body",
+                    },
+                ),
+            ],
+            model="safe-model",
+        ),
+        limits,
+        calls,
+    )
+    completed = extract_tool_events(
+        UserMessage(
+            content=[
+                ToolResultBlock(
+                    tool_use_id="sdk-write-real-1",
+                    content="success",
+                    is_error=False,
+                )
+            ],
+            tool_use_result=None,
+        ),
+        limits,
+        calls,
+    )
+
+    assert extract_text_blocks(
+        AssistantMessage(content=[TextBlock(text="safe text")], model="safe-model")
+    ) == ["safe text"]
+    assert [(event["tool_name"], event["status"]) for event in [*started, *completed]] == [
+        ("Write", "STARTED"),
+        ("Write", "SUCCEEDED"),
+    ]
+    serialized = json.dumps([*started, *completed], ensure_ascii=False)
+    assert "outputs/result.md" in serialized
+    assert "sensitive generated body" not in serialized
+    assert "success" not in serialized
+
+
+def test_python_runtime_keeps_real_sdk_tool_events_when_model_result_fails() -> None:
+    async def query(**_kwargs: Any) -> Any:
+        yield AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="sdk-write-before-failure-1",
+                    name="Write",
+                    input={
+                        "file_path": "outputs/result.md",
+                        "content": "sensitive generated body",
+                    },
+                )
+            ],
+            model="safe-model",
+        )
+        yield {
+            "type": "result",
+            "is_error": True,
+            "subtype": "provider_error",
+            "errors": ["provider failed"],
+            "result": "",
+        }
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    client = ClaudeSdkClient(
+        model="safe-model",
+        limits=build_settings().execution,
+        api_key="runtime-model-key-value",
+        sdk_loader=lambda: sdk,
+    )
+    context = AgentExecutionContext(
+        system_role="file agent",
+        safety_rules=["sandbox only"],
+        user_question="create a Markdown output",
+        project_code="project-1",
+        allowed_tools=[],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        runtime_protocol_version="1.4",
+    )
+
+    with pytest.raises(RetryableExecutionError) as captured:
+        client.run(
+            AgentRunRequest(
+                job_id="job-sdk-tool-failure",
+                user_id="user-sdk-tool-failure",
+                project_code="project-1",
+                invocation_id="invocation-sdk-tool-failure",
+                context=context,
+            )
+        )
+
+    assert [(item["tool_name"], item["status"]) for item in captured.value.tool_events] == [
+        ("Write", "STARTED")
+    ]
+    assert "sensitive generated body" not in json.dumps(
+        captured.value.tool_events, ensure_ascii=False
+    )
+
+
+def test_python_runtime_classifies_local_file_selector_as_sdk_custom() -> None:
+    request = _request()
+    request["mcp_servers"].append(
+        {
+            "server_code": "file-service",
+            "tools": [
+                {
+                    "tool_name": "file_create_commit_intent",
+                    "required_scope": "mcp:file-service:file_create_commit_intent:invoke",
+                    "tool_schema_hash": "c" * 64,
+                }
+            ],
+        }
+    )
+
+    normalized = normalize_tool_events(
+        [
+            {
+                "tool_call_id": "sdk-select-output-1",
+                "tool_name": "mcp__file_service__select_sandbox_output",
+                "status": "SUCCEEDED",
+            }
+        ],
+        request,
+    )
+
+    assert len(normalized) == 1
+    assert normalized[0]["tool_origin"] == "sdk_custom"
+    assert normalized[0]["server_code"] is None
+    assert normalized[0]["tool_name"] == "select_sandbox_output"
 
 
 def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> None:

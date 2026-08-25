@@ -27,6 +27,9 @@ SDK_BUILTIN_TOOLS = frozenset(
     }
 )
 PLATFORM_SDK_TOOLS: frozenset[str] = frozenset()
+RUNTIME_DERIVED_TOOL_ALIASES = {
+    "mcp__file_service__select_sandbox_output": "select_sandbox_output",
+}
 FORBIDDEN_TOOL_INPUT_FIELDS = frozenset(
     {
         "authorization",
@@ -79,6 +82,11 @@ def normalize_tool_events(
     for event in events[:128]:
         full_tool_name = str(event.get("tool_name") or "unknown_tool")
         published_tool = published.get(full_tool_name)
+        derived_tool = (
+            RUNTIME_DERIVED_TOOL_ALIASES.get(full_tool_name)
+            if _file_commit_flow_is_frozen(request)
+            else None
+        )
         if published_tool:
             tool_origin = "mcp"
             server_code: str | None = published_tool[0]
@@ -87,6 +95,10 @@ def normalize_tool_events(
             tool_origin = "sdk_builtin"
             server_code = None
             tool_name = full_tool_name
+        elif derived_tool is not None:
+            tool_origin = "sdk_custom"
+            server_code = None
+            tool_name = derived_tool
         elif full_tool_name in PLATFORM_SDK_TOOLS:
             tool_origin = "sdk_custom"
             server_code = None
@@ -140,3 +152,16 @@ def normalize_tool_events(
             }
         normalized.append(item)
     return tuple(normalized)
+
+
+def _file_commit_flow_is_frozen(request: dict[str, Any]) -> bool:
+    return any(
+        str(server.get("server_code") or "") == "file-service"
+        and any(
+            str(tool.get("tool_name") or "") == "file_create_commit_intent"
+            for tool in server.get("tools") or []
+            if isinstance(tool, dict)
+        )
+        for server in request.get("mcp_servers") or []
+        if isinstance(server, dict)
+    )

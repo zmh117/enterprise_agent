@@ -184,7 +184,6 @@ class ClaudeSdkClient:
         options = self._build_options(sdk, runtime_context, mcp_server, cli_stderr, binding)
         prompt = streaming_user_prompt(request.context.user_question)
         assistant_texts: list[str] = []
-        parsed_tool_events: list[dict[str, Any]] = []
         parsed_tool_calls: dict[str, dict[str, Any]] = {}
         final_answer = ""
         audit = SdkEventNormalizer()
@@ -217,9 +216,7 @@ class ClaudeSdkClient:
                         ),
                     )
                 assistant_texts.extend(extract_text_blocks(message))
-                parsed_tool_events.extend(
-                    extract_tool_events(message, self.limits, parsed_tool_calls)
-                )
+                tool_events.extend(extract_tool_events(message, self.limits, parsed_tool_calls))
                 result_text = extract_result_text(message)
                 if result_text:
                     final_answer = result_text
@@ -249,7 +246,7 @@ class ClaudeSdkClient:
             )
         return AgentRunResult(
             final_answer=final_answer,
-            tool_events=tool_events if tool_events else parsed_tool_events,
+            tool_events=tool_events,
         )
 
     async def _consume_with_cancellation(
