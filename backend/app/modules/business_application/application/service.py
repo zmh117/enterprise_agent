@@ -36,6 +36,7 @@ from app.modules.business_application.domain.policies import (
 from app.modules.document_processing import (
     DOCLING_LAYOUT_OCR_V2,
     DocumentProcessingProfileCode,
+    DocumentProcessingStatus,
     document_processing_profile_snapshot,
     document_processing_state,
 )
@@ -1037,9 +1038,11 @@ class BusinessApplicationService:
         }
 
     def _snapshot_summary(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        document_profile, document_profile_source = publication_document_processing_profile(
-            snapshot
-        )
+        (
+            document_profile,
+            document_profile_source,
+            document_profile_state,
+        ) = self._publication_document_processing_view(snapshot)
         return {
             "schema_version": snapshot.get("schema_version"),
             "application": snapshot.get("application"),
@@ -1057,7 +1060,7 @@ class BusinessApplicationService:
             "document_processing_profile_version": document_profile["version"],
             "document_processing_profile_hash": document_profile["hash"],
             "document_processing_profile_source": document_profile_source,
-            **document_processing_state(document_profile["code"]),
+            **document_profile_state,
             "task_file_features": validate_task_file_features(snapshot.get("task_file_features")),
             "task_workspace_retention_source": "publication_snapshot",
             "runtime_readiness": self.runtime_evaluator.evaluate(
@@ -1065,6 +1068,38 @@ class BusinessApplicationService:
                 deployment=None,
             ).to_dict(),
         }
+
+    @staticmethod
+    def _publication_document_processing_view(
+        snapshot: dict[str, Any],
+    ) -> tuple[dict[str, str], str, dict[str, str]]:
+        try:
+            profile, source = publication_document_processing_profile(snapshot)
+        except NonRetryableExecutionError:
+            frozen = snapshot.get("document_processing_profile")
+            if not isinstance(frozen, dict) or set(frozen) != {"code", "version", "hash"}:
+                raise
+            code = str(frozen.get("code") or "")
+            version = str(frozen.get("version") or "")
+            profile_hash = str(frozen.get("hash") or "")
+            if (
+                code != DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
+                or version != DOCLING_LAYOUT_OCR_V2.version
+                or len(profile_hash) != 64
+                or any(character not in "0123456789abcdef" for character in profile_hash)
+            ):
+                raise
+            return (
+                {"code": code, "version": version, "hash": profile_hash},
+                "publication_snapshot",
+                {
+                    "document_processing_status": (
+                        DocumentProcessingStatus.CONFIGURED_UNAVAILABLE.value
+                    ),
+                    "document_processing_reason_code": "profile_version_unavailable",
+                },
+            )
+        return profile, source, document_processing_state(profile["code"])
 
     def _deployment_with_readiness(self, deployment: dict[str, Any]) -> dict[str, Any]:
         snapshot: dict[str, Any] | None = None

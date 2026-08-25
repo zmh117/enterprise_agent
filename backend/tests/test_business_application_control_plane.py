@@ -506,6 +506,93 @@ def test_document_processing_profile_is_strict_and_frozen() -> None:
     }
 
 
+def test_historical_profile_hash_remains_manageable_but_cannot_be_activated() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="historical-document-profile",
+        name="Historical Document Profile",
+        description="safe",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    payload = draft_payload()
+    payload["document_processing_profile_code"] = "docling-layout-ocr-v2"
+    enable_file_context_dependencies(container, payload)
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="historical-document-profile",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+    publication = service.publish(
+        actor_id="user_local_admin",
+        code="historical-document-profile",
+        revision_id=str(revision["id"]),
+    )
+
+    frozen = container.business_application_repository.get_publication(str(publication["id"]))
+    historical_hash = "7" * 64
+    historical_snapshot = dict(frozen["snapshot"])
+    historical_snapshot["document_processing_profile"] = {
+        **dict(historical_snapshot["document_processing_profile"]),
+        "hash": historical_hash,
+    }
+    container.database.execute(
+        """
+        update business_application_publication
+           set document_processing_profile_hash = ?, snapshot_json = ?, config_hash = ?
+         where id = ?
+        """,
+        (
+            historical_hash,
+            canonical_json(historical_snapshot),
+            snapshot_hash(historical_snapshot),
+            str(publication["id"]),
+        ),
+    )
+
+    app = create_app(control_plane_settings(), container_factory=lambda _: container)
+    with TestClient(app) as client:
+        login(client)
+        response = client.get("/api/admin/business-applications/historical-document-profile")
+        assert response.status_code == 200
+        historical = response.json()["application"]["publications"][0]
+        assert historical["document_processing_profile_hash"] == historical_hash
+        assert historical["document_processing_status"] == "CONFIGURED_UNAVAILABLE"
+        assert historical["document_processing_reason_code"] == "profile_version_unavailable"
+        assert historical["runtime_status"] == "blocked"
+        assert historical["reason_code"] == "publication_integrity_error"
+
+        with pytest.raises(NonRetryableExecutionError) as blocked:
+            service.activate(
+                actor_id="user_local_admin",
+                code="historical-document-profile",
+                environment="local",
+                publication_id=str(publication["id"]),
+                expected_revision=0,
+            )
+        assert blocked.value.error_code == "integrity_error"
+
+        next_revision = service.save_draft(
+            actor_id="user_local_admin",
+            code="historical-document-profile",
+            expected_revision=int(revision["revision"]),
+            payload=payload,
+        )
+        current_publication = service.publish(
+            actor_id="user_local_admin",
+            code="historical-document-profile",
+            revision_id=str(next_revision["id"]),
+        )
+        assert current_publication["id"] != publication["id"]
+        assert (
+            current_publication["document_processing_profile_hash"]
+            == DOCLING_LAYOUT_OCR_V2.profile_hash
+        )
+
+
 def test_document_processing_profile_http_contract_rejects_arbitrary_options() -> None:
     settings = control_plane_settings()
     container = build_test_container(settings, migrate=True, seed=True)
