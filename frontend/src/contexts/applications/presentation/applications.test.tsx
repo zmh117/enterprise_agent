@@ -407,6 +407,18 @@ describe("Business Application workbench", () => {
               direction: "",
               component_type: "agent_publication",
             },
+            {
+              id: "agent_publication_default_v2",
+              code: "default-diagnostic-agent",
+              revision: 30,
+              project_code: "default",
+              status: "enabled",
+              config_hash: "agent-hash-v2",
+              runtime_kind: "python-v1",
+              runtime_protocol_versions: ["1.4"],
+              direction: "",
+              component_type: "agent_publication",
+            },
           ],
           workflows: [],
           connectors: [
@@ -464,6 +476,27 @@ describe("Business Application workbench", () => {
                 tool_identifier,
                 schema_hash: "b".repeat(64),
                 description: "受治理任务文件工具",
+                resource_kind: "file",
+              })),
+            ],
+            agent_publication_default_v2: [
+              {
+                server_code: "gitlab-mcp",
+                tool_identifier: "search_merge_requests",
+                schema_hash: "c".repeat(64),
+                description: "只读查询合并请求",
+                resource_kind: "gitlab",
+              },
+              ...[
+                "task_workspace_get",
+                "task_workspace_list_files",
+                "file_get_metadata",
+                "file_prepare_materialization",
+              ].map((tool_identifier) => ({
+                server_code: "file-service",
+                tool_identifier,
+                schema_hash: "d".repeat(64),
+                description: "升级后的受治理任务文件工具",
                 resource_kind: "file",
               })),
             ],
@@ -593,10 +626,16 @@ describe("Business Application workbench", () => {
     )
     expect(requiredFileTool).toBeChecked()
     expect(requiredFileTool).toHaveAttribute("aria-disabled", "true")
+    fireEvent.change(agentSelector, {
+      target: { value: "agent_publication_default_v2" },
+    })
+    expect(mcpTool).toBeChecked()
+    expect(requiredFileTool).toBeChecked()
     fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
 
     await waitFor(() =>
       expect(savedBody).toMatchObject({
+        agent_publication_id: "agent_publication_default_v2",
         session_policy: {
           conversation_mode: "channel",
           continuous_conversation_enabled: true,

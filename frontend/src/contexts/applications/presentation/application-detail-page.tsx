@@ -325,13 +325,27 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
               className={selectClass}
               required
               value={form.agent_publication_id}
-              onChange={(event) =>
+              onChange={(event) => {
+                const agentPublicationId = event.target.value
+                const availableTools = new Set(
+                  (
+                    catalog.data?.mcp_tools_by_agent_publication[
+                      agentPublicationId
+                    ] ?? []
+                  ).map((tool) => tool.tool_identifier)
+                )
                 setForm({
                   ...form,
-                  agent_publication_id: event.target.value,
-                  mcp_tools: [],
+                  agent_publication_id: agentPublicationId,
+                  mcp_tools: selectRequiredFileMcpTools(
+                    form.mcp_tools.filter((identifier) =>
+                      availableTools.has(identifier)
+                    ),
+                    form.task_file_features,
+                    availableTools
+                  ),
                 })
-              }
+              }}
             >
               <option value="">请选择已发布 Agent</option>
               {catalog.data?.agents
