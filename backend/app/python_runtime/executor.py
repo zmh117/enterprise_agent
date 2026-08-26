@@ -39,7 +39,11 @@ from app.python_runtime.mcp_config import (
 from app.python_runtime.tool_policy import normalize_tool_events
 from app.shared.config import ExecutionSettings
 from app.shared.build_identity import BuildIdentity, build_identity_from_environment
-from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from app.shared.exceptions import (
+    ExecutionTimeout,
+    NonRetryableExecutionError,
+    RetryableExecutionError,
+)
 
 from .model_binding import PythonModelBindingResolver
 
@@ -196,13 +200,17 @@ class PythonRuntimeExecutor:
                 },
                 tool_contract_observation=dict(client.last_tool_contract_observation),
             )
-        except NonRetryableExecutionError as exc:
+        except (ExecutionTimeout, NonRetryableExecutionError) as exc:
             if str(exc.error_code or "") == "runtime_cancelled":
                 return self._cancelled(provenance)
             failure_code = str(exc.error_code or "runtime_configuration_error")
             if failure_code == "runtime_tool_contract_remote_not_observed":
                 retry_class = "TRANSIENT"
-            elif failure_code.startswith("runtime_tool_contract_"):
+            elif (
+                isinstance(exc, ExecutionTimeout)
+                or failure_code == "execution_policy_max_tool_calls_exhausted"
+                or failure_code.startswith("runtime_tool_contract_")
+            ):
                 retry_class = "NEVER"
             else:
                 retry_class = "CONFIGURATION"

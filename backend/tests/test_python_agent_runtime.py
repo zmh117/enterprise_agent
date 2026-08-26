@@ -37,7 +37,9 @@ from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
     McpRuntimeBinding,
+    ToolCallBudget,
 )
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.model_connection.domain import (
     DEFAULT_MODEL_CONNECTION_CODE,
     ModelRuntimeBinding,
@@ -69,7 +71,12 @@ from app.python_runtime.service import (
     create_app,
 )
 from app.shared.database import Database, default_migrations_dir
-from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from app.shared.exceptions import (
+    ExecutionPolicyExceeded,
+    ExecutionTimeout,
+    NonRetryableExecutionError,
+    RetryableExecutionError,
+)
 from app.shared.build_identity import BuildIdentity
 from app.shared.migrations import Migrator
 from app.shared.model_probe_envelope import (
@@ -1152,6 +1159,215 @@ def test_runtime_tool_registry_marks_required_file_live_failure_as_drift() -> No
     }
 
 
+def _tool_budget_test_context(max_tool_calls: int) -> AgentExecutionContext:
+    tool = MCP_TOOL_MANIFEST["query_database"]
+    build_identity = {
+        "component": "control-plane",
+        "source_revision": "test-revision",
+        "build_id": "test-build",
+        "platform": "linux/amd64",
+    }
+    return AgentExecutionContext(
+        system_role="readonly diagnostic agent",
+        safety_rules=["readonly"],
+        user_question="inspect test data",
+        project_code="project-1",
+        allowed_tools=["query_database"],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        timeout_seconds=120,
+        max_turns=12,
+        max_tool_calls=max_tool_calls,
+        publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+        model_runtime_binding=ModelRuntimeBinding(
+            protocol="anthropic_compatible",
+            base_url="https://api.deepseek.com/anthropic",
+            model="deepseek-chat",
+            default_opus_model="deepseek-chat",
+            default_sonnet_model="deepseek-chat",
+            default_haiku_model="deepseek-chat",
+            subagent_model="deepseek-chat",
+            effort_level="max",
+            secret_ref="secret://not-projected",
+        ),
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code="tool-mcp",
+                tool_name="query_database",
+                required_scope="tool:query_database",
+                tool_schema_hash=tool.schema_hash,
+            ),
+        ),
+        effective_tool_names=("mcp__tool_mcp__query_database",),
+        job_tool_snapshot_hash="f" * 64,
+        control_plane_build_identity=build_identity,
+        worker_build_identity={**build_identity, "component": "agent-worker"},
+    )
+
+
+@pytest.mark.parametrize("maximum, allowed_calls", [(1, 1), (0, 0)])
+def test_python_runtime_tool_budget_hard_interrupts_before_authorization(
+    maximum: int,
+    allowed_calls: int,
+) -> None:
+    context = _tool_budget_test_context(maximum)
+    request = AgentRunRequest(
+        job_id=f"job-tool-budget-{maximum}",
+        user_id="app-user-1",
+        project_code="project-1",
+        invocation_id=f"invocation-tool-budget-{maximum}",
+        context=context,
+    )
+    client = FixedMcpClaudeSdkClient(
+        limits=build_settings().execution,
+        api_key="runtime-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        runtime_build_identity=BuildIdentity(
+            "python-runtime",
+            "test-revision",
+            "test-build",
+            "linux/amd64",
+        ),
+    )
+    sdk = ClaudeSdk(
+        query=cast(Any, None),
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+        permission_allow=lambda *, updated_input: {
+            "behavior": "allow",
+            "updated_input": updated_input,
+        },
+        permission_deny=lambda *, message, interrupt: {
+            "behavior": "deny",
+            "message": message,
+            "interrupt": interrupt,
+        },
+    )
+    budget = ToolCallBudget(maximum=maximum)
+    sandbox = client.sandbox_manager.create(request.job_id)
+    sandbox_token = client._sandbox.set(sandbox)
+    try:
+        options = client._build_options(
+            sdk,
+            context,
+            client._build_mcp_server(request),
+            [],
+            context.model_runtime_binding,
+            tool_call_budget=budget,
+        )
+        decisions = [
+            asyncio.run(
+                options["can_use_tool"](
+                    "mcp__tool_mcp__query_database",
+                    {"query": f"select {index}"},
+                    object(),
+                )
+            )
+            for index in range(allowed_calls + 1)
+        ]
+    finally:
+        client._sandbox.reset(sandbox_token)
+        sandbox.cleanup()
+
+    assert [item["behavior"] for item in decisions[:allowed_calls]] == ["allow"] * allowed_calls
+    assert decisions[-1]["behavior"] == "deny"
+    assert decisions[-1]["interrupt"] is True
+    assert budget.attempted == allowed_calls + 1
+    assert budget.exhausted is True
+
+
+@pytest.mark.parametrize("sdk_completion", ["normal", "propagated", "wrapped"])
+def test_python_runtime_normalizes_tool_budget_exhaustion_across_sdk_paths(
+    sdk_completion: str,
+) -> None:
+    async def query(*, options: dict[str, Any], **_kwargs: Any) -> Any:
+        yield AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="sdk-tool-before-budget-1",
+                    name="mcp__tool_mcp__query_database",
+                    input={"query": "select 1"},
+                )
+            ],
+            model="safe-model",
+        )
+        assert (
+            await options["can_use_tool"](
+                "mcp__tool_mcp__query_database",
+                {"query": "select 1"},
+                object(),
+            )
+        )["behavior"] == "allow"
+        denied = await options["can_use_tool"](
+            "mcp__tool_mcp__query_database",
+            {"query": "select 2"},
+            object(),
+        )
+        assert denied["behavior"] == "deny"
+        assert denied["interrupt"] is True
+        if sdk_completion == "propagated":
+            raise ExecutionPolicyExceeded("SDK propagated permission interrupt")
+        if sdk_completion == "wrapped":
+            raise RuntimeError("SDK wrapped permission interrupt")
+        yield {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "must be discarded after budget exhaustion",
+        }
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+        permission_allow=lambda *, updated_input: {
+            "behavior": "allow",
+            "updated_input": updated_input,
+        },
+        permission_deny=lambda *, message, interrupt: {
+            "behavior": "deny",
+            "message": message,
+            "interrupt": interrupt,
+        },
+    )
+    context = _tool_budget_test_context(1)
+    client = FixedMcpClaudeSdkClient(
+        limits=build_settings().execution,
+        api_key="runtime-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        runtime_build_identity=BuildIdentity(
+            "python-runtime",
+            "test-revision",
+            "test-build",
+            "linux/amd64",
+        ),
+    )
+    client.sdk_loader = lambda: sdk
+
+    with pytest.raises(ExecutionPolicyExceeded) as captured:
+        client.run(
+            AgentRunRequest(
+                job_id=f"job-sdk-budget-{sdk_completion}",
+                user_id="user-sdk-budget",
+                project_code="project-1",
+                invocation_id=f"invocation-sdk-budget-{sdk_completion}",
+                context=context,
+            )
+        )
+
+    assert captured.value.error_code == "execution_policy_max_tool_calls_exhausted"
+    assert [(event["status"], event["tool_call_id"]) for event in captured.value.tool_events] == [
+        ("STARTED", "sdk-tool-before-budget-1")
+    ]
+
+
 def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
     context = AgentExecutionContext(
         system_role="readonly diagnostic agent",
@@ -2036,6 +2252,164 @@ def test_python_runtime_classifies_local_file_selector_as_sdk_custom() -> None:
     assert normalized[0]["tool_origin"] == "sdk_custom"
     assert normalized[0]["server_code"] is None
     assert normalized[0]["tool_name"] == "select_sandbox_output"
+
+
+def test_python_runtime_local_wall_clock_timeout_is_structured() -> None:
+    async def query(**_kwargs: Any) -> Any:
+        await asyncio.sleep(1)
+        yield {"type": "result", "subtype": "success", "is_error": False, "result": "late"}
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    client = ClaudeSdkClient(
+        model="safe-model",
+        limits=build_settings().execution,
+        api_key="runtime-model-key-value",
+        sdk_loader=lambda: sdk,
+    )
+    context = AgentExecutionContext(
+        system_role="readonly agent",
+        safety_rules=["readonly"],
+        user_question="bounded request",
+        project_code="project-1",
+        allowed_tools=[],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        timeout_seconds=0,
+        max_turns=1,
+        max_tool_calls=0,
+    )
+
+    with pytest.raises(ExecutionTimeout) as captured:
+        client.run(
+            AgentRunRequest(
+                job_id="job-local-wall-clock-timeout",
+                user_id="user-local-wall-clock-timeout",
+                project_code="project-1",
+                invocation_id="invocation-local-wall-clock-timeout",
+                context=context,
+            )
+        )
+
+    assert captured.value.error_code == "runtime_timeout"
+    assert captured.value.tool_events == []
+
+
+def test_python_runtime_provider_timeout_remains_retryable() -> None:
+    async def query(**_kwargs: Any) -> Any:
+        raise asyncio.TimeoutError("provider request timed out")
+        yield  # pragma: no cover
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    client = ClaudeSdkClient(
+        model="safe-model",
+        limits=build_settings().execution,
+        api_key="runtime-model-key-value",
+        sdk_loader=lambda: sdk,
+    )
+    context = AgentExecutionContext(
+        system_role="readonly agent",
+        safety_rules=["readonly"],
+        user_question="provider timeout request",
+        project_code="project-1",
+        allowed_tools=[],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        timeout_seconds=120,
+        max_turns=1,
+        max_tool_calls=0,
+    )
+
+    with pytest.raises(RetryableExecutionError) as captured:
+        client.run(
+            AgentRunRequest(
+                job_id="job-provider-timeout",
+                user_id="user-provider-timeout",
+                project_code="project-1",
+                invocation_id="invocation-provider-timeout",
+                context=context,
+            )
+        )
+
+    assert captured.value.error_code != "runtime_timeout"
+
+
+@pytest.mark.parametrize(
+    ("failure_type", "error_code"),
+    [
+        (ExecutionPolicyExceeded, "execution_policy_max_tool_calls_exhausted"),
+        (ExecutionTimeout, "runtime_timeout"),
+    ],
+)
+def test_python_runtime_projects_policy_and_timeout_failures_as_never(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_type: Any,
+    error_code: str,
+) -> None:
+    failure = failure_type(
+        "internal terminal detail",
+        safe_message="执行已安全停止",
+        error_code=error_code,
+        tool_events=[
+            {
+                "tool_call_id": "runtime-terminal-tool-1",
+                "tool_name": "Read",
+                "status": "STARTED",
+            }
+        ],
+    )
+
+    class FailingClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.last_runtime_events = [
+                {"event_type": "model_call", "payload": {"status": "FAILED"}}
+            ]
+            self.last_accounting = {"status": "PARTIAL"}
+            self.last_tool_contract_observation = {"status": "MATCH"}
+
+        def run(self, _request: AgentRunRequest) -> Any:
+            raise failure
+
+    monkeypatch.setattr(
+        "app.python_runtime.executor.FixedMcpClaudeSdkClient",
+        FailingClient,
+    )
+    executor = PythonRuntimeExecutor(
+        cast(PythonModelBindingResolver, FakePythonBindingResolver()),
+        limits=build_settings().execution,
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        sdk_version="0.2.134",
+        cli_version="2.1.226",
+    )
+
+    outcome = executor.execute(_current_request(), threading.Event())
+
+    assert outcome.status == "FAILED"
+    assert outcome.failure == {
+        "code": error_code,
+        "retry_class": "NEVER",
+        "safe_message": "执行已安全停止",
+    }
+    assert [(item["tool_name"], item["status"]) for item in outcome.tool_events] == [
+        ("Read", "STARTED")
+    ]
+    assert outcome.runtime_events[0]["event_type"] == "model_call"
+    assert outcome.tool_contract_observation == {"status": "MATCH"}
 
 
 def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> None:

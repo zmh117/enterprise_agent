@@ -41,19 +41,20 @@ class JobRetryService:
         self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
 
     def is_retryable(self, exc: Exception) -> bool:
+        if getattr(exc, "error_code", "") == "runtime_timeout":
+            return False
         if isinstance(
             exc,
             (
                 PermissionDenied,
                 ToolPolicyError,
+                ExecutionTimeout,
                 NonRetryableExecutionError,
                 DiagnosticLoopExhausted,
             ),
         ):
             return False
-        return isinstance(
-            exc, (RetryableExecutionError, ExecutionTimeout, TimeoutError, ConnectionError)
-        )
+        return isinstance(exc, (RetryableExecutionError, TimeoutError, ConnectionError))
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def handle_failure(self, job: AgentJob, exc: Exception, correlation_id: str) -> str:
@@ -96,7 +97,7 @@ class JobRetryService:
             return "retry"
         terminal_status = (
             JobStatus.TIMEOUT
-            if isinstance(exc, (ExecutionTimeout, TimeoutError))
+            if isinstance(exc, (ExecutionTimeout, TimeoutError)) or error_code == "runtime_timeout"
             else JobStatus.FAILED
         )
         terminal = self.repository.transition_job(

@@ -46,6 +46,7 @@ from app.shared.build_identity import (
     build_identity_from_environment,
 )
 from app.shared.exceptions import (
+    ExecutionTimeout,
     NonRetryableExecutionError,
     RetryableExecutionError,
 )
@@ -749,16 +750,21 @@ class AgentRuntimeHttpClient:
                 execution_accounting=dict(terminal.get("accounting") or {}),
             )
         failure = dict(terminal.get("failure") or {})
-        exception_type = (
-            RetryableExecutionError
-            if failure.get("retry_class") == "TRANSIENT"
-            else NonRetryableExecutionError
-        )
+        failure_code = str(failure.get("code") or "runtime_failure")
+        exception_type: type[
+            ExecutionTimeout | RetryableExecutionError | NonRetryableExecutionError
+        ]
+        if failure_code == "runtime_timeout":
+            exception_type = ExecutionTimeout
+        elif failure.get("retry_class") == "TRANSIENT":
+            exception_type = RetryableExecutionError
+        else:
+            exception_type = NonRetryableExecutionError
         raise exception_type(
-            f"Agent Runtime failed with {failure.get('code') or 'runtime_failure'}",
+            f"Agent Runtime failed with {failure_code}",
             safe_message=str(failure.get("safe_message") or "Agent Runtime 执行失败"),
             tool_events=tool_events,
-            error_code=str(failure.get("code") or "runtime_failure"),
+            error_code=failure_code,
             diagnostics={
                 "runtime_provenance": provenance,
                 "runtime_events": [

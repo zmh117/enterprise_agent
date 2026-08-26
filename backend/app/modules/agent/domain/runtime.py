@@ -88,15 +88,24 @@ class AgentRunResult:
 class ToolCallBudget:
     maximum: int
     attempted: int = 0
+    exhausted: bool = field(default=False, init=False)
 
     def consume(self) -> None:
         self.attempted += 1
         if self.attempted > self.maximum:
-            raise ExecutionPolicyExceeded(
-                f"Agent tool call budget exhausted after {self.maximum} calls",
-                safe_message=(
-                    f"Agent 已达到本次执行允许的最大工具调用次数（{self.maximum}），"
-                    "执行已安全停止。"
-                ),
-                error_code="execution_policy_max_tool_calls_exhausted",
-            )
+            self.exhausted = True
+            raise self.exhaustion_error()
+
+    def exhaustion_error(
+        self,
+        *,
+        tool_events: list[dict[str, Any]] | None = None,
+    ) -> ExecutionPolicyExceeded:
+        return ExecutionPolicyExceeded(
+            f"Agent tool call budget exhausted after {self.maximum} calls",
+            safe_message=(
+                f"Agent 已达到本次执行允许的最大工具调用次数（{self.maximum}），执行已安全停止。"
+            ),
+            error_code="execution_policy_max_tool_calls_exhausted",
+            tool_events=tool_events,
+        )

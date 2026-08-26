@@ -30,7 +30,11 @@ from app.modules.model_connection.domain import (
     ANTHROPIC_COMPATIBLE_PROTOCOL,
     ModelRuntimeBinding,
 )
-from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from app.shared.exceptions import (
+    ExecutionTimeout,
+    NonRetryableExecutionError,
+    RetryableExecutionError,
+)
 from app.shared.build_identity import BuildIdentity
 from app.shared.tool_contract import canonical_json_sha256
 from app.python_runtime.executor import agent_request_from_runtime_request
@@ -300,8 +304,14 @@ def _provenance(request: dict[str, Any]) -> dict[str, Any]:
 
 
 class GoldenTransport:
-    def __init__(self, *, terminal_status: str = "SUCCEEDED") -> None:
+    def __init__(
+        self,
+        *,
+        terminal_status: str = "SUCCEEDED",
+        failure: dict[str, str] | None = None,
+    ) -> None:
         self.terminal_status = terminal_status
+        self.failure = failure
         self.request: dict[str, Any] = {}
         self.headers: dict[str, str] = {}
         self.cancel_payload: dict[str, Any] = {}
@@ -434,7 +444,7 @@ class GoldenTransport:
         if self.terminal_status == "SUCCEEDED":
             terminal["final_answer"] = "final answer"
         else:
-            terminal["failure"] = {
+            terminal["failure"] = self.failure or {
                 "code": "runtime_model_rate_limited",
                 "retry_class": "TRANSIENT",
                 "safe_message": "模型服务当前繁忙，请稍后重试",
@@ -887,6 +897,29 @@ def test_worker_maps_runtime_failure_and_preserves_prior_tool_events() -> None:
         client.run(_request())
 
     assert raised.value.error_code == "runtime_model_rate_limited"
+    assert len(raised.value.tool_events) == 1
+    assert raised.value.diagnostics["runtime_provenance"]["sdk_version"] == "0.3.226"
+
+
+@pytest.mark.parametrize("retry_class", ["NEVER", "TRANSIENT"])
+def test_worker_restores_runtime_timeout_without_retryable_transport_semantics(
+    retry_class: str,
+) -> None:
+    client, _ = _client(
+        GoldenTransport(
+            terminal_status="FAILED",
+            failure={
+                "code": "runtime_timeout",
+                "retry_class": retry_class,
+                "safe_message": "Claude 运行超时",
+            },
+        )
+    )
+
+    with pytest.raises(ExecutionTimeout) as raised:
+        client.run(_request())
+
+    assert raised.value.error_code == "runtime_timeout"
     assert len(raised.value.tool_events) == 1
     assert raised.value.diagnostics["runtime_provenance"]["sdk_version"] == "0.3.226"
 

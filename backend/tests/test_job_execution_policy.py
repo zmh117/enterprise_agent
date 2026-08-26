@@ -13,7 +13,12 @@ from app.modules.job.domain.execution_policy import (
 )
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.config import ExecutionSettings
-from app.shared.exceptions import ExecutionPolicyExceeded, NonRetryableExecutionError
+from app.shared.exceptions import (
+    ExecutionPolicyExceeded,
+    ExecutionTimeout,
+    NonRetryableExecutionError,
+    RetryableExecutionError,
+)
 from app.workers.agent_job_worker import AgentJobWorker
 from backend.tests.helpers import container, persisted_agent_job_message
 
@@ -181,9 +186,11 @@ def test_worker_rejects_missing_policy_before_context_tools_or_model() -> None:
 def test_tool_budget_counts_rejected_attempt() -> None:
     budget = ToolCallBudget(maximum=1)
     budget.consume()
+    assert budget.exhausted is False
     with pytest.raises(ExecutionPolicyExceeded):
         budget.consume()
     assert budget.attempted == 2
+    assert budget.exhausted is True
 
 
 def test_executor_counts_server_persisted_mcp_call_without_runtime_tool_event() -> None:
@@ -381,3 +388,65 @@ def test_worker_delivers_safe_non_retryable_tool_budget_failure_once() -> None:
     delivered = json.loads(adapter.messages[0])
     assert delivered["error_code"] == "execution_policy_max_tool_calls_exhausted"
     assert "internal detail" not in delivered["message"]
+
+
+@pytest.mark.parametrize("failure_type", [ExecutionTimeout, RetryableExecutionError])
+def test_worker_marks_runtime_timeout_terminal_without_retry_and_delivers_once(
+    failure_type: type[ExecutionTimeout | RetryableExecutionError],
+) -> None:
+    c = container()
+    adapter = _CaptureFailureDeliveryAdapter()
+    c.result_delivery_service.adapters["timeout_failure_capture"] = adapter
+    failure_name = failure_type.__name__.lower()
+    job = c.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key=f"worker-runtime-timeout-{failure_name}",
+            external_conversation_id=f"conversation-runtime-timeout-{failure_name}",
+            requester_id="local-user",
+            user_message="check",
+            reply_route={"type": "timeout_failure_capture", "target": {}},
+        )
+    )
+    tool_events = [
+        {
+            "tool_call_id": "runtime-timeout-tool-1",
+            "tool_name": "query_database",
+            "request_payload": {"sql": "select 1"},
+            "status": "STARTED",
+            "duration_ms": 1,
+            "risk_level": "medium",
+        }
+    ]
+
+    class TimeoutClient:
+        def run(self, request: object) -> object:
+            del request
+            raise failure_type(
+                "internal timeout detail must not be delivered",
+                safe_message="Claude 运行超时",
+                error_code="runtime_timeout",
+                tool_events=tool_events,
+            )
+
+    c.agent_executor.runtime_client = TimeoutClient()
+    worker = AgentJobWorker(c.settings, container=c)
+    message = persisted_agent_job_message(c, job.id)
+
+    worker.handle(message)
+    worker.handle(message)
+    delivery = c.delivery_dispatcher.dispatch_pending(limit=1)
+
+    persisted = c.agent_repository.get_job(job.id)
+    assert persisted.status == JobStatus.TIMEOUT
+    assert persisted.retry_count == 0
+    assert persisted.last_error_code == "runtime_timeout"
+    assert persisted.execution_policy_tool_call_count == 1
+    assert persisted.execution_policy_exhausted is False
+    audit_types = {row["event_type"] for row in c.audit_repository.list_for_job(job.id)}
+    assert "job.retry.scheduled" not in audit_types
+    assert "job.dead.persisted" in audit_types
+    assert delivery.succeeded == 1
+    assert len(adapter.messages) == 1
+    delivered = json.loads(adapter.messages[0])
+    assert delivered["error_code"] == "runtime_timeout"
+    assert "internal timeout detail" not in delivered["message"]

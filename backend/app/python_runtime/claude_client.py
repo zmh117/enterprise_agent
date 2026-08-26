@@ -21,6 +21,7 @@ from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
     AgentRunResult,
+    ToolCallBudget,
 )
 from app.modules.model_connection.domain import (
     ANTHROPIC_COMPATIBLE_PROTOCOL,
@@ -44,6 +45,7 @@ from app.shared.config import ExecutionSettings
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import (
     DiagnosticLoopExhausted,
+    ExecutionTimeout,
     NonRetryableExecutionError,
     RetryableExecutionError,
     ToolPolicyError,
@@ -58,6 +60,10 @@ from app.python_runtime.sdk_event_normalizer import (
 )
 
 CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES = 64 * 1024 * 1024
+
+
+class _LocalExecutionTimeout(Exception):
+    """Raised only when the Runtime-owned Job wall-clock watcher expires."""
 
 
 @dataclass(frozen=True)
@@ -181,7 +187,15 @@ class ClaudeSdkClient:
         mcp_server = await self._open_mcp_server(request, sdk)
         cli_stderr: list[str] = []
         runtime_context = await self._prepare_context(request.context)
-        options = self._build_options(sdk, runtime_context, mcp_server, cli_stderr, binding)
+        tool_call_budget = ToolCallBudget(maximum=runtime_context.max_tool_calls)
+        options = self._build_options(
+            sdk,
+            runtime_context,
+            mcp_server,
+            cli_stderr,
+            binding,
+            tool_call_budget=tool_call_budget,
+        )
         prompt = streaming_user_prompt(request.context.user_question)
         assistant_texts: list[str] = []
         parsed_tool_calls: dict[str, dict[str, Any]] = {}
@@ -227,14 +241,20 @@ class ClaudeSdkClient:
                     consume(),
                     timeout_seconds=request.context.timeout_seconds,
                 )
-        except asyncio.TimeoutError as exc:
-            raise RetryableExecutionError(
+            if tool_call_budget.exhausted:
+                raise tool_call_budget.exhaustion_error(tool_events=tool_events)
+        except _LocalExecutionTimeout as exc:
+            if tool_call_budget.exhausted:
+                raise tool_call_budget.exhaustion_error(tool_events=tool_events) from exc
+            raise ExecutionTimeout(
                 "Claude Agent SDK execution timed out",
                 safe_message="Claude 运行超时",
                 tool_events=tool_events,
                 error_code="runtime_timeout",
             ) from exc
         except Exception as exc:
+            if tool_call_budget.exhausted:
+                raise tool_call_budget.exhaustion_error(tool_events=tool_events) from exc
             self._raise_mapped_sdk_error(exc, cli_stderr, tool_events, binding)
 
         if not final_answer:
@@ -286,7 +306,7 @@ class ClaudeSdkClient:
                     safe_message="Agent 执行已取消",
                     error_code="runtime_cancelled",
                 )
-            raise asyncio.TimeoutError
+            raise _LocalExecutionTimeout
         finally:
             if cancellation is not None:
                 cancellation.cancel()
@@ -462,7 +482,10 @@ class ClaudeSdkClient:
         server: Any,
         cli_stderr: list[str],
         binding: ModelRuntimeBinding,
+        *,
+        tool_call_budget: ToolCallBudget | None = None,
     ) -> Any:
+        del tool_call_budget
         exact_tools = [f"mcp__tool_mcp__{tool_name}" for tool_name in context.allowed_tools]
         sandbox = self._sandbox.get()
         if sandbox is None:

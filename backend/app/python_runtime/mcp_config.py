@@ -10,7 +10,11 @@ from types import MappingProxyType
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
+from app.modules.agent.domain.runtime import (
+    AgentExecutionContext,
+    AgentRunRequest,
+    ToolCallBudget,
+)
 from app.shared.mcp_server_policy import (
     FILE_MCP_SERVER_CODE,
     MCP_SERVER_POLICIES,
@@ -44,7 +48,7 @@ from app.python_runtime.job_sandbox import (
 from app.python_runtime.tool_policy import contains_forbidden_tool_input
 from app.shared.config import ExecutionSettings
 from app.shared.build_identity import BuildIdentity, build_identity_from_environment
-from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.exceptions import ExecutionPolicyExceeded, NonRetryableExecutionError
 from app.python_runtime.tool_contract import build_tool_contract_observation
 
 
@@ -598,6 +602,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         server: Any,
         cli_stderr: list[str],
         binding: Any,
+        *,
+        tool_call_budget: ToolCallBudget | None = None,
     ) -> Any:
         exact_tool_set = frozenset(
             name for name in context.effective_tool_names if name not in FILE_TOOL_NAMES
@@ -610,23 +616,27 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 safe_message="当前任务沙盒不可用",
                 error_code="runtime_sandbox_unavailable",
             )
-        attempted = 0
+        budget = tool_call_budget or ToolCallBudget(maximum=context.max_tool_calls)
 
         def allow(updated_input: dict[str, Any]) -> Any:
             if sdk.permission_allow is not None:
                 return sdk.permission_allow(updated_input=updated_input)
             return {"behavior": "allow", "updated_input": updated_input}
 
-        def deny() -> Any:
+        def deny(
+            *,
+            message: str = "Tool is not authorized for this Job",
+            interrupt: bool = False,
+        ) -> Any:
             if sdk.permission_deny is not None:
                 return sdk.permission_deny(
-                    message="Tool is not authorized for this Job",
-                    interrupt=False,
+                    message=message,
+                    interrupt=interrupt,
                 )
             return {
                 "behavior": "deny",
-                "message": "Tool is not authorized for this Job",
-                "interrupt": False,
+                "message": message,
+                "interrupt": interrupt,
             }
 
         async def can_use_tool(
@@ -634,10 +644,10 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             tool_input: dict[str, Any],
             _permission_context: Any,
         ) -> Any:
-            nonlocal attempted
-            attempted += 1
-            if attempted > context.max_tool_calls:
-                return deny()
+            try:
+                budget.consume()
+            except ExecutionPolicyExceeded as exc:
+                return deny(message=exc.safe_message, interrupt=True)
             if tool_name in exact_tool_set:
                 return (
                     deny() if contains_forbidden_tool_input(tool_input) else allow(dict(tool_input))
