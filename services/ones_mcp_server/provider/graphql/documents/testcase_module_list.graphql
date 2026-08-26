@@ -1,0 +1,9 @@
+query QUERY_MODULES_IN_LIBRARY($moduleFilter: Filter) {
+  testcaseModules(filter: $moduleFilter, groupBy: {testcaseLibrary: {}}, orderBy: {isDefault: ASC, position: ASC}) {
+    uuid
+    name
+    path
+    parent { uuid }
+    testcaseCaseCount
+  }
+}

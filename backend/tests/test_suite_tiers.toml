@@ -99,6 +99,7 @@ contract = [
   "test_mcp_audit_coordinator.py",
   "test_mcp_tool_runtime.py",
   "test_mock_ones_api.py",
+  "test_ones_basic_query_interfaces.py",
   "test_ones_graphql_operations.py",
   "test_ones_identity_binding.py",
   "test_ones_mcp_runtime.py",

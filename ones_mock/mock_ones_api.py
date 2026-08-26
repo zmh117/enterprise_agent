@@ -321,6 +321,7 @@ def _task_fixture(config: MockOnesConfig, task: dict[str, Any]) -> dict[str, Any
         "estimatedHours": 0,
         "issueType": {
             "manhourStatisticMode": 0,
+            "name": issue_type["name"],
             "uuid": issue_type["uuid"],
         },
         "issueTypeScope": {"uuid": issue_type["scope_uuid"]},
@@ -330,6 +331,10 @@ def _task_fixture(config: MockOnesConfig, task: dict[str, Any]) -> dict[str, Any
         "owner": {
             "avatar": "",
             "key": f"user-{owner_uuid}",
+            "name": owner_name,
+            "uuid": owner_uuid,
+        },
+        "assign": {
             "name": owner_name,
             "uuid": owner_uuid,
         },
@@ -350,6 +355,10 @@ def _task_fixture(config: MockOnesConfig, task: dict[str, Any]) -> dict[str, Any
         },
         "remainingManhour": 0,
         "serverUpdateStamp": 1784736001000000 + number,
+        "sprint": {
+            "name": "Mock Active Sprint",
+            "uuid": "MOCK-ONES-SPRINT-ACTIVE",
+        },
         "status": {
             "category": status["category"],
             "name": status["name"],
@@ -382,6 +391,36 @@ def _issue_type_filter(variables: dict[str, Any]) -> set[str]:
     return values
 
 
+def _group_filter_values(variables: dict[str, Any], field: str) -> set[str]:
+    groups = variables.get("filterGroup")
+    if not isinstance(groups, list):
+        return set()
+    values: set[str] = set()
+    for group in groups:
+        if isinstance(group, dict):
+            values.update(_string_list(group.get(field)))
+    return values
+
+
+def _created_range(variables: dict[str, Any]) -> dict[str, int]:
+    groups = variables.get("filterGroup")
+    if not isinstance(groups, list):
+        return {}
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        value = group.get("createTime_range")
+        if not isinstance(value, dict):
+            continue
+        result: dict[str, int] = {}
+        for key in ("gte", "lte"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.isdigit():
+                result[key] = int(raw)
+        return result
+    return {}
+
+
 def _search_keyword(variables: dict[str, Any]) -> str:
     search = variables.get("search")
     if not isinstance(search, dict):
@@ -411,11 +450,27 @@ def _matches_keyword(task: dict[str, Any], keyword: str) -> bool:
 
 def _group_task_data(config: MockOnesConfig, variables: dict[str, Any]) -> dict[str, Any]:
     issue_types = _issue_type_filter(variables)
+    projects = _group_filter_values(variables, "project_in")
+    sprints = _group_filter_values(variables, "sprint_in")
+    statuses = _group_filter_values(variables, "status_in")
+    status_categories = _group_filter_values(variables, "statusCategory_in")
+    assignees = _group_filter_values(variables, "assign_in")
+    created = _created_range(variables)
     keyword = _search_keyword(variables)
     tasks = [
         fixture
         for fixture in (_task_fixture(config, task) for task in config.tasks)
         if (not issue_types or str(fixture["issueType"]["uuid"]) in issue_types)
+        and (not projects or str(fixture["project"]["uuid"]) in projects)
+        and (not sprints or str(fixture["sprint"]["uuid"]) in sprints)
+        and (not statuses or str(fixture["status"]["uuid"]) in statuses)
+        and (
+            not status_categories
+            or str(fixture["status"]["category"]) in status_categories
+        )
+        and (not assignees or str(fixture["assign"]["uuid"]) in assignees)
+        and ("gte" not in created or int(fixture["createTime"]) >= created["gte"])
+        and ("lte" not in created or int(fixture["createTime"]) <= created["lte"])
         and _matches_keyword(fixture, keyword)
     ]
     total_count = len(tasks)
@@ -455,7 +510,11 @@ def _issue_type_scopes(config: MockOnesConfig, variables: dict[str, Any]) -> dic
         requested_scope = scope if isinstance(scope, str) else None
         requested_scope_type = scope_type if isinstance(scope_type, int) else None
 
-    if requested_scope not in {None, config.project_scope_uuid} or requested_scope_type not in {
+    if requested_scope not in {
+        None,
+        config.project_uuid,
+        config.project_scope_uuid,
+    } or requested_scope_type not in {
         None,
         1,
     }:
@@ -487,6 +546,172 @@ def _issue_type_scopes(config: MockOnesConfig, variables: dict[str, Any]) -> dic
             }
         )
     return {"data": {"issueTypeScopes": scopes}}
+
+
+def _project_list(config: MockOnesConfig, variables: dict[str, Any]) -> dict[str, Any]:
+    filters = variables.get("projectFilterGroup")
+    keyword = ""
+    if isinstance(filters, list):
+        for value in filters:
+            if isinstance(value, dict) and isinstance(value.get("name_match"), str):
+                keyword = str(value["name_match"]).strip().casefold()
+                break
+    projects = [
+        {
+            "uuid": config.project_uuid,
+            "name": config.project_name,
+            "status": {
+                "uuid": "MOCK-PROJECT-STATUS-ACTIVE",
+                "name": "进行中",
+                "category": "in_progress",
+            },
+            "isSample": False,
+            "isArchive": False,
+            "owner": {
+                "uuid": config.primary_user.uuid,
+                "name": config.primary_user.name,
+            },
+        }
+    ]
+    if keyword:
+        projects = [item for item in projects if keyword in str(item["name"]).casefold()]
+    return {
+        "data": {
+            "buckets": [
+                {
+                    "projects": projects,
+                    "pageInfo": {
+                        "count": len(projects),
+                        "totalCount": len(projects),
+                        "endCursor": "mock-project-cursor" if projects else "",
+                        "hasNextPage": False,
+                    },
+                }
+            ]
+        }
+    }
+
+
+def _work_item_detail(config: MockOnesConfig, variables: dict[str, Any]) -> dict[str, Any]:
+    key = variables.get("key")
+    task = next(
+        (
+            _task_fixture(config, value)
+            for value in config.tasks
+            if key == f"task-MOCK-ONES-TASK-{value['number']}"
+        ),
+        None,
+    )
+    if task is None:
+        return {"data": {"task": None}}
+    task["descriptionText"] = "Synthetic work item detail for ONES MCP tests."
+    task["relatedTasks"] = []
+    return {"data": {"task": task}}
+
+
+def _test_bucket(collection: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "data": {
+            "buckets": [
+                {
+                    collection: items,
+                    "pageInfo": {
+                        "count": len(items),
+                        "totalCount": len(items),
+                        "endCursor": f"mock-{collection}-cursor" if items else "",
+                        "hasNextPage": False,
+                    },
+                }
+            ]
+        }
+    }
+
+
+def _testcase_libraries() -> dict[str, Any]:
+    return _test_bucket(
+        "testcaseLibraries",
+        [
+            {
+                "uuid": "MOCK-ONES-LIBRARY-001",
+                "name": "Mock Regression Library",
+                "isSample": False,
+                "testcaseCaseCount": 1,
+            }
+        ],
+    )
+
+
+def _testcase_modules() -> dict[str, Any]:
+    return {
+        "data": {
+            "testcaseModules": [
+                {
+                    "uuid": "MOCK-ONES-MODULE-001",
+                    "name": "Mock Order Module",
+                    "path": "MOCK-ONES-MODULE-001",
+                    "parent": None,
+                    "testcaseCaseCount": 1,
+                }
+            ]
+        }
+    }
+
+
+def _test_plans(config: MockOnesConfig) -> dict[str, Any]:
+    return _test_bucket(
+        "testcasePlans",
+        [
+            {
+                "uuid": "MOCK-ONES-PLAN-001",
+                "name": "Mock Release Verification",
+                "owner": {
+                    "uuid": config.primary_user.uuid,
+                    "name": config.primary_user.name,
+                },
+                "status": {"name": "进行中", "category": "in_progress"},
+                "isSample": False,
+            }
+        ],
+    )
+
+
+def _test_cases(*, plan: bool) -> dict[str, Any]:
+    item: dict[str, Any] = {"uuid": "MOCK-ONES-TESTCASE-001"}
+    collection = "testcaseCases"
+    if plan:
+        collection = "testcasePlanCases"
+        item = {"testcaseCase": item}
+    return _test_bucket(collection, [item])
+
+
+def _test_case_detail(config: MockOnesConfig) -> dict[str, Any]:
+    return {
+        "data": {
+            "testcaseCases": [
+                {
+                    "uuid": "MOCK-ONES-TESTCASE-001",
+                    "name": "Mock production order synchronization",
+                    "condition": "Synthetic precondition.",
+                    "desc": "Synthetic testcase detail.",
+                    "assign": {
+                        "uuid": config.primary_user.uuid,
+                        "name": config.primary_user.name,
+                    },
+                    "createTime": 1784736000000000,
+                    "testcaseLibrary": {"uuid": "MOCK-ONES-LIBRARY-001"},
+                    "testcaseModule": {"uuid": "MOCK-ONES-MODULE-001"},
+                    "path": "MOCK-ONES-MODULE-001",
+                }
+            ],
+            "testcaseCaseSteps": [
+                {
+                    "index": 1,
+                    "desc": "Run the synthetic action.",
+                    "result": "The synthetic result is visible.",
+                }
+            ],
+        }
+    }
 
 
 def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> FastAPI:
@@ -772,6 +997,123 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
             )
         return {"users": users}
 
+    @app.post(
+        "/project/api/project/team/{team_uuid}/project/{project_uuid}/stamps/data"
+    )
+    async def project_sprints(
+        team_uuid: str,
+        project_uuid: str,
+        payload: dict[str, Any] = Body(),
+        query_type: str = Query(alias="t"),
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+        referer: str | None = Header(default=None, alias="Referer"),
+        cache_control: str | None = Header(default=None, alias="cache-control"),
+    ) -> dict[str, Any]:
+        require_business_user(
+            ones_auth_token=ones_auth_token,
+            ones_user_id=ones_user_id,
+            referer=referer,
+            cache_control=cache_control,
+        )
+        if team_uuid != config.team_uuid or project_uuid != config.project_uuid:
+            raise HTTPException(status_code=404, detail={"code": "project_not_found"})
+        if query_type != "sprint" or payload != {"sprint": 0}:
+            raise HTTPException(status_code=400, detail={"code": "invalid_sprint_query"})
+        return {
+            "sprint": {
+                "sprints": [
+                    {
+                        "uuid": "MOCK-ONES-SPRINT-DONE",
+                        "title": "Mock Completed Sprint",
+                        "project_uuid": config.project_uuid,
+                        "project_name": config.project_name,
+                        "start_time": 1782144000000,
+                        "end_time": 1782748800000,
+                        "progress": 100,
+                        "statuses": [
+                            {"category": "done", "is_current_status": True}
+                        ],
+                    },
+                    {
+                        "uuid": "MOCK-ONES-SPRINT-ACTIVE",
+                        "title": "Mock Active Sprint",
+                        "project_uuid": config.project_uuid,
+                        "project_name": config.project_name,
+                        "start_time": 1784563200000,
+                        "end_time": 1785168000000,
+                        "progress": 50,
+                        "statuses": [
+                            {"category": "in_progress", "is_current_status": True}
+                        ],
+                    },
+                ]
+            }
+        }
+
+    @app.get("/project/api/project/team/{team_uuid}/task/{work_item_uuid}/messages")
+    async def work_item_messages(
+        team_uuid: str,
+        work_item_uuid: str,
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+        referer: str | None = Header(default=None, alias="Referer"),
+        cache_control: str | None = Header(default=None, alias="cache-control"),
+    ) -> dict[str, Any]:
+        require_business_user(
+            ones_auth_token=ones_auth_token,
+            ones_user_id=ones_user_id,
+            referer=referer,
+            cache_control=cache_control,
+        )
+        if team_uuid != config.team_uuid:
+            raise HTTPException(status_code=404, detail={"code": "team_not_found"})
+        known = {f"MOCK-ONES-TASK-{task['number']}" for task in config.tasks}
+        if work_item_uuid not in known:
+            raise HTTPException(status_code=404, detail={"code": "task_not_found"})
+        return {
+            "messages": [
+                {
+                    "uuid": "MOCK-ONES-MESSAGE-001",
+                    "type": "comment",
+                    "send_time": 1784736000000,
+                    "text": "Synthetic timeline message.",
+                }
+            ],
+            "count": 1,
+            "has_next": False,
+        }
+
+    @app.post("/project/api/project/team/{team_uuid}/users/search")
+    async def search_team_users(
+        team_uuid: str,
+        payload: dict[str, Any] = Body(),
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+        referer: str | None = Header(default=None, alias="Referer"),
+        cache_control: str | None = Header(default=None, alias="cache-control"),
+    ) -> dict[str, Any]:
+        require_business_user(
+            ones_auth_token=ones_auth_token,
+            ones_user_id=ones_user_id,
+            referer=referer,
+            cache_control=cache_control,
+        )
+        if team_uuid != config.team_uuid:
+            raise HTTPException(status_code=404, detail={"code": "team_not_found"})
+        project_uuid = payload.get("project_uuid")
+        if project_uuid not in {None, config.project_uuid}:
+            return {"users": []}
+        keyword = str(payload.get("keyword") or "").strip().casefold()
+        users = [
+            {"uuid": user.uuid, "name": user.name}
+            for user in config.users
+            if not keyword
+            or keyword in user.name.casefold()
+            or keyword in user.email.casefold()
+        ]
+        return {"users": users}
+
     @app.post("/project/api/project/team/{team_uuid}/items/graphql")
     async def graphql(
         team_uuid: str,
@@ -798,6 +1140,22 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
             return _group_task_data(config, payload.variables)
         if query_type == "issueTypeScopes":
             return _issue_type_scopes(config, payload.variables)
+        if query_type == "projects-group-list-for-project-view":
+            return _project_list(config, payload.variables)
+        if query_type == "Task":
+            return _work_item_detail(config, payload.variables)
+        if query_type == "QUERY_LIBRARY_LIST":
+            return _testcase_libraries()
+        if query_type == "library-module-list-tree-NCdREx5Y":
+            return _testcase_modules()
+        if query_type == "plan-list":
+            return _test_plans(config)
+        if query_type == "library-testcase-list-uuids":
+            return _test_cases(plan=False)
+        if query_type == "plan-testcase-list-uuids":
+            return _test_cases(plan=True)
+        if query_type == "library-testcase-detail":
+            return _test_case_detail(config)
         raise HTTPException(
             status_code=400,
             detail={

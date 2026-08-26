@@ -174,10 +174,17 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
                 correlation_id=str(request.headers.get("x-correlation-id") or "")[:128],
                 invocation_id=_invocation_id(request),
             )
+            audit_handle = getattr(result, "audit_handle", None)
+            if not isinstance(audit_handle, McpAuditHandle):
+                raise OnesMcpError(
+                    "ONES MCP Tool result is missing its audit handle",
+                    safe_message="ONES 查询审计结果无效",
+                    error_code="ones_mcp_audit_invalid",
+                )
             return _tool_result(
                 dict(result),
                 is_error=False,
-                meta=result.audit_handle.result_meta(),
+                meta=audit_handle.result_meta(),
             )
         except AppError as exc:
             return _tool_result(
@@ -413,7 +420,7 @@ def _tool_result(
         content=[types.TextContent(type="text", text=encoded)],
         structured_content=payload,
         is_error=is_error,
-        meta=meta or None,
+        _meta=meta or None,
     )
 
 

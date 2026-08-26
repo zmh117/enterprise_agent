@@ -1,0 +1,8 @@
+query TESTCASE_PLAN_CASE_LIST_UUIDS($testCaseFilter: Filter, $planFilter: Filter, $moduleFilter: Filter, $orderByFilter: Filter) {
+  buckets(groupBy: {testcasePlanCases: {}}, pagination: {limit: 201, after: "", preciseCount: false}) {
+    testcasePlanCases(filterGroup: $testCaseFilter, orderBy: $orderByFilter, limit: 201) {
+      testcaseCase { uuid }
+    }
+    pageInfo { count totalCount endCursor hasNextPage preciseCount }
+  }
+}

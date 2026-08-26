@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import cast
 
 from app.bootstrap import Container
 from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalTokenVerifier
@@ -11,7 +12,16 @@ from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
 from services.ones_mcp_server.contracts import SERVER_CODE
 from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshService
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
-from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
+from services.ones_mcp_server.provider.graphql.operation import (
+    GraphqlOperation,
+    GraphqlOperationRegistry,
+)
+from services.ones_mcp_server.provider.graphql.operations.business_queries import (
+    BUSINESS_GRAPHQL_OPERATIONS,
+)
+from services.ones_mcp_server.provider.graphql.operations.test_queries import (
+    TEST_GRAPHQL_OPERATIONS,
+)
 from services.ones_mcp_server.provider.graphql.operations.work_item_search import (
     WORK_ITEM_SEARCH_OPERATION,
 )
@@ -19,6 +29,20 @@ from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
 from services.ones_mcp_server.provider.target import validate_provider_target
 from services.ones_mcp_server.tools.registry import OnesToolRegistry
 from services.ones_mcp_server.tools.project_role_members import OnesProjectRoleMemberService
+from services.ones_mcp_server.tools.query_services import (
+    OnesIssueTypeListService,
+    OnesProjectSearchService,
+    OnesProjectSprintListService,
+    OnesTeamUserSearchService,
+    OnesTestCaseDetailService,
+    OnesTestCaseQueryService,
+    OnesTestPlanListService,
+    OnesTestcaseLibraryListService,
+    OnesTestcaseModuleListService,
+    OnesWorkItemDetailService,
+    OnesWorkItemMessageListService,
+    OnesWorkItemQueryService,
+)
 from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
 
 
@@ -57,7 +81,16 @@ def build_work_item_search_service(runtime: Container) -> OnesWorkItemSearchServ
     )
     graphql = OnesGraphqlClient(
         http,
-        GraphqlOperationRegistry((WORK_ITEM_SEARCH_OPERATION,)),
+        GraphqlOperationRegistry(
+            cast(
+                tuple[GraphqlOperation, ...],
+                (
+                    WORK_ITEM_SEARCH_OPERATION,
+                    *BUSINESS_GRAPHQL_OPERATIONS,
+                    *TEST_GRAPHQL_OPERATIONS,
+                ),
+            )
+        ),
     )
     login_settings = replace(
         settings.ones_identity,
@@ -86,15 +119,37 @@ def build_work_item_search_service(runtime: Container) -> OnesWorkItemSearchServ
 
 def build_tool_registry(runtime: Container) -> OnesToolRegistry:
     work_item_search = build_work_item_search_service(runtime)
-    project_role_members = OnesProjectRoleMemberService(
+    shared = (
         work_item_search.resolver,
-        work_item_search.graphql.http,
         work_item_search.credentials,
         work_item_search.audit,
         work_item_search.credential_refresh,
     )
+    graphql = work_item_search.graphql
+    http = graphql.http
+    project_role_members = OnesProjectRoleMemberService(
+        shared[0],
+        http,
+        shared[1],
+        shared[2],
+        shared[3],
+    )
+    query_tools = (
+        OnesProjectSearchService(*shared, graphql=graphql),
+        OnesProjectSprintListService(*shared, http=http),
+        OnesIssueTypeListService(*shared, graphql=graphql),
+        OnesWorkItemQueryService(*shared, graphql=graphql),
+        OnesWorkItemDetailService(*shared, graphql=graphql),
+        OnesWorkItemMessageListService(*shared, http=http),
+        OnesTeamUserSearchService(*shared, http=http),
+        OnesTestcaseLibraryListService(*shared, graphql=graphql),
+        OnesTestcaseModuleListService(*shared, graphql=graphql),
+        OnesTestPlanListService(*shared, graphql=graphql),
+        OnesTestCaseQueryService(*shared, graphql=graphql),
+        OnesTestCaseDetailService(*shared, graphql=graphql),
+    )
     return OnesToolRegistry(
         authenticate=work_item_search.authenticate,
-        tools=(work_item_search, project_role_members),
+        tools=(work_item_search, project_role_members, *query_tools),
         audit=work_item_search.audit,
     )

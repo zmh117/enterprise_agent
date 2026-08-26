@@ -132,7 +132,7 @@ WORK_ITEM_SCHEMA: Final[dict[str, Any]] = {
                 "uuid": {"type": "string", "maxLength": 128},
                 "name": {"type": "string", "maxLength": 300},
             },
-            "required": ["uuid", "name"],
+            "required": ["uuid"],
             "additionalProperties": False,
         },
         "issue_type": {
@@ -176,7 +176,7 @@ TESTCASE_SCHEMA: Final[dict[str, Any]] = {
         "assignee": _person(),
         "created_at": {"type": "string", "maxLength": 64},
     },
-    "required": ["uuid", "name"],
+    "required": ["uuid"],
     "additionalProperties": False,
 }
 

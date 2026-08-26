@@ -14,7 +14,8 @@ WORK_ITEM_SEARCH_DOCUMENT: Final = load_graphql_document("work_item_search.graph
 
 class WorkItemSearchOperation:
     code = WORK_ITEM_SEARCH_OPERATION_CODE
-    path = WORK_ITEM_SEARCH_PATH
+    path_template = WORK_ITEM_SEARCH_PATH
+    query_type = ""
     document = WORK_ITEM_SEARCH_DOCUMENT
 
     def build_variables(

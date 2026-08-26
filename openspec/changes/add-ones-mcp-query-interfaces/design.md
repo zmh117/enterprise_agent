@@ -69,7 +69,7 @@ HTTP Client 继续拒绝调用方直接在 path 中传入 `?`、fragment、schem
 
 ### 5. 现有 Tool 保持 Schema 兼容，新 Tool 通过新 Publication 启用
 
-`ones_work_item_search` 保持现有 `keyword + issue_type + limit` 输入与 `number/name/type` 输出，由服务端把稳定 `demand|task|defect` 映射为当前项目/Team 中查询得到的工作项类型，再执行真实 `group-task-data` 查询。若类型无法唯一解析则失败关闭，不猜 UUID。
+`ones_work_item_search` 保持现有 `keyword + issue_type + limit` 输入、`number/name/type` 输出和既有 Provider 实现，不改变已发布 schema hash。由于旧输入没有项目范围，而真实 ONES 工作项类型 UUID 属于项目范围，本 change 不会把 `demand|task|defect` 猜测映射到一个或多个项目。需要真实 ONES 查询的新 Publication 必须使用 `ones_search_projects` → `ones_list_issue_types` → `ones_query_work_items`。
 
 新增 Tool 进入代码 Manifest 后，不自动修改旧 Agent/Application Publication。管理员需要选择新 Tool、发布 Agent、在业务应用中选择新 Agent Publication 与 Tool 子集、发布并激活，再由新 Job 冻结使用。
 

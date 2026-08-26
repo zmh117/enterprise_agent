@@ -1,0 +1,20 @@
+{
+  buckets(groupBy: $groupBy, orderBy: $groupOrderBy, pagination: $pagination, filter: $groupFilter) {
+    tasks(filterGroup: $filterGroup, orderBy: $orderBy, limit: 101, includeAncestors: {pathField: "path"}, orderByPath: "path") {
+      uuid
+      number
+      name
+      serverUpdateStamp
+      createTime
+      subTaskCount
+      subTaskDoneCount
+      issueType { uuid }
+      project { uuid name }
+      status { uuid name category }
+      owner { uuid name }
+      assign { uuid name }
+      sprint { uuid name }
+    }
+    pageInfo { count totalCount endCursor hasNextPage preciseCount }
+  }
+}

@@ -1,0 +1,18 @@
+query QUERY_TESTCASES_DETAIL($testCaseFilter: Filter, $stepFilter: Filter) {
+  testcaseCases(filter: $testCaseFilter) {
+    uuid
+    name
+    condition
+    desc
+    assign { uuid name }
+    createTime
+    testcaseLibrary { uuid }
+    testcaseModule { uuid }
+    path
+  }
+  testcaseCaseSteps(filter: $stepFilter, orderBy: {index: ASC}) {
+    index
+    desc
+    result
+  }
+}

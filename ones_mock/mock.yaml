@@ -83,6 +83,14 @@ statuses:
     uuid: MOCK-STATUS-TODO
     name: 待处理
     category: to_do
+  in_progress:
+    uuid: MOCK-STATUS-IN-PROGRESS
+    name: 处理中
+    category: in_progress
+  done:
+    uuid: MOCK-STATUS-DONE
+    name: 已完成
+    category: done
 
 tasks:
   - number: 900101
@@ -95,7 +103,7 @@ tasks:
     name: "Mock task: verify production order synchronization"
     issue_type: task
     owner_uuid: MOCK-ONES-USER-002
-    status: todo
+    status: done
     priority: normal
   - number: 900103
     name: "Mock defect: order status is not refreshed"

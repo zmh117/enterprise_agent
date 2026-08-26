@@ -1,0 +1,11 @@
+query QUERY_LIBRARY_LIST {
+  buckets(pagination: $pagination, groupBy: {testcaseLibraries: {}}) {
+    testcaseLibraries(orderBy: {isPin: DESC, namePinyin: ASC}) {
+      uuid
+      name
+      isSample
+      testcaseCaseCount
+    }
+    pageInfo { count totalCount endCursor hasNextPage }
+  }
+}

@@ -16,6 +16,27 @@ tools over stateless Streamable HTTP. It is not an arbitrary GraphQL or HTTP pro
 - `credentials/`: 401 refresh, per-credential locking, revision CAS, and refresh audit.
 - `tools/`: MCP Tool validation and business/audit orchestration.
 
+## Read-only query tools
+
+The server keeps the legacy `ones_work_item_search` and
+`ones_list_project_role_members` tools and also registers these fixed business
+queries:
+
+- Project discovery and structure: `ones_search_projects`,
+  `ones_list_project_sprints`, and `ones_list_issue_types`.
+- Work items: `ones_query_work_items`, `ones_get_work_item_detail`, and
+  `ones_list_work_item_messages`.
+- People: `ones_search_team_users`.
+- Test assets: `ones_list_testcase_libraries`, `ones_list_testcase_modules`,
+  `ones_list_test_plans`, `ones_query_test_cases`, and
+  `ones_get_test_case_detail`.
+
+Every tool accepts only bounded business arguments. Provider origin, default Team,
+credential headers, HTTP path, GraphQL document, and fixed query type remain
+server-owned. New tools become callable only after the normal Agent/Application
+publication flow freezes them into a new Job; adding them to the code manifest does
+not widen an existing publication.
+
 ## Adding a GraphQL-backed Tool
 
 1. Add a fixed query operation under `provider/graphql/operations/`. The operation

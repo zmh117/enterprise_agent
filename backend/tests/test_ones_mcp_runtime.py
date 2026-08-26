@@ -44,6 +44,9 @@ from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshSe
 from services.ones_mcp_server.errors import OnesMcpError
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
 from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
+from services.ones_mcp_server.provider.graphql.operations.business_queries import (
+    BUSINESS_GRAPHQL_OPERATIONS,
+)
 from services.ones_mcp_server.provider.graphql.operations.work_item_search import (
     WORK_ITEM_SEARCH_OPERATION,
 )
@@ -51,6 +54,7 @@ from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
 from services.ones_mcp_server.tools.project_role_members import (
     OnesProjectRoleMemberService,
 )
+from services.ones_mcp_server.tools.query_services import OnesProjectSearchService
 from services.ones_mcp_server.tools.registry import OnesToolRegistry
 from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
 
@@ -79,7 +83,7 @@ class _MockProviderTransport:
         headers = {key: value for key, value in request.header_items()}
         response = self.client.request(
             request.get_method(),
-            target.path,
+            target.path + (f"?{target.query}" if target.query else ""),
             content=bytes(request.data or b""),
             headers=headers,
         )
@@ -144,9 +148,7 @@ def _fixture(
         ("agent_publication_default_v1",),
     )
     assert next_order is not None
-    for offset, tool_identifier in enumerate(
-        ("ones_work_item_search", PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER)
-    ):
+    for offset, tool_identifier in enumerate(capabilities):
         definition = MCP_TOOL_MANIFEST[tool_identifier]
         runtime.database.execute(
             """
@@ -245,7 +247,9 @@ def _fixture(
     )
     graphql = OnesGraphqlClient(
         provider_http,
-        GraphqlOperationRegistry((WORK_ITEM_SEARCH_OPERATION,)),
+        GraphqlOperationRegistry(
+            (WORK_ITEM_SEARCH_OPERATION, *BUSINESS_GRAPHQL_OPERATIONS)
+        ),
     )
     resolver = OnesPrincipalResolver(
         runtime.database,
@@ -274,9 +278,16 @@ def _fixture(
         audit,
         refresh,
     )
+    project_search_service = OnesProjectSearchService(
+        resolver,
+        credentials,
+        audit,
+        refresh,
+        graphql=graphql,
+    )
     registry = OnesToolRegistry(
         authenticate=service.authenticate,
-        tools=(service, role_service),
+        tools=(service, role_service, project_search_service),
         audit=audit,
     )
     return {
@@ -287,6 +298,7 @@ def _fixture(
         "claims": service.authenticate(token),
         "service": service,
         "role_service": role_service,
+        "project_search_service": project_search_service,
         "registry": registry,
         "provider_http": provider_http,
         "login": login,
@@ -404,6 +416,53 @@ def test_ones_mcp_refreshes_stale_token_once_and_retries_mock_query() -> None:
         ("TOOL", 0, "SUCCEEDED"),
         ("AUTHORIZATION", 0, "SUCCEEDED"),
     }
+
+
+def test_new_project_query_uses_job_scope_refresh_and_safe_provider_audit() -> None:
+    fixture = _fixture(
+        initial_token="stale-test-token",
+        capabilities=("ones_work_item_search", "ones_search_projects"),
+    )
+    service = fixture["project_search_service"]
+
+    result = service.invoke(
+        claims=service.authenticate(fixture["token"]),
+        arguments={"keyword": "Manufacturing", "limit": 10},
+        correlation_id="ones-project-search-refresh",
+        invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
+    )
+
+    assert result["projects"][0]["uuid"] == fixture["mock"].config.project_uuid
+    assert fixture["login"].calls == 1
+    rows = fixture["runtime"].database.execute(
+        "select * from mcp_operation_audit where correlation_id = ? order by created_at, id",
+        ("ones-project-search-refresh",),
+    )
+    provider_rows = [row for row in rows if row["event_kind"] == "PROVIDER"]
+    assert [(row["attempt"], row["status"]) for row in provider_rows] == [
+        (0, "FAILED"),
+        (1, "SUCCEEDED"),
+    ]
+    request = json.loads(provider_rows[1]["business_request_json"])
+    response = json.loads(provider_rows[1]["business_response_json"])
+    assert request["operation"] == "project_search"
+    assert request["query_type"] == "projects-group-list-for-project-view"
+    assert "query" not in request
+    assert response == {
+        "result_keys": [
+            "projects",
+            "returned",
+            "total",
+            "truncated",
+            "untrusted_data",
+        ],
+        "returned": 1,
+        "total": 1,
+        "truncated": False,
+    }
+    evidence = json.dumps(rows, ensure_ascii=False)
+    assert fixture["mock"].token not in evidence
+    assert fixture["mock"].password not in evidence
 
 
 def test_project_role_members_joins_fixed_rest_calls_and_audits_only_safe_summaries() -> None:

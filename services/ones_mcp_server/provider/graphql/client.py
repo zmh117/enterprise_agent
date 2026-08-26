@@ -34,7 +34,10 @@ class OnesGraphqlClient:
     ) -> dict[str, Any]:
         operation = self.registry.require(operation_code)
         variables = operation.build_variables(arguments, context)
-        return {"query": operation.document, "variables": variables}
+        provider_variables = {
+            key: value for key, value in variables.items() if not key.startswith("_")
+        }
+        return {"query": operation.document, "variables": provider_variables}
 
     def execute(
         self,
@@ -45,14 +48,36 @@ class OnesGraphqlClient:
         headers: dict[str, str],
     ) -> GraphqlExecution:
         operation = self.registry.require(operation_code)
-        request = self.build_request(
-            operation_code,
-            arguments=arguments,
-            context=context,
-        )
-        response = self.http.post_json(operation.path, request, headers=headers)
+        variables = operation.build_variables(arguments, context)
+        provider_variables = {
+            key: value for key, value in variables.items() if not key.startswith("_")
+        }
+        request = {"query": operation.document, "variables": provider_variables}
+        team_uuid = context.get("team_id")
+        if not isinstance(team_uuid, str) or not team_uuid:
+            raise ValueError("ONES GraphQL Team context is invalid")
+        path = operation.path_template.format(team_uuid=team_uuid)
+        query = {"t": operation.query_type} if operation.query_type else None
+        if query is None:
+            response = self.http.post_json(path, request, headers=headers)
+        else:
+            response = self.http.post_json(
+                path,
+                request,
+                headers=headers,
+                query=query,
+            )
         output = operation.parse_response(
             response,
-            variables=dict(request["variables"]),
+            variables=variables,
         )
-        return GraphqlExecution(request=request, response=response, output=output)
+        return GraphqlExecution(
+            request={
+                "operation": operation.code,
+                "path": path,
+                **({"query_type": operation.query_type} if operation.query_type else {}),
+                "variables": provider_variables,
+            },
+            response=response,
+            output=output,
+        )

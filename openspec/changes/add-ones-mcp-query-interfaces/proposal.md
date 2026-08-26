@@ -7,7 +7,7 @@
 - 为真实 ONES GraphQL 查询增加代码拥有的固定文档、固定 `t` 查询类型、Team 路径模板、变量构造和有界响应解析；所有 `.graphql` 文档集中存放，Tool 输入不得提供 GraphQL、URL、Header、Token、Team 或任意查询参数。
 - 为迭代列表、工作项时间线、Team 人员搜索等非 GraphQL 接口增加精确 REST Operation，保留现有项目角色成员的两步 REST 查询。
 - 增加项目、迭代、工作项类型、工作项查询/详情/时间线、Team 人员以及测试库/路径/计划/用例等只读业务 MCP Tool，并将其加入代码 Manifest、发布和 Job 冻结链路。
-- 保留现有 `ones_work_item_search` Tool 的 Schema 兼容性，并把它映射到真实 ONES 工作项查询契约，避免已发布配置因无必要的 Schema 变化而漂移。
+- 保留现有 `ones_work_item_search` Tool 的 Schema 和既有实现兼容性，避免已发布配置因无必要的 Schema 变化而漂移；真实项目范围查询使用新增的项目、工作项类型和工作项 Tool，不用旧 Tool 猜测项目范围类型 UUID。
 - 扩展独立 ONES Mock，使其使用合成数据精确模拟新增请求方法、路径、固定查询类型、分页和有界响应；真实抓取中的人员、消息、附件、标识和认证材料不得进入代码、测试或审计。
 - 本 change 不增加统计口径、统计聚合 Tool、Agent Skill、写接口、任意查询执行器或真实 ONES 凭据管理能力。
 

@@ -1,0 +1,13 @@
+{
+  buckets(groupBy: $groupBy, orderBy: $orderBy, pagination: {limit: 50, after: "", preciseCount: true}) {
+    projects(limit: 101, orderBy: $projectOrderBy, filterGroup: $projectFilterGroup) {
+      uuid
+      name
+      status { uuid name category }
+      isSample
+      isArchive
+      owner { uuid name }
+    }
+    pageInfo { count totalCount endCursor hasNextPage }
+  }
+}

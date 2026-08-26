@@ -1,0 +1,6 @@
+query TESTCASE_UUIDS($testCaseFilter: Filter, $orderByFilter: Filter) {
+  buckets(groupBy: {testcaseCases: {}}, pagination: {limit: 201, after: "", preciseCount: false}) {
+    testcaseCases(filterGroup: $testCaseFilter, orderBy: $orderByFilter, limit: 201) { uuid }
+    pageInfo { count totalCount endCursor hasNextPage preciseCount }
+  }
+}

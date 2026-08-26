@@ -1,0 +1,7 @@
+{
+  issueTypeScopes(filter: $filter) {
+    issueType { uuid name subIssueType }
+    scope
+    uuid
+  }
+}

@@ -1,41 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
-from services.ones_mcp_server.contracts import (
-    PROJECT_ROLE_MEMBER_LIMITS,
-    PROVIDER_HEADERS,
-)
+from services.ones_mcp_server.contracts import PROJECT_ROLE_MEMBER_LIMITS
 from services.ones_mcp_server.errors import invalid_provider_response
 from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
-
-
-@dataclass(frozen=True, slots=True)
-class RestExecution:
-    request: dict[str, Any]
-    response: dict[str, Any]
-    output: Any
+from services.ones_mcp_server.provider.rest.operations.common import (
+    RestExecution,
+    request_headers,
+)
 
 
 def _bounded_string(value: object, *, maximum: int) -> str:
     if not isinstance(value, str) or not value or len(value) > maximum:
         raise invalid_provider_response("ones_provider_schema_invalid")
     return value
-
-
-def _request_headers(
-    http: OnesProviderHttpClient,
-    *,
-    token: str,
-    user_id: str,
-) -> dict[str, str]:
-    return {
-        PROVIDER_HEADERS["token"]: token,
-        PROVIDER_HEADERS["user"]: user_id,
-        "Referer": http.target.base_url,
-        "cache-control": "no-cache",
-    }
 
 
 class ProjectRoleMembersOperation:
@@ -60,7 +39,7 @@ class ProjectRoleMembersOperation:
         response = http.get_json(
             path,
             body,
-            headers=_request_headers(http, token=token, user_id=user_id),
+            headers=request_headers(http, token=token, user_id=user_id),
         )
         return RestExecution(
             request={"operation": self.code, "method": self.method, "path": path, "body": body},
@@ -149,7 +128,7 @@ class TeamUsersOperation:
         response = http.post_json(
             path,
             body,
-            headers=_request_headers(http, token=token, user_id=user_id),
+            headers=request_headers(http, token=token, user_id=user_id),
         )
         return RestExecution(
             request={"operation": self.code, "method": self.method, "path": path, "body": body},

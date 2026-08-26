@@ -27,6 +27,7 @@ from services.ones_mcp_server.contracts import (
     validate_provider_target,
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -161,15 +162,37 @@ def test_ones_contract_exposes_only_code_owned_fixed_readonly_tools() -> None:
     assert PROJECT_ROLE_MEMBERS_OUTPUT_SCHEMA["properties"]["untrusted_data"] == {
         "const": True
     }
+    production = _production_sources().lower()
+    assert "ones_mock/ones" not in production
+    for contract in ONES_TOOL_CONTRACTS.values():
+        assert contract.identifier.startswith("ones_")
+        assert contract.input_schema["additionalProperties"] is False
+        assert set(contract.input_schema.get("properties", ())).isdisjoint(
+            {"url", "path", "query", "document", "headers", "token", "team_uuid"}
+        )
+        assert MCP_TOOL_MANIFEST[contract.identifier].read_only is True
 
 
 def test_ones_query_assets_are_static_documents_without_dynamic_query_library() -> None:
     documents = REPOSITORY_ROOT / "services/ones_mcp_server/provider/graphql/documents"
-    assert {path.name for path in documents.glob("*.graphql")} == {"work_item_search.graphql"}
+    expected = {
+        "issue_type_list.graphql",
+        "project_search.graphql",
+        "sprint_work_item_query.graphql",
+        "test_plan_list.graphql",
+        "testcase_detail.graphql",
+        "testcase_library_list.graphql",
+        "testcase_module_cases.graphql",
+        "testcase_module_list.graphql",
+        "testcase_plan_cases.graphql",
+        "work_item_detail.graphql",
+        "work_item_query.graphql",
+        "work_item_search.graphql",
+    }
+    assert {path.name for path in documents.glob("*.graphql")} == expected
+    assert all(path.read_text(encoding="utf-8").strip() for path in documents.glob("*.graphql"))
     production = _production_sources().lower()
     for forbidden in (
-        "query_library_list",
-        "library_list.graphql",
         "dynamic_graphql",
         "graphql_ast",
         "query_fingerprint",

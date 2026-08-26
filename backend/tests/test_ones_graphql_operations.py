@@ -36,7 +36,8 @@ class _RecordingHttp:
 @dataclass(frozen=True)
 class _SecondQuery:
     code: str = "project_summary"
-    path: str = "/project/api/project/items/graphql"
+    path_template: str = "/project/api/project/items/graphql"
+    query_type: str = ""
     document: str = "query ProjectSummary($team_id: String!) { projectSummary(teamId: $team_id) }"
 
     def build_variables(

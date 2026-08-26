@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
+from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
@@ -20,6 +23,9 @@ from services.ones_mcp_server.provider.target import ProviderTarget
 class _NoRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
         return None
+
+
+_QUERY_PART = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
 
 class OnesProviderHttpClient:
@@ -51,37 +57,52 @@ class OnesProviderHttpClient:
         payload: dict[str, Any],
         *,
         headers: dict[str, str],
+        query: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        return self._request_json("POST", path, payload, headers=headers)
+        return self._request_json("POST", path, payload, headers=headers, query=query)
 
     def get_json(
         self,
         path: str,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | None,
         *,
         headers: dict[str, str],
+        query: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        return self._request_json("GET", path, payload, headers=headers)
+        return self._request_json("GET", path, payload, headers=headers, query=query)
 
     def _request_json(
         self,
         method: str,
         path: str,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | None,
         *,
         headers: dict[str, str],
+        query: Mapping[str, str] | None,
     ) -> dict[str, Any]:
         if method not in {"GET", "POST"}:
             raise ValueError("ONES Provider method is not supported")
         if not path.startswith("/") or "://" in path or "?" in path or "#" in path:
             raise ValueError("ONES Provider path must be a fixed absolute path")
-        if not isinstance(payload, dict):
+        if payload is None and method != "GET":
+            raise ValueError("ONES Provider JSON payload is required")
+        if payload is not None and not isinstance(payload, dict):
             raise ValueError("ONES Provider JSON payload must be an object")
+        query_string = self._fixed_query_string(query)
         assert_external_io_allowed("ones_mcp.provider")
+        request_headers = {"Accept": "application/json", **headers}
+        request_data = None
+        if payload is not None:
+            request_headers["Content-Type"] = "application/json"
+            request_data = json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
         request = Request(
-            self.target.base_url + path,
-            data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-            headers={"Accept": "application/json", "Content-Type": "application/json", **headers},
+            self.target.base_url + path + query_string,
+            data=request_data,
+            headers=request_headers,
             method=method,
         )
         try:
@@ -111,6 +132,24 @@ class OnesProviderHttpClient:
             raise invalid_provider_response("ones_provider_response_invalid")
         McpAuditCoordinator.reject_auth_material(parsed)
         return parsed
+
+    @staticmethod
+    def _fixed_query_string(query: Mapping[str, str] | None) -> str:
+        if query is None:
+            return ""
+        if not isinstance(query, Mapping) or not 1 <= len(query) <= 8:
+            raise ValueError("ONES Provider query parameters are invalid")
+        normalized: list[tuple[str, str]] = []
+        for key, value in query.items():
+            if (
+                not isinstance(key, str)
+                or not isinstance(value, str)
+                or _QUERY_PART.fullmatch(key) is None
+                or _QUERY_PART.fullmatch(value) is None
+            ):
+                raise ValueError("ONES Provider query parameters are invalid")
+            normalized.append((key, value))
+        return "?" + urlencode(sorted(normalized))
 
     @staticmethod
     def status_error(status: int) -> AppError:

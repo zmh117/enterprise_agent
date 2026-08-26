@@ -1,0 +1,26 @@
+query Task($key: Key) {
+  task(key: $key) {
+    uuid
+    number
+    name
+    descriptionText
+    createTime
+    serverUpdateStamp
+    subTaskCount
+    subTaskDoneCount
+    issueType { uuid name }
+    project { uuid name }
+    status { uuid name category }
+    owner { uuid name }
+    assign { uuid name }
+    sprint { uuid name }
+    relatedTasks {
+      uuid
+      number
+      name
+      issueType { uuid name }
+      project { uuid name }
+      status { uuid name category }
+    }
+  }
+}

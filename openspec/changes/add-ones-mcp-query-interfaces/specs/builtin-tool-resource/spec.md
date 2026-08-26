@@ -78,16 +78,17 @@
 - **THEN** Tool 在连接 Provider 前返回稳定输入错误
 
 ### Requirement: 现有ONES工作项搜索必须保持Schema兼容
-现有 `ones_work_item_search` MUST 保持已发布的 `keyword`、`issue_type=demand|task|defect`、`limit` 输入 Schema 和 `number/name/type/total/truncated/untrusted_data` 输出语义。服务端 SHALL 通过真实 ONES 工作项类型与 `group-task-data` 查询实现该兼容 Tool；不得继续依赖仅存在于 Mock 的自定义 Provider 响应，也不得在类型名称或 UUID 歧义时猜测。
+现有 `ones_work_item_search` MUST 保持已发布的 `keyword`、`issue_type=demand|task|defect`、`limit` 输入 Schema、`number/name/type/total/truncated/untrusted_data` 输出语义和既有 Provider 实现。系统 MUST NOT 在缺少项目范围时把稳定类型猜测映射为真实 ONES 项目工作项类型；真实项目范围查询 SHALL 使用新增项目、工作项类型和工作项 Tool。
 
 #### Scenario: 旧Publication调用工作项搜索
 - **WHEN** 旧 Agent/Application Publication 冻结的 `ones_work_item_search` Schema 与当前 Manifest 一致
-- **THEN** 新代码按原输入输出契约执行真实 ONES 固定查询
+- **THEN** 新代码按原输入输出和既有 Provider 契约执行
 - **AND** 不因本 change 新增 Tool 而自动扩展旧 Publication 的权限
 
-#### Scenario: 稳定类型无法唯一解析
-- **WHEN** 当前默认 Team 中 `demand|task|defect` 无法映射为唯一 ONES 工作项类型
-- **THEN** Tool 返回稳定配置或 Provider schema 错误且不执行扩大范围的工作项查询
+#### Scenario: 用户需要真实项目范围查询
+- **WHEN** 用户需要按真实项目、迭代或项目工作项类型查询
+- **THEN** Agent使用新增项目、工作项类型和工作项 Tool
+- **AND** 系统不使用旧 Tool 猜测项目或类型 UUID
 
 ### Requirement: ONES Mock不得复制真实业务抓取
 独立 ONES Mock SHALL 使用仓库合成 fixture 精确模拟新增固定 GraphQL/REST 请求、401 refresh、403、非法查询类型、超大响应、非法结构和截断结果。`ones_mock/ones/` 中的真实抓取内容 MUST NOT 被提交、加载为运行时 fixture、写入测试快照或复制到审计。

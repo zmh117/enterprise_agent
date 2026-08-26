@@ -61,19 +61,26 @@ def test_http_client_sends_exact_get_and_post_json_requests() -> None:
     }
 
     assert client.get_json("/fixed/get", {}, headers=headers) == {"ok": True}
+    assert client.get_json("/fixed/get-without-body", None, headers=headers) == {"ok": True}
     assert client.post_json("/fixed/post", {"uuids": ["U1"]}, headers=headers) == {
         "ok": True
     }
 
     get_request, get_timeout = calls[0]
-    post_request, post_timeout = calls[1]
+    bodyless_request, bodyless_timeout = calls[1]
+    post_request, post_timeout = calls[2]
     assert get_request.get_method() == "GET"
     assert get_request.full_url == "http://ones-mock:8001/fixed/get"
     assert bytes(get_request.data) == b"{}"
+    assert bodyless_request.get_method() == "GET"
+    assert bodyless_request.data is None
+    assert "content-type" not in {
+        key.lower(): value for key, value in bodyless_request.header_items()
+    }
     assert post_request.get_method() == "POST"
     assert post_request.full_url == "http://ones-mock:8001/fixed/post"
     assert json.loads(bytes(post_request.data)) == {"uuids": ["U1"]}
-    assert get_timeout == post_timeout == 5.0
+    assert get_timeout == bodyless_timeout == post_timeout == 5.0
     sent_headers = {key.lower(): value for key, value in get_request.header_items()}
     assert sent_headers == {
         "accept": "application/json",
@@ -83,6 +90,32 @@ def test_http_client_sends_exact_get_and_post_json_requests() -> None:
         "referer": "http://ones-mock:8001",
         "cache-control": "no-cache",
     }
+
+
+def test_http_client_adds_only_valid_code_owned_query_parameters() -> None:
+    calls: list[Any] = []
+
+    def open_response(request: Any, _timeout: float) -> _Response:
+        calls.append(request)
+        return _Response(200, b"{}")
+
+    client = _client(open_response)
+    client.post_json(
+        "/project/api/project/team/TEAM/items/graphql",
+        {},
+        headers={},
+        query={"t": "group-task-data"},
+    )
+
+    assert calls[0].full_url.endswith("/items/graphql?t=group-task-data")
+    for invalid in (
+        {},
+        {"t": "contains spaces"},
+        {"t?": "fixed"},
+        {str(index): "v" for index in range(9)},
+    ):
+        with pytest.raises(ValueError):
+            client.post_json("/fixed", {}, headers={}, query=invalid)
 
 
 def test_http_client_keeps_proxy_and_redirect_handlers_closed() -> None:
