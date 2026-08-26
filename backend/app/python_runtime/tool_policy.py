@@ -29,6 +29,7 @@ SDK_BUILTIN_TOOLS = frozenset(
 PLATFORM_SDK_TOOLS: frozenset[str] = frozenset()
 RUNTIME_DERIVED_TOOL_ALIASES = {
     "mcp__file_service__select_sandbox_output": "select_sandbox_output",
+    "mcp__file_service__scan_log_evidence": "scan_log_evidence",
 }
 FORBIDDEN_TOOL_INPUT_FIELDS = frozenset(
     {
@@ -82,11 +83,7 @@ def normalize_tool_events(
     for event in events[:128]:
         full_tool_name = str(event.get("tool_name") or "unknown_tool")
         published_tool = published.get(full_tool_name)
-        derived_tool = (
-            RUNTIME_DERIVED_TOOL_ALIASES.get(full_tool_name)
-            if _file_commit_flow_is_frozen(request)
-            else None
-        )
+        derived_tool = _authorized_runtime_derived_tool(full_tool_name, request)
         if published_tool:
             tool_origin = "mcp"
             server_code: str | None = published_tool[0]
@@ -165,3 +162,28 @@ def _file_commit_flow_is_frozen(request: dict[str, Any]) -> bool:
         for server in request.get("mcp_servers") or []
         if isinstance(server, dict)
     )
+
+
+def _file_materialization_is_frozen(request: dict[str, Any]) -> bool:
+    return any(
+        str(server.get("server_code") or "") == "file-service"
+        and any(
+            str(tool.get("tool_name") or "") == "file_prepare_materialization"
+            for tool in server.get("tools") or []
+            if isinstance(tool, dict)
+        )
+        for server in request.get("mcp_servers") or []
+        if isinstance(server, dict)
+    )
+
+
+def _authorized_runtime_derived_tool(
+    full_tool_name: str,
+    request: dict[str, Any],
+) -> str | None:
+    derived = RUNTIME_DERIVED_TOOL_ALIASES.get(full_tool_name)
+    if derived == "select_sandbox_output" and _file_commit_flow_is_frozen(request):
+        return derived
+    if derived == "scan_log_evidence" and _file_materialization_is_frozen(request):
+        return derived
+    return None

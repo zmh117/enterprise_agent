@@ -9,9 +9,10 @@ from app.shared.tool_contract import canonical_json_sha256, tool_schema_hash
 
 from .file_mcp_bridge import LOCAL_FILE_OUTPUT_TOOL
 from .job_sandbox import FILE_TOOL_NAMES
+from .log_evidence_scanner import LOG_EVIDENCE_INPUT_SCHEMA, LOG_EVIDENCE_TOOL
 
 
-PROMPT_TEMPLATE_VERSION = "agent-system-prompt-v2"
+PROMPT_TEMPLATE_VERSION = "agent-system-prompt-v3"
 _SELECT_OUTPUT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -104,6 +105,31 @@ def build_tool_contract_observation(
         and item["authorization_status"] == "ALLOWED"
         for item in effective
     )
+    materialize_effective = any(
+        item["server_code"] == FILE_MCP_SERVER_CODE
+        and item["tool_name"] == "file_prepare_materialization"
+        and item["authorization_status"] == "ALLOWED"
+        for item in effective
+    )
+    if materialize_effective:
+        effective.append(
+            {
+                "server_code": FILE_MCP_SERVER_CODE,
+                "tool_name": LOG_EVIDENCE_TOOL,
+                "sdk_tool_name": f"mcp__file_service__{LOG_EVIDENCE_TOOL}",
+                "origin": "runtime_derived",
+                "schema_hash": tool_schema_hash(LOG_EVIDENCE_INPUT_SCHEMA),
+                "authorization_status": "ALLOWED",
+                "dependency_tool_name": "file_prepare_materialization",
+            }
+        )
+        rows.append(
+            {
+                "server_code": FILE_MCP_SERVER_CODE,
+                "tool_name": LOG_EVIDENCE_TOOL,
+                "status": "RUNTIME_DERIVED",
+            }
+        )
     if commit_effective:
         effective.append(
             {

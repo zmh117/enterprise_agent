@@ -376,6 +376,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 sandbox=sandbox,
             ),
             timeout_seconds=float(request.context.timeout_seconds),
+            cancellation_event=self.cancellation_event,
         )
         self._file_bridge = bridge
         try:

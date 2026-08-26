@@ -8,6 +8,10 @@ from typing import Any
 
 from app.python_runtime.error_mapper import redact_sensitive_text
 from app.shared.config import ExecutionSettings
+from app.python_runtime.log_evidence_scanner import (
+    LOG_EVIDENCE_SCANNER_VERSION,
+    LOG_EVIDENCE_TOOL,
+)
 
 
 class SdkEventNormalizer:
@@ -329,10 +333,22 @@ def extract_tool_events(
             tool_name = str(started.get("tool_name") or "unknown_tool")
             request_payload = started.get("request_payload") or {}
             status = "FAILED" if sdk_value(block, "is_error") is True else "SUCCEEDED"
-        response = (
-            {"file_tool_result": "omitted"}
-            if tool_name in {"Read", "Grep", "Write", "Edit"}
-            else sdk_value(block, "content") or sdk_value(block, "result") or {}
+        if _is_log_evidence_tool(tool_name):
+            response = safe_log_evidence_response(
+                sdk_value(block, "content") or sdk_value(block, "result") or {}
+            )
+        else:
+            response = (
+                {"file_tool_result": "omitted"}
+                if tool_name in {"Read", "Grep", "Write", "Edit"}
+                else sdk_value(block, "content") or sdk_value(block, "result") or {}
+            )
+        duration_ms = (
+            int(response.get("elapsed_ms") or 0)
+            if isinstance(response, dict)
+            and isinstance(response.get("elapsed_ms"), int)
+            and not isinstance(response.get("elapsed_ms"), bool)
+            else 0
         )
         events.append(
             {
@@ -341,7 +357,7 @@ def extract_tool_events(
                 "request_payload": bounded_payload(request_payload, limits.max_tool_response_chars),
                 "response_summary": bounded_payload(response, limits.max_tool_response_chars),
                 "status": status,
-                "duration_ms": 0,
+                "duration_ms": max(0, min(duration_ms, 86_400_000)),
                 "risk_level": risk_level(tool_name),
                 "mcp_call_id": metadata["mcp_call_id"],
                 "persisted_tool_call_id": metadata["persisted_tool_call_id"],
@@ -351,6 +367,13 @@ def extract_tool_events(
 
 
 def safe_file_tool_request(tool_name: str, value: Any) -> Any:
+    if _is_log_evidence_tool(tool_name):
+        paths = value.get("relative_paths") if isinstance(value, dict) else None
+        return {
+            "contract": "runtime-derived/file-service/scan_log_evidence",
+            "scanner_version": LOG_EVIDENCE_SCANNER_VERSION,
+            "input_count": len(paths) if isinstance(paths, list) else 0,
+        }
     if tool_name not in {"Read", "Grep", "Write", "Edit"} or not isinstance(value, dict):
         return value
     path = value.get("file_path", value.get("path"))
@@ -373,6 +396,80 @@ def safe_file_tool_request(tool_name: str, value: Any) -> Any:
     if tool_name == "Grep" and isinstance(value.get("pattern"), str):
         result["pattern_chars"] = len(value["pattern"])
     return result
+
+
+def safe_log_evidence_response(value: Any) -> dict[str, Any]:
+    payload = _log_evidence_json_payload(value)
+    bridge = payload.get("runtime_file_bridge") if isinstance(payload, dict) else None
+    source = bridge if isinstance(bridge, dict) else payload if isinstance(payload, dict) else {}
+    error_code = identifier_or_none(source.get("error_code"))
+    if error_code is not None:
+        return {
+            "contract": "runtime-derived/file-service/scan_log_evidence",
+            "scanner_version": LOG_EVIDENCE_SCANNER_VERSION,
+            "error_code": error_code,
+        }
+    result: dict[str, Any] = {
+        "contract": "runtime-derived/file-service/scan_log_evidence",
+        "scanner_version": bounded_identifier_text(
+            source.get("scanner_version") or LOG_EVIDENCE_SCANNER_VERSION,
+            64,
+        ),
+    }
+    bounded_counts = {
+        "input_count": 40,
+        "input_bytes": 224 * 1024 * 1024,
+        "scanned_bytes": 224 * 1024 * 1024,
+        "logical_line_count": 100_000_000,
+        "candidate_count": 100_000_000,
+        "retained_count": 500,
+        "omitted_count": 100_000_000,
+        "deduplicated_count": 100_000_000,
+        "size_bytes": 4 * 1024 * 1024,
+        "elapsed_ms": 86_400_000,
+    }
+    for field, maximum in bounded_counts.items():
+        raw = source.get(field)
+        if isinstance(raw, int) and not isinstance(raw, bool) and 0 <= raw <= maximum:
+            result[field] = raw
+    for field in ("coverage_complete", "evidence_limit_reached", "reused"):
+        if isinstance(source.get(field), bool):
+            result[field] = source[field]
+    sha256 = source.get("sha256")
+    if isinstance(sha256, str) and re.fullmatch(r"[0-9a-f]{64}", sha256):
+        result["sha256"] = sha256
+    return result
+
+
+def _log_evidence_json_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        if "runtime_file_bridge" in value or "error_code" in value:
+            return value
+        for child in value.values():
+            parsed = _log_evidence_json_payload(child)
+            if parsed:
+                return parsed
+        return {}
+    if isinstance(value, list):
+        for child in value[:8]:
+            parsed = _log_evidence_json_payload(child)
+            if parsed:
+                return parsed
+        return {}
+    text = sdk_value(value, "text")
+    if isinstance(text, str):
+        value = text
+    if isinstance(value, str) and len(value) <= 16_384:
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _is_log_evidence_tool(tool_name: str) -> bool:
+    return tool_name == LOG_EVIDENCE_TOOL or tool_name.endswith(f"__{LOG_EVIDENCE_TOOL}")
 
 
 def platform_tool_metadata(message: Any) -> dict[str, str | None]:

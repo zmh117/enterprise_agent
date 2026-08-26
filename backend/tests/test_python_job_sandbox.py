@@ -88,6 +88,24 @@ def test_python_job_sandbox_maps_job_and_cleans_every_terminal_path(tmp_path: Pa
     assert not sandbox.path.exists()
 
 
+def test_python_job_sandbox_accepts_targets_beneath_an_aliased_root_path(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / "real-root"
+    real_root.mkdir()
+    alias_root = tmp_path / "alias-root"
+    alias_root.symlink_to(real_root, target_is_directory=True)
+    sandbox = JobSandboxManager(alias_root / "sandboxes").create("job-aliased-root")
+    try:
+        authorized = sandbox.authorize_tool(
+            "Write",
+            {"file_path": "outputs/report.md", "content": "# report"},
+        )
+        assert authorized["file_path"] == "outputs/report.md"
+    finally:
+        sandbox.cleanup()
+
+
 @pytest.mark.parametrize(
     ("tool_name", "tool_input", "code"),
     [
@@ -207,9 +225,7 @@ def test_python_text_v2_sandbox_allows_markdown_write_and_denies_log_mutation(
     try:
         (sandbox.path / "inputs/service.log").write_text("line\n", encoding="utf-8")
         (sandbox.path / "inputs/readonly").mkdir()
-        (sandbox.path / "inputs/readonly/document.md").write_text(
-            "# extracted\n", encoding="utf-8"
-        )
+        (sandbox.path / "inputs/readonly/document.md").write_text("# extracted\n", encoding="utf-8")
         assert (
             sandbox.authorize_tool("Read", {"file_path": "inputs/service.log"})["file_path"]
             == "inputs/service.log"
@@ -221,9 +237,9 @@ def test_python_text_v2_sandbox_allows_markdown_write_and_denies_log_mutation(
             == "outputs/report.md"
         )
         assert (
-            sandbox.authorize_tool(
-                "Read", {"file_path": "inputs/readonly/document.md"}
-            )["file_path"]
+            sandbox.authorize_tool("Read", {"file_path": "inputs/readonly/document.md"})[
+                "file_path"
+            ]
             == "inputs/readonly/document.md"
         )
         with pytest.raises(JobSandboxError) as representation_readonly:

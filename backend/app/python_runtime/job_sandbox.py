@@ -54,9 +54,7 @@ class JobSandboxLimits:
             or self.max_input_files < 1
             or self.max_work_output_files < 1
             or self.max_tmp_files < 1
-            or self.max_input_files
-            + self.max_work_output_files
-            + self.max_tmp_files
+            or self.max_input_files + self.max_work_output_files + self.max_tmp_files
             > self.max_files
         ):
             raise ValueError("Job Sandbox limits are invalid")
@@ -80,6 +78,33 @@ class SandboxReservation:
     expected_size_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class SandboxCommittedInput:
+    identity: tuple[str, str]
+    relative_path: str
+    absolute_path: Path = field(repr=False)
+    size_bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxRuntimeArtifactReservation:
+    token: str
+    relative_path: str
+    staging_relative_path: str
+    maximum_size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxRuntimeArtifact:
+    relative_path: str
+    absolute_path: Path = field(repr=False)
+    size_bytes: int
+    sha256: str
+    request_digest: str
+    public_payload: Mapping[str, object]
+
+
 @dataclass(slots=True)
 class _PendingReservation:
     token: str
@@ -87,6 +112,7 @@ class _PendingReservation:
     expected_size_bytes: int
     identity: tuple[str, str] | None = None
     relative_path: str = ""
+    staging_relative_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +121,18 @@ class _CommittedInput:
     relative_path: str
     size_bytes: int
     sha256: str
+    device: int
+    inode: int
+    modified_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeArtifact:
+    relative_path: str
+    size_bytes: int
+    sha256: str
+    request_digest: str
+    public_payload: Mapping[str, object]
 
 
 @dataclass(slots=True)
@@ -109,6 +147,7 @@ class JobSandbox:
         default_factory=dict, repr=False
     )
     _write_reservations: dict[str, str] = field(default_factory=dict, repr=False)
+    _runtime_artifacts: dict[str, _RuntimeArtifact] = field(default_factory=dict, repr=False)
 
     def cleanup(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)
@@ -175,8 +214,13 @@ class JobSandbox:
         return value
 
     def _authorize_write(self, tool_name: str, target: Path, value: Mapping[str, object]) -> None:
-        relative = target.relative_to(self.path).as_posix()
+        relative = target.relative_to(self.path.resolve(strict=True)).as_posix()
         top_level = PurePosixPath(relative).parts[0]
+        if relative in self._runtime_artifacts:
+            self._deny(
+                "sandbox_file_read_only",
+                "Runtime-generated evidence artifacts are read-only",
+            )
         if top_level == "tmp" or (top_level == "inputs" and not target.exists()):
             self._deny(
                 "sandbox_write_partition_denied",
@@ -289,15 +333,204 @@ class JobSandbox:
             allowed_top_levels={"work", "outputs"},
         )
 
-    def reserve_tmp(
-        self, *, relative_path: str, expected_size_bytes: int
-    ) -> SandboxReservation:
+    def reserve_tmp(self, *, relative_path: str, expected_size_bytes: int) -> SandboxReservation:
         return self._reserve_named_path(
             partition="tmp",
             relative_path=relative_path,
             expected_size_bytes=expected_size_bytes,
             allowed_top_levels={"tmp"},
         )
+
+    def resolve_committed_log_input(self, relative_path: str) -> SandboxCommittedInput:
+        """Resolve one exact materialized LOG without broadening Job file authority."""
+
+        path = self._strict_log_input_path(relative_path)
+        with self._budget_lock:
+            matches = [
+                item for item in self._committed_inputs.values() if item.relative_path == path
+            ]
+            if len(matches) != 1:
+                self._deny(
+                    "log_evidence_input_not_materialized",
+                    "log evidence input is not an exact committed materialization",
+                )
+            committed = matches[0]
+            target = self.path / path
+            self._reject_symlinks(target)
+            try:
+                state = target.lstat()
+            except OSError:
+                self._deny(
+                    "log_evidence_input_not_materialized",
+                    "log evidence input is unavailable",
+                )
+            if not stat.S_ISREG(state.st_mode):
+                self._deny(
+                    "sandbox_special_file_denied",
+                    "log evidence input must be a regular file",
+                )
+            if (
+                state.st_size != committed.size_bytes
+                or state.st_dev != committed.device
+                or state.st_ino != committed.inode
+                or state.st_mtime_ns != committed.modified_ns
+            ):
+                self._deny(
+                    "log_evidence_source_integrity_error",
+                    "materialized log content facts changed",
+                )
+            return SandboxCommittedInput(
+                identity=committed.identity,
+                relative_path=committed.relative_path,
+                absolute_path=target,
+                size_bytes=committed.size_bytes,
+                sha256=committed.sha256,
+            )
+
+    def reserve_runtime_artifact(
+        self,
+        *,
+        relative_path: str,
+        maximum_size_bytes: int,
+    ) -> SandboxRuntimeArtifactReservation:
+        """Reserve one final work/output slot with an unpublished staging name."""
+
+        path = PurePosixPath(relative_path)
+        if (
+            path.is_absolute()
+            or str(path) != relative_path
+            or not path.parts
+            or path.parts[0] not in {"work", "outputs"}
+            or "." in path.parts
+            or ".." in path.parts
+            or path.suffix.casefold() != ".md"
+        ):
+            self._deny("sandbox_path_invalid", "Runtime artifact path is invalid")
+        if maximum_size_bytes < 1 or maximum_size_bytes > self.limits.max_file_bytes:
+            self._deny(
+                "sandbox_file_limit_exceeded",
+                "Runtime artifact exceeds the sandbox file limit",
+            )
+        with self._budget_lock:
+            target = self.path / relative_path
+            self._reject_symlinks(target)
+            if target.exists() or relative_path in self._runtime_artifacts:
+                self._deny("sandbox_entry_conflict", "Runtime artifact already exists")
+            token = self._reserve_locked(
+                partition="work_outputs",
+                expected_size_bytes=maximum_size_bytes,
+                relative_path=relative_path,
+            )
+            staging_name = f".{path.name}.{token.rsplit(':', 1)[-1]}.partial"
+            staging_relative_path = str(path.with_name(staging_name))
+            self._pending[token].staging_relative_path = staging_relative_path
+            staging = self.path / staging_relative_path
+            self._reject_symlinks(staging)
+            staging.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            return SandboxRuntimeArtifactReservation(
+                token=token,
+                relative_path=relative_path,
+                staging_relative_path=staging_relative_path,
+                maximum_size_bytes=maximum_size_bytes,
+            )
+
+    def publish_runtime_artifact(
+        self,
+        reservation: SandboxRuntimeArtifactReservation,
+        *,
+        expected_size_bytes: int,
+        expected_sha256: str,
+        request_digest: str,
+        public_payload: Mapping[str, object],
+    ) -> SandboxRuntimeArtifact:
+        """Validate and atomically publish one Runtime-owned read-only artifact."""
+
+        with self._budget_lock:
+            pending = self._pending.get(reservation.token)
+            if (
+                pending is None
+                or pending.partition != "work_outputs"
+                or pending.relative_path != reservation.relative_path
+                or pending.staging_relative_path != reservation.staging_relative_path
+            ):
+                self._deny(
+                    "sandbox_reservation_invalid",
+                    "Runtime artifact reservation is inconsistent",
+                )
+            staging = self.path / reservation.staging_relative_path
+            target = self.path / reservation.relative_path
+            self._reject_symlinks(staging)
+            self._reject_symlinks(target)
+            try:
+                state = staging.lstat()
+            except OSError:
+                self._deny(
+                    "sandbox_reservation_invalid",
+                    "Runtime artifact staging file is unavailable",
+                )
+            if (
+                not stat.S_ISREG(state.st_mode)
+                or expected_size_bytes < 0
+                or expected_size_bytes != state.st_size
+                or expected_size_bytes > pending.expected_size_bytes
+                or target.exists()
+            ):
+                self._deny(
+                    "sandbox_reservation_invalid",
+                    "Runtime artifact staging file is inconsistent",
+                )
+            actual_sha256 = self._file_sha256(staging)
+            if actual_sha256 != expected_sha256:
+                self._deny(
+                    "log_evidence_pack_integrity_error",
+                    "Runtime artifact hash verification failed",
+                )
+            staging.replace(target)
+            os.chmod(target, 0o400)
+            artifact = _RuntimeArtifact(
+                relative_path=reservation.relative_path,
+                size_bytes=expected_size_bytes,
+                sha256=actual_sha256,
+                request_digest=request_digest,
+                public_payload=dict(public_payload),
+            )
+            self._runtime_artifacts[reservation.relative_path] = artifact
+            self._pending.pop(reservation.token, None)
+            return self._public_runtime_artifact(artifact)
+
+    def release_runtime_artifact(self, reservation: SandboxRuntimeArtifactReservation) -> None:
+        with self._budget_lock:
+            pending = self._pending.get(reservation.token)
+            if pending is not None:
+                (self.path / reservation.staging_relative_path).unlink(missing_ok=True)
+                self._pending.pop(reservation.token, None)
+
+    def runtime_artifact(
+        self, *, relative_path: str, request_digest: str
+    ) -> SandboxRuntimeArtifact | None:
+        with self._budget_lock:
+            artifact = self._runtime_artifacts.get(relative_path)
+            if artifact is None or artifact.request_digest != request_digest:
+                return None
+            target = self.path / artifact.relative_path
+            self._reject_symlinks(target)
+            try:
+                state = target.lstat()
+            except OSError:
+                self._deny(
+                    "log_evidence_pack_integrity_error",
+                    "Runtime evidence artifact is unavailable",
+                )
+            if (
+                not stat.S_ISREG(state.st_mode)
+                or state.st_size != artifact.size_bytes
+                or self._file_sha256(target) != artifact.sha256
+            ):
+                self._deny(
+                    "log_evidence_pack_integrity_error",
+                    "Runtime evidence artifact failed integrity verification",
+                )
+            return self._public_runtime_artifact(artifact)
 
     def commit_reservation(self, reservation: SandboxReservation) -> None:
         with self._budget_lock:
@@ -397,6 +630,20 @@ class JobSandbox:
                 or size_bytes != pending.expected_size_bytes
             ):
                 self._deny("sandbox_reservation_invalid", "input reservation is inconsistent")
+            target = self.path / pending.relative_path
+            self._reject_symlinks(target)
+            try:
+                state = target.lstat()
+            except OSError:
+                self._deny(
+                    "sandbox_reservation_invalid",
+                    "materialized input is unavailable",
+                )
+            if not stat.S_ISREG(state.st_mode) or state.st_size != size_bytes:
+                self._deny(
+                    "sandbox_reservation_invalid",
+                    "materialized input is inconsistent",
+                )
             self._pending.pop(pending.token, None)
             self._input_tokens.pop(reservation.identity, None)
             committed = _CommittedInput(
@@ -404,6 +651,9 @@ class JobSandbox:
                 pending.relative_path,
                 size_bytes,
                 sha256,
+                state.st_dev,
+                state.st_ino,
+                state.st_mtime_ns,
             )
             self._committed_inputs[reservation.identity] = committed
             return SandboxInputReservation(
@@ -429,9 +679,7 @@ class JobSandbox:
                 if committed is not None:
                     (self.path / committed.relative_path).unlink(missing_ok=True)
 
-    def committed_input(
-        self, identity: tuple[str, str]
-    ) -> SandboxInputReservation | None:
+    def committed_input(self, identity: tuple[str, str]) -> SandboxInputReservation | None:
         with self._budget_lock:
             committed = self._committed_inputs.get(identity)
             if committed is None:
@@ -447,6 +695,11 @@ class JobSandbox:
 
     def partition_usage(self) -> dict[str, tuple[int, int]]:
         usage = {"inputs": [0, 0], "work_outputs": [0, 0], "tmp": [0, 0]}
+        staging_paths = {
+            item.staging_relative_path
+            for item in self._pending.values()
+            if item.staging_relative_path
+        }
         for root, directories, files in os.walk(self.path, followlinks=False):
             root_path = Path(root)
             for name in directories:
@@ -457,6 +710,8 @@ class JobSandbox:
                 if name == SANDBOX_MARKER:
                     continue
                 entry = root_path / name
+                if entry.relative_to(self.path).as_posix() in staging_paths:
+                    continue
                 state = entry.lstat()
                 if stat.S_ISLNK(state.st_mode):
                     self._deny("sandbox_symlink_denied", "sandbox contains a symlink")
@@ -518,6 +773,55 @@ class JobSandbox:
         )
         return token
 
+    def _strict_log_input_path(self, value: object) -> str:
+        if (
+            not isinstance(value, str)
+            or not 1 <= len(value) <= 240
+            or "\\" in value
+            or "\x00" in value
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            self._deny("log_evidence_path_invalid", "log evidence path is invalid")
+        path = PurePosixPath(value)
+        if (
+            path.is_absolute()
+            or str(path) != value
+            or not path.parts
+            or path.parts[0] != "inputs"
+            or "." in path.parts
+            or ".." in path.parts
+            or path.suffix.casefold() != ".log"
+        ):
+            self._deny(
+                "log_evidence_path_invalid",
+                "log evidence path must target an inputs LOG",
+            )
+        return value
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        try:
+            with path.open("rb") as stream:
+                while chunk := stream.read(64 * 1024):
+                    digest.update(chunk)
+        except OSError as exc:
+            raise JobSandboxError(
+                "log_evidence_pack_integrity_error",
+                "Runtime artifact could not be verified",
+            ) from exc
+        return digest.hexdigest()
+
+    def _public_runtime_artifact(self, artifact: _RuntimeArtifact) -> SandboxRuntimeArtifact:
+        return SandboxRuntimeArtifact(
+            relative_path=artifact.relative_path,
+            absolute_path=self.path / artifact.relative_path,
+            size_bytes=artifact.size_bytes,
+            sha256=artifact.sha256,
+            request_digest=artifact.request_digest,
+            public_payload=dict(artifact.public_payload),
+        )
+
     def _reserve_named_path(
         self,
         *,
@@ -559,7 +863,11 @@ class JobSandbox:
         for relative_path, token in list(self._write_reservations.items()):
             pending = self._pending.get(token)
             target = self.path / relative_path
-            if pending is not None and target.exists() and target.stat().st_size <= pending.expected_size_bytes:
+            if (
+                pending is not None
+                and target.exists()
+                and target.stat().st_size <= pending.expected_size_bytes
+            ):
                 self._pending.pop(token, None)
                 self._write_reservations.pop(relative_path, None)
 
@@ -661,10 +969,7 @@ class JobSandbox:
                 "sandbox_tool_input_invalid",
                 "Glob pattern must be a safe relative pattern",
             )
-        allowed = tuple(
-            definition.extension
-            for definition in get_text_format_policy().formats
-        )
+        allowed = tuple(definition.extension for definition in get_text_format_policy().formats)
         lowered = value.lower()
         if not lowered.endswith(allowed) and not any(
             f"{extension[1:]}}}" in lowered for extension in allowed
@@ -686,11 +991,15 @@ class JobSandbox:
         return target
 
     def _reject_symlinks(self, target: Path) -> None:
-        current = self.path
+        root = self.path.resolve(strict=True)
+        current = root
         try:
             parts = target.relative_to(self.path).parts
         except ValueError:
-            self._deny("sandbox_path_invalid", "sandbox path escaped its Job boundary")
+            try:
+                parts = target.relative_to(root).parts
+            except ValueError:
+                self._deny("sandbox_path_invalid", "sandbox path escaped its Job boundary")
         for part in parts:
             current /= part
             if current.exists() or current.is_symlink():

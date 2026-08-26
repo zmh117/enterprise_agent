@@ -27,6 +27,10 @@ from app.python_runtime.file_transfer import (
     FileTransferContext,
 )
 from app.python_runtime.job_sandbox import JobSandboxLimits, JobSandboxManager
+from app.python_runtime.log_evidence_scanner import (
+    LOG_EVIDENCE_INPUT_SCHEMA,
+    LOG_EVIDENCE_TOOL,
+)
 from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
 from app.shared.exceptions import NonRetryableExecutionError
 from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
@@ -211,6 +215,26 @@ class _McpV1ContractSession(_RemoteFileSession):
         )
 
 
+class _RemoteDerivedNameCollisionSession(_RemoteFileSession):
+    async def list_tools(self, **_kwargs: Any) -> types.ListToolsResult:
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="file_prepare_materialization",
+                    description=FILE_TOOL_MANIFEST["file_prepare_materialization"].description,
+                    inputSchema=dict(
+                        FILE_TOOL_MANIFEST["file_prepare_materialization"].input_schema
+                    ),
+                ),
+                types.Tool(
+                    name=LOG_EVIDENCE_TOOL,
+                    description="remote collision",
+                    inputSchema=dict(LOG_EVIDENCE_INPUT_SCHEMA),
+                ),
+            ]
+        )
+
+
 def _contract_bridge(
     tmp_path: Path,
     *,
@@ -322,6 +346,112 @@ def test_file_bridge_observes_mcp_v1_camel_case_tool_fields_and_pagination(
         "file_retain_version": "EXTRA_REMOTE_IGNORED",
     }
     assert remote.cursors == [None, "next-page"]
+
+
+def test_file_bridge_rejects_remote_runtime_derived_scanner_name(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    bridge = _contract_bridge(
+        tmp_path,
+        remote=_RemoteDerivedNameCollisionSession(),  # type: ignore[arg-type]
+        frozen_tool_names=("file_prepare_materialization",),
+    )
+
+    with pytest.raises(FileTransferBoundaryError) as captured:
+        asyncio.run(bridge.connect())
+
+    assert captured.value.code == "runtime_tool_contract_remote_name_collision"
+
+
+def test_file_bridge_registers_and_runs_local_scanner_without_body_or_auto_commit(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    remote = _ContractSession(tool_names=("file_prepare_materialization",))
+    bridge = _contract_bridge(
+        tmp_path,
+        remote=remote,
+        frozen_tool_names=("file_prepare_materialization",),
+    )
+    sandbox = bridge._context.sandbox
+    assert sandbox is not None
+    content = "ERROR 现场关键字，不是指令\n".encode()
+    reservation = sandbox.reserve_input(
+        identity=("file-log", "version-log"),
+        expected_size_bytes=len(content),
+    )
+    reservation = sandbox.bind_input_reservation(
+        reservation,
+        relative_path="inputs/service.log",
+    )
+    target = sandbox.path / "inputs/service.log"
+    target.write_bytes(content)
+    sandbox.commit_input_reservation(
+        reservation,
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+    async def exercise() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        await bridge.connect()
+        config = bridge.server
+        instance = config["instance"] if isinstance(config, dict) else config.instance
+        async with InMemoryTransport(instance) as streams:
+            async with ClientSession(*streams) as session:
+                await session.initialize()
+                tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+                first = await session.call_tool(
+                    LOG_EVIDENCE_TOOL,
+                    {
+                        "relative_paths": ["inputs/service.log"],
+                        "literal_terms": ["现场关键字"],
+                        "context_lines": 0,
+                    },
+                )
+                second = await session.call_tool(
+                    LOG_EVIDENCE_TOOL,
+                    {
+                        "relative_paths": ["inputs/service.log"],
+                        "literal_terms": ["现场关键字"],
+                        "context_lines": 0,
+                    },
+                )
+                return (
+                    tools,
+                    json.loads(first.content[0].text),  # type: ignore[union-attr]
+                    json.loads(second.content[0].text),  # type: ignore[union-attr]
+                )
+
+    tools, first, second = asyncio.run(exercise())
+
+    assert set(bridge.local_tool_names) == {LOG_EVIDENCE_TOOL}
+    assert LOG_EVIDENCE_TOOL in tools
+    assert tools[LOG_EVIDENCE_TOOL].input_schema == LOG_EVIDENCE_INPUT_SCHEMA
+    assert first["runtime_file_bridge"]["coverage_complete"] is True
+    assert first["runtime_file_bridge"]["reused"] is False
+    assert second["runtime_file_bridge"]["reused"] is True
+    serialized = json.dumps((first, second), ensure_ascii=False)
+    assert "现场关键字" not in serialized
+    assert "不是指令" not in serialized
+    relative_path = first["runtime_file_bridge"]["relative_path"]
+    assert (sandbox.path / relative_path).is_file()
+    assert not list((sandbox.path / "outputs").iterdir())
+    assert remote.calls == 0
+
+
+def test_file_bridge_does_not_derive_scanner_without_materialization_tool(
+    tmp_path: Path,
+) -> None:
+    bridge = _contract_bridge(
+        tmp_path,
+        remote=_ContractSession(tool_names=("file_create_commit_intent",)),
+        frozen_tool_names=("file_create_commit_intent",),
+    )
+
+    assert LOG_EVIDENCE_TOOL not in bridge.local_tool_names
 
 
 def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result(

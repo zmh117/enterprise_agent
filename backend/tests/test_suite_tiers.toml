@@ -94,6 +94,7 @@ contract = [
   "test_job_dispatch_outbox_dispatcher.py",
   "test_job_dispatch_outbox_schema.py",
   "test_job_file_manifest.py",
+  "test_log_evidence_scanner.py",
   "test_management_surface_authorization.py",
   "test_mcp_audit_coordinator.py",
   "test_mcp_tool_runtime.py",
