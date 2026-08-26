@@ -14,12 +14,8 @@ from app.modules.document_processing.provider import DocumentProcessorFailure
 
 LAYOUT_SCHEMA_NAME = "enterprise-agent.office-image-ocr-layout"
 PICTURE_RESULT_SCHEMA_NAME = "enterprise-agent.office-picture-ocr-result"
-ALLOWED_RELATIONS = frozenset(
-    {"LEFT_OF", "RIGHT_OF", "ABOVE", "BELOW", "SAME_ROW", "CONTAINS"}
-)
-PICTURE_TERMINAL_STATUSES = frozenset(
-    {"AVAILABLE", "NO_TEXT", "SKIPPED_LIMIT", "FAILED"}
-)
+ALLOWED_RELATIONS = frozenset({"LEFT_OF", "RIGHT_OF", "ABOVE", "BELOW", "SAME_ROW", "CONTAINS"})
+PICTURE_TERMINAL_STATUSES = frozenset({"AVAILABLE", "NO_TEXT", "SKIPPED_LIMIT", "FAILED"})
 
 
 def _limits(profile: DocumentProcessingProfile) -> dict[str, Any]:
@@ -134,14 +130,7 @@ def _normalized_bbox(value: object, *, width: float, height: float) -> list[int]
         bottom = height - coordinates["b"]
     else:
         raise DocumentProcessorFailure("docling_picture_origin_invalid", retryable=False)
-    if (
-        left < 0
-        or top < 0
-        or right > width
-        or bottom > height
-        or right <= left
-        or bottom <= top
-    ):
+    if left < 0 or top < 0 or right > width or bottom > height or right <= left or bottom <= top:
         raise DocumentProcessorFailure("docling_picture_bbox_invalid", retryable=False)
     normalized = [
         int(round(left * 10_000 / width)),
@@ -230,6 +219,70 @@ def _bounded_relations(blocks: list[dict[str, Any]], *, maximum: int) -> list[di
     return relations
 
 
+def _text_provenance_segments(
+    text_item: dict[str, Any],
+    *,
+    text: str,
+    profile: DocumentProcessingProfile,
+) -> list[tuple[str, dict[str, Any]]]:
+    provenance = text_item.get("prov")
+    if (
+        not isinstance(provenance, list)
+        or not provenance
+        or any(not isinstance(item, dict) for item in provenance)
+    ):
+        raise DocumentProcessorFailure(
+            _structure_error(profile, "docling_picture_provenance_invalid"),
+            retryable=False,
+        )
+    if len(provenance) == 1:
+        return [(text, provenance[0])]
+
+    spans: list[tuple[int, int, int, dict[str, Any]]] = []
+    for original_index, item in enumerate(provenance):
+        charspan = item.get("charspan")
+        if (
+            not isinstance(charspan, list)
+            or len(charspan) != 2
+            or any(not isinstance(value, int) or isinstance(value, bool) for value in charspan)
+        ):
+            raise DocumentProcessorFailure(
+                _structure_error(profile, "docling_picture_provenance_invalid"),
+                retryable=False,
+            )
+        start, end = charspan
+        if start < 0 or start >= end or end > len(text):
+            raise DocumentProcessorFailure(
+                _structure_error(profile, "docling_picture_provenance_invalid"),
+                retryable=False,
+            )
+        spans.append((start, end, original_index, item))
+
+    spans.sort(key=lambda value: (value[0], value[1], value[2]))
+    segments: list[tuple[str, dict[str, Any]]] = []
+    cursor = 0
+    for start, end, _, item in spans:
+        if start < cursor or any(not value.isspace() for value in text[cursor:start]):
+            raise DocumentProcessorFailure(
+                _structure_error(profile, "docling_picture_provenance_invalid"),
+                retryable=False,
+            )
+        segment = text[start:end]
+        if not segment:
+            raise DocumentProcessorFailure(
+                _structure_error(profile, "docling_picture_provenance_invalid"),
+                retryable=False,
+            )
+        segments.append((segment, item))
+        cursor = end
+    if any(not value.isspace() for value in text[cursor:]):
+        raise DocumentProcessorFailure(
+            _structure_error(profile, "docling_picture_provenance_invalid"),
+            retryable=False,
+        )
+    return segments
+
+
 def adapt_docling_picture_result(
     docling_json: bytes,
     *,
@@ -249,7 +302,9 @@ def adapt_docling_picture_result(
         )
     if len(texts) > int(limits["max_blocks_per_picture"]):
         raise DocumentProcessorFailure("docling_picture_block_limit_exceeded", retryable=False)
-    blocks: list[dict[str, Any]] = []
+    maximum_blocks = int(limits["max_blocks_per_picture"])
+    block_candidates: list[dict[str, Any]] = []
+    has_multiple_provenance = False
     character_count = 0
     for index, text_item in enumerate(texts, start=1):
         if not isinstance(text_item, dict) or not isinstance(text_item.get("text"), str):
@@ -262,27 +317,43 @@ def adapt_docling_picture_result(
             continue
         character_count += len(text)
         if character_count > int(limits["max_characters_per_picture"]):
-            raise DocumentProcessorFailure("docling_picture_character_limit_exceeded", retryable=False)
-        provenance = text_item.get("prov")
-        if not isinstance(provenance, list) or len(provenance) != 1 or not isinstance(
-            provenance[0], dict
-        ):
             raise DocumentProcessorFailure(
-                _structure_error(profile, "docling_picture_provenance_invalid"),
+                "docling_picture_character_limit_exceeded", retryable=False
+            )
+        segments = _text_provenance_segments(text_item, text=text, profile=profile)
+        has_multiple_provenance = has_multiple_provenance or len(segments) > 1
+        if len(block_candidates) + len(segments) > maximum_blocks:
+            raise DocumentProcessorFailure(
+                "docling_picture_block_limit_exceeded",
                 retryable=False,
             )
-        bbox = _normalized_bbox(provenance[0].get("bbox"), width=width, height=height)
+        for segment, provenance in segments:
+            block_candidates.append(
+                {
+                    "source_index": index,
+                    "text": segment,
+                    "confidence_bp": _confidence_basis_points(
+                        text_item,
+                        provenance,
+                        profile=profile,
+                    ),
+                    "bbox": _normalized_bbox(
+                        provenance.get("bbox"),
+                        width=width,
+                        height=height,
+                    ),
+                }
+            )
+    blocks: list[dict[str, Any]] = []
+    for output_index, candidate in enumerate(block_candidates, start=1):
+        block_number = output_index if has_multiple_provenance else candidate["source_index"]
         blocks.append(
             {
-                "id": f"b{index:04d}",
-                "text": text,
-                "confidence_bp": _confidence_basis_points(
-                    text_item,
-                    provenance[0],
-                    profile=profile,
-                ),
-                "reading_order": len(blocks) + 1,
-                "bbox": bbox,
+                "id": f"b{block_number:04d}",
+                "text": candidate["text"],
+                "confidence_bp": candidate["confidence_bp"],
+                "reading_order": output_index,
+                "bbox": candidate["bbox"],
             }
         )
     relations = _bounded_relations(
@@ -383,8 +454,7 @@ def validate_picture_result(
         or result["status"] not in {"AVAILABLE", "NO_TEXT"}
         or not isinstance(result["picture_sha256"], str)
         or len(result["picture_sha256"]) != 64
-        or result["coordinate_space"]
-        != {"origin": "TOPLEFT", "minimum": 0, "maximum": 10_000}
+        or result["coordinate_space"] != {"origin": "TOPLEFT", "minimum": 0, "maximum": 10_000}
         or not isinstance(result["blocks"], list)
         or not isinstance(result["relations"], list)
         or len(result["blocks"]) > int(limits["max_blocks_per_picture"])
@@ -403,8 +473,7 @@ def validate_picture_result(
             not isinstance(item, int) or item < 1
             for item in [*image["original_size"], *image["normalized_size"]]
         )
-        or image["original_size"][0] * image["original_size"][1]
-        > int(limits["max_picture_pixels"])
+        or image["original_size"][0] * image["original_size"][1] > int(limits["max_picture_pixels"])
         or not isinstance(image["transform"], dict)
         or set(image["transform"])
         != {
@@ -417,10 +486,8 @@ def validate_picture_result(
             "original_size",
             "normalized_size",
         }
-        or image["transform"].get("version")
-        != "embedded-media-exif-orientation/v1"
-        or image["transform"].get("pixel_basis")
-        != "RAW_EMBEDDED_MEDIA_AFTER_EXIF"
+        or image["transform"].get("version") != "embedded-media-exif-orientation/v1"
+        or image["transform"].get("pixel_basis") != "RAW_EMBEDDED_MEDIA_AFTER_EXIF"
         or image["transform"].get("office_display_transform_applied") is not False
         or image["transform"].get("source_origin") != "TOPLEFT"
         or image["transform"].get("target_origin") != "TOPLEFT"
@@ -439,7 +506,9 @@ def validate_picture_result(
             "reading_order",
             "bbox",
         }:
-            raise DocumentProcessorFailure("document_picture_layout_schema_invalid", retryable=False)
+            raise DocumentProcessorFailure(
+                "document_picture_layout_schema_invalid", retryable=False
+            )
         bbox = block["bbox"]
         if (
             block["id"] != f"b{index:04d}"
@@ -461,7 +530,9 @@ def validate_picture_result(
             or bbox[2] <= bbox[0]
             or bbox[3] <= bbox[1]
         ):
-            raise DocumentProcessorFailure("document_picture_layout_schema_invalid", retryable=False)
+            raise DocumentProcessorFailure(
+                "document_picture_layout_schema_invalid", retryable=False
+            )
         block_ids.add(str(block["id"]))
         characters += len(block["text"])
     if characters > int(limits["max_characters_per_picture"]):
@@ -475,7 +546,9 @@ def validate_picture_result(
             or relation["source"] == relation["target"]
             or relation["type"] not in ALLOWED_RELATIONS
         ):
-            raise DocumentProcessorFailure("document_picture_layout_schema_invalid", retryable=False)
+            raise DocumentProcessorFailure(
+                "document_picture_layout_schema_invalid", retryable=False
+            )
     if (result["status"] == "NO_TEXT") != (not result["blocks"]):
         raise DocumentProcessorFailure("document_picture_layout_schema_invalid", retryable=False)
     return result
@@ -494,7 +567,9 @@ def assemble_layout_representation(
     totals = {"blocks": 0, "characters": 0, "relations": 0}
     for expected_index, occurrence in enumerate(occurrences, start=1):
         if int(occurrence.get("occurrence_index") or 0) != expected_index:
-            raise DocumentProcessorFailure("document_picture_occurrence_order_invalid", retryable=False)
+            raise DocumentProcessorFailure(
+                "document_picture_occurrence_order_invalid", retryable=False
+            )
         status = str(occurrence.get("status") or "")
         if status not in PICTURE_TERMINAL_STATUSES:
             raise DocumentProcessorFailure("document_picture_status_invalid", retryable=False)
@@ -551,9 +626,7 @@ def assemble_layout_representation(
             "profile_hash": profile.profile_hash,
             "layout_version": f"{LAYOUT_SCHEMA_NAME}/{_layout_schema_version(profile)}",
             "assembler_version": str(layout_options["assembler_version"]),
-            "relation_algorithm_version": str(
-                layout_options["relation_algorithm"]["version"]
-            ),
+            "relation_algorithm_version": str(layout_options["relation_algorithm"]["version"]),
         },
         "pictures": pictures,
     }
@@ -576,6 +649,7 @@ def validate_layout_representation(
     profile: DocumentProcessingProfile,
 ) -> dict[str, Any]:
     limits = _limits(profile)
+    assert profile.layout_ocr_options is not None
     if len(value) > int(limits["max_ocr_layout_json_bytes"]):
         raise DocumentProcessorFailure("document_layout_size_exceeded", retryable=False)
     layout = _strict_json_object(value, error_code="document_layout_schema_invalid")
@@ -659,8 +733,7 @@ def validate_layout_representation(
         elif anchor.get("source_format") == "PPTX":
             bbox = anchor.get("slide_bbox")
             if (
-                set(anchor)
-                != {"source_format", "slide_no", "shape_ref", "slide_bbox"}
+                set(anchor) != {"source_format", "slide_no", "shape_ref", "slide_bbox"}
                 or anchor["shape_ref"] != picture["picture_ref"]
                 or not isinstance(anchor["slide_no"], int)
                 or anchor["slide_no"] < 1
@@ -724,7 +797,9 @@ def append_layout_ocr_markdown(parent_markdown: bytes, layout_json: bytes) -> by
     try:
         parent = parent_markdown.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
-        raise DocumentProcessorFailure("docling_markdown_encoding_invalid", retryable=False) from exc
+        raise DocumentProcessorFailure(
+            "docling_markdown_encoding_invalid", retryable=False
+        ) from exc
     confidence_notice = (
         "> 仅支持文字、上游可用时的置信度、阅读顺序与有限几何关系；不识别箭头、颜色、图标、照片含义或因果。"
         if layout.get("schema_version") == "v2"
