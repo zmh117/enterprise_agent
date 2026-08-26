@@ -24,3 +24,4 @@ dingtalk-runtime/dist/
 enterprise-agent-master-key.tar
 .agents/
 skills-lock.json
+ones_mock/ones
