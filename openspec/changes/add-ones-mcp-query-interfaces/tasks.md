@@ -26,6 +26,6 @@
 
 ## 5. 验证与交付
 
-- [ ] 5.1 运行 ONES 聚焦 pytest、Ruff、mypy/compileall、OpenSpec strict validation 和 `git diff --check`
-- [ ] 5.2 运行两份 Compose config 校验，重建并启动 `ones-mcp` 与独立 Mock，验证健康检查和合成接口闭环
-- [ ] 5.3 记录实现验证证据，明确 Mock 通过不等于真实 ONES 兼容，真实环境只读探测保持待办
+- [x] 5.1 运行 ONES 聚焦 pytest、Ruff、mypy/compileall、OpenSpec strict validation 和 `git diff --check`
+- [x] 5.2 运行两份 Compose config 校验，重建并启动 `ones-mcp` 与独立 Mock，验证健康检查和合成接口闭环
+- [x] 5.3 记录实现验证证据，明确 Mock 通过不等于真实 ONES 兼容，真实环境只读探测保持待办
