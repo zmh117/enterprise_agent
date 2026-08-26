@@ -40,6 +40,296 @@ class DocumentProcessingRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    def acquire_docling_slot(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        lease_expires_at: str,
+        now: str | None = None,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        timestamp = now or _now()
+        with self.database.unit_of_work():
+            existing = self.database.execute_one(
+                """
+                select * from document_processing_docling_slot
+                 where owner_kind = ? and owner_id = ?
+                """,
+                (owner_kind, owner_id),
+            )
+            if existing is not None:
+                if str(existing["state"]) == "QUARANTINED":
+                    return existing, False
+                if (
+                    str(existing["worker_instance_id"]) != worker_instance_id
+                    and str(existing["lease_expires_at"] or "") > timestamp
+                ):
+                    return existing, False
+                changed = self.database.execute(
+                    """
+                    update document_processing_docling_slot
+                       set worker_instance_id = ?, lease_expires_at = ?, updated_at = ?
+                     where slot_no = ? and state = 'OCCUPIED'
+                       and owner_kind = ? and owner_id = ?
+                    returning *
+                    """,
+                    (
+                        worker_instance_id,
+                        lease_expires_at,
+                        timestamp,
+                        existing["slot_no"],
+                        owner_kind,
+                        owner_id,
+                    ),
+                )
+                return (changed[0], True) if changed else (existing, False)
+
+            if self.database.engine == "postgres":
+                candidate = self.database.execute_one(
+                    """
+                    select slot_no from document_processing_docling_slot
+                     where state = 'AVAILABLE'
+                     order by slot_no
+                     for update skip locked limit 1
+                    """
+                )
+            else:
+                candidate = self.database.execute_one(
+                    """
+                    select slot_no from document_processing_docling_slot
+                     where state = 'AVAILABLE'
+                     order by slot_no limit 1
+                    """
+                )
+            if candidate is None:
+                return None, False
+            changed = self.database.execute(
+                """
+                update document_processing_docling_slot
+                   set state = 'OCCUPIED', owner_kind = ?, owner_id = ?,
+                       worker_instance_id = ?, lease_expires_at = ?, reason_code = '',
+                       acquired_at = ?, updated_at = ?
+                 where slot_no = ? and state = 'AVAILABLE'
+                returning *
+                """,
+                (
+                    owner_kind,
+                    owner_id,
+                    worker_instance_id,
+                    lease_expires_at,
+                    timestamp,
+                    timestamp,
+                    candidate["slot_no"],
+                ),
+            )
+            return (changed[0], True) if changed else (None, False)
+
+    def renew_docling_slot(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        lease_expires_at: str,
+        now: str | None = None,
+    ) -> dict[str, Any]:
+        timestamp = now or _now()
+        changed = self.database.execute(
+            """
+            update document_processing_docling_slot
+               set lease_expires_at = ?, updated_at = ?
+             where owner_kind = ? and owner_id = ? and state = 'OCCUPIED'
+               and worker_instance_id = ?
+            returning *
+            """,
+            (
+                lease_expires_at,
+                timestamp,
+                owner_kind,
+                owner_id,
+                worker_instance_id,
+            ),
+        )
+        if not changed:
+            self._deny("docling_slot_lease_conflict", "Docling并发槽位租约冲突")
+        return changed[0]
+
+    def release_docling_slot(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        now: str | None = None,
+    ) -> bool:
+        timestamp = now or _now()
+        existing = self.database.execute_one(
+            """
+            select * from document_processing_docling_slot
+             where owner_kind = ? and owner_id = ?
+            """,
+            (owner_kind, owner_id),
+        )
+        if existing is None:
+            return False
+        if str(existing["worker_instance_id"]) != worker_instance_id:
+            self._deny("docling_slot_lease_conflict", "Docling并发槽位租约冲突")
+        changed = self.database.execute(
+            """
+            update document_processing_docling_slot
+               set state = 'AVAILABLE', owner_kind = '', owner_id = '',
+                   worker_instance_id = '', lease_expires_at = null,
+                   reason_code = '', acquired_at = null, updated_at = ?
+             where slot_no = ? and owner_kind = ? and owner_id = ?
+               and worker_instance_id = ?
+            returning slot_no
+            """,
+            (
+                timestamp,
+                existing["slot_no"],
+                owner_kind,
+                owner_id,
+                worker_instance_id,
+            ),
+        )
+        return bool(changed)
+
+    def quarantine_docling_slot(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        reason_code: str,
+        lease_expires_at: str,
+        now: str | None = None,
+    ) -> dict[str, Any]:
+        timestamp = now or _now()
+        changed = self.database.execute(
+            """
+            update document_processing_docling_slot
+               set state = 'QUARANTINED', reason_code = ?,
+                   lease_expires_at = ?, updated_at = ?
+             where owner_kind = ? and owner_id = ? and worker_instance_id = ?
+               and state in ('OCCUPIED', 'QUARANTINED')
+            returning *
+            """,
+            (
+                _safe_metric_error_code(reason_code) or "docling_task_state_unknown",
+                lease_expires_at,
+                timestamp,
+                owner_kind,
+                owner_id,
+                worker_instance_id,
+            ),
+        )
+        if not changed:
+            self._deny("docling_slot_lease_conflict", "Docling并发槽位租约冲突")
+        return changed[0]
+
+    def record_processing_worker_heartbeat(
+        self,
+        *,
+        instance_id: str,
+        profile_hash: str,
+        queue_contract: str,
+        docling_local_workers: int,
+        status: str,
+        reason_code: str,
+        expires_at: str,
+        now: str | None = None,
+    ) -> dict[str, Any]:
+        timestamp = now or _now()
+        rows = self.database.execute(
+            """
+            insert into file_processing_worker_heartbeat
+              (instance_id, profile_hash, queue_contract, docling_local_workers,
+               status, reason_code, expires_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(instance_id) do update set
+              profile_hash = excluded.profile_hash,
+              queue_contract = excluded.queue_contract,
+              docling_local_workers = excluded.docling_local_workers,
+              status = excluded.status,
+              reason_code = excluded.reason_code,
+              expires_at = excluded.expires_at,
+              updated_at = excluded.updated_at
+            returning *
+            """,
+            (
+                instance_id,
+                profile_hash,
+                queue_contract,
+                docling_local_workers,
+                status,
+                _safe_metric_error_code(reason_code) or "worker_degraded",
+                expires_at,
+                timestamp,
+            ),
+        )
+        return rows[0]
+
+    def docling_concurrency_readiness(
+        self,
+        *,
+        expected_profile_hash: str,
+        now: str | None = None,
+    ) -> dict[str, Any]:
+        timestamp = now or _now()
+        heartbeats = self.database.execute(
+            """
+            select instance_id, profile_hash, queue_contract, docling_local_workers,
+                   status, reason_code, expires_at, updated_at
+              from file_processing_worker_heartbeat
+             where expires_at > ?
+             order by instance_id
+            """,
+            (timestamp,),
+        )
+        slots = self.database.execute(
+            """
+            select slot_no, state, lease_expires_at, reason_code, updated_at
+              from document_processing_docling_slot order by slot_no
+            """
+        )
+        eligible = [
+            row
+            for row in heartbeats
+            if str(row["profile_hash"]) == expected_profile_hash
+            and str(row["queue_contract"]) == "file-processing/v1"
+            and int(row["docling_local_workers"]) == 2
+            and str(row["status"]) == "READY"
+        ]
+        quarantined = [row for row in slots if str(row["state"]) == "QUARANTINED"]
+        if len(slots) != 2:
+            reason_code = "docling_slot_topology_invalid"
+        elif quarantined:
+            reason_code = "docling_slot_quarantined"
+        elif len(heartbeats) > 2:
+            reason_code = "file_processing_worker_topology_drift"
+        elif len(heartbeats) < 2:
+            reason_code = "file_processing_worker_capacity_missing"
+        elif len(eligible) != 2:
+            reason_code = "file_processing_worker_configuration_drift"
+        else:
+            reason_code = "ready"
+        return {
+            "configured": True,
+            "ready": reason_code == "ready",
+            "reason_code": reason_code,
+            "expected_workers": 2,
+            "active_workers": len(heartbeats),
+            "eligible_workers": len(eligible),
+            "slots_total": len(slots),
+            "slots_occupied": sum(str(row["state"]) == "OCCUPIED" for row in slots),
+            "slots_quarantined": len(quarantined),
+            "oldest_lease_expires_at": min(
+                (str(row["lease_expires_at"]) for row in slots if row["lease_expires_at"]),
+                default="",
+            ),
+        }
+
     def create_or_get_run(
         self,
         *,

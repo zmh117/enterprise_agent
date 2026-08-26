@@ -12,7 +12,7 @@ from services.file_service.app import create_app
 class _Database:
     def execute_one(self, query: str) -> dict[str, Any]:
         if "schema_migration" in query:
-            return {"version": 116}
+            return {"version": 122}
         return {"ready": 1}
 
     def execute(self, _: str) -> list[dict[str, Any]]:
@@ -58,6 +58,45 @@ class _DocumentProcessing:
     def __init__(self) -> None:
         self.claim_message: dict[str, Any] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def acquire_docling_slot(self, **values: Any) -> dict[str, Any]:
+        self.calls.append(("slot-acquire", values))
+        return {"acquired": True, "slot_no": 1, "state": "OCCUPIED", "reason_code": "ready"}
+
+    def renew_docling_slot(self, **values: Any) -> dict[str, Any]:
+        self.calls.append(("slot-renew", values))
+        return {"renewed": True, "slot_no": 1, "state": "OCCUPIED"}
+
+    def release_docling_slot(self, **values: Any) -> dict[str, Any]:
+        self.calls.append(("slot-release", values))
+        return {"released": True}
+
+    def quarantine_docling_slot(self, **values: Any) -> dict[str, Any]:
+        self.calls.append(("slot-quarantine", values))
+        return {
+            "quarantined": True,
+            "slot_no": 1,
+            "state": "QUARANTINED",
+            "reason_code": str(values["reason_code"]),
+        }
+
+    def record_processing_worker_heartbeat(self, **values: Any) -> dict[str, Any]:
+        self.calls.append(("heartbeat", values))
+        return {"accepted": True, "expires_at": "2099-01-01T00:00:00+00:00"}
+
+    def docling_concurrency_readiness(self) -> dict[str, Any]:
+        return {
+            "configured": True,
+            "ready": False,
+            "reason_code": "file_processing_worker_capacity_missing",
+            "expected_workers": 2,
+            "active_workers": 0,
+            "eligible_workers": 0,
+            "slots_total": 2,
+            "slots_occupied": 0,
+            "slots_quarantined": 0,
+            "oldest_lease_expires_at": "",
+        }
 
     def claim(self, *, message: dict[str, Any], service_principal_id: str) -> dict[str, Any]:
         assert service_principal_id == "file-processing-worker"
@@ -207,6 +246,56 @@ def test_processing_worker_claim_and_source_stream_are_principal_and_purpose_bou
         "internal:file-service:document-processing:claim",
         "internal:file-service:document-processing:source:read",
         "internal:file-service:document-processing:source:read",
+    ]
+
+
+def test_processing_admission_and_heartbeat_are_principal_bound_and_safe() -> None:
+    client, principal, processing = _client()
+    headers = {
+        "Authorization": "Bearer processing-worker-token",
+        "Content-Type": "application/json",
+    }
+    identity = {
+        "owner_kind": "PARENT_RUN",
+        "owner_id": "run-1",
+        "worker_instance_id": "worker-instance-0001",
+    }
+    with client:
+        acquired = client.post(
+            "/internal/v1/document-processing/admission/acquire",
+            headers=headers,
+            json=identity,
+        )
+        heartbeat = client.post(
+            "/internal/v1/document-processing/workers/heartbeat",
+            headers=headers,
+            json={
+                "instance_id": "worker-instance-0001",
+                "profile_hash": "a" * 64,
+                "queue_contract": "file-processing/v1",
+                "docling_local_workers": 2,
+                "status": "READY",
+                "reason_code": "ready",
+            },
+        )
+    assert acquired.json() == {
+        "acquired": True,
+        "slot_no": 1,
+        "state": "OCCUPIED",
+        "reason_code": "ready",
+    }
+    assert heartbeat.json() == {
+        "accepted": True,
+        "expires_at": "2099-01-01T00:00:00+00:00",
+    }
+    assert [name for name, _ in processing.calls] == ["slot-acquire", "heartbeat"]
+    for _name, values in processing.calls:
+        assert "file_name" not in values
+        assert "object_key" not in values
+        assert "external_task_id" not in values
+    assert principal.scopes == [
+        "internal:file-service:document-processing:admission",
+        "internal:file-service:document-processing:heartbeat",
     ]
 
 

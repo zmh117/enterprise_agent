@@ -287,7 +287,7 @@ def test_file_service_requires_managed_private_bucket() -> None:
 class _Database:
     def execute_one(self, query: str) -> dict[str, Any]:
         if "schema_migration" in query:
-            return {"version": "120"}
+            return {"version": "122"}
         return {"ready": 1}
 
     def execute(self, query: str) -> list[dict[str, Any]]:
@@ -351,7 +351,18 @@ def test_file_service_health_readiness_and_transport_fail_closed_without_secrets
         readiness = client.get("/ready")
         assert readiness.status_code == 200
         assert readiness.json()["streaming_api"] == "ready"
-        assert readiness.json()["document_processing"] == "not_configured"
+        assert readiness.json()["document_processing"] == {
+            "configured": False,
+            "ready": False,
+            "reason_code": "document_processing_not_configured",
+            "expected_workers": 2,
+            "active_workers": 0,
+            "eligible_workers": 0,
+            "slots_total": 0,
+            "slots_occupied": 0,
+            "slots_quarantined": 0,
+            "oldest_lease_expires_at": "",
+        }
         denied = client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},

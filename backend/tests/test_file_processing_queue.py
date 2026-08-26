@@ -35,6 +35,7 @@ class _Channel:
         self.callback: Any = None
         self.consumer_queue = ""
         self.prefetch_count = 0
+        self.ack_error: Exception | None = None
 
     def queue_declare(self, **values: Any) -> None:
         self.declarations.append(values)
@@ -59,30 +60,46 @@ class _Channel:
 
     def basic_ack(self, *, delivery_tag: int) -> None:
         self.acks.append(delivery_tag)
+        if self.ack_error is not None:
+            raise self.ack_error
 
 
 class _Connection:
     def __init__(self, channel: _Channel) -> None:
         self._channel = channel
+        self.is_open = True
 
     def channel(self) -> _Channel:
         return self._channel
 
     def close(self) -> None:
+        self.is_open = False
         return None
 
 
-def _pika(monkeypatch: pytest.MonkeyPatch, channel: _Channel) -> None:
+def _pika(monkeypatch: pytest.MonkeyPatch, channel: _Channel) -> list[Any]:
     connection = _Connection(channel)
+    parameters: list[Any] = []
+
+    def url_parameters(value: str) -> Any:
+        result = SimpleNamespace(
+            url=value,
+            heartbeat=None,
+            blocked_connection_timeout=None,
+        )
+        parameters.append(result)
+        return result
+
     monkeypatch.setitem(
         sys.modules,
         "pika",
         SimpleNamespace(
-            URLParameters=lambda value: value,
+            URLParameters=url_parameters,
             BlockingConnection=lambda _: connection,
             BasicProperties=lambda **values: SimpleNamespace(**values),
         ),
     )
+    return parameters
 
 
 def _message() -> FileProcessingTaskMessage:
@@ -165,12 +182,29 @@ def test_processing_publisher_uses_durable_work_retry_dead_topology_and_safe_pay
     assert json.loads(dead["body"])["dead_letter_error_code"] == "docling_format_rejected"
 
 
+def test_capacity_retry_preserves_message_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = QueueSettings()
+    channel = _Channel()
+    _pika(monkeypatch, channel)
+    publisher = RabbitMQFileProcessingPublisher("amqp://test", queue)
+
+    publisher.publish_retry(
+        _message(),
+        delay_seconds=30,
+        increment_attempt=False,
+    )
+
+    assert json.loads(channel.published[-1]["body"])["attempt"] == 0
+
+
 def test_processing_consumer_validates_message_and_acks_only_after_disposition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     queue = QueueSettings()
     channel = _Channel(json.dumps(_message().safe_payload()).encode())
-    _pika(monkeypatch, channel)
+    parameters = _pika(monkeypatch, channel)
     received: list[FileProcessingTaskMessage] = []
 
     def handle(message: FileProcessingTaskMessage) -> FileProcessingTaskResult:
@@ -183,6 +217,27 @@ def test_processing_consumer_validates_message_and_acks_only_after_disposition(
     assert channel.prefetch_count == 1
     assert channel.consumer_queue == queue.file_processing_queue
     assert channel.acks == [23]
+    assert parameters[0].heartbeat == queue.consumer_heartbeat_seconds
+    assert (
+        parameters[0].blocked_connection_timeout
+        == queue.consumer_heartbeat_seconds + 60
+    )
+
+
+def test_processing_consumer_does_not_dead_letter_after_transport_ack_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel = _Channel(json.dumps(_message().safe_payload()).encode())
+    channel.ack_error = RuntimeError("ack_transport_lost")
+    _pika(monkeypatch, channel)
+
+    with pytest.raises(RuntimeError, match="ack_transport_lost"):
+        RabbitMQFileProcessingConsumer("amqp://test", QueueSettings()).consume(
+            lambda _: FileProcessingTaskResult(FileProcessingDisposition.ACK)
+        )
+
+    assert channel.acks == [23]
+    assert channel.published == []
 
 
 def test_processing_consumer_quarantines_malformed_input_without_republishing_body(

@@ -4,13 +4,14 @@ from pathlib import Path
 
 import yaml
 
+from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V2
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DIGEST = "sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807"
 PROCESSOR_VERSION = "v1.30.0+wps-null-zero-drawing.v1"
 PROCESSOR_BUILD_DIGEST = "sha256:ea15a6fc35b991249180d9265e1a3406448855fe8134c61fc7d26dd046b93429"
 MODEL_DIGEST = "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
-PROFILE_HASH = "c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8"
 
 
 def _compose() -> dict[str, object]:
@@ -51,7 +52,7 @@ def test_docling_image_is_digest_pinned_offline_nonroot_and_internal_only() -> N
 
     assert environment["DOCLING_DEVICE"] == "cpu"
     assert environment["DOCLING_SERVE_ENG_KIND"] == "local"
-    assert environment["DOCLING_SERVE_ENG_LOC_NUM_WORKERS"] == "1"
+    assert environment["DOCLING_SERVE_ENG_LOC_NUM_WORKERS"] == "2"
     assert environment["DOCLING_SERVE_ENABLE_REMOTE_SERVICES"] == "false"
     assert environment["DOCLING_SERVE_ALLOW_EXTERNAL_PLUGINS"] == "false"
     assert environment["DOCLING_SERVE_ALLOW_CUSTOM_VLM_CONFIG"] == "false"
@@ -66,6 +67,9 @@ def test_docling_image_is_digest_pinned_offline_nonroot_and_internal_only() -> N
     assert environment["HF_HUB_OFFLINE"] == "1"
     assert environment["TRANSFORMERS_OFFLINE"] == "1"
     assert environment["DOCLING_MODEL_ARTIFACT_DIGEST"] == MODEL_DIGEST
+    assert environment["DOCLING_MODEL_ARTIFACT_DIGEST"] == str(
+        DOCLING_LAYOUT_OCR_V2.layout_ocr_options["model_artifact"]["digest"]
+    )
     assert environment["DOCLING_SERVE_LOAD_MODELS_AT_BOOT"] == "true"
     assert "DOCLING_SERVE_API_KEY" not in environment
     assert "/run/secrets/docling_api_key" in service["command"][0]
@@ -82,7 +86,13 @@ def test_file_service_freezes_docling_and_docx_compatibility_build_identity() ->
 def test_processing_worker_has_only_queue_file_service_identity_and_docling_boundaries() -> None:
     services = _compose()["services"]
     worker = services["file-processing-worker"]
+    second_worker = services["file-processing-worker-2"]
     environment = worker["environment"]
+
+    assert second_worker == worker
+    assert worker["image"] == (
+        "enterprise-agent/file-processing-worker:docling-concurrency-2"
+    )
 
     assert worker["build"]["target"] == "file-processing-worker"
     assert worker["user"] == "10006:10006"
@@ -104,8 +114,8 @@ def test_processing_worker_has_only_queue_file_service_identity_and_docling_boun
     assert environment["DOCLING_SERVE_TOTAL_TIMEOUT_SECONDS"] == "600"
     assert environment["DOCLING_SERVE_MAX_RESPONSE_BYTES"] == "134217728"
     assert environment["DOCUMENT_LAYOUT_OCR_ENABLED"] == "true"
-    assert environment["DOCUMENT_LAYOUT_OCR_PROFILE_HASH"] == PROFILE_HASH
-    assert environment["DOCLING_MODEL_ARTIFACT_DIGEST"] == MODEL_DIGEST
+    assert "DOCUMENT_LAYOUT_OCR_PROFILE_HASH" not in environment
+    assert "DOCLING_MODEL_ARTIFACT_DIGEST" not in environment
     assert environment["FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE"] == (
         "/run/secrets/file_processing_worker_bootstrap_token"
     )
@@ -140,6 +150,11 @@ def test_processing_topology_adds_no_redis_rq_ray_file_mcp_or_host_docling_port(
     assert "redis" not in services
     assert "file-mcp" not in services
     assert "docling-server" not in services
+    assert sorted(name for name in services if name.startswith("file-processing-worker")) == [
+        "file-processing-worker",
+        "file-processing-worker-2",
+    ]
+    assert [name for name in services if name.startswith("docling-serve")] == ["docling-serve"]
     worker = services["file-processing-worker"]
     docling = services["docling-serve"]
     combined = str({"worker": worker, "docling": docling}).lower()
@@ -147,6 +162,14 @@ def test_processing_topology_adds_no_redis_rq_ray_file_mcp_or_host_docling_port(
     assert "eng_kind': 'ray" not in combined
     assert "redis_url" not in combined
     assert "ports" not in docling
+    migration = (ROOT / "backend/migrations/121_expand_docling_processing_concurrency.sql").read_text(
+        encoding="utf-8"
+    )
+    assert "VALUES (1, CURRENT_TIMESTAMP), (2, CURRENT_TIMESTAMP)" in migration
+    assert (
+        DOCLING_LAYOUT_OCR_V2.layout_ocr_options["limits"]["max_global_docling_concurrency"]
+        == 2
+    )
 
 
 def test_processing_secrets_are_generated_as_files_and_never_have_example_values() -> None:

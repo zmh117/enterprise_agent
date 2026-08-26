@@ -36,10 +36,12 @@ FILE_WORKER_SCOPES = frozenset(
 )
 FILE_PROCESSING_WORKER_SCOPES = frozenset(
     {
+        "internal:file-service:document-processing:admission",
         "internal:file-service:document-processing:claim",
         "internal:file-service:document-processing:source:read",
         "internal:file-service:document-processing:representation:write",
         "internal:file-service:document-processing:complete",
+        "internal:file-service:document-processing:heartbeat",
     }
 )
 DELIVERY_WORKER_SCOPES = frozenset({"internal:file-service:delivery:read"})

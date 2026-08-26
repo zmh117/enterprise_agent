@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import threading
 import time
 import urllib.request
@@ -102,12 +103,13 @@ def main() -> None:
     layout_options = DOCLING_LAYOUT_OCR_V2.layout_ocr_options
     if layout_options is None:
         raise RuntimeError("Document layout OCR Profile is invalid")
+    model_digest = str(layout_options["model_artifact"]["digest"])
     if worker_settings.layout_ocr_enabled and (
-        worker_settings.layout_profile_hash != DOCLING_LAYOUT_OCR_V2.profile_hash
-        or worker_settings.model_artifact_digest
-        != str(layout_options["model_artifact"]["digest"])
+        len(DOCLING_LAYOUT_OCR_V2.profile_hash) != 64
+        or not model_digest.startswith("sha256:")
+        or len(model_digest) != 71
     ):
-        raise RuntimeError("Document layout OCR deployment digest mismatch")
+        raise RuntimeError("Document layout OCR code artifact is invalid")
     token_provider = ServicePrincipalTokenClient(
         base_url=settings.service_principal.identity_base_url,
         allowed_hosts=settings.service_principal.identity_allowed_hosts,
@@ -130,6 +132,7 @@ def main() -> None:
         connect_timeout_seconds=worker_settings.connect_timeout_seconds,
         max_response_bytes=worker_settings.max_response_bytes,
     )
+    worker_instance_id = secrets.token_hex(32)
     service = FileProcessingWorkerService(
         file_service=file_service,
         processor=processor,
@@ -137,6 +140,7 @@ def main() -> None:
         total_timeout_seconds=worker_settings.total_timeout_seconds,
         max_attempts=settings.queue.file_processing_max_attempts,
         retry_base_seconds=settings.queue.file_processing_retry_base_seconds,
+        worker_instance_id=worker_instance_id,
     )
     consumer = RabbitMQFileProcessingConsumer(settings.rabbitmq_url, settings.queue)
     status_lock = threading.Lock()
@@ -173,6 +177,21 @@ def main() -> None:
                 except (OSError, TimeoutError):
                     status[name] = "unavailable"
             publish_status(**status)
+            with status_lock:
+                heartbeat_status = dict(runtime_status)
+            readiness = document_processing_readiness(heartbeat_status, 0.0)
+            try:
+                file_service.heartbeat(
+                    instance_id=worker_instance_id,
+                    profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+                    status="READY" if readiness["ready"] else "DEGRADED",
+                    reason_code=str(readiness["reason_code"]),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "File processing heartbeat failed safely error_class=%s",
+                    type(exc).__name__[:128],
+                )
             time.sleep(30)
 
     def handle(message: object):

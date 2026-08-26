@@ -3,7 +3,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import queue
+import threading
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -150,11 +153,16 @@ def _source(
     storage: _Storage,
     *,
     tenant_id: str = "tenant-default",
+    suffix: str = "",
+    create_workspace: bool = True,
 ) -> tuple[FileWorkspaceRepository, str, str, bytes]:
     file_repository = FileWorkspaceRepository(database)
     body = _pdf_bytes(2)
-    file_id = "managed_file_document_source"
-    version_id = "managed_file_version_document_source"
+    identifier_suffix = f"_{suffix}" if suffix else ""
+    file_id = f"managed_file_document_source{identifier_suffix}"
+    version_id = f"managed_file_version_document_source{identifier_suffix}"
+    workspace_id = "document-workspace"
+    display_name = f"source{identifier_suffix}.pdf"
     object_key = storage.new_object_key(
         kind="attachment",
         canonical_extension=".pdf",
@@ -164,21 +172,22 @@ def _source(
         owner_type=WorkspaceOwnerType.PRIVATE_USER,
         user_id="user-document-owner",
     )
-    file_repository.create_workspace(
-        workspace_id="document-workspace",
-        tenant_id=tenant_id,
-        session_id="document-session",
-        owner=owner,
-        publication_id="document-app-p1",
-        retention_period=RetentionPeriod.WEEK,
-        expires_at="2026-08-24T00:00:00+00:00",
-        actor_id="file-worker",
-    )
+    if create_workspace:
+        file_repository.create_workspace(
+            workspace_id=workspace_id,
+            tenant_id=tenant_id,
+            session_id="document-session",
+            owner=owner,
+            publication_id="document-app-p1",
+            retention_period=RetentionPeriod.WEEK,
+            expires_at="2026-08-24T00:00:00+00:00",
+            actor_id="file-worker",
+        )
     file_repository.create_file(
         file_id=file_id,
         tenant_id=tenant_id,
         owner=owner,
-        display_name="source.pdf",
+        display_name=display_name,
         actor_id="file-worker",
         format_code="PDF",
     )
@@ -199,10 +208,10 @@ def _source(
         advance_current_from="",
     )
     file_repository.link_workspace_file(
-        workspace_id="document-workspace",
+        workspace_id=workspace_id,
         file_id=file_id,
         version_id=version_id,
-        logical_name="source.pdf",
+        logical_name=display_name,
         role=WorkspaceFileRole.INPUT,
     )
     return file_repository, file_id, version_id, body
@@ -275,7 +284,6 @@ def test_processing_request_is_idempotent_and_outbox_payload_is_bounded() -> Non
         }
         & projected["payload"].keys()
     )
-
     with pytest.raises(PermissionDenied):
         service.request_processing(
             tenant_id="tenant-other",
@@ -285,6 +293,393 @@ def test_processing_request_is_idempotent_and_outbox_payload_is_bounded() -> Non
             correlation_id="safe",
         )
 
+
+def test_docling_slots_are_globally_bounded_and_only_same_owner_can_take_over() -> None:
+    database = _database()
+    repository = DocumentProcessingRepository(database)
+    first, acquired = repository.acquire_docling_slot(
+        owner_kind="PARENT_RUN",
+        owner_id="run-slot-1",
+        worker_instance_id="worker-instance-0001",
+        lease_expires_at="2026-08-25T00:01:00+00:00",
+        now="2026-08-25T00:00:00+00:00",
+    )
+    assert acquired is True
+    assert first is not None and first["slot_no"] == 1
+
+    same_owner, acquired = repository.acquire_docling_slot(
+        owner_kind="PARENT_RUN",
+        owner_id="run-slot-1",
+        worker_instance_id="worker-instance-0002",
+        lease_expires_at="2026-08-25T00:01:30+00:00",
+        now="2026-08-25T00:00:30+00:00",
+    )
+    assert acquired is False
+    assert same_owner is not None and same_owner["worker_instance_id"] == "worker-instance-0001"
+
+    second, acquired = repository.acquire_docling_slot(
+        owner_kind="PICTURE_ITEM",
+        owner_id="item-slot-2",
+        worker_instance_id="worker-instance-0002",
+        lease_expires_at="2026-08-25T00:01:00+00:00",
+        now="2026-08-25T00:00:00+00:00",
+    )
+    assert acquired is True
+    assert second is not None and second["slot_no"] == 2
+
+    third, acquired = repository.acquire_docling_slot(
+        owner_kind="PARENT_RUN",
+        owner_id="run-slot-3",
+        worker_instance_id="worker-instance-0003",
+        lease_expires_at="2026-08-25T00:02:00+00:00",
+        now="2026-08-25T00:01:30+00:00",
+    )
+    assert third is None
+    assert acquired is False
+
+    recovered, acquired = repository.acquire_docling_slot(
+        owner_kind="PARENT_RUN",
+        owner_id="run-slot-1",
+        worker_instance_id="worker-instance-0002",
+        lease_expires_at="2026-08-25T00:03:00+00:00",
+        now="2026-08-25T00:01:30+00:00",
+    )
+    assert acquired is True
+    assert recovered is not None and recovered["worker_instance_id"] == "worker-instance-0002"
+    assert repository.release_docling_slot(
+        owner_kind="PARENT_RUN",
+        owner_id="run-slot-1",
+        worker_instance_id="worker-instance-0002",
+    )
+    assert not repository.release_docling_slot(
+        owner_kind="PARENT_RUN",
+        owner_id="run-slot-1",
+        worker_instance_id="worker-instance-0002",
+    )
+    database.close()
+
+
+def test_two_transactions_cannot_claim_the_same_last_docling_slot() -> None:
+    database = _database()
+    repository = DocumentProcessingRepository(database)
+    repository.acquire_docling_slot(
+        owner_kind="PARENT_RUN",
+        owner_id="run-occupied",
+        worker_instance_id="worker-instance-0000",
+        lease_expires_at="2026-08-25T00:05:00+00:00",
+        now="2026-08-25T00:00:00+00:00",
+    )
+
+    def acquire(index: int) -> bool:
+        _slot, acquired = repository.acquire_docling_slot(
+            owner_kind="PARENT_RUN",
+            owner_id=f"run-contender-{index}",
+            worker_instance_id=f"worker-instance-000{index}",
+            lease_expires_at="2026-08-25T00:05:00+00:00",
+            now="2026-08-25T00:00:00+00:00",
+        )
+        return acquired
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(acquire, (1, 2)))
+    assert sorted(results) == [False, True]
+    assert database.execute_one(
+        "select count(*) as count from document_processing_docling_slot where state = 'OCCUPIED'"
+    ) == {"count": 2}
+    database.close()
+
+
+def test_processing_worker_heartbeat_requires_exactly_two_matching_instances() -> None:
+    database = _database()
+    repository = DocumentProcessingRepository(database)
+    for index in (1, 2):
+        repository.record_processing_worker_heartbeat(
+            instance_id=f"worker-instance-000{index}",
+            profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+            queue_contract="file-processing/v1",
+            docling_local_workers=2,
+            status="READY",
+            reason_code="ready",
+            expires_at="2026-08-25T00:02:00+00:00",
+            now="2026-08-25T00:00:00+00:00",
+        )
+    ready = repository.docling_concurrency_readiness(
+        expected_profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+        now="2026-08-25T00:01:00+00:00",
+    )
+    assert ready == {
+        "configured": True,
+        "ready": True,
+        "reason_code": "ready",
+        "expected_workers": 2,
+        "active_workers": 2,
+        "eligible_workers": 2,
+        "slots_total": 2,
+        "slots_occupied": 0,
+        "slots_quarantined": 0,
+        "oldest_lease_expires_at": "",
+    }
+    repository.record_processing_worker_heartbeat(
+        instance_id="worker-instance-0003",
+        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+        queue_contract="file-processing/v1",
+        docling_local_workers=2,
+        status="READY",
+        reason_code="ready",
+        expires_at="2026-08-25T00:02:00+00:00",
+        now="2026-08-25T00:00:00+00:00",
+    )
+    drift = repository.docling_concurrency_readiness(
+        expected_profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+        now="2026-08-25T00:01:00+00:00",
+    )
+    assert drift["ready"] is False
+    assert drift["reason_code"] == "file_processing_worker_topology_drift"
+    database.close()
+
+
+def test_processing_readiness_fails_closed_for_missing_drifted_or_quarantined_capacity() -> None:
+    database = _database()
+    repository = DocumentProcessingRepository(database)
+    repository.record_processing_worker_heartbeat(
+        instance_id="worker-instance-0001",
+        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+        queue_contract="file-processing/v1",
+        docling_local_workers=2,
+        status="READY",
+        reason_code="ready",
+        expires_at="2026-08-25T00:03:00+00:00",
+        now="2026-08-25T00:00:00+00:00",
+    )
+    missing = repository.docling_concurrency_readiness(
+        expected_profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+        now="2026-08-25T00:01:00+00:00",
+    )
+    assert missing["reason_code"] == "file_processing_worker_capacity_missing"
+
+    repository.record_processing_worker_heartbeat(
+        instance_id="worker-instance-0002",
+        profile_hash="d" * 64,
+        queue_contract="file-processing/v1",
+        docling_local_workers=2,
+        status="READY",
+        reason_code="ready",
+        expires_at="2026-08-25T00:03:00+00:00",
+        now="2026-08-25T00:00:00+00:00",
+    )
+    drift = repository.docling_concurrency_readiness(
+        expected_profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+        now="2026-08-25T00:01:00+00:00",
+    )
+    assert drift["reason_code"] == "file_processing_worker_configuration_drift"
+
+    slot, acquired = repository.acquire_docling_slot(
+        owner_kind="PARENT_RUN",
+        owner_id="run-quarantined",
+        worker_instance_id="worker-instance-0001",
+        lease_expires_at="2026-08-25T00:03:00+00:00",
+        now="2026-08-25T00:00:00+00:00",
+    )
+    assert acquired and slot is not None
+    repository.quarantine_docling_slot(
+        owner_kind="PARENT_RUN",
+        owner_id="run-quarantined",
+        worker_instance_id="worker-instance-0001",
+        reason_code="docling_task_state_unknown",
+        lease_expires_at="2026-08-25T00:03:00+00:00",
+        now="2026-08-25T00:00:00+00:00",
+    )
+    quarantined = repository.docling_concurrency_readiness(
+        expected_profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+        now="2026-08-25T00:01:00+00:00",
+    )
+    assert quarantined["reason_code"] == "docling_slot_quarantined"
+    assert quarantined["slots_quarantined"] == 1
+    database.close()
+
+
+def test_ten_files_complete_with_two_workers_two_slots_and_no_duplicate_results() -> None:
+    database = _database()
+    storage = _Storage()
+    service = GovernedDocumentProcessingService(
+        DocumentProcessingRepository(database),
+        FileWorkspaceRepository(database),
+        storage,
+        SourceStreamGrantSigner(b"document-processing-test-signing-key-32"),
+        AuditService(AuditRepository(database)),
+        processor_version="1.30.0",
+        processor_build_digest=PROCESSOR_DIGEST,
+    )
+    requested: list[tuple[dict[str, object], str, str]] = []
+    for index in range(10):
+        _files, file_id, version_id, _body = _source(
+            database,
+            storage,
+            suffix=str(index),
+            create_workspace=index == 0,
+        )
+        run = service.request_processing(
+            tenant_id="tenant-default",
+            source_file_id=file_id,
+            source_version_id=version_id,
+            actor_id="file-worker",
+            correlation_id=f"ten-file-{index}",
+        )
+        requested.append((run, file_id, version_id))
+
+    assert len({str(run["id"]) for run, _file_id, _version_id in requested}) == 10
+    assert database.execute_one(
+        "select count(*) as count from file_domain_outbox "
+        "where event_type = 'file.processing.requested'"
+    ) == {"count": 10}
+
+    pending: queue.Queue[tuple[dict[str, object], str, str]] = queue.Queue()
+    for item in requested:
+        pending.put(item)
+    active_lock = threading.Lock()
+    database_lock = threading.Lock()
+    first_pair_ready = threading.Event()
+    active = 0
+    maximum_active = 0
+    started = 0
+    waiting_when_two_active = -1
+    completed: list[str] = []
+
+    def process(worker_index: int) -> None:
+        nonlocal active, maximum_active, started, waiting_when_two_active
+        worker_id = f"worker-integration-000{worker_index}"
+        while True:
+            try:
+                run, file_id, version_id = pending.get_nowait()
+            except queue.Empty:
+                return
+            run_id = str(run["id"])
+            with database_lock:
+                slot = service.acquire_docling_slot(
+                    owner_kind="PARENT_RUN",
+                    owner_id=run_id,
+                    worker_instance_id=worker_id,
+                    service_principal_id="file-processing-worker",
+                    now=NOW,
+                )
+            assert slot["acquired"] is True
+            with active_lock:
+                active += 1
+                started += 1
+                maximum_active = max(maximum_active, active)
+                if started == 2:
+                    waiting_when_two_active = pending.qsize()
+                    first_pair_ready.set()
+            if started <= 2:
+                assert first_pair_ready.wait(timeout=5)
+            try:
+                with database_lock:
+                    message = service.repository.safe_message_payload(
+                        run_id=run_id,
+                        source_version_id=version_id,
+                        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+                        attempt=0,
+                        correlation_id=f"ten-file-{run_id}",
+                    )
+                    claimed = service.claim(
+                        message=message,
+                        service_principal_id="file-processing-worker",
+                    )
+                    assert claimed["run_id"] == run_id
+                    service.mark_submitted(
+                        run_id=run_id,
+                        external_task_id=f"task-{run_id}",
+                    )
+                markdown = f"# result {run_id}\n".encode()
+                docling_json = json.dumps(
+                    {"schema_name": "DoclingDocument", "run_id": run_id},
+                    sort_keys=True,
+                ).encode()
+                layout = assemble_layout_representation(
+                    source_file_id=file_id,
+                    source_version_id=version_id,
+                    run_id=run_id,
+                    profile=DOCLING_LAYOUT_OCR_V2,
+                    occurrences=[],
+                )
+                with database_lock:
+                    for kind, media_type, content in (
+                        ("MARKDOWN", "text/markdown", markdown),
+                        ("DOCLING_JSON", "application/json", docling_json),
+                        ("OCR_LAYOUT_JSON", "application/json", layout),
+                    ):
+                        prepared = service.prepare_representation_transfer(
+                            run_id=run_id,
+                            kind=kind,
+                            expected_size_bytes=len(content),
+                            expected_sha256=hashlib.sha256(content).hexdigest(),
+                            now=NOW,
+                        )
+                        service.upload_representation(
+                            transfer_id=str(prepared["transfer_id"]),
+                            upload_token=str(prepared["upload_token"]),
+                            stream=io.BytesIO(content),
+                            media_type=media_type,
+                            now=NOW,
+                        )
+                    representations = service.finalize(
+                        run_id=run_id,
+                        partial=False,
+                        page_count=2,
+                        processing_time_ms=100,
+                    )
+                assert len(representations) == 3
+                with active_lock:
+                    completed.append(run_id)
+            finally:
+                with database_lock:
+                    released = service.release_docling_slot(
+                        owner_kind="PARENT_RUN",
+                        owner_id=run_id,
+                        worker_instance_id=worker_id,
+                        service_principal_id="file-processing-worker",
+                        now=NOW,
+                    )
+                assert released["released"] is True
+                with active_lock:
+                    active -= 1
+                pending.task_done()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(process, index) for index in (1, 2)]
+        for future in futures:
+            future.result(timeout=30)
+
+    assert maximum_active == 2
+    assert waiting_when_two_active == 8
+    assert sorted(completed) == sorted(str(run["id"]) for run, _file, _version in requested)
+    assert database.execute_one(
+        "select count(*) as count from file_processing_run where status = 'SUCCEEDED'"
+    ) == {"count": 10}
+    assert database.execute_one(
+        "select count(*) as count from file_representation where status = 'AVAILABLE'"
+    ) == {"count": 30}
+    assert database.execute_one(
+        "select count(*) as count from ("
+        "select processing_run_id, kind from file_representation "
+        "group by processing_run_id, kind having count(*) > 1) duplicate"
+    ) == {"count": 0}
+    assert service.docling_concurrency_readiness()["slots_occupied"] == 0
+
+    for run, _file_id, version_id in requested:
+        replay = service.request_processing(
+            tenant_id="tenant-default",
+            source_file_id=str(run["source_file_id"]),
+            source_version_id=version_id,
+            actor_id="file-worker",
+            correlation_id="replayed",
+        )
+        assert replay["id"] == run["id"]
+    assert database.execute_one(
+        "select count(*) as count from file_domain_outbox "
+        "where event_type = 'file.processing.requested'"
+    ) == {"count": 10}
+    database.close()
 
 def test_layout_profile_freezes_three_outputs_deadline_and_unique_picture_assembly() -> None:
     database, storage, service, file_id, version_id, _body = _service()

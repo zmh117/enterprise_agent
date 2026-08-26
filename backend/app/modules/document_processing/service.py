@@ -38,6 +38,8 @@ from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 SOURCE_GRANT_TTL = timedelta(minutes=5)
 REPRESENTATION_TRANSFER_TTL = timedelta(minutes=10)
 PICTURE_TRANSFER_TTL = timedelta(minutes=10)
+DOCLING_SLOT_LEASE_TTL = timedelta(seconds=150)
+PROCESSING_WORKER_HEARTBEAT_TTL = timedelta(seconds=90)
 
 
 class DocumentObjectStoragePort(Protocol):
@@ -144,6 +146,183 @@ class GovernedDocumentProcessingService:
         self.audit_service = audit_service
         self.processor_version = processor_version
         self.processor_build_digest = processor_build_digest
+
+    def acquire_docling_slot(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        service_principal_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        self._require_processing_principal(service_principal_id)
+        self._validate_slot_identity(owner_kind, owner_id, worker_instance_id)
+        self._require_current_slot_owner(owner_kind, owner_id)
+        issued_at = now or datetime.now(UTC)
+        slot, acquired = self.repository.acquire_docling_slot(
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            worker_instance_id=worker_instance_id,
+            lease_expires_at=(issued_at + DOCLING_SLOT_LEASE_TTL).isoformat(),
+            now=issued_at.isoformat(),
+        )
+        return {
+            "acquired": acquired,
+            "slot_no": int(slot["slot_no"]) if slot is not None and acquired else None,
+            "state": str(slot["state"]) if slot is not None else "UNAVAILABLE",
+            "reason_code": (
+                "ready"
+                if acquired
+                else str((slot or {}).get("reason_code") or "docling_capacity_unavailable")
+            ),
+        }
+
+    def renew_docling_slot(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        service_principal_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        self._require_processing_principal(service_principal_id)
+        self._validate_slot_identity(owner_kind, owner_id, worker_instance_id)
+        issued_at = now or datetime.now(UTC)
+        slot = self.repository.renew_docling_slot(
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            worker_instance_id=worker_instance_id,
+            lease_expires_at=(issued_at + DOCLING_SLOT_LEASE_TTL).isoformat(),
+            now=issued_at.isoformat(),
+        )
+        return {"renewed": True, "slot_no": int(slot["slot_no"]), "state": "OCCUPIED"}
+
+    def release_docling_slot(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        service_principal_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        self._require_processing_principal(service_principal_id)
+        self._validate_slot_identity(owner_kind, owner_id, worker_instance_id)
+        released = self.repository.release_docling_slot(
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            worker_instance_id=worker_instance_id,
+            now=(now or datetime.now(UTC)).isoformat(),
+        )
+        return {"released": released}
+
+    def quarantine_docling_slot(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        reason_code: str,
+        service_principal_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        self._require_processing_principal(service_principal_id)
+        self._validate_slot_identity(owner_kind, owner_id, worker_instance_id)
+        if not reason_code or not reason_code.replace("_", "").isalnum():
+            self._deny("docling_slot_reason_invalid", "Docling槽位隔离原因无效")
+        issued_at = now or datetime.now(UTC)
+        slot = self.repository.quarantine_docling_slot(
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            worker_instance_id=worker_instance_id,
+            reason_code=reason_code,
+            lease_expires_at=(issued_at + DOCLING_SLOT_LEASE_TTL).isoformat(),
+            now=issued_at.isoformat(),
+        )
+        return {
+            "quarantined": True,
+            "slot_no": int(slot["slot_no"]),
+            "state": "QUARANTINED",
+            "reason_code": str(slot["reason_code"]),
+        }
+
+    def record_processing_worker_heartbeat(
+        self,
+        *,
+        instance_id: str,
+        profile_hash: str,
+        queue_contract: str,
+        docling_local_workers: int,
+        status: str,
+        reason_code: str,
+        service_principal_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        self._require_processing_principal(service_principal_id)
+        self._validate_worker_instance_id(instance_id)
+        if (
+            profile_hash != DOCLING_LAYOUT_OCR_V2.profile_hash
+            or queue_contract != "file-processing/v1"
+            or docling_local_workers != 2
+            or status not in {"READY", "DEGRADED"}
+            or not reason_code
+            or not reason_code.replace("_", "").isalnum()
+        ):
+            self._deny("file_processing_worker_heartbeat_invalid", "文档处理Worker心跳无效")
+        issued_at = now or datetime.now(UTC)
+        row = self.repository.record_processing_worker_heartbeat(
+            instance_id=instance_id,
+            profile_hash=profile_hash,
+            queue_contract=queue_contract,
+            docling_local_workers=docling_local_workers,
+            status=status,
+            reason_code=reason_code,
+            expires_at=(issued_at + PROCESSING_WORKER_HEARTBEAT_TTL).isoformat(),
+            now=issued_at.isoformat(),
+        )
+        return {"accepted": True, "expires_at": str(row["expires_at"])}
+
+    def docling_concurrency_readiness(self) -> dict[str, Any]:
+        return self.repository.docling_concurrency_readiness(
+            expected_profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash
+        )
+
+    @staticmethod
+    def _require_processing_principal(service_principal_id: str) -> None:
+        if service_principal_id != "file-processing-worker":
+            raise PermissionDenied(
+                "Document processing principal denied",
+                safe_message="文档处理运行身份无权执行此操作",
+            )
+
+    def _require_current_slot_owner(self, owner_kind: str, owner_id: str) -> None:
+        if owner_kind == "PARENT_RUN":
+            run = self.repository.get_run(owner_id)
+        else:
+            item = self.repository.get_picture_item(owner_id)
+            run = self.repository.get_run(str(item["processing_run_id"]))
+        if (
+            str(run["profile_code"])
+            != DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
+            or str(run["profile_hash"]) != DOCLING_LAYOUT_OCR_V2.profile_hash
+        ):
+            self._deny("document_profile_version_unavailable", "文档处理Profile版本不可用")
+
+    def _validate_slot_identity(
+        self, owner_kind: str, owner_id: str, worker_instance_id: str
+    ) -> None:
+        if owner_kind not in {"PARENT_RUN", "PICTURE_ITEM"} or not 1 <= len(owner_id) <= 256:
+            self._deny("docling_slot_owner_invalid", "Docling槽位工作身份无效")
+        self._validate_worker_instance_id(worker_instance_id)
+
+    def _validate_worker_instance_id(self, value: str) -> None:
+        if (
+            not 16 <= len(value) <= 128
+            or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for character in value)
+        ):
+            self._deny("file_processing_worker_instance_invalid", "文档处理Worker实例身份无效")
 
     def request_processing(
         self,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import json
 import logging
 import secrets
@@ -63,6 +63,7 @@ class FileProcessingWorkerService:
         total_timeout_seconds: int,
         max_attempts: int,
         retry_base_seconds: int,
+        worker_instance_id: str,
         monotonic: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
         now: Callable[[], datetime] | None = None,
@@ -75,12 +76,15 @@ class FileProcessingWorkerService:
             raise ValueError("File processing max attempts must match the frozen profile")
         if not 1 <= retry_base_seconds <= total_timeout_seconds:
             raise ValueError("File processing retry base is invalid")
+        if not 16 <= len(worker_instance_id) <= 128:
+            raise ValueError("File processing worker instance identity is invalid")
         self.file_service = file_service
         self.processor = processor
         self.poll_interval_seconds = poll_interval_seconds
         self.total_timeout_seconds = total_timeout_seconds
         self.max_attempts = max_attempts
         self.retry_base_seconds = retry_base_seconds
+        self.worker_instance_id = worker_instance_id
         self.monotonic = monotonic or time.monotonic
         self.sleep = sleep or time.sleep
         self.now = now or (lambda: datetime.now(UTC))
@@ -94,11 +98,18 @@ class FileProcessingWorkerService:
 
     def _handle_parent(self, message: FileProcessingTaskMessage) -> FileProcessingTaskResult:
         run: ClaimedDocumentRun | None = None
+        task: ProcessorTask | None = None
         started = self.monotonic()
         try:
+            if not self.file_service.acquire_docling_slot(
+                owner_kind="PARENT_RUN",
+                owner_id=message.run_id,
+                worker_instance_id=self.worker_instance_id,
+            ):
+                return self._capacity_retry("document_docling_capacity_unavailable")
             run = self.file_service.claim(message)
             if run.terminal:
-                return FileProcessingTaskResult(FileProcessingDisposition.ACK)
+                return self._release_then_ack("PARENT_RUN", message.run_id)
             profile = require_document_processing_profile(
                 run.profile_code, profile_hash=run.profile_hash
             )
@@ -113,6 +124,8 @@ class FileProcessingWorkerService:
                 task,
                 started=started,
                 timeout_seconds=parent_timeout,
+                owner_kind="PARENT_RUN",
+                owner_id=run.run_id,
             )
             self._require_run_not_expired(run.run_deadline_at, profile=profile)
             if task.state is ProcessorTaskState.FAILURE:
@@ -124,7 +137,7 @@ class FileProcessingWorkerService:
                     task=task,
                     correlation_id=message.correlation_id,
                 )
-                return FileProcessingTaskResult(FileProcessingDisposition.ACK)
+                return self._release_then_ack("PARENT_RUN", run.run_id)
             result = self.processor.fetch(task.task_id, profile=profile)
             if result.no_text:
                 self.file_service.no_text(
@@ -132,7 +145,7 @@ class FileProcessingWorkerService:
                     page_count=result.page_count,
                     processing_time_ms=result.processing_time_ms,
                 )
-                return FileProcessingTaskResult(FileProcessingDisposition.ACK)
+                return self._release_then_ack("PARENT_RUN", run.run_id)
             self.file_service.upload_representation(
                 run_id=run.run_id,
                 kind="MARKDOWN",
@@ -151,22 +164,52 @@ class FileProcessingWorkerService:
                 page_count=result.page_count,
                 processing_time_ms=result.processing_time_ms,
             )
-            return FileProcessingTaskResult(FileProcessingDisposition.ACK)
+            return self._release_then_ack("PARENT_RUN", run.run_id)
         except DocumentProcessorFailure as exc:
-            return self._failure(run, message, exc.error_code, retryable=exc.retryable)
+            if run is None:
+                return self._unclaimed_failure(exc.error_code, retryable=exc.retryable)
+            result = self._failure(run, message, exc.error_code, retryable=exc.retryable)
+            return self._settle_failed_slot(
+                "PARENT_RUN", message.run_id, result=result, task=task, error_code=exc.error_code
+            )
         except RetryableExecutionError as exc:
-            return self._failure(
+            if run is None:
+                return self._unclaimed_failure(
+                    exc.error_code or "document_processing_dependency_unavailable",
+                    retryable=True,
+                )
+            result = self._failure(
                 run,
                 message,
                 exc.error_code or "document_processing_dependency_unavailable",
                 retryable=True,
             )
+            return self._settle_failed_slot(
+                "PARENT_RUN", message.run_id, result=result, task=task,
+                error_code=exc.error_code or "document_processing_dependency_unavailable",
+            )
         except NonRetryableExecutionError as exc:
-            return self._failure(
+            if run is None:
+                result = self._unclaimed_failure(
+                    exc.error_code or "document_processing_denied",
+                    retryable=False,
+                )
+                return self._settle_failed_slot(
+                    "PARENT_RUN",
+                    message.run_id,
+                    result=result,
+                    task=None,
+                    error_code=exc.error_code or "document_processing_denied",
+                )
+            result = self._failure(
                 run,
                 message,
                 exc.error_code or "document_processing_denied",
                 retryable=False,
+            )
+            return self._settle_failed_slot(
+                "PARENT_RUN", message.run_id, result=result, task=task,
+                error_code=exc.error_code or "document_processing_denied",
             )
         except Exception as exc:
             logger.error(
@@ -174,11 +217,20 @@ class FileProcessingWorkerService:
                 run.run_id if run is not None else message.run_id,
                 type(exc).__name__[:128],
             )
-            return self._failure(
+            if run is None:
+                return self._unclaimed_failure(
+                    "document_processing_unexpected",
+                    retryable=True,
+                )
+            result = self._failure(
                 run,
                 message,
                 "document_processing_unexpected",
                 retryable=True,
+            )
+            return self._settle_failed_slot(
+                "PARENT_RUN", message.run_id, result=result, task=task,
+                error_code="document_processing_unexpected",
             )
 
     def _submit_or_resume(
@@ -323,8 +375,15 @@ class FileProcessingWorkerService:
         self, message: PictureProcessingTaskMessage
     ) -> FileProcessingTaskResult:
         item: ClaimedPictureItem | None = None
+        task: ProcessorTask | None = None
         started = self.monotonic()
         try:
+            if not self.file_service.acquire_docling_slot(
+                owner_kind="PICTURE_ITEM",
+                owner_id=message.picture_item_id,
+                worker_instance_id=self.worker_instance_id,
+            ):
+                return self._capacity_retry("document_picture_docling_capacity_unavailable")
             item = self.file_service.claim_picture_item(
                 picture_item_id=message.picture_item_id,
                 claim_token=secrets.token_urlsafe(24),
@@ -333,7 +392,7 @@ class FileProcessingWorkerService:
                 expected_profile_hash=message.profile_hash,
             )
             if item.terminal:
-                return FileProcessingTaskResult(FileProcessingDisposition.ACK)
+                return self._release_then_ack("PICTURE_ITEM", message.picture_item_id)
             profile = require_layout_ocr_profile_by_hash(item.profile_hash)
             self._require_run_not_expired(
                 item.run_deadline_at,
@@ -360,6 +419,8 @@ class FileProcessingWorkerService:
                         "picture_attempt_deadline_seconds"
                     ]
                 ),
+                owner_kind="PICTURE_ITEM",
+                owner_id=item.picture_item_id,
             )
             self._require_run_not_expired(
                 item.run_deadline_at,
@@ -407,22 +468,55 @@ class FileProcessingWorkerService:
                 error_code="",
                 correlation_id=message.correlation_id,
             )
-            return FileProcessingTaskResult(FileProcessingDisposition.ACK)
+            return self._release_then_ack("PICTURE_ITEM", item.picture_item_id)
         except DocumentProcessorFailure as exc:
-            return self._picture_failure(item, message, exc.error_code, retryable=exc.retryable)
+            if item is None:
+                return self._unclaimed_failure(exc.error_code, retryable=exc.retryable)
+            result = self._picture_failure(
+                item, message, exc.error_code, retryable=exc.retryable
+            )
+            return self._settle_failed_slot(
+                "PICTURE_ITEM", message.picture_item_id, result=result, task=task,
+                error_code=exc.error_code,
+            )
         except RetryableExecutionError as exc:
-            return self._picture_failure(
+            if item is None:
+                return self._unclaimed_failure(
+                    exc.error_code or "document_picture_dependency_unavailable",
+                    retryable=True,
+                )
+            result = self._picture_failure(
                 item,
                 message,
                 exc.error_code or "document_picture_dependency_unavailable",
                 retryable=True,
             )
+            return self._settle_failed_slot(
+                "PICTURE_ITEM", message.picture_item_id, result=result, task=task,
+                error_code=exc.error_code or "document_picture_dependency_unavailable",
+            )
         except NonRetryableExecutionError as exc:
-            return self._picture_failure(
+            if item is None:
+                result = self._unclaimed_failure(
+                    exc.error_code or "document_picture_denied",
+                    retryable=False,
+                )
+                return self._settle_failed_slot(
+                    "PICTURE_ITEM",
+                    message.picture_item_id,
+                    result=result,
+                    task=None,
+                    error_code=exc.error_code or "document_picture_denied",
+                )
+            result = self._picture_failure(
                 item,
                 message,
                 exc.error_code or "document_picture_denied",
                 retryable=False,
+            )
+            return self._settle_failed_slot(
+                "PICTURE_ITEM", message.picture_item_id, result=result, task=task,
+                error_code=exc.error_code or "document_picture_denied",
             )
         except Exception as exc:
             logger.error(
@@ -430,11 +524,20 @@ class FileProcessingWorkerService:
                 message.picture_item_id,
                 type(exc).__name__[:128],
             )
-            return self._picture_failure(
+            if item is None:
+                return self._unclaimed_failure(
+                    "document_picture_unexpected",
+                    retryable=True,
+                )
+            result = self._picture_failure(
                 item,
                 message,
                 "document_picture_unexpected",
                 retryable=True,
+            )
+            return self._settle_failed_slot(
+                "PICTURE_ITEM", message.picture_item_id, result=result, task=task,
+                error_code="document_picture_unexpected",
             )
 
     def _handle_assembly(self, message: AssemblyTaskMessage) -> FileProcessingTaskResult:
@@ -635,6 +738,8 @@ class FileProcessingWorkerService:
         *,
         started: float,
         timeout_seconds: int,
+        owner_kind: str,
+        owner_id: str,
     ) -> ProcessorTask:
         current = task
         while current.state not in {
@@ -643,9 +748,90 @@ class FileProcessingWorkerService:
         }:
             if self.monotonic() - started >= timeout_seconds:
                 raise DocumentProcessorFailure("docling_processing_timeout", retryable=True)
+            self.file_service.renew_docling_slot(
+                owner_kind=owner_kind,
+                owner_id=owner_id,
+                worker_instance_id=self.worker_instance_id,
+            )
             self.sleep(self.poll_interval_seconds)
             current = self.processor.poll(current.task_id)
         return current
+
+    def _capacity_retry(self, error_code: str) -> FileProcessingTaskResult:
+        return FileProcessingTaskResult(
+            FileProcessingDisposition.RETRY,
+            error_code=error_code,
+            delay_seconds=min(self.retry_base_seconds, 30),
+            increment_attempt=False,
+        )
+
+    def _release_slot(self, owner_kind: str, owner_id: str) -> bool:
+        try:
+            self.file_service.release_docling_slot(
+                owner_kind=owner_kind,
+                owner_id=owner_id,
+                worker_instance_id=self.worker_instance_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Docling slot release deferred owner_kind=%s error_class=%s",
+                owner_kind,
+                type(exc).__name__[:128],
+            )
+            return False
+        return True
+
+    def _release_then_ack(
+        self, owner_kind: str, owner_id: str
+    ) -> FileProcessingTaskResult:
+        if self._release_slot(owner_kind, owner_id):
+            return FileProcessingTaskResult(FileProcessingDisposition.ACK)
+        return self._capacity_retry("document_docling_slot_release_deferred")
+
+    def _unclaimed_failure(
+        self, error_code: str, *, retryable: bool
+    ) -> FileProcessingTaskResult:
+        safe_code = _safe_error_code(error_code)
+        if retryable:
+            return self._capacity_retry(safe_code)
+        return FileProcessingTaskResult(
+            FileProcessingDisposition.DEAD,
+            error_code=safe_code,
+        )
+
+    def _settle_failed_slot(
+        self,
+        owner_kind: str,
+        owner_id: str,
+        *,
+        result: FileProcessingTaskResult,
+        task: ProcessorTask | None,
+        error_code: str,
+    ) -> FileProcessingTaskResult:
+        if result.disposition is FileProcessingDisposition.RETRY:
+            return result
+        if task is None or task.state in {
+            ProcessorTaskState.SUCCESS,
+            ProcessorTaskState.FAILURE,
+        }:
+            if self._release_slot(owner_kind, owner_id):
+                return result
+            return self._capacity_retry("document_docling_slot_release_deferred")
+        try:
+            self.file_service.quarantine_docling_slot(
+                owner_kind=owner_kind,
+                owner_id=owner_id,
+                worker_instance_id=self.worker_instance_id,
+                reason_code=_safe_error_code(error_code),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Docling slot quarantine deferred owner_kind=%s error_class=%s",
+                owner_kind,
+                type(exc).__name__[:128],
+            )
+            return self._capacity_retry("document_docling_slot_quarantine_deferred")
+        return result
 
     def _require_run_not_expired(
         self,

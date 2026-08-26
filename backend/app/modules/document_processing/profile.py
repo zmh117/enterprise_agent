@@ -332,8 +332,8 @@ _CURRENT_LAYOUT_OCR_OPTIONS = MappingProxyType(
             "max_parent_attempts": 3,
             "max_picture_attempts": 3,
             "max_assembly_attempts": 3,
-            "max_global_docling_concurrency": 1,
-            "max_parent_picture_concurrency": 1,
+            "max_global_docling_concurrency": 2,
+            "max_parent_picture_concurrency": 2,
         },
         "security": {
             "upload_name_policy": "fixed-synthetic-name",
@@ -361,7 +361,7 @@ DOCLING_LAYOUT_OCR_V2 = DocumentProcessingProfile(
     layout_ocr_options=_CURRENT_LAYOUT_OCR_OPTIONS,
 )
 DOCLING_LAYOUT_OCR_V2_PROFILE_HASH = (
-    "c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8"
+    "b056637d6c9a7665368a8122633cf45c202ccd70b1f3d29ef1d337e43efa482f"
 )
 
 if DOCLING_LAYOUT_OCR_V2.profile_hash != DOCLING_LAYOUT_OCR_V2_PROFILE_HASH:

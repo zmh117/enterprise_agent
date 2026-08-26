@@ -505,6 +505,49 @@ def _submit_formats(
     print(json.dumps({"batch": batch, "submitted": submitted}, sort_keys=True))
 
 
+def _submit_repeated_pdf(sample_dir: Path, *, batch: str, count: int) -> None:
+    if not batch.replace("-", "").isalnum() or len(batch) > 32:
+        raise ValueError("synthetic batch identifier is invalid")
+    if not 1 <= count <= 20:
+        raise ValueError("synthetic repeat count is invalid")
+    source = sample_dir / "synthetic-100-page.pdf"
+    token = _runtime_auth_token()
+    lease = _runtime_request(
+        "/api/internal/dingtalk-runtime/lease/acquire",
+        {"runtime_id": RUNTIME_ID, "lease_token": ""},
+        token,
+    )["lease"]
+    lease_token = str(lease["lease_token"])
+    submitted = 0
+    try:
+        for index in range(count):
+            event_id = f"synthetic-{batch}-repeat-pdf-{index + 1}"
+            payload = _file_payload(
+                message_id=event_id,
+                conversation_id=DOCLING_CONVERSATION,
+                file_name=f"synthetic-100-page-{index + 1}.pdf",
+                file_size=source.stat().st_size,
+                media_type="application/pdf",
+                download_code="synthetic:synthetic-100-page.pdf",
+            )
+            result = _submit_to_inbox(
+                lease_token=lease_token,
+                auth_token=token,
+                external_event_id=event_id,
+                payload=payload,
+            )
+            if result.get("created") is not True:
+                raise AssertionError("synthetic repeated PDF event was not created")
+            submitted += 1
+    finally:
+        _runtime_request(
+            "/api/internal/dingtalk-runtime/lease/release",
+            {"runtime_id": RUNTIME_ID, "lease_token": lease_token},
+            token,
+        )
+    print(json.dumps({"batch": batch, "submitted": submitted}, sort_keys=True))
+
+
 def _submit_text(*, event_id: str, conversation_id: str = DOCLING_CONVERSATION) -> None:
     token = _runtime_auth_token()
     lease = _runtime_request(
@@ -573,8 +616,9 @@ def _wait_for_file_ready(*, event_id: str, timeout: int) -> None:
                          as available_representations
                   from agent_message m
                   join message_attachment a on a.message_id = m.id
+                  join message_attachment_file_binding b on b.attachment_id = a.id
                   left join file_processing_run r
-                    on r.source_version_id = a.managed_file_version_id
+                    on r.source_version_id = b.version_id
                  where m.external_message_id = ?
                  order by r.created_at desc
                  limit 1
@@ -583,17 +627,17 @@ def _wait_for_file_ready(*, event_id: str, timeout: int) -> None:
             )
             last = dict(row or {})
             if (
-                str(last.get("attachment_status") or "") == "AVAILABLE"
+                str(last.get("attachment_status") or "") == "READY"
                 and str(last.get("processing_status") or "") == "SUCCEEDED"
-                and int(last.get("available_representations") or 0) == 2
+                and int(last.get("available_representations") or 0) == 3
             ):
                 print(
                     json.dumps(
                         {
                             "event_id": event_id,
-                            "attachment_status": "AVAILABLE",
+                            "attachment_status": "READY",
                             "processing_status": "SUCCEEDED",
-                            "available_representations": 2,
+                            "available_representations": 3,
                         },
                         sort_keys=True,
                     )
@@ -809,8 +853,10 @@ def _verify(*, expect_terminal: bool) -> None:
         expected_formats = {"DOCX", "PPTX", "XLSX", "PDF", "PNG", "JPEG", "WEBP"}
         if expect_terminal and formats != expected_formats:
             raise AssertionError(f"terminal format set mismatch: {sorted(formats)}")
-        if expect_terminal and int((representations or {}).get("value") or 0) != 14:
-            raise AssertionError("seven successful inputs must expose Markdown and JSON")
+        if expect_terminal and int((representations or {}).get("value") or 0) != 21:
+            raise AssertionError(
+                "seven successful inputs must expose three Profile representations"
+            )
         if int((attachment_content or {}).get("value") or 0) != 0:
             raise AssertionError("governed profile wrote legacy attachment_content")
         if invalid is None or str(invalid["status"]) != "REJECTED":
@@ -828,6 +874,144 @@ def _verify(*, expect_terminal: bool) -> None:
                 },
                 sort_keys=True,
             )
+        )
+    finally:
+        runtime.database.close()
+
+
+def _wait_for_inflight(*, minimum: int, timeout: int) -> None:
+    runtime = _runtime("api-server")
+    try:
+        deadline = time.monotonic() + timeout
+        last = {"occupied_slots": 0, "quarantined_slots": 0}
+        while time.monotonic() < deadline:
+            row = runtime.database.execute_one(
+                """
+                select
+                  sum(case when state = 'OCCUPIED' then 1 else 0 end) as occupied_slots,
+                  sum(case when state = 'QUARANTINED' then 1 else 0 end)
+                    as quarantined_slots
+                  from document_processing_docling_slot
+                """
+            ) or {}
+            last = {key: int(row.get(key) or 0) for key in last}
+            if last["occupied_slots"] > 2:
+                raise AssertionError("Docling occupied slots exceeded two")
+            if last["quarantined_slots"]:
+                raise AssertionError("Docling slot entered quarantine during acceptance")
+            if last["occupied_slots"] >= minimum:
+                print(json.dumps(last, sort_keys=True))
+                return
+            time.sleep(0.25)
+        raise AssertionError(f"Docling inflight threshold was not reached: {last}")
+    finally:
+        runtime.database.close()
+
+
+def _wait_for_concurrency_batch(*, prefix: str, expected: int, timeout: int) -> None:
+    if not prefix.replace("-", "").isalnum() or len(prefix) > 32:
+        raise ValueError("synthetic concurrency prefix is invalid")
+    runtime = _runtime("api-server")
+    try:
+        deadline = time.monotonic() + timeout
+        maximum_occupied = 0
+        last: dict[str, int] = {}
+        pattern = f"synthetic-{prefix}%"
+        while time.monotonic() < deadline:
+            slot = runtime.database.execute_one(
+                """
+                select
+                  sum(case when state = 'OCCUPIED' then 1 else 0 end) as occupied,
+                  sum(case when state = 'QUARANTINED' then 1 else 0 end) as quarantined
+                  from document_processing_docling_slot
+                """
+            ) or {}
+            occupied = int(slot.get("occupied") or 0)
+            quarantined = int(slot.get("quarantined") or 0)
+            maximum_occupied = max(maximum_occupied, occupied)
+            if occupied > 2:
+                raise AssertionError("Docling occupied slots exceeded two")
+            if quarantined:
+                raise AssertionError("Docling slot entered quarantine during acceptance")
+            row = runtime.database.execute_one(
+                """
+                select count(distinct r.id) as runs,
+                       count(distinct r.source_version_id) as source_versions,
+                       count(distinct case when r.status = 'SUCCEEDED' then r.id end)
+                         as succeeded,
+                       count(distinct case when r.status in
+                         ('FAILED', 'NO_TEXT', 'PARTIAL') then r.id end) as other_terminal,
+                       count(distinct o.id) as processing_requests,
+                       count(distinct p.id) as available_representations
+                  from agent_message m
+                  join message_attachment a on a.message_id = m.id
+                  join message_attachment_file_binding b on b.attachment_id = a.id
+                  join file_processing_run r
+                    on r.source_version_id = b.version_id
+                  left join file_domain_outbox o
+                    on o.aggregate_id = r.id
+                   and o.event_type = 'file.processing.requested'
+                  left join file_representation p
+                    on p.processing_run_id = r.id and p.status = 'AVAILABLE'
+                 where m.external_message_id like ?
+                """,
+                (pattern,),
+            ) or {}
+            last = {key: int(row.get(key) or 0) for key in (
+                "runs",
+                "source_versions",
+                "succeeded",
+                "other_terminal",
+                "processing_requests",
+                "available_representations",
+            )}
+            if last["other_terminal"]:
+                raise AssertionError(f"synthetic concurrency batch failed: {last}")
+            if (
+                last["runs"] == expected
+                and last["source_versions"] == expected
+                and last["succeeded"] == expected
+                and last["processing_requests"] == expected
+                and last["available_representations"] == expected * 3
+                and occupied == 0
+            ):
+                duplicate = runtime.database.execute_one(
+                    """
+                    select count(*) as count from (
+                      select p.processing_run_id, p.kind
+                        from agent_message m
+                        join message_attachment a on a.message_id = m.id
+                        join message_attachment_file_binding b
+                          on b.attachment_id = a.id
+                        join file_processing_run r
+                          on r.source_version_id = b.version_id
+                        join file_representation p on p.processing_run_id = r.id
+                       where m.external_message_id like ?
+                       group by p.processing_run_id, p.kind
+                      having count(*) > 1
+                    ) duplicate
+                    """,
+                    (pattern,),
+                ) or {}
+                duplicate_representations = int(duplicate.get("count") or 0)
+                if duplicate_representations:
+                    raise AssertionError("synthetic batch created duplicate representations")
+                print(
+                    json.dumps(
+                        {
+                            **last,
+                            "duplicate_representations": 0,
+                            "maximum_occupied_slots": maximum_occupied,
+                            "final_occupied_slots": 0,
+                            "quarantined_slots": 0,
+                        },
+                        sort_keys=True,
+                    )
+                )
+                return
+            time.sleep(0.5)
+        raise AssertionError(
+            f"synthetic concurrency batch did not finish max={maximum_occupied}: {last}"
         )
     finally:
         runtime.database.close()
@@ -1014,6 +1198,10 @@ def main() -> None:
     submit_formats.add_argument("--batch", required=True)
     submit_formats.add_argument("--only", default="")
     submit_formats.add_argument("--conversation", default=DOCLING_CONVERSATION)
+    submit_repeat = subparsers.add_parser("submit-repeat-pdf")
+    submit_repeat.add_argument("sample_dir", type=Path)
+    submit_repeat.add_argument("--batch", required=True)
+    submit_repeat.add_argument("--count", type=int, default=10)
     submit_text = subparsers.add_parser("submit-text")
     submit_text.add_argument("--event-id", default="synthetic-job-question")
     submit_text.add_argument("--conversation", default=DOCLING_CONVERSATION)
@@ -1026,6 +1214,13 @@ def main() -> None:
     wait_channel.add_argument("--timeout", type=int, default=60)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--expect-terminal", action="store_true")
+    wait_inflight = subparsers.add_parser("wait-inflight")
+    wait_inflight.add_argument("--minimum", type=int, default=2)
+    wait_inflight.add_argument("--timeout", type=int, default=180)
+    wait_concurrency = subparsers.add_parser("wait-concurrency")
+    wait_concurrency.add_argument("--prefix", required=True)
+    wait_concurrency.add_argument("--expected", type=int, default=10)
+    wait_concurrency.add_argument("--timeout", type=int, default=900)
     wait_file = subparsers.add_parser("wait-file")
     wait_file.add_argument("--event-id", required=True)
     wait_file.add_argument("--timeout", type=int, default=180)
@@ -1049,6 +1244,8 @@ def main() -> None:
             only=args.only,
             conversation_id=args.conversation,
         )
+    elif args.command == "submit-repeat-pdf":
+        _submit_repeated_pdf(args.sample_dir, batch=args.batch, count=args.count)
     elif args.command == "submit-text":
         _submit_text(event_id=args.event_id, conversation_id=args.conversation)
     elif args.command == "consume-attachments":
@@ -1057,6 +1254,14 @@ def main() -> None:
         _wait_for_channel(staged=args.staged, rejected=args.rejected, timeout=args.timeout)
     elif args.command == "verify":
         _verify(expect_terminal=args.expect_terminal)
+    elif args.command == "wait-inflight":
+        _wait_for_inflight(minimum=args.minimum, timeout=args.timeout)
+    elif args.command == "wait-concurrency":
+        _wait_for_concurrency_batch(
+            prefix=args.prefix,
+            expected=args.expected,
+            timeout=args.timeout,
+        )
     elif args.command == "wait-file":
         _wait_for_file_ready(event_id=args.event_id, timeout=args.timeout)
     elif args.command == "wait-job":

@@ -134,7 +134,7 @@ class _Queues:
                     "availability": "available",
                     "ready": 2,
                     "unacked": 0,
-                    "consumers": 1,
+                    "consumers": 2,
                 },
                 {
                     "name": "agent.file.processing.retry.queue",
@@ -229,7 +229,7 @@ def test_file_operations_projection_is_safe_bounded_and_worker_aware() -> None:
                 "availability": "available",
                 "ready": 2,
                 "unacked": 0,
-                "consumers": 1,
+                "consumers": 2,
             },
             "retry": {
                 "availability": "available",

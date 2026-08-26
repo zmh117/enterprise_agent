@@ -13,6 +13,7 @@ services:
       - /bin/sh
       - -ec
       - |
+        python -m app.cli.docling_profile_cutover_preflight
         python -m app.cli.migrate
         python -c "import os; from pathlib import Path; from app.shared.database import Database; db=Database(os.environ['DATABASE_DSN']); db.execute_script(Path('/app/backend/seeds/local_seed.sql').read_text()); db.close()"
         python -m app.cli.bootstrap_file_storage_secrets

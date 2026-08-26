@@ -108,6 +108,7 @@ class FileProcessingTaskResult:
     disposition: FileProcessingDisposition
     error_code: str = ""
     delay_seconds: int = 0
+    increment_attempt: bool = True
 
 
 class MessagePublisher(Protocol):

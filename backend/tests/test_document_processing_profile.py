@@ -24,7 +24,7 @@ def test_only_current_layout_ocr_profile_is_registered_and_hash_stable() -> None
     assert profile.output_kinds == ("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON")
     assert profile.profile_hash == DOCLING_LAYOUT_OCR_V2_PROFILE_HASH
     assert profile.profile_hash == (
-        "c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8"
+        "b056637d6c9a7665368a8122633cf45c202ccd70b1f3d29ef1d337e43efa482f"
     )
     for source in profile.source_formats:
         assert source.actions == {

@@ -40,8 +40,6 @@ x-api-env: &api-env
   FILE_PROCESSING_WORKER_INTERNAL_BASE_URL: http://file-processing-worker:9106
   FILE_PROCESSING_WORKER_INTERNAL_ALLOWED_HOSTS: file-processing-worker
   DOCUMENT_LAYOUT_OCR_ENABLED: "true"
-  DOCUMENT_LAYOUT_OCR_PROFILE_HASH: c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8
-  DOCLING_MODEL_ARTIFACT_DIGEST: sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c
   DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/delivery_worker_bootstrap_token
   SERVICE_PRINCIPAL_TTL_SECONDS: ${SERVICE_PRINCIPAL_TTL_SECONDS:-300}
   # ONES 本人身份验证只由 API 发起；固定 Provider 配置不得下发给
@@ -100,7 +98,7 @@ services:
     command:
       - /bin/sh
       - -ec
-      - python -m app.cli.migrate && python -m app.cli.bootstrap_file_storage_secrets && python -m app.cli.bootstrap_admin --non-interactive && python -m app.cli.bootstrap_agents && python -m app.cli.apply_agent_runtime_grants
+      - python -m app.cli.docling_profile_cutover_preflight && python -m app.cli.migrate && python -m app.cli.bootstrap_file_storage_secrets && python -m app.cli.bootstrap_admin --non-interactive && python -m app.cli.bootstrap_agents && python -m app.cli.apply_agent_runtime_grants
     secrets:
       - app_config_master_key
       - file_storage_bootstrap_access_key
@@ -737,7 +735,7 @@ services:
       DOCLING_DEVICE: cpu
       DOCLING_NUM_THREADS: "4"
       DOCLING_SERVE_ENG_KIND: local
-      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "1"
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "2"
       DOCLING_SERVE_ENG_LOC_SHARE_MODELS: "true"
       DOCLING_SERVE_ENABLE_UI: "false"
       DOCLING_SERVE_ENABLE_MANAGEMENT_ENDPOINTS: "false"
@@ -796,11 +794,12 @@ services:
     networks:
       - document-processing
 
-  file-processing-worker:
+  file-processing-worker: &file-processing-worker-service
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: file-processing-worker
+    image: enterprise-agent/file-processing-worker:docling-concurrency-2
     command: ["python", "-m", "app.workers.file_processing_worker"]
     restart: unless-stopped
     user: "10006:10006"
@@ -838,8 +837,6 @@ services:
       DOCLING_SERVE_TOTAL_TIMEOUT_SECONDS: "600"
       DOCLING_SERVE_MAX_RESPONSE_BYTES: "134217728"
       DOCUMENT_LAYOUT_OCR_ENABLED: "true"
-      DOCUMENT_LAYOUT_OCR_PROFILE_HASH: c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8
-      DOCLING_MODEL_ARTIFACT_DIGEST: sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c
     secrets:
       - file_processing_worker_bootstrap_token
       - docling_api_key
@@ -873,6 +870,9 @@ services:
     networks:
       - default
       - document-processing
+
+  file-processing-worker-2:
+    <<: *file-processing-worker-service
 
 secrets:
   app_config_master_key:

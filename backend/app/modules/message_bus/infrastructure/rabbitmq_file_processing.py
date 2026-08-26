@@ -77,12 +77,16 @@ class RabbitMQFileProcessingPublisher:
         self._publish(self.queue.file_processing_queue, message.safe_payload())
 
     def publish_retry(
-        self, message: DocumentProcessingStageMessage, *, delay_seconds: int
+        self,
+        message: DocumentProcessingStageMessage,
+        *,
+        delay_seconds: int,
+        increment_attempt: bool = True,
     ) -> None:
         if not 1 <= delay_seconds <= 600:
             raise ValueError("File processing retry delay is invalid")
         payload = message.safe_payload()
-        payload["attempt"] = message.attempt + 1
+        payload["attempt"] = message.attempt + (1 if increment_attempt else 0)
         self._publish(
             self.queue.file_processing_retry_queue,
             payload,
@@ -192,7 +196,12 @@ class RabbitMQFileProcessingConsumer:
             import pika
         except ModuleNotFoundError as exc:
             raise RuntimeError("pika is required for RabbitMQ consuming") from exc
-        connection: Any = pika.BlockingConnection(pika.URLParameters(self.rabbitmq_url))
+        parameters = pika.URLParameters(self.rabbitmq_url)
+        parameters.heartbeat = self.queue.consumer_heartbeat_seconds
+        parameters.blocked_connection_timeout = (
+            self.queue.consumer_heartbeat_seconds + 60
+        )
+        connection: Any = pika.BlockingConnection(parameters)
         try:
             channel = connection.channel()
             declare_file_processing_topology(channel, self.queue)
@@ -219,11 +228,6 @@ class RabbitMQFileProcessingConsumer:
 
                 try:
                     result = handler(message)
-                    if result.disposition is FileProcessingDisposition.RETRY:
-                        self.publisher.publish_retry(message, delay_seconds=result.delay_seconds)
-                    elif result.disposition is FileProcessingDisposition.DEAD:
-                        self.publisher.publish_dead(message, error_code=result.error_code)
-                    ch.basic_ack(delivery_tag=method.delivery_tag)
                 except Exception:
                     logger.exception(
                         "File processing handler failed safely run_id=%s",
@@ -231,6 +235,19 @@ class RabbitMQFileProcessingConsumer:
                     )
                     self.publisher.publish_dead(message, error_code="processing_handler_unexpected")
                     ch.basic_ack(delivery_tag=method.delivery_tag)
+                    return
+                if result.disposition is FileProcessingDisposition.RETRY:
+                    self.publisher.publish_retry(
+                        message,
+                        delay_seconds=result.delay_seconds,
+                        increment_attempt=result.increment_attempt,
+                    )
+                elif result.disposition is FileProcessingDisposition.DEAD:
+                    self.publisher.publish_dead(message, error_code=result.error_code)
+                # Transport settlement errors must escape without publishing an
+                # application dead letter. RabbitMQ will redeliver the unacked
+                # identity and the governed run/item handlers are idempotent.
+                ch.basic_ack(delivery_tag=method.delivery_tag)
 
             channel.basic_consume(
                 queue=self.queue.file_processing_queue,
@@ -238,7 +255,8 @@ class RabbitMQFileProcessingConsumer:
             )
             channel.start_consuming()
         finally:
-            connection.close()
+            if bool(getattr(connection, "is_open", True)):
+                connection.close()
 
 
 def _safe_error_code(value: str) -> str:

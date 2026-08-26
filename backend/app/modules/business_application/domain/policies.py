@@ -276,6 +276,42 @@ def verify_publication_snapshot(
     )
 
 
+def verify_historical_document_profile_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    schema_version: int,
+    expected_hash: str,
+) -> bool:
+    """Recognize an intact immutable snapshot whose only drift is Profile hash."""
+    if schema_version != 6 or snapshot.get("schema_version") != 6:
+        return False
+    if not verify_snapshot(snapshot, expected_hash):
+        return False
+    value = snapshot.get("document_processing_profile")
+    if not isinstance(value, dict) or set(value) != {"code", "version", "hash"}:
+        return False
+    current = document_processing_profile_snapshot(value.get("code"))
+    profile_hash = str(value.get("hash") or "")
+    if (
+        value.get("code") != DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
+        or value.get("version") != current["version"]
+        or profile_hash == current["hash"]
+        or len(profile_hash) != 64
+        or any(character not in "0123456789abcdef" for character in profile_hash)
+    ):
+        return False
+    try:
+        features_valid = validate_task_file_features(
+            snapshot.get("task_file_features")
+        ) == snapshot.get("task_file_features")
+    except NonRetryableExecutionError:
+        return False
+    return (
+        snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
+        and features_valid
+    )
+
+
 def validate_execution_policy(value: dict[str, Any]) -> dict[str, Any]:
     _reject_unknown(value, EXECUTION_POLICY_FIELDS, "execution_policy")
     normalized: dict[str, int] = {

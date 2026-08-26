@@ -31,6 +31,7 @@ from app.modules.business_application.domain.policies import (
     validate_task_workspace_retention_period,
     validate_status,
     validate_trigger,
+    verify_historical_document_profile_snapshot,
     verify_publication_snapshot,
 )
 from app.modules.document_processing import (
@@ -885,6 +886,16 @@ class BusinessApplicationService:
             schema_version=int(publication["schema_version"]),
             expected_hash=str(publication["config_hash"]),
         ):
+            if verify_historical_document_profile_snapshot(
+                dict(publication["snapshot"]),
+                schema_version=int(publication["schema_version"]),
+                expected_hash=str(publication["config_hash"]),
+            ):
+                raise NonRetryableExecutionError(
+                    "Business Application document Profile is no longer current",
+                    safe_message="文档处理 Profile 已更新，请创建新修订版本并重新发布",
+                    error_code="document_profile_version_unavailable",
+                )
             raise NonRetryableExecutionError(
                 "Business Application publication integrity check failed",
                 safe_message="业务应用发布版本完整性校验失败",

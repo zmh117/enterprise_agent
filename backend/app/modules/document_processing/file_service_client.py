@@ -94,6 +94,108 @@ class DocumentProcessingFileServiceClient:
         self.token_provider = token_provider
         self.client = client or httpx.Client(timeout=float(timeout_seconds), follow_redirects=False)
 
+    def acquire_docling_slot(
+        self, *, owner_kind: str, owner_id: str, worker_instance_id: str
+    ) -> bool:
+        value = self._admission(
+            "acquire",
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            worker_instance_id=worker_instance_id,
+        )
+        if set(value) != {"acquired", "slot_no", "state", "reason_code"}:
+            self._invalid_response()
+        return bool(value["acquired"])
+
+    def renew_docling_slot(
+        self, *, owner_kind: str, owner_id: str, worker_instance_id: str
+    ) -> None:
+        value = self._admission(
+            "renew",
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            worker_instance_id=worker_instance_id,
+        )
+        if set(value) != {"renewed", "slot_no", "state"} or value["renewed"] is not True:
+            self._invalid_response()
+
+    def release_docling_slot(
+        self, *, owner_kind: str, owner_id: str, worker_instance_id: str
+    ) -> None:
+        value = self._admission(
+            "release",
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            worker_instance_id=worker_instance_id,
+        )
+        if set(value) != {"released"} or not isinstance(value["released"], bool):
+            self._invalid_response()
+
+    def quarantine_docling_slot(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        reason_code: str,
+    ) -> None:
+        value = self._admission(
+            "quarantine",
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            worker_instance_id=worker_instance_id,
+            reason_code=reason_code,
+        )
+        if set(value) != {"quarantined", "slot_no", "state", "reason_code"} or value[
+            "quarantined"
+        ] is not True:
+            self._invalid_response()
+
+    def heartbeat(
+        self,
+        *,
+        instance_id: str,
+        profile_hash: str,
+        status: str,
+        reason_code: str,
+    ) -> None:
+        value = self._json(
+            "POST",
+            "/internal/v1/document-processing/workers/heartbeat",
+            json={
+                "instance_id": instance_id,
+                "profile_hash": profile_hash,
+                "queue_contract": "file-processing/v1",
+                "docling_local_workers": 2,
+                "status": status,
+                "reason_code": reason_code,
+            },
+        )
+        if set(value) != {"accepted", "expires_at"} or value["accepted"] is not True:
+            self._invalid_response()
+
+    def _admission(
+        self,
+        action: str,
+        *,
+        owner_kind: str,
+        owner_id: str,
+        worker_instance_id: str,
+        reason_code: str | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "owner_kind": owner_kind,
+            "owner_id": owner_id,
+            "worker_instance_id": worker_instance_id,
+        }
+        if reason_code is not None:
+            payload["reason_code"] = reason_code
+        return self._json(
+            "POST",
+            f"/internal/v1/document-processing/admission/{quote(action, safe='')}",
+            json=payload,
+        )
+
     def claim(self, message: FileProcessingTaskMessage) -> ClaimedDocumentRun:
         value = self._json(
             "POST",

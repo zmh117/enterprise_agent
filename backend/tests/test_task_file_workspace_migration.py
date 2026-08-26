@@ -77,7 +77,7 @@ def test_workspace_expand_schema_enforces_active_owner_and_version_constraints()
         default_migrations_dir(),
         migrator_build="task-file-workspace-schema-test",
     ).run()
-    assert result.head == "120"
+    assert result.head == "122"
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")

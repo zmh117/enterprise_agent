@@ -133,6 +133,7 @@ def generate(output_dir: Path) -> None:
     workbook.save(output_dir / "synthetic-workbook.xlsx")
 
     _write_pdf(output_dir / "synthetic-10-page.pdf", pages=10)
+    _write_pdf(output_dir / "synthetic-100-page.pdf", pages=100)
     (output_dir / "synthetic-invalid.docx").write_bytes(
         b"synthetic invalid Office package; no customer data\n"
     )

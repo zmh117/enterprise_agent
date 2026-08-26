@@ -53,14 +53,19 @@ class FileOperationsStatusService:
 
     def query(self) -> dict[str, Any]:
         file_service = self.file_service_probe()
-        file_processing_worker = self.file_processing_worker_probe()
+        aggregate = file_service.get("document_processing")
+        file_processing_worker = (
+            dict(aggregate)
+            if isinstance(aggregate, dict)
+            else self.file_processing_worker_probe()
+        )
         queue_result = self.queues.collect()
         attachment_queue = self._find_queue(queue_result, self.attachment_queue)
         processing_queue = self._find_queue(queue_result, self.file_processing_queue)
         processing_retry_queue = self._find_queue(queue_result, self.file_processing_retry_queue)
         processing_dead_queue = self._find_queue(queue_result, self.file_processing_dead_queue)
-        attachment_queue_ready = self._queue_ready(attachment_queue)
-        processing_queue_ready = self._queue_ready(processing_queue)
+        attachment_queue_ready = self._queue_ready(attachment_queue, expected_consumers=1)
+        processing_queue_ready = self._queue_ready(processing_queue, expected_consumers=2)
         document_processing_ready = bool(
             file_service.get("ready")
             and file_processing_worker.get("ready")
@@ -292,9 +297,13 @@ class FileOperationsStatusService:
         )
 
     @staticmethod
-    def _queue_ready(queue: dict[str, Any] | None) -> bool:
+    def _queue_ready(
+        queue: dict[str, Any] | None, *, expected_consumers: int
+    ) -> bool:
         return bool(
-            queue and queue.get("availability") == "available" and queue.get("consumers") == 1
+            queue
+            and queue.get("availability") == "available"
+            and queue.get("consumers") == expected_consumers
         )
 
     @staticmethod
@@ -477,6 +486,35 @@ class FileOperationsStatusService:
                     "ready" if ready else str(value.get("reason_code") or unavailable_reason)
                 ),
             }
+            processing = value.get("document_processing")
+            if isinstance(processing, dict):
+                allowed = {
+                    "configured",
+                    "ready",
+                    "reason_code",
+                    "expected_workers",
+                    "active_workers",
+                    "eligible_workers",
+                    "slots_total",
+                    "slots_occupied",
+                    "slots_quarantined",
+                    "oldest_lease_expires_at",
+                }
+                if set(processing) == allowed:
+                    result["document_processing"] = {
+                        "configured": bool(processing["configured"]),
+                        "ready": bool(processing["ready"]),
+                        "reason_code": str(processing["reason_code"])[:128],
+                        "expected_workers": int(processing["expected_workers"]),
+                        "active_workers": int(processing["active_workers"]),
+                        "eligible_workers": int(processing["eligible_workers"]),
+                        "slots_total": int(processing["slots_total"]),
+                        "slots_occupied": int(processing["slots_occupied"]),
+                        "slots_quarantined": int(processing["slots_quarantined"]),
+                        "oldest_lease_expires_at": str(
+                            processing["oldest_lease_expires_at"]
+                        )[:64],
+                    }
             if include_components:
                 components = value.get("components")
                 result["components"] = {

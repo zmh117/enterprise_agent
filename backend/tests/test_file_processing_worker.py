@@ -34,6 +34,7 @@ from app.modules.message_bus.application.message_publisher import (
     FileProcessingTaskMessage,
     PictureProcessingTaskMessage,
 )
+from app.shared.exceptions import RetryableExecutionError
 from app.workers.file_processing_worker import document_processing_readiness
 
 
@@ -144,6 +145,23 @@ class _FileService:
         self.run = run
         self.source = source
         self.calls: list[tuple[str, Any]] = []
+        self.slot_available = True
+        self.slot_error: Exception | None = None
+
+    def acquire_docling_slot(self, **values: Any) -> bool:
+        self.calls.append(("slot_acquire", values["owner_id"]))
+        if self.slot_error is not None:
+            raise self.slot_error
+        return self.slot_available
+
+    def renew_docling_slot(self, **values: Any) -> None:
+        self.calls.append(("slot_renew", values["owner_id"]))
+
+    def release_docling_slot(self, **values: Any) -> None:
+        self.calls.append(("slot_release", values["owner_id"]))
+
+    def quarantine_docling_slot(self, **values: Any) -> None:
+        self.calls.append(("slot_quarantine", values["owner_id"]))
 
     def claim(self, message: FileProcessingTaskMessage) -> ClaimedDocumentRun:
         self.calls.append(("claim", message.run_id))
@@ -421,10 +439,129 @@ def _worker(
         total_timeout_seconds=600,
         max_attempts=3,
         retry_base_seconds=30,
+        worker_instance_id="worker-test-instance-0001",
         monotonic=monotonic,
         sleep=lambda _: None,
         now=now,
     )
+
+
+def test_capacity_wait_does_not_claim_or_increment_processing_attempt() -> None:
+    files = _FileService()
+    files.slot_available = False
+    processor = _Processor()
+
+    result = _worker(files, processor)(MESSAGE)
+
+    assert result.disposition is FileProcessingDisposition.RETRY
+    assert result.error_code == "document_docling_capacity_unavailable"
+    assert result.increment_attempt is False
+    assert files.calls == [("slot_acquire", "run-1")]
+    assert processor.calls == []
+
+
+def test_admission_dependency_failure_does_not_mutate_unclaimed_parent_run() -> None:
+    files = _FileService()
+    files.slot_error = RetryableExecutionError(
+        "admission unavailable",
+        error_code="document_processing_admission_unavailable",
+    )
+    processor = _Processor()
+
+    result = _worker(files, processor)(MESSAGE)
+
+    assert result.disposition is FileProcessingDisposition.RETRY
+    assert result.error_code == "document_processing_admission_unavailable"
+    assert files.calls == [("slot_acquire", "run-1")]
+    assert processor.calls == []
+
+
+def test_admission_dependency_failure_does_not_mutate_unclaimed_picture_item() -> None:
+    files = _LayoutFileService()
+    files.slot_error = RetryableExecutionError(
+        "admission unavailable",
+        error_code="document_processing_admission_unavailable",
+    )
+    processor = _LayoutProcessor()
+    message = PictureProcessingTaskMessage(
+        contract_version="file-picture-processing/v1",
+        run_id="run-layout",
+        picture_item_id="item-layout",
+        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+        attempt=0,
+        correlation_id="correlation-layout",
+    )
+
+    result = _worker(files, processor)(message)
+
+    assert result.disposition is FileProcessingDisposition.RETRY
+    assert result.error_code == "document_processing_admission_unavailable"
+    assert files.calls == [("slot_acquire", "item-layout")]
+    assert processor.calls == []
+
+
+def test_submit_failure_keeps_same_owner_slot_for_retry() -> None:
+    files = _LayoutFileService()
+    processor = _LayoutProcessor()
+    processor.submit_failure = DocumentProcessorFailure(
+        "docling_submit_unavailable", retryable=True
+    )
+
+    result = _worker(files, processor)(LAYOUT_MESSAGE)
+
+    assert result.disposition is FileProcessingDisposition.RETRY
+    names = [name for name, _ in files.calls]
+    assert "retry" in names
+    assert "slot_release" not in names
+    assert "slot_quarantine" not in names
+
+
+def test_resumed_external_task_poll_failure_keeps_slot_for_same_owner_recovery() -> None:
+    files = _LayoutFileService()
+    files.run = replace(files.run, external_task_id="task-existing")
+
+    class _PollFailure(_LayoutProcessor):
+        def poll(self, task_id: str) -> ProcessorTask:
+            self.calls.append(("poll", task_id))
+            raise DocumentProcessorFailure("docling_poll_unavailable", retryable=True)
+
+    processor = _PollFailure()
+    result = _worker(files, processor)(LAYOUT_MESSAGE)
+
+    assert result.disposition is FileProcessingDisposition.RETRY
+    names = [name for name, _ in files.calls]
+    assert "download" not in names
+    assert "slot_release" not in names
+    assert "slot_quarantine" not in names
+
+
+def test_single_use_fetch_failure_keeps_slot_until_same_work_is_recovered() -> None:
+    files = _LayoutFileService()
+
+    class _FetchFailure(_LayoutProcessor):
+        def fetch_bundle(self, task_id: str, **_: Any) -> DocumentProcessorBundleResult:
+            self.calls.append(("fetch_bundle", task_id))
+            raise DocumentProcessorFailure("docling_fetch_unavailable", retryable=True)
+
+    processor = _FetchFailure()
+    result = _worker(files, processor)(LAYOUT_MESSAGE)
+
+    assert result.disposition is FileProcessingDisposition.RETRY
+    names = [name for name, _ in files.calls]
+    assert "retry" in names
+    assert "slot_release" not in names
+    assert "slot_quarantine" not in names
+
+
+def test_duplicate_terminal_message_only_releases_existing_owner_slot() -> None:
+    files = _FileService(replace(RUN, status="SUCCEEDED"))
+    processor = _Processor()
+
+    result = _worker(files, processor)(MESSAGE)
+
+    assert result.disposition is FileProcessingDisposition.ACK
+    assert [name for name, _ in files.calls] == ["slot_acquire", "claim", "slot_release"]
+    assert processor.calls == []
 
 
 def test_layout_parent_persists_parent_asset_occurrence_item_and_outbox_boundary() -> None:
@@ -444,7 +581,7 @@ def test_layout_parent_persists_parent_asset_occurrence_item_and_outbox_boundary
     assert "picture_asset" in names
     assert "occurrence" in names
     assert "picture_item" in names
-    assert names[-1] == "parent_complete"
+    assert names[-2:] == ["parent_complete", "slot_release"]
 
 
 def test_layout_parent_submits_normalized_docx_without_changing_downloaded_source() -> None:
@@ -534,7 +671,7 @@ def test_layout_parent_rejects_hard_occurrence_limit_before_any_private_staging(
         name in {"parent_artifact", "upload", "picture_asset", "occurrence", "picture_item"}
         for name, _ in files.calls
     )
-    assert files.calls[-1][0] == "fail"
+    assert [name for name, _ in files.calls[-2:]] == ["fail", "slot_release"]
 
 
 def test_layout_picture_stage_stages_canonical_result_and_completes_item() -> None:

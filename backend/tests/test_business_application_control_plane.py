@@ -46,10 +46,6 @@ def control_plane_settings() -> object:
         document_processing_worker=replace(
             settings.document_processing_worker,
             layout_ocr_enabled=True,
-            layout_profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
-            model_artifact_digest=str(
-                DOCLING_LAYOUT_OCR_V2.layout_ocr_options["model_artifact"]["digest"]
-            ),
         ),
     )
 
@@ -573,7 +569,7 @@ def test_historical_profile_hash_remains_manageable_but_cannot_be_activated() ->
                 publication_id=str(publication["id"]),
                 expected_revision=0,
             )
-        assert blocked.value.error_code == "integrity_error"
+        assert blocked.value.error_code == "document_profile_version_unavailable"
 
         next_revision = service.save_draft(
             actor_id="user_local_admin",
@@ -632,8 +628,6 @@ def test_layout_profile_publication_fails_closed_until_deployment_contract_is_re
         document_processing_worker=replace(
             configured.document_processing_worker,
             layout_ocr_enabled=False,
-            layout_profile_hash="",
-            model_artifact_digest="",
         ),
     )
     container = build_test_container(settings, migrate=True, seed=True)
@@ -728,6 +722,8 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "118_expand_bounded_workspace_working_sets.sql",
         "119_contract_single_current_file_rule.sql",
         "120_expand_runtime_tool_contract_evidence.sql",
+        "121_expand_docling_processing_concurrency.sql",
+        "122_document_processing_concurrency_comments.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

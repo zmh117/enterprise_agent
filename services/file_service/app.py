@@ -44,7 +44,7 @@ from services.file_service.principal import FilePrincipalResolver
 
 logger = logging.getLogger(__name__)
 SERVER_VERSION = "0.1.0"
-REQUIRED_SCHEMA_VERSION = 120
+REQUIRED_SCHEMA_VERSION = 121
 MAX_TOOL_RESPONSE_BYTES = 256 * 1024
 BUILD_IDENTITY_CAPABILITY = "enterprise-agent/build-identity-v1"
 
@@ -110,6 +110,18 @@ class FileServiceReadiness(Protocol):
 
 
 class DocumentProcessingOperations(Protocol):
+    def acquire_docling_slot(self, **values: Any) -> dict[str, Any]: ...
+
+    def renew_docling_slot(self, **values: Any) -> dict[str, Any]: ...
+
+    def release_docling_slot(self, **values: Any) -> dict[str, Any]: ...
+
+    def quarantine_docling_slot(self, **values: Any) -> dict[str, Any]: ...
+
+    def record_processing_worker_heartbeat(self, **values: Any) -> dict[str, Any]: ...
+
+    def docling_concurrency_readiness(self) -> dict[str, Any]: ...
+
     def claim(self, *, message: dict[str, Any], service_principal_id: str) -> dict[str, Any]: ...
 
     def prepare_source_stream(
@@ -458,6 +470,22 @@ def create_app(
                 raise ValueError(
                     "File Service document processing is configured but was not composed"
                 )
+            processing_readiness = (
+                document_processing.docling_concurrency_readiness()
+                if document_processing is not None
+                else {
+                    "configured": False,
+                    "ready": False,
+                    "reason_code": "document_processing_not_configured",
+                    "expected_workers": 2,
+                    "active_workers": 0,
+                    "eligible_workers": 0,
+                    "slots_total": 0,
+                    "slots_occupied": 0,
+                    "slots_quarantined": 0,
+                    "oldest_lease_expires_at": "",
+                }
+            )
             return JSONResponse(
                 {
                     "status": "ok",
@@ -470,9 +498,7 @@ def create_app(
                     "streaming_api": "ready",
                     "layout_ocr_profile_registry": "ready",
                     "layout_ocr_schema": "ready",
-                    "document_processing": (
-                        "ready" if document_processing is not None else "not_configured"
-                    ),
+                    "document_processing": processing_readiness,
                     "runtime_protocol_version": "1.4",
                     "build_identity": build_identity.to_dict(),
                 }
@@ -584,6 +610,66 @@ def create_app(
 
     def processing_claims(request: Request, required_scope: str) -> dict[str, Any]:
         return service_principal.verify_processing(_bearer(request), required_scope=required_scope)
+
+    async def processing_admission(request: Request) -> JSONResponse:
+        try:
+            claims = processing_claims(
+                request, "internal:file-service:document-processing:admission"
+            )
+            action = str(request.path_params["action"])
+            fields = {"owner_kind", "owner_id", "worker_instance_id"}
+            if action == "quarantine":
+                fields.add("reason_code")
+            if action not in {"acquire", "renew", "release", "quarantine"}:
+                raise FilePrincipalError(
+                    "Document processing admission action is invalid",
+                    safe_message="文档处理并发槽位操作无效",
+                    error_code="docling_slot_action_invalid",
+                )
+            payload = await _request_json_exact(request, fields)
+            values = {
+                "owner_kind": str(payload["owner_kind"]),
+                "owner_id": str(payload["owner_id"]),
+                "worker_instance_id": str(payload["worker_instance_id"]),
+                "service_principal_id": str(claims["sub"]),
+            }
+            if action == "quarantine":
+                values["reason_code"] = str(payload["reason_code"])
+            operation = getattr(processing_service(), f"{action}_docling_slot")
+            result = await asyncio.to_thread(operation, **values)
+            return JSONResponse(_safe_result(result))
+        except AppError as exc:
+            return _safe_error(exc)
+
+    async def processing_heartbeat(request: Request) -> JSONResponse:
+        try:
+            claims = processing_claims(
+                request, "internal:file-service:document-processing:heartbeat"
+            )
+            payload = await _request_json_exact(
+                request,
+                {
+                    "instance_id",
+                    "profile_hash",
+                    "queue_contract",
+                    "docling_local_workers",
+                    "status",
+                    "reason_code",
+                },
+            )
+            result = await asyncio.to_thread(
+                processing_service().record_processing_worker_heartbeat,
+                instance_id=str(payload["instance_id"]),
+                profile_hash=str(payload["profile_hash"]),
+                queue_contract=str(payload["queue_contract"]),
+                docling_local_workers=int(payload["docling_local_workers"]),
+                status=str(payload["status"]),
+                reason_code=str(payload["reason_code"]),
+                service_principal_id=str(claims["sub"]),
+            )
+            return JSONResponse(_safe_result(result))
+        except AppError as exc:
+            return _safe_error(exc)
 
     async def processing_claim(request: Request) -> JSONResponse:
         try:
@@ -1312,6 +1398,16 @@ def create_app(
                 "/internal/v1/file-deliveries/{delivery_id}/content",
                 delivery_content,
                 methods=["GET"],
+            ),
+            Route(
+                "/internal/v1/document-processing/admission/{action}",
+                processing_admission,
+                methods=["POST"],
+            ),
+            Route(
+                "/internal/v1/document-processing/workers/heartbeat",
+                processing_heartbeat,
+                methods=["POST"],
             ),
             Route(
                 "/internal/v1/document-processing/runs/{run_id}/claim",
