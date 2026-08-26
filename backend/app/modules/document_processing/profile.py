@@ -275,9 +275,7 @@ _CURRENT_LAYOUT_OCR_OPTIONS = MappingProxyType(
         "model_artifact": {
             "code": "docling-v1.30.0-cpu-model-bundle",
             "revision": "v1.30.0",
-            "digest": (
-                "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
-            ),
+            "digest": ("sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"),
             "manifest_algorithm": "relative-path-size-content-sha256/v1",
         },
         "layout_schema": {
@@ -287,6 +285,9 @@ _CURRENT_LAYOUT_OCR_OPTIONS = MappingProxyType(
         "picture_result_schema": {
             "name": "enterprise-agent.office-picture-ocr-result",
             "version": "v2",
+        },
+        "picture_result_adapter": {
+            "version": "docling-picture-result-adapter/v2",
         },
         "confidence_contract": {
             "source": "docling-text-item-or-provenance",
@@ -361,7 +362,7 @@ DOCLING_LAYOUT_OCR_V2 = DocumentProcessingProfile(
     layout_ocr_options=_CURRENT_LAYOUT_OCR_OPTIONS,
 )
 DOCLING_LAYOUT_OCR_V2_PROFILE_HASH = (
-    "b056637d6c9a7665368a8122633cf45c202ccd70b1f3d29ef1d337e43efa482f"
+    "8a9ba792a902a8a2c9ede356ab1dd195fc1b3a0e192d96606c84b8331a3b7cb9"
 )
 
 if DOCLING_LAYOUT_OCR_V2.profile_hash != DOCLING_LAYOUT_OCR_V2_PROFILE_HASH:

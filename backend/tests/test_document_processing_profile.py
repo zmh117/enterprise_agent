@@ -24,7 +24,7 @@ def test_only_current_layout_ocr_profile_is_registered_and_hash_stable() -> None
     assert profile.output_kinds == ("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON")
     assert profile.profile_hash == DOCLING_LAYOUT_OCR_V2_PROFILE_HASH
     assert profile.profile_hash == (
-        "b056637d6c9a7665368a8122633cf45c202ccd70b1f3d29ef1d337e43efa482f"
+        "8a9ba792a902a8a2c9ede356ab1dd195fc1b3a0e192d96606c84b8331a3b7cb9"
     )
     for source in profile.source_formats:
         assert source.actions == {
@@ -52,6 +52,9 @@ def test_current_profile_is_a_complete_independent_fixed_definition() -> None:
     assert layout["embedded_source_formats"] == ["DOCX", "PPTX"]
     assert layout["layout_schema"]["version"] == "v2"
     assert layout["picture_result_schema"]["version"] == "v2"
+    assert layout["picture_result_adapter"] == {
+        "version": "docling-picture-result-adapter/v2",
+    }
     assert layout["assembler_version"] == "office-image-layout-assembler/v2"
     assert layout["confidence_contract"]["missing_value"] is None
     assert layout["confidence_contract"]["aggregate_fallback_enabled"] is False
@@ -93,6 +96,9 @@ def test_document_processing_state_requires_current_dependencies() -> None:
         "document_processing_status": "CONFIGURED_UNAVAILABLE",
         "document_processing_reason_code": "processing_dependencies_unavailable",
     }
-    assert document_processing_state(
-        "docling-layout-ocr-v2", dependencies_ready=True
-    )["document_processing_status"] == "READY"
+    assert (
+        document_processing_state("docling-layout-ocr-v2", dependencies_ready=True)[
+            "document_processing_status"
+        ]
+        == "READY"
+    )

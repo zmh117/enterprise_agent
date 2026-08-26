@@ -10,18 +10,18 @@
 - [x] 2.1 在 `layout_ocr.py` 增加有界的 provenance 解析/排序/覆盖校验逻辑；单 provenance 保持完整 text 路径，多 provenance 仅按合法 charspan 产生文字片段。
 - [x] 2.2 将 block ID、`reading_order`、bbox 和置信度改为基于最终展开序列生成，并保持既有单 provenance canonical JSON 字节不变。
 - [x] 2.3 将单图 block 上限应用到最终展开后的 block 集合，字符上限继续按每个上游完整 text 只累计一次，并保留现有关系数量上限。
-- [x] 2.4 确认 Worker、数据库、日志与审计不新增 OCR 正文、charspan/bbox 明细或原始 Docling 失败响应，且不改变 API、消息、Schema 或 Profile 配置。
+- [x] 2.4 将图片结果适配算法版本纳入代码发布的 Profile canonical payload，更新固定 hash 与回归并删除 `.env.example` 中失效的 Profile hash 项；确认 Worker、数据库、消息、日志与审计不新增 OCR 正文、charspan/bbox 明细、原始响应、Schema 或环境覆盖参数。
 
 ## 3. 代码与规格验证
 
-- [x] 3.1 运行 `backend/tests/test_document_layout_ocr.py` 及相关 document processing/Worker 回归，确认新增用例和既有单 provenance、NO_TEXT、坐标、置信度、Assembler 用例通过。
-- [x] 3.2 运行受影响 Python 静态检查、`docker compose config --quiet`、`git diff --check`，确认没有无关文件或配置漂移。
+- [x] 3.1 运行 `backend/tests/test_document_layout_ocr.py`、Profile、控制面及相关 document processing/Worker 回归，确认新增用例和既有单 provenance、NO_TEXT、坐标、置信度、Assembler、历史 Profile 管理用例通过。
+- [x] 3.2 运行受影响 Python 静态检查、`docker compose config --quiet`、`git diff --check`，确认任务范围没有配置漂移且不触碰工作区内无关改动。
 - [x] 3.3 运行 `openspec validate support-docling-multi-provenance-ocr --strict`，确认 delta spec 与全部工件严格有效。
 
 ## 4. 现场部署与完整链路验收
 
-- [ ] 4.1 重建并滚动更新两个 `file-processing-worker`，确认两个 processing consumer、两个全局槽位与 Docling readiness 正常，且不修改 Docling 模型 digest/Profile 环境参数。
-- [ ] 4.2 对现场 DOCX 的精确 File Version 使用新 Worker build 创建新 processing run，确认旧 `PARTIAL` run 及其错误事实保持不变。
-- [ ] 4.3 验证新 run 的 7 个 picture item 全部为 `AVAILABLE`、父 run 为 `SUCCEEDED`、assembly 为 `COMPLETED`，且 Markdown、Docling JSON、OCR Layout JSON 三种 Representation 均完成发布。
-- [ ] 4.4 通过受控物化读取新 Markdown，确认图片 5、7 不再显示 OCR 失败占位且其 block 已进入布局附录；证据只记录状态、数量、版本/哈希与安全错误码，不复制业务正文。
-- [ ] 4.5 核对 processing 队列、stage outbox、槽位释放与重复 Representation，确认无遗留消息、无占用槽位、无重复发布后再完成交付。
+- [x] 4.1 重建并协调滚动更新 File Service、API 与两个 `file-processing-worker`，确认代码生成的新 Profile hash、两个 processing consumer、两个全局槽位与 Docling readiness 正常，且不修改 Docling 模型 digest或增加Profile环境参数。
+- [x] 4.2 为当前业务应用创建并发布绑定新 Profile hash 的 Revision，再对现场 DOCX 的精确 File Version 创建新 processing run，确认历史 Publication 可管理且旧 `PARTIAL` run 及其错误事实保持不变。
+- [x] 4.3 验证新 run 的 7 个 picture item 全部为 `AVAILABLE`、父 run 为 `SUCCEEDED`、assembly 为 `COMPLETED`，且 Markdown、Docling JSON、OCR Layout JSON 三种 Representation 均完成发布。
+- [x] 4.4 通过受控物化读取新 Markdown，确认图片 5、7 不再显示 OCR 失败占位且其 block 已进入布局附录；证据只记录状态、数量、版本/哈希与安全错误码，不复制业务正文。
+- [x] 4.5 核对 processing 队列、stage outbox、槽位释放与重复 Representation，确认无遗留消息、无占用槽位、无重复发布后再完成交付。

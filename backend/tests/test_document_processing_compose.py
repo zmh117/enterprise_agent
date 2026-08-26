@@ -83,6 +83,15 @@ def test_file_service_freezes_docling_and_docx_compatibility_build_identity() ->
     assert file_service["environment"]["DOCUMENT_PROCESSOR_BUILD_DIGEST"] == PROCESSOR_BUILD_DIGEST
 
 
+def test_profile_identity_is_code_published_not_an_environment_parameter() -> None:
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "DOCUMENT_LAYOUT_OCR_PROFILE_HASH=" not in env_example
+
+    for service in _compose()["services"].values():
+        environment = service.get("environment", {})
+        assert "DOCUMENT_LAYOUT_OCR_PROFILE_HASH" not in environment
+
+
 def test_processing_worker_has_only_queue_file_service_identity_and_docling_boundaries() -> None:
     services = _compose()["services"]
     worker = services["file-processing-worker"]
@@ -90,9 +99,7 @@ def test_processing_worker_has_only_queue_file_service_identity_and_docling_boun
     environment = worker["environment"]
 
     assert second_worker == worker
-    assert worker["image"] == (
-        "enterprise-agent/file-processing-worker:docling-concurrency-2"
-    )
+    assert worker["image"] == ("enterprise-agent/file-processing-worker:docling-concurrency-2")
 
     assert worker["build"]["target"] == "file-processing-worker"
     assert worker["user"] == "10006:10006"
@@ -162,14 +169,11 @@ def test_processing_topology_adds_no_redis_rq_ray_file_mcp_or_host_docling_port(
     assert "eng_kind': 'ray" not in combined
     assert "redis_url" not in combined
     assert "ports" not in docling
-    migration = (ROOT / "backend/migrations/121_expand_docling_processing_concurrency.sql").read_text(
-        encoding="utf-8"
-    )
+    migration = (
+        ROOT / "backend/migrations/121_expand_docling_processing_concurrency.sql"
+    ).read_text(encoding="utf-8")
     assert "VALUES (1, CURRENT_TIMESTAMP), (2, CURRENT_TIMESTAMP)" in migration
-    assert (
-        DOCLING_LAYOUT_OCR_V2.layout_ocr_options["limits"]["max_global_docling_concurrency"]
-        == 2
-    )
+    assert DOCLING_LAYOUT_OCR_V2.layout_ocr_options["limits"]["max_global_docling_concurrency"] == 2
 
 
 def test_processing_secrets_are_generated_as_files_and_never_have_example_values() -> None:

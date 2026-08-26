@@ -56,7 +56,7 @@ digest input: docling-serve@sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ff
 当前代码唯一有效的 `docling-layout-ocr-v2` Profile hash 为：
 
 ```text
-b056637d6c9a7665368a8122633cf45c202ccd70b1f3d29ef1d337e43efa482f
+8a9ba792a902a8a2c9ede356ab1dd195fc1b3a0e192d96606c84b8331a3b7cb9
 ```
 
 模型 artifact digest 仍为：
@@ -65,7 +65,8 @@ b056637d6c9a7665368a8122633cf45c202ccd70b1f3d29ef1d337e43efa482f
 sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c
 ```
 
-这两个值由代码 Profile 和镜像内容固化。Compose 不再要求
+Profile hash 由包含图片结果适配算法版本的代码 canonical payload 自动生成，模型
+artifact digest 由镜像内容固化。Compose 不再要求
 `DOCUMENT_LAYOUT_OCR_PROFILE_HASH` 或 `DOCLING_MODEL_ARTIFACT_DIGEST` 环境变量；部署到
 其他环境时不得再手工替换它们。
 

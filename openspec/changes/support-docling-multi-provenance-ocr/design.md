@@ -13,13 +13,14 @@
 - 将具有完整、无重叠 `charspan` 和合法 `bbox` 的多 provenance 文本项确定性展开为多个 OCR block。
 - 保持单 provenance 输入的现有输出字节、block ID、reading order、置信度与关系行为不变。
 - 在展开后执行 block 上限，并确保相同 Docling JSON、图片与 Profile 始终产生相同结果和哈希。
+- 将图片结果适配算法语义纳入代码发布的不可变 Profile，使相同 File Version 可以在新语义下创建可追溯的新 run。
 - 让现场 DOCX 通过新 processing run 达到 7/7 图片可用并从 `PARTIAL` 变为 `SUCCEEDED`，同时保留旧 run 事实。
 
 **Non-Goals:**
 
 - 不接受缺失、空、类型错误或没有可验证字符区间/坐标的 provenance。
 - 不合并多个 bbox、不使用其包围盒替代真实分段，也不根据 OCR 文字或几何位置猜测字符归属。
-- 不增加图片描述、视觉理解、VLM、外部 OCR 服务、Profile 环境开关或新的模型配置。
+- 不增加图片描述、视觉理解、VLM、外部 OCR 服务、Profile 环境开关、人工 Profile hash 参数或新的模型配置。
 - 不改变数据库 Schema、消息契约、外部 API、并发槽位、Docling 容器或既有终态 run。
 
 ## Decisions
@@ -46,20 +47,30 @@
 
 `prov` 缺失、非数组、空数组、包含非对象、多段缺失/非法 charspan、区间重叠、越界、存在非空白未覆盖文字时，继续返回 `docling_picture_provenance_invalid` 且不可重试。bbox、原点和置信度错误继续使用既有细分错误码。生产日志、数据库和审计不新增 OCR 正文、charspan 内容或 bbox 内容；回归 fixture 使用合成文字，不纳入现场业务正文。
 
+### 5. 适配算法版本属于 Profile 身份而不是部署环境
+
+`file_processing_run` 的不可变身份键为 `(source_version_id, processor_build_digest, profile_hash)`。本次变化发生在平台 Worker 的图片结果映射语义，不改变固定 Docling 镜像与 DOCX 提交前兼容算法，因此不得伪造或修改 `processor_build_digest`。若继续沿用旧 Profile hash，相同 File Version 只能命中旧 `PARTIAL` run，且新旧映射语义会共享一个不可审计的处理身份。
+
+因此在 `layout_ocr` canonical payload 中加入 `picture_result_adapter.version`。本次多 provenance 语义使用新的固定版本；Profile hash 由 canonical payload 自动计算并由代码常量校验。Compose 不读取 `DOCUMENT_LAYOUT_OCR_PROFILE_HASH`，`.env.example` 删除该遗留项，部署者无需在环境间手工同步 hash。
+
+Profile hash 变化后，历史 Publication 继续可查看和编辑，但因绑定旧 hash 不可直接激活；管理员基于当前 Profile 创建并发布新 Revision。旧 run 与 Representation 不修改，新 run 以相同 source File Version、原 processor build digest 和新 Profile hash 建立独立身份。
+
 ## Risks / Trade-offs
 
 - [Docling charspan 与 Python Unicode 索引语义出现差异] → 使用中文、ASCII、空白和补充平面 Unicode 的合成用例验证切片覆盖；任何越界、重叠或非空白缺口均失败关闭。
 - [多段展开使 block 数超过 Profile 上限] → 在追加每个最终 block 前执行上限，整项失败而非静默截断。
 - [block ID 因展开而变化] → 变化只发生在此前必然失败、没有可见结果的多 provenance 图片；单 provenance 的既有输出保持不变。
+- [Profile hash 变化使历史 Publication 不再可激活] → 保持历史快照可管理并通过新 Revision/Publication 显式迁移；不覆盖旧 hash 或要求修改环境变量。
 - [只修单元适配但现场链路仍为 PARTIAL] → 必须重建 Worker、创建新 run，并核对 7 个 picture item、三种 Representation 与最终可读状态；容器健康不作为完成证据。
 
 ## Migration Plan
 
 1. 先加入多 provenance 合成回归并确认旧实现以 `docling_picture_provenance_invalid` 失败。
 2. 实现确定性展开和最终 block 上限，运行 document processing 相关单元/集成测试及静态检查。
-3. 重建并滚动更新两个 `file-processing-worker`；Docling、数据库和消息契约无需迁移。
-4. 对现场精确 File Version 使用新 Worker build 创建新 processing run，验证 7/7 图片终态、`SUCCEEDED`、三种 Representation 与可物化 Markdown；旧 `PARTIAL` run 保持不变。
-5. 若需回滚，恢复上一 Worker 镜像即可；已发布的新 run 和 Representation 作为不可变历史保留，不回写或删除。
+3. 将图片结果适配算法版本加入代码 Profile、更新固定 hash 与回归，并删除 `.env.example` 中失效的 Profile hash 参数；Docling 模型 digest 保持不变。
+4. 协调重建并滚动更新 File Service、API 与两个 `file-processing-worker`；Docling、数据库和消息契约无需迁移。
+5. 基于当前 Profile 创建并发布新 Revision，对现场精确 File Version 创建新 processing run，验证 7/7 图片终态、`SUCCEEDED`、三种 Representation 与可物化 Markdown；旧 Publication 与旧 `PARTIAL` run 保持不变。
+6. 若需回滚，协调恢复上一版本的 File Service、API 与 Worker 镜像；已发布的新 run 和 Representation 作为不可变历史保留，不回写或删除。
 
 ## Open Questions
 
