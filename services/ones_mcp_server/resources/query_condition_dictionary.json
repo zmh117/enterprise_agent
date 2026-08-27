@@ -1,0 +1,5687 @@
+{
+  "captured_at": "2026-08-27",
+  "content_sha256": "5da0830d4226ff059376d09a29fd814c6230ba836b57caed78ca6445a5954fd4",
+  "custom_option_fields": [
+    {
+      "filter_key": "_14WWVyu8_in",
+      "name": "问题类型（废弃）",
+      "options": [
+        {
+          "name": "其他",
+          "uuid": "HThEgDzX"
+        },
+        {
+          "name": "需求",
+          "uuid": "HaDKHbrh"
+        },
+        {
+          "name": "bug",
+          "uuid": "WFH489jU"
+        },
+        {
+          "name": "优化",
+          "uuid": "Y5MEpzZs"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "14WWVyu8"
+    },
+    {
+      "filter_key": "_29qAbfKL_in",
+      "name": "项目阶段",
+      "options": [
+        {
+          "name": "售前",
+          "uuid": "3jjkEkSb"
+        },
+        {
+          "name": "试用",
+          "uuid": "8fYKXyKR"
+        },
+        {
+          "name": "生产",
+          "uuid": "BQoc24iV"
+        },
+        {
+          "name": "IQ",
+          "uuid": "BnAtBL8f"
+        },
+        {
+          "name": "FAT",
+          "uuid": "EEsaMZ8N"
+        },
+        {
+          "name": "SAT/UAT",
+          "uuid": "GMFRyLSH"
+        },
+        {
+          "name": "售后",
+          "uuid": "NHAFBjAQ"
+        },
+        {
+          "name": "PQ",
+          "uuid": "SWHX1bg7"
+        },
+        {
+          "name": "OQ",
+          "uuid": "Uk4k812v"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "29qAbfKL"
+    },
+    {
+      "filter_key": "_2adoeHHw_in",
+      "name": "多版本重复bug",
+      "options": [
+        {
+          "name": "否",
+          "uuid": "AdaziLeh"
+        },
+        {
+          "name": "是",
+          "uuid": "WKkVBza1"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "2adoeHHw"
+    },
+    {
+      "filter_key": "_2mfHYoe4_in",
+      "name": "是否完成自测试",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "BLphqi3a"
+        },
+        {
+          "name": "否",
+          "uuid": "MV5E4UFi"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "2mfHYoe4"
+    },
+    {
+      "filter_key": "_3NaKeELG_in",
+      "name": "BUG来源",
+      "options": [
+        {
+          "name": "交付",
+          "uuid": "AYXhKZ3p"
+        },
+        {
+          "name": "销售",
+          "uuid": "PbmuyJCB"
+        },
+        {
+          "name": "售前",
+          "uuid": "Ur7QmyaU"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "3NaKeELG"
+    },
+    {
+      "filter_key": "_3bA8Q712_in",
+      "name": "是否存在产品不支持项",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "BGvJbD1L"
+        },
+        {
+          "name": "否",
+          "uuid": "FqU2TuLM"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "3bA8Q712"
+    },
+    {
+      "filter_key": "_3igYZDwp_in",
+      "name": "工单提出角色",
+      "options": [
+        {
+          "name": "售后",
+          "uuid": "4ZG1mtk5"
+        },
+        {
+          "name": "产品验证",
+          "uuid": "65NXJPu5"
+        },
+        {
+          "name": "销售",
+          "uuid": "A1PgJr5j"
+        },
+        {
+          "name": "交付",
+          "uuid": "Av9FZyB9"
+        },
+        {
+          "name": "售前",
+          "uuid": "MbG6MSgw"
+        },
+        {
+          "name": "其他",
+          "uuid": "QFtKsQtV"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "3igYZDwp"
+    },
+    {
+      "filter_key": "_492uBwuz_in",
+      "name": "是否来自URS",
+      "options": [
+        {
+          "name": "否",
+          "uuid": "3SDZWSpd"
+        },
+        {
+          "name": "NA",
+          "uuid": "LfzM5wtn"
+        },
+        {
+          "name": "是",
+          "uuid": "VXbm5exW"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "492uBwuz"
+    },
+    {
+      "filter_key": "_4QhXszHZ_in",
+      "name": "缺陷类型",
+      "options": [
+        {
+          "name": "文档",
+          "uuid": "2M5bqUAH"
+        },
+        {
+          "name": "界面",
+          "uuid": "62pL6vJh"
+        },
+        {
+          "name": "兼容性",
+          "uuid": "AjQajqz8"
+        },
+        {
+          "name": "系统",
+          "uuid": "EXuaaZBh"
+        },
+        {
+          "name": "安全性",
+          "uuid": "FYvFD8Va"
+        },
+        {
+          "name": "易用性",
+          "uuid": "GJvNsvUB"
+        },
+        {
+          "name": "需求",
+          "uuid": "JVi83nwF"
+        },
+        {
+          "name": "性能",
+          "uuid": "MfZLuZDJ"
+        },
+        {
+          "name": "功能",
+          "uuid": "SChWTxgh"
+        },
+        {
+          "name": "可靠性",
+          "uuid": "WZHcrdk3"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "4QhXszHZ"
+    },
+    {
+      "filter_key": "_4ipdiS95_in",
+      "name": "影响版本-MES",
+      "options": [
+        {
+          "name": "V5.1-寿仙谷",
+          "uuid": "2TRqjtYb"
+        },
+        {
+          "name": "V4.1",
+          "uuid": "2er1MTfd"
+        },
+        {
+          "name": "V3.4.10-金耀",
+          "uuid": "2i4XXHUw"
+        },
+        {
+          "name": "V5.1-艾美荣誉",
+          "uuid": "2keu3cDF"
+        },
+        {
+          "name": "V3.4.2-普康",
+          "uuid": "4NeRgJpT"
+        },
+        {
+          "name": "V3.0",
+          "uuid": "4qhpoY4n"
+        },
+        {
+          "name": "V5.1-迈科康",
+          "uuid": "6PjzCedo"
+        },
+        {
+          "name": "V3.4.10.PQ",
+          "uuid": "6qahjAyn"
+        },
+        {
+          "name": "V5.1-先泰",
+          "uuid": "6qj9fn6G"
+        },
+        {
+          "name": "V3.4.12-云顶",
+          "uuid": "77n1siwo"
+        },
+        {
+          "name": "V4.0.2-博雅",
+          "uuid": "82W6LqvY"
+        },
+        {
+          "name": "V3.4.13-山禾",
+          "uuid": "8XDi9jNy"
+        },
+        {
+          "name": "V3.4.18-国药",
+          "uuid": "ASstAtns"
+        },
+        {
+          "name": "V5.0.1-三九",
+          "uuid": "BGHAYotG"
+        },
+        {
+          "name": "V3.4.8-罗益",
+          "uuid": "BiM7MLFr"
+        },
+        {
+          "name": "V3.4.5-丽珠",
+          "uuid": "CJjT1yhQ"
+        },
+        {
+          "name": "V5.2-主线",
+          "uuid": "CSeNGG84"
+        },
+        {
+          "name": "V1.0",
+          "uuid": "CVj21ZQe"
+        },
+        {
+          "name": "V5.1-沃森",
+          "uuid": "DAPcicg7"
+        },
+        {
+          "name": "V3.4.1-通用",
+          "uuid": "DBgJqkuP"
+        },
+        {
+          "name": "V5.0-东阳光",
+          "uuid": "DVrJwNg1"
+        },
+        {
+          "name": "V3.4.4-依生",
+          "uuid": "F3ncjCoU"
+        },
+        {
+          "name": "V3.4.7-恺佧",
+          "uuid": "GcmY3i1B"
+        },
+        {
+          "name": "V3.4.17-中科",
+          "uuid": "HAyVe4fv"
+        },
+        {
+          "name": "V3.4.9-万泰",
+          "uuid": "HFsGuSxo"
+        },
+        {
+          "name": "V5.1",
+          "uuid": "HMNAPAtD"
+        },
+        {
+          "name": "V5.1-际华",
+          "uuid": "HivH7uZa"
+        },
+        {
+          "name": "V3.4.15-长澳",
+          "uuid": "KWMPFvm2"
+        },
+        {
+          "name": "V5.1-艾美坚持",
+          "uuid": "L8U7DVDg"
+        },
+        {
+          "name": "V3.4.6-泽润",
+          "uuid": "LYkXUA8a"
+        },
+        {
+          "name": "V5.1-绿竹",
+          "uuid": "MNhaHDu2"
+        },
+        {
+          "name": "V3.4.10.R",
+          "uuid": "NmGpmMff"
+        },
+        {
+          "name": "V2.0",
+          "uuid": "Nua5EVdB"
+        },
+        {
+          "name": "V3.4.3-倍锦",
+          "uuid": "PDTeKcaP"
+        },
+        {
+          "name": "V5.1-吉诺卫",
+          "uuid": "Qhy5JHcG"
+        },
+        {
+          "name": "V4.0",
+          "uuid": "RaJ5FTAA"
+        },
+        {
+          "name": "V3.4.16-依科赛",
+          "uuid": "SGqgfRhN"
+        },
+        {
+          "name": "V3.4.5.R-丽珠",
+          "uuid": "TnoJpoLp"
+        },
+        {
+          "name": "V5.0.1.R",
+          "uuid": "UG5AHuq5"
+        },
+        {
+          "name": "V3.4.14-思鹏",
+          "uuid": "UkADYj43"
+        },
+        {
+          "name": "V4.0.1-药机展",
+          "uuid": "VndQbbEe"
+        },
+        {
+          "name": "V5.0.Release",
+          "uuid": "WDTCKYT6"
+        },
+        {
+          "name": "V5.0",
+          "uuid": "X5UciuKZ"
+        },
+        {
+          "name": "V3.4.11-丽珠秤配",
+          "uuid": "XDtH4s1g"
+        },
+        {
+          "name": "V5.1-艾美SAT",
+          "uuid": "XcWKVw1d"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "4ipdiS95"
+    },
+    {
+      "filter_key": "_4v1yHkX9_in",
+      "name": "发现难易程度",
+      "options": [
+        {
+          "name": "容易发现",
+          "uuid": "NakMKxHA"
+        },
+        {
+          "name": "正常发现",
+          "uuid": "SHvUk7pY"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "4v1yHkX9"
+    },
+    {
+      "filter_key": "_5Bcjyoyb_in",
+      "name": "开发成本",
+      "options": [
+        {
+          "name": "2",
+          "uuid": "3f6mMFBX"
+        },
+        {
+          "name": "3",
+          "uuid": "4a5THTU5"
+        },
+        {
+          "name": "4",
+          "uuid": "6kgYmWo3"
+        },
+        {
+          "name": "5",
+          "uuid": "JzdaM7Mx"
+        },
+        {
+          "name": "1",
+          "uuid": "QWEQw2h5"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "5Bcjyoyb"
+    },
+    {
+      "filter_key": "_5nfD2B2t_in",
+      "name": "影响版本-WMS3.0",
+      "options": [
+        {
+          "name": "V3.4.0-东阳光制剂",
+          "uuid": "2X2r5375"
+        },
+        {
+          "name": "V3.3.9-青岛润农",
+          "uuid": "2q3gsoWe"
+        },
+        {
+          "name": "V3.2.0-仙琚",
+          "uuid": "44masXi4"
+        },
+        {
+          "name": "V3.4.0-东阳光药业",
+          "uuid": "6BNVnQPs"
+        },
+        {
+          "name": "V3.4.4-智享生物",
+          "uuid": "6bsrQg3E"
+        },
+        {
+          "name": "V3.4.4-凌科",
+          "uuid": "7F5W8Yr4"
+        },
+        {
+          "name": "V3.2.0.LH-林华",
+          "uuid": "7kmnrgPB"
+        },
+        {
+          "name": "V3.2.0-立生",
+          "uuid": "7sEVfUPg"
+        },
+        {
+          "name": "V3.2.0-宜昌人福远安东山",
+          "uuid": "8cEPa5EU"
+        },
+        {
+          "name": "V3.2.0-自动化库",
+          "uuid": "AxDTFxaY"
+        },
+        {
+          "name": "V3.0.0",
+          "uuid": "B8KYaHgX"
+        },
+        {
+          "name": "V3.3.10-宜昌人福OSD",
+          "uuid": "C6AhXbjb"
+        },
+        {
+          "name": "V3.3.0-诺泰诺和",
+          "uuid": "DRvAbTqz"
+        },
+        {
+          "name": "V3.2.0-明兴绿竹",
+          "uuid": "GHMweT38"
+        },
+        {
+          "name": "V3.2.0-依科赛",
+          "uuid": "NQxMiufY"
+        },
+        {
+          "name": "V3.2.0-韦德杰",
+          "uuid": "QCmrmYts"
+        },
+        {
+          "name": "V3.1.0",
+          "uuid": "RN6BUcc2"
+        },
+        {
+          "name": "V3.2.0-奥翔麒正",
+          "uuid": "RReDbHaS"
+        },
+        {
+          "name": "V3.2.0-主线",
+          "uuid": "T6wXXAwN"
+        },
+        {
+          "name": "V3.2.0-上海高腾",
+          "uuid": "V39J2JQa"
+        },
+        {
+          "name": "V3.4.4-联亚",
+          "uuid": "YCoWr2Ey"
+        },
+        {
+          "name": "V3.2.0-佛山汉腾",
+          "uuid": "YZVEhCTZ"
+        },
+        {
+          "name": "V3.4.4-迈科康",
+          "uuid": "sjxhMawK"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "5nfD2B2t"
+    },
+    {
+      "filter_key": "_679m6U93_in",
+      "name": "重现概率",
+      "options": [
+        {
+          "name": "必现",
+          "uuid": "6jGwq12U"
+        },
+        {
+          "name": "只出现一次",
+          "uuid": "CTe2RM47"
+        },
+        {
+          "name": "大概率",
+          "uuid": "CbJKW2yb"
+        },
+        {
+          "name": "小概率",
+          "uuid": "FYLxR8LC"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "679m6U93"
+    },
+    {
+      "filter_key": "_685sTVcs_in",
+      "name": "多选客户（MSP）",
+      "options": [
+        {
+          "name": "山东百诺",
+          "uuid": "21iHvHR2"
+        },
+        {
+          "name": "霍德生物",
+          "uuid": "3pqQyUek"
+        },
+        {
+          "name": "万特",
+          "uuid": "4z8oy3wD"
+        },
+        {
+          "name": "博济",
+          "uuid": "5RaCXAbE"
+        },
+        {
+          "name": "中国中药",
+          "uuid": "7NF3i6QG"
+        },
+        {
+          "name": "产品",
+          "uuid": "98bPy8F3"
+        },
+        {
+          "name": "片仔癀",
+          "uuid": "ATEm1bbU"
+        },
+        {
+          "name": "同济堂",
+          "uuid": "BMy3ucUm"
+        },
+        {
+          "name": "蓝鹊",
+          "uuid": "CJB4Zn2j"
+        },
+        {
+          "name": "联科",
+          "uuid": "CdvePvyk"
+        },
+        {
+          "name": "创胜",
+          "uuid": "Cf96zk4D"
+        },
+        {
+          "name": "上药集团",
+          "uuid": "EG1qM3gM"
+        },
+        {
+          "name": "和元",
+          "uuid": "EdVMRVNF"
+        },
+        {
+          "name": "深信生物",
+          "uuid": "EueyACdL"
+        },
+        {
+          "name": "鼎康生物",
+          "uuid": "F1s95DiM"
+        },
+        {
+          "name": "微元合成",
+          "uuid": "FJxxQWZa"
+        },
+        {
+          "name": "葛店人福",
+          "uuid": "HC9Laq1x"
+        },
+        {
+          "name": "跃赛生物",
+          "uuid": "HoJQTTN8"
+        },
+        {
+          "name": "弈尊生物",
+          "uuid": "J5exstWP"
+        },
+        {
+          "name": "南京药科大",
+          "uuid": "JVeGoRpF"
+        },
+        {
+          "name": "南京羚诺",
+          "uuid": "Jt2q6ndt"
+        },
+        {
+          "name": "青山利康",
+          "uuid": "JzKhg4tt"
+        },
+        {
+          "name": "诺泰诺和",
+          "uuid": "LHzf2EDo"
+        },
+        {
+          "name": "晶云",
+          "uuid": "LSNiGaEF"
+        },
+        {
+          "name": "禾泰健宇",
+          "uuid": "M4vEDB2v"
+        },
+        {
+          "name": "中山联邦",
+          "uuid": "N6PvfN9a"
+        },
+        {
+          "name": "汇伦医药",
+          "uuid": "PhCgaKCT"
+        },
+        {
+          "name": "联邦",
+          "uuid": "RjeZoQVT"
+        },
+        {
+          "name": "复宏汉霖",
+          "uuid": "TK8GNpDG"
+        },
+        {
+          "name": "英百瑞",
+          "uuid": "UptSqwf2"
+        },
+        {
+          "name": "星锐",
+          "uuid": "Uwapotbn"
+        },
+        {
+          "name": "康华",
+          "uuid": "W8HdWS4x"
+        },
+        {
+          "name": "兆科眼科",
+          "uuid": "Xa3aQ4L1"
+        },
+        {
+          "name": "晶易医药",
+          "uuid": "Xm5NLgMX"
+        },
+        {
+          "name": "康龙化成",
+          "uuid": "Xm6F1hiU"
+        },
+        {
+          "name": "宜昌人福",
+          "uuid": "YUkQAu5g"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "685sTVcs"
+    },
+    {
+      "filter_key": "_6FimuZwX_in",
+      "name": "是否历史缺陷",
+      "options": [
+        {
+          "name": "否",
+          "uuid": "9f9zEBZU"
+        },
+        {
+          "name": "是",
+          "uuid": "LzeEpcEP"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "6FimuZwX"
+    },
+    {
+      "filter_key": "_6aEJp8xn_in",
+      "name": "是否达成一致",
+      "options": [
+        {
+          "name": "内容分歧",
+          "uuid": "JR8uu3D2"
+        },
+        {
+          "name": "达成一致",
+          "uuid": "Uj5JnqcU"
+        },
+        {
+          "name": "排期不一致",
+          "uuid": "WYo5uP5J"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "6aEJp8xn"
+    },
+    {
+      "filter_key": "_79WCF8hL_in",
+      "name": "缺陷发现阶段",
+      "options": [
+        {
+          "name": "需求阶段",
+          "uuid": "5JqXmos5"
+        },
+        {
+          "name": "系统测试阶段",
+          "uuid": "AbL7D7vo"
+        },
+        {
+          "name": "上线维护阶段",
+          "uuid": "BpKLcpcf"
+        },
+        {
+          "name": "代码评审阶段",
+          "uuid": "EMUNeeBu"
+        },
+        {
+          "name": "单元测试阶段",
+          "uuid": "F2cVMsSM"
+        },
+        {
+          "name": "设计阶段",
+          "uuid": "G497GLJd"
+        },
+        {
+          "name": "验收测试阶段",
+          "uuid": "GQwKEH4w"
+        },
+        {
+          "name": "代码阶段",
+          "uuid": "LT5twNRi"
+        },
+        {
+          "name": "集成测试阶段",
+          "uuid": "RwEb5tb7"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "79WCF8hL"
+    },
+    {
+      "filter_key": "_7EYyAPT1_in",
+      "name": "是否增补",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "QKts7Mhb"
+        },
+        {
+          "name": "否",
+          "uuid": "TTv8ADLx"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "7EYyAPT1"
+    },
+    {
+      "filter_key": "_7GRAMoYd_in",
+      "name": "难度",
+      "options": [
+        {
+          "name": "难",
+          "uuid": "8ZXQpwis"
+        },
+        {
+          "name": "正常",
+          "uuid": "Qg77oK9j"
+        },
+        {
+          "name": "简单",
+          "uuid": "WUb2hUcm"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "7GRAMoYd"
+    },
+    {
+      "filter_key": "_7WvtVmuY_in",
+      "name": "风险管理策略",
+      "options": [
+        {
+          "name": "接受",
+          "uuid": "GB98ZEG5"
+        },
+        {
+          "name": "规避",
+          "uuid": "KPfzLgqU"
+        },
+        {
+          "name": "减轻",
+          "uuid": "XAyHroCR"
+        },
+        {
+          "name": "转移",
+          "uuid": "XnRdixtt"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "7WvtVmuY"
+    },
+    {
+      "filter_key": "_7gGQAD3q_in",
+      "name": "|状态",
+      "options": [
+        {
+          "name": "方案验证中",
+          "uuid": "8K1f3o3T"
+        },
+        {
+          "name": "已解决",
+          "uuid": "BMHMK7EL"
+        },
+        {
+          "name": "方案待验证",
+          "uuid": "DDNy3kkY"
+        },
+        {
+          "name": "提出",
+          "uuid": "KkgVTZ44"
+        },
+        {
+          "name": "方案设计中",
+          "uuid": "U4t1Yavt"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "7gGQAD3q"
+    },
+    {
+      "filter_key": "_86tFWpmh_in",
+      "name": "产品线名称",
+      "options": [
+        {
+          "name": "QMS",
+          "uuid": "Anr6SgAo"
+        },
+        {
+          "name": "DMS",
+          "uuid": "Bo5Xnxyr"
+        },
+        {
+          "name": "LIMS",
+          "uuid": "Q4xK6Tew"
+        },
+        {
+          "name": "TMS",
+          "uuid": "UcKGSRGm"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "86tFWpmh"
+    },
+    {
+      "filter_key": "_8gxgwAca_in",
+      "name": "影响版本-PDR",
+      "options": [
+        {
+          "name": "PDR_ZHEJIANG_PHARMA_V3.5.4",
+          "uuid": "3wZXg3ZQ"
+        },
+        {
+          "name": "PDR_ZHEJIANG_PHARMA_V3.0",
+          "uuid": "5zFcKTPS"
+        },
+        {
+          "name": "PDR_LIAONING_PHARMA_V1.0",
+          "uuid": "8Tq6GdvF"
+        },
+        {
+          "name": "PDR_ZHEJIANG_PHARMA_V3.5",
+          "uuid": "8YjvFqYR"
+        },
+        {
+          "name": "PDR_YUNNAN_PHARMA_V1.0",
+          "uuid": "9342UcKP"
+        },
+        {
+          "name": "PDR_ZHEJIANG_PHARMA_V2.0",
+          "uuid": "HHUaecrh"
+        },
+        {
+          "name": "PDR_ZHEJIANG_INSTRUMENT_V1.0",
+          "uuid": "QWrk9bum"
+        },
+        {
+          "name": "PDR_ZHEJIANG_COSMETIC_V1.0",
+          "uuid": "US9EvJ5x"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "8gxgwAca"
+    },
+    {
+      "filter_key": "_8kRw1MJW_in",
+      "name": "客户（立库）",
+      "options": [
+        {
+          "name": "仙琚制药",
+          "uuid": "EeWT342r"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "8kRw1MJW"
+    },
+    {
+      "filter_key": "_8yADjbfg_in",
+      "name": "标签（制造）",
+      "options": [
+        {
+          "name": "产品功能",
+          "uuid": "4vVpr1Se"
+        },
+        {
+          "name": "云顶",
+          "uuid": "639JtFEA"
+        },
+        {
+          "name": "万泰",
+          "uuid": "BorMZeq3"
+        },
+        {
+          "name": "金耀",
+          "uuid": "Bx1JVA5s"
+        },
+        {
+          "name": "普康",
+          "uuid": "JFKp7SrD"
+        },
+        {
+          "name": "倍锦",
+          "uuid": "Jf9T33ZJ"
+        },
+        {
+          "name": "丽珠称配",
+          "uuid": "Kyb65Wxs"
+        },
+        {
+          "name": "依科赛",
+          "uuid": "LQp9d5tt"
+        },
+        {
+          "name": "丽珠",
+          "uuid": "Mka3E4rD"
+        },
+        {
+          "name": "依生",
+          "uuid": "NHdZEFFY"
+        },
+        {
+          "name": "长澳",
+          "uuid": "NeG6PV8K"
+        },
+        {
+          "name": "思鹏称配",
+          "uuid": "QxdBP94g"
+        },
+        {
+          "name": "山禾",
+          "uuid": "U9WuQvw1"
+        },
+        {
+          "name": "泽润",
+          "uuid": "Umuf2mpJ"
+        },
+        {
+          "name": "恺佧",
+          "uuid": "WBnR9Bqb"
+        },
+        {
+          "name": "华润三九",
+          "uuid": "XDvJTQGk"
+        },
+        {
+          "name": "天药",
+          "uuid": "XVUp5Wuj"
+        },
+        {
+          "name": "罗益",
+          "uuid": "Xx49tsQk"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "8yADjbfg"
+    },
+    {
+      "filter_key": "_94eu2bm8_in",
+      "name": "客户（AI）",
+      "options": [
+        {
+          "name": "安士",
+          "uuid": "3WSEfmLJ"
+        },
+        {
+          "name": "华润三九",
+          "uuid": "6KQ7rmiU"
+        },
+        {
+          "name": "复宏汉霖",
+          "uuid": "PusE9E8N"
+        },
+        {
+          "name": "人福医药",
+          "uuid": "UggiV38E"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "94eu2bm8"
+    },
+    {
+      "filter_key": "_94xukQYe_in",
+      "name": "风险类型",
+      "options": [
+        {
+          "name": "成本超支",
+          "uuid": "67omdTJh"
+        },
+        {
+          "name": "合同风险",
+          "uuid": "KVwioK5D"
+        },
+        {
+          "name": "沟通问题",
+          "uuid": "MKQL3wAs"
+        },
+        {
+          "name": "进度延期",
+          "uuid": "NV2D5ktm"
+        },
+        {
+          "name": "资源不足",
+          "uuid": "NbGfAGgW"
+        },
+        {
+          "name": "合规风险",
+          "uuid": "TLtHX6xX"
+        },
+        {
+          "name": "质量风险",
+          "uuid": "VyZFQuUG"
+        },
+        {
+          "name": "范围蔓延",
+          "uuid": "Wy9N1PbN"
+        },
+        {
+          "name": "技术风险",
+          "uuid": "Xknc8fwv"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "94xukQYe"
+    },
+    {
+      "filter_key": "_96WBwQ1e_in",
+      "name": "缺陷严重等级",
+      "options": [
+        {
+          "name": "轻微",
+          "uuid": "8YBp3Vdn"
+        },
+        {
+          "name": "致命",
+          "uuid": "9HdpThLo"
+        },
+        {
+          "name": "一般",
+          "uuid": "DtTbtnaY"
+        },
+        {
+          "name": "严重",
+          "uuid": "G4sVobHn"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "96WBwQ1e"
+    },
+    {
+      "filter_key": "_9CQR71RJ_in",
+      "name": "变更类型",
+      "options": [
+        {
+          "name": "产品类",
+          "uuid": "Fmqbj9xm"
+        },
+        {
+          "name": "项目类",
+          "uuid": "UDk6g7vs"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "9CQR71RJ"
+    },
+    {
+      "filter_key": "_9kAxyMoL_in",
+      "name": "工单类型",
+      "options": [
+        {
+          "name": "缺陷",
+          "uuid": "GJtvp1iY"
+        },
+        {
+          "name": "需求",
+          "uuid": "GPtAH5V4"
+        },
+        {
+          "name": "咨询",
+          "uuid": "WBgLAmyx"
+        },
+        {
+          "name": "文档",
+          "uuid": "XLthxUXQ"
+        },
+        {
+          "name": "业财变更",
+          "uuid": "YQhU1b93"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "9kAxyMoL"
+    },
+    {
+      "filter_key": "_A5RrzzqC_in",
+      "name": "普遍性",
+      "options": [
+        {
+          "name": "项目特有",
+          "uuid": "7Z8TzuFQ"
+        },
+        {
+          "name": "共性",
+          "uuid": "P5ofZwYK"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "A5RrzzqC"
+    },
+    {
+      "filter_key": "_A6FH5FAE_in",
+      "name": "验证版本-WMS2.0",
+      "options": [
+        {
+          "name": "V2.1.5-普康",
+          "uuid": "AottLHri"
+        },
+        {
+          "name": "V2.2.50-标准分支",
+          "uuid": "BfBEVLSR"
+        },
+        {
+          "name": "V2.2.40.YC-宜昌人福",
+          "uuid": "GmafEq4f"
+        },
+        {
+          "name": "V2.2.50.JY-药源",
+          "uuid": "JLnZnMG2"
+        },
+        {
+          "name": "V2.2.50.WT-万泰",
+          "uuid": "LM9hkieb"
+        },
+        {
+          "name": "V2.2.50.ZK-中科",
+          "uuid": "LQtVogjk"
+        },
+        {
+          "name": "V2.1.4-人福普克",
+          "uuid": "RnHPf9io"
+        },
+        {
+          "name": "V2.2.50.YX-云顶新耀",
+          "uuid": "SKXGot3Z"
+        },
+        {
+          "name": "V2.2.50.ZR-泽润二期",
+          "uuid": "So7DSKDs"
+        },
+        {
+          "name": "V2.2.50.SP-思鹏",
+          "uuid": "T5i5MaUz"
+        },
+        {
+          "name": "V2.2.40.ZR-泽润",
+          "uuid": "XRbJkkiy"
+        },
+        {
+          "name": "V2.2.42.RK-瑞科",
+          "uuid": "XtJ9a9Fa"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "A6FH5FAE"
+    },
+    {
+      "filter_key": "_AST3JVZw_in",
+      "name": "客户（QDT）",
+      "options": [
+        {
+          "name": "齐鲁干细胞",
+          "uuid": "124pHyUU"
+        },
+        {
+          "name": "迈博太科",
+          "uuid": "2ZXkSy8Q"
+        },
+        {
+          "name": "澳斯康",
+          "uuid": "2hU177qJ"
+        },
+        {
+          "name": "宜昌人福",
+          "uuid": "2r2yYxcA"
+        },
+        {
+          "name": "惠迪森",
+          "uuid": "3Z8St5Zq"
+        },
+        {
+          "name": "九珑人福",
+          "uuid": "3jVPksCC"
+        },
+        {
+          "name": "博之锐",
+          "uuid": "48q2cte7"
+        },
+        {
+          "name": "康弘集团",
+          "uuid": "5PhgS7Xv"
+        },
+        {
+          "name": "厦门万泰",
+          "uuid": "5Px4jyM9"
+        },
+        {
+          "name": "北海康成",
+          "uuid": "6GzSujby"
+        },
+        {
+          "name": "东阳光",
+          "uuid": "6Jq7Kpoo"
+        },
+        {
+          "name": "信念医药",
+          "uuid": "6di3jujv"
+        },
+        {
+          "name": "君实生物",
+          "uuid": "84sXordr"
+        },
+        {
+          "name": "泰昶生物",
+          "uuid": "8ckLbSs1"
+        },
+        {
+          "name": "药源生物",
+          "uuid": "8g1x6MD3"
+        },
+        {
+          "name": "派真生物",
+          "uuid": "93WiRNhH"
+        },
+        {
+          "name": "复宏汉霖",
+          "uuid": "98svMBGr"
+        },
+        {
+          "name": "基诺厚普",
+          "uuid": "9eVNzJAY"
+        },
+        {
+          "name": "皓元生物",
+          "uuid": "9jYYbr1y"
+        },
+        {
+          "name": "普洛药业",
+          "uuid": "ATtKsKdx"
+        },
+        {
+          "name": "健顺",
+          "uuid": "BZmjCP4A"
+        },
+        {
+          "name": "海正",
+          "uuid": "BjYaAJLd"
+        },
+        {
+          "name": "先为达",
+          "uuid": "CsumibT8"
+        },
+        {
+          "name": "信达",
+          "uuid": "DS1kCX3v"
+        },
+        {
+          "name": "天晴顺欣",
+          "uuid": "DmrtcGgK"
+        },
+        {
+          "name": "厦门特宝",
+          "uuid": "EmMPgEAT"
+        },
+        {
+          "name": "上海宝济",
+          "uuid": "EzkdnTtB"
+        },
+        {
+          "name": "正大天晴",
+          "uuid": "FDsjfiKc"
+        },
+        {
+          "name": "南京金斯瑞",
+          "uuid": "Ft5CjmxJ"
+        },
+        {
+          "name": "智享",
+          "uuid": "G22tpYCk"
+        },
+        {
+          "name": "国药星鲨",
+          "uuid": "G9HkUcNC"
+        },
+        {
+          "name": "兆维",
+          "uuid": "GQ862bA9"
+        },
+        {
+          "name": "产品",
+          "uuid": "GWikva9N"
+        },
+        {
+          "name": "铂生",
+          "uuid": "H1UVWobx"
+        },
+        {
+          "name": "上海枫林",
+          "uuid": "HTjs5wAV"
+        },
+        {
+          "name": "诺泰诺和",
+          "uuid": "HkTBg9D6"
+        },
+        {
+          "name": "杜瑞",
+          "uuid": "K9Ghfbfj"
+        },
+        {
+          "name": "上海同济堂",
+          "uuid": "KJTx1fTJ"
+        },
+        {
+          "name": "创胜",
+          "uuid": "Ks8cNWXX"
+        },
+        {
+          "name": "泽璟",
+          "uuid": "L3cGFQap"
+        },
+        {
+          "name": "金斯瑞",
+          "uuid": "La4zh5Hb"
+        },
+        {
+          "name": "金墁利",
+          "uuid": "LisxJn2Y"
+        },
+        {
+          "name": "万润",
+          "uuid": "MZ5wGp8J"
+        },
+        {
+          "name": "泰诺麦博",
+          "uuid": "MiRkUyvj"
+        },
+        {
+          "name": "霍德",
+          "uuid": "N2Tp6z6X"
+        },
+        {
+          "name": "瑞科",
+          "uuid": "NLn4GKsM"
+        },
+        {
+          "name": "佐力",
+          "uuid": "NycWxx13"
+        },
+        {
+          "name": "迈科康",
+          "uuid": "NzJTDkmR"
+        },
+        {
+          "name": "澳亚生物",
+          "uuid": "PBnnXGRG"
+        },
+        {
+          "name": "药明生物",
+          "uuid": "QFacEZ54"
+        },
+        {
+          "name": "宜诺",
+          "uuid": "QUQJ9V76"
+        },
+        {
+          "name": "多禧",
+          "uuid": "S2QTXc6o"
+        },
+        {
+          "name": "前沿生物",
+          "uuid": "S5Q2CCHU"
+        },
+        {
+          "name": "扬子江药业",
+          "uuid": "SADJ4MTK"
+        },
+        {
+          "name": "振东安欣",
+          "uuid": "Tp4a1RpL"
+        },
+        {
+          "name": "三元基因",
+          "uuid": "ULW9QeHk"
+        },
+        {
+          "name": "安士制药",
+          "uuid": "Ut2yihdG"
+        },
+        {
+          "name": "高视泰靓",
+          "uuid": "UuTyn1Y5"
+        },
+        {
+          "name": "国转中心",
+          "uuid": "VaW6DdD1"
+        },
+        {
+          "name": "赛孚士",
+          "uuid": "Vfvy75iN"
+        },
+        {
+          "name": "药明合联",
+          "uuid": "VfzkAAAA"
+        },
+        {
+          "name": "宣泰",
+          "uuid": "W2TG9LLJ"
+        },
+        {
+          "name": "何济公",
+          "uuid": "WFvxq7wx"
+        },
+        {
+          "name": "摩尔生物",
+          "uuid": "XkUf7oDF"
+        },
+        {
+          "name": "易慕峰",
+          "uuid": "Y4Mnm81b"
+        },
+        {
+          "name": "甘李",
+          "uuid": "YDpQsaK2"
+        },
+        {
+          "name": "上海高腾医药",
+          "uuid": "YXmtDCf5"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "AST3JVZw"
+    },
+    {
+      "filter_key": "_AWyc6666_in",
+      "name": "年度",
+      "options": [
+        {
+          "name": "2023年",
+          "uuid": "8Dyq1VpB"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "AWyc6666"
+    },
+    {
+      "filter_key": "_B9KFNg4n_in",
+      "name": "现场项目",
+      "options": [
+        {
+          "name": "依生",
+          "uuid": "5ypjhBi7"
+        },
+        {
+          "name": "恺佧",
+          "uuid": "7U8K6Z5M"
+        },
+        {
+          "name": "龟鹿",
+          "uuid": "8fS7Y3y5"
+        },
+        {
+          "name": "普康",
+          "uuid": "A7UJXsFj"
+        },
+        {
+          "name": "倍锦",
+          "uuid": "Lmo9ytno"
+        },
+        {
+          "name": "双鲸",
+          "uuid": "YH5yEFAu"
+        },
+        {
+          "name": "天药",
+          "uuid": "aZTjtqSW"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "B9KFNg4n"
+    },
+    {
+      "filter_key": "_BmamfVEP_in",
+      "name": "是否定制",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "4BFJ5C9B"
+        },
+        {
+          "name": "否",
+          "uuid": "CYx8ptbr"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "BmamfVEP"
+    },
+    {
+      "filter_key": "_BnG6VL2G_in",
+      "name": "客户（制造）",
+      "options": [
+        {
+          "name": "际华-天津",
+          "uuid": "16vc5BBF"
+        },
+        {
+          "name": "宜昌人福远安工厂",
+          "uuid": "2CaqN7f2"
+        },
+        {
+          "name": "泽润",
+          "uuid": "2cEU933r"
+        },
+        {
+          "name": "云南白药",
+          "uuid": "2rmE5AUS"
+        },
+        {
+          "name": "艾美荣誉",
+          "uuid": "319nf3xz"
+        },
+        {
+          "name": "中科",
+          "uuid": "3FuGS3bD"
+        },
+        {
+          "name": "寿仙谷",
+          "uuid": "3obXy62r"
+        },
+        {
+          "name": "原天",
+          "uuid": "4SEMF2MV"
+        },
+        {
+          "name": "山东力诺",
+          "uuid": "4YvNK6Pd"
+        },
+        {
+          "name": "药源生物",
+          "uuid": "4iXabgQF"
+        },
+        {
+          "name": "万泰生物IVD",
+          "uuid": "51GVzUcX"
+        },
+        {
+          "name": "依科赛",
+          "uuid": "5XoreSbx"
+        },
+        {
+          "name": "万泰升级3.0",
+          "uuid": "5btfz4z2"
+        },
+        {
+          "name": "云顶",
+          "uuid": "6YKnqmVC"
+        },
+        {
+          "name": "立生医药",
+          "uuid": "6pwD75bc"
+        },
+        {
+          "name": "上海兆维奥利",
+          "uuid": "6qbGueQ4"
+        },
+        {
+          "name": "普康",
+          "uuid": "6wTHeyaE"
+        },
+        {
+          "name": "艾美坚持",
+          "uuid": "7mNpYnym"
+        },
+        {
+          "name": "恒瑞医药",
+          "uuid": "96fkgzvZ"
+        },
+        {
+          "name": "东阳光药业",
+          "uuid": "9GN5jssZ"
+        },
+        {
+          "name": "亚东",
+          "uuid": "9MczeRgn"
+        },
+        {
+          "name": "长澳",
+          "uuid": "9TkNqPgd"
+        },
+        {
+          "name": "宜昌东阳光生化",
+          "uuid": "9XUwQ71v"
+        },
+        {
+          "name": "浙江大冢",
+          "uuid": "9vYtFcAr"
+        },
+        {
+          "name": "成都康弘生物",
+          "uuid": "9wnoWzDA"
+        },
+        {
+          "name": "基诺厚普",
+          "uuid": "A6hdEufA"
+        },
+        {
+          "name": "华润双鹤利民",
+          "uuid": "A7JnSCpu"
+        },
+        {
+          "name": "丽珠",
+          "uuid": "AVjJeWkE"
+        },
+        {
+          "name": "伟德杰",
+          "uuid": "AVjsrgZU"
+        },
+        {
+          "name": "迈科康",
+          "uuid": "BCqRWvXi"
+        },
+        {
+          "name": "华润三九顺峰二期",
+          "uuid": "BEhxkV5d"
+        },
+        {
+          "name": "威斯克",
+          "uuid": "CcoMgdBz"
+        },
+        {
+          "name": "国药同济堂",
+          "uuid": "DJYnX7rf"
+        },
+        {
+          "name": "紫杉药业",
+          "uuid": "DSiCZ4Bj"
+        },
+        {
+          "name": "瑞科",
+          "uuid": "DnLgG5So"
+        },
+        {
+          "name": "产品",
+          "uuid": "DpGwF3hj"
+        },
+        {
+          "name": "丽珠称配",
+          "uuid": "EYNtjQ2Q"
+        },
+        {
+          "name": "先泰",
+          "uuid": "Ef18rz4B"
+        },
+        {
+          "name": "安士",
+          "uuid": "F3BjCSf7"
+        },
+        {
+          "name": "和元智造(上海)",
+          "uuid": "FHNwg3mJ"
+        },
+        {
+          "name": "北京甘李药业",
+          "uuid": "Fzsi6H9e"
+        },
+        {
+          "name": "华润三九",
+          "uuid": "GkNyA59h"
+        },
+        {
+          "name": "宜昌人福OSD",
+          "uuid": "HAxEdovv"
+        },
+        {
+          "name": "沃森",
+          "uuid": "HEA5FGpg"
+        },
+        {
+          "name": "绿竹",
+          "uuid": "HNycNeX9"
+        },
+        {
+          "name": "依生",
+          "uuid": "HTwP3ZKW"
+        },
+        {
+          "name": "恺佧",
+          "uuid": "HpY1q39M"
+        },
+        {
+          "name": "吉诺卫",
+          "uuid": "HyHwWMvw"
+        },
+        {
+          "name": "浙江京新",
+          "uuid": "HyrzV23W"
+        },
+        {
+          "name": "仙琚制药",
+          "uuid": "JkuEz9WP"
+        },
+        {
+          "name": "九珑人福",
+          "uuid": "Joh7jSPC"
+        },
+        {
+          "name": "诺泰诺和",
+          "uuid": "JqG7mqB2"
+        },
+        {
+          "name": "万泰",
+          "uuid": "KTa7RMzT"
+        },
+        {
+          "name": "润农化工",
+          "uuid": "KULAByzH"
+        },
+        {
+          "name": "暨明医药",
+          "uuid": "Kp1ehDTZ"
+        },
+        {
+          "name": "佛山汉腾",
+          "uuid": "LXThEJcb"
+        },
+        {
+          "name": "联亚药业",
+          "uuid": "LwoSZ1PT"
+        },
+        {
+          "name": "奥翔麒正",
+          "uuid": "MTQAw6Ly"
+        },
+        {
+          "name": "罗益",
+          "uuid": "P7xUz7d2"
+        },
+        {
+          "name": "白云山明兴制药",
+          "uuid": "PXDemgqQ"
+        },
+        {
+          "name": "思鹏",
+          "uuid": "PgktoLH1"
+        },
+        {
+          "name": "上海高腾",
+          "uuid": "QD9gdAZq"
+        },
+        {
+          "name": "东阳光制剂",
+          "uuid": "QDi2XaWM"
+        },
+        {
+          "name": "林华",
+          "uuid": "QomrBTJ2"
+        },
+        {
+          "name": "华润三九枣庄三期",
+          "uuid": "R5dDAcML"
+        },
+        {
+          "name": "凌科药业",
+          "uuid": "RACpZfE7"
+        },
+        {
+          "name": "碧博",
+          "uuid": "RCri9aMx"
+        },
+        {
+          "name": "泽润二期",
+          "uuid": "SKcHYcU4"
+        },
+        {
+          "name": "倍锦",
+          "uuid": "SSTNt2XN"
+        },
+        {
+          "name": "福元",
+          "uuid": "T5edmZSc"
+        },
+        {
+          "name": "华润三九观澜三期",
+          "uuid": "Tqrfu6VY"
+        },
+        {
+          "name": "华润三九观澜二期",
+          "uuid": "UaM44UXa"
+        },
+        {
+          "name": "菲鹏",
+          "uuid": "UxreYi4E"
+        },
+        {
+          "name": "人福普克",
+          "uuid": "V4Z72mxv"
+        },
+        {
+          "name": "华润三九郴州二期",
+          "uuid": "VNPQQHcw"
+        },
+        {
+          "name": "山禾",
+          "uuid": "VQfZtDTC"
+        },
+        {
+          "name": "和元",
+          "uuid": "WGv18R6X"
+        },
+        {
+          "name": "辽宁依升生物",
+          "uuid": "Wux8WjDM"
+        },
+        {
+          "name": "普洛家园药业",
+          "uuid": "X5Wv6qE8"
+        },
+        {
+          "name": "天药",
+          "uuid": "XMwELPmv"
+        },
+        {
+          "name": "宜昌人福",
+          "uuid": "XSUHBJGH"
+        },
+        {
+          "name": "华海生物",
+          "uuid": "XahocAjx"
+        },
+        {
+          "name": "金耀",
+          "uuid": "YAY86p2w"
+        },
+        {
+          "name": "万泰SAP接口对接",
+          "uuid": "YCLGdTFa"
+        },
+        {
+          "name": "际华-海口",
+          "uuid": "hoTJtEmw"
+        },
+        {
+          "name": "智享",
+          "uuid": "irShYTUy"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "BnG6VL2G"
+    },
+    {
+      "filter_key": "_Bz8N3JK6_in",
+      "name": "依赖性",
+      "options": [
+        {
+          "name": "否",
+          "uuid": "Laiah5FV"
+        },
+        {
+          "name": "是",
+          "uuid": "R89CwCRb"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "Bz8N3JK6"
+    },
+    {
+      "filter_key": "_CV1cFeuP_in",
+      "name": "工单产生原因归类",
+      "options": [
+        {
+          "name": "需求-功能优化",
+          "uuid": "4JD1xp8C"
+        },
+        {
+          "name": "需求-技术债优化",
+          "uuid": "76sx8ZQV"
+        },
+        {
+          "name": "缺陷-代码逻辑缺陷",
+          "uuid": "BVmXSZnv"
+        },
+        {
+          "name": "文档-文档使用困难",
+          "uuid": "ENgzoxWV"
+        },
+        {
+          "name": "需求-新功能需求",
+          "uuid": "FCCtiB1w"
+        },
+        {
+          "name": "缺陷-配置缺陷",
+          "uuid": "TgZB35NQ"
+        },
+        {
+          "name": "缺陷-性能缺陷",
+          "uuid": "VLjHLnFU"
+        },
+        {
+          "name": "文档-文档缺失",
+          "uuid": "WqZnH4Xh"
+        },
+        {
+          "name": "咨询",
+          "uuid": "XosZBsfe"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "CV1cFeuP"
+    },
+    {
+      "filter_key": "_CaGrhUjz_in",
+      "name": "问题单分析",
+      "options": [
+        {
+          "name": "不修复",
+          "uuid": "3RCy6V3A"
+        },
+        {
+          "name": "非问题",
+          "uuid": "6CUH1WhM"
+        },
+        {
+          "name": "重复问题",
+          "uuid": "8xi9LFiV"
+        },
+        {
+          "name": "特殊场景漏测",
+          "uuid": "ASSBmUyg"
+        },
+        {
+          "name": "修改引入",
+          "uuid": "GgXbKmXs"
+        },
+        {
+          "name": "转需求",
+          "uuid": "Gj1uuxQw"
+        },
+        {
+          "name": "新需求引入",
+          "uuid": "JGS9UJzV"
+        },
+        {
+          "name": "需求不明确",
+          "uuid": "JZox2xQ2"
+        },
+        {
+          "name": "基本场景漏测",
+          "uuid": "LkVcAWYh"
+        },
+        {
+          "name": "接口文档问题",
+          "uuid": "N8kmkawu"
+        },
+        {
+          "name": "接口变更",
+          "uuid": "NBqD6FFy"
+        },
+        {
+          "name": "兼容性问题",
+          "uuid": "Uh48RCMZ"
+        },
+        {
+          "name": "易用性问题",
+          "uuid": "YH2UiDCd"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "CaGrhUjz"
+    },
+    {
+      "filter_key": "_DSu2Yaug_in",
+      "name": "reopen次数",
+      "options": [
+        {
+          "name": "9",
+          "uuid": "26vGfosM"
+        },
+        {
+          "name": "3",
+          "uuid": "5qJvPZUa"
+        },
+        {
+          "name": "2",
+          "uuid": "5r5ci3Sd"
+        },
+        {
+          "name": "6",
+          "uuid": "5rvisT67"
+        },
+        {
+          "name": "1",
+          "uuid": "L1fLnUkK"
+        },
+        {
+          "name": "8",
+          "uuid": "NBUbeBoT"
+        },
+        {
+          "name": "5",
+          "uuid": "QsvMB9Km"
+        },
+        {
+          "name": "7",
+          "uuid": "QwWyr99z"
+        },
+        {
+          "name": "4",
+          "uuid": "RmYtBrZ8"
+        },
+        {
+          "name": "10",
+          "uuid": "YNhZbzJU"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "DSu2Yaug"
+    },
+    {
+      "filter_key": "_DUt2WykH_in",
+      "name": "缺陷产生来源",
+      "options": [
+        {
+          "name": "交付",
+          "uuid": "HT5NHzwP"
+        },
+        {
+          "name": "产研",
+          "uuid": "RvcawLTb"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "DUt2WykH"
+    },
+    {
+      "filter_key": "_Dn7VG2SZ_in",
+      "name": "需求来源",
+      "options": [
+        {
+          "name": "市场",
+          "uuid": "7m3DBuEv"
+        },
+        {
+          "name": "技术支持",
+          "uuid": "8cjN57XN"
+        },
+        {
+          "name": "合作伙伴",
+          "uuid": "CAst8Lww"
+        },
+        {
+          "name": "客户",
+          "uuid": "EZ4xbXop"
+        },
+        {
+          "name": "用户",
+          "uuid": "Ek3xgK5C"
+        },
+        {
+          "name": "客服",
+          "uuid": "JHAH4miz"
+        },
+        {
+          "name": "竞争对手",
+          "uuid": "JTrsZ2mw"
+        },
+        {
+          "name": "测试人员",
+          "uuid": "NKWPNyDe"
+        },
+        {
+          "name": "运营",
+          "uuid": "Q45YAocp"
+        },
+        {
+          "name": "BUG",
+          "uuid": "QYTnFTRs"
+        },
+        {
+          "name": "开发人员",
+          "uuid": "RYd1XtkM"
+        },
+        {
+          "name": "产品经理",
+          "uuid": "Rhq7fN9X"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "Dn7VG2SZ"
+    },
+    {
+      "filter_key": "_E9VDi99R_in",
+      "name": "影响版本-LIMS",
+      "options": [
+        {
+          "name": "V3.2.4",
+          "uuid": "42QqTmKj"
+        },
+        {
+          "name": "V3.1.2_ZR",
+          "uuid": "7KqA7zoo"
+        },
+        {
+          "name": "V1.0",
+          "uuid": "87wB9mrU"
+        },
+        {
+          "name": "V3.2.2",
+          "uuid": "8J4DTpjx"
+        },
+        {
+          "name": "V3.1.4",
+          "uuid": "AKxbVutK"
+        },
+        {
+          "name": "V1.0-ZR",
+          "uuid": "EFTq9ACJ"
+        },
+        {
+          "name": "V3.2.3",
+          "uuid": "EqiKAZpP"
+        },
+        {
+          "name": "V1.0.1",
+          "uuid": "FJxEugbx"
+        },
+        {
+          "name": "V3.2.1",
+          "uuid": "GGLyykQU"
+        },
+        {
+          "name": "V3.1.1",
+          "uuid": "JGYuUY68"
+        },
+        {
+          "name": "V3.2.5",
+          "uuid": "K3GmLY1r"
+        },
+        {
+          "name": "V3.2",
+          "uuid": "KMqPQLWd"
+        },
+        {
+          "name": "V3.0",
+          "uuid": "KgHKnjz9"
+        },
+        {
+          "name": "V3.1",
+          "uuid": "L5QfSFsg"
+        },
+        {
+          "name": "V3.1.2",
+          "uuid": "NRwsK4E4"
+        },
+        {
+          "name": "V3.1.3",
+          "uuid": "TcRUweGR"
+        },
+        {
+          "name": "V3.1.5",
+          "uuid": "TchLTfb2"
+        },
+        {
+          "name": "V1.0-DEMO",
+          "uuid": "XSFmbVcU"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "E9VDi99R"
+    },
+    {
+      "filter_key": "_EJJa8wip_in",
+      "name": "解决结果",
+      "options": [
+        {
+          "name": "Not Bug",
+          "uuid": "4Nchftep"
+        },
+        {
+          "name": "Won't Do",
+          "uuid": "673z7HqM"
+        },
+        {
+          "name": "Cannot Reproduce",
+          "uuid": "7Kxfu7Cd"
+        },
+        {
+          "name": "By Design",
+          "uuid": "7zaJeU1Z"
+        },
+        {
+          "name": "Fixed",
+          "uuid": "9REmVs5k"
+        },
+        {
+          "name": "Done",
+          "uuid": "ArLSjnt6"
+        },
+        {
+          "name": "Duplicate",
+          "uuid": "GwTh4sar"
+        },
+        {
+          "name": "abandon",
+          "uuid": "Mh7jKqBz"
+        },
+        {
+          "name": "Not Repro",
+          "uuid": "QuL3fx3M"
+        },
+        {
+          "name": "Unresolved",
+          "uuid": "WeZeTFzx"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "EJJa8wip"
+    },
+    {
+      "filter_key": "_EVzQVBV8_in",
+      "name": "是否影响产品路线图",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "71mwBeJE"
+        },
+        {
+          "name": "否",
+          "uuid": "MhKFwu7x"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "EVzQVBV8"
+    },
+    {
+      "filter_key": "_EdipXWJ1_in",
+      "name": "浏览器",
+      "options": [
+        {
+          "name": "Opera",
+          "uuid": "3boVqHwU"
+        },
+        {
+          "name": "360浏览器",
+          "uuid": "8PD6y6DE"
+        },
+        {
+          "name": "QQ浏览器",
+          "uuid": "8UAdsS9Y"
+        },
+        {
+          "name": "搜狗浏览器",
+          "uuid": "9hxvZUp4"
+        },
+        {
+          "name": "Edge",
+          "uuid": "Ann5HxeN"
+        },
+        {
+          "name": "Firefox",
+          "uuid": "NjHZQKTu"
+        },
+        {
+          "name": "遨游浏览器",
+          "uuid": "SND9xua1"
+        },
+        {
+          "name": "Chrome",
+          "uuid": "TexUvQ6h"
+        },
+        {
+          "name": "Chromium",
+          "uuid": "UHweRZ2b"
+        },
+        {
+          "name": "Safari",
+          "uuid": "W6bNg9WD"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "EdipXWJ1"
+    },
+    {
+      "filter_key": "_Eoz4XmvC_in",
+      "name": "多选客户（QDT）",
+      "options": [
+        {
+          "name": "泽璟",
+          "uuid": "3dBmhrJ9"
+        },
+        {
+          "name": "扬子江药业",
+          "uuid": "3oEJe9Cy"
+        },
+        {
+          "name": "澳亚生物",
+          "uuid": "5Yc3rNB2"
+        },
+        {
+          "name": "惠迪森",
+          "uuid": "BPDUVRhB"
+        },
+        {
+          "name": "上海宝济",
+          "uuid": "CKbE3YAD"
+        },
+        {
+          "name": "泰诺麦博",
+          "uuid": "DFpfi8wx"
+        },
+        {
+          "name": "药明合联",
+          "uuid": "Drtxurbe"
+        },
+        {
+          "name": "君实生物",
+          "uuid": "E1d6zn7x"
+        },
+        {
+          "name": "厦门万泰",
+          "uuid": "EJMDj4wt"
+        },
+        {
+          "name": "奥斯康",
+          "uuid": "EYu4knXh"
+        },
+        {
+          "name": "天晴顺欣",
+          "uuid": "Ew1uuu1z"
+        },
+        {
+          "name": "创胜",
+          "uuid": "J3wAyysc"
+        },
+        {
+          "name": "三元基因",
+          "uuid": "JqKpxcLu"
+        },
+        {
+          "name": "药明生物",
+          "uuid": "M85caeZM"
+        },
+        {
+          "name": "易慕峰",
+          "uuid": "MP1e31jg"
+        },
+        {
+          "name": "上海枫林",
+          "uuid": "MhYbZPDY"
+        },
+        {
+          "name": "宣泰",
+          "uuid": "N1y8TnbC"
+        },
+        {
+          "name": "高视泰靓",
+          "uuid": "QYQ9kPxh"
+        },
+        {
+          "name": "霍德",
+          "uuid": "T8DiVjDB"
+        },
+        {
+          "name": "皓元生物",
+          "uuid": "TVZkmPWR"
+        },
+        {
+          "name": "智享",
+          "uuid": "VbWQbhVy"
+        },
+        {
+          "name": "国药星鲨",
+          "uuid": "W6j7WnzH"
+        },
+        {
+          "name": "海正",
+          "uuid": "WomtJSc2"
+        },
+        {
+          "name": "迈博太科",
+          "uuid": "XJ5poHUy"
+        },
+        {
+          "name": "基诺厚普",
+          "uuid": "YCqDJe3f"
+        },
+        {
+          "name": "佐力",
+          "uuid": "emojSbHk"
+        },
+        {
+          "name": "产品",
+          "uuid": "speMpSTY"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "Eoz4XmvC"
+    },
+    {
+      "filter_key": "_EsCipeNh_in",
+      "name": "Affect version",
+      "options": [
+        {
+          "name": "123",
+          "uuid": "JjmzaiMN"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "EsCipeNh"
+    },
+    {
+      "filter_key": "_EzupbeNn_in",
+      "name": "是否影响验收",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "3ZEQUT5v"
+        },
+        {
+          "name": "否",
+          "uuid": "6WY5o9ER"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "EzupbeNn"
+    },
+    {
+      "filter_key": "_FnkEKd4Y_in",
+      "name": "紧急程度",
+      "options": [
+        {
+          "name": "非阻塞",
+          "uuid": "5iKtZTwj"
+        },
+        {
+          "name": "阻塞",
+          "uuid": "SGu8Vc7V"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "FnkEKd4Y"
+    },
+    {
+      "filter_key": "_GEjYvmqL_in",
+      "name": "影响模块（前端）",
+      "options": [
+        {
+          "name": "common-ui",
+          "uuid": "2ZCFbhup"
+        },
+        {
+          "name": "eln",
+          "uuid": "2u5j7ASB"
+        },
+        {
+          "name": "common-module",
+          "uuid": "3CvXSmVp"
+        },
+        {
+          "name": "无",
+          "uuid": "57BfsF6m"
+        },
+        {
+          "name": "chem",
+          "uuid": "6An9KX8p"
+        },
+        {
+          "name": "ppm",
+          "uuid": "9wcpWGhz"
+        },
+        {
+          "name": "stm",
+          "uuid": "DuPLDRru"
+        },
+        {
+          "name": "lrc",
+          "uuid": "EU3dNSB5"
+        },
+        {
+          "name": "portal",
+          "uuid": "GEUMUW1x"
+        },
+        {
+          "name": "instrument",
+          "uuid": "Lz7PSuBx"
+        },
+        {
+          "name": "lda-data-center",
+          "uuid": "NjroYprf"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "GEjYvmqL"
+    },
+    {
+      "filter_key": "_GGKig8z3_in",
+      "name": "产品属性",
+      "options": [
+        {
+          "name": "否",
+          "uuid": "8VUEyJi4"
+        },
+        {
+          "name": "是",
+          "uuid": "QMUDhoCw"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "GGKig8z3"
+    },
+    {
+      "filter_key": "_GuJ24Too_in",
+      "name": "KANO类型",
+      "options": [
+        {
+          "name": "期望型",
+          "uuid": "9p21kspc"
+        },
+        {
+          "name": "兴奋型",
+          "uuid": "EXaa4gPr"
+        },
+        {
+          "name": "基本型",
+          "uuid": "M4H1KQSk"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "GuJ24Too"
+    },
+    {
+      "filter_key": "_HC2gcCoa_in",
+      "name": "问题分类",
+      "options": [
+        {
+          "name": "外部",
+          "uuid": "49kj3aNX"
+        },
+        {
+          "name": "采购",
+          "uuid": "6JKAvCK1"
+        },
+        {
+          "name": "配置",
+          "uuid": "BsozFexD"
+        },
+        {
+          "name": "内部",
+          "uuid": "Ho7mynwz"
+        },
+        {
+          "name": "系统",
+          "uuid": "LQTq4f6R"
+        },
+        {
+          "name": "验证",
+          "uuid": "YXnRgXfk"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "HC2gcCoa"
+    },
+    {
+      "filter_key": "_HPQixpnA_in",
+      "name": "影响版本-WMS2.0",
+      "options": [
+        {
+          "name": "V2.2.50.ZR-泽润二期",
+          "uuid": "4Jb1vMZC"
+        },
+        {
+          "name": "V2.2.50-标准分支",
+          "uuid": "6eBmzEBo"
+        },
+        {
+          "name": "V2.2.50.ZK-中科",
+          "uuid": "ETAk18v2"
+        },
+        {
+          "name": "V2.2.40.YC-宜昌人福",
+          "uuid": "FEDTNCKx"
+        },
+        {
+          "name": "V2.2.50.SP-思鹏",
+          "uuid": "GaeN29NJ"
+        },
+        {
+          "name": "V2.2.42.RK-瑞科",
+          "uuid": "M8yYE9WG"
+        },
+        {
+          "name": "V2.2.50.WT-万泰",
+          "uuid": "PFPdFfd9"
+        },
+        {
+          "name": "V2.2.50.JY-药源",
+          "uuid": "R6ps3G8r"
+        },
+        {
+          "name": "V2.1.4-人福普克",
+          "uuid": "TdqPFmPn"
+        },
+        {
+          "name": "V2.2.50.YX-云顶新耀",
+          "uuid": "UJsteEJ2"
+        },
+        {
+          "name": "V2.2.40.ZR-泽润",
+          "uuid": "VQL2cKNH"
+        },
+        {
+          "name": "V2.1.5-普康",
+          "uuid": "XmLL3HVN"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "HPQixpnA"
+    },
+    {
+      "filter_key": "_HXDB9gwa_in",
+      "name": "Epic Status",
+      "options": [
+        {
+          "name": "In Progress",
+          "uuid": "JnnumfCk"
+        },
+        {
+          "name": "Done",
+          "uuid": "SUGxxqEB"
+        },
+        {
+          "name": "To Do",
+          "uuid": "WJTmeLfG"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "HXDB9gwa"
+    },
+    {
+      "filter_key": "_JRiVshzT_in",
+      "name": "运维问题类型",
+      "options": [
+        {
+          "name": "其他",
+          "uuid": "3gJaeqZd"
+        },
+        {
+          "name": "问题答疑",
+          "uuid": "8JmXKJAJ"
+        },
+        {
+          "name": "用户建议",
+          "uuid": "NzpToJQg"
+        },
+        {
+          "name": "模块配置",
+          "uuid": "UmbRy1Vd"
+        },
+        {
+          "name": "操作咨询",
+          "uuid": "VYPqbsst"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "JRiVshzT"
+    },
+    {
+      "filter_key": "_K39SUc4b_in",
+      "name": "子任务类型",
+      "options": [
+        {
+          "name": "需求-前端开发",
+          "uuid": "AwG8npGx"
+        },
+        {
+          "name": "需求-后端开发",
+          "uuid": "BJcr9Vai"
+        },
+        {
+          "name": "其他（会议沟通研究）",
+          "uuid": "CpGMHjpa"
+        },
+        {
+          "name": "需求-设计",
+          "uuid": "DCdiEVAg"
+        },
+        {
+          "name": "工单/现场问题",
+          "uuid": "DWtiZuPf"
+        },
+        {
+          "name": "需求-测试",
+          "uuid": "R3G4MuWq"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "K39SUc4b"
+    },
+    {
+      "filter_key": "_K5PRd7Bv_in",
+      "name": "缺陷产生阶段",
+      "options": [
+        {
+          "name": "设计阶段",
+          "uuid": "MXjeM28R"
+        },
+        {
+          "name": "编码阶段",
+          "uuid": "RWHFNb87"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "K5PRd7Bv"
+    },
+    {
+      "filter_key": "_KSSnCj5q_in",
+      "name": "计划修复版本-MES",
+      "options": [
+        {
+          "name": "V5.1-沃森",
+          "uuid": "2KhYzaSE"
+        },
+        {
+          "name": "V3.4.9-万泰",
+          "uuid": "3nsfxSwv"
+        },
+        {
+          "name": "V3.0",
+          "uuid": "3qCkEuns"
+        },
+        {
+          "name": "V5.1-艾美荣誉",
+          "uuid": "6SY6Q77v"
+        },
+        {
+          "name": "V1.0",
+          "uuid": "6sEAzVGM"
+        },
+        {
+          "name": "V4.0",
+          "uuid": "72maf8fp"
+        },
+        {
+          "name": "V5.0.Release",
+          "uuid": "774RNVag"
+        },
+        {
+          "name": "V5.1-艾美SAT",
+          "uuid": "7TV6Cnp9"
+        },
+        {
+          "name": "V3.4.7-恺佧",
+          "uuid": "7yP75Ckp"
+        },
+        {
+          "name": "V5.1-吉诺卫",
+          "uuid": "7ygHnEi8"
+        },
+        {
+          "name": "V3.4.17-中科",
+          "uuid": "9f3FhbLq"
+        },
+        {
+          "name": "V4.0.1-药机展",
+          "uuid": "CgToMS9K"
+        },
+        {
+          "name": "V3.4.8-罗益",
+          "uuid": "DZCaJwPG"
+        },
+        {
+          "name": "V5.1-寿仙谷",
+          "uuid": "EWtYPczR"
+        },
+        {
+          "name": "V3.4.10.PQ",
+          "uuid": "EomeChMq"
+        },
+        {
+          "name": "V3.4.6-泽润",
+          "uuid": "FEfnoYDY"
+        },
+        {
+          "name": "V3.4.15-长澳",
+          "uuid": "G8gGLFH5"
+        },
+        {
+          "name": "V3.4.5-丽珠",
+          "uuid": "H7CHDUkY"
+        },
+        {
+          "name": "V5.0.1.R",
+          "uuid": "HRHWXjgC"
+        },
+        {
+          "name": "V3.4.18-国药",
+          "uuid": "HW9dpwsQ"
+        },
+        {
+          "name": "V3.4.14-思鹏",
+          "uuid": "K7AKnMT7"
+        },
+        {
+          "name": "V5.2",
+          "uuid": "Ko1rjBpP"
+        },
+        {
+          "name": "V5.1-绿竹",
+          "uuid": "L1UXSAJx"
+        },
+        {
+          "name": "V5.1-际华",
+          "uuid": "LoR4J1VD"
+        },
+        {
+          "name": "V5.0",
+          "uuid": "LxCVCgTT"
+        },
+        {
+          "name": "V5.1-迈科康",
+          "uuid": "M8qCdn48"
+        },
+        {
+          "name": "V3.4.13-山禾",
+          "uuid": "METoXLJV"
+        },
+        {
+          "name": "V5.1-先泰",
+          "uuid": "NrVaxKRM"
+        },
+        {
+          "name": "V3.4.5.R-丽珠",
+          "uuid": "PGcpYV53"
+        },
+        {
+          "name": "V4.1",
+          "uuid": "PtxRN3Lt"
+        },
+        {
+          "name": "V3.4.11-丽珠秤配",
+          "uuid": "QfTqhLxa"
+        },
+        {
+          "name": "V5.0.1-三九",
+          "uuid": "QnhrnkEr"
+        },
+        {
+          "name": "V2.0",
+          "uuid": "RDtucgpH"
+        },
+        {
+          "name": "V3.4.10-金耀",
+          "uuid": "SKxYhda4"
+        },
+        {
+          "name": "V5.0-东阳光",
+          "uuid": "SMvtVnkg"
+        },
+        {
+          "name": "V3.4.3-倍锦",
+          "uuid": "Shff97yc"
+        },
+        {
+          "name": "V3.4.4-依生",
+          "uuid": "T5g3wwxd"
+        },
+        {
+          "name": "V3.4.16-依科赛",
+          "uuid": "TEH3jcU9"
+        },
+        {
+          "name": "V3.4.1-通用",
+          "uuid": "TSDXL9kF"
+        },
+        {
+          "name": "V3.4.2-普康",
+          "uuid": "UZesm9ku"
+        },
+        {
+          "name": "V4.0.2-博雅",
+          "uuid": "UkAHq8qf"
+        },
+        {
+          "name": "V3.4.10.R",
+          "uuid": "VYxbsXZH"
+        },
+        {
+          "name": "V5.1-主线",
+          "uuid": "XEiuNG77"
+        },
+        {
+          "name": "V3.4.12-云顶",
+          "uuid": "XpQdDbDi"
+        },
+        {
+          "name": "V5.1-艾美坚持",
+          "uuid": "YCJ2tPsw"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "KSSnCj5q"
+    },
+    {
+      "filter_key": "_KYZpjC7x_in",
+      "name": "问题发生次数",
+      "options": [
+        {
+          "name": "10次以上",
+          "uuid": "6nGWcXj2"
+        },
+        {
+          "name": "1次",
+          "uuid": "BW2xmr3q"
+        },
+        {
+          "name": "5~10次",
+          "uuid": "DRtMFHL7"
+        },
+        {
+          "name": "2~4次",
+          "uuid": "DtS5UV3t"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "KYZpjC7x"
+    },
+    {
+      "filter_key": "_Kj8ULxnQ_in",
+      "name": "交付项目阶段",
+      "options": [
+        {
+          "name": "项目规划",
+          "uuid": "5CpwoqhZ"
+        },
+        {
+          "name": "项目启动",
+          "uuid": "HhcBGhyL"
+        },
+        {
+          "name": "项目执行",
+          "uuid": "Hn4S2LJv"
+        },
+        {
+          "name": "项目收尾",
+          "uuid": "S1nVvveN"
+        },
+        {
+          "name": "项目监控",
+          "uuid": "TA9gpDhx"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "Kj8ULxnQ"
+    },
+    {
+      "filter_key": "_KjdAD76J_in",
+      "name": "产品建议",
+      "options": [
+        {
+          "name": "延期",
+          "uuid": "Qba5jdyK"
+        },
+        {
+          "name": "按计划",
+          "uuid": "RBLtCHFX"
+        },
+        {
+          "name": "取消",
+          "uuid": "YDSCYwLa"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "KjdAD76J"
+    },
+    {
+      "filter_key": "_LCpcdfKW_in",
+      "name": "产品线",
+      "options": [
+        {
+          "name": "LRC",
+          "uuid": "Aj1R5S1u"
+        },
+        {
+          "name": "ELN",
+          "uuid": "DdJSbUsu"
+        },
+        {
+          "name": "PPM",
+          "uuid": "FLRPvULE"
+        },
+        {
+          "name": "LDA",
+          "uuid": "P6EFGsX4"
+        },
+        {
+          "name": "MSP",
+          "uuid": "TzjWLMuT"
+        },
+        {
+          "name": "eCTD",
+          "uuid": "YPvrLiB8"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "LCpcdfKW"
+    },
+    {
+      "filter_key": "_LfbLTzsp_in",
+      "name": "验证版本-MES",
+      "options": [
+        {
+          "name": "V3.4.3-倍锦",
+          "uuid": "3DBoipWi"
+        },
+        {
+          "name": "V3.4.5-丽珠",
+          "uuid": "3VyAAPsz"
+        },
+        {
+          "name": "V3.4.6-泽润",
+          "uuid": "4bbsN3Qn"
+        },
+        {
+          "name": "V4.1",
+          "uuid": "7JmGh9Lf"
+        },
+        {
+          "name": "V5.1-先泰",
+          "uuid": "7XKJa34V"
+        },
+        {
+          "name": "V3.4.1-通用",
+          "uuid": "7i33kyL8"
+        },
+        {
+          "name": "V3.4.17-中科",
+          "uuid": "7uf59UrD"
+        },
+        {
+          "name": "V3.4.14-思鹏",
+          "uuid": "7yB4FRDT"
+        },
+        {
+          "name": "V5.1-艾美坚持",
+          "uuid": "88XBusrZ"
+        },
+        {
+          "name": "V2.0",
+          "uuid": "B6wQL5bg"
+        },
+        {
+          "name": "V3.0",
+          "uuid": "BQgGNQaD"
+        },
+        {
+          "name": "V5.1-际华",
+          "uuid": "DdUhYMY6"
+        },
+        {
+          "name": "V3.4.13-山禾",
+          "uuid": "EytvV3cG"
+        },
+        {
+          "name": "V5.0.Release",
+          "uuid": "FPD9wRWK"
+        },
+        {
+          "name": "V1.0",
+          "uuid": "Fpt8Luee"
+        },
+        {
+          "name": "V3.4.16-依科赛",
+          "uuid": "H8s8mNpP"
+        },
+        {
+          "name": "V5.1-沃森",
+          "uuid": "HV2tFg7m"
+        },
+        {
+          "name": "V5.0-东阳光",
+          "uuid": "J6amG6yT"
+        },
+        {
+          "name": "V4.0",
+          "uuid": "JPw3LCoU"
+        },
+        {
+          "name": "V3.4.8-罗益",
+          "uuid": "KA85Wa8E"
+        },
+        {
+          "name": "V5.1-寿仙谷",
+          "uuid": "LAMEmfh3"
+        },
+        {
+          "name": "V5.0",
+          "uuid": "LKHXBUBi"
+        },
+        {
+          "name": "V3.4.10.R",
+          "uuid": "LQZquCgF"
+        },
+        {
+          "name": "V3.4.15-长澳",
+          "uuid": "LvA2oxgr"
+        },
+        {
+          "name": "V3.4.11-丽珠秤配",
+          "uuid": "MjbHpPWq"
+        },
+        {
+          "name": "V3.4.10-金耀",
+          "uuid": "NT6Wn2An"
+        },
+        {
+          "name": "V5.1-艾美荣誉",
+          "uuid": "NuzAPgAq"
+        },
+        {
+          "name": "V5.2-主线",
+          "uuid": "NwYpwkVx"
+        },
+        {
+          "name": "V3.4.12-云顶",
+          "uuid": "NxQAysgw"
+        },
+        {
+          "name": "V5.1",
+          "uuid": "Pc6UjuCP"
+        },
+        {
+          "name": "V5.1-艾美SAT",
+          "uuid": "QieNBVhJ"
+        },
+        {
+          "name": "V5.1-绿竹",
+          "uuid": "Rb5GHHt4"
+        },
+        {
+          "name": "V3.4.2-普康",
+          "uuid": "SJW7AJRs"
+        },
+        {
+          "name": "V3.4.7-恺佧",
+          "uuid": "T3U6YMyw"
+        },
+        {
+          "name": "V5.1-吉诺卫",
+          "uuid": "T4XxbHa9"
+        },
+        {
+          "name": "V5.0.1.R",
+          "uuid": "UY4KvXv9"
+        },
+        {
+          "name": "V3.4.5.R-丽珠",
+          "uuid": "V9cZLHHw"
+        },
+        {
+          "name": "V3.4.10.PQ",
+          "uuid": "VFDrakGU"
+        },
+        {
+          "name": "V3.4.9-万泰",
+          "uuid": "WzWJvRxf"
+        },
+        {
+          "name": "V4.0.2-博雅",
+          "uuid": "X855dipA"
+        },
+        {
+          "name": "V3.4.18-国药",
+          "uuid": "XDz1KcA4"
+        },
+        {
+          "name": "V4.0.1-药机展",
+          "uuid": "XKDBqh8F"
+        },
+        {
+          "name": "V3.4.4-依生",
+          "uuid": "XbjnNwYc"
+        },
+        {
+          "name": "V5.1-迈科康",
+          "uuid": "nBo7HfG4"
+        },
+        {
+          "name": "V5.0.1-三九",
+          "uuid": "tNdn6Ekc"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "LfbLTzsp"
+    },
+    {
+      "filter_key": "_MjstbbZd_in",
+      "name": "是否关键需求",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "NyxdnfXc"
+        },
+        {
+          "name": "否",
+          "uuid": "XqLndX8i"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "MjstbbZd"
+    },
+    {
+      "filter_key": "_MysgAE3y_in",
+      "name": "修复版本-MES",
+      "options": [
+        {
+          "name": "V3.4.4-依生",
+          "uuid": "2NRS5MTS"
+        },
+        {
+          "name": "V3.4.10.PQ",
+          "uuid": "59GP8TAg"
+        },
+        {
+          "name": "V3.4.5-丽珠",
+          "uuid": "5GZKa6mv"
+        },
+        {
+          "name": "V4.0.2-博雅",
+          "uuid": "5SCYggVd"
+        },
+        {
+          "name": "V4.0.1-药机展",
+          "uuid": "6CbcjTHc"
+        },
+        {
+          "name": "V3.4.10.R",
+          "uuid": "7NGYXdsq"
+        },
+        {
+          "name": "V3.0",
+          "uuid": "7mUk2GTt"
+        },
+        {
+          "name": "V5.1-际华",
+          "uuid": "7z8g8AUS"
+        },
+        {
+          "name": "V4.1",
+          "uuid": "8tuxmHjE"
+        },
+        {
+          "name": "V3.4.13-山禾",
+          "uuid": "AFQ2USxw"
+        },
+        {
+          "name": "V3.4.14-思鹏",
+          "uuid": "AevnctBg"
+        },
+        {
+          "name": "V4.0",
+          "uuid": "AkpnthhQ"
+        },
+        {
+          "name": "V5.1-迈科康",
+          "uuid": "BkEz89SB"
+        },
+        {
+          "name": "V5.2-主线",
+          "uuid": "CEEjPXjJ"
+        },
+        {
+          "name": "V3.4.15-长澳",
+          "uuid": "CW5uVtwx"
+        },
+        {
+          "name": "V5.1-绿竹",
+          "uuid": "DceZnsWq"
+        },
+        {
+          "name": "V5.1-先泰",
+          "uuid": "EmXy3y7R"
+        },
+        {
+          "name": "V5.0-东阳光",
+          "uuid": "GwrdBm4S"
+        },
+        {
+          "name": "V5.1-艾美坚持",
+          "uuid": "GxtnvkKa"
+        },
+        {
+          "name": "V3.4.7-恺佧",
+          "uuid": "JD2BnCwC"
+        },
+        {
+          "name": "V3.4.11-丽珠秤配",
+          "uuid": "KKKjAMdo"
+        },
+        {
+          "name": "V3.4.16-依科赛",
+          "uuid": "KuVJBez5"
+        },
+        {
+          "name": "V5.1-沃森",
+          "uuid": "L2nSwAHb"
+        },
+        {
+          "name": "V5.1-艾美荣誉",
+          "uuid": "Mvq9kZ2K"
+        },
+        {
+          "name": "V3.4.1-通用",
+          "uuid": "QccYLjZU"
+        },
+        {
+          "name": "V5.0.1.R",
+          "uuid": "QoxRuE7H"
+        },
+        {
+          "name": "V5.0.1-三九",
+          "uuid": "Qy4WjZSh"
+        },
+        {
+          "name": "V3.4.2-普康",
+          "uuid": "RcwXAqaT"
+        },
+        {
+          "name": "V3.4.5.R-丽珠",
+          "uuid": "RhAYFRry"
+        },
+        {
+          "name": "V5.1-吉诺卫",
+          "uuid": "RnFhtKW5"
+        },
+        {
+          "name": "V5.1-艾美SAT",
+          "uuid": "S1rhiMdA"
+        },
+        {
+          "name": "V5.0",
+          "uuid": "S9XYe1Sb"
+        },
+        {
+          "name": "V5.1",
+          "uuid": "SPMLK115"
+        },
+        {
+          "name": "V5.0.Release",
+          "uuid": "SWiaMX1k"
+        },
+        {
+          "name": "V2.0",
+          "uuid": "Sc9xrVJB"
+        },
+        {
+          "name": "V5.1-寿仙谷",
+          "uuid": "T48JGMq2"
+        },
+        {
+          "name": "V3.4.12-云顶",
+          "uuid": "Tkb8VCPm"
+        },
+        {
+          "name": "V3.4.10-金耀",
+          "uuid": "UpgwYPiy"
+        },
+        {
+          "name": "V3.4.3-倍锦",
+          "uuid": "UsuVhqK3"
+        },
+        {
+          "name": "V1.0",
+          "uuid": "VF1HXSiF"
+        },
+        {
+          "name": "V3.4.6-泽润",
+          "uuid": "VZoiQrXo"
+        },
+        {
+          "name": "V3.4.17-中科",
+          "uuid": "W4npcHLc"
+        },
+        {
+          "name": "V3.4.8-罗益",
+          "uuid": "WG2fc3JF"
+        },
+        {
+          "name": "V3.4.18-国药",
+          "uuid": "Y2eFzFgC"
+        },
+        {
+          "name": "V3.4.9-万泰",
+          "uuid": "YLMp7rkc"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "MysgAE3y"
+    },
+    {
+      "filter_key": "_NGkrefaY_in",
+      "name": "是否存在售前评估项",
+      "options": [
+        {
+          "name": "否",
+          "uuid": "5T7Gx9hN"
+        },
+        {
+          "name": "是",
+          "uuid": "VQiHefRc"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "NGkrefaY"
+    },
+    {
+      "filter_key": "_NPziLDU4_in",
+      "name": "Rejected原因",
+      "options": [
+        {
+          "name": "设计如此",
+          "uuid": "GP88dJSy"
+        },
+        {
+          "name": "需求变更",
+          "uuid": "LrKsAf11"
+        },
+        {
+          "name": "不是问题",
+          "uuid": "TGopYRyW"
+        },
+        {
+          "name": "重复问题",
+          "uuid": "uRmhx7pu"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "NPziLDU4"
+    },
+    {
+      "filter_key": "_NZwkqUL3_in",
+      "name": "后端影响应用（中台）",
+      "options": [
+        {
+          "name": "hcp-backend",
+          "uuid": "26xewJ6A"
+        },
+        {
+          "name": "portal-backend",
+          "uuid": "2nyyKVdJ"
+        },
+        {
+          "name": "app-backend",
+          "uuid": "3GRv2vs6"
+        },
+        {
+          "name": "见备注",
+          "uuid": "FQYaf3cw"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "NZwkqUL3"
+    },
+    {
+      "filter_key": "_NqhdVEfR_in",
+      "name": "评审结论",
+      "options": [
+        {
+          "name": "通过",
+          "uuid": "6BByFVKR"
+        },
+        {
+          "name": "不通过",
+          "uuid": "QWPQdcS1"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "NqhdVEfR"
+    },
+    {
+      "filter_key": "_NsNWZEpn_in",
+      "name": "优先级",
+      "options": [
+        {
+          "name": "高",
+          "uuid": "BnVcMUD7"
+        },
+        {
+          "name": "中",
+          "uuid": "DmozGXr1"
+        },
+        {
+          "name": "低",
+          "uuid": "WxNY5Jgy"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "NsNWZEpn"
+    },
+    {
+      "filter_key": "_Pm8CSp9k_in",
+      "name": "阶段",
+      "options": [
+        {
+          "name": "测试阶段",
+          "uuid": "9XNwKuzw"
+        },
+        {
+          "name": "开发阶段",
+          "uuid": "CA8PNKqB"
+        },
+        {
+          "name": "发布阶段",
+          "uuid": "LFE63CNC"
+        },
+        {
+          "name": "需求阶段",
+          "uuid": "NCjAhxov"
+        },
+        {
+          "name": "计划阶段",
+          "uuid": "NzoLWxiR"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "Pm8CSp9k"
+    },
+    {
+      "filter_key": "_PxHXwe6T_in",
+      "name": "缺陷产生原因",
+      "options": [
+        {
+          "name": "编码阶段-修改引入新缺陷",
+          "uuid": "4Hn7f6jW"
+        },
+        {
+          "name": "编码阶段-前后端修改不一致",
+          "uuid": "BF8bRhJP"
+        },
+        {
+          "name": "需求阶段-需求描述不充分",
+          "uuid": "CNhNGFmc"
+        },
+        {
+          "name": "编码阶段-自测试不充分",
+          "uuid": "CYixJHBa"
+        },
+        {
+          "name": "环境-环境自身问题",
+          "uuid": "GLgxYwEy"
+        },
+        {
+          "name": "设计阶段-未做设计",
+          "uuid": "K4ztxL3e"
+        },
+        {
+          "name": "设计阶段-设计不充分",
+          "uuid": "P9GgZPKD"
+        },
+        {
+          "name": "编码阶段-异常处理未考虑",
+          "uuid": "RMp674Cd"
+        },
+        {
+          "name": "测试阶段-测试用例覆盖不全",
+          "uuid": "VGxMGxwf"
+        },
+        {
+          "name": "测试阶段-测试用例执行不全",
+          "uuid": "Vo8ukjb7"
+        },
+        {
+          "name": "环境-环境部署检查项遗漏",
+          "uuid": "XabRmScf"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "PxHXwe6T"
+    },
+    {
+      "filter_key": "_QRs844UY_in",
+      "name": "场景价值度",
+      "options": [
+        {
+          "name": "1",
+          "uuid": "4oQcPLpk"
+        },
+        {
+          "name": "3",
+          "uuid": "8FB1wwra"
+        },
+        {
+          "name": "5",
+          "uuid": "GEvfbAtw"
+        },
+        {
+          "name": "2",
+          "uuid": "LZWFAUT4"
+        },
+        {
+          "name": "4",
+          "uuid": "VUVx3sKR"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "QRs844UY"
+    },
+    {
+      "filter_key": "_QSDBDtid_in",
+      "name": "变更等级",
+      "options": [
+        {
+          "name": "二级",
+          "uuid": "2aDrDNFN"
+        },
+        {
+          "name": "三级",
+          "uuid": "FcAJgLR8"
+        },
+        {
+          "name": "一级",
+          "uuid": "GJcHqJya"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "QSDBDtid"
+    },
+    {
+      "filter_key": "_QUNbzW4m_in",
+      "name": "风险概率",
+      "options": [
+        {
+          "name": "低（1）",
+          "uuid": "E2cJj3qJ"
+        },
+        {
+          "name": "高（3）",
+          "uuid": "QeuqR8j3"
+        },
+        {
+          "name": "中（2）",
+          "uuid": "UuecMtDw"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "QUNbzW4m"
+    },
+    {
+      "filter_key": "_QYW5h8ft_in",
+      "name": "需求类型",
+      "options": [
+        {
+          "name": "新功能",
+          "uuid": "7bR1kYAA"
+        },
+        {
+          "name": "优化需求",
+          "uuid": "CYxmJJMU"
+        },
+        {
+          "name": "其他",
+          "uuid": "CcQtJijR"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "QYW5h8ft"
+    },
+    {
+      "filter_key": "_Qd35ftfp_in",
+      "name": "是否研发概要设计",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "Jo4SYdGd"
+        },
+        {
+          "name": "否",
+          "uuid": "SYD7VACY"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "Qd35ftfp"
+    },
+    {
+      "filter_key": "_RMSgkig8_in",
+      "name": "项目名称",
+      "options": [
+        {
+          "name": "药源生物",
+          "uuid": "PZaS32Qa"
+        },
+        {
+          "name": "华润三九",
+          "uuid": "UjX7gCav"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "RMSgkig8"
+    },
+    {
+      "filter_key": "_RQKT6qwQ_in",
+      "name": "需求场景",
+      "options": [
+        {
+          "name": "质量",
+          "uuid": "EvM1cfbN"
+        },
+        {
+          "name": "研发",
+          "uuid": "ExoBaVdd"
+        },
+        {
+          "name": "生产",
+          "uuid": "YRoGPC4v"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "RQKT6qwQ"
+    },
+    {
+      "filter_key": "_RnVnJrye_in",
+      "name": "客户（ATLAS）",
+      "options": [
+        {
+          "name": "复宏汉霖-ATLAS",
+          "uuid": "4qpB4kHs"
+        },
+        {
+          "name": "安士-ATLAS",
+          "uuid": "NkTyyG9m"
+        },
+        {
+          "name": "复宏汉霖-HAIDOC",
+          "uuid": "QN5S7aaA"
+        },
+        {
+          "name": "复宏汉霖-BPR",
+          "uuid": "RPHmNk5n"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "RnVnJrye"
+    },
+    {
+      "filter_key": "_RyBwsKCQ_in",
+      "name": "多选客户（制造）",
+      "options": [
+        {
+          "name": "上海高腾",
+          "uuid": "25Lv4EcB"
+        },
+        {
+          "name": "艾美卫信",
+          "uuid": "2AjMNecP"
+        },
+        {
+          "name": "普康",
+          "uuid": "2Jg9rPn4"
+        },
+        {
+          "name": "罗益",
+          "uuid": "3CW7xVQJ"
+        },
+        {
+          "name": "长澳",
+          "uuid": "3cvQAVS6"
+        },
+        {
+          "name": "依科赛",
+          "uuid": "3fW2SvKd"
+        },
+        {
+          "name": "丽珠",
+          "uuid": "41tLPNuG"
+        },
+        {
+          "name": "润农化工",
+          "uuid": "4FdPBA6N"
+        },
+        {
+          "name": "国药同济堂",
+          "uuid": "4bjfiMYK"
+        },
+        {
+          "name": "立生医药",
+          "uuid": "4uAs43if"
+        },
+        {
+          "name": "宜昌人福",
+          "uuid": "6Hbdc4Vb"
+        },
+        {
+          "name": "人福普克",
+          "uuid": "6j2q2D7c"
+        },
+        {
+          "name": "福元",
+          "uuid": "7F3KR2xG"
+        },
+        {
+          "name": "绿竹",
+          "uuid": "7aSRdSe2"
+        },
+        {
+          "name": "东阳光制剂",
+          "uuid": "83S8EBba"
+        },
+        {
+          "name": "迈科康",
+          "uuid": "97mJQ7qA"
+        },
+        {
+          "name": "泽润",
+          "uuid": "9dpy71FU"
+        },
+        {
+          "name": "云顶",
+          "uuid": "ANbDiZnE"
+        },
+        {
+          "name": "丽珠称配",
+          "uuid": "B6mzWsXv"
+        },
+        {
+          "name": "林华",
+          "uuid": "BDhtV8eT"
+        },
+        {
+          "name": "安若维他",
+          "uuid": "C3XqUyiZ"
+        },
+        {
+          "name": "宜昌人福OSD",
+          "uuid": "CnboG7S6"
+        },
+        {
+          "name": "瑞科",
+          "uuid": "D2GW4V4t"
+        },
+        {
+          "name": "东阳光药业",
+          "uuid": "D51KsuPB"
+        },
+        {
+          "name": "沃森",
+          "uuid": "DS9mxqwK"
+        },
+        {
+          "name": "思鹏",
+          "uuid": "DaLH1Dep"
+        },
+        {
+          "name": "恺佧",
+          "uuid": "EEiMTGtU"
+        },
+        {
+          "name": "万泰",
+          "uuid": "F3yNQH4x"
+        },
+        {
+          "name": "依生",
+          "uuid": "Fo23ZPz7"
+        },
+        {
+          "name": "寿仙谷",
+          "uuid": "Fu1AxZLq"
+        },
+        {
+          "name": "产品",
+          "uuid": "GQhXwPUE"
+        },
+        {
+          "name": "智享",
+          "uuid": "HZQAJiNZ"
+        },
+        {
+          "name": "仙琚制药",
+          "uuid": "HZXXkkvX"
+        },
+        {
+          "name": "碧博",
+          "uuid": "JQXQBJpd"
+        },
+        {
+          "name": "宜昌人福远安工厂",
+          "uuid": "Juoce3s6"
+        },
+        {
+          "name": "倍锦",
+          "uuid": "K4seCGUb"
+        },
+        {
+          "name": "艾美荣安",
+          "uuid": "KUTTkARJ"
+        },
+        {
+          "name": "佛山汉腾",
+          "uuid": "LF2HiqwA"
+        },
+        {
+          "name": "奥翔麒正",
+          "uuid": "P77wa1G9"
+        },
+        {
+          "name": "山禾",
+          "uuid": "PNZV6144"
+        },
+        {
+          "name": "华润双鹤利民",
+          "uuid": "PRscgznY"
+        },
+        {
+          "name": "普洛家园药业",
+          "uuid": "QbNaW46g"
+        },
+        {
+          "name": "金耀",
+          "uuid": "TdY4v8F7"
+        },
+        {
+          "name": "泽润二期",
+          "uuid": "UCa8PSvc"
+        },
+        {
+          "name": "白云山明兴制药",
+          "uuid": "UR4VsXDY"
+        },
+        {
+          "name": "华润三九",
+          "uuid": "UqbpSp3Q"
+        },
+        {
+          "name": "伟德杰",
+          "uuid": "WD1CYvh4"
+        },
+        {
+          "name": "紫杉药业",
+          "uuid": "WXSRpYMY"
+        },
+        {
+          "name": "天药",
+          "uuid": "XAosL2kZ"
+        },
+        {
+          "name": "威斯克",
+          "uuid": "XHaRvasG"
+        },
+        {
+          "name": "暨明医药",
+          "uuid": "YVmGwGLu"
+        },
+        {
+          "name": "药源生物",
+          "uuid": "YXbeBhny"
+        },
+        {
+          "name": "中科",
+          "uuid": "q43K2FCX"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "RyBwsKCQ"
+    },
+    {
+      "filter_key": "_S1JdB8LM_in",
+      "name": "验证结果",
+      "options": [
+        {
+          "name": "不通过",
+          "uuid": "3u7zuiaa"
+        },
+        {
+          "name": "通过",
+          "uuid": "Kr3xLsn3"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "S1JdB8LM"
+    },
+    {
+      "filter_key": "_S1gTXGjJ_in",
+      "name": "是否有变更",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "DsRs7k7e"
+        },
+        {
+          "name": "否",
+          "uuid": "Mfu8jDcZ"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "S1gTXGjJ"
+    },
+    {
+      "filter_key": "_SSssZvs4_in",
+      "name": "Flagged",
+      "options": [
+        {
+          "name": "障碍",
+          "uuid": "N2nGwTV9"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "SSssZvs4"
+    },
+    {
+      "filter_key": "_SWoyBRCP_in",
+      "name": "是否确认",
+      "options": [
+        {
+          "name": "是",
+          "uuid": "L299X9SP"
+        },
+        {
+          "name": "否",
+          "uuid": "UV2BDJ7B"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "SWoyBRCP"
+    },
+    {
+      "filter_key": "_SXiYo1kT_in",
+      "name": "Fix version",
+      "options": [
+        {
+          "name": "123",
+          "uuid": "7Yx1e1jt"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "SXiYo1kT"
+    },
+    {
+      "filter_key": "_SZT4U6ah_in",
+      "name": "前端影响应用（中台）",
+      "options": [
+        {
+          "name": "见备注",
+          "uuid": "6GxwXNsx"
+        },
+        {
+          "name": "user-front",
+          "uuid": "7M3nTizE"
+        },
+        {
+          "name": "app-front",
+          "uuid": "FkHopH6s"
+        },
+        {
+          "name": "portal-front",
+          "uuid": "SFn5tNgK"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "SZT4U6ah"
+    },
+    {
+      "filter_key": "_SsM9iZjx_in",
+      "name": "审核意见",
+      "options": [
+        {
+          "name": "同意",
+          "uuid": "2yiqet5g"
+        },
+        {
+          "name": "不同意",
+          "uuid": "TMQBDZaE"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "SsM9iZjx"
+    },
+    {
+      "filter_key": "_T3s63YDj_in",
+      "name": "所属产品（单选）",
+      "options": [
+        {
+          "name": "WMS",
+          "uuid": "6eWCWtsN"
+        },
+        {
+          "name": "ATLAS",
+          "uuid": "8feADzm1"
+        },
+        {
+          "name": "LIMS",
+          "uuid": "AGGksyRb"
+        },
+        {
+          "name": "MSP",
+          "uuid": "LkCzC4Eb"
+        },
+        {
+          "name": "QDT",
+          "uuid": "QKyWXPe4"
+        },
+        {
+          "name": "通用",
+          "uuid": "TV6KMUNw"
+        },
+        {
+          "name": "SCADA",
+          "uuid": "VvGarE9t"
+        },
+        {
+          "name": "MES",
+          "uuid": "W6PSiYWd"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "T3s63YDj"
+    },
+    {
+      "filter_key": "_Th6j9UN4_in",
+      "name": "验证版本-PDR",
+      "options": [
+        {
+          "name": "PDR_ZHEJIANG_COSMETIC_V1.0",
+          "uuid": "2zVqVKRE"
+        },
+        {
+          "name": "PDR_YUNNAN_PHARMA_V1.0",
+          "uuid": "5stdfC3y"
+        },
+        {
+          "name": "PDR_ZHEJIANG_PHARMA_V2.0",
+          "uuid": "8mQJJTKQ"
+        },
+        {
+          "name": "PDR_ZHEJIANG_PHARMA_V3.5.4",
+          "uuid": "EUaX64iT"
+        },
+        {
+          "name": "PDR_LIAONING_PHARMA_V1.0",
+          "uuid": "GevtPxDS"
+        },
+        {
+          "name": "PDR_ZHEJIANG_INSTRUMENT_V1.0",
+          "uuid": "Jwc5mhFD"
+        },
+        {
+          "name": "PDR_ZHEJIANG_PHARMA_V3.0",
+          "uuid": "U8v3jJNr"
+        },
+        {
+          "name": "PDR_ZHEJIANG_PHARMA_V3.5",
+          "uuid": "YU5kydL1"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "Th6j9UN4"
+    },
+    {
+      "filter_key": "_UB72YvNo_in",
+      "name": "系统名称",
+      "options": [
+        {
+          "name": "DMS",
+          "uuid": "75gatZbj"
+        },
+        {
+          "name": "TMS",
+          "uuid": "7u3gZR2x"
+        },
+        {
+          "name": "QMS",
+          "uuid": "RvZmvQuG"
+        },
+        {
+          "name": "LIMS",
+          "uuid": "YV2HdPLp"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "UB72YvNo"
+    },
+    {
+      "filter_key": "_UgWaudvT_in",
+      "name": "验证版本-WMS3.0",
+      "options": [
+        {
+          "name": "V3.2.0-宜昌人福远安东山",
+          "uuid": "212Zgrq3"
+        },
+        {
+          "name": "V3.4.0-东阳光制剂",
+          "uuid": "2GhQFYoe"
+        },
+        {
+          "name": "V3.2.0-立生",
+          "uuid": "2XmwzarJ"
+        },
+        {
+          "name": "V3.3.10-宜昌人福OSD",
+          "uuid": "4G2cZpX2"
+        },
+        {
+          "name": "V3.4.4-凌科",
+          "uuid": "5GAgCKSq"
+        },
+        {
+          "name": "V3.0.0",
+          "uuid": "6q7K9zkq"
+        },
+        {
+          "name": "V3.2.0-明兴绿竹",
+          "uuid": "7UV92XW4"
+        },
+        {
+          "name": "V3.2.0-佛山汉腾",
+          "uuid": "7k9omegg"
+        },
+        {
+          "name": "V3.3.9-青岛润农",
+          "uuid": "9Bet38GZ"
+        },
+        {
+          "name": "V3.2.0.LH-林华",
+          "uuid": "AVEbCmyA"
+        },
+        {
+          "name": "V3.4.0-东阳光药业",
+          "uuid": "ArxC5FPv"
+        },
+        {
+          "name": "V3.4.4-迈科康",
+          "uuid": "ENBZaD7y"
+        },
+        {
+          "name": "V3.2.0-韦德杰",
+          "uuid": "GeYh1iPD"
+        },
+        {
+          "name": "V3.2.0-主线",
+          "uuid": "H2Rjbmzr"
+        },
+        {
+          "name": "V3.1.0",
+          "uuid": "HactAfJU"
+        },
+        {
+          "name": "V3.2.0-依科赛",
+          "uuid": "HsPhj2o8"
+        },
+        {
+          "name": "V3.2.0-仙琚",
+          "uuid": "MRXWWw4x"
+        },
+        {
+          "name": "V3.2.0-自动化库",
+          "uuid": "RNzRHXSf"
+        },
+        {
+          "name": "V3.3.0-诺泰诺和",
+          "uuid": "SfjcBa8r"
+        },
+        {
+          "name": "V3.4.4-联亚",
+          "uuid": "VyPkdRUz"
+        },
+        {
+          "name": "V3.4.4-智享生物",
+          "uuid": "W5o8DPW3"
+        },
+        {
+          "name": "V3.2.0-上海高腾",
+          "uuid": "s6YbFfQc"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "UgWaudvT"
+    },
+    {
+      "filter_key": "_UtbVBkUM_in",
+      "name": "风险严重性",
+      "options": [
+        {
+          "name": "低（1）",
+          "uuid": "DTPhe2xf"
+        },
+        {
+          "name": "高（3）",
+          "uuid": "HMVMbtFN"
+        },
+        {
+          "name": "中（2）",
+          "uuid": "JXvhkaYA"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "UtbVBkUM"
+    },
+    {
+      "filter_key": "_VGVWRS6M_in",
+      "name": "产品（废弃）",
+      "options": [
+        {
+          "name": "MSP",
+          "uuid": "2ApNu7xL"
+        },
+        {
+          "name": "PPM",
+          "uuid": "7oytT8EQ"
+        },
+        {
+          "name": "LDA",
+          "uuid": "9JM3JsgZ"
+        },
+        {
+          "name": "ELN",
+          "uuid": "9XFLPzxe"
+        },
+        {
+          "name": "eCTD",
+          "uuid": "PuacUXpA"
+        },
+        {
+          "name": "LRC",
+          "uuid": "UvvREUgN"
+        },
+        {
+          "name": "STM",
+          "uuid": "YPjVtwef"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "VGVWRS6M"
+    },
+    {
+      "filter_key": "_VGwqJ1QU_in",
+      "name": "项目类型",
+      "options": [
+        {
+          "name": "客户类",
+          "uuid": "8ToYYNyU"
+        },
+        {
+          "name": "产品类",
+          "uuid": "YMJUkiYx"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "VGwqJ1QU"
+    },
+    {
+      "filter_key": "_VN23KS3i_in",
+      "name": "风险等级",
+      "options": [
+        {
+          "name": "高",
+          "uuid": "2PGEibaT"
+        },
+        {
+          "name": "低",
+          "uuid": "956ZFMKs"
+        },
+        {
+          "name": "中",
+          "uuid": "EZ31z1VX"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "VN23KS3i"
+    },
+    {
+      "filter_key": "_WbWd9A3x_in",
+      "name": "演示评价",
+      "options": [
+        {
+          "name": "演示效果良好，无问题",
+          "uuid": "PjbnsBJC"
+        },
+        {
+          "name": "演示效果糟糕，问题较多",
+          "uuid": "XVWL85Fc"
+        },
+        {
+          "name": "演示效果一般，问题较少",
+          "uuid": "Z9LinvCQ"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "WbWd9A3x"
+    },
+    {
+      "filter_key": "_Wx7yWYyB_in",
+      "name": "客户（MSP）",
+      "options": [
+        {
+          "name": "和元",
+          "uuid": "12R7C4GU"
+        },
+        {
+          "name": "天津药研院",
+          "uuid": "2J5FFAxS"
+        },
+        {
+          "name": "博济",
+          "uuid": "2ZkNUavR"
+        },
+        {
+          "name": "售前",
+          "uuid": "2z79Absv"
+        },
+        {
+          "name": "片仔癀",
+          "uuid": "6R81r5zF"
+        },
+        {
+          "name": "羿尊生物",
+          "uuid": "7G1UYGSy"
+        },
+        {
+          "name": "星锐",
+          "uuid": "7L6eRyKy"
+        },
+        {
+          "name": "迈威生物",
+          "uuid": "7Pykuoy9"
+        },
+        {
+          "name": "汇伦医药",
+          "uuid": "7fHA5F7Y"
+        },
+        {
+          "name": "九源基因",
+          "uuid": "7oromfdq"
+        },
+        {
+          "name": "中山联邦",
+          "uuid": "7pvJdK5u"
+        },
+        {
+          "name": "诺泰诺和",
+          "uuid": "8bsf7TjE"
+        },
+        {
+          "name": "东阳光",
+          "uuid": "8n6GXNtQ"
+        },
+        {
+          "name": "双林生物",
+          "uuid": "8nvm6hqo"
+        },
+        {
+          "name": "茵诺医药",
+          "uuid": "8wNTYUvd"
+        },
+        {
+          "name": "安士",
+          "uuid": "9VqhzqwP"
+        },
+        {
+          "name": "山东百诺",
+          "uuid": "9Wwf24AG"
+        },
+        {
+          "name": "三生国健",
+          "uuid": "9iLDUWDP"
+        },
+        {
+          "name": "鼎康生物",
+          "uuid": "AKePJR4j"
+        },
+        {
+          "name": "联科",
+          "uuid": "Amf6datB"
+        },
+        {
+          "name": "联邦",
+          "uuid": "BKEYTydp"
+        },
+        {
+          "name": "宜昌人福",
+          "uuid": "BxiMAuNp"
+        },
+        {
+          "name": "兆科眼科",
+          "uuid": "CBUbYZmC"
+        },
+        {
+          "name": "信立泰",
+          "uuid": "CXb1sReV"
+        },
+        {
+          "name": "青山利康",
+          "uuid": "CdvSASTy"
+        },
+        {
+          "name": "中科院",
+          "uuid": "Dbcrmw4y"
+        },
+        {
+          "name": "南京药科大",
+          "uuid": "Dk8y4TSd"
+        },
+        {
+          "name": "晶易医药",
+          "uuid": "DunDSFkH"
+        },
+        {
+          "name": "中国中药",
+          "uuid": "ELso5ZKW"
+        },
+        {
+          "name": "鸿运华宁",
+          "uuid": "G9TskaHE"
+        },
+        {
+          "name": "葛店人福",
+          "uuid": "GTzRA41s"
+        },
+        {
+          "name": "微谱",
+          "uuid": "GvebBNvt"
+        },
+        {
+          "name": "康华",
+          "uuid": "HNnyMiPy"
+        },
+        {
+          "name": "奕安济世",
+          "uuid": "Ha5jEWKP"
+        },
+        {
+          "name": "人福研究院",
+          "uuid": "JYhj9NN5"
+        },
+        {
+          "name": "蓝鹊",
+          "uuid": "Jjqcpy48"
+        },
+        {
+          "name": "康龙化成",
+          "uuid": "KBjgrTPD"
+        },
+        {
+          "name": "同济堂",
+          "uuid": "KotiU9ya"
+        },
+        {
+          "name": "菲鹏生物",
+          "uuid": "LBF7aYZo"
+        },
+        {
+          "name": "跃赛生物",
+          "uuid": "LLZVHGKZ"
+        },
+        {
+          "name": "禾泰健宇",
+          "uuid": "MJBdQaBT"
+        },
+        {
+          "name": "创胜",
+          "uuid": "Mp3qkuB5"
+        },
+        {
+          "name": "国转",
+          "uuid": "N4bWbUAQ"
+        },
+        {
+          "name": "葵花",
+          "uuid": "N8ZUmmPs"
+        },
+        {
+          "name": "哈尔滨北科",
+          "uuid": "NRjxd3Sr"
+        },
+        {
+          "name": "上海宝济",
+          "uuid": "NxMjhcs9"
+        },
+        {
+          "name": "英百瑞",
+          "uuid": "P64dkp4Y"
+        },
+        {
+          "name": "华海天衡",
+          "uuid": "PZC1JAzV"
+        },
+        {
+          "name": "晶云",
+          "uuid": "RZ9areGD"
+        },
+        {
+          "name": "中恒",
+          "uuid": "RuPReEdi"
+        },
+        {
+          "name": "霍德生物",
+          "uuid": "S2N2A2P4"
+        },
+        {
+          "name": "售后",
+          "uuid": "SXaB26Hi"
+        },
+        {
+          "name": "万特",
+          "uuid": "T5UcseG9"
+        },
+        {
+          "name": "招商创科",
+          "uuid": "Tj7FCdcS"
+        },
+        {
+          "name": "深信生物",
+          "uuid": "TrxFFSEA"
+        },
+        {
+          "name": "复宏汉霖",
+          "uuid": "UQNbN5ko"
+        },
+        {
+          "name": "上海三湲",
+          "uuid": "W18wzdzQ"
+        },
+        {
+          "name": "南京羚诺",
+          "uuid": "W7TAjhNJ"
+        },
+        {
+          "name": "产品",
+          "uuid": "WtBLhUBi"
+        },
+        {
+          "name": "上药集团",
+          "uuid": "Wy3LteW2"
+        },
+        {
+          "name": "微元合成",
+          "uuid": "XCAwWWh7"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "Wx7yWYyB"
+    },
+    {
+      "filter_key": "_XdvZDaJs_in",
+      "name": "技术难度",
+      "options": [
+        {
+          "name": "2",
+          "uuid": "4ofNjM4C"
+        },
+        {
+          "name": "3",
+          "uuid": "59GnKmgm"
+        },
+        {
+          "name": "4",
+          "uuid": "JoNh2pN3"
+        },
+        {
+          "name": "5",
+          "uuid": "M91HbuE8"
+        },
+        {
+          "name": "1",
+          "uuid": "TQc5ofj8"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "XdvZDaJs"
+    },
+    {
+      "filter_key": "_Y8xjy83V_in",
+      "name": "验证版本-LIMS",
+      "options": [
+        {
+          "name": "V3.2.2",
+          "uuid": "3FaxjaZW"
+        },
+        {
+          "name": "V3.1.2",
+          "uuid": "5KUhipy6"
+        },
+        {
+          "name": "V3.1.4",
+          "uuid": "5ifD6Sv9"
+        },
+        {
+          "name": "V3.2.1",
+          "uuid": "8Jp39ieh"
+        },
+        {
+          "name": "V3.2.4",
+          "uuid": "9BmADAu6"
+        },
+        {
+          "name": "V3.1.5",
+          "uuid": "9SMLnuh9"
+        },
+        {
+          "name": "V1.0",
+          "uuid": "Bkjw2Yha"
+        },
+        {
+          "name": "V3.2",
+          "uuid": "J2SccjGK"
+        },
+        {
+          "name": "V3.0",
+          "uuid": "JZMg93qq"
+        },
+        {
+          "name": "V1.0.1",
+          "uuid": "MQJdTG9o"
+        },
+        {
+          "name": "V1.0-ZR",
+          "uuid": "MuhtXgVM"
+        },
+        {
+          "name": "V3.1.2_ZR",
+          "uuid": "PDK4A2uJ"
+        },
+        {
+          "name": "V3.1.1",
+          "uuid": "Rggb85Hy"
+        },
+        {
+          "name": "V3.1",
+          "uuid": "ST93hi9e"
+        },
+        {
+          "name": "V3.2.5",
+          "uuid": "SwyK3SE4"
+        },
+        {
+          "name": "V1.0-DEMO",
+          "uuid": "ToGvg63w"
+        },
+        {
+          "name": "V3.2.3",
+          "uuid": "WXz7x4yH"
+        },
+        {
+          "name": "V3.1.3",
+          "uuid": "YVtVUT2Q"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "Y8xjy83V"
+    },
+    {
+      "filter_key": "_Yc5Rfz8z_in",
+      "name": "影响模块（后端）",
+      "options": [
+        {
+          "name": "lda-collect-center",
+          "uuid": "2X3Gke1V"
+        },
+        {
+          "name": "stm",
+          "uuid": "44KSjNX9"
+        },
+        {
+          "name": "common-hssu",
+          "uuid": "5Y2S83ra"
+        },
+        {
+          "name": "common-master-data",
+          "uuid": "AAYgmNjd"
+        },
+        {
+          "name": "file",
+          "uuid": "BUm4QomB"
+        },
+        {
+          "name": "无",
+          "uuid": "DRSZfVx4"
+        },
+        {
+          "name": "lda-data-center",
+          "uuid": "FFAzKPxS"
+        },
+        {
+          "name": "common-workflow",
+          "uuid": "Ft6rbS29"
+        },
+        {
+          "name": "ppm",
+          "uuid": "Gud1tEQV"
+        },
+        {
+          "name": "common-message",
+          "uuid": "HLB2n2B4"
+        },
+        {
+          "name": "common-dms",
+          "uuid": "KbufEDpx"
+        },
+        {
+          "name": "search",
+          "uuid": "NmvhumaA"
+        },
+        {
+          "name": "eln",
+          "uuid": "PPKqTHFe"
+        },
+        {
+          "name": "lrc",
+          "uuid": "S8Um3dK6"
+        },
+        {
+          "name": "chem",
+          "uuid": "U5scyXbS"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "Yc5Rfz8z"
+    },
+    {
+      "filter_key": "_field012_in",
+      "name": "优先级",
+      "options": [
+        {
+          "name": "低",
+          "uuid": "KY95ieww"
+        },
+        {
+          "name": "高",
+          "uuid": "SnrBftk9"
+        },
+        {
+          "name": "中",
+          "uuid": "TbtnxsfQ"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "field012"
+    },
+    {
+      "filter_key": "_field031_in",
+      "name": "是否线上缺陷",
+      "options": [
+        {
+          "name": "否",
+          "uuid": "DytBL75G"
+        },
+        {
+          "name": "是",
+          "uuid": "GkoZWTYd"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "field031"
+    },
+    {
+      "filter_key": "_field038_in",
+      "name": "严重程度",
+      "options": [
+        {
+          "name": "致命",
+          "uuid": "3YsgbD57"
+        },
+        {
+          "name": "一般",
+          "uuid": "8DwqBbHv"
+        },
+        {
+          "name": "严重",
+          "uuid": "CrDsngiW"
+        },
+        {
+          "name": "轻微",
+          "uuid": "UMGGaVFV"
+        },
+        {
+          "name": "建议",
+          "uuid": "UyMbwLT4"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "field038"
+    },
+    {
+      "filter_key": "_field039_in",
+      "name": "处理结果",
+      "options": [
+        {
+          "name": "已修复",
+          "uuid": "3WLHWNJ3"
+        },
+        {
+          "name": "完成",
+          "uuid": "7DiMM5qa"
+        },
+        {
+          "name": "需求变更",
+          "uuid": "B6HWbxk7"
+        },
+        {
+          "name": "不是问题",
+          "uuid": "KYimeMLM"
+        },
+        {
+          "name": "重复问题",
+          "uuid": "R5hPT1my"
+        },
+        {
+          "name": "无法复现",
+          "uuid": "VTBu1gob"
+        },
+        {
+          "name": "环境问题",
+          "uuid": "YWN547eF"
+        },
+        {
+          "name": "设计如此",
+          "uuid": "sfMPTBg9"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "field039"
+    },
+    {
+      "filter_key": "_field041_in",
+      "name": "缺陷类型",
+      "options": [
+        {
+          "name": "兼容性",
+          "uuid": "5kyGGHx1"
+        },
+        {
+          "name": "性能",
+          "uuid": "BSvXW1QX"
+        },
+        {
+          "name": "接口",
+          "uuid": "ErEJgJ4X"
+        },
+        {
+          "name": "需求",
+          "uuid": "FgBhyx9z"
+        },
+        {
+          "name": "易用性",
+          "uuid": "M6gf3T4p"
+        },
+        {
+          "name": "可靠性",
+          "uuid": "PEp2vu88"
+        },
+        {
+          "name": "安全性",
+          "uuid": "PnZ4iueJ"
+        },
+        {
+          "name": "UI界面",
+          "uuid": "Px9n7t7U"
+        },
+        {
+          "name": "功能",
+          "uuid": "QBASLRgK"
+        },
+        {
+          "name": "文档",
+          "uuid": "S958Q4wF"
+        },
+        {
+          "name": "系统",
+          "uuid": "WCH7h7NH"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "field041"
+    },
+    {
+      "filter_key": "_wCgWwspA_in",
+      "name": "需求状态",
+      "options": [
+        {
+          "name": "已自测",
+          "uuid": "8RdRojYz"
+        },
+        {
+          "name": "规格设计中",
+          "uuid": "8kewogyR"
+        },
+        {
+          "name": "规格已评审",
+          "uuid": "CgmTsxSr"
+        },
+        {
+          "name": "已验收",
+          "uuid": "Cn7GeNVc"
+        },
+        {
+          "name": "待排",
+          "uuid": "DSLtLg6F"
+        },
+        {
+          "name": "测试中",
+          "uuid": "JJBrUDU3"
+        },
+        {
+          "name": "已排",
+          "uuid": "Kzvb8RgX"
+        },
+        {
+          "name": "已提测",
+          "uuid": "LU9MRZ7R"
+        },
+        {
+          "name": "规格已提交",
+          "uuid": "RWN186JQ"
+        },
+        {
+          "name": "测试完成",
+          "uuid": "S6JuYf33"
+        },
+        {
+          "name": "开发中",
+          "uuid": "TYZoZRve"
+        },
+        {
+          "name": "测试阻塞",
+          "uuid": "UWAmHzjp"
+        },
+        {
+          "name": "缺陷验证",
+          "uuid": "XQkETs4S"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "wCgWwspA"
+    },
+    {
+      "filter_key": "_wRbRFwkw_in",
+      "name": "系统",
+      "options": [
+        {
+          "name": "ELN",
+          "uuid": "5vPGywwi"
+        },
+        {
+          "name": "MES",
+          "uuid": "FD6frkPN"
+        },
+        {
+          "name": "SCADA",
+          "uuid": "GdJeoWh5"
+        },
+        {
+          "name": "WMS",
+          "uuid": "LLL2vakM"
+        },
+        {
+          "name": "eCTD",
+          "uuid": "MsFVAtK5"
+        },
+        {
+          "name": "PPM",
+          "uuid": "NpCJKBra"
+        },
+        {
+          "name": "LIMS",
+          "uuid": "SQWrBB7o"
+        }
+      ],
+      "type": "multi_select",
+      "uuid": "wRbRFwkw"
+    },
+    {
+      "filter_key": "_yYzMbVPR_in",
+      "name": "是否中标",
+      "options": [
+        {
+          "name": "否",
+          "uuid": "5Mj4unL2"
+        },
+        {
+          "name": "是",
+          "uuid": "Rk6L8rkx"
+        }
+      ],
+      "type": "single_select",
+      "uuid": "yYzMbVPR"
+    }
+  ],
+  "dictionary_version": "2026-08-27-5da0830d4226ff05",
+  "schema_version": 1,
+  "source_sha256": "fd88e3603f72e6fbc555d2434236cfa30f97e10e6586dbf57dfdb3d7ab0849d1",
+  "source_team_uuid": "3HHnQbuG",
+  "statuses": [
+    {
+      "category": "in_progress",
+      "name": "ACCEPT",
+      "uuid": "12dsvq3G"
+    },
+    {
+      "category": "done",
+      "name": "已验证",
+      "uuid": "2UkxNF3X"
+    },
+    {
+      "category": "in_progress",
+      "name": "评估完成",
+      "uuid": "2YXJUxei"
+    },
+    {
+      "category": "in_progress",
+      "name": "测试完成",
+      "uuid": "2bTLPVsx"
+    },
+    {
+      "category": "in_progress",
+      "name": "开发完成",
+      "uuid": "3A2Ga4GN"
+    },
+    {
+      "category": "in_progress",
+      "name": "验证中",
+      "uuid": "3G8h8DG3"
+    },
+    {
+      "category": "in_progress",
+      "name": "开发-完成",
+      "uuid": "3GuDAcxo"
+    },
+    {
+      "category": "done",
+      "name": "重复工单",
+      "uuid": "3xoPAeko"
+    },
+    {
+      "category": "in_progress",
+      "name": "挂起",
+      "uuid": "4PbkW4Ld"
+    },
+    {
+      "category": "in_progress",
+      "name": "PMO审核",
+      "uuid": "4X2D5L7S"
+    },
+    {
+      "category": "in_progress",
+      "name": "项目策划",
+      "uuid": "553kjJv9"
+    },
+    {
+      "category": "in_progress",
+      "name": "产研评估",
+      "uuid": "55ShbiUv"
+    },
+    {
+      "category": "to_do",
+      "name": "待 办",
+      "uuid": "5XpbWymg"
+    },
+    {
+      "category": "done",
+      "name": "已实现",
+      "uuid": "5kjrp6oz"
+    },
+    {
+      "category": "in_progress",
+      "name": "事业部负责人审核",
+      "uuid": "639rQQBm"
+    },
+    {
+      "category": "in_progress",
+      "name": "风险跟踪",
+      "uuid": "6DkN123w"
+    },
+    {
+      "category": "done",
+      "name": "Closed",
+      "uuid": "6VQMUVes"
+    },
+    {
+      "category": "in_progress",
+      "name": "变更影响分析",
+      "uuid": "74MULSiv"
+    },
+    {
+      "category": "done",
+      "name": "已拒绝",
+      "uuid": "7T3Cgh5r"
+    },
+    {
+      "category": "in_progress",
+      "name": "已排期",
+      "uuid": "7o8Ki35Z"
+    },
+    {
+      "category": "in_progress",
+      "name": "风险处理",
+      "uuid": "83xcH5in"
+    },
+    {
+      "category": "done",
+      "name": "Removed",
+      "uuid": "8cy1zjEB"
+    },
+    {
+      "category": "in_progress",
+      "name": "待排期",
+      "uuid": "8gascLUV"
+    },
+    {
+      "category": "to_do",
+      "name": "提交问题",
+      "uuid": "A7hexhWC"
+    },
+    {
+      "category": "in_progress",
+      "name": "风险分析",
+      "uuid": "AKVfQpsj"
+    },
+    {
+      "category": "in_progress",
+      "name": "汇总中",
+      "uuid": "B1EXodmp"
+    },
+    {
+      "category": "done",
+      "name": "已发布",
+      "uuid": "BTcscw4t"
+    },
+    {
+      "category": "in_progress",
+      "name": "分析中",
+      "uuid": "BXxVXRMd"
+    },
+    {
+      "category": "in_progress",
+      "name": "董事长审核",
+      "uuid": "ByuuTZ5D"
+    },
+    {
+      "category": "done",
+      "name": "Done",
+      "uuid": "C1PjSCw8"
+    },
+    {
+      "category": "in_progress",
+      "name": "进行中",
+      "uuid": "CHh8QtFq"
+    },
+    {
+      "category": "done",
+      "name": "风险转问题",
+      "uuid": "CVDjqkaE"
+    },
+    {
+      "category": "in_progress",
+      "name": "待评审",
+      "uuid": "DZcxRvir"
+    },
+    {
+      "category": "in_progress",
+      "name": "处理中",
+      "uuid": "EMNDpJhJ"
+    },
+    {
+      "category": "done",
+      "name": "对接客户",
+      "uuid": "Ee1PXUmP"
+    },
+    {
+      "category": "in_progress",
+      "name": "产品线负责人审核",
+      "uuid": "FiDeoES2"
+    },
+    {
+      "category": "in_progress",
+      "name": "产品总监审核",
+      "uuid": "FtBK7Sc6"
+    },
+    {
+      "category": "done",
+      "name": "已废弃",
+      "uuid": "G1PGGxSG"
+    },
+    {
+      "category": "to_do",
+      "name": "已确认",
+      "uuid": "GVwgZ5GP"
+    },
+    {
+      "category": "to_do",
+      "name": "Deferred",
+      "uuid": "GboP4miu"
+    },
+    {
+      "category": "in_progress",
+      "name": "测试中",
+      "uuid": "Gk4tkvML"
+    },
+    {
+      "category": "in_progress",
+      "name": "基础测试结束",
+      "uuid": "HPozJGk1"
+    },
+    {
+      "category": "in_progress",
+      "name": "交付评估",
+      "uuid": "HgxcRmaF"
+    },
+    {
+      "category": "in_progress",
+      "name": "技术总监审核",
+      "uuid": "HjPEymhg"
+    },
+    {
+      "category": "done",
+      "name": "完成",
+      "uuid": "J6BBgVb7"
+    },
+    {
+      "category": "in_progress",
+      "name": "In development",
+      "uuid": "JWyxTjxV"
+    },
+    {
+      "category": "in_progress",
+      "name": "Rejected",
+      "uuid": "K3VUrUsA"
+    },
+    {
+      "category": "in_progress",
+      "name": "评估中",
+      "uuid": "KjJwJXCS"
+    },
+    {
+      "category": "done",
+      "name": "风险关闭",
+      "uuid": "KtUFTWGW"
+    },
+    {
+      "category": "done",
+      "name": "|已完成",
+      "uuid": "KuCMW3vU"
+    },
+    {
+      "category": "in_progress",
+      "name": "配置文档库",
+      "uuid": "Kv5v3bzu"
+    },
+    {
+      "category": "in_progress",
+      "name": "Resolved",
+      "uuid": "LZjWv73s"
+    },
+    {
+      "category": "in_progress",
+      "name": "Reopened",
+      "uuid": "LdCARmCn"
+    },
+    {
+      "category": "done",
+      "name": "Abandoned",
+      "uuid": "LxyKPTct"
+    },
+    {
+      "category": "done",
+      "name": "已解决",
+      "uuid": "MTKjDRQ9"
+    },
+    {
+      "category": "in_progress",
+      "name": "产品经理审核",
+      "uuid": "Mg8Qc6uY"
+    },
+    {
+      "category": "in_progress",
+      "name": "待开发",
+      "uuid": "MpUjV46A"
+    },
+    {
+      "category": "to_do",
+      "name": "未开始",
+      "uuid": "N51YTCLL"
+    },
+    {
+      "category": "in_progress",
+      "name": "In Progress",
+      "uuid": "P1fVEZAW"
+    },
+    {
+      "category": "to_do",
+      "name": "未发布",
+      "uuid": "PUoJcDp9"
+    },
+    {
+      "category": "to_do",
+      "name": "To Do",
+      "uuid": "PV1KjeNx"
+    },
+    {
+      "category": "to_do",
+      "name": "未激活",
+      "uuid": "PihRLoZp"
+    },
+    {
+      "category": "in_progress",
+      "name": "验证评估",
+      "uuid": "Q8UwnJnn"
+    },
+    {
+      "category": "in_progress",
+      "name": "验证NC项",
+      "uuid": "QEHb2YSB"
+    },
+    {
+      "category": "to_do",
+      "name": "待处理",
+      "uuid": "QGAfAyFx"
+    },
+    {
+      "category": "done",
+      "name": "废弃",
+      "uuid": "QPLRsi82"
+    },
+    {
+      "category": "in_progress",
+      "name": "Open",
+      "uuid": "QQZnpv3a"
+    },
+    {
+      "category": "in_progress",
+      "name": "In Review",
+      "uuid": "QfU7bQRd"
+    },
+    {
+      "category": "in_progress",
+      "name": "条线交付负责人审核",
+      "uuid": "Qp2owE4V"
+    },
+    {
+      "category": "to_do",
+      "name": "风险识别",
+      "uuid": "QpccRzqt"
+    },
+    {
+      "category": "in_progress",
+      "name": "需变更",
+      "uuid": "RqgfxoZW"
+    },
+    {
+      "category": "in_progress",
+      "name": "已打回待确认",
+      "uuid": "RtALgVEX"
+    },
+    {
+      "category": "in_progress",
+      "name": "提测中",
+      "uuid": "S9hy7Pe9"
+    },
+    {
+      "category": "in_progress",
+      "name": "Fixed",
+      "uuid": "SFmVuzsH"
+    },
+    {
+      "category": "to_do",
+      "name": "待办",
+      "uuid": "SkzkxJro"
+    },
+    {
+      "category": "in_progress",
+      "name": "实现中",
+      "uuid": "Sm3s1kKf"
+    },
+    {
+      "category": "done",
+      "name": "已完成",
+      "uuid": "T5u5D2CH"
+    },
+    {
+      "category": "done",
+      "name": "完成",
+      "uuid": "Tpq4hPKr"
+    },
+    {
+      "category": "to_do",
+      "name": "提交NC项",
+      "uuid": "UAU4hBxi"
+    },
+    {
+      "category": "in_progress",
+      "name": "评审中",
+      "uuid": "VbzowDaT"
+    },
+    {
+      "category": "to_do",
+      "name": "提交申请",
+      "uuid": "VdQ9RXYq"
+    },
+    {
+      "category": "in_progress",
+      "name": "成本评估",
+      "uuid": "VeY7FAh6"
+    },
+    {
+      "category": "in_progress",
+      "name": "修复中",
+      "uuid": "VmsZSG7c"
+    },
+    {
+      "category": "in_progress",
+      "name": "处理NC项",
+      "uuid": "VqgjFhX2"
+    },
+    {
+      "category": "done",
+      "name": "审批通过",
+      "uuid": "Vyd53GAK"
+    },
+    {
+      "category": "in_progress",
+      "name": "已修复",
+      "uuid": "WJ8gW2xt"
+    },
+    {
+      "category": "in_progress",
+      "name": "In Testing",
+      "uuid": "WRTJvVM3"
+    },
+    {
+      "category": "done",
+      "name": "已关单",
+      "uuid": "WsFecSSv"
+    },
+    {
+      "category": "done",
+      "name": "关闭",
+      "uuid": "XV7a15fL"
+    },
+    {
+      "category": "in_progress",
+      "name": "已处理未发布",
+      "uuid": "XcVHkpBZ"
+    },
+    {
+      "category": "to_do",
+      "name": "New",
+      "uuid": "XnHQXNwR"
+    },
+    {
+      "category": "in_progress",
+      "name": "执行变更",
+      "uuid": "YL1p3Tku"
+    },
+    {
+      "category": "in_progress",
+      "name": "开发中",
+      "uuid": "YPaNrD3c"
+    },
+    {
+      "category": "in_progress",
+      "name": "已接受",
+      "uuid": "p2wBuRdo"
+    },
+    {
+      "category": "to_do",
+      "name": "重新打开",
+      "uuid": "x4hcdBwk"
+    }
+  ]
+}

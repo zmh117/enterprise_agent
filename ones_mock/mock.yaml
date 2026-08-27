@@ -99,15 +99,21 @@ tasks:
     owner_uuid: MOCK-ONES-USER-001
     status: todo
     priority: normal
+    custom_options:
+      MOCK-CUSTOM-FIELD-SEVERITY: MOCK-CUSTOM-OPTION-MEDIUM
   - number: 900102
     name: "Mock task: verify production order synchronization"
     issue_type: task
     owner_uuid: MOCK-ONES-USER-002
     status: done
     priority: normal
+    custom_options:
+      MOCK-CUSTOM-FIELD-SEVERITY: MOCK-CUSTOM-OPTION-LOW
   - number: 900103
     name: "Mock defect: order status is not refreshed"
     issue_type: defect
     owner_uuid: MOCK-ONES-USER-001
     status: todo
     priority: normal
+    custom_options:
+      MOCK-CUSTOM-FIELD-SEVERITY: MOCK-CUSTOM-OPTION-HIGH

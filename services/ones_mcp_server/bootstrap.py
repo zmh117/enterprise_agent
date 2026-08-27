@@ -9,6 +9,7 @@ from app.modules.identity.infrastructure.ones_identity_verifier import UrllibOne
 from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.config import OnesIdentitySettings
 from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
+from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
 from services.ones_mcp_server.contracts import SERVER_CODE
 from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshService
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
@@ -30,9 +31,11 @@ from services.ones_mcp_server.provider.target import validate_provider_target
 from services.ones_mcp_server.tools.registry import OnesToolRegistry
 from services.ones_mcp_server.tools.project_role_members import OnesProjectRoleMemberService
 from services.ones_mcp_server.tools.query_services import (
+    OnesCustomOptionWorkItemQueryService,
     OnesIssueTypeListService,
     OnesProjectSearchService,
     OnesProjectSprintListService,
+    OnesQueryConditionResolverService,
     OnesTeamUserSearchService,
     OnesTestCaseDetailService,
     OnesTestCaseQueryService,
@@ -42,6 +45,7 @@ from services.ones_mcp_server.tools.query_services import (
     OnesWorkItemDetailService,
     OnesWorkItemMessageListService,
     OnesWorkItemQueryService,
+    OnesUsersByUuidService,
 )
 from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
 
@@ -127,6 +131,7 @@ def build_tool_registry(runtime: Container) -> OnesToolRegistry:
     )
     graphql = work_item_search.graphql
     http = graphql.http
+    dictionary = QueryConditionDictionary.load()
     project_role_members = OnesProjectRoleMemberService(
         shared[0],
         http,
@@ -139,9 +144,16 @@ def build_tool_registry(runtime: Container) -> OnesToolRegistry:
         OnesProjectSprintListService(*shared, http=http),
         OnesIssueTypeListService(*shared, graphql=graphql),
         OnesWorkItemQueryService(*shared, graphql=graphql),
+        OnesCustomOptionWorkItemQueryService(
+            *shared,
+            graphql=graphql,
+            dictionary=dictionary,
+        ),
         OnesWorkItemDetailService(*shared, graphql=graphql),
         OnesWorkItemMessageListService(*shared, http=http),
         OnesTeamUserSearchService(*shared, http=http),
+        OnesUsersByUuidService(*shared, http=http),
+        OnesQueryConditionResolverService(*shared, dictionary=dictionary),
         OnesTestcaseLibraryListService(*shared, graphql=graphql),
         OnesTestcaseModuleListService(*shared, graphql=graphql),
         OnesTestPlanListService(*shared, graphql=graphql),

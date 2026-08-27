@@ -11,6 +11,7 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.exceptions import AppError
 from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
 from ones_mock.mock_ones_api import MockOnesSettings, create_app
+from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
 from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
 from services.ones_mcp_server.provider.graphql.operations.business_queries import (
@@ -34,8 +35,14 @@ from services.ones_mcp_server.provider.rest.operations.basic_queries import (
     TEAM_USER_SEARCH_OPERATION,
     WORK_ITEM_MESSAGES_OPERATION,
 )
+from services.ones_mcp_server.provider.rest.operations.project_role_members import (
+    TEAM_USERS_OPERATION,
+)
 from services.ones_mcp_server.tools.query_services import (
+    OnesCustomOptionWorkItemQueryService,
+    OnesQueryConditionResolverService,
     OnesTestCaseQueryService,
+    OnesUsersByUuidService,
     OnesWorkItemQueryService,
 )
 
@@ -43,6 +50,7 @@ from services.ones_mcp_server.tools.query_services import (
 NEW_TOOL_IDENTIFIERS = {
     "ones_get_test_case_detail",
     "ones_get_work_item_detail",
+    "ones_get_users_by_uuids",
     "ones_list_issue_types",
     "ones_list_project_sprints",
     "ones_list_test_plans",
@@ -51,6 +59,8 @@ NEW_TOOL_IDENTIFIERS = {
     "ones_list_work_item_messages",
     "ones_query_test_cases",
     "ones_query_work_items",
+    "ones_query_work_items_with_custom_options",
+    "ones_resolve_query_conditions",
     "ones_search_projects",
     "ones_search_team_users",
 }
@@ -125,6 +135,15 @@ def test_all_ones_tool_contracts_are_valid_shared_manifest_facts() -> None:
         assert definition.input_schema == contract.input_schema
         assert definition.read_only is True
 
+    legacy_query = MCP_TOOL_MANIFEST["ones_query_work_items"]
+    custom_query = MCP_TOOL_MANIFEST["ones_query_work_items_with_custom_options"]
+    assert legacy_query.schema_hash == (
+        "914d1fe3e2e8e15e60335ad55b432c4ad8d3a97b2a8fb64d85c13a9d085e521a"
+    )
+    assert "custom_option_filters" not in legacy_query.input_schema["properties"]
+    assert "custom_option_filters" in custom_query.input_schema["properties"]
+    assert custom_query.schema_hash != legacy_query.schema_hash
+
 
 def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -> None:
     settings, http, headers = _provider()
@@ -167,6 +186,33 @@ def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -
     )
     assert [item["number"] for item in work_items.output["items"]] == [900102]
     _assert_contract("ones_query_work_items", work_items.output)
+
+    custom_filtered = client.execute(
+        SPRINT_WORK_ITEM_QUERY,
+        arguments={
+            "project_uuid": settings.config.project_uuid,
+            "sprint_uuid": "MOCK-ONES-SPRINT-ACTIVE",
+            "custom_option_filters": [
+                {
+                    "field_uuid": "MOCK-CUSTOM-FIELD-SEVERITY",
+                    "filter_key": "_MOCK-CUSTOM-FIELD-SEVERITY_in",
+                    "option_uuids": ["MOCK-CUSTOM-OPTION-HIGH"],
+                }
+            ],
+            "limit": 10,
+        },
+        context=context,
+        headers=headers,
+    )
+    assert [item["number"] for item in custom_filtered.output["items"]] == [900103]
+    assert custom_filtered.request["variables"]["filterGroup"] == [
+        {
+            "project_in": [settings.config.project_uuid],
+            "sprint_in": ["MOCK-ONES-SPRINT-ACTIVE"],
+            "_MOCK-CUSTOM-FIELD-SEVERITY_in": ["MOCK-CUSTOM-OPTION-HIGH"],
+        }
+    ]
+    _assert_contract("ones_query_work_items_with_custom_options", custom_filtered.output)
 
     detail = client.execute(
         WORK_ITEM_DETAIL,
@@ -280,10 +326,85 @@ def test_fixed_rest_operations_execute_against_the_mock_contract() -> None:
     assert users.output["users"][0]["name"] == "Mock ONES Owner"
     _assert_contract("ones_search_team_users", users.output)
 
+    users_by_uuid = TEAM_USERS_OPERATION.execute(
+        http,  # type: ignore[arg-type]
+        member_uuids=[settings.user_uuid, settings.config.users[1].uuid],
+        **common,
+    )
+    assert list(users_by_uuid.output) == [settings.user_uuid, settings.config.users[1].uuid]
+    assert users_by_uuid.output[settings.user_uuid] == settings.user_name
+    assert "email" not in str(users_by_uuid.output).casefold()
+
+
+def test_user_lookup_and_condition_resolver_project_only_safe_fields() -> None:
+    settings, http, _headers = _provider()
+    principal = SimpleNamespace(
+        team_id=settings.team_uuid,
+        provider_user_id=settings.user_uuid,
+        credential=SimpleNamespace(secrets=SimpleNamespace(token=settings.token)),
+    )
+    users = object.__new__(OnesUsersByUuidService)
+    users.http = http  # type: ignore[attr-defined]
+    user_result = users.call_provider(
+        principal,  # type: ignore[arg-type]
+        {"user_uuids": [settings.config.users[1].uuid]},
+    )
+    assert user_result.output == {
+        "users": [{"uuid": settings.config.users[1].uuid, "name": settings.config.users[1].name}],
+        "total": 1,
+        "returned": 1,
+        "truncated": False,
+        "untrusted_data": True,
+    }
+    _assert_contract("ones_get_users_by_uuids", user_result.output)
+    missing_result = users.call_provider(
+        principal,  # type: ignore[arg-type]
+        {"user_uuids": ["MOCK-ONES-USER-UNKNOWN"]},
+    )
+    assert missing_result.output == {
+        "users": [],
+        "total": 0,
+        "returned": 0,
+        "truncated": False,
+        "untrusted_data": True,
+    }
+
+    dictionary = QueryConditionDictionary(
+        source_team_uuid=settings.team_uuid,
+        captured_at="2026-08-27",
+        dictionary_version="2026-08-27-synthetic",
+        statuses=({"uuid": "MOCK-STATUS-DONE", "name": "已完成", "category": "done"},),
+        fields=(
+            {
+                "uuid": "MOCK-CUSTOM-FIELD-SEVERITY",
+                "name": "严重程度",
+                "type": "single_select",
+                "filter_key": "_MOCK-CUSTOM-FIELD-SEVERITY_in",
+                "options": ({"uuid": "MOCK-CUSTOM-OPTION-HIGH", "name": "严重"},),
+            },
+        ),
+    )
+    resolver = object.__new__(OnesQueryConditionResolverService)
+    resolver.dictionary = dictionary
+    resolved = resolver.call_provider(
+        principal,  # type: ignore[arg-type]
+        {
+            "condition_type": "custom_option",
+            "keyword": "严重",
+            "field_keyword": "严重程度",
+            "limit": 20,
+        },
+    )
+    assert resolved.output["matches"][0]["option_uuid"] == "MOCK-CUSTOM-OPTION-HIGH"
+    _assert_contract("ones_resolve_query_conditions", resolved.output)
+
 
 def test_new_tool_validation_and_timeline_projection_fail_closed() -> None:
     work_items = object.__new__(OnesWorkItemQueryService)
+    custom_work_items = object.__new__(OnesCustomOptionWorkItemQueryService)
     test_cases = object.__new__(OnesTestCaseQueryService)
+    users = object.__new__(OnesUsersByUuidService)
+    conditions = object.__new__(OnesQueryConditionResolverService)
 
     for arguments in (
         {"sprint_uuid": "SPRINT-1", "limit": 10},
@@ -298,11 +419,55 @@ def test_new_tool_validation_and_timeline_projection_fail_closed() -> None:
             work_items.validate_arguments(arguments)
         assert raised.value.error_code == "ones_tool_input_invalid"
 
-    with pytest.raises(AppError) as missing_library:
-        test_cases.validate_arguments(
-            {"source": "module", "source_uuid": "MODULE-1", "limit": 10}
+    with pytest.raises(AppError) as duplicate_custom_field:
+        custom_work_items.validate_arguments(
+            {
+                "custom_option_filters": [
+                    {
+                        "field_uuid": "FIELD-1",
+                        "option_uuids": ["OPTION-1"],
+                    },
+                    {
+                        "field_uuid": "FIELD-1",
+                        "option_uuids": ["OPTION-2"],
+                    },
+                ],
+                "limit": 10,
+            }
         )
+    assert duplicate_custom_field.value.error_code == "ones_tool_input_invalid"
+
+    with pytest.raises(AppError) as missing_custom_filter:
+        custom_work_items.validate_arguments({"limit": 10})
+    assert missing_custom_filter.value.error_code == "ones_tool_input_invalid"
+
+    with pytest.raises(AppError) as missing_library:
+        test_cases.validate_arguments({"source": "module", "source_uuid": "MODULE-1", "limit": 10})
     assert missing_library.value.error_code == "ones_tool_input_invalid"
+
+    for arguments in (
+        {"user_uuids": []},
+        {"user_uuids": ["USER-1", "USER-1"]},
+        {"user_uuids": ["invalid user"]},
+        {"user_uuids": [f"USER-{index}" for index in range(101)]},
+    ):
+        with pytest.raises(AppError) as invalid_users:
+            users.validate_arguments(arguments)
+        assert invalid_users.value.error_code == "ones_tool_input_invalid"
+
+    for arguments in (
+        {"condition_type": "custom_option", "keyword": "严重", "limit": 10},
+        {
+            "condition_type": "status",
+            "keyword": "完成",
+            "field_keyword": "状态",
+            "limit": 10,
+        },
+        {"condition_type": "project", "keyword": "项目", "limit": 10},
+    ):
+        with pytest.raises(AppError) as invalid_condition:
+            conditions.validate_arguments(arguments)
+        assert invalid_condition.value.error_code == "ones_tool_input_invalid"
 
     timeline = WORK_ITEM_MESSAGES_OPERATION.parse_response(
         {

@@ -65,9 +65,7 @@ def _project_response(payload: dict[str, Any], variables: dict[str, Any]) -> dic
     )
 
 
-def _issue_type_variables(
-    arguments: dict[str, Any], _context: dict[str, Any]
-) -> dict[str, Any]:
+def _issue_type_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
     return {
         "filter": {
             "scope_equal": arguments["project_uuid"],
@@ -76,9 +74,7 @@ def _issue_type_variables(
     }
 
 
-def _issue_type_response(
-    payload: dict[str, Any], variables: dict[str, Any]
-) -> dict[str, Any]:
+def _issue_type_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     data = require_mapping(payload.get("data"))
     raw_items = require_list(data.get("issueTypeScopes"))
     limit = bounded_int(variables.get("_limit", 100), minimum=1)
@@ -115,9 +111,7 @@ def _microseconds(value: str) -> str:
     return str(int(parsed.timestamp() * 1_000_000))
 
 
-def _work_item_variables(
-    arguments: dict[str, Any], _context: dict[str, Any]
-) -> dict[str, Any]:
+def _work_item_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
     filters: dict[str, Any] = {}
     for argument, provider in (
         ("issue_type_uuids", "issueType_in"),
@@ -127,6 +121,8 @@ def _work_item_variables(
     ):
         if arguments.get(argument):
             filters[provider] = list(arguments[argument])
+    for custom_filter in arguments.get("custom_option_filters") or []:
+        filters[str(custom_filter["filter_key"])] = list(custom_filter["option_uuids"])
     if arguments.get("project_uuid"):
         filters["project_in"] = [arguments["project_uuid"]]
     if arguments.get("sprint_uuid"):
@@ -154,9 +150,7 @@ def _work_item_variables(
     }
 
 
-def _work_item_response(
-    payload: dict[str, Any], variables: dict[str, Any]
-) -> dict[str, Any]:
+def _work_item_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
     raw, total, truncated, cursor = page_items(payload, collection="tasks", limit=limit)
     return normalized_list(

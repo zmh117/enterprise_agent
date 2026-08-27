@@ -296,6 +296,89 @@ _WORK_ITEM_QUERY_INPUT = _object_schema(
     required=("limit",),
 )
 
+_CUSTOM_WORK_ITEM_QUERY_INPUT = {
+    **_WORK_ITEM_QUERY_INPUT,
+    "properties": {
+        **_WORK_ITEM_QUERY_INPUT["properties"],
+        "custom_option_filters": {
+            "type": "array",
+            "maxItems": 8,
+            "items": _object_schema(
+                {
+                    "field_uuid": _identifier(),
+                    "option_uuids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "uniqueItems": True,
+                        "items": _identifier(),
+                    },
+                },
+                required=("field_uuid", "option_uuids"),
+            ),
+        },
+    },
+    "required": ["limit", "custom_option_filters"],
+}
+
+_QUERY_CONDITION_OUTPUT = {
+    "type": "object",
+    "properties": {
+        "matches": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+                "oneOf": [
+                    _object_schema(
+                        {
+                            "condition_type": {"const": "status"},
+                            "uuid": _identifier(),
+                            "name": {"type": "string", "maxLength": 300},
+                            "category": {
+                                "type": "string",
+                                "enum": list(ONES_STATUS_CATEGORIES),
+                            },
+                        },
+                        required=("condition_type", "uuid", "name", "category"),
+                    ),
+                    _object_schema(
+                        {
+                            "condition_type": {"const": "custom_option"},
+                            "field_uuid": _identifier(),
+                            "field_name": {"type": "string", "maxLength": 300},
+                            "option_uuid": _identifier(),
+                            "option_name": {"type": "string", "maxLength": 300},
+                        },
+                        required=(
+                            "condition_type",
+                            "field_uuid",
+                            "field_name",
+                            "option_uuid",
+                            "option_name",
+                        ),
+                    ),
+                ]
+            },
+        },
+        "total": {"type": "integer", "minimum": 0},
+        "returned": {"type": "integer", "minimum": 0, "maximum": 20},
+        "truncated": {"type": "boolean"},
+        "dictionary_version": {"type": "string", "maxLength": 80},
+        "captured_at": {"type": "string", "format": "date", "maxLength": 10},
+        "untrusted_data": {"const": True},
+    },
+    "required": [
+        "matches",
+        "total",
+        "returned",
+        "truncated",
+        "dictionary_version",
+        "captured_at",
+        "untrusted_data",
+    ],
+    "additionalProperties": False,
+}
+
 _TESTCASE_DETAIL_OUTPUT = {
     "type": "object",
     "properties": {
@@ -379,6 +462,29 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
             _list_output("items", WORK_ITEM_SCHEMA, maximum=100),
         ),
         _contract(
+            "ones_query_work_items_with_custom_options",
+            "按项目、迭代、类型、状态、处理人、自定义选项、创建时间或关键词组合查询当前默认 Team 的工作项；自定义字段和值必须来自受管条件字典。",
+            _CUSTOM_WORK_ITEM_QUERY_INPUT,
+            _list_output("items", WORK_ITEM_SCHEMA, maximum=100),
+        ),
+        _contract(
+            "ones_resolve_query_conditions",
+            "按中文或显示名解析当前 Team 受管快照中的状态或自定义选项候选；项目、迭代、类型和人员必须使用实时查询 Tool。",
+            _object_schema(
+                {
+                    "condition_type": {
+                        "type": "string",
+                        "enum": ["status", "custom_option"],
+                    },
+                    "keyword": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "field_keyword": {"type": "string", "maxLength": 200},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                required=("condition_type", "keyword", "limit"),
+            ),
+            _QUERY_CONDITION_OUTPUT,
+        ),
+        _contract(
             "ones_get_work_item_detail",
             "查询一个明确 ONES 工作项 UUID 的有界详情和关联摘要。",
             _object_schema({"work_item_uuid": _identifier()}, required=("work_item_uuid",)),
@@ -434,6 +540,23 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
                     "limit": {"type": "integer", "minimum": 1, "maximum": 100},
                 },
                 required=("keyword", "limit"),
+            ),
+            _list_output("users", _person(), maximum=100),
+        ),
+        _contract(
+            "ones_get_users_by_uuids",
+            "按明确 UUID 批量查询当前用户默认 Team 中的人员安全摘要；只返回 UUID 和姓名。",
+            _object_schema(
+                {
+                    "user_uuids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "uniqueItems": True,
+                        "items": _identifier(),
+                    }
+                },
+                required=("user_uuids",),
             ),
             _list_output("users", _person(), maximum=100),
         ),

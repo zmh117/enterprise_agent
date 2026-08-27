@@ -13,6 +13,8 @@ tools over stateless Streamable HTTP. It is not an arbitrary GraphQL or HTTP pro
 - `provider/graphql/documents/`: code-owned GraphQL document files.
 - `provider/graphql/operations/`: fixed paths, variables, and strict response parsers.
 - `provider/rest/operations/`: fixed REST methods, paths, request bodies, and response parsers.
+- `condition_dictionary.py` and `resources/`: validated, Team-scoped status and
+  custom-option lookup snapshot; no Provider transport or personal directory data.
 - `credentials/`: 401 refresh, per-credential locking, revision CAS, and refresh audit.
 - `tools/`: MCP Tool validation and business/audit orchestration.
 
@@ -24,9 +26,14 @@ queries:
 
 - Project discovery and structure: `ones_search_projects`,
   `ones_list_project_sprints`, and `ones_list_issue_types`.
-- Work items: `ones_query_work_items`, `ones_get_work_item_detail`, and
-  `ones_list_work_item_messages`.
-- People: `ones_search_team_users`.
+- Work items: `ones_query_work_items` for its existing standard filters,
+  `ones_query_work_items_with_custom_options` for dictionary-validated custom
+  option filters, `ones_get_work_item_detail`, and `ones_list_work_item_messages`.
+- Query conditions: `ones_resolve_query_conditions` performs a bounded local
+  resource lookup for status and custom-option candidates after Principal Team
+  validation. It is not GraphQL or REST and never refreshes Provider credentials.
+- People: `ones_search_team_users` for live name search and
+  `ones_get_users_by_uuids` for fixed REST batch lookup of UUID/name summaries.
 - Test assets: `ones_list_testcase_libraries`, `ones_list_testcase_modules`,
   `ones_list_test_plans`, `ones_query_test_cases`, and
   `ones_get_test_case_detail`.
@@ -35,7 +42,27 @@ Every tool accepts only bounded business arguments. Provider origin, default Tea
 credential headers, HTTP path, GraphQL document, and fixed query type remain
 server-owned. New tools become callable only after the normal Agent/Application
 publication flow freezes them into a new Job; adding them to the code manifest does
-not widen an existing publication.
+not widen an existing publication. The existing `ones_query_work_items` contract is
+unchanged; custom-option support is a separate Tool so its schema hash cannot drift
+for historical Publications or Jobs.
+
+## Updating the managed query-condition snapshot
+
+The ignored `ones_mock/ones/查询条件字典.yaml` is maintenance input only. Production,
+Mock, and test runtime code must not read it. After reviewing an updated personal
+capture, regenerate the minimal checked-in resource explicitly:
+
+```bash
+.venv/bin/python scripts/sync_ones_query_condition_dictionary.py \
+  ones_mock/ones/查询条件字典.yaml \
+  services/ones_mcp_server/resources/query_condition_dictionary.json
+```
+
+The generator accepts only Team metadata, statuses, and single/multi-select custom
+options. It excludes people, projects, sprints, issue types, request headers, and
+raw responses; malformed input does not replace the current resource. Run the
+dictionary, ONES contract, architecture, Mock, and Runtime tests before rebuilding
+and explicitly republishing the Agent/Application.
 
 ## Adding a GraphQL-backed Tool
 

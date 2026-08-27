@@ -28,6 +28,10 @@ from services.ones_mcp_server.contracts import (
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
+from services.ones_mcp_server.condition_dictionary import (
+    DEFAULT_DICTIONARY_PATH,
+    QueryConditionDictionary,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -159,9 +163,7 @@ def test_ones_contract_exposes_only_code_owned_fixed_readonly_tools() -> None:
     assert role_definition.read_only is True
     assert PROJECT_ROLE_MEMBERS_INPUT_SCHEMA["additionalProperties"] is False
     assert PROJECT_ROLE_MEMBERS_INPUT_SCHEMA["required"] == ["project_uuid"]
-    assert PROJECT_ROLE_MEMBERS_OUTPUT_SCHEMA["properties"]["untrusted_data"] == {
-        "const": True
-    }
+    assert PROJECT_ROLE_MEMBERS_OUTPUT_SCHEMA["properties"]["untrusted_data"] == {"const": True}
     production = _production_sources().lower()
     assert "ones_mock/ones" not in production
     for contract in ONES_TOOL_CONTRACTS.values():
@@ -203,6 +205,28 @@ def test_ones_query_assets_are_static_documents_without_dynamic_query_library() 
         "arbitrary_interface_executor",
     ):
         assert forbidden not in production
+
+
+def test_ones_query_dictionary_is_a_minimal_scoped_runtime_asset() -> None:
+    QueryConditionDictionary.load()
+    raw = json.loads(DEFAULT_DICTIONARY_PATH.read_text(encoding="utf-8"))
+    serialized = json.dumps(raw, ensure_ascii=False).casefold()
+    for forbidden in (
+        '"assign_in"',
+        '"project_in"',
+        '"sprint_in"',
+        '"issuetype_in"',
+        '"headers"',
+        '"token"',
+        '"cookie"',
+        '"email"',
+        '"phone"',
+        '"department_uuids"',
+    ):
+        assert forbidden not in serialized
+
+    dockerfile = (REPOSITORY_ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
+    assert "COPY services /app/services" in dockerfile
 
 
 def test_provider_target_requires_https_except_explicit_local_mock() -> None:

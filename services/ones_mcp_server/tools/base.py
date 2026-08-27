@@ -275,3 +275,52 @@ class BaseOnesQueryService(ABC):
         principal: ResolvedOnesPrincipal,
         arguments: dict[str, Any],
     ) -> ProviderCall: ...
+
+
+class BaseOnesResourceQueryService(BaseOnesQueryService):
+    """Principal-scoped local resource lookup without Provider credential use."""
+
+    def _execute_with_refresh(
+        self,
+        *,
+        claims: dict[str, Any],
+        handle: McpAuditHandle,
+        principal: ResolvedOnesPrincipal,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        del claims
+        started = time.monotonic()
+        try:
+            call = self.call_provider(principal, arguments)
+            self.audit.append_event(
+                handle,
+                event_kind="RESOURCE",
+                status="SUCCEEDED",
+                duration_ms=int((time.monotonic() - started) * 1000),
+                resource_code="ones-query-condition-dictionary",
+                business_request=call.request_summary,
+                business_response=call.response_summary,
+            )
+            return call.output
+        except AppError as exc:
+            self.audit.append_event(
+                handle,
+                event_kind="RESOURCE",
+                status="FAILED",
+                error_code=error_code(exc),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                resource_code="ones-query-condition-dictionary",
+                business_request={"operation": self.tool_identifier},
+            )
+            raise
+        except Exception:
+            self.audit.append_event(
+                handle,
+                event_kind="RESOURCE",
+                status="FAILED",
+                error_code="ones_mcp_unavailable",
+                duration_ms=int((time.monotonic() - started) * 1000),
+                resource_code="ones-query-condition-dictionary",
+                business_request={"operation": self.tool_identifier},
+            )
+            raise

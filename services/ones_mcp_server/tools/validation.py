@@ -61,6 +61,30 @@ def identifier_list(value: object, *, maximum_items: int) -> list[str]:
     return normalized
 
 
+def custom_option_filters(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 8:
+        raise invalid_input()
+    result: list[dict[str, Any]] = []
+    seen_fields: set[str] = set()
+    for raw in value:
+        item = require_fields(
+            raw,
+            allowed={"field_uuid", "option_uuids"},
+            required={"field_uuid", "option_uuids"},
+        )
+        field_uuid = identifier(item["field_uuid"])
+        if field_uuid in seen_fields:
+            raise invalid_input()
+        seen_fields.add(field_uuid)
+        result.append(
+            {
+                "field_uuid": field_uuid,
+                "option_uuids": identifier_list(item["option_uuids"], maximum_items=20),
+            }
+        )
+    return result
+
+
 def status_categories(value: object) -> list[str]:
     if not isinstance(value, list) or not 1 <= len(value) <= 3:
         raise invalid_input()
@@ -81,4 +105,3 @@ def timestamp(value: object) -> str:
     if parsed.tzinfo is None:
         raise invalid_input()
     return raw
-

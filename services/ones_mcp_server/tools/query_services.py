@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.modules.mcp_audit import McpAuditHandle
 from services.ones_mcp_server.auth.principal import ResolvedOnesPrincipal
+from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
 from services.ones_mcp_server.contracts import PROVIDER_HEADERS
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
 from services.ones_mcp_server.provider.graphql.operations.business_queries import (
@@ -26,8 +28,16 @@ from services.ones_mcp_server.provider.rest.operations.basic_queries import (
     TEAM_USER_SEARCH_OPERATION,
     WORK_ITEM_MESSAGES_OPERATION,
 )
-from services.ones_mcp_server.tools.base import BaseOnesQueryService, ProviderCall
+from services.ones_mcp_server.provider.rest.operations.project_role_members import (
+    TEAM_USERS_OPERATION,
+)
+from services.ones_mcp_server.tools.base import (
+    BaseOnesQueryService,
+    BaseOnesResourceQueryService,
+    ProviderCall,
+)
 from services.ones_mcp_server.tools.validation import (
+    custom_option_filters,
     identifier,
     identifier_list,
     integer,
@@ -121,9 +131,7 @@ class OnesWorkItemQueryService(GraphqlQueryService):
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(arguments, allowed=self._allowed, required={"limit"})
-        result: dict[str, Any] = {
-            "limit": integer(value["limit"], minimum=1, maximum=100)
-        }
+        result: dict[str, Any] = {"limit": integer(value["limit"], minimum=1, maximum=100)}
         if "keyword" in value:
             result["keyword"] = text(value["keyword"], maximum=200, allow_empty=True).strip()
         for key in ("project_uuid", "sprint_uuid"):
@@ -150,6 +158,50 @@ class OnesWorkItemQueryService(GraphqlQueryService):
 
     def selected_operation(self, arguments: dict[str, Any]) -> str:
         return SPRINT_WORK_ITEM_QUERY if arguments.get("sprint_uuid") else WORK_ITEM_QUERY
+
+
+class OnesCustomOptionWorkItemQueryService(OnesWorkItemQueryService):
+    tool_identifier = "ones_query_work_items_with_custom_options"
+    _allowed = OnesWorkItemQueryService._allowed | {"custom_option_filters"}
+
+    def __init__(
+        self,
+        *args: Any,
+        graphql: OnesGraphqlClient,
+        dictionary: QueryConditionDictionary,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, graphql=graphql, **kwargs)
+        self.dictionary = dictionary
+
+    def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if "custom_option_filters" not in arguments:
+            raise invalid_input()
+        result = super().validate_arguments(arguments)
+        result["custom_option_filters"] = custom_option_filters(arguments["custom_option_filters"])
+        return result
+
+    def _execute_with_refresh(
+        self,
+        *,
+        claims: dict[str, Any],
+        handle: McpAuditHandle,
+        principal: ResolvedOnesPrincipal,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        provider_arguments = dict(arguments)
+        filters = list(arguments.get("custom_option_filters") or [])
+        if filters:
+            provider_arguments["custom_option_filters"] = self.dictionary.validated_custom_filters(
+                team_uuid=principal.team_id,
+                filters=filters,
+            )
+        return super()._execute_with_refresh(
+            claims=claims,
+            handle=handle,
+            principal=principal,
+            arguments=provider_arguments,
+        )
 
 
 class OnesWorkItemDetailService(GraphqlQueryService):
@@ -351,4 +403,109 @@ class OnesTeamUserSearchService(RestQueryService):
             execution.output,
             execution.request,
             self.response_summary(execution.output),
+        )
+
+
+class OnesUsersByUuidService(RestQueryService):
+    tool_identifier = "ones_get_users_by_uuids"
+
+    def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        value = require_fields(
+            arguments,
+            allowed={"user_uuids"},
+            required={"user_uuids"},
+        )
+        return {"user_uuids": identifier_list(value["user_uuids"], maximum_items=100)}
+
+    def call_provider(
+        self,
+        principal: ResolvedOnesPrincipal,
+        arguments: dict[str, Any],
+    ) -> ProviderCall:
+        execution = TEAM_USERS_OPERATION.execute(
+            self.http,
+            team_uuid=principal.team_id,
+            member_uuids=arguments["user_uuids"],
+            token=principal.credential.secrets.token,
+            user_id=principal.provider_user_id,
+        )
+        users_by_uuid = execution.output
+        users = [
+            {"uuid": uuid, "name": users_by_uuid[uuid]}
+            for uuid in arguments["user_uuids"]
+            if uuid in users_by_uuid
+        ]
+        output = {
+            "users": users,
+            "total": len(users),
+            "returned": len(users),
+            "truncated": False,
+            "untrusted_data": True,
+        }
+        return ProviderCall(
+            output,
+            {
+                "operation": execution.request["operation"],
+                "method": execution.request["method"],
+                "requested": len(arguments["user_uuids"]),
+            },
+            self.response_summary(output),
+        )
+
+
+class OnesQueryConditionResolverService(BaseOnesResourceQueryService):
+    tool_identifier = "ones_resolve_query_conditions"
+
+    def __init__(
+        self,
+        *args: Any,
+        dictionary: QueryConditionDictionary,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.dictionary = dictionary
+
+    def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        value = require_fields(
+            arguments,
+            allowed={"condition_type", "keyword", "field_keyword", "limit"},
+            required={"condition_type", "keyword", "limit"},
+        )
+        condition_type = text(value["condition_type"], maximum=30)
+        if condition_type not in {"status", "custom_option"}:
+            raise invalid_input()
+        keyword = text(value["keyword"], maximum=200).strip()
+        if not keyword:
+            raise invalid_input()
+        field_keyword = ""
+        if "field_keyword" in value:
+            field_keyword = text(value["field_keyword"], maximum=200).strip()
+        if condition_type == "custom_option" and not field_keyword:
+            raise invalid_input()
+        if condition_type == "status" and field_keyword:
+            raise invalid_input()
+        return {
+            "condition_type": condition_type,
+            "keyword": keyword,
+            "field_keyword": field_keyword,
+            "limit": integer(value["limit"], minimum=1, maximum=20),
+        }
+
+    def call_provider(
+        self,
+        principal: ResolvedOnesPrincipal,
+        arguments: dict[str, Any],
+    ) -> ProviderCall:
+        output = self.dictionary.resolve(team_uuid=principal.team_id, **arguments)
+        return ProviderCall(
+            output,
+            {
+                "operation": "resolve_query_conditions",
+                "condition_type": arguments["condition_type"],
+                "keyword_length": len(arguments["keyword"]),
+                "field_keyword_length": len(arguments["field_keyword"]),
+                "limit": arguments["limit"],
+                "dictionary_version": self.dictionary.dictionary_version,
+            },
+            self.response_summary(output),
         )

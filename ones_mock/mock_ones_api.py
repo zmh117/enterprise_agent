@@ -204,6 +204,10 @@ def load_config(path: str | Path | None = None) -> MockOnesConfig:
     tasks: list[dict[str, Any]] = []
     for index, item in enumerate(tasks_raw):
         task = _require_mapping(item, f"tasks[{index}]")
+        custom_options = _require_mapping(
+            task.get("custom_options") or {},
+            f"tasks[{index}].custom_options",
+        )
         tasks.append(
             {
                 "number": _require_int(task.get("number"), f"tasks[{index}].number"),
@@ -212,6 +216,13 @@ def load_config(path: str | Path | None = None) -> MockOnesConfig:
                 "owner_uuid": _require_str(task.get("owner_uuid"), f"tasks[{index}].owner_uuid"),
                 "status": _require_str(task.get("status"), f"tasks[{index}].status"),
                 "priority": _require_str(task.get("priority"), f"tasks[{index}].priority"),
+                "custom_options": {
+                    _require_str(key, f"tasks[{index}].custom_options field"): _require_str(
+                        value,
+                        f"tasks[{index}].custom_options.{key}",
+                    )
+                    for key, value in custom_options.items()
+                },
             }
         )
 
@@ -314,7 +325,7 @@ def _task_fixture(config: MockOnesConfig, task: dict[str, Any]) -> dict[str, Any
     owner_uuid = str(task["owner_uuid"])
     number = int(task["number"])
     task_uuid = f"MOCK-ONES-TASK-{number}"
-    return {
+    fixture = {
         "_MOCK_CUSTOM_FIELD": None,
         "createTime": 1784736000000000 + number,
         "deadline": None,
@@ -372,6 +383,12 @@ def _task_fixture(config: MockOnesConfig, task: dict[str, Any]) -> dict[str, Any
         "totalRemainingHours": 0,
         "uuid": task_uuid,
     }
+    for field_uuid, option_uuid in task.get("custom_options", {}).items():
+        fixture[f"_{field_uuid}"] = {
+            "uuid": option_uuid,
+            "value": option_uuid,
+        }
+    return fixture
 
 
 def _string_list(value: object) -> list[str]:
@@ -421,6 +438,34 @@ def _created_range(variables: dict[str, Any]) -> dict[str, int]:
     return {}
 
 
+def _custom_option_filters(variables: dict[str, Any]) -> dict[str, set[str]]:
+    groups = variables.get("filterGroup")
+    if not isinstance(groups, list):
+        return {}
+    result: dict[str, set[str]] = {}
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        for key, value in group.items():
+            if not key.startswith("_") or not key.endswith("_in"):
+                continue
+            values = set(_string_list(value))
+            if values:
+                result[key.removesuffix("_in")] = values
+    return result
+
+
+def _matches_custom_options(
+    fixture: dict[str, Any],
+    custom_filters: dict[str, set[str]],
+) -> bool:
+    for field_key, allowed in custom_filters.items():
+        value = fixture.get(field_key)
+        if not isinstance(value, dict) or str(value.get("uuid") or "") not in allowed:
+            return False
+    return True
+
+
 def _search_keyword(variables: dict[str, Any]) -> str:
     search = variables.get("search")
     if not isinstance(search, dict):
@@ -455,6 +500,7 @@ def _group_task_data(config: MockOnesConfig, variables: dict[str, Any]) -> dict[
     statuses = _group_filter_values(variables, "status_in")
     status_categories = _group_filter_values(variables, "statusCategory_in")
     assignees = _group_filter_values(variables, "assign_in")
+    custom_filters = _custom_option_filters(variables)
     created = _created_range(variables)
     keyword = _search_keyword(variables)
     tasks = [
@@ -464,11 +510,9 @@ def _group_task_data(config: MockOnesConfig, variables: dict[str, Any]) -> dict[
         and (not projects or str(fixture["project"]["uuid"]) in projects)
         and (not sprints or str(fixture["sprint"]["uuid"]) in sprints)
         and (not statuses or str(fixture["status"]["uuid"]) in statuses)
-        and (
-            not status_categories
-            or str(fixture["status"]["category"]) in status_categories
-        )
+        and (not status_categories or str(fixture["status"]["category"]) in status_categories)
         and (not assignees or str(fixture["assign"]["uuid"]) in assignees)
+        and _matches_custom_options(fixture, custom_filters)
         and ("gte" not in created or int(fixture["createTime"]) >= created["gte"])
         and ("lte" not in created or int(fixture["createTime"]) <= created["lte"])
         and _matches_keyword(fixture, keyword)
@@ -908,9 +952,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
             )
         return user
 
-    @app.get(
-        "/project/api/project/team/{team_uuid}/project/{project_uuid}/role_members"
-    )
+    @app.get("/project/api/project/team/{team_uuid}/project/{project_uuid}/role_members")
     async def project_role_members(
         request: Request,
         team_uuid: str,
@@ -980,6 +1022,8 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
         )
         if team_uuid != config.team_uuid:
             raise HTTPException(status_code=404, detail={"code": "team_not_found"})
+        if "__403__" in payload.uuids:
+            raise HTTPException(status_code=403, detail={"code": "forbidden"})
         users = []
         for user_uuid in dict.fromkeys(payload.uuids):
             user = config.user_by_uuid(user_uuid)
@@ -997,9 +1041,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
             )
         return {"users": users}
 
-    @app.post(
-        "/project/api/project/team/{team_uuid}/project/{project_uuid}/stamps/data"
-    )
+    @app.post("/project/api/project/team/{team_uuid}/project/{project_uuid}/stamps/data")
     async def project_sprints(
         team_uuid: str,
         project_uuid: str,
@@ -1031,9 +1073,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                         "start_time": 1782144000000,
                         "end_time": 1782748800000,
                         "progress": 100,
-                        "statuses": [
-                            {"category": "done", "is_current_status": True}
-                        ],
+                        "statuses": [{"category": "done", "is_current_status": True}],
                     },
                     {
                         "uuid": "MOCK-ONES-SPRINT-ACTIVE",
@@ -1043,9 +1083,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                         "start_time": 1784563200000,
                         "end_time": 1785168000000,
                         "progress": 50,
-                        "statuses": [
-                            {"category": "in_progress", "is_current_status": True}
-                        ],
+                        "statuses": [{"category": "in_progress", "is_current_status": True}],
                     },
                 ]
             }
@@ -1108,9 +1146,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
         users = [
             {"uuid": user.uuid, "name": user.name}
             for user in config.users
-            if not keyword
-            or keyword in user.name.casefold()
-            or keyword in user.email.casefold()
+            if not keyword or keyword in user.name.casefold() or keyword in user.email.casefold()
         ]
         return {"users": users}
 

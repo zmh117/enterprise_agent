@@ -104,6 +104,7 @@ contract = [
   "test_ones_identity_binding.py",
   "test_ones_mcp_runtime.py",
   "test_ones_provider_http_client.py",
+  "test_ones_query_condition_dictionary.py",
   "test_ones_rest_operations.py",
   "test_open_test_file_domain_reset.py",
   "test_phase3a_secret_leak_gate.py",

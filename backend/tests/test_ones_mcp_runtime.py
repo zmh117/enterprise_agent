@@ -35,6 +35,7 @@ from backend.tests.helpers import container, prepare_debug_application_access
 from ones_mock.mock_ones_api import MockOnesSettings, create_app as create_mock_app
 from services.ones_mcp_server.app import create_app as create_mcp_app
 from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
+from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
 from services.ones_mcp_server.contracts import (
     PROJECT_ROLE_MEMBERS_OUTPUT_SCHEMA,
     PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
@@ -54,7 +55,13 @@ from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
 from services.ones_mcp_server.tools.project_role_members import (
     OnesProjectRoleMemberService,
 )
-from services.ones_mcp_server.tools.query_services import OnesProjectSearchService
+from services.ones_mcp_server.tools.query_services import (
+    OnesCustomOptionWorkItemQueryService,
+    OnesProjectSearchService,
+    OnesQueryConditionResolverService,
+    OnesUsersByUuidService,
+    OnesWorkItemQueryService,
+)
 from services.ones_mcp_server.tools.registry import OnesToolRegistry
 from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
 
@@ -130,6 +137,34 @@ def _signing_key() -> PrincipalSigningKey:
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
+    )
+
+
+def _mock_dictionary(settings: MockOnesSettings) -> QueryConditionDictionary:
+    return QueryConditionDictionary(
+        source_team_uuid=settings.team_uuid,
+        captured_at="2026-08-27",
+        dictionary_version="2026-08-27-synthetic",
+        statuses=(
+            {
+                "uuid": str(settings.config.statuses["done"]["uuid"]),
+                "name": str(settings.config.statuses["done"]["name"]),
+                "category": "done",
+            },
+        ),
+        fields=(
+            {
+                "uuid": "MOCK-CUSTOM-FIELD-SEVERITY",
+                "name": "严重程度",
+                "type": "single_select",
+                "filter_key": "_MOCK-CUSTOM-FIELD-SEVERITY_in",
+                "options": (
+                    {"uuid": "MOCK-CUSTOM-OPTION-HIGH", "name": "严重"},
+                    {"uuid": "MOCK-CUSTOM-OPTION-LOW", "name": "一般"},
+                    {"uuid": "MOCK-CUSTOM-OPTION-MEDIUM", "name": "中等"},
+                ),
+            },
+        ),
     )
 
 
@@ -247,9 +282,7 @@ def _fixture(
     )
     graphql = OnesGraphqlClient(
         provider_http,
-        GraphqlOperationRegistry(
-            (WORK_ITEM_SEARCH_OPERATION, *BUSINESS_GRAPHQL_OPERATIONS)
-        ),
+        GraphqlOperationRegistry((WORK_ITEM_SEARCH_OPERATION, *BUSINESS_GRAPHQL_OPERATIONS)),
     )
     resolver = OnesPrincipalResolver(
         runtime.database,
@@ -285,9 +318,47 @@ def _fixture(
         refresh,
         graphql=graphql,
     )
+    dictionary = _mock_dictionary(mock)
+    work_item_query_service = OnesWorkItemQueryService(
+        resolver,
+        credentials,
+        audit,
+        refresh,
+        graphql=graphql,
+    )
+    custom_work_item_query_service = OnesCustomOptionWorkItemQueryService(
+        resolver,
+        credentials,
+        audit,
+        refresh,
+        graphql=graphql,
+        dictionary=dictionary,
+    )
+    users_by_uuid_service = OnesUsersByUuidService(
+        resolver,
+        credentials,
+        audit,
+        refresh,
+        http=provider_http,
+    )
+    condition_resolver_service = OnesQueryConditionResolverService(
+        resolver,
+        credentials,
+        audit,
+        refresh,
+        dictionary=dictionary,
+    )
     registry = OnesToolRegistry(
         authenticate=service.authenticate,
-        tools=(service, role_service, project_search_service),
+        tools=(
+            service,
+            role_service,
+            project_search_service,
+            work_item_query_service,
+            custom_work_item_query_service,
+            users_by_uuid_service,
+            condition_resolver_service,
+        ),
         audit=audit,
     )
     return {
@@ -295,10 +366,14 @@ def _fixture(
         "job": claimed,
         "identity": identity,
         "token": token,
-        "claims": service.authenticate(token),
+        "claims": registry.authenticate(token, tool_identifier=capabilities[0]),
         "service": service,
         "role_service": role_service,
         "project_search_service": project_search_service,
+        "work_item_query_service": work_item_query_service,
+        "custom_work_item_query_service": custom_work_item_query_service,
+        "users_by_uuid_service": users_by_uuid_service,
+        "condition_resolver_service": condition_resolver_service,
         "registry": registry,
         "provider_http": provider_http,
         "login": login,
@@ -465,6 +540,135 @@ def test_new_project_query_uses_job_scope_refresh_and_safe_provider_audit() -> N
     assert fixture["mock"].password not in evidence
 
 
+def test_custom_option_query_is_dictionary_validated_before_fixed_graphql() -> None:
+    fixture = _fixture(capabilities=("ones_query_work_items_with_custom_options",))
+    service = fixture["custom_work_item_query_service"]
+    invocation_id = f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}"
+    result = service.invoke(
+        claims=service.authenticate(fixture["token"]),
+        arguments={
+            "custom_option_filters": [
+                {
+                    "field_uuid": "MOCK-CUSTOM-FIELD-SEVERITY",
+                    "option_uuids": ["MOCK-CUSTOM-OPTION-HIGH"],
+                }
+            ],
+            "limit": 10,
+        },
+        correlation_id="ones-custom-filter",
+        invocation_id=invocation_id,
+    )
+    assert [item["number"] for item in result["items"]] == [900103]
+    provider = fixture["runtime"].database.execute_one(
+        "select business_request_json from mcp_operation_audit "
+        "where correlation_id = ? and event_kind = 'PROVIDER'",
+        ("ones-custom-filter",),
+    )
+    assert provider is not None
+    request = json.loads(provider["business_request_json"])
+    assert request["variables"]["filterGroup"] == [
+        {"_MOCK-CUSTOM-FIELD-SEVERITY_in": ["MOCK-CUSTOM-OPTION-HIGH"]}
+    ]
+    assert "query" not in request
+
+    with pytest.raises(AppError) as unknown:
+        service.invoke(
+            claims=service.authenticate(fixture["token"]),
+            arguments={
+                "custom_option_filters": [
+                    {
+                        "field_uuid": "MOCK-CUSTOM-FIELD-SEVERITY",
+                        "option_uuids": ["MOCK-CUSTOM-OPTION-UNKNOWN"],
+                    }
+                ],
+                "limit": 10,
+            },
+            correlation_id="ones-custom-filter-unknown",
+            invocation_id=invocation_id,
+        )
+    assert unknown.value.error_code == "ones_query_condition_invalid"
+    assert (
+        fixture["runtime"].database.execute_one(
+            "select id from mcp_operation_audit "
+            "where correlation_id = ? and event_kind = 'PROVIDER'",
+            ("ones-custom-filter-unknown",),
+        )
+        is None
+    )
+
+
+def test_condition_resolution_uses_scoped_resource_without_provider_or_refresh() -> None:
+    fixture = _fixture(capabilities=("ones_resolve_query_conditions",))
+    service = fixture["condition_resolver_service"]
+    result = service.invoke(
+        claims=service.authenticate(fixture["token"]),
+        arguments={
+            "condition_type": "custom_option",
+            "field_keyword": "严重程度",
+            "keyword": "严重",
+            "limit": 10,
+        },
+        correlation_id="ones-condition-resolve",
+        invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
+    )
+    assert result["matches"][0]["option_uuid"] == "MOCK-CUSTOM-OPTION-HIGH"
+    assert fixture["login"].calls == 0
+    rows = fixture["runtime"].database.execute(
+        "select event_kind, status from mcp_operation_audit where correlation_id = ?",
+        ("ones-condition-resolve",),
+    )
+    assert {(row["event_kind"], row["status"]) for row in rows} == {
+        ("AUTHORIZATION", "SUCCEEDED"),
+        ("RESOURCE", "SUCCEEDED"),
+        ("TOOL", "SUCCEEDED"),
+    }
+
+
+def test_user_uuid_lookup_refreshes_once_and_never_projects_personal_details() -> None:
+    fixture = _fixture(
+        initial_token="stale-test-token",
+        capabilities=("ones_get_users_by_uuids",),
+    )
+    service = fixture["users_by_uuid_service"]
+    result = service.invoke(
+        claims=service.authenticate(fixture["token"]),
+        arguments={"user_uuids": [fixture["mock"].user_uuid]},
+        correlation_id="ones-users-by-uuid-refresh",
+        invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
+    )
+    assert result["users"] == [
+        {"uuid": fixture["mock"].user_uuid, "name": fixture["mock"].user_name}
+    ]
+    assert fixture["login"].calls == 1
+    serialized = json.dumps(result, ensure_ascii=False).casefold()
+    assert all(
+        forbidden not in serialized
+        for forbidden in ("email", "phone", "department", "avatar", "mfa", "company")
+    )
+    rows = fixture["runtime"].database.execute(
+        "select event_kind, attempt, status from mcp_operation_audit where correlation_id = ?",
+        ("ones-users-by-uuid-refresh",),
+    )
+    assert {(row["event_kind"], row["attempt"], row["status"]) for row in rows} >= {
+        ("PROVIDER", 0, "FAILED"),
+        ("CREDENTIAL", 0, "SUCCEEDED"),
+        ("PROVIDER", 1, "SUCCEEDED"),
+    }
+
+
+def test_user_uuid_lookup_maps_provider_forbidden() -> None:
+    fixture = _fixture(capabilities=("ones_get_users_by_uuids",))
+    service = fixture["users_by_uuid_service"]
+    with pytest.raises(OnesMcpError) as raised:
+        service.invoke(
+            claims=service.authenticate(fixture["token"]),
+            arguments={"user_uuids": ["__403__"]},
+            correlation_id="ones-users-by-uuid-forbidden",
+            invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
+        )
+    assert raised.value.error_code == "ones_provider_forbidden"
+
+
 def test_project_role_members_joins_fixed_rest_calls_and_audits_only_safe_summaries() -> None:
     fixture = _fixture()
     result = _list_project_role_members(
@@ -498,9 +702,7 @@ def test_project_role_members_joins_fixed_rest_calls_and_audits_only_safe_summar
         ("ones-project-role-members",),
     )
     provider_rows = [row for row in rows if row["event_kind"] == "PROVIDER"]
-    assert {row["tool_identifier"] for row in rows} == {
-        PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER
-    }
+    assert {row["tool_identifier"] for row in rows} == {PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER}
     assert [json.loads(row["business_request_json"])["operation"] for row in provider_rows] == [
         "project_role_members",
         "team_users",
@@ -571,10 +773,13 @@ def test_project_role_members_rejects_extra_identity_fields_before_audit() -> No
         )
 
     assert raised.value.error_code == "ones_tool_input_invalid"
-    assert fixture["runtime"].database.execute(
-        "select * from mcp_operation_audit where correlation_id = ?",
-        ("ones-project-role-members-forged-identity",),
-    ) == []
+    assert (
+        fixture["runtime"].database.execute(
+            "select * from mcp_operation_audit where correlation_id = ?",
+            ("ones-project-role-members-forged-identity",),
+        )
+        == []
+    )
 
 
 def test_project_role_members_refreshes_stale_token_once() -> None:
@@ -820,7 +1025,7 @@ def test_ones_mcp_v2_stateless_http_requires_bearer_and_supports_both_protocol_e
     assert "mcp-session-id" not in discovered_v2.headers
     assert [item["name"] for item in listed_v2.json()["result"]["tools"]] == [
         PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
-        "ones_work_item_search"
+        "ones_work_item_search",
     ]
     assert called_v2.status_code == 200, called_v2.text
     assert called_v2.json()["result"]["isError"] is False
