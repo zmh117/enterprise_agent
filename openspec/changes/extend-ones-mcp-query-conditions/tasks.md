@@ -22,8 +22,14 @@
 - [x] 4.1 实现并注册 `ones_get_users_by_uuids`，复用固定 Team users POST operation
 - [x] 4.2 只投影用户 UUID/姓名，并覆盖重复、空列表、超限、未知用户、401 refresh、403 与额外个人字段不泄露测试
 
-## 5. 文档与验证
+## 5. Agent查询Skill
 
-- [x] 5.1 更新 ONES MCP README，明确 GraphQL、REST、本地受管资源三类固定操作及字典更新流程
-- [x] 5.2 运行 ONES 契约、Mock、Runtime、架构定向测试以及静态检查、`git diff --check`、Compose 配置和严格 OpenSpec 校验
-- [x] 5.3 记录实现验证证据，并区分本地 Confirmed-current 与仍需授权真实 ONES 环境验证的项目
+- [x] 5.1 新增简短 `ones-query` Skill，定义实时发现、受管条件解析、工具选择、歧义停止和用户统计口径边界
+- [x] 5.2 注册 Skill 并验证其可被 Agent Profile 选择、进入运行时镜像且只通过新的 Publication/Job snapshot 生效
+- [x] 5.3 验证 Skill 不包含受管字典中的真实 Team、项目、人员、状态、字段或选项 UUID
+
+## 6. 文档与验证
+
+- [x] 6.1 更新 ONES MCP README，明确 GraphQL、REST、本地受管资源三类固定操作及字典更新流程
+- [x] 6.2 运行 ONES 契约、Mock、Runtime、架构定向测试以及静态检查、`git diff --check`、Compose 配置和严格 OpenSpec 校验
+- [x] 6.3 记录实现验证证据，并区分本地 Confirmed-current 与仍需授权真实 ONES 环境验证的项目

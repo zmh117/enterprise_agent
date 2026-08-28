@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 import yaml
 
+from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from services.ones_mcp_server.contracts import (
     ISSUE_TYPES,
     LOGIN_PATH,
@@ -208,7 +209,7 @@ def test_ones_query_assets_are_static_documents_without_dynamic_query_library() 
 
 
 def test_ones_query_dictionary_is_a_minimal_scoped_runtime_asset() -> None:
-    QueryConditionDictionary.load()
+    dictionary = QueryConditionDictionary.load()
     raw = json.loads(DEFAULT_DICTIONARY_PATH.read_text(encoding="utf-8"))
     serialized = json.dumps(raw, ensure_ascii=False).casefold()
     for forbidden in (
@@ -227,6 +228,33 @@ def test_ones_query_dictionary_is_a_minimal_scoped_runtime_asset() -> None:
 
     dockerfile = (REPOSITORY_ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
     assert "COPY services /app/services" in dockerfile
+
+    skill_path = REPOSITORY_ROOT / ".claude/skills/ones-query/SKILL.md"
+    skill = skill_path.read_text(encoding="utf-8")
+    assert "ones_resolve_query_conditions" in skill
+    assert "ones_query_work_items_with_custom_options" in skill
+    assert "default SLA" in skill
+    assert "ones-query" in SkillLoader.DEFAULT_SKILLS
+    assert SkillLoader().load(("ones-query",))["ones-query"] == skill
+    assert SkillLoader().load(()) == {}
+    catalog_item = next(item for item in SkillLoader().catalog() if item["code"] == "ones-query")
+    assert catalog_item["name"] == "ONES query orchestration"
+    assert catalog_item["description"].startswith("Orchestrate complex read-only ONES")
+    assert catalog_item["assignable"] is True
+
+    dictionary_identifiers = {dictionary.source_team_uuid}
+    dictionary_identifiers.update(value["uuid"] for value in dictionary.statuses)
+    for field in dictionary.fields:
+        dictionary_identifiers.add(str(field["uuid"]))
+        dictionary_identifiers.update(option["uuid"] for option in field["options"])
+    assert all(identifier not in skill for identifier in dictionary_identifiers)
+
+    context_builder = (
+        REPOSITORY_ROOT / "backend/app/modules/agent/application/agent_context_builder.py"
+    ).read_text(encoding="utf-8")
+    assert 'snapshot.get("skills")' in context_builder
+    assert "self.skill_loader.load(skill_names) if publication" in context_builder
+    assert "COPY .claude/skills /app/.claude/skills" in dockerfile
 
 
 def test_provider_target_requires_https_except_explicit_local_mock() -> None:

@@ -46,6 +46,15 @@ not widen an existing publication. The existing `ones_query_work_items` contract
 unchanged; custom-option support is a separate Tool so its schema hash cannot drift
 for historical Publications or Jobs.
 
+## Agent query orchestration
+
+The optional `ones-query` Skill teaches an Agent how to combine live project,
+sprint, issue-type, and user discovery with managed condition resolution and the
+fixed work-item tools. It does not contain dictionary UUIDs or default statistical
+formulas. The Skill is available to Agent Profile configuration but is loaded only
+when a new Publication snapshot selects it; existing Publications and Jobs are not
+modified automatically.
+
 ## Updating the managed query-condition snapshot
 
 The ignored `ones_mock/ones/查询条件字典.yaml` is maintenance input only. Production,

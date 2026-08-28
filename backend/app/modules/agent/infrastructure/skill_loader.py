@@ -5,14 +5,21 @@ from typing import Any
 
 
 class SkillLoader:
-    DEFAULT_SKILLS = ("bug-analysis", "sql-diagnosis", "redis-diagnosis", "loki-log-analysis")
+    DEFAULT_SKILLS = (
+        "bug-analysis",
+        "sql-diagnosis",
+        "redis-diagnosis",
+        "loki-log-analysis",
+        "ones-query",
+    )
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or Path.cwd() / ".claude" / "skills"
 
     def load(self, names: tuple[str, ...] | None = None) -> dict[str, str]:
         result: dict[str, str] = {}
-        for name in names or self.DEFAULT_SKILLS:
+        selected = self.DEFAULT_SKILLS if names is None else names
+        for name in selected:
             path = self.root / name / "SKILL.md"
             if path.exists():
                 result[name] = path.read_text()
@@ -30,7 +37,8 @@ class SkillLoader:
                     (
                         line.strip("# ")
                         for line in content.splitlines()
-                        if line.strip() and not line.startswith("---")
+                        if line.strip()
+                        and not line.strip().startswith(("---", "name:", "description:"))
                     ),
                     name,
                 )
@@ -63,6 +71,8 @@ class SkillLoader:
 def _description(content: str) -> str:
     for line in content.splitlines():
         text = line.strip()
+        if text.startswith("description:"):
+            return text.removeprefix("description:").strip()[:300]
         if text and not text.startswith(("#", "---", "name:")):
             return text[:300]
     return ""

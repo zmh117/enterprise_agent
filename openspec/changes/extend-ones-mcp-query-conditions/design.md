@@ -12,13 +12,14 @@
 - 新增 `ones_query_work_items_with_custom_options`，仅接受字典允许的自定义选项字段与选项 UUID，继续使用固定 GraphQL 文档，并保持既有 `ones_query_work_items` 契约与 schema hash 不变。
 - 提供按明确 UUID 批量查询用户的固定只读 REST Tool，只投影 UUID 与姓名。
 - 让字典资源按 Team、版本、采集时间和内容摘要可校验，且不包含人员、项目、迭代、凭据或原始响应。
+- 提供基础 `ones-query` Skill，固化实时发现优先、条件解析、工具选择、歧义处理和可变统计口径的澄清边界。
 
 **Non-Goals:**
 
 - 不实现任意 GraphQL、REST、筛选键或自由 JSON 执行器。
 - 不支持自定义文本、日期、数值、用户、多级联动等尚无真实请求证据的字段类型；本次仅支持单选/多选 UUID 条件。
 - 不把个人抓取中的人员、项目或迭代列表作为授权、实时可见性或全局租户事实。
-- 不定义“响应时间”“完成”等统计口径，也不新增 Agent Skill；这些按用户要求留到后续独立变更。
+- 不定义“响应时间”“完成”等固定统计口径或默认 SLA；Skill 只要求按本次用户定义执行，缺少关键定义时先澄清。
 - 不自动修改既有 Agent/Application Publication 或已冻结 Job。
 
 ## Decisions
@@ -51,6 +52,12 @@ GraphQL 文档仍位于 `provider/graphql/documents/`，没有动态查询文本
 
 现有 `ones_search_team_users` 继续负责按关键词发现人员；新 Tool 用于已有 UUID 的批量反查，不合并两个不同语义。
 
+### 5. Skill 只保存查询编排决策，不保存业务字典
+
+新增 `.claude/skills/ones-query/SKILL.md` 并注册到 `SkillLoader.DEFAULT_SKILLS`，使管理面可以选择该 Skill，并在新 Agent Publication 中冻结其 code；运行时仍只加载 Publication snapshot 明确选择的 Skill。Skill 指导 Agent 先用实时 Tool 解析项目、迭代、事项类型和人员，只有精确工作流状态或自定义选项才调用 `ones_resolve_query_conditions`；同名或多候选不自动取第一项。
+
+Skill 不包含真实 Team、项目、人员、状态、字段或选项 UUID，也不读取运行字典文件。它只说明如何调用受管 Tool；实际字典读取、Team 校验和 Provider 筛选键构造仍由 ONES MCP 完成。统计时仅采用本次用户明确的完成、响应时间、工作时段、排除项、分组与月份边界；任何会显著改变结果的缺失定义都先询问用户。
+
 ## Risks / Trade-offs
 
 - [静态选项在 ONES 中发生漂移] → 资源带采集日期和摘要；未知值失败关闭，更新必须重新同步、测试、发布镜像和 Agent/Application Publication。
@@ -63,10 +70,10 @@ GraphQL 文档仍位于 `provider/graphql/documents/`，没有动态查询文本
 
 1. 生成并审查最小字典资源，运行安全扫描确认不含人员段、Header、邮箱和手机号。
 2. 发布共享 Tool 契约、ONES MCP 实现与合成 Mock，并完成定向测试；确认既有 `ones_query_work_items` schema hash 未变化。
-3. 重建 `api-server` 与 `ones-mcp` 镜像，验证 Tool 和字典资源进入对应镜像。
-4. 创建新的 Agent Publication，选择新增 ONES Tools；再显式发布并激活需要使用它的 Business Application。
+3. 重建 `api-server`、`agent-worker` 与 `ones-mcp` 镜像，验证 Tool、字典资源和 Skill 进入对应镜像。
+4. 创建新的 Agent Publication，选择 `ones-query` 与新增 ONES Tools；再显式发布并激活需要使用它的 Business Application。
 5. 回滚时切回旧 Publication/Deployment；旧 Job 不受资源更新影响。
 
 ## Open Questions
 
-无。统计口径明确留在后续用户需求中，不阻塞本次基础查询能力。
+无。Skill 明确不提供默认统计口径，具体定义仍来自每次用户需求。

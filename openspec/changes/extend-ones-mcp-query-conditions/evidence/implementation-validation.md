@@ -1,12 +1,17 @@
 # Implementation validation
 
-Date: 2026-08-27
+Date: 2026-08-28
 
 ## Confirmed-current local evidence
 
 - ONES contract, Mock, GraphQL/REST operation, Runtime, Provider client,
-  dictionary, and architecture tests: `108 passed`.
-- Test-tier governance checks: `7 passed`.
+  dictionary, Agent Profile, image-security, architecture, and test-tier
+  governance tests: `150 passed`.
+- The `ones-query` Skill passed the standard Skill validator, is available in
+  the Agent Profile catalog, is packaged by the existing Runtime image copy,
+  and contains none of the managed dictionary Team/status/field/option UUIDs.
+- `SkillLoader.load(())` now returns no Skills, preserving an explicitly empty
+  Publication snapshot instead of falling back to all registered defaults.
 - Ruff lint and format checks passed for all changed Python paths.
 - Targeted Mypy check passed for the ONES MCP implementation, dictionary sync,
   and shared Tool contracts.
@@ -25,5 +30,8 @@ Date: 2026-08-27
   current personal-account visibility, current Team dictionary freshness, and
   production publication/deployment remain pending an explicitly authorized
   read-only verification and deployment flow.
-- No Agent Skill or statistical definition was added; the user explicitly
-  deferred that work to a later change.
+- No fixed statistical formula or default SLA was added. The Skill requires the
+  current user request to define any material completion, response-time,
+  working-hours, exclusion, grouping, or month-boundary rule.
+- No Agent or Business Application Publication was created or activated, so
+  existing Publications and Jobs do not receive the new Skill automatically.
