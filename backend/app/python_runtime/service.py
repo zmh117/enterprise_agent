@@ -30,6 +30,7 @@ from app.shared.mcp_server_policy import (
     MAX_BUSINESS_PRINCIPAL_SERVERS,
     MAX_MCP_PRINCIPAL_TOKEN_BYTES,
     MCP_SERVER_POLICIES,
+    DINGTALK_MCP_SERVER_CODE,
     ONES_MCP_SERVER_CODE,
     McpServerAuthMode,
     McpServerPolicy,
@@ -495,7 +496,11 @@ def _default_dependencies() -> PythonRuntimeDependencies:
             ONES_MCP_SERVER_CODE: os.getenv(
                 "ONES_MCP_SERVER_URL",
                 "http://ones-mcp:9104/mcp",
-            )
+            ),
+            DINGTALK_MCP_SERVER_CODE: os.getenv(
+                "DINGTALK_MCP_SERVER_URL",
+                "http://dingtalk-mcp:9107/mcp",
+            ),
         },
         file_mcp_server_url=os.getenv(
             "FILE_MCP_SERVER_URL",

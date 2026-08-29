@@ -746,6 +746,7 @@ class RuntimeControlService:
         audit_service: AuditService,
         max_event_bytes: int = 256 * 1024,
         lease_ttl_seconds: int = 15,
+        external_action_service: Any | None = None,
     ) -> None:
         self.repository = repository
         self.secret_resolver = secret_resolver
@@ -753,6 +754,57 @@ class RuntimeControlService:
         self.audit_service = audit_service
         self.max_event_bytes = max_event_bytes
         self.lease_ttl_seconds = lease_ttl_seconds
+        self.external_action_service = external_action_service
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def receive_card_action(
+        self,
+        *,
+        runtime_id: str,
+        lease_token: str,
+        connector_id: str,
+        corp_id: str,
+        out_track_id: str,
+        user_id: str,
+        action: str,
+        revision: int,
+        intent_token: str,
+    ) -> dict[str, Any]:
+        self.repository.require_lease(
+            runtime_id=_runtime_id(runtime_id), lease_token=lease_token
+        )
+        connector = self.repository.get_connector(connector_id)
+        if (
+            str(connector.get("connector_type") or "") != "dingtalk_enterprise_stream"
+            or not bool(connector.get("enabled"))
+            or not bool(connector.get("allow_ingress"))
+        ):
+            raise NonRetryableExecutionError(
+                "Connector cannot accept card callbacks",
+                safe_message="该钉钉应用连接不能接收卡片回调",
+                error_code="dingtalk_card_connector_ineligible",
+            )
+        if self.external_action_service is None:
+            raise NonRetryableExecutionError(
+                "External Action confirmation service is unavailable",
+                safe_message="外部操作确认服务尚未配置",
+                error_code="external_action_service_unavailable",
+            )
+        result = self.external_action_service.handle_callback(
+            connector_id=connector_id,
+            corp_id=corp_id,
+            out_track_id=out_track_id,
+            user_id=user_id,
+            action=action,
+            revision=revision,
+            intent_token=intent_token,
+        )
+        return {
+            "acknowledged": result.acknowledged,
+            "duplicate": result.duplicate,
+            "status": result.status,
+            "response": result.response,
+        }
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def acquire(self, runtime_id: str) -> dict[str, Any] | None:

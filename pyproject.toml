@@ -52,6 +52,9 @@ tool-mcp = [
 ones-mcp = [
   "mcp==2.0.0",
 ]
+dingtalk-mcp = [
+  "mcp==2.0.0",
+]
 file-service = [
   "mcp==2.0.0",
 ]

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ControlApi, ControlApiError } from "../src/control-api.js";
+import {
+  CardCallbackInputError,
+  ControlApi,
+  ControlApiError,
+} from "../src/control-api.js";
 
 test("submit reports compact UTF-8 JSON byte count", async () => {
   const originalFetch = globalThis.fetch;
@@ -120,4 +124,86 @@ test("control API errors expose only a validated safe error code", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("card callback forwards only governed action facts", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(
+      JSON.stringify({
+        acknowledged: true,
+        duplicate: false,
+        status: "APPROVED",
+        response: {},
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  };
+  try {
+    const api = new ControlApi({
+      baseUrl: "http://control-api.test",
+      token: "runtime-token",
+    });
+    await api.submitCardAction("runtime-1", "lease-1", "connector-1", {
+      headers: { messageId: "message-1" },
+      data: JSON.stringify({
+        corpId: "corp-1",
+        outTrackId: "action-1",
+        userId: "staff-1",
+        content: JSON.stringify({
+          cardPrivateData: {
+            params: {
+              action: "confirm",
+              expectedRevision: "2",
+              intentToken: "v1.2.signature",
+              supplement: "must not be forwarded in MVP",
+            },
+          },
+        }),
+      }),
+    });
+    assert.deepEqual(requestBody, {
+      runtime_id: "runtime-1",
+      lease_token: "lease-1",
+      connector_id: "connector-1",
+      corp_id: "corp-1",
+      out_track_id: "action-1",
+      user_id: "staff-1",
+      action: "agree",
+      revision: 2,
+      intent_token: "v1.2.signature",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("card callback fails closed when the private intent token is absent", async () => {
+  const api = new ControlApi({
+    baseUrl: "http://control-api.test",
+    token: "runtime-token",
+  });
+  await assert.rejects(
+    api.submitCardAction("runtime-1", "lease-1", "connector-1", {
+      headers: { messageId: "message-1" },
+      data: JSON.stringify({
+        corpId: "corp-1",
+        outTrackId: "action-1",
+        userId: "staff-1",
+        content: JSON.stringify({
+          cardPrivateData: {
+            params: {
+              action: "confirm",
+              expectedRevision: "2",
+            },
+          },
+        }),
+      }),
+    }),
+    (error: unknown) =>
+      error instanceof CardCallbackInputError &&
+      error.code === "callback_token_missing"
+  );
 });

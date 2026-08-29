@@ -21,6 +21,7 @@ from app.modules.agent.infrastructure.runtime_protocol import (
 )
 from app.shared.mcp_server_policy import (
     FILE_MCP_SERVER_CODE,
+    DINGTALK_MCP_SERVER_CODE,
     MCP_SERVER_POLICIES,
     ONES_MCP_SERVER_CODE,
     TOOL_MCP_SERVER_CODE,
@@ -100,7 +101,10 @@ class PythonRuntimeExecutor:
         )
         validate_mcp_server_policies(self._server_policies)
         raw_business_urls = (
-            {ONES_MCP_SERVER_CODE: "http://ones-mcp:9104/mcp"}
+            {
+                ONES_MCP_SERVER_CODE: "http://ones-mcp:9104/mcp",
+                DINGTALK_MCP_SERVER_CODE: "http://dingtalk-mcp:9107/mcp",
+            }
             if business_mcp_server_urls is None
             else dict(business_mcp_server_urls)
         )

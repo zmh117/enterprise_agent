@@ -25,7 +25,10 @@ from app.modules.agent.infrastructure.runtime_http_client import (
     RuntimePrincipalTokens,
     probe_runtime_readiness,
 )
-from app.shared.mcp_server_policy import ONES_MCP_SERVER_CODE
+from app.shared.mcp_server_policy import (
+    DINGTALK_MCP_SERVER_CODE,
+    ONES_MCP_SERVER_CODE,
+)
 from app.modules.model_connection.domain import (
     ANTHROPIC_COMPATIBLE_PROTOCOL,
     ModelRuntimeBinding,
@@ -505,6 +508,15 @@ def _client(
         ),
         public_pem,
     )
+
+
+def test_runtime_client_default_allowlist_includes_governed_dingtalk_mcp() -> None:
+    settings = RuntimeClientSettings(
+        base_url="http://agent-runtime:8090",
+        allowed_runtime_hosts=("agent-runtime",),
+    )
+
+    assert DINGTALK_MCP_SERVER_CODE in settings.allowed_mcp_server_codes
 
 
 def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:

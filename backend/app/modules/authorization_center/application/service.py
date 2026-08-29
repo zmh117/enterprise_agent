@@ -13,14 +13,11 @@ from app.modules.authorization_center.infrastructure.repository import (
 )
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.modules.identity.infrastructure import IdentityRepository
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
 
 _ROLE_CODE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
-_FORBIDDEN_BUSINESS_CAPABILITY = re.compile(
-    r"(^|[._-])(write|insert|update|delete|drop|shell|exec|file-write|redis-set)([._-]|$)",
-    re.IGNORECASE,
-)
 _ROLE_AUDIT_LABELS = {
     "authorization.role.created": "创建角色",
     "authorization.role.metadata.updated": "更新基本信息",
@@ -631,10 +628,14 @@ class AuthorizationCenterService:
                         f"applications.{index}.tool_identifiers",
                         f"MCP Tool 未在业务应用中装配：{identifier}",
                     )
-                if _FORBIDDEN_BUSINESS_CAPABILITY.search(identifier):
+                definition = MCP_TOOL_MANIFEST.get(identifier)
+                if definition is None or (
+                    definition.effect == "mutation"
+                    and definition.confirmation_policy == "none"
+                ):
                     self._field_error(
                         f"applications.{index}.tool_identifiers",
-                        "角色只允许授予已注册的只读 MCP Tool",
+                        "角色只能授予代码注册且确认策略完整的 MCP Tool",
                     )
             scopes: list[dict[str, Any]] = []
             seen_scopes: set[str] = set()

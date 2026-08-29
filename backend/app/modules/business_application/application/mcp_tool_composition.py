@@ -32,6 +32,10 @@ class ApplicationMcpToolCompositionService:
                     "schema_hash": str(row["schema_hash"]),
                     "description": MCP_TOOL_MANIFEST[str(row["tool_identifier"])].description,
                     "resource_kind": MCP_TOOL_MANIFEST[str(row["tool_identifier"])].resource_kind,
+                    "effect": MCP_TOOL_MANIFEST[str(row["tool_identifier"])].effect,
+                    "confirmation_policy": MCP_TOOL_MANIFEST[
+                        str(row["tool_identifier"])
+                    ].confirmation_policy,
                 }
                 for row in rows
                 if str(row["tool_identifier"]) in MCP_TOOL_MANIFEST
@@ -89,6 +93,8 @@ class ApplicationMcpToolCompositionService:
                 "tool_identifier": identifier,
                 "schema_hash": MCP_TOOL_MANIFEST[identifier].schema_hash,
                 "resource_kind": MCP_TOOL_MANIFEST[identifier].resource_kind,
+                "effect": MCP_TOOL_MANIFEST[identifier].effect,
+                "confirmation_policy": MCP_TOOL_MANIFEST[identifier].confirmation_policy,
                 "selection_order": index,
             }
             for index, identifier in enumerate(selected)

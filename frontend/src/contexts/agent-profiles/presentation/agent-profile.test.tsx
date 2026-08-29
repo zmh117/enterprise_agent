@@ -151,6 +151,16 @@ function agentPayload(
             resource_kind: "",
             read_only: true,
           },
+          {
+            server_code: "dingtalk-mcp",
+            identifier: "dingtalk_create_todo",
+            description: "为当前钉钉用户准备一个本人待办。",
+            schema_hash: "c".repeat(64),
+            resource_kind: "",
+            read_only: false,
+            effect: "mutation",
+            confirmation_policy: "external_action_card_v1",
+          },
         ],
       },
     },
@@ -1185,14 +1195,23 @@ describe("Agent Profile management", () => {
     expect(await screen.findByText("MCP 工具")).toBeInTheDocument()
     expect(screen.getByText("查看数据库结构目录")).toBeInTheDocument()
     expect(screen.getByText("只读查询 ONES 工作项")).toBeInTheDocument()
+    expect(screen.getByText("为当前钉钉用户准备一个本人待办。")).toBeInTheDocument()
+    expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole("checkbox", { name: "ones_work_item_search" })
+    )
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "dingtalk_create_todo" })
     )
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
 
     await waitFor(() =>
       expect(savedConfig).toMatchObject({
-        mcp_tool_ids: ["get_schema_directory", "ones_work_item_search"],
+        mcp_tool_ids: [
+          "get_schema_directory",
+          "ones_work_item_search",
+          "dingtalk_create_todo",
+        ],
       })
     )
   })

@@ -466,6 +466,15 @@ describe("Business Application workbench", () => {
                 description: "只读查询合并请求",
                 resource_kind: "gitlab",
               },
+              {
+                server_code: "dingtalk-mcp",
+                tool_identifier: "dingtalk_create_todo",
+                schema_hash: "e".repeat(64),
+                description: "为当前钉钉用户准备一个本人待办。",
+                resource_kind: "",
+                effect: "mutation",
+                confirmation_policy: "external_action_card_v1",
+              },
               ...[
                 "task_workspace_get",
                 "task_workspace_list_files",
@@ -486,6 +495,15 @@ describe("Business Application workbench", () => {
                 schema_hash: "c".repeat(64),
                 description: "只读查询合并请求",
                 resource_kind: "gitlab",
+              },
+              {
+                server_code: "dingtalk-mcp",
+                tool_identifier: "dingtalk_create_todo",
+                schema_hash: "f".repeat(64),
+                description: "为当前钉钉用户准备一个本人待办。",
+                resource_kind: "",
+                effect: "mutation",
+                confirmation_policy: "external_action_card_v1",
               },
               ...[
                 "task_workspace_get",
@@ -619,8 +637,15 @@ describe("Business Application workbench", () => {
       "选择 MCP Tool search_merge_requests"
     )
     expect(screen.getByText("只读查询合并请求")).toBeInTheDocument()
+    expect(screen.getByText("为当前钉钉用户准备一个本人待办。")).toBeInTheDocument()
+    expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(mcpTool)
     expect(mcpTool).toBeChecked()
+    const dingtalkTool = screen.getByLabelText(
+      "选择 MCP Tool dingtalk_create_todo"
+    )
+    fireEvent.click(dingtalkTool)
+    expect(dingtalkTool).toBeChecked()
     const requiredFileTool = screen.getByLabelText(
       "选择 MCP Tool file_prepare_materialization"
     )
@@ -648,6 +673,7 @@ describe("Business Application workbench", () => {
         },
         mcp_tools: expect.arrayContaining([
           "search_merge_requests",
+          "dingtalk_create_todo",
           "task_workspace_get",
           "task_workspace_list_files",
           "file_get_metadata",

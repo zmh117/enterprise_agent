@@ -281,6 +281,92 @@ services:
       - agent-runtime-control
       - provider-egress
 
+  dingtalk-mcp:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: dingtalk-mcp
+      args: *release-build-args
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777,uid=10007,gid=10007
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      <<: *database-env
+      APP_ENV: ${APP_ENV:-local}
+      SEED_LOCAL_CONFIG: "false"
+      PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
+    secrets:
+      - app_config_master_key
+      - principal_jwks
+    expose:
+      - "9107"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9107/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+    networks:
+      - agent-runtime-control
+
+  external-action-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: dingtalk-mcp
+      args: *release-build-args
+    command: ["python", "-m", "services.dingtalk_mcp_server.worker"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777,uid=10007,gid=10007
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      <<: *database-env
+      APP_ENV: ${APP_ENV:-local}
+      SEED_LOCAL_CONFIG: "false"
+    secrets:
+      - app_config_master_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      dingtalk-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/external-action-worker.heartbeat"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+    networks:
+      - default
+      - provider-egress
+
   file-service:
     build:
       context: .
@@ -366,6 +452,7 @@ services:
       MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
       MCP_TOOL_SERVER_URL: http://tool-mcp:9103/mcp
       ONES_MCP_SERVER_URL: http://ones-mcp:9104/mcp
+      DINGTALK_MCP_SERVER_URL: http://dingtalk-mcp:9107/mcp
       FILE_MCP_SERVER_URL: http://file-service:9105/mcp
       PYTHON_AGENT_RUNTIME_SANDBOX_ROOT: /tmp/python-agent-runtime/sandboxes
       PYTHON_AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES: ${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-234881024}
@@ -391,6 +478,8 @@ services:
       tool-mcp:
         condition: service_healthy
       ones-mcp:
+        condition: service_healthy
+      dingtalk-mcp:
         condition: service_healthy
       file-service:
         condition: service_healthy
@@ -527,6 +616,8 @@ services:
       tool-mcp:
         condition: service_healthy
       ones-mcp:
+        condition: service_healthy
+      dingtalk-mcp:
         condition: service_healthy
       python-agent-runtime:
         condition: service_healthy

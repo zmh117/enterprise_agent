@@ -350,6 +350,14 @@ describe("角色授权中心", () => {
                   description: "对唯一解析的数据资源执行策略允许的只读 SQL。",
                   version_constraint: "",
                 },
+                {
+                  tool_identifier: "dingtalk_create_todo",
+                  display_name_zh: "创建钉钉待办",
+                  description: "为当前钉钉用户准备一个本人待办。",
+                  version_constraint: "",
+                  effect: "mutation",
+                  confirmation_policy: "external_action_card_v1",
+                },
               ],
             },
           ],
@@ -375,6 +383,11 @@ describe("角色授权中心", () => {
     expect(
       await screen.findByText("对唯一解析的数据资源执行策略允许的只读 SQL。")
     ).toBeInTheDocument()
+    expect(screen.getByText("创建钉钉待办")).toBeInTheDocument()
+    expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /MCP Tool dingtalk_create_todo/ })
+    )
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "选择 test 环境" })
     )
@@ -396,7 +409,7 @@ describe("角色授权中心", () => {
         applications: [
           {
             application_id: "app-test",
-            tool_identifiers: ["query_database"],
+            tool_identifiers: ["query_database", "dingtalk_create_todo"],
             scopes: [{ environment_id: "environment-test" }],
           },
         ],

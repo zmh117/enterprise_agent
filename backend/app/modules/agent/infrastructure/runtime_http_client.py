@@ -26,6 +26,7 @@ from app.modules.agent.infrastructure.runtime_protocol import (
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.mcp_server_policy import (
+    DINGTALK_MCP_SERVER_CODE,
     FILE_MCP_SERVER_CODE,
     MAX_BUSINESS_PRINCIPAL_HEADER_BYTES,
     MAX_BUSINESS_PRINCIPAL_SERVERS,
@@ -351,6 +352,7 @@ class RuntimeClientSettings:
     allowed_mcp_server_codes: tuple[str, ...] = (
         STANDARD_TOOL_MCP_CODE,
         ONES_MCP_SERVER_CODE,
+        DINGTALK_MCP_SERVER_CODE,
         FILE_MCP_CODE,
     )
     allow_insecure_internal_http: bool = False

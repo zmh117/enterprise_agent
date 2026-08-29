@@ -999,6 +999,12 @@ function BusinessApplicationCard({
                     <span className="mt-1 block text-xs leading-5 text-muted-foreground">
                       {tool.description.trim() || "暂无工具说明。"}
                     </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {tool.effect === "mutation" ? "受控写操作" : "只读"}
+                      {tool.confirmation_policy === "external_action_card_v1"
+                        ? " · 需原用户确认卡片"
+                        : ""}
+                    </span>
                   </span>
                 </label>
               ))}

@@ -206,6 +206,8 @@ export const agentDetailSchema = z.object({
           schema_hash: z.string(),
           resource_kind: z.string(),
           read_only: z.boolean(),
+          effect: z.enum(["read", "mutation"]).default("read"),
+          confirmation_policy: z.string().default("none"),
         })
       )
       .default([]),

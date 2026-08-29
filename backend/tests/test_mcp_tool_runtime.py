@@ -273,6 +273,10 @@ def test_code_owned_mcp_manifest_has_stable_unique_tool_contracts() -> None:
         assert len(definition.schema_hash) == 64
         if definition.server_code == "file-service":
             assert definition.read_only is (not FILE_TOOL_MANIFEST[identifier].mutating)
+        elif definition.server_code == "dingtalk-mcp":
+            assert definition.read_only is False
+            assert definition.effect == "mutation"
+            assert definition.confirmation_policy == "external_action_card_v1"
         else:
             assert definition.read_only is True
         assert require_mcp_tool(identifier) is definition

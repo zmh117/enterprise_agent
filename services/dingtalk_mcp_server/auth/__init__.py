@@ -1,0 +1,1 @@
+"""DingTalk MCP Principal resolution."""

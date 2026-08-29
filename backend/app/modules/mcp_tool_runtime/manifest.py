@@ -5,8 +5,13 @@ from typing import Any, Mapping
 
 from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
 from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
+from app.shared.dingtalk_tool_contracts import (
+    DINGTALK_CONFIRMATION_POLICY,
+    DINGTALK_TOOL_CONTRACTS,
+)
 from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
 from app.shared.mcp_server_policy import (
+    DINGTALK_MCP_SERVER_CODE,
     FILE_MCP_SERVER_CODE,
     MCP_SERVER_POLICIES,
     ONES_MCP_SERVER_CODE,
@@ -39,6 +44,8 @@ class McpToolDefinition:
     schema_hash: str
     resource_kind: str = ""
     read_only: bool = True
+    effect: str = "read"
+    confirmation_policy: str = "none"
 
 
 def mcp_tool_schema_hash(input_schema: dict[str, Any]) -> str:
@@ -68,6 +75,19 @@ for _ones_contract in ONES_TOOL_CONTRACTS.values():
         read_only=True,
     )
 
+for _dingtalk_contract in DINGTALK_TOOL_CONTRACTS.values():
+    MCP_TOOL_MANIFEST[_dingtalk_contract.identifier] = McpToolDefinition(
+        server_code=DINGTALK_MCP_SERVER_CODE,
+        identifier=_dingtalk_contract.identifier,
+        description=_dingtalk_contract.description,
+        input_schema=_dingtalk_contract.input_schema,
+        schema_hash=mcp_tool_schema_hash(_dingtalk_contract.input_schema),
+        resource_kind="",
+        read_only=False,
+        effect="mutation",
+        confirmation_policy=DINGTALK_CONFIRMATION_POLICY,
+    )
+
 for _identifier, _file_tool in FILE_TOOL_MANIFEST.items():
     MCP_TOOL_MANIFEST[_identifier] = McpToolDefinition(
         server_code=FILE_MCP_SERVER_CODE,
@@ -77,6 +97,8 @@ for _identifier, _file_tool in FILE_TOOL_MANIFEST.items():
         schema_hash=_file_tool.schema_hash,
         resource_kind="file",
         read_only=not _file_tool.mutating,
+        effect="mutation" if _file_tool.mutating else "read",
+        confirmation_policy="file_workspace_intent" if _file_tool.mutating else "none",
     )
 
 
@@ -99,6 +121,17 @@ def validate_mcp_tool_manifest(
         if identifier != definition.identifier:
             raise ValueError("MCP Tool Manifest identifier is inconsistent")
         require_mcp_server_policy(definition.server_code, policies=selected_policies)
+        if definition.effect not in {"read", "mutation"}:
+            raise ValueError("MCP Tool effect is invalid")
+        if definition.read_only != (definition.effect == "read"):
+            raise ValueError("MCP Tool read_only and effect are inconsistent")
+        if definition.effect == "read" and definition.confirmation_policy != "none":
+            raise ValueError("Read-only MCP Tool cannot declare mutation confirmation")
+        if definition.effect == "mutation" and definition.confirmation_policy not in {
+            DINGTALK_CONFIRMATION_POLICY,
+            "file_workspace_intent",
+        }:
+            raise ValueError("Mutation MCP Tool requires a supported confirmation policy")
 
 
 validate_mcp_server_policies()

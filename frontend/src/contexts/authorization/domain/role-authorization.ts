@@ -119,6 +119,8 @@ export const catalogApplicationSchema = z.object({
       display_name_zh: z.string().default("MCP Tool"),
       description: z.string().default(""),
       version_constraint: z.string(),
+      effect: z.enum(["read", "mutation"]).default("read"),
+      confirmation_policy: z.string().default("none"),
     }),
   ),
 })

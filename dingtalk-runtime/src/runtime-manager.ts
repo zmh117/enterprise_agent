@@ -5,7 +5,11 @@ import type {
   StreamClient,
   StreamClientFactory,
 } from "./contracts.js";
-import { ControlApiError, type ControlApi } from "./control-api.js";
+import {
+  CardCallbackInputError,
+  ControlApiError,
+  type ControlApi,
+} from "./control-api.js";
 
 interface ManagedClient {
   config: DesiredConnector;
@@ -133,6 +137,35 @@ export class RuntimeManager {
         // No ACK: DingTalk can redeliver. Secrets and payloads are intentionally not logged.
       }
     });
+    client.onCardCallback(async (message) => {
+      try {
+        const result = await this.controlApi.submitCardAction(
+          this.runtimeId,
+          this.leaseToken,
+          config.connector_id,
+          message
+        );
+        if (result.acknowledged) {
+          managed.registrationConfirmed = true;
+          managed.errorCode = "";
+          managed.errorSummary = "";
+          client.acknowledge(message.headers.messageId, result.response);
+        }
+      } catch (error) {
+        const failure = inboxFailure(error);
+        managed.errorCode = `card_${failure.code}`.slice(0, 120);
+        managed.errorSummary = "DingTalk card callback was rejected safely";
+        console.warn(
+          JSON.stringify({
+            event: "dingtalk_card_callback_rejected",
+            connector_id: config.connector_id,
+            status: failure.status,
+            error_code: managed.errorCode,
+          })
+        );
+        // No ACK: only a durable, validated state transition may acknowledge.
+      }
+    });
     managed.operation = managed.operation.then(async () => {
       try {
         await client.connect();
@@ -195,6 +228,13 @@ function inboxFailure(error: unknown): {
   summary: string;
   status: number;
 } {
+  if (error instanceof CardCallbackInputError) {
+    return {
+      code: error.code.slice(0, 120),
+      summary: "DingTalk card callback failed bounded validation",
+      status: 0,
+    };
+  }
   if (error instanceof ControlApiError) {
     const suffix = error.code || `http_${error.status}`;
     return {

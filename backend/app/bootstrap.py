@@ -74,6 +74,12 @@ from app.modules.file_workspace.delivery_service import FileVersionDeliveryServi
 from app.modules.file_workspace.manifest_service import JobFileManifestService
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
+from app.modules.external_action.repository import ExternalActionRepository
+from app.modules.external_action.service import (
+    ExternalActionService,
+    ExternalActionTokenSigner,
+    external_action_signing_key,
+)
 from app.modules.dingding.application.dingding_message_service import DingTalkMessageService
 from app.modules.dingding.application.dingtalk_stream_service import (
     DingTalkStreamMessageService,
@@ -231,6 +237,7 @@ class Container:
     runtime_control_service: RuntimeControlService
     channel_outbox_publisher: ChannelOutboxPublisher
     channel_dispatch_service: ChannelDispatchService
+    external_action_service: ExternalActionService | None
     service_principal_token_issuer: ServicePrincipalTokenIssuer | None = None
 
 
@@ -896,6 +903,15 @@ def _build_container(
         audit_service=audit_service,
         stale_seconds=settings.managed_channels.stale_seconds,
     )
+    external_action_service = (
+        ExternalActionService(
+            ExternalActionRepository(database),
+            ExternalActionTokenSigner(external_action_signing_key(settings.app_config_master_key)),
+            audit_service,
+        )
+        if settings.app_config_master_key
+        else None
+    )
     runtime_control_service = RuntimeControlService(
         repository=managed_channel_repository,
         secret_resolver=connector_registry.resolve_reference,
@@ -903,6 +919,7 @@ def _build_container(
         audit_service=audit_service,
         max_event_bytes=settings.managed_channels.max_event_bytes,
         lease_ttl_seconds=settings.managed_channels.lease_ttl_seconds,
+        external_action_service=external_action_service,
     )
     channel_outbox_publisher = ChannelOutboxPublisher(
         repository=managed_channel_repository,
@@ -1161,4 +1178,5 @@ def _build_container(
         runtime_control_service=runtime_control_service,
         channel_outbox_publisher=channel_outbox_publisher,
         channel_dispatch_service=channel_dispatch_service,
+        external_action_service=external_action_service,
     )

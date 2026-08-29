@@ -139,6 +139,14 @@ class JobMcpToolSnapshotService:
                 definition is None
                 or definition.server_code != str(tool.get("server_code") or "")
                 or definition.schema_hash != str(tool.get("schema_hash") or "")
+                or (
+                    ("effect" in tool or "confirmation_policy" in tool)
+                    and (
+                        str(tool.get("effect") or "") != definition.effect
+                        or str(tool.get("confirmation_policy") or "")
+                        != definition.confirmation_policy
+                    )
+                )
             ):
                 raise ToolPolicyError(
                     "Job MCP Tool server or schema drift detected",
@@ -252,9 +260,14 @@ class JobMcpToolSnapshotService:
                     "tool_identifier": identifier,
                     "schema_hash": definition.schema_hash,
                     "resource_kind": definition.resource_kind,
+                    "effect": definition.effect,
+                    "confirmation_policy": definition.confirmation_policy,
                 }
             )
         snapshot = {
+            # The row/snapshot storage shape stays at v1. New snapshots add
+            # optional governed effect facts without invalidating historical
+            # snapshots that predate those fields.
             "schema_version": 1,
             "job_id": job_id,
             "application_publication_id": application_publication_id,

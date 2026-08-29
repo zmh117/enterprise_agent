@@ -365,6 +365,8 @@ def test_assignable_catalog_describes_tools_from_legacy_agent_publications() -> 
             "description": MCP_TOOL_MANIFEST["query_database"].description,
             "version_constraint": "",
             "display_name_zh": "只读查询数据库",
+            "effect": "read",
+            "confirmation_policy": "none",
         }
     ]
     c.database.close()

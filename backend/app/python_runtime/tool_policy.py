@@ -38,7 +38,6 @@ FORBIDDEN_TOOL_INPUT_FIELDS = frozenset(
         "user_id",
         "app_user_id",
         "actor_id",
-        "subject",
         "sub",
         "credential",
         "credential_id",

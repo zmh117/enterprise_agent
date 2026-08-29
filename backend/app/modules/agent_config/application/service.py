@@ -259,6 +259,8 @@ class AgentConfigService:
                     "schema_hash": definition.schema_hash,
                     "resource_kind": definition.resource_kind,
                     "read_only": definition.read_only,
+                    "effect": definition.effect,
+                    "confirmation_policy": definition.confirmation_policy,
                 }
                 for definition in MCP_TOOL_MANIFEST.values()
             ],
@@ -430,6 +432,10 @@ class AgentConfigService:
                     "tool_identifier": identifier,
                     "schema_hash": MCP_TOOL_MANIFEST[identifier].schema_hash,
                     "description": MCP_TOOL_MANIFEST[identifier].description,
+                    "effect": MCP_TOOL_MANIFEST[identifier].effect,
+                    "confirmation_policy": (
+                        MCP_TOOL_MANIFEST[identifier].confirmation_policy
+                    ),
                 }
                 for identifier in tool_ids
             ]

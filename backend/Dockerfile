@@ -88,6 +88,7 @@ COPY backend/app/modules/business_application /app/backend/app/modules/business_
 COPY backend/app/modules/channel /app/backend/app/modules/channel
 COPY backend/app/modules/delivery /app/backend/app/modules/delivery
 COPY backend/app/modules/document_processing /app/backend/app/modules/document_processing
+COPY backend/app/modules/external_action /app/backend/app/modules/external_action
 COPY backend/app/modules/dingding/__init__.py /app/backend/app/modules/dingding/
 COPY backend/app/modules/dingding/application /app/backend/app/modules/dingding/application
 COPY backend/app/modules/dingding/infrastructure /app/backend/app/modules/dingding/infrastructure
@@ -182,6 +183,17 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && python -c "import services.ones_mcp_server.app"
 USER 10003:10003
 CMD ["python", "-m", "services.ones_mcp_server"]
+
+FROM api-server AS dingtalk-mcp
+USER root
+COPY services /app/services
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['dingtalk-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    && groupadd --system --gid 10007 dingtalk-mcp \
+    && useradd --system --uid 10007 --gid 10007 --no-create-home dingtalk-mcp \
+    && python -c "import services.dingtalk_mcp_server.app; import services.dingtalk_mcp_server.worker"
+USER 10007:10007
+CMD ["python", "-m", "services.dingtalk_mcp_server"]
 
 FROM api-server AS file-service
 USER root

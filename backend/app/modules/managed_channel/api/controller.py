@@ -7,7 +7,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -135,6 +135,16 @@ class RuntimeInboxRequest(RuntimeLeaseRequest):
     safe_summary: dict[str, Any] = Field(default_factory=dict)
     payload_hash: str = Field(default="", max_length=128)
     request_bytes: int = Field(ge=0)
+
+
+class RuntimeCardActionRequest(RuntimeLeaseRequest):
+    connector_id: str = Field(min_length=1, max_length=160)
+    corp_id: str = Field(min_length=1, max_length=128)
+    out_track_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=256)
+    action: Literal["agree", "reject", "revise"]
+    revision: int = Field(ge=1, le=1000000)
+    intent_token: str = Field(min_length=1, max_length=256)
 
 
 def build_managed_channel_router() -> APIRouter:
@@ -560,6 +570,27 @@ def build_runtime_control_router() -> APIRouter:
                 "created": created,
                 "acknowledged": True,
             }
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
+    @router.post("/card-actions")
+    def card_actions(request: Request, payload: RuntimeCardActionRequest) -> dict[str, Any]:
+        _require_runtime_auth(request)
+        try:
+            return cast(
+                dict[str, Any],
+                container(request).runtime_control_service.receive_card_action(
+                    runtime_id=payload.runtime_id,
+                    lease_token=payload.lease_token,
+                    connector_id=payload.connector_id,
+                    corp_id=payload.corp_id,
+                    out_track_id=payload.out_track_id,
+                    user_id=payload.user_id,
+                    action=payload.action,
+                    revision=payload.revision,
+                    intent_token=payload.intent_token,
+                ),
+            )
         except Exception as exc:
             raise handle_exception(exc) from exc
 

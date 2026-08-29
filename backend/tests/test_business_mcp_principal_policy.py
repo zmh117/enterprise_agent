@@ -5,6 +5,7 @@ import pytest
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST, validate_mcp_tool_manifest
 from app.shared.mcp_server_policy import (
     FILE_MCP_SERVER_CODE,
+    DINGTALK_MCP_SERVER_CODE,
     MCP_SERVER_POLICIES,
     ONES_MCP_SERVER_CODE,
     TOOL_MCP_SERVER_CODE,
@@ -27,6 +28,7 @@ def test_fixed_mcp_servers_have_one_closed_auth_mode() -> None:
     assert {code: policy.auth_mode for code, policy in MCP_SERVER_POLICIES.items()} == {
         TOOL_MCP_SERVER_CODE: McpServerAuthMode.JOB_CONTEXT,
         ONES_MCP_SERVER_CODE: McpServerAuthMode.BUSINESS_PRINCIPAL_JWT,
+        DINGTALK_MCP_SERVER_CODE: McpServerAuthMode.BUSINESS_PRINCIPAL_JWT,
         FILE_MCP_SERVER_CODE: McpServerAuthMode.FILE_PRINCIPAL_JWT,
     }
     validate_mcp_tool_manifest()
@@ -60,6 +62,7 @@ def test_business_principal_header_mapping_is_exact_and_reversible() -> None:
     policies = business_mcp_test_policies()
     aliases = {code: mcp_sdk_server_alias(code, policies=policies) for code in policies}
     assert aliases[ONES_MCP_SERVER_CODE] == "ones_mcp"
+    assert aliases[DINGTALK_MCP_SERVER_CODE] == "dingtalk_mcp"
     assert aliases[TEST_BUSINESS_SERVER_CODE] == "test_business_mcp"
     assert len(set(aliases.values())) == len(aliases)
 

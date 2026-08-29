@@ -21,6 +21,7 @@ class McpServerPolicy:
 
 TOOL_MCP_SERVER_CODE = "tool-mcp"
 ONES_MCP_SERVER_CODE = "ones-mcp"
+DINGTALK_MCP_SERVER_CODE = "dingtalk-mcp"
 FILE_MCP_SERVER_CODE = "file-service"
 BUSINESS_PRINCIPAL_HEADER_PREFIX = "x-mcp-principal-token-"
 MAX_BUSINESS_PRINCIPAL_SERVERS = 8
@@ -37,6 +38,10 @@ MCP_SERVER_POLICIES: Mapping[str, McpServerPolicy] = MappingProxyType(
         ),
         ONES_MCP_SERVER_CODE: McpServerPolicy(
             server_code=ONES_MCP_SERVER_CODE,
+            auth_mode=McpServerAuthMode.BUSINESS_PRINCIPAL_JWT,
+        ),
+        DINGTALK_MCP_SERVER_CODE: McpServerPolicy(
+            server_code=DINGTALK_MCP_SERVER_CODE,
             auth_mode=McpServerAuthMode.BUSINESS_PRINCIPAL_JWT,
         ),
         FILE_MCP_SERVER_CODE: McpServerPolicy(

@@ -1,0 +1,18 @@
+from __future__ import annotations
+
+from app.shared.dingtalk_tool_contracts import (
+    DINGTALK_CREATE_TODO_TOOL_IDENTIFIER,
+    DINGTALK_TOOL_CONTRACTS,
+)
+from app.shared.mcp_server_policy import DINGTALK_MCP_SERVER_CODE, mcp_invoke_scope
+
+
+SERVER_CODE = DINGTALK_MCP_SERVER_CODE
+SERVER_VERSION = "0.1.0"
+TOOL_IDENTIFIER = DINGTALK_CREATE_TODO_TOOL_IDENTIFIER
+TOOL_CONTRACT = DINGTALK_TOOL_CONTRACTS[TOOL_IDENTIFIER]
+TOOL_INPUT_SCHEMA = TOOL_CONTRACT.input_schema
+TOOL_OUTPUT_SCHEMA = TOOL_CONTRACT.output_schema
+REQUIRED_SCOPE = mcp_invoke_scope(SERVER_CODE, TOOL_IDENTIFIER)
+OPERATION_CODE = "dingtalk.todo.create"
+

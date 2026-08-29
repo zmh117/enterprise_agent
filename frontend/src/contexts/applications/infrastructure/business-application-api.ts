@@ -77,6 +77,8 @@ export const catalogSchema = z.object({
           schema_hash: z.string(),
           description: z.string(),
           resource_kind: z.string(),
+          effect: z.enum(["read", "mutation"]).default("read"),
+          confirmation_policy: z.string().default("none"),
         })
       )
     )

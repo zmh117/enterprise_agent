@@ -325,6 +325,22 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
         "MINIO_ROOT_PASSWORD",
     }.intersection(ones["environment"])
 
+    dingtalk = services["dingtalk-mcp"]
+    assert dingtalk["read_only"] is True
+    assert "ports" not in dingtalk
+    assert dingtalk["expose"] == ["9107"]
+    assert set(dingtalk["networks"]) == {"agent-runtime-control"}
+    assert set(dingtalk["secrets"]) == {"app_config_master_key", "principal_jwks"}
+    assert dingtalk["environment"]["PRINCIPAL_JWKS_FILE"] == "/run/secrets/principal_jwks"
+    external_worker = services["external-action-worker"]
+    assert external_worker["command"] == [
+        "python",
+        "-m",
+        "services.dingtalk_mcp_server.worker",
+    ]
+    assert set(external_worker["networks"]) == {"default", "provider-egress"}
+    assert external_worker["secrets"] == ["app_config_master_key"]
+
     worker = services["agent-worker"]
     assert worker["environment"]["PRINCIPAL_JWT_PRIVATE_KEY_FILE"] == (
         "/run/secrets/principal_jwt_private_key"
@@ -342,7 +358,11 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
     assert "typescript-agent-runtime" not in services
     runtime = services["python-agent-runtime"]
     assert runtime["environment"]["ONES_MCP_SERVER_URL"] == ("http://ones-mcp:9104/mcp")
+    assert runtime["environment"]["DINGTALK_MCP_SERVER_URL"] == (
+        "http://dingtalk-mcp:9107/mcp"
+    )
     assert runtime["depends_on"]["ones-mcp"]["condition"] == "service_healthy"
+    assert runtime["depends_on"]["dingtalk-mcp"]["condition"] == "service_healthy"
     assert not {
         "PRINCIPAL_JWT_PRIVATE_KEY_FILE",
         "PRINCIPAL_JWKS_FILE",
@@ -352,9 +372,11 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
 
     dockerfile = (REPOSITORY_ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
     assert "FROM api-server AS ones-mcp" in dockerfile
+    assert "FROM api-server AS dingtalk-mcp" in dockerfile
     assert 'USER 10003:10003\nCMD ["python", "-m", "services.ones_mcp_server"]' in dockerfile
     project = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert project["project"]["optional-dependencies"]["ones-mcp"] == ["mcp==2.0.0"]
+    assert project["project"]["optional-dependencies"]["dingtalk-mcp"] == ["mcp==2.0.0"]
     assert project["project"]["optional-dependencies"]["tool-mcp"] == ["mcp==2.0.0"]
 
 

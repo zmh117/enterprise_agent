@@ -723,7 +723,8 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "119_contract_single_current_file_rule.sql",
         "120_expand_runtime_tool_contract_evidence.sql",
         "121_expand_docling_processing_concurrency.sql",
-        "122_document_processing_concurrency_comments.sql",
+            "122_document_processing_concurrency_comments.sql",
+            "123_expand_governed_external_actions.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
@@ -1414,9 +1415,11 @@ def test_ones_tool_preserves_server_through_agent_application_and_job_snapshot()
         {
             "server_code": "ones-mcp",
             "tool_identifier": definition.identifier,
-            "schema_hash": definition.schema_hash,
-            "resource_kind": "",
-        }
+                "schema_hash": definition.schema_hash,
+                "resource_kind": "",
+                "effect": "read",
+                "confirmation_policy": "none",
+            }
     ]
 
     tampered = dict(frozen["snapshot"])

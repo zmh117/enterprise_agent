@@ -14,6 +14,7 @@ class FakeClient implements StreamClient {
   reconnecting = false;
   disconnected = false;
   handler?: (message: StreamEnvelope) => Promise<void>;
+  cardHandler?: (message: StreamEnvelope) => Promise<void>;
 
   constructor(readonly config: DesiredConnector) {}
   async connect(): Promise<void> {
@@ -36,6 +37,9 @@ class FakeClient implements StreamClient {
   }
   onRobotMessage(handler: (message: StreamEnvelope) => Promise<void>): void {
     this.handler = handler;
+  }
+  onCardCallback(handler: (message: StreamEnvelope) => Promise<void>): void {
+    this.cardHandler = handler;
   }
   acknowledge(): void {}
 }

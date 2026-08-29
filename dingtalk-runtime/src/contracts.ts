@@ -57,6 +57,7 @@ export interface StreamClient {
   connect(): Promise<void>;
   disconnect(): void;
   onRobotMessage(handler: (message: StreamEnvelope) => Promise<void>): void;
+  onCardCallback(handler: (message: StreamEnvelope) => Promise<void>): void;
   acknowledge(messageId: string, data: unknown): void;
 }
 

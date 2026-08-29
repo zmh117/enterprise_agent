@@ -1,5 +1,6 @@
 import {
   DWClient,
+  TOPIC_CARD,
   TOPIC_ROBOT,
   type DWClientDownStream,
 } from "dingtalk-stream";
@@ -54,6 +55,20 @@ export class DingTalkSdkClient implements StreamClient {
           headers,
           data: message.data,
         });
+      }
+    );
+  }
+
+  onCardCallback(handler: (message: StreamEnvelope) => Promise<void>): void {
+    this.client.registerCallbackListener(
+      TOPIC_CARD,
+      (message: DWClientDownStream) => {
+        const headers: StreamEnvelope["headers"] = {
+          messageId: message.headers.messageId,
+          topic: message.headers.topic,
+        };
+        if (message.headers.eventId) headers.eventId = message.headers.eventId;
+        void handler({ headers, data: message.data });
       }
     );
   }

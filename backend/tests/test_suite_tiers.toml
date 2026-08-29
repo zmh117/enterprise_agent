@@ -6,6 +6,7 @@ unit = [
   "test_database_unit_of_work.py",
   "test_document_model_artifact.py",
   "test_document_picture_normalization.py",
+  "test_dingtalk_mcp_runtime.py",
   "test_file_clock.py",
   "test_file_workspace_contracts.py",
   "test_guarded_runtime_client.py",
