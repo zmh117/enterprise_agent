@@ -32,4 +32,4 @@
 - [x] 5.2 增加 Action Intent 状态机、卡片 callback、重复点击、撤权和 worker recovery 测试
 - [x] 5.3 增加 dingtalk-runtime TypeScript 测试与 Compose/security 拓扑测试
 - [x] 5.4 运行相关 pytest/npm test、ruff/mypy 定向检查、migration smoke、Compose config、OpenSpec strict validate 与 git diff check
-- [ ] 5.5 在具备测试 Connector 权限后执行真实 Job→卡片→同意/拒绝→待办→卡片结果 E2E，并记录不含 Secret 的证据
+- [x] 5.5 在具备测试 Connector 权限后执行真实 Job→卡片→同意/拒绝→待办→卡片结果 E2E，并记录不含 Secret 的证据
