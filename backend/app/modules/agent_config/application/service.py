@@ -261,6 +261,9 @@ class AgentConfigService:
                     "read_only": definition.read_only,
                     "effect": definition.effect,
                     "confirmation_policy": definition.confirmation_policy,
+                    "operation_code": definition.operation_code,
+                    "risk_level": definition.risk_level,
+                    "target_policy": definition.target_policy,
                 }
                 for definition in MCP_TOOL_MANIFEST.values()
             ],
@@ -433,9 +436,10 @@ class AgentConfigService:
                     "schema_hash": MCP_TOOL_MANIFEST[identifier].schema_hash,
                     "description": MCP_TOOL_MANIFEST[identifier].description,
                     "effect": MCP_TOOL_MANIFEST[identifier].effect,
-                    "confirmation_policy": (
-                        MCP_TOOL_MANIFEST[identifier].confirmation_policy
-                    ),
+                    "confirmation_policy": (MCP_TOOL_MANIFEST[identifier].confirmation_policy),
+                    "operation_code": MCP_TOOL_MANIFEST[identifier].operation_code,
+                    "risk_level": MCP_TOOL_MANIFEST[identifier].risk_level,
+                    "target_policy": MCP_TOOL_MANIFEST[identifier].target_policy,
                 }
                 for identifier in tool_ids
             ]

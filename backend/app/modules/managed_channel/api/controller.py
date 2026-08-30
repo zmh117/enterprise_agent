@@ -40,6 +40,7 @@ class DingTalkApplicationRequest(StrictRequest):
     allow_private_chat: bool = True
     allow_group_chat: bool = True
     require_group_at: bool = True
+    work_notification_agent_id: int | None = Field(default=None, ge=1)
     enabled: bool = False
     rotate_secret: bool = False
 
@@ -606,6 +607,7 @@ def _application_input(payload: DingTalkApplicationRequest) -> DingTalkApplicati
         allow_private_chat=payload.allow_private_chat,
         allow_group_chat=payload.allow_group_chat,
         require_group_at=payload.require_group_at,
+        work_notification_agent_id=payload.work_notification_agent_id,
     )
 
 

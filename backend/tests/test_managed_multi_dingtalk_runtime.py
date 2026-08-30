@@ -151,6 +151,60 @@ def test_managed_channels_keep_secrets_out_of_admin_reads_and_runtime_states_are
     )
 
 
+def test_work_notification_agent_id_is_validated_stored_and_masked() -> None:
+    container = _container()
+    enterprise = _active_enterprise(container)
+    created = container.managed_channel_service.create_dingtalk(
+        DingTalkApplicationInput(
+            name="工作通知机器人",
+            client_id="ding-work-notice",
+            client_secret="secret-work-notice",
+            dingtalk_enterprise_id=str(enterprise["id"]),
+            work_notification_agent_id=123456,
+        ),
+        actor_id="test-admin",
+        enabled=True,
+    )
+    assert created["work_notification_agent_id_configured"] is True
+    assert created["work_notification_agent_id_hint"] == "***3456"
+    assert "123456" not in str(created)
+    stored = container.managed_channel_repository.get_connector(created["id"])
+    assert stored["metadata"]["work_notification_agent_id"] == 123456
+
+    updated = container.managed_channel_service.update_dingtalk(
+        created["id"],
+        DingTalkApplicationInput(
+            name="工作通知机器人",
+            client_id="ding-work-notice",
+            client_secret="",
+            dingtalk_enterprise_id=str(enterprise["id"]),
+        ),
+        expected_revision=created["revision"],
+        actor_id="test-admin",
+        rotate_secret=False,
+    )
+    assert updated["work_notification_agent_id_hint"] == "***3456"
+
+    with pytest.raises(NonRetryableExecutionError) as invalid:
+        container.managed_channel_service.create_dingtalk(
+            DingTalkApplicationInput(
+                name="无效通知机器人",
+                client_id="ding-invalid-notice",
+                client_secret="secret-invalid-notice",
+                dingtalk_enterprise_id=str(enterprise["id"]),
+                work_notification_agent_id=0,
+            ),
+            actor_id="test-admin",
+            enabled=False,
+        )
+    assert invalid.value.field_errors == [
+        {
+            "field": "work_notification_agent_id",
+            "message": "工作通知 Agent ID 必须为正整数",
+        }
+    ]
+
+
 def test_channel_inbox_deduplicates_per_connector_and_encrypts_reply_credential():
     container = _container()
     first = _create(container, "ding-first")

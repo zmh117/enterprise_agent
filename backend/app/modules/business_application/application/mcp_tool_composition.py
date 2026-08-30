@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
@@ -36,6 +37,9 @@ class ApplicationMcpToolCompositionService:
                     "confirmation_policy": MCP_TOOL_MANIFEST[
                         str(row["tool_identifier"])
                     ].confirmation_policy,
+                    "operation_code": MCP_TOOL_MANIFEST[str(row["tool_identifier"])].operation_code,
+                    "risk_level": MCP_TOOL_MANIFEST[str(row["tool_identifier"])].risk_level,
+                    "target_policy": MCP_TOOL_MANIFEST[str(row["tool_identifier"])].target_policy,
                 }
                 for row in rows
                 if str(row["tool_identifier"]) in MCP_TOOL_MANIFEST
@@ -95,6 +99,9 @@ class ApplicationMcpToolCompositionService:
                 "resource_kind": MCP_TOOL_MANIFEST[identifier].resource_kind,
                 "effect": MCP_TOOL_MANIFEST[identifier].effect,
                 "confirmation_policy": MCP_TOOL_MANIFEST[identifier].confirmation_policy,
+                "operation_code": MCP_TOOL_MANIFEST[identifier].operation_code,
+                "risk_level": MCP_TOOL_MANIFEST[identifier].risk_level,
+                "target_policy": MCP_TOOL_MANIFEST[identifier].target_policy,
                 "selection_order": index,
             }
             for index, identifier in enumerate(selected)
@@ -152,6 +159,68 @@ class ApplicationMcpToolCompositionService:
                 }
             ]
         return []
+
+    def dingtalk_feature_errors(
+        self,
+        *,
+        selected_tools: list[dict[str, Any]],
+        triggers: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        selected = {
+            str(tool.get("tool_identifier") or "")
+            for tool in selected_tools
+            if str(tool.get("server_code") or "") == "dingtalk-mcp"
+        }
+        if not selected:
+            return []
+        dingtalk_triggers = [
+            trigger
+            for trigger in triggers
+            if bool(trigger.get("enabled"))
+            and str(trigger.get("trigger_type") or "") in {"dingtalk_private", "dingtalk_group"}
+        ]
+        if not dingtalk_triggers:
+            return [
+                {
+                    "field": "mcp_tools",
+                    "message": "钉钉 MCP 工具要求至少一个已启用的钉钉来源 Trigger",
+                }
+            ]
+        notice_tools = {
+            "dingtalk_send_work_notification",
+            "dingtalk_get_work_notification_progress",
+            "dingtalk_get_work_notification_result",
+        }
+        if not selected.intersection(notice_tools):
+            return []
+        missing: list[str] = []
+        for trigger in dingtalk_triggers:
+            connector_id = str(trigger.get("connector_id") or "")
+            row = self.database.execute_one(
+                """
+                select name, metadata from integration_connector
+                 where id = ? and connector_type = 'dingtalk_enterprise_stream'
+                   and enabled = 1 and deleted = 0
+                """,
+                (connector_id,),
+            )
+            metadata = self._json_object((row or {}).get("metadata"))
+            if (
+                row is None
+                or self._positive_int(metadata.get("work_notification_agent_id")) is None
+            ):
+                missing.append(str((row or {}).get("name") or connector_id or "未知连接"))
+        if not missing:
+            return []
+        return [
+            {
+                "field": "mcp_tools",
+                "message": (
+                    "工作通知工具要求所有钉钉来源连接配置正整数 Agent ID："
+                    + "、".join(sorted(set(missing)))[:300]
+                ),
+            }
+        ]
 
     def persist_draft(
         self,
@@ -221,6 +290,11 @@ class ApplicationMcpToolCompositionService:
                 "tool_identifier": str(tool["tool_identifier"]),
                 "schema_hash": str(tool["schema_hash"]),
                 "resource_kind": str(tool.get("resource_kind") or ""),
+                "effect": str(tool.get("effect") or "read"),
+                "confirmation_policy": str(tool.get("confirmation_policy") or "none"),
+                "operation_code": str(tool.get("operation_code") or ""),
+                "risk_level": str(tool.get("risk_level") or "low"),
+                "target_policy": str(tool.get("target_policy") or ""),
             }
             for tool in tools
         ]
@@ -233,3 +307,21 @@ class ApplicationMcpToolCompositionService:
             error_code="validation_failed",
             field_errors=[{"field": f"mcp_tools.{index}", "message": message}],
         )
+
+    @staticmethod
+    def _json_object(value: object) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        try:
+            parsed = json.loads(str(value or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _positive_int(value: object) -> int | None:
+        try:
+            parsed = int(str(value or ""))
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None

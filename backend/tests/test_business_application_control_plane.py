@@ -50,6 +50,50 @@ def control_plane_settings() -> object:
     )
 
 
+def test_dingtalk_notice_tools_require_agent_id_on_every_source_connector() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    composition = container.business_application_service.mcp_tool_composition_service
+    selected = [
+        {
+            "server_code": "dingtalk-mcp",
+            "tool_identifier": "dingtalk_send_work_notification",
+        }
+    ]
+    triggers = [
+        {
+            "trigger_type": "dingtalk_private",
+            "connector_id": "connector-dingtalk-stream-default",
+            "enabled": True,
+        }
+    ]
+    errors = composition.dingtalk_feature_errors(
+        selected_tools=selected,
+        triggers=triggers,
+    )
+    assert errors and errors[0]["field"] == "mcp_tools"
+
+    row = container.database.execute_one(
+        "select metadata from integration_connector where id = ?",
+        ("connector-dingtalk-stream-default",),
+    )
+    metadata = json.loads(str((row or {})["metadata"]))
+    metadata["work_notification_agent_id"] = 123456
+    container.database.execute(
+        "update integration_connector set metadata = ? where id = ?",
+        (
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            "connector-dingtalk-stream-default",
+        ),
+    )
+    assert (
+        composition.dingtalk_feature_errors(
+            selected_tools=selected,
+            triggers=triggers,
+        )
+        == []
+    )
+
+
 def draft_payload(*, route: str = "", mcp_tools: list[str] | None = None) -> dict[str, object]:
     triggers: list[dict[str, object]] = []
     deliveries: list[dict[str, object]] = []
@@ -723,8 +767,8 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "119_contract_single_current_file_rule.sql",
         "120_expand_runtime_tool_contract_evidence.sql",
         "121_expand_docling_processing_concurrency.sql",
-            "122_document_processing_concurrency_comments.sql",
-            "123_expand_governed_external_actions.sql",
+        "122_document_processing_concurrency_comments.sql",
+        "123_expand_governed_external_actions.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
@@ -1415,11 +1459,14 @@ def test_ones_tool_preserves_server_through_agent_application_and_job_snapshot()
         {
             "server_code": "ones-mcp",
             "tool_identifier": definition.identifier,
-                "schema_hash": definition.schema_hash,
-                "resource_kind": "",
-                "effect": "read",
-                "confirmation_policy": "none",
-            }
+            "schema_hash": definition.schema_hash,
+            "resource_kind": "",
+            "effect": "read",
+            "confirmation_policy": "none",
+            "operation_code": "",
+            "risk_level": "low",
+            "target_policy": "",
+        }
     ]
 
     tampered = dict(frozen["snapshot"])

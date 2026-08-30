@@ -367,6 +367,9 @@ def test_assignable_catalog_describes_tools_from_legacy_agent_publications() -> 
             "display_name_zh": "只读查询数据库",
             "effect": "read",
             "confirmation_policy": "none",
+            "operation_code": "",
+            "risk_level": "low",
+            "target_policy": "",
         }
     ]
     c.database.close()

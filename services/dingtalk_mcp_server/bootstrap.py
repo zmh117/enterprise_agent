@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from app.bootstrap import Container
 from app.modules.external_action.repository import ExternalActionRepository
 from app.modules.external_action.service import (
@@ -11,8 +13,12 @@ from app.modules.identity.application.principal_jwt import PrincipalJwks, Princi
 from app.modules.mcp_audit import McpAuditCoordinator
 from services.dingtalk_mcp_server.auth.principal import DingTalkPrincipalResolver
 from services.dingtalk_mcp_server.contracts import SERVER_CODE
-from services.dingtalk_mcp_server.tools.create_todo import DingTalkCreateTodoService
-from services.dingtalk_mcp_server.tools.registry import DingTalkToolRegistry
+from services.dingtalk_mcp_server.tools.mutation_catalog import build_mutation_tools
+from services.dingtalk_mcp_server.tools.read_catalog import build_read_tools
+from services.dingtalk_mcp_server.tools.registry import (
+    DingTalkToolHandler,
+    DingTalkToolRegistry,
+)
 
 
 def build_tool_registry(runtime: Container) -> DingTalkToolRegistry:
@@ -40,5 +46,11 @@ def build_tool_registry(runtime: Container) -> DingTalkToolRegistry:
         ),
         runtime.audit_service,
     )
-    tool = DingTalkCreateTodoService(resolver, actions, audit)
-    return DingTalkToolRegistry(authenticate=tool.authenticate, tools=(tool,), audit=audit)
+    read_tools = build_read_tools(runtime, resolver, audit)
+    mutation_tools = build_mutation_tools(runtime, resolver, actions, audit)
+    tools = cast(tuple[DingTalkToolHandler, ...], (*read_tools, *mutation_tools))
+    return DingTalkToolRegistry(
+        authenticate=mutation_tools[0].authenticate,
+        tools=tools,
+        audit=audit,
+    )

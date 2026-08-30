@@ -46,6 +46,13 @@ class McpToolDefinition:
     read_only: bool = True
     effect: str = "read"
     confirmation_policy: str = "none"
+    required_scope: str = ""
+    operation_code: str = ""
+    risk_level: str = "low"
+    target_policy: str = ""
+    destructive: bool = False
+    idempotent: bool = False
+    open_world: bool = False
 
 
 def mcp_tool_schema_hash(input_schema: dict[str, Any]) -> str:
@@ -83,9 +90,16 @@ for _dingtalk_contract in DINGTALK_TOOL_CONTRACTS.values():
         input_schema=_dingtalk_contract.input_schema,
         schema_hash=mcp_tool_schema_hash(_dingtalk_contract.input_schema),
         resource_kind="",
-        read_only=False,
-        effect="mutation",
-        confirmation_policy=DINGTALK_CONFIRMATION_POLICY,
+        read_only=_dingtalk_contract.read_only,
+        effect=_dingtalk_contract.effect,
+        confirmation_policy=_dingtalk_contract.confirmation_policy,
+        required_scope=_dingtalk_contract.required_scope,
+        operation_code=_dingtalk_contract.operation_code,
+        risk_level=_dingtalk_contract.risk_level,
+        target_policy=_dingtalk_contract.target_policy,
+        destructive=_dingtalk_contract.destructive,
+        idempotent=_dingtalk_contract.idempotent,
+        open_world=_dingtalk_contract.open_world,
     )
 
 for _identifier, _file_tool in FILE_TOOL_MANIFEST.items():
@@ -123,6 +137,8 @@ def validate_mcp_tool_manifest(
         require_mcp_server_policy(definition.server_code, policies=selected_policies)
         if definition.effect not in {"read", "mutation"}:
             raise ValueError("MCP Tool effect is invalid")
+        if definition.risk_level not in {"low", "medium", "high"}:
+            raise ValueError("MCP Tool risk level is invalid")
         if definition.read_only != (definition.effect == "read"):
             raise ValueError("MCP Tool read_only and effect are inconsistent")
         if definition.effect == "read" and definition.confirmation_policy != "none":
@@ -132,6 +148,19 @@ def validate_mcp_tool_manifest(
             "file_workspace_intent",
         }:
             raise ValueError("Mutation MCP Tool requires a supported confirmation policy")
+        if definition.server_code == DINGTALK_MCP_SERVER_CODE:
+            contract = DINGTALK_TOOL_CONTRACTS.get(identifier)
+            if (
+                contract is None
+                or definition.required_scope != contract.required_scope
+                or definition.operation_code != contract.operation_code
+                or definition.risk_level != contract.risk_level
+                or definition.target_policy != contract.target_policy
+                or definition.destructive != contract.destructive
+                or definition.idempotent != contract.idempotent
+                or definition.open_world != contract.open_world
+            ):
+                raise ValueError("DingTalk MCP Tool execution metadata is inconsistent")
 
 
 validate_mcp_server_policies()

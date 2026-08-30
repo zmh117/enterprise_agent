@@ -373,7 +373,10 @@ class ManagedChannelService:
                 connector_id=connector_id,
                 expected_revision=expected_revision,
                 name=normalized.name,
-                metadata=self._metadata(normalized),
+                metadata=self._metadata(
+                    normalized,
+                    current_metadata=dict(current.get("metadata") or {}),
+                ),
                 dingtalk_enterprise_id=normalized.dingtalk_enterprise_id,
                 secret_ref=secret_ref,
                 enabled=bool(current["enabled"]),
@@ -592,6 +595,13 @@ class ManagedChannelService:
             "enabled": bool(item["enabled"]),
             "revision": int(item.get("revision") or 1),
             "secret_configured": bool(item.get("secret_ref")),
+            "work_notification_agent_id_configured": self._positive_int(
+                metadata.get("work_notification_agent_id")
+            )
+            is not None,
+            "work_notification_agent_id_hint": self._agent_id_hint(
+                metadata.get("work_notification_agent_id")
+            ),
             "capabilities": {
                 "private_chat": bool(metadata.get("allow_private_chat", True)),
                 "group_chat": bool(metadata.get("allow_group_chat", True)),
@@ -643,6 +653,12 @@ class ManagedChannelService:
             raise _invalid("dingtalk_enterprise_id", "必须选择钉钉企业")
         if secret_required and not secret:
             raise _invalid("client_secret", "必须填写 Client Secret")
+        agent_id = ManagedChannelService._positive_int(payload.work_notification_agent_id)
+        if payload.work_notification_agent_id is not None and agent_id is None:
+            raise _invalid(
+                "work_notification_agent_id",
+                "工作通知 Agent ID 必须为正整数",
+            )
         return DingTalkApplicationInput(
             name=name,
             client_id=client_id,
@@ -651,17 +667,46 @@ class ManagedChannelService:
             allow_private_chat=payload.allow_private_chat,
             allow_group_chat=payload.allow_group_chat,
             require_group_at=payload.require_group_at,
+            work_notification_agent_id=agent_id,
         )
 
     @staticmethod
-    def _metadata(payload: DingTalkApplicationInput) -> dict[str, Any]:
-        return {
+    def _metadata(
+        payload: DingTalkApplicationInput,
+        *,
+        current_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        metadata = {
             "client_id": payload.client_id,
             "allow_private_chat": payload.allow_private_chat,
             "allow_group_chat": payload.allow_group_chat,
             "require_group_at": payload.require_group_at,
             "managed_channel_kind": "DINGTALK_APP_ROBOT",
         }
+        agent_id = payload.work_notification_agent_id
+        if agent_id is None:
+            agent_id = ManagedChannelService._positive_int(
+                (current_metadata or {}).get("work_notification_agent_id")
+            )
+        if agent_id is not None:
+            metadata["work_notification_agent_id"] = agent_id
+        return metadata
+
+    @staticmethod
+    def _positive_int(value: object) -> int | None:
+        try:
+            parsed = int(str(value or ""))
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @classmethod
+    def _agent_id_hint(cls, value: object) -> str:
+        parsed = cls._positive_int(value)
+        if parsed is None:
+            return ""
+        text = str(parsed)
+        return f"***{text[-4:]}"
 
     @staticmethod
     def _enterprise_name(value: str) -> str:
@@ -770,9 +815,7 @@ class RuntimeControlService:
         revision: int,
         intent_token: str,
     ) -> dict[str, Any]:
-        self.repository.require_lease(
-            runtime_id=_runtime_id(runtime_id), lease_token=lease_token
-        )
+        self.repository.require_lease(runtime_id=_runtime_id(runtime_id), lease_token=lease_token)
         connector = self.repository.get_connector(connector_id)
         if (
             str(connector.get("connector_type") or "") != "dingtalk_enterprise_stream"

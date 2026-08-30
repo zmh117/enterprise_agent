@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import socket
@@ -11,11 +12,24 @@ from app.bootstrap import Container, build_worker_container
 from app.modules.dingding.infrastructure.dingtalk_delivery_clients import DingTalkAccessTokenClient
 from app.modules.external_action.repository import ExternalActionRepository
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.shared.dingtalk_tool_contracts import (
+    DINGTALK_MUTATION_TOOL_IDENTIFIERS,
+    DINGTALK_TOOL_CONTRACTS,
+    DingTalkToolContract,
+)
 from app.shared.config import load_settings
 from app.shared.exceptions import RetryableExecutionError
 from app.shared.logging import configure_logging
-from services.dingtalk_mcp_server.contracts import SERVER_CODE, TOOL_IDENTIFIER
-from services.dingtalk_mcp_server.provider import DingTalkCardClient, DingTalkTodoClient
+from services.dingtalk_mcp_server.contracts import SERVER_CODE
+from services.dingtalk_mcp_server.provider import (
+    DingTalkAiTableMutationClient,
+    DingTalkAiTableReadClient,
+    DingTalkCalendarMutationClient,
+    DingTalkCardClient,
+    DingTalkRobotMutationClient,
+    DingTalkTodoClient,
+    DingTalkWorkNotificationMutationClient,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +41,23 @@ class ExternalActionWorker:
         self.runtime = runtime
         self.repository = ExternalActionRepository(runtime.database)
         self.worker_id = worker_id[:128]
+        self._dispatchers = {
+            "dingtalk.todo.create": self._execute_todo_create,
+            "dingtalk.todo.update": self._execute_todo_update,
+            "dingtalk.todo.complete": self._execute_todo_complete,
+            "dingtalk.calendar.event.create": self._execute_calendar_create,
+            "dingtalk.calendar.event.update": self._execute_calendar_update,
+            "dingtalk.aitable.record.insert": self._execute_aitable_insert,
+            "dingtalk.aitable.record.update": self._execute_aitable_update,
+            "dingtalk.robot.message.send": self._execute_robot_send,
+            "dingtalk.work_notification.send": self._execute_work_notification_send,
+        }
+        expected_operations = {
+            DINGTALK_TOOL_CONTRACTS[identifier].operation_code
+            for identifier in DINGTALK_MUTATION_TOOL_IDENTIFIERS
+        }
+        if set(self._dispatchers) != expected_operations:
+            raise ValueError("External action dispatcher is incomplete")
 
     def run_once(self) -> bool:
         card = self.repository.claim_card(worker_id=self.worker_id)
@@ -63,14 +94,12 @@ class ExternalActionWorker:
             if str(outbox["event_kind"]) == "CREATE":
                 summary = self.repository.decode_json(intent["safe_summary_json"])
                 token = self._intent_token(str(intent["id"]), int(intent["revision"]))
+                card_fields = self._confirmation_card_fields(intent, summary)
                 client.create_confirmation(
                     out_track_id=str(intent["id"]),
                     staff_id=str(intent["target_external_subject_id"]),
                     card_fields={
-                        "providerName": "钉钉",
-                        "operationName": "创建待办",
-                        "targetName": "当前用户本人",
-                        "detailText": self._detail_text(summary),
+                        **card_fields,
                         # The published template renders its request buttons only while
                         # status is empty. Non-empty values represent terminal/progress
                         # states and intentionally replace the buttons with status text.
@@ -87,11 +116,19 @@ class ExternalActionWorker:
                 )
             else:
                 payload = self.repository.decode_json(outbox["payload_json"])
+                summary = self.repository.decode_json(intent["safe_summary_json"])
+                status = str(payload.get("status") or "failed")
+                operation = str(summary.get("operation") or "钉钉操作")[:100]
+                status_text = (
+                    f"{operation}成功"
+                    if status == "succeeded"
+                    else f"{operation}失败，请联系管理员"
+                )
                 client.update(
                     out_track_id=str(intent["id"]),
                     card_fields={
-                        "status": str(payload.get("status") or "failed"),
-                        "statusText": str(payload.get("statusText") or "操作状态已更新")[:200],
+                        "status": status,
+                        "statusText": status_text[:200],
                         "inputStatus": "disabled",
                         "errorText": "",
                     },
@@ -106,18 +143,27 @@ class ExternalActionWorker:
 
     def _execute(self, intent: dict[str, Any]) -> None:
         try:
-            self._reauthorize(intent)
+            contract = self._reauthorize(intent)
             client_id, client_secret = self._connector_credentials(intent)
             arguments = self.repository.decode_json(intent["arguments_json"])
-            result = DingTalkTodoClient(
-                DingTalkAccessTokenClient(
-                    client_id=client_id, client_secret=client_secret, timeout_seconds=5
-                )
-            ).create_for_self(union_id=str(intent["target_union_id"]), arguments=arguments)
+            token_client = DingTalkAccessTokenClient(
+                client_id=client_id,
+                client_secret=client_secret,
+                timeout_seconds=5,
+            )
+            dispatcher = self._dispatchers.get(contract.operation_code)
+            if dispatcher is None:
+                raise ValueError("External action operation is not registered")
+            result = dispatcher(intent, arguments, token_client)
             self.repository.complete_execution(
                 str(intent["id"]),
                 result=result,
-                provider_request_id=str(result.get("task_id") or ""),
+                provider_request_id=str(
+                    result.get("task_id")
+                    or result.get("event_id")
+                    or result.get("message_request_id")
+                    or ""
+                ),
             )
             self.runtime.audit_service.record(
                 "external_action.executed",
@@ -125,13 +171,18 @@ class ExternalActionWorker:
                 summary="Confirmed external action executed",
                 job_id=str(intent["job_id"]),
                 actor_id=str(intent["actor_user_id"]),
-                payload={"action_intent_id": str(intent["id"]), "operation_code": str(intent["operation_code"])},
+                payload={
+                    "action_intent_id": str(intent["id"]),
+                    "operation_code": str(intent["operation_code"]),
+                },
             )
         except Exception as exc:
             uncertain = isinstance(exc, RetryableExecutionError)
             self.repository.fail_execution(
                 str(intent["id"]),
-                error_code=str(getattr(exc, "error_code", "") or "external_action_execution_failed"),
+                error_code=str(
+                    getattr(exc, "error_code", "") or "external_action_execution_failed"
+                ),
                 error_summary=str(getattr(exc, "safe_message", "") or "外部操作执行失败"),
                 uncertain=uncertain,
             )
@@ -143,17 +194,26 @@ class ExternalActionWorker:
                 actor_id=str(intent["actor_user_id"]),
                 payload={
                     "action_intent_id": str(intent["id"]),
-                    "error_code": str(getattr(exc, "error_code", "") or "external_action_execution_failed"),
+                    "error_code": str(
+                        getattr(exc, "error_code", "") or "external_action_execution_failed"
+                    ),
                 },
             )
 
-    def _reauthorize(self, intent: dict[str, Any]) -> None:
-        definition = MCP_TOOL_MANIFEST[TOOL_IDENTIFIER]
+    def _reauthorize(self, intent: dict[str, Any]) -> DingTalkToolContract:
+        tool_identifier = str(intent["tool_identifier"])
+        contract = DINGTALK_TOOL_CONTRACTS.get(tool_identifier)
+        definition = MCP_TOOL_MANIFEST.get(tool_identifier)
         if (
-            str(intent["server_code"]) != SERVER_CODE
-            or str(intent["tool_identifier"]) != TOOL_IDENTIFIER
+            contract is None
+            or contract.effect != "mutation"
+            or definition is None
+            or str(intent["server_code"]) != SERVER_CODE
+            or definition.server_code != SERVER_CODE
             or str(intent["schema_hash"]) != definition.schema_hash
             or str(intent["confirmation_policy"]) != definition.confirmation_policy
+            or str(intent["operation_code"]) != definition.operation_code
+            or definition.operation_code != contract.operation_code
         ):
             raise ValueError("External action manifest facts drifted")
         job = self.runtime.database.execute_one(
@@ -168,18 +228,27 @@ class ExternalActionWorker:
         if (
             job is None
             or str(job["internal_user_id"]) != str(intent["actor_user_id"])
-            or str(job["business_application_id"])
-            != str(intent["business_application_id"])
+            or str(job["business_application_id"]) != str(intent["business_application_id"])
             or str(job["source_connector_id"]) != str(intent["source_connector_id"])
             or str(job["user_status"]) != "enabled"
             or str(job["user_account_type"]) != "human"
         ):
             raise ValueError("External action actor facts are no longer eligible")
-        self.runtime.mcp_tool_snapshot_service.verify(str(intent["job_id"]))
+        verified = self.runtime.mcp_tool_snapshot_service.verify(str(intent["job_id"]))
+        matches = [
+            item
+            for item in verified["snapshot"].get("tools") or []
+            if isinstance(item, dict)
+            and str(item.get("server_code") or "") == SERVER_CODE
+            and str(item.get("tool_identifier") or "") == tool_identifier
+            and str(item.get("schema_hash") or "") == definition.schema_hash
+        ]
+        if len(matches) != 1:
+            raise ValueError("External action Tool is absent from the Job snapshot")
         self.runtime.business_authorization_service.require(
             user_id=str(intent["actor_user_id"]),
             application_id=str(intent["business_application_id"]),
-            tool_identifier=TOOL_IDENTIFIER,
+            tool_identifier=tool_identifier,
             stage="dingtalk_external_action_execute",
         )
         identity = self.runtime.database.execute_one(
@@ -197,6 +266,254 @@ class ExternalActionWorker:
         )
         if identity is None:
             raise ValueError("External action DingTalk identity is no longer eligible")
+        self._reauthorize_target(intent, contract)
+        return contract
+
+    def _execute_todo_create(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        result = DingTalkTodoClient(token_client).create_for_self(
+            union_id=str(intent["target_union_id"]),
+            arguments=arguments,
+        )
+        if not str(result.get("task_id") or ""):
+            raise ValueError("DingTalk todo creation did not return a task ID")
+        return result
+
+    def _execute_todo_update(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        return DingTalkTodoClient(token_client).update_for_self(
+            union_id=str(intent["target_union_id"]),
+            arguments=arguments,
+        )
+
+    def _execute_todo_complete(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        return DingTalkTodoClient(token_client).complete_for_self(
+            union_id=str(intent["target_union_id"]),
+            arguments=arguments,
+        )
+
+    def _execute_calendar_create(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        result = DingTalkCalendarMutationClient(token_client).create_for_self(
+            union_id=str(intent["target_union_id"]),
+            arguments=arguments,
+        )
+        if not str(result.get("event_id") or ""):
+            raise ValueError("DingTalk calendar creation did not return an event ID")
+        return result
+
+    def _execute_calendar_update(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        return DingTalkCalendarMutationClient(token_client).update_for_self(
+            union_id=str(intent["target_union_id"]),
+            arguments=arguments,
+        )
+
+    def _execute_aitable_insert(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        del intent
+        target = self._target(arguments)
+        operator_id = str(target["operator_id"])
+        self._preflight_aitable(token_client, operator_id, arguments)
+        return DingTalkAiTableMutationClient(token_client).insert_records(
+            operator_id=operator_id,
+            arguments=arguments,
+        )
+
+    def _execute_aitable_update(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        del intent
+        target = self._target(arguments)
+        operator_id = str(target["operator_id"])
+        self._preflight_aitable(token_client, operator_id, arguments)
+        return DingTalkAiTableMutationClient(token_client).update_records(
+            operator_id=operator_id,
+            arguments=arguments,
+        )
+
+    def _execute_robot_send(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        del intent
+        return DingTalkRobotMutationClient(token_client).send_current(arguments=arguments)
+
+    def _execute_work_notification_send(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        del intent
+        result = DingTalkWorkNotificationMutationClient(token_client).send_to_self(
+            arguments=arguments
+        )
+        if int(result.get("task_id") or 0) <= 0:
+            raise ValueError("DingTalk work notification did not return a task ID")
+        return result
+
+    @staticmethod
+    def _preflight_aitable(
+        token_client: DingTalkAccessTokenClient,
+        operator_id: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        DingTalkAiTableReadClient(token_client).get_sheet(
+            operator_id=operator_id,
+            base_id=str(arguments["base_id"]),
+            sheet_id=str(arguments["sheet_id"]),
+        )
+
+    def _reauthorize_target(
+        self,
+        intent: dict[str, Any],
+        contract: DingTalkToolContract,
+    ) -> None:
+        target_policy = contract.target_policy
+        if target_policy == "current_user_todo":
+            return
+        arguments = self.repository.decode_json(intent["arguments_json"])
+        if target_policy == "current_user_primary_calendar":
+            target = self._target(arguments)
+            if target != {
+                "union_id": str(intent["target_union_id"]),
+                "calendar_id": "primary",
+            }:
+                raise ValueError("External action calendar target facts drifted")
+            return
+        if target_policy == "current_user_aitable_operator":
+            target = self._target(arguments)
+            if target != {"operator_id": str(intent["target_union_id"])}:
+                raise ValueError("External action AI table target facts drifted")
+            return
+        if target_policy == "current_source_conversation":
+            if self._target(arguments) != self._current_robot_target(intent):
+                raise ValueError("External action source conversation target facts drifted")
+            return
+        if target_policy == "current_user_work_notification":
+            target = self._target(arguments)
+            connector = self.runtime.connector_registry.require_dingtalk_stream_ingress(
+                str(intent["source_connector_id"])
+            )
+            agent_id = self._positive_int(
+                self.runtime.connector_registry.metadata_value(
+                    connector, "work_notification_agent_id"
+                )
+            )
+            if (
+                target
+                != {
+                    "agent_id": agent_id,
+                    "staff_id": str(intent["target_external_subject_id"]),
+                }
+                or agent_id is None
+            ):
+                raise ValueError("External action work notification target facts drifted")
+            return
+        raise ValueError("External action target policy is unsupported")
+
+    def _current_robot_target(self, intent: dict[str, Any]) -> dict[str, Any]:
+        source = self.runtime.database.execute_one(
+            """
+            select s.conversation_type, s.external_conversation_id,
+                   s.bot_identity, s.reply_route_json
+              from agent_job j join agent_session s on s.id = j.session_id
+             where j.id = ? and s.source_connector_id = j.source_connector_id
+            """,
+            (intent["job_id"],),
+        )
+        if source is None or not str(source.get("external_conversation_id") or ""):
+            raise ValueError("External action source conversation is unavailable")
+        route = self._json_object(source.get("reply_route_json"))
+        route_connector = str(route.get("connector_id") or "")
+        if route_connector and route_connector != str(intent["source_connector_id"]):
+            raise ValueError("External action source connector facts drifted")
+        route_target = route.get("target")
+        route_target = route_target if isinstance(route_target, dict) else {}
+        connector = self.runtime.connector_registry.require_dingtalk_stream_ingress(
+            str(intent["source_connector_id"])
+        )
+        robot_code = str(
+            route_target.get("robot_code")
+            or source.get("bot_identity")
+            or self.runtime.connector_registry.metadata_value(connector, "default_robot_code")
+            or ""
+        )
+        if not robot_code:
+            raise ValueError("External action robot identity is unavailable")
+        conversation_type = str(source.get("conversation_type") or "")
+        if conversation_type == "group":
+            open_conversation_id = str(route_target.get("open_conversation_id") or "")
+            if not open_conversation_id:
+                raise ValueError("External action group target is unavailable")
+            return {
+                "conversation_type": "group",
+                "open_conversation_id": open_conversation_id,
+                "robot_code": robot_code,
+            }
+        if conversation_type == "direct":
+            return {
+                "conversation_type": "direct",
+                "staff_id": str(intent["target_external_subject_id"]),
+                "robot_code": robot_code,
+            }
+        raise ValueError("External action conversation type is invalid")
+
+    @staticmethod
+    def _target(arguments: dict[str, Any]) -> dict[str, Any]:
+        target = arguments.get("_target")
+        if not isinstance(target, dict):
+            raise ValueError("External action target facts are missing")
+        return target
+
+    @staticmethod
+    def _json_object(value: object) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        try:
+            parsed = json.loads(str(value or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _positive_int(value: object) -> int | None:
+        try:
+            parsed = int(str(value or ""))
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
 
     def _connector_credentials(self, intent: dict[str, Any]) -> tuple[str, str]:
         connector = self.runtime.connector_registry.require_dingtalk_stream_ingress(
@@ -227,10 +544,88 @@ class ExternalActionWorker:
             )
         )
 
+    @classmethod
+    def _confirmation_card_fields(
+        cls,
+        intent: dict[str, Any],
+        summary: dict[str, Any],
+    ) -> dict[str, str]:
+        operation_code = str(intent["operation_code"])
+        targets = {
+            "dingtalk.todo.create": "当前用户本人",
+            "dingtalk.todo.update": "当前用户本人待办",
+            "dingtalk.todo.complete": "当前用户本人待办",
+            "dingtalk.calendar.event.create": "当前用户主日历",
+            "dingtalk.calendar.event.update": "当前用户主日历",
+            "dingtalk.aitable.record.insert": "当前用户可访问的 AI 表格",
+            "dingtalk.aitable.record.update": "当前用户可访问的 AI 表格",
+            "dingtalk.robot.message.send": str(summary.get("target") or "当前来源会话"),
+            "dingtalk.work_notification.send": "当前用户本人",
+        }
+        if operation_code not in targets:
+            raise ValueError("External action confirmation card operation is unsupported")
+        operation = str(summary.get("operation") or operation_code)[:100]
+        return {
+            "providerName": "钉钉",
+            "operationName": operation,
+            "targetName": targets[operation_code][:200],
+            "detailText": cls._detail_text(operation_code, summary),
+        }
+
     @staticmethod
-    def _detail_text(summary: dict[str, Any]) -> str:
-        due = str(summary.get("due_time") or "未设置")
-        return f"待办：{str(summary.get('subject') or '')[:200]}\n截止：{due[:64]}"
+    def _detail_text(operation_code: str, summary: dict[str, Any]) -> str:
+        if operation_code == "dingtalk.todo.create":
+            lines = [
+                f"待办：{str(summary.get('subject') or '')[:200]}",
+                f"截止：{str(summary.get('due_time') or '未设置')[:64]}",
+            ]
+        elif operation_code == "dingtalk.todo.update":
+            lines = [
+                f"待办 ID：{str(summary.get('task_id') or '')[:512]}",
+                f"标题：{str(summary.get('subject') or '')[:200]}",
+                f"截止：{str(summary.get('due_time') or '未设置')[:64]}",
+            ]
+        elif operation_code == "dingtalk.todo.complete":
+            lines = [
+                f"待办 ID：{str(summary.get('task_id') or '')[:512]}",
+                f"标题：{str(summary.get('subject') or '')[:200]}",
+            ]
+        elif operation_code == "dingtalk.calendar.event.create":
+            lines = [
+                f"日程：{str(summary.get('title') or '')[:500]}",
+                f"开始：{str(summary.get('start_time') or '')[:64]}",
+                f"结束：{str(summary.get('end_time') or '')[:64]}",
+                f"时区：{str(summary.get('time_zone') or '')[:64]}",
+            ]
+        elif operation_code == "dingtalk.calendar.event.update":
+            lines = [
+                f"日程 ID：{str(summary.get('event_id') or '')[:512]}",
+                f"标题：{str(summary.get('title') or '')[:500]}",
+                f"时间：{str(summary.get('time_range') or '')[:160]}",
+            ]
+        elif operation_code in {
+            "dingtalk.aitable.record.insert",
+            "dingtalk.aitable.record.update",
+        }:
+            fields = summary.get("field_names")
+            field_names = fields if isinstance(fields, list) else []
+            lines = [
+                f"Base ID：{str(summary.get('base_id') or '')[:512]}",
+                f"Sheet ID：{str(summary.get('sheet_id') or '')[:512]}",
+                f"记录数：{int(summary.get('record_count') or 0)}",
+                "字段：" + "、".join(str(item)[:128] for item in field_names[:50]),
+            ]
+        elif operation_code in {
+            "dingtalk.robot.message.send",
+            "dingtalk.work_notification.send",
+        }:
+            lines = [
+                f"标题：{str(summary.get('title') or '')[:200]}",
+                f"正文：{str(summary.get('text') or '')[:3000]}",
+            ]
+        else:
+            raise ValueError("External action confirmation detail operation is unsupported")
+        return "\n".join(lines)[:4000]
 
 
 def main() -> None:

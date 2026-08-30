@@ -1002,7 +1002,7 @@ function BusinessApplicationCard({
                     <span className="mt-1 block text-xs text-muted-foreground">
                       {tool.effect === "mutation" ? "受控写操作" : "只读"}
                       {tool.confirmation_policy === "external_action_card_v1"
-                        ? " · 需原用户确认卡片"
+                        ? " · 每次需原用户确认卡片"
                         : ""}
                     </span>
                   </span>

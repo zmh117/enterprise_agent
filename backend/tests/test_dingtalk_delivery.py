@@ -4,6 +4,8 @@ import os
 import unittest
 from contextlib import contextmanager
 from typing import Any
+from urllib.error import URLError
+from unittest.mock import patch
 
 from app.modules.delivery.infrastructure.adapters import (
     DingTalkEnterpriseAppDeliveryAdapter,
@@ -13,11 +15,13 @@ from app.modules.delivery.infrastructure.adapters import (
 from app.modules.channel.domain.channel_event import ReplyRoute
 from app.modules.dingding.infrastructure.dingtalk_delivery_clients import (
     DingTalkAccessTokenClient,
+    UrllibJsonPostTransport,
     DingTalkWebhookRobotClient,
 )
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.domain.job_status import JobStatus
+from app.shared.exceptions import RetryableExecutionError
 from backend.tests.helpers import (
     container,
     dispatch_pending_deliveries,
@@ -60,6 +64,25 @@ class DingTalkDeliveryTests(unittest.TestCase):
         self.assertEqual(
             {"appKey": "client-id", "appSecret": "client-secret"},
             transport.calls[0]["payload"],
+        )
+
+    def test_access_token_transport_failure_has_stable_error_code(self) -> None:
+        client = DingTalkAccessTokenClient(
+            client_id="client-id",
+            client_secret="client-secret",
+            transport=UrllibJsonPostTransport(),
+        )
+
+        with patch(
+            "app.modules.dingding.infrastructure.dingtalk_delivery_clients.urlopen",
+            side_effect=URLError("provider network unavailable"),
+        ):
+            with self.assertRaises(RetryableExecutionError) as caught:
+                client.access_token()
+
+        self.assertEqual(
+            "dingtalk_access_token_transport_failed",
+            caught.exception.error_code,
         )
 
     def test_enterprise_app_delivery_uses_env_credentials_and_default_target(self) -> None:

@@ -325,6 +325,7 @@ services:
           memory: 384M
     networks:
       - agent-runtime-control
+      - provider-egress
 
   external-action-worker:
     build:

@@ -329,7 +329,7 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
     assert dingtalk["read_only"] is True
     assert "ports" not in dingtalk
     assert dingtalk["expose"] == ["9107"]
-    assert set(dingtalk["networks"]) == {"agent-runtime-control"}
+    assert set(dingtalk["networks"]) == {"agent-runtime-control", "provider-egress"}
     assert set(dingtalk["secrets"]) == {"app_config_master_key", "principal_jwks"}
     assert dingtalk["environment"]["PRINCIPAL_JWKS_FILE"] == "/run/secrets/principal_jwks"
     external_worker = services["external-action-worker"]

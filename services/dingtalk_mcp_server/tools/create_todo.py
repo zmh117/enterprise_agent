@@ -16,6 +16,7 @@ from services.dingtalk_mcp_server.contracts import (
     TOOL_IDENTIFIER,
 )
 from services.dingtalk_mcp_server.errors import error_code
+from services.dingtalk_mcp_server.tools.read_tool import _safe_payload_summary
 
 
 class DingTalkActionResult(dict[str, Any]):
@@ -25,16 +26,17 @@ class DingTalkActionResult(dict[str, Any]):
 
 
 class DingTalkCreateTodoService:
+    contract = TOOL_CONTRACT
     tool_identifier = TOOL_IDENTIFIER
     description = TOOL_CONTRACT.description
     input_schema = TOOL_CONTRACT.input_schema
     output_schema = TOOL_CONTRACT.output_schema
     required_scope = REQUIRED_SCOPE
     operation_code = OPERATION_CODE
-    read_only = False
-    destructive = True
-    idempotent = True
-    open_world = False
+    read_only = TOOL_CONTRACT.read_only
+    destructive = TOOL_CONTRACT.destructive
+    idempotent = TOOL_CONTRACT.idempotent
+    open_world = TOOL_CONTRACT.open_world
 
     def __init__(
         self,
@@ -47,7 +49,7 @@ class DingTalkCreateTodoService:
         self.audit = audit
 
     def authenticate(self, token: str) -> dict[str, Any]:
-        return self.resolver.authenticate(token)
+        return self.resolver.authenticate(token, self.contract)
 
     def invoke(
         self,
@@ -61,13 +63,17 @@ class DingTalkCreateTodoService:
         business_request = normalized.as_dict()
         context = self.resolver.audit_context(
             claims,
+            self.contract,
             invocation_id=invocation_id,
             correlation_id=correlation_id,
         )
-        handle = self.audit.begin(context, business_request=business_request)
+        handle = self.audit.begin(
+            context,
+            business_request=_safe_payload_summary(business_request),
+        )
         started = time.monotonic()
         try:
-            principal = self.resolver.resolve(claims)
+            principal = self.resolver.resolve(claims, self.contract)
             self.audit.append_event(
                 handle,
                 event_kind="AUTHORIZATION",
@@ -117,7 +123,7 @@ class DingTalkCreateTodoService:
                 handle,
                 status="SUCCEEDED",
                 duration_ms=int((time.monotonic() - started) * 1000),
-                business_response=output,
+                business_response=_safe_payload_summary(output),
             )
             return DingTalkActionResult(output, handle)
         except AppError as exc:
@@ -127,10 +133,6 @@ class DingTalkCreateTodoService:
                 status="DENIED",
                 error_code=error_code(exc),
                 duration_ms=int((time.monotonic() - started) * 1000),
-                business_response={
-                    "error": str(exc.safe_message),
-                    "error_code": error_code(exc),
-                },
+                business_response={"error_code": error_code(exc)},
             )
             raise
-

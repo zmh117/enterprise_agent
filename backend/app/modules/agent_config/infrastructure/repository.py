@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.modules.job.infrastructure.repositories import new_id, now_iso
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
@@ -497,6 +498,31 @@ class AgentConfigRepository:
                 safe_message="Agent MCP 工具发布事实完整性校验失败",
                 error_code="agent_mcp_tool_envelope_mismatch",
             )
+        for envelope in envelopes:
+            identifier = str(envelope["tool_identifier"])
+            definition = MCP_TOOL_MANIFEST.get(identifier)
+            if definition is None:
+                raise NonRetryableExecutionError(
+                    "Agent MCP Tool is not in the code manifest",
+                    safe_message="Agent MCP 工具发布事实完整性校验失败",
+                    error_code="agent_mcp_tool_envelope_mismatch",
+                )
+            declared = {
+                "effect": definition.effect,
+                "confirmation_policy": definition.confirmation_policy,
+                "operation_code": definition.operation_code,
+                "risk_level": definition.risk_level,
+                "target_policy": definition.target_policy,
+            }
+            if any(
+                key in envelope and str(envelope.get(key) or "") != expected_value
+                for key, expected_value in declared.items()
+            ):
+                raise NonRetryableExecutionError(
+                    "Agent MCP Tool execution metadata differs from the code manifest",
+                    safe_message="Agent MCP 工具执行策略已变化，请创建新发布版本",
+                    error_code="agent_mcp_tool_envelope_mismatch",
+                )
 
     def publication_connectors(self, publication_id: str, direction: str) -> set[str]:
         rows = self.database.execute(

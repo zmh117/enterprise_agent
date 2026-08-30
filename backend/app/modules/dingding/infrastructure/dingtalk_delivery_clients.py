@@ -41,11 +41,13 @@ class UrllibJsonPostTransport:
             raise RetryableExecutionError(
                 f"DingTalk HTTP request failed with status {safe_status}",
                 safe_message=f"钉钉 HTTP 请求失败，状态码：{safe_status}",
+                error_code=f"dingtalk_access_token_http_{safe_status}",
             ) from exc
         except URLError as exc:
             raise RetryableExecutionError(
                 "DingTalk HTTP request failed",
                 safe_message="钉钉 HTTP 请求失败",
+                error_code="dingtalk_access_token_transport_failed",
             ) from exc
         if not body:
             return {}
@@ -55,11 +57,13 @@ class UrllibJsonPostTransport:
             raise RetryableExecutionError(
                 "DingTalk response is not valid JSON",
                 safe_message="钉钉响应不是有效的 JSON",
+                error_code="dingtalk_access_token_response_invalid",
             ) from exc
         if not isinstance(value, dict):
             raise RetryableExecutionError(
                 "DingTalk response JSON is not an object",
                 safe_message="钉钉响应 JSON 不是对象",
+                error_code="dingtalk_access_token_response_invalid",
             )
         return value
 
@@ -96,6 +100,7 @@ class DingTalkAccessTokenClient:
             raise NonRetryableExecutionError(
                 "DingTalk enterprise App credentials are not configured",
                 safe_message="尚未配置钉钉企业应用凭据",
+                error_code="dingtalk_connector_credentials_unavailable",
             )
         now = float(self.clock())
         if self._cached_token and self._cached_token.expires_at - self.refresh_margin_seconds > now:
@@ -112,6 +117,7 @@ class DingTalkAccessTokenClient:
             raise NonRetryableExecutionError(
                 "DingTalk access token response did not include a token",
                 safe_message="钉钉访问令牌响应中没有令牌",
+                error_code="dingtalk_access_token_rejected",
             )
         self._cached_token = DingTalkAccessToken(value=token, expires_at=now + expires_in)
         return token

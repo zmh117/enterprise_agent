@@ -139,14 +139,7 @@ class JobMcpToolSnapshotService:
                 definition is None
                 or definition.server_code != str(tool.get("server_code") or "")
                 or definition.schema_hash != str(tool.get("schema_hash") or "")
-                or (
-                    ("effect" in tool or "confirmation_policy" in tool)
-                    and (
-                        str(tool.get("effect") or "") != definition.effect
-                        or str(tool.get("confirmation_policy") or "")
-                        != definition.confirmation_policy
-                    )
-                )
+                or self._execution_metadata_drifted(tool, definition)
             ):
                 raise ToolPolicyError(
                     "Job MCP Tool server or schema drift detected",
@@ -262,6 +255,9 @@ class JobMcpToolSnapshotService:
                     "resource_kind": definition.resource_kind,
                     "effect": definition.effect,
                     "confirmation_policy": definition.confirmation_policy,
+                    "operation_code": definition.operation_code,
+                    "risk_level": definition.risk_level,
+                    "target_policy": definition.target_policy,
                 }
             )
         snapshot = {
@@ -316,3 +312,21 @@ class JobMcpToolSnapshotService:
     @classmethod
     def _hash(cls, value: Any) -> str:
         return hashlib.sha256(cls._json_text(value).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _execution_metadata_drifted(tool: dict[str, Any], definition: Any) -> bool:
+        # Historical snapshots may predate execution metadata entirely or only
+        # contain the MVP effect/policy pair. New snapshots freeze all fields.
+        legacy_declared = "effect" in tool or "confirmation_policy" in tool
+        if legacy_declared and (
+            str(tool.get("effect") or "") != definition.effect
+            or str(tool.get("confirmation_policy") or "") != definition.confirmation_policy
+        ):
+            return True
+        extended_fields = ("operation_code", "risk_level", "target_policy")
+        if not any(field in tool for field in extended_fields):
+            return False
+        return any(
+            str(tool.get(field) or "") != str(getattr(definition, field))
+            for field in extended_fields
+        )

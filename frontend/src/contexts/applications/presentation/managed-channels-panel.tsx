@@ -973,6 +973,35 @@ function DingTalkEditorForm({
             }
           />
         </EditorField>
+        <EditorField
+          label="工作通知 Agent ID"
+          htmlFor="dingtalk-work-notification-agent-id"
+        >
+          <Input
+            id="dingtalk-work-notification-agent-id"
+            type="number"
+            min={1}
+            step={1}
+            value={form.work_notification_agent_id ?? ""}
+            placeholder={
+              channel?.work_notification_agent_id_configured
+                ? `已配置 ${channel.work_notification_agent_id_hint}，留空表示不修改`
+                : "可选；启用工作通知 Tool 时必填"
+            }
+            onChange={(event) =>
+              setInitialForm({
+                ...initialForm,
+                work_notification_agent_id: event.target.value
+                  ? Number(event.target.value)
+                  : null,
+              })
+            }
+          />
+          <p className="text-xs leading-5 text-muted-foreground">
+            仅用于当前用户本人的工作通知；保存后只显示尾号，不作为 Secret
+            存储。
+          </p>
+        </EditorField>
         <BooleanField
           id="dingtalk-private"
           label="允许私聊"
@@ -1267,6 +1296,7 @@ function dingTalkForm(channel?: ManagedChannel): DingTalkChannelInput {
     allow_private_chat: channel?.capabilities.private_chat ?? true,
     allow_group_chat: channel?.capabilities.group_chat ?? true,
     require_group_at: channel?.capabilities.require_group_at ?? true,
+    work_notification_agent_id: null,
     enabled: channel?.enabled ?? false,
     rotate_secret: false,
   }

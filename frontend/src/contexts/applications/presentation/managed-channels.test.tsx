@@ -69,6 +69,8 @@ const dingTalkChannel = {
   enabled: true,
   revision: 4,
   secret_configured: true,
+  work_notification_agent_id_configured: true,
+  work_notification_agent_id_hint: "***3456",
   capabilities: {
     private_chat: true,
     group_chat: true,
@@ -159,12 +161,16 @@ describe("Managed channels", () => {
     fireEvent.change(screen.getByLabelText("Client Secret / AppSecret"), {
       target: { value: "test-only-secret" },
     })
+    fireEvent.change(screen.getByLabelText("工作通知 Agent ID"), {
+      target: { value: "123456" },
+    })
     fireEvent.click(screen.getByRole("button", { name: "创建渠道" }))
     await waitFor(() => expect(channelBody).toBeDefined())
     expect(channelBody).toMatchObject({
       dingtalk_enterprise_id: "enterprise-new",
       name: "新机器人",
       client_id: "new-client",
+      work_notification_agent_id: 123456,
     })
     expect(channelBody).not.toHaveProperty("tenant_code")
   })
@@ -310,6 +316,10 @@ describe("Managed channels", () => {
     fireEvent.click(screen.getByRole("button", { name: "编辑" }))
     const secret = await screen.findByLabelText("Client Secret / AppSecret")
     expect(secret).toHaveValue("")
+    expect(screen.getByLabelText("工作通知 Agent ID")).toHaveAttribute(
+      "placeholder",
+      "已配置 ***3456，留空表示不修改"
+    )
     fireEvent.change(screen.getByLabelText("渠道名称"), {
       target: { value: "更新后的机器人" },
     })
@@ -322,6 +332,7 @@ describe("Managed channels", () => {
       rotate_secret: false,
       name: "更新后的机器人",
       dingtalk_enterprise_id: "enterprise-default",
+      work_notification_agent_id: null,
     })
   })
 

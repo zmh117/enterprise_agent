@@ -10,7 +10,33 @@ from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 
 _BUSINESS_CAPABILITY_NAMES_ZH = {
+    "dingtalk_search_users": "搜索钉钉用户",
+    "dingtalk_get_user": "查看钉钉用户",
+    "dingtalk_list_department_users": "查看部门用户",
+    "dingtalk_search_departments": "搜索钉钉部门",
+    "dingtalk_get_department": "查看钉钉部门",
+    "dingtalk_list_sub_departments": "查看子部门",
+    "dingtalk_list_todos": "查看本人钉钉待办",
     "dingtalk_create_todo": "创建钉钉待办",
+    "dingtalk_update_todo": "更新本人钉钉待办",
+    "dingtalk_complete_todo": "完成本人钉钉待办",
+    "dingtalk_get_calendar_event": "查看钉钉日程",
+    "dingtalk_list_calendar_events": "查看钉钉日程列表",
+    "dingtalk_list_calendar_attendees": "查看钉钉日程参与人",
+    "dingtalk_create_calendar_event": "创建钉钉日程",
+    "dingtalk_update_calendar_event": "更新钉钉日程",
+    "dingtalk_search_aitables": "搜索钉钉 AI 表格",
+    "dingtalk_list_aitable_sheets": "查看 AI 表格数据表",
+    "dingtalk_get_aitable_sheet": "查看 AI 表格数据表详情",
+    "dingtalk_list_aitable_fields": "查看 AI 表格字段",
+    "dingtalk_list_aitable_records": "查看 AI 表格记录",
+    "dingtalk_get_aitable_record": "查看 AI 表格记录详情",
+    "dingtalk_insert_aitable_records": "新增 AI 表格记录",
+    "dingtalk_update_aitable_records": "更新 AI 表格记录",
+    "dingtalk_send_robot_message": "发送当前会话机器人消息",
+    "dingtalk_send_work_notification": "发送本人工作通知",
+    "dingtalk_get_work_notification_progress": "查看工作通知进度",
+    "dingtalk_get_work_notification_result": "查看工作通知结果",
     "get_schema_directory": "查看数据库结构目录",
     "diagnose_loki_labels": "诊断日志标签",
     "diagnose_loki_label_values": "诊断日志标签值",
@@ -500,6 +526,9 @@ class AuthorizationCenterRepository:
                 tool["description"] = definition.description
                 tool["effect"] = definition.effect
                 tool["confirmation_policy"] = definition.confirmation_policy
+                tool["operation_code"] = definition.operation_code
+                tool["risk_level"] = definition.risk_level
+                tool["target_policy"] = definition.target_policy
         return applications
 
     def application_tool_is_effective(self, application_id: str, tool_identifier: str) -> bool:

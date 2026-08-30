@@ -716,6 +716,12 @@ class BusinessApplicationService:
                 selected_tools=list(revision.get("mcp_tools") or []),
             )
         )
+        errors.extend(
+            self.mcp_tool_composition_service.dingtalk_feature_errors(
+                selected_tools=list(revision.get("mcp_tools") or []),
+                triggers=list(revision.get("triggers") or []),
+            )
+        )
         try:
             document_processing_profile_code = validate_document_processing_profile_code(
                 revision.get("document_processing_profile_code")
