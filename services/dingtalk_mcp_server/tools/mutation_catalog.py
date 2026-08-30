@@ -10,6 +10,7 @@ from app.modules.external_action.domain import normalize_todo_arguments
 from app.modules.external_action.service import ExternalActionService
 from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.dingtalk_tool_contracts import (
+    DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER,
     DINGTALK_MUTATION_TOOL_IDENTIFIERS,
     DINGTALK_TOOL_CONTRACTS,
 )
@@ -47,6 +48,9 @@ class DingTalkMutationPreparationCatalog:
             "dingtalk_insert_aitable_records": self._insert_aitable_records,
             "dingtalk_update_aitable_records": self._update_aitable_records,
             "dingtalk_send_robot_message": self._send_robot_message,
+            DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER: (
+                self._batch_send_message_to_users_by_robot
+            ),
             "dingtalk_send_work_notification": self._send_work_notification,
         }
         self._preflights: dict[str, MutationPreflight] = {
@@ -202,8 +206,35 @@ class DingTalkMutationPreparationCatalog:
         title = str(arguments["title"]).strip()
         text = str(arguments["text"]).strip()
         return {"title": title, "text": text, "_target": target}, {
-            "operation": "发送钉钉机器人消息",
+            "operation": "向当前钉钉来源会话发送机器人消息",
             "target": target_name,
+            "title": title,
+            "text": text,
+        }
+
+    @staticmethod
+    def _batch_send_message_to_users_by_robot(
+        principal: ResolvedDingTalkPrincipal,
+        arguments: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if not principal.enterprise_robot_code:
+            raise _not_ready("当前来源 Connector 未配置企业机器人 Code")
+        user_ids = [str(value) for value in arguments["user_ids"]]
+        msg_param = arguments["msg_param"]
+        title = str(msg_param["title"])
+        text = str(msg_param["text"])
+        frozen = {
+            "user_ids": user_ids,
+            "msg_param": {"title": title, "text": text},
+            "_target": {
+                "robot_code": principal.enterprise_robot_code,
+                "recipient_count": len(user_ids),
+            },
+        }
+        return frozen, {
+            "operation": "批量发送钉钉机器人单聊",
+            "recipient_count": len(user_ids),
+            "recipient_id_suffixes": [f"...{user_id[-6:]}" for user_id in user_ids],
             "title": title,
             "text": text,
         }

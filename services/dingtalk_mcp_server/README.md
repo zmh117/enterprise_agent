@@ -1,8 +1,8 @@
 # Governed DingTalk MCP
 
-该服务是企业 Agent 的固定业务 MCP Server。Phase 2 发布代码内声明的 27 个
+该服务是企业 Agent 的固定业务 MCP Server。当前发布代码内声明的 28 个
 Tool：18 个只读 Tool 直接走 Principal、Job Snapshot、角色/Application 授权和统一
-MCP 审计；9 个 mutation 只创建待确认 Action Intent，不直接写入钉钉。原用户在
+MCP 审计；10 个 mutation 只创建待确认 Action Intent，不直接写入钉钉。原用户在
 互动卡片中同意后，独立 Worker 再次授权并按固定 operation dispatcher 执行。
 
 ## Phase 2 边界
@@ -10,10 +10,13 @@ MCP 审计；9 个 mutation 只创建待确认 Action Intent，不直接写入�
 - 固定卡片模板：`0ad7c643-7e30-4797-8284-da5ef89d3841.schema`。
 - Provider method/path、输入输出 Schema、Profile、effect、operation、risk 和 target
   policy 全部由代码目录固定；运行时不加载官方 YAML 或动态 Profile。
-- Tool 参数不接受当前身份 ID、Union ID、operator ID、primary calendar ID、robot
-  code、openConversationId、Agent ID、URL、Method、Header 或凭据。
-- 当前本人待办、本人主日历、本人 AI 表格 operator、当前来源会话和本人工作通知
-  目标全部由服务端事实注入；删除、撤回、DING、任意目标和结构修改能力未注册。
+- Tool 参数不接受当前 actor 身份 ID、Union ID、operator ID、primary calendar ID、
+  robot code、openConversationId、Agent ID、URL、Method、Header 或凭据；官方用户
+  批量消息 Tool 只接受显式收件人 `user_ids` 和 `msg_param={title,text}`。
+- 当前本人待办、本人主日历、本人 AI 表格 operator、当前来源会话、企业机器人 Code
+  和本人工作通知目标由服务端事实注入；按姓名发送由 Agent 显式执行搜索、必要时详情
+  消歧再传入 userId，MCP 服务不隐式查人。删除、撤回、DING、任意群和结构修改能力
+  未注册。
 - 卡片使用同一企业应用的 Stream 回调，`outTrackId` 等于 Action Intent ID，并禁止转发。
 - 服务端强制校验 Runtime lease、Connector、corp、点击人、意图签名、revision 和状态；端侧按钮状态不构成授权。
 - `agree` 才进入 Provider 执行队列；`reject` 永不执行；`revise` 只返回“不支持”
@@ -40,7 +43,8 @@ MCP 审计；9 个 mutation 只创建待确认 Action Intent，不直接写入�
 - `dingtalk-tasks`：`Todo.Todo.Read`；mutation 另需 `Todo.Todo.Write`。
 - `dingtalk-calendar`：Calendar Read/Schedule Read；mutation 另需 Calendar Write。
 - `dingtalk-notable`：逐 endpoint 在当前企业应用后台核验，平台不猜测权限代码。
-- `dingtalk-robot-send-message`：企业机器人发送权限和当前来源 robot code。
+- `dingtalk-robot-send-message`：企业机器人当前会话/用户批量发送权限；用户批量 Tool
+  要求 Connector 配置企业机器人 Code，并固定调用官方 batch endpoint。
 - `dingtalk-notice`：工作通知发送/查询权限和 Connector Agent ID。
 
 权限不足统一失败关闭，不会回退到其它 Connector、Credential 或 endpoint。服务和

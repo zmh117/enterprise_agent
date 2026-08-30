@@ -134,6 +134,7 @@ COPY backend/app/modules/agent/__init__.py /app/backend/app/modules/agent/
 COPY backend/app/modules/agent/domain /app/backend/app/modules/agent/domain
 COPY backend/app/modules/agent/infrastructure/__init__.py /app/backend/app/modules/agent/infrastructure/
 COPY backend/app/modules/agent/infrastructure/generated_runtime_contracts*.py backend/app/modules/agent/infrastructure/runtime_protocol.py backend/app/modules/agent/infrastructure/tool_manifest.py /app/backend/app/modules/agent/infrastructure/
+COPY backend/app/modules/mcp_tool_runtime/__init__.py backend/app/modules/mcp_tool_runtime/contracts.py backend/app/modules/mcp_tool_runtime/manifest.py /app/backend/app/modules/mcp_tool_runtime/
 # Keep this as a narrow namespace-package whitelist. Its __init__.py imports the repository layer.
 COPY backend/app/modules/file_workspace/contracts.py backend/app/modules/file_workspace/domain.py backend/app/modules/file_workspace/text_format_policy.py /app/backend/app/modules/file_workspace/
 COPY backend/app/modules/model_connection/__init__.py /app/backend/app/modules/model_connection/
@@ -146,7 +147,7 @@ COPY backend/app/modules/platform_config/infrastructure/__init__.py backend/app/
 COPY contracts/agent-runtime/v1.4 /app/contracts/agent-runtime/v1.4
 RUN groupadd --system --gid 10002 python-runtime \
     && useradd --system --uid 10002 --gid 10002 --no-create-home python-runtime \
-    && python -c "import app.python_runtime; import app.python_runtime.file_transfer_http; import app.modules.agent.infrastructure.runtime_protocol; from mcp import types; from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version; from app.python_runtime.file_mcp_bridge import _mcp_list_tools_next_cursor, _mcp_tool_input_schema; assert claude_sdk_version() != 'unknown'; assert claude_cli_version() not in {'unknown', 'unavailable'}; assert _mcp_tool_input_schema(types.Tool(name='probe', inputSchema={})) == {}; assert _mcp_list_tools_next_cursor(types.ListToolsResult(tools=[])) == ''"
+    && python -c "import app.python_runtime; import app.python_runtime.file_transfer_http; import app.modules.agent.infrastructure.runtime_protocol; from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST; from mcp import types; from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version; from app.python_runtime.file_mcp_bridge import _mcp_list_tools_next_cursor, _mcp_tool_input_schema; assert MCP_TOOL_MANIFEST; assert claude_sdk_version() != 'unknown'; assert claude_cli_version() not in {'unknown', 'unavailable'}; assert _mcp_tool_input_schema(types.Tool(name='probe', inputSchema={})) == {}; assert _mcp_list_tools_next_cursor(types.ListToolsResult(tools=[])) == ''"
 USER 10002:10002
 CMD ["python", "-m", "uvicorn", "app.python_runtime.service:create_app", "--factory", "--host", "0.0.0.0", "--port", "8091"]
 

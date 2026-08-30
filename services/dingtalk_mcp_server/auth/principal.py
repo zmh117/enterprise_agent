@@ -44,6 +44,7 @@ class ResolvedDingTalkPrincipal:
     source_conversation_id: str
     source_open_conversation_id: str
     source_robot_code: str
+    enterprise_robot_code: str
     work_notification_agent_id: int | None
     principal_jti: str
 
@@ -193,6 +194,7 @@ class DingTalkPrincipalResolver:
             or connector_metadata.get("default_robot_code")
             or ""
         )
+        enterprise_robot_code = str(connector_metadata.get("default_robot_code") or "")
         work_notification_agent_id = self._positive_int(
             connector_metadata.get("work_notification_agent_id")
         )
@@ -214,6 +216,7 @@ class DingTalkPrincipalResolver:
             source_conversation_id=source_conversation_id,
             source_open_conversation_id=source_open_conversation_id,
             source_robot_code=source_robot_code,
+            enterprise_robot_code=enterprise_robot_code,
             work_notification_agent_id=work_notification_agent_id,
             principal_jti=str(claims["jti"]),
         )

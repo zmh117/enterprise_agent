@@ -8,6 +8,9 @@ from app.shared.mcp_server_policy import DINGTALK_MCP_SERVER_CODE, mcp_invoke_sc
 
 
 DINGTALK_CREATE_TODO_TOOL_IDENTIFIER: Final = "dingtalk_create_todo"
+DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER: Final = (
+    "dingtalk_batch_send_message_to_users_by_robot"
+)
 DINGTALK_CONFIRMATION_POLICY: Final = "external_action_card_v1"
 DINGTALK_NO_CONFIRMATION_POLICY: Final = "none"
 DINGTALK_ID_PATTERN: Final = r"^[A-Za-z0-9._:@-]+$"
@@ -43,6 +46,7 @@ DINGTALK_MUTATION_TOOL_IDENTIFIERS: Final = (
     "dingtalk_insert_aitable_records",
     "dingtalk_update_aitable_records",
     "dingtalk_send_robot_message",
+    DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER,
     "dingtalk_send_work_notification",
 )
 
@@ -433,7 +437,11 @@ def _add(contract: DingTalkToolContract) -> None:
 _add(
     _read_contract(
         "dingtalk_search_users",
-        "在当前钉钉企业应用可见范围内按名称搜索用户，只返回工作字段白名单。",
+        (
+            "在当前钉钉企业应用可见范围内按名称搜索用户，只返回工作字段白名单。"
+            "搜索命中可能只包含稳定 user_id；需要核实姓名、职务或部门时，必须对本次返回的"
+            "每个候选继续调用 dingtalk_get_user，不得用历史轮次的授权结果替代当前调用。"
+        ),
         _object(
             {
                 "query": {"type": "string", "minLength": 1, "maxLength": 100},
@@ -452,7 +460,11 @@ _add(
 _add(
     _read_contract(
         "dingtalk_get_user",
-        "读取当前钉钉企业应用可见范围内的用户工作信息，不返回手机号或邮箱。",
+        (
+            "读取当前钉钉企业应用可见范围内指定稳定 user_id 的工作信息，不返回手机号或邮箱。"
+            "用于核实 dingtalk_search_users 本次返回的候选；调用时只需原样传入 user_id，"
+            "language 可省略并默认使用 zh_CN。"
+        ),
         _object({"user_id": _identifier(), "language": _LANGUAGE}, required=("user_id",)),
         _item_output("user", _USER_ITEM),
         operation_code="dingtalk.contact.user.get",
@@ -852,8 +864,56 @@ _add(
 )
 _add(
     _mutation_contract(
+        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER,
+        (
+            "准备使用企业机器人向一个或多个明确 user_id 批量发送普通消息，原用户确认后"
+            "才会执行。按姓名发送时，必须先调用 dingtalk_search_users；候选无法唯一识别"
+            "时继续调用本 Job 中已授权的 dingtalk_get_user 并让用户选择。不得复用历史 Job"
+            "的授权结论，也不得改用工作通知或当前来源会话消息。"
+        ),
+        _object(
+            {
+                "user_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": _identifier(),
+                },
+                "msg_param": _object(
+                    {
+                        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+                        "text": {"type": "string", "minLength": 1, "maxLength": 3000},
+                    },
+                    required=("title", "text"),
+                ),
+            },
+            required=("user_ids", "msg_param"),
+        ),
+        _confirmation_output(
+            "批量发送钉钉机器人单聊",
+            {
+                "recipient_count": {"type": "integer", "minimum": 1},
+                "recipient_id_suffixes": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 4, "maxLength": 16},
+                },
+                "title": {"type": "string", "maxLength": 200},
+                "text": {"type": "string", "maxLength": 3000},
+            },
+            summary_required=("recipient_count", "recipient_id_suffixes", "title", "text"),
+        ),
+        operation_code="dingtalk.robot.batch_send_message_to_users",
+        target_policy="explicit_enterprise_user_ids",
+        provider_profile="dingtalk-robot-send-message",
+    )
+)
+_add(
+    _mutation_contract(
         "dingtalk_send_robot_message",
-        "准备向当前钉钉来源群或当前私聊发起人发送机器人消息，原用户确认后才会执行。",
+        (
+            "仅准备向当前钉钉来源群或当前私聊发起人发送机器人消息，原用户确认后"
+            "才会执行。不支持按姓名或任意 user_id 定向发送；该场景必须使用当前 Job 中"
+            "已授权的 dingtalk_batch_send_message_to_users_by_robot。"
+        ),
         _object(
             {
                 "title": {"type": "string", "minLength": 1, "maxLength": 200},
@@ -862,7 +922,7 @@ _add(
             required=("title", "text"),
         ),
         _confirmation_output(
-            "发送钉钉机器人消息",
+            "向当前钉钉来源会话发送机器人消息",
             {
                 "target": {"type": "string", "maxLength": 200},
                 "title": {"type": "string", "maxLength": 200},
@@ -934,8 +994,10 @@ def validate_dingtalk_tool_contracts(
 ) -> None:
     selected = DINGTALK_TOOL_CONTRACTS if contracts is None else contracts
     expected = set(DINGTALK_READ_TOOL_IDENTIFIERS) | set(DINGTALK_MUTATION_TOOL_IDENTIFIERS)
-    if set(selected) != expected or len(selected) != 27:
-        raise ValueError("DingTalk MCP Tool catalog must contain the exact Phase 2 set")
+    if set(selected) != expected or len(selected) != 28:
+        raise ValueError(
+            "DingTalk MCP Tool catalog must contain Phase 2 plus the official user batch send Tool"
+        )
     operations: set[str] = set()
     for identifier, contract in selected.items():
         if identifier != contract.identifier:

@@ -50,6 +50,7 @@ class ExternalActionWorker:
             "dingtalk.aitable.record.insert": self._execute_aitable_insert,
             "dingtalk.aitable.record.update": self._execute_aitable_update,
             "dingtalk.robot.message.send": self._execute_robot_send,
+            "dingtalk.robot.batch_send_message_to_users": self._execute_robot_user_batch_send,
             "dingtalk.work_notification.send": self._execute_work_notification_send,
         }
         expected_operations = {
@@ -369,6 +370,17 @@ class ExternalActionWorker:
         del intent
         return DingTalkRobotMutationClient(token_client).send_current(arguments=arguments)
 
+    def _execute_robot_user_batch_send(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        del intent
+        return DingTalkRobotMutationClient(token_client).batch_send_to_users(
+            arguments=arguments
+        )
+
     def _execute_work_notification_send(
         self,
         intent: dict[str, Any],
@@ -421,6 +433,24 @@ class ExternalActionWorker:
             if self._target(arguments) != self._current_robot_target(intent):
                 raise ValueError("External action source conversation target facts drifted")
             return
+        if target_policy == "explicit_enterprise_user_ids":
+            user_ids = arguments.get("user_ids")
+            target = self._target(arguments)
+            robot_code = self._enterprise_robot_code(intent)
+            if (
+                not isinstance(user_ids, list)
+                or not user_ids
+                or any(not isinstance(user_id, str) or not user_id for user_id in user_ids)
+                or not robot_code
+                or type(target.get("recipient_count")) is not int
+                or target
+                != {
+                    "robot_code": robot_code,
+                    "recipient_count": len(user_ids),
+                }
+            ):
+                raise ValueError("External action robot user batch target facts drifted")
+            return
         if target_policy == "current_user_work_notification":
             target = self._target(arguments)
             connector = self.runtime.connector_registry.require_dingtalk_stream_ingress(
@@ -442,6 +472,14 @@ class ExternalActionWorker:
                 raise ValueError("External action work notification target facts drifted")
             return
         raise ValueError("External action target policy is unsupported")
+
+    def _enterprise_robot_code(self, intent: dict[str, Any]) -> str:
+        connector = self.runtime.connector_registry.require_dingtalk_stream_ingress(
+            str(intent["source_connector_id"])
+        )
+        return str(
+            self.runtime.connector_registry.metadata_value(connector, "default_robot_code") or ""
+        )
 
     def _current_robot_target(self, intent: dict[str, Any]) -> dict[str, Any]:
         source = self.runtime.database.execute_one(
@@ -520,11 +558,16 @@ class ExternalActionWorker:
             str(intent["source_connector_id"])
         )
         enterprise = self.runtime.database.execute_one(
-            "select status from dingtalk_enterprise where id = ?",
-            (intent["dingtalk_enterprise_id"],),
+            """
+            select e.status
+              from integration_connector c
+              join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
+             where c.id = ? and c.dingtalk_enterprise_id = ?
+            """,
+            (intent["source_connector_id"], intent["dingtalk_enterprise_id"]),
         )
         if enterprise is None or str(enterprise["status"]) != "ACTIVE":
-            raise ValueError("DingTalk enterprise is not active")
+            raise ValueError("DingTalk connector enterprise binding is no longer eligible")
         client_id = self.runtime.connector_registry.metadata_value(connector, "client_id")
         client_secret = self.runtime.connector_registry.resolve_secret(connector)
         if not client_id or not client_secret:
@@ -560,6 +603,9 @@ class ExternalActionWorker:
             "dingtalk.aitable.record.insert": "当前用户可访问的 AI 表格",
             "dingtalk.aitable.record.update": "当前用户可访问的 AI 表格",
             "dingtalk.robot.message.send": str(summary.get("target") or "当前来源会话"),
+            "dingtalk.robot.batch_send_message_to_users": (
+                f"{int(summary.get('recipient_count') or 0)} 名明确收件人"
+            ),
             "dingtalk.work_notification.send": "当前用户本人",
         }
         if operation_code not in targets:
@@ -614,6 +660,16 @@ class ExternalActionWorker:
                 f"Sheet ID：{str(summary.get('sheet_id') or '')[:512]}",
                 f"记录数：{int(summary.get('record_count') or 0)}",
                 "字段：" + "、".join(str(item)[:128] for item in field_names[:50]),
+            ]
+        elif operation_code == "dingtalk.robot.batch_send_message_to_users":
+            suffixes = summary.get("recipient_id_suffixes")
+            recipient_id_suffixes = suffixes if isinstance(suffixes, list) else []
+            lines = [
+                f"收件人数：{int(summary.get('recipient_count') or 0)}",
+                "收件人 ID 尾号："
+                + "、".join(str(item)[:16] for item in recipient_id_suffixes),
+                f"标题：{str(summary.get('title') or '')[:200]}",
+                f"正文：{str(summary.get('text') or '')[:3000]}",
             ]
         elif operation_code in {
             "dingtalk.robot.message.send",

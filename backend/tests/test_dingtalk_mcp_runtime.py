@@ -12,7 +12,10 @@ from app.modules.external_action.service import ExternalActionService, ExternalA
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.python_runtime.tool_policy import contains_forbidden_tool_input
 from app.shared.database import Database
-from app.shared.dingtalk_tool_contracts import DINGTALK_TOOL_CONTRACTS
+from app.shared.dingtalk_tool_contracts import (
+    DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER,
+    DINGTALK_TOOL_CONTRACTS,
+)
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 from services.dingtalk_mcp_server.contracts import TOOL_IDENTIFIER
 from services.dingtalk_mcp_server.auth.principal import (
@@ -34,8 +37,11 @@ from services.dingtalk_mcp_server.provider import (
     DingTalkWorkNotificationMutationClient,
     UrllibDingTalkJsonTransport,
 )
-from services.dingtalk_mcp_server.tools.read_tool import _safe_payload_summary, _validated_payload
+from services.dingtalk_mcp_server.tools.mutation_catalog import (
+    DingTalkMutationPreparationCatalog,
+)
 from services.dingtalk_mcp_server.tools.mutation_tool import DingTalkMutationToolService
+from services.dingtalk_mcp_server.tools.read_tool import _safe_payload_summary, _validated_payload
 from services.dingtalk_mcp_server.worker import ExternalActionWorker
 
 
@@ -191,11 +197,23 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
     assert len(transport.calls) == 18
     assert [(method, url) for method, url, *_ in transport.calls] == [
         ("POST", "https://api.dingtalk.com/v1.0/contact/users/search"),
-        ("POST", "https://oapi.dingtalk.com/topapi/v2/user/get"),
-        ("POST", "https://oapi.dingtalk.com/topapi/user/listid"),
+        (
+            "POST",
+            "https://oapi.dingtalk.com/topapi/v2/user/get?access_token=test-access-token",
+        ),
+        (
+            "POST",
+            "https://oapi.dingtalk.com/topapi/user/listid?access_token=test-access-token",
+        ),
         ("POST", "https://api.dingtalk.com/v1.0/contact/departments/search"),
-        ("POST", "https://oapi.dingtalk.com/topapi/v2/department/get"),
-        ("POST", "https://oapi.dingtalk.com/topapi/v2/department/listsub"),
+        (
+            "POST",
+            "https://oapi.dingtalk.com/topapi/v2/department/get?access_token=test-access-token",
+        ),
+        (
+            "POST",
+            "https://oapi.dingtalk.com/topapi/v2/department/listsub?access_token=test-access-token",
+        ),
         ("POST", "https://api.dingtalk.com/v1.0/todo/users/union-1/org/tasks/query"),
         (
             "GET",
@@ -227,12 +245,22 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
             "GET",
             "https://api.dingtalk.com/v1.0/notable/bases/base-1/sheets/sheet-1/records/record-1?operatorId=union-1",
         ),
-        ("POST", "https://oapi.dingtalk.com/topapi/message/corpconversation/getsendprogress"),
-        ("POST", "https://oapi.dingtalk.com/topapi/message/corpconversation/getsendresult"),
+        (
+            "POST",
+            "https://oapi.dingtalk.com/topapi/message/corpconversation/getsendprogress?access_token=test-access-token",
+        ),
+        (
+            "POST",
+            "https://oapi.dingtalk.com/topapi/message/corpconversation/getsendresult?access_token=test-access-token",
+        ),
     ]
-    assert all(
-        call[3] == {"x-acs-dingtalk-access-token": "test-access-token"} for call in transport.calls
-    )
+    for _method, url, _payload, headers, _timeout in transport.calls:
+        if url.startswith("https://oapi.dingtalk.com/"):
+            assert headers == {}
+            assert "access_token=test-access-token" in url
+        else:
+            assert headers == {"x-acs-dingtalk-access-token": "test-access-token"}
+            assert "access_token=" not in url
     assert transport.calls[0][2] == {
         "queryWord": "张三",
         "offset": 0,
@@ -308,6 +336,110 @@ def test_contact_projection_and_audit_summary_remove_sensitive_values() -> None:
     assert "value" not in str(summary)
 
 
+def test_contact_search_projects_string_user_ids_and_provider_pagination_facts() -> None:
+    transport = _Transport(
+        {
+            "result": {
+                "list": ["staff-1", "staff-2"],
+                "hasMore": False,
+                "totalCount": 2,
+            }
+        }
+    )
+    result = DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
+        query="庄慕焕",
+        offset=0,
+        page_size=20,
+        exact_match=False,
+    )
+
+    assert result == {
+        "users": [{"user_id": "staff-1"}, {"user_id": "staff-2"}],
+        "returned": 2,
+        "truncated": False,
+        "untrusted_data": True,
+    }
+    assert transport.calls[0][2] == {"queryWord": "庄慕焕", "offset": 0, "size": 20}
+
+    transport.response = {
+        "result": {
+            "list": ["staff-3"],
+            "hasMore": False,
+            "totalCount": 4,
+        }
+    }
+    next_page = DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
+        query="庄慕焕",
+        offset=2,
+        page_size=1,
+        exact_match=False,
+    )
+    assert next_page["users"] == [{"user_id": "staff-3"}]
+    assert next_page["returned"] == 1
+    assert next_page["truncated"] is True
+
+    transport.response = {
+        "result": {
+            "list": ["staff-4"],
+            "hasMore": True,
+            "totalCount": 1,
+        }
+    }
+    has_more_page = DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
+        query="庄慕焕",
+        offset=0,
+        page_size=20,
+        exact_match=False,
+    )
+    assert has_more_page["truncated"] is True
+
+
+def test_ambiguous_user_search_does_not_implicitly_prepare_or_send() -> None:
+    transport = _Transport(
+        {
+            "result": {
+                "list": ["staff-same-name-1", "staff-same-name-2"],
+                "hasMore": False,
+                "totalCount": 2,
+            }
+        }
+    )
+    result = DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
+        query="庄慕焕",
+        offset=0,
+        page_size=20,
+        exact_match=False,
+    )
+    database = _database()
+
+    assert result["users"] == [
+        {"user_id": "staff-same-name-1"},
+        {"user_id": "staff-same-name-2"},
+    ]
+    assert [(method, url) for method, url, *_ in transport.calls] == [
+        ("POST", "https://api.dingtalk.com/v1.0/contact/users/search")
+    ]
+    assert database.execute_one(
+        "select count(*) as count from external_action_intent"
+    ) == {"count": 0}
+
+
+def test_contact_search_rejects_unknown_provider_item_shape() -> None:
+    transport = _Transport(
+        {"result": {"list": [123], "hasMore": False, "totalCount": 1}}
+    )
+
+    with pytest.raises(RetryableExecutionError) as exc_info:
+        DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
+            query="庄慕焕",
+            offset=0,
+            page_size=20,
+            exact_match=False,
+        )
+
+    assert exc_info.value.error_code == "dingtalk_response_invalid"
+
+
 def test_read_schema_rejects_identity_and_network_overrides_before_provider_io() -> None:
     schema = MCP_TOOL_MANIFEST["dingtalk_list_todos"].input_schema
     with pytest.raises(NonRetryableExecutionError) as identity:
@@ -322,6 +454,268 @@ def test_read_schema_rejects_identity_and_network_overrides_before_provider_io()
             kind="request",
         )
     assert network.value.error_code == "dingtalk_request_invalid"
+
+
+def test_robot_user_batch_schema_and_normalizer_preserve_official_input_semantics() -> None:
+    contract = DINGTALK_TOOL_CONTRACTS[
+        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
+    ]
+    arguments = {
+        "user_ids": ["staff-2", "staff-1", "staff-2"],
+        "msg_param": {"title": " 标题 ", "text": " 正文 "},
+    }
+    validated = _validated_payload(arguments, contract.input_schema, kind="request")
+    catalog = DingTalkMutationPreparationCatalog(SimpleNamespace())
+    assert catalog.preflight(contract.identifier) is None
+
+    frozen, summary = catalog.normalizer(contract.identifier)(
+        SimpleNamespace(enterprise_robot_code="robot-1"),  # type: ignore[arg-type]
+        validated,
+    )
+
+    assert frozen == {
+        "user_ids": ["staff-2", "staff-1", "staff-2"],
+        "msg_param": {"title": " 标题 ", "text": " 正文 "},
+        "_target": {"robot_code": "robot-1", "recipient_count": 3},
+    }
+    assert summary == {
+        "operation": "批量发送钉钉机器人单聊",
+        "recipient_count": 3,
+        "recipient_id_suffixes": ["...taff-2", "...taff-1", "...taff-2"],
+        "title": " 标题 ",
+        "text": " 正文 ",
+    }
+    assert json_hash(frozen) != json_hash(
+        {**frozen, "user_ids": ["staff-1", "staff-2", "staff-2"]}
+    )
+
+
+def test_robot_user_batch_reuses_one_intent_for_identical_ordered_arguments() -> None:
+    database = _database()
+    service = ExternalActionService(
+        ExternalActionRepository(database),
+        ExternalActionTokenSigner("k" * 32),
+        _Audit(),
+    )
+    definition = MCP_TOOL_MANIFEST[DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER]
+    facts = {
+        **_facts(),
+        "tool_identifier": definition.identifier,
+        "schema_hash": definition.schema_hash,
+        "operation_code": definition.operation_code,
+    }
+    arguments = {
+        "user_ids": ["staff-2", "staff-1", "staff-2"],
+        "msg_param": {"title": "标题", "text": "正文"},
+        "_target": {"robot_code": "robot-1", "recipient_count": 3},
+    }
+    summary = {
+        "operation": "批量发送钉钉机器人单聊",
+        "recipient_count": 3,
+        "recipient_id_suffixes": ["...taff-2", "...taff-1", "...taff-2"],
+        "title": "标题",
+        "text": "正文",
+    }
+
+    first, first_created = service.prepare(
+        facts=facts,
+        arguments=arguments,
+        arguments_hash=json_hash(arguments),
+        safe_summary=summary,
+        mcp_call_id="mcp-call-1",
+    )
+    second, second_created = service.prepare(
+        facts=facts,
+        arguments=arguments,
+        arguments_hash=json_hash(arguments),
+        safe_summary=summary,
+        mcp_call_id="mcp-call-2",
+    )
+    reordered_arguments = {
+        **arguments,
+        "user_ids": ["staff-1", "staff-2", "staff-2"],
+    }
+    reordered, reordered_created = service.prepare(
+        facts=facts,
+        arguments=reordered_arguments,
+        arguments_hash=json_hash(reordered_arguments),
+        safe_summary={
+            **summary,
+            "recipient_id_suffixes": ["...taff-1", "...taff-2", "...taff-2"],
+        },
+        mcp_call_id="mcp-call-3",
+    )
+
+    assert first_created is True
+    assert second_created is False
+    assert second["id"] == first["id"]
+    assert reordered_created is True
+    assert reordered["id"] != first["id"]
+    assert database.execute_one(
+        "select count(*) as count from external_action_card_outbox"
+    ) == {"count": 2}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"user_ids": [], "msg_param": {"title": "标题", "text": "正文"}},
+        {"user_ids": [""], "msg_param": {"title": "标题", "text": "正文"}},
+        {
+            "user_ids": ["staff-1"],
+            "msg_param": {"title": "标题", "text": "正文", "msgKey": "forged"},
+        },
+        {
+            "user_ids": ["staff-1"],
+            "msg_param": {"title": "标题", "text": "正文"},
+            "robot_code": "forged",
+        },
+    ],
+)
+def test_robot_user_batch_schema_rejects_empty_or_server_owned_fields(
+    arguments: dict[str, Any],
+) -> None:
+    schema = MCP_TOOL_MANIFEST[
+        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
+    ].input_schema
+    with pytest.raises(NonRetryableExecutionError) as caught:
+        _validated_payload(arguments, schema, kind="request")
+    assert caught.value.error_code == "dingtalk_request_invalid"
+
+
+def test_robot_user_batch_rejects_global_intent_payload_overflow_before_prepare() -> None:
+    contract = DINGTALK_TOOL_CONTRACTS[
+        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
+    ]
+    principal = SimpleNamespace(enterprise_robot_code="robot-1")
+
+    class _Resolver:
+        @staticmethod
+        def audit_context(*_args: Any, **_kwargs: Any) -> object:
+            return object()
+
+        @staticmethod
+        def resolve(*_args: Any, **_kwargs: Any) -> object:
+            return principal
+
+    class _Actions:
+        @staticmethod
+        def prepare(**_values: Any) -> tuple[dict[str, Any], bool]:
+            raise AssertionError("oversized arguments must not create an Intent")
+
+    class _McpAudit:
+        @staticmethod
+        def begin(*_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(mcp_call_id="mcp-call-1")
+
+        @staticmethod
+        def append_event(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        @staticmethod
+        def complete(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+    normalizer = DingTalkMutationPreparationCatalog(SimpleNamespace()).normalizer(
+        contract.identifier
+    )
+    service = DingTalkMutationToolService(
+        contract,
+        _Resolver(),  # type: ignore[arg-type]
+        _Actions(),  # type: ignore[arg-type]
+        _McpAudit(),  # type: ignore[arg-type]
+        normalizer,
+    )
+    large_user_ids = [f"user-{index:03d}-" + "x" * 500 for index in range(40)]
+
+    with pytest.raises(NonRetryableExecutionError) as caught:
+        service.invoke(
+            claims={},
+            arguments={
+                "user_ids": large_user_ids,
+                "msg_param": {"title": "标题", "text": "正文"},
+            },
+            correlation_id="correlation-1",
+            invocation_id="job-1.attempt-0",
+        )
+
+    assert caught.value.error_code == "dingtalk_mutation_arguments_too_large"
+
+
+def test_worker_reauthorizes_robot_user_batch_target_without_user_detail_preflight() -> None:
+    class _ConnectorRegistry:
+        robot_code = "robot-1"
+
+        @staticmethod
+        def require_dingtalk_stream_ingress(connector_id: str) -> dict[str, str]:
+            assert connector_id == "connector-1"
+            return {"id": connector_id}
+
+        def metadata_value(self, _connector: object, key: str) -> str:
+            assert key == "default_robot_code"
+            return self.robot_code
+
+    connector_registry = _ConnectorRegistry()
+    worker = ExternalActionWorker.__new__(ExternalActionWorker)
+    worker.runtime = SimpleNamespace(connector_registry=connector_registry)
+    arguments = {
+        "user_ids": ["staff-2", "staff-1", "staff-2"],
+        "msg_param": {"title": "标题", "text": "正文"},
+        "_target": {"robot_code": "robot-1", "recipient_count": 3},
+    }
+    worker.repository = SimpleNamespace(  # type: ignore[assignment]
+        decode_json=lambda _value: arguments
+    )
+    intent = {"source_connector_id": "connector-1", "arguments_json": "{}"}
+    contract = DINGTALK_TOOL_CONTRACTS[
+        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
+    ]
+
+    worker._reauthorize_target(intent, contract)
+    connector_registry.robot_code = "robot-2"
+    with pytest.raises(ValueError, match="batch target facts drifted"):
+        worker._reauthorize_target(intent, contract)
+
+
+def test_worker_reauthorizes_connector_enterprise_binding_before_credentials() -> None:
+    class _Database:
+        eligible = True
+
+        def execute_one(self, sql: str, values: tuple[str, str]) -> dict[str, str] | None:
+            assert "join dingtalk_enterprise" in sql
+            assert values == ("connector-1", "enterprise-1")
+            return {"status": "ACTIVE"} if self.eligible else None
+
+    class _ConnectorRegistry:
+        @staticmethod
+        def require_dingtalk_stream_ingress(connector_id: str) -> object:
+            assert connector_id == "connector-1"
+            return object()
+
+        @staticmethod
+        def metadata_value(_connector: object, key: str) -> str:
+            assert key == "client_id"
+            return "client-1"
+
+        @staticmethod
+        def resolve_secret(_connector: object) -> str:
+            return "secret-1"
+
+    database = _Database()
+    worker = ExternalActionWorker.__new__(ExternalActionWorker)
+    worker.runtime = SimpleNamespace(
+        database=database,
+        connector_registry=_ConnectorRegistry(),
+    )
+    intent = {
+        "source_connector_id": "connector-1",
+        "dingtalk_enterprise_id": "enterprise-1",
+    }
+
+    assert worker._connector_credentials(intent) == ("client-1", "secret-1")
+    database.eligible = False
+    with pytest.raises(ValueError, match="enterprise binding"):
+        worker._connector_credentials(intent)
 
 
 @pytest.mark.parametrize(
@@ -366,6 +760,20 @@ def test_todo_subject_is_business_input_not_a_principal_override() -> None:
     assert contains_forbidden_tool_input({"sub": "forged-principal"}) is True
     assert contains_forbidden_tool_input({"actor_id": "forged-actor"}) is True
     assert contains_forbidden_tool_input({"user_id": "forged-user"}) is True
+    assert (
+        contains_forbidden_tool_input(
+            {"user_id": "explicit-business-target"},
+            declared_root_fields=frozenset({"user_id"}),
+        )
+        is False
+    )
+    assert (
+        contains_forbidden_tool_input(
+            {"user_id": "explicit-business-target", "actor_id": "forged-actor"},
+            declared_root_fields=frozenset({"user_id"}),
+        )
+        is True
+    )
 
 
 def test_principal_resolver_uses_invoked_contract_and_server_owned_targets() -> None:
@@ -405,7 +813,10 @@ def test_principal_resolver_uses_invoked_contract_and_server_owned_targets() -> 
                     "dingtalk_enterprise_id": "enterprise-1",
                     "enterprise_status": "ACTIVE",
                     "corp_id": "corp-1",
-                    "metadata": '{"work_notification_agent_id":123456}',
+                    "metadata": (
+                        '{"default_robot_code":"enterprise-robot-1",'
+                        '"work_notification_agent_id":123456}'
+                    ),
                 }
             if "select retry_count" in sql:
                 return {"retry_count": 0}
@@ -486,6 +897,7 @@ def test_principal_resolver_uses_invoked_contract_and_server_owned_targets() -> 
     assert principal.aitable_operator_id == "union-1"
     assert principal.source_open_conversation_id == "open-1"
     assert principal.source_robot_code == "robot-1"
+    assert principal.enterprise_robot_code == "enterprise-robot-1"
     assert principal.work_notification_agent_id == 123456
     assert authorization.values[-1]["tool_identifier"] == contract.identifier
 
@@ -943,7 +1355,7 @@ def test_card_and_todo_clients_emit_only_fixed_bounded_provider_contracts() -> N
     assert result == {"task_id": "todo-1", "created": True}
 
 
-def test_fixed_mutation_clients_use_the_nine_allowlisted_operations() -> None:
+def test_fixed_mutation_clients_use_the_ten_allowlisted_operations() -> None:
     transport = _Transport({"id": "resource-1", "task_id": 321})
     token = _TokenClient()
     todo = DingTalkTodoClient(token, transport=transport)
@@ -998,6 +1410,13 @@ def test_fixed_mutation_clients_use_the_nine_allowlisted_operations() -> None:
             },
         }
     )
+    DingTalkRobotMutationClient(token, transport=transport).batch_send_to_users(
+        arguments={
+            "user_ids": ["staff-1", "staff-2"],
+            "msg_param": {"title": "批量标题", "text": "批量正文"},
+            "_target": {"robot_code": "robot-1", "recipient_count": 2},
+        }
+    )
     DingTalkWorkNotificationMutationClient(token, transport=transport).send_to_self(
         arguments={
             "title": "标题",
@@ -1033,21 +1452,32 @@ def test_fixed_mutation_clients_use_the_nine_allowlisted_operations() -> None:
             "https://api.dingtalk.com/v1.0/notable/bases/base%2F1/sheets/sheet%2F1/records?operatorId=union%2F1",
         ),
         ("POST", "https://api.dingtalk.com/v1.0/robot/groupMessages/send"),
+        ("POST", "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"),
         (
             "POST",
-            "https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2",
+            "https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2?access_token=test-access-token",
         ),
     ]
-    assert all(
-        call[3] == {"x-acs-dingtalk-access-token": "test-access-token"} for call in transport.calls
-    )
+    for _method, url, _payload, headers, _timeout in transport.calls:
+        if url.startswith("https://oapi.dingtalk.com/"):
+            assert headers == {}
+            assert "access_token=test-access-token" in url
+        else:
+            assert headers == {"x-acs-dingtalk-access-token": "test-access-token"}
+            assert "access_token=" not in url
     assert transport.calls[7][2] == {
         "robotCode": "robot-1",
         "msgKey": "sampleMarkdown",
-        "msgParam": {"title": "标题", "text": "正文"},
+        "msgParam": '{"title":"标题","text":"正文"}',
         "openConversationId": "cid/1",
     }
     assert transport.calls[8][2] == {
+        "robotCode": "robot-1",
+        "userIds": ["staff-1", "staff-2"],
+        "msgKey": "sampleMarkdown",
+        "msgParam": '{"title":"批量标题","text":"批量正文"}',
+    }
+    assert transport.calls[9][2] == {
         "agent_id": 123,
         "userid_list": "staff-1",
         "to_all_user": False,
@@ -1056,6 +1486,33 @@ def test_fixed_mutation_clients_use_the_nine_allowlisted_operations() -> None:
             "markdown": {"title": "标题", "text": "正文"},
         },
     }
+
+
+def test_robot_user_batch_provider_rejects_target_drift_before_io() -> None:
+    transport = _Transport()
+    client = DingTalkRobotMutationClient(_TokenClient(), transport=transport)
+
+    with pytest.raises(NonRetryableExecutionError) as caught:
+        client.batch_send_to_users(
+            arguments={
+                "user_ids": ["staff-1", "staff-2"],
+                "msg_param": {"title": "标题", "text": "正文"},
+                "_target": {"robot_code": "robot-1", "recipient_count": 1},
+            }
+        )
+
+    assert caught.value.error_code == "dingtalk_robot_user_batch_invalid"
+    assert transport.calls == []
+
+    with pytest.raises(NonRetryableExecutionError):
+        client.batch_send_to_users(
+            arguments={
+                "user_ids": ["staff-1"],
+                "msg_param": {"title": "标题", "text": "正文"},
+                "_target": {"robot_code": "robot-1", "recipient_count": True},
+            }
+        )
+    assert transport.calls == []
 
 
 @pytest.mark.parametrize(
@@ -1091,12 +1548,34 @@ def test_fixed_mutation_clients_use_the_nine_allowlisted_operations() -> None:
         (
             "dingtalk.robot.message.send",
             {
-                "operation": "发送钉钉机器人消息",
+                "operation": "向当前钉钉来源会话发送机器人消息",
                 "target": "当前群聊",
                 "title": "结果",
                 "text": "已完成",
             },
             "当前群聊",
+        ),
+        (
+            "dingtalk.robot.batch_send_message_to_users",
+            {
+                "operation": "批量发送钉钉机器人单聊",
+                "recipient_count": 1,
+                "recipient_id_suffixes": ["...taff-1"],
+                "title": "结果",
+                "text": "已完成",
+            },
+            "1 名明确收件人",
+        ),
+        (
+            "dingtalk.robot.batch_send_message_to_users",
+            {
+                "operation": "批量发送钉钉机器人单聊",
+                "recipient_count": 2,
+                "recipient_id_suffixes": ["...taff-1", "...taff-2"],
+                "title": "结果",
+                "text": "已完成",
+            },
+            "2 名明确收件人",
         ),
     ],
 )
@@ -1113,7 +1592,7 @@ def test_confirmation_card_fields_are_operation_specific_and_bounded(
     assert 1 <= len(fields["detailText"]) <= 4000
 
 
-def test_mutation_mcp_audit_excludes_message_values_and_target_secrets() -> None:
+def test_user_batch_mcp_audit_excludes_recipient_ids_message_and_target_secrets() -> None:
     principal = ResolvedDingTalkPrincipal(
         job_id="job-1",
         session_id="session-1",
@@ -1132,6 +1611,7 @@ def test_mutation_mcp_audit_excludes_message_values_and_target_secrets() -> None
         source_conversation_id="conversation-secret",
         source_open_conversation_id="open-conversation-secret",
         source_robot_code="robot-secret",
+        enterprise_robot_code="enterprise-robot-secret",
         work_notification_agent_id=123456,
         principal_jti="jti-secret",
     )
@@ -1169,35 +1649,26 @@ def test_mutation_mcp_audit_excludes_message_values_and_target_secrets() -> None
             }, True
 
     audit = _McpAudit()
-    tool_contract = DINGTALK_TOOL_CONTRACTS["dingtalk_send_robot_message"]
-
-    def _normalize(
-        _principal: ResolvedDingTalkPrincipal,
-        values: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        return {
-            **values,
-            "_target": {
-                "open_conversation_id": "open-conversation-secret",
-                "robot_code": "robot-secret",
-            },
-        }, {
-            "operation": "发送钉钉机器人消息",
-            "target": "当前群聊",
-            "title": values["title"],
-            "text": values["text"],
-        }
+    tool_contract = DINGTALK_TOOL_CONTRACTS[
+        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
+    ]
+    normalizer = DingTalkMutationPreparationCatalog(SimpleNamespace()).normalizer(
+        tool_contract.identifier
+    )
 
     service = DingTalkMutationToolService(
         tool_contract,
         _Resolver(),  # type: ignore[arg-type]
         _Actions(),  # type: ignore[arg-type]
         audit,  # type: ignore[arg-type]
-        _normalize,
+        normalizer,
     )
     service.invoke(
         claims={},
-        arguments={"title": "机密标题", "text": "正文绝密 private@example.invalid"},
+        arguments={
+            "user_ids": ["staff-full-secret-alpha", "staff-full-secret-beta"],
+            "msg_param": {"title": "机密标题", "text": "正文绝密 private@example.invalid"},
+        },
         correlation_id="correlation-1",
         invocation_id="job-1.attempt-0",
     )
@@ -1206,8 +1677,11 @@ def test_mutation_mcp_audit_excludes_message_values_and_target_secrets() -> None
         "机密标题",
         "正文绝密",
         "private@example.invalid",
+        "staff-full-secret-alpha",
+        "staff-full-secret-beta",
         "open-conversation-secret",
         "robot-secret",
+        "enterprise-robot-secret",
         "staff-secret",
         "union-secret",
         "jti-secret",

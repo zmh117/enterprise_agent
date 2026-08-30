@@ -94,6 +94,64 @@ def test_dingtalk_notice_tools_require_agent_id_on_every_source_connector() -> N
     )
 
 
+def test_dingtalk_user_batch_tool_requires_connector_robot_code() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    composition = container.business_application_service.mcp_tool_composition_service
+    selected = [
+        {
+            "server_code": "dingtalk-mcp",
+            "tool_identifier": "dingtalk_batch_send_message_to_users_by_robot",
+        }
+    ]
+    triggers = [
+        {
+            "trigger_type": "dingtalk_private",
+            "connector_id": "connector-dingtalk-stream-default",
+            "enabled": True,
+        }
+    ]
+    row = container.database.execute_one(
+        "select metadata from integration_connector where id = ?",
+        ("connector-dingtalk-stream-default",),
+    )
+    metadata = json.loads(str((row or {})["metadata"]))
+    metadata.pop("default_robot_code", None)
+    container.database.execute(
+        "update integration_connector set metadata = ? where id = ?",
+        (
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            "connector-dingtalk-stream-default",
+        ),
+    )
+
+    errors = composition.dingtalk_feature_errors(
+        selected_tools=selected,
+        triggers=triggers,
+    )
+    assert errors == [
+        {
+            "field": "mcp_tools",
+            "message": (
+                "批量用户机器人消息工具要求所有钉钉来源连接配置企业机器人 Code："
+                "dingtalk-stream-default"
+            ),
+        }
+    ]
+
+    metadata["default_robot_code"] = "robot-code-configured"
+    container.database.execute(
+        "update integration_connector set metadata = ? where id = ?",
+        (
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            "connector-dingtalk-stream-default",
+        ),
+    )
+    assert composition.dingtalk_feature_errors(
+        selected_tools=selected,
+        triggers=triggers,
+    ) == []
+
+
 def draft_payload(*, route: str = "", mcp_tools: list[str] | None = None) -> dict[str, object]:
     triggers: list[dict[str, object]] = []
     deliveries: list[dict[str, object]] = []

@@ -47,18 +47,30 @@ FORBIDDEN_TOOL_INPUT_FIELDS = frozenset(
 )
 
 
-def contains_forbidden_tool_input(value: object, depth: int = 0) -> bool:
+def contains_forbidden_tool_input(
+    value: object,
+    depth: int = 0,
+    *,
+    declared_root_fields: frozenset[str] = frozenset(),
+) -> bool:
     if depth >= 8:
         return False
     if isinstance(value, list):
         return any(contains_forbidden_tool_input(item, depth + 1) for item in value)
     if not isinstance(value, dict):
         return False
-    return any(
-        str(key).lower() in FORBIDDEN_TOOL_INPUT_FIELDS
-        or contains_forbidden_tool_input(child, depth + 1)
-        for key, child in value.items()
-    )
+    for key, child in value.items():
+        field = str(key)
+        # A trusted, frozen Tool schema owns the semantics of its declared
+        # top-level fields. Once declared, the MCP server performs the exact
+        # nested validation and Principal/target injection for that field.
+        if depth == 0 and field in declared_root_fields:
+            continue
+        if field.lower() in FORBIDDEN_TOOL_INPUT_FIELDS or contains_forbidden_tool_input(
+            child, depth + 1
+        ):
+            return True
+    return False
 
 
 def normalize_tool_events(

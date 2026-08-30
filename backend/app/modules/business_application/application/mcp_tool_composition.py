@@ -191,9 +191,13 @@ class ApplicationMcpToolCompositionService:
             "dingtalk_get_work_notification_progress",
             "dingtalk_get_work_notification_result",
         }
-        if not selected.intersection(notice_tools):
+        batch_robot_tools = {"dingtalk_batch_send_message_to_users_by_robot"}
+        requires_notice = bool(selected.intersection(notice_tools))
+        requires_batch_robot = bool(selected.intersection(batch_robot_tools))
+        if not requires_notice and not requires_batch_robot:
             return []
-        missing: list[str] = []
+        missing_notice: list[str] = []
+        missing_batch_robot: list[str] = []
         for trigger in dingtalk_triggers:
             connector_id = str(trigger.get("connector_id") or "")
             row = self.database.execute_one(
@@ -205,22 +209,38 @@ class ApplicationMcpToolCompositionService:
                 (connector_id,),
             )
             metadata = self._json_object((row or {}).get("metadata"))
-            if (
+            connector_name = str((row or {}).get("name") or connector_id or "未知连接")
+            if requires_notice and (
                 row is None
                 or self._positive_int(metadata.get("work_notification_agent_id")) is None
             ):
-                missing.append(str((row or {}).get("name") or connector_id or "未知连接"))
-        if not missing:
-            return []
-        return [
-            {
-                "field": "mcp_tools",
-                "message": (
-                    "工作通知工具要求所有钉钉来源连接配置正整数 Agent ID："
-                    + "、".join(sorted(set(missing)))[:300]
-                ),
-            }
-        ]
+                missing_notice.append(connector_name)
+            if requires_batch_robot and (
+                row is None or not str(metadata.get("default_robot_code") or "").strip()
+            ):
+                missing_batch_robot.append(connector_name)
+        errors: list[dict[str, str]] = []
+        if missing_notice:
+            errors.append(
+                {
+                    "field": "mcp_tools",
+                    "message": (
+                        "工作通知工具要求所有钉钉来源连接配置正整数 Agent ID："
+                        + "、".join(sorted(set(missing_notice)))[:300]
+                    ),
+                }
+            )
+        if missing_batch_robot:
+            errors.append(
+                {
+                    "field": "mcp_tools",
+                    "message": (
+                        "批量用户机器人消息工具要求所有钉钉来源连接配置企业机器人 Code："
+                        + "、".join(sorted(set(missing_batch_robot)))[:300]
+                    ),
+                }
+            )
+        return errors
 
     def persist_draft(
         self,

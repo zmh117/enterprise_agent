@@ -1972,6 +1972,106 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
     assert normalized[0]["tool_name"] == "ones_work_item_search"
 
 
+def test_python_runtime_allows_schema_declared_user_id_but_denies_actor_override() -> None:
+    definition = MCP_TOOL_MANIFEST["dingtalk_get_user"]
+    tool_name = "mcp__dingtalk_mcp__dingtalk_get_user"
+    context = AgentExecutionContext(
+        system_role="readonly DingTalk agent",
+        safety_rules=["readonly"],
+        user_question="resolve the current search candidates",
+        project_code="project-1",
+        allowed_tools=["dingtalk_get_user"],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code="dingtalk-mcp",
+                tool_name=definition.identifier,
+                required_scope=definition.required_scope,
+                tool_schema_hash=definition.schema_hash,
+            ),
+        ),
+        effective_tool_names=(tool_name,),
+    )
+    request = AgentRunRequest(
+        job_id="job-dingtalk-user-detail",
+        user_id="app-user-1",
+        project_code="project-1",
+        invocation_id="invocation-dingtalk-user-detail",
+        context=context,
+    )
+    client = FixedMcpClaudeSdkClient(
+        limits=build_settings().execution,
+        api_key="runtime-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        business_mcp_server_urls={"dingtalk-mcp": "http://dingtalk-mcp:9107/mcp"},
+        mcp_principal_tokens={"dingtalk-mcp": "test-only-principal-token"},
+    )
+    captured: dict[str, Any] = {}
+    sdk = ClaudeSdk(
+        query=cast(Any, None),
+        options=lambda **kwargs: captured.update(kwargs) or kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+        permission_allow=lambda *, updated_input: {
+            "behavior": "allow",
+            "updated_input": updated_input,
+        },
+        permission_deny=lambda *, message, interrupt: {
+            "behavior": "deny",
+            "message": message,
+            "interrupt": interrupt,
+        },
+    )
+    binding = ModelRuntimeBinding(
+        protocol="anthropic_compatible",
+        base_url="https://model.invalid/anthropic",
+        model="test-model",
+        default_opus_model="test-model",
+        default_sonnet_model="test-model",
+        default_haiku_model="test-model",
+        subagent_model="test-model",
+        effort_level="max",
+        secret_ref="secret://not-projected",
+    )
+    sandbox = client.sandbox_manager.create(request.job_id)
+    sandbox_token = client._sandbox.set(sandbox)
+    try:
+        client._build_options(
+            sdk,
+            context,
+            client._build_mcp_server(request),
+            [],
+            binding,
+        )
+        allowed = asyncio.run(
+            captured["can_use_tool"](
+                tool_name,
+                {"user_id": "staff-1", "language": "zh_CN"},
+                object(),
+            )
+        )
+        denied = asyncio.run(
+            captured["can_use_tool"](
+                tool_name,
+                {"user_id": "staff-1", "actor_id": "forged-actor"},
+                object(),
+            )
+        )
+    finally:
+        client._sandbox.reset(sandbox_token)
+        sandbox.cleanup()
+
+    assert allowed["behavior"] == "allow"
+    assert allowed["updated_input"] == {"user_id": "staff-1", "language": "zh_CN"}
+    assert denied["behavior"] == "deny"
+
+
 def test_python_runtime_builds_isolated_sdk_config_for_two_business_servers() -> None:
     context = AgentExecutionContext(
         system_role="readonly business agent",

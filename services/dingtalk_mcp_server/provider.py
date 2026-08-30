@@ -270,13 +270,19 @@ class _FixedDingTalkClient:
             for key, value in (query or {}).items()
             if value is not None and str(value) != ""
         }
+        access_token = self.token_client.access_token()
+        if legacy:
+            # DingTalk's legacy oapi endpoints authenticate with the app access
+            # token in the query string. The newer api.dingtalk.com endpoints
+            # use the x-acs-dingtalk-access-token header instead.
+            clean_query["access_token"] = access_token
         if clean_query:
             url = f"{url}?{urlencode(clean_query)}"
         return self.transport.request_json(
             method,
             url,
             payload or {},
-            {"x-acs-dingtalk-access-token": self.token_client.access_token()},
+            {} if legacy else {"x-acs-dingtalk-access-token": access_token},
             self.timeout_seconds,
         )
 
@@ -302,8 +308,14 @@ class DingTalkContactsClient(_FixedDingTalkClient):
             "/v1.0/contact/users/search",
             payload=payload,
         )
-        rows = _provider_items(response, "list", "users", "items")[:page_size]
-        return _page("users", [_project_user(row) for row in rows], response, page_size)
+        rows = _provider_items(response, "list", "users", "items")
+        return _page(
+            "users",
+            [_project_search_user(row) for row in rows],
+            response,
+            page_size,
+            offset=offset,
+        )
 
     def get_user(self, *, user_id: str, language: str) -> dict[str, Any]:
         response = self._request(
@@ -691,6 +703,54 @@ class DingTalkAiTableMutationClient(_FixedDingTalkClient):
 
 
 class DingTalkRobotMutationClient(_FixedDingTalkClient):
+    def batch_send_to_users(self, *, arguments: dict[str, Any]) -> dict[str, Any]:
+        target = arguments.get("_target")
+        user_ids = arguments.get("user_ids")
+        msg_param = arguments.get("msg_param")
+        if (
+            not isinstance(target, dict)
+            or not str(target.get("robot_code") or "")
+            or not isinstance(user_ids, list)
+            or not user_ids
+            or any(not isinstance(user_id, str) or not user_id for user_id in user_ids)
+            or type(target.get("recipient_count")) is not int
+            or target.get("recipient_count") != len(user_ids)
+            or not isinstance(msg_param, dict)
+            or set(msg_param) != {"title", "text"}
+            or not isinstance(msg_param.get("title"), str)
+            or not isinstance(msg_param.get("text"), str)
+        ):
+            raise NonRetryableExecutionError(
+                "DingTalk robot user batch target is invalid",
+                safe_message="钉钉机器人批量收件人或消息参数无效",
+                error_code="dingtalk_robot_user_batch_invalid",
+            )
+        response = self._request(
+            "POST",
+            "/v1.0/robot/oToMessages/batchSend",
+            payload={
+                "robotCode": str(target["robot_code"]),
+                "userIds": list(user_ids),
+                "msgKey": "sampleMarkdown",
+                "msgParam": _robot_markdown_msg_param(
+                    title=msg_param["title"],
+                    text=msg_param["text"],
+                ),
+            },
+        )
+        request_id = _text(
+            response.get("processQueryKey") or response.get("requestId"),
+            512,
+        )
+        process_query_keys = response.get("processQueryKeys")
+        if not request_id and isinstance(process_query_keys, list) and process_query_keys:
+            request_id = _text(process_query_keys[0], 512)
+        return {
+            "message_request_id": request_id,
+            "recipient_count": len(user_ids),
+            "sent": True,
+        }
+
     def send_current(self, *, arguments: dict[str, Any]) -> dict[str, Any]:
         target = arguments.get("_target")
         if not isinstance(target, dict):
@@ -702,7 +762,10 @@ class DingTalkRobotMutationClient(_FixedDingTalkClient):
         payload: dict[str, Any] = {
             "robotCode": str(target["robot_code"]),
             "msgKey": "sampleMarkdown",
-            "msgParam": {"title": arguments["title"], "text": arguments["text"]},
+            "msgParam": _robot_markdown_msg_param(
+                title=arguments["title"],
+                text=arguments["text"],
+            ),
         }
         if str(target.get("conversation_type")) == "group":
             path = "/v1.0/robot/groupMessages/send"
@@ -758,6 +821,14 @@ class DingTalkWorkNotificationMutationClient(_FixedDingTalkClient):
             or _provider_object(response).get("task_id")
         )
         return {"task_id": task_id, "sent": True}
+
+
+def _robot_markdown_msg_param(*, title: str, text: str) -> str:
+    return json.dumps(
+        {"title": title, "text": text},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def _calendar_payload(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -824,21 +895,55 @@ def _page(
     items: list[dict[str, Any]],
     response: dict[str, Any],
     maximum: int,
+    *,
+    offset: int = 0,
 ) -> dict[str, Any]:
     source = _provider_object(response)
     cursor = _text(
         source.get("nextToken") or source.get("next_token") or response.get("nextToken"),
         512,
     )
+    has_more = _boolean(
+        source.get("hasMore", source.get("has_more", response.get("hasMore", False)))
+    )
+    total_count = _integer(
+        source.get(
+            "totalCount",
+            source.get("total_count", response.get("totalCount", -1)),
+        ),
+        -1,
+    )
+    returned = min(len(items), maximum)
     output: dict[str, Any] = {
         field: items[:maximum],
-        "returned": min(len(items), maximum),
-        "truncated": len(items) > maximum or bool(cursor),
+        "returned": returned,
+        "truncated": (
+            len(items) > maximum
+            or bool(cursor)
+            or has_more
+            or (total_count >= 0 and total_count > max(0, offset) + returned)
+        ),
         "untrusted_data": True,
     }
     if cursor:
         output["next_cursor"] = cursor
     return output
+
+
+def _project_search_user(value: object) -> dict[str, Any]:
+    if isinstance(value, str):
+        user_id = _text(value, 512)
+        if user_id:
+            return {"user_id": user_id}
+    elif isinstance(value, dict):
+        user = _project_user(value)
+        if user.get("user_id"):
+            return user
+    raise RetryableExecutionError(
+        "DingTalk user search item was invalid",
+        safe_message="钉钉开放接口响应无效",
+        error_code="dingtalk_response_invalid",
+    )
 
 
 def _project_user(value: object) -> dict[str, Any]:

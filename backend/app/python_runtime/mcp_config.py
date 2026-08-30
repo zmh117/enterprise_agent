@@ -15,6 +15,7 @@ from app.modules.agent.domain.runtime import (
     AgentRunRequest,
     ToolCallBudget,
 )
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.mcp_server_policy import (
     FILE_MCP_SERVER_CODE,
     DINGTALK_MCP_SERVER_CODE,
@@ -139,6 +140,34 @@ def _validated_runtime_manifest_items(
             )
         validated.append(item)
     return validated
+
+
+def _declared_mcp_input_fields(
+    context: AgentExecutionContext,
+    *,
+    server_policies: Mapping[str, McpServerPolicy],
+) -> dict[str, frozenset[str]]:
+    declared: dict[str, frozenset[str]] = {}
+    for binding in context.mcp_bindings:
+        definition = MCP_TOOL_MANIFEST.get(binding.tool_name)
+        if (
+            definition is None
+            or definition.server_code != binding.server_code
+            or definition.schema_hash != binding.tool_schema_hash
+        ):
+            continue
+        properties = definition.input_schema.get("properties")
+        if not isinstance(properties, dict):
+            continue
+        sdk_name = (
+            f"mcp__{mcp_sdk_server_alias(binding.server_code, policies=server_policies)}"
+            f"__{binding.tool_name}"
+        )
+        fields = frozenset(str(value) for value in properties)
+        declared[sdk_name] = (
+            declared[sdk_name].intersection(fields) if sdk_name in declared else fields
+        )
+    return declared
 
 
 class FixedMcpClaudeSdkClient(ClaudeSdkClient):
@@ -613,6 +642,10 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         exact_tool_set = frozenset(
             name for name in context.effective_tool_names if name not in FILE_TOOL_NAMES
         )
+        declared_input_fields = _declared_mcp_input_fields(
+            context,
+            server_policies=self._server_policies,
+        )
         file_job = any(name in FILE_TOOL_NAMES for name in context.effective_tool_names)
         sandbox = self._sandbox.get()
         if sandbox is None:
@@ -655,7 +688,14 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 return deny(message=exc.safe_message, interrupt=True)
             if tool_name in exact_tool_set:
                 return (
-                    deny() if contains_forbidden_tool_input(tool_input) else allow(dict(tool_input))
+                    deny()
+                    if contains_forbidden_tool_input(
+                        tool_input,
+                        declared_root_fields=declared_input_fields.get(
+                            tool_name, frozenset()
+                        ),
+                    )
+                    else allow(dict(tool_input))
                 )
             if file_job and tool_name in ALLOWED_FILE_TOOLS:
                 try:

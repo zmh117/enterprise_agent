@@ -12,6 +12,8 @@
 
 本基线只把官方包中的七个 YAML Profile 当作 method/path/Provider 字段参考。运行时不得读取或复制这些 YAML，不得消费 `ACTIVE_PROFILES`，也不得接受模型提供的 URL、Method、Header、Credential、Profile 或服务端身份字段。项目代码中的固定合同、Provider allowlist 和测试才是运行事实源。
 
+Provider 鉴权投影同样属于固定合同：`https://api.dingtalk.com` 新版接口使用 `x-acs-dingtalk-access-token` Header；`https://oapi.dingtalk.com` 旧版接口使用 URL 查询参数 `access_token`，不得同时把 Token 放入 Header。Token 只能由服务端 Connector 凭据换取和注入，模型参数、MCP 响应、审计及业务日志都不得包含 Token。
+
 ## 2. Profile 权限基线
 
 | Profile | 官方公开权限/配置 | Phase 2 门禁 |
@@ -79,7 +81,7 @@
 
 | 固定 Tool | 官方工具参考 | Method / Path | 模型字段与固定投影 |
 |---|---|---|---|
-| `dingtalk_send_robot_message` | `sendMessageToGroupByRobot` 或 `batchSendMessageToUsersByRobot` | 群：`POST https://api.dingtalk.com/v1.0/robot/groupMessages/send`；私聊：`POST https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend` | 仅 `title/text`；服务端按当前来源类型选择 endpoint，并注入 `robotCode`、当前 `openConversationId` 或当前发起人 `staffId`，固定 `msgKey=sampleMarkdown` |
+| `dingtalk_send_robot_message` | `sendMessageToGroupByRobot` 或 `batchSendMessageToUsersByRobot` | 群：`POST https://api.dingtalk.com/v1.0/robot/groupMessages/send`；私聊：`POST https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend` | 仅 `title/text`；服务端按当前来源类型选择 endpoint，并注入 `robotCode`、当前 `openConversationId` 或当前发起人 `staffId`，固定 `msgKey=sampleMarkdown`；Provider 边界按官方 `extendType=json` 将 `{title,text}` 序列化为 `msgParam` JSON string |
 | `dingtalk_send_work_notification` | `sendNotice` | `POST https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2` | 仅 `title/text`；服务端注入 `agent_id` 与当前发起人 `userid_list`，固定 `to_all_user=false` 且不发送部门列表 |
 | `dingtalk_get_work_notification_progress` | `getSendProgress` | `POST https://oapi.dingtalk.com/topapi/message/corpconversation/getsendprogress` | `task_id`；只允许查询同 actor/企业/Connector 的平台发送记录，服务端注入 `agent_id` |
 | `dingtalk_get_work_notification_result` | `getSendResult` | `POST https://oapi.dingtalk.com/topapi/message/corpconversation/getsendresult` | `task_id`；关联约束同上，服务端注入 `agent_id` |

@@ -448,6 +448,60 @@ def test_agent_publication_persists_manifest_owned_ones_server_code() -> None:
     ]
 
 
+def test_dingtalk_user_batch_tool_requires_a_new_agent_publication() -> None:
+    c = container()
+    connection_revision = ready_connection(c)
+    agent = c.agent_config_service.get(AGENT_CODE)
+    first_draft = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=int(agent["draft"]["revision"]),
+        config=agent_config(str(connection_revision["id"])),
+    )
+    first_publication = c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(first_draft["id"]),
+    )
+
+    next_config = agent_config(str(connection_revision["id"]))
+    next_config["mcp_tool_ids"] = ["dingtalk_batch_send_message_to_users_by_robot"]
+    second_draft = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=int(first_draft["revision"]),
+        config=next_config,
+    )
+    second_publication = c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(second_draft["id"]),
+    )
+
+    first_tools = {
+        item["tool_identifier"] for item in first_publication["snapshot"]["mcp_tool_envelope"]
+    }
+    second_tools = {
+        item["tool_identifier"] for item in second_publication["snapshot"]["mcp_tool_envelope"]
+    }
+    assert "dingtalk_batch_send_message_to_users_by_robot" not in first_tools
+    assert "dingtalk_batch_send_message_to_users_by_robot" in second_tools
+    assert c.database.execute_one(
+        """
+        select count(*) as count from agent_publication_mcp_tool
+         where agent_publication_id = ? and tool_identifier = ?
+        """,
+        (first_publication["id"], "dingtalk_batch_send_message_to_users_by_robot"),
+    ) == {"count": 0}
+    assert c.database.execute_one(
+        """
+        select count(*) as count from agent_publication_mcp_tool
+         where agent_publication_id = ? and tool_identifier = ?
+        """,
+        (second_publication["id"], "dingtalk_batch_send_message_to_users_by_robot"),
+    ) == {"count": 1}
+
+
 def test_agent_list_degrades_missing_published_model_revision_instead_of_500() -> None:
     settings, c = web_container()
     connection_revision = ready_connection(c)
