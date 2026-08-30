@@ -59,7 +59,7 @@
 ## 8. 真实发布与 E2E 证据
 
 - [x] 8.1 创建包含精确 Phase 2 Tool 的新 Agent/Application Publication 与角色 grant，并证明既有 Publication 和旧 Job 不会自动获得新 Tool
-- [ ] 8.2 使用全新真实 DingTalk Job 分别验收 contacts、department、tasks、calendar、notable 和 notice-status 代表性只读调用，区分成功、无数据和权限不足
+- [x] 8.2 使用全新真实 DingTalk Job 分别验收 contacts、department、tasks、calendar、notable 和 notice-status 代表性只读调用，区分成功、无数据和权限不足
 - [ ] 8.3 分别验收待办、日历、AI 表格记录、机器人消息和工作通知 mutation 的同意链，关联 Job、Tool Call、Intent、卡片、唯一 Provider attempt 与真实外部结果
 - [ ] 8.4 分别验收上述 mutation 的拒绝链，证明 Intent 为 REJECTED、Provider 写入 attempt 为零且卡片终态不可再次执行
 - [ ] 8.5 保存不含 Secret、Token 或无界业务正文的发布/回滚证据，确认排除的删除、撤回、DING、任意目标和结构修改 Tool 不可见

@@ -41,7 +41,9 @@ A later post-permission run exposed `dingtalk_http_400` only for fuzzy user sear
 
 - Fresh representative read Job `job_e022d40048ac4c26aad65bbb9218fff8` completed one Tool call for contacts, department, tasks, calendar and notable. All five Tool Calls reached `SUCCEEDED`; their bounded list counts were respectively users `0`, departments `0`, todos `0`, events `0` and AI tables `1`. This distinguishes valid empty results from a non-empty but still bounded AI-table search without reproducing any item value.
 
-The notice-status read after a successful work-notification mutation, mutation agree/reject chains, provider-attempt counts, terminal card states, and exclusion visibility checks remain to be recorded below.
+After the successful work-notification mutation, fresh Job `job_27b1b8e644934553803141d8426f0c1f` called `dingtalk_get_work_notification_progress` and `dingtalk_get_work_notification_result` in order. The Job reached `SUCCEEDED` with Tool contract status `MATCH`; both Tool calls and their MCP audits reached `SUCCEEDED`, both authorization decisions were `ALLOW` with reason `principal_identity_snapshot_and_tool_grant_allowed`, and request/response truncation flags were false. The bounded response summaries contained only the declared `progress`/`result` and `untrusted_data` fields. The Job created zero Action Intents. Its frozen snapshot recorded both tools as `read`, confirmation policy `none`, and target policy `current_user_work_notification_history`.
+
+Together with the representative contacts, department, tasks, calendar and notable calls above, this closes the Phase 2 read-only Profile gate. Mutation agree/reject chains, terminal card states, and exclusion visibility checks remain to be completed below.
 
 ## Contact string-ID regression run
 
@@ -83,3 +85,11 @@ The notice-status read after a successful work-notification mutation, mutation a
 - The Intent records exactly one execution attempt, a non-empty Provider task identifier, and bounded result keys `created,task_id`.
 - Both `CREATE` and `RESULT_UPDATE` card outbox rows reached `SUCCEEDED` in one attempt. Audit events form `external_action.prepared -> external_action.approved -> external_action.executed`.
 - The original user independently confirmed that the todo exists in DingTalk. No todo title, description, Provider body, external identity, Secret, or Token is retained in this artifact.
+
+### Calendar create and read-back
+
+- Fresh Job `job_5e0fe1fdc6ab4ae3a85c89e5085d1191` prepared calendar-create Intent `action_8e540e55b01a4124ae38b1ae7604dba1`. The exact Tool authorization was `ALLOW`; the original actor approved the current revision; one Provider execution attempt returned a non-empty event identifier; the Intent and both `CREATE`/`RESULT_UPDATE` card rows reached `SUCCEEDED` in one attempt.
+- The original user then reported that the event was not visible in the DingTalk client, so the mutation's platform success state alone was not accepted as proof of the external business result.
+- Fresh read-only Job `job_369a62129b444838a5307cf8839bbde3` used the exact returned event identifier with `dingtalk_get_calendar_event`, then queried the bounded expected time window with `dingtalk_list_calendar_events`. The Job reached `SUCCEEDED` with Tool contract status `MATCH`; both Tool Calls and Tool audits reached `SUCCEEDED`; both authorization decisions were `ALLOW` with reason `principal_identity_snapshot_and_tool_grant_allowed`; the bounded list contained exactly one event; and no Action Intent was created.
+- The precise identifier lookup proves that the created event exists through the current principal's primary-calendar API, while the bounded list proves that one event is visible in the requested time window. This closes the Provider-side external-result check. The user's earlier client observation is retained as a separate DingTalk client display, filter, or synchronization uncertainty and is not represented as API creation failure.
+- The fixed request method, path and payload field projection match the pinned official `dingtalk-mcp@1.1.21` `createEvent` contract. No title, description, complete event identifier, credential or raw Provider response is retained here.
