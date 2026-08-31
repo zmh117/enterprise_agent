@@ -431,6 +431,17 @@ def test_tool_restrictions_do_not_disclose_unassigned_tool_identifiers() -> None
     assert "get_schema_directory" not in database_only_text
 
 
+def test_confirmation_gated_tool_restrictions_require_a_real_tool_result() -> None:
+    without_mutation = " ".join(_tool_restrictions(["dingtalk_list_calendar_events"]))
+    with_mutation = " ".join(_tool_restrictions(["dingtalk_create_calendar_event"]))
+
+    assert "status=confirmation_required" not in without_mutation
+    assert "actually call the exact assigned Tool" in with_mutation
+    assert "status=confirmation_required" in with_mutation
+    assert "if no call occurred" in with_mutation
+    assert "dingtalk_create_calendar_event" not in with_mutation
+
+
 @pytest.mark.parametrize("runtime_kind", ["python-v1"])
 def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_tools(
     runtime_kind: str,

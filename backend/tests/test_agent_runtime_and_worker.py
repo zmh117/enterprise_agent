@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import unittest
 
+from app.modules.agent.application.agent_executor import _guard_confirmation_claim
+from app.modules.agent.domain.runtime import AgentRunResult
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
-from app.modules.agent.domain.runtime import AgentRunResult
 from app.shared.exceptions import DiagnosticLoopExhausted, RetryableExecutionError
 from app.workers.agent_job_worker import AgentJobWorker
 from backend.tests.helpers import (
@@ -91,6 +92,46 @@ class ToolEventClaudeClient:
 
 
 class AgentRuntimeAndWorkerTests(unittest.TestCase):
+    def test_unverified_confirmation_claim_is_replaced(self) -> None:
+        guarded, rejected = _guard_confirmation_claim(
+            final_answer=(
+                "确认卡片已创建（status=confirmation_required），当前处于等待确认状态。"
+            ),
+            allowed_tools=["dingtalk_create_calendar_event"],
+            tool_events=[],
+        )
+
+        self.assertTrue(rejected)
+        self.assertIn("确认卡未创建", guarded)
+        self.assertNotIn("confirmation_required", guarded)
+
+    def test_verified_confirmation_claim_keeps_the_model_answer(self) -> None:
+        answer = "确认卡已创建，status=confirmation_required。"
+        guarded, rejected = _guard_confirmation_claim(
+            final_answer=answer,
+            allowed_tools=["dingtalk_create_calendar_event"],
+            tool_events=[
+                {
+                    "tool_name": "dingtalk_create_calendar_event",
+                    "status": "SUCCEEDED",
+                }
+            ],
+        )
+
+        self.assertFalse(rejected)
+        self.assertEqual(answer, guarded)
+
+    def test_confirmation_status_explanation_without_creation_claim_is_unchanged(self) -> None:
+        answer = "confirmation_required 表示操作仍需用户确认。"
+        guarded, rejected = _guard_confirmation_claim(
+            final_answer=answer,
+            allowed_tools=["dingtalk_create_calendar_event"],
+            tool_events=[],
+        )
+
+        self.assertFalse(rejected)
+        self.assertEqual(answer, guarded)
+
     def test_agent_executor_completes_with_evidence_report(self) -> None:
         c = _runtime_container()
         job = c.create_agent_job_service.execute(

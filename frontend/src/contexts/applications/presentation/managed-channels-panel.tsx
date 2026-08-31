@@ -974,6 +974,27 @@ function DingTalkEditorForm({
           />
         </EditorField>
         <EditorField
+          label="企业机器人 Code"
+          htmlFor="dingtalk-enterprise-robot-code"
+        >
+          <Input
+            id="dingtalk-enterprise-robot-code"
+            maxLength={128}
+            value={form.enterprise_robot_code}
+            placeholder="启用机器人个人/群消息 Tool 时必填"
+            onChange={(event) =>
+              setInitialForm({
+                ...initialForm,
+                enterprise_robot_code: event.target.value,
+              })
+            }
+          />
+          <p className="text-xs leading-5 text-muted-foreground">
+            对应钉钉官方 MCP 的 ROBOT_CODE，用于企业机器人个人/群消息；不是工作通知
+            Agent ID，也不是 Secret。
+          </p>
+        </EditorField>
+        <EditorField
           label="工作通知 Agent ID"
           htmlFor="dingtalk-work-notification-agent-id"
         >
@@ -1297,6 +1318,7 @@ function dingTalkForm(channel?: ManagedChannel): DingTalkChannelInput {
     allow_group_chat: channel?.capabilities.group_chat ?? true,
     require_group_at: channel?.capabilities.require_group_at ?? true,
     work_notification_agent_id: null,
+    enterprise_robot_code: channel?.enterprise_robot_code ?? "",
     enabled: channel?.enabled ?? false,
     rotate_secret: false,
   }

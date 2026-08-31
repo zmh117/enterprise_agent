@@ -47,9 +47,13 @@ class ExternalActionWorker:
             "dingtalk.todo.complete": self._execute_todo_complete,
             "dingtalk.calendar.event.create": self._execute_calendar_create,
             "dingtalk.calendar.event.update": self._execute_calendar_update,
+            "dingtalk.aitable.sheet.create": self._execute_aitable_sheet_create,
+            "dingtalk.aitable.sheet.update": self._execute_aitable_sheet_update,
+            "dingtalk.aitable.field.create": self._execute_aitable_field_create,
+            "dingtalk.aitable.field.update": self._execute_aitable_field_update,
             "dingtalk.aitable.record.insert": self._execute_aitable_insert,
             "dingtalk.aitable.record.update": self._execute_aitable_update,
-            "dingtalk.robot.message.send": self._execute_robot_send,
+            "dingtalk.robot.group_message.send": self._execute_robot_group_send,
             "dingtalk.robot.batch_send_message_to_users": self._execute_robot_user_batch_send,
             "dingtalk.work_notification.send": self._execute_work_notification_send,
         }
@@ -120,7 +124,7 @@ class ExternalActionWorker:
                 summary = self.repository.decode_json(intent["safe_summary_json"])
                 status = str(payload.get("status") or "failed")
                 operation = str(summary.get("operation") or "钉钉操作")[:100]
-                status_text = (
+                status_text = str(payload.get("statusText") or "").strip() or (
                     f"{operation}成功"
                     if status == "succeeded"
                     else f"{operation}失败，请联系管理员"
@@ -165,6 +169,7 @@ class ExternalActionWorker:
                     or result.get("message_request_id")
                     or ""
                 ),
+                card_status_text=self._success_card_status_text(contract, result),
             )
             self.runtime.audit_service.record(
                 "external_action.executed",
@@ -200,6 +205,23 @@ class ExternalActionWorker:
                     ),
                 },
             )
+
+    @staticmethod
+    def _success_card_status_text(
+        contract: DingTalkToolContract,
+        result: dict[str, Any],
+    ) -> str:
+        if contract.operation_code == "dingtalk.robot.group_message.send":
+            return "群机器人消息请求已受理，最终送达以钉钉为准"
+        if contract.operation_code == "dingtalk.robot.batch_send_message_to_users":
+            accepted = max(0, int(result.get("accepted_count") or 0))
+            rejected = max(0, int(result.get("not_accepted_count") or 0))
+            if bool(result.get("fully_accepted")):
+                return f"批量机器人消息请求已受理：{accepted} 人受理"
+            return f"批量消息请求已受理：{accepted} 人受理，{rejected} 人未受理"
+        if contract.operation_code == "dingtalk.work_notification.send":
+            return "工作通知发送任务已提交，最终结果请查询发送进度"
+        return ""
 
     def _reauthorize(self, intent: dict[str, Any]) -> DingTalkToolContract:
         tool_identifier = str(intent["tool_identifier"])
@@ -331,16 +353,66 @@ class ExternalActionWorker:
             arguments=arguments,
         )
 
+    def _execute_aitable_sheet_create(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        operator_id = str(intent["target_union_id"])
+        self._preflight_aitable(token_client, arguments, operator_id=operator_id)
+        return DingTalkAiTableMutationClient(token_client).create_sheet(
+            operator_id=operator_id,
+            arguments=arguments,
+        )
+
+    def _execute_aitable_sheet_update(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        operator_id = str(intent["target_union_id"])
+        self._preflight_aitable(token_client, arguments, operator_id=operator_id)
+        return DingTalkAiTableMutationClient(token_client).update_sheet(
+            operator_id=operator_id,
+            arguments=arguments,
+        )
+
+    def _execute_aitable_field_create(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        operator_id = str(intent["target_union_id"])
+        self._preflight_aitable(token_client, arguments, operator_id=operator_id)
+        return DingTalkAiTableMutationClient(token_client).create_field(
+            operator_id=operator_id,
+            arguments=arguments,
+        )
+
+    def _execute_aitable_field_update(
+        self,
+        intent: dict[str, Any],
+        arguments: dict[str, Any],
+        token_client: DingTalkAccessTokenClient,
+    ) -> dict[str, Any]:
+        operator_id = str(intent["target_union_id"])
+        self._preflight_aitable(token_client, arguments, operator_id=operator_id)
+        return DingTalkAiTableMutationClient(token_client).update_field(
+            operator_id=operator_id,
+            arguments=arguments,
+        )
+
     def _execute_aitable_insert(
         self,
         intent: dict[str, Any],
         arguments: dict[str, Any],
         token_client: DingTalkAccessTokenClient,
     ) -> dict[str, Any]:
-        del intent
-        target = self._target(arguments)
-        operator_id = str(target["operator_id"])
-        self._preflight_aitable(token_client, operator_id, arguments)
+        operator_id = str(intent["target_union_id"])
+        self._preflight_aitable(token_client, arguments, operator_id=operator_id)
         return DingTalkAiTableMutationClient(token_client).insert_records(
             operator_id=operator_id,
             arguments=arguments,
@@ -352,23 +424,21 @@ class ExternalActionWorker:
         arguments: dict[str, Any],
         token_client: DingTalkAccessTokenClient,
     ) -> dict[str, Any]:
-        del intent
-        target = self._target(arguments)
-        operator_id = str(target["operator_id"])
-        self._preflight_aitable(token_client, operator_id, arguments)
+        operator_id = str(intent["target_union_id"])
+        self._preflight_aitable(token_client, arguments, operator_id=operator_id)
         return DingTalkAiTableMutationClient(token_client).update_records(
             operator_id=operator_id,
             arguments=arguments,
         )
 
-    def _execute_robot_send(
+    def _execute_robot_group_send(
         self,
         intent: dict[str, Any],
         arguments: dict[str, Any],
         token_client: DingTalkAccessTokenClient,
     ) -> dict[str, Any]:
         del intent
-        return DingTalkRobotMutationClient(token_client).send_current(arguments=arguments)
+        return DingTalkRobotMutationClient(token_client).send_to_group(arguments=arguments)
 
     def _execute_robot_user_batch_send(
         self,
@@ -398,14 +468,29 @@ class ExternalActionWorker:
     @staticmethod
     def _preflight_aitable(
         token_client: DingTalkAccessTokenClient,
-        operator_id: str,
         arguments: dict[str, Any],
+        *,
+        operator_id: str,
     ) -> None:
-        DingTalkAiTableReadClient(token_client).get_sheet(
-            operator_id=operator_id,
-            base_id=str(arguments["base_id"]),
-            sheet_id=str(arguments["sheet_id"]),
-        )
+        client = DingTalkAiTableReadClient(token_client)
+        base_id = str(arguments["base_id"])
+        sheet_id = str(arguments.get("sheet_id") or "")
+        if not sheet_id:
+            client.list_sheets(operator_id=operator_id, base_id=base_id)
+            return
+        client.get_sheet(operator_id=operator_id, base_id=base_id, sheet_id=sheet_id)
+        field_id = str(arguments.get("field_id") or "")
+        if field_id:
+            fields = client.list_fields(
+                operator_id=operator_id,
+                base_id=base_id,
+                sheet_id=sheet_id,
+            ).get("fields")
+            if not isinstance(fields, list) or not any(
+                isinstance(row, dict) and str(row.get("field_id") or "") == field_id
+                for row in fields
+            ):
+                raise ValueError("External action AI table field is unavailable")
 
     def _reauthorize_target(
         self,
@@ -424,14 +509,22 @@ class ExternalActionWorker:
             }:
                 raise ValueError("External action calendar target facts drifted")
             return
-        if target_policy == "current_user_aitable_operator":
+        if target_policy == "explicit_aitable_resource_for_current_operator":
             target = self._target(arguments)
-            if target != {"operator_id": str(intent["target_union_id"])}:
+            expected_target = {
+                "operator_id": str(intent["target_union_id"]),
+                "base_id": str(arguments.get("base_id") or ""),
+            }
+            for key in ("sheet_id", "field_id"):
+                value = str(arguments.get(key) or "")
+                if value:
+                    expected_target[key] = value
+            if target != expected_target:
                 raise ValueError("External action AI table target facts drifted")
             return
-        if target_policy == "current_source_conversation":
-            if self._target(arguments) != self._current_robot_target(intent):
-                raise ValueError("External action source conversation target facts drifted")
+        if target_policy == "current_source_group":
+            if self._target(arguments) != self._current_robot_group_target(intent):
+                raise ValueError("External action source group target facts drifted")
             return
         if target_policy == "explicit_enterprise_user_ids":
             user_ids = arguments.get("user_ids")
@@ -481,7 +574,7 @@ class ExternalActionWorker:
             self.runtime.connector_registry.metadata_value(connector, "default_robot_code") or ""
         )
 
-    def _current_robot_target(self, intent: dict[str, Any]) -> dict[str, Any]:
+    def _current_robot_group_target(self, intent: dict[str, Any]) -> dict[str, Any]:
         source = self.runtime.database.execute_one(
             """
             select s.conversation_type, s.external_conversation_id,
@@ -511,22 +604,15 @@ class ExternalActionWorker:
         if not robot_code:
             raise ValueError("External action robot identity is unavailable")
         conversation_type = str(source.get("conversation_type") or "")
-        if conversation_type == "group":
-            open_conversation_id = str(route_target.get("open_conversation_id") or "")
-            if not open_conversation_id:
-                raise ValueError("External action group target is unavailable")
-            return {
-                "conversation_type": "group",
-                "open_conversation_id": open_conversation_id,
-                "robot_code": robot_code,
-            }
-        if conversation_type == "direct":
-            return {
-                "conversation_type": "direct",
-                "staff_id": str(intent["target_external_subject_id"]),
-                "robot_code": robot_code,
-            }
-        raise ValueError("External action conversation type is invalid")
+        if conversation_type != "group":
+            raise ValueError("External action source is not a group conversation")
+        open_conversation_id = str(route_target.get("open_conversation_id") or "")
+        if not open_conversation_id:
+            raise ValueError("External action group target is unavailable")
+        return {
+            "open_conversation_id": open_conversation_id,
+            "robot_code": robot_code,
+        }
 
     @staticmethod
     def _target(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -600,9 +686,13 @@ class ExternalActionWorker:
             "dingtalk.todo.complete": "当前用户本人待办",
             "dingtalk.calendar.event.create": "当前用户主日历",
             "dingtalk.calendar.event.update": "当前用户主日历",
-            "dingtalk.aitable.record.insert": "当前用户可访问的 AI 表格",
-            "dingtalk.aitable.record.update": "当前用户可访问的 AI 表格",
-            "dingtalk.robot.message.send": str(summary.get("target") or "当前来源会话"),
+            "dingtalk.aitable.sheet.create": "当前用户可访问的指定 AI 表格",
+            "dingtalk.aitable.sheet.update": "当前用户可访问的指定 AI 表格数据表",
+            "dingtalk.aitable.field.create": "当前用户可访问的指定 AI 表格数据表",
+            "dingtalk.aitable.field.update": "当前用户可访问的指定 AI 表格字段",
+            "dingtalk.aitable.record.insert": "当前用户可访问的指定 AI 表格",
+            "dingtalk.aitable.record.update": "当前用户可访问的指定 AI 表格",
+            "dingtalk.robot.group_message.send": str(summary.get("target") or "当前来源群"),
             "dingtalk.robot.batch_send_message_to_users": (
                 f"{int(summary.get('recipient_count') or 0)} 名明确收件人"
             ),
@@ -649,6 +739,34 @@ class ExternalActionWorker:
                 f"标题：{str(summary.get('title') or '')[:500]}",
                 f"时间：{str(summary.get('time_range') or '')[:160]}",
             ]
+        elif operation_code == "dingtalk.aitable.sheet.create":
+            fields = summary.get("field_names")
+            field_names = fields if isinstance(fields, list) else []
+            lines = [
+                f"Base ID：{str(summary.get('base_id') or '')[:512]}",
+                f"数据表名称：{str(summary.get('name') or '')[:300]}",
+                "初始字段：" + "、".join(str(item)[:300] for item in field_names[:50]),
+            ]
+        elif operation_code == "dingtalk.aitable.sheet.update":
+            lines = [
+                f"Base ID：{str(summary.get('base_id') or '')[:512]}",
+                f"Sheet ID：{str(summary.get('sheet_id') or '')[:512]}",
+                f"新名称：{str(summary.get('name') or '')[:300]}",
+            ]
+        elif operation_code == "dingtalk.aitable.field.create":
+            lines = [
+                f"Base ID：{str(summary.get('base_id') or '')[:512]}",
+                f"Sheet ID：{str(summary.get('sheet_id') or '')[:512]}",
+                f"字段名称：{str(summary.get('name') or '')[:300]}",
+                f"字段类型：{str(summary.get('field_type') or '')[:64]}",
+            ]
+        elif operation_code == "dingtalk.aitable.field.update":
+            lines = [
+                f"Base ID：{str(summary.get('base_id') or '')[:512]}",
+                f"Sheet ID：{str(summary.get('sheet_id') or '')[:512]}",
+                f"Field ID：{str(summary.get('field_id') or '')[:512]}",
+                f"新名称：{str(summary.get('name') or '')[:300]}",
+            ]
         elif operation_code in {
             "dingtalk.aitable.record.insert",
             "dingtalk.aitable.record.update",
@@ -672,7 +790,7 @@ class ExternalActionWorker:
                 f"正文：{str(summary.get('text') or '')[:3000]}",
             ]
         elif operation_code in {
-            "dingtalk.robot.message.send",
+            "dingtalk.robot.group_message.send",
             "dingtalk.work_notification.send",
         }:
             lines = [

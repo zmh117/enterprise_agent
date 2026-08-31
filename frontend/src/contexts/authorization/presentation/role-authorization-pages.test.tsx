@@ -417,6 +417,113 @@ describe("角色授权中心", () => {
     )
   })
 
+  it("显式显示并允许移除当前应用 Publication 已下线的历史 Tool 授权", async () => {
+    let submitted: Record<string, unknown> | undefined
+    const businessDetail = {
+      ...detail(),
+      business: {
+        revision: 7,
+        applications: [
+          {
+            id: "role-app-access-test",
+            application_id: "app-test",
+            application_code: "diagnostic-app",
+            application_name: "诊断应用",
+            status: "enabled",
+            tool_identifiers: [
+              "query_database",
+              "dingtalk_send_robot_message",
+            ],
+            scopes: [],
+          },
+        ],
+      },
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/api/admin/capabilities")) {
+        return response({
+          capabilities: ["authorization.read", "authorization.manage"],
+          modules: {},
+        })
+      }
+      if (
+        url.endsWith("/authorization/roles/role-diagnostic/business-access") &&
+        init?.method === "PUT"
+      ) {
+        submitted = JSON.parse(String(init.body))
+        return response({ revision: 8, applications: [] })
+      }
+      if (url.endsWith("/authorization/roles/role-diagnostic")) {
+        return response(businessDetail)
+      }
+      if (url.endsWith("/authorization/assignable-catalog")) {
+        return response({
+          applications: [
+            {
+              id: "app-test",
+              code: "diagnostic-app",
+              name: "诊断应用",
+              description: "",
+              project_code: "default",
+              status: "enabled",
+              mcp_tools: [
+                {
+                  tool_identifier: "query_database",
+                  display_name_zh: "只读查询数据库",
+                  description: "对唯一解析的数据资源执行策略允许的只读 SQL。",
+                  version_constraint: "",
+                  effect: "read",
+                  confirmation_policy: "none",
+                },
+              ],
+            },
+          ],
+          topology: [],
+          scope_mode: "explicit_current_set",
+          scope_notice: "当前全部保存明确集合",
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderDetail()
+
+    await screen.findByText("诊断操作员")
+    fireEvent.click(screen.getByRole("tab", { name: "业务应用与数据范围" }))
+    const removed = await screen.findByRole("checkbox", {
+      name: /MCP Tool dingtalk_send_robot_message/,
+    })
+    expect(removed).toHaveAttribute("data-checked")
+    expect(
+      screen.getByText(/已从当前应用 Publication 移除/)
+    ).toBeInTheDocument()
+    fireEvent.click(removed)
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /我已确认本次高风险授权变更/,
+      })
+    )
+    fireEvent.change(screen.getByLabelText("授权变更原因"), {
+      target: { value: "移除已下线工具授权" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "原子保存业务授权" }))
+
+    await waitFor(() =>
+      expect(submitted).toEqual({
+        expected_revision: 7,
+        confirmed: true,
+        reason: "移除已下线工具授权",
+        applications: [
+          {
+            application_id: "app-test",
+            tool_identifiers: ["query_database"],
+            scopes: [],
+          },
+        ],
+      })
+    )
+  })
+
   it("分区 revision 冲突保留本地草稿并触发未保存离开保护", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)

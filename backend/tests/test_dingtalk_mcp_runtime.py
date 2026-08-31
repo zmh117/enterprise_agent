@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import json
 from types import SimpleNamespace
 from typing import Any
 from urllib.error import HTTPError
@@ -14,6 +16,7 @@ from app.python_runtime.tool_policy import contains_forbidden_tool_input
 from app.shared.database import Database
 from app.shared.dingtalk_tool_contracts import (
     DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER,
+    DINGTALK_SEND_MESSAGE_TO_GROUP_TOOL_IDENTIFIER,
     DINGTALK_TOOL_CONTRACTS,
 )
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
@@ -35,12 +38,14 @@ from services.dingtalk_mcp_server.provider import (
     DingTalkTodoReadClient,
     DingTalkWorkNotificationReadClient,
     DingTalkWorkNotificationMutationClient,
+    LEGACY_ALLOWED_PATHS,
     UrllibDingTalkJsonTransport,
 )
 from services.dingtalk_mcp_server.tools.mutation_catalog import (
     DingTalkMutationPreparationCatalog,
 )
 from services.dingtalk_mcp_server.tools.mutation_tool import DingTalkMutationToolService
+from services.dingtalk_mcp_server.tools.read_catalog import DingTalkReadExecutorCatalog
 from services.dingtalk_mcp_server.tools.read_tool import _safe_payload_summary, _validated_payload
 from services.dingtalk_mcp_server.worker import ExternalActionWorker
 
@@ -138,15 +143,27 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
     token = _TokenClient()
 
     contacts = DingTalkContactsClient(token, transport=transport)
+    transport.response = {"list": [], "hasMore": False, "totalCount": 0}
     contacts.search_users(query="张三", offset=0, page_size=20, exact_match=False)
+    transport.response = {
+        "userList": [{"userid": "staff-1", "unionid": "union-1", "name": "张三"}],
+        "unauthorizedUserIdList": [],
+    }
     contacts.get_user(user_id="staff-1", language="zh_CN")
+    transport.response = {"result": {"userid_list": []}}
     contacts.list_department_users(department_id=1)
 
     departments = DingTalkDepartmentClient(token, transport=transport)
-    departments.search(query="研发", offset=0, page_size=20)
+    transport.response = {"list": [2], "hasMore": False, "totalCount": 1}
+    assert departments.search(query="研发", offset=0, page_size=20)["departments"] == [
+        {"department_id": 2}
+    ]
+    transport.response = {"result": {"dept_id": 1, "name": "研发"}}
     departments.get(department_id=1, language="zh_CN")
+    transport.response = {"result": []}
     departments.list_sub_departments(parent_department_id=1, language="zh_CN")
 
+    transport.response = {"todoCards": [], "nextToken": ""}
     DingTalkTodoReadClient(token, transport=transport).list_for_self(
         union_id="union-1",
         cursor="",
@@ -155,7 +172,14 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
     )
 
     calendar = DingTalkCalendarReadClient(token, transport=transport)
+    transport.response = {
+        "id": "event-1",
+        "summary": "会议",
+        "start": {"dateTime": "2026-08-30T10:00:00+08:00"},
+        "end": {"dateTime": "2026-08-30T11:00:00+08:00"},
+    }
     calendar.get_event(union_id="union-1", event_id="event-1", max_attendees=20)
+    transport.response = {"events": [], "nextToken": ""}
     calendar.list_events(
         union_id="union-1",
         time_min="2026-08-30T00:00:00+08:00",
@@ -164,6 +188,7 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
         cursor="",
         max_attendees=20,
     )
+    transport.response = {"attendees": [], "nextToken": ""}
     calendar.list_attendees(
         union_id="union-1",
         event_id="event-1",
@@ -172,10 +197,15 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
     )
 
     aitable = DingTalkAiTableReadClient(token, transport=transport)
+    transport.response = {"items": [], "nextToken": ""}
     aitable.search(operator_id="union-1", query="项目", page_size=20, cursor="")
+    transport.response = {"value": []}
     aitable.list_sheets(operator_id="union-1", base_id="base-1")
+    transport.response = {"id": "sheet-1", "name": "数据表"}
     aitable.get_sheet(operator_id="union-1", base_id="base-1", sheet_id="sheet-1")
+    transport.response = {"value": []}
     aitable.list_fields(operator_id="union-1", base_id="base-1", sheet_id="sheet-1")
+    transport.response = {"records": [], "hasMore": False, "nextToken": ""}
     aitable.list_records(
         operator_id="union-1",
         base_id="base-1",
@@ -183,6 +213,7 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
         page_size=100,
         cursor="",
     )
+    transport.response = {"id": "record-1", "fields": {"名称": "记录"}}
     aitable.get_record(
         operator_id="union-1",
         base_id="base-1",
@@ -191,15 +222,29 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
     )
 
     notice = DingTalkWorkNotificationReadClient(token, transport=transport)
+    transport.response = {"progress": {"progress_in_percent": 100, "status": 2}}
     notice.get_progress(agent_id=123, task_id=456)
+    transport.response = {
+        "send_result": {
+            "invalid_user_id_list": [],
+            "forbidden_user_id_list": [],
+            "failed_user_id_list": [],
+            "read_user_id_list": ["staff-1"],
+            "unread_user_id_list": [],
+            "invalid_dept_id_list": [],
+        }
+    }
     notice.get_result(agent_id=123, task_id=456)
 
     assert len(transport.calls) == 18
     assert [(method, url) for method, url, *_ in transport.calls] == [
         ("POST", "https://api.dingtalk.com/v1.0/contact/users/search"),
         (
-            "POST",
-            "https://oapi.dingtalk.com/topapi/v2/user/get?access_token=test-access-token",
+            "GET",
+            (
+                "https://api.dingtalk.com/v1.0/contact/users/batch/get?"
+                "userIdList=%5B%22staff-1%22%5D"
+            ),
         ),
         (
             "POST",
@@ -228,7 +273,10 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
             "https://api.dingtalk.com/v1.0/calendar/users/union-1/calendars/primary/events/event-1/attendees?maxResults=20&nextToken=cursor-1",
         ),
         ("POST", "https://api.dingtalk.com/v2.0/storage/dentries/search?operatorId=union-1"),
-        ("GET", "https://api.dingtalk.com/v1.0/notable/bases/base-1/sheets?operatorId=union-1"),
+        (
+            "GET",
+            "https://api.dingtalk.com/v1.0/notable/bases/base-1/sheets?operatorId=union-1",
+        ),
         (
             "GET",
             "https://api.dingtalk.com/v1.0/notable/bases/base-1/sheets/sheet-1?operatorId=union-1",
@@ -283,23 +331,38 @@ def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
     assert transport.calls[-1][2] == {"agent_id": 123, "task_id": 456}
 
 
+def test_legacy_provider_paths_are_closed_to_officially_unreplaced_operations() -> None:
+    assert LEGACY_ALLOWED_PATHS == {
+        "/topapi/user/listid",
+        "/topapi/v2/department/get",
+        "/topapi/v2/department/listsub",
+        "/topapi/message/corpconversation/asyncsend_v2",
+        "/topapi/message/corpconversation/getsendprogress",
+        "/topapi/message/corpconversation/getsendresult",
+    }
+
+    client = DingTalkContactsClient(_TokenClient(), transport=_Transport())
+    with pytest.raises(ValueError, match="legacy operation is not allowlisted"):
+        client._request("POST", "/topapi/unknown", legacy=True)
+    with pytest.raises(ValueError, match="legacy operation is not allowlisted"):
+        client._request("POST", "/topapi/v2/user/get", legacy=True)
+
+
 def test_contact_projection_and_audit_summary_remove_sensitive_values() -> None:
     transport = _Transport(
         {
-            "result": {
-                "list": [
-                    {
-                        "userid": "staff-1",
-                        "unionid": "union-1",
-                        "name": "张三",
-                        "title": "工程师",
-                        "mobile": "13800000000",
-                        "email": "private@example.invalid",
-                        "homeAddress": "secret",
-                    }
-                ],
-                "nextToken": "cursor-2",
-            }
+            "list": [
+                {
+                    "userid": "staff-1",
+                    "unionid": "union-1",
+                    "name": "张三",
+                    "title": "工程师",
+                    "mobile": "13800000000",
+                    "email": "private@example.invalid",
+                    "homeAddress": "secret",
+                }
+            ],
+            "nextToken": "cursor-2",
         }
     )
     result = DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
@@ -312,11 +375,10 @@ def test_contact_projection_and_audit_summary_remove_sensitive_values() -> None:
         "users": [
             {
                 "user_id": "staff-1",
-                "union_id": "union-1",
-                "name": "张三",
-                "title": "工程师",
-                "department_ids": [],
-            }
+                    "union_id": "union-1",
+                    "name": "张三",
+                    "title": "工程师",
+                }
         ],
         "returned": 1,
         "truncated": True,
@@ -339,11 +401,9 @@ def test_contact_projection_and_audit_summary_remove_sensitive_values() -> None:
 def test_contact_search_projects_string_user_ids_and_provider_pagination_facts() -> None:
     transport = _Transport(
         {
-            "result": {
-                "list": ["staff-1", "staff-2"],
-                "hasMore": False,
-                "totalCount": 2,
-            }
+            "list": ["staff-1", "staff-2"],
+            "hasMore": False,
+            "totalCount": 2,
         }
     )
     result = DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
@@ -362,11 +422,9 @@ def test_contact_search_projects_string_user_ids_and_provider_pagination_facts()
     assert transport.calls[0][2] == {"queryWord": "庄慕焕", "offset": 0, "size": 20}
 
     transport.response = {
-        "result": {
-            "list": ["staff-3"],
-            "hasMore": False,
-            "totalCount": 4,
-        }
+        "list": ["staff-3"],
+        "hasMore": False,
+        "totalCount": 4,
     }
     next_page = DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
         query="庄慕焕",
@@ -379,11 +437,9 @@ def test_contact_search_projects_string_user_ids_and_provider_pagination_facts()
     assert next_page["truncated"] is True
 
     transport.response = {
-        "result": {
-            "list": ["staff-4"],
-            "hasMore": True,
-            "totalCount": 1,
-        }
+        "list": ["staff-4"],
+        "hasMore": True,
+        "totalCount": 1,
     }
     has_more_page = DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
         query="庄慕焕",
@@ -394,14 +450,105 @@ def test_contact_search_projects_string_user_ids_and_provider_pagination_facts()
     assert has_more_page["truncated"] is True
 
 
+def test_get_user_uses_latest_batch_endpoint_and_projects_safe_identity_fields() -> None:
+    transport = _Transport(
+        {
+            "userList": [
+                {
+                    "userid": "staff-1",
+                    "unionid": "union-1",
+                    "name": "张三",
+                    "job_number": "A-001",
+                    "mobile": "13800000000",
+                    "avatar": "https://example.invalid/private-avatar",
+                }
+            ],
+            "unauthorizedUserIdList": [],
+        }
+    )
+
+    result = DingTalkContactsClient(_TokenClient(), transport=transport).get_user(
+        user_id="staff-1",
+        language="zh_CN",
+    )
+
+    assert result == {
+        "user": {
+            "user_id": "staff-1",
+            "union_id": "union-1",
+            "name": "张三",
+            "job_number": "A-001",
+        },
+        "untrusted_data": True,
+    }
+    assert transport.calls == [
+        (
+            "GET",
+            (
+                "https://api.dingtalk.com/v1.0/contact/users/batch/get?"
+                "userIdList=%5B%22staff-1%22%5D"
+            ),
+            {},
+            {"x-acs-dingtalk-access-token": "test-access-token"},
+            5,
+        )
+    ]
+    assert "13800000000" not in str(result)
+    assert "private-avatar" not in str(result)
+
+
+@pytest.mark.parametrize(
+    ("response", "error_code"),
+    [
+        (
+            {"userList": [], "unauthorizedUserIdList": ["staff-1"]},
+            "dingtalk_permission_denied",
+        ),
+        (
+            {"userList": [], "unauthorizedUserIdList": []},
+            "dingtalk_user_not_visible",
+        ),
+    ],
+)
+def test_get_user_classifies_latest_batch_endpoint_empty_results(
+    response: dict[str, Any],
+    error_code: str,
+) -> None:
+    with pytest.raises(NonRetryableExecutionError) as exc_info:
+        DingTalkContactsClient(_TokenClient(), transport=_Transport(response)).get_user(
+            user_id="staff-1",
+            language="zh_CN",
+        )
+
+    assert exc_info.value.error_code == error_code
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"result": {"userid": "staff-1"}},
+        {"userList": {"userid": "staff-1"}, "unauthorizedUserIdList": []},
+        {"userList": [{"userid": "different-user"}], "unauthorizedUserIdList": []},
+    ],
+)
+def test_get_user_rejects_legacy_or_inconsistent_success_shapes(
+    response: dict[str, Any],
+) -> None:
+    with pytest.raises(RetryableExecutionError) as exc_info:
+        DingTalkContactsClient(_TokenClient(), transport=_Transport(response)).get_user(
+            user_id="staff-1",
+            language="zh_CN",
+        )
+
+    assert exc_info.value.error_code == "dingtalk_response_invalid"
+
+
 def test_ambiguous_user_search_does_not_implicitly_prepare_or_send() -> None:
     transport = _Transport(
         {
-            "result": {
-                "list": ["staff-same-name-1", "staff-same-name-2"],
-                "hasMore": False,
-                "totalCount": 2,
-            }
+            "list": ["staff-same-name-1", "staff-same-name-2"],
+            "hasMore": False,
+            "totalCount": 2,
         }
     )
     result = DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
@@ -425,9 +572,7 @@ def test_ambiguous_user_search_does_not_implicitly_prepare_or_send() -> None:
 
 
 def test_contact_search_rejects_unknown_provider_item_shape() -> None:
-    transport = _Transport(
-        {"result": {"list": [123], "hasMore": False, "totalCount": 1}}
-    )
+    transport = _Transport({"list": [123], "hasMore": False, "totalCount": 1})
 
     with pytest.raises(RetryableExecutionError) as exc_info:
         DingTalkContactsClient(_TokenClient(), transport=transport).search_users(
@@ -438,6 +583,528 @@ def test_contact_search_rejects_unknown_provider_item_shape() -> None:
         )
 
     assert exc_info.value.error_code == "dingtalk_response_invalid"
+
+
+def test_aitable_v1_projects_official_value_and_records_shapes_with_operator() -> None:
+    transport = _Transport(
+        {
+            "value": [
+                {"id": "sheet-1", "name": "数据表1"},
+                {"id": "sheet-2", "name": "数据表2"},
+            ]
+        }
+    )
+    client = DingTalkAiTableReadClient(_TokenClient(), transport=transport)
+
+    sheets = client.list_sheets(operator_id="union-1", base_id="base-1")
+
+    assert sheets == {
+        "sheets": [
+            {"sheet_id": "sheet-1", "name": "数据表1"},
+            {"sheet_id": "sheet-2", "name": "数据表2"},
+        ],
+        "returned": 2,
+        "truncated": False,
+        "untrusted_data": True,
+    }
+    assert transport.calls[0][0:3] == (
+        "GET",
+        "https://api.dingtalk.com/v1.0/notable/bases/base-1/sheets?operatorId=union-1",
+        {},
+    )
+
+    transport.response = {
+        "value": [
+            {"id": "field-1", "name": "标题", "type": "text"},
+            {"id": "field-2", "name": "排名", "type": "number"},
+        ]
+    }
+    fields = client.list_fields(
+        operator_id="union-1",
+        base_id="base-1",
+        sheet_id="sheet-1",
+    )
+    assert fields["returned"] == 2
+    assert [item["field_id"] for item in fields["fields"]] == ["field-1", "field-2"]
+
+    transport.response = {
+        "records": [
+            {
+                "id": "record-1",
+                "fields": {
+                    "标题": "热搜",
+                    "人员": [{"unionId": "union-1"}],
+                    "关联": {"linkedRecordIds": ["record-2"]},
+                },
+            },
+            {"id": "record-empty", "fields": {}},
+        ],
+        "hasMore": True,
+        "nextToken": "next-1",
+    }
+    records = client.list_records(
+        operator_id="union-1",
+        base_id="base-1",
+        sheet_id="sheet-1",
+        page_size=20,
+        cursor="cursor-1",
+    )
+    assert records["records"] == [
+        {
+            "record_id": "record-1",
+            "fields": {
+                "标题": "热搜",
+                "人员": [{"unionId": "union-1"}],
+                "关联": {"linkedRecordIds": ["record-2"]},
+            },
+        },
+        {"record_id": "record-empty", "fields": {}},
+    ]
+    assert records["truncated"] is True
+    assert records["next_cursor"] == "next-1"
+    assert transport.calls[-1][0:3] == (
+        "POST",
+        (
+            "https://api.dingtalk.com/v1.0/notable/bases/base-1/sheets/"
+            "sheet-1/records/list?operatorId=union-1"
+        ),
+        {"maxResults": 20, "nextToken": "cursor-1"},
+    )
+
+
+def test_aitable_v1_targets_explicit_resources_for_current_operator() -> None:
+    principal = ResolvedDingTalkPrincipal(
+        job_id="job-1",
+        session_id="session-1",
+        actor_user_id="user-1",
+        business_application_id="application-1",
+        agent_publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+        source_connector_id="connector-1",
+        dingtalk_enterprise_id="enterprise-1",
+        external_identity_id="identity-1",
+        target_external_subject_id="staff-1",
+        target_union_id="union-1",
+        primary_calendar_id="primary",
+        aitable_operator_id="union-1",
+        source_conversation_type="direct",
+        source_conversation_id="conversation-1",
+        source_open_conversation_id="",
+        source_robot_code="robot-1",
+        enterprise_robot_code="robot-1",
+        work_notification_agent_id=123,
+        principal_jti="jti-1",
+    )
+    frozen, _summary = DingTalkMutationPreparationCatalog._insert_aitable_records(
+        principal,
+        {
+            "base_id": "base-1",
+            "sheet_id": "sheet-1",
+            "records": [{"fields": {"名称": "记录"}}],
+        },
+    )
+
+    assert frozen["_target"] == {
+        "operator_id": "union-1",
+        "base_id": "base-1",
+        "sheet_id": "sheet-1",
+    }
+
+    read_transport = _Transport({"value": [{"id": "sheet-1", "name": "数据表"}]})
+    read_result = DingTalkAiTableReadClient(
+        _TokenClient(), transport=read_transport
+    ).list_sheets(operator_id="union-1", base_id="base-1")
+    assert read_result["returned"] == 1
+
+    mutation_transport = _Transport({"value": [{"id": "record-1"}]})
+    mutation_result = DingTalkAiTableMutationClient(
+        _TokenClient(), transport=mutation_transport
+    ).insert_records(operator_id="union-1", arguments=frozen)
+    assert mutation_result["record_ids"] == ["record-1"]
+
+    created_sheet, sheet_summary = (
+        DingTalkMutationPreparationCatalog._create_aitable_sheet(
+            principal,
+            {
+                "base_id": "base-1",
+                "name": "验收表",
+                "fields": [{"name": "标题", "type": "text"}],
+            },
+        )
+    )
+    assert created_sheet["_target"] == {
+        "operator_id": "union-1",
+        "base_id": "base-1",
+    }
+    assert sheet_summary["field_names"] == ["标题"]
+
+    updated_field, field_summary = (
+        DingTalkMutationPreparationCatalog._update_aitable_field(
+            principal,
+            {
+                "base_id": "base-1",
+                "sheet_id": "sheet-1",
+                "field_id": "field-1",
+                "name": "标题-更新",
+            },
+        )
+    )
+    assert updated_field["_target"] == {
+        "operator_id": "union-1",
+        "base_id": "base-1",
+        "sheet_id": "sheet-1",
+        "field_id": "field-1",
+    }
+    assert field_summary["field_id"] == "field-1"
+
+
+def test_aitable_official_static_references_are_local_bounded_and_versioned() -> None:
+    for executor in (
+        DingTalkReadExecutorCatalog._get_aitable_supported_search_filters,
+        DingTalkReadExecutorCatalog._get_aitable_supported_field_info,
+        DingTalkReadExecutorCatalog._get_aitable_record_values_format,
+    ):
+        result = executor(None, {})  # type: ignore[arg-type]
+        assert result["source_version"] == "dingtalk-mcp@1.1.21"
+        assert result["trusted_reference"] is True
+        assert 1 <= len(str(result["content"])) <= 16_000
+
+
+def test_aitable_v1_non_delete_structure_mutations_use_operator_and_strict_targets() -> None:
+    transport = _Transport({"id": "sheet-1", "name": "验收表"})
+    client = DingTalkAiTableMutationClient(_TokenClient(), transport=transport)
+
+    assert client.create_sheet(
+        operator_id="union/1",
+        arguments={
+            "base_id": "base/1",
+            "name": "验收表",
+            "fields": [{"name": "标题", "type": "text"}],
+        },
+    ) == {"sheet_id": "sheet-1", "name": "验收表", "created": True}
+
+    transport.response = {"id": "sheet-1", "name": "验收表-更新"}
+    assert client.update_sheet(
+        operator_id="union/1",
+        arguments={"base_id": "base/1", "sheet_id": "sheet-1", "name": "验收表-更新"},
+    ) == {"sheet_id": "sheet-1", "name": "验收表-更新", "updated": True}
+
+    transport.response = {
+        "id": "field-1",
+        "name": "排名",
+        "type": "number",
+        "property": {"formatter": "INT"},
+    }
+    assert client.create_field(
+        operator_id="union/1",
+        arguments={
+            "base_id": "base/1",
+            "sheet_id": "sheet-1",
+            "name": "排名",
+            "type": "number",
+            "property": {"formatter": "INT"},
+        },
+    ) == {
+        "field_id": "field-1",
+        "name": "排名",
+        "field_type": "number",
+        "created": True,
+    }
+
+    transport.response = {"id": "field-1"}
+    assert client.update_field(
+        operator_id="union/1",
+        arguments={
+            "base_id": "base/1",
+            "sheet_id": "sheet-1",
+            "field_id": "field-1",
+            "name": "排名-更新",
+            "property": {"formatter": "FLOAT_2"},
+        },
+    ) == {"field_id": "field-1", "updated": True}
+
+    assert [(method, url, payload) for method, url, payload, *_ in transport.calls] == [
+        (
+            "POST",
+            "https://api.dingtalk.com/v1.0/notable/bases/base%2F1/sheets?operatorId=union%2F1",
+            {"name": "验收表", "fields": [{"name": "标题", "type": "text"}]},
+        ),
+        (
+            "PUT",
+            (
+                "https://api.dingtalk.com/v1.0/notable/bases/base%2F1/sheets/"
+                "sheet-1?operatorId=union%2F1"
+            ),
+            {"name": "验收表-更新"},
+        ),
+        (
+            "POST",
+            (
+                "https://api.dingtalk.com/v1.0/notable/bases/base%2F1/sheets/"
+                "sheet-1/fields?operatorId=union%2F1"
+            ),
+            {"name": "排名", "type": "number", "property": {"formatter": "INT"}},
+        ),
+        (
+            "PUT",
+            (
+                "https://api.dingtalk.com/v1.0/notable/bases/base%2F1/sheets/"
+                "sheet-1/fields/field-1?operatorId=union%2F1"
+            ),
+            {"name": "排名-更新", "property": {"formatter": "FLOAT_2"}},
+        ),
+    ]
+
+def test_aitable_search_projects_latest_storage_v2_items_shape() -> None:
+    transport = _Transport(
+        {
+            "items": [
+                {
+                    "dentryUuid": "base-1",
+                    "name": "新浪热搜",
+                    "creator": {"userId": "staff-1", "name": "用户"},
+                    "lastModifyTime": 1788074100000,
+                }
+            ],
+            "nextToken": "next-1",
+        }
+    )
+
+    result = DingTalkAiTableReadClient(
+        _TokenClient(), transport=transport
+    ).search(operator_id="union-1", query="新浪热搜", page_size=20, cursor="")
+
+    assert result == {
+        "aitables": [
+            {
+                "base_id": "base-1",
+                "name": "新浪热搜",
+                "creator_user_id": "staff-1",
+                "updated_at": "1788074100000",
+            }
+        ],
+        "returned": 1,
+        "truncated": True,
+        "next_cursor": "next-1",
+        "untrusted_data": True,
+    }
+
+
+def test_aitable_search_rejects_retired_or_unknown_item_containers() -> None:
+    for response in ({"dentries": []}, {"items": {}}, {}):
+        with pytest.raises(RetryableExecutionError) as caught:
+            DingTalkAiTableReadClient(
+                _TokenClient(), transport=_Transport(response)
+            ).search(
+                operator_id="union-1",
+                query="新浪热搜",
+                page_size=20,
+                cursor="",
+            )
+        assert caught.value.error_code == "dingtalk_response_invalid"
+
+
+def test_bounded_provider_lists_report_overflow_as_truncated() -> None:
+    sheet_result = DingTalkAiTableReadClient(
+        _TokenClient(),
+        transport=_Transport(
+            {"value": [{"id": f"sheet-{index}", "name": "数据表"} for index in range(51)]}
+        ),
+    ).list_sheets(operator_id="union-1", base_id="base-1")
+
+    assert sheet_result["returned"] == 50
+    assert len(sheet_result["sheets"]) == 50
+    assert sheet_result["truncated"] is True
+
+    department_result = DingTalkContactsClient(
+        _TokenClient(),
+        transport=_Transport(
+            {"result": {"userid_list": [f"staff-{index}" for index in range(51)]}}
+        ),
+    ).list_department_users(department_id=1)
+
+    assert department_result["returned"] == 50
+    assert len(department_result["users"]) == 50
+    assert department_result["truncated"] is True
+
+
+def test_provider_rejects_missing_required_business_fields_per_operation() -> None:
+    with pytest.raises(RetryableExecutionError) as department_error:
+        DingTalkDepartmentClient(
+            _TokenClient(), transport=_Transport({"result": [{"dept_id": 2}]})
+        ).list_sub_departments(parent_department_id=1, language="zh_CN")
+    assert department_error.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as todo_error:
+        DingTalkTodoReadClient(
+            _TokenClient(), transport=_Transport({"todoCards": [{"taskId": "todo-1"}]})
+        ).list_for_self(
+            union_id="union-1",
+            cursor="",
+            is_done=False,
+            role_types=["executor"],
+        )
+    assert todo_error.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as event_error:
+        DingTalkCalendarReadClient(
+            _TokenClient(), transport=_Transport({"id": "event-1", "summary": "会议"})
+        ).get_event(union_id="union-1", event_id="event-1", max_attendees=20)
+    assert event_error.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as aitable_error:
+        DingTalkAiTableReadClient(
+            _TokenClient(), transport=_Transport({"items": [{"dentryUuid": "base-1"}]})
+        ).search(operator_id="union-1", query="表格", page_size=20, cursor="")
+    assert aitable_error.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as sheet_error:
+        DingTalkAiTableReadClient(
+            _TokenClient(), transport=_Transport({"value": [{"id": "sheet-1"}]})
+        ).list_sheets(operator_id="union-1", base_id="base-1")
+    assert sheet_error.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as field_error:
+        DingTalkAiTableReadClient(
+            _TokenClient(),
+            transport=_Transport({"value": [{"id": "field-1", "name": "标题"}]}),
+        ).list_fields(operator_id="union-1", base_id="base-1", sheet_id="sheet-1")
+    assert field_error.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as record_error:
+        DingTalkAiTableReadClient(
+            _TokenClient(),
+            transport=_Transport({"records": [{"id": "record-1"}]}),
+        ).list_records(
+            operator_id="union-1",
+            base_id="base-1",
+            sheet_id="sheet-1",
+            page_size=20,
+            cursor="",
+        )
+    assert record_error.value.error_code == "dingtalk_response_invalid"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {"sheets": []},
+        {"value": {}},
+        {"value": [{"name": "缺少 ID"}]},
+    ],
+)
+def test_aitable_sheet_list_rejects_unknown_or_incomplete_success_shapes(
+    response: dict[str, Any],
+) -> None:
+    with pytest.raises(RetryableExecutionError) as caught:
+        DingTalkAiTableReadClient(
+            _TokenClient(),
+            transport=_Transport(response),
+        ).list_sheets(operator_id="union-1", base_id="base-1")
+
+    assert caught.value.error_code == "dingtalk_response_invalid"
+
+
+def test_work_notification_reads_project_official_legacy_response_shapes() -> None:
+    transport = _Transport(
+        {"progress": {"progress_in_percent": 75, "status": 1}}
+    )
+    client = DingTalkWorkNotificationReadClient(_TokenClient(), transport=transport)
+
+    assert client.get_progress(agent_id=123, task_id=456) == {
+        "progress": {"task_id": 456, "status": 1, "progress_percent": 75},
+        "untrusted_data": True,
+    }
+
+    transport.response = {
+        "send_result": {
+            "invalid_user_id_list": {"string": ["invalid-1"]},
+            "forbidden_user_id_list": ["forbidden-1"],
+            "failed_user_id_list": [],
+            "read_user_id_list": ["read-1"],
+            "unread_user_id_list": ["unread-1"],
+            "invalid_dept_id_list": {"number": [1, 2]},
+        }
+    }
+    assert client.get_result(agent_id=123, task_id=456) == {
+        "result": {
+            "task_id": 456,
+            "invalid_user_ids": ["invalid-1"],
+            "invalid_user_count": 1,
+            "forbidden_user_ids": ["forbidden-1"],
+            "forbidden_user_count": 1,
+            "failed_user_ids": [],
+            "failed_user_count": 0,
+            "read_user_ids": ["read-1"],
+            "read_user_count": 1,
+            "unread_user_ids": ["unread-1"],
+            "unread_user_count": 1,
+            "invalid_department_ids": [1, 2],
+            "invalid_department_count": 2,
+            "truncated": False,
+        },
+        "untrusted_data": True,
+    }
+
+
+def test_work_notification_result_reports_bounded_counts_and_rejects_bad_ids() -> None:
+    users = [f"staff-{index}" for index in range(51)]
+    result = DingTalkWorkNotificationReadClient(
+        _TokenClient(),
+        transport=_Transport(
+            {
+                "send_result": {
+                    "invalid_user_id_list": users,
+                    "forbidden_user_id_list": [],
+                    "failed_user_id_list": [],
+                    "read_user_id_list": [],
+                    "unread_user_id_list": [],
+                    "invalid_dept_id_list": [],
+                }
+            }
+        ),
+    ).get_result(agent_id=123, task_id=456)
+
+    assert result["result"]["invalid_user_count"] == 51
+    assert len(result["result"]["invalid_user_ids"]) == 50
+    assert result["result"]["truncated"] is True
+
+    with pytest.raises(RetryableExecutionError) as caught:
+        DingTalkWorkNotificationReadClient(
+            _TokenClient(),
+            transport=_Transport(
+                {
+                    "send_result": {
+                        "invalid_user_id_list": [{"unexpected": "value"}],
+                    }
+                }
+            ),
+        ).get_result(agent_id=123, task_id=456)
+    assert caught.value.error_code == "dingtalk_response_invalid"
+
+
+@pytest.mark.parametrize(
+    ("method_name", "response"),
+    [
+        ("get_progress", {}),
+        ("get_progress", {"progress": {"progress_in_percent": 101, "status": 2}}),
+        ("get_progress", {"progress": {"progress_in_percent": 50, "status": 9}}),
+        ("get_result", {}),
+        ("get_result", {"send_result": {"invalid_user_id_list": "bad"}}),
+    ],
+)
+def test_work_notification_reads_reject_unknown_success_shapes(
+    method_name: str,
+    response: dict[str, Any],
+) -> None:
+    client = DingTalkWorkNotificationReadClient(
+        _TokenClient(),
+        transport=_Transport(response),
+    )
+    with pytest.raises(RetryableExecutionError) as caught:
+        getattr(client, method_name)(agent_id=123, task_id=456)
+    assert caught.value.error_code == "dingtalk_response_invalid"
 
 
 def test_read_schema_rejects_identity_and_network_overrides_before_provider_io() -> None:
@@ -488,6 +1155,38 @@ def test_robot_user_batch_schema_and_normalizer_preserve_official_input_semantic
     assert json_hash(frozen) != json_hash(
         {**frozen, "user_ids": ["staff-1", "staff-2", "staff-2"]}
     )
+
+
+def test_group_robot_normalizer_requires_a_trusted_group_source() -> None:
+    catalog = DingTalkMutationPreparationCatalog(SimpleNamespace())
+    normalizer = catalog.normalizer(DINGTALK_SEND_MESSAGE_TO_GROUP_TOOL_IDENTIFIER)
+    principal = SimpleNamespace(
+        source_robot_code="robot-1",
+        source_conversation_type="group",
+        source_open_conversation_id="open-group-1",
+    )
+
+    frozen, summary = normalizer(principal, {"title": "标题", "text": "正文"})
+
+    assert frozen == {
+        "title": "标题",
+        "text": "正文",
+        "_target": {
+            "open_conversation_id": "open-group-1",
+            "robot_code": "robot-1",
+        },
+    }
+    assert summary == {
+        "operation": "向当前钉钉来源群发送机器人消息",
+        "target": "当前群聊",
+        "title": "标题",
+        "text": "正文",
+    }
+
+    principal.source_conversation_type = "direct"
+    with pytest.raises(NonRetryableExecutionError) as caught:
+        normalizer(principal, {"title": "标题", "text": "正文"})
+    assert caught.value.error_code == "dingtalk_mutation_not_ready"
 
 
 def test_robot_user_batch_reuses_one_intent_for_identical_ordered_arguments() -> None:
@@ -677,6 +1376,38 @@ def test_worker_reauthorizes_robot_user_batch_target_without_user_detail_preflig
         worker._reauthorize_target(intent, contract)
 
 
+def test_worker_reauthorizes_explicit_aitable_resource_target() -> None:
+    worker = ExternalActionWorker.__new__(ExternalActionWorker)
+    arguments = {
+        "base_id": "base-1",
+        "sheet_id": "sheet-1",
+        "records": [{"fields": {"名称": "记录"}}],
+        "_target": {
+            "operator_id": "union-1",
+            "base_id": "base-1",
+            "sheet_id": "sheet-1",
+        },
+    }
+    worker.repository = SimpleNamespace(  # type: ignore[assignment]
+        decode_json=lambda _value: arguments
+    )
+    intent = {"arguments_json": "{}", "target_union_id": "union-1"}
+    contract = DINGTALK_TOOL_CONTRACTS["dingtalk_insert_aitable_records"]
+
+    worker._reauthorize_target(intent, contract)
+    arguments["_target"]["operator_id"] = "union-other"
+    with pytest.raises(ValueError, match="AI table target facts drifted"):
+        worker._reauthorize_target(intent, contract)
+    arguments["_target"]["operator_id"] = "union-1"
+    arguments["_target"] = {
+        "operator_id": "union-1",
+        "base_id": "base-1",
+        "sheet_id": "sheet-other",
+    }
+    with pytest.raises(ValueError, match="AI table target facts drifted"):
+        worker._reauthorize_target(intent, contract)
+
+
 def test_worker_reauthorizes_connector_enterprise_binding_before_credentials() -> None:
     class _Database:
         eligible = True
@@ -753,6 +1484,84 @@ def test_provider_http_errors_have_stable_safe_classification(
     assert getattr(caught.value, "error_code") == error_code
     assert "provider body" not in str(getattr(caught.value, "safe_message", ""))
     assert "token-secret" not in str(caught.value)
+
+
+def test_provider_permission_error_preserves_only_bounded_official_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise(*_args: Any, **_kwargs: Any) -> None:
+        raise HTTPError(
+            "https://api.dingtalk.com/fixed",
+            403,
+            "provider body must not escape",
+            None,
+            io.BytesIO(
+                json.dumps(
+                    {
+                        "code": "Forbidden.AccessDenied",
+                        "message": "private provider explanation must not escape",
+                        "details": {"credential": "secret-value"},
+                    }
+                ).encode()
+            ),
+        )
+
+    monkeypatch.setattr("services.dingtalk_mcp_server.provider.urlopen", _raise)
+    with pytest.raises(NonRetryableExecutionError) as caught:
+        UrllibDingTalkJsonTransport().request_json(
+            "GET",
+            "https://api.dingtalk.com/fixed",
+            {},
+            {"x-acs-dingtalk-access-token": "token-secret"},
+            5,
+        )
+
+    assert caught.value.error_code == "dingtalk_permission_denied"
+    assert caught.value.diagnostics == {
+        "provider_error_code": "Forbidden.AccessDenied"
+    }
+    assert "Forbidden.AccessDenied" in caught.value.safe_message
+    assert "private provider explanation" not in caught.value.safe_message
+    assert "secret-value" not in str(caught.value)
+    assert "token-secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "unsafe_code",
+    [
+        "code with spaces",
+        "code/with/slashes",
+        "x" * 97,
+        {"nested": "code"},
+        True,
+    ],
+)
+def test_provider_permission_error_rejects_unsafe_provider_code(
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe_code: object,
+) -> None:
+    def _raise(*_args: Any, **_kwargs: Any) -> None:
+        raise HTTPError(
+            "https://api.dingtalk.com/fixed",
+            403,
+            "forbidden",
+            None,
+            io.BytesIO(json.dumps({"code": unsafe_code}).encode()),
+        )
+
+    monkeypatch.setattr("services.dingtalk_mcp_server.provider.urlopen", _raise)
+    with pytest.raises(NonRetryableExecutionError) as caught:
+        UrllibDingTalkJsonTransport().request_json(
+            "GET",
+            "https://api.dingtalk.com/fixed",
+            {},
+            {},
+            5,
+        )
+
+    assert caught.value.error_code == "dingtalk_permission_denied"
+    assert caught.value.diagnostics == {}
+    assert caught.value.safe_message == "钉钉应用缺少此能力所需权限或可见范围"
 
 
 def test_todo_subject_is_business_input_not_a_principal_override() -> None:
@@ -1304,6 +2113,104 @@ def test_worker_create_card_matches_published_template_contract(
     }
 
 
+def test_worker_result_card_uses_bounded_provider_acceptance_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Repository:
+        completed: list[str] = []
+        failed: list[str] = []
+
+        @staticmethod
+        def get(_intent_id: str) -> dict[str, Any]:
+            return {
+                "id": "action-1",
+                "target_external_subject_id": "staff-1",
+                "safe_summary_json": "summary",
+            }
+
+        @staticmethod
+        def decode_json(value: str) -> dict[str, str]:
+            if value == "payload":
+                return {
+                    "status": "succeeded",
+                    "statusText": "批量消息请求已受理：1 人受理，2 人未受理",
+                }
+            return {"operation": "批量发送钉钉机器人单聊"}
+
+        def complete_card(self, outbox_id: str) -> None:
+            self.completed.append(outbox_id)
+
+        def fail_card(self, outbox_id: str, **_values: str) -> None:
+            self.failed.append(outbox_id)
+
+    class _CardClient:
+        def __init__(self, _token_client: Any) -> None:
+            pass
+
+        @staticmethod
+        def update(**values: Any) -> None:
+            captured.update(values)
+
+    monkeypatch.setattr(
+        "services.dingtalk_mcp_server.worker.DingTalkAccessTokenClient",
+        lambda **_values: object(),
+    )
+    monkeypatch.setattr("services.dingtalk_mcp_server.worker.DingTalkCardClient", _CardClient)
+    worker = ExternalActionWorker(SimpleNamespace(database=object()), worker_id="worker-1")
+    repository = _Repository()
+    worker.repository = repository  # type: ignore[assignment]
+    monkeypatch.setattr(worker, "_connector_credentials", lambda _intent: ("id", "secret"))
+
+    worker._dispatch_card(
+        {
+            "id": "card-outbox-1",
+            "action_intent_id": "action-1",
+            "event_kind": "RESULT_UPDATE",
+            "payload_json": "payload",
+        }
+    )
+
+    assert repository.completed == ["card-outbox-1"]
+    assert repository.failed == []
+    assert captured["card_fields"]["status"] == "succeeded"
+    assert (
+        captured["card_fields"]["statusText"]
+        == "批量消息请求已受理：1 人受理，2 人未受理"
+    )
+
+
+def test_worker_async_success_text_never_claims_final_delivery() -> None:
+    group = DINGTALK_TOOL_CONTRACTS[DINGTALK_SEND_MESSAGE_TO_GROUP_TOOL_IDENTIFIER]
+    batch = DINGTALK_TOOL_CONTRACTS[DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER]
+    notice = DINGTALK_TOOL_CONTRACTS["dingtalk_send_work_notification"]
+
+    assert "已受理" in ExternalActionWorker._success_card_status_text(
+        group,
+        {"accepted": True},
+    )
+    assert "送达" in ExternalActionWorker._success_card_status_text(
+        group,
+        {"accepted": True},
+    )
+    assert ExternalActionWorker._success_card_status_text(
+        batch,
+        {
+            "accepted_count": 1,
+            "not_accepted_count": 2,
+            "filtered_count": 1,
+            "flow_controlled_count": 1,
+            "invalid_count": 0,
+            "fully_accepted": False,
+        },
+    ) == "批量消息请求已受理：1 人受理，2 人未受理"
+    assert "已提交" in ExternalActionWorker._success_card_status_text(
+        notice,
+        {"accepted": True, "task_id": 321},
+    )
+
+
 def test_card_and_todo_clients_emit_only_fixed_bounded_provider_contracts() -> None:
     card_transport = _Transport()
     card = DingTalkCardClient(_TokenClient(), transport=card_transport)
@@ -1356,7 +2263,15 @@ def test_card_and_todo_clients_emit_only_fixed_bounded_provider_contracts() -> N
 
 
 def test_fixed_mutation_clients_use_the_ten_allowlisted_operations() -> None:
-    transport = _Transport({"id": "resource-1", "task_id": 321})
+    transport = _Transport(
+        {
+            "id": "event/1",
+            "task_id": 321,
+            "result": True,
+            "value": [{"id": "record/1"}],
+            "processQueryKey": "request-1",
+        }
+    )
     token = _TokenClient()
     todo = DingTalkTodoClient(token, transport=transport)
     todo.create_for_self(union_id="union/1", arguments={"subject": "创建"})
@@ -1399,12 +2314,11 @@ def test_fixed_mutation_clients_use_the_ten_allowlisted_operations() -> None:
             "records": [{"record_id": "record/1", "fields": {"名称": "更新"}}],
         },
     )
-    DingTalkRobotMutationClient(token, transport=transport).send_current(
+    DingTalkRobotMutationClient(token, transport=transport).send_to_group(
         arguments={
             "title": "标题",
             "text": "正文",
             "_target": {
-                "conversation_type": "group",
                 "open_conversation_id": "cid/1",
                 "robot_code": "robot-1",
             },
@@ -1433,7 +2347,10 @@ def test_fixed_mutation_clients_use_the_ten_allowlisted_operations() -> None:
         ),
         (
             "PUT",
-            "https://api.dingtalk.com/v1.0/todo/users/union%2F1/tasks/todo%2F1",
+            (
+                "https://api.dingtalk.com/v1.0/todo/users/union%2F1/tasks/"
+                "todo%2F1/executorStatus"
+            ),
         ),
         (
             "POST",
@@ -1471,6 +2388,9 @@ def test_fixed_mutation_clients_use_the_ten_allowlisted_operations() -> None:
         "msgParam": '{"title":"标题","text":"正文"}',
         "openConversationId": "cid/1",
     }
+    assert transport.calls[2][2] == {
+        "executorStatusList": [{"id": "union/1", "isDone": True}]
+    }
     assert transport.calls[8][2] == {
         "robotCode": "robot-1",
         "userIds": ["staff-1", "staff-2"],
@@ -1486,6 +2406,273 @@ def test_fixed_mutation_clients_use_the_ten_allowlisted_operations() -> None:
             "markdown": {"title": "标题", "text": "正文"},
         },
     }
+
+
+def test_mutation_success_responses_reject_target_or_record_drift() -> None:
+    with pytest.raises(RetryableExecutionError) as calendar_error:
+        DingTalkCalendarMutationClient(
+            _TokenClient(), transport=_Transport({"id": "different-event"})
+        ).update_for_self(
+            union_id="union-1",
+            arguments={"event_id": "event-1", "title": "更新"},
+        )
+    assert calendar_error.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as inserted_error:
+        DingTalkAiTableMutationClient(
+            _TokenClient(),
+            transport=_Transport({"value": [{"id": "record-1"}, {"id": "record-2"}]}),
+        ).insert_records(
+            operator_id="union-1",
+            arguments={
+                "base_id": "base-1",
+                "sheet_id": "sheet-1",
+                "records": [{"fields": {"名称": "记录"}}],
+            },
+        )
+    assert inserted_error.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as updated_error:
+        DingTalkAiTableMutationClient(
+            _TokenClient(),
+            transport=_Transport({"value": [{"id": "different-record"}]}),
+        ).update_records(
+            operator_id="union-1",
+            arguments={
+                "base_id": "base-1",
+                "sheet_id": "sheet-1",
+                "records": [{"record_id": "record-1", "fields": {"名称": "更新"}}],
+            },
+        )
+    assert updated_error.value.error_code == "dingtalk_response_invalid"
+
+
+def test_robot_and_work_notification_results_report_acceptance_not_delivery() -> None:
+    group = DingTalkRobotMutationClient(
+        _TokenClient(),
+        transport=_Transport({"processQueryKey": "group-request-1"}),
+    ).send_to_group(
+        arguments={
+            "title": "标题",
+            "text": "正文",
+            "_target": {
+                "open_conversation_id": "conversation-1",
+                "robot_code": "robot-1",
+            },
+        }
+    )
+    assert group == {"message_request_id": "group-request-1", "accepted": True}
+    assert "sent" not in group
+
+    batch = DingTalkRobotMutationClient(
+        _TokenClient(),
+        transport=_Transport(
+            {
+                "processQueryKey": "batch-request-1",
+                "filteredStaffIdList": ["staff-2"],
+                "flowControlledStaffIdList": ["staff-3"],
+                "invalidStaffIdList": ["staff-2"],
+            }
+        ),
+    ).batch_send_to_users(
+        arguments={
+            "user_ids": ["staff-1", "staff-2", "staff-3"],
+            "msg_param": {"title": "标题", "text": "正文"},
+            "_target": {"robot_code": "robot-1", "recipient_count": 3},
+        }
+    )
+    assert batch == {
+        "message_request_id": "batch-request-1",
+        "recipient_count": 3,
+        "accepted_count": 1,
+        "not_accepted_count": 2,
+        "filtered_count": 1,
+        "flow_controlled_count": 1,
+        "invalid_count": 1,
+        "fully_accepted": False,
+        "accepted": True,
+    }
+    assert "staff-2" not in str(batch)
+    assert "staff-3" not in str(batch)
+    assert "sent" not in batch
+
+    notice = DingTalkWorkNotificationMutationClient(
+        _TokenClient(),
+        transport=_Transport({"task_id": 321}),
+    ).send_to_self(
+        arguments={
+            "title": "标题",
+            "text": "正文",
+            "_target": {"agent_id": 123, "staff_id": "staff-1"},
+        }
+    )
+    assert notice == {"task_id": 321, "accepted": True}
+    assert "sent" not in notice
+
+
+def test_robot_user_batch_rejects_provider_recipient_drift() -> None:
+    client = DingTalkRobotMutationClient(
+        _TokenClient(),
+        transport=_Transport(
+            {
+                "processQueryKey": "batch-request-1",
+                "invalidStaffIdList": ["not-requested"],
+            }
+        ),
+    )
+
+    with pytest.raises(RetryableExecutionError) as exc_info:
+        client.batch_send_to_users(
+            arguments={
+                "user_ids": ["staff-1"],
+                "msg_param": {"title": "标题", "text": "正文"},
+                "_target": {"robot_code": "robot-1", "recipient_count": 1},
+            }
+        )
+
+    assert exc_info.value.error_code == "dingtalk_response_invalid"
+
+
+def test_calendar_all_day_uses_official_date_objects() -> None:
+    transport = _Transport({"id": "event-1"})
+    principal = ResolvedDingTalkPrincipal(
+        job_id="job-1",
+        session_id="session-1",
+        actor_user_id="user-1",
+        business_application_id="application-1",
+        agent_publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+        source_connector_id="connector-1",
+        dingtalk_enterprise_id="enterprise-1",
+        external_identity_id="external-identity-1",
+        target_external_subject_id="staff-1",
+        target_union_id="union-1",
+        primary_calendar_id="primary",
+        aitable_operator_id="union-1",
+        source_conversation_type="group",
+        source_conversation_id="conversation-1",
+        source_open_conversation_id="cid-1",
+        source_robot_code="robot-1",
+        enterprise_robot_code="robot-1",
+        work_notification_agent_id=123,
+        principal_jti="principal-jti-1",
+    )
+    frozen, _summary = DingTalkMutationPreparationCatalog._create_calendar_event(
+        principal,
+        {
+            "title": "全天验收",
+            "start_time": "2026-08-30T00:00:00+08:00",
+            "end_time": "2026-08-31T00:00:00+08:00",
+            "time_zone": "Asia/Shanghai",
+            "all_day": True,
+        },
+    )
+
+    DingTalkCalendarMutationClient(
+        _TokenClient(), transport=transport
+    ).create_for_self(union_id="union-1", arguments=frozen)
+
+    assert transport.calls[0][2] == {
+        "summary": "全天验收",
+        "isAllDay": True,
+        "start": {"date": "2026-08-30"},
+        "end": {"date": "2026-08-31"},
+    }
+
+
+def test_calendar_all_day_rejects_nonexclusive_same_date_range() -> None:
+    principal = ResolvedDingTalkPrincipal(
+        job_id="job-1",
+        session_id="session-1",
+        actor_user_id="user-1",
+        business_application_id="application-1",
+        agent_publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+        source_connector_id="connector-1",
+        dingtalk_enterprise_id="enterprise-1",
+        external_identity_id="external-identity-1",
+        target_external_subject_id="staff-1",
+        target_union_id="union-1",
+        primary_calendar_id="primary",
+        aitable_operator_id="union-1",
+        source_conversation_type="group",
+        source_conversation_id="conversation-1",
+        source_open_conversation_id="cid-1",
+        source_robot_code="robot-1",
+        enterprise_robot_code="robot-1",
+        work_notification_agent_id=123,
+        principal_jti="principal-jti-1",
+    )
+    with pytest.raises(NonRetryableExecutionError) as caught:
+        DingTalkMutationPreparationCatalog._create_calendar_event(
+            principal,
+            {
+                "title": "全天验收",
+                "start_time": "2026-08-30T09:00:00+08:00",
+                "end_time": "2026-08-30T18:00:00+08:00",
+                "time_zone": "Asia/Shanghai",
+                "all_day": True,
+            },
+        )
+    assert caught.value.error_code == "external_action_arguments_invalid"
+
+
+def test_mutation_clients_reject_unknown_success_response_shapes() -> None:
+    with pytest.raises(RetryableExecutionError) as todo_create:
+        DingTalkTodoClient(
+            _TokenClient(), transport=_Transport({})
+        ).create_for_self(union_id="union-1", arguments={"subject": "创建"})
+    assert todo_create.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as todo_update:
+        DingTalkTodoClient(
+            _TokenClient(), transport=_Transport({"result": False})
+        ).update_for_self(
+            union_id="union-1",
+            arguments={"task_id": "task-1", "subject": "更新"},
+        )
+    assert todo_update.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as calendar_create:
+        DingTalkCalendarMutationClient(
+            _TokenClient(), transport=_Transport({"result": {"id": "event-1"}})
+        ).create_for_self(
+            union_id="union-1",
+            arguments={
+                "title": "日程",
+                "start_time": "2026-08-30T10:00:00+08:00",
+                "end_time": "2026-08-30T11:00:00+08:00",
+                "time_zone": "Asia/Shanghai",
+            },
+        )
+    assert calendar_create.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as robot_group:
+        DingTalkRobotMutationClient(
+            _TokenClient(), transport=_Transport({"processQueryKeys": ["request-1"]})
+        ).send_to_group(
+            arguments={
+                "title": "标题",
+                "text": "正文",
+                "_target": {
+                    "open_conversation_id": "cid-1",
+                    "robot_code": "robot-1",
+                },
+            }
+        )
+    assert robot_group.value.error_code == "dingtalk_response_invalid"
+
+    with pytest.raises(RetryableExecutionError) as work_notice:
+        DingTalkWorkNotificationMutationClient(
+            _TokenClient(), transport=_Transport({})
+        ).send_to_self(
+            arguments={
+                "title": "标题",
+                "text": "正文",
+                "_target": {"agent_id": 123, "staff_id": "staff-1"},
+            }
+        )
+    assert work_notice.value.error_code == "dingtalk_response_invalid"
 
 
 def test_robot_user_batch_provider_rejects_target_drift_before_io() -> None:
@@ -1543,12 +2730,12 @@ def test_robot_user_batch_provider_rejects_target_drift_before_io() -> None:
                 "record_count": 1,
                 "field_names": ["状态"],
             },
-            "当前用户可访问的 AI 表格",
+            "当前用户可访问的指定 AI 表格",
         ),
         (
-            "dingtalk.robot.message.send",
+            "dingtalk.robot.group_message.send",
             {
-                "operation": "向当前钉钉来源会话发送机器人消息",
+                "operation": "向当前钉钉来源群发送机器人消息",
                 "target": "当前群聊",
                 "title": "结果",
                 "text": "已完成",

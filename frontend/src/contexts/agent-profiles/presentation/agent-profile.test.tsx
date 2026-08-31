@@ -1302,4 +1302,76 @@ describe("Agent Profile management", () => {
       fetchSpy.mock.calls.some(([input]) => String(input).endsWith("/validate"))
     ).toBe(false)
   })
+
+  it("shows unavailable selected MCP Tools so a new revision can remove them", async () => {
+    let savedConfig: AgentConfig | undefined
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) => {
+        const url = String(input)
+        if (url.includes("/model-connections/")) {
+          return response({ connection: modelConnection })
+        }
+        if (url.endsWith("/draft") && init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as { config: AgentConfig }
+          savedConfig = body.config
+          return response({
+            revision: {
+              ...agentPayload().agent.draft,
+              revision: 3,
+              config: body.config,
+            },
+          })
+        }
+        const payload = agentPayload()
+        if (payload.agent.draft) {
+          payload.agent.draft.config = {
+            ...config,
+            mcp_tool_ids: [
+              "get_schema_directory",
+              "dingtalk_send_robot_message",
+            ],
+          }
+        }
+        return response(payload)
+      })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter>
+          <AgentProfilePage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    const tools = await screen.findByRole("group", { name: "MCP 工具" })
+    const unavailable = within(tools).getByRole("checkbox", {
+      name: "dingtalk_send_robot_message",
+    })
+    expect(unavailable).toBeChecked()
+    expect(
+      within(tools).getByText(
+        "MCP Tool 已从当前目录移除，请取消选择后保存新草稿；历史发布版本不会被改写。"
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.click(unavailable)
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
+
+    await waitFor(() =>
+      expect(savedConfig?.mcp_tool_ids).toEqual(["get_schema_directory"])
+    )
+    expect(
+      fetchSpy.mock.calls.some(([input]) => String(input).endsWith("/validate"))
+    ).toBe(false)
+  })
 })

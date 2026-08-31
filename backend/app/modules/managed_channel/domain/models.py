@@ -97,6 +97,7 @@ class DingTalkApplicationInput:
     allow_group_chat: bool = True
     require_group_at: bool = True
     work_notification_agent_id: int | None = None
+    enterprise_robot_code: str = ""
 
 
 @dataclass(frozen=True)

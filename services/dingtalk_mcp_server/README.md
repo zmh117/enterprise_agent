@@ -1,8 +1,8 @@
 # Governed DingTalk MCP
 
-该服务是企业 Agent 的固定业务 MCP Server。当前发布代码内声明的 28 个
-Tool：18 个只读 Tool 直接走 Principal、Job Snapshot、角色/Application 授权和统一
-MCP 审计；10 个 mutation 只创建待确认 Action Intent，不直接写入钉钉。原用户在
+该服务是企业 Agent 的固定业务 MCP Server。当前发布代码内声明的 35 个
+Tool：21 个只读 Tool 直接走 Principal、Job Snapshot、角色/Application 授权和统一
+MCP 审计；14 个 mutation 只创建待确认 Action Intent，不直接写入钉钉。原用户在
 互动卡片中同意后，独立 Worker 再次授权并按固定 operation dispatcher 执行。
 
 ## Phase 2 边界
@@ -15,8 +15,8 @@ MCP 审计；10 个 mutation 只创建待确认 Action Intent，不直接写入�
   批量消息 Tool 只接受显式收件人 `user_ids` 和 `msg_param={title,text}`。
 - 当前本人待办、本人主日历、本人 AI 表格 operator、当前来源会话、企业机器人 Code
   和本人工作通知目标由服务端事实注入；按姓名发送由 Agent 显式执行搜索、必要时详情
-  消歧再传入 userId，MCP 服务不隐式查人。删除、撤回、DING、任意群和结构修改能力
-  未注册。
+  消歧再传入 userId，MCP 服务不隐式查人。AI 表格按官方 notable v1 + operator
+  契约开放数据表/字段的新增修改以及记录新增修改；删除、撤回、DING 和任意群能力未注册。
 - 卡片使用同一企业应用的 Stream 回调，`outTrackId` 等于 Action Intent ID，并禁止转发。
 - 服务端强制校验 Runtime lease、Connector、corp、点击人、意图签名、revision 和状态；端侧按钮状态不构成授权。
 - `agree` 才进入 Provider 执行队列；`reject` 永不执行；`revise` 只返回“不支持”
@@ -42,7 +42,8 @@ MCP 审计；10 个 mutation 只创建待确认 Action Intent，不直接写入�
   可见范围。
 - `dingtalk-tasks`：`Todo.Todo.Read`；mutation 另需 `Todo.Todo.Write`。
 - `dingtalk-calendar`：Calendar Read/Schedule Read；mutation 另需 Calendar Write。
-- `dingtalk-notable`：逐 endpoint 在当前企业应用后台核验，平台不猜测权限代码。
+- `dingtalk-notable`：名称搜索使用 storage v2；数据表、字段和记录使用官方 MCP/SDK
+  共同支持的 notable v1 + 当前用户 operator。三个固定格式参考 Tool 不访问 Provider。
 - `dingtalk-robot-send-message`：企业机器人当前会话/用户批量发送权限；用户批量 Tool
   要求 Connector 配置企业机器人 Code，并固定调用官方 batch endpoint。
 - `dingtalk-notice`：工作通知发送/查询权限和 Connector Agent ID。

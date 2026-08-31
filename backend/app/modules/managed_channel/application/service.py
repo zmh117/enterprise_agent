@@ -602,6 +602,7 @@ class ManagedChannelService:
             "work_notification_agent_id_hint": self._agent_id_hint(
                 metadata.get("work_notification_agent_id")
             ),
+            "enterprise_robot_code": str(metadata.get("default_robot_code") or ""),
             "capabilities": {
                 "private_chat": bool(metadata.get("allow_private_chat", True)),
                 "group_chat": bool(metadata.get("allow_group_chat", True)),
@@ -659,6 +660,12 @@ class ManagedChannelService:
                 "work_notification_agent_id",
                 "工作通知 Agent ID 必须为正整数",
             )
+        enterprise_robot_code = payload.enterprise_robot_code.strip()
+        if len(enterprise_robot_code) > 128:
+            raise _invalid(
+                "enterprise_robot_code",
+                "企业机器人 Code 长度不能超过 128",
+            )
         return DingTalkApplicationInput(
             name=name,
             client_id=client_id,
@@ -668,6 +675,7 @@ class ManagedChannelService:
             allow_group_chat=payload.allow_group_chat,
             require_group_at=payload.require_group_at,
             work_notification_agent_id=agent_id,
+            enterprise_robot_code=enterprise_robot_code,
         )
 
     @staticmethod
@@ -690,6 +698,13 @@ class ManagedChannelService:
             )
         if agent_id is not None:
             metadata["work_notification_agent_id"] = agent_id
+        enterprise_robot_code = payload.enterprise_robot_code.strip()
+        if not enterprise_robot_code:
+            enterprise_robot_code = str(
+                (current_metadata or {}).get("default_robot_code") or ""
+            ).strip()
+        if enterprise_robot_code:
+            metadata["default_robot_code"] = enterprise_robot_code
         return metadata
 
     @staticmethod

@@ -295,4 +295,28 @@ def _tool_restrictions(
         "diagnose_loki_probe",
     } & assigned:
         restrictions.append("Loki queries must be bounded by service, time range, and result size.")
+    confirmation_gated = {
+        tool_name
+        for tool_name in assigned
+        if (definition := MCP_TOOL_MANIFEST.get(tool_name)) is not None
+        and definition.effect == "mutation"
+        and definition.confirmation_policy != "none"
+    }
+    if confirmation_gated:
+        restrictions.extend(
+            [
+                (
+                    "When the user asks to perform an assigned confirmation-gated external "
+                    "mutation and all required parameters are available, actually call the exact "
+                    "assigned Tool. Do not merely describe, simulate, or pre-compose its result."
+                ),
+                (
+                    "A confirmation card exists only after that Tool succeeds and returns "
+                    "status=confirmation_required. Never claim that a card was created, submitted, "
+                    "or is waiting for confirmation without a successful Tool result from this "
+                    "Job; if no call occurred or it failed or was denied, state that no card was "
+                    "created."
+                ),
+            ]
+        )
     return restrictions

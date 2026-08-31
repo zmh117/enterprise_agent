@@ -1501,10 +1501,13 @@ function McpToolChecklist({
   selected: string[]
   onToggle: (value: string) => void
 }) {
+  const availableIds = new Set(items.map((item) => item.identifier))
+  const unavailableSelected = selected.filter((id) => !availableIds.has(id))
+
   return (
     <fieldset className="rounded-lg border p-4">
       <legend className="px-1 text-sm font-medium">{title}</legend>
-      {items.length ? (
+      {items.length || unavailableSelected.length ? (
         <div className="grid gap-2 sm:grid-cols-2">
           {items.map((item) => (
             <label
@@ -1533,6 +1536,28 @@ function McpToolChecklist({
                 </span>
                 <span className="mt-1 block text-xs leading-5 text-muted-foreground">
                   {item.description.trim() || "暂无工具说明。"}
+                </span>
+              </span>
+            </label>
+          ))}
+          {unavailableSelected.map((identifier) => (
+            <label
+              key={identifier}
+              className="flex min-w-0 items-start gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm"
+            >
+              <input
+                className="mt-0.5"
+                type="checkbox"
+                aria-label={identifier}
+                checked
+                onChange={() => onToggle(identifier)}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block font-mono text-xs font-medium break-all">
+                  {identifier}
+                </span>
+                <span className="mt-1 block text-xs text-destructive">
+                  MCP Tool 已从当前目录移除，请取消选择后保存新草稿；历史发布版本不会被改写。
                 </span>
               </span>
             </label>

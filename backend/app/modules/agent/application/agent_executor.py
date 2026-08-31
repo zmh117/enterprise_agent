@@ -16,6 +16,7 @@ from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
@@ -216,6 +217,20 @@ class AgentExecutor:
                 tool_events=result.tool_events,
                 exhausted=False,
             )
+            final_answer, rejected_confirmation_claim = _guard_confirmation_claim(
+                final_answer=result.final_answer,
+                allowed_tools=context.allowed_tools,
+                tool_events=result.tool_events,
+            )
+            if rejected_confirmation_claim:
+                self.audit_service.record(
+                    "agent.external_action_confirmation_claim.rejected",
+                    status="DENIED",
+                    summary="Unverified external action confirmation claim was replaced",
+                    job_id=job.id,
+                    actor_id=job.internal_user_id or job.requester_id,
+                    payload={"invocation_id": attempt_invocation_id},
+                )
             self.repository.add_step(
                 job_id=job.id,
                 step_type="model_completed",
@@ -224,12 +239,12 @@ class AgentExecutor:
             )
             self._persist_success(
                 job=job,
-                final_answer=result.final_answer,
+                final_answer=final_answer,
                 worker_id=worker_id,
                 correlation_id=correlation_id,
             )
             self.execution_audit_repository.rebuild_summary(job.id)
-            return result.final_answer
+            return final_answer
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", str(exc))
             tool_events = getattr(exc, "tool_events", [])
@@ -378,6 +393,51 @@ def _runtime_tool_attempt_count(tool_events: list[dict[str, object]]) -> int:
         else:
             identityless_attempts += 1
     return len(stable_ids) + identityless_attempts
+
+
+_CONFIRMATION_CLAIM_PHRASES = (
+    "确认卡已创建",
+    "确认卡片已创建",
+    "确认卡已生成",
+    "确认卡片已生成",
+    "确认卡已提交",
+    "确认卡片已提交",
+    "处于等待确认状态",
+    "处于待确认状态",
+)
+_UNVERIFIED_CONFIRMATION_MESSAGE = (
+    "外部操作确认卡未创建：本次 Agent 没有实际完成确认型 Tool Call。"
+    "请不要等待或点击卡片；可在修正后重新发起请求。"
+)
+
+
+def _guard_confirmation_claim(
+    *,
+    final_answer: str,
+    allowed_tools: list[str],
+    tool_events: list[dict[str, object]],
+) -> tuple[str, bool]:
+    confirmation_tools = {
+        tool_name
+        for tool_name in allowed_tools
+        if (definition := MCP_TOOL_MANIFEST.get(tool_name)) is not None
+        and definition.effect == "mutation"
+        and definition.confirmation_policy != "none"
+    }
+    claims_current_confirmation = (
+        "confirmation_required" in final_answer
+        and any(phrase in final_answer for phrase in _CONFIRMATION_CLAIM_PHRASES)
+    )
+    if not confirmation_tools or not claims_current_confirmation:
+        return final_answer, False
+    has_successful_confirmation_tool = any(
+        str(event.get("tool_name") or "") in confirmation_tools
+        and str(event.get("status") or "").upper() == "SUCCEEDED"
+        for event in tool_events
+    )
+    if has_successful_confirmation_tool:
+        return final_answer, False
+    return _UNVERIFIED_CONFIRMATION_MESSAGE, True
 
 
 def _int_value(value: object) -> int:

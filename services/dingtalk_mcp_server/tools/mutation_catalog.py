@@ -12,6 +12,7 @@ from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.dingtalk_tool_contracts import (
     DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER,
     DINGTALK_MUTATION_TOOL_IDENTIFIERS,
+    DINGTALK_SEND_MESSAGE_TO_GROUP_TOOL_IDENTIFIER,
     DINGTALK_TOOL_CONTRACTS,
 )
 from app.shared.exceptions import NonRetryableExecutionError
@@ -45,15 +46,23 @@ class DingTalkMutationPreparationCatalog:
             "dingtalk_complete_todo": self._complete_todo,
             "dingtalk_create_calendar_event": self._create_calendar_event,
             "dingtalk_update_calendar_event": self._update_calendar_event,
+            "dingtalk_create_aitable_sheet": self._create_aitable_sheet,
+            "dingtalk_update_aitable_sheet": self._update_aitable_sheet,
+            "dingtalk_create_aitable_field": self._create_aitable_field,
+            "dingtalk_update_aitable_field": self._update_aitable_field,
             "dingtalk_insert_aitable_records": self._insert_aitable_records,
             "dingtalk_update_aitable_records": self._update_aitable_records,
-            "dingtalk_send_robot_message": self._send_robot_message,
+            DINGTALK_SEND_MESSAGE_TO_GROUP_TOOL_IDENTIFIER: self._send_message_to_group,
             DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER: (
                 self._batch_send_message_to_users_by_robot
             ),
             "dingtalk_send_work_notification": self._send_work_notification,
         }
         self._preflights: dict[str, MutationPreflight] = {
+            "dingtalk_create_aitable_sheet": self._preflight_aitable,
+            "dingtalk_update_aitable_sheet": self._preflight_aitable,
+            "dingtalk_create_aitable_field": self._preflight_aitable,
+            "dingtalk_update_aitable_field": self._preflight_aitable,
             "dingtalk_insert_aitable_records": self._preflight_aitable,
             "dingtalk_update_aitable_records": self._preflight_aitable,
         }
@@ -165,6 +174,64 @@ class DingTalkMutationPreparationCatalog:
         }
 
     @staticmethod
+    def _create_aitable_sheet(
+        principal: ResolvedDingTalkPrincipal,
+        arguments: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        frozen = _frozen_aitable_arguments(principal, arguments)
+        raw_fields = frozen.get("fields")
+        fields: list[Any] = raw_fields if isinstance(raw_fields, list) else []
+        return frozen, {
+            "operation": "创建钉钉 AI 表格数据表",
+            "base_id": str(frozen["base_id"]),
+            "name": str(frozen["name"]),
+            "field_names": [
+                str(row.get("name") or "") for row in fields if isinstance(row, dict)
+            ],
+        }
+
+    @staticmethod
+    def _update_aitable_sheet(
+        principal: ResolvedDingTalkPrincipal,
+        arguments: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        frozen = _frozen_aitable_arguments(principal, arguments)
+        return frozen, {
+            "operation": "更新钉钉 AI 表格数据表名称",
+            "base_id": str(frozen["base_id"]),
+            "sheet_id": str(frozen["sheet_id"]),
+            "name": str(frozen["name"]),
+        }
+
+    @staticmethod
+    def _create_aitable_field(
+        principal: ResolvedDingTalkPrincipal,
+        arguments: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        frozen = _frozen_aitable_arguments(principal, arguments)
+        return frozen, {
+            "operation": "创建钉钉 AI 表格字段",
+            "base_id": str(frozen["base_id"]),
+            "sheet_id": str(frozen["sheet_id"]),
+            "name": str(frozen["name"]),
+            "field_type": str(frozen["type"]),
+        }
+
+    @staticmethod
+    def _update_aitable_field(
+        principal: ResolvedDingTalkPrincipal,
+        arguments: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        frozen = _frozen_aitable_arguments(principal, arguments)
+        return frozen, {
+            "operation": "更新钉钉 AI 表格字段",
+            "base_id": str(frozen["base_id"]),
+            "sheet_id": str(frozen["sheet_id"]),
+            "field_id": str(frozen["field_id"]),
+            "name": str(frozen["name"]),
+        }
+
+    @staticmethod
     def _insert_aitable_records(
         principal: ResolvedDingTalkPrincipal,
         arguments: dict[str, Any],
@@ -181,33 +248,25 @@ class DingTalkMutationPreparationCatalog:
         return frozen, _aitable_summary("更新钉钉 AI 表格记录", frozen)
 
     @staticmethod
-    def _send_robot_message(
+    def _send_message_to_group(
         principal: ResolvedDingTalkPrincipal,
         arguments: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if not principal.source_robot_code:
             raise _not_ready("当前来源 Connector 未配置企业机器人 Code")
-        if principal.source_conversation_type == "group":
-            if not principal.source_open_conversation_id:
-                raise _not_ready("当前来源群缺少 openConversationId")
-            target = {
-                "conversation_type": "group",
-                "open_conversation_id": principal.source_open_conversation_id,
-                "robot_code": principal.source_robot_code,
-            }
-            target_name = "当前群聊"
-        else:
-            target = {
-                "conversation_type": "direct",
-                "staff_id": principal.target_external_subject_id,
-                "robot_code": principal.source_robot_code,
-            }
-            target_name = "当前用户本人"
+        if principal.source_conversation_type != "group":
+            raise _not_ready("当前 Job 不是钉钉群聊来源")
+        if not principal.source_open_conversation_id:
+            raise _not_ready("当前来源群缺少 openConversationId")
+        target = {
+            "open_conversation_id": principal.source_open_conversation_id,
+            "robot_code": principal.source_robot_code,
+        }
         title = str(arguments["title"]).strip()
         text = str(arguments["text"]).strip()
         return {"title": title, "text": text, "_target": target}, {
-            "operation": "向当前钉钉来源会话发送机器人消息",
-            "target": target_name,
+            "operation": "向当前钉钉来源群发送机器人消息",
+            "target": "当前群聊",
             "title": title,
             "text": text,
         }
@@ -268,16 +327,36 @@ class DingTalkMutationPreparationCatalog:
         arguments: dict[str, Any],
     ) -> None:
         target = arguments.get("_target")
-        if not isinstance(target, dict):
+        expected_target = _aitable_target(principal, arguments)
+        if target != expected_target:
             raise _not_ready("AI 表格目标事实缺失")
-        DingTalkAiTableReadClient(
+        client = DingTalkAiTableReadClient(
             self.read_executors.token_client(principal),
             transport=self.transport,
-        ).get_sheet(
-            operator_id=str(target["operator_id"]),
-            base_id=str(arguments["base_id"]),
-            sheet_id=str(arguments["sheet_id"]),
         )
+        operator_id = principal.aitable_operator_id
+        base_id = str(arguments["base_id"])
+        sheet_id = str(arguments.get("sheet_id") or "")
+        if not sheet_id:
+            client.list_sheets(operator_id=operator_id, base_id=base_id)
+            return
+        client.get_sheet(
+            operator_id=operator_id,
+            base_id=base_id,
+            sheet_id=sheet_id,
+        )
+        field_id = str(arguments.get("field_id") or "")
+        if field_id:
+            fields = client.list_fields(
+                operator_id=operator_id,
+                base_id=base_id,
+                sheet_id=sheet_id,
+            ).get("fields")
+            if not isinstance(fields, list) or not any(
+                isinstance(row, dict) and str(row.get("field_id") or "") == field_id
+                for row in fields
+            ):
+                raise _not_ready("AI 表格字段不可用")
 
 
 def _calendar_values(
@@ -309,8 +388,16 @@ def _calendar_values(
         parsed_end = datetime.fromisoformat(end.replace("Z", "+00:00"))
         if parsed_start.tzinfo is None or parsed_end.tzinfo is None or parsed_end <= parsed_start:
             raise _invalid("日程结束时间必须晚于开始时间且都包含时区")
-        values["start_time"] = parsed_start.isoformat()
-        values["end_time"] = parsed_end.isoformat()
+        if bool(values.get("all_day")):
+            start_date = parsed_start.date()
+            end_date = parsed_end.date()
+            if end_date <= start_date:
+                raise _invalid("全天日程结束日期必须晚于开始日期")
+            values["start_time"] = start_date.isoformat()
+            values["end_time"] = end_date.isoformat()
+        else:
+            values["start_time"] = parsed_start.isoformat()
+            values["end_time"] = parsed_end.isoformat()
     return values
 
 
@@ -324,8 +411,23 @@ def _frozen_aitable_arguments(
     if not isinstance(parsed, dict):
         raise _invalid("AI 表格参数必须为对象")
     copied: dict[str, Any] = dict(parsed)
-    copied["_target"] = {"operator_id": principal.aitable_operator_id}
+    copied["_target"] = _aitable_target(principal, copied)
     return copied
+
+
+def _aitable_target(
+    principal: ResolvedDingTalkPrincipal,
+    arguments: dict[str, Any],
+) -> dict[str, str]:
+    target = {
+        "operator_id": principal.aitable_operator_id,
+        "base_id": str(arguments["base_id"]),
+    }
+    for key in ("sheet_id", "field_id"):
+        value = str(arguments.get(key) or "")
+        if value:
+            target[key] = value
+    return target
 
 
 def _aitable_summary(operation: str, frozen: dict[str, Any]) -> dict[str, Any]:

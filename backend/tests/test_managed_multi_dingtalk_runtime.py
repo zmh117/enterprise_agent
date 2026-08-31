@@ -151,7 +151,7 @@ def test_managed_channels_keep_secrets_out_of_admin_reads_and_runtime_states_are
     )
 
 
-def test_work_notification_agent_id_is_validated_stored_and_masked() -> None:
+def test_dingtalk_tool_identifiers_are_validated_stored_and_preserved() -> None:
     container = _container()
     enterprise = _active_enterprise(container)
     created = container.managed_channel_service.create_dingtalk(
@@ -161,6 +161,7 @@ def test_work_notification_agent_id_is_validated_stored_and_masked() -> None:
             client_secret="secret-work-notice",
             dingtalk_enterprise_id=str(enterprise["id"]),
             work_notification_agent_id=123456,
+            enterprise_robot_code="ding-enterprise-robot",
         ),
         actor_id="test-admin",
         enabled=True,
@@ -168,8 +169,10 @@ def test_work_notification_agent_id_is_validated_stored_and_masked() -> None:
     assert created["work_notification_agent_id_configured"] is True
     assert created["work_notification_agent_id_hint"] == "***3456"
     assert "123456" not in str(created)
+    assert created["enterprise_robot_code"] == "ding-enterprise-robot"
     stored = container.managed_channel_repository.get_connector(created["id"])
     assert stored["metadata"]["work_notification_agent_id"] == 123456
+    assert stored["metadata"]["default_robot_code"] == "ding-enterprise-robot"
 
     updated = container.managed_channel_service.update_dingtalk(
         created["id"],
@@ -184,6 +187,7 @@ def test_work_notification_agent_id_is_validated_stored_and_masked() -> None:
         rotate_secret=False,
     )
     assert updated["work_notification_agent_id_hint"] == "***3456"
+    assert updated["enterprise_robot_code"] == "ding-enterprise-robot"
 
     with pytest.raises(NonRetryableExecutionError) as invalid:
         container.managed_channel_service.create_dingtalk(

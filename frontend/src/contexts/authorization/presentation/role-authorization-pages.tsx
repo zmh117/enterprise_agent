@@ -944,6 +944,14 @@ function BusinessApplicationCard({
 }) {
   const enabled = Boolean(selected)
   const update = (next: ApplicationSelection) => onChange(next)
+  const currentToolIdentifiers = new Set(
+    application.mcp_tools.map((tool) => tool.tool_identifier)
+  )
+  const removedToolIdentifiers = selected
+    ? [...selected.toolIdentifiers].filter(
+        (identifier) => !currentToolIdentifiers.has(identifier)
+      )
+    : []
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -971,6 +979,32 @@ function BusinessApplicationCard({
           <div>
             <h3 className="text-sm font-medium">MCP Tool 使用权限</h3>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {removedToolIdentifiers.map((identifier) => (
+                <label
+                  key={identifier}
+                  className="flex items-start gap-3 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm"
+                >
+                  <Checkbox
+                    className="mt-0.5"
+                    aria-label={`MCP Tool ${identifier}`}
+                    checked
+                    onCheckedChange={(checked) => {
+                      if (checked) return
+                      const identifiers = new Set(selected.toolIdentifiers)
+                      identifiers.delete(identifier)
+                      update({ ...selected, toolIdentifiers: identifiers })
+                    }}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-mono text-xs">
+                      {identifier}
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-destructive">
+                      MCP Tool 已从当前应用 Publication 移除，请取消选择后保存新授权；历史角色审计和既有 Job 快照不会被改写。
+                    </span>
+                  </span>
+                </label>
+              ))}
               {application.mcp_tools.map((tool) => (
                 <label
                   key={tool.tool_identifier}

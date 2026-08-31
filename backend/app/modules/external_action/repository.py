@@ -303,6 +303,7 @@ class ExternalActionRepository:
         *,
         result: dict[str, Any],
         provider_request_id: str = "",
+        card_status_text: str = "",
     ) -> None:
         timestamp = now_iso()
         self.database.execute(
@@ -325,7 +326,14 @@ class ExternalActionRepository:
             action_intent_id=intent_id,
             event_kind="RESULT_UPDATE",
             idempotency_key=f"{intent_id}:result:succeeded",
-            payload={"status": "succeeded", "statusText": "操作成功"},
+            payload={
+                "status": "succeeded",
+                **(
+                    {"statusText": card_status_text[:200]}
+                    if card_status_text.strip()
+                    else {}
+                ),
+            },
         )
 
     @operation_unit_of_work(lambda repository: repository.database)

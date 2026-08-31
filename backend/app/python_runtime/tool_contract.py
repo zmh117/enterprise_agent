@@ -12,7 +12,7 @@ from .job_sandbox import FILE_TOOL_NAMES
 from .log_evidence_scanner import LOG_EVIDENCE_INPUT_SCHEMA, LOG_EVIDENCE_TOOL
 
 
-PROMPT_TEMPLATE_VERSION = "agent-system-prompt-v3"
+PROMPT_TEMPLATE_VERSION = "agent-system-prompt-v4"
 _SELECT_OUTPUT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,

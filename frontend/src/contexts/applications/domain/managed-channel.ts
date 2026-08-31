@@ -70,6 +70,7 @@ export const managedChannelSchema = z
     secret_configured: z.boolean().optional(),
     work_notification_agent_id_configured: z.boolean().default(false),
     work_notification_agent_id_hint: z.string().default(""),
+    enterprise_robot_code: z.string().default(""),
     capabilities: z
       .object({
         private_chat: z.boolean().default(false),
@@ -120,6 +121,7 @@ export type DingTalkChannelInput = {
   allow_group_chat: boolean
   require_group_at: boolean
   work_notification_agent_id: number | null
+  enterprise_robot_code: string
   enabled: boolean
   rotate_secret: boolean
 }
