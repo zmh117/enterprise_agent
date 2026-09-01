@@ -682,6 +682,10 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             tool_input: dict[str, Any],
             _permission_context: Any,
         ) -> Any:
+            audit_recorder = getattr(self, "_run_audit_recorder", None)
+            drain_raw_api_bodies = getattr(audit_recorder, "drain_raw_api_bodies", None)
+            if callable(drain_raw_api_bodies):
+                drain_raw_api_bodies()
             try:
                 budget.consume()
             except ExecutionPolicyExceeded as exc:

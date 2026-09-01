@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.modules.agent.domain.runtime import AgentExecutionContext, McpRuntimeBinding
+from app.python_runtime.job_sandbox import JobSandboxManager
 from app.python_runtime.run_audit import (
     RunAuditRecorder,
     decode_audit_chunks,
@@ -171,6 +172,44 @@ def test_recorder_keeps_complete_model_visible_content_and_raw_bodies(
         and item["definition"]["input_schema"]["properties"]["query"] == {"type": "string"}
         for item in audit["tool_definitions"]
     )
+
+
+def test_recorder_drains_completed_raw_api_files_within_tmp_budget(
+    tmp_path: Path,
+) -> None:
+    sandbox = JobSandboxManager(tmp_path / "sandboxes").create("job-audit-budget")
+    try:
+        raw_dir = sandbox.path / "tmp" / "raw-api"
+        raw_dir.mkdir(parents=True)
+        recorder = RunAuditRecorder(
+            _context("budget"),
+            system_prompt="built-system::budget",
+            raw_api_dir=raw_dir,
+            permission_snapshot={"allowed_tools": []},
+        )
+
+        for index in range(10):
+            (raw_dir / "current.request.json").write_text(
+                json.dumps({"messages": [{"index": index}], "tools": []}),
+                encoding="utf-8",
+            )
+            (raw_dir / "current.response.json").write_text(
+                json.dumps({"content": [{"index": index}]}),
+                encoding="utf-8",
+            )
+            recorder.observe_message(
+                {"type": "system", "subtype": "progress", "data": {"index": index}}
+            )
+            sandbox.assert_within_limits()
+
+        assert list(raw_dir.rglob("*.json")) == []
+        audit = recorder.finalize(status="SUCCEEDED")
+        assert len(audit["api_requests"]) == 10
+        assert len(audit["api_responses"]) == 10
+        assert len(audit["usage"]["raw_api_request_metrics"]) == 10
+        assert audit["summary"]["model_request_count"] == 10
+    finally:
+        sandbox.cleanup()
 
 
 def test_audit_chunks_round_trip_complete_unicode_and_detect_tampering() -> None:

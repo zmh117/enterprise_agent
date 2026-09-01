@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from app.modules.agent.domain.runtime import AgentExecutionContext
@@ -35,6 +36,8 @@ class RunAuditRecorder:
         self.raw_api_dir = raw_api_dir
         self._seen_model_messages: set[str] = set()
         self._tool_call_index: dict[str, int] = {}
+        self._raw_api_files: set[str] = set()
+        self._raw_api_lock = RLock()
         self.audit: dict[str, Any] = {
             "started_at": _now_iso(),
             "finished_at": None,
@@ -61,6 +64,7 @@ class RunAuditRecorder:
         }
 
     def observe_message(self, message: Any) -> None:
+        self.drain_raw_api_bodies()
         data = _jsonable(message)
         message_type = sdk_message_type(message)
         self.audit["sdk_messages"].append(
@@ -84,7 +88,8 @@ class RunAuditRecorder:
         final_answer: str = "",
         error: BaseException | None = None,
     ) -> dict[str, Any]:
-        _collect_raw_api_bodies(self.audit, self.raw_api_dir)
+        self.drain_raw_api_bodies(accept_incomplete=True)
+        _finalize_raw_api_bodies(self.audit)
         self.audit["finished_at"] = _now_iso()
         self.audit["status"] = status
         if final_answer:
@@ -97,6 +102,17 @@ class RunAuditRecorder:
             }
         _finalize_summary(self.audit)
         return self.audit
+
+    def drain_raw_api_bodies(self, *, accept_incomplete: bool = False) -> None:
+        """Absorb completed OTel raw bodies without accumulating Sandbox tmp files."""
+
+        with self._raw_api_lock:
+            _drain_raw_api_bodies(
+                self.audit,
+                self.raw_api_dir,
+                seen_files=self._raw_api_files,
+                accept_incomplete=accept_incomplete,
+            )
 
     def _observe_model_usage(self, message: Any, message_type: str) -> None:
         nested = sdk_value(message, "message") or message
@@ -261,13 +277,38 @@ def _tool_definitions(context: AgentExecutionContext) -> list[dict[str, Any]]:
     return [{"name": name, "source": "runtime_effective"} for name in context.effective_tool_names]
 
 
-def _collect_raw_api_bodies(audit: dict[str, Any], raw_api_dir: Path) -> None:
-    request_files = _raw_files(raw_api_dir, "*.request.json")
-    response_files = _raw_files(raw_api_dir, "*.response.json")
-    audit["api_requests"] = [_read_raw_file(item) for item in request_files]
-    audit["api_responses"] = [_read_raw_file(item) for item in response_files]
-    if request_files or response_files:
+def _drain_raw_api_bodies(
+    audit: dict[str, Any],
+    raw_api_dir: Path,
+    *,
+    seen_files: set[str],
+    accept_incomplete: bool,
+) -> None:
+    captured = False
+    for pattern, target_key in (
+        ("*.request.json", "api_requests"),
+        ("*.response.json", "api_responses"),
+    ):
+        target = audit.setdefault(target_key, [])
+        for path in _raw_files(raw_api_dir, pattern):
+            identity = _raw_file_identity(raw_api_dir, path)
+            if identity not in seen_files:
+                item = _read_raw_file(path, accept_incomplete=accept_incomplete)
+                if item is None:
+                    continue
+                target.append(item)
+                seen_files.add(identity)
+                captured = True
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                # The Sandbox limit check remains authoritative if cleanup fails.
+                pass
+    if captured or audit.get("api_requests") or audit.get("api_responses"):
         audit["raw_api_capture_status"] = "captured"
+
+
+def _finalize_raw_api_bodies(audit: dict[str, Any]) -> None:
     metrics = []
     loaded_definitions: list[dict[str, Any]] = []
     for index, item in enumerate(audit["api_requests"], start=1):
@@ -290,10 +331,12 @@ def _collect_raw_api_bodies(audit: dict[str, Any], raw_api_dir: Path) -> None:
                 "request_character_count": len(_canonical_json(body)),
             }
         )
-    audit["tool_definitions"] = [
-        *list(audit.get("tool_definitions") or []),
-        *loaded_definitions,
+    frozen_definitions = [
+        item
+        for item in list(audit.get("tool_definitions") or [])
+        if not isinstance(item, dict) or item.get("source") != "raw_api_request"
     ]
+    audit["tool_definitions"] = [*frozen_definitions, *loaded_definitions]
     audit["usage"]["raw_api_request_metrics"] = metrics
 
 
@@ -307,10 +350,36 @@ def _raw_files(directory: Path, pattern: str) -> list[Path]:
         return []
 
 
-def _read_raw_file(path: Path) -> dict[str, Any]:
+def _raw_file_identity(directory: Path, path: Path) -> str:
+    try:
+        relative = path.relative_to(directory).as_posix()
+    except ValueError:
+        relative = str(path)
+    try:
+        state = path.stat()
+    except OSError:
+        return relative
+    return ":".join(
+        (
+            relative,
+            str(state.st_dev),
+            str(state.st_ino),
+            str(state.st_mtime_ns),
+            str(state.st_size),
+        )
+    )
+
+
+def _read_raw_file(
+    path: Path,
+    *,
+    accept_incomplete: bool,
+) -> dict[str, Any] | None:
     try:
         raw_text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
+        if not accept_incomplete:
+            return None
         return {
             "file_name": path.name,
             "read_error": {
@@ -321,6 +390,8 @@ def _read_raw_file(path: Path) -> dict[str, Any]:
     try:
         body: Any = json.loads(raw_text)
     except json.JSONDecodeError:
+        if not accept_incomplete:
+            return None
         body = {"raw_text": raw_text}
     return {"file_name": path.name, "body": body}
 

@@ -2182,6 +2182,17 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
 
     async def query(*, options: dict[str, Any], **_kwargs: Any) -> Any:
         captured.update(options)
+        raw_api_dir = Path(options["cwd"]) / "tmp" / "raw-api"
+        for index in range(5):
+            (raw_api_dir / f"{index}.request.json").write_text(
+                json.dumps({"messages": [], "tools": []}),
+                encoding="utf-8",
+            )
+            (raw_api_dir / f"{index}.response.json").write_text(
+                json.dumps({"content": []}),
+                encoding="utf-8",
+            )
+        assert len(list(raw_api_dir.glob("*.json"))) == 10
         assert (
             await options["can_use_tool"](
                 "Write",
@@ -2189,6 +2200,7 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
                 object(),
             )
         )["behavior"] == "allow"
+        assert list(raw_api_dir.glob("*.json")) == []
         assert (await options["can_use_tool"]("Bash", {"command": "pwd"}, object()))[
             "behavior"
         ] == "deny"
