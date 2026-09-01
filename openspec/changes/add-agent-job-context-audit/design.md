@@ -9,6 +9,8 @@
 **Goals:**
 
 - 保存模型实际可见的完整应用上下文、SDK 消息、API request/response 与工具输入输出。
+- 当前 Job 输入只发送一次；滚动摘要与最近历史消息只以一个规范模型可见表示进入 System Prompt。
+- 上下文清单只保存一份规范化来源正文，不持久化可确定性派生的重复渲染文本。
 - 提供请求次数、峰值上下文、Token/cache/cost、注册/加载/调用工具数等调优摘要。
 - 成功、失败、超时、重试和相同 invocation 恢复重放均可审计且幂等。
 - 完整正文只在管理端通过 Job scope 后读取，页面摘要优先、正文默认折叠。
@@ -59,11 +61,25 @@ migration 124 新增 `agent_run_audit`，以 `(job_id, invocation_id)` 唯一，
 
 保留现有执行汇总、Tool contract、文件、Delivery 和模型轮次，不用旧页面整文件覆盖。Tool contract 卡片本身不折叠，标题、说明、状态和总体摘要始终可见；Job 快照以及每个 invocation 内的组件身份、四层契约和逐工具矩阵分别使用默认关闭的 `<details>`。摘要网格单元允许收缩，长 Invocation ID 等标识在自身单元内断行，不得覆盖相邻指标。新增 Context tuning 摘要，并按 attempt 显示四个默认关闭的 `<details>`：上下文与 Prompt、模型 request/response、完整工具执行、usage 与元数据。`pre` 使用固定最大高度、换行和滚动；历史 Job 显示明确空态。
 
+### 7. 会话只保留一个模型可见表示，审计正文只保存一份
+
+`ConversationContextService` 在滚动摘要、最近消息窗口和字符预算计算之前，按 `job.input_message_id` 排除当前 Job 输入消息。这样当前问题只通过 SDK User Prompt 发送一次，历史窗口仍保留此前用户和 Assistant 消息。
+
+`AgentContextBuilder` 继续把 `conversation.prompt_text()` 作为唯一模型可见的历史会话正文；`retrieved_context.conversation` 只保留 `recent_message_count`、`truncated` 和固定不可信数据声明，不再复制最近消息正文、Job ID、Session ID、外部消息 ID 或发送人稳定标识。发送人归属仍由展平历史中的角色和展示名表达。
+
+该模型可见语义变化将 Prompt template 从 `agent-system-prompt-v4` 提升为 `agent-system-prompt-v5`；历史 Job 保留其原观测版本，新 Job 的 Tool contract 与运行记录必须报告 v5，不能把去重后的 Prompt 误标为 v4。
+
+`context_manifest.sources[*]` 保留规范化 `content`、`character_count`、`estimated_tokens` 和 `upstream_truncated`，删除可由 `content` 确定性生成的 `rendered_text`。这只去除 `agent_run_audit` 的存储/API 重复，不截断或脱敏允许保存的模型可见正文。
+
+完整 Prompt、模型回复、SDK message、模型可见 Tool I/O 和 Provider request/response 只允许进入 Runtime v1.5 `audit_chunk`、同 invocation 恢复账本、`agent_run_audit` 和授权后的管理 Job 详情。它们不得进入普通 RabbitMQ、Job 快照、Runtime 日志、归一化事件/terminal、Debug evidence、Tool/MCP 主账或列表查询。API Key、Auth Token、Secret ref/value、Runtime Grant、Principal JWT、认证 Header、Cookie、完整敏感 URL 和 private thinking 在所有路径继续禁止。
+
 ## Risks / Trade-offs
 
 - [正文显著增大] → 仅详情按授权读取；分块传输和 SDK buffer 采用显式上限，列表不读取正文。
 - [Runtime 协议升级复杂] → v1.5 expand-first，Worker/contract 测试先落地，不原地修改 v1.4。
 - [完整正文包含企业敏感数据] → 用户已确认不脱敏；仍阻止运行凭据主动进入审计，并先鉴权后查询正文。
+- [会话去重误删历史] → 只按当前 Job 的规范 `input_message_id` 排除当前输入，不按正文相等判断；保留此前即使内容相同的独立消息。
+- [删除 `rendered_text` 影响展示] → `content` 保持完整且 JSON UI 已能确定性渲染；增加审计结构回归，禁止两份正文字段重新出现。
 - [Runtime 强杀前无法形成完整 terminal] → 同 invocation 恢复账本可重放已提交事件；未形成可验证审计时明确显示缺失，不伪造。
 - [hidden thinking 不可恢复] → 保存 SDK 实际返回值并在 UI 标明上游限制。
 

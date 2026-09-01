@@ -140,6 +140,14 @@ def test_recorder_keeps_complete_model_visible_content_and_raw_bodies(
     serialized = json.dumps(audit, ensure_ascii=False)
     assert marker in serialized
     assert audit["system_prompt"] == f"built-system::{marker}"
+    assert all("rendered_text" not in item for item in audit["context_manifest"]["sources"])
+    session_source = next(
+        item
+        for item in audit["context_manifest"]["sources"]
+        if item["source_type"] == "retrieved_context" and item["name"] == "session"
+    )
+    assert session_source["content"] == f"session::{marker}"
+    assert session_source["character_count"] == len(f"session::{marker}")
     assert audit["api_requests"][0]["body"]["messages"][0]["content"] == marker
     assert audit["api_responses"][0]["body"]["content"][0]["text"] == marker
     assert audit["tool_executions"][0]["input"]["query"] == marker

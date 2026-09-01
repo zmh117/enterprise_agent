@@ -17,6 +17,9 @@ from app.modules.admin.domain import (
     ADMIN_CAPABILITY_BY_CODE,
     validate_admin_capability_catalog,
 )
+from app.modules.authorization_center.infrastructure.repository import (
+    _BUSINESS_CAPABILITY_NAMES_ZH,
+)
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
@@ -373,6 +376,15 @@ def test_assignable_catalog_describes_tools_from_legacy_agent_publications() -> 
         }
     ]
     c.database.close()
+
+
+def test_business_capability_names_cover_the_current_mcp_tool_manifest() -> None:
+    assert set(_BUSINESS_CAPABILITY_NAMES_ZH) == set(MCP_TOOL_MANIFEST)
+    assert all(
+        name.strip() and name != "MCP Tool"
+        for name in _BUSINESS_CAPABILITY_NAMES_ZH.values()
+    )
+    assert _BUSINESS_CAPABILITY_NAMES_ZH["task_workspace_get"] == "查看任务工作区"
 
 
 def test_role_sections_use_independent_revisions_and_dependency_closure() -> None:

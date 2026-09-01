@@ -28,3 +28,11 @@
 - [ ] 5.3 重建受影响服务并以新 Job 验证运行成功、`agent_run_audit` 持久化及调优摘要/折叠正文展示
 - [x] 5.4 保持工具契约卡片与总体摘要常显，将内部长证据分组默认折叠，并完成前端回归与部署验证
 - [x] 5.5 修复工具契约摘要长 Invocation ID 覆盖相邻指标的布局回归，并完成前端回归与部署验证
+
+## 6. 上下文去重与完整正文规范收敛
+
+- [x] 6.1 补充完整正文专用审计例外、会话单份模型表示和上下文清名单份存储的 proposal/design/delta spec
+- [x] 6.2 在会话预算前按 `input_message_id` 排除当前输入，并让 Runtime Prompt 只保留一份历史会话正文
+- [x] 6.3 删除 `context_manifest` 可派生的 `rendered_text` 副本，保持完整 `content` 与统计口径
+- [x] 6.4 补充当前问题单次发送、相同正文历史保留、会话元数据最小化和审计单份存储回归
+- [x] 6.5 同步 execution-delivery delta 到 canonical spec，并完成聚焦测试、静态检查、Compose 与 strict OpenSpec 验证

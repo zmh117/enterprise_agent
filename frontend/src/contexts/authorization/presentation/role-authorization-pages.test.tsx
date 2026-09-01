@@ -358,6 +358,13 @@ describe("角色授权中心", () => {
                   effect: "mutation",
                   confirmation_policy: "external_action_card_v1",
                 },
+                {
+                  tool_identifier: "task_workspace_get",
+                  display_name_zh: "查看任务工作区",
+                  description:
+                    "查询当前 Job 绑定的任务工作区安全摘要；工作区身份从 Principal 与 Job 解析。",
+                  version_constraint: "",
+                },
               ],
             },
           ],
@@ -384,9 +391,29 @@ describe("角色授权中心", () => {
       await screen.findByText("对唯一解析的数据资源执行策略允许的只读 SQL。")
     ).toBeInTheDocument()
     expect(screen.getByText("创建钉钉待办")).toBeInTheDocument()
+    expect(screen.getByText("查看任务工作区")).toBeInTheDocument()
+    expect(screen.getByText("task_workspace_get")).toBeInTheDocument()
+    const workspaceTool = screen.getByRole("checkbox", {
+      name: /^查看任务工作区 task_workspace_get/,
+    })
+    expect(workspaceTool).toHaveAttribute(
+      "aria-label",
+      "查看任务工作区 task_workspace_get"
+    )
+    expect(workspaceTool.closest("label")).toHaveTextContent(
+      "查看任务工作区 task_workspace_get"
+    )
+    expect(
+      screen.getByText(
+        "查询当前 Job 绑定的任务工作区安全摘要；工作区身份从 Principal 与 Job 解析。"
+      )
+    ).toBeInTheDocument()
+    expect(screen.getAllByText("只读")).toHaveLength(2)
     expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(
-      screen.getByRole("checkbox", { name: /MCP Tool dingtalk_create_todo/ })
+      screen.getByRole("checkbox", {
+        name: /^创建钉钉待办 dingtalk_create_todo/,
+      })
     )
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "选择 test 环境" })

@@ -1012,7 +1012,7 @@ function BusinessApplicationCard({
                 >
                   <Checkbox
                     className="mt-0.5"
-                    aria-label={`MCP Tool ${tool.tool_identifier}`}
+                    aria-label={`${tool.display_name_zh} ${tool.tool_identifier}`}
                     checked={selected.toolIdentifiers.has(
                       tool.tool_identifier
                     )}
@@ -1025,8 +1025,8 @@ function BusinessApplicationCard({
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block">
-                      <span>{tool.display_name_zh}</span>
-                      <span className="ml-2 font-mono text-xs text-muted-foreground">
+                      <span>{tool.display_name_zh}</span>{" "}
+                      <span className="font-mono text-xs text-muted-foreground">
                         {tool.tool_identifier}
                       </span>
                     </span>

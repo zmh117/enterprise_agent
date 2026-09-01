@@ -204,7 +204,6 @@ def _context_manifest(context: AgentExecutionContext) -> dict[str, Any]:
                 "source_type": source_type,
                 "name": name,
                 "content": normalized,
-                "rendered_text": rendered,
                 "character_count": len(rendered),
                 "estimated_tokens": (len(rendered) + 3) // 4,
                 "upstream_truncated": (

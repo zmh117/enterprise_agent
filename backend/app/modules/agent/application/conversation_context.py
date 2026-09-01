@@ -69,12 +69,13 @@ class ConversationContextService:
         recent_message_limit = session.recent_message_limit or self.settings.recent_message_limit
         messages = self.repository.list_messages(
             job.session_id,
-            limit=recent_message_limit + self.settings.summary_trigger_messages,
+            limit=recent_message_limit + self.settings.summary_trigger_messages + 1,
         )
         messages = [
             message
             for message in messages
             if str(message.get("message_type") or "") != "attachment_intake"
+            and str(message.get("id") or "") != job.input_message_id
         ]
         summary = session.summary_text
         if len(messages) > self.settings.summary_trigger_messages:

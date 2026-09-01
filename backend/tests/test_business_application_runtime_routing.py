@@ -1044,7 +1044,9 @@ def test_application_recent_message_limit_and_attachment_policy_are_enforced() -
         container.settings.conversation,
     ).build(second_job)
     assert len(context.recent_messages) == 1
-    assert context.recent_messages[0]["job_id"] == second.job_id
+    assert context.recent_messages[0]["job_id"] == first.job_id
+    assert context.recent_messages[0]["id"] != second_job.input_message_id
+    assert context.recent_messages[0]["content"] == second_job.input_message
 
     payload = _stream_payload(message_id="attachment-disabled")
     event = container.dingtalk_stream_message_service.to_channel_event(
