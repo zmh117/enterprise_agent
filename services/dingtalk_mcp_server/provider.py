@@ -951,7 +951,7 @@ class DingTalkAiTableMutationClient(_FixedDingTalkClient):
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
         sheet_id = str(arguments["sheet_id"])
-        response = self._request(
+        self._request(
             "PUT",
             (
                 f"/v1.0/notable/bases/{quote(str(arguments['base_id']), safe='')}/"
@@ -960,15 +960,18 @@ class DingTalkAiTableMutationClient(_FixedDingTalkClient):
             query={"operatorId": operator_id},
             payload={"name": arguments["name"]},
         )
-        sheet = _project_sheet(response)
-        _require_projected_fields(
-            "dingtalk.aitable.sheet.update",
-            sheet,
-            "sheet_id",
-            "name",
+        verified = DingTalkAiTableReadClient(
+            self.token_client,
+            transport=self.transport,
+            timeout_seconds=self.timeout_seconds,
+        ).get_sheet(
+            operator_id=operator_id,
+            base_id=str(arguments["base_id"]),
+            sheet_id=sheet_id,
         )
+        sheet = verified["sheet"]
         if sheet != {"sheet_id": sheet_id, "name": str(arguments["name"])}:
-            _raise_response_invalid("dingtalk.aitable.sheet.update", response)
+            _raise_response_invalid("dingtalk.aitable.sheet.update", sheet)
         return {**sheet, "updated": True}
 
     def create_field(

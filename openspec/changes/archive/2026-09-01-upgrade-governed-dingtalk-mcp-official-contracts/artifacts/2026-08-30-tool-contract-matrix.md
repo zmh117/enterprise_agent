@@ -39,7 +39,7 @@
 | `insertNotableRecords` | `dingtalk_insert_aitable_records` | `POST /v1.0/notable/bases/{base}/sheets/{sheet}/records?operatorId=...`; `value[].id` | registered；Action Intent 冻结资源与当前 operator，确认后重授权 |
 | `updateNotableRecords` | `dingtalk_update_aitable_records` | `PUT /v1.0/notable/bases/{base}/sheets/{sheet}/records?operatorId=...`; `value[].id` | registered；Action Intent 冻结资源与当前 operator，确认后重授权 |
 | `getNotableAllFields` | `dingtalk_list_aitable_fields` | `GET /v1.0/notable/bases/{base}/sheets/{sheet}/fields?operatorId=...`; `value` | registered |
-| `updateNotableSheetName` | `dingtalk_update_aitable_sheet` | `PUT /v1.0/notable/bases/{base}/sheets/{sheet}?operatorId=...`; object `id/name` | registered；逐次确认 |
+| `updateNotableSheetName` | `dingtalk_update_aitable_sheet` | `PUT /v1.0/notable/bases/{base}/sheets/{sheet}?operatorId=...`; 2xx acknowledgement 后用同一 operator `GET` 同一数据表并严格校验 `id/name` | registered；逐次确认；不得用请求参数补造写入结果 |
 | `createNotableSheet` | `dingtalk_create_aitable_sheet` | `POST /v1.0/notable/bases/{base}/sheets?operatorId=...`; object `id/name` | registered；逐次确认，可带有界字段定义 |
 | `deleteNotableSheet` | excluded | `DELETE /v1.0/notable/.../sheets/{sheet}?operatorId=...` | 删除能力排除 |
 | `deleteNotableRecords` | excluded | `POST /v1.0/notable/.../records/delete?operatorId=...` | 删除能力排除 |

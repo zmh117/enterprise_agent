@@ -87,6 +87,12 @@
 - **THEN** Provider 执行按 `dingtalk_response_invalid` 失败关闭
 - **AND** 系统不得使用请求参数伪造写入成功结果
 
+#### Scenario: AI 表格数据表改名使用独立后置条件
+- **WHEN** 官方数据表改名 `PUT` 返回 HTTP 2xx，但响应不提供可用于证明新名称的稳定 `id/name` 实体
+- **THEN** Provider 必须使用同一 `operatorId` 立即读取同一 `base_id/sheet_id`
+- **AND** 只有读取结果的 `sheet_id` 与目标一致且名称等于确认过的新名称时，才返回写入成功
+- **AND** 回读失败、名称未变化或目标漂移时必须返回 `dingtalk_response_invalid`，不得用请求参数伪造成功结果
+
 ### Requirement: 模型描述必须区分官方功能与平台治理限制
 模型可见 Tool 名称、描述和输入 Schema MUST 准确表达对应官方 MCP 能力的对象、调用时机和参数语义；平台追加的主体解析、数据可见范围、目标补全、逐次确认和数量上限 MUST 作为治理限制单独表述。系统 MUST NOT 以官方相同或相似名称描述不同目标能力，也不得声称未实现的官方能力可用。
 

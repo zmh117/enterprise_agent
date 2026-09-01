@@ -40,6 +40,8 @@
 
 列表接口按具体 operation 声明允许的官方容器字段，例如 AI 表格 sheets/fields 接受官方 `value`，records 接受官方 `records`。空数组只有在已识别官方容器且其值确为空时成立；HTTP 2xx 但结构未知、容器类型错误或必需标识缺失时返回 `dingtalk_response_invalid`，错误摘要只包含 operation 和结构键名，不包含业务正文。
 
+AI 表格数据表改名是该规则的明确后置条件型 mutation：官方 `PUT` 的 2xx 只表示请求已被接口接受，不能提供稳定的新名称实体。Provider 不投影该响应为业务成功，而是用同一 operator 读取同一数据表；只有回读的稳定 ID 与确认过的新名称同时精确匹配才完成 Intent，否则按不确定失败关闭。
+
 替代方案是继续使用跨接口通用 fallback。该方案会把 Provider 漂移误判为空结果，已经造成现场错误，因此不采用。
 
 ### 4. 新式接口优先，legacy 只在官方仍无等价替代时保留

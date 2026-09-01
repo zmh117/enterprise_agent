@@ -81,6 +81,23 @@ class _Transport:
         return self.response
 
 
+class _SequenceTransport(_Transport):
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.responses = list(responses)
+
+    def request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        self.calls.append((method, url, payload, headers, timeout_seconds))
+        return self.responses.pop(0)
+
+
 def _database() -> Database:
     database = Database("sqlite:///:memory:")
     database.execute_script(
@@ -838,6 +855,14 @@ def test_aitable_v1_non_delete_structure_mutations_use_operator_and_strict_targe
             {"name": "验收表-更新"},
         ),
         (
+            "GET",
+            (
+                "https://api.dingtalk.com/v1.0/notable/bases/base%2F1/sheets/"
+                "sheet-1?operatorId=union%2F1"
+            ),
+            {},
+        ),
+        (
             "POST",
             (
                 "https://api.dingtalk.com/v1.0/notable/bases/base%2F1/sheets/"
@@ -854,6 +879,51 @@ def test_aitable_v1_non_delete_structure_mutations_use_operator_and_strict_targe
             {"name": "排名-更新", "property": {"formatter": "FLOAT_2"}},
         ),
     ]
+
+
+def test_aitable_sheet_update_uses_exact_get_postcondition_after_empty_ack() -> None:
+    transport = _SequenceTransport(
+        [
+            {},
+            {"id": "sheet-1", "name": "验收表-更新"},
+        ]
+    )
+
+    assert DingTalkAiTableMutationClient(
+        _TokenClient(), transport=transport
+    ).update_sheet(
+        operator_id="union/1",
+        arguments={
+            "base_id": "base/1",
+            "sheet_id": "sheet-1",
+            "name": "验收表-更新",
+        },
+    ) == {"sheet_id": "sheet-1", "name": "验收表-更新", "updated": True}
+
+    assert [call[0] for call in transport.calls] == ["PUT", "GET"]
+
+
+def test_aitable_sheet_update_rejects_postcondition_name_drift() -> None:
+    transport = _SequenceTransport(
+        [
+            {},
+            {"id": "sheet-1", "name": "仍是旧名称"},
+        ]
+    )
+
+    with pytest.raises(RetryableExecutionError) as exc_info:
+        DingTalkAiTableMutationClient(
+            _TokenClient(), transport=transport
+        ).update_sheet(
+            operator_id="union/1",
+            arguments={
+                "base_id": "base/1",
+                "sheet_id": "sheet-1",
+                "name": "验收表-更新",
+            },
+        )
+
+    assert exc_info.value.error_code == "dingtalk_response_invalid"
 
 def test_aitable_search_projects_latest_storage_v2_items_shape() -> None:
     transport = _Transport(

@@ -38,5 +38,5 @@
 - [x] 5.2 运行静态检查、Secret 扫描、`git diff --check`、OpenSpec strict validation 和 `docker compose config --quiet`
 - [x] 5.3 重建并检查 `api-server`、`agent-worker`、`dingtalk-mcp`、Action worker 和相关 Runtime 的就绪状态
 - [x] 5.4 创建新 Agent/Application Publication 与新 Job，完成七个 profile 的真实只读和错误分类验收
-- [ ] 5.5 对纳入的 mutation 完成卡片确认后 Provider 回查，记录有界证据并确认历史 Job 未被改写
-- [ ] 5.6 重建修正后的服务并用新 Publication、新 Job 完成 AI 表格只读、记录写入和非删除结构 mutation 验收
+- [x] 5.5 对纳入的 mutation 完成卡片确认后 Provider 回查，记录有界证据并确认历史 Job 未被改写
+- [x] 5.6 重建修正后的服务并用新 Publication、新 Job 完成 AI 表格只读、记录写入和非删除结构 mutation 验收
