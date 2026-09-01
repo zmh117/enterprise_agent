@@ -25,6 +25,16 @@ class PrincipalBusinessAuthorizationPort(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class DingTalkUnionIdCompletionPort(Protocol):
+    def complete(
+        self,
+        *,
+        identity_id: str,
+        connector_id: str,
+        external_subject_id: str,
+    ) -> str: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedDingTalkPrincipal:
     job_id: str
@@ -56,11 +66,13 @@ class DingTalkPrincipalResolver:
         verifier: PrincipalTokenVerifier,
         snapshot_service: JobMcpToolSnapshotService,
         business_authorization_service: PrincipalBusinessAuthorizationPort,
+        union_id_completion: DingTalkUnionIdCompletionPort | None = None,
     ) -> None:
         self.database = database
         self.verifier = verifier
         self.snapshot_service = snapshot_service
         self.business_authorization_service = business_authorization_service
+        self.union_id_completion = union_id_completion
 
     def authenticate(self, token: str, contract: DingTalkToolContract) -> dict[str, Any]:
         return self.verifier.verify_for_running_job(
@@ -169,6 +181,17 @@ class DingTalkPrincipalResolver:
         identity = identities[0]
         target_external_subject_id = str(identity.get("external_subject_id") or "")
         target_union_id = str(identity.get("union_id") or "")
+        if (
+            target_external_subject_id
+            and contract.requires_target_union_id
+            and not target_union_id
+            and self.union_id_completion is not None
+        ):
+            target_union_id = self.union_id_completion.complete(
+                identity_id=str(identity["id"]),
+                connector_id=str(connector["id"]),
+                external_subject_id=target_external_subject_id,
+            )
         if not target_external_subject_id or (
             contract.requires_target_union_id and not target_union_id
         ):

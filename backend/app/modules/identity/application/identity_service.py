@@ -127,6 +127,8 @@ class IdentityService:
                 nickname=descriptor.display_name,
                 occurred_at=descriptor.occurred_at,
                 received_at=descriptor.received_at,
+                union_id=descriptor.union_id,
+                open_id=descriptor.open_id,
             )
         else:
             self.repository.touch_external_identity(str(identity["id"]))

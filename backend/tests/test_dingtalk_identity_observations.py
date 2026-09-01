@@ -5,6 +5,7 @@ import json
 import pytest
 
 from app.bootstrap import build_test_container
+from app.modules.identity.domain import ExternalIdentityDescriptor
 from app.modules.managed_channel.domain import DingTalkApplicationInput
 from app.shared.config import Settings
 from app.shared.exceptions import NonRetryableExecutionError
@@ -152,6 +153,134 @@ def test_identity_is_enterprise_scoped_and_observed_by_multiple_apps() -> None:
         first["name"],
         second["name"],
     }
+
+
+def test_trusted_message_completes_provider_ids_without_empty_overwrite() -> None:
+    container = _container()
+    enterprise = _active_enterprise(
+        container,
+        name="身份补全企业",
+        corp_id="corp-identity-completion",
+    )
+    connector = _connector(
+        container,
+        enterprise_id=enterprise["id"],
+        client_id="ding-identity-completion",
+    )
+    initial_event = _ingress(
+        container,
+        connector_id=connector["id"],
+        event_id="identity-completion-initial",
+        received_at="2026-08-03T01:00:00+00:00",
+    )
+    identity = container.identity_repository.bind_dingtalk_identity(
+        user_id="observation-user",
+        dingtalk_enterprise_id=enterprise["id"],
+        external_subject_id="staff-completion",
+        display_name="待补全用户",
+        source_connector_id=connector["id"],
+        source_ingress_event_id=initial_event,
+        observed_at="2026-08-03T01:00:00+00:00",
+        replace_current=False,
+    )
+    completed_event = _ingress(
+        container,
+        connector_id=connector["id"],
+        event_id="identity-completion-provider-ids",
+        received_at="2026-08-03T02:00:00+00:00",
+    )
+    principal = container.identity_service.resolve_external(
+        ExternalIdentityDescriptor(
+            provider="dingtalk",
+            tenant_code=enterprise["id"],
+            external_subject_id="staff-completion",
+            connector_id=connector["id"],
+            union_id="union-completed",
+            open_id="open-completed",
+            display_name="待补全用户",
+            dingtalk_enterprise_id=enterprise["id"],
+            source_ingress_event_id=completed_event,
+            occurred_at="2026-08-03T02:00:00+00:00",
+            received_at="2026-08-03T02:00:00+00:00",
+        )
+    )
+    assert principal.external_identity_id == identity["id"]
+    empty_event = _ingress(
+        container,
+        connector_id=connector["id"],
+        event_id="identity-completion-empty",
+        received_at="2026-08-03T03:00:00+00:00",
+    )
+    container.identity_repository.record_dingtalk_message_facts(
+        identity_id=identity["id"],
+        connector_id=connector["id"],
+        source_ingress_event_id=empty_event,
+        nickname="待补全用户",
+        occurred_at="2026-08-03T03:00:00+00:00",
+        received_at="2026-08-03T03:00:00+00:00",
+        union_id="",
+        open_id="",
+    )
+
+    current = container.identity_repository.get_external_identity(identity["id"])
+    assert current["union_id"] == "union-completed"
+    assert current["open_id"] == "open-completed"
+
+
+def test_trusted_message_rejects_nonempty_provider_id_conflict() -> None:
+    container = _container()
+    enterprise = _active_enterprise(
+        container,
+        name="身份冲突企业",
+        corp_id="corp-identity-conflict",
+    )
+    connector = _connector(
+        container,
+        enterprise_id=enterprise["id"],
+        client_id="ding-identity-conflict",
+    )
+    initial_event = _ingress(
+        container,
+        connector_id=connector["id"],
+        event_id="identity-conflict-initial",
+        received_at="2026-08-03T01:00:00+00:00",
+    )
+    identity = container.identity_repository.bind_dingtalk_identity(
+        user_id="observation-user",
+        dingtalk_enterprise_id=enterprise["id"],
+        external_subject_id="staff-conflict",
+        display_name="冲突用户",
+        source_connector_id=connector["id"],
+        source_ingress_event_id=initial_event,
+        observed_at="2026-08-03T01:00:00+00:00",
+        replace_current=False,
+    )
+    container.identity_repository.complete_dingtalk_union_id(
+        identity_id=identity["id"],
+        external_subject_id="staff-conflict",
+        union_id="union-original",
+    )
+    conflict_event = _ingress(
+        container,
+        connector_id=connector["id"],
+        event_id="identity-conflict-new",
+        received_at="2026-08-03T02:00:00+00:00",
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as exc_info:
+        container.identity_repository.record_dingtalk_message_facts(
+            identity_id=identity["id"],
+            connector_id=connector["id"],
+            source_ingress_event_id=conflict_event,
+            nickname="冲突用户",
+            occurred_at="2026-08-03T02:00:00+00:00",
+            received_at="2026-08-03T02:00:00+00:00",
+            union_id="union-conflicting",
+        )
+
+    assert exc_info.value.error_code == "dingtalk_identity_union_mismatch"
+    current = container.identity_repository.get_external_identity(identity["id"])
+    assert current["union_id"] == "union-original"
 
 
 def test_nickname_cursor_is_monotonic_idempotent_and_falls_back_from_bad_clock() -> None:

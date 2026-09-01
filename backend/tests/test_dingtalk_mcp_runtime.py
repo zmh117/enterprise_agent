@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any
 from urllib.error import HTTPError
@@ -24,6 +25,9 @@ from services.dingtalk_mcp_server.contracts import TOOL_IDENTIFIER
 from services.dingtalk_mcp_server.auth.principal import (
     DingTalkPrincipalResolver,
     ResolvedDingTalkPrincipal,
+)
+from services.dingtalk_mcp_server.auth.identity_completion import (
+    DingTalkUnionIdCompletionService,
 )
 from services.dingtalk_mcp_server.provider import (
     DingTalkAiTableMutationClient,
@@ -1656,16 +1660,25 @@ def test_todo_subject_is_business_input_not_a_principal_override() -> None:
 
 
 @pytest.mark.parametrize(
-    ("tool_identifier", "identity_union_id", "expected_error_code"),
     (
-        ("dingtalk_send_work_notification", "union-1", ""),
-        ("dingtalk_get_department", "", ""),
-        ("dingtalk_list_todos", "", "dingtalk_identity_incomplete"),
+        "tool_identifier",
+        "identity_union_id",
+        "completed_union_id",
+        "expected_error_code",
+    ),
+    (
+        ("dingtalk_send_work_notification", "union-1", "", ""),
+        ("dingtalk_get_department", "", "", ""),
+        ("dingtalk_get_aitable_supported_field_info", "", "", ""),
+        ("dingtalk_get_work_notification_progress", "", "", ""),
+        ("dingtalk_search_aitables", "", "union-completed", ""),
+        ("dingtalk_list_todos", "", "", "dingtalk_identity_incomplete"),
     ),
 )
 def test_principal_resolver_uses_identity_required_by_target_policy(
     tool_identifier: str,
     identity_union_id: str,
+    completed_union_id: str,
     expected_error_code: str,
 ) -> None:
     contract = DINGTALK_TOOL_CONTRACTS[tool_identifier]
@@ -1762,11 +1775,22 @@ def test_principal_resolver_uses_identity_required_by_target_policy(
 
     verifier = _Verifier()
     authorization = _Authorization()
+
+    class _UnionCompletion:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, str]] = []
+
+        def complete(self, **values: str) -> str:
+            self.calls.append(values)
+            return completed_union_id
+
+    completion = _UnionCompletion() if completed_union_id else None
     resolver = DingTalkPrincipalResolver(
         _PrincipalDatabase(),  # type: ignore[arg-type]
         verifier,  # type: ignore[arg-type]
         _Snapshot(),  # type: ignore[arg-type]
         authorization,
+        completion,
     )
     resolver.authenticate("principal-jwt", contract)
     assert verifier.scope == contract.required_scope
@@ -1786,10 +1810,11 @@ def test_principal_resolver_uses_identity_required_by_target_policy(
         return
 
     principal = resolver.resolve(claims, contract)
+    expected_union_id = identity_union_id or completed_union_id
     assert principal.target_external_subject_id == "staff-1"
-    assert principal.target_union_id == identity_union_id
+    assert principal.target_union_id == expected_union_id
     assert principal.primary_calendar_id == "primary"
-    assert principal.aitable_operator_id == identity_union_id
+    assert principal.aitable_operator_id == expected_union_id
     assert principal.source_open_conversation_id == "open-1"
     assert principal.source_robot_code == "robot-1"
     assert principal.enterprise_robot_code == "enterprise-robot-1"
@@ -1801,7 +1826,111 @@ def test_principal_resolver_uses_identity_required_by_target_policy(
         invocation_id="job-1.attempt-0",
         correlation_id="correlation-1",
     )
-    assert audit_context.provider_user_id == (identity_union_id or "staff-1")
+    assert audit_context.provider_user_id == (expected_union_id or "staff-1")
+    if completion is not None:
+        assert completion.calls == [
+            {
+                "identity_id": "identity-1",
+                "connector_id": "connector-1",
+                "external_subject_id": "staff-1",
+            },
+            {
+                "identity_id": "identity-1",
+                "connector_id": "connector-1",
+                "external_subject_id": "staff-1",
+            },
+        ]
+
+
+def test_union_id_completion_uses_verified_contact_detail_and_persists_it() -> None:
+    class _Contacts:
+        @staticmethod
+        def get_user(*, user_id: str, language: str) -> dict[str, Any]:
+            assert user_id == "staff-1"
+            assert language == "zh_CN"
+            return {
+                "user": {"user_id": "staff-1", "union_id": "union-completed"},
+                "untrusted_data": True,
+            }
+
+    class _IdentityRepository:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, str]] = []
+
+        def complete_dingtalk_union_id(self, **values: str) -> dict[str, Any]:
+            self.calls.append(values)
+            return {
+                "user_id": "user-1",
+                "union_id": values["union_id"],
+            }
+
+    repository = _IdentityRepository()
+    runtime = SimpleNamespace(
+        database=SimpleNamespace(unit_of_work=lambda: nullcontext()),
+        identity_repository=repository,
+        audit_service=_Audit(),
+    )
+    service = DingTalkUnionIdCompletionService(
+        runtime,  # type: ignore[arg-type]
+        contacts_client_factory=lambda connector_id: (
+            _Contacts() if connector_id == "connector-1" else pytest.fail("wrong connector")
+        ),
+    )
+
+    completed = service.complete(
+        identity_id="identity-1",
+        connector_id="connector-1",
+        external_subject_id="staff-1",
+    )
+
+    assert completed == "union-completed"
+    assert repository.calls == [
+        {
+            "identity_id": "identity-1",
+            "external_subject_id": "staff-1",
+            "union_id": "union-completed",
+        }
+    ]
+    assert runtime.audit_service.events[-1][0] == "identity.dingtalk.union_id_completed"
+
+
+@pytest.mark.parametrize(
+    "user",
+    (
+        {"user_id": "another-staff", "union_id": "union-completed"},
+        {"user_id": "staff-1"},
+    ),
+)
+def test_union_id_completion_rejects_unverified_contact_detail(user: dict[str, str]) -> None:
+    class _Contacts:
+        @staticmethod
+        def get_user(*, user_id: str, language: str) -> dict[str, Any]:
+            del user_id, language
+            return {"user": user, "untrusted_data": True}
+
+    runtime = SimpleNamespace(
+        database=SimpleNamespace(unit_of_work=lambda: nullcontext()),
+        identity_repository=SimpleNamespace(
+            complete_dingtalk_union_id=lambda **_values: pytest.fail("must not persist")
+        ),
+        audit_service=_Audit(),
+    )
+    service = DingTalkUnionIdCompletionService(
+        runtime,  # type: ignore[arg-type]
+        contacts_client_factory=lambda _connector_id: _Contacts(),
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as exc_info:
+        service.complete(
+            identity_id="identity-1",
+            connector_id="connector-1",
+            external_subject_id="staff-1",
+        )
+
+    assert exc_info.value.error_code == "dingtalk_identity_incomplete"
+    assert runtime.audit_service.events[-1][0] == (
+        "identity.dingtalk.union_id_completion_failed"
+    )
 
 
 def test_intent_is_idempotent_and_only_original_actor_can_approve() -> None:

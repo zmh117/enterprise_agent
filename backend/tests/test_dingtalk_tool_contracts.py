@@ -290,6 +290,14 @@ def test_governed_catalog_is_exact_and_execution_metadata_is_fixed() -> None:
         assert contract.open_world is (
             effect == "read" and target_policy != "static_official_reference"
         )
+        assert contract.requires_target_union_id is (
+            target_policy
+            not in {
+                "enterprise_directory_visible_scope",
+                "static_official_reference",
+                "current_user_work_notification_history",
+            }
+        )
 
         assert definition.server_code == "dingtalk-mcp"
         assert definition.effect == contract.effect

@@ -13,6 +13,8 @@ class DingTalkIdentityObservationPort(Protocol):
         nickname: str,
         occurred_at: str,
         received_at: str,
+        union_id: str = "",
+        open_id: str = "",
     ) -> None: ...
 
     def list_dingtalk_application_observations(

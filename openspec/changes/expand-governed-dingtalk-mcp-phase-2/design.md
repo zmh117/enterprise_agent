@@ -43,7 +43,9 @@ Phase 2 固定 Tool 如下：
 
 MCP registry 在调用前把精确 `DingTalkToolContract` 交给 Principal Resolver。Resolver 使用该 Tool 的 required scope 验证 JWT，复核 Job Snapshot 中同一 server/tool/schema/effect/policy，执行当前角色和 Application 授权，再解析来源 Connector、企业、当前 staff ID 与 union ID。审计上下文使用调用 Tool 的 operation/risk，不再引用模块级 `TOOL_IDENTIFIER` 常量。
 
-所有 DingTalk Tool 都要求来源 Job 具有有效 DingTalk enterprise App Connector；调试 Job、其它 Channel Job、身份缺失或多身份命中均失败关闭。备选方案是允许模型传 `unionId` 或 Connector ID，但这会把身份选择退回 Prompt，因此不采用。
+所有 DingTalk Tool 都要求来源 Job 具有有效 DingTalk enterprise App Connector；调试 Job、其它 Channel Job、身份缺失或多身份命中均失败关闭。企业通讯录类 Tool 只需要当前身份的 staff ID；待办、日历和 AI 表格 Provider 调用还需要 union ID。钉钉 Stream 常见消息只携带 staff ID，因此平台先接受并持久化受信消息中直接提供的 union ID；当需要 union ID 的 Tool 发现当前身份尚未补全时，再使用同一 Connector 的应用凭据和该身份的 staff ID 调用固定联系人详情接口，校验返回 user ID 后原子补全 union ID，并继续本次 Tool 调用。补全失败仍返回稳定的身份或 Provider 权限错误，不把联系人读取失败解释为角色未授权。
+
+备选方案是允许模型、JWT 或 Tool 参数传 `unionId`，但这会把身份选择退回 Prompt，因此不采用。空值不得覆盖既有 union ID；受信消息或联系人详情返回的非空 union ID 与既有非空值冲突时必须失败关闭并保留原值。
 
 ### 3. 只读 Tool 使用共享受治理执行壳和领域 Provider Client
 

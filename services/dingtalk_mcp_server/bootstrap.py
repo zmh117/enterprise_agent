@@ -12,6 +12,9 @@ from app.modules.external_action.service import (
 from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalTokenVerifier
 from app.modules.mcp_audit import McpAuditCoordinator
 from services.dingtalk_mcp_server.auth.principal import DingTalkPrincipalResolver
+from services.dingtalk_mcp_server.auth.identity_completion import (
+    DingTalkUnionIdCompletionService,
+)
 from services.dingtalk_mcp_server.contracts import SERVER_CODE
 from services.dingtalk_mcp_server.tools.mutation_catalog import build_mutation_tools
 from services.dingtalk_mcp_server.tools.read_catalog import build_read_tools
@@ -33,6 +36,7 @@ def build_tool_registry(runtime: Container) -> DingTalkToolRegistry:
         ),
         runtime.mcp_tool_snapshot_service,
         runtime.business_authorization_service,
+        DingTalkUnionIdCompletionService(runtime),
     )
     audit = McpAuditCoordinator(
         runtime.database,

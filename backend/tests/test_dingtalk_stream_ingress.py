@@ -78,6 +78,27 @@ class CaptureDeliveryAdapter:
 
 
 class DingTalkStreamIngressTests(unittest.TestCase):
+    def test_stream_parser_keeps_union_and_explicit_open_id_separate_from_sender_id(
+        self,
+    ) -> None:
+        c = routed_container()
+        payload = stream_payload()
+        payload.update(
+            {
+                "senderId": "generic-sender-id",
+                "senderUnionId": "union-stream-1",
+                "senderOpenId": "open-stream-1",
+            }
+        )
+
+        message = c.dingtalk_stream_message_service.parse_message(payload)
+
+        self.assertEqual("union-stream-1", message.union_id)
+        self.assertEqual("open-stream-1", message.open_id)
+        payload.pop("senderOpenId")
+        without_explicit_open_id = c.dingtalk_stream_message_service.parse_message(payload)
+        self.assertEqual("", without_explicit_open_id.open_id)
+
     def test_stream_message_creates_job_and_acknowledges(self) -> None:
         c = routed_container()
 

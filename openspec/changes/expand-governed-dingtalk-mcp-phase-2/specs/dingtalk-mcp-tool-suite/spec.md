@@ -14,6 +14,8 @@
 ### Requirement: 只读 Tool 必须在完整授权后直接返回有界结果
 18 个只读 Tool SHALL 使用当前 Job Principal、Agent/Application Publication、角色 grant、Job Snapshot、Connector、企业和外部身份完成逐工具复核，并在不创建 Action Intent 或确认卡片的情况下调用固定只读 Provider endpoint。列表、时间窗、游标、请求和响应 MUST 受代码上限约束。
 
+身份完整性 SHALL 按固定 Tool target policy 判定：企业通讯录与部门 Tool 只要求当前企业身份的 staff ID；待办、日历与 AI 表格 Provider Tool 要求经平台持久事实或同一 Connector 固定联系人详情接口补全的 union ID。系统 MUST NOT 把“内部管理员”作为调用成功条件，也 MUST NOT 把 union ID 缺失伪装成角色授权不足。
+
 #### Scenario: 用户查询本人未完成待办
 - **WHEN** `dingtalk_list_todos` 通过全部授权且请求位于分页上限内
 - **THEN** 系统使用服务端解析的当前 union ID 查询并返回有界待办列表，不创建确认意图

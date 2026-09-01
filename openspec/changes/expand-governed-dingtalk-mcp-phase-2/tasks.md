@@ -18,6 +18,7 @@
 - [x] 3.3 实现共享只读 Tool 执行壳，统一参数规范化、Principal、MCP 审计、超时、响应字节和安全错误分类
 - [x] 3.4 实现共享 mutation 准备器，冻结模型参数与服务端目标事实并生成分 operation 的安全摘要和确认详情
 - [x] 3.5 增加审计脱敏回归，证明联系人敏感字段、消息/日程正文、AI 表格值、Secret、Token 和原始 Provider 正文不进入普通日志或审计
+- [x] 3.6 修复普通成员 Staff ID-only 身份：持久化受信 Stream union ID，并在需要 union ID 的 Tool 调用前通过同一 Connector 固定联系人详情接口核对和原子补全；冲突与补全失败保持失败关闭
 
 ## 4. 只读 Provider 与 Tool
 
@@ -55,6 +56,7 @@
 - [x] 7.3 运行钉钉 MCP/外部操作定向 pytest、相关后端完整测试层、Ruff/静态检查、Runtime 测试与类型检查
 - [x] 7.4 重建受影响镜像并验证 `docker compose config --quiet`、migration/schema head、`dingtalk-mcp` 与 external action worker health/readiness
 - [x] 7.5 运行 `openspec validate expand-governed-dingtalk-mcp-phase-2 --strict`、相关 canonical/全量 OpenSpec 校验和 `git diff --check`
+- [x] 7.6 增加普通成员回归，覆盖直接携带 union ID、Staff ID 懒补全、联系人/部门无需 union ID、空值不覆盖和非空冲突失败关闭
 
 ## 8. 真实发布与 E2E 证据
 

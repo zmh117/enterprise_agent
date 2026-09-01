@@ -532,7 +532,10 @@ class DingTalkStreamMessageService:
         conversation_type = "group" if raw_conversation_type == "2" else "direct"
         bot_identity = _first_text(payload, "robotCode", "chatbotUserId", "chatbot_user_id")
         union_id = _first_text(payload, "senderUnionId", "unionId", "union_id")
-        open_id = _first_text(payload, "senderOpenId", "openId", "open_id", "senderId")
+        # Do not treat the generic senderId as an openId. The two identifiers
+        # have different DingTalk contracts and trusted provider IDs are now
+        # persisted on the bound identity.
+        open_id = _first_text(payload, "senderOpenId", "openId", "open_id")
         sender_corp_id = _first_text(payload, "senderCorpId", "sender_corp_id")
         chatbot_corp_id = _first_text(payload, "chatbotCorpId", "chatbot_corp_id")
         occurred_at = _first_text(payload, "createAt", "create_at", "timestamp")

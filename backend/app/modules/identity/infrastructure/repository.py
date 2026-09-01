@@ -535,11 +535,19 @@ class IdentityRepository:
         nickname: str,
         occurred_at: str,
         received_at: str,
+        union_id: str = "",
+        open_id: str = "",
     ) -> None:
         timestamp = now_iso()
         observed_at = _trusted_dingtalk_event_time(
             occurred_at=occurred_at,
             received_at=received_at,
+        )
+        self._merge_dingtalk_provider_ids(
+            identity_id=identity_id,
+            union_id=union_id,
+            open_id=open_id,
+            timestamp=timestamp,
         )
         self.database.execute(
             """
@@ -665,6 +673,99 @@ class IdentityRepository:
                 source_ingress_event_id,
             ),
         )
+
+    def complete_dingtalk_union_id(
+        self,
+        *,
+        identity_id: str,
+        external_subject_id: str,
+        union_id: str,
+    ) -> dict[str, Any]:
+        normalized_union_id = union_id.strip()
+        if not normalized_union_id:
+            raise NonRetryableExecutionError(
+                "DingTalk contact detail did not include union ID",
+                safe_message="钉钉身份缺少 Union ID",
+                error_code="dingtalk_identity_incomplete",
+            )
+        identity = self.database.execute_one(
+            "select * from user_external_identity where id = ? and provider = 'dingtalk'",
+            (identity_id,),
+        )
+        if identity is None or str(identity.get("external_subject_id") or "") != external_subject_id:
+            raise NonRetryableExecutionError(
+                "DingTalk identity changed during union ID completion",
+                safe_message="钉钉身份已发生变化，请重试",
+                error_code="dingtalk_identity_changed",
+            )
+        self._merge_dingtalk_provider_ids(
+            identity_id=identity_id,
+            union_id=normalized_union_id,
+            open_id="",
+            timestamp=now_iso(),
+        )
+        return self.get_external_identity(identity_id)
+
+    def _merge_dingtalk_provider_ids(
+        self,
+        *,
+        identity_id: str,
+        union_id: str,
+        open_id: str,
+        timestamp: str,
+    ) -> None:
+        normalized_union_id = union_id.strip()[:512]
+        normalized_open_id = open_id.strip()[:512]
+        if not normalized_union_id and not normalized_open_id:
+            return
+        identity = self.database.execute_one(
+            "select * from user_external_identity where id = ? and provider = 'dingtalk'",
+            (identity_id,),
+        )
+        if identity is None:
+            raise NotFound("External identity not found", safe_message="未找到身份")
+        current_union_id = str(identity.get("union_id") or "")
+        current_open_id = str(identity.get("open_id") or "")
+        if normalized_union_id and current_union_id and normalized_union_id != current_union_id:
+            raise NonRetryableExecutionError(
+                "Trusted DingTalk union ID conflicts with the stored identity",
+                safe_message="钉钉身份标识发生冲突，请联系管理员核查",
+                error_code="dingtalk_identity_union_mismatch",
+            )
+        if normalized_open_id and current_open_id and normalized_open_id != current_open_id:
+            raise NonRetryableExecutionError(
+                "Trusted DingTalk open ID conflicts with the stored identity",
+                safe_message="钉钉身份标识发生冲突，请联系管理员核查",
+                error_code="dingtalk_identity_open_id_mismatch",
+            )
+        if normalized_union_id:
+            owner = self.database.execute_one(
+                """
+                select id from user_external_identity
+                 where provider = 'dingtalk' and dingtalk_enterprise_id = ?
+                   and union_id = ? and id <> ?
+                """,
+                (identity.get("dingtalk_enterprise_id"), normalized_union_id, identity_id),
+            )
+            if owner is not None:
+                raise NonRetryableExecutionError(
+                    "Trusted DingTalk union ID is already bound to another identity",
+                    safe_message="钉钉身份标识已绑定其他人员，请联系管理员核查",
+                    error_code="dingtalk_identity_union_conflict",
+                )
+        if (not current_union_id and normalized_union_id) or (
+            not current_open_id and normalized_open_id
+        ):
+            self.database.execute(
+                """
+                update user_external_identity
+                   set union_id = case when union_id = '' then ? else union_id end,
+                       open_id = case when open_id = '' then ? else open_id end,
+                       revision = revision + 1, updated_at = ?
+                 where id = ? and provider = 'dingtalk'
+                """,
+                (normalized_union_id, normalized_open_id, timestamp, identity_id),
+            )
 
     def list_dingtalk_application_observations(self, identity_id: str) -> list[dict[str, Any]]:
         return self.database.execute(

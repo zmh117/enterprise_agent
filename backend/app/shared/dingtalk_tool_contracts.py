@@ -269,12 +269,16 @@ class DingTalkToolContract:
 
     @property
     def requires_target_union_id(self) -> bool:
-        # Enterprise directory reads are authorized with the current Connector's
-        # application credentials and DingTalk visible scope. The actor still
-        # needs one enabled enterprise-bound external identity, but that identity's
-        # unionId is not a Provider input for these calls. Unknown/future policies
-        # remain fail-closed by requiring unionId.
-        return self.target_policy != "enterprise_directory_visible_scope"
+        # Directory reads use the application-visible enterprise scope, bundled
+        # notable references perform no Provider I/O, and work-notification
+        # history is anchored by the current actor/enterprise/Connector Intent.
+        # None of those Provider contracts accepts the actor's unionId. Unknown
+        # and future target policies remain fail-closed by requiring it.
+        return self.target_policy not in {
+            "enterprise_directory_visible_scope",
+            "static_official_reference",
+            "current_user_work_notification_history",
+        }
 
 
 def _object(
