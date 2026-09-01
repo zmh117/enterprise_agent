@@ -52,7 +52,7 @@ from app.shared.exceptions import (
     RetryableExecutionError,
 )
 from app.shared.tool_contract import canonical_json_sha256
-from app.python_runtime.run_audit import decode_audit_chunks
+from app.shared.agent_run_audit_codec import decode_audit_chunks
 
 MAX_EVENT_LINE_BYTES = 65_536
 MAX_STREAM_BYTES = 2_097_152

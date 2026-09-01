@@ -124,6 +124,9 @@ def test_api_server_alone_receives_fixed_ones_identity_provider_configuration() 
 
 def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     dockerfile = (ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
+    runtime_http_client = (
+        ROOT / "backend/app/modules/agent/infrastructure/runtime_http_client.py"
+    ).read_text(encoding="utf-8")
     worker_section = dockerfile.split("FROM python-deps AS agent-worker", 1)[1].split(
         "FROM claude-runtime AS python-agent-runtime", 1
     )[0]
@@ -133,6 +136,7 @@ def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     assert "COPY .claude/skills /app/.claude/skills" in worker_section
     assert "COPY .claude/settings" not in worker_section
     assert "python_runtime" not in worker_section
+    assert "app.python_runtime" not in runtime_http_client
     assert not (
         ROOT / "backend/app/modules/agent/infrastructure/claude_code_agent_client.py"
     ).exists()
