@@ -484,6 +484,72 @@ def test_attachment_rejection_persists_machine_error_code() -> None:
     assert runtime.agent_repository.get_job(job.id).status == JobStatus.FAILED
 
 
+def test_job_bound_image_signature_mismatch_delivers_explicit_format_notice() -> None:
+    runtime = multimodal_container(
+        task_file_features={"workspace_enabled": True, "file_mcp_enabled": True}
+    )
+    command_kwargs = file_workspace_command_kwargs(runtime)
+    command_kwargs.update(
+        {
+            "document_processing_profile_code": "docling-layout-ocr-v2",
+            "task_file_features": {
+                "workspace_enabled": True,
+                "file_mcp_enabled": True,
+            },
+        }
+    )
+    job = runtime.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="job-image-signature-mismatch",
+            requester_id="user_local_admin",
+            external_conversation_id="job-image-signature-mismatch-conversation",
+            external_event_id="job-image-signature-mismatch-event",
+            external_message_id="job-image-signature-mismatch-message",
+            user_message="分析这张图片",
+            source_channel="dingding_stream",
+            source_connector_id="connector-dingtalk-stream-default",
+            conversation_type="direct",
+            bot_identity="robot-redacted",
+            attachments=(
+                ChannelAttachment(
+                    media_type="image",
+                    file_name="图片-20260901-195406.png",
+                    source_credential="download-job-image-signature-mismatch",
+                ),
+            ),
+            **command_kwargs,
+        )
+    )
+    task = runtime.message_bus.attachments.popleft()
+    runtime.attachment_service.downloader = FakeDownloader(  # type: ignore[union-attr]
+        {"download-job-image-signature-mismatch": b"not-a-png"}
+    )
+    runtime.attachment_service.importer = _RejectingImporter(  # type: ignore[union-attr]
+        safe_message="图片内容与扩展名不一致",
+        error_code="document_source_signature_mismatch",
+    )
+    adapter = _CaptureDeliveryAdapter()
+    runtime.result_delivery_service.adapters["dingtalk_conversation"] = adapter
+
+    assert (
+        runtime.attachment_service.process(  # type: ignore[union-attr]
+            task.attachment_id, "correlation-job-image-signature-mismatch"
+        )
+        == "system_notice"
+    )
+    runtime.delivery_dispatcher.dispatch_pending(limit=10)
+
+    assert runtime.agent_repository.get_job(job.id).status == JobStatus.FAILED
+    assert adapter.sent == [
+        (
+            "文件未进入工作区",
+            "《图片-20260901-195406.png》未进入工作区："
+            "文件实际格式与文件扩展名不匹配。"
+            "请转换为匹配的受支持格式后重新发送。",
+        )
+    ]
+
+
 def test_staged_noncompliant_attachment_notifies_the_originating_conversation_once() -> None:
     runtime = multimodal_container(
         task_file_features={"workspace_enabled": True, "file_mcp_enabled": True}

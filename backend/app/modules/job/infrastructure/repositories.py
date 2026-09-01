@@ -2145,6 +2145,8 @@ class AgentRepository:
             row = self.database.execute_one(
                 """
                 select a.status, a.readability_status, a.file_name,
+                       coalesce(nullif(a.readability_error_code, ''), a.failure_code, '')
+                         as error_code,
                        coalesce(b.file_id, '') as file_id,
                        coalesce(b.version_id, '') as version_id
                   from message_attachment a
@@ -2165,6 +2167,9 @@ class AgentRepository:
                 refreshed["display_name"] = str(
                     row.get("file_name") or refreshed.get("display_name") or ""
                 )
+                refreshed["error_code"] = str(
+                    row.get("error_code") or refreshed.get("error_code") or ""
+                )
                 return refreshed
         if version_id:
             row = self.database.execute_one(
@@ -2177,7 +2182,15 @@ class AgentRepository:
                           where b.version_id = v.id
                           order by a.readability_updated_at desc, a.id desc
                           limit 1
-                       ), 'NOT_REQUIRED') as readability_status
+                       ), 'NOT_REQUIRED') as readability_status,
+                       coalesce((
+                         select coalesce(nullif(a.readability_error_code, ''), a.failure_code, '')
+                           from message_attachment_file_binding b
+                           join message_attachment a on a.id = b.attachment_id
+                          where b.version_id = v.id
+                          order by a.readability_updated_at desc, a.id desc
+                          limit 1
+                       ), '') as error_code
                   from managed_file_version v
                  where v.id = ?
                 """,
@@ -2188,6 +2201,9 @@ class AgentRepository:
                 refreshed["source_status"] = "READY" if status == "AVAILABLE" else status
                 refreshed["readability_status"] = str(
                     row.get("readability_status") or "NOT_REQUIRED"
+                )
+                refreshed["error_code"] = str(
+                    row.get("error_code") or refreshed.get("error_code") or ""
                 )
         return refreshed
 

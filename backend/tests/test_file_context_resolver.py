@@ -368,6 +368,18 @@ def test_readable_content_pending_is_system_notice() -> None:
     assert "{" not in body
 
 
+def test_rejected_source_notice_explains_format_mismatch() -> None:
+    title, body = system_notice_markdown(
+        notice_kind="rejected",
+        display_names=("图片-20260901-195406.png",),
+        failure_reasons=("文件实际格式与文件扩展名不匹配",),
+    )
+
+    assert title == "文件未进入工作区"
+    assert "文件实际格式与文件扩展名不匹配" in body
+    assert "转换为匹配的受支持格式后重新发送" in body
+
+
 def test_current_message_waits_for_source_import() -> None:
     decision = resolve_file_context(
         text="总结这份文件",

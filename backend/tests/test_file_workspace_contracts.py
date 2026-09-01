@@ -239,3 +239,7 @@ def test_file_transfer_protocol_and_stable_errors_are_cross_runtime_safe() -> No
         error.safe_message and "secret" not in error.safe_message.lower()
         for error in FILE_ERROR_CATALOG.values()
     )
+    assert (
+        FILE_ERROR_CATALOG["document_source_signature_mismatch"].safe_message
+        == "文件实际格式与文件扩展名不匹配"
+    )

@@ -332,9 +332,22 @@ class AttachmentProcessingService:
         correlation_id: str,
     ) -> str:
         names = tuple(item.display_name for item in gate.dependencies if item.display_name)
+        source_rejections = tuple(
+            item for item in gate.dependencies if item.source_status in {"REJECTED", "FAILED"}
+        )
+        source_rejection_reasons = tuple(
+            definition.safe_message
+            for item in source_rejections
+            if (definition := FILE_ERROR_CATALOG.get(item.error_code)) is not None
+        )
         title, markdown = system_notice_markdown(
-            notice_kind=gate.notice_kind or "pending",
+            notice_kind=(
+                "rejected"
+                if source_rejections and len(source_rejections) == len(gate.dependencies)
+                else gate.notice_kind or "pending"
+            ),
             display_names=names,
+            failure_reasons=source_rejection_reasons,
         )
         self.repository.transition_job(
             job_id=job.id,

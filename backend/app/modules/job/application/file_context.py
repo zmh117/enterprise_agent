@@ -637,8 +637,16 @@ def system_notice_markdown(
     *,
     notice_kind: str,
     display_names: tuple[str, ...],
+    failure_reasons: tuple[str, ...] = (),
 ) -> tuple[str, str]:
     names = "、".join(_safe_file_name(name) for name in display_names if name) or "该文件"
+    if notice_kind == "rejected":
+        reasons = "；".join(dict.fromkeys(reason for reason in failure_reasons if reason))
+        reason = reasons or "文件不符合当前任务工作区策略"
+        return (
+            "文件未进入工作区",
+            f"《{names}》未进入工作区：{reason}。请转换为匹配的受支持格式后重新发送。",
+        )
     if notice_kind == "pending":
         return (
             "文件尚未可阅读",

@@ -351,6 +351,9 @@ FILE_ERROR_CATALOG: Mapping[str, FileErrorDefinition] = MappingProxyType(
         "file_format_mismatch": FileErrorDefinition("NEVER", "文件格式与冻结元数据不一致"),
         "file_format_read_only": FileErrorDefinition("NEVER", "此文件格式只允许读取和发送"),
         "file_mime_invalid": FileErrorDefinition("NEVER", "文件扩展名与 MIME 类型不一致"),
+        "document_source_signature_mismatch": FileErrorDefinition(
+            "NEVER", "文件实际格式与文件扩展名不匹配"
+        ),
         "file_encoding_invalid": FileErrorDefinition("NEVER", "文件必须使用 UTF-8 编码"),
         "file_size_exceeded": FileErrorDefinition("NEVER", "文本文件超过 15 MiB"),
         "file_count_quota_exceeded": FileErrorDefinition("NEVER", "工作区文件数量已达上限"),
