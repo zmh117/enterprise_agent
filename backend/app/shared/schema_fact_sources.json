@@ -506,7 +506,7 @@
       "retention_policy": "runtime-operational-history",
       "audit_requirement": "exclude prompts, raw model responses, credentials, and private reasoning",
       "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["runtime protocol replacement with equivalent audit"]},
-      "evidence_refs": ["execution-delivery:Claude 错误诊断元数据必须有界、脱敏且可关联"]
+      "evidence_refs": ["execution-delivery:Claude 错误诊断元数据必须有界、脱敏且可关联", "change:add-agent-job-context-audit", "schema:125_expand_runtime_audit_chunk_event_projection"]
     },
     {
       "id": "runtime.terminal_ledger",

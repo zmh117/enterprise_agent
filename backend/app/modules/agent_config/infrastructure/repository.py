@@ -467,6 +467,18 @@ class AgentConfigRepository:
         agent_publication_id: str,
         envelopes: list[dict[str, Any]],
     ) -> None:
+        self.verify_mcp_tool_facts(
+            agent_publication_id=agent_publication_id,
+            envelopes=envelopes,
+        )
+        self.verify_mcp_tool_policy(envelopes=envelopes)
+
+    def verify_mcp_tool_facts(
+        self,
+        *,
+        agent_publication_id: str,
+        envelopes: list[dict[str, Any]],
+    ) -> None:
         rows = self.database.execute(
             """
             select server_code, tool_identifier, schema_hash
@@ -498,14 +510,17 @@ class AgentConfigRepository:
                 safe_message="Agent MCP 工具发布事实完整性校验失败",
                 error_code="agent_mcp_tool_envelope_mismatch",
             )
+
+    @staticmethod
+    def verify_mcp_tool_policy(*, envelopes: list[dict[str, Any]]) -> None:
         for envelope in envelopes:
             identifier = str(envelope["tool_identifier"])
             definition = MCP_TOOL_MANIFEST.get(identifier)
             if definition is None:
                 raise NonRetryableExecutionError(
                     "Agent MCP Tool is not in the code manifest",
-                    safe_message="Agent MCP 工具发布事实完整性校验失败",
-                    error_code="agent_mcp_tool_envelope_mismatch",
+                    safe_message="Agent MCP 工具已退役，请创建新发布版本",
+                    error_code="agent_mcp_tool_policy_incompatible",
                 )
             declared = {
                 "effect": definition.effect,
@@ -521,7 +536,7 @@ class AgentConfigRepository:
                 raise NonRetryableExecutionError(
                     "Agent MCP Tool execution metadata differs from the code manifest",
                     safe_message="Agent MCP 工具执行策略已变化，请创建新发布版本",
-                    error_code="agent_mcp_tool_envelope_mismatch",
+                    error_code="agent_mcp_tool_policy_incompatible",
                 )
 
     def publication_connectors(self, publication_id: str, direction: str) -> set[str]:

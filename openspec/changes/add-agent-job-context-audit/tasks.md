@@ -20,3 +20,11 @@
 - [x] 4.1 运行协议、Runtime、Worker、仓储、管理 API 和前端聚焦测试
 - [x] 4.2 运行 Ruff、mypy 变更路径、ESLint、TypeScript、build、Compose config、strict OpenSpec 和 diff check（mypy 仍报告 one_runtime 既有类型基线问题，本变更新增文件通过）
 - [x] 4.3 使用真实浏览器验证摘要布局、默认折叠和长内容滚动
+
+## 5. 真实验收回归修复
+
+- [x] 5.1 修复 v1.5 `audit_chunk` 被过滤后 terminal 触发 `runtime_event_sequence_gap`，新增 migration 125 并仅投影分块结构元数据以保持 Runtime 原始 sequence
+- [x] 5.2 增加 HTTP Client + 真实 Runtime event repository 回归，验证序列连续、Base64 正文不落入 `agent_runtime_event` 且完整 `run_audit` 仍可重组
+- [ ] 5.3 重建受影响服务并以新 Job 验证运行成功、`agent_run_audit` 持久化及调优摘要/折叠正文展示
+- [x] 5.4 保持工具契约卡片与总体摘要常显，将内部长证据分组默认折叠，并完成前端回归与部署验证
+- [x] 5.5 修复工具契约摘要长 Invocation ID 覆盖相邻指标的布局回归，并完成前端回归与部署验证

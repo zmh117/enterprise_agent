@@ -26,7 +26,7 @@
 
 v1.5 在 v1.4 基础上新增 `audit_chunk` 事件。Runtime 将完整审计对象序列化为 UTF-8 JSON，计算 SHA-256，再以 40 KiB 原始字节分块并 Base64 编码。每块携带 `chunk_index`、`chunk_count`、`sha256`、`encoding` 和 `content`；terminal 携带同一 `audit_sha256` 与 `audit_chunk_count`。Worker 必须验证连续索引、总数、摘要和 JSON 对象类型，任一不一致都按 Runtime 协议错误失败。
 
-40 KiB 分块使单条 NDJSON 保持在现有 64 KiB 行边界内。v1.5 将总 stream 边界提高到与 SDK 64 MiB buffer 相匹配的有界值；应用不对边界内正文再做内容截断。`audit_chunk` 只用于传输：Runtime 恢复账本保存它以支持相同 invocation 重放，Worker 重组后不把 Base64 块复制进 `agent_runtime_event`。
+40 KiB 分块使单条 NDJSON 保持在现有 64 KiB 行边界内。v1.5 将总 stream 边界提高到与 SDK 64 MiB buffer 相匹配的有界值；应用不对边界内正文再做内容截断。`audit_chunk` 正文只用于传输：Runtime 恢复账本保存它以支持相同 invocation 重放，Worker 重组后不把 Base64 `content` 复制进 `agent_runtime_event`。为保持 Runtime 原始 sequence 连续，Worker 必须为每个 `audit_chunk` 保存仅含 `encoding`、`chunk_index`、`chunk_count`、`sha256`、正文省略状态和编码字符数的结构事件；不得跳过中间 sequence 后直接保存 terminal。
 
 ### 2. Python Runtime 以独立 Recorder 采集完整审计
 
@@ -57,7 +57,7 @@ migration 124 新增 `agent_run_audit`，以 `(job_id, invocation_id)` 唯一，
 
 ### 6. 页面在现有运行详情上增加四组折叠区
 
-保留现有执行汇总、Tool contract、文件、Delivery 和模型轮次，不用旧页面整文件覆盖。新增 Context tuning 摘要，并按 attempt 显示四个默认关闭的 `<details>`：上下文与 Prompt、模型 request/response、完整工具执行、usage 与元数据。`pre` 使用固定最大高度、换行和滚动；历史 Job 显示明确空态。
+保留现有执行汇总、Tool contract、文件、Delivery 和模型轮次，不用旧页面整文件覆盖。Tool contract 卡片本身不折叠，标题、说明、状态和总体摘要始终可见；Job 快照以及每个 invocation 内的组件身份、四层契约和逐工具矩阵分别使用默认关闭的 `<details>`。摘要网格单元允许收缩，长 Invocation ID 等标识在自身单元内断行，不得覆盖相邻指标。新增 Context tuning 摘要，并按 attempt 显示四个默认关闭的 `<details>`：上下文与 Prompt、模型 request/response、完整工具执行、usage 与元数据。`pre` 使用固定最大高度、换行和滚动；历史 Job 显示明确空态。
 
 ## Risks / Trade-offs
 

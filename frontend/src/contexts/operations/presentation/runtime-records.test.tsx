@@ -771,7 +771,37 @@ describe("runtime provenance records", () => {
     )
 
     expect(await screen.findByText("工具契约对账")).toBeInTheDocument()
+    const toolContractPanel = screen.getByTestId("tool-contract-panel")
+    const lastInvocationLabel = screen.getByText("最后观测 Invocation")
+    expect(lastInvocationLabel).toBeVisible()
+    const lastInvocationMetric = lastInvocationLabel.closest("div")
+    expect(lastInvocationMetric).toHaveClass("min-w-0")
+    expect(lastInvocationMetric?.querySelector("dd")).toHaveClass(
+      "min-w-0",
+      "[overflow-wrap:anywhere]"
+    )
+    expect(
+      screen.getByText(
+        "工具契约状态来自该 Job 的冻结快照与不可变 Runtime 事件。"
+      )
+    ).toBeVisible()
+    const toolContractDisclosures =
+      toolContractPanel.querySelectorAll("details")
+    expect(toolContractDisclosures).toHaveLength(13)
+    expect(
+      Array.from(toolContractDisclosures).every((item) => !item.open)
+    ).toBe(true)
     expect(screen.getAllByText("DRIFT").length).toBeGreaterThan(0)
+    const snapshotDisclosure = screen
+      .getByText("Job Frozen Snapshot")
+      .closest("details")
+    fireEvent.click(screen.getByText("Job Frozen Snapshot"))
+    expect(snapshotDisclosure).toHaveAttribute("open")
+    const firstLayerDisclosure = screen
+      .getAllByText("A. Job frozen")[0]
+      .closest("details")
+    fireEvent.click(screen.getAllByText("A. Job frozen")[0])
+    expect(firstLayerDisclosure).toHaveAttribute("open")
     expect(screen.getAllByText("A. Job frozen")).toHaveLength(2)
     expect(screen.getAllByText("B. File MCP live")).toHaveLength(2)
     expect(screen.getAllByText("C. Runtime effective")).toHaveLength(2)
@@ -840,7 +870,7 @@ describe("runtime provenance records", () => {
     expect(await screen.findByText("200 tokens")).toBeInTheDocument()
     expect(screen.getAllByText("完整上下文与 Prompt")).toHaveLength(2)
     const disclosures = document.querySelectorAll("details")
-    expect(disclosures).toHaveLength(8)
+    expect(disclosures).toHaveLength(9)
     expect(Array.from(disclosures).every((item) => !item.open)).toBe(true)
   })
 

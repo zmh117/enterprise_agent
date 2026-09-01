@@ -166,6 +166,21 @@ def _safe_runtime_event_payload(event_type: str, value: object) -> dict[str, Any
             "error_status": _optional_nonnegative_integer(payload.get("error_status")),
             "error_code": str(payload.get("error_code") or "unknown")[:128],
         }
+    if event_type == "audit_chunk":
+        content = str(payload.get("content") or "")
+        encoded_character_count = payload.get("encoded_character_count")
+        return {
+            "encoding": str(payload.get("encoding") or "")[:32],
+            "chunk_index": _optional_nonnegative_integer(payload.get("chunk_index")),
+            "chunk_count": _optional_nonnegative_integer(payload.get("chunk_count")),
+            "sha256": str(payload.get("sha256") or "")[:64],
+            "content_status": "OMITTED",
+            "encoded_character_count": _optional_nonnegative_integer(
+                encoded_character_count
+                if encoded_character_count is not None
+                else len(content)
+            ),
+        }
     if event_type == "terminal":
         safe = {
             key: payload.get(key)
@@ -751,6 +766,7 @@ class AgentRepository:
                 "tool_contract_observed",
                 "model_call",
                 "api_retry",
+                "audit_chunk",
                 "tool_event",
                 "assistant_text",
                 "terminal",

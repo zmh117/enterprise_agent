@@ -1081,6 +1081,17 @@ function ProfileForm({
     ? []
     : (agent.draft?.validation.errors ?? [])
   const draftPublished = agent.draft?.status === "published"
+  const currentPublicationHistorical =
+    agent.current_publication?.runtime_protocol_compatibility ===
+    "historical_read_only"
+  const currentToolPolicyHistorical =
+    agent.current_publication?.incompatibility_reasons.includes(
+      "mcp_tool_policy"
+    ) ?? false
+  const currentPublicationReadOnly =
+    agent.current_publication?.execution_compatibility ===
+      "historical_read_only" || currentPublicationHistorical
+  const recoveryDraftAvailable = currentPublicationReadOnly && draftPublished
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
       <Card className="shadow-none">
@@ -1225,7 +1236,9 @@ function ProfileForm({
               ) : (
                 <SaveIcon />
               )}
-              保存草稿
+              {recoveryDraftAvailable
+                ? "创建当前 Runtime 恢复草稿"
+                : "保存草稿"}
             </Button>
             <Button
               type="button"
@@ -1260,7 +1273,12 @@ function ProfileForm({
               {draftPublished ? "当前版本已发布" : "发布 Agent"}
             </Button>
           </div>
-          {draftPublished ? (
+          {recoveryDraftAvailable ? (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              当前发布的 Runtime 协议或 MCP
+              工具策略已落后于平台，不能用于新执行或回退。请先创建恢复草稿，再校验并发布为当前事实；业务应用不会自动切换。
+            </p>
+          ) : draftPublished ? (
             <p className="text-xs text-muted-foreground">
               当前修订版本已经发布。修改配置并保存后会生成新的草稿版本。
             </p>
@@ -1303,6 +1321,20 @@ function ProfileForm({
                   value={`${agent.current_publication.config_hash.slice(0, 14)}…`}
                   mono
                 />
+                <StatusLine
+                  label="Runtime 协议"
+                  value={
+                    currentPublicationReadOnly
+                      ? "历史事实 · 只读且不可执行"
+                      : "当前协议"
+                  }
+                />
+                {currentToolPolicyHistorical ? (
+                  <StatusLine
+                    label="MCP 工具策略"
+                    value="已变化 · 需重新发布"
+                  />
+                ) : null}
               </>
             ) : (
               <p className="text-muted-foreground">尚未发布。</p>
@@ -1346,6 +1378,11 @@ function PublicationHistory({
         const current = publication.id === currentId
         const historicalProtocol =
           publication.runtime_protocol_compatibility === "historical_read_only"
+        const historicalToolPolicy =
+          publication.incompatibility_reasons.includes("mcp_tool_policy")
+        const historicalReadOnly =
+          publication.execution_compatibility === "historical_read_only" ||
+          historicalProtocol
         return (
           <Card key={publication.id} className="shadow-none">
             <CardContent className="grid gap-4 py-5 lg:grid-cols-[minmax(0,1fr)_auto]">
@@ -1366,12 +1403,20 @@ function PublicationHistory({
                   {historicalProtocol ? (
                     <Badge variant="secondary">历史协议 · 只读</Badge>
                   ) : null}
+                  {historicalToolPolicy ? (
+                    <Badge variant="secondary">工具策略已变化 · 只读</Badge>
+                  ) : null}
                 </div>
                 <p className="font-mono text-xs break-all">{publication.id}</p>
                 <p className="text-xs text-muted-foreground">
                   {new Date(publication.published_at).toLocaleString()} · hash{" "}
                   {publication.config_hash.slice(0, 16)}…
                 </p>
+                {historicalReadOnly ? (
+                  <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                    此版本仅保留为历史事实，不能回退为当前版本或用于新执行。
+                  </p>
+                ) : null}
                 <div className="rounded-lg bg-muted/50 p-3 text-sm">
                   <p className="font-medium">仍使用此版本的激活应用</p>
                   {publication.active_applications?.length ? (
@@ -1397,7 +1442,7 @@ function PublicationHistory({
                 variant="outline"
                 disabled={
                   current ||
-                  historicalProtocol ||
+                  historicalReadOnly ||
                   rollback.isPending ||
                   !canPublish
                 }
@@ -1557,7 +1602,8 @@ function McpToolChecklist({
                   {identifier}
                 </span>
                 <span className="mt-1 block text-xs text-destructive">
-                  MCP Tool 已从当前目录移除，请取消选择后保存新草稿；历史发布版本不会被改写。
+                  MCP Tool
+                  已从当前目录移除，请取消选择后保存新草稿；历史发布版本不会被改写。
                 </span>
               </span>
             </label>

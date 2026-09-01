@@ -28,6 +28,11 @@ Runtime MUST 将审计 JSON 以带连续索引、总块数、编码和 SHA-256 �
 - **WHEN** terminal 声明的块数或摘要与已收集内容不一致
 - **THEN** Worker 以 Runtime 协议错误终止，不保存伪完整审计
 
+#### Scenario: 审计块位于安全事件与终态之间
+- **WHEN** Runtime v1.5 在安全事件之后、terminal 之前发送一个或多个 `audit_chunk`
+- **THEN** Worker 按 Runtime 原始 sequence 保存不含 Base64 `content` 的审计块结构元数据与 terminal
+- **AND** `agent_runtime_event` 序列保持连续，完整审计在校验重组后仍只保存一份
+
 ### Requirement: 调优摘要必须区分实际 usage 和构成估算
 系统 SHALL 保存每轮/Result usage、请求次数、峰值上下文、Token/cache/cost、注册工具、单次最大加载工具、无需确认工具、调用次数和不同工具数。`allowed_tools` 仅计入无需确认工具，不得冒充注册或加载工具总数。峰值上下文按 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` 计算；字符估算 MUST 标明估算方法，不得冒充 Provider 计费事实。
 
@@ -48,6 +53,17 @@ Agent 运行详情 SHALL 保留现有执行、工具合同、文件和 Delivery 
 #### Scenario: 超长上下文
 - **WHEN** 管理员打开包含超长 Prompt 和工具结果的 Job
 - **THEN** 初始页面保持紧凑，管理员可逐组展开并完整滚动查看
+
+#### Scenario: 工具契约证据较长
+- **WHEN** 管理员打开包含工具快照、多个 invocation 观测和逐工具状态矩阵的 Job
+- **THEN** 工具契约卡片的标题、说明、状态和总体摘要保持可见
+- **AND** Job 快照及每个 invocation 内的长证据分组默认折叠
+- **AND** 管理员可逐组独立展开或收起内部证据
+
+#### Scenario: 工具契约摘要包含长标识
+- **WHEN** Invocation ID 或其他摘要值超过单个网格列宽
+- **THEN** 长标识在所属指标单元内断行
+- **AND** 不得覆盖相邻指标的标题或内容
 
 #### Scenario: 历史 Job
 - **WHEN** Job 创建于完整审计启用前

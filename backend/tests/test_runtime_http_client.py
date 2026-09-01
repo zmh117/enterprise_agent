@@ -4,7 +4,7 @@ import hashlib
 import json
 import io
 import urllib.error
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any
 
@@ -24,6 +24,10 @@ from app.modules.agent.infrastructure.runtime_http_client import (
     RuntimeGrantIssuer,
     RuntimePrincipalTokens,
     probe_runtime_readiness,
+)
+from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
+from app.modules.job.infrastructure.execution_audit_repository import (
+    ExecutionAuditRepository,
 )
 from app.shared.mcp_server_policy import (
     DINGTALK_MCP_SERVER_CODE,
@@ -48,6 +52,7 @@ from backend.tests.business_mcp_fixtures import (
     TEST_BUSINESS_TOOL_IDENTIFIER,
     business_mcp_test_policies,
 )
+from backend.tests.helpers import container
 
 
 class _PassiveResponse:
@@ -504,6 +509,7 @@ def _client(
     transport: Any,
     *,
     events: list[dict[str, Any]] | None = None,
+    event_sink: Callable[[str, dict[str, Any]], None] | None = None,
     principal_token_issuer: Any | None = None,
     server_policies: Any | None = None,
     allowed_mcp_server_codes: tuple[str, ...] | None = None,
@@ -526,7 +532,11 @@ def _client(
             principal_token_issuer=principal_token_issuer,
             server_policies=server_policies,
             transport=transport,
-            event_sink=lambda _job_id, event: captured_events.append(event),
+            event_sink=(
+                event_sink
+                if event_sink is not None
+                else lambda _job_id, event: captured_events.append(event)
+            ),
         ),
         public_pem,
     )
@@ -580,7 +590,7 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
     assert "url" not in transport.request["mcp_servers"][0]
 
 
-def test_worker_reassembles_complete_v15_run_audit_without_persisting_chunks() -> None:
+def test_worker_reassembles_complete_v15_run_audit_with_metadata_only_chunk_events() -> None:
     run_audit = {
         "system_prompt": "完整系统提示词",
         "user_prompt": "完整用户与文件上下文",
@@ -596,7 +606,59 @@ def test_worker_reassembles_complete_v15_run_audit_without_persisting_chunks() -
     result = client.run(_request())
 
     assert result.run_audit == run_audit
-    assert all(event["event_type"] != "audit_chunk" for event in persisted_events)
+    chunk_events = [
+        event for event in persisted_events if event["event_type"] == "audit_chunk"
+    ]
+    assert chunk_events
+    assert [event["sequence"] for event in persisted_events] == list(
+        range(1, len(persisted_events) + 1)
+    )
+    assert all("content" not in event["payload"] for event in chunk_events)
+    assert all(event["payload"]["content_status"] == "OMITTED" for event in chunk_events)
+    assert all(event["payload"]["encoded_character_count"] > 0 for event in chunk_events)
+
+
+def test_v15_audit_chunk_metadata_keeps_real_runtime_event_repository_contiguous() -> None:
+    runtime = container(allow_direct_jobs=True)
+    runtime.create_agent_job_service.published_agent_runtime_enabled = True
+    runtime.create_agent_job_service.runtime_readiness_guard = None
+    job = runtime.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="runtime-audit-chunk-sequence",
+            requester_id="user_local_admin",
+            user_message="diagnose",
+            source_channel="debug_api",
+        )
+    )
+    request = replace(
+        _request(),
+        job_id=job.id,
+        invocation_id=f"{job.id}.attempt-0",
+    )
+    run_audit = {
+        "system_prompt": "完整系统提示词",
+        "user_prompt": "完整用户与文件上下文",
+        "api_responses": [{"body": {"content": "模型原始响应"}}],
+    }
+    client, _ = _client(
+        GoldenTransport(run_audit=run_audit),
+        event_sink=ExecutionAuditRepository(runtime.database).record_runtime_event,
+    )
+
+    result = client.run(request)
+
+    persisted_events = runtime.agent_repository.list_runtime_events(job.id)
+    assert result.run_audit == run_audit
+    assert [event["sequence"] for event in persisted_events] == list(
+        range(1, len(persisted_events) + 1)
+    )
+    chunk_events = [
+        event for event in persisted_events if event["event_type"] == "audit_chunk"
+    ]
+    assert chunk_events
+    assert all("content" not in event["payload"] for event in chunk_events)
+    assert all(event["payload"]["content_status"] == "OMITTED" for event in chunk_events)
+    assert persisted_events[-1]["event_type"] == "terminal"
 
 
 def test_worker_attaches_complete_v15_run_audit_to_runtime_failure() -> None:

@@ -59,7 +59,7 @@ def container():
     return value
 
 
-def web_container():
+def web_container(*, allow_direct_jobs: bool = False):
     settings = replace(
         build_settings(),
         environment="test",
@@ -71,7 +71,14 @@ def web_container():
             allowed_origins=("http://admin.test",),
         ),
     )
-    value = build_test_container(settings, migrate=True, seed=True)
+    value = build_test_container(
+        settings,
+        migrate=True,
+        seed=True,
+        permission_service_factory=(
+            direct_job_permission_service_factory if allow_direct_jobs else None
+        ),
+    )
     value.model_connection_service.dns_resolver = lambda *args, **kwargs: [
         (2, 1, 6, "", ("1.1.1.1", 443))
     ]
@@ -590,11 +597,14 @@ def test_agent_publication_is_idempotent_and_published_revision_stays_published(
     ) == {"count": 1}
 
 
-def test_agent_publication_history_keeps_v13_read_only_without_making_it_executable() -> None:
+@pytest.mark.parametrize("historical_protocols", [["1.3"], ["1.4"], ["2.0"]])
+def test_agent_publication_history_keeps_valid_historical_protocols_read_only_without_making_them_executable(
+    historical_protocols: list[str],
+) -> None:
     settings, c = web_container()
     historical = c.agent_config_service.repository.current_publication(AGENT_CODE)
     historical_snapshot = dict(historical["snapshot"])
-    historical_snapshot["supported_runtime_protocol_versions"] = ["1.3"]
+    historical_snapshot["supported_runtime_protocol_versions"] = historical_protocols
     historical_hash = hashlib.sha256(
         json.dumps(
             historical_snapshot,
@@ -642,8 +652,190 @@ def test_agent_publication_history_keeps_v13_read_only_without_making_it_executa
     publications = response.json()["publications"]
     assert [item["id"] for item in publications] == [current["id"], historical["id"]]
     assert publications[0]["runtime_protocol_compatibility"] == "current"
+    assert publications[0]["execution_compatibility"] == "current"
+    assert publications[0]["incompatibility_reasons"] == []
     assert publications[1]["runtime_protocol_compatibility"] == "historical_read_only"
-    assert publications[1]["snapshot"]["supported_runtime_protocol_versions"] == ["1.3"]
+    assert publications[1]["execution_compatibility"] == "historical_read_only"
+    assert publications[1]["incompatibility_reasons"] == ["runtime_protocol"]
+    assert (
+        publications[1]["snapshot"]["supported_runtime_protocol_versions"] == historical_protocols
+    )
+
+
+def test_agent_management_detail_exposes_historical_current_protocol_but_execution_and_rollback_reject_it() -> (
+    None
+):
+    settings, c = web_container(allow_direct_jobs=True)
+    historical = c.agent_config_service.repository.current_publication(AGENT_CODE)
+    historical_snapshot = dict(historical["snapshot"])
+    historical_snapshot["supported_runtime_protocol_versions"] = ["1.4"]
+    historical_hash = hashlib.sha256(
+        json.dumps(
+            historical_snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    c.database.execute(
+        "update agent_publication set snapshot_json = ?, config_hash = ? where id = ?",
+        (
+            json.dumps(historical_snapshot, ensure_ascii=False, sort_keys=True),
+            historical_hash,
+            historical["id"],
+        ),
+    )
+
+    app = create_app(settings, container_factory=lambda _: c)
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "111111111111"},
+        )
+        assert login.status_code == 200
+        detail_response = client.get(f"/api/admin/agents/{AGENT_CODE}")
+        history_response = client.get(f"/api/admin/agents/{AGENT_CODE}/publications")
+        with pytest.raises(NonRetryableExecutionError) as current_rejected:
+            c.agent_config_service.current_publication(AGENT_CODE)
+        with pytest.raises(NonRetryableExecutionError) as rollback_rejected:
+            c.agent_config_service.rollback(
+                actor_id=ADMIN_ID,
+                agent_code=AGENT_CODE,
+                publication_id=str(historical["id"]),
+            )
+        with pytest.raises(NonRetryableExecutionError) as job_rejected:
+            c.create_agent_job_service.execute(
+                CreateAgentJobCommand(
+                    idempotency_key="historical-protocol-new-job",
+                    requester_id=ADMIN_ID,
+                    external_conversation_id="historical-protocol-conversation",
+                    external_event_id="historical-protocol-event",
+                    user_message="must fail before creating a new Job",
+                )
+            )
+
+    assert detail_response.status_code == 200, detail_response.text
+    assert (
+        detail_response.json()["agent"]["current_publication"]["runtime_protocol_compatibility"]
+        == "historical_read_only"
+    )
+    assert (
+        detail_response.json()["agent"]["current_publication"]["execution_compatibility"]
+        == "historical_read_only"
+    )
+    assert detail_response.json()["agent"]["current_publication"]["incompatibility_reasons"] == [
+        "runtime_protocol"
+    ]
+    assert history_response.status_code == 200, history_response.text
+    assert history_response.json()["publications"][0]["runtime_protocol_compatibility"] == (
+        "historical_read_only"
+    )
+    assert current_rejected.value.error_code == "agent_publication_runtime_protocol_mismatch"
+    assert rollback_rejected.value.error_code == "agent_publication_runtime_protocol_mismatch"
+    assert job_rejected.value.error_code == "agent_publication_runtime_protocol_mismatch"
+
+
+def test_agent_management_keeps_tool_policy_drift_read_only_but_preserves_frozen_fact_integrity() -> (
+    None
+):
+    c = container()
+    connection_revision = ready_connection(c)
+    agent = c.agent_config_service.get(AGENT_CODE)
+    config = agent_config(str(connection_revision["id"]))
+    config["mcp_tool_ids"] = ["get_schema_directory"]
+    draft = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=int(agent["draft"]["revision"]),
+        config=config,
+    )
+    publication = c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(draft["id"]),
+    )
+    snapshot = dict(publication["snapshot"])
+    envelope = [dict(item) for item in snapshot["mcp_tool_envelope"]]
+    assert envelope
+    envelope[0]["confirmation_policy"] = "external_action_card_v1"
+    snapshot["mcp_tool_envelope"] = envelope
+    config_hash = hashlib.sha256(
+        json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    c.database.execute(
+        "update agent_publication set snapshot_json = ?, config_hash = ? where id = ?",
+        (
+            json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+            config_hash,
+            publication["id"],
+        ),
+    )
+
+    managed = c.agent_config_service.publications(AGENT_CODE)[0]
+    managed_current = c.agent_config_service.get(AGENT_CODE)["current_publication"]
+
+    assert managed["runtime_protocol_compatibility"] == "current"
+    assert managed["execution_compatibility"] == "historical_read_only"
+    assert managed["incompatibility_reasons"] == ["mcp_tool_policy"]
+    assert managed_current["execution_compatibility"] == "historical_read_only"
+    assert managed_current["incompatibility_reasons"] == ["mcp_tool_policy"]
+    with pytest.raises(NonRetryableExecutionError) as execution_rejected:
+        c.agent_config_service.publication(str(publication["id"]))
+    assert execution_rejected.value.error_code == "agent_mcp_tool_policy_incompatible"
+    with pytest.raises(NonRetryableExecutionError) as job_rejected:
+        c.create_agent_job_service.execute(
+            CreateAgentJobCommand(
+                idempotency_key="historical-tool-policy-new-job",
+                requester_id=ADMIN_ID,
+                external_conversation_id="historical-tool-policy-conversation",
+                external_event_id="historical-tool-policy-event",
+                user_message="must fail before creating a new Job",
+            )
+        )
+    assert job_rejected.value.error_code == "agent_mcp_tool_policy_incompatible"
+
+    c.database.execute(
+        "delete from agent_publication_mcp_tool where agent_publication_id = ?",
+        (publication["id"],),
+    )
+    with pytest.raises(NonRetryableExecutionError) as facts_rejected:
+        c.agent_config_service.publications(AGENT_CODE)
+    assert facts_rejected.value.error_code == "agent_mcp_tool_envelope_mismatch"
+
+
+@pytest.mark.parametrize(
+    "invalid_protocols",
+    [None, "1.4", [], ["1.4", "1.4"], ["latest"]],
+)
+def test_agent_management_rejects_malformed_runtime_protocol_facts(
+    invalid_protocols: Any,
+) -> None:
+    c = container()
+    publication = c.agent_config_service.repository.current_publication(AGENT_CODE)
+    snapshot = dict(publication["snapshot"])
+    snapshot["supported_runtime_protocol_versions"] = invalid_protocols
+    malformed = {
+        **publication,
+        "snapshot": snapshot,
+        "config_hash": hashlib.sha256(
+            json.dumps(
+                snapshot,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest(),
+    }
+
+    with pytest.raises(NonRetryableExecutionError) as rejected:
+        c.agent_config_service._management_publication(malformed)
+
+    assert rejected.value.error_code == "agent_publication_runtime_protocol_mismatch"
 
 
 def test_connection_revision_is_immutable_while_credential_rotation_is_active() -> None:

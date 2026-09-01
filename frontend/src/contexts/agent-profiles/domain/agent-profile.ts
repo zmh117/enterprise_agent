@@ -164,6 +164,12 @@ export const agentPublicationSchema = z.object({
   runtime_protocol_compatibility: z
     .enum(["current", "historical_read_only"])
     .optional(),
+  execution_compatibility: z
+    .enum(["current", "historical_read_only"])
+    .optional(),
+  incompatibility_reasons: z
+    .array(z.enum(["runtime_protocol", "mcp_tool_policy"]))
+    .default([]),
 })
 
 export const agentDetailSchema = z.object({

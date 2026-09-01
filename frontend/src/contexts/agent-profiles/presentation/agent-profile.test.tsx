@@ -491,6 +491,8 @@ describe("Agent Profile management", () => {
                 published_by: "user_local_admin",
                 model_runtime_mode: "pinned_connection",
                 runtime_protocol_compatibility: "current",
+                execution_compatibility: "current",
+                incompatibility_reasons: [],
                 active_applications: [],
               },
               {
@@ -502,6 +504,8 @@ describe("Agent Profile management", () => {
                 published_by: "user_local_admin",
                 model_runtime_mode: "legacy_global_connection",
                 runtime_protocol_compatibility: "current",
+                execution_compatibility: "current",
+                incompatibility_reasons: [],
                 active_applications: [
                   {
                     code: "default-diagnostic-application",
@@ -521,6 +525,21 @@ describe("Agent Profile management", () => {
                 published_by: "user_local_admin",
                 model_runtime_mode: "legacy_global_connection",
                 runtime_protocol_compatibility: "historical_read_only",
+                execution_compatibility: "historical_read_only",
+                incompatibility_reasons: ["runtime_protocol"],
+                active_applications: [],
+              },
+              {
+                id: "agent_publication_historical_tool_policy",
+                revision: 11,
+                config_hash: "historical-tool-policy-hash",
+                snapshot: config,
+                published_at: "2026-07-22T00:00:00+08:00",
+                published_by: "user_local_admin",
+                model_runtime_mode: "pinned_connection",
+                runtime_protocol_compatibility: "current",
+                execution_compatibility: "historical_read_only",
+                incompatibility_reasons: ["mcp_tool_policy"],
                 active_applications: [],
               },
             ],
@@ -710,7 +729,8 @@ describe("Agent Profile management", () => {
       name: "回退 Agent",
     })
     expect(screen.getByText("历史协议 · 只读")).toBeInTheDocument()
-    expect(rollbackButtons).toHaveLength(3)
+    expect(screen.getByText("工具策略已变化 · 只读")).toBeInTheDocument()
+    expect(rollbackButtons).toHaveLength(4)
     expect(
       rollbackButtons.filter((button) => !button.hasAttribute("disabled"))
     ).toHaveLength(1)
@@ -1195,7 +1215,9 @@ describe("Agent Profile management", () => {
     expect(await screen.findByText("MCP 工具")).toBeInTheDocument()
     expect(screen.getByText("查看数据库结构目录")).toBeInTheDocument()
     expect(screen.getByText("只读查询 ONES 工作项")).toBeInTheDocument()
-    expect(screen.getByText("为当前钉钉用户准备一个本人待办。")).toBeInTheDocument()
+    expect(
+      screen.getByText("为当前钉钉用户准备一个本人待办。")
+    ).toBeInTheDocument()
     expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole("checkbox", { name: "ones_work_item_search" })
@@ -1214,6 +1236,101 @@ describe("Agent Profile management", () => {
         ],
       })
     )
+  })
+
+  it("creates a normal recovery draft when the current publication uses historical execution facts", async () => {
+    let savedBody:
+      { expected_revision: number; config: AgentConfig } | undefined
+    const basePayload = agentPayload()
+    const historicalPayload = {
+      agent: {
+        ...basePayload.agent,
+        definition: {
+          ...basePayload.agent.definition,
+          current_publication_id: "agent_publication_historical",
+        },
+        draft: {
+          ...basePayload.agent.draft,
+          status: "published",
+          validation: { valid: true, errors: [] },
+        },
+        current_publication: {
+          id: "agent_publication_historical",
+          revision: 2,
+          config_hash: "historical-publication-hash",
+          runtime_kind: "python-v1",
+          snapshot: {
+            ...config,
+            supported_runtime_protocol_versions: ["1.5"],
+          },
+          published_at: "2026-08-31T00:00:00+08:00",
+          published_by: "user_local_admin",
+          runtime_protocol_compatibility: "current",
+          execution_compatibility: "historical_read_only",
+          incompatibility_reasons: ["mcp_tool_policy"],
+        },
+      },
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes("/model-connections/")) {
+        return response({ connection: modelConnection })
+      }
+      if (url.endsWith("/draft") && init?.method === "PUT") {
+        savedBody = JSON.parse(String(init.body)) as {
+          expected_revision: number
+          config: AgentConfig
+        }
+        return response({
+          revision: {
+            ...basePayload.agent.draft,
+            revision: 3,
+            status: "draft",
+            config: savedBody.config,
+          },
+        })
+      }
+      return response(historicalPayload)
+    })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter>
+          <AgentProfilePage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    const recoveryButton = await screen.findByRole("button", {
+      name: "创建当前 Runtime 恢复草稿",
+    })
+    expect(
+      screen.getByText(/当前发布的 Runtime 协议或 MCP 工具策略已落后于平台/)
+    ).toBeInTheDocument()
+    expect(screen.getByText("历史事实 · 只读且不可执行")).toBeInTheDocument()
+    expect(screen.getByText("已变化 · 需重新发布")).toBeInTheDocument()
+    fireEvent.click(recoveryButton)
+
+    await waitFor(() =>
+      expect(savedBody).toEqual({
+        expected_revision: 2,
+        config,
+      })
+    )
+    expect(
+      vi
+        .mocked(globalThis.fetch)
+        .mock.calls.some(([input]) => String(input).endsWith("/publish"))
+    ).toBe(false)
   })
 
   it("shows unavailable selected Connectors and blocks validation until changes are saved", async () => {

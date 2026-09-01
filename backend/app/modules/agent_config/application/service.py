@@ -20,6 +20,7 @@ DEFAULT_AGENT_CODE = "default-diagnostic-agent"
 SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1"})
 WRITABLE_RUNTIME_KIND = "python-v1"
 SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = ("1.5",)
+RUNTIME_PROTOCOL_VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)*$")
 AGENT_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 PROJECT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FORBIDDEN_CONFIG_KEYS = {
@@ -84,7 +85,9 @@ class AgentConfigService:
         latest = self.repository.latest_revision(str(definition["id"]))
         current = None
         if definition.get("current_publication_id"):
-            current = self.repository.get_publication(str(definition["current_publication_id"]))
+            current = self._management_publication(
+                self.repository.get_publication(str(definition["current_publication_id"]))
+            )
         return {
             "definition": definition,
             "draft": latest,
@@ -576,7 +579,36 @@ class AgentConfigService:
             )
         return publication
 
-    def _verified_publication_integrity(self, publication: dict[str, Any]) -> dict[str, Any]:
+    def _management_publication(self, publication: dict[str, Any]) -> dict[str, Any]:
+        publication = self._verified_publication_integrity(
+            publication,
+            require_current_tool_policy=False,
+        )
+        runtime_compatibility = self._runtime_protocol_compatibility(publication)
+        incompatibility_reasons: list[str] = []
+        if runtime_compatibility != "current":
+            incompatibility_reasons.append("runtime_protocol")
+        envelope = (publication.get("snapshot") or {}).get("mcp_tool_envelope")
+        if isinstance(envelope, list):
+            try:
+                self.repository.verify_mcp_tool_policy(envelopes=envelope)
+            except NonRetryableExecutionError as exc:
+                if exc.error_code != "agent_mcp_tool_policy_incompatible":
+                    raise
+                incompatibility_reasons.append("mcp_tool_policy")
+        publication["runtime_protocol_compatibility"] = runtime_compatibility
+        publication["execution_compatibility"] = (
+            "historical_read_only" if incompatibility_reasons else "current"
+        )
+        publication["incompatibility_reasons"] = incompatibility_reasons
+        return publication
+
+    def _verified_publication_integrity(
+        self,
+        publication: dict[str, Any],
+        *,
+        require_current_tool_policy: bool = True,
+    ) -> dict[str, Any]:
         schema_version = int(publication.get("schema_version") or 0)
         if schema_version != 3:
             raise NonRetryableExecutionError(
@@ -614,10 +646,12 @@ class AgentConfigService:
                     safe_message="Agent MCP 工具发布事实完整性校验失败",
                     error_code="agent_mcp_tool_envelope_invalid",
                 )
-            self.repository.verify_mcp_tools(
+            self.repository.verify_mcp_tool_facts(
                 agent_publication_id=str(publication["id"]),
                 envelopes=envelope,
             )
+            if require_current_tool_policy:
+                self.repository.verify_mcp_tool_policy(envelopes=envelope)
         return publication
 
     @staticmethod
@@ -625,7 +659,16 @@ class AgentConfigService:
         protocols = (publication.get("snapshot") or {}).get("supported_runtime_protocol_versions")
         if protocols == list(SUPPORTED_RUNTIME_PROTOCOL_VERSIONS):
             return "current"
-        if protocols == ["1.3"]:
+        if (
+            isinstance(protocols, list)
+            and protocols
+            and all(
+                isinstance(value, str)
+                and RUNTIME_PROTOCOL_VERSION_PATTERN.fullmatch(value) is not None
+                for value in protocols
+            )
+            and len(protocols) == len(set(protocols))
+        ):
             return "historical_read_only"
         raise NonRetryableExecutionError(
             "Agent publication Runtime protocol support is invalid",
@@ -640,10 +683,7 @@ class AgentConfigService:
         definition = self.repository.get_definition(agent_code)
         values = []
         for value in self.repository.list_publications(str(definition["id"])):
-            publication = self._verified_publication_integrity(value)
-            publication["runtime_protocol_compatibility"] = self._runtime_protocol_compatibility(
-                publication
-            )
+            publication = self._management_publication(value)
             values.append(publication)
         for publication in values:
             publication["active_applications"] = (

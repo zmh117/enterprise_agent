@@ -716,7 +716,7 @@ function summarizeRunAudits(audits: AgentRunAudit[]) {
 
 function ToolContractPanel({ value }: { value: ToolContractEvidence }) {
   return (
-    <Card className="mt-4 shadow-none">
+    <Card className="mt-4 shadow-none" data-testid="tool-contract-panel">
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           工具契约对账
@@ -743,10 +743,9 @@ function ToolContractPanel({ value }: { value: ToolContractEvidence }) {
             value={value.summary.prompt_contract_hash}
           />
         </dl>
-        <section className="rounded-lg border p-3">
-          <h3 className="text-sm font-medium">Job Frozen Snapshot</h3>
+        <AuditDisclosure title="Job Frozen Snapshot">
           {value.snapshot ? (
-            <div className="mt-2 space-y-2 text-xs">
+            <div className="space-y-2 text-xs">
               <LongCopyMetric
                 label={`Snapshot v${value.snapshot.schema_version}`}
                 value={value.snapshot.snapshot_hash}
@@ -761,67 +760,66 @@ function ToolContractPanel({ value }: { value: ToolContractEvidence }) {
               />
             </div>
           ) : (
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               此 Job 没有 MCP Tool Snapshot。
             </p>
           )}
-        </section>
-        {value.observations.map((observation) => (
-          <article
-            key={`${observation.invocation_id}:${observation.sequence}`}
-            className="space-y-4 rounded-lg border p-3"
-          >
-            <header className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="font-mono text-xs font-medium break-all">
-                  {observation.invocation_id}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatDate(observation.created_at)} · event sequence{" "}
-                  {observation.sequence}
-                </p>
-              </div>
-              <ToolContractStatusBadge status={observation.status} />
-            </header>
-            <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
-              <LongCopyMetric
-                label="Observation Hash"
-                value={observation.observation_hash}
-              />
-              <LongCopyMetric
-                label="Snapshot Hash"
-                value={observation.snapshot_hash}
-              />
-              <LongCopyMetric
-                label="Request Digest"
-                value={observation.request_digest}
-              />
-            </dl>
-            <section>
-              <h4 className="text-sm font-medium">组件构建身份</h4>
-              <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-                {observation.component_build_identities.map((identity) => (
-                  <div
-                    key={identity.component}
-                    className="rounded-md bg-muted/40 p-2 text-xs"
-                  >
-                    <p className="font-medium">{identity.component}</p>
-                    <p className="mt-1 break-all text-muted-foreground">
-                      revision {identity.source_revision} · build{" "}
-                      {identity.build_id}
-                    </p>
-                    <p className="break-all text-muted-foreground">
-                      {identity.platform}
-                    </p>
-                    {identity.image_digest ? (
-                      <LongCopyValue value={identity.image_digest} />
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </section>
-            <div className="grid gap-3 xl:grid-cols-2">
-              <ToolContractLayer title="A. Job frozen">
+        </AuditDisclosure>
+        <div className="space-y-3">
+          {value.observations.map((observation) => (
+            <article
+              key={`${observation.invocation_id}:${observation.sequence}`}
+              className="space-y-3 rounded-lg border p-3"
+            >
+              <header className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-mono text-xs font-medium break-all">
+                    {observation.invocation_id}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatDate(observation.created_at)} · event sequence{" "}
+                    {observation.sequence}
+                  </p>
+                </div>
+                <ToolContractStatusBadge status={observation.status} />
+              </header>
+              <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+                <LongCopyMetric
+                  label="Observation Hash"
+                  value={observation.observation_hash}
+                />
+                <LongCopyMetric
+                  label="Snapshot Hash"
+                  value={observation.snapshot_hash}
+                />
+                <LongCopyMetric
+                  label="Request Digest"
+                  value={observation.request_digest}
+                />
+              </dl>
+              <AuditDisclosure title="组件构建身份">
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                  {observation.component_build_identities.map((identity) => (
+                    <div
+                      key={identity.component}
+                      className="rounded-md bg-muted/40 p-2 text-xs"
+                    >
+                      <p className="font-medium">{identity.component}</p>
+                      <p className="mt-1 break-all text-muted-foreground">
+                        revision {identity.source_revision} · build{" "}
+                        {identity.build_id}
+                      </p>
+                      <p className="break-all text-muted-foreground">
+                        {identity.platform}
+                      </p>
+                      {identity.image_digest ? (
+                        <LongCopyValue value={identity.image_digest} />
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </AuditDisclosure>
+              <AuditDisclosure title="A. Job frozen">
                 <ToolNameList
                   items={observation.job_frozen.map((tool) => ({
                     key: `${tool.server_code}:${tool.tool_name}`,
@@ -830,8 +828,8 @@ function ToolContractPanel({ value }: { value: ToolContractEvidence }) {
                   }))}
                   empty="无冻结工具"
                 />
-              </ToolContractLayer>
-              <ToolContractLayer title="B. File MCP live">
+              </AuditDisclosure>
+              <AuditDisclosure title="B. File MCP live">
                 <p className="mb-2 text-xs text-muted-foreground">
                   {observation.file_mcp_live.status}
                 </p>
@@ -847,8 +845,8 @@ function ToolContractPanel({ value }: { value: ToolContractEvidence }) {
                   }))}
                   empty="未取得 File MCP live tools/list"
                 />
-              </ToolContractLayer>
-              <ToolContractLayer title="C. Runtime effective">
+              </AuditDisclosure>
+              <AuditDisclosure title="C. Runtime effective">
                 <ToolNameList
                   items={observation.runtime_effective.map((tool) => ({
                     key: tool.sdk_tool_name,
@@ -857,8 +855,8 @@ function ToolContractPanel({ value }: { value: ToolContractEvidence }) {
                   }))}
                   empty="无有效工具"
                 />
-              </ToolContractLayer>
-              <ToolContractLayer title="D. Prompt declaration">
+              </AuditDisclosure>
+              <AuditDisclosure title="D. Prompt declaration">
                 <p className="text-xs text-muted-foreground">
                   模板 {observation.prompt.template_version || "未知"}
                 </p>
@@ -874,73 +872,57 @@ function ToolContractPanel({ value }: { value: ToolContractEvidence }) {
                   }))}
                   empty="Prompt 未声明可调用工具"
                 />
-              </ToolContractLayer>
-            </div>
-            <section>
-              <h4 className="text-sm font-medium">逐工具状态矩阵</h4>
-              {observation.matrix.length ? (
-                <div className="mt-2 overflow-x-auto">
-                  <table className="w-full min-w-[560px] text-left text-xs">
-                    <thead className="border-b text-muted-foreground">
-                      <tr>
-                        <th className="pb-2 font-medium">服务</th>
-                        <th className="pb-2 font-medium">工具</th>
-                        <th className="pb-2 font-medium">状态</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {observation.matrix.map((row) => (
-                        <tr
-                          key={`${row.server_code}:${row.tool_name}:${row.status}`}
-                        >
-                          <td className="py-2 pr-3">{row.server_code}</td>
-                          <td className="py-2 pr-3 font-mono break-all">
-                            {row.tool_name}
-                          </td>
-                          <td className="py-2">
-                            <Badge
-                              variant={
-                                row.status === "MATCH" ||
-                                row.status === "RUNTIME_DERIVED"
-                                  ? "secondary"
-                                  : row.status === "EXTRA_REMOTE_IGNORED"
-                                    ? "outline"
-                                    : "destructive"
-                              }
-                            >
-                              {row.status}
-                            </Badge>
-                          </td>
+              </AuditDisclosure>
+              <AuditDisclosure title="逐工具状态矩阵">
+                {observation.matrix.length ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[560px] text-left text-xs">
+                      <thead className="border-b text-muted-foreground">
+                        <tr>
+                          <th className="pb-2 font-medium">服务</th>
+                          <th className="pb-2 font-medium">工具</th>
+                          <th className="pb-2 font-medium">状态</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  无逐工具状态。
-                </p>
-              )}
-            </section>
-          </article>
-        ))}
+                      </thead>
+                      <tbody className="divide-y">
+                        {observation.matrix.map((row) => (
+                          <tr
+                            key={`${row.server_code}:${row.tool_name}:${row.status}`}
+                          >
+                            <td className="py-2 pr-3">{row.server_code}</td>
+                            <td className="py-2 pr-3 font-mono break-all">
+                              {row.tool_name}
+                            </td>
+                            <td className="py-2">
+                              <Badge
+                                variant={
+                                  row.status === "MATCH" ||
+                                  row.status === "RUNTIME_DERIVED"
+                                    ? "secondary"
+                                    : row.status === "EXTRA_REMOTE_IGNORED"
+                                      ? "outline"
+                                      : "destructive"
+                                }
+                              >
+                                {row.status}
+                              </Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    无逐工具状态。
+                  </p>
+                )}
+              </AuditDisclosure>
+            </article>
+          ))}
+        </div>
       </CardContent>
     </Card>
-  )
-}
-
-function ToolContractLayer({
-  title,
-  children,
-}: {
-  title: string
-  children: ReactNode
-}) {
-  return (
-    <section className="min-w-0 rounded-md bg-muted/30 p-3">
-      <h4 className="mb-2 text-sm font-medium">{title}</h4>
-      {children}
-    </section>
   )
 }
 
@@ -1375,9 +1357,11 @@ function ModelCallsPanel({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 font-medium">{value}</dd>
+      <dd className="mt-1 min-w-0 font-medium [overflow-wrap:anywhere]">
+        {value}
+      </dd>
     </div>
   )
 }

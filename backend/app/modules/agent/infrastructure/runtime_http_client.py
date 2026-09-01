@@ -64,6 +64,24 @@ STANDARD_TOOL_MCP_CODE = TOOL_MCP_SERVER_CODE
 FILE_MCP_CODE = FILE_MCP_SERVER_CODE
 
 
+def _audit_chunk_event_for_persistence(event: dict[str, Any]) -> dict[str, Any]:
+    """Keep Runtime sequence evidence without copying audit chunk content."""
+    payload = event.get("payload")
+    chunk = payload if isinstance(payload, dict) else {}
+    content = str(chunk.get("content") or "")
+    return {
+        **event,
+        "payload": {
+            "encoding": str(chunk.get("encoding") or "")[:32],
+            "chunk_index": int(chunk.get("chunk_index") or 0),
+            "chunk_count": int(chunk.get("chunk_count") or 0),
+            "sha256": str(chunk.get("sha256") or "")[:64],
+            "content_status": "OMITTED",
+            "encoded_character_count": len(content),
+        },
+    }
+
+
 def _manifest_canonical_item(item: Mapping[str, Any]) -> dict[str, Any]:
     try:
         allowed_actions = [str(value) for value in item["allowed_actions"]]
@@ -712,8 +730,13 @@ class AgentRuntimeHttpClient:
                     "Runtime continued execution after Tool contract drift",
                     tool_events,
                 )
-            if self.event_sink is not None and event_type != "audit_chunk":
-                self.event_sink(run_request.job_id, event)
+            if self.event_sink is not None:
+                persisted_event = (
+                    _audit_chunk_event_for_persistence(event)
+                    if event_type == "audit_chunk"
+                    else event
+                )
+                self.event_sink(run_request.job_id, persisted_event)
             if event["event_type"] == "tool_event":
                 tool_events.append(
                     {
