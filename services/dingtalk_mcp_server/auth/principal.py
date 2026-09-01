@@ -167,8 +167,10 @@ class DingTalkPrincipalResolver:
                 "dingtalk_identity_missing" if not identities else "dingtalk_identity_ambiguous"
             )
         identity = identities[0]
-        if not str(identity.get("external_subject_id") or "") or not str(
-            identity.get("union_id") or ""
+        target_external_subject_id = str(identity.get("external_subject_id") or "")
+        target_union_id = str(identity.get("union_id") or "")
+        if not target_external_subject_id or (
+            contract.requires_target_union_id and not target_union_id
         ):
             raise self._denied("dingtalk_identity_incomplete")
         connector_metadata = self._json_object(connector.get("metadata"))
@@ -208,10 +210,10 @@ class DingTalkPrincipalResolver:
             source_connector_id=str(connector["id"]),
             dingtalk_enterprise_id=str(connector["dingtalk_enterprise_id"]),
             external_identity_id=str(identity["id"]),
-            target_external_subject_id=str(identity["external_subject_id"]),
-            target_union_id=str(identity["union_id"]),
+            target_external_subject_id=target_external_subject_id,
+            target_union_id=target_union_id,
             primary_calendar_id="primary",
-            aitable_operator_id=str(identity["union_id"]),
+            aitable_operator_id=target_union_id,
             source_conversation_type=conversation_type,
             source_conversation_id=source_conversation_id,
             source_open_conversation_id=source_open_conversation_id,
@@ -256,7 +258,9 @@ class DingTalkPrincipalResolver:
             principal_jti=principal.principal_jti,
             external_identity_id=principal.external_identity_id,
             provider="dingtalk",
-            provider_user_id=principal.target_union_id,
+            provider_user_id=(
+                principal.target_union_id or principal.target_external_subject_id
+            ),
         )
 
     @staticmethod

@@ -267,6 +267,15 @@ class DingTalkToolContract:
         # Fixed official reference Tools read bundled content only.
         return self.effect == "read" and self.target_policy != "static_official_reference"
 
+    @property
+    def requires_target_union_id(self) -> bool:
+        # Enterprise directory reads are authorized with the current Connector's
+        # application credentials and DingTalk visible scope. The actor still
+        # needs one enabled enterprise-bound external identity, but that identity's
+        # unionId is not a Provider input for these calls. Unknown/future policies
+        # remain fail-closed by requiring unionId.
+        return self.target_policy != "enterprise_directory_visible_scope"
+
 
 def _object(
     properties: dict[str, Any],

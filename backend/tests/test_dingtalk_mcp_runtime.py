@@ -1655,8 +1655,20 @@ def test_todo_subject_is_business_input_not_a_principal_override() -> None:
     )
 
 
-def test_principal_resolver_uses_invoked_contract_and_server_owned_targets() -> None:
-    contract = DINGTALK_TOOL_CONTRACTS["dingtalk_send_work_notification"]
+@pytest.mark.parametrize(
+    ("tool_identifier", "identity_union_id", "expected_error_code"),
+    (
+        ("dingtalk_send_work_notification", "union-1", ""),
+        ("dingtalk_get_department", "", ""),
+        ("dingtalk_list_todos", "", "dingtalk_identity_incomplete"),
+    ),
+)
+def test_principal_resolver_uses_identity_required_by_target_policy(
+    tool_identifier: str,
+    identity_union_id: str,
+    expected_error_code: str,
+) -> None:
+    contract = DINGTALK_TOOL_CONTRACTS[tool_identifier]
     definition = MCP_TOOL_MANIFEST[contract.identifier]
 
     class _PrincipalDatabase:
@@ -1708,7 +1720,7 @@ def test_principal_resolver_uses_invoked_contract_and_server_owned_targets() -> 
                 {
                     "id": "identity-1",
                     "external_subject_id": "staff-1",
-                    "union_id": "union-1",
+                    "union_id": identity_union_id,
                 }
             ]
 
@@ -1758,27 +1770,38 @@ def test_principal_resolver_uses_invoked_contract_and_server_owned_targets() -> 
     )
     resolver.authenticate("principal-jwt", contract)
     assert verifier.scope == contract.required_scope
-    principal = resolver.resolve(
-        {
-            "job_id": "job-1",
-            "sub": "user-1",
-            "session_id": "session-1",
-            "agent_publication_id": "agent-publication-1",
-            "application_publication_id": "application-publication-1",
-            "authorization_hash": "authorization-hash",
-            "jti": "jti-1",
-        },
-        contract,
-    )
+    claims = {
+        "job_id": "job-1",
+        "sub": "user-1",
+        "session_id": "session-1",
+        "agent_publication_id": "agent-publication-1",
+        "application_publication_id": "application-publication-1",
+        "authorization_hash": "authorization-hash",
+        "jti": "jti-1",
+    }
+    if expected_error_code:
+        with pytest.raises(NonRetryableExecutionError) as exc_info:
+            resolver.resolve(claims, contract)
+        assert exc_info.value.error_code == expected_error_code
+        return
+
+    principal = resolver.resolve(claims, contract)
     assert principal.target_external_subject_id == "staff-1"
-    assert principal.target_union_id == "union-1"
+    assert principal.target_union_id == identity_union_id
     assert principal.primary_calendar_id == "primary"
-    assert principal.aitable_operator_id == "union-1"
+    assert principal.aitable_operator_id == identity_union_id
     assert principal.source_open_conversation_id == "open-1"
     assert principal.source_robot_code == "robot-1"
     assert principal.enterprise_robot_code == "enterprise-robot-1"
     assert principal.work_notification_agent_id == 123456
     assert authorization.values[-1]["tool_identifier"] == contract.identifier
+    audit_context = resolver.audit_context(
+        claims,
+        contract,
+        invocation_id="job-1.attempt-0",
+        correlation_id="correlation-1",
+    )
+    assert audit_context.provider_user_id == (identity_union_id or "staff-1")
 
 
 def test_intent_is_idempotent_and_only_original_actor_can_approve() -> None:
