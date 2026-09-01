@@ -535,7 +535,7 @@ class CreateAgentJobService:
         agent_revision = 0
         agent_config_hash = ""
         agent_runtime_kind = "python-v1"
-        agent_runtime_protocol_version = "1.4"
+        agent_runtime_protocol_version = "1.5"
         agent_snapshot: dict[str, Any] = {}
         model_runtime_provenance: dict[str, Any] = {
             "legacy": True,
@@ -592,12 +592,12 @@ class CreateAgentJobService:
                     safe_message="固定的 Agent Runtime 配置无效",
                     error_code="agent_runtime_kind_unsupported",
                 )
-            agent_runtime_protocol_version = "1.4"
+            agent_runtime_protocol_version = "1.5"
             agent_snapshot = dict(publication.get("snapshot") or {})
             supported_protocols = tuple(
                 str(item) for item in agent_snapshot.get("supported_runtime_protocol_versions", [])
             )
-            if supported_protocols != ("1.4",):
+            if supported_protocols != ("1.5",):
                 raise NonRetryableExecutionError(
                     "Pinned Agent publication does not support the required Runtime protocol",
                     safe_message="固定的 Agent 发布版本不支持文件策略所需 Runtime 协议",

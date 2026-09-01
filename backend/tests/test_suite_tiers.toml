@@ -29,6 +29,7 @@ unit = [
 contract = [
   "test_admin_api_contracts.py",
   "test_admin_web_proxy.py",
+  "test_agent_context_audit_repository.py",
   "test_agent_job_debug_authorization.py",
   "test_agent_job_debug_queries.py",
   "test_agent_profile_creation.py",
@@ -116,6 +117,7 @@ contract = [
   "test_python_file_transfer.py",
   "test_python_file_transfer_http.py",
   "test_python_job_sandbox.py",
+  "test_python_runtime_run_audit.py",
   "test_rabbitmq_consumer_poison_boundary.py",
   "test_real_workshop_partition_examples.py",
   "test_redis_cluster_oracle_client.py",

@@ -340,7 +340,7 @@ def test_file_service_health_readiness_and_transport_fail_closed_without_secrets
         assert health == {
             "status": "ok",
             "server_code": "file-service",
-            "runtime_protocol_version": "1.4",
+            "runtime_protocol_version": "1.5",
             "build_identity": {
                 "component": "file-service",
                 "source_revision": "test-revision",
@@ -429,7 +429,7 @@ def test_file_service_readiness_fails_closed_when_document_processing_is_configu
 
     assert readiness.status_code == 503
     assert readiness.json()["status"] == "degraded"
-    assert readiness.json()["runtime_protocol_version"] == "1.4"
+    assert readiness.json()["runtime_protocol_version"] == "1.5"
     assert readiness.json()["build_identity"]["component"] == "file-service"
     assert "master" not in readiness.text.lower()
 

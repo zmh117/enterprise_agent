@@ -19,7 +19,7 @@ from app.shared.exceptions import NotFound, NonRetryableExecutionError
 DEFAULT_AGENT_CODE = "default-diagnostic-agent"
 SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1"})
 WRITABLE_RUNTIME_KIND = "python-v1"
-SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = ("1.4",)
+SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = ("1.5",)
 AGENT_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 PROJECT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FORBIDDEN_CONFIG_KEYS = {

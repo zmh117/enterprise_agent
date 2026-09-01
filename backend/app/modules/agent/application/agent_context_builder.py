@@ -103,9 +103,9 @@ class AgentContextBuilder:
                     error_code="file_manifest_runtime_unavailable",
                 )
             file_manifest = self.file_manifest_service.runtime_manifest(job.id)
-        if job.agent_runtime_protocol_version != "1.4":
+        if job.agent_runtime_protocol_version not in {"1.4", "1.5"}:
             raise NonRetryableExecutionError(
-                "Only Runtime protocol 1.4 is supported",
+                "Only Runtime protocols 1.4 and 1.5 are supported",
                 safe_message="当前 Job Runtime 协议版本不受支持",
                 error_code="runtime_protocol_unsupported",
             )
@@ -199,8 +199,10 @@ class AgentContextBuilder:
             str(item)
             for item in publication_snapshot.get("supported_runtime_protocol_versions", [])
         )
-        if supported_protocols != ("1.4",):
-            raise RuntimeError("Agent publication does not freeze Runtime protocol 1.4 only")
+        if supported_protocols not in {("1.4",), ("1.5",)}:
+            raise RuntimeError(
+                "Agent publication must freeze exactly one supported Runtime protocol"
+            )
         if (
             int(publication["revision"]) != int(job.agent_revision or 0)
             or str(publication["config_hash"]) != job.agent_config_hash

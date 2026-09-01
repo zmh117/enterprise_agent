@@ -389,11 +389,13 @@ def build_admin_router() -> APIRouter:
             request, resource_type="agent_job", resource_code="*", action="read"
         )
         c = container(request)
-        evidence = AdminReadRepository(c.database).job_evidence(job_id)
+        repository = AdminReadRepository(c.database)
+        evidence = repository.job_evidence(job_id)
         if evidence is None or not _scope(c, principal).permits(evidence["job"]):
             from fastapi import HTTPException
 
             raise HTTPException(status_code=404, detail="未找到 Agent 任务")
+        evidence["run_audits"] = repository.job_run_audits(job_id)
         return evidence
 
     @router.get("/conversations")

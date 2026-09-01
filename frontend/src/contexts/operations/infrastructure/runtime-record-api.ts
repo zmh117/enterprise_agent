@@ -40,7 +40,7 @@ function apiTimestamp(value: string): string {
 
 export async function getRuntimeJob(jobId: string) {
   const payload = await apiRequest(
-    `/api/agent/jobs/${encodeURIComponent(jobId)}/evidence`
+    `/api/admin/jobs/${encodeURIComponent(jobId)}`
   )
   const parsed = runtimeJobDetailSchema.safeParse(payload)
   if (!parsed.success) {
@@ -76,5 +76,7 @@ export async function getConversation(sessionId: string) {
 }
 
 export async function getFileOperations() {
-  return fileOperationsSchema.parse(await apiRequest("/api/admin/file-operations"))
+  return fileOperationsSchema.parse(
+    await apiRequest("/api/admin/file-operations")
+  )
 }

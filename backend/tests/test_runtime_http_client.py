@@ -41,6 +41,7 @@ from app.shared.exceptions import (
 from app.shared.build_identity import BuildIdentity
 from app.shared.tool_contract import canonical_json_sha256
 from app.python_runtime.executor import agent_request_from_runtime_request
+from app.python_runtime.run_audit import encode_audit_chunks
 from app.python_runtime.tool_contract import build_tool_contract_observation
 from backend.tests.business_mcp_fixtures import (
     TEST_BUSINESS_SERVER_CODE,
@@ -79,7 +80,7 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.4",
+                    "protocol_version": "1.5",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
                     "build_identity": {
@@ -135,7 +136,7 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.4",
+                    "protocol_version": "1.5",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
                     "build_identity": {
@@ -194,7 +195,7 @@ def test_passive_runtime_readiness_fails_closed_without_build_identity(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.4",
+                    "protocol_version": "1.5",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
                 }
@@ -312,9 +313,11 @@ class GoldenTransport:
         *,
         terminal_status: str = "SUCCEEDED",
         failure: dict[str, str] | None = None,
+        run_audit: dict[str, Any] | None = None,
     ) -> None:
         self.terminal_status = terminal_status
         self.failure = failure
+        self.run_audit = run_audit
         self.request: dict[str, Any] = {}
         self.headers: dict[str, str] = {}
         self.cancel_payload: dict[str, Any] = {}
@@ -415,11 +418,27 @@ class GoldenTransport:
                 },
             },
         ]
+        audit_sha256 = ""
+        audit_chunks: list[dict[str, Any]] = []
+        if self.request["protocol_version"] == "1.5" and self.run_audit:
+            audit_sha256, audit_chunks = encode_audit_chunks(self.run_audit)
+            for payload in audit_chunks:
+                events.append(
+                    {
+                        "protocol_version": self.request["protocol_version"],
+                        "invocation_id": self.request["invocation_id"],
+                        "request_digest": self.request["request_digest"],
+                        "sequence": len(events) + 1,
+                        "event_type": "audit_chunk",
+                        "timestamp": "2026-08-09T00:00:01Z",
+                        "payload": payload,
+                    }
+                )
         terminal: dict[str, Any] = {
             "protocol_version": self.request["protocol_version"],
             "invocation_id": self.request["invocation_id"],
             "request_digest": self.request["request_digest"],
-            "last_sequence": 4,
+            "last_sequence": len(events) + 1,
             "status": self.terminal_status,
             "usage": {
                 "input_tokens": 10,
@@ -429,6 +448,9 @@ class GoldenTransport:
             },
             "runtime_provenance": provenance,
         }
+        if audit_sha256:
+            terminal["audit_sha256"] = audit_sha256
+            terminal["audit_chunk_count"] = len(audit_chunks)
         terminal["accounting"] = {
             "status": "COMPLETE",
             "duration_ms": 20,
@@ -457,7 +479,7 @@ class GoldenTransport:
                 "protocol_version": self.request["protocol_version"],
                 "invocation_id": self.request["invocation_id"],
                 "request_digest": self.request["request_digest"],
-                "sequence": 4,
+                "sequence": len(events) + 1,
                 "event_type": "terminal",
                 "timestamp": "2026-08-09T00:00:02Z",
                 "payload": terminal,
@@ -556,6 +578,39 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
     ]
     assert "access_token" not in transport.request["mcp_servers"][0]
     assert "url" not in transport.request["mcp_servers"][0]
+
+
+def test_worker_reassembles_complete_v15_run_audit_without_persisting_chunks() -> None:
+    run_audit = {
+        "system_prompt": "完整系统提示词",
+        "user_prompt": "完整用户与文件上下文",
+        "api_responses": [{"body": {"content": "模型原始响应"}}],
+        "tool_executions": [{"output": "工具结果原文"}],
+    }
+    persisted_events: list[dict[str, Any]] = []
+    client, _ = _client(
+        GoldenTransport(run_audit=run_audit),
+        events=persisted_events,
+    )
+
+    result = client.run(_request())
+
+    assert result.run_audit == run_audit
+    assert all(event["event_type"] != "audit_chunk" for event in persisted_events)
+
+
+def test_worker_attaches_complete_v15_run_audit_to_runtime_failure() -> None:
+    run_audit = {
+        "status": "FAILED",
+        "system_prompt": "失败调用完整提示词",
+        "error": {"message": "provider failure"},
+    }
+    client, _ = _client(GoldenTransport(terminal_status="FAILED", run_audit=run_audit))
+
+    with pytest.raises(RetryableExecutionError) as raised:
+        client.run(_request())
+
+    assert getattr(raised.value, "run_audit") == run_audit
 
 
 def test_worker_passes_manifest_v5_without_projection() -> None:
@@ -1129,7 +1184,7 @@ def test_worker_cancels_same_invocation_when_terminal_reconnect_also_fails(
     assert raised.value.error_code == "runtime_transport_error"
     assert transport.calls == 2
     assert transport.cancel_payload == {
-        "protocol_version": "1.4",
+        "protocol_version": "1.5",
         "invocation_id": "job-1.attempt-0",
         "request_digest": transport.cancel_payload["request_digest"],
         "reason": reason,

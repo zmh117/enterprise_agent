@@ -595,6 +595,10 @@ class AdminReadRepository:
             },
         }
 
+    def job_run_audits(self, job_id: str) -> list[dict[str, Any]]:
+        """Load complete invocation bodies only after the API has passed Job scope."""
+        return AgentRepository(self.database).list_run_audits(job_id)
+
     def tool_contract_evidence(self, job_id: str) -> dict[str, Any]:
         """Return only immutable, bounded Tool-contract audit facts."""
         job = self.database.execute_one(
@@ -933,7 +937,7 @@ def _tool_contract_notice(*, protocol_version: str, status: str) -> str:
         return "工具契约状态来自该 Job 的冻结快照与不可变 Runtime 事件。"
     if protocol_version == "1.3":
         return "历史 protocol 1.3 Job 未记录工具契约；NOT_OBSERVED 不代表健康。"
-    return "尚无 protocol 1.4 工具契约观测；NOT_OBSERVED 不代表健康。"
+    return "尚无当前 Runtime protocol 工具契约观测；NOT_OBSERVED 不代表健康。"
 
 
 def _frozen_tool_entries(value: Any) -> list[dict[str, str]]:
@@ -1058,7 +1062,7 @@ def _execution_summary(item: dict[str, Any]) -> dict[str, Any]:
         "failure_code": item.pop(f"{prefix}failure_code", None),
         "failure_summary": item.pop(f"{prefix}failure_summary", None),
         "retry_exhausted": bool(item.pop(f"{prefix}retry_exhausted", 0) or False),
-        "source_protocol_version": str(item.pop(f"{prefix}source_protocol_version", "") or "1.4"),
+        "source_protocol_version": str(item.pop(f"{prefix}source_protocol_version", "") or "1.5"),
     }
 
 

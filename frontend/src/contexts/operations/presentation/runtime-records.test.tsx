@@ -437,6 +437,60 @@ function modelCall(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function runAudit(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "audit-1",
+    job_id: "job-1",
+    invocation_id: "invocation-1",
+    request_digest: "a".repeat(64),
+    attempt_no: 1,
+    status: "SUCCEEDED",
+    audit_sha256: "b".repeat(64),
+    context_manifest: {
+      sources: ["system_prompt", "session", "file_workspace"],
+      estimated_characters: 4096,
+    },
+    system_prompt: "完整 System Prompt 内容",
+    user_prompt: "完整会话正文与文件内容",
+    tool_definitions: [{ name: "mcp__file__read", input_schema: {} }],
+    permission_snapshot: { allowed_tools: ["mcp__file__read"] },
+    init_snapshot: { tools: ["mcp__file__read"] },
+    sdk_messages: [{ type: "assistant", content: "模型原始响应全文" }],
+    api_requests: [{ body: { system: "完整 System Prompt 内容" } }],
+    api_responses: [{ body: { content: "模型原始响应全文" } }],
+    tool_executions: [
+      {
+        tool_name: "mcp__file__read",
+        input: { path: "example.md" },
+        output: "工具结果原文",
+      },
+    ],
+    model_requests: [{ sequence: 1, context_tokens: 144 }],
+    usage: { input_tokens: 120, output_tokens: 32 },
+    summary: {
+      model_request_count: 1,
+      max_request_context_tokens: 144,
+      cumulative_input_tokens: 120,
+      cumulative_output_tokens: 32,
+      cache_creation_input_tokens: 8,
+      cache_read_input_tokens: 16,
+      total_cost_usd: 0.012345,
+      registered_tool_count: 9,
+      max_loaded_tool_count: 4,
+      auto_approved_tool_count: 0,
+      tool_call_count: 1,
+      distinct_tool_count: 1,
+    },
+    raw_api_capture_status: "captured",
+    provider_thinking_disclosure: "仅展示上游 SDK/API 实际返回的可观测内容。",
+    error: {},
+    started_at: "2026-07-24T10:00:00+00:00",
+    finished_at: "2026-07-24T10:00:01+00:00",
+    created_at: "2026-07-24T10:00:01+00:00",
+    ...overrides,
+  }
+}
+
 function renderRoute(
   path: string,
   routePattern: string,
@@ -608,6 +662,7 @@ describe("runtime provenance records", () => {
           has_more: false,
           next_cursor: null,
         },
+        run_audits: [runAudit()],
         file_workspace: {
           enabled: true,
           manifest_schema_version: 5,
@@ -665,6 +720,22 @@ describe("runtime provenance records", () => {
     expect(screen.getByText("本 Job 输出提交")).toBeInTheDocument()
     expect(screen.getByText(/· 1 个 · COMMITTED/)).toBeInTheDocument()
     expect(screen.getByText(/不回写输入/)).toBeInTheDocument()
+    expect(screen.getByText("上下文与原始运行审计")).toBeInTheDocument()
+    expect(screen.getByText("峰值请求上下文")).toBeInTheDocument()
+    expect(screen.getByText("144 tokens")).toBeInTheDocument()
+    const contextDisclosure = screen
+      .getByText("完整上下文与 Prompt")
+      .closest("details")
+    expect(contextDisclosure).not.toHaveAttribute("open")
+    fireEvent.click(screen.getByText("完整上下文与 Prompt"))
+    expect(contextDisclosure).toHaveAttribute("open")
+    expect(screen.getByText("完整 System Prompt 内容")).toHaveClass(
+      "max-h-[32rem]",
+      "overflow-auto"
+    )
+    expect(screen.getAllByText("模型请求与原始响应")).toHaveLength(1)
+    expect(screen.getAllByText("工具定义、权限与执行原文")).toHaveLength(1)
+    expect(screen.getAllByText("Token、成本与审计元数据")).toHaveLength(1)
   })
 
   it("shows immutable per-invocation Tool contract layers and drift history", async () => {
@@ -716,6 +787,61 @@ describe("runtime provenance records", () => {
       screen.getAllByRole("button", { name: /复制/ }).length
     ).toBeGreaterThan(0)
     expect(screen.queryByText(/raw-provider-secret/)).not.toBeInTheDocument()
+  })
+
+  it("aggregates multiple runtime attempts while keeping every body group closed", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job(),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [],
+        execution_summary: executionSummary(),
+        model_calls: {
+          items: [],
+          limit: 50,
+          has_more: false,
+          next_cursor: null,
+        },
+        run_audits: [
+          runAudit(),
+          runAudit({
+            id: "audit-2",
+            invocation_id: "invocation-2",
+            attempt_no: 2,
+            status: "FAILED",
+            summary: {
+              model_request_count: 2,
+              max_request_context_tokens: 200,
+              cumulative_input_tokens: 80,
+              cumulative_output_tokens: 10,
+              cache_creation_input_tokens: 2,
+              cache_read_input_tokens: 4,
+              total_cost_usd: 0.01,
+              registered_tool_count: 12,
+              max_loaded_tool_count: 6,
+              auto_approved_tool_count: 0,
+              tool_call_count: 2,
+              distinct_tool_count: 2,
+            },
+          }),
+        ],
+        deliveries: { events: [], attempts: [], chunks: [] },
+        webhook_events: [],
+      })
+    )
+
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+
+    expect(await screen.findByText("200 tokens")).toBeInTheDocument()
+    expect(screen.getAllByText("完整上下文与 Prompt")).toHaveLength(2)
+    const disclosures = document.querySelectorAll("details")
+    expect(disclosures).toHaveLength(8)
+    expect(Array.from(disclosures).every((item) => !item.open)).toBe(true)
   })
 
   it("states that historical NOT_OBSERVED is not a health result", async () => {
@@ -780,6 +906,9 @@ describe("runtime provenance records", () => {
     expect(
       screen.getAllByText("NOT_OBSERVED（不等于健康）").length
     ).toBeGreaterThan(0)
+    expect(
+      screen.getByText(/此历史 Job 没有上下文审计记录/)
+    ).toBeInTheDocument()
   })
 
   it("renders document source formats in job evidence instead of failing closed to fixture copy", async () => {

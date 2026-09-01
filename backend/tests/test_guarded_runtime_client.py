@@ -30,7 +30,7 @@ class RunOnlyRuntimeClient:
         return AgentRunResult(final_answer=request.job_id)
 
 
-def request(runtime_kind: str, protocol: str = "1.4") -> AgentRunRequest:
+def request(runtime_kind: str, protocol: str = "1.5") -> AgentRunRequest:
     return AgentRunRequest(
         job_id="job-1",
         user_id="user-1",

@@ -52,9 +52,11 @@ from app.shared.exceptions import (
     RetryableExecutionError,
 )
 from app.shared.tool_contract import canonical_json_sha256
+from app.python_runtime.run_audit import decode_audit_chunks
 
 MAX_EVENT_LINE_BYTES = 65_536
 MAX_STREAM_BYTES = 2_097_152
+MAX_STREAM_BYTES_V15 = 96 * 1024 * 1024
 MAX_EVENTS = 2_048
 IN_PROGRESS_RECOVERY_ATTEMPTS = 12
 IN_PROGRESS_RECOVERY_DELAY_SECONDS = 0.5
@@ -443,7 +445,7 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         )
         identity_ready = (
             version.get("runtime") == settings.runtime_kind
-            and version.get("protocol_version") == "1.4"
+            and version.get("protocol_version") == "1.5"
             and isinstance(version.get("runtime_version"), str)
             and build_identity_ready
         )
@@ -610,8 +612,10 @@ class AgentRuntimeHttpClient:
         if principal_tokens.files:
             headers["X-File-Principal-Token"] = principal_tokens.files
         events: list[dict[str, Any]] = []
+        audit_chunks: list[dict[str, Any]] = []
         tool_events: list[dict[str, Any]] = []
         total_bytes = 0
+        event_count = 0
         terminal: dict[str, Any] | None = None
         tool_contract_status: str | None = None
         expected_sequence = 1
@@ -629,16 +633,19 @@ class AgentRuntimeHttpClient:
             except StopIteration:
                 break
             except RetryableExecutionError as exc:
-                exc.diagnostics["runtime_events_observed"] = len(events)
+                exc.diagnostics["runtime_events_observed"] = event_count
                 if tool_events:
                     exc.tool_events = tool_events
                 raise
             total_bytes += len(raw_line)
-            if len(raw_line) > MAX_EVENT_LINE_BYTES or total_bytes > MAX_STREAM_BYTES:
+            stream_limit = (
+                MAX_STREAM_BYTES_V15 if request["protocol_version"] == "1.5" else MAX_STREAM_BYTES
+            )
+            if len(raw_line) > MAX_EVENT_LINE_BYTES or total_bytes > stream_limit:
                 raise self._protocol_error(
                     "Runtime event stream exceeds its byte boundary", tool_events
                 )
-            if len(events) >= MAX_EVENTS:
+            if event_count >= MAX_EVENTS:
                 raise self._protocol_error(
                     "Runtime event stream exceeds its event boundary", tool_events
                 )
@@ -658,8 +665,12 @@ class AgentRuntimeHttpClient:
                     "Runtime event identity or sequence mismatch", tool_events
                 )
             expected_sequence += 1
-            events.append(event)
+            event_count += 1
             event_type = str(event["event_type"])
+            if event_type == "audit_chunk":
+                audit_chunks.append(dict(event["payload"]))
+            else:
+                events.append(event)
             if tool_contract_status is None and event_type not in {
                 "execution_started",
                 "tool_contract_observed",
@@ -701,7 +712,7 @@ class AgentRuntimeHttpClient:
                     "Runtime continued execution after Tool contract drift",
                     tool_events,
                 )
-            if self.event_sink is not None:
+            if self.event_sink is not None and event_type != "audit_chunk":
                 self.event_sink(run_request.job_id, event)
             if event["event_type"] == "tool_event":
                 tool_events.append(
@@ -718,7 +729,7 @@ class AgentRuntimeHttpClient:
                 safe_message="Agent Runtime 未返回终态",
                 tool_events=tool_events,
                 error_code="runtime_terminal_missing",
-                diagnostics={"runtime_events_observed": len(events)},
+                diagnostics={"runtime_events_observed": event_count},
             )
         if tool_contract_status is None:
             raise self._protocol_error(
@@ -733,6 +744,21 @@ class AgentRuntimeHttpClient:
         if int(terminal["last_sequence"]) != expected_sequence - 1:
             raise self._protocol_error("Runtime terminal sequence mismatch", tool_events)
         provenance = dict(terminal["runtime_provenance"])
+        run_audit: dict[str, Any] = {}
+        audit_sha256 = str(terminal.get("audit_sha256") or "")
+        audit_chunk_count = int(terminal.get("audit_chunk_count") or 0)
+        if audit_sha256 or audit_chunk_count or audit_chunks:
+            try:
+                run_audit = decode_audit_chunks(
+                    audit_chunks,
+                    expected_sha256=audit_sha256,
+                    expected_count=audit_chunk_count,
+                )
+            except ValueError as exc:
+                raise self._protocol_error(
+                    "Runtime Agent run audit is incomplete or invalid",
+                    tool_events,
+                ) from exc
         if terminal["status"] == "SUCCEEDED":
             return AgentRunResult(
                 final_answer=str(terminal["final_answer"]),
@@ -750,6 +776,7 @@ class AgentRuntimeHttpClient:
                     }
                 ],
                 execution_accounting=dict(terminal.get("accounting") or {}),
+                run_audit=run_audit,
             )
         failure = dict(terminal.get("failure") or {})
         failure_code = str(failure.get("code") or "runtime_failure")
@@ -762,7 +789,7 @@ class AgentRuntimeHttpClient:
             exception_type = RetryableExecutionError
         else:
             exception_type = NonRetryableExecutionError
-        raise exception_type(
+        error = exception_type(
             f"Agent Runtime failed with {failure_code}",
             safe_message=str(failure.get("safe_message") or "Agent Runtime 执行失败"),
             tool_events=tool_events,
@@ -783,6 +810,8 @@ class AgentRuntimeHttpClient:
                 "execution_accounting": dict(terminal.get("accounting") or {}),
             },
         )
+        setattr(error, "run_audit", run_audit)
+        raise error
 
     def cancel(self, run_request: AgentRunRequest, reason: str) -> dict[str, Any]:
         request = self._execution_request(run_request)
@@ -899,7 +928,7 @@ class AgentRuntimeHttpClient:
                 }
             )
         protocol_version = str(context.runtime_protocol_version or "")
-        if protocol_version != "1.4":
+        if protocol_version not in {"1.4", "1.5"}:
             raise NonRetryableExecutionError(
                 "Job runtime protocol version is unsupported",
                 safe_message="当前 Job Runtime 协议版本不受支持",

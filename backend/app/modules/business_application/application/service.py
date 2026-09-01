@@ -778,7 +778,7 @@ class BusinessApplicationService:
                     "message": "Docling 文档处理必须启用连续会话",
                 }
             )
-        if agent is None or "1.4" not in agent.runtime_protocol_versions:
+        if agent is None or "1.5" not in agent.runtime_protocol_versions:
             errors.append(
                 {
                     "field": "agent_publication_id",

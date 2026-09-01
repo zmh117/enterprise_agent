@@ -1,0 +1,117 @@
+{
+  "protocol_version": "1.5",
+  "runtime_kind": "python-v1",
+  "invocation_id": "invocation-file-manifest-1",
+  "request_digest": "92e97dd78aa63bf82a01e2ff86d03f970c9feb185261f6da4061337c6f246585",
+  "job_id": "job-file-manifest-1",
+  "app_user_id": "app-user-1",
+  "project_code": "project-1",
+  "agent_publication_id": "agent-publication-1",
+  "application_publication_id": "application-publication-1",
+  "job_tool_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "control_plane_build_identity": {
+    "component": "control-plane",
+    "source_revision": "test-revision",
+    "build_id": "test-build",
+    "platform": "linux/amd64"
+  },
+  "worker_build_identity": {
+    "component": "agent-worker",
+    "source_revision": "test-revision",
+    "build_id": "test-build",
+    "platform": "linux/amd64"
+  },
+  "model_connection": {
+    "revision_id": "model-connection-revision-1",
+    "config_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "prompt": {
+    "template_version": "agent-system-prompt-v2",
+    "system_role": "只读项目诊断 Agent",
+    "safety_rules": [
+      "readonly"
+    ],
+    "business_instructions": "",
+    "tool_restrictions": [
+      "bounded"
+    ],
+    "user_question": "docx 里写了什么",
+    "conversation_summary": "none",
+    "retrieved_context": {},
+    "skills": {},
+    "mcp_unavailable_notices": []
+  },
+  "limits": {
+    "timeout_seconds": 120,
+    "max_turns": 12,
+    "max_tool_calls": 30
+  },
+  "mcp_servers": [
+    {
+      "server_code": "file-service",
+      "tools": [
+        {
+          "tool_name": "file_read_metadata",
+          "required_scope": "mcp:file-service:file_read_metadata:invoke",
+          "tool_schema_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ]
+    }
+  ],
+  "file_context": {
+    "file_manifest": {
+      "schema_version": 5,
+      "workspace_catalog_revision_id": "workspace-catalog-revision-1",
+      "manifest_hash": "1639b3d60362145ec514a391fa0396cf65de8668f056e16da7b46510cef9daf6",
+      "observed_at": "2026-08-18T07:44:33.552408+00:00",
+      "items": [
+        {
+          "file_id": "file-text-1",
+          "version_id": "file-version-text-1",
+          "display_name": "diagnostic-notes.txt",
+          "format_code": "TXT",
+          "source_kind": "CURRENT_MESSAGE",
+          "allowed_actions": [
+            "READ_METADATA",
+            "MATERIALIZE"
+          ],
+          "auto_materialize": true,
+          "conflict_candidate": false,
+          "source_received_at": "2026-08-18T07:44:20.000000+00:00",
+          "version_created_at": "2026-08-18T07:44:21.000000+00:00",
+          "materialization_size_bytes": 1024
+        },
+        {
+          "file_id": "file-document-1",
+          "version_id": "file-version-document-1",
+          "display_name": "model-overview.docx",
+          "format_code": "DOCX",
+          "source_kind": "CURRENT_MESSAGE",
+          "allowed_actions": [
+            "READ_METADATA",
+            "RETAIN",
+            "DELIVER"
+          ],
+          "auto_materialize": false,
+          "conflict_candidate": false,
+          "source_received_at": "2026-08-18T07:44:22.000000+00:00",
+          "version_created_at": "2026-08-18T07:44:23.000000+00:00",
+          "materialization_size_bytes": 2048,
+          "representation_id": "file-representation-1",
+          "representation_kind": "MARKDOWN",
+          "representation_size_bytes": 2048,
+          "representation_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "representation_format_code": "MARKDOWN",
+          "representation_created_at": "2026-08-18T07:44:30.000000+00:00"
+        }
+      ],
+      "readability_notices": [
+        {
+          "file_name": "scan-page.png",
+          "status": "UNAVAILABLE",
+          "error_code": "docling_conversion_failed"
+        }
+      ]
+    }
+  }
+}

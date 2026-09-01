@@ -28,6 +28,37 @@ class FailingClaudeClient:
         raise RetryableExecutionError("timeout", safe_message="Claude timeout")
 
 
+def _run_audit(status: str, marker: str) -> dict[str, object]:
+    return {
+        "started_at": "2026-09-01T00:00:00+00:00",
+        "finished_at": "2026-09-01T00:00:01+00:00",
+        "status": status,
+        "context_manifest": {"sources": [{"content": marker}]},
+        "system_prompt": f"system::{marker}",
+        "user_prompt": f"user::{marker}",
+        "tool_definitions": [],
+        "permission_snapshot": {},
+        "init_snapshot": {},
+        "sdk_messages": [{"content": marker}],
+        "api_requests": [],
+        "api_responses": [{"body": {"content": marker}}],
+        "tool_executions": [],
+        "model_requests": [],
+        "usage": {},
+        "summary": {},
+        "raw_api_capture_status": "unavailable",
+        "provider_thinking_disclosure": "仅保存上游实际暴露内容",
+        "error": {},
+    }
+
+
+class FailingClaudeClientWithAudit:
+    def run(self, request: object) -> object:
+        error = RetryableExecutionError("timeout", safe_message="Claude timeout")
+        error.run_audit = _run_audit("FAILED", "失败模型调用原文")  # type: ignore[attr-defined]
+        raise error
+
+
 class FailingClaudeClientWithEvents:
     def run(self, request: object) -> object:
         raise RetryableExecutionError(
@@ -94,9 +125,7 @@ class ToolEventClaudeClient:
 class AgentRuntimeAndWorkerTests(unittest.TestCase):
     def test_unverified_confirmation_claim_is_replaced(self) -> None:
         guarded, rejected = _guard_confirmation_claim(
-            final_answer=(
-                "确认卡片已创建（status=confirmation_required），当前处于等待确认状态。"
-            ),
+            final_answer=("确认卡片已创建（status=confirmation_required），当前处于等待确认状态。"),
             allowed_tools=["dingtalk_create_calendar_event"],
             tool_events=[],
         )
@@ -151,6 +180,13 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertEqual(JobStatus.SUCCEEDED, stored.status)
         self.assertEqual(0, c.agent_repository.count_rows("agent_tool_call"))
         self.assertEqual(1, c.agent_repository.count_rows("agent_artifact"))
+        run_audits = c.agent_repository.list_run_audits(job.id)
+        self.assertEqual(1, len(run_audits))
+        self.assertEqual("SUCCEEDED", run_audits[0]["status"])
+        self.assertEqual(
+            "Why is order waiting material?",
+            run_audits[0]["user_prompt"],
+        )
         steps = c.database.execute(
             "select step_type, content from agent_step where job_id = ?", (job.id,)
         )
@@ -212,6 +248,27 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
         tool_calls = c.agent_repository.list_tool_calls(job.id)
         self.assertIn("query_database", [call["tool_name"] for call in tool_calls])
+
+    def test_retryable_failure_persists_complete_invocation_audit(self) -> None:
+        c = _runtime_container()
+        job = c.create_agent_job_service.execute(
+            CreateAgentJobCommand(
+                idempotency_key="retry-audit-job",
+                external_conversation_id="conversation-1",
+                requester_id="local-user",
+                user_message="retry with complete audit",
+                project_code="default",
+            )
+        )
+        c.agent_executor.runtime_client = FailingClaudeClientWithAudit()  # type: ignore[assignment]
+
+        with self.assertRaises(RetryableExecutionError):
+            c.agent_executor.execute(job.id, fail_on_error=False)
+
+        run_audits = c.agent_repository.list_run_audits(job.id)
+        self.assertEqual(1, len(run_audits))
+        self.assertEqual("FAILED", run_audits[0]["status"])
+        self.assertEqual("system::失败模型调用原文", run_audits[0]["system_prompt"])
 
     def test_max_turns_failure_is_not_retried_and_keeps_tool_events(self) -> None:
         c = _runtime_container()
@@ -287,6 +344,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         dispatch_pending_deliveries(c)
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
         self.assertEqual(1, len(c.result_delivery_service.sent_messages))
+
 
 if __name__ == "__main__":
     unittest.main()

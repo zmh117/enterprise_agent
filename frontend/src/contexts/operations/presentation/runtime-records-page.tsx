@@ -21,6 +21,7 @@ import {
 import {
   DOCUMENT_RUNTIME_FILE_FORMATS,
   TEXT_RUNTIME_FILE_FORMATS,
+  type AgentRunAudit,
   type DeliveryAttempt,
   type DeliveryChunk,
   type DeliveryEvent,
@@ -460,6 +461,7 @@ export function RuntimeJobDetailPage() {
           ]}
         />
       </div>
+      <AgentRunAuditPanel audits={query.data.run_audits} />
       <ToolContractPanel value={query.data.tool_contract} />
       <FileWorkspacePolicyPanel value={query.data.file_workspace} />
       <ExecutionAccountingPanel summary={query.data.execution_summary} />
@@ -498,6 +500,217 @@ export function RuntimeJobDetailPage() {
         </CardContent>
       </Card>
     </PageFrame>
+  )
+}
+
+function AgentRunAuditPanel({ audits }: { audits: AgentRunAudit[] }) {
+  const summary = summarizeRunAudits(audits)
+  return (
+    <Card className="mt-4 shadow-none">
+      <CardHeader>
+        <CardTitle>上下文与原始运行审计</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          完整展示实际送入模型的 Prompt、上下文、工具定义与结果，以及 SDK
+          可观测的模型原始响应。长内容默认折叠。
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!audits.length ? (
+          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+            此历史 Job 没有上下文审计记录；不据此推断当时的
+            Prompt、工具或模型响应。
+          </p>
+        ) : (
+          <>
+            <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-5">
+              <Metric label="Runtime 调用" value={`${audits.length} 次`} />
+              <Metric
+                label="模型请求"
+                value={`${summary.modelRequestCount} 次`}
+              />
+              <Metric
+                label="峰值请求上下文"
+                value={`${formatCounter(summary.maxRequestContextTokens)} tokens`}
+              />
+              <Metric
+                label="累计输入 / 输出"
+                value={`${formatCounter(summary.cumulativeInputTokens)} / ${formatCounter(summary.cumulativeOutputTokens)}`}
+              />
+              <Metric
+                label="缓存创建 / 读取"
+                value={`${formatCounter(summary.cacheCreationInputTokens)} / ${formatCounter(summary.cacheReadInputTokens)}`}
+              />
+              <Metric
+                label="累计成本"
+                value={formatCost(String(summary.totalCostUsd))}
+              />
+              <Metric
+                label="注册工具峰值"
+                value={`${summary.registeredToolCount} 个`}
+              />
+              <Metric
+                label="加载工具峰值"
+                value={`${summary.maxLoadedToolCount} 个`}
+              />
+              <Metric
+                label="无需确认工具峰值"
+                value={`${summary.autoApprovedToolCount} 个`}
+              />
+              <Metric
+                label="实际工具调用"
+                value={`${summary.toolCallCount} 次`}
+              />
+              <Metric
+                label="单次最多不同工具"
+                value={`${summary.distinctToolCount} 个`}
+              />
+            </dl>
+            <div className="space-y-3">
+              {audits.map((audit) => (
+                <RunAuditInvocation key={audit.id} audit={audit} />
+              ))}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function RunAuditInvocation({ audit }: { audit: AgentRunAudit }) {
+  return (
+    <section className="space-y-3 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <div>
+          <p className="font-medium">
+            Runtime 调用 #{audit.attempt_no} · {audit.status}
+          </p>
+          <p className="mt-1 font-mono text-xs text-muted-foreground">
+            {audit.invocation_id}
+          </p>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {formatDate(audit.started_at)} → {formatDate(audit.finished_at)}
+        </p>
+      </div>
+      <AuditDisclosure title="完整上下文与 Prompt">
+        <AuditJson label="上下文清单" value={audit.context_manifest} />
+        <AuditText label="System Prompt" value={audit.system_prompt} />
+        <AuditText label="User Prompt / 会话正文" value={audit.user_prompt} />
+      </AuditDisclosure>
+      <AuditDisclosure title="模型请求与原始响应">
+        <AuditJson label="逐请求上下文" value={audit.model_requests} />
+        <AuditJson label="原始 API 请求体" value={audit.api_requests} />
+        <AuditJson label="原始 API 响应体" value={audit.api_responses} />
+        <AuditJson label="SDK 原始消息流" value={audit.sdk_messages} />
+      </AuditDisclosure>
+      <AuditDisclosure title="工具定义、权限与执行原文">
+        <AuditJson label="注册 / 加载工具定义" value={audit.tool_definitions} />
+        <AuditJson label="权限快照" value={audit.permission_snapshot} />
+        <AuditJson label="工具输入与结果" value={audit.tool_executions} />
+      </AuditDisclosure>
+      <AuditDisclosure title="Token、成本与审计元数据">
+        <AuditJson label="Usage 原文" value={audit.usage} />
+        <AuditJson label="调优摘要" value={audit.summary} />
+        <AuditJson label="SDK Init 快照" value={audit.init_snapshot} />
+        <AuditJson
+          label="审计身份"
+          value={{
+            request_digest: audit.request_digest,
+            audit_sha256: audit.audit_sha256,
+            raw_api_capture_status: audit.raw_api_capture_status,
+            provider_thinking_disclosure: audit.provider_thinking_disclosure,
+            error: audit.error,
+          }}
+        />
+      </AuditDisclosure>
+    </section>
+  )
+}
+
+function AuditDisclosure({
+  title,
+  children,
+}: {
+  title: string
+  children: ReactNode
+}) {
+  return (
+    <details className="group rounded-md border bg-muted/10">
+      <summary className="cursor-pointer px-3 py-2 text-sm font-medium select-none">
+        {title}
+      </summary>
+      <div className="space-y-3 border-t p-3">{children}</div>
+    </details>
+  )
+}
+
+function AuditJson({ label, value }: { label: string; value: unknown }) {
+  return <AuditText label={label} value={JSON.stringify(value, null, 2)} />
+}
+
+function AuditText({ label, value }: { label: string; value: string }) {
+  return (
+    <section className="space-y-1">
+      <h4 className="text-xs font-medium text-muted-foreground">{label}</h4>
+      <pre className="max-h-[32rem] overflow-auto rounded-md bg-muted/50 p-3 text-xs break-words whitespace-pre-wrap">
+        {value || "（空）"}
+      </pre>
+    </section>
+  )
+}
+
+function summarizeRunAudits(audits: AgentRunAudit[]) {
+  return audits.reduce(
+    (total, audit) => ({
+      modelRequestCount:
+        total.modelRequestCount + audit.summary.model_request_count,
+      maxRequestContextTokens: Math.max(
+        total.maxRequestContextTokens,
+        audit.summary.max_request_context_tokens
+      ),
+      cumulativeInputTokens:
+        total.cumulativeInputTokens + audit.summary.cumulative_input_tokens,
+      cumulativeOutputTokens:
+        total.cumulativeOutputTokens + audit.summary.cumulative_output_tokens,
+      cacheCreationInputTokens:
+        total.cacheCreationInputTokens +
+        audit.summary.cache_creation_input_tokens,
+      cacheReadInputTokens:
+        total.cacheReadInputTokens + audit.summary.cache_read_input_tokens,
+      totalCostUsd: total.totalCostUsd + audit.summary.total_cost_usd,
+      registeredToolCount: Math.max(
+        total.registeredToolCount,
+        audit.summary.registered_tool_count
+      ),
+      maxLoadedToolCount: Math.max(
+        total.maxLoadedToolCount,
+        audit.summary.max_loaded_tool_count
+      ),
+      autoApprovedToolCount: Math.max(
+        total.autoApprovedToolCount,
+        audit.summary.auto_approved_tool_count
+      ),
+      toolCallCount: total.toolCallCount + audit.summary.tool_call_count,
+      distinctToolCount: Math.max(
+        total.distinctToolCount,
+        audit.summary.distinct_tool_count
+      ),
+    }),
+    {
+      modelRequestCount: 0,
+      maxRequestContextTokens: 0,
+      cumulativeInputTokens: 0,
+      cumulativeOutputTokens: 0,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      totalCostUsd: 0,
+      registeredToolCount: 0,
+      maxLoadedToolCount: 0,
+      autoApprovedToolCount: 0,
+      toolCallCount: 0,
+      distinctToolCount: 0,
+    }
   )
 }
 

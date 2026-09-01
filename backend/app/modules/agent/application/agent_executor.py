@@ -25,6 +25,7 @@ from app.modules.job.infrastructure.execution_audit_repository import (
 )
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import PermissionDenied
+from app.shared.tool_contract import canonical_json_sha256
 
 
 class AgentExecutor:
@@ -210,6 +211,12 @@ class AgentExecutor:
                     job.id,
                     result.runtime_provenance,
                 )
+            self._persist_run_audit(
+                job=job,
+                invocation_id=attempt_invocation_id,
+                status="SUCCEEDED",
+                audit=result.run_audit,
+            )
             self._persist_tool_events(job.id, result.tool_events)
             self._record_execution_policy_usage(
                 job.id,
@@ -248,6 +255,16 @@ class AgentExecutor:
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", str(exc))
             tool_events = getattr(exc, "tool_events", [])
+            self._persist_run_audit(
+                job=job,
+                invocation_id=attempt_invocation_id,
+                status=(
+                    "CANCELLED"
+                    if getattr(exc, "error_code", "") == "runtime_cancelled"
+                    else "FAILED"
+                ),
+                audit=getattr(exc, "run_audit", {}),
+            )
             self._persist_tool_events(job.id, tool_events)
             self._record_execution_policy_usage(
                 job.id,
@@ -273,6 +290,31 @@ class AgentExecutor:
             if isinstance(runtime_provenance, dict):
                 self.repository.record_runtime_provenance(job.id, runtime_provenance)
             raise
+
+    def _persist_run_audit(
+        self,
+        *,
+        job: AgentJob,
+        invocation_id: str,
+        status: str,
+        audit: object,
+    ) -> None:
+        if not isinstance(audit, dict) or not audit:
+            return
+        identity = audit.get("runtime_identity")
+        identity = identity if isinstance(identity, dict) else {}
+        persisted_invocation_id = str(identity.get("invocation_id") or invocation_id)
+        request_digest = str(identity.get("request_digest") or "")
+        if len(request_digest) != 64:
+            request_digest = canonical_json_sha256(audit)
+        self.repository.record_run_audit(
+            job_id=job.id,
+            invocation_id=persisted_invocation_id,
+            request_digest=request_digest,
+            attempt_no=job.retry_count + 1,
+            status=status,
+            audit=audit,
+        )
 
     def _record_execution_policy_usage(
         self,
@@ -424,9 +466,8 @@ def _guard_confirmation_claim(
         and definition.effect == "mutation"
         and definition.confirmation_policy != "none"
     }
-    claims_current_confirmation = (
-        "confirmation_required" in final_answer
-        and any(phrase in final_answer for phrase in _CONFIRMATION_CLAIM_PHRASES)
+    claims_current_confirmation = "confirmation_required" in final_answer and any(
+        phrase in final_answer for phrase in _CONFIRMATION_CLAIM_PHRASES
     )
     if not confirmation_tools or not claims_current_confirmation:
         return final_answer, False

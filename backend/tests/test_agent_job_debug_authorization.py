@@ -225,7 +225,7 @@ def test_debug_create_projects_current_task_file_contract_into_job() -> None:
     )
 
     assert job.task_workspace_id
-    assert job.agent_runtime_protocol_version == "1.4"
+    assert job.agent_runtime_protocol_version == "1.5"
     assert job.business_application_route_decision["task_file_features"] == (task_file_features)
     frozen_tools = runtime.mcp_tool_snapshot_service.verify(job.id)
     assert {

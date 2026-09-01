@@ -57,7 +57,7 @@ class AgentExecutionContext:
     mcp_bindings: tuple[McpRuntimeBinding, ...] = ()
     mcp_unavailable_notices: tuple[McpUnavailableNotice, ...] = ()
     runtime_kind: str = "python-v1"
-    runtime_protocol_version: str = "1.4"
+    runtime_protocol_version: str = "1.5"
     job_tool_snapshot_hash: str = ""
     control_plane_build_identity: dict[str, str] = field(default_factory=dict)
     prompt_template_version: str = "agent-system-prompt-v4"
@@ -82,6 +82,7 @@ class AgentRunResult:
     runtime_provenance: dict[str, Any] = field(default_factory=dict)
     runtime_events: list[dict[str, Any]] = field(default_factory=list)
     execution_accounting: dict[str, Any] = field(default_factory=dict)
+    run_audit: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

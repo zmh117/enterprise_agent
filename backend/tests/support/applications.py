@@ -108,7 +108,7 @@ def activate_dingtalk_test_application(
         raise AssertionError("Test Agent publication is missing")
     snapshot = json.loads(str(publication_row["snapshot_json"]))
     snapshot["runtime_kind"] = str(publication_row["runtime_kind"])
-    snapshot["supported_runtime_protocol_versions"] = ["1.4"]
+    snapshot["supported_runtime_protocol_versions"] = ["1.5"]
     container.database.execute(
         """
         update agent_publication

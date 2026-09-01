@@ -56,6 +56,7 @@ COPY backend/app/modules /app/backend/app/modules
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY contracts/agent-runtime/v1.4 /app/contracts/agent-runtime/v1.4
+COPY contracts/agent-runtime/v1.5 /app/contracts/agent-runtime/v1.5
 COPY .claude/skills /app/.claude/skills
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
@@ -111,6 +112,7 @@ COPY backend/app/workers /app/backend/app/workers
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY contracts/agent-runtime/v1.4 /app/contracts/agent-runtime/v1.4
+COPY contracts/agent-runtime/v1.5 /app/contracts/agent-runtime/v1.5
 COPY .claude/skills /app/.claude/skills
 RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.job_dispatch_worker; import app.workers.delivery_dispatch_worker; import app.workers.webhook_dispatch_worker; import app.workers.channel_dispatch_worker; import app.workers.file_worker; import app.workers.file_processing_worker"
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -145,6 +147,7 @@ COPY backend/app/modules/platform_config/domain /app/backend/app/modules/platfor
 COPY backend/app/modules/platform_config/application/__init__.py backend/app/modules/platform_config/application/secrets.py backend/app/modules/platform_config/application/validation.py /app/backend/app/modules/platform_config/application/
 COPY backend/app/modules/platform_config/infrastructure/__init__.py backend/app/modules/platform_config/infrastructure/repository.py /app/backend/app/modules/platform_config/infrastructure/
 COPY contracts/agent-runtime/v1.4 /app/contracts/agent-runtime/v1.4
+COPY contracts/agent-runtime/v1.5 /app/contracts/agent-runtime/v1.5
 RUN groupadd --system --gid 10002 python-runtime \
     && useradd --system --uid 10002 --gid 10002 --no-create-home python-runtime \
     && python -c "import app.python_runtime; import app.python_runtime.file_transfer_http; import app.modules.agent.infrastructure.runtime_protocol; from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST; from mcp import types; from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version; from app.python_runtime.file_mcp_bridge import _mcp_list_tools_next_cursor, _mcp_tool_input_schema; assert MCP_TOOL_MANIFEST; assert claude_sdk_version() != 'unknown'; assert claude_cli_version() not in {'unknown', 'unavailable'}; assert _mcp_tool_input_schema(types.Tool(name='probe', inputSchema={})) == {}; assert _mcp_list_tools_next_cursor(types.ListToolsResult(tools=[])) == ''"

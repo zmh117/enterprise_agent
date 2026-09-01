@@ -403,7 +403,7 @@ describe("Business Application workbench", () => {
               status: "enabled",
               config_hash: "agent-hash",
               runtime_kind: "python-v1",
-              runtime_protocol_versions: ["1.4"],
+              runtime_protocol_versions: ["1.5"],
               direction: "",
               component_type: "agent_publication",
             },
@@ -637,7 +637,9 @@ describe("Business Application workbench", () => {
       "选择 MCP Tool search_merge_requests"
     )
     expect(screen.getByText("只读查询合并请求")).toBeInTheDocument()
-    expect(screen.getByText("为当前钉钉用户准备一个本人待办。")).toBeInTheDocument()
+    expect(
+      screen.getByText("为当前钉钉用户准备一个本人待办。")
+    ).toBeInTheDocument()
     expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(mcpTool)
     expect(mcpTool).toBeChecked()

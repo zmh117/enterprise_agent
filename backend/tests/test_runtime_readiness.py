@@ -17,7 +17,7 @@ def test_health_is_liveness_only_and_never_checks_dependencies() -> None:
     )
     assert main._build_health(settings) == {
         "status": "ok",
-        "protocol_version": "1.4",
+        "protocol_version": "1.5",
         "build_identity": {
             "component": "control-plane",
             "source_revision": "test-revision",
@@ -46,7 +46,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
             database=runtime.database,
         )
         assert ready["status"] == "ready"
-        assert ready["protocol_version"] == "1.4"
+        assert ready["protocol_version"] == "1.5"
         assert ready["build_identity"] == {
             "component": "control-plane",
             "source_revision": "test-revision",
@@ -88,7 +88,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["runtime_selection"] == {
             "default_runtime": "python-v1",
             "supported_runtimes": ["python-v1"],
-            "protocol_version": "1.4",
+            "protocol_version": "1.5",
         }
         assert ready["runtime_config"] == {
             "source": runtime.settings.runtime_config_source,

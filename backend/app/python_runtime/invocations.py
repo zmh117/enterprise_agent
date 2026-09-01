@@ -15,6 +15,7 @@ from app.shared.database import Database
 
 from .claude_client import claude_cli_version, claude_sdk_version
 from .executor import PythonExecutionOutcome, agent_request_from_runtime_request
+from .run_audit import encode_audit_chunks
 from .tool_contract import build_tool_contract_observation
 
 
@@ -537,6 +538,17 @@ class PythonInvocationRegistry:
             self._persist_and_emit(invocation, event_type, dict(payload))
         for tool_event in outcome.tool_events:
             self._persist_and_emit(invocation, "tool_event", dict(tool_event))
+        audit_sha256 = ""
+        audit_chunk_count = 0
+        if request["protocol_version"] == "1.5" and outcome.run_audit:
+            audit_sha256, audit_chunks = encode_audit_chunks(outcome.run_audit)
+            if len(invocation.events()) + len(audit_chunks) + 1 > 2048:
+                raise InvocationConflictError(
+                    "Complete Agent run audit exceeds the Runtime event boundary"
+                )
+            for audit_chunk in audit_chunks:
+                self._persist_and_emit(invocation, "audit_chunk", audit_chunk)
+            audit_chunk_count = len(audit_chunks)
         last_sequence = len(invocation.events()) + 1
         terminal = {
             "protocol_version": request["protocol_version"],
@@ -548,6 +560,9 @@ class PythonInvocationRegistry:
             "accounting": outcome.accounting or _unavailable_accounting(),
             "runtime_provenance": outcome.runtime_provenance,
         }
+        if audit_sha256:
+            terminal["audit_sha256"] = audit_sha256
+            terminal["audit_chunk_count"] = audit_chunk_count
         if outcome.status == "SUCCEEDED":
             terminal["final_answer"] = outcome.final_answer
         else:

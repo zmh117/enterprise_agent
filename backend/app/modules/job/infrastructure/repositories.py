@@ -567,7 +567,7 @@ class AgentRepository:
         execution_policy: dict[str, Any] | None = None,
         model_runtime_provenance: dict[str, Any] | None = None,
         agent_runtime_kind: str = "python-v1",
-        agent_runtime_protocol_version: str = "1.4",
+        agent_runtime_protocol_version: str = "1.5",
         task_workspace_id: str = "",
         quoted_external_message_id: str = "",
     ) -> AgentJob:
@@ -896,6 +896,143 @@ class AgentRepository:
             }
             for row in rows
         ]
+
+    def record_run_audit(
+        self,
+        *,
+        job_id: str,
+        invocation_id: str,
+        request_digest: str,
+        attempt_no: int,
+        status: str,
+        audit: dict[str, Any],
+    ) -> str:
+        """Persist one complete Runtime invocation snapshot without content filtering."""
+        if status not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+            raise NonRetryableExecutionError(
+                "Agent run audit status is invalid",
+                safe_message="Agent 运行审计状态无效",
+                error_code="agent_run_audit_invalid",
+            )
+        normalized_attempt = max(1, min(int(attempt_no), 32))
+        audit_sha256 = canonical_json_sha256(audit)
+        timestamp = now_iso()
+        audit_id = new_id("run_audit")
+
+        def encoded(field: str, fallback: object) -> str:
+            value = audit.get(field, fallback)
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+
+        self.database.execute(
+            """
+            insert into agent_run_audit
+              (id, job_id, invocation_id, request_digest, attempt_no, status,
+               audit_sha256, context_manifest_json, system_prompt, user_prompt,
+               tool_definitions_json, permission_snapshot_json, init_snapshot_json,
+               sdk_messages_json, api_requests_json, api_responses_json,
+               tool_executions_json, model_requests_json, usage_json, summary_json,
+               raw_api_capture_status, provider_thinking_disclosure, error_json,
+               started_at, finished_at, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?)
+            on conflict(job_id, invocation_id) do nothing
+            """,
+            (
+                audit_id,
+                job_id,
+                invocation_id,
+                request_digest,
+                normalized_attempt,
+                status,
+                audit_sha256,
+                encoded("context_manifest", {}),
+                str(audit.get("system_prompt") or ""),
+                str(audit.get("user_prompt") or ""),
+                encoded("tool_definitions", []),
+                encoded("permission_snapshot", {}),
+                encoded("init_snapshot", {}),
+                encoded("sdk_messages", []),
+                encoded("api_requests", []),
+                encoded("api_responses", []),
+                encoded("tool_executions", []),
+                encoded("model_requests", []),
+                encoded("usage", {}),
+                encoded("summary", {}),
+                str(audit.get("raw_api_capture_status") or "unavailable"),
+                str(audit.get("provider_thinking_disclosure") or ""),
+                encoded("error", {}),
+                str(audit.get("started_at") or timestamp),
+                str(audit.get("finished_at") or timestamp),
+                timestamp,
+            ),
+        )
+        persisted = self.database.execute_one(
+            """
+            select id, request_digest, audit_sha256, attempt_no, status
+              from agent_run_audit
+             where job_id = ? and invocation_id = ?
+            """,
+            (job_id, invocation_id),
+        )
+        if persisted is None:
+            raise NonRetryableExecutionError(
+                "Agent run audit could not be persisted",
+                safe_message="Agent 运行审计保存失败",
+                error_code="agent_run_audit_persistence_failed",
+            )
+        if (
+            str(persisted.get("request_digest") or "") != request_digest
+            or str(persisted.get("audit_sha256") or "") != audit_sha256
+            or int(persisted.get("attempt_no") or 0) != normalized_attempt
+            or str(persisted.get("status") or "") != status
+        ):
+            raise NonRetryableExecutionError(
+                "Agent run audit replay conflicts with the persisted invocation",
+                safe_message="Agent 运行审计重放冲突",
+                error_code="agent_run_audit_conflict",
+            )
+        return str(persisted["id"])
+
+    def list_run_audits(self, job_id: str) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select * from agent_run_audit
+             where job_id = ?
+             order by attempt_no, invocation_id
+            """,
+            (job_id,),
+        )
+        json_fields: dict[str, object] = {
+            "context_manifest_json": {},
+            "tool_definitions_json": [],
+            "permission_snapshot_json": {},
+            "init_snapshot_json": {},
+            "sdk_messages_json": [],
+            "api_requests_json": [],
+            "api_responses_json": [],
+            "tool_executions_json": [],
+            "model_requests_json": [],
+            "usage_json": {},
+            "summary_json": {},
+            "error_json": {},
+        }
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            for field, fallback in json_fields.items():
+                value = self._json_from_text(str(item.pop(field, "") or ""))
+                item[field.removesuffix("_json")] = (
+                    value if isinstance(value, type(fallback)) else fallback
+                )
+            item["attempt_no"] = int(item.get("attempt_no") or 0)
+            result.append(item)
+        return result
 
     def record_execution_policy_usage(
         self,
@@ -3302,7 +3439,7 @@ class AgentRepository:
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             "agent_runtime_kind": row.get("agent_runtime_kind") or "python-v1",
-            "agent_runtime_protocol_version": (row.get("agent_runtime_protocol_version") or "1.4"),
+            "agent_runtime_protocol_version": (row.get("agent_runtime_protocol_version") or "1.5"),
             "tool_call_count": int(row.get("execution_policy_tool_call_count") or 0),
             "execution_policy_exhausted": bool(row.get("execution_policy_exhausted") or False),
             "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
@@ -3855,7 +3992,7 @@ class AgentRepository:
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             agent_runtime_kind=row.get("agent_runtime_kind") or "python-v1",
-            agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.4"),
+            agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.5"),
             task_workspace_id=str(row.get("task_workspace_id") or ""),
             control_plane_build_identity=self._json_from_text(
                 row.get("control_plane_build_identity_json") or "{}"

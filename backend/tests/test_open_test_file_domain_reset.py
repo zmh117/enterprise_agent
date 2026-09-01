@@ -311,7 +311,7 @@ def test_reset_deletes_only_publications_outside_current_runtime_contract(
         database,
         publication_id="current-protocol-publication",
         revision=2,
-        protocols=["1.4"],
+        protocols=["1.5"],
     )
     database.execute(
         """

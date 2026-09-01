@@ -438,7 +438,9 @@ function PolicyEditor({
     (item) => item.id === form.agent_publication_id
   )
   const fileContextRuntimeCompatible =
-    selectedAgent?.runtime_protocol_versions.includes("1.4") === true
+    selectedAgent?.runtime_protocol_versions.some((version) =>
+      ["1.4", "1.5"].includes(version)
+    ) === true
   const selectedDocumentProfile = catalog?.document_processing_profiles.find(
     (item) => item.code === form.document_processing_profile_code
   )

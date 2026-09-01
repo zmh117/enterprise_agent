@@ -198,7 +198,7 @@ class ComponentReferenceResponse(BaseModel):
     status: str
     config_hash: str
     runtime_kind: Literal["python-v1"] | None = None
-    runtime_protocol_versions: list[Literal["1.4"]] | None = None
+    runtime_protocol_versions: list[Literal["1.5"]] | None = None
     direction: str = ""
     component_type: str = ""
 

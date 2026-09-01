@@ -192,7 +192,7 @@ class _AgentConfigService:
             "snapshot": {
                 "skills": [],
                 "model_policy": {},
-                "supported_runtime_protocol_versions": ["1.4"],
+                "supported_runtime_protocol_versions": ["1.5"],
             },
         }
 
@@ -462,7 +462,7 @@ def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_too
         agent_revision=1,
         agent_config_hash="agent-config-hash",
         agent_runtime_kind=runtime_kind,
-        agent_runtime_protocol_version="1.4",
+        agent_runtime_protocol_version="1.5",
         business_application_publication_id="application-publication-1",
         control_plane_build_identity=_CONTROL_PLANE_BUILD_IDENTITY,
     )
@@ -502,7 +502,7 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
         agent_revision=1,
         agent_config_hash="agent-config-hash",
         agent_runtime_kind="python-v1",
-        agent_runtime_protocol_version="1.4",
+        agent_runtime_protocol_version="1.5",
         business_application_publication_id="application-publication-1",
         task_workspace_id="task-workspace-1",
         control_plane_build_identity=_CONTROL_PLANE_BUILD_IDENTITY,
@@ -566,7 +566,7 @@ def test_text_v2_context_exposes_log_read_only_and_markdown_output_rules() -> No
         agent_revision=1,
         agent_config_hash="agent-config-hash",
         agent_runtime_kind="python-v1",
-        agent_runtime_protocol_version="1.4",
+        agent_runtime_protocol_version="1.5",
         business_application_publication_id="application-publication-v2",
         business_application_route_decision={},
         task_workspace_id="task-workspace-v2",
@@ -600,7 +600,7 @@ def test_context_filters_stale_file_tools_when_job_has_no_workspace() -> None:
         agent_revision=1,
         agent_config_hash="agent-config-hash",
         agent_runtime_kind="python-v1",
-        agent_runtime_protocol_version="1.4",
+        agent_runtime_protocol_version="1.5",
         business_application_publication_id="application-publication-1",
         task_workspace_id="",
         control_plane_build_identity=_CONTROL_PLANE_BUILD_IDENTITY,

@@ -36,7 +36,7 @@ const executionSummarySchema = z.object({
   failure_code: z.string().nullable(),
   failure_summary: z.string().nullable(),
   retry_exhausted: z.boolean().default(false),
-  source_protocol_version: z.string().default("1.4"),
+  source_protocol_version: z.string().default("1.5"),
 })
 
 const unavailableExecutionSummary = {
@@ -60,7 +60,7 @@ const unavailableExecutionSummary = {
   failure_code: null,
   failure_summary: null,
   retry_exhausted: false,
-  source_protocol_version: "1.4",
+  source_protocol_version: "1.5",
 }
 
 const buildIdentitySchema = z.object({
@@ -396,6 +396,71 @@ const toolContractEvidenceSchema = z.object({
   notice: z.string(),
 })
 
+const runAuditSummarySchema = z
+  .object({
+    model_request_count: z.number().int().nonnegative().default(0),
+    max_request_context_tokens: z.number().int().nonnegative().default(0),
+    cumulative_input_tokens: z.number().int().nonnegative().default(0),
+    cumulative_output_tokens: z.number().int().nonnegative().default(0),
+    cache_creation_input_tokens: z.number().int().nonnegative().default(0),
+    cache_read_input_tokens: z.number().int().nonnegative().default(0),
+    total_cost_usd: z.number().nonnegative().default(0),
+    registered_tool_count: z.number().int().nonnegative().default(0),
+    max_loaded_tool_count: z.number().int().nonnegative().default(0),
+    auto_approved_tool_count: z.number().int().nonnegative().default(0),
+    tool_call_count: z.number().int().nonnegative().default(0),
+    distinct_tool_count: z.number().int().nonnegative().default(0),
+  })
+  .passthrough()
+
+const agentRunAuditSchema = z
+  .object({
+    id: z.string(),
+    job_id: z.string(),
+    invocation_id: z.string(),
+    request_digest: z.string(),
+    attempt_no: z.number().int().positive(),
+    status: z.enum(["SUCCEEDED", "FAILED", "CANCELLED"]),
+    audit_sha256: z.string(),
+    context_manifest: z.record(z.string(), z.unknown()).default({}),
+    system_prompt: z.string().default(""),
+    user_prompt: z.string().default(""),
+    tool_definitions: z.array(z.unknown()).default([]),
+    permission_snapshot: z.record(z.string(), z.unknown()).default({}),
+    init_snapshot: z.record(z.string(), z.unknown()).default({}),
+    sdk_messages: z.array(z.unknown()).default([]),
+    api_requests: z.array(z.unknown()).default([]),
+    api_responses: z.array(z.unknown()).default([]),
+    tool_executions: z.array(z.unknown()).default([]),
+    model_requests: z.array(z.unknown()).default([]),
+    usage: z.record(z.string(), z.unknown()).default({}),
+    summary: runAuditSummarySchema.default({
+      model_request_count: 0,
+      max_request_context_tokens: 0,
+      cumulative_input_tokens: 0,
+      cumulative_output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      total_cost_usd: 0,
+      registered_tool_count: 0,
+      max_loaded_tool_count: 0,
+      auto_approved_tool_count: 0,
+      tool_call_count: 0,
+      distinct_tool_count: 0,
+    }),
+    raw_api_capture_status: z.enum([
+      "captured",
+      "unavailable",
+      "not_applicable",
+    ]),
+    provider_thinking_disclosure: z.string().default(""),
+    error: z.record(z.string(), z.unknown()).default({}),
+    started_at: z.string(),
+    finished_at: z.string(),
+    created_at: z.string(),
+  })
+  .passthrough()
+
 export const runtimeJobDetailSchema = z
   .object({
     job: runtimeJobSchema,
@@ -425,6 +490,7 @@ export const runtimeJobDetailSchema = z
       observations: [],
       notice: "尚无工具契约观测；NOT_OBSERVED 不代表健康。",
     }),
+    run_audits: z.array(agentRunAuditSchema).default([]),
     deliveries: deliveryTimelineSchema,
     webhook_events: z.array(z.record(z.string(), z.unknown())).default([]),
   })
@@ -615,6 +681,7 @@ export type DeliveryChunk = z.infer<typeof deliveryChunkSchema>
 export type JobDispatch = z.infer<typeof jobDispatchSchema>
 export type FileWorkspaceEvidence = z.infer<typeof fileWorkspaceSchema>
 export type ToolContractEvidence = z.infer<typeof toolContractEvidenceSchema>
+export type AgentRunAudit = z.infer<typeof agentRunAuditSchema>
 export type FileOperations = z.infer<typeof fileOperationsSchema>
 export const TEXT_RUNTIME_FILE_FORMATS = TEXT_FILE_FORMAT_CODES
 export const DOCUMENT_RUNTIME_FILE_FORMATS = DOCUMENT_FILE_FORMAT_CODES

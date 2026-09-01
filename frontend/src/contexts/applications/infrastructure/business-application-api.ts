@@ -32,7 +32,7 @@ const componentReferenceSchema = z.object({
     (value) => (value === "" || value === null ? undefined : value),
     z.literal("python-v1").optional()
   ),
-  runtime_protocol_versions: z.array(z.literal("1.4")).default([]),
+  runtime_protocol_versions: z.array(z.enum(["1.4", "1.5"])).default([]),
   direction: z.string(),
   component_type: z.string(),
 })

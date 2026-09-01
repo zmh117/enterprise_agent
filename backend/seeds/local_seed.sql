@@ -91,8 +91,8 @@ INSERT INTO agent_publication
 VALUES
   ('agent_publication_default_v1', 'agent_default_diagnostic',
    'agent_revision_default_v1', 1, 3,
-   '{"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent","channels":{"delivery":["connector-dingtalk-enterprise-default"],"ingress":["connector-dingtalk-stream-default"]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"python-v1","skills":[],"supported_runtime_protocol_versions":["1.4"],"tools":["get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"]}',
-   '5feb1d4fce35bf088694b601b93a658279ab1c4aeeb0ac6414985f89ebbab820',
+   '{"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent","channels":{"delivery":["connector-dingtalk-enterprise-default"],"ingress":["connector-dingtalk-stream-default"]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"python-v1","skills":[],"supported_runtime_protocol_versions":["1.5"],"tools":["get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"]}',
+   '157389ea2e0f7457496e2d0c53e6fb4876e1a5b4241aac1d83f6cd038322e8fd',
    'python-v1', 'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 

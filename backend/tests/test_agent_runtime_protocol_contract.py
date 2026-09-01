@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.agent.infrastructure.generated_runtime_contracts_v1_4 import (
+from app.modules.agent.infrastructure.generated_runtime_contracts_v1_5 import (
     CONTRACT_SCHEMA_SHA256,
     validate_contract,
 )
@@ -21,15 +21,16 @@ from app.modules.agent.infrastructure.runtime_protocol import (
 from app.shared.tool_contract import MAX_TOOL_CONTRACT_ITEMS
 
 
-CONTRACT_ROOT = Path(__file__).parents[2] / "contracts" / "agent-runtime" / "v1.4"
+CONTRACT_ROOT = Path(__file__).parents[2] / "contracts" / "agent-runtime" / "v1.5"
+HISTORICAL_CONTRACT_ROOT = CONTRACT_ROOT.parent / "v1.4"
 
 
 def _request(name: str = "execution-request.json") -> dict[str, object]:
     return json.loads((CONTRACT_ROOT / "golden" / name).read_text(encoding="utf-8"))
 
 
-def test_only_current_runtime_contract_is_published_and_hash_matches() -> None:
-    assert SUPPORTED_RUNTIME_PROTOCOL_VERSIONS == ("1.4",)
+def test_current_and_previous_runtime_contracts_are_published_and_hash_matches() -> None:
+    assert SUPPORTED_RUNTIME_PROTOCOL_VERSIONS == ("1.4", "1.5")
     assert hashlib.sha256((CONTRACT_ROOT / "protocol.schema.json").read_bytes()).hexdigest() == (
         CONTRACT_SCHEMA_SHA256
     )
@@ -40,7 +41,7 @@ def test_only_current_runtime_contract_is_published_and_hash_matches() -> None:
 
 def test_current_empty_file_context_request_is_valid() -> None:
     request = _request()
-    assert request["protocol_version"] == "1.4"
+    assert request["protocol_version"] == "1.5"
     assert request["runtime_kind"] == "python-v1"
     assert request["file_context"] == {"file_manifest": None}
     assert canonical_request_digest(request) == request["request_digest"]
@@ -105,7 +106,24 @@ def test_current_safe_runtime_fixture_covers_runtime_contracts() -> None:
     }
     for name, key in keys.items():
         validate_contract(name, fixture[key])
-        validate_runtime_contract(name, fixture[key], protocol_version="1.4")
+        validate_runtime_contract(name, fixture[key], protocol_version="1.5")
+
+
+def test_v14_remains_valid_and_rejects_v15_audit_chunks() -> None:
+    historical = json.loads(
+        (HISTORICAL_CONTRACT_ROOT / "golden" / "execution-request.json").read_text(encoding="utf-8")
+    )
+    assert validate_execution_request(historical) == historical
+    chunk = {
+        "encoding": "base64+json",
+        "chunk_index": 0,
+        "chunk_count": 1,
+        "sha256": "a" * 64,
+        "content": "e30=",
+    }
+    validate_runtime_contract("AuditChunk", chunk, protocol_version="1.5")
+    with pytest.raises(ValueError, match="unknown runtime contract"):
+        validate_runtime_contract("AuditChunk", chunk, protocol_version="1.4")
 
 
 def test_tool_contract_limits_and_stable_failure_classes_match_runtime() -> None:
@@ -113,7 +131,7 @@ def test_tool_contract_limits_and_stable_failure_classes_match_runtime() -> None
     errors = json.loads((CONTRACT_ROOT / "errors.json").read_text(encoding="utf-8"))
     retry_classes = {item["code"]: item["retry_class"] for item in errors["errors"]}
 
-    assert limits["protocol_version"] == "1.4"
+    assert limits["protocol_version"] == "1.5"
     assert limits["max_tool_contract_items"] == MAX_TOOL_CONTRACT_ITEMS == 128
     assert len(retry_classes) == len(errors["errors"])
     assert {

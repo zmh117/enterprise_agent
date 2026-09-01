@@ -208,6 +208,13 @@ class FakePythonExecutor:
                     "duration_ms": 5,
                 },
             ),
+            run_audit={
+                "status": "SUCCEEDED",
+                "system_prompt": "完整 Runtime System Prompt",
+                "user_prompt": "完整 Runtime User Prompt",
+                "api_responses": [{"body": {"content": "完整模型响应"}}],
+                "tool_executions": [{"output": "完整工具结果"}],
+            },
         )
 
     def probe(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -282,7 +289,7 @@ def _request() -> dict[str, Any]:
 
 
 def _current_request() -> dict[str, Any]:
-    path = Path("contracts/agent-runtime/v1.4/golden/execution-request.json")
+    path = Path("contracts/agent-runtime/v1.5/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"] = []
@@ -291,8 +298,8 @@ def _current_request() -> dict[str, Any]:
 
 
 def _request_for_version(protocol_version: str) -> dict[str, Any]:
-    assert protocol_version == "1.4"
-    path = Path("contracts/agent-runtime/v1.4/golden/execution-request.json")
+    assert protocol_version in SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
+    path = Path(f"contracts/agent-runtime/v{protocol_version}/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"] = []
@@ -411,6 +418,14 @@ def test_python_runtime_accepts_replays_and_rejects_digest_conflict_for_current_
     assert events[0]["event_type"] == "execution_started"
     assert events[-1]["event_type"] == "terminal"
     assert events[-1]["payload"]["status"] == "SUCCEEDED"
+    if protocol_version == "1.5":
+        audit_events = [event for event in events if event["event_type"] == "audit_chunk"]
+        assert audit_events
+        assert events[-1]["payload"]["audit_chunk_count"] == len(audit_events)
+        assert events[-1]["payload"]["audit_sha256"] == audit_events[0]["payload"]["sha256"]
+    else:
+        assert all(event["event_type"] != "audit_chunk" for event in events)
+        assert "audit_sha256" not in events[-1]["payload"]
     assert len(executor.requests) == 1
 
     conflicting = copy.deepcopy(request)
@@ -478,17 +493,21 @@ def test_python_runtime_streams_observability_before_accounting_terminal(
 
     assert response.status_code == 200
     events = [json.loads(line) for line in response.text.strip().splitlines()]
-    assert [event["event_type"] for event in events] == [
+    event_types = [event["event_type"] for event in events]
+    assert event_types[:5] == [
         "execution_started",
         "tool_contract_observed",
         "runtime_initialized",
         "model_call",
         "tool_event",
-        "terminal",
     ]
+    assert set(event_types[5:-1]) == {"audit_chunk"}
+    assert event_types[-1] == "terminal"
     terminal = events[-1]["payload"]
     assert terminal["accounting"]["status"] == "COMPLETE"
     assert terminal["accounting"]["estimated_cost_usd"] == 0.001
+    assert terminal["audit_chunk_count"] == len(events[5:-1])
+    assert len(terminal["audit_sha256"]) == 64
     assert replay.text == response.text
     assert len(executor.requests) == 1
 
@@ -743,7 +762,7 @@ def test_python_runtime_restart_fails_orphan_without_replaying_model(
     ledger = PythonTerminalLedger(database)
     assert ledger.claim(request, "runtime-before-restart").status == "CLAIMED"
     started = {
-        "protocol_version": "1.4",
+        "protocol_version": request["protocol_version"],
         "invocation_id": request["invocation_id"],
         "request_digest": request["request_digest"],
         "sequence": 1,
@@ -815,7 +834,7 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
     assert response.json()["protocol_version"] == CURRENT_RUNTIME_PROTOCOL_VERSION
     assert client.get("/health").json() == {
         "status": "ok",
-        "protocol_version": "1.4",
+        "protocol_version": "1.5",
         "component": "python-runtime",
         "source_revision": "test-revision",
         "build_id": "test-build",
@@ -864,7 +883,7 @@ def test_python_runtime_model_probe_accepts_only_current_request(
     dependencies, _private_key = _dependencies(tmp_path, executor)
     client = TestClient(create_app(dependencies))
     probe = {
-        "protocol_version": "1.4",
+        "protocol_version": "1.5",
         "runtime_kind": "python-v1",
         "probe_id": "probe-legacy-1",
         "model_connection": {"revision_id": "revision-1", "config_hash": "a" * 64},
@@ -1733,7 +1752,7 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
 
 def test_python_sdk_projects_current_observability_fixture() -> None:
     fixture = json.loads(
-        Path("contracts/agent-runtime/v1.4/golden/sdk-observability-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.5/golden/sdk-observability-fixture.json").read_text(
             encoding="utf-8"
         )
     )
@@ -1766,7 +1785,7 @@ def test_python_sdk_projects_current_observability_fixture() -> None:
         skills={},
         retrieved_context={},
         conversation_summary="",
-        runtime_protocol_version="1.4",
+        runtime_protocol_version="1.5",
     )
     client = ClaudeSdkClient(
         model="claude-safe-model",
@@ -1797,11 +1816,12 @@ def test_python_sdk_projects_current_observability_fixture() -> None:
     assert client.last_accounting["duration_api_ms"] == 1800
     serialized = json.dumps(client.last_runtime_events)
     assert "bounded result omitted" not in serialized
+    assert "bounded result omitted" in json.dumps(result.run_audit)
 
 
-def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
+def test_python_sdk_keeps_safe_events_bounded_and_complete_audit_unfiltered() -> None:
     fixture = json.loads(
-        Path("contracts/agent-runtime/v1.4/golden/sdk-observability-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.5/golden/sdk-observability-fixture.json").read_text(
             encoding="utf-8"
         )
     )
@@ -1833,7 +1853,7 @@ def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
         sdk_loader=lambda: sdk,
     )
 
-    client.run(
+    run_result = client.run(
         AgentRunRequest(
             job_id="job-safe-unknown",
             user_id="user-safe-unknown",
@@ -1849,7 +1869,7 @@ def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
                 skills={},
                 retrieved_context={},
                 conversation_summary="",
-                runtime_protocol_version="1.4",
+                runtime_protocol_version="1.5",
             ),
         )
     )
@@ -1864,6 +1884,10 @@ def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
     assert "private-thinking-must-not-persist" not in serialized
     assert "full-answer-must-not-persist" not in serialized
     assert "final answer remains execution-only" not in serialized
+    complete_audit = json.dumps(run_result.run_audit)
+    assert "private-thinking-must-not-persist" in complete_audit
+    assert "full-answer-must-not-persist" in complete_audit
+    assert "final answer remains execution-only" in complete_audit
 
 
 def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None:
@@ -3155,7 +3179,7 @@ def test_python_runtime_decrypts_draft_probe_once_without_persisting_credential(
         ).encode("utf-8")
     ).hexdigest()
     request: dict[str, Any] = {
-        "protocol_version": "1.4",
+        "protocol_version": "1.5",
         "runtime_kind": "python-v1",
         "probe_id": "probe-python-draft-test",
         "config_hash": config_hash,
@@ -3214,7 +3238,7 @@ def test_python_runtime_draft_probe_accepts_allowlisted_internal_http_gateway(
         ).encode("utf-8")
     ).hexdigest()
     request: dict[str, Any] = {
-        "protocol_version": "1.4",
+        "protocol_version": "1.5",
         "runtime_kind": "python-v1",
         "probe_id": "probe-python-draft-gateway",
         "config_hash": config_hash,

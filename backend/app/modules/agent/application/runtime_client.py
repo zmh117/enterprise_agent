@@ -5,7 +5,7 @@ from typing import Protocol
 from app.modules.agent.domain.runtime import AgentRunRequest, AgentRunResult
 from app.shared.exceptions import NonRetryableExecutionError
 
-SUPPORTED_RUNTIME_PROTOCOLS = frozenset({"1.4"})
+SUPPORTED_RUNTIME_PROTOCOLS = frozenset({"1.4", "1.5"})
 SUPPORTED_RUNTIME_KIND = "python-v1"
 
 

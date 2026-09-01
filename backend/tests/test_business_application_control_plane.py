@@ -146,10 +146,13 @@ def test_dingtalk_user_batch_tool_requires_connector_robot_code() -> None:
             "connector-dingtalk-stream-default",
         ),
     )
-    assert composition.dingtalk_feature_errors(
-        selected_tools=selected,
-        triggers=triggers,
-    ) == []
+    assert (
+        composition.dingtalk_feature_errors(
+            selected_tools=selected,
+            triggers=triggers,
+        )
+        == []
+    )
 
 
 def draft_payload(*, route: str = "", mcp_tools: list[str] | None = None) -> dict[str, object]:
@@ -209,7 +212,7 @@ def enable_file_context_dependencies(container: object, payload: dict[str, objec
     assert agent_row is not None
     agent_snapshot = json.loads(str(agent_row["snapshot_json"]))
     agent_snapshot["runtime_kind"] = "python-v1"
-    agent_snapshot["supported_runtime_protocol_versions"] = ["1.4"]
+    agent_snapshot["supported_runtime_protocol_versions"] = ["1.5"]
     container.database.execute(
         """
         update agent_publication
@@ -827,6 +830,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "121_expand_docling_processing_concurrency.sql",
         "122_document_processing_concurrency_comments.sql",
         "123_expand_governed_external_actions.sql",
+        "124_expand_agent_job_context_audit.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

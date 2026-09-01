@@ -56,8 +56,10 @@ from app.python_runtime.sdk_event_normalizer import (
     extract_result_text,
     extract_text_blocks,
     extract_tool_events,
+    sdk_value,
     unavailable_accounting,
 )
+from app.python_runtime.run_audit import RunAuditRecorder
 
 CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES = 64 * 1024 * 1024
 
@@ -116,6 +118,8 @@ class ClaudeSdkClient:
         self.cancellation_event = cancellation_event
         self.last_runtime_events: list[dict[str, Any]] = []
         self.last_accounting: dict[str, Any] = unavailable_accounting()
+        self.last_run_audit: dict[str, Any] = {}
+        self._run_audit_recorder: RunAuditRecorder | None = None
 
     def run(self, request: AgentRunRequest) -> AgentRunResult:
         assert_external_io_allowed("model.run")
@@ -182,8 +186,24 @@ class ClaudeSdkClient:
         binding: ModelRuntimeBinding,
         api_key: str,
     ) -> AgentRunResult:
-        sdk = self._load_sdk()
         tool_events: list[dict[str, Any]] = []
+        sandbox = self._sandbox.get()
+        if sandbox is None:
+            raise NonRetryableExecutionError(
+                "Python Runtime Job Sandbox is unavailable",
+                safe_message="当前任务沙盒不可用",
+                error_code="runtime_sandbox_unavailable",
+            )
+        raw_api_dir = sandbox.path / "tmp" / "raw-api"
+        raw_api_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._run_audit_recorder = RunAuditRecorder(
+            request.context,
+            system_prompt=build_system_prompt(request.context),
+            raw_api_dir=raw_api_dir,
+            permission_snapshot=_permission_snapshot(request.context),
+        )
+        self.last_run_audit = self._run_audit_recorder.audit
+        sdk = self._load_sdk()
         mcp_server = await self._open_mcp_server(request, sdk)
         cli_stderr: list[str] = []
         runtime_context = await self._prepare_context(request.context)
@@ -196,6 +216,14 @@ class ClaudeSdkClient:
             binding,
             tool_call_budget=tool_call_budget,
         )
+        run_audit_recorder = RunAuditRecorder(
+            runtime_context,
+            system_prompt=build_system_prompt(runtime_context),
+            raw_api_dir=raw_api_dir,
+            permission_snapshot=_permission_snapshot(runtime_context, options=options),
+        )
+        self._run_audit_recorder = run_audit_recorder
+        self.last_run_audit = run_audit_recorder.audit
         prompt = streaming_user_prompt(request.context.user_question)
         assistant_texts: list[str] = []
         parsed_tool_calls: dict[str, dict[str, Any]] = {}
@@ -208,6 +236,7 @@ class ClaudeSdkClient:
             nonlocal final_answer
             async for message in sdk.query(prompt=prompt, options=options):
                 audit.consume(message)
+                run_audit_recorder.observe_message(message)
                 self.last_runtime_events = list(audit.events)
                 self.last_accounting = dict(audit.accounting)
                 error_result = result_error_details(message)
@@ -236,7 +265,11 @@ class ClaudeSdkClient:
                     final_answer = result_text
 
         try:
-            with _temporary_claude_env(api_key, binding):
+            with _temporary_claude_env(
+                api_key,
+                binding,
+                raw_api_dir=str(raw_api_dir),
+            ):
                 await self._consume_with_cancellation(
                     consume(),
                     timeout_seconds=request.context.timeout_seconds,
@@ -264,10 +297,32 @@ class ClaudeSdkClient:
                 "Claude Agent SDK completed without a final answer",
                 safe_message="Claude 运行结束，但没有生成最终回答",
             )
+        self.last_run_audit = self.finalize_run_audit(
+            status="SUCCEEDED",
+            final_answer=final_answer,
+        )
         return AgentRunResult(
             final_answer=final_answer,
             tool_events=tool_events,
+            run_audit=self.last_run_audit,
         )
+
+    def finalize_run_audit(
+        self,
+        *,
+        status: str,
+        final_answer: str = "",
+        error: BaseException | None = None,
+    ) -> dict[str, Any]:
+        recorder = self._run_audit_recorder
+        if recorder is None:
+            return dict(self.last_run_audit)
+        self.last_run_audit = recorder.finalize(
+            status=status,
+            final_answer=final_answer,
+            error=error,
+        )
+        return dict(self.last_run_audit)
 
     async def _consume_with_cancellation(
         self,
@@ -732,6 +787,29 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
     )
 
 
+def _permission_snapshot(
+    context: AgentExecutionContext,
+    *,
+    options: Any | None = None,
+) -> dict[str, Any]:
+    def option(name: str, fallback: Any) -> Any:
+        value = sdk_value(options, name) if options is not None else None
+        return fallback if value is None else value
+
+    return {
+        "effective_tools": list(context.effective_tool_names),
+        "tools": option("tools", []),
+        "allowed_tools": option("allowed_tools", []),
+        "disallowed_tools": option("disallowed_tools", []),
+        "permission_mode": option("permission_mode", "unknown"),
+        "strict_mcp_config": bool(option("strict_mcp_config", False)),
+        "setting_sources": option("setting_sources", []),
+        "skills": option("skills", []),
+        "can_use_tool_configured": callable(option("can_use_tool", None)),
+        "policy": "Runtime options plus frozen Tool contract",
+    }
+
+
 def _numbered(items: list[str]) -> str:
     return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
 
@@ -775,7 +853,12 @@ _CLAUDE_ENV_LOCK = threading.RLock()
 
 
 @contextmanager
-def _temporary_claude_env(api_key: str, binding: ModelRuntimeBinding) -> Iterator[None]:
+def _temporary_claude_env(
+    api_key: str,
+    binding: ModelRuntimeBinding,
+    *,
+    raw_api_dir: str = "",
+) -> Iterator[None]:
     values = {
         "ANTHROPIC_API_KEY": api_key,
         "ANTHROPIC_AUTH_TOKEN": api_key,
@@ -787,6 +870,9 @@ def _temporary_claude_env(api_key: str, binding: ModelRuntimeBinding) -> Iterato
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": binding.default_haiku_model,
         "CLAUDE_CODE_SUBAGENT_MODEL": binding.subagent_model,
         "CLAUDE_CODE_EFFORT_LEVEL": binding.effort_level,
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1" if raw_api_dir else "",
+        "OTEL_LOGS_EXPORTER": "none" if raw_api_dir else "",
+        "OTEL_LOG_RAW_API_BODIES": f"file:{raw_api_dir}" if raw_api_dir else "",
     }
     with _CLAUDE_ENV_LOCK:
         previous = {name: os.environ.get(name) for name in values}

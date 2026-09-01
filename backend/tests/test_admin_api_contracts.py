@@ -452,6 +452,37 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
             },
         },
     )
+    context_marker = "完整 Prompt 与模型响应审计正文"
+    container.agent_repository.record_run_audit(
+        job_id=job.id,
+        invocation_id=f"{job.id}.attempt-0",
+        request_digest="a" * 64,
+        attempt_no=1,
+        status="FAILED",
+        audit={
+            "started_at": "2026-07-20T00:00:01+00:00",
+            "finished_at": "2026-07-20T00:00:02+00:00",
+            "context_manifest": {"sources": [{"content": context_marker}]},
+            "system_prompt": f"system::{context_marker}",
+            "user_prompt": f"user::{context_marker}",
+            "tool_definitions": [{"name": "ones_work_item_search"}],
+            "permission_snapshot": {"allowed_tools": ["ones_work_item_search"]},
+            "init_snapshot": {"tools": ["ones_work_item_search"]},
+            "sdk_messages": [{"content": context_marker}],
+            "api_requests": [{"body": {"messages": [context_marker]}}],
+            "api_responses": [{"body": {"content": context_marker}}],
+            "tool_executions": [{"input": context_marker, "output": context_marker}],
+            "model_requests": [{"usage": {"input_tokens": 11}}],
+            "usage": {"result": {"input_tokens": 11, "output_tokens": 3}},
+            "summary": {
+                "model_request_count": 1,
+                "max_request_context_tokens": 11,
+            },
+            "raw_api_capture_status": "captured",
+            "provider_thinking_disclosure": "仅保存上游实际暴露内容",
+            "error": {"message": "model failed"},
+        },
+    )
     container.agent_repository.add_tool_call(
         job_id=job.id,
         tool_name="ones_work_item_search",
@@ -539,6 +570,8 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     assert jobs.json()["items"][0]["correlation_id"] == "correlation-ops"
     assert detail.json()["job"]["business_application_deployment_id"] == "deployment-ops"
     assert detail.json()["job"]["tool_call_count"] == 1
+    assert detail.json()["run_audits"][0]["system_prompt"] == f"system::{context_marker}"
+    assert detail.json()["run_audits"][0]["api_responses"][0]["body"]["content"] == (context_marker)
     assert jobs.json()["items"][0]["tool_call_count"] == 1
     assert [item["id"] for item in jobs_by_names.json()["items"]] == [job.id]
     assert jobs_by_unknown_name.json()["items"] == []
@@ -564,6 +597,51 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     assert routes["/api/admin/queues"].keys() == {"get"}
     assert not any(word in path for path in routes for word in ("purge", "replay"))
     assert (len(container.message_bus.attachments) if container.message_bus else 0) == before_queue
+
+
+def test_job_detail_checks_scope_before_loading_large_run_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = unified_settings()
+    container = build_test_container(settings, migrate=True, seed=True)
+    session = container.agent_repository.create_session(
+        project_code="default",
+        source_channel="debug_api",
+        source_connector_id="connector-debug-api",
+        external_conversation_id="scope-before-audit",
+        requester_id="user_local_admin",
+        routing_context={"project_code": "default", "environment": "local"},
+        session_key="scope-before-audit",
+    )
+    job = container.agent_repository.create_job(
+        session_id=session.id,
+        idempotency_key="scope-before-audit",
+        internal_user_id="user_local_admin",
+        project_code="default",
+        source_channel="debug_api",
+        source_connector_id="connector-debug-api",
+        requester_id="user_local_admin",
+        input_message="scope check",
+        max_retry_count=0,
+        initial_status=JobStatus.FAILED,
+        routing_context={"project_code": "default", "environment": "local"},
+        execution_policy=execution_policy_snapshot(),
+        reply_route={"type": "none"},
+    )
+    loaded: list[str] = []
+    monkeypatch.setattr(AdminScope, "permits", lambda _self, _item: False)
+    monkeypatch.setattr(
+        AdminReadRepository,
+        "job_run_audits",
+        lambda _self, job_id: loaded.append(job_id) or [],
+    )
+
+    with TestClient(create_app(settings, container_factory=lambda _: container)) as client:
+        login(client)
+        response = client.get(f"/api/admin/jobs/{job.id}")
+
+    assert response.status_code == 404
+    assert loaded == []
 
 
 def test_job_query_filters_before_limit_and_uses_stable_keyset_pages() -> None:

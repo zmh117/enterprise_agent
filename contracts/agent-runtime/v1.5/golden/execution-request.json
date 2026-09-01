@@ -1,0 +1,64 @@
+{
+  "protocol_version": "1.5",
+  "runtime_kind": "python-v1",
+  "invocation_id": "invocation-1",
+  "request_digest": "3e9c72b48d09b3fbd2dcca910b6c70924944a2e583a77264f9a27fc9691f9bdf",
+  "job_id": "job-1",
+  "app_user_id": "app-user-1",
+  "project_code": "project-1",
+  "agent_publication_id": "agent-publication-1",
+  "application_publication_id": "application-publication-1",
+  "job_tool_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "control_plane_build_identity": {
+    "component": "control-plane",
+    "source_revision": "test-revision",
+    "build_id": "test-build",
+    "platform": "linux/amd64"
+  },
+  "worker_build_identity": {
+    "component": "agent-worker",
+    "source_revision": "test-revision",
+    "build_id": "test-build",
+    "platform": "linux/amd64"
+  },
+  "model_connection": {
+    "revision_id": "model-connection-revision-1",
+    "config_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "prompt": {
+    "template_version": "agent-system-prompt-v2",
+    "system_role": "只读项目诊断 Agent",
+    "safety_rules": [
+      "readonly"
+    ],
+    "business_instructions": "",
+    "tool_restrictions": [
+      "bounded"
+    ],
+    "user_question": "查询失败的工作项",
+    "conversation_summary": "none",
+    "retrieved_context": {},
+    "skills": {},
+    "mcp_unavailable_notices": []
+  },
+  "limits": {
+    "timeout_seconds": 120,
+    "max_turns": 12,
+    "max_tool_calls": 30
+  },
+  "mcp_servers": [
+    {
+      "server_code": "ones-mcp",
+      "tools": [
+        {
+          "tool_name": "ones_work_item_search",
+          "required_scope": "mcp:ones-mcp:ones_work_item_search:invoke",
+          "tool_schema_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ]
+    }
+  ],
+  "file_context": {
+    "file_manifest": null
+  }
+}

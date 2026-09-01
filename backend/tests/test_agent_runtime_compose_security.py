@@ -148,6 +148,9 @@ def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     assert "COPY contracts/agent-runtime/v1.4 /app/contracts/agent-runtime/v1.4" in (
         python_runtime_section
     )
+    assert "COPY contracts/agent-runtime/v1.5 /app/contracts/agent-runtime/v1.5" in (
+        python_runtime_section
+    )
     assert "COPY contracts/agent-runtime /app/contracts/agent-runtime" not in dockerfile
     assert "backend/app/modules/file_workspace/__init__.py" not in python_runtime_section
     assert "backend/app/modules/file_workspace/contracts.py" in python_runtime_section

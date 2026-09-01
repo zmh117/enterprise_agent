@@ -215,7 +215,7 @@
       "source_contract": "agent_runtime_event.event_type = tool_contract_observed",
       "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
       "readers": ["code:backend/app/modules/admin/infrastructure/read_repository.py"],
-      "lifecycle": "NOT_OBSERVED until a protocol 1.4 observation; DRIFT is sticky for the Job",
+      "lifecycle": "NOT_OBSERVED until a current protocol observation; DRIFT is sticky for the Job",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "store only status, last invocation, and bounded hashes; never duplicate the frozen snapshot",
       "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement requires an equivalent immutable-event projection"]},
@@ -770,6 +770,22 @@
       "audit_requirement": "stores safe request and message identifiers, bounded error metadata, Token counts, and SDK-observed duration only; content fields are structurally absent",
       "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves stable model-turn identity and unknown-value semantics"]},
       "evidence_refs": ["change:improve-agent-run-audit", "schema:106_expand_agent_run_audit"]
+    },
+    {
+      "id": "audit.agent_run_context",
+      "object_type": "table",
+      "table": "agent_run_audit",
+      "owner": "job-runtime-audit",
+      "semantics": "Immutable complete Runtime invocation context and model-visible I/O snapshot, separate from searchable execution, Tool, MCP, and Delivery facts.",
+      "classification": "immutable_snapshot",
+      "source_contract": "Validated Runtime protocol 1.5 audit chunks reassembled and digest-verified for one immutable invocation.",
+      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
+      "readers": ["code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "lifecycle": "created once per validated Runtime 1.5 invocation and retained with the Job",
+      "retention_policy": "same-as-agent-job",
+      "audit_requirement": "stores complete unredacted model-visible business content by explicit policy; Runtime credentials and authentication headers must not be proactively copied into the snapshot",
+      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves invocation identity, complete content, integrity digest, authorization, and historical readability"]},
+      "evidence_refs": ["change:add-agent-job-context-audit", "schema:124_expand_agent_job_context_audit"]
     }
   ]
 }

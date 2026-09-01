@@ -32,7 +32,11 @@ from app.shared.mcp_server_policy import (
     validate_mcp_server_policies,
 )
 from app.python_runtime.job_sandbox import JobSandboxManager
-from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version
+from app.python_runtime.claude_client import (
+    build_system_prompt,
+    claude_cli_version,
+    claude_sdk_version,
+)
 from app.python_runtime.mcp_config import (
     FixedMcpClaudeSdkClient,
     fixed_mcp_server_url,
@@ -73,6 +77,7 @@ class PythonExecutionOutcome:
     runtime_events: tuple[dict[str, Any], ...] = ()
     tool_events: tuple[dict[str, Any], ...] = ()
     accounting: dict[str, Any] | None = None
+    run_audit: dict[str, Any] | None = None
     failure: dict[str, str] | None = None
     tool_contract_observation: dict[str, Any] | None = None
 
@@ -183,15 +188,18 @@ class PythonRuntimeExecutor:
                         secret_context,
                     ),
                     tool_contract_observation=dict(client.last_tool_contract_observation),
+                    run_audit=_with_runtime_identity(_fake_run_audit(run_request), request),
                 )
             result = client.run(run_request)
         except RetryableExecutionError as exc:
+            run_audit = _finalize_client_run_audit(client, status="FAILED", error=exc)
             return PythonExecutionOutcome(
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
                 runtime_events=tuple(client.last_runtime_events),
                 accounting=dict(client.last_accounting),
+                run_audit=_with_runtime_identity(run_audit, request),
                 tool_events=normalize_tool_events(
                     exc.tool_events,
                     request,
@@ -206,7 +214,13 @@ class PythonRuntimeExecutor:
             )
         except (ExecutionTimeout, NonRetryableExecutionError) as exc:
             if str(exc.error_code or "") == "runtime_cancelled":
-                return self._cancelled(provenance)
+                return self._cancelled(
+                    provenance,
+                    run_audit=_with_runtime_identity(
+                        _finalize_client_run_audit(client, status="CANCELLED", error=exc),
+                        request,
+                    ),
+                )
             failure_code = str(exc.error_code or "runtime_configuration_error")
             if failure_code == "runtime_tool_contract_remote_not_observed":
                 retry_class = "TRANSIENT"
@@ -224,6 +238,10 @@ class PythonRuntimeExecutor:
                 runtime_provenance=provenance,
                 runtime_events=tuple(client.last_runtime_events),
                 accounting=dict(client.last_accounting),
+                run_audit=_with_runtime_identity(
+                    _finalize_client_run_audit(client, status="FAILED", error=exc),
+                    request,
+                ),
                 tool_events=normalize_tool_events(
                     exc.tool_events,
                     request,
@@ -236,8 +254,32 @@ class PythonRuntimeExecutor:
                 },
                 tool_contract_observation=dict(client.last_tool_contract_observation),
             )
+        except Exception as exc:
+            return PythonExecutionOutcome(
+                status="FAILED",
+                usage={"input_tokens": 0, "output_tokens": 0},
+                runtime_provenance=provenance,
+                runtime_events=tuple(client.last_runtime_events),
+                accounting=dict(client.last_accounting),
+                run_audit=_with_runtime_identity(
+                    _finalize_client_run_audit(client, status="FAILED", error=exc),
+                    request,
+                ),
+                failure={
+                    "code": "runtime_internal_error",
+                    "retry_class": "TRANSIENT",
+                    "safe_message": "Python Agent Runtime 暂时不可用",
+                },
+                tool_contract_observation=dict(client.last_tool_contract_observation),
+            )
         if cancel_event.is_set():
-            return self._cancelled(provenance)
+            return self._cancelled(
+                provenance,
+                run_audit=_with_runtime_identity(
+                    _finalize_client_run_audit(client, status="CANCELLED"),
+                    request,
+                ),
+            )
         return PythonExecutionOutcome(
             status="SUCCEEDED",
             final_answer=result.final_answer,
@@ -245,6 +287,7 @@ class PythonRuntimeExecutor:
             runtime_provenance=provenance,
             runtime_events=tuple(client.last_runtime_events),
             accounting=dict(client.last_accounting),
+            run_audit=_with_runtime_identity(result.run_audit, request),
             tool_events=normalize_tool_events(
                 result.tool_events,
                 request,
@@ -659,17 +702,111 @@ class PythonRuntimeExecutor:
         }
 
     @staticmethod
-    def _cancelled(provenance: dict[str, Any]) -> PythonExecutionOutcome:
+    def _cancelled(
+        provenance: dict[str, Any],
+        *,
+        run_audit: dict[str, Any] | None = None,
+    ) -> PythonExecutionOutcome:
         return PythonExecutionOutcome(
             status="CANCELLED",
             usage={"input_tokens": 0, "output_tokens": 0},
             runtime_provenance=provenance,
+            run_audit=run_audit,
             failure={
                 "code": "runtime_cancelled",
                 "retry_class": "NEVER",
                 "safe_message": "Agent 执行已取消",
             },
         )
+
+
+def _fake_run_audit(request: AgentRunRequest) -> dict[str, Any]:
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    context = request.context
+    system_prompt = build_system_prompt(context)
+    return {
+        "started_at": timestamp,
+        "finished_at": timestamp,
+        "status": "SUCCEEDED",
+        "context_manifest": {
+            "sources": [
+                {"source_type": "system_prompt", "name": "system_prompt", "content": system_prompt},
+                {
+                    "source_type": "user_prompt",
+                    "name": "user_question",
+                    "content": context.user_question,
+                },
+                {
+                    "source_type": "retrieved_context",
+                    "name": "retrieved_context",
+                    "content": context.retrieved_context,
+                },
+            ],
+            "estimate_method": "ceil(Unicode character count / 4)",
+            "runtime_protocol_version": context.runtime_protocol_version,
+            "model": context.model,
+        },
+        "system_prompt": system_prompt,
+        "user_prompt": context.user_question,
+        "tool_definitions": [
+            {
+                "name": binding.tool_name,
+                "server_code": binding.server_code,
+                "tool_schema_hash": binding.tool_schema_hash,
+            }
+            for binding in context.mcp_bindings
+        ],
+        "permission_snapshot": {"effective_tools": list(context.effective_tool_names)},
+        "init_snapshot": {},
+        "sdk_messages": [],
+        "api_requests": [],
+        "api_responses": [],
+        "tool_executions": [],
+        "model_requests": [],
+        "usage": {},
+        "summary": {
+            "model_request_count": 0,
+            "max_request_context_tokens": 0,
+            "registered_tool_count": len(context.effective_tool_names),
+            "max_loaded_tool_count": 0,
+            "auto_approved_tool_count": 0,
+            "tool_call_count": 0,
+            "distinct_tool_count": 0,
+        },
+        "raw_api_capture_status": "not_applicable",
+        "provider_thinking_disclosure": "Fake Provider 未产生真实模型响应。",
+        "error": {},
+    }
+
+
+def _finalize_client_run_audit(
+    client: Any,
+    *,
+    status: str,
+    error: BaseException | None = None,
+) -> dict[str, Any]:
+    finalize = getattr(client, "finalize_run_audit", None)
+    if callable(finalize):
+        value = finalize(status=status, error=error)
+        return dict(value) if isinstance(value, dict) else {}
+    value = getattr(client, "last_run_audit", {})
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _with_runtime_identity(
+    audit: dict[str, Any] | None,
+    request: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not audit:
+        return audit
+    return {
+        **audit,
+        "runtime_identity": {
+            "protocol_version": str(request["protocol_version"]),
+            "invocation_id": str(request["invocation_id"]),
+            "request_digest": str(request["request_digest"]),
+        },
+    }
 
 
 def agent_request_from_runtime_request(

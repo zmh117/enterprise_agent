@@ -230,7 +230,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "123"
+        assert result.head == "124"
         assert result.applied == (
             "100",
             "101",
@@ -253,6 +253,10 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "118",
             "119",
             "120",
+            "121",
+            "122",
+            "123",
+            "124",
         )
         assert database.execute_one(
             """
@@ -262,9 +266,9 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 124}
-        assert comments["table_count"] == 124
-        assert comments["column_count"] == 1622
+        ) == {"count": 129}
+        assert comments["table_count"] == 129
+        assert comments["column_count"] == 1714
     finally:
         database.close()
 
@@ -282,7 +286,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "123"
+        assert result.head == "124"
         assert result.applied == (
             "100",
             "101",
@@ -305,9 +309,13 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "118",
             "119",
             "120",
+            "121",
+            "122",
+            "123",
+            "124",
         )
-        assert comments["table_count"] == 124
-        assert comments["column_count"] == 1622
+        assert comments["table_count"] == 129
+        assert comments["column_count"] == 1714
         assert {
             "dingding_conversation_id",
             "dingding_user_id",
@@ -369,6 +377,10 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "118",
             "119",
             "120",
+            "121",
+            "122",
+            "123",
+            "124",
         ),
     ]
     database = Database(postgres_database_dsn)
@@ -395,6 +407,10 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "118",
             "119",
             "120",
+            "121",
+            "122",
+            "123",
+            "124",
         ]
     finally:
         database.close()
@@ -430,14 +446,14 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
                agent_runtime_protocol_version)
             values ('postgres-audit-job', 'postgres-audit-session',
                     'postgres-audit-job', 'default', 'SUCCEEDED', ?, 'test',
-                    'connector-test', 'audit-user', '1.4')
+                    'connector-test', 'audit-user', '1.5')
             """,
             (timestamp,),
         )
         repository = ExecutionAuditRepository(database)
         digest = "a" * 64
         model_event = {
-            "protocol_version": "1.4",
+            "protocol_version": "1.5",
             "invocation_id": "postgres-invocation",
             "request_digest": digest,
             "sequence": 1,
@@ -474,14 +490,14 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
             },
         }
         terminal = {
-            "protocol_version": "1.4",
+            "protocol_version": "1.5",
             "invocation_id": "postgres-invocation",
             "request_digest": digest,
             "sequence": 3,
             "event_type": "terminal",
             "timestamp": timestamp,
             "payload": {
-                "protocol_version": "1.4",
+                "protocol_version": "1.5",
                 "invocation_id": "postgres-invocation",
                 "request_digest": digest,
                 "last_sequence": 3,
@@ -511,7 +527,7 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
                 "runtime_provenance": {
                     "runtime_kind": "python-v1",
                     "runtime_version": "0.1.0",
-                    "protocol_version": "1.4",
+                    "protocol_version": "1.5",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
                     "model_connection_revision_id": "revision-1",
@@ -523,6 +539,34 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
         repository.record_runtime_event("postgres-audit-job", second_model_event)
         repository.record_runtime_event("postgres-audit-job", terminal)
         summary = repository.rebuild_summary("postgres-audit-job")
+        agent_repository = AgentRepository(database)
+        agent_repository.record_run_audit(
+            job_id="postgres-audit-job",
+            invocation_id="postgres-invocation",
+            request_digest=digest,
+            attempt_no=1,
+            status="SUCCEEDED",
+            audit={
+                "started_at": timestamp,
+                "finished_at": timestamp,
+                "context_manifest": {"sources": [{"content": "完整上下文"}]},
+                "system_prompt": "完整System Prompt",
+                "user_prompt": "完整用户Prompt",
+                "tool_definitions": [],
+                "permission_snapshot": {},
+                "init_snapshot": {},
+                "sdk_messages": [],
+                "api_requests": [],
+                "api_responses": [{"body": {"content": "模型原始响应"}}],
+                "tool_executions": [],
+                "model_requests": [],
+                "usage": {},
+                "summary": {},
+                "raw_api_capture_status": "captured",
+                "provider_thinking_disclosure": "仅保存上游实际暴露内容",
+                "error": {},
+            },
+        )
         first_page = repository.list_model_calls("postgres-audit-job", limit=1)
         second_page = repository.list_model_calls(
             "postgres-audit-job", limit=1, cursor=first_page["next_cursor"]
@@ -534,7 +578,11 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
         assert first_page["items"][0]["runtime_sequence"] == 1
         assert second_page["has_more"] is False
         assert second_page["items"][0]["runtime_sequence"] == 2
-        serialized = str(AgentRepository(database).list_runtime_events("postgres-audit-job"))
+        assert (
+            agent_repository.list_run_audits("postgres-audit-job")[0]["system_prompt"]
+            == "完整System Prompt"
+        )
+        serialized = str(agent_repository.list_runtime_events("postgres-audit-job"))
         assert "must-not-enter-audit-event" not in serialized
 
         database.execute("delete from agent_runtime_event where job_id = 'postgres-audit-job'")
@@ -545,6 +593,9 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
         assert database.execute_one(
             "select count(*)::int as count from agent_job_execution_summary"
         ) == {"count": 0}
+        assert database.execute_one("select count(*)::int as count from agent_run_audit") == {
+            "count": 0
+        }
     finally:
         database.close()
 

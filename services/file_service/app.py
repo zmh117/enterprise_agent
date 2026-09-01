@@ -423,7 +423,7 @@ def create_app(
             {
                 "status": "ok",
                 "server_code": FILE_MCP_SERVER_CODE,
-                "runtime_protocol_version": "1.4",
+                "runtime_protocol_version": "1.5",
                 "build_identity": build_identity.to_dict(),
             }
         )
@@ -499,7 +499,7 @@ def create_app(
                     "layout_ocr_profile_registry": "ready",
                     "layout_ocr_schema": "ready",
                     "document_processing": processing_readiness,
-                    "runtime_protocol_version": "1.4",
+                    "runtime_protocol_version": "1.5",
                     "build_identity": build_identity.to_dict(),
                 }
             )
@@ -509,7 +509,7 @@ def create_app(
                     "status": "degraded",
                     "server_code": FILE_MCP_SERVER_CODE,
                     "dependency": "unavailable",
-                    "runtime_protocol_version": "1.4",
+                    "runtime_protocol_version": "1.5",
                     "build_identity": build_identity.to_dict(),
                 },
                 status_code=503,
