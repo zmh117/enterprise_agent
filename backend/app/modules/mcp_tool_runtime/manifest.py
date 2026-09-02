@@ -10,6 +10,7 @@ from app.shared.dingtalk_tool_contracts import (
     DINGTALK_TOOL_CONTRACTS,
 )
 from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
+from app.shared.ones_tool_contracts import ONES_CONFIRMATION_POLICY
 from app.shared.mcp_server_policy import (
     DINGTALK_MCP_SERVER_CODE,
     FILE_MCP_SERVER_CODE,
@@ -79,7 +80,20 @@ for _ones_contract in ONES_TOOL_CONTRACTS.values():
         input_schema=_ones_contract.input_schema,
         schema_hash=mcp_tool_schema_hash(_ones_contract.input_schema),
         resource_kind="",
-        read_only=True,
+        read_only=_ones_contract.read_only,
+        effect=_ones_contract.effect,
+        confirmation_policy=_ones_contract.confirmation_policy,
+        required_scope=(
+            f"mcp:{ONES_MCP_SERVER_CODE}:{_ones_contract.identifier}:invoke"
+            if _ones_contract.effect == "mutation"
+            else ""
+        ),
+        operation_code=_ones_contract.operation_code,
+        risk_level=_ones_contract.risk_level,
+        target_policy=_ones_contract.target_policy,
+        destructive=_ones_contract.destructive,
+        idempotent=_ones_contract.idempotent,
+        open_world=_ones_contract.open_world,
     )
 
 for _dingtalk_contract in DINGTALK_TOOL_CONTRACTS.values():
@@ -145,6 +159,7 @@ def validate_mcp_tool_manifest(
             raise ValueError("Read-only MCP Tool cannot declare mutation confirmation")
         if definition.effect == "mutation" and definition.confirmation_policy not in {
             DINGTALK_CONFIRMATION_POLICY,
+            ONES_CONFIRMATION_POLICY,
             "file_workspace_intent",
         }:
             raise ValueError("Mutation MCP Tool requires a supported confirmation policy")
@@ -161,6 +176,20 @@ def validate_mcp_tool_manifest(
                 or definition.open_world != contract.open_world
             ):
                 raise ValueError("DingTalk MCP Tool execution metadata is inconsistent")
+        if definition.server_code == ONES_MCP_SERVER_CODE:
+            ones_contract = ONES_TOOL_CONTRACTS.get(identifier)
+            if (
+                ones_contract is None
+                or definition.effect != ones_contract.effect
+                or definition.confirmation_policy != ones_contract.confirmation_policy
+                or definition.operation_code != ones_contract.operation_code
+                or definition.risk_level != ones_contract.risk_level
+                or definition.target_policy != ones_contract.target_policy
+                or definition.destructive != ones_contract.destructive
+                or definition.idempotent != ones_contract.idempotent
+                or definition.open_world != ones_contract.open_world
+            ):
+                raise ValueError("ONES MCP Tool execution metadata is inconsistent")
 
 
 validate_mcp_server_policies()

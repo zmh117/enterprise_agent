@@ -1,11 +1,33 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from typing import Any
 
 from fastapi.testclient import TestClient
 
 from ones_mock.mock_ones_api import MOCK_ISSUE_TYPES, MockOnesSettings, create_app
+from services.ones_mcp_server.provider.task_update import OnesTaskUpdateProvider
+from services.ones_mcp_server.task_update_catalog import TaskUpdateFieldCatalog
+
+
+class _TestClientTaskUpdateHttp:
+    def __init__(self, client: TestClient) -> None:
+        self.client = client
+
+    def post_json(
+        self,
+        path: str,
+        payload: dict[str, object],
+        *,
+        headers: dict[str, str],
+        query: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        response = self.client.post(path, params=query, headers=headers, json=payload)
+        response.raise_for_status()
+        body = response.json()
+        assert isinstance(body, dict)
+        return body
 
 
 class MockOnesApiTests(unittest.TestCase):
@@ -152,6 +174,50 @@ class MockOnesApiTests(unittest.TestCase):
         self.assertEqual("team_not_found", wrong_team.json()["detail"]["code"])
         self.assertEqual(400, unsupported.status_code)
         self.assertEqual("unsupported_query_type", unsupported.json()["detail"]["code"])
+
+    def test_task_update_provider_uses_mock_update3_and_observes_readback(self) -> None:
+        catalog = replace(
+            TaskUpdateFieldCatalog.load(),
+            source_team_uuid=self.settings.team_uuid,
+        )
+        provider = OnesTaskUpdateProvider(
+            _TestClientTaskUpdateHttp(self.client),  # type: ignore[arg-type]
+            catalog=catalog,
+        )
+        task_uuid = "MOCK-ONES-TASK-900103"
+
+        before = provider.read_task(
+            team_uuid=self.settings.team_uuid,
+            task_uuid=task_uuid,
+            provider_user_id=self.settings.user_uuid,
+            token=self.settings.token,
+        )
+        result = provider.update_task(
+            team_uuid=self.settings.team_uuid,
+            provider_user_id=self.settings.user_uuid,
+            token=self.settings.token,
+            payload={
+                "tasks": [
+                    {
+                        "uuid": task_uuid,
+                        "name": "Mock defect: status refresh fixed",
+                        "summary": "Mock defect: status refresh fixed",
+                    }
+                ]
+            },
+        )
+        after = provider.read_task(
+            team_uuid=self.settings.team_uuid,
+            task_uuid=task_uuid,
+            provider_user_id=self.settings.user_uuid,
+            token=self.settings.token,
+        )
+
+        self.assertEqual({"updated": True, "bad_tasks": []}, result)
+        self.assertEqual("缺陷", before.issue_type_name)
+        self.assertTrue(before.can_edit)
+        self.assertEqual("Mock defect: status refresh fixed", after.title)
+        self.assertNotEqual(before.server_update_stamp, after.server_update_stamp)
 
     def test_governed_search_returns_bounded_normalized_contract(self) -> None:
         response = self.client.post(

@@ -409,6 +409,7 @@ describe("角色授权中心", () => {
       )
     ).toBeInTheDocument()
     expect(screen.getAllByText("只读")).toHaveLength(2)
+    expect(screen.getByText(/写入/)).toBeInTheDocument()
     expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole("checkbox", {

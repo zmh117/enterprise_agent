@@ -640,6 +640,7 @@ describe("Business Application workbench", () => {
     expect(
       screen.getByText("为当前钉钉用户准备一个本人待办。")
     ).toBeInTheDocument()
+    expect(screen.getByText(/dingtalk-mcp · 写入/)).toBeInTheDocument()
     expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(mcpTool)
     expect(mcpTool).toBeChecked()

@@ -6,6 +6,8 @@ from typing import Any, Final
 
 ONES_ID_PATTERN: Final = r"^[A-Za-z0-9_-]+$"
 ONES_STATUS_CATEGORIES: Final = ("to_do", "in_progress", "done")
+ONES_UPDATE_TASK_TOOL_IDENTIFIER: Final = "ones_update_task"
+ONES_CONFIRMATION_POLICY: Final = "external_action_card_v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +16,29 @@ class OnesToolContract:
     description: str
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
+    effect: str = "read"
+    confirmation_policy: str = "none"
+    operation_code: str = ""
+    risk_level: str = "low"
+    target_policy: str = ""
+
+    @property
+    def read_only(self) -> bool:
+        return self.effect == "read"
+
+    @property
+    def destructive(self) -> bool:
+        return self.effect == "mutation"
+
+    @property
+    def idempotent(self) -> bool:
+        # Mutation calls only prepare a snapshot-aware Action Intent. The
+        # confirmed Provider write is executed separately by the worker.
+        return self.effect == "mutation"
+
+    @property
+    def open_world(self) -> bool:
+        return False
 
 
 def _identifier(*, maximum: int = 128) -> dict[str, Any]:
@@ -199,8 +224,112 @@ def _contract(
     description: str,
     input_schema: dict[str, Any],
     output_schema: dict[str, Any],
+    *,
+    effect: str = "read",
+    confirmation_policy: str = "none",
+    operation_code: str = "",
+    risk_level: str = "low",
+    target_policy: str = "",
 ) -> OnesToolContract:
-    return OnesToolContract(identifier, description, input_schema, output_schema)
+    return OnesToolContract(
+        identifier,
+        description,
+        input_schema,
+        output_schema,
+        effect,
+        confirmation_policy,
+        operation_code,
+        risk_level,
+        target_policy,
+    )
+
+
+def _identifier_array(*, maximum: int = 100) -> dict[str, Any]:
+    return {
+        "type": "array",
+        "maxItems": maximum,
+        "uniqueItems": True,
+        "items": _identifier(),
+    }
+
+
+_ONES_UPDATE_TASK_INPUT = {
+    "type": "object",
+    "properties": {
+        "uuid": _identifier(),
+        "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "description": {"type": "string", "maxLength": 8000},
+        "assignee_uuid": _identifier(),
+        "environment": {"type": "string", "maxLength": 4000},
+        "labels_text": {"type": "string", "maxLength": 2000},
+        "resolver_uuid": _identifier(),
+        "owner_uuids": _identifier_array(),
+        "watcher_uuids": _identifier_array(),
+        "defect_type_uuid": _identifier(),
+        "urgency_uuid": _identifier(),
+        "severity_uuid": _identifier(),
+        "discovery_difficulty_uuid": _identifier(),
+        "reproduction_probability_uuid": _identifier(),
+        "sprint_uuid": _identifier(),
+        "product_uuids": _identifier_array(),
+        "product_module_uuids": _identifier_array(),
+        "discovery_stage_uuid": _identifier(),
+        "online_defect_uuid": _identifier(),
+        "historical_defect_uuid": _identifier(),
+        "affected_version_mes_uuids": _identifier_array(),
+        "fixed_version_mes_uuids": _identifier_array(),
+        "verified_version_mes_uuids": _identifier_array(),
+        "solution_text": {"type": "string", "maxLength": 8000},
+        "cause_uuid": _identifier(),
+        "svn_version_number": {"type": "number"},
+        "handling_result_uuid": _identifier(),
+        "impact_analysis": {"type": "string", "maxLength": 8000},
+        "multi_version_duplicate_bug_uuid": _identifier(),
+        "priority_uuid": _identifier(),
+    },
+    "required": ["uuid"],
+    "minProperties": 2,
+    "additionalProperties": False,
+}
+
+_ONES_UPDATE_TASK_OUTPUT = {
+    "type": "object",
+    "properties": {
+        "status": {
+            "type": "string",
+            "enum": ["confirmation_required", "no_update"],
+        },
+        "action_intent_id": {"type": "string", "maxLength": 128},
+        "revision": {"type": "integer", "minimum": 1},
+        "expires_at": {"type": "string", "format": "date-time", "maxLength": 64},
+        "summary": {
+            "type": "object",
+            "properties": {
+                "operation": {"const": "更新缺陷"},
+                "target": {"type": "string", "maxLength": 700},
+                "changes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 29,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field": {"type": "string", "maxLength": 100},
+                            "before": {"type": "string", "maxLength": 8000},
+                            "after": {"type": "string", "maxLength": 8000},
+                        },
+                        "required": ["field", "before", "after"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["operation", "target", "changes"],
+            "additionalProperties": False,
+        },
+    },
+    "required": ["status"],
+    "additionalProperties": False,
+}
 
 
 _LEGACY_WORK_ITEM_INPUT = _object_schema(
@@ -658,6 +787,17 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
             "查询一个明确 ONES 测试用例 UUID 的详情和有界步骤。",
             _object_schema({"test_case_uuid": _identifier()}, required=("test_case_uuid",)),
             _TESTCASE_DETAIL_OUTPUT,
+        ),
+        _contract(
+            ONES_UPDATE_TASK_TOOL_IDENTIFIER,
+            "更新一个明确 UUID 的现有 ONES 缺陷；只接受语义化 Patch，仅钉钉来源可用，调用后私发确认卡片，用户逐次确认后才执行写入。",
+            _ONES_UPDATE_TASK_INPUT,
+            _ONES_UPDATE_TASK_OUTPUT,
+            effect="mutation",
+            confirmation_policy=ONES_CONFIRMATION_POLICY,
+            operation_code="ones.task.update",
+            risk_level="high",
+            target_policy="single_existing_defect",
         ),
     )
 }

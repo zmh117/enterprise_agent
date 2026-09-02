@@ -1571,7 +1571,7 @@ function McpToolChecklist({
                   {item.identifier}
                 </span>
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  {item.server_code} · {item.read_only ? "只读" : "受控写操作"}
+                  {item.server_code} · {item.read_only ? "只读" : "写入"}
                   {item.confirmation_policy === "external_action_card_v1"
                     ? " · 每次需原用户确认卡片"
                     : ""}

@@ -118,12 +118,24 @@ def _database() -> Database:
           confirmation_policy text not null, operation_code text not null,
           revision integer not null, status text not null, arguments_json text not null,
           arguments_hash text not null, safe_summary_json text not null, mcp_call_id text not null,
+          confirmation_summary_json text not null default '{}',
           expires_at text not null, approved_at text, rejected_at text,
           execution_claimed_by text not null default '', execution_claim_expires_at text,
           execution_attempts integer not null default 0, provider_request_id text not null default '',
           result_json text not null default '{}', last_error_code text not null default '',
           last_error_summary text not null default '', created_at text not null,
           updated_at text not null, completed_at text,
+          confirmation_channel_code text not null default 'dingtalk',
+          execution_provider_code text not null default 'dingtalk',
+          execution_external_identity_id text,
+          execution_scope_id text not null default '',
+          target_resource_type text not null default '',
+          target_resource_id text not null default '',
+          precondition_json text not null default '{}',
+          precondition_hash text not null default '',
+          field_catalog_version text not null default '',
+          field_catalog_hash text not null default '',
+          intent_fingerprint text not null default '',
           unique(job_id, tool_identifier, arguments_hash)
         );
         create table external_action_card_outbox (
@@ -396,10 +408,10 @@ def test_contact_projection_and_audit_summary_remove_sensitive_values() -> None:
         "users": [
             {
                 "user_id": "staff-1",
-                    "union_id": "union-1",
-                    "name": "张三",
-                    "title": "工程师",
-                }
+                "union_id": "union-1",
+                "name": "张三",
+                "title": "工程师",
+            }
         ],
         "returned": 1,
         "truncated": True,
@@ -587,9 +599,9 @@ def test_ambiguous_user_search_does_not_implicitly_prepare_or_send() -> None:
     assert [(method, url) for method, url, *_ in transport.calls] == [
         ("POST", "https://api.dingtalk.com/v1.0/contact/users/search")
     ]
-    assert database.execute_one(
-        "select count(*) as count from external_action_intent"
-    ) == {"count": 0}
+    assert database.execute_one("select count(*) as count from external_action_intent") == {
+        "count": 0
+    }
 
 
 def test_contact_search_rejects_unknown_provider_item_shape() -> None:
@@ -732,9 +744,9 @@ def test_aitable_v1_targets_explicit_resources_for_current_operator() -> None:
     }
 
     read_transport = _Transport({"value": [{"id": "sheet-1", "name": "数据表"}]})
-    read_result = DingTalkAiTableReadClient(
-        _TokenClient(), transport=read_transport
-    ).list_sheets(operator_id="union-1", base_id="base-1")
+    read_result = DingTalkAiTableReadClient(_TokenClient(), transport=read_transport).list_sheets(
+        operator_id="union-1", base_id="base-1"
+    )
     assert read_result["returned"] == 1
 
     mutation_transport = _Transport({"value": [{"id": "record-1"}]})
@@ -743,15 +755,13 @@ def test_aitable_v1_targets_explicit_resources_for_current_operator() -> None:
     ).insert_records(operator_id="union-1", arguments=frozen)
     assert mutation_result["record_ids"] == ["record-1"]
 
-    created_sheet, sheet_summary = (
-        DingTalkMutationPreparationCatalog._create_aitable_sheet(
-            principal,
-            {
-                "base_id": "base-1",
-                "name": "验收表",
-                "fields": [{"name": "标题", "type": "text"}],
-            },
-        )
+    created_sheet, sheet_summary = DingTalkMutationPreparationCatalog._create_aitable_sheet(
+        principal,
+        {
+            "base_id": "base-1",
+            "name": "验收表",
+            "fields": [{"name": "标题", "type": "text"}],
+        },
     )
     assert created_sheet["_target"] == {
         "operator_id": "union-1",
@@ -759,16 +769,14 @@ def test_aitable_v1_targets_explicit_resources_for_current_operator() -> None:
     }
     assert sheet_summary["field_names"] == ["标题"]
 
-    updated_field, field_summary = (
-        DingTalkMutationPreparationCatalog._update_aitable_field(
-            principal,
-            {
-                "base_id": "base-1",
-                "sheet_id": "sheet-1",
-                "field_id": "field-1",
-                "name": "标题-更新",
-            },
-        )
+    updated_field, field_summary = DingTalkMutationPreparationCatalog._update_aitable_field(
+        principal,
+        {
+            "base_id": "base-1",
+            "sheet_id": "sheet-1",
+            "field_id": "field-1",
+            "name": "标题-更新",
+        },
     )
     assert updated_field["_target"] == {
         "operator_id": "union-1",
@@ -893,9 +901,7 @@ def test_aitable_sheet_update_uses_exact_get_postcondition_after_empty_ack() -> 
         ]
     )
 
-    assert DingTalkAiTableMutationClient(
-        _TokenClient(), transport=transport
-    ).update_sheet(
+    assert DingTalkAiTableMutationClient(_TokenClient(), transport=transport).update_sheet(
         operator_id="union/1",
         arguments={
             "base_id": "base/1",
@@ -916,9 +922,7 @@ def test_aitable_sheet_update_rejects_postcondition_name_drift() -> None:
     )
 
     with pytest.raises(RetryableExecutionError) as exc_info:
-        DingTalkAiTableMutationClient(
-            _TokenClient(), transport=transport
-        ).update_sheet(
+        DingTalkAiTableMutationClient(_TokenClient(), transport=transport).update_sheet(
             operator_id="union/1",
             arguments={
                 "base_id": "base/1",
@@ -928,6 +932,7 @@ def test_aitable_sheet_update_rejects_postcondition_name_drift() -> None:
         )
 
     assert exc_info.value.error_code == "dingtalk_response_invalid"
+
 
 def test_aitable_search_projects_latest_storage_v2_items_shape() -> None:
     transport = _Transport(
@@ -944,9 +949,9 @@ def test_aitable_search_projects_latest_storage_v2_items_shape() -> None:
         }
     )
 
-    result = DingTalkAiTableReadClient(
-        _TokenClient(), transport=transport
-    ).search(operator_id="union-1", query="新浪热搜", page_size=20, cursor="")
+    result = DingTalkAiTableReadClient(_TokenClient(), transport=transport).search(
+        operator_id="union-1", query="新浪热搜", page_size=20, cursor=""
+    )
 
     assert result == {
         "aitables": [
@@ -987,9 +992,7 @@ def test_aitable_search_catalog_defaults_to_fifty_items_per_page() -> None:
 def test_aitable_search_rejects_retired_or_unknown_item_containers() -> None:
     for response in ({"dentries": []}, {"items": {}}, {}):
         with pytest.raises(RetryableExecutionError) as caught:
-            DingTalkAiTableReadClient(
-                _TokenClient(), transport=_Transport(response)
-            ).search(
+            DingTalkAiTableReadClient(_TokenClient(), transport=_Transport(response)).search(
                 operator_id="union-1",
                 query="新浪热搜",
                 page_size=20,
@@ -1101,9 +1104,7 @@ def test_aitable_sheet_list_rejects_unknown_or_incomplete_success_shapes(
 
 
 def test_work_notification_reads_project_official_legacy_response_shapes() -> None:
-    transport = _Transport(
-        {"progress": {"progress_in_percent": 75, "status": 1}}
-    )
+    transport = _Transport({"progress": {"progress_in_percent": 75, "status": 1}})
     client = DingTalkWorkNotificationReadClient(_TokenClient(), transport=transport)
 
     assert client.get_progress(agent_id=123, task_id=456) == {
@@ -1218,9 +1219,7 @@ def test_read_schema_rejects_identity_and_network_overrides_before_provider_io()
 
 
 def test_robot_user_batch_schema_and_normalizer_preserve_official_input_semantics() -> None:
-    contract = DINGTALK_TOOL_CONTRACTS[
-        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
-    ]
+    contract = DINGTALK_TOOL_CONTRACTS[DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER]
     arguments = {
         "user_ids": ["staff-2", "staff-1", "staff-2"],
         "msg_param": {"title": " 标题 ", "text": " 正文 "},
@@ -1246,9 +1245,7 @@ def test_robot_user_batch_schema_and_normalizer_preserve_official_input_semantic
         "title": " 标题 ",
         "text": " 正文 ",
     }
-    assert json_hash(frozen) != json_hash(
-        {**frozen, "user_ids": ["staff-1", "staff-2", "staff-2"]}
-    )
+    assert json_hash(frozen) != json_hash({**frozen, "user_ids": ["staff-1", "staff-2", "staff-2"]})
 
 
 def test_group_robot_normalizer_requires_a_trusted_group_source() -> None:
@@ -1344,9 +1341,9 @@ def test_robot_user_batch_reuses_one_intent_for_identical_ordered_arguments() ->
     assert second["id"] == first["id"]
     assert reordered_created is True
     assert reordered["id"] != first["id"]
-    assert database.execute_one(
-        "select count(*) as count from external_action_card_outbox"
-    ) == {"count": 2}
+    assert database.execute_one("select count(*) as count from external_action_card_outbox") == {
+        "count": 2
+    }
 
 
 @pytest.mark.parametrize(
@@ -1368,18 +1365,14 @@ def test_robot_user_batch_reuses_one_intent_for_identical_ordered_arguments() ->
 def test_robot_user_batch_schema_rejects_empty_or_server_owned_fields(
     arguments: dict[str, Any],
 ) -> None:
-    schema = MCP_TOOL_MANIFEST[
-        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
-    ].input_schema
+    schema = MCP_TOOL_MANIFEST[DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER].input_schema
     with pytest.raises(NonRetryableExecutionError) as caught:
         _validated_payload(arguments, schema, kind="request")
     assert caught.value.error_code == "dingtalk_request_invalid"
 
 
 def test_robot_user_batch_rejects_global_intent_payload_overflow_before_prepare() -> None:
-    contract = DINGTALK_TOOL_CONTRACTS[
-        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
-    ]
+    contract = DINGTALK_TOOL_CONTRACTS[DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER]
     principal = SimpleNamespace(enterprise_robot_code="robot-1")
 
     class _Resolver:
@@ -1460,9 +1453,7 @@ def test_worker_reauthorizes_robot_user_batch_target_without_user_detail_preflig
         decode_json=lambda _value: arguments
     )
     intent = {"source_connector_id": "connector-1", "arguments_json": "{}"}
-    contract = DINGTALK_TOOL_CONTRACTS[
-        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
-    ]
+    contract = DINGTALK_TOOL_CONTRACTS[DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER]
 
     worker._reauthorize_target(intent, contract)
     connector_registry.robot_code = "robot-2"
@@ -1611,9 +1602,7 @@ def test_provider_permission_error_preserves_only_bounded_official_code(
         )
 
     assert caught.value.error_code == "dingtalk_permission_denied"
-    assert caught.value.diagnostics == {
-        "provider_error_code": "Forbidden.AccessDenied"
-    }
+    assert caught.value.diagnostics == {"provider_error_code": "Forbidden.AccessDenied"}
     assert "Forbidden.AccessDenied" in caught.value.safe_message
     assert "private provider explanation" not in caught.value.safe_message
     assert "secret-value" not in str(caught.value)
@@ -1948,9 +1937,7 @@ def test_union_id_completion_rejects_unverified_contact_detail(user: dict[str, s
         )
 
     assert exc_info.value.error_code == "dingtalk_identity_incomplete"
-    assert runtime.audit_service.events[-1][0] == (
-        "identity.dingtalk.union_id_completion_failed"
-    )
+    assert runtime.audit_service.events[-1][0] == ("identity.dingtalk.union_id_completion_failed")
 
 
 def test_intent_is_idempotent_and_only_original_actor_can_approve() -> None:
@@ -2099,6 +2086,21 @@ def test_intent_is_idempotent_and_only_original_actor_can_approve() -> None:
     )
     assert expired_result.status == "EXPIRED"
     assert service.repository.claim_approved(worker_id="worker-expired") is None
+
+
+def test_worker_uses_legacy_summary_for_intents_backfilled_with_empty_full_summary() -> None:
+    worker = ExternalActionWorker.__new__(ExternalActionWorker)
+    worker.repository = SimpleNamespace(
+        decode_json=ExternalActionRepository.decode_json,
+    )
+    legacy = {"operation": "创建待办", "subject": "旧意图仍可确认"}
+
+    assert worker._confirmation_summary(
+        {
+            "confirmation_summary_json": "{}",
+            "safe_summary_json": json.dumps(legacy, ensure_ascii=False),
+        }
+    ) == legacy
 
 
 def test_worker_reauthorizes_current_actor_application_and_identity() -> None:
@@ -2285,6 +2287,7 @@ def test_worker_classifies_provider_failure_without_automatic_replay(
             "error_code": getattr(failure, "error_code"),
             "error_summary": getattr(failure, "safe_message"),
             "uncertain": uncertain,
+            "card_status_text": getattr(failure, "safe_message"),
         }
     ]
     assert audit.events[-1][1]["status"] == audit_status
@@ -2417,10 +2420,7 @@ def test_worker_result_card_uses_bounded_provider_acceptance_status(
     assert repository.completed == ["card-outbox-1"]
     assert repository.failed == []
     assert captured["card_fields"]["status"] == "succeeded"
-    assert (
-        captured["card_fields"]["statusText"]
-        == "批量消息请求已受理：1 人受理，2 人未受理"
-    )
+    assert captured["card_fields"]["statusText"] == "批量消息请求已受理：1 人受理，2 人未受理"
 
 
 def test_worker_async_success_text_never_claims_final_delivery() -> None:
@@ -2436,17 +2436,20 @@ def test_worker_async_success_text_never_claims_final_delivery() -> None:
         group,
         {"accepted": True},
     )
-    assert ExternalActionWorker._success_card_status_text(
-        batch,
-        {
-            "accepted_count": 1,
-            "not_accepted_count": 2,
-            "filtered_count": 1,
-            "flow_controlled_count": 1,
-            "invalid_count": 0,
-            "fully_accepted": False,
-        },
-    ) == "批量消息请求已受理：1 人受理，2 人未受理"
+    assert (
+        ExternalActionWorker._success_card_status_text(
+            batch,
+            {
+                "accepted_count": 1,
+                "not_accepted_count": 2,
+                "filtered_count": 1,
+                "flow_controlled_count": 1,
+                "invalid_count": 0,
+                "fully_accepted": False,
+            },
+        )
+        == "批量消息请求已受理：1 人受理，2 人未受理"
+    )
     assert "已提交" in ExternalActionWorker._success_card_status_text(
         notice,
         {"accepted": True, "task_id": 321},
@@ -2589,10 +2592,7 @@ def test_fixed_mutation_clients_use_the_ten_allowlisted_operations() -> None:
         ),
         (
             "PUT",
-            (
-                "https://api.dingtalk.com/v1.0/todo/users/union%2F1/tasks/"
-                "todo%2F1/executorStatus"
-            ),
+            ("https://api.dingtalk.com/v1.0/todo/users/union%2F1/tasks/todo%2F1/executorStatus"),
         ),
         (
             "POST",
@@ -2630,9 +2630,7 @@ def test_fixed_mutation_clients_use_the_ten_allowlisted_operations() -> None:
         "msgParam": '{"title":"标题","text":"正文"}',
         "openConversationId": "cid/1",
     }
-    assert transport.calls[2][2] == {
-        "executorStatusList": [{"id": "union/1", "isDone": True}]
-    }
+    assert transport.calls[2][2] == {"executorStatusList": [{"id": "union/1", "isDone": True}]}
     assert transport.calls[8][2] == {
         "robotCode": "robot-1",
         "userIds": ["staff-1", "staff-2"],
@@ -2810,9 +2808,9 @@ def test_calendar_all_day_uses_official_date_objects() -> None:
         },
     )
 
-    DingTalkCalendarMutationClient(
-        _TokenClient(), transport=transport
-    ).create_for_self(union_id="union-1", arguments=frozen)
+    DingTalkCalendarMutationClient(_TokenClient(), transport=transport).create_for_self(
+        union_id="union-1", arguments=frozen
+    )
 
     assert transport.calls[0][2] == {
         "summary": "全天验收",
@@ -2861,15 +2859,13 @@ def test_calendar_all_day_rejects_nonexclusive_same_date_range() -> None:
 
 def test_mutation_clients_reject_unknown_success_response_shapes() -> None:
     with pytest.raises(RetryableExecutionError) as todo_create:
-        DingTalkTodoClient(
-            _TokenClient(), transport=_Transport({})
-        ).create_for_self(union_id="union-1", arguments={"subject": "创建"})
+        DingTalkTodoClient(_TokenClient(), transport=_Transport({})).create_for_self(
+            union_id="union-1", arguments={"subject": "创建"}
+        )
     assert todo_create.value.error_code == "dingtalk_response_invalid"
 
     with pytest.raises(RetryableExecutionError) as todo_update:
-        DingTalkTodoClient(
-            _TokenClient(), transport=_Transport({"result": False})
-        ).update_for_self(
+        DingTalkTodoClient(_TokenClient(), transport=_Transport({"result": False})).update_for_self(
             union_id="union-1",
             arguments={"task_id": "task-1", "subject": "更新"},
         )
@@ -3078,9 +3074,7 @@ def test_user_batch_mcp_audit_excludes_recipient_ids_message_and_target_secrets(
             }, True
 
     audit = _McpAudit()
-    tool_contract = DINGTALK_TOOL_CONTRACTS[
-        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
-    ]
+    tool_contract = DINGTALK_TOOL_CONTRACTS[DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER]
     normalizer = DingTalkMutationPreparationCatalog(SimpleNamespace()).normalizer(
         tool_contract.identifier
     )

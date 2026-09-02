@@ -833,6 +833,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "124_expand_agent_job_context_audit.sql",
         "125_expand_runtime_audit_chunk_event_projection.sql",
         "126_release_unbound_ones_identity.sql",
+        "127_expand_external_action_provider_facts.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
@@ -1365,9 +1366,9 @@ def test_mcp_tool_catalog_lists_manifest_tools_and_enforces_agent_binding() -> N
     ]
 
 
-def test_ones_tool_preserves_server_through_agent_application_and_job_snapshot() -> None:
+def test_ones_mutation_preserves_contract_through_application_and_job_snapshot() -> None:
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
-    definition = MCP_TOOL_MANIFEST["ones_work_item_search"]
+    definition = MCP_TOOL_MANIFEST["ones_update_task"]
     container.database.execute(
         """
         insert into agent_publication_mcp_tool
@@ -1410,6 +1411,9 @@ def test_ones_tool_preserves_server_through_agent_application_and_job_snapshot()
         if item["tool_identifier"] == definition.identifier
     )
     assert catalog_entry["server_code"] == "ones-mcp"
+    assert catalog_entry["effect"] == "mutation"
+    assert catalog_entry["confirmation_policy"] == "external_action_card_v1"
+    assert "仅钉钉来源可用" in catalog_entry["description"]
 
     wrong_payload = draft_payload()
     wrong_payload["mcp_tools"] = [
@@ -1525,11 +1529,11 @@ def test_ones_tool_preserves_server_through_agent_application_and_job_snapshot()
             "tool_identifier": definition.identifier,
             "schema_hash": definition.schema_hash,
             "resource_kind": "",
-            "effect": "read",
-            "confirmation_policy": "none",
-            "operation_code": "",
-            "risk_level": "low",
-            "target_policy": "",
+            "effect": "mutation",
+            "confirmation_policy": "external_action_card_v1",
+            "operation_code": "ones.task.update",
+            "risk_level": "high",
+            "target_policy": "single_existing_defect",
         }
     ]
 

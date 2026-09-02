@@ -832,7 +832,7 @@ function McpToolSelector({
                   </span>
                   <span className="mt-1 block text-xs text-muted-foreground">
                     {tool.server_code} ·{" "}
-                    {tool.effect === "mutation" ? "受控写操作" : "只读"}
+                    {tool.effect === "mutation" ? "写入" : "只读"}
                     {tool.confirmation_policy === "external_action_card_v1"
                       ? " · 每次需原用户确认卡片"
                       : ""}

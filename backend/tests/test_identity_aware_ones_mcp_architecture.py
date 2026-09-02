@@ -144,7 +144,7 @@ def test_business_principal_migration_has_no_dedicated_issuer_or_single_slot() -
     assert "def principal_token(" not in sources
 
 
-def test_ones_contract_exposes_only_code_owned_fixed_readonly_tools() -> None:
+def test_ones_contract_exposes_code_owned_fixed_tools_and_one_confirmed_mutation() -> None:
     assert SERVER_CODE == "ones-mcp"
     assert TOOL_IDENTIFIER == "ones_work_item_search"
     assert ISSUE_TYPES == ("demand", "task", "defect")
@@ -173,7 +173,13 @@ def test_ones_contract_exposes_only_code_owned_fixed_readonly_tools() -> None:
         assert set(contract.input_schema.get("properties", ())).isdisjoint(
             {"url", "path", "query", "document", "headers", "token", "team_uuid"}
         )
-        assert MCP_TOOL_MANIFEST[contract.identifier].read_only is True
+        definition = MCP_TOOL_MANIFEST[contract.identifier]
+        assert definition.read_only is contract.read_only
+        assert definition.effect == contract.effect
+        assert definition.confirmation_policy == contract.confirmation_policy
+    assert {item.identifier for item in ONES_TOOL_CONTRACTS.values() if not item.read_only} == {
+        "ones_update_task"
+    }
 
 
 def test_ones_query_assets_are_static_documents_without_dynamic_query_library() -> None:
@@ -340,6 +346,13 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
     ]
     assert set(external_worker["networks"]) == {"default", "provider-egress"}
     assert external_worker["secrets"] == ["app_config_master_key"]
+    assert external_worker["environment"]["ONES_MCP_PROVIDER_BASE_URL"] == (
+        "${ONES_MCP_PROVIDER_BASE_URL:-http://host.docker.internal:19121}"
+    )
+    assert external_worker["environment"]["ONES_MCP_PROVIDER_ALLOWED_HOSTS"] == (
+        "${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-host.docker.internal}"
+    )
+    assert external_worker["extra_hosts"] == ["host.docker.internal:host-gateway"]
 
     worker = services["agent-worker"]
     assert worker["environment"]["PRINCIPAL_JWT_PRIVATE_KEY_FILE"] == (
@@ -373,6 +386,7 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
     dockerfile = (REPOSITORY_ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
     assert "FROM api-server AS ones-mcp" in dockerfile
     assert "FROM api-server AS dingtalk-mcp" in dockerfile
+    assert "TaskUpdateFieldCatalog.load()" in dockerfile
     assert 'USER 10003:10003\nCMD ["python", "-m", "services.ones_mcp_server"]' in dockerfile
     project = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert project["project"]["optional-dependencies"]["ones-mcp"] == ["mcp==2.0.0"]

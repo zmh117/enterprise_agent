@@ -133,7 +133,9 @@ def test_all_ones_tool_contracts_are_valid_shared_manifest_facts() -> None:
         assert definition.server_code == "ones-mcp"
         assert definition.description == contract.description
         assert definition.input_schema == contract.input_schema
-        assert definition.read_only is True
+        assert definition.read_only is contract.read_only
+        assert definition.effect == contract.effect
+        assert definition.confirmation_policy == contract.confirmation_policy
 
     legacy_query = MCP_TOOL_MANIFEST["ones_query_work_items"]
     custom_query = MCP_TOOL_MANIFEST["ones_query_work_items_with_custom_options"]

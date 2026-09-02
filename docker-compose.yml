@@ -344,6 +344,11 @@ services:
       <<: *database-env
       APP_ENV: ${APP_ENV:-local}
       SEED_LOCAL_CONFIG: "false"
+      ONES_MCP_PROVIDER_BASE_URL: ${ONES_MCP_PROVIDER_BASE_URL:-http://host.docker.internal:19121}
+      ONES_MCP_PROVIDER_ALLOWED_HOSTS: ${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-host.docker.internal}
+      ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL: ${ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL:-true}
+      ONES_MCP_PROVIDER_TIMEOUT_SECONDS: ${ONES_MCP_PROVIDER_TIMEOUT_SECONDS:-5}
+      ONES_MCP_PROVIDER_MAX_RESPONSE_BYTES: ${ONES_MCP_PROVIDER_MAX_RESPONSE_BYTES:-262144}
     secrets:
       - app_config_master_key
     depends_on:
@@ -353,6 +358,8 @@ services:
         condition: service_completed_successfully
       dingtalk-mcp:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/external-action-worker.heartbeat"]
       interval: 10s

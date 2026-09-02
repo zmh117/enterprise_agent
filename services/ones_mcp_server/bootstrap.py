@@ -10,6 +10,7 @@ from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.config import OnesIdentitySettings
 from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
 from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
+from services.ones_mcp_server.task_update_catalog import TaskUpdateFieldCatalog
 from services.ones_mcp_server.contracts import SERVER_CODE
 from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshService
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
@@ -27,8 +28,10 @@ from services.ones_mcp_server.provider.graphql.operations.work_item_search impor
     WORK_ITEM_SEARCH_OPERATION,
 )
 from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
+from services.ones_mcp_server.provider.task_update import OnesTaskUpdateProvider
 from services.ones_mcp_server.provider.target import validate_provider_target
 from services.ones_mcp_server.tools.registry import OnesToolRegistry
+from services.ones_mcp_server.tools.task_update import OnesTaskUpdateService
 from services.ones_mcp_server.tools.project_role_members import OnesProjectRoleMemberService
 from services.ones_mcp_server.tools.query_services import (
     OnesCustomOptionWorkItemQueryService,
@@ -132,6 +135,7 @@ def build_tool_registry(runtime: Container) -> OnesToolRegistry:
     graphql = work_item_search.graphql
     http = graphql.http
     dictionary = QueryConditionDictionary.load()
+    task_update_catalog = TaskUpdateFieldCatalog.load()
     project_role_members = OnesProjectRoleMemberService(
         shared[0],
         http,
@@ -160,8 +164,19 @@ def build_tool_registry(runtime: Container) -> OnesToolRegistry:
         OnesTestCaseQueryService(*shared, graphql=graphql),
         OnesTestCaseDetailService(*shared, graphql=graphql),
     )
+    if runtime.external_action_service is None:
+        raise ValueError("ONES task update requires the External Action service")
+    task_update = OnesTaskUpdateService(
+        resolver=shared[0],
+        provider=OnesTaskUpdateProvider(http, catalog=task_update_catalog),
+        catalog=task_update_catalog,
+        external_actions=runtime.external_action_service,
+        audit=shared[2],
+        credentials=shared[1],
+        credential_refresh=shared[3],
+    )
     return OnesToolRegistry(
         authenticate=work_item_search.authenticate,
-        tools=(work_item_search, project_role_members, *query_tools),
+        tools=(work_item_search, project_role_members, *query_tools, task_update),
         audit=work_item_search.audit,
     )

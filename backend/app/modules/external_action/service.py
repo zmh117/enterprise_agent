@@ -7,7 +7,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.external_action.domain import ExternalActionIntentFacts
 from app.modules.external_action.repository import ExternalActionRepository
+from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError
 
@@ -56,16 +58,37 @@ class ExternalActionService:
     def prepare(
         self,
         *,
-        facts: dict[str, str],
+        facts: dict[str, str] | ExternalActionIntentFacts,
         arguments: dict[str, Any],
         arguments_hash: str,
         safe_summary: dict[str, Any],
         mcp_call_id: str,
         ttl_seconds: int = 900,
     ) -> tuple[dict[str, Any], bool]:
+        repository_facts: dict[str, Any]
+        if isinstance(facts, ExternalActionIntentFacts):
+            repository_facts = facts.as_repository_facts(arguments_hash=arguments_hash)
+        else:
+            repository_facts = {
+                **facts,
+                "confirmation_channel_code": facts.get("confirmation_channel_code", "dingtalk"),
+                "execution_provider_code": facts.get("execution_provider_code", "dingtalk"),
+                "execution_external_identity_id": facts.get("execution_external_identity_id", ""),
+                "execution_scope_id": facts.get("execution_scope_id", ""),
+                "target_resource_type": facts.get("target_resource_type", ""),
+                "target_resource_id": facts.get("target_resource_id", ""),
+                "precondition": {},
+                "precondition_hash": facts.get("precondition_hash", ""),
+                "field_catalog_version": facts.get("field_catalog_version", ""),
+                "field_catalog_hash": facts.get("field_catalog_hash", ""),
+                "intent_fingerprint": facts.get("intent_fingerprint", ""),
+            }
+        McpAuditCoordinator.reject_auth_material(arguments)
+        McpAuditCoordinator.reject_auth_material(safe_summary)
+        McpAuditCoordinator.reject_auth_material(repository_facts)
         expires_at = (datetime.now(UTC) + timedelta(seconds=max(60, ttl_seconds))).isoformat()
         intent, created = self.repository.create_or_get(
-            facts=facts,
+            facts=repository_facts,
             arguments=arguments,
             arguments_hash=arguments_hash,
             safe_summary=safe_summary,
@@ -234,9 +257,7 @@ class ExternalActionService:
                 "cardData": {
                     "cardParamMap": {"status": accepted_status, "statusText": status_text}
                 },
-                "userPrivateData": {
-                    "cardParamMap": {"inputStatus": "disabled", "errorText": ""}
-                },
+                "userPrivateData": {"cardParamMap": {"inputStatus": "disabled", "errorText": ""}},
             },
         )
 

@@ -65,6 +65,7 @@ _BUSINESS_CAPABILITY_NAMES_ZH = {
     "ones_get_work_item_detail": "查看 ONES 工作项详情",
     "ones_list_work_item_messages": "查看 ONES 工作项消息",
     "ones_resolve_query_conditions": "解析 ONES 查询条件",
+    "ones_update_task": "更新 ONES 缺陷",
     "ones_list_test_plans": "查看 ONES 测试计划",
     "ones_list_testcase_libraries": "查看 ONES 测试用例库",
     "ones_list_testcase_modules": "查看 ONES 测试用例模块",

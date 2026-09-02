@@ -15,6 +15,9 @@ tools over stateless Streamable HTTP. It is not an arbitrary GraphQL or HTTP pro
 - `provider/rest/operations/`: fixed REST methods, paths, request bodies, and response parsers.
 - `condition_dictionary.py` and `resources/`: validated, Team-scoped status and
   custom-option lookup snapshot; no Provider transport or personal directory data.
+- `task_update_catalog.py`, `task_update.py`, and `provider/task_update.py`: bounded
+  defect-write catalog, semantic Patch compiler, fixed detail query, and fixed
+  `update3` adapter.
 - `credentials/`: 401 refresh, per-credential locking, revision CAS, and refresh audit.
 - `tools/`: MCP Tool validation and business/audit orchestration.
 
@@ -46,6 +49,19 @@ not widen an existing publication. The existing `ones_query_work_items` contract
 unchanged; custom-option support is a separate Tool so its schema hash cannot drift
 for historical Publications or Jobs.
 
+## Confirmed defect update
+
+`ones_update_task` updates one existing defect by UUID. Its public schema contains
+only semantic Patch fields; status, Team, Provider path, headers, and credentials are
+not caller-controlled. The Tool can be prepared only by a DingTalk-source Job and
+never writes during the MCP call. It computes the full Chinese old-to-new diff and
+privately delivers the existing external-action confirmation card to the originating
+operator. The shared external-action worker reauthorizes the frozen ONES identity,
+Team, Publication and Job Tool snapshot, requires an unchanged
+`serverUpdateStamp`, executes one fixed `update3` request, and verifies the result by
+readback. Existing Publications, Applications, roles, and Jobs do not receive this
+Tool automatically.
+
 ## Agent query orchestration
 
 The optional `ones-query` Skill teaches an Agent how to combine live project,
@@ -72,6 +88,17 @@ options. It excludes people, projects, sprints, issue types, request headers, an
 raw responses; malformed input does not replace the current resource. Run the
 dictionary, ONES contract, architecture, Mock, and Runtime tests before rebuilding
 and explicitly republishing the Agent/Application.
+
+The defect-write field catalog is generated separately from the same maintenance
+input. It contains only the reviewed defect fields and static option UUID/name pairs;
+people, projects, sprints, products, modules, status, and raw Provider data remain
+runtime-resolved or excluded:
+
+```bash
+.venv/bin/python scripts/sync_ones_task_update_field_catalog.py \
+  ones_mock/ones/查询条件字典.yaml \
+  services/ones_mcp_server/resources/task_update_field_catalog.json
+```
 
 ## Adding a GraphQL-backed Tool
 

@@ -178,7 +178,7 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
             if not isinstance(audit_handle, McpAuditHandle):
                 raise OnesMcpError(
                     "ONES MCP Tool result is missing its audit handle",
-                    safe_message="ONES 查询审计结果无效",
+                    safe_message="ONES 操作审计结果无效",
                     error_code="ones_mcp_audit_invalid",
                 )
             return _tool_result(
@@ -198,7 +198,7 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
         except Exception as exc:
             logger.exception("ONES MCP call failed safely tool_name=%s", params.name)
             return _tool_result(
-                {"error": "ONES 查询暂时不可用", "error_code": "ones_mcp_unavailable"},
+                {"error": "ONES 操作暂时不可用", "error_code": "ones_mcp_unavailable"},
                 is_error=True,
                 meta=_error_meta(exc),
             )
@@ -206,7 +206,7 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
     return Server(
         "Enterprise ONES MCP",
         version=SERVER_VERSION,
-        instructions="Identity-aware, code-registered, read-only ONES tools.",
+        instructions="Identity-aware, code-registered ONES reads and confirmed defect updates.",
         on_list_tools=list_tools,
         on_call_tool=call_tool,
     )

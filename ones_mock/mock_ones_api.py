@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -305,6 +306,36 @@ class GraphqlRequest(BaseModel):
 
 class TeamUsersRequest(BaseModel):
     uuids: list[str] = Field(min_length=1, max_length=2000)
+
+
+_TASK_UPDATE_FIELD_SOURCES = {
+    "5BiPnrfy": "_5BiPnrfy",
+    "F9eyqM3a": "_F9eyqM3a",
+    "field040": "solver",
+    "VRS2LsBn": "_VRS2LsBn",
+    "field008": "watchers",
+    "field041": "defectType",
+    "FnkEKd4Y": "_FnkEKd4Y",
+    "field038": "severityLevel",
+    "4v1yHkX9": "_4v1yHkX9",
+    "679m6U93": "_679m6U93",
+    "field011": "sprint",
+    "field029": "products",
+    "field030": "productModules",
+    "79WCF8hL": "_79WCF8hL",
+    "field031": "isOnlineDefect",
+    "6FimuZwX": "_6FimuZwX",
+    "4ipdiS95": "_4ipdiS95",
+    "MysgAE3y": "_MysgAE3y",
+    "LfbLTzsp": "_LfbLTzsp",
+    "LMb5XC7P": "_LMb5XC7P",
+    "PxHXwe6T": "_PxHXwe6T",
+    "DmGDdhkv": "_DmGDdhkv",
+    "field039": "solution",
+    "41TN9bsG": "_41TN9bsG",
+    "2adoeHHw": "_2adoeHHw",
+    "field012": "priority",
+}
 
 
 def _task_fixture(config: MockOnesConfig, task: dict[str, Any]) -> dict[str, Any]:
@@ -636,21 +667,111 @@ def _project_list(config: MockOnesConfig, variables: dict[str, Any]) -> dict[str
     }
 
 
-def _work_item_detail(config: MockOnesConfig, variables: dict[str, Any]) -> dict[str, Any]:
+def _work_item_detail(
+    config: MockOnesConfig,
+    variables: dict[str, Any],
+    *,
+    task_state: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     key = variables.get("key")
-    task = next(
-        (
-            _task_fixture(config, value)
-            for value in config.tasks
-            if key == f"task-MOCK-ONES-TASK-{value['number']}"
-        ),
-        None,
-    )
+    task_uuid = str(key or "").removeprefix("task-")
+    task = task_state.get(task_uuid) if task_state is not None else None
+    if task is None and task_state is None:
+        task = next(
+            (
+                _task_fixture(config, value)
+                for value in config.tasks
+                if key == f"task-MOCK-ONES-TASK-{value['number']}"
+            ),
+            None,
+        )
     if task is None:
         return {"data": {"task": None}}
-    task["descriptionText"] = "Synthetic work item detail for ONES MCP tests."
-    task["relatedTasks"] = []
-    return {"data": {"task": task}}
+    return {"data": {"task": deepcopy(task)}}
+
+
+def _task_update_detail_fixture(
+    config: MockOnesConfig,
+    task: dict[str, Any],
+) -> dict[str, Any]:
+    fixture = _task_fixture(config, task)
+    fixture.update(
+        {
+            "descriptionText": "Synthetic work item detail for ONES MCP tests.",
+            "relatedTasks": [],
+            "canEdit": True,
+            "hasEditPermission": True,
+            "canUpdateWatchers": True,
+            "hasUpdateWatchersPermission": True,
+            "watchers": [],
+            "solver": fixture["assign"],
+            "_VRS2LsBn": [],
+            "_5BiPnrfy": "",
+            "_F9eyqM3a": "",
+            "_LMb5XC7P": "",
+            "_DmGDdhkv": 0,
+            "_41TN9bsG": "",
+            "products": [],
+            "allProducts": [{"uuid": "MOCK-PRODUCT-001", "name": "Mock Product"}],
+            "productModules": [],
+            "allProductModules": [
+                {"uuid": "MOCK-PRODUCT-MODULE-001", "name": "Mock Product Module"}
+            ],
+        }
+    )
+    for source in _TASK_UPDATE_FIELD_SOURCES.values():
+        fixture.setdefault(source, None)
+    return fixture
+
+
+def _named_mock_entity(config: MockOnesConfig, uuid: str) -> dict[str, str]:
+    user = config.user_by_uuid(uuid)
+    return {"uuid": uuid, "name": user.name if user is not None else uuid}
+
+
+def _apply_task_field_value(
+    config: MockOnesConfig,
+    task: dict[str, Any],
+    value: dict[str, Any],
+) -> bool:
+    if set(value) != {"field_uuid", "type", "value"}:
+        return False
+    field_uuid = str(value.get("field_uuid") or "")
+    source = _TASK_UPDATE_FIELD_SOURCES.get(field_uuid)
+    field_type = value.get("type")
+    raw = value.get("value")
+    if source is None or isinstance(field_type, bool) or not isinstance(field_type, int):
+        return False
+    if field_type in {13, 16, 44, 46}:
+        if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+            return False
+        task[source] = [_named_mock_entity(config, item) for item in raw]
+    elif field_type in {1, 7, 8}:
+        if not isinstance(raw, str) or not raw:
+            return False
+        if source == "priority":
+            priority = next(
+                (item for item in config.priorities.values() if item["uuid"] == raw),
+                None,
+            )
+            task[source] = (
+                {"uuid": raw, "value": str(priority["value"])}
+                if priority is not None
+                else {"uuid": raw, "value": raw}
+            )
+        else:
+            task[source] = _named_mock_entity(config, raw)
+    elif field_type == 4:
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return False
+        task[source] = raw
+    elif field_type in {2, 15}:
+        if not isinstance(raw, str):
+            return False
+        task[source] = raw
+    else:
+        return False
+    return True
 
 
 def _test_bucket(collection: str, items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -768,6 +889,11 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
 
     app = FastAPI(title="Mock ONES API", version="0.3.0")
     app.state.ones_mock_config = config
+    task_state = {
+        str(fixture["uuid"]): fixture
+        for fixture in (_task_update_detail_fixture(config, task) for task in config.tasks)
+    }
+    app.state.ones_mock_task_state = task_state
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -1179,7 +1305,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
         if query_type == "projects-group-list-for-project-view":
             return _project_list(config, payload.variables)
         if query_type == "Task":
-            return _work_item_detail(config, payload.variables)
+            return _work_item_detail(config, payload.variables, task_state=task_state)
         if query_type == "QUERY_LIBRARY_LIST":
             return _testcase_libraries()
         if query_type == "library-module-list-tree-NCdREx5Y":
@@ -1199,6 +1325,82 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 "message": f"unsupported mock query type: {query_type}",
             },
         )
+
+    @app.post("/project/api/project/team/{team_uuid}/tasks/update3")
+    async def update_tasks(
+        team_uuid: str,
+        payload: dict[str, Any] = Body(),
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+    ) -> dict[str, Any]:
+        user = config.find_user_by_auth(
+            token=str(ones_auth_token or ""),
+            user_uuid=str(ones_user_id or ""),
+        )
+        if user is None:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "unauthorized", "message": "invalid ONES auth headers"},
+            )
+        if team_uuid not in {str(item["uuid"]) for item in config.teams}:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "team_not_found", "message": "mock team does not exist"},
+            )
+        tasks = payload.get("tasks")
+        if set(payload) != {"tasks"} or not isinstance(tasks, list) or len(tasks) != 1:
+            return {"bad_tasks": [{"reason": "invalid_payload"}]}
+        requested = tasks[0]
+        if not isinstance(requested, dict):
+            return {"bad_tasks": [{"reason": "invalid_task"}]}
+        task_uuid = str(requested.get("uuid") or "")
+        task = task_state.get(task_uuid)
+        allowed = {
+            "uuid",
+            "name",
+            "summary",
+            "desc_rich",
+            "descriptionText",
+            "assign",
+            "field_values",
+        }
+        if task is None or not set(requested).issubset(allowed):
+            return {"bad_tasks": [{"uuid": task_uuid, "reason": "invalid_task"}]}
+        candidate = deepcopy(task)
+        name = requested.get("name")
+        summary = requested.get("summary")
+        if (name is None) != (summary is None) or (
+            name is not None
+            and (
+                not isinstance(name, str)
+                or not name
+                or not isinstance(summary, str)
+                or summary != name
+            )
+        ):
+            return {"bad_tasks": [{"uuid": task_uuid, "reason": "invalid_title"}]}
+        if isinstance(name, str):
+            candidate["name"] = name
+        if "descriptionText" in requested:
+            description = requested["descriptionText"]
+            rich = requested.get("desc_rich")
+            if not isinstance(description, str) or not isinstance(rich, str):
+                return {"bad_tasks": [{"uuid": task_uuid, "reason": "invalid_description"}]}
+            candidate["descriptionText"] = description
+        if "assign" in requested:
+            assignee = requested["assign"]
+            if not isinstance(assignee, str) or config.user_by_uuid(assignee) is None:
+                return {"bad_tasks": [{"uuid": task_uuid, "reason": "invalid_assignee"}]}
+            candidate["assign"] = _named_mock_entity(config, assignee)
+        field_values = requested.get("field_values", [])
+        if not isinstance(field_values, list) or any(
+            not isinstance(item, dict) or not _apply_task_field_value(config, candidate, item)
+            for item in field_values
+        ):
+            return {"bad_tasks": [{"uuid": task_uuid, "reason": "invalid_field_value"}]}
+        candidate["serverUpdateStamp"] = int(candidate["serverUpdateStamp"]) + 1
+        task_state[task_uuid] = candidate
+        return {"bad_tasks": []}
 
     return app
 
