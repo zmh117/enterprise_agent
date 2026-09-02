@@ -463,6 +463,19 @@ def test_confirmation_gated_tool_restrictions_require_a_real_tool_result() -> No
     assert "dingtalk_create_calendar_event" not in with_mutation
 
 
+def test_aitable_search_restrictions_require_keyword_and_bounded_pagination() -> None:
+    without_search = " ".join(_tool_restrictions([]))
+    with_search = " ".join(_tool_restrictions(["dingtalk_search_aitables"]))
+
+    assert "AI table search" not in without_search
+    assert "meaningful name keyword supplied by the user" in with_search
+    assert "never invent broad queries such as 表 or 表格" in with_search
+    assert "page_size=50" in with_search
+    assert "exact same query" in with_search
+    assert "4 pages or 200 unique items" in with_search
+    assert "full base_id" in with_search
+
+
 @pytest.mark.parametrize("runtime_kind", ["python-v1"])
 def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_tools(
     runtime_kind: str,

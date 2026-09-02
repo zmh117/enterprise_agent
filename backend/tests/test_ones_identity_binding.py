@@ -254,6 +254,219 @@ def test_self_binding_reverification_team_selection_and_unbind_store_no_login_ma
     assert "single-request-token" not in audit
 
 
+def test_unbound_ones_subject_can_move_to_verified_user_without_rewriting_history() -> None:
+    container, verifier = runtime()
+    user_a, _ = create_login_user(container)
+    user_b = container.identity_repository.create_user(
+        username="ones-rebound-user",
+        display_name="ONES Rebound User",
+    )
+    service = container.ones_identity_binding_service
+
+    challenge_a = service.begin_self_binding(
+        actor_id=str(user_a["id"]),
+        email="owner-a@example.test",
+        password="not-a-real-owner-a-password",
+    )
+    service.confirm_self_binding(
+        actor_id=str(user_a["id"]),
+        challenge_id=str(challenge_a["id"]),
+        default_team_id="TEAM-A",
+    )
+    identity_a = next(
+        identity
+        for identity in container.identity_repository.list_external_identities(
+            str(user_a["id"])
+        )
+        if identity["provider"] == "ones"
+    )
+    service.self_unbind(actor_id=str(user_a["id"]))
+    history_before = container.database.execute_one(
+        """
+        select id, user_id, external_subject_id, status, revision
+          from user_external_identity where id = ?
+        """,
+        (identity_a["id"],),
+    )
+    credential_before = container.database.execute_one(
+        """
+        select id, external_identity_id, status, revision,
+               login_material_ciphertext, token_ciphertext
+          from external_identity_credential where external_identity_id = ?
+        """,
+        (identity_a["id"],),
+    )
+    audit_before = container.database.execute(
+        """
+        select id, actor_id, payload_summary from audit_event
+         where actor_id = ? order by created_at, id
+        """,
+        (user_a["id"],),
+    )
+    assert history_before is not None
+    assert history_before["user_id"] == user_a["id"]
+    assert history_before["status"] == "unbound"
+    assert credential_before is not None
+    assert credential_before["status"] == "UNBOUND"
+    assert credential_before["login_material_ciphertext"] is None
+    assert credential_before["token_ciphertext"] is None
+
+    challenge_b = service.begin_self_binding(
+        actor_id=str(user_b["id"]),
+        email="owner-b@example.test",
+        password="not-a-real-owner-b-password",
+    )
+    rebound = service.confirm_self_binding(
+        actor_id=str(user_b["id"]),
+        challenge_id=str(challenge_b["id"]),
+        default_team_id="TEAM-B",
+    )
+
+    assert rebound["ones"]["user_id"] == verifier.user_uuid
+    identity_b = next(
+        identity
+        for identity in container.identity_repository.list_external_identities(
+            str(user_b["id"])
+        )
+        if identity["provider"] == "ones" and identity["status"] == "enabled"
+    )
+    assert identity_b["id"] != identity_a["id"]
+    assert container.database.execute_one(
+        """
+        select id, user_id, external_subject_id, status, revision
+          from user_external_identity where id = ?
+        """,
+        (identity_a["id"],),
+    ) == history_before
+    assert container.database.execute_one(
+        """
+        select id, external_identity_id, status, revision,
+               login_material_ciphertext, token_ciphertext
+          from external_identity_credential where external_identity_id = ?
+        """,
+        (identity_a["id"],),
+    ) == credential_before
+    assert container.database.execute(
+        """
+        select id, actor_id, payload_summary from audit_event
+         where actor_id = ? order by created_at, id
+        """,
+        (user_a["id"],),
+    ) == audit_before
+    assert container.database.execute_one(
+        """
+        select count(*) as count from user_external_identity
+         where provider = 'ones' and tenant_code = 'default'
+           and external_subject_id = ? and status in ('enabled', 'disabled')
+        """,
+        (verifier.user_uuid,),
+    ) == {"count": 1}
+
+    reverse = service.begin_self_binding(
+        actor_id=str(user_a["id"]),
+        email="owner-a-again@example.test",
+        password="not-a-real-owner-a-again-password",
+    )
+    with pytest.raises(NonRetryableExecutionError) as reverse_error:
+        service.confirm_self_binding(
+            actor_id=str(user_a["id"]),
+            challenge_id=str(reverse["id"]),
+            default_team_id="TEAM-A",
+        )
+    assert reverse_error.value.error_code == "identity_conflict"
+
+
+def test_disabled_ones_subject_remains_owned_by_original_user() -> None:
+    container, _ = runtime()
+    user_a, _ = create_login_user(container)
+    user_b = container.identity_repository.create_user(
+        username="ones-disabled-contender",
+        display_name="ONES Disabled Contender",
+    )
+    service = container.ones_identity_binding_service
+    challenge_a = service.begin_self_binding(
+        actor_id=str(user_a["id"]),
+        email="disabled-owner@example.test",
+        password="not-a-real-disabled-owner-password",
+    )
+    service.confirm_self_binding(
+        actor_id=str(user_a["id"]),
+        challenge_id=str(challenge_a["id"]),
+        default_team_id="TEAM-A",
+    )
+    identity_a = next(
+        identity
+        for identity in container.identity_repository.list_external_identities(
+            str(user_a["id"])
+        )
+        if identity["provider"] == "ones"
+    )
+    container.identity_repository.set_external_identity_status(
+        str(identity_a["id"]),
+        status="disabled",
+        expected_revision=int(identity_a["revision"]),
+    )
+
+    challenge_b = service.begin_self_binding(
+        actor_id=str(user_b["id"]),
+        email="disabled-contender@example.test",
+        password="not-a-real-disabled-contender-password",
+    )
+    with pytest.raises(NonRetryableExecutionError) as conflict_error:
+        service.confirm_self_binding(
+            actor_id=str(user_b["id"]),
+            challenge_id=str(challenge_b["id"]),
+            default_team_id="TEAM-A",
+        )
+    assert conflict_error.value.error_code == "identity_conflict"
+    assert container.identity_repository.get_external_identity(str(identity_a["id"]))[
+        "status"
+    ] == "disabled"
+    assert service.self_status(actor_id=str(user_b["id"]))["ones"] is None
+
+
+def test_ones_binding_maps_database_unique_race_to_identity_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    container, _ = runtime()
+    owner = container.identity_repository.create_user(
+        username="ones-race-owner",
+        display_name="ONES Race Owner",
+    )
+    contender = container.identity_repository.create_user(
+        username="ones-race-contender",
+        display_name="ONES Race Contender",
+    )
+    repository = container.identity_repository
+    repository.bind_external_identity(
+        user_id=str(owner["id"]),
+        provider="ones",
+        tenant_code="default",
+        external_subject_id="ONES-RACE-SUBJECT",
+        connector_id="",
+    )
+    monkeypatch.setattr(repository, "find_external_identity", lambda **_: None)
+
+    with pytest.raises(NonRetryableExecutionError) as conflict_error:
+        repository.bind_external_identity(
+            user_id=str(contender["id"]),
+            provider="ones",
+            tenant_code="default",
+            external_subject_id="ONES-RACE-SUBJECT",
+            connector_id="",
+        )
+
+    assert conflict_error.value.error_code == "identity_conflict"
+    assert container.database.execute_one(
+        """
+        select count(*) as count from user_external_identity
+         where provider = 'ones' and tenant_code = 'default'
+           and external_subject_id = 'ONES-RACE-SUBJECT'
+           and status in ('enabled', 'disabled')
+        """
+    ) == {"count": 1}
+
+
 def test_admin_can_read_and_disable_ones_but_cannot_enable_unbind_or_verify_for_user() -> None:
     container, verifier = runtime()
     user, _ = create_login_user(container)

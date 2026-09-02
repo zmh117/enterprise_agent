@@ -964,6 +964,26 @@ def test_aitable_search_projects_latest_storage_v2_items_shape() -> None:
     }
 
 
+def test_aitable_search_catalog_defaults_to_fifty_items_per_page() -> None:
+    transport = _Transport({"items": [], "nextToken": ""})
+    catalog = object.__new__(DingTalkReadExecutorCatalog)
+    catalog.transport = transport
+    catalog.token_client = lambda _principal: _TokenClient()  # type: ignore[method-assign]
+
+    result = catalog._search_aitables(  # type: ignore[arg-type]
+        SimpleNamespace(aitable_operator_id="union-1"),
+        {"query": "项目"},
+    )
+
+    assert result["returned"] == 0
+    assert transport.calls[0][2]["option"] == {
+        "dentryCategories": ["alidoc"],
+        "creatorIds": [],
+        "nextToken": "",
+        "maxResults": 50,
+    }
+
+
 def test_aitable_search_rejects_retired_or_unknown_item_containers() -> None:
     for response in ({"dentries": []}, {"items": {}}, {}):
         with pytest.raises(RetryableExecutionError) as caught:

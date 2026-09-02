@@ -230,7 +230,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "125"
+        assert result.head == "126"
         assert result.applied == (
             "100",
             "101",
@@ -258,6 +258,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "123",
             "124",
             "125",
+            "126",
         )
         assert database.execute_one(
             """
@@ -287,7 +288,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "125"
+        assert result.head == "126"
         assert result.applied == (
             "100",
             "101",
@@ -315,6 +316,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "123",
             "124",
             "125",
+            "126",
         )
         assert comments["table_count"] == 129
         assert comments["column_count"] == 1714
@@ -384,6 +386,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "123",
             "124",
             "125",
+            "126",
         ),
     ]
     database = Database(postgres_database_dsn)
@@ -415,6 +418,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "123",
             "124",
             "125",
+            "126",
         ]
     finally:
         database.close()

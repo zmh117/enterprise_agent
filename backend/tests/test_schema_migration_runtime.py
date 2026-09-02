@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import json
 from pathlib import Path
 import re
+import sqlite3
 import uuid
 
 import pytest
@@ -67,6 +68,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("123", "123_expand_governed_external_actions.sql"),
         ("124", "124_expand_agent_job_context_audit.sql"),
         ("125", "125_expand_runtime_audit_chunk_event_projection.sql"),
+        ("126", "126_release_unbound_ones_identity.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -96,6 +98,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "123",
         "124",
         "125",
+        "126",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -264,7 +267,7 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "125"
+    assert first.head == "126"
     assert first.baselined == 0
     assert first.applied == (
         "100",
@@ -293,8 +296,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
         "123",
         "124",
         "125",
+        "126",
     )
-    assert second.head == "125"
+    assert second.head == "126"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -312,7 +316,7 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         include_schema_contract=True,
     ).run()
 
-    assert result.head == "125"
+    assert result.head == "126"
     assert result.applied == (
         "100",
         "101",
@@ -340,8 +344,9 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         "123",
         "124",
         "125",
+        "126",
     )
-    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "125"
+    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "126"
     assert (
         Migrator(
             database,
@@ -434,6 +439,7 @@ def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
         "123",
         "124",
         "125",
+        "126",
     )
     assert repeated.applied == ()
     assert database.execute_one(
@@ -494,6 +500,146 @@ def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
         "idx_mcp_operation_audit_principal",
         "idx_mcp_operation_audit_status",
     }.issubset(indexes)
+
+
+def test_release_unbound_ones_identity_migration_preserves_history_and_constraints(
+    tmp_path: Path,
+) -> None:
+    database = Database("sqlite:///:memory:")
+    through_125 = _migrations_through(tmp_path, "125")
+    Migrator(database, through_125, migrator_build="ones-release-predecessor").run()
+    timestamp = "2026-09-02T00:00:00+00:00"
+    for user_id in ("release-user-a", "release-user-b", "release-user-c"):
+        database.execute(
+            """
+            insert into app_user
+              (id, username, display_name, status, created_at, updated_at)
+            values (?, ?, ?, 'enabled', ?, ?)
+            """,
+            (user_id, user_id, user_id, timestamp, timestamp),
+        )
+    database.execute(
+        """
+        insert into user_external_identity
+          (id, user_id, provider, tenant_code, external_subject_id,
+           display_name, status, verified_at, revision, created_at, updated_at)
+        values ('released-ones-history', 'release-user-a', 'ones', 'default',
+                'ONES-RELEASED-SUBJECT', 'Released ONES', 'unbound', ?, 2, ?, ?)
+        """,
+        (timestamp, timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into external_identity_credential
+          (id, external_identity_id, provider, status, revision, key_id,
+           verified_at, unbound_at, created_at, updated_at)
+        values ('released-ones-credential', 'released-ones-history', 'ones',
+                'UNBOUND', 2, 'test-key', ?, ?, ?, ?)
+        """,
+        (timestamp, timestamp, timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into user_external_identity
+          (id, user_id, provider, tenant_code, external_subject_id,
+           display_name, status, verified_at, revision, created_at, updated_at)
+        values ('released-dingtalk-history', 'release-user-a', 'dingtalk', 'corp-a',
+                'DINGTALK-HISTORICAL-SUBJECT', 'Historical DingTalk', 'unbound',
+                ?, 2, ?, ?)
+        """,
+        (timestamp, timestamp, timestamp),
+    )
+
+    result = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="ones-release-upgrade",
+    ).run()
+
+    assert result.applied == ("126",)
+    assert database.execute_one(
+        """
+        select user_id, status from user_external_identity
+         where id = 'released-ones-history'
+        """
+    ) == {"user_id": "release-user-a", "status": "unbound"}
+    assert database.execute_one(
+        """
+        select external_identity_id, status, login_material_ciphertext, token_ciphertext
+          from external_identity_credential where id = 'released-ones-credential'
+        """
+    ) == {
+        "external_identity_id": "released-ones-history",
+        "status": "UNBOUND",
+        "login_material_ciphertext": None,
+        "token_ciphertext": None,
+    }
+    assert database.execute("pragma foreign_key_check") == []
+    assert {
+        str(row["table"])
+        for row in database.execute("pragma foreign_key_list(external_identity_credential)")
+    } == {"user_external_identity"}
+    index_sql = {
+        str(row["name"]): str(row["sql"])
+        for row in database.execute(
+            """
+            select name, sql from sqlite_master
+             where type = 'index' and name like 'uq_external_identity_%'
+            """
+        )
+    }
+    assert set(index_sql) == {
+        "uq_external_identity_non_ones_subject",
+        "uq_external_identity_ones_current_subject",
+    }
+    assert "provider <> 'ones'" in index_sql["uq_external_identity_non_ones_subject"]
+    assert "status IN ('enabled', 'disabled')" in index_sql[
+        "uq_external_identity_ones_current_subject"
+    ]
+
+    database.execute(
+        """
+        insert into user_external_identity
+          (id, user_id, provider, tenant_code, external_subject_id,
+           display_name, status, verified_at, revision, created_at, updated_at)
+        values ('released-ones-current', 'release-user-b', 'ones', 'default',
+                'ONES-RELEASED-SUBJECT', 'Current ONES', 'enabled', ?, 1, ?, ?)
+        """,
+        (timestamp, timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into user_external_identity
+          (id, user_id, provider, tenant_code, external_subject_id,
+           display_name, status, verified_at, revision, created_at, updated_at)
+        values ('released-ones-second-history', 'release-user-c', 'ones', 'default',
+                'ONES-RELEASED-SUBJECT', 'Second ONES History', 'unbound', ?, 2, ?, ?)
+        """,
+        (timestamp, timestamp, timestamp),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
+        database.execute(
+            """
+            insert into user_external_identity
+              (id, user_id, provider, tenant_code, external_subject_id,
+               display_name, status, verified_at, revision, created_at, updated_at)
+            values ('released-ones-conflict', 'release-user-c', 'ones', 'default',
+                    'ONES-RELEASED-SUBJECT', 'Conflicting ONES', 'disabled', ?, 1, ?, ?)
+            """,
+            (timestamp, timestamp, timestamp),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
+        database.execute(
+            """
+            insert into user_external_identity
+              (id, user_id, provider, tenant_code, external_subject_id,
+               display_name, status, verified_at, revision, created_at, updated_at)
+            values ('released-dingtalk-conflict', 'release-user-b', 'dingtalk', 'corp-a',
+                    'DINGTALK-HISTORICAL-SUBJECT', 'Conflicting DingTalk', 'enabled',
+                    ?, 1, ?, ?)
+            """,
+            (timestamp, timestamp, timestamp),
+        )
 
 
 def test_unified_mcp_audit_migration_preserves_legacy_rows_without_guessing_links(
@@ -705,7 +851,7 @@ def test_runtime_v14_migration_preserves_terminal_v13_history(tmp_path: Path) ->
           from agent_job where id = 'migration-120-job'
         """
     )
-    assert result.head == "125"
+    assert result.head == "126"
     assert row == {
         "agent_runtime_protocol_version": "1.3",
         "tool_contract_status": "NOT_OBSERVED",
@@ -781,6 +927,7 @@ def test_existing_database_contract_requires_separate_approval(tmp_path: Path) -
         "123",
         "124",
         "125",
+        "126",
     )
     assert "user_message" not in {
         row["name"] for row in database.execute("pragma table_info(agent_job)")
@@ -1305,7 +1452,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 125",
+        match="ledger is missing; expected head 126",
     ):
         SchemaHeadValidator(
             database,

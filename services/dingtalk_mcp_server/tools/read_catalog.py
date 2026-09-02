@@ -221,7 +221,7 @@ class DingTalkReadExecutorCatalog:
         ).search(
             operator_id=principal.aitable_operator_id,
             query=str(arguments["query"]),
-            page_size=int(arguments.get("page_size", 20)),
+            page_size=int(arguments.get("page_size", 50)),
             cursor=str(arguments.get("cursor") or ""),
         )
 

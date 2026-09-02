@@ -290,6 +290,24 @@ def _tool_restrictions(
             )
     if {"query_redis_get", "query_redis_scan"} & assigned:
         restrictions.append("Redis operations must be get or bounded scan.")
+    if "dingtalk_search_aitables" in assigned:
+        restrictions.extend(
+            [
+                (
+                    "AI table search requires a meaningful name keyword supplied by the user. "
+                    "If the user asks for all or available AI tables without such a keyword, "
+                    "ask for one; never invent broad queries such as 表 or 表格."
+                ),
+                (
+                    "For AI table search, use page_size=50. When truncated=true and a non-empty "
+                    "next_cursor is returned, repeat the exact same query with that cursor, "
+                    "deduplicate by the full base_id, and accumulate at most 4 pages or 200 unique "
+                    "items. Do not shorten base_id values. Report remaining truncation only when "
+                    "that aggregate limit is reached while another page exists, or when the "
+                    "Provider reports truncation without a usable next_cursor."
+                ),
+            ]
+        )
     if {
         "query_loki",
         "diagnose_loki_labels",

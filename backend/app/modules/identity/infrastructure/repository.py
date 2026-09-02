@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 from datetime import UTC, datetime, timedelta
 
@@ -234,6 +235,7 @@ class IdentityRepository:
             tenant_code=tenant_code,
             external_subject_id=external_subject_id,
             include_disabled=True,
+            include_unbound=normalized_provider != ExternalIdentityProvider.ONES.value,
         )
         if existing:
             if str(existing["user_id"]) != user_id:
@@ -282,33 +284,45 @@ class IdentityRepository:
             return existing
         identity_id = new_id("identity")
         timestamp = now_iso()
-        self.database.execute(
-            """
-            insert into user_external_identity
-              (id, user_id, provider, tenant_code, external_subject_id, connector_id,
-               union_id, open_id, display_name, status, verified_at, last_seen_at,
-               metadata_json, revision, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'enabled', ?, ?, ?, 1, ?, ?)
-            """,
-            (
-                identity_id,
-                user_id,
-                normalized_provider,
-                tenant_code,
-                external_subject_id,
-                connector_id,
-                union_id,
-                open_id,
-                display_name,
-                timestamp,
-                timestamp
-                if normalized_provider == ExternalIdentityProvider.DINGTALK.value
-                else None,
-                json.dumps(normalized_metadata, ensure_ascii=False, sort_keys=True),
-                timestamp,
-                timestamp,
-            ),
-        )
+        try:
+            self.database.execute(
+                """
+                insert into user_external_identity
+                  (id, user_id, provider, tenant_code, external_subject_id, connector_id,
+                   union_id, open_id, display_name, status, verified_at, last_seen_at,
+                   metadata_json, revision, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'enabled', ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    identity_id,
+                    user_id,
+                    normalized_provider,
+                    tenant_code,
+                    external_subject_id,
+                    connector_id,
+                    union_id,
+                    open_id,
+                    display_name,
+                    timestamp,
+                    timestamp
+                    if normalized_provider == ExternalIdentityProvider.DINGTALK.value
+                    else None,
+                    json.dumps(normalized_metadata, ensure_ascii=False, sort_keys=True),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        except Exception as exc:
+            if (
+                normalized_provider == ExternalIdentityProvider.ONES.value
+                and _is_ones_current_identity_unique_conflict(exc)
+            ):
+                raise NonRetryableExecutionError(
+                    "External identity already belongs to another user",
+                    safe_message="此外部身份已绑定其他用户",
+                    error_code="identity_conflict",
+                ) from exc
+            raise
         return self.get_external_identity(identity_id)
 
     def list_external_identities(self, user_id: str) -> list[dict[str, Any]]:
@@ -344,8 +358,14 @@ class IdentityRepository:
         tenant_code: str,
         external_subject_id: str,
         include_disabled: bool = False,
+        include_unbound: bool = True,
     ) -> dict[str, Any] | None:
-        status = "" if include_disabled else "and i.status = 'enabled' and u.status = 'enabled'"
+        if not include_disabled:
+            status = "and i.status = 'enabled' and u.status = 'enabled'"
+        elif include_unbound:
+            status = ""
+        else:
+            status = "and i.status in ('enabled', 'disabled')"
         row = self.database.execute_one(
             f"""
             select i.*, u.username, u.display_name as user_display_name,
@@ -354,6 +374,9 @@ class IdentityRepository:
             join app_user u on u.id = i.user_id
             where i.provider = ? and i.tenant_code = ? and i.external_subject_id = ?
               {status}
+            order by case when i.status in ('enabled', 'disabled') then 0 else 1 end,
+                     i.updated_at desc, i.id
+            limit 1
             """,
             (provider, tenant_code, external_subject_id),
         )
@@ -1433,6 +1456,16 @@ def _json_list(value: object) -> list[str]:
     except json.JSONDecodeError:
         return []
     return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+
+def _is_ones_current_identity_unique_conflict(exc: Exception) -> bool:
+    if isinstance(exc, sqlite3.IntegrityError):
+        return "unique constraint failed: user_external_identity.provider" in str(exc).lower()
+    diagnostic = getattr(exc, "diag", None)
+    return (
+        str(getattr(diagnostic, "constraint_name", ""))
+        == "uq_external_identity_ones_current_subject"
+    )
 
 
 def _json_object(value: object) -> dict[str, Any]:

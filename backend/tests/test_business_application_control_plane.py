@@ -832,6 +832,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "123_expand_governed_external_actions.sql",
         "124_expand_agent_job_context_audit.sql",
         "125_expand_runtime_audit_chunk_event_projection.sql",
+        "126_release_unbound_ones_identity.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

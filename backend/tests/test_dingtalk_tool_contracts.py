@@ -534,6 +534,11 @@ def test_aitable_v1_contracts_bind_resources_to_current_operator() -> None:
     search = DINGTALK_TOOL_CONTRACTS["dingtalk_search_aitables"]
     assert search.target_policy == "current_user_aitable_operator"
     assert "operator 由当前 Job 服务端解析" in search.description
+    assert "名称关键词必须来自用户" in search.description
+    assert "不得自行使用“表”或“表格”等宽泛词猜测" in search.description
+    assert "page_size=50" in search.description
+    assert "保持同一 query" in search.description
+    assert "最多 4 页或 200 条" in search.description
 
     for identifier in (
         "dingtalk_list_aitable_sheets",
