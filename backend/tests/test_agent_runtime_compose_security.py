@@ -136,6 +136,9 @@ def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     assert "COPY .claude/skills /app/.claude/skills" in worker_section
     assert "COPY .claude/settings" not in worker_section
     assert "python_runtime" not in worker_section
+    assert "COPY backend/app/modules/mcp_audit /app/backend/app/modules/mcp_audit" in (
+        worker_section
+    )
     assert "app.python_runtime" not in runtime_http_client
     assert not (
         ROOT / "backend/app/modules/agent/infrastructure/claude_code_agent_client.py"

@@ -96,6 +96,7 @@ COPY backend/app/modules/dingding/infrastructure /app/backend/app/modules/dingdi
 COPY backend/app/modules/file_workspace /app/backend/app/modules/file_workspace
 COPY backend/app/modules/identity /app/backend/app/modules/identity
 COPY backend/app/modules/identity_discovery /app/backend/app/modules/identity_discovery
+COPY backend/app/modules/mcp_audit /app/backend/app/modules/mcp_audit
 COPY backend/app/modules/mcp_tool_runtime /app/backend/app/modules/mcp_tool_runtime
 COPY backend/app/modules/job/__init__.py /app/backend/app/modules/job/
 COPY backend/app/modules/job/application /app/backend/app/modules/job/application
