@@ -11,6 +11,10 @@
 - **WHEN** Compose 或进程环境设置 `ACTIVE_PROFILES`
 - **THEN** 固定服务忽略该变量且 readiness 展示的工具数不发生变化
 
+#### Scenario: mutation 应用缺少确认卡模板
+- **WHEN** 业务应用选择任一 `confirmation_policy=external_action_card_v1` 的 Tool，但其已启用钉钉来源 Connector 未配置 `external_action_confirmation` 或合同版本不兼容
+- **THEN** 发布或激活失败关闭并指出缺少外部操作确认卡片模板；纯只读 Tool 不受该配置缺失影响
+
 ### Requirement: 钉钉权限不足必须形成精确降级事实
 系统 SHALL 为 contacts、department、tasks、calendar、notable、robot 和 notice 的固定 Provider 操作维护所需权限说明，并把权限不足分类为对应 Tool/Profile 的稳定非重试错误。单个 Profile 权限不足 MUST NOT 使已满足依赖的其它 Tool 绕过授权或被误报为不可用。
 

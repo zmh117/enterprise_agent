@@ -155,6 +155,62 @@ def test_dingtalk_user_batch_tool_requires_connector_robot_code() -> None:
     )
 
 
+def test_confirmation_required_tool_requires_connector_card_template() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    composition = container.business_application_service.mcp_tool_composition_service
+    triggers = [
+        {
+            "trigger_type": "dingtalk_private",
+            "connector_id": "connector-dingtalk-stream-default",
+            "enabled": True,
+        }
+    ]
+    row = container.database.execute_one(
+        "select metadata from integration_connector where id = ?",
+        ("connector-dingtalk-stream-default",),
+    )
+    metadata = json.loads(str((row or {})["metadata"]))
+    metadata.pop("card_templates", None)
+    container.database.execute(
+        "update integration_connector set metadata = ? where id = ?",
+        (
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            "connector-dingtalk-stream-default",
+        ),
+    )
+
+    mutation_errors = composition.dingtalk_feature_errors(
+        selected_tools=[
+            {
+                "server_code": "dingtalk-mcp",
+                "tool_identifier": "dingtalk_create_todo",
+            }
+        ],
+        triggers=triggers,
+    )
+    assert mutation_errors == [
+        {
+            "field": "mcp_tools",
+            "message": (
+                "需逐次确认的写入工具要求所有钉钉来源连接配置"
+                "外部操作确认卡片模板 ID：dingtalk-stream-default"
+            ),
+        }
+    ]
+    assert (
+        composition.dingtalk_feature_errors(
+            selected_tools=[
+                {
+                    "server_code": "dingtalk-mcp",
+                    "tool_identifier": "dingtalk_search_users",
+                }
+            ],
+            triggers=triggers,
+        )
+        == []
+    )
+
+
 def draft_payload(*, route: str = "", mcp_tools: list[str] | None = None) -> dict[str, object]:
     triggers: list[dict[str, object]] = []
     deliveries: list[dict[str, object]] = []
@@ -834,6 +890,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "125_expand_runtime_audit_chunk_event_projection.sql",
         "126_release_unbound_ones_identity.sql",
         "127_expand_external_action_provider_facts.sql",
+        "128_expand_dingtalk_confirmation_card_templates.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
@@ -1427,7 +1484,7 @@ def test_ones_mutation_preserves_contract_through_application_and_job_snapshot()
             payload=wrong_payload,
         )
 
-    payload = draft_payload()
+    payload = draft_payload(route="ones-provenance")
     payload["mcp_tools"] = [{"server_code": "ones-mcp", "tool_identifier": definition.identifier}]
     revision = service.save_draft(
         actor_id="user_local_admin",

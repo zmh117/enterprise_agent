@@ -8,7 +8,7 @@ INSERT INTO integration_connector
 VALUES
   ('connector-debug-api', 'debug_api', 'debug-api', '', 1, '{}', 1, 0, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-dingtalk-stream-default', 'dingtalk_enterprise_stream', 'dingtalk-stream-default', '', 1,
-   '{"client_id_ref":"secret://platform/dingtalk_client_id","tenant_code":"default"}',
+   '{"card_templates":{"external_action_confirmation":{"contract_version":"external-action-confirmation-v1","template_id":"0ad7c643-7e30-4797-8284-da5ef89d3841.schema"}},"client_id_ref":"secret://platform/dingtalk_client_id","tenant_code":"default"}',
    1, 0, 'secret://platform/dingtalk_client_secret', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-dingtalk-enterprise-default', 'dingtalk_enterprise_robot', 'dingtalk-enterprise-default', '', 1,
    '{"client_id_ref":"secret://platform/dingtalk_client_id","default_open_conversation_id":"test-open-conversation","default_robot_code":"test-robot-code"}',

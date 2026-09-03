@@ -21,3 +21,14 @@
 #### Scenario: 最终回答投递重试
 - **WHEN** Agent 最终回答 Delivery 发生可重试失败
 - **THEN** Delivery 只重试最终回答，不重新执行已成功的机器人消息 Intent
+
+### Requirement: 钉钉 Connector 必须治理代码定义的卡片用途
+`dingtalk_enterprise_stream` Connector MAY 保存非敏感的用途化卡片模板绑定。管理端 SHALL 只允许配置平台代码已声明的用途和合同，当前仅包含 `external_action_confirmation`；模板绑定属于具体企业应用 Connector，切换钉钉组织时 MUST 新建并验证对应企业与 Connector，不得修改既有已验证 Corp ID 来复用绑定。
+
+#### Scenario: 管理员配置外部操作确认卡
+- **WHEN** 管理员在渠道与触发器编辑钉钉应用机器人并填写合法模板 ID
+- **THEN** Connector 元数据保存该 ID 和平台固定合同版本，API 返回可编辑的非敏感配置事实
+
+#### Scenario: 请求任意卡片用途
+- **WHEN** 管理端请求提交未在代码中声明的用途或由 Agent 指定模板 ID
+- **THEN** 严格请求 schema 或服务端投影拒绝/忽略该未知字段，运行时不得据此投放卡片

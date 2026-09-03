@@ -990,8 +990,9 @@ function DingTalkEditorForm({
             }
           />
           <p className="text-xs leading-5 text-muted-foreground">
-            对应钉钉官方 MCP 的 ROBOT_CODE，用于企业机器人个人/群消息；不是工作通知
-            Agent ID，也不是 Secret。
+            对应钉钉官方 MCP 的
+            ROBOT_CODE，用于企业机器人个人/群消息；不是工作通知 Agent ID，也不是
+            Secret。
           </p>
         </EditorField>
         <EditorField
@@ -1019,8 +1020,30 @@ function DingTalkEditorForm({
             }
           />
           <p className="text-xs leading-5 text-muted-foreground">
-            仅用于当前用户本人的工作通知；保存后只显示尾号，不作为 Secret
-            存储。
+            仅用于当前用户本人的工作通知；保存后只显示尾号，不作为 Secret 存储。
+          </p>
+        </EditorField>
+        <EditorField
+          label="外部操作确认卡片模板 ID"
+          htmlFor="dingtalk-external-action-confirmation-card-template-id"
+        >
+          <Input
+            id="dingtalk-external-action-confirmation-card-template-id"
+            maxLength={256}
+            value={form.external_action_confirmation_card_template_id}
+            placeholder="例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.schema"
+            onChange={(event) =>
+              setInitialForm({
+                ...initialForm,
+                external_action_confirmation_card_template_id:
+                  event.target.value,
+              })
+            }
+          />
+          <p className="text-xs leading-5 text-muted-foreground">
+            用于待办、日程、AI 表格等外部写入的逐次确认。模板必须发布在当前
+            Client ID
+            对应的钉钉应用中，并兼容平台固定的确认卡字段与回调合同；修改后仅影响新发起的操作。
           </p>
         </EditorField>
         <BooleanField
@@ -1319,6 +1342,8 @@ function dingTalkForm(channel?: ManagedChannel): DingTalkChannelInput {
     require_group_at: channel?.capabilities.require_group_at ?? true,
     work_notification_agent_id: null,
     enterprise_robot_code: channel?.enterprise_robot_code ?? "",
+    external_action_confirmation_card_template_id:
+      channel?.external_action_confirmation_card_template_id ?? "",
     enabled: channel?.enabled ?? false,
     rotate_secret: false,
   }

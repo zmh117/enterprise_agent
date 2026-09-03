@@ -70,6 +70,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("125", "125_expand_runtime_audit_chunk_event_projection.sql"),
         ("126", "126_release_unbound_ones_identity.sql"),
         ("127", "127_expand_external_action_provider_facts.sql"),
+        ("128", "128_expand_dingtalk_confirmation_card_templates.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -101,6 +102,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "125",
         "126",
         "127",
+        "128",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -158,7 +160,7 @@ def test_external_action_intent_separates_confirmation_route_from_execution_prov
         migrator_build="ones-external-action-provider-split-test",
     ).run()
 
-    assert result.head == "127"
+    assert result.head == "128"
     columns = {
         row["name"]: row for row in database.execute("pragma table_info(external_action_intent)")
     }
@@ -181,6 +183,85 @@ def test_external_action_intent_separates_confirmation_route_from_execution_prov
     assert str(columns["execution_provider_code"]["dflt_value"]).strip("'") == "dingtalk"
     indexes = {row["name"] for row in database.execute("pragma index_list(external_action_intent)")}
     assert "uq_external_action_intent_fingerprint" in indexes
+
+
+def test_confirmation_card_template_migration_backfills_connector_and_outbox(
+    tmp_path: Path,
+) -> None:
+    database = Database("sqlite:///:memory:")
+    through_127 = _migrations_through(tmp_path, "127")
+    Migrator(database, through_127, migrator_build="card-binding-before").run()
+    database.execute("pragma foreign_keys = off")
+    timestamp = "2026-09-03T00:00:00Z"
+    database.execute(
+        """
+        insert into integration_connector
+          (id, connector_type, name, enabled, metadata, allow_ingress,
+           revision, deleted, created_at, updated_at)
+        values ('connector-card-history', 'dingtalk_enterprise_stream',
+                'card-history', 1, '{}', 1, 3, 0, ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into external_action_intent
+          (id, job_id, session_id, actor_user_id, business_application_id,
+           agent_publication_id, application_publication_id, source_connector_id,
+           dingtalk_enterprise_id, target_external_subject_id, target_union_id,
+           server_code, tool_identifier, schema_hash, confirmation_policy,
+           operation_code, revision, status, arguments_json, arguments_hash,
+           safe_summary_json, mcp_call_id, expires_at, created_at, updated_at)
+        values ('action-card-history', 'job-card-history', 'session-card-history',
+                'user-card-history', 'application-card-history',
+                'agent-publication-card-history', 'app-publication-card-history',
+                'connector-card-history', 'enterprise-card-history', 'staff-card-history',
+                'union-card-history', 'dingtalk-mcp', 'dingtalk_create_todo', ?,
+                'external_action_card_v1', 'dingtalk.todo.create', 1,
+                'PENDING_CONFIRMATION', '{}', ?, '{}', 'call-card-history', ?, ?, ?)
+        """,
+        ("a" * 64, "b" * 64, timestamp, timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into external_action_card_outbox
+          (id, action_intent_id, event_kind, status, idempotency_key,
+           payload_json, attempt_count, created_at, updated_at)
+        values ('outbox-card-history', 'action-card-history', 'CREATE', 'PENDING',
+                'action-card-history:create:v1', '{"revision":1}', 0, ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+
+    result = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="card-binding-after",
+    ).run()
+
+    assert result.applied == ("128",)
+    connector = database.execute_one(
+        "select metadata, revision from integration_connector where id = ?",
+        ("connector-card-history",),
+    )
+    metadata = json.loads(str((connector or {})["metadata"]))
+    assert int((connector or {})["revision"]) == 4
+    assert metadata["card_templates"]["external_action_confirmation"] == {
+        "template_id": "0ad7c643-7e30-4797-8284-da5ef89d3841.schema",
+        "contract_version": "external-action-confirmation-v1",
+    }
+    outbox = database.execute_one(
+        "select payload_json from external_action_card_outbox where id = ?",
+        ("outbox-card-history",),
+    )
+    payload = json.loads(str((outbox or {})["payload_json"]))
+    assert payload["card_binding"] == {
+        "purpose": "external_action_confirmation",
+        "template_id": "0ad7c643-7e30-4797-8284-da5ef89d3841.schema",
+        "contract_version": "external-action-confirmation-v1",
+        "connector_id": "connector-card-history",
+        "connector_revision": 4,
+    }
 
 
 @pytest.mark.parametrize(
@@ -302,7 +383,7 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "127"
+    assert first.head == "128"
     assert first.baselined == 0
     assert first.applied == (
         "100",
@@ -333,8 +414,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
         "125",
         "126",
         "127",
+        "128",
     )
-    assert second.head == "127"
+    assert second.head == "128"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -352,7 +434,7 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         include_schema_contract=True,
     ).run()
 
-    assert result.head == "127"
+    assert result.head == "128"
     assert result.applied == (
         "100",
         "101",
@@ -382,8 +464,9 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         "125",
         "126",
         "127",
+        "128",
     )
-    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "127"
+    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "128"
     assert (
         Migrator(
             database,
@@ -478,6 +561,7 @@ def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
         "125",
         "126",
         "127",
+        "128",
     )
     assert repeated.applied == ()
     assert database.execute_one(
@@ -594,7 +678,7 @@ def test_release_unbound_ones_identity_migration_preserves_history_and_constrain
         migrator_build="ones-release-upgrade",
     ).run()
 
-    assert result.applied == ("126", "127")
+    assert result.applied == ("126", "127", "128")
     assert database.execute_one(
         """
         select user_id, status from user_external_identity
@@ -890,7 +974,7 @@ def test_runtime_v14_migration_preserves_terminal_v13_history(tmp_path: Path) ->
           from agent_job where id = 'migration-120-job'
         """
     )
-    assert result.head == "127"
+    assert result.head == "128"
     assert row == {
         "agent_runtime_protocol_version": "1.3",
         "tool_contract_status": "NOT_OBSERVED",
@@ -968,6 +1052,7 @@ def test_existing_database_contract_requires_separate_approval(tmp_path: Path) -
         "125",
         "126",
         "127",
+        "128",
     )
     assert "user_message" not in {
         row["name"] for row in database.execute("pragma table_info(agent_job)")
@@ -1492,7 +1577,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 127",
+        match="ledger is missing; expected head 128",
     ):
         SchemaHeadValidator(
             database,

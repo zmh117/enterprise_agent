@@ -12,7 +12,6 @@ from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
 
-CARD_TEMPLATE_ID = "0ad7c643-7e30-4797-8284-da5ef89d3841.schema"
 OPEN_API_BASE = "https://api.dingtalk.com"
 LEGACY_API_BASE = "https://oapi.dingtalk.com"
 LEGACY_ALLOWED_PATHS = frozenset(
@@ -141,11 +140,7 @@ class UrllibDingTalkJsonTransport:
                     provider_code,
                 ),
                 error_code="dingtalk_provider_rejected",
-                diagnostics=(
-                    {"provider_error_code": provider_code}
-                    if provider_code
-                    else {}
-                ),
+                diagnostics=({"provider_error_code": provider_code} if provider_code else {}),
             )
         return value
 
@@ -196,6 +191,7 @@ class DingTalkCardClient:
     def create_confirmation(
         self,
         *,
+        card_template_id: str,
         out_track_id: str,
         staff_id: str,
         card_fields: dict[str, Any],
@@ -205,7 +201,7 @@ class DingTalkCardClient:
             "POST",
             "/v1.0/card/instances/createAndDeliver",
             {
-                "cardTemplateId": CARD_TEMPLATE_ID,
+                "cardTemplateId": card_template_id,
                 "outTrackId": out_track_id,
                 "userId": staff_id,
                 "cardData": {"cardParamMap": card_fields},
@@ -1003,10 +999,7 @@ class DingTalkAiTableMutationClient(_FixedDingTalkClient):
             "name",
             "field_type",
         )
-        if (
-            field["name"] != str(arguments["name"])
-            or field["field_type"] != str(arguments["type"])
-        ):
+        if field["name"] != str(arguments["name"]) or field["field_type"] != str(arguments["type"]):
             _raise_response_invalid("dingtalk.aitable.field.create", response)
         return {
             "field_id": field["field_id"],
@@ -1065,10 +1058,7 @@ class DingTalkAiTableMutationClient(_FixedDingTalkClient):
             for row in rows
             if isinstance(row, dict) and (row.get("id") or row.get("recordId"))
         ]
-        if (
-            len(record_ids) != len(arguments["records"])
-            or len(set(record_ids)) != len(record_ids)
-        ):
+        if len(record_ids) != len(arguments["records"]) or len(set(record_ids)) != len(record_ids):
             _raise_response_invalid("dingtalk.aitable.record.insert", response)
         return {
             "record_ids": record_ids,
@@ -1246,9 +1236,7 @@ class DingTalkWorkNotificationMutationClient(_FixedDingTalkClient):
                 },
             },
         )
-        task_id = _integer(
-            response.get("task_id")
-        )
+        task_id = _integer(response.get("task_id"))
         if task_id <= 0:
             _raise_response_invalid("dingtalk.work_notification.send", response)
         return {"task_id": task_id, "accepted": True}

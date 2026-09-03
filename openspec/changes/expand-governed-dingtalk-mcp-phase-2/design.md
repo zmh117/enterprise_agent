@@ -71,17 +71,21 @@ worker 先按 intent 的 `tool_identifier` 读取当前 Manifest，复核 schema
 
 当前数据库 Action Intent 与 Card Outbox 已能保存通用 operation 和规范化 JSON，本阶段不新增平行状态机或新 mutation 表。消息/通知/表格写入在 Provider 超时后继续进入 `FAILED_UNCERTAIN`，不得自动重发；有明确 Provider 幂等键时才可由后续 change 单独放宽。
 
-### 6. 一张现有模板承载所有操作的差异化摘要
+### 6. 确认卡模板按 Connector 和代码定义用途配置
 
-继续使用模板 `0ad7c643-7e30-4797-8284-da5ef89d3841.schema` 和现有 callback。worker 根据 operation 注册表生成 `operationName`、`targetName`、`detailText` 和终态文案；卡片展示有界的目标、标题/时间/字段名/行数或待发送正文，使用户能识别本次操作。opaque intent token 与 revision 仍只进入私有数据，卡片不可转发。
+确认卡模板不再由服务全局常量选择。每个 `dingtalk_enterprise_stream` Connector 在非敏感元数据中维护代码定义用途 `external_action_confirmation`，其中包含管理员填写的 `template_id` 和平台固定的 `external-action-confirmation-v1` 合同版本。管理端当前只开放“外部操作确认卡片模板 ID”这一字段；Agent、模型和 Tool 参数均不能选择模板或增加任意用途。
 
-审计和普通日志只记录安全摘要；消息正文、日程正文和 AI 表格值不得复制到审计。备选方案是每种操作一个模板，但会增加模板发布与回调兼容矩阵，Phase 2 不采用。
+创建新 Action Intent 时，平台从来源 Connector 解析模板绑定，并把用途、模板 ID、合同版本和 Connector revision 冻结到 `external_action_card_outbox.payload_json`。card worker 只使用该冻结绑定创建卡片，不再读取当前 Connector 模板配置；因此修改模板只影响修改后新建的 Intent，已存在或已排队的 Intent 保持原模板。现有 Connector 和 CREATE Outbox 在迁移时补入升级前实际使用的模板 `0ad7c643-7e30-4797-8284-da5ef89d3841.schema`，运行时不得以代码 fallback 掩盖缺失绑定。
+
+`external-action-confirmation-v1` 固定要求公开字段 `providerName`、`operationName`、`targetName`、`detailText`、`status`、`statusText`，以及私有字段 `revisionNo`、`intentToken`、`supplement`、`inputStatus`、`errorText`。worker 根据 operation 注册表生成差异化摘要和终态文案；opaque intent token 与 revision 仍只进入私有数据，卡片不可转发。模板 ID 必须是有界、无空白且以 `.schema` 结尾的钉钉模板标识。
+
+Card Outbox 以不可变载荷记录用途、合同版本、Connector revision 和模板 ID；普通日志和审计如需引用该绑定，只能记录这些安全配置事实。消息正文、日程正文和 AI 表格值不得复制到审计。未来新增其它卡片时，必须先在代码中声明新用途和合同，再扩展管理端，不提供让模型任意选模板的通用映射编辑器。
 
 ### 7. 发布与可用性按精确 Tool 处理
 
 部署新代码不会自动改变任何已发布 Agent/Application 或角色。管理员仍需创建新 Agent Publication、Application Publication 和角色 Tool grant；新 Job 才能冻结新 Tool。MCP `tools/list` 只返回 Principal 当前被授权的精确子集，不因为 Connector 具备某项钉钉权限而扩大工具集合。
 
-Connector readiness 校验 App Secret 可解析、企业 ACTIVE、机器人 code 可用，并在选择工作通知 Tool 时要求合法 `work_notification_agent_id`。Provider 权限不足返回稳定缺失权限错误，不把整台 MCP 服务误标为可用；上线验收必须用新的真实 Job，而不是复用旧 Job 快照。
+Connector readiness 校验 App Secret 可解析、企业 ACTIVE、机器人 code 可用，并在选择工作通知 Tool 时要求合法 `work_notification_agent_id`。业务应用选择任何 `confirmation_policy=external_action_card_v1` 的 mutation 时，所有已启用钉钉来源 Connector 必须配置兼容的 `external_action_confirmation` 模板；缺失或不兼容只阻止这类 mutation 发布，不影响纯只读应用。Provider 权限不足返回稳定缺失权限错误，不把整台 MCP 服务误标为可用；上线验收必须用新的真实 Job，而不是复用旧 Job 快照。
 
 ## Risks / Trade-offs
 
@@ -98,6 +102,7 @@ Connector readiness 校验 App Secret 可解析、企业 ACTIVE、机器人 code
 1. 同步并归档 `add-governed-dingtalk-mcp-mvp`，确认 canonical 出现其新 capability 和通用确认要求；若语义不一致则停止并修订本 change。
 2. 先扩展合同/Manifest/Principal/只读执行壳和 Provider clients，在未选择新 Tool 的 Publication 下部署并通过合同测试。
 3. 泛化 worker operation dispatcher 和卡片摘要，保持现有创建待办回归与旧 Intent 可执行。
+4. 增加 Connector 模板用途配置和数据迁移，先回填既有 Connector/Outbox，再启用运行时冻结绑定的强校验；切换组织时新建并验证新的企业与 Connector，不修改已验证企业的 Corp ID。
 4. 配置钉钉应用权限和 Connector `work_notification_agent_id`，验证 readiness；不得把 Secret 或 Access Token写入元数据。
 5. 创建新的 Agent/Application Publication 与角色 grant，小范围启用只读 Tool，再逐类启用 mutation。
 6. 使用全新真实 DingTalk Job 验证各 Profile 读取以及 mutation 同意、拒绝和卡片终态，保存有界证据后再扩大授权。

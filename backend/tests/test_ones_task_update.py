@@ -44,6 +44,27 @@ class _Audit:
         return None
 
 
+def _configure_confirmation_connector(database: Database) -> None:
+    database.execute(
+        """
+        insert into integration_connector
+          (id, connector_type, name, enabled, metadata, allow_ingress,
+           revision, deleted, created_at, updated_at)
+        values (?, 'dingtalk_enterprise_stream', ?, 1, ?, 1, 4, 0,
+                '2026-09-03T00:00:00Z', '2026-09-03T00:00:00Z')
+        """,
+        (
+            "connector-1",
+            "ones-confirmation-connector",
+            (
+                '{"card_templates":{"external_action_confirmation":'
+                '{"contract_version":"external-action-confirmation-v1",'
+                '"template_id":"ones-confirmation.schema"}}}'
+            ),
+        ),
+    )
+
+
 class _TaskHttp:
     def __init__(self, responses: list[dict[str, object]]) -> None:
         self.responses = list(responses)
@@ -419,6 +440,7 @@ def test_ones_action_intent_idempotency_includes_resource_snapshot() -> None:
     database = Database("sqlite:///:memory:")
     Migrator(database, default_migrations_dir(), migrator_build="ones-intent-test").run()
     database.execute("pragma foreign_keys = off")
+    _configure_confirmation_connector(database)
     service = ExternalActionService(
         ExternalActionRepository(database),
         ExternalActionTokenSigner("k" * 32),
@@ -513,6 +535,7 @@ def test_ones_action_intent_preserves_full_card_summary_beyond_legacy_limit() ->
     database = Database("sqlite:///:memory:")
     Migrator(database, default_migrations_dir(), migrator_build="ones-summary-budget-test").run()
     database.execute("pragma foreign_keys = off")
+    _configure_confirmation_connector(database)
     repository = ExternalActionRepository(database)
     service = ExternalActionService(
         repository,

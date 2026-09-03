@@ -72,6 +72,7 @@ const dingTalkChannel = {
   work_notification_agent_id_configured: true,
   work_notification_agent_id_hint: "***3456",
   enterprise_robot_code: "ding-enterprise-robot",
+  external_action_confirmation_card_template_id: "confirmation-v2.schema",
   capabilities: {
     private_chat: true,
     group_chat: true,
@@ -168,6 +169,9 @@ describe("Managed channels", () => {
     fireEvent.change(screen.getByLabelText("企业机器人 Code"), {
       target: { value: "ding-enterprise-robot" },
     })
+    fireEvent.change(screen.getByLabelText("外部操作确认卡片模板 ID"), {
+      target: { value: "confirmation-v2.schema" },
+    })
     fireEvent.click(screen.getByRole("button", { name: "创建渠道" }))
     await waitFor(() => expect(channelBody).toBeDefined())
     expect(channelBody).toMatchObject({
@@ -176,6 +180,7 @@ describe("Managed channels", () => {
       client_id: "new-client",
       work_notification_agent_id: 123456,
       enterprise_robot_code: "ding-enterprise-robot",
+      external_action_confirmation_card_template_id: "confirmation-v2.schema",
     })
     expect(channelBody).not.toHaveProperty("tenant_code")
   })
@@ -328,6 +333,9 @@ describe("Managed channels", () => {
     expect(screen.getByLabelText("企业机器人 Code")).toHaveValue(
       "ding-enterprise-robot"
     )
+    expect(screen.getByLabelText("外部操作确认卡片模板 ID")).toHaveValue(
+      "confirmation-v2.schema"
+    )
     fireEvent.change(screen.getByLabelText("渠道名称"), {
       target: { value: "更新后的机器人" },
     })
@@ -342,6 +350,7 @@ describe("Managed channels", () => {
       dingtalk_enterprise_id: "enterprise-default",
       work_notification_agent_id: null,
       enterprise_robot_code: "ding-enterprise-robot",
+      external_action_confirmation_card_template_id: "confirmation-v2.schema",
     })
   })
 

@@ -30,7 +30,7 @@ from services.dingtalk_mcp_server.tools.registry import DingTalkToolRegistry
 logger = logging.getLogger(__name__)
 MAX_REQUEST_BYTES = 256 * 1024
 MAX_RESPONSE_BYTES = 256 * 1024
-REQUIRED_SCHEMA_VERSION = 123
+REQUIRED_SCHEMA_VERSION = 128
 
 
 class _McpTransport:
@@ -295,4 +295,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

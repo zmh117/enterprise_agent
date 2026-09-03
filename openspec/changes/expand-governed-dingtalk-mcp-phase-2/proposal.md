@@ -10,6 +10,7 @@
 - 泛化现有 DingTalk Principal、MCP 审计和外部操作 worker，使其按固定 Tool identifier、schema、effect、confirmation policy 与 operation code 授权和分派，不再写死创建待办。
 - 用户、企业、Connector、`unionId`、AI 表格 operator、主日历、当前会话和当前通知接收人均由当前 Job 与持久平台事实解析；模型不得提交身份、Credential、Provider URL、HTTP Method/Header、`ACTIVE_PROFILES` 或任意消息目标。
 - 钉钉通讯录读取受企业应用可见范围限制；AI 表格读写必须以当前用户 operator 访问目标 base/sheet，并在 mutation 执行前再次验证；机器人消息只允许当前 Job 来源会话，工作通知只允许当前用户本人。
+- 外部操作确认卡模板改为按钉钉应用 Connector 配置的用途绑定；当前只开放“外部操作确认卡片”这一代码定义用途。新 Action Intent 将模板 ID、模板合同版本和 Connector revision 冻结到 Card Outbox，后续修改配置不得改变既有 Intent。
 - 本阶段不提供删除、撤回、自定义机器人 Webhook、DING、任意用户/部门群发、AI 表格 sheet/field 结构修改、日程删除或参与人修改；这些能力不得因官方 Profile 已启用而自动出现。
 - 本 change 的 apply 前置条件是 `add-governed-dingtalk-mcp-mvp` 先同步并归档到 canonical specs；在前置条件满足后必须重新读取 canonical、复核本 change 的 delta 并严格校验，未满足前不得实施。
 
@@ -29,5 +30,5 @@
 
 - 影响 `services/dingtalk_mcp_server/` 的合同、Tool registry、Principal、Provider clients、只读执行器、mutation 准备器和 external action worker；现有 `dingtalk_create_todo` 合同与成功/拒绝语义保持兼容。
 - 影响代码 Tool Manifest、Agent/Application Publication、角色工具目录、Job Tool Snapshot、MCP 审计和外部操作卡片安全摘要；不引入动态 MCP Server、通用 HTTP/Raw API 或用户 OAuth。
-- 影响 Connector 非敏感元数据和管理端校验：工作通知需要固定数值 Agent ID；Client Secret、Access Token、Principal JWT 和原始 Provider 正文继续不得进入模型、Job、卡片、日志或审计。
+- 影响 Connector 非敏感元数据和管理端校验：工作通知需要固定数值 Agent ID；外部操作 mutation 需要已发布且符合固定字段合同的确认卡模板 ID；Client Secret、Access Token、Principal JWT 和原始 Provider 正文继续不得进入模型、Job、卡片、日志或审计。
 - 需要新增单元、合同、集成和真实 E2E 验收，至少覆盖每个只读 Profile、每类 mutation 的同意/拒绝、目标越权、权限漂移、重复点击和 Provider 不确定失败。

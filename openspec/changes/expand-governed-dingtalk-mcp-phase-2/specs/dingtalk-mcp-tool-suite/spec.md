@@ -87,6 +87,21 @@ AI 表格 Tool SHALL 把当前 Principal 的 union ID 作为固定 `operatorId`�
 - **WHEN** Intent 的 operation code 不是代码为其 tool identifier 注册的唯一 operation
 - **THEN** worker 在任何 Provider I/O 前失败关闭并记录安全审计
 
+### Requirement: 确认卡模板绑定必须按来源 Connector 冻结
+系统 SHALL 从当前 Job 来源的钉钉 Connector 解析代码定义用途 `external_action_confirmation`，并在创建 Action Intent 时把模板 ID、`external-action-confirmation-v1` 合同版本和 Connector revision 冻结到 CREATE Card Outbox。Agent、模型和 Tool 参数 MUST NOT 选择模板。card worker MUST 只使用冻结绑定，不得在投递时回退到全局模板或读取当前 Connector 模板配置。
+
+#### Scenario: 管理员修改确认卡模板
+- **WHEN** 管理员把来源 Connector 的外部操作确认卡模板从 A 修改为 B
+- **THEN** 修改后新建的 Intent 冻结模板 B，修改前已存在的 Intent 和 Card Outbox 继续使用模板 A
+
+#### Scenario: 新 mutation 缺少模板绑定
+- **WHEN** 来源 Connector 未配置兼容的外部操作确认卡模板而 Tool 请求创建新 Intent
+- **THEN** 系统在 Provider I/O 和 Intent 创建前失败关闭，不以代码常量、其它 Connector 或模型参数补全模板
+
+#### Scenario: 历史 CREATE Outbox 升级
+- **WHEN** 升级前已存在使用旧固定模板的 CREATE Card Outbox
+- **THEN** 迁移将其历史实际模板和合同版本写入 payload，使新版 worker 仍按原模板投递
+
 ### Requirement: 消息与工作通知必须限制为当前来源和当前用户
 `dingtalk_send_robot_message` SHALL 只向当前 Job 冻结的钉钉来源会话发送：群聊目标为当前群，私聊目标为当前发起人。`dingtalk_send_work_notification` SHALL 只向当前发起人发送。模型输入只允许有界标题与正文，不得包含 conversation ID、robot code、user list、department list、全员标志或 Agent ID。
 

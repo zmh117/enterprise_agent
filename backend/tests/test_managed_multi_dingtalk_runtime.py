@@ -162,6 +162,7 @@ def test_dingtalk_tool_identifiers_are_validated_stored_and_preserved() -> None:
             dingtalk_enterprise_id=str(enterprise["id"]),
             work_notification_agent_id=123456,
             enterprise_robot_code="ding-enterprise-robot",
+            external_action_confirmation_card_template_id="confirmation-v2.schema",
         ),
         actor_id="test-admin",
         enabled=True,
@@ -170,9 +171,16 @@ def test_dingtalk_tool_identifiers_are_validated_stored_and_preserved() -> None:
     assert created["work_notification_agent_id_hint"] == "***3456"
     assert "123456" not in str(created)
     assert created["enterprise_robot_code"] == "ding-enterprise-robot"
+    assert created["external_action_confirmation_card_template_id"] == "confirmation-v2.schema"
     stored = container.managed_channel_repository.get_connector(created["id"])
     assert stored["metadata"]["work_notification_agent_id"] == 123456
     assert stored["metadata"]["default_robot_code"] == "ding-enterprise-robot"
+    assert stored["metadata"]["card_templates"] == {
+        "external_action_confirmation": {
+            "template_id": "confirmation-v2.schema",
+            "contract_version": "external-action-confirmation-v1",
+        }
+    }
 
     updated = container.managed_channel_service.update_dingtalk(
         created["id"],
@@ -188,6 +196,7 @@ def test_dingtalk_tool_identifiers_are_validated_stored_and_preserved() -> None:
     )
     assert updated["work_notification_agent_id_hint"] == "***3456"
     assert updated["enterprise_robot_code"] == "ding-enterprise-robot"
+    assert updated["external_action_confirmation_card_template_id"] == "confirmation-v2.schema"
 
     with pytest.raises(NonRetryableExecutionError) as invalid:
         container.managed_channel_service.create_dingtalk(
@@ -207,6 +216,22 @@ def test_dingtalk_tool_identifiers_are_validated_stored_and_preserved() -> None:
             "message": "工作通知 Agent ID 必须为正整数",
         }
     ]
+
+    with pytest.raises(NonRetryableExecutionError) as invalid_template:
+        container.managed_channel_service.create_dingtalk(
+            DingTalkApplicationInput(
+                name="无效卡片机器人",
+                client_id="ding-invalid-card",
+                client_secret="secret-invalid-card",
+                dingtalk_enterprise_id=str(enterprise["id"]),
+                external_action_confirmation_card_template_id="invalid template",
+            ),
+            actor_id="test-admin",
+            enabled=False,
+        )
+    assert invalid_template.value.field_errors[0]["field"] == (
+        "external_action_confirmation_card_template_id"
+    )
 
 
 def test_channel_inbox_deduplicates_per_connector_and_encrypts_reply_credential():

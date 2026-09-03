@@ -48,6 +48,8 @@
 - [x] 6.2 实现按 Tool 的 readiness 校验：企业/App Secret、robot code、当前来源路由、Agent ID 和 operation handler 缺失时精确失败关闭
 - [x] 6.3 更新 Compose/运行配置与运维说明，确认服务不消费 `ACTIVE_PROFILES`、官方 YAML、`ROBOT_ACCESS_TOKEN` 或动态 Provider 配置
 - [x] 6.4 增加钉钉应用权限清单和 Profile 级稳定错误映射，权限不足不得回退其它 Connector、Credential 或 endpoint
+- [x] 6.5 在 DingTalk Connector API/UI 中增加代码定义的“外部操作确认卡片”模板配置，并迁移既有 Connector 的历史模板事实
+- [x] 6.6 创建 Intent 时将模板 ID、合同版本和 Connector revision 冻结到 Card Outbox，worker 只消费冻结绑定且缺失时失败关闭
 
 ## 7. 自动化验证
 
@@ -57,6 +59,7 @@
 - [x] 7.4 重建受影响镜像并验证 `docker compose config --quiet`、migration/schema head、`dingtalk-mcp` 与 external action worker health/readiness
 - [x] 7.5 运行 `openspec validate expand-governed-dingtalk-mcp-phase-2 --strict`、相关 canonical/全量 OpenSpec 校验和 `git diff --check`
 - [x] 7.6 增加普通成员回归，覆盖直接携带 union ID、Staff ID 懒补全、联系人/部门无需 union ID、空值不覆盖和非空冲突失败关闭
+- [x] 7.7 增加模板格式、保存保留、mutation 发布门禁、历史迁移、Intent 冻结和 worker 投递合同测试，并完成相关前后端与 OpenSpec 校验
 
 ## 8. 真实发布与 E2E 证据
 

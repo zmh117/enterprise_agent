@@ -7,6 +7,7 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.business_application.domain.policies import required_file_mcp_tools
 from app.modules.job.infrastructure.repositories import now_iso
 from app.shared.database import Database
+from app.shared.dingtalk_card_templates import external_action_confirmation_card_binding
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -171,7 +172,16 @@ class ApplicationMcpToolCompositionService:
             for tool in selected_tools
             if str(tool.get("server_code") or "") == "dingtalk-mcp"
         }
-        if not selected:
+        requires_confirmation_card = any(
+            str(tool.get("confirmation_policy") or "") == "external_action_card_v1"
+            or (
+                (definition := MCP_TOOL_MANIFEST.get(str(tool.get("tool_identifier") or "")))
+                is not None
+                and definition.confirmation_policy == "external_action_card_v1"
+            )
+            for tool in selected_tools
+        )
+        if not selected and not requires_confirmation_card:
             return []
         dingtalk_triggers = [
             trigger
@@ -183,7 +193,11 @@ class ApplicationMcpToolCompositionService:
             return [
                 {
                     "field": "mcp_tools",
-                    "message": "钉钉 MCP 工具要求至少一个已启用的钉钉来源 Trigger",
+                    "message": (
+                        "钉钉 MCP 工具要求至少一个已启用的钉钉来源 Trigger"
+                        if selected
+                        else "需逐次确认的写入工具要求至少一个已启用的钉钉来源 Trigger"
+                    ),
                 }
             ]
         notice_tools = {
@@ -194,15 +208,14 @@ class ApplicationMcpToolCompositionService:
         batch_robot_tools = {"dingtalk_batch_send_message_to_users_by_robot"}
         requires_notice = bool(selected.intersection(notice_tools))
         requires_batch_robot = bool(selected.intersection(batch_robot_tools))
-        if not requires_notice and not requires_batch_robot:
-            return []
         missing_notice: list[str] = []
         missing_batch_robot: list[str] = []
+        missing_confirmation_card: list[str] = []
         for trigger in dingtalk_triggers:
             connector_id = str(trigger.get("connector_id") or "")
             row = self.database.execute_one(
                 """
-                select name, metadata from integration_connector
+                select name, metadata, revision from integration_connector
                  where id = ? and connector_type = 'dingtalk_enterprise_stream'
                    and enabled = 1 and deleted = 0
                 """,
@@ -219,6 +232,16 @@ class ApplicationMcpToolCompositionService:
                 row is None or not str(metadata.get("default_robot_code") or "").strip()
             ):
                 missing_batch_robot.append(connector_name)
+            if requires_confirmation_card and (
+                row is None
+                or external_action_confirmation_card_binding(
+                    metadata,
+                    connector_id=connector_id,
+                    connector_revision=int((row or {}).get("revision") or 0),
+                )
+                is None
+            ):
+                missing_confirmation_card.append(connector_name)
         errors: list[dict[str, str]] = []
         if missing_notice:
             errors.append(
@@ -237,6 +260,17 @@ class ApplicationMcpToolCompositionService:
                     "message": (
                         "批量用户机器人消息工具要求所有钉钉来源连接配置企业机器人 Code："
                         + "、".join(sorted(set(missing_batch_robot)))[:300]
+                    ),
+                }
+            )
+        if missing_confirmation_card:
+            errors.append(
+                {
+                    "field": "mcp_tools",
+                    "message": (
+                        "需逐次确认的写入工具要求所有钉钉来源连接配置"
+                        "外部操作确认卡片模板 ID："
+                        + "、".join(sorted(set(missing_confirmation_card)))[:300]
                     ),
                 }
             )

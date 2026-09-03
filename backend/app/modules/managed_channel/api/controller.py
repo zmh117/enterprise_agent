@@ -42,6 +42,7 @@ class DingTalkApplicationRequest(StrictRequest):
     require_group_at: bool = True
     work_notification_agent_id: int | None = Field(default=None, ge=1)
     enterprise_robot_code: str = Field(default="", max_length=128)
+    external_action_confirmation_card_template_id: str | None = Field(default=None, max_length=256)
     enabled: bool = False
     rotate_secret: bool = False
 
@@ -610,6 +611,9 @@ def _application_input(payload: DingTalkApplicationRequest) -> DingTalkApplicati
         require_group_at=payload.require_group_at,
         work_notification_agent_id=payload.work_notification_agent_id,
         enterprise_robot_code=payload.enterprise_robot_code,
+        external_action_confirmation_card_template_id=(
+            payload.external_action_confirmation_card_template_id
+        ),
     )
 
 

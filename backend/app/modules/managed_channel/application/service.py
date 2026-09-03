@@ -19,6 +19,12 @@ from app.modules.message_bus.application.message_publisher import (
     MessagePublisher,
 )
 from app.modules.platform_config.application.secrets import SecretProviderPort
+from app.shared.dingtalk_card_templates import (
+    EXTERNAL_ACTION_CONFIRMATION_CARD_CONTRACT_VERSION,
+    EXTERNAL_ACTION_CONFIRMATION_CARD_PURPOSE,
+    external_action_confirmation_card_binding,
+    normalize_dingtalk_card_template_id,
+)
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import AppError, NonRetryableExecutionError, NotFound
 
@@ -603,6 +609,17 @@ class ManagedChannelService:
                 metadata.get("work_notification_agent_id")
             ),
             "enterprise_robot_code": str(metadata.get("default_robot_code") or ""),
+            "external_action_confirmation_card_template_id": str(
+                (
+                    external_action_confirmation_card_binding(
+                        metadata,
+                        connector_id=str(item["id"]),
+                        connector_revision=int(item.get("revision") or 1),
+                    )
+                    or {}
+                ).get("template_id")
+                or ""
+            ),
             "capabilities": {
                 "private_chat": bool(metadata.get("allow_private_chat", True)),
                 "group_chat": bool(metadata.get("allow_group_chat", True)),
@@ -666,6 +683,21 @@ class ManagedChannelService:
                 "enterprise_robot_code",
                 "企业机器人 Code 长度不能超过 128",
             )
+        raw_card_template_id = payload.external_action_confirmation_card_template_id
+        card_template_id = (
+            normalize_dingtalk_card_template_id(raw_card_template_id)
+            if raw_card_template_id is not None
+            else None
+        )
+        if (
+            raw_card_template_id is not None
+            and raw_card_template_id.strip()
+            and not card_template_id
+        ):
+            raise _invalid(
+                "external_action_confirmation_card_template_id",
+                "外部操作确认卡片模板 ID 必须无空白、仅包含字母数字及 ._-，并以 .schema 结尾",
+            )
         return DingTalkApplicationInput(
             name=name,
             client_id=client_id,
@@ -676,6 +708,7 @@ class ManagedChannelService:
             require_group_at=payload.require_group_at,
             work_notification_agent_id=agent_id,
             enterprise_robot_code=enterprise_robot_code,
+            external_action_confirmation_card_template_id=card_template_id,
         )
 
     @staticmethod
@@ -705,6 +738,21 @@ class ManagedChannelService:
             ).strip()
         if enterprise_robot_code:
             metadata["default_robot_code"] = enterprise_robot_code
+        current_card_templates = (current_metadata or {}).get("card_templates")
+        card_templates = (
+            dict(current_card_templates) if isinstance(current_card_templates, dict) else {}
+        )
+        card_template_id = payload.external_action_confirmation_card_template_id
+        if card_template_id is not None:
+            if card_template_id:
+                card_templates[EXTERNAL_ACTION_CONFIRMATION_CARD_PURPOSE] = {
+                    "template_id": card_template_id,
+                    "contract_version": EXTERNAL_ACTION_CONFIRMATION_CARD_CONTRACT_VERSION,
+                }
+            else:
+                card_templates.pop(EXTERNAL_ACTION_CONFIRMATION_CARD_PURPOSE, None)
+        if card_templates:
+            metadata["card_templates"] = card_templates
         return metadata
 
     @staticmethod

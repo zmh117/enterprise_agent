@@ -98,6 +98,7 @@ class DingTalkApplicationInput:
     require_group_at: bool = True
     work_notification_agent_id: int | None = None
     enterprise_robot_code: str = ""
+    external_action_confirmation_card_template_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,8 @@ from typing import Any
 from app.modules.external_action.domain import ExternalActionStatus, canonical_json
 from app.modules.job.infrastructure.repositories import new_id, now_iso
 from app.shared.database import Database, operation_unit_of_work
+from app.shared.dingtalk_card_templates import external_action_confirmation_card_binding
+from app.shared.exceptions import NonRetryableExecutionError
 
 
 class ExternalActionRepository:
@@ -46,6 +48,7 @@ class ExternalActionRepository:
             )
         if existing is not None:
             return existing, False
+        card_binding = self._confirmation_card_binding(facts)
         intent_id = new_id("action")
         timestamp = now_iso()
         confirmation_summary_json = canonical_json(safe_summary)
@@ -120,12 +123,42 @@ class ExternalActionRepository:
             action_intent_id=intent_id,
             event_kind="CREATE",
             idempotency_key=f"{intent_id}:create:v1",
-            payload={"revision": 1},
+            payload={"revision": 1, "card_binding": card_binding},
         )
         created = self.get(intent_id)
         if created is None:
             raise RuntimeError("External Action Intent insert did not persist")
         return created, True
+
+    def _confirmation_card_binding(self, facts: dict[str, Any]) -> dict[str, Any]:
+        if str(facts.get("confirmation_channel_code") or "dingtalk") != "dingtalk":
+            raise NonRetryableExecutionError(
+                "External action confirmation channel is unsupported",
+                safe_message="当前外部操作确认渠道不可用",
+                error_code="external_action_confirmation_channel_unsupported",
+            )
+        connector_id = str(facts.get("source_connector_id") or "")
+        row = self.database.execute_one(
+            """
+            select metadata, revision from integration_connector
+             where id = ? and connector_type = 'dingtalk_enterprise_stream'
+               and enabled = 1 and deleted = 0
+            """,
+            (connector_id,),
+        )
+        metadata = self.decode_json((row or {}).get("metadata"))
+        binding = external_action_confirmation_card_binding(
+            metadata,
+            connector_id=connector_id,
+            connector_revision=int((row or {}).get("revision") or 0),
+        )
+        if binding is None:
+            raise NonRetryableExecutionError(
+                "DingTalk confirmation card template binding is unavailable",
+                safe_message="当前钉钉来源连接未配置兼容的外部操作确认卡片模板 ID",
+                error_code="dingtalk_confirmation_card_template_not_ready",
+            )
+        return binding
 
     def enqueue_card(
         self,

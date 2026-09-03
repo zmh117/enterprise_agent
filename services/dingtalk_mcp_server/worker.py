@@ -13,12 +13,18 @@ from app.modules.dingding.infrastructure.dingtalk_delivery_clients import DingTa
 from app.modules.external_action.card import render_confirmation_card
 from app.modules.external_action.repository import ExternalActionRepository
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.shared.dingtalk_card_templates import (
+    EXTERNAL_ACTION_CONFIRMATION_CARD_CONTRACT_VERSION,
+    EXTERNAL_ACTION_CONFIRMATION_CARD_PURPOSE,
+    normalize_dingtalk_card_template_id,
+)
 from app.shared.dingtalk_tool_contracts import (
     DINGTALK_MUTATION_TOOL_IDENTIFIERS,
     DINGTALK_TOOL_CONTRACTS,
     DingTalkToolContract,
 )
 from app.shared.config import load_settings
+from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.logging import configure_logging
 from services.dingtalk_mcp_server.contracts import SERVER_CODE
 from services.dingtalk_mcp_server.provider import (
@@ -107,11 +113,16 @@ class ExternalActionWorker:
                 client_id=client_id, client_secret=client_secret, timeout_seconds=5
             )
             client = DingTalkCardClient(token_client)
+            payload = self.repository.decode_json(outbox.get("payload_json"))
             if str(outbox["event_kind"]) == "CREATE":
                 summary = self._confirmation_summary(intent)
                 token = self._intent_token(str(intent["id"]), int(intent["revision"]))
                 card_fields = self._confirmation_card_fields(intent, summary)
                 client.create_confirmation(
+                    card_template_id=self._confirmation_card_template_id(
+                        intent=intent,
+                        payload=payload,
+                    ),
                     out_track_id=str(intent["id"]),
                     staff_id=str(intent["target_external_subject_id"]),
                     card_fields={
@@ -131,7 +142,6 @@ class ExternalActionWorker:
                     },
                 )
             else:
-                payload = self.repository.decode_json(outbox["payload_json"])
                 summary = self._confirmation_summary(intent)
                 status = str(payload.get("status") or "failed")
                 operation = str(summary.get("operation") or "钉钉操作")[:100]
@@ -156,6 +166,36 @@ class ExternalActionWorker:
                 error_code=str(getattr(exc, "error_code", "") or "card_delivery_failed"),
                 error_summary=str(getattr(exc, "safe_message", "") or "卡片投放失败"),
             )
+
+    @staticmethod
+    def _confirmation_card_template_id(
+        *,
+        intent: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> str:
+        binding = payload.get("card_binding")
+        if not isinstance(binding, dict):
+            binding = {}
+        template_id = normalize_dingtalk_card_template_id(binding.get("template_id"))
+        connector_revision = binding.get("connector_revision")
+        valid = (
+            template_id
+            and str(binding.get("purpose") or "") == EXTERNAL_ACTION_CONFIRMATION_CARD_PURPOSE
+            and str(binding.get("contract_version") or "")
+            == EXTERNAL_ACTION_CONFIRMATION_CARD_CONTRACT_VERSION
+            and str(binding.get("connector_id") or "")
+            == str(intent.get("source_connector_id") or "")
+            and isinstance(connector_revision, int)
+            and not isinstance(connector_revision, bool)
+            and connector_revision > 0
+        )
+        if not valid:
+            raise NonRetryableExecutionError(
+                "Frozen DingTalk confirmation card binding is invalid",
+                safe_message="外部操作确认卡片的冻结模板绑定无效",
+                error_code="dingtalk_confirmation_card_binding_invalid",
+            )
+        return template_id
 
     def _confirmation_summary(self, intent: dict[str, Any]) -> dict[str, Any]:
         full = self.repository.decode_json(intent.get("confirmation_summary_json"))

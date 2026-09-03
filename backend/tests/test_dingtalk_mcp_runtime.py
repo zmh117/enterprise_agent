@@ -108,6 +108,15 @@ def _database() -> Database:
         """
         create table dingtalk_enterprise (id text primary key, corp_id text not null);
         insert into dingtalk_enterprise values ('enterprise-1', 'corp-1');
+        create table integration_connector (
+          id text primary key, connector_type text not null, enabled integer not null,
+          deleted integer not null, metadata text not null, revision integer not null
+        );
+        insert into integration_connector values (
+          'connector-1', 'dingtalk_enterprise_stream', 1, 0,
+          '{"card_templates":{"external_action_confirmation":{"template_id":"test-confirmation.schema","contract_version":"external-action-confirmation-v1"}}}',
+          7
+        );
         create table external_action_intent (
           id text primary key, job_id text not null, session_id text not null,
           actor_user_id text not null, business_application_id text not null,
@@ -1346,6 +1355,102 @@ def test_robot_user_batch_reuses_one_intent_for_identical_ordered_arguments() ->
     }
 
 
+def test_action_intent_freezes_connector_card_template_binding() -> None:
+    database = _database()
+    repository = ExternalActionRepository(database)
+    service = ExternalActionService(
+        repository,
+        ExternalActionTokenSigner("k" * 32),
+        _Audit(),
+    )
+    first_arguments = normalize_todo_arguments({"subject": "第一项"}).as_dict()
+    first, first_created = service.prepare(
+        facts=_facts(),
+        arguments=first_arguments,
+        arguments_hash=json_hash(first_arguments),
+        safe_summary={"operation": "创建钉钉待办", "subject": "第一项"},
+        mcp_call_id="mcp-call-first",
+    )
+    first_outbox = database.execute_one(
+        "select payload_json from external_action_card_outbox where action_intent_id = ?",
+        (first["id"],),
+    )
+    first_payload = repository.decode_json((first_outbox or {}).get("payload_json"))
+    assert first_created is True
+    assert first_payload["card_binding"] == {
+        "purpose": "external_action_confirmation",
+        "template_id": "test-confirmation.schema",
+        "contract_version": "external-action-confirmation-v1",
+        "connector_id": "connector-1",
+        "connector_revision": 7,
+    }
+
+    database.execute(
+        """
+        update integration_connector
+           set metadata = ?, revision = 8
+         where id = 'connector-1'
+        """,
+        (
+            '{"card_templates":{"external_action_confirmation":'
+            '{"template_id":"replacement-confirmation.schema",'
+            '"contract_version":"external-action-confirmation-v1"}}}',
+        ),
+    )
+    replay, replay_created = service.prepare(
+        facts=_facts(),
+        arguments=first_arguments,
+        arguments_hash=json_hash(first_arguments),
+        safe_summary={"operation": "创建钉钉待办", "subject": "第一项"},
+        mcp_call_id="mcp-call-replay",
+    )
+    assert replay_created is False
+    assert replay["id"] == first["id"]
+
+    second_arguments = normalize_todo_arguments({"subject": "第二项"}).as_dict()
+    second, second_created = service.prepare(
+        facts=_facts(),
+        arguments=second_arguments,
+        arguments_hash=json_hash(second_arguments),
+        safe_summary={"operation": "创建钉钉待办", "subject": "第二项"},
+        mcp_call_id="mcp-call-second",
+    )
+    second_outbox = database.execute_one(
+        "select payload_json from external_action_card_outbox where action_intent_id = ?",
+        (second["id"],),
+    )
+    second_payload = repository.decode_json((second_outbox or {}).get("payload_json"))
+    assert second_created is True
+    assert second_payload["card_binding"]["template_id"] == ("replacement-confirmation.schema")
+    assert second_payload["card_binding"]["connector_revision"] == 8
+    assert first_payload["card_binding"]["template_id"] == "test-confirmation.schema"
+
+
+def test_new_action_intent_fails_closed_without_connector_card_template() -> None:
+    database = _database()
+    database.execute("update integration_connector set metadata = '{}' where id = 'connector-1'")
+    service = ExternalActionService(
+        ExternalActionRepository(database),
+        ExternalActionTokenSigner("k" * 32),
+        _Audit(),
+    )
+    arguments = normalize_todo_arguments({"subject": "不会创建"}).as_dict()
+
+    with pytest.raises(NonRetryableExecutionError) as caught:
+        service.prepare(
+            facts=_facts(),
+            arguments=arguments,
+            arguments_hash=json_hash(arguments),
+            safe_summary={"operation": "创建钉钉待办", "subject": "不会创建"},
+            mcp_call_id="mcp-call-missing-card",
+        )
+
+    assert caught.value.error_code == "dingtalk_confirmation_card_template_not_ready"
+    assert database.execute_one("select count(*) as count from external_action_intent") == {
+        "count": 0
+    }
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -2095,12 +2200,15 @@ def test_worker_uses_legacy_summary_for_intents_backfilled_with_empty_full_summa
     )
     legacy = {"operation": "创建待办", "subject": "旧意图仍可确认"}
 
-    assert worker._confirmation_summary(
-        {
-            "confirmation_summary_json": "{}",
-            "safe_summary_json": json.dumps(legacy, ensure_ascii=False),
-        }
-    ) == legacy
+    assert (
+        worker._confirmation_summary(
+            {
+                "confirmation_summary_json": "{}",
+                "safe_summary_json": json.dumps(legacy, ensure_ascii=False),
+            }
+        )
+        == legacy
+    )
 
 
 def test_worker_reauthorizes_current_actor_application_and_identity() -> None:
@@ -2307,13 +2415,24 @@ def test_worker_create_card_matches_published_template_contract(
             return {
                 "id": "action-1",
                 "revision": 3,
+                "source_connector_id": "connector-1",
                 "target_external_subject_id": "staff-1",
                 "operation_code": "dingtalk.todo.create",
                 "safe_summary_json": "{}",
             }
 
         @staticmethod
-        def decode_json(_value: str) -> dict[str, str]:
+        def decode_json(value: object) -> dict[str, Any]:
+            if value == "card-payload":
+                return {
+                    "card_binding": {
+                        "purpose": "external_action_confirmation",
+                        "template_id": "configured-confirmation.schema",
+                        "contract_version": "external-action-confirmation-v1",
+                        "connector_id": "connector-1",
+                        "connector_revision": 7,
+                    }
+                }
             return {"subject": "回访客户", "due_time": "未设置"}
 
         def complete_card(self, outbox_id: str) -> None:
@@ -2342,12 +2461,18 @@ def test_worker_create_card_matches_published_template_contract(
     monkeypatch.setattr(worker, "_intent_token", lambda _intent_id, _revision: "signed")
 
     worker._dispatch_card(
-        {"id": "card-outbox-1", "action_intent_id": "action-1", "event_kind": "CREATE"}
+        {
+            "id": "card-outbox-1",
+            "action_intent_id": "action-1",
+            "event_kind": "CREATE",
+            "payload_json": "card-payload",
+        }
     )
 
     assert repository.completed == ["card-outbox-1"]
     assert repository.failed == []
     assert captured["card_fields"]["status"] == ""
+    assert captured["card_template_id"] == "configured-confirmation.schema"
     assert "intentToken" not in captured["card_fields"]
     assert captured["private_fields"] == {
         "revisionNo": "3",
@@ -2460,6 +2585,7 @@ def test_card_and_todo_clients_emit_only_fixed_bounded_provider_contracts() -> N
     card_transport = _Transport()
     card = DingTalkCardClient(_TokenClient(), transport=card_transport)
     card.create_confirmation(
+        card_template_id="configured-confirmation.schema",
         out_track_id="action-1",
         staff_id="staff-1",
         card_fields={"subject": "回访客户", "status": ""},
@@ -2472,7 +2598,7 @@ def test_card_and_todo_clients_emit_only_fixed_bounded_provider_contracts() -> N
     method, url, payload, headers, _timeout = card_transport.calls[0]
     assert method == "POST"
     assert url.endswith("/v1.0/card/instances/createAndDeliver")
-    assert payload["cardTemplateId"] == "0ad7c643-7e30-4797-8284-da5ef89d3841.schema"
+    assert payload["cardTemplateId"] == "configured-confirmation.schema"
     assert payload["callbackType"] == "STREAM"
     assert payload["userId"] == "staff-1"
     assert payload["cardData"]["cardParamMap"]["status"] == ""
