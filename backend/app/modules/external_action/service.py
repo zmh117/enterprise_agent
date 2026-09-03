@@ -107,6 +107,20 @@ class ExternalActionService:
                 "revision": int(intent["revision"]),
             },
         )
+        supersedes_intent_id = str(intent.get("supersedes_intent_id") or "")
+        if created and supersedes_intent_id:
+            self.audit_service.record(
+                "external_action.superseded",
+                status="SUPERSEDED",
+                summary="Pending external action proposal was replaced atomically",
+                job_id=str(intent["job_id"]),
+                actor_id=str(intent["actor_user_id"]),
+                payload={
+                    "action_intent_id": supersedes_intent_id,
+                    "superseded_by_intent_id": str(intent["id"]),
+                    "proposal_chain_id": str(intent["proposal_chain_id"]),
+                },
+            )
         return intent, created
 
     @operation_unit_of_work(lambda service: service.repository.database)
@@ -142,6 +156,30 @@ class ExternalActionService:
             revision=revision,
         ):
             raise self._denied("external_action_revision_mismatch", "确认卡片版本已失效")
+        if str(intent["status"]) == "SUPERSEDED":
+            return ActionCallbackResult(
+                acknowledged=True,
+                duplicate=True,
+                status="SUPERSEDED",
+                response={
+                    "cardUpdateOptions": {
+                        "updateCardDataByKey": True,
+                        "updatePrivateDataByKey": True,
+                    },
+                    "cardData": {
+                        "cardParamMap": {
+                            "status": "superseded",
+                            "statusText": "已被新版本替代，请使用最新确认卡",
+                        }
+                    },
+                    "userPrivateData": {
+                        "cardParamMap": {
+                            "inputStatus": "disabled",
+                            "errorText": "请使用最新确认卡",
+                        }
+                    },
+                },
+            )
         if (
             str(intent["status"]) == "PENDING_CONFIRMATION"
             and str(intent["expires_at"]) <= datetime.now(UTC).isoformat()
@@ -188,9 +226,9 @@ class ExternalActionService:
             )
         if action == "revise":
             self.audit_service.record(
-                "external_action.revise_unsupported",
+                "external_action.revise_requested",
                 status=str(intent["status"]),
-                summary="External action revision was not executed in MVP",
+                summary="User was directed to revise the proposal in the source conversation",
                 job_id=str(intent["job_id"]),
                 actor_id=str(intent["actor_user_id"]),
                 payload={"action_intent_id": out_track_id, "revision": revision},
@@ -207,7 +245,7 @@ class ExternalActionService:
                     "userPrivateData": {
                         "cardParamMap": {
                             "inputStatus": "enabled",
-                            "errorText": "MVP 暂不支持补充并重新生成，原操作尚未执行",
+                            "errorText": "请在当前会话回复要修改的字段；生成新完整版本前原提案不会执行",
                         }
                     },
                 },

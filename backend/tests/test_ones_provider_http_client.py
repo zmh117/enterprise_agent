@@ -144,7 +144,7 @@ def test_http_client_rejects_non_fixed_paths(path: str) -> None:
         (429, "ones_provider_rate_limited"),
         (500, "ones_provider_unavailable"),
         (307, "ones_provider_redirect_rejected"),
-        (404, "ones_provider_response_invalid"),
+        (404, "ones_provider_operation_unavailable"),
     ],
 )
 def test_http_client_maps_http_status_without_exposing_bodies(

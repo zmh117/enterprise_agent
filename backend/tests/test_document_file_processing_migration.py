@@ -18,7 +18,7 @@ def _migrated_database() -> Database:
         default_migrations_dir(),
         migrator_build="document-file-processing-schema-test",
     ).run()
-    assert result.head == "123"
+    assert result.head == "129"
     return database
 
 

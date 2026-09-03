@@ -206,7 +206,10 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
     return Server(
         "Enterprise ONES MCP",
         version=SERVER_VERSION,
-        instructions="Identity-aware, code-registered ONES reads and confirmed defect updates.",
+        instructions=(
+            "Identity-aware, code-registered ONES reads plus confirmed defect creation "
+            "and updates."
+        ),
         on_list_tools=list_tools,
         on_call_tool=call_tool,
     )

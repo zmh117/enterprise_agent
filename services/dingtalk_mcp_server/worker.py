@@ -150,9 +150,18 @@ class ExternalActionWorker:
                     if status == "succeeded"
                     else f"{operation}失败，请联系管理员"
                 )
+                extra_fields = payload.get("cardFields")
+                if not isinstance(extra_fields, dict):
+                    extra_fields = {}
+                allowed_extra = {"providerName", "operationName", "targetName", "detailText"}
+                if set(extra_fields) - allowed_extra or any(
+                    not isinstance(value, str) for value in extra_fields.values()
+                ):
+                    raise ValueError("External action result card fields are invalid")
                 client.update(
                     out_track_id=str(intent["id"]),
                     card_fields={
+                        **extra_fields,
                         "status": status,
                         "statusText": status_text[:200],
                         "inputStatus": "disabled",

@@ -165,6 +165,18 @@ class OnesProviderHttpClient:
                 safe_message="当前 ONES 身份无权访问该 Team",
                 error_code="ones_provider_forbidden",
             )
+        if status == 409:
+            return RetryableExecutionError(
+                "ONES Provider reported a write conflict with an uncertain outcome",
+                safe_message="ONES 写入结果需要按原标识核验",
+                error_code="ones_provider_write_conflict",
+            )
+        if status == 404:
+            return OnesMcpError(
+                "ONES Provider operation or resource was not found",
+                safe_message="ONES 所需接口或资源不可用",
+                error_code="ones_provider_operation_unavailable",
+            )
         if status == 429:
             return RetryableExecutionError(
                 "ONES Provider rate limited the request",
@@ -184,7 +196,7 @@ class OnesProviderHttpClient:
                 error_code="ones_provider_unavailable",
             )
         return OnesMcpError(
-            "ONES Provider returned an unsupported status",
-            safe_message="ONES 返回了无效响应",
-            error_code="ones_provider_response_invalid",
+            "ONES Provider rejected the request",
+            safe_message="ONES 拒绝了当前请求",
+            error_code="ones_provider_request_rejected",
         )

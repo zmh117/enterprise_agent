@@ -71,6 +71,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("126", "126_release_unbound_ones_identity.sql"),
         ("127", "127_expand_external_action_provider_facts.sql"),
         ("128", "128_expand_dingtalk_confirmation_card_templates.sql"),
+        ("129", "129_expand_external_action_proposal_chains.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -103,6 +104,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "126",
         "127",
         "128",
+        "129",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -160,7 +162,7 @@ def test_external_action_intent_separates_confirmation_route_from_execution_prov
         migrator_build="ones-external-action-provider-split-test",
     ).run()
 
-    assert result.head == "128"
+    assert result.head == "129"
     columns = {
         row["name"]: row for row in database.execute("pragma table_info(external_action_intent)")
     }
@@ -177,12 +179,22 @@ def test_external_action_intent_separates_confirmation_route_from_execution_prov
         "field_catalog_hash",
         "intent_fingerprint",
         "confirmation_summary_json",
+        "proposal_chain_id",
+        "supersedes_intent_id",
+        "superseded_by_intent_id",
+        "superseded_at",
+        "provider_attempt_status",
+        "provider_attempt_started_at",
+        "provider_request_hash",
+        "provider_catalog_hash",
     }
     assert expected.issubset(columns)
     assert str(columns["confirmation_channel_code"]["dflt_value"]).strip("'") == "dingtalk"
     assert str(columns["execution_provider_code"]["dflt_value"]).strip("'") == "dingtalk"
     indexes = {row["name"] for row in database.execute("pragma index_list(external_action_intent)")}
     assert "uq_external_action_intent_fingerprint" in indexes
+    assert "uq_external_action_intent_mcp_call" in indexes
+    assert "uq_external_action_intent_supersedes" in indexes
 
 
 def test_confirmation_card_template_migration_backfills_connector_and_outbox(
@@ -232,6 +244,10 @@ def test_confirmation_card_template_migration_backfills_connector_and_outbox(
         """,
         (timestamp, timestamp),
     )
+    foreign_key_violations_before = {
+        (str(row["table"]), int(row["rowid"]), str(row["parent"]))
+        for row in database.execute("pragma foreign_key_check")
+    }
 
     result = Migrator(
         database,
@@ -239,7 +255,7 @@ def test_confirmation_card_template_migration_backfills_connector_and_outbox(
         migrator_build="card-binding-after",
     ).run()
 
-    assert result.applied == ("128",)
+    assert result.applied == ("128", "129")
     connector = database.execute_one(
         "select metadata, revision from integration_connector where id = ?",
         ("connector-card-history",),
@@ -262,6 +278,31 @@ def test_confirmation_card_template_migration_backfills_connector_and_outbox(
         "connector_id": "connector-card-history",
         "connector_revision": 4,
     }
+    preserved_intent = database.execute_one(
+        """
+        select status, arguments_json, proposal_chain_id, supersedes_intent_id,
+               provider_attempt_status
+          from external_action_intent where id = ?
+        """,
+        ("action-card-history",),
+    )
+    assert preserved_intent == {
+        "status": "PENDING_CONFIRMATION",
+        "arguments_json": "{}",
+        "proposal_chain_id": "action-card-history",
+        "supersedes_intent_id": None,
+        "provider_attempt_status": "",
+    }
+    assert {
+        (str(row["table"]), int(row["rowid"]), str(row["parent"]))
+        for row in database.execute("pragma foreign_key_check")
+    } == foreign_key_violations_before
+    repeated = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="card-binding-repeat",
+    ).run()
+    assert repeated.applied == ()
 
 
 @pytest.mark.parametrize(
@@ -383,7 +424,7 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "128"
+    assert first.head == "129"
     assert first.baselined == 0
     assert first.applied == (
         "100",
@@ -415,8 +456,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
         "126",
         "127",
         "128",
+        "129",
     )
-    assert second.head == "128"
+    assert second.head == "129"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -434,7 +476,7 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         include_schema_contract=True,
     ).run()
 
-    assert result.head == "128"
+    assert result.head == "129"
     assert result.applied == (
         "100",
         "101",
@@ -465,8 +507,9 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         "126",
         "127",
         "128",
+        "129",
     )
-    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "128"
+    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "129"
     assert (
         Migrator(
             database,
@@ -562,6 +605,7 @@ def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
         "126",
         "127",
         "128",
+        "129",
     )
     assert repeated.applied == ()
     assert database.execute_one(
@@ -678,7 +722,7 @@ def test_release_unbound_ones_identity_migration_preserves_history_and_constrain
         migrator_build="ones-release-upgrade",
     ).run()
 
-    assert result.applied == ("126", "127", "128")
+    assert result.applied == ("126", "127", "128", "129")
     assert database.execute_one(
         """
         select user_id, status from user_external_identity
@@ -974,7 +1018,7 @@ def test_runtime_v14_migration_preserves_terminal_v13_history(tmp_path: Path) ->
           from agent_job where id = 'migration-120-job'
         """
     )
-    assert result.head == "128"
+    assert result.head == "129"
     assert row == {
         "agent_runtime_protocol_version": "1.3",
         "tool_contract_status": "NOT_OBSERVED",
@@ -1053,6 +1097,7 @@ def test_existing_database_contract_requires_separate_approval(tmp_path: Path) -
         "126",
         "127",
         "128",
+        "129",
     )
     assert "user_message" not in {
         row["name"] for row in database.execute("pragma table_info(agent_job)")
@@ -1371,7 +1416,7 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert all(re.search(r"[\u3400-\u9fff]", table_comments[table]) for table in owned_tables)
     assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
     assert len(owned_tables) == 129
-    assert len(owned_columns) == 1726
+    assert len(owned_columns) == 1734
     database.close()
 
 
@@ -1577,7 +1622,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 128",
+        match="ledger is missing; expected head 129",
     ):
         SchemaHeadValidator(
             database,

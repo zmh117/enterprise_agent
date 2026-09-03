@@ -19,6 +19,7 @@ class ExternalActionStatus(StrEnum):
     FAILED_UNCERTAIN = "FAILED_UNCERTAIN"
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
+    SUPERSEDED = "SUPERSEDED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,7 @@ class ExternalActionIntentFacts:
     precondition: dict[str, Any] | None = None
     field_catalog_version: str = ""
     field_catalog_hash: str = ""
+    supersedes_intent_id: str = ""
 
     def as_repository_facts(self, *, arguments_hash: str) -> dict[str, Any]:
         precondition = dict(self.precondition or {})
@@ -103,6 +105,7 @@ class ExternalActionIntentFacts:
             "field_catalog_version": self.field_catalog_version,
             "field_catalog_hash": self.field_catalog_hash,
             "intent_fingerprint": intent_fingerprint,
+            "supersedes_intent_id": self.supersedes_intent_id,
         }
 
 

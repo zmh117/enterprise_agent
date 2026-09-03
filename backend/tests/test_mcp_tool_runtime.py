@@ -311,8 +311,11 @@ def test_code_owned_mcp_manifest_has_stable_unique_tool_contracts() -> None:
                 "" if definition.read_only else f"mcp:ones-mcp:{identifier}:invoke"
             )
             if not definition.read_only:
-                assert definition.operation_code == "ones.task.update"
-                assert definition.target_policy == "single_existing_defect"
+                assert definition.operation_code in {"ones.task.update", "ones.task.create"}
+                assert definition.target_policy in {
+                    "single_existing_defect",
+                    "single_new_defect",
+                }
         else:
             assert definition.read_only is True
         assert require_mcp_tool(identifier) is definition

@@ -10,6 +10,7 @@ from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.config import OnesIdentitySettings
 from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
 from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
+from services.ones_mcp_server.bug_create_catalog import BugCreateFieldCatalog
 from services.ones_mcp_server.task_update_catalog import TaskUpdateFieldCatalog
 from services.ones_mcp_server.contracts import SERVER_CODE
 from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshService
@@ -28,9 +29,11 @@ from services.ones_mcp_server.provider.graphql.operations.work_item_search impor
     WORK_ITEM_SEARCH_OPERATION,
 )
 from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
+from services.ones_mcp_server.provider.bug_create import OnesBugCreateProvider
 from services.ones_mcp_server.provider.task_update import OnesTaskUpdateProvider
 from services.ones_mcp_server.provider.target import validate_provider_target
 from services.ones_mcp_server.tools.registry import OnesToolRegistry
+from services.ones_mcp_server.tools.bug_create import OnesBugCreateService
 from services.ones_mcp_server.tools.task_update import OnesTaskUpdateService
 from services.ones_mcp_server.tools.project_role_members import OnesProjectRoleMemberService
 from services.ones_mcp_server.tools.query_services import (
@@ -136,6 +139,7 @@ def build_tool_registry(runtime: Container) -> OnesToolRegistry:
     http = graphql.http
     dictionary = QueryConditionDictionary.load()
     task_update_catalog = TaskUpdateFieldCatalog.load()
+    bug_create_catalog = BugCreateFieldCatalog.load()
     project_role_members = OnesProjectRoleMemberService(
         shared[0],
         http,
@@ -175,8 +179,17 @@ def build_tool_registry(runtime: Container) -> OnesToolRegistry:
         credentials=shared[1],
         credential_refresh=shared[3],
     )
+    bug_create = OnesBugCreateService(
+        resolver=shared[0],
+        provider=OnesBugCreateProvider(http, catalog=bug_create_catalog),
+        catalog=bug_create_catalog,
+        external_actions=runtime.external_action_service,
+        audit=shared[2],
+        credentials=shared[1],
+        credential_refresh=shared[3],
+    )
     return OnesToolRegistry(
         authenticate=work_item_search.authenticate,
-        tools=(work_item_search, project_role_members, *query_tools, task_update),
+        tools=(work_item_search, project_role_members, *query_tools, bug_create, task_update),
         audit=work_item_search.audit,
     )

@@ -22,7 +22,7 @@ def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None
             migrator_build="job-dispatch-schema-test",
         ).run()
 
-        assert result.head == "123"
+        assert result.head == "129"
         columns = {
             str(row["name"]): row
             for row in database.execute("pragma table_info(job_dispatch_outbox)")
@@ -175,5 +175,5 @@ def test_job_dispatch_legacy_evidence_is_frozen_but_active_catalog_is_current() 
         artifact for artifact in manifest["catalog"] if artifact["version"] == "019"
     )
 
-    assert catalog[-1].version == "123"
+    assert catalog[-1].version == "129"
     assert job_dispatch["name"] == "019_job_dispatch_outbox.sql"

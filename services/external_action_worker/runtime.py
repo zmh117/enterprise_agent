@@ -12,6 +12,7 @@ class ExternalActionExecutionOutcome:
     result: dict[str, Any]
     provider_request_id: str = ""
     card_status_text: str = ""
+    card_fields: dict[str, str] | None = None
 
 
 class ExternalActionExecutionAdapter(Protocol):
@@ -64,6 +65,7 @@ class ProviderNeutralExternalActionWorker:
                     result=outcome.result,
                     provider_request_id=outcome.provider_request_id,
                     card_status_text=outcome.card_status_text,
+                    card_fields=outcome.card_fields,
                 )
                 status = "SUCCEEDED"
                 summary = "Interrupted external action reconciled by read-only verification"
@@ -107,6 +109,7 @@ class ProviderNeutralExternalActionWorker:
                 result=outcome.result,
                 provider_request_id=outcome.provider_request_id,
                 card_status_text=outcome.card_status_text,
+                card_fields=outcome.card_fields,
             )
             self.runtime.audit_service.record(
                 "external_action.executed",
@@ -122,16 +125,18 @@ class ProviderNeutralExternalActionWorker:
             )
         except Exception as exc:
             uncertain = isinstance(exc, RetryableExecutionError)
+            safe_error = str(getattr(exc, "safe_message", "") or "外部操作执行失败")
+            card_error = safe_error
+            if str(intent.get("operation_code") or "") == "ones.task.create":
+                card_error = f"{safe_error}（关联号：{str(intent['id'])[:128]}）"
             self.repository.fail_execution(
                 str(intent["id"]),
                 error_code=str(
                     getattr(exc, "error_code", "") or "external_action_execution_failed"
                 ),
-                error_summary=str(getattr(exc, "safe_message", "") or "外部操作执行失败"),
+                error_summary=safe_error,
                 uncertain=uncertain,
-                card_status_text=str(
-                    getattr(exc, "safe_message", "") or "外部操作执行失败，请联系管理员"
-                ),
+                card_status_text=card_error,
             )
             self.runtime.audit_service.record(
                 "external_action.failed",

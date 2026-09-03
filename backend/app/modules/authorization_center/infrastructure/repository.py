@@ -58,6 +58,7 @@ _BUSINESS_CAPABILITY_NAMES_ZH = {
     "ones_list_issue_types": "查看 ONES 工作项类型",
     "ones_search_team_users": "搜索 ONES 团队用户",
     "ones_get_users_by_uuids": "批量查看 ONES 用户",
+    "ones_create_bug": "创建 ONES 缺陷",
     "ones_list_project_role_members": "查看 ONES 项目角色成员",
     "ones_work_item_search": "搜索 ONES 工作项",
     "ones_query_work_items": "查询 ONES 工作项",

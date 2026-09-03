@@ -25,6 +25,8 @@ def render_confirmation_card(
 
 
 def _render_ones(intent: dict[str, Any], summary: dict[str, Any]) -> dict[str, str]:
+    if str(intent.get("operation_code") or "") == "ones.task.create":
+        return _render_ones_bug_create(intent, summary)
     if (
         str(intent.get("operation_code") or "") != "ones.task.update"
         or str(intent.get("target_resource_type") or "") != "task"
@@ -55,6 +57,48 @@ def _render_ones(intent: dict[str, Any], summary: dict[str, Any]) -> dict[str, s
         "providerName": "ONES",
         "operationName": "更新缺陷",
         "targetName": target[:700],
+        "detailText": detail,
+    }
+
+
+def _render_ones_bug_create(
+    intent: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, str]:
+    if (
+        str(intent.get("target_resource_type") or "") != "task"
+        or str(summary.get("operation") or "") != "创建缺陷"
+    ):
+        raise _invalid("external_action_card_summary_invalid", "ONES 缺陷创建确认摘要无效")
+    target = str(summary.get("target") or "")
+    fields = summary.get("fields")
+    if not target or not isinstance(fields, list) or len(fields) != 18:
+        raise _invalid("external_action_card_summary_invalid", "ONES 缺陷创建确认摘要无效")
+    lines: list[str] = []
+    for raw in fields:
+        if not isinstance(raw, dict):
+            raise _invalid("external_action_card_summary_invalid", "ONES 缺陷创建确认摘要无效")
+        label = str(raw.get("label") or "")
+        value = str(raw.get("value") or "")
+        marker = str(raw.get("marker") or "")
+        if (
+            not label
+            or not value
+            or marker not in {"", "建议值", "系统固定", "系统默认"}
+            or any(ord(char) < 32 and char not in "\n\r\t" for char in label + value)
+        ):
+            raise _invalid("external_action_card_summary_invalid", "ONES 缺陷创建确认摘要无效")
+        rendered_label = f"{label}（{marker}）" if marker else label
+        lines.append(f"{rendered_label}：{value}")
+    detail = "\n".join(lines)
+    if len(detail) > MAX_CARD_DETAIL_CHARACTERS:
+        raise _invalid(
+            "external_action_card_detail_too_large",
+            "本次缺陷创建内容超过确认卡片上限，请缩短描述后重新发起",
+        )
+    return {
+        "providerName": "ONES",
+        "operationName": "创建缺陷",
+        "targetName": target,
         "detailText": detail,
     }
 

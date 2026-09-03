@@ -6,6 +6,7 @@ from typing import Any, Final
 
 ONES_ID_PATTERN: Final = r"^[A-Za-z0-9_-]+$"
 ONES_STATUS_CATEGORIES: Final = ("to_do", "in_progress", "done")
+ONES_CREATE_BUG_TOOL_IDENTIFIER: Final = "ones_create_bug"
 ONES_UPDATE_TASK_TOOL_IDENTIFIER: Final = "ones_update_task"
 ONES_CONFIRMATION_POLICY: Final = "external_action_card_v1"
 
@@ -251,6 +252,141 @@ def _identifier_array(*, maximum: int = 100) -> dict[str, Any]:
         "uniqueItems": True,
         "items": _identifier(),
     }
+
+
+_ONES_CREATE_BUG_REQUIRED_FIELDS: Final = (
+    "title",
+    "project_uuid",
+    "description",
+    "environment",
+    "assignee_uuid",
+    "defect_type_uuid",
+    "urgency_uuid",
+    "severity_uuid",
+    "discovery_difficulty_uuid",
+    "reproduction_probability_uuid",
+    "product_uuids",
+    "product_module_uuids",
+    "discovery_stage_uuid",
+    "online_defect_uuid",
+    "historical_defect_uuid",
+    "affected_version_uuids",
+)
+
+_ONES_CREATE_BUG_PROVENANCE_FIELDS: Final = tuple(_ONES_CREATE_BUG_REQUIRED_FIELDS) + (
+    "watcher_uuids",
+)
+
+
+def _create_identifier_array(*, maximum: int = 100) -> dict[str, Any]:
+    # Creation accepts repeated UUIDs so the compiler can perform stable
+    # de-duplication before it freezes the proposal and Provider payload.
+    return {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": maximum,
+        "items": _identifier(),
+    }
+
+
+_ONES_CREATE_BUG_INPUT = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "project_uuid": _identifier(),
+        "description": {"type": "string", "minLength": 1, "maxLength": 8000},
+        "environment": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "assignee_uuid": _identifier(),
+        "defect_type_uuid": _identifier(),
+        "urgency_uuid": _identifier(),
+        "severity_uuid": _identifier(),
+        "discovery_difficulty_uuid": _identifier(),
+        "reproduction_probability_uuid": _identifier(),
+        "product_uuids": _create_identifier_array(),
+        "product_module_uuids": _create_identifier_array(),
+        "discovery_stage_uuid": _identifier(),
+        "online_defect_uuid": _identifier(),
+        "historical_defect_uuid": _identifier(),
+        "affected_version_uuids": _create_identifier_array(),
+        "watcher_uuids": {
+            "type": "array",
+            "maxItems": 100,
+            "items": _identifier(),
+        },
+        "field_provenance": {
+            "type": "array",
+            "maxItems": len(_ONES_CREATE_BUG_PROVENANCE_FIELDS),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "field": {
+                        "type": "string",
+                        "enum": list(_ONES_CREATE_BUG_PROVENANCE_FIELDS),
+                    },
+                    "source": {
+                        "type": "string",
+                        "enum": [
+                            "current_message",
+                            "conversation_context",
+                            "field_catalog",
+                            "ones_read",
+                        ],
+                    },
+                },
+                "required": ["field", "source"],
+                "additionalProperties": False,
+            },
+        },
+        "supersedes_intent_id": _identifier(),
+    },
+    "required": list(_ONES_CREATE_BUG_REQUIRED_FIELDS),
+    "additionalProperties": False,
+}
+
+_ONES_CREATE_BUG_OUTPUT = {
+    "type": "object",
+    "properties": {
+        "status": {"const": "confirmation_required"},
+        "action_intent_id": {"type": "string", "maxLength": 128},
+        "revision": {"type": "integer", "minimum": 1},
+        "expires_at": {"type": "string", "format": "date-time", "maxLength": 64},
+        "summary": {
+            "type": "object",
+            "properties": {
+                "operation": {"const": "创建缺陷"},
+                "target": {"type": "string", "minLength": 1, "maxLength": 500},
+                "fields": {
+                    "type": "array",
+                    "minItems": 18,
+                    "maxItems": 18,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "minLength": 1, "maxLength": 100},
+                            "value": {"type": "string", "minLength": 1, "maxLength": 8000},
+                            "marker": {
+                                "type": "string",
+                                "enum": ["", "建议值", "系统固定", "系统默认"],
+                            },
+                        },
+                        "required": ["label", "value", "marker"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["operation", "target", "fields"],
+            "additionalProperties": False,
+        },
+    },
+    "required": [
+        "status",
+        "action_intent_id",
+        "revision",
+        "expires_at",
+        "summary",
+    ],
+    "additionalProperties": False,
+}
 
 
 _ONES_UPDATE_TASK_INPUT = {
@@ -787,6 +923,17 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
             "查询一个明确 ONES 测试用例 UUID 的详情和有界步骤。",
             _object_schema({"test_case_uuid": _identifier()}, required=("test_case_uuid",)),
             _TESTCASE_DETAIL_OUTPUT,
+        ),
+        _contract(
+            ONES_CREATE_BUG_TOOL_IDENTIFIER,
+            "创建一个完整的 ONES 缺陷；所有业务字段必须齐全，仅钉钉来源可用，调用后私发完整中文确认卡片，用户逐次确认后才执行写入。字段建议只能来自当前消息、当前相关会话、版本化字段目录或本次 ONES 只读结果；UUID 优先使用文档目录，目录不能唯一解析时才调用只读查询。真实 Provider 未提供可靠权限、布局和回查合同时保持未就绪并失败关闭。",
+            _ONES_CREATE_BUG_INPUT,
+            _ONES_CREATE_BUG_OUTPUT,
+            effect="mutation",
+            confirmation_policy=ONES_CONFIRMATION_POLICY,
+            operation_code="ones.task.create",
+            risk_level="high",
+            target_policy="single_new_defect",
         ),
         _contract(
             ONES_UPDATE_TASK_TOOL_IDENTIFIER,

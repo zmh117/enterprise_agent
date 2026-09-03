@@ -144,7 +144,7 @@ def test_business_principal_migration_has_no_dedicated_issuer_or_single_slot() -
     assert "def principal_token(" not in sources
 
 
-def test_ones_contract_exposes_code_owned_fixed_tools_and_one_confirmed_mutation() -> None:
+def test_ones_contract_exposes_code_owned_fixed_tools_and_confirmed_mutations() -> None:
     assert SERVER_CODE == "ones-mcp"
     assert TOOL_IDENTIFIER == "ones_work_item_search"
     assert ISSUE_TYPES == ("demand", "task", "defect")
@@ -178,7 +178,8 @@ def test_ones_contract_exposes_code_owned_fixed_tools_and_one_confirmed_mutation
         assert definition.effect == contract.effect
         assert definition.confirmation_policy == contract.confirmation_policy
     assert {item.identifier for item in ONES_TOOL_CONTRACTS.values() if not item.read_only} == {
-        "ones_update_task"
+        "ones_create_bug",
+        "ones_update_task",
     }
 
 

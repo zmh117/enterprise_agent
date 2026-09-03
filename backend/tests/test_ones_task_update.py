@@ -157,7 +157,7 @@ def test_existing_ones_reads_and_dingtalk_mutations_keep_their_contracts() -> No
     assert {
         identifier: MCP_TOOL_MANIFEST[identifier].schema_hash
         for identifier in sorted(ONES_TOOL_CONTRACTS)
-        if identifier != TOOL_IDENTIFIER
+        if identifier not in {TOOL_IDENTIFIER, "ones_create_bug"}
     } == _EXISTING_ONES_SCHEMA_HASHES
     for identifier in _EXISTING_ONES_SCHEMA_HASHES:
         definition = MCP_TOOL_MANIFEST[identifier]

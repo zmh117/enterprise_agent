@@ -196,7 +196,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['dingtalk-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
     && groupadd --system --gid 10007 dingtalk-mcp \
     && useradd --system --uid 10007 --gid 10007 --no-create-home dingtalk-mcp \
-    && python -c "import services.dingtalk_mcp_server.app; import services.dingtalk_mcp_server.worker; from services.ones_mcp_server.task_update_catalog import TaskUpdateFieldCatalog; TaskUpdateFieldCatalog.load()"
+    && python -c "import services.dingtalk_mcp_server.app; import services.dingtalk_mcp_server.worker; from services.ones_mcp_server.task_update_catalog import TaskUpdateFieldCatalog; from services.ones_mcp_server.bug_create_catalog import BugCreateFieldCatalog; TaskUpdateFieldCatalog.load(); BugCreateFieldCatalog.load()"
 USER 10007:10007
 CMD ["python", "-m", "services.dingtalk_mcp_server"]
 

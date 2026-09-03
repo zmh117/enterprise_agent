@@ -18,6 +18,9 @@ tools over stateless Streamable HTTP. It is not an arbitrary GraphQL or HTTP pro
 - `task_update_catalog.py`, `task_update.py`, and `provider/task_update.py`: bounded
   defect-write catalog, semantic Patch compiler, fixed detail query, and fixed
   `update3` adapter.
+- `bug_create_catalog.py`, `bug_create.py`, and `provider/bug_create.py`: complete
+  defect-create catalog/compiler, capability and layout preflight, fixed `add3`,
+  and fixed-UUID readback verification.
 - `credentials/`: 401 refresh, per-credential locking, revision CAS, and refresh audit.
 - `tools/`: MCP Tool validation and business/audit orchestration.
 
@@ -62,6 +65,21 @@ Team, Publication and Job Tool snapshot, requires an unchanged
 readback. Existing Publications, Applications, roles, and Jobs do not receive this
 Tool automatically.
 
+## Confirmed defect creation
+
+`ones_create_bug` prepares one complete defect proposal for a DingTalk-source Job.
+The assignee is mandatory and is never defaulted; the current bound ONES user is
+always included in the final watcher set. Agent-suggested values carry a bounded
+source category, while unresolved values and descriptions containing “待补充” stay
+as ordinary chat drafts. A private confirmation card shows every field in Chinese.
+Only after confirmation does the existing external-action worker revalidate the
+identity, Team, publication, permission, layout and references, persist a single
+Provider attempt, call fixed `add3`, and compare a full readback using the same
+pre-generated Task UUID. Conflicts, transport uncertainty, or interrupted attempts
+are never replayed with another UUID. The real Provider remains fail-closed until it
+implements the explicit preflight and readback contracts; the repository Mock is
+the current executable acceptance target.
+
 ## Agent query orchestration
 
 The optional `ones-query` Skill teaches an Agent how to combine live project,
@@ -98,6 +116,15 @@ runtime-resolved or excluded:
 .venv/bin/python scripts/sync_ones_task_update_field_catalog.py \
   ones_mock/ones/查询条件字典.yaml \
   services/ones_mcp_server/resources/task_update_field_catalog.json
+```
+
+The creation catalog is a separate contract because creation has different required
+fields, fixed top-level values, and reference-validation rules:
+
+```bash
+.venv/bin/python scripts/sync_ones_bug_create_field_catalog.py \
+  ones_mock/ones/查询条件字典.yaml \
+  services/ones_mcp_server/resources/bug_create_field_catalog.json
 ```
 
 ## Adding a GraphQL-backed Tool

@@ -337,6 +337,25 @@ _TASK_UPDATE_FIELD_SOURCES = {
     "field012": "priority",
 }
 
+_BUG_CREATE_REQUIRED_FIELD_UUIDS = {
+    "field001",
+    "field016",
+    "5BiPnrfy",
+    "field004",
+    "field041",
+    "FnkEKd4Y",
+    "field038",
+    "4v1yHkX9",
+    "679m6U93",
+    "field029",
+    "field030",
+    "79WCF8hL",
+    "field031",
+    "6FimuZwX",
+    "4ipdiS95",
+}
+_BUG_ISSUE_TYPE_UUID = "B4TV9bu5"
+
 
 def _task_fixture(config: MockOnesConfig, task: dict[str, Any]) -> dict[str, Any]:
     issue_type_key = str(task["issue_type"])
@@ -894,6 +913,9 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
         for fixture in (_task_update_detail_fixture(config, task) for task in config.tasks)
     }
     app.state.ones_mock_task_state = task_state
+    created_bug_state: dict[str, dict[str, Any]] = {}
+    app.state.ones_mock_created_bug_state = created_bug_state
+    app.state.ones_mock_bug_create_mode = "success"
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -1325,6 +1347,169 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 "message": f"unsupported mock query type: {query_type}",
             },
         )
+
+    def require_create_user(
+        team_uuid: str,
+        ones_auth_token: str | None,
+        ones_user_id: str | None,
+    ) -> MockOnesUser:
+        user = config.find_user_by_auth(
+            token=str(ones_auth_token or ""),
+            user_uuid=str(ones_user_id or ""),
+        )
+        if user is None:
+            raise HTTPException(status_code=401, detail={"code": "unauthorized"})
+        if team_uuid != config.team_uuid:
+            raise HTTPException(status_code=404, detail={"code": "team_not_found"})
+        return user
+
+    @app.post("/project/api/project/team/{team_uuid}/tasks/create_preflight")
+    async def preflight_bug_create(
+        request: Request,
+        team_uuid: str,
+        payload: dict[str, Any] = Body(),
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+    ) -> dict[str, Any]:
+        current = require_create_user(team_uuid, ones_auth_token, ones_user_id)
+        mode = str(request.app.state.ones_mock_bug_create_mode)
+        if mode == "not_ready":
+            return {"ready": False, "can_create": False}
+        project_uuid = str(payload.get("project_uuid") or "")
+        if project_uuid != config.project_uuid or payload.get("issue_type_uuid") != _BUG_ISSUE_TYPE_UUID:
+            return {"ready": True, "can_create": False}
+        user_uuids = payload.get("user_uuids")
+        products = payload.get("product_uuids")
+        modules = payload.get("product_module_uuids")
+        versions = payload.get("affected_version_uuids")
+        if not isinstance(user_uuids, list):
+            raise HTTPException(status_code=400, detail={"code": "invalid_preflight"})
+        if not isinstance(products, list):
+            raise HTTPException(status_code=400, detail={"code": "invalid_preflight"})
+        if not isinstance(modules, list):
+            raise HTTPException(status_code=400, detail={"code": "invalid_preflight"})
+        if not isinstance(versions, list):
+            raise HTTPException(status_code=400, detail={"code": "invalid_preflight"})
+        known_users = {
+            user.uuid: user.name for user in config.users if user.uuid in set(user_uuids)
+        }
+        known_products = {
+            "MOCK-PRODUCT-001": "Mock Product",
+            "NfvccPP5M3vRzNMY": "MES",
+        }
+        known_modules = {
+            "MOCK-PRODUCT-MODULE-001": ("Mock Product Module", ["MOCK-PRODUCT-001"]),
+            "BkcW9Bx4": ("称量", ["NfvccPP5M3vRzNMY"]),
+        }
+        if current.uuid not in known_users:
+            known_users[current.uuid] = current.name
+        return {
+            "ready": True,
+            "can_create": True,
+            "layout_version": "mock-defect-create-v1",
+            "required_field_uuids": sorted(_BUG_CREATE_REQUIRED_FIELD_UUIDS),
+            "project": {"uuid": project_uuid, "name": config.project_name},
+            "issue_type": {"uuid": _BUG_ISSUE_TYPE_UUID, "name": "缺陷"},
+            "users": [
+                {"uuid": uuid, "name": name} for uuid, name in sorted(known_users.items())
+            ],
+            "products": [
+                {"uuid": uuid, "name": known_products.get(uuid, "")}
+                for uuid in products
+                if uuid in known_products
+            ],
+            "product_modules": [
+                {
+                    "uuid": uuid,
+                    "name": known_modules[uuid][0],
+                    "product_uuids": known_modules[uuid][1],
+                }
+                for uuid in modules
+                if uuid in known_modules
+            ],
+            "affected_versions": [
+                {"uuid": uuid, "name": f"Mock Affected Version {uuid}", "kind": "affected"}
+                for uuid in versions
+            ],
+        }
+
+    @app.post("/project/api/project/team/{team_uuid}/tasks/add3")
+    async def create_bug(
+        request: Request,
+        team_uuid: str,
+        payload: dict[str, Any] = Body(),
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+    ) -> dict[str, Any]:
+        require_create_user(team_uuid, ones_auth_token, ones_user_id)
+        mode = str(request.app.state.ones_mock_bug_create_mode)
+        tasks = payload.get("tasks")
+        if set(payload) != {"tasks"} or not isinstance(tasks, list) or len(tasks) != 1:
+            raise HTTPException(status_code=400, detail={"code": "invalid_payload"})
+        task = tasks[0]
+        if not isinstance(task, dict) or set(task) != {
+            "uuid",
+            "summary",
+            "assign",
+            "parent_uuid",
+            "issue_type_uuid",
+            "project_uuid",
+            "watchers",
+            "field_values",
+            "add_manhours",
+        }:
+            raise HTTPException(status_code=400, detail={"code": "invalid_task"})
+        task_uuid = str(task.get("uuid") or "")
+        if mode == "conflict" or task_uuid in created_bug_state:
+            raise HTTPException(status_code=409, detail={"code": "AlreadyExists.Task"})
+        if mode in {"timeout", "disconnect"}:
+            raise HTTPException(status_code=503, detail={"code": mode})
+        if (
+            task.get("parent_uuid") != ""
+            or task.get("add_manhours") != []
+            or task.get("issue_type_uuid") != _BUG_ISSUE_TYPE_UUID
+            or task.get("project_uuid") != config.project_uuid
+            or config.user_by_uuid(str(task.get("assign") or "")) is None
+            or not isinstance(task.get("watchers"), list)
+            or not isinstance(task.get("field_values"), list)
+            or {str(value.get("field_uuid") or "") for value in task["field_values"] if isinstance(value, dict)}
+            != _BUG_CREATE_REQUIRED_FIELD_UUIDS
+        ):
+            raise HTTPException(status_code=400, detail={"code": "invalid_task"})
+        number = 900000 + len(created_bug_state) + 1
+        stored = deepcopy(task)
+        stored["number"] = number
+        if mode == "mismatch":
+            stored["summary"] = "Mock mismatched title"
+        created_bug_state[task_uuid] = stored
+        return {
+            "tasks": [
+                {
+                    "uuid": task_uuid,
+                    "project_uuid": task["project_uuid"],
+                    "issue_type_uuid": task["issue_type_uuid"],
+                    "summary": task["summary"],
+                    "parent_uuid": "",
+                    "number": number,
+                }
+            ],
+            "bad_tasks": [],
+        }
+
+    @app.get(
+        "/project/api/project/team/{team_uuid}/tasks/{task_uuid}/create_readback"
+    )
+    async def read_created_bug(
+        team_uuid: str,
+        task_uuid: str,
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+    ) -> dict[str, Any]:
+        require_create_user(team_uuid, ones_auth_token, ones_user_id)
+        task = created_bug_state.get(task_uuid)
+        if task is None:
+            return {"found": False}
+        return {"found": True, "task": deepcopy(task)}
 
     @app.post("/project/api/project/team/{team_uuid}/tasks/update3")
     async def update_tasks(
