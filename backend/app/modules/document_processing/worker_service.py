@@ -24,11 +24,13 @@ from app.modules.document_processing.layout_ocr import (
     assemble_layout_representation,
     build_no_text_picture_result,
 )
+from app.modules.document_processing.model_artifact import MODEL_ARTIFACT_REVISION
 from app.modules.document_processing.profile import (
     DOCLING_LAYOUT_OCR_V2,
     DocumentProcessingProfile,
     require_document_processing_profile,
     require_layout_ocr_profile_by_hash,
+    require_profile_model_artifact,
 )
 from app.modules.document_processing.provider import (
     DocumentProcessor,
@@ -64,6 +66,7 @@ class FileProcessingWorkerService:
         max_attempts: int,
         retry_base_seconds: int,
         worker_instance_id: str,
+        runtime_platform: str,
         monotonic: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
         now: Callable[[], datetime] | None = None,
@@ -85,6 +88,10 @@ class FileProcessingWorkerService:
         self.max_attempts = max_attempts
         self.retry_base_seconds = retry_base_seconds
         self.worker_instance_id = worker_instance_id
+        self.model_artifact = require_profile_model_artifact(
+            DOCLING_LAYOUT_OCR_V2,
+            runtime_platform,
+        )
         self.monotonic = monotonic or time.monotonic
         self.sleep = sleep or time.sleep
         self.now = now or (lambda: datetime.now(UTC))
@@ -346,15 +353,14 @@ class FileProcessingWorkerService:
             entry["count"] = int(entry["count"]) + 1
             if selected:
                 entry["selected"] = True
-        model = layout_options["model_artifact"]
         for entry in assets.values():
             item_id = self.file_service.register_picture_item(
                 run_id=run.run_id,
                 picture_asset_id=str(entry["asset_id"]),
                 occurrence_count=int(entry["count"]),
                 ocr_engine_code="docling-rapidocr",
-                model_revision=str(model["revision"]),
-                model_digest=str(model["digest"]),
+                model_revision=MODEL_ARTIFACT_REVISION,
+                model_digest=self.model_artifact.digest,
                 correlation_id=correlation_id,
             )
             if not bool(entry["selected"]):

@@ -15,6 +15,7 @@ from app.modules.document_processing.file_service_client import (
 )
 from app.modules.document_processing.image_normalization import normalize_picture_asset
 from app.modules.document_processing.layout_ocr import adapt_docling_picture_result
+from app.modules.document_processing.model_artifact import model_artifact_for_platform
 from app.modules.document_processing.profile import (
     DOCLING_LAYOUT_OCR_V2,
     DocumentProcessingProfile,
@@ -147,6 +148,7 @@ class _FileService:
         self.calls: list[tuple[str, Any]] = []
         self.slot_available = True
         self.slot_error: Exception | None = None
+        self.picture_item_values: list[dict[str, Any]] = []
 
     def acquire_docling_slot(self, **values: Any) -> bool:
         self.calls.append(("slot_acquire", values["owner_id"]))
@@ -332,6 +334,7 @@ class _LayoutFileService(_FileService):
         return "occurrence-layout"
 
     def register_picture_item(self, **values: Any) -> str:
+        self.picture_item_values.append(values)
         self.calls.append(("picture_item", values["picture_asset_id"]))
         return "item-layout"
 
@@ -440,6 +443,7 @@ def _worker(
         max_attempts=3,
         retry_base_seconds=30,
         worker_instance_id="worker-test-instance-0001",
+        runtime_platform=model_artifact_for_platform("linux/arm64").platform,
         monotonic=monotonic,
         sleep=lambda _: None,
         now=now,
@@ -581,6 +585,10 @@ def test_layout_parent_persists_parent_asset_occurrence_item_and_outbox_boundary
     assert "picture_asset" in names
     assert "occurrence" in names
     assert "picture_item" in names
+    assert files.picture_item_values[0]["model_revision"] == "v1.30.0"
+    assert files.picture_item_values[0]["model_digest"] == (
+        "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
+    )
     assert names[-2:] == ["parent_complete", "slot_release"]
 
 

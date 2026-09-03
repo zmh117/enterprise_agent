@@ -56,19 +56,50 @@ digest input: docling-serve@sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ff
 当前代码唯一有效的 `docling-layout-ocr-v2` Profile hash 为：
 
 ```text
-8a9ba792a902a8a2c9ede356ab1dd195fc1b3a0e192d96606c84b8331a3b7cb9
+7265262613d8cd022f7703d3f0ada08785a87bfe7bc4cfe550605ef3fbd605e1
 ```
 
-模型 artifact digest 仍为：
+固定 OCI index 在两个受支持平台上的发布映射为：
 
-```text
-sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c
+| 平台 | child manifest digest | 模型 artifact digest |
+| --- | --- | --- |
+| `linux/amd64` | `sha256:0ccbc00b5f8b443334a7c4f36a5c6ff89c684c6fbe18ff7c1bc41e00b8e01657` | `sha256:bd9b6624ee97cd02b2506737e6f1646e25c68bf64a1cf4825a2ff69a5992c090` |
+| `linux/arm64` | `sha256:b09477515c6234bb86c8a90c9db3af2b5d6991aeb6b64c3348283be264dba63c` | `sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c` |
+
+Profile canonical payload 固定完整双平台映射，因此 AMD64 与 ARM64 使用同一个 Profile
+hash；运行时只选择当前平台条目，并按
+`relative-path-size-content-sha256/v1` 对模型目录逐文件实算后比较。实算结果只用于验证，
+不得写回配置或作为放行值。Compose 和 `.env.example` 均不接受
+`DOCUMENT_LAYOUT_OCR_PROFILE_HASH` 或 `DOCLING_MODEL_ARTIFACT_DIGEST`；部署到其他环境时
+不需要也不得手工替换摘要。未知平台、平台条目缺失或摘要不一致都必须失败关闭。
+
+只有升级固定 OCI index 或镜像内模型内容时，才重新采集并评审 index、两个 child
+manifest 和两个模型摘要，同时产生新的 Profile hash。发布校验应先确认 registry 中的
+index 成员，再分别运行两个平台的内置校验器，例如：
+
+```bash
+docker buildx imagetools inspect \
+  quay.io/docling-project/docling-serve:v1.30.0@sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807
+
+docker buildx build --platform linux/amd64 --load \
+  -f backend/docker/docling-serve/Dockerfile \
+  -t enterprise-agent/docling-serve:v1.30.0-layout-ocr-v2-amd64 .
+docker run --rm --platform linux/amd64 --entrypoint python \
+  -e DOCLING_MODEL_ARTIFACT_PATH=/opt/app-root/src/.cache/docling/models \
+  enterprise-agent/docling-serve:v1.30.0-layout-ocr-v2-amd64 \
+  /opt/enterprise-agent/verify_model_bundle.py
+
+docker buildx build --platform linux/arm64 --load \
+  -f backend/docker/docling-serve/Dockerfile \
+  -t enterprise-agent/docling-serve:v1.30.0-layout-ocr-v2-arm64 .
+docker run --rm --platform linux/arm64 --entrypoint python \
+  -e DOCLING_MODEL_ARTIFACT_PATH=/opt/app-root/src/.cache/docling/models \
+  enterprise-agent/docling-serve:v1.30.0-layout-ocr-v2-arm64 \
+  /opt/enterprise-agent/verify_model_bundle.py
 ```
 
-Profile hash 由包含图片结果适配算法版本的代码 canonical payload 自动生成，模型
-artifact digest 由镜像内容固化。Compose 不再要求
-`DOCUMENT_LAYOUT_OCR_PROFILE_HASH` 或 `DOCLING_MODEL_ARTIFACT_DIGEST` 环境变量；部署到
-其他环境时不得再手工替换它们。
+两个 `docker run` 都输出 `Docling model artifact verified` 才构成双平台摘要证据；只在单一
+本机架构通过不能代替另一平台验收。
 
 兼容算法只在首次提交 Docling 前移除指向不存在 `../NULL`、且全部引用均为零宽或零高
 DrawingML 图片占位的关系与节点。规范化副本仅存在于 Worker 内存，原始 File Version、
@@ -121,7 +152,7 @@ task ID、对象位置或凭据。`status=blocked` 时不要强行迁移或手�
 
 1. migrator 最终 head 为 `122`；
 2. File Service `/ready` 成功且 Principal JWKS、对象存储、processing outbox 可用；
-3. Docling `/ready` 成功且固定模型 artifact/digest 可用；
+3. Docling `/ready` 成功且当前平台对应的固定模型 artifact/digest 可用；
 4. File Service 聚合状态为 `READY`，且 `expected_workers=2`、`active_workers=2`、
    `eligible_workers=2`、`slots_total=2`、`slots_quarantined=0`；
 5. RabbitMQ 的 processing queue consumer 数量恰好为 2，attachment queue 仍为 1；

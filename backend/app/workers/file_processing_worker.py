@@ -14,7 +14,11 @@ from typing import Any
 from app.modules.document_processing.file_service_client import (
     DocumentProcessingFileServiceClient,
 )
-from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V2
+from app.modules.document_processing.model_artifact import current_runtime_platform
+from app.modules.document_processing.profile import (
+    DOCLING_LAYOUT_OCR_V2,
+    require_profile_model_artifact,
+)
 from app.modules.document_processing.provider import (
     DoclingServeProvider,
     read_docling_api_key,
@@ -25,6 +29,7 @@ from app.modules.message_bus.infrastructure.rabbitmq_file_processing import (
     RabbitMQFileProcessingConsumer,
 )
 from app.shared.config import load_settings
+from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.logging import configure_logging, with_correlation
 
 
@@ -103,11 +108,20 @@ def main() -> None:
     layout_options = DOCLING_LAYOUT_OCR_V2.layout_ocr_options
     if layout_options is None:
         raise RuntimeError("Document layout OCR Profile is invalid")
-    model_digest = str(layout_options["model_artifact"]["digest"])
+    try:
+        runtime_platform = current_runtime_platform()
+        model_artifact = require_profile_model_artifact(
+            DOCLING_LAYOUT_OCR_V2,
+            runtime_platform,
+        )
+    except (ValueError, NonRetryableExecutionError) as exc:
+        raise RuntimeError("Document layout OCR code artifact is invalid") from exc
     if worker_settings.layout_ocr_enabled and (
         len(DOCLING_LAYOUT_OCR_V2.profile_hash) != 64
-        or not model_digest.startswith("sha256:")
-        or len(model_digest) != 71
+        or not model_artifact.digest.startswith("sha256:")
+        or len(model_artifact.digest) != 71
+        or not model_artifact.image_manifest_digest.startswith("sha256:")
+        or len(model_artifact.image_manifest_digest) != 71
     ):
         raise RuntimeError("Document layout OCR code artifact is invalid")
     token_provider = ServicePrincipalTokenClient(
@@ -141,6 +155,7 @@ def main() -> None:
         max_attempts=settings.queue.file_processing_max_attempts,
         retry_base_seconds=settings.queue.file_processing_retry_base_seconds,
         worker_instance_id=worker_instance_id,
+        runtime_platform=runtime_platform,
     )
     consumer = RabbitMQFileProcessingConsumer(settings.rabbitmq_url, settings.queue)
     status_lock = threading.Lock()

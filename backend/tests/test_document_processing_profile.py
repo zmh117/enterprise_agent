@@ -24,7 +24,7 @@ def test_only_current_layout_ocr_profile_is_registered_and_hash_stable() -> None
     assert profile.output_kinds == ("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON")
     assert profile.profile_hash == DOCLING_LAYOUT_OCR_V2_PROFILE_HASH
     assert profile.profile_hash == (
-        "8a9ba792a902a8a2c9ede356ab1dd195fc1b3a0e192d96606c84b8331a3b7cb9"
+        "7265262613d8cd022f7703d3f0ada08785a87bfe7bc4cfe550605ef3fbd605e1"
     )
     for source in profile.source_formats:
         assert source.actions == {
@@ -65,6 +65,32 @@ def test_current_profile_is_a_complete_independent_fixed_definition() -> None:
     }
     assert layout["security"]["vlm_enabled"] is False
     assert layout["security"]["runtime_options_override_enabled"] is False
+    assert layout["model_artifact"] == {
+        "code": "docling-v1.30.0-cpu-model-bundle",
+        "revision": "v1.30.0",
+        "image_index_digest": (
+            "sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807"
+        ),
+        "manifest_algorithm": "relative-path-size-content-sha256/v1",
+        "platforms": {
+            "linux/amd64": {
+                "image_manifest_digest": (
+                    "sha256:0ccbc00b5f8b443334a7c4f36a5c6ff89c684c6fbe18ff7c1bc41e00b8e01657"
+                ),
+                "digest": (
+                    "sha256:bd9b6624ee97cd02b2506737e6f1646e25c68bf64a1cf4825a2ff69a5992c090"
+                ),
+            },
+            "linux/arm64": {
+                "image_manifest_digest": (
+                    "sha256:b09477515c6234bb86c8a90c9db3af2b5d6991aeb6b64c3348283be264dba63c"
+                ),
+                "digest": (
+                    "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
+                ),
+            },
+        },
+    }
 
 
 def test_profile_selection_is_only_none_or_current_v2() -> None:

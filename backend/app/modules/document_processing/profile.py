@@ -7,6 +7,11 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from app.modules.document_processing.model_artifact import (
+    ModelArtifactPlatform,
+    model_artifact_catalog_payload,
+    model_artifact_for_platform,
+)
 from app.modules.file_workspace.domain import FileAction
 from app.shared.exceptions import NonRetryableExecutionError
 
@@ -272,12 +277,7 @@ _CURRENT_LAYOUT_OCR_OPTIONS = MappingProxyType(
             "image_exif_orientation_applied": True,
             "office_display_crop_rotation_flip_applied": False,
         },
-        "model_artifact": {
-            "code": "docling-v1.30.0-cpu-model-bundle",
-            "revision": "v1.30.0",
-            "digest": ("sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"),
-            "manifest_algorithm": "relative-path-size-content-sha256/v1",
-        },
+        "model_artifact": model_artifact_catalog_payload(),
         "layout_schema": {
             "name": "enterprise-agent.office-image-ocr-layout",
             "version": "v2",
@@ -362,7 +362,7 @@ DOCLING_LAYOUT_OCR_V2 = DocumentProcessingProfile(
     layout_ocr_options=_CURRENT_LAYOUT_OCR_OPTIONS,
 )
 DOCLING_LAYOUT_OCR_V2_PROFILE_HASH = (
-    "8a9ba792a902a8a2c9ede356ab1dd195fc1b3a0e192d96606c84b8331a3b7cb9"
+    "7265262613d8cd022f7703d3f0ada08785a87bfe7bc4cfe550605ef3fbd605e1"
 )
 
 if DOCLING_LAYOUT_OCR_V2.profile_hash != DOCLING_LAYOUT_OCR_V2_PROFILE_HASH:
@@ -429,6 +429,21 @@ def require_layout_ocr_profile_by_hash(value: object) -> DocumentProcessingProfi
         if profile.layout_ocr_options is not None and profile.profile_hash == profile_hash:
             return profile
     raise _profile_error("布局OCR Profile版本不匹配")
+
+
+def require_profile_model_artifact(
+    profile: DocumentProcessingProfile,
+    platform_code: str,
+) -> ModelArtifactPlatform:
+    if profile.layout_ocr_options is None:
+        raise _profile_error("当前文档处理Profile未启用布局OCR")
+    configured = _plain_value(profile.layout_ocr_options.get("model_artifact"))
+    if configured != model_artifact_catalog_payload():
+        raise _profile_error("布局OCR模型artifact发布合同不匹配")
+    try:
+        return model_artifact_for_platform(platform_code)
+    except ValueError as exc:
+        raise _profile_error("当前运行平台不受布局OCR模型artifact支持") from exc
 
 
 def document_processing_profile_snapshot(value: object) -> dict[str, str]:

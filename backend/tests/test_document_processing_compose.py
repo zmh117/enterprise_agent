@@ -4,14 +4,16 @@ from pathlib import Path
 
 import yaml
 
+from app.modules.document_processing.model_artifact import (
+    DOCLING_IMAGE_INDEX_DIGEST,
+    MODEL_ARTIFACT_PLATFORMS,
+)
 from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V2
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DIGEST = "sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807"
 PROCESSOR_VERSION = "v1.30.0+wps-null-zero-drawing.v1"
 PROCESSOR_BUILD_DIGEST = "sha256:ea15a6fc35b991249180d9265e1a3406448855fe8134c61fc7d26dd046b93429"
-MODEL_DIGEST = "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
 
 
 def _compose() -> dict[str, object]:
@@ -29,7 +31,10 @@ def test_docling_image_is_digest_pinned_offline_nonroot_and_internal_only() -> N
         "dockerfile": "backend/docker/docling-serve/Dockerfile",
     }
     dockerfile = (ROOT / service["build"]["dockerfile"]).read_text(encoding="utf-8")
-    assert f"FROM quay.io/docling-project/docling-serve:v1.30.0@{DIGEST}" in dockerfile
+    assert (
+        f"FROM quay.io/docling-project/docling-serve:v1.30.0@{DOCLING_IMAGE_INDEX_DIGEST}"
+        in dockerfile
+    )
     assert "verify_model_bundle.py" in dockerfile
     assert service["user"] == "1001:0"
     assert service["read_only"] is True
@@ -66,14 +71,24 @@ def test_docling_image_is_digest_pinned_offline_nonroot_and_internal_only() -> N
     assert environment["DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT"] == "600"
     assert environment["HF_HUB_OFFLINE"] == "1"
     assert environment["TRANSFORMERS_OFFLINE"] == "1"
-    assert environment["DOCLING_MODEL_ARTIFACT_DIGEST"] == MODEL_DIGEST
-    assert environment["DOCLING_MODEL_ARTIFACT_DIGEST"] == str(
-        DOCLING_LAYOUT_OCR_V2.layout_ocr_options["model_artifact"]["digest"]
-    )
+    assert "DOCLING_MODEL_ARTIFACT_DIGEST" not in environment
     assert environment["DOCLING_SERVE_LOAD_MODELS_AT_BOOT"] == "true"
     assert "DOCLING_SERVE_API_KEY" not in environment
     assert "/run/secrets/docling_api_key" in service["command"][0]
     assert "verify_model_bundle.py" in service["command"][0]
+
+
+def test_docling_profile_fixes_index_and_both_platform_artifacts() -> None:
+    model = DOCLING_LAYOUT_OCR_V2.canonical_payload["layout_ocr"]["model_artifact"]
+
+    assert model["image_index_digest"] == DOCLING_IMAGE_INDEX_DIGEST
+    assert model["platforms"] == {
+        platform_code: {
+            "image_manifest_digest": artifact.image_manifest_digest,
+            "digest": artifact.digest,
+        }
+        for platform_code, artifact in MODEL_ARTIFACT_PLATFORMS.items()
+    }
 
 
 def test_file_service_freezes_docling_and_docx_compatibility_build_identity() -> None:
@@ -86,6 +101,7 @@ def test_file_service_freezes_docling_and_docx_compatibility_build_identity() ->
 def test_profile_identity_is_code_published_not_an_environment_parameter() -> None:
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
     assert "DOCUMENT_LAYOUT_OCR_PROFILE_HASH=" not in env_example
+    assert "DOCLING_MODEL_ARTIFACT_DIGEST=" not in env_example
 
     for service in _compose()["services"].values():
         environment = service.get("environment", {})

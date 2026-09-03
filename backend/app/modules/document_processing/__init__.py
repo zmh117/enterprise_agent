@@ -25,6 +25,7 @@ from app.modules.document_processing.profile import (
     normalize_document_processing_profile_code,
     require_document_processing_profile,
     require_layout_ocr_profile_by_hash,
+    require_profile_model_artifact,
     required_output_kinds_for_profile,
     resolve_document_processing_profile,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "normalize_representation_kind",
     "require_document_processing_profile",
     "require_layout_ocr_profile_by_hash",
+    "require_profile_model_artifact",
     "required_output_kinds_for_profile",
     "require_processing_transition",
     "resolve_document_processing_profile",

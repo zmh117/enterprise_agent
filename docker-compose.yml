@@ -862,7 +862,6 @@ services:
       DOCLING_SERVE_LOG_FORMAT: json
       DOCLING_SERVE_LOG_LEVEL: WARNING
       DOCLING_MODEL_ARTIFACT_PATH: /opt/app-root/src/.cache/docling/models
-      DOCLING_MODEL_ARTIFACT_DIGEST: sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
       # torch.compile writes a shared object into the inductor cache and dlopens it,
