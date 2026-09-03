@@ -52,6 +52,25 @@ from .validation import (
 )
 
 
+def _optional_expected_revision(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError("expected_revision必须为正整数")
+    if isinstance(value, int):
+        revision = value
+    elif isinstance(value, str):
+        try:
+            revision = int(value)
+        except ValueError as exc:
+            raise ValueError("expected_revision必须为正整数") from exc
+    else:
+        raise ValueError("expected_revision必须为正整数")
+    if revision < 1:
+        raise ValueError("expected_revision必须为正整数")
+    return revision
+
+
 class PlatformConfigService:
     def __init__(
         self,
@@ -564,10 +583,7 @@ class PlatformConfigService:
                     "tenant仍有未冻结task_workspace_search_files的启用Publication: "
                     + identities
                 )
-        expected_revision_raw = payload.get("expected_revision")
-        expected_revision = (
-            int(expected_revision_raw) if expected_revision_raw not in (None, "") else None
-        )
+        expected_revision = _optional_expected_revision(payload.get("expected_revision"))
         if before and scope_type.value == "tenant" and expected_revision is None:
             raise ValueError("修改tenant运行配置必须提供expected_revision")
         entity = self.repository.upsert_runtime_config_value(

@@ -8,6 +8,7 @@ import secrets
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import TypedDict
 
 from app.modules.document_processing.file_service_client import (
     ClaimedDocumentRun,
@@ -53,6 +54,12 @@ from app.shared.exceptions import NonRetryableExecutionError, RetryableExecution
 
 
 logger = logging.getLogger(__name__)
+
+
+class _PictureAssetEntry(TypedDict):
+    asset_id: str
+    count: int
+    selected: bool
 
 
 class FileProcessingWorkerService:
@@ -145,31 +152,31 @@ class FileProcessingWorkerService:
                     correlation_id=message.correlation_id,
                 )
                 return self._release_then_ack("PARENT_RUN", run.run_id)
-            result = self.processor.fetch(task.task_id, profile=profile)
-            if result.no_text:
+            processor_result = self.processor.fetch(task.task_id, profile=profile)
+            if processor_result.no_text:
                 self.file_service.no_text(
                     run_id=run.run_id,
-                    page_count=result.page_count,
-                    processing_time_ms=result.processing_time_ms,
+                    page_count=processor_result.page_count,
+                    processing_time_ms=processor_result.processing_time_ms,
                 )
                 return self._release_then_ack("PARENT_RUN", run.run_id)
             self.file_service.upload_representation(
                 run_id=run.run_id,
                 kind="MARKDOWN",
-                content=result.markdown,
+                content=processor_result.markdown,
                 media_type="text/markdown",
             )
             self.file_service.upload_representation(
                 run_id=run.run_id,
                 kind="DOCLING_JSON",
-                content=result.docling_json,
+                content=processor_result.docling_json,
                 media_type="application/json",
             )
             self.file_service.finalize(
                 run_id=run.run_id,
-                partial=result.partial,
-                page_count=result.page_count,
-                processing_time_ms=result.processing_time_ms,
+                partial=processor_result.partial,
+                page_count=processor_result.page_count,
+                processing_time_ms=processor_result.processing_time_ms,
             )
             return self._release_then_ack("PARENT_RUN", run.run_id)
         except DocumentProcessorFailure as exc:
@@ -272,16 +279,19 @@ class FileProcessingWorkerService:
         correlation_id: str,
     ) -> None:
         if run.format_code in {"DOCX", "PPTX"}:
-            parent = self.processor.fetch_bundle(
+            bundle_result = self.processor.fetch_bundle(
                 task.task_id,
                 profile=profile,
                 source_format=run.format_code,
             )
-            pictures = parent.pictures
+            parent_markdown = bundle_result.markdown
+            parent_docling_json = bundle_result.docling_json
+            pictures = bundle_result.pictures
         else:
-            parent = self.processor.fetch_picture(task.task_id, profile=profile)
+            picture_result = self.processor.fetch_picture(task.task_id, profile=profile)
+            parent_markdown = picture_result.markdown
+            parent_docling_json = picture_result.docling_json
             pictures = ()
-        parent_markdown = parent.markdown
         if not parent_markdown.strip():
             parent_markdown = "# 文档正文\n\n（未提取到父文档文字。）\n".encode()
         layout_options = profile.layout_ocr_options
@@ -299,12 +309,12 @@ class FileProcessingWorkerService:
         self.file_service.upload_representation(
             run_id=run.run_id,
             kind="DOCLING_JSON",
-            content=parent.docling_json,
+            content=parent_docling_json,
             media_type="application/json",
         )
         used_pixels = 0
-        used_derived_bytes = len(parent_markdown) + len(parent.docling_json)
-        assets: dict[str, dict[str, object]] = {}
+        used_derived_bytes = len(parent_markdown) + len(parent_docling_json)
+        assets: dict[str, _PictureAssetEntry] = {}
         for artifact in pictures:
             selected = artifact.occurrence_index <= int(
                 limits["soft_picture_occurrences"]
@@ -350,14 +360,14 @@ class FileProcessingWorkerService:
                     "selected": False,
                 },
             )
-            entry["count"] = int(entry["count"]) + 1
+            entry["count"] += 1
             if selected:
                 entry["selected"] = True
         for entry in assets.values():
             item_id = self.file_service.register_picture_item(
                 run_id=run.run_id,
                 picture_asset_id=str(entry["asset_id"]),
-                occurrence_count=int(entry["count"]),
+                occurrence_count=entry["count"],
                 ocr_engine_code="docling-rapidocr",
                 model_revision=MODEL_ARTIFACT_REVISION,
                 model_digest=self.model_artifact.digest,
@@ -400,6 +410,9 @@ class FileProcessingWorkerService:
             if item.terminal:
                 return self._release_then_ack("PICTURE_ITEM", message.picture_item_id)
             profile = require_layout_ocr_profile_by_hash(item.profile_hash)
+            layout_options = profile.layout_ocr_options
+            if layout_options is None:
+                raise DocumentProcessorFailure("document_profile_mismatch", retryable=False)
             self._require_run_not_expired(
                 item.run_deadline_at,
                 profile=profile,
@@ -421,9 +434,7 @@ class FileProcessingWorkerService:
                 task,
                 started=started,
                 timeout_seconds=int(
-                    profile.layout_ocr_options["limits"][
-                        "picture_attempt_deadline_seconds"
-                    ]
+                    layout_options["limits"]["picture_attempt_deadline_seconds"]
                 ),
                 owner_kind="PICTURE_ITEM",
                 owner_id=item.picture_item_id,
@@ -434,7 +445,7 @@ class FileProcessingWorkerService:
             )
             if task.state is ProcessorTaskState.FAILURE:
                 raise DocumentProcessorFailure("docling_conversion_failed", retryable=False)
-            result = self.processor.fetch_picture(
+            processor_result = self.processor.fetch_picture(
                 task.task_id,
                 profile=profile,
             )
@@ -447,14 +458,14 @@ class FileProcessingWorkerService:
                 original_height_pixels=item.original_height_pixels,
                 width_pixels=item.width_pixels,
                 height_pixels=item.height_pixels,
-                exif_orientation=int(transform["exif_orientation"]),
+                exif_orientation=item.normalization_transform["exif_orientation"],
                 transform=transform,
             )
             picture_result = (
                 build_no_text_picture_result(picture=normalized, profile=profile)
-                if result.no_text
+                if processor_result.no_text
                 else adapt_docling_picture_result(
-                    result.docling_json,
+                    processor_result.docling_json,
                     picture=normalized,
                     profile=profile,
                 )

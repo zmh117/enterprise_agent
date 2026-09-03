@@ -25,6 +25,10 @@ from app.modules.document_processing.provider import (
 )
 from app.modules.document_processing.worker_service import FileProcessingWorkerService
 from app.modules.identity.application.service_principal import ServicePrincipalTokenClient
+from app.modules.message_bus.application.message_publisher import (
+    DocumentProcessingStageMessage,
+    FileProcessingTaskResult,
+)
 from app.modules.message_bus.infrastructure.rabbitmq_file_processing import (
     RabbitMQFileProcessingConsumer,
 )
@@ -209,7 +213,7 @@ def main() -> None:
                 )
             time.sleep(30)
 
-    def handle(message: object):
+    def handle(message: DocumentProcessingStageMessage) -> FileProcessingTaskResult:
         run_id = str(getattr(message, "run_id"))
         correlation_id = str(getattr(message, "correlation_id"))
         HEARTBEAT.touch()

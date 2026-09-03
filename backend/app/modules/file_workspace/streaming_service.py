@@ -56,6 +56,16 @@ TRANSFER_TTL = timedelta(minutes=5)
 INTERNAL_TRANSFER_META = "__file_transfer_meta"
 
 
+def _record_int(value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError("Boolean is not a valid integer record value")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value)
+    raise ValueError("Invalid integer record value")
+
+
 class FilePrincipalPort(Protocol):
     def authenticate(
         self, token: str, *, tool_identifier: str = "task_workspace_get"
@@ -221,7 +231,7 @@ class GovernedFileStreamingService:
             version_id=version_id,
             sandbox_entry_handle=handle,
             relative_path=relative_path,
-            expected_size_bytes=int(content["size_bytes"]),
+            expected_size_bytes=_record_int(content["size_bytes"]),
             expected_sha256=str(content["content_sha256"]),
             expires_at=expires_at,
             now=_iso(now),
@@ -245,7 +255,7 @@ class GovernedFileStreamingService:
                     "transfer_id": transfer_id,
                     "sandbox_entry_handle": handle,
                     "relative_path": relative_path,
-                    "expected_size_bytes": int(content["size_bytes"]),
+                    "expected_size_bytes": _record_int(content["size_bytes"]),
                     "expected_sha256": str(content["content_sha256"]),
                     "format_code": format_code,
                 }
@@ -494,7 +504,7 @@ class GovernedFileStreamingService:
                 transfer.get("format_code") or "TXT"
             ):
                 self._deny("file_format_mismatch", "文件传输格式不一致")
-        if int(content["size_bytes"]) != int(transfer["expected_size_bytes"]) or str(
+        if _record_int(content["size_bytes"]) != int(transfer["expected_size_bytes"]) or str(
             content["content_sha256"]
         ) != str(transfer["expected_sha256"]):
             self._deny("file_transfer_integrity_mismatch", "文件完整性校验失败")
@@ -647,6 +657,7 @@ class GovernedFileStreamingService:
                 now=_iso(self.now()),
             )
             reservation_id = str(reservation["id"])
+            staging: dict[str, Any] | None = None
             try:
                 staging = self.repository.get_staging_for_intent(str(intent["id"]))
                 if staging is None:
@@ -683,7 +694,7 @@ class GovernedFileStreamingService:
                         content_sha256=validated.content_sha256,
                     )
             except Exception:
-                if "staging" in locals():
+                if staging is not None:
                     self._record_compensation(intent=intent, staging=staging)
                 self.quota.finalize_reservation(
                     reservation_id,

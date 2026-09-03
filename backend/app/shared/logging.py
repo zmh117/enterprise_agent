@@ -7,7 +7,10 @@ import re
 import sys
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeVar
+
+
+_T = TypeVar("_T")
 
 correlation_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "correlation_id", default="-"
@@ -54,7 +57,7 @@ def configure_logging(level: str = "INFO") -> None:
     root.setLevel(level)
 
 
-def with_correlation(correlation_id: str | None, func: Callable[[], Any]) -> Any:
+def with_correlation(correlation_id: str | None, func: Callable[[], _T]) -> _T:
     token = correlation_id_var.set(validated_correlation_id(correlation_id))
     try:
         return func()

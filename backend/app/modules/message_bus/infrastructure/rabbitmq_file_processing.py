@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -112,7 +112,7 @@ class RabbitMQFileProcessingPublisher:
     def _publish(
         self,
         queue_name: str,
-        payload: dict[str, object],
+        payload: Mapping[str, object],
         *,
         expiration_ms: int | None = None,
     ) -> None:

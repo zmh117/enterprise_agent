@@ -870,6 +870,8 @@ class FileWorkspaceRepository:
         try:
             snapshot = json.loads(str((row or {}).get("snapshot_json") or "{}"))
             tools = snapshot.get("tools") if isinstance(snapshot, dict) else None
+            if not isinstance(tools, list):
+                tools = []
             identifiers = {
                 str(item.get("tool_identifier") or "")
                 for item in tools

@@ -430,37 +430,6 @@ class AttachmentProcessingService:
         """Retry-safe public release hook driven by persistent attachment state."""
         return self._release_if_ready(job_id, correlation_id)
 
-    def report_orphan_objects(self) -> list[str]:
-        if self.storage is None:
-            return []
-        referenced = {
-            str(row["object_key"])
-            for row in self.repository.database.execute(
-                "select object_key from message_attachment where object_key <> ''"
-            )
-        }
-        return [key for key in self.storage.list_keys() if key not in referenced]
-
-    def cleanup_expired(self) -> list[str]:
-        if self.storage is None:
-            return []
-        deleted: list[str] = []
-        for attachment in self.repository.list_expired_attachments(datetime.now(UTC).isoformat()):
-            try:
-                self.storage.delete(key=attachment.object_key)
-            except Exception:
-                continue
-            self.repository.mark_attachment_deleted(attachment.id)
-            deleted.append(attachment.id)
-            self.audit_service.record(
-                "attachment.deleted",
-                status="SUCCEEDED",
-                summary="Expired attachment object deleted",
-                job_id=attachment.job_id or None,
-                payload={"attachment_id": attachment.id},
-            )
-        return deleted
-
 
 def _expired(value: object) -> bool:
     if not value:

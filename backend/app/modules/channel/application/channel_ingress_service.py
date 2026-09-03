@@ -10,10 +10,10 @@ from app.modules.business_application.domain import (
     RuntimeRouteResolution,
 )
 from app.modules.business_application.domain.policies import (
-    document_processing_profile_snapshot,
     publication_document_processing_profile,
 )
 from app.modules.channel.domain.channel_event import ChannelEvent
+from app.modules.document_processing import document_processing_profile_snapshot
 from app.modules.identity.application import IdentityService
 from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,

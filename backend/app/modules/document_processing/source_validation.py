@@ -4,7 +4,7 @@ import io
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Never
 from xml.dom import Node
 from xml.dom import minidom
 from xml.parsers.expat import ExpatError
@@ -302,7 +302,7 @@ def _require_safe_docx_null_placeholders(
             for attribute_index in range(element.attributes.length):
                 attribute = element.attributes.item(attribute_index)
                 if (
-                    attribute is not None
+                    isinstance(attribute, minidom.Attr)
                     and attribute.namespaceURI == _OFFICE_RELATIONSHIPS_NS
                     and attribute.value == relationship_id
                 ):
@@ -358,11 +358,12 @@ def _ancestor_element(
     current = element.parentNode
     while current is not None:
         if (
-            current.nodeType == Node.ELEMENT_NODE
+            isinstance(current, minidom.Element)
+            and current.nodeType == Node.ELEMENT_NODE
             and current.namespaceURI == namespace
             and current.localName == local_name
         ):
-            return current  # type: ignore[return-value]
+            return current
         current = current.parentNode
     return None
 
@@ -371,11 +372,12 @@ def _ancestor_drawing_container(element: minidom.Element) -> minidom.Element | N
     current = element.parentNode
     while current is not None:
         if (
-            current.nodeType == Node.ELEMENT_NODE
+            isinstance(current, minidom.Element)
+            and current.nodeType == Node.ELEMENT_NODE
             and current.namespaceURI == _WORDPROCESSING_DRAWING_NS
             and current.localName in {"inline", "anchor"}
         ):
-            return current  # type: ignore[return-value]
+            return current
         current = current.parentNode
     return None
 
@@ -389,7 +391,10 @@ def _drawing_references_only(
     for element in elements:
         for attribute_index in range(element.attributes.length):
             attribute = element.attributes.item(attribute_index)
-            if attribute is not None and attribute.namespaceURI == _OFFICE_RELATIONSHIPS_NS:
+            if (
+                isinstance(attribute, minidom.Attr)
+                and attribute.namespaceURI == _OFFICE_RELATIONSHIPS_NS
+            ):
                 references.append((element, attribute.value, attribute.localName))
     return bool(references) and all(
         element.namespaceURI == _DRAWINGML_NS
@@ -400,7 +405,7 @@ def _drawing_references_only(
     )
 
 
-def _reject_docx_null_placeholder_unsafe() -> None:
+def _reject_docx_null_placeholder_unsafe() -> Never:
     _reject(
         "docx_null_image_placeholder_unsafe",
         "DOCX 图片占位结构不安全",
@@ -432,5 +437,5 @@ def _error(code: str, safe_message: str) -> NonRetryableExecutionError:
     )
 
 
-def _reject(code: str, safe_message: str) -> None:
+def _reject(code: str, safe_message: str) -> Never:
     raise _error(code, safe_message)

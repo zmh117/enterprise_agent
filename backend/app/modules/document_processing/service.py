@@ -10,7 +10,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, BinaryIO, Protocol
+from typing import Any, BinaryIO, Never, Protocol
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.document_processing.domain import (
@@ -1741,7 +1741,7 @@ class GovernedDocumentProcessingService:
             cls._deny("document_transfer_digest_mismatch", "上传内容大小或摘要不一致")
 
     @staticmethod
-    def _deny(code: str, safe_message: str) -> None:
+    def _deny(code: str, safe_message: str) -> Never:
         raise NonRetryableExecutionError(
             "Governed document processing request denied",
             safe_message=safe_message,

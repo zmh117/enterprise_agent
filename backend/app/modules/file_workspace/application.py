@@ -4,7 +4,7 @@ import base64
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import Any, Never
+from typing import Any, Never, TypedDict
 
 import jsonschema
 
@@ -22,6 +22,15 @@ from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.quota import WorkspaceQuotaService
 from app.modules.file_workspace.streaming_service import GovernedFileStreamingService
 from app.shared.exceptions import NonRetryableExecutionError
+
+
+class _FileSearchFilters(TypedDict):
+    exact_name: str
+    name_prefix: str
+    format_codes: list[str]
+    source_received_from: str | None
+    source_received_to: str | None
+    readability_statuses: list[str]
 
 
 class FileWorkspaceApplicationService:
@@ -154,7 +163,7 @@ class FileWorkspaceApplicationService:
         received_to = self._utc_filter(arguments.get("source_received_to"))
         if received_from and received_to and received_from > received_to:
             self._deny("file_tool_input_invalid", "来源时间范围无效")
-        filters = {
+        filters: _FileSearchFilters = {
             "exact_name": str(arguments.get("exact_name") or ""),
             "name_prefix": str(arguments.get("name_prefix") or ""),
             "format_codes": sorted(str(value) for value in arguments.get("format_codes") or []),

@@ -165,6 +165,18 @@ def test_tenant_runtime_config_is_code_gated_bounded_and_revision_safe() -> None
             },
             actor_id="user_local_admin",
         )
+    with pytest.raises(ValueError, match="expected_revision必须为正整数"):
+        service.upsert_runtime_config_value(
+            {
+                "key": "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+                "scope_type": "tenant",
+                "scope_code": "tenant-runtime-config",
+                "service_name": "file-service",
+                "value": 600,
+                "expected_revision": {"revision": created["revision"]},
+            },
+            actor_id="user_local_admin",
+        )
     with pytest.raises(ValueError, match="刷新后重试"):
         service.upsert_runtime_config_value(
             {

@@ -270,10 +270,10 @@ class GovernedResourceService:
                         correlation_id=correlation_id,
                     )
             if create_base_if_missing:
-                environment = self.config_repository.get_environment_by_code(
+                environment_for_base = self.config_repository.get_environment_by_code(
                     environment_code
                 )
-                if not environment or environment.get("status") != "enabled":
+                if not environment_for_base or environment_for_base.get("status") != "enabled":
                     raise NonRetryableExecutionError(
                         "Platform Environment for Base is unavailable",
                         safe_message="新基地所属环境不存在或已停用",
@@ -312,11 +312,11 @@ class GovernedResourceService:
                         correlation_id=correlation_id,
                     )
             if create_workshop_if_missing:
-                base = self.config_repository.get_base_by_code(
+                base_for_workshop = self.config_repository.get_base_by_code(
                     environment_code=environment_code,
                     code=base_code,
                 )
-                if not base or base.get("status") != "enabled":
+                if not base_for_workshop or base_for_workshop.get("status") != "enabled":
                     raise NonRetryableExecutionError(
                         "Platform Base for Workshop is unavailable",
                         safe_message="新车间所属基地不存在或已停用",

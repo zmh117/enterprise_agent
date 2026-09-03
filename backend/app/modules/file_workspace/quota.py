@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Never
 
 from app.modules.platform_config.application.runtime_config import RuntimeConfigSnapshotBuilder
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
@@ -424,9 +424,14 @@ class WorkspaceQuotaService:
     def _bounded_int(value: object, *, default: int, hard_limit: int) -> int:
         if isinstance(value, bool):
             return default
-        try:
-            parsed = int(value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+        if isinstance(value, int):
+            parsed = value
+        elif isinstance(value, str):
+            try:
+                parsed = int(value)
+            except ValueError:
+                return default
+        else:
             return default
         return min(hard_limit, max(1, parsed))
 
@@ -436,7 +441,7 @@ class WorkspaceQuotaService:
         return source[:128] or "definition-default"
 
     @staticmethod
-    def _deny(code: str, message: str) -> None:
+    def _deny(code: str, message: str) -> Never:
         raise NonRetryableExecutionError(
             "Workspace quota rejected the operation",
             safe_message=message,

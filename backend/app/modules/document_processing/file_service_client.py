@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Never, TypedDict, cast
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -14,6 +14,17 @@ from app.shared.exceptions import NonRetryableExecutionError, RetryableExecution
 
 MAX_CONTROL_RESPONSE_BYTES = 256 * 1024
 MAX_SOURCE_BYTES = 25 * 1024 * 1024
+
+
+class PictureNormalizationTransform(TypedDict):
+    version: str
+    pixel_basis: str
+    office_display_transform_applied: bool
+    source_origin: str
+    target_origin: str
+    exif_orientation: int
+    original_size: list[int]
+    normalized_size: list[int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +70,7 @@ class ClaimedPictureItem:
     original_height_pixels: int
     width_pixels: int
     height_pixels: int
-    normalization_transform: dict[str, object]
+    normalization_transform: PictureNormalizationTransform
 
     @property
     def terminal(self) -> bool:
@@ -426,7 +437,7 @@ class DocumentProcessingFileServiceClient:
         parent_label: str,
         parent_ordinal: int,
         slide_no: int | None,
-        parent_bbox: dict[str, object] | None,
+        parent_bbox: list[int] | None,
         selection_status: str,
     ) -> str:
         value = self._json(
@@ -510,6 +521,27 @@ class DocumentProcessingFileServiceClient:
         }
         if set(value) != required:
             self._invalid_response()
+        transform = value["normalization_transform"]
+        transform_keys = {
+            "version",
+            "pixel_basis",
+            "office_display_transform_applied",
+            "source_origin",
+            "target_origin",
+            "exif_orientation",
+            "original_size",
+            "normalized_size",
+        }
+        if (
+            not isinstance(transform, dict)
+            or set(transform) != transform_keys
+            or not isinstance(transform.get("exif_orientation"), int)
+            or isinstance(transform.get("exif_orientation"), bool)
+            or not isinstance(transform.get("original_size"), list)
+            or not isinstance(transform.get("normalized_size"), list)
+        ):
+            self._invalid_response()
+        value["normalization_transform"] = cast(PictureNormalizationTransform, transform)
         try:
             item = ClaimedPictureItem(**value)
         except (TypeError, ValueError) as exc:
@@ -793,7 +825,7 @@ class DocumentProcessingFileServiceClient:
         return response.content
 
     @staticmethod
-    def _invalid_response(cause: Exception | None = None) -> None:
+    def _invalid_response(cause: Exception | None = None) -> Never:
         error = RetryableExecutionError(
             "File Service document processing response is invalid",
             safe_message="文档处理文件服务响应无效",

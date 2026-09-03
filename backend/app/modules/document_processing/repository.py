@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Never
 
 from app.modules.document_processing.domain import (
     PROCESSING_TERMINAL_STATUSES,
@@ -2420,7 +2420,7 @@ class DocumentProcessingRepository:
         return dict(payload)
 
     @staticmethod
-    def _deny(code: str, safe_message: str) -> None:
+    def _deny(code: str, safe_message: str) -> Never:
         raise NonRetryableExecutionError(
             "Document processing request denied",
             safe_message=safe_message,
