@@ -35,6 +35,7 @@ from backend.tests.test_file_workspace_repository import (
     "message",
     [
         "请创建一份 Markdown 文件并保存为 report.md",
+        "生成 md 文件记录我今天的对话",
         "edit the .md document and export it",
     ],
 )

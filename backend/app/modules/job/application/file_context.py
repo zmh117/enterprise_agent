@@ -141,6 +141,34 @@ PREVIOUS_MONTH_TOKENS: tuple[str, ...] = ("上个月", "上月")
 TODAY_TOKENS: tuple[str, ...] = ("今天", "今日")
 YESTERDAY_TOKENS: tuple[str, ...] = ("昨天", "昨日")
 
+_TIME_WINDOW_SOURCE_WORDS = (
+    *PREVIOUS_WEEK_TOKENS,
+    *CURRENT_WEEK_TOKENS,
+    *PREVIOUS_MONTH_TOKENS,
+    *TODAY_TOKENS,
+    *YESTERDAY_TOKENS,
+)
+_TIME_WINDOW_SOURCE_PREFIX = "(?:" + "|".join(
+    re.escape(token) for token in _TIME_WINDOW_SOURCE_WORDS
+) + ")"
+_EXPLICIT_DATE_SOURCE_PREFIX = (
+    r"(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|(?:\d{4}年)?\d{1,2}月\d{1,2}[日号])"
+)
+_TIME_WINDOW_FILE_SOURCE_NOUN = r"(?:文件|附件|图片|文档|材料|表格)"
+_TIME_WINDOW_FILE_SOURCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        rf"(?:{_TIME_WINDOW_SOURCE_PREFIX}|{_EXPLICIT_DATE_SOURCE_PREFIX})"
+        r"(?:上传|发送|发|传|收到|保存)?(?:给我)?(?:的)?"
+        r"(?:全部|所有|这些|那些|多个|几份|一份)?"
+        rf"{_TIME_WINDOW_FILE_SOURCE_NOUN}"
+    ),
+    re.compile(
+        r"(?:上传|发送|发来|传来|收到|引用)(?:给我)?(?:的)?"
+        r"(?:全部|所有|这些|那些|多个|几份|一份)?"
+        rf"{_TIME_WINDOW_FILE_SOURCE_NOUN}"
+    ),
+)
+
 DATE_RANGE_CN = re.compile(
     r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})[日号]\s*(?:到|至|~|—|-)\s*(?:(\d{1,2})月)?(\d{1,2})[日号]"
 )
@@ -323,6 +351,11 @@ def has_file_referring_token(text: str) -> bool:
     return any(token in text for token in FILE_REFERRING_TOKENS)
 
 
+def has_explicit_time_window_file_source(text: str) -> bool:
+    normalized = unicodedata.normalize("NFC", text).casefold()
+    return any(pattern.search(normalized) for pattern in _TIME_WINDOW_FILE_SOURCE_PATTERNS)
+
+
 def is_image_only_file_query(text: str) -> bool:
     has_image = any(token in text for token in IMAGE_FILE_REFERRING_TOKENS) or (
         "图" in text and "文件" not in text and "附件" not in text and "文档" not in text
@@ -453,7 +486,15 @@ def resolve_file_context(
     if parsed_window.invalid and has_file_referring_token(text) and not skip_deixis:
         return ResolverDecision(dependencies=(), notice_kind="invalid_time_window")
     window = parsed_window.window
-    if window is not None and has_file_referring_token(text) and not skip_deixis:
+    if (
+        window is not None
+        and has_file_referring_token(text)
+        and not skip_deixis
+        and (
+            not requests_file_output
+            or has_explicit_time_window_file_source(text)
+        )
+    ):
         return _resolve_time_window(
             text=text,
             capability=capability,

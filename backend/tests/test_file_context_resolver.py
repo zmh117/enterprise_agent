@@ -535,6 +535,57 @@ def test_explicit_output_request_does_not_bind_generic_deixis_to_failed_input() 
     assert evaluate_file_gate(decision).action == "enqueue_job"
 
 
+def test_output_request_conversation_time_scope_does_not_query_workspace_files() -> None:
+    now = datetime(2026, 9, 4, 12, 0, tzinfo=SHANGHAI)
+    candidate_sets = (
+        (),
+        (
+            WorkspaceFileCandidate(
+                file_id="f-today",
+                version_id="v-today",
+                display_name="无关附件.txt",
+                source_status="READY",
+                readability_status="NOT_REQUIRED",
+                source_received_at="2026-09-04T02:00:00+00:00",
+            ),
+        ),
+    )
+
+    for candidates in candidate_sets:
+        decision = resolve_file_context(
+            text="生成 md 文件记录我今天的对话",
+            requests_file_output=True,
+            now=now,
+            candidates=candidates,
+        )
+
+        assert decision.dependencies == ()
+        assert decision.notice_kind == ""
+        assert evaluate_file_gate(decision).action == "enqueue_job"
+
+
+def test_output_request_can_still_use_explicit_time_window_file_sources() -> None:
+    now = datetime(2026, 9, 4, 12, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(
+        text="根据今天上传的文件生成汇总.md",
+        requests_file_output=True,
+        now=now,
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="f-today",
+                version_id="v-today",
+                display_name="今日材料.txt",
+                source_status="READY",
+                readability_status="NOT_REQUIRED",
+                source_received_at="2026-09-04T02:00:00+00:00",
+            ),
+        ),
+    )
+
+    assert [item.version_id for item in decision.dependencies] == ["v-today"]
+    assert decision.dependencies[0].reason == "TIME_WINDOW"
+
+
 def test_parse_time_window_natural_week_and_calendar_dates() -> None:
     monday = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
     last_week = parse_time_window("上周的图", now=monday)
