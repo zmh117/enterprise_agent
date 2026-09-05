@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -469,7 +470,7 @@ def _group_filter_values(variables: dict[str, Any], field: str) -> set[str]:
     return values
 
 
-def _created_range(variables: dict[str, Any]) -> dict[str, int]:
+def _created_range(variables: dict[str, Any]) -> dict[str, str]:
     groups = variables.get("filterGroup")
     if not isinstance(groups, list):
         return {}
@@ -479,11 +480,15 @@ def _created_range(variables: dict[str, Any]) -> dict[str, int]:
         value = group.get("createTime_range")
         if not isinstance(value, dict):
             continue
-        result: dict[str, int] = {}
+        result: dict[str, str] = {}
         for key in ("gte", "lte"):
             raw = value.get(key)
-            if isinstance(raw, str) and raw.isdigit():
-                result[key] = int(raw)
+            if isinstance(raw, str):
+                try:
+                    datetime.strptime(raw, "%Y-%m-%d")
+                except ValueError:
+                    continue
+                result[key] = raw
         return result
     return {}
 
@@ -517,11 +522,27 @@ def _matches_custom_options(
 
 
 def _search_keyword(variables: dict[str, Any]) -> str:
-    search = variables.get("search")
-    if not isinstance(search, dict):
+    groups = variables.get("filterGroup")
+    if not isinstance(groups, list):
         return ""
-    keyword = search.get("keyword")
-    return keyword.strip() if isinstance(keyword, str) else ""
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        keyword = group.get("name_match")
+        if isinstance(keyword, str):
+            return keyword.strip()
+    return ""
+
+
+def _created_calendar_date(value: object) -> str:
+    if type(value) is not int or value < 0:
+        return ""
+    divisor = 1_000_000 if value >= 100_000_000_000_000 else 1000
+    try:
+        instant = datetime.fromtimestamp(value / divisor, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return ""
+    return instant.astimezone(timezone(timedelta(hours=8))).date().isoformat()
 
 
 def _page_limit(variables: dict[str, Any]) -> int:
@@ -563,8 +584,14 @@ def _group_task_data(config: MockOnesConfig, variables: dict[str, Any]) -> dict[
         and (not status_categories or str(fixture["status"]["category"]) in status_categories)
         and (not assignees or str(fixture["assign"]["uuid"]) in assignees)
         and _matches_custom_options(fixture, custom_filters)
-        and ("gte" not in created or int(fixture["createTime"]) >= created["gte"])
-        and ("lte" not in created or int(fixture["createTime"]) <= created["lte"])
+        and (
+            "gte" not in created
+            or _created_calendar_date(fixture["createTime"]) >= created["gte"]
+        )
+        and (
+            "lte" not in created
+            or _created_calendar_date(fixture["createTime"]) <= created["lte"]
+        )
         and _matches_keyword(fixture, keyword)
     ]
     total_count = len(tasks)
@@ -976,107 +1003,6 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
             "teams": list(config.teams),
         }
 
-    @app.post("/project/api/project/items/graphql")
-    async def governed_work_item_search(
-        payload: GraphqlRequest,
-        ones_auth_token: str | None = Header(
-            default=None,
-            alias="Ones-Auth-Token",
-        ),
-    ) -> Any:
-        variables = payload.variables
-        user_id = str(variables.get("user_id") or "")
-        team_id = str(variables.get("team_id") or "")
-        keyword = str(variables.get("keyword") or "")
-        issue_type = str(variables.get("issue_type") or "")
-        limit = variables.get("limit")
-        user = config.find_user_by_auth(
-            token=str(ones_auth_token or ""),
-            user_uuid=user_id,
-        )
-        if keyword == "__401__" or user is None:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "code": "unauthorized",
-                    "message": "invalid ONES credential",
-                },
-            )
-        if keyword in {"__403__", "__team_revoked__"}:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "forbidden",
-                    "message": "team access revoked",
-                },
-            )
-        if keyword == "__429__":
-            raise HTTPException(
-                status_code=429,
-                detail={"code": "rate_limited"},
-            )
-        if keyword == "__500__":
-            raise HTTPException(
-                status_code=500,
-                detail={"code": "server_error"},
-            )
-        if keyword == "__redirect__":
-            return RedirectResponse("/health", status_code=307)
-        if keyword == "__bad_json__":
-            return Response(
-                content="{not-json",
-                media_type="application/json",
-            )
-        if keyword == "__oversize__":
-            return Response(
-                content='{"padding":"' + ("x" * 2_000_000) + '"}',
-                media_type="application/json",
-            )
-        if team_id not in {str(item["uuid"]) for item in config.teams}:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "team_not_found"},
-            )
-        if (
-            issue_type not in {"demand", "task", "defect"}
-            or not isinstance(limit, int)
-            or isinstance(limit, bool)
-            or not 1 <= limit <= 50
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail={"code": "invalid_search_input"},
-            )
-        matches = [
-            task
-            for task in config.tasks
-            if str(task["issue_type"]) == issue_type and _matches_keyword(task, keyword)
-        ]
-        items = [
-            {
-                "number": int(task["number"]),
-                "name": str(task["name"]),
-                "type": str(task["issue_type"]),
-            }
-            for task in matches[:limit]
-        ]
-        if keyword == "__missing_field__":
-            items = [
-                {
-                    "name": "Malformed item",
-                    "type": issue_type,
-                }
-            ]
-        return {
-            "data": {
-                "workItems": {
-                    "items": items,
-                    "total": len(matches),
-                    "truncated": len(matches) > len(items),
-                }
-            }
-        }
-
     def require_business_user(
         *,
         ones_auth_token: str | None,
@@ -1305,7 +1231,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
         query_type: str = Query(alias="t"),
         ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
         ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
-    ) -> dict[str, Any]:
+    ) -> Any:
         user = config.find_user_by_auth(
             token=str(ones_auth_token or ""),
             user_uuid=str(ones_user_id or ""),
@@ -1321,6 +1247,54 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 detail={"code": "team_not_found", "message": "mock team does not exist"},
             )
         if query_type == "group-task-data":
+            keyword = _search_keyword(payload.variables)
+            if keyword in {"__403__", "__team_revoked__"}:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"code": "forbidden", "message": "team access revoked"},
+                )
+            if keyword == "__429__":
+                raise HTTPException(status_code=429, detail={"code": "rate_limited"})
+            if keyword == "__500__":
+                raise HTTPException(status_code=500, detail={"code": "server_error"})
+            if keyword == "__redirect__":
+                return RedirectResponse("/health", status_code=307)
+            if keyword == "__bad_json__":
+                return Response(content="{not-json", media_type="application/json")
+            if keyword == "__oversize__":
+                return Response(
+                    content='{"padding":"' + ("x" * 2_000_000) + '"}',
+                    media_type="application/json",
+                )
+            if keyword == "__missing_field__":
+                issue_types = _issue_type_filter(payload.variables)
+                issue_type_uuid = next(iter(issue_types), "B4TV9bu5")
+                return {
+                    "data": {
+                        "buckets": [
+                            {
+                                "tasks": [
+                                    {
+                                        "name": "Malformed item",
+                                        "issueType": {"uuid": issue_type_uuid},
+                                    }
+                                ],
+                                "pageInfo": {
+                                    "count": 1,
+                                    "totalCount": 1,
+                                    "endCursor": "mock-malformed",
+                                    "hasNextPage": False,
+                                    "preciseCount": True,
+                                },
+                            }
+                        ]
+                    }
+                }
+            if keyword == "__401__":
+                raise HTTPException(
+                    status_code=401,
+                    detail={"code": "unauthorized", "message": "invalid ONES credential"},
+                )
             return _group_task_data(config, payload.variables)
         if query_type == "issueTypeScopes":
             return _issue_type_scopes(config, payload.variables)

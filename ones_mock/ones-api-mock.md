@@ -70,14 +70,15 @@ ONES_IDENTITY_ALLOW_INSECURE_LOCAL=true
 
 ## 查询需求 / 任务 / 缺陷
 
-`ones-mcp` 第一阶段使用固定治理端点：
+`ones-mcp` 使用与真实 ONES 一致的 Team 级固定治理端点：
 
 ```text
-POST /project/api/project/items/graphql
+POST /project/api/project/team/{team_uuid}/items/graphql?t=group-task-data
 ```
 
-请求体固定为 GraphQL `query` 与 variables：`keyword`、`issue_type`、`limit`、
-`user_id`、`team_id`。身份、Team、URL、Header 和 query 均不能由 Tool Input 指定。
+请求体固定为 GraphQL `query` 与 variables；关键词编译为 `filterGroup.name_match`，
+稳定类型编译为 `filterGroup.issueType_in`。身份、Team、URL、Header 和 query 均不能由
+Tool Input 指定。
 
 以下 keyword 是稳定负向控制：
 
@@ -95,18 +96,18 @@ __missing_field__ 缺少必填业务字段
 `mock.yaml` 中的 `control_passwords.subject_changed` 与 `team_missing` 用于刷新登录时
 稳定触发 subject 变化和默认 Team 消失。
 
-旧的详细任务列表 Mock 端点仍保留给人工兼容性调试：
+详细任务列表与兼容搜索共用同一个 Team 级端点：
 
 ```text
 POST /project/api/project/team/{team_uuid}/items/graphql?t=group-task-data
 ```
 
-支持 `issueType_in`、`search.keyword`、`pagination.limit`。类型 UUID：
+支持 `issueType_in`、`name_match`、`createTime_range` 和 `pagination.limit`。类型 UUID：
 
 ```text
-需求: MOCK-ISSUE-TYPE-DEMAND
-任务: MOCK-ISSUE-TYPE-TASK
-缺陷: MOCK-ISSUE-TYPE-DEFECT
+需求: WE3uoYoq
+任务: Rbk6XNBr
+缺陷: B4TV9bu5
 ```
 
 ```bash
@@ -117,8 +118,7 @@ curl -sS 'http://127.0.0.1:19121/project/api/project/team/MOCK-ONES-TEAM-001/ite
   -d '{
     "query":"query MockTaskQuery { buckets { tasks { number name } } }",
     "variables":{
-      "filterGroup":[{"issueType_in":["MOCK-ISSUE-TYPE-DEFECT"]}],
-      "search":{"keyword":"#900103","aliases":[]},
+      "filterGroup":[{"issueType_in":["B4TV9bu5"],"name_match":"status"}],
       "pagination":{"limit":500,"preciseCount":false}
     }
   }'

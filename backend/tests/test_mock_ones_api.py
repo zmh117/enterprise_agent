@@ -102,12 +102,16 @@ class MockOnesApiTests(unittest.TestCase):
         self.assertEqual(401, response.status_code)
         self.assertEqual("unauthorized", response.json()["detail"]["code"])
 
-    def test_group_task_data_filters_by_defect_type_and_number(self) -> None:
+    def test_group_task_data_filters_by_defect_type_and_name_keyword(self) -> None:
         response = self.graphql(
             "group-task-data",
             {
-                "filterGroup": [{"issueType_in": [MOCK_ISSUE_TYPES["defect"]["uuid"]]}],
-                "search": {"keyword": "#900103", "aliases": []},
+                "filterGroup": [
+                    {
+                        "issueType_in": [MOCK_ISSUE_TYPES["defect"]["uuid"]],
+                        "name_match": "status",
+                    }
+                ],
                 "pagination": {"limit": 500, "preciseCount": False},
             },
         )
@@ -221,45 +225,53 @@ class MockOnesApiTests(unittest.TestCase):
 
     def test_governed_search_returns_bounded_normalized_contract(self) -> None:
         response = self.client.post(
-            "/project/api/project/items/graphql",
-            headers={"Ones-Auth-Token": self.settings.token},
+            (
+                f"/project/api/project/team/{self.settings.team_uuid}/items/graphql"
+                "?t=group-task-data"
+            ),
+            headers={
+                "Ones-Auth-Token": self.settings.token,
+                "Ones-User-Id": self.settings.user_uuid,
+            },
             json={
-                "query": "query SearchWorkItems { workItems { total } }",
+                "query": "{ buckets { tasks { number name issueType { uuid } } } }",
                 "variables": {
-                    "keyword": "status",
-                    "issue_type": "defect",
-                    "limit": 1,
-                    "user_id": self.settings.user_uuid,
-                    "team_id": self.settings.team_uuid,
+                    "filterGroup": [
+                        {"name_match": "status", "issueType_in": ["B4TV9bu5"]}
+                    ],
+                    "pagination": {"limit": 1, "preciseCount": True},
                 },
             },
         )
         self.assertEqual(200, response.status_code)
-        result = response.json()["data"]["workItems"]
-        self.assertEqual(1, result["total"])
+        result = response.json()["data"]["buckets"][0]
+        self.assertEqual(1, result["pageInfo"]["totalCount"])
+        self.assertEqual(900103, result["tasks"][0]["number"])
         self.assertEqual(
-            {
-                "number": 900103,
-                "name": "Mock defect: order status is not refreshed",
-                "type": "defect",
-            },
-            result["items"][0],
+            "Mock defect: order status is not refreshed",
+            result["tasks"][0]["name"],
         )
-        self.assertFalse(result["truncated"])
+        self.assertEqual("B4TV9bu5", result["tasks"][0]["issueType"]["uuid"])
+        self.assertFalse(result["pageInfo"]["hasNextPage"])
 
     def test_governed_search_covers_safe_failure_scenarios(self) -> None:
         def request(keyword: str) -> Any:
             return self.client.post(
-                "/project/api/project/items/graphql",
-                headers={"Ones-Auth-Token": self.settings.token},
+                (
+                    f"/project/api/project/team/{self.settings.team_uuid}/items/graphql"
+                    "?t=group-task-data"
+                ),
+                headers={
+                    "Ones-Auth-Token": self.settings.token,
+                    "Ones-User-Id": self.settings.user_uuid,
+                },
                 json={
-                    "query": "query SearchWorkItems { workItems { total } }",
+                    "query": "{ buckets { tasks { number name issueType { uuid } } } }",
                     "variables": {
-                        "keyword": keyword,
-                        "issue_type": "defect",
-                        "limit": 1,
-                        "user_id": self.settings.user_uuid,
-                        "team_id": self.settings.team_uuid,
+                        "filterGroup": [
+                            {"name_match": keyword, "issueType_in": ["B4TV9bu5"]}
+                        ],
+                        "pagination": {"limit": 1, "preciseCount": True},
                     },
                 },
             )
@@ -276,7 +288,7 @@ class MockOnesApiTests(unittest.TestCase):
         malformed = request("__missing_field__").json()
         self.assertNotIn(
             "number",
-            malformed["data"]["workItems"]["items"][0],
+            malformed["data"]["buckets"][0]["tasks"][0],
         )
 
     def test_project_role_members_and_team_users_follow_the_exact_rest_contract(self) -> None:

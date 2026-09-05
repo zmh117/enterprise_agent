@@ -28,15 +28,18 @@ class _RecordingHttp:
         payload: dict[str, Any],
         *,
         headers: dict[str, str],
+        query: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        self.calls.append({"path": path, "payload": payload, "headers": headers})
+        self.calls.append(
+            {"path": path, "payload": payload, "headers": headers, "query": query}
+        )
         return self.response
 
 
 @dataclass(frozen=True)
 class _SecondQuery:
     code: str = "project_summary"
-    path_template: str = "/project/api/project/items/graphql"
+    path_template: str = "/project/api/project/summary/graphql"
     query_type: str = ""
     document: str = "query ProjectSummary($team_id: String!) { projectSummary(teamId: $team_id) }"
 
@@ -68,11 +71,24 @@ def test_graphql_client_uses_registered_document_path_and_variables_only() -> No
     http = _RecordingHttp(
         {
             "data": {
-                "workItems": {
-                    "items": [{"number": 1, "name": "Bounded result", "type": "task"}],
-                    "total": 1,
-                    "truncated": False,
-                }
+                "buckets": [
+                    {
+                        "tasks": [
+                            {
+                                "number": 1,
+                                "name": "Bounded result",
+                                "issueType": {"uuid": "Rbk6XNBr"},
+                            }
+                        ],
+                        "pageInfo": {
+                            "count": 1,
+                            "totalCount": 1,
+                            "endCursor": "cursor-1",
+                            "hasNextPage": False,
+                            "preciseCount": True,
+                        },
+                    }
+                ]
             }
         }
     )
@@ -93,18 +109,23 @@ def test_graphql_client_uses_registered_document_path_and_variables_only() -> No
         headers={"Ones-Auth-Token": "not-persisted-test-token"},
     )
 
-    assert http.calls[0]["path"] == WORK_ITEM_SEARCH_PATH
+    assert http.calls[0]["path"] == WORK_ITEM_SEARCH_PATH.format(team_uuid="ones-team")
+    assert http.calls[0]["query"] == {"t": "group-task-data"}
     assert http.calls[0]["payload"] == {
         "query": WORK_ITEM_SEARCH_DOCUMENT,
         "variables": {
-            "keyword": "fixed",
-            "issue_type": "task",
-            "limit": 5,
-            "user_id": "ones-user",
-            "team_id": "ones-team",
+            "groupBy": {"tasks": {}},
+            "groupOrderBy": None,
+            "groupFilter": None,
+            "orderBy": {"position": "ASC", "createTime": "DESC"},
+            "filterGroup": [
+                {"name_match": "fixed", "issueType_in": ["Rbk6XNBr"]}
+            ],
+            "pagination": {"limit": 5, "preciseCount": True},
         },
     }
     assert result.output["items"][0]["name"] == "Bounded result"
+    assert result.output["items"][0]["type"] == "task"
 
 
 def test_graphql_registry_rejects_arbitrary_or_mutating_operations() -> None:
@@ -124,16 +145,36 @@ def test_graphql_registry_rejects_arbitrary_or_mutating_operations() -> None:
 
 
 def test_work_item_document_is_loaded_from_the_code_owned_resource() -> None:
-    expected = (
-        "query SearchWorkItems($keyword: String!, $issue_type: String!, $limit: Int!, "
-        "$user_id: String!, $team_id: String!) { "
-        "workItems(keyword: $keyword, issueType: $issue_type, limit: $limit, "
-        "userId: $user_id, teamId: $team_id) { "
-        "items { number name type } total truncated } }"
-    )
+    expected = load_graphql_document("work_item_search.graphql")
 
     assert WORK_ITEM_SEARCH_DOCUMENT == expected
-    assert load_graphql_document("work_item_search.graphql") == expected
+    assert "workItems(" not in expected
+    assert "tasks(" in expected
+    assert "$filterGroup" in expected
+    assert "$pagination" in expected
+
+
+def test_graphql_client_rejects_provider_variables_not_consumed_by_document() -> None:
+    @dataclass(frozen=True)
+    class _UnusedVariableQuery(_SecondQuery):
+        def build_variables(
+            self,
+            _arguments: dict[str, Any],
+            context: dict[str, Any],
+        ) -> dict[str, Any]:
+            return {"team_id": context["team_id"], "unused": "must-fail"}
+
+    client = OnesGraphqlClient(
+        _RecordingHttp({}),  # type: ignore[arg-type]
+        GraphqlOperationRegistry((_UnusedVariableQuery(),)),
+    )
+
+    with pytest.raises(ValueError, match="variables do not match"):
+        client.build_request(
+            "project_summary",
+            arguments={},
+            context={"team_id": "ones-team"},
+        )
 
 
 def test_graphql_document_loader_fails_for_missing_empty_or_unsafe_resources(

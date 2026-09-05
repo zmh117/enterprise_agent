@@ -152,8 +152,12 @@ def test_ones_contract_exposes_code_owned_fixed_tools_and_confirmed_mutations() 
     assert TOOL_INPUT_SCHEMA["required"] == ["keyword", "issue_type", "limit"]
     assert TOOL_OUTPUT_SCHEMA["properties"]["untrusted_data"] == {"const": True}
     assert LOGIN_PATH == "/project/api/project/auth/login"
-    assert WORK_ITEM_SEARCH_PATH == "/project/api/project/items/graphql"
-    assert WORK_ITEM_SEARCH_DOCUMENT.startswith("query SearchWorkItems(")
+    assert WORK_ITEM_SEARCH_PATH == (
+        "/project/api/project/team/{team_uuid}/items/graphql"
+    )
+    assert WORK_ITEM_SEARCH_DOCUMENT.startswith("{")
+    assert "tasks(" in WORK_ITEM_SEARCH_DOCUMENT
+    assert "workItems(" not in WORK_ITEM_SEARCH_DOCUMENT
     definition = MCP_TOOL_MANIFEST[TOOL_IDENTIFIER]
     assert definition.server_code == SERVER_CODE
     assert definition.input_schema == TOOL_INPUT_SCHEMA

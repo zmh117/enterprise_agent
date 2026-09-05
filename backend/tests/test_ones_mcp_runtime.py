@@ -427,16 +427,22 @@ def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None
     tool = next(row for row in rows if row["event_kind"] == "TOOL")
     authorization = next(row for row in rows if row["event_kind"] == "AUTHORIZATION")
     assert json.loads(provider["business_request_json"])["variables"] == {
-        "keyword": "traceability",
-        "issue_type": "demand",
-        "limit": 10,
-        "team_id": fixture["mock"].team_uuid,
-        "user_id": fixture["mock"].user_uuid,
+        "groupBy": {"tasks": {}},
+        "groupOrderBy": None,
+        "groupFilter": None,
+        "orderBy": {"position": "ASC", "createTime": "DESC"},
+        "filterGroup": [
+            {
+                "name_match": "traceability",
+                "issueType_in": ["WE3uoYoq"],
+            }
+        ],
+        "pagination": {"limit": 10, "preciseCount": True},
     }
     assert (
-        json.loads(provider["business_response_json"])["provider_response"]["data"]["workItems"][
-            "items"
-        ][0]["name"]
+        json.loads(provider["business_response_json"])["provider_response"]["data"][
+            "buckets"
+        ][0]["tasks"][0]["name"]
         == result["items"][0]["name"]
     )
     assert json.loads(tool["tool_request_json"])["keyword"] == "traceability"
@@ -1419,9 +1425,9 @@ def test_mcp_audit_detail_requires_audit_read_and_records_the_read() -> None:
 
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
-    assert authorized.json()["event"]["provider_request"]["variables"]["keyword"] == (
-        "traceability"
-    )
+    assert authorized.json()["event"]["provider_request"]["variables"][
+        "filterGroup"
+    ][0]["name_match"] == "traceability"
     assert read_audit == {"actor_id": "user_local_admin"}
     assert filtered.status_code == 200
     assert len(filtered.json()["events"]) == 1

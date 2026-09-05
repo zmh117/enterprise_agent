@@ -101,14 +101,14 @@ def _issue_type_response(payload: dict[str, Any], variables: dict[str, Any]) -> 
     )
 
 
-def _microseconds(value: str) -> str:
+def _calendar_date(value: str) -> str:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         raise ValueError("ONES work item time filter is invalid") from None
     if parsed.tzinfo is None:
         raise ValueError("ONES work item time filter is invalid")
-    return str(int(parsed.timestamp() * 1_000_000))
+    return parsed.date().isoformat()
 
 
 def _work_item_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
@@ -127,16 +127,18 @@ def _work_item_variables(arguments: dict[str, Any], _context: dict[str, Any]) ->
         filters["project_in"] = [arguments["project_uuid"]]
     if arguments.get("sprint_uuid"):
         filters["sprint_in"] = [arguments["sprint_uuid"]]
+    keyword = str(arguments.get("keyword") or "").strip()
+    if keyword:
+        filters["name_match"] = keyword
     created_from = arguments.get("created_from")
     created_to = arguments.get("created_to")
     if created_from or created_to:
         time_filter: dict[str, str] = {}
         if created_from:
-            time_filter["gte"] = _microseconds(str(created_from))
+            time_filter["gte"] = _calendar_date(str(created_from))
         if created_to:
-            time_filter["lte"] = _microseconds(str(created_to))
+            time_filter["lte"] = _calendar_date(str(created_to))
         filters["createTime_range"] = time_filter
-    keyword = str(arguments.get("keyword") or "").strip()
     limit = int(arguments["limit"])
     return {
         "groupBy": {"tasks": {}},
@@ -144,7 +146,6 @@ def _work_item_variables(arguments: dict[str, Any], _context: dict[str, Any]) ->
         "groupFilter": None,
         "orderBy": {"position": "ASC", "createTime": "DESC"},
         "filterGroup": [filters] if filters else [],
-        "search": {"keyword": keyword, "aliases": []} if keyword else None,
         "pagination": {"limit": limit, "preciseCount": True},
         "_limit": limit,
     }

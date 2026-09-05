@@ -20,6 +20,7 @@ from services.ones_mcp_server.provider.graphql.operations.business_queries impor
     PROJECT_SEARCH,
     SPRINT_WORK_ITEM_QUERY,
     WORK_ITEM_DETAIL,
+    WORK_ITEM_QUERY,
 )
 from services.ones_mcp_server.provider.graphql.operations.test_queries import (
     TEST_GRAPHQL_OPERATIONS,
@@ -188,6 +189,35 @@ def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -
     )
     assert [item["number"] for item in work_items.output["items"]] == [900102]
     _assert_contract("ones_query_work_items", work_items.output)
+
+    keyword_items = client.execute(
+        WORK_ITEM_QUERY,
+        arguments={"keyword": "status", "limit": 10},
+        context=context,
+        headers=headers,
+    )
+    assert [item["number"] for item in keyword_items.output["items"]] == [900103]
+    assert keyword_items.request["variables"]["filterGroup"] == [
+        {"name_match": "status"}
+    ]
+    assert "search" not in keyword_items.request["variables"]
+    _assert_contract("ones_query_work_items", keyword_items.output)
+
+    date_items = client.execute(
+        WORK_ITEM_QUERY,
+        arguments={
+            "created_from": "2026-07-23T00:00:00+08:00",
+            "created_to": "2026-07-23T23:59:59+08:00",
+            "limit": 10,
+        },
+        context=context,
+        headers=headers,
+    )
+    assert date_items.output["returned"] == 3
+    assert date_items.request["variables"]["filterGroup"] == [
+        {"createTime_range": {"gte": "2026-07-23", "lte": "2026-07-23"}}
+    ]
+    _assert_contract("ones_query_work_items", date_items.output)
 
     custom_filtered = client.execute(
         SPRINT_WORK_ITEM_QUERY,

@@ -49,21 +49,21 @@ users:
 
 issue_types:
   demand:
-    uuid: MOCK-ISSUE-TYPE-DEMAND
+    uuid: WE3uoYoq
     scope_uuid: MOCK-ISSUE-SCOPE-DEMAND
     name: 需求
     name_pinyin: xu1qiu2
     detail_type: 1
     icon: 3
   task:
-    uuid: MOCK-ISSUE-TYPE-TASK
+    uuid: Rbk6XNBr
     scope_uuid: MOCK-ISSUE-SCOPE-TASK
     name: 任务
     name_pinyin: ren4wu4
     detail_type: 2
     icon: 1
   defect:
-    uuid: MOCK-ISSUE-TYPE-DEFECT
+    uuid: B4TV9bu5
     scope_uuid: MOCK-ISSUE-SCOPE-DEFECT
     name: 缺陷
     name_pinyin: que1xian4
