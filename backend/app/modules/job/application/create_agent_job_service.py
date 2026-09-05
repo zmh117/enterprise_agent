@@ -23,19 +23,15 @@ from app.modules.channel.infrastructure.connector_registry import ConnectorRegis
 from app.modules.document_processing import resolve_document_processing_profile
 from app.modules.file_workspace.manifest_service import (
     JobFileManifestService,
-    is_explicit_text_output_request,
     is_task_text_name,
 )
 from app.modules.job.application.file_context import (
+    AdmissionFileReference,
     CurrentMessageAttachment,
-    GateDecision,
-    ResolverDecision,
+    FileAdmissionPlan,
     WorkspaceFileCandidate,
-    evaluate_file_gate,
-    file_dependency_payload,
-    resolve_file_context,
-    resolver_now,
-    system_notice_markdown,
+    plan_file_admission,
+    render_file_admission_notice,
 )
 from app.modules.job.domain.agent_job import AgentJob, AgentSession
 from app.modules.mcp_tool_runtime.job_snapshot import (
@@ -757,6 +753,22 @@ class CreateAgentJobService:
                     session_policy=command.session_policy,
                 )
             )
+            workspace_feature_enabled = bool(
+                command.task_file_features.get("workspace_enabled")
+            )
+            active_workspace = (
+                self.file_manifest_service.active_workspace(session.id)
+                if self.file_manifest_service is not None and workspace_feature_enabled
+                else None
+            )
+            file_plan = self._plan_file_admission(
+                command=command,
+                session_id=session.id,
+                active_workspace_id=(
+                    str(active_workspace.get("id") or "") if active_workspace else ""
+                ),
+                workspace_feature_enabled=workspace_feature_enabled,
+            )
             file_workspace = (
                 self.file_manifest_service.resolve_workspace(
                     tenant_id=command.tenant_id,
@@ -771,53 +783,21 @@ class CreateAgentJobService:
                     retention_period=command.task_workspace_retention_period,
                     attachments=command.attachments,
                     file_references=command.file_references,
-                    requests_file_output=(
-                        command.requests_file_output
-                        or is_explicit_text_output_request(command.user_message)
-                    ),
+                    requests_file_output=file_plan.effective_output_intent,
+                    force_create=file_plan.workspace_requirement == "force_create",
                 )
-                if (
-                    self.file_manifest_service is not None
-                    and bool(command.task_file_features.get("workspace_enabled"))
-                )
+                if self.file_manifest_service is not None
+                and file_plan.workspace_requirement != "none"
                 else None
             )
-            gate, file_decision = self._file_turn_gate(
-                command=command,
-                session_id=session.id,
-                workspace_id=str(file_workspace["id"]) if file_workspace else "",
-            )
-            if (
-                file_workspace is None
-                and self.file_manifest_service is not None
-                and bool(command.task_file_features.get("workspace_enabled"))
-                and gate.action == "enqueue_job"
-                and any(item.reason == "TIME_WINDOW" for item in gate.dependencies)
-            ):
-                file_workspace = self.file_manifest_service.resolve_workspace(
-                    tenant_id=command.tenant_id,
-                    session_id=session.id,
-                    requester_id=requester_id,
-                    conversation_type=command.conversation_type,
-                    enterprise_id=command.enterprise_id,
-                    connector_id=command.source_connector_id,
-                    conversation_id=external_conversation_id,
-                    sender_staff_id=command.sender_staff_id,
-                    publication_id=command.business_application_publication_id,
-                    retention_period=command.task_workspace_retention_period,
-                    attachments=command.attachments,
-                    file_references=command.file_references,
-                    requests_file_output=False,
-                    force_create=True,
-                )
+            gate = file_plan.gate
             if gate.action == "system_notice":
                 return self._persist_system_notice(
                     command=command,
                     session=session,
                     workspace_id=str(file_workspace["id"]) if file_workspace else "",
                     reply_route=reply_route,
-                    gate=gate,
-                    decision=file_decision,
+                    file_plan=file_plan,
                     correlation_id=correlation_id,
                     requester_id=requester_id,
                 )
@@ -826,7 +806,7 @@ class CreateAgentJobService:
                 for item in gate.dependencies
                 if item.attachment_id and not item.attachment_id.startswith("current:")
             )
-            file_turn_payload = [file_dependency_payload(item) for item in gate.dependencies]
+            file_turn_payload = file_plan.dependency_payloads()
             job = self.repository.create_job(
                 session_id=session.id,
                 idempotency_key=command.idempotency_key,
@@ -885,8 +865,7 @@ class CreateAgentJobService:
             mcp_tool_snapshot: dict[str, Any] = {}
             if command.business_application_id and self.mcp_tool_snapshot_service is not None:
                 file_server_enabled_for_job = bool(
-                    file_workspace is not None
-                    and command.task_file_features.get("file_mcp_enabled")
+                    file_workspace is not None and file_plan.file_mcp_enabled
                 )
                 mcp_tool_snapshot = self.mcp_tool_snapshot_service.freeze(
                     job_id=job.id,
@@ -954,35 +933,22 @@ class CreateAgentJobService:
                     },
                 )
             file_manifest: dict[str, Any] = {}
-            if file_workspace is not None and bool(
-                command.task_file_features.get("file_mcp_enabled")
-            ):
+            if file_workspace is not None and file_plan.file_mcp_enabled:
                 assert self.file_manifest_service is not None
-                manifest_references = list(command.file_references)
-                seen = {(item.file_id, item.version_id) for item in manifest_references}
-                for item in gate.dependencies:
-                    identity = (item.file_id, item.version_id)
-                    if item.file_id and item.version_id and identity not in seen:
-                        auto_materialize = item.reason != "TIME_WINDOW" or (
-                            item.required_capability in {"READABLE_CONTENT", "ORIGINAL"}
-                            and item.content_available
-                            and sum(1 for dep in gate.dependencies if dep.reason == "TIME_WINDOW")
-                            == 1
-                        )
-                        manifest_references.append(
-                            ChannelFileReference(
-                                file_id=item.file_id,
-                                version_id=item.version_id,
-                                auto_materialize=auto_materialize,
-                            )
-                        )
-                        seen.add(identity)
+                manifest_references = tuple(
+                    ChannelFileReference(
+                        file_id=item.file_id,
+                        version_id=item.version_id,
+                        auto_materialize=item.auto_materialize,
+                    )
+                    for item in file_plan.manifest_bindings
+                )
                 self.file_manifest_service.register_request(
                     job_id=job.id,
                     workspace=file_workspace,
                     requester_id=requester_id,
                     publication_id=command.business_application_publication_id,
-                    file_references=tuple(manifest_references),
+                    file_references=manifest_references,
                 )
                 if not self.file_manifest_service.has_pending_text_attachments(job.id):
                     file_manifest = self.file_manifest_service.finalize(job.id) or {}
@@ -1064,40 +1030,47 @@ class CreateAgentJobService:
             self.publisher.publish_attachment(attachment_id, correlation_id)
         return job
 
-    def _file_turn_gate(
+    def _plan_file_admission(
         self,
         *,
         command: CreateAgentJobCommand,
         session_id: str,
-        workspace_id: str,
-    ) -> tuple[GateDecision, ResolverDecision]:
+        active_workspace_id: str,
+        workspace_feature_enabled: bool,
+    ) -> FileAdmissionPlan:
+        observed_at = datetime.now(UTC)
         rows = self.repository.list_file_turn_candidate_rows(
             session_id=session_id,
-            workspace_id=workspace_id,
+            workspace_id=active_workspace_id,
         )
         retained_rows = self.repository.list_session_retained_attachment_rows(
             session_id=session_id,
-            now=datetime.now(UTC).isoformat(),
+            now=observed_at.isoformat(),
         )
-        decision = resolve_file_context(
+        return plan_file_admission(
             text=command.resolver_text or command.user_message,
-            requests_file_output=(
-                command.requests_file_output
-                or is_explicit_text_output_request(command.user_message)
-            ),
+            output_intent_hint=command.requests_file_output,
+            workspace_enabled=workspace_feature_enabled,
+            workspace_adapter_available=self.file_manifest_service is not None,
+            has_active_workspace=bool(active_workspace_id),
+            file_mcp_enabled=bool(command.task_file_features.get("file_mcp_enabled")),
             current_attachments=tuple(
                 CurrentMessageAttachment(file_name=item.file_name, ordinal=ordinal)
                 for ordinal, item in enumerate(command.attachments, start=1)
             ),
             explicit_references=tuple(
-                (item.file_id, item.version_id) for item in command.file_references
+                AdmissionFileReference(
+                    file_id=item.file_id,
+                    version_id=item.version_id,
+                    auto_materialize=item.auto_materialize,
+                )
+                for item in command.file_references
             ),
             quoted_external_message_id=command.quoted_external_message_id,
             candidates=self._workspace_file_candidates(rows),
             retained_candidates=self._workspace_file_candidates(retained_rows),
-            now=resolver_now(),
+            now=observed_at,
         )
-        return evaluate_file_gate(decision), decision
 
     @staticmethod
     def _workspace_file_candidates(
@@ -1134,15 +1107,13 @@ class CreateAgentJobService:
         session: AgentSession,
         workspace_id: str,
         reply_route: dict[str, Any],
-        gate: GateDecision,
-        decision: ResolverDecision,
+        file_plan: FileAdmissionPlan,
         correlation_id: str,
         requester_id: str,
     ) -> SystemNoticeIntake:
-        names = decision.clarification_names or tuple(
-            item.display_name for item in gate.dependencies if item.display_name
-        )
-        title, markdown = system_notice_markdown(
+        gate = file_plan.gate
+        names = file_plan.notice_names
+        title, markdown = render_file_admission_notice(
             notice_kind=gate.notice_kind or "pending",
             display_names=names,
         )

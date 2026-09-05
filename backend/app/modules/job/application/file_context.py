@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 import re
@@ -17,9 +18,57 @@ BindReason = Literal[
     "TIME_WINDOW",
 ]
 GateAction = Literal["enqueue_job", "wait_source", "system_notice"]
+WorkspaceRequirement = Literal["none", "resolve", "force_create"]
+
+__all__ = (
+    "AdmissionFileReference",
+    "CurrentMessageAttachment",
+    "FileAdmissionPlan",
+    "GateDecision",
+    "ManifestBindingPlan",
+    "WorkspaceFileCandidate",
+    "plan_file_admission",
+    "reevaluate_file_admission",
+    "render_file_admission_notice",
+    "restore_file_admission_gate",
+)
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 TIME_WINDOW_METADATA_LIMIT = 20
+
+TXT_OUTPUT_FORMAT_MARKERS = ("txt", "文本文件", "文本文档")
+MARKDOWN_OUTPUT_FORMAT_MARKERS = (
+    ".md",
+    "md文件",
+    "md文档",
+    "markdown文件",
+    "markdown文档",
+    "markdownfile",
+    "markdowndocument",
+)
+TXT_OUTPUT_ACTION_MARKERS = (
+    "生成",
+    "创建",
+    "新建",
+    "修改",
+    "编辑",
+    "保存",
+    "写入",
+    "制作",
+    "绘制",
+    "画",
+    "输出",
+    "导出",
+    "做",
+    "generate",
+    "create",
+    "edit",
+    "save",
+    "write",
+    "make",
+    "draw",
+    "export",
+)
 
 GENERIC_DEIXIS_PATTERNS: tuple[str, ...] = (
     "这个文件",
@@ -299,15 +348,58 @@ class GateDecision:
     dependencies: tuple[FileDependency, ...] = ()
 
 
-def resolver_now() -> datetime:
+@dataclass(frozen=True, slots=True)
+class AdmissionFileReference:
+    file_id: str
+    version_id: str
+    auto_materialize: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestBindingPlan:
+    file_id: str
+    version_id: str
+    auto_materialize: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FileAdmissionPlan:
+    """One immutable decision for all file-related effects of an Agent Job turn."""
+
+    effective_output_intent: bool
+    gate: GateDecision
+    workspace_requirement: WorkspaceRequirement
+    file_mcp_enabled: bool
+    manifest_bindings: tuple[ManifestBindingPlan, ...]
+    notice_names: tuple[str, ...]
+
+    @property
+    def dependencies(self) -> tuple[FileDependency, ...]:
+        return self.gate.dependencies
+
+    def dependency_payloads(self) -> list[dict[str, str]]:
+        return [_file_dependency_payload(item) for item in self.gate.dependencies]
+
+
+def _resolver_now() -> datetime:
     return datetime.now(SHANGHAI)
 
 
-def normalize_display_name(value: str) -> str:
+def _is_explicit_text_output_request(message: str) -> bool:
+    """Return the existing deterministic format-and-action output signal."""
+
+    normalized = "".join(message.lower().split())
+    format_markers = (*TXT_OUTPUT_FORMAT_MARKERS, *MARKDOWN_OUTPUT_FORMAT_MARKERS)
+    if not any(marker in normalized for marker in format_markers):
+        return False
+    return any(marker in normalized for marker in TXT_OUTPUT_ACTION_MARKERS)
+
+
+def _normalize_display_name(value: str) -> str:
     return unicodedata.normalize("NFC", value).casefold().strip()
 
 
-def infer_capability(text: str) -> FileCapability:
+def _infer_capability(text: str) -> FileCapability:
     if any(pattern.search(text) for pattern in ORIGINAL_PATTERNS):
         return "ORIGINAL"
     if any(pattern.search(text) for pattern in METADATA_PATTERNS):
@@ -364,12 +456,12 @@ def is_image_only_file_query(text: str) -> bool:
     return has_image and not has_generic
 
 
-def parse_time_window(text: str, *, now: datetime | None = None) -> TimeWindow | None:
+def _parse_time_window_value(text: str, *, now: datetime | None = None) -> TimeWindow | None:
     return _parse_time_window(text, now=now).window
 
 
 def _parse_time_window(text: str, *, now: datetime | None = None) -> TimeWindowParse:
-    moment = (now or resolver_now()).astimezone(SHANGHAI)
+    moment = (now or _resolver_now()).astimezone(SHANGHAI)
     if any(token in text for token in PREVIOUS_WEEK_TOKENS):
         current = _week_start(moment)
         return TimeWindowParse(
@@ -402,7 +494,7 @@ def _parse_time_window(text: str, *, now: datetime | None = None) -> TimeWindowP
     return _parse_single_date(text, moment)
 
 
-def resolve_file_context(
+def _resolve_file_context(
     *,
     text: str,
     requests_file_output: bool = False,
@@ -413,7 +505,7 @@ def resolve_file_context(
     retained_candidates: tuple[WorkspaceFileCandidate, ...] = (),
     now: datetime | None = None,
 ) -> ResolverDecision:
-    capability = infer_capability(text)
+    capability = _infer_capability(text)
     if current_attachments:
         return ResolverDecision(
             dependencies=tuple(
@@ -583,7 +675,7 @@ def resolve_file_context(
     )
 
 
-def evaluate_file_gate(decision: ResolverDecision) -> GateDecision:
+def _evaluate_file_gate(decision: ResolverDecision) -> GateDecision:
     if decision.notice_kind == "invalid_time_window":
         return GateDecision(
             action="system_notice",
@@ -674,7 +766,107 @@ def evaluate_file_gate(decision: ResolverDecision) -> GateDecision:
     )
 
 
-def system_notice_markdown(
+def plan_file_admission(
+    *,
+    text: str,
+    output_intent_hint: bool = False,
+    workspace_enabled: bool = False,
+    workspace_adapter_available: bool = False,
+    has_active_workspace: bool = False,
+    file_mcp_enabled: bool = False,
+    current_attachments: tuple[CurrentMessageAttachment, ...] = (),
+    explicit_references: tuple[AdmissionFileReference, ...] = (),
+    quoted_external_message_id: str = "",
+    candidates: tuple[WorkspaceFileCandidate, ...] = (),
+    retained_candidates: tuple[WorkspaceFileCandidate, ...] = (),
+    now: datetime | None = None,
+) -> FileAdmissionPlan:
+    """Freeze the complete deterministic file-admission decision for one turn."""
+
+    effective_output_intent = output_intent_hint or _is_explicit_text_output_request(text)
+    decision = _resolve_file_context(
+        text=text,
+        requests_file_output=effective_output_intent,
+        current_attachments=current_attachments,
+        explicit_references=tuple(
+            (item.file_id, item.version_id) for item in explicit_references
+        ),
+        quoted_external_message_id=quoted_external_message_id,
+        candidates=candidates,
+        retained_candidates=retained_candidates,
+        now=now,
+    )
+    gate = _evaluate_file_gate(decision)
+    workspace_available = workspace_enabled and workspace_adapter_available
+    if not workspace_available:
+        workspace_requirement: WorkspaceRequirement = "none"
+    elif (
+        has_active_workspace
+        or bool(current_attachments)
+        or bool(explicit_references)
+        or effective_output_intent
+    ):
+        workspace_requirement = "resolve"
+    elif gate.action == "enqueue_job" and any(
+        item.reason == "TIME_WINDOW" for item in gate.dependencies
+    ):
+        workspace_requirement = "force_create"
+    else:
+        workspace_requirement = "none"
+    return FileAdmissionPlan(
+        effective_output_intent=effective_output_intent,
+        gate=gate,
+        workspace_requirement=workspace_requirement,
+        file_mcp_enabled=bool(file_mcp_enabled and workspace_available),
+        manifest_bindings=_manifest_binding_plan(explicit_references, gate.dependencies),
+        notice_names=decision.clarification_names
+        or tuple(item.display_name for item in gate.dependencies if item.display_name),
+    )
+
+
+def reevaluate_file_admission(
+    dependencies: tuple[FileDependency, ...],
+) -> GateDecision:
+    """Re-evaluate readiness from frozen dependency identities only."""
+
+    return _evaluate_file_gate(ResolverDecision(dependencies=dependencies))
+
+
+def _manifest_binding_plan(
+    explicit_references: tuple[AdmissionFileReference, ...],
+    dependencies: tuple[FileDependency, ...],
+) -> tuple[ManifestBindingPlan, ...]:
+    bindings = [
+        ManifestBindingPlan(
+            file_id=item.file_id,
+            version_id=item.version_id,
+            auto_materialize=item.auto_materialize,
+        )
+        for item in explicit_references
+    ]
+    seen = {(item.file_id, item.version_id) for item in bindings}
+    time_window_count = sum(1 for item in dependencies if item.reason == "TIME_WINDOW")
+    for item in dependencies:
+        identity = (item.file_id, item.version_id)
+        if not item.file_id or not item.version_id or identity in seen:
+            continue
+        auto_materialize = item.reason != "TIME_WINDOW" or (
+            item.required_capability in {"READABLE_CONTENT", "ORIGINAL"}
+            and item.content_available
+            and time_window_count == 1
+        )
+        bindings.append(
+            ManifestBindingPlan(
+                file_id=item.file_id,
+                version_id=item.version_id,
+                auto_materialize=auto_materialize,
+            )
+        )
+        seen.add(identity)
+    return tuple(bindings)
+
+
+def render_file_admission_notice(
     *,
     notice_kind: str,
     display_names: tuple[str, ...],
@@ -947,7 +1139,7 @@ def _deixis_candidate_pool(
 
 
 def _is_image_candidate(item: WorkspaceFileCandidate) -> bool:
-    name = normalize_display_name(item.display_name)
+    name = _normalize_display_name(item.display_name)
     return name.endswith(IMAGE_NAME_SUFFIXES)
 
 
@@ -966,17 +1158,17 @@ def _unique_filename_hits(
             unique[key] = item
     collapsed = tuple(unique.values())
     identities = {(item.file_id, item.version_id) for item in collapsed}
-    names = {normalize_display_name(item.display_name) for item in collapsed}
+    names = {_normalize_display_name(item.display_name) for item in collapsed}
     if len(identities) > 1 and len(names) == 1:
         return "ambiguous"
     return collapsed
 
 
 def _name_mentioned(text: str, item: WorkspaceFileCandidate) -> bool:
-    needle = normalize_display_name(item.display_name)
+    needle = _normalize_display_name(item.display_name)
     if not needle or "." not in needle:
         return False
-    return needle in normalize_display_name(text)
+    return needle in _normalize_display_name(text)
 
 
 def _safe_file_name(value: str) -> str:
@@ -990,7 +1182,7 @@ def _source_pending(item: FileDependency) -> bool:
     return item.reason == "CURRENT_MESSAGE" and item.source_status not in SOURCE_TERMINAL
 
 
-def file_dependency_payload(item: FileDependency) -> dict[str, str]:
+def _file_dependency_payload(item: FileDependency) -> dict[str, str]:
     return {
         "file_id": item.file_id,
         "version_id": item.version_id,
@@ -1006,7 +1198,7 @@ def file_dependency_payload(item: FileDependency) -> dict[str, str]:
     }
 
 
-def file_dependency_from_payload(value: dict[str, object]) -> FileDependency:
+def _file_dependency_from_payload(value: dict[str, object]) -> FileDependency:
     capability = str(value.get("required_capability") or "READABLE_CONTENT")
     reason = str(value.get("reason") or "FILENAME")
     if capability not in {"METADATA", "ORIGINAL", "READABLE_CONTENT"}:
@@ -1028,3 +1220,30 @@ def file_dependency_from_payload(value: dict[str, object]) -> FileDependency:
         source_received_at=received or None,
         content_available=content_available,
     )
+
+
+def restore_file_admission_gate(
+    *,
+    stored_payloads: Iterable[object],
+    current_attachment_ids: Mapping[int, str],
+    refresh_dependency: Callable[[dict[str, object]], Mapping[str, object]],
+) -> GateDecision:
+    """Restore an old or current dependency payload without re-parsing the message."""
+
+    dependencies: list[FileDependency] = []
+    for item in stored_payloads:
+        if not isinstance(item, Mapping):
+            continue
+        payload: dict[str, object] = {str(key): value for key, value in item.items()}
+        attachment_id = str(payload.get("attachment_id") or "")
+        if attachment_id.startswith("current:"):
+            try:
+                ordinal = int(attachment_id.split(":", 1)[1])
+            except ValueError:
+                ordinal = 0
+            resolved_attachment_id = current_attachment_ids.get(ordinal)
+            if resolved_attachment_id:
+                payload["attachment_id"] = resolved_attachment_id
+        refreshed = refresh_dependency(payload)
+        dependencies.append(_file_dependency_from_payload(dict(refreshed)))
+    return reevaluate_file_admission(tuple(dependencies))

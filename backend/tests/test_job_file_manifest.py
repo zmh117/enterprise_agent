@@ -20,8 +20,8 @@ from app.modules.file_workspace.domain import (
 )
 from app.modules.file_workspace.manifest_service import (
     JobFileManifestService,
-    is_explicit_text_output_request,
 )
+from app.modules.job.application.file_context import plan_file_admission
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
 from app.shared.exceptions import NonRetryableExecutionError
@@ -40,7 +40,7 @@ from backend.tests.test_file_workspace_repository import (
     ],
 )
 def test_current_rule_requires_explicit_markdown_file_output_intent(message: str) -> None:
-    assert is_explicit_text_output_request(message) is True
+    assert plan_file_admission(text=message).effective_output_intent is True
 
 
 @pytest.mark.parametrize(
@@ -55,7 +55,7 @@ def test_current_rule_requires_explicit_markdown_file_output_intent(message: str
 def test_text_v2_does_not_create_workspace_for_discussion_or_log_analysis(
     message: str,
 ) -> None:
-    assert is_explicit_text_output_request(message) is False
+    assert plan_file_admission(text=message).effective_output_intent is False
 
 
 def _service() -> tuple[FileWorkspaceRepository, JobFileManifestService]:
@@ -73,7 +73,7 @@ def _service() -> tuple[FileWorkspaceRepository, JobFileManifestService]:
     ),
 )
 def test_explicit_txt_output_request_recognizes_generation_phrases(message: str) -> None:
-    assert is_explicit_text_output_request(message) is True
+    assert plan_file_admission(text=message).effective_output_intent is True
 
 
 @pytest.mark.parametrize(
@@ -85,7 +85,7 @@ def test_explicit_txt_output_request_recognizes_generation_phrases(message: str)
     ),
 )
 def test_explicit_txt_output_request_rejects_non_output_questions(message: str) -> None:
-    assert is_explicit_text_output_request(message) is False
+    assert plan_file_admission(text=message).effective_output_intent is False
 
 
 def _insert_job(

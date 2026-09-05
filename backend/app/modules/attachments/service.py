@@ -17,10 +17,8 @@ from app.modules.file_workspace.contracts import FILE_ERROR_CATALOG
 from app.modules.file_workspace.manifest_service import JobFileManifestService
 from app.modules.file_workspace.text_format_policy import get_text_format_policy
 from app.modules.job.application.file_context import (
-    ResolverDecision,
-    evaluate_file_gate,
-    file_dependency_from_payload,
-    system_notice_markdown,
+    render_file_admission_notice,
+    restore_file_admission_gate,
 )
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
@@ -306,24 +304,11 @@ class AttachmentProcessingService:
         stored = (job.business_application_route_decision or {}).get("file_turn_dependencies")
         if not isinstance(stored, list) or not stored:
             return None
-        by_ordinal = {item.ordinal: item for item in attachments}
-        dependencies = []
-        for item in stored:
-            if not isinstance(item, dict):
-                continue
-            payload = dict(item)
-            attachment_id = str(payload.get("attachment_id") or "")
-            if attachment_id.startswith("current:"):
-                try:
-                    ordinal = int(attachment_id.split(":", 1)[1])
-                except ValueError:
-                    ordinal = 0
-                match = by_ordinal.get(ordinal)
-                if match is not None:
-                    payload["attachment_id"] = match.id
-            refreshed = self.repository.refresh_file_turn_dependency_row(payload)
-            dependencies.append(file_dependency_from_payload(refreshed))
-        return evaluate_file_gate(ResolverDecision(dependencies=tuple(dependencies)))
+        return restore_file_admission_gate(
+            stored_payloads=stored,
+            current_attachment_ids={item.ordinal: item.id for item in attachments},
+            refresh_dependency=self.repository.refresh_file_turn_dependency_row,
+        )
 
     def _end_waiting_job_with_notice(
         self,
@@ -340,7 +325,7 @@ class AttachmentProcessingService:
             for item in source_rejections
             if (definition := FILE_ERROR_CATALOG.get(item.error_code)) is not None
         )
-        title, markdown = system_notice_markdown(
+        title, markdown = render_file_admission_notice(
             notice_kind=(
                 "rejected"
                 if source_rejections and len(source_rejections) == len(gate.dependencies)
@@ -408,7 +393,9 @@ class AttachmentProcessingService:
         for turn in self.repository.list_ready_file_readiness_blocked_turns():
             version_ids = tuple(self.repository.list_blocked_turn_version_ids(str(turn["id"])))
             names = self.repository.display_names_for_versions(version_ids)
-            title, markdown = system_notice_markdown(notice_kind="ready", display_names=names)
+            title, markdown = render_file_admission_notice(
+                notice_kind="ready", display_names=names
+            )
             session = self.repository.get_session(str(turn["session_id"]))
             self.delivery_service.enqueue_system_notice(
                 idempotency_key=f"file-ready-notice:{turn['id']}",

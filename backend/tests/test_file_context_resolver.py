@@ -4,14 +4,17 @@ from datetime import datetime
 
 from app.modules.job.application.file_context import (
     SHANGHAI,
+    AdmissionFileReference,
     CurrentMessageAttachment,
     WorkspaceFileCandidate,
-    evaluate_file_gate,
-    file_dependency_payload,
-    infer_capability,
-    parse_time_window,
-    resolve_file_context,
-    system_notice_markdown,
+    _evaluate_file_gate as evaluate_file_gate,
+    _file_dependency_payload as file_dependency_payload,
+    _infer_capability as infer_capability,
+    _parse_time_window_value as parse_time_window,
+    _resolve_file_context as resolve_file_context,
+    plan_file_admission,
+    render_file_admission_notice as system_notice_markdown,
+    restore_file_admission_gate,
 )
 
 
@@ -584,6 +587,128 @@ def test_output_request_can_still_use_explicit_time_window_file_sources() -> Non
 
     assert [item.version_id for item in decision.dependencies] == ["v-today"]
     assert decision.dependencies[0].reason == "TIME_WINDOW"
+
+
+def test_admission_plan_freezes_output_workspace_and_empty_manifest_binding() -> None:
+    plan = plan_file_admission(
+        text="生成 md 文件记录我今天的对话",
+        workspace_enabled=True,
+        workspace_adapter_available=True,
+        file_mcp_enabled=True,
+        now=datetime(2026, 9, 4, 12, 0, tzinfo=SHANGHAI),
+    )
+
+    assert plan.effective_output_intent is True
+    assert plan.gate.action == "enqueue_job"
+    assert plan.gate.reason_code == "no_file_dependency"
+    assert plan.workspace_requirement == "resolve"
+    assert plan.file_mcp_enabled is True
+    assert plan.dependencies == ()
+    assert plan.manifest_bindings == ()
+
+
+def test_admission_plan_keeps_time_window_candidates_metadata_only() -> None:
+    plan = plan_file_admission(
+        text="根据今天上传的文件生成汇总.md",
+        workspace_enabled=True,
+        workspace_adapter_available=True,
+        file_mcp_enabled=True,
+        retained_candidates=(
+            WorkspaceFileCandidate(
+                file_id="f-today",
+                version_id="v-today",
+                display_name="今日材料.txt",
+                source_status="READY",
+                readability_status="NOT_REQUIRED",
+                source_received_at="2026-09-04T02:00:00+00:00",
+            ),
+        ),
+        now=datetime(2026, 9, 4, 12, 0, tzinfo=SHANGHAI),
+    )
+
+    assert plan.gate.action == "enqueue_job"
+    assert plan.workspace_requirement == "resolve"
+    assert [(item.required_capability, item.reason) for item in plan.dependencies] == [
+        ("METADATA", "TIME_WINDOW")
+    ]
+    assert [
+        (item.file_id, item.version_id, item.auto_materialize)
+        for item in plan.manifest_bindings
+    ] == [("f-today", "v-today", False)]
+
+
+def test_admission_plan_for_time_window_read_without_workspace_forces_creation() -> None:
+    plan = plan_file_admission(
+        text="读取今天上传的文件",
+        workspace_enabled=True,
+        workspace_adapter_available=True,
+        file_mcp_enabled=True,
+        retained_candidates=(
+            WorkspaceFileCandidate(
+                file_id="f-today",
+                version_id="v-today",
+                display_name="今日材料.txt",
+                source_status="READY",
+                readability_status="NOT_REQUIRED",
+                source_received_at="2026-09-04T02:00:00+00:00",
+            ),
+        ),
+        now=datetime(2026, 9, 4, 12, 0, tzinfo=SHANGHAI),
+    )
+
+    assert plan.effective_output_intent is False
+    assert plan.workspace_requirement == "force_create"
+    assert plan.manifest_bindings[0].auto_materialize is False
+
+
+def test_admission_plan_preserves_explicit_reference_materialization_fact() -> None:
+    plan = plan_file_admission(
+        text="查看指定文件",
+        explicit_references=(
+            AdmissionFileReference(
+                file_id="f-explicit",
+                version_id="v-explicit",
+                auto_materialize=False,
+            ),
+        ),
+    )
+
+    assert plan.manifest_bindings[0].auto_materialize is False
+
+
+def test_restore_old_dependency_payload_only_refreshes_frozen_identity() -> None:
+    refreshed_payloads: list[dict[str, object]] = []
+
+    def refresh(payload: dict[str, object]) -> dict[str, object]:
+        refreshed_payloads.append(dict(payload))
+        return {
+            **payload,
+            "file_id": "file-ready",
+            "version_id": "version-ready",
+            "source_status": "READY",
+            "readability_status": "AVAILABLE",
+        }
+
+    gate = restore_file_admission_gate(
+        stored_payloads=(
+            {
+                "attachment_id": "current:1",
+                "display_name": "历史任务.md",
+                "required_capability": "READABLE_CONTENT",
+                "reason": "CURRENT_MESSAGE",
+                "source_status": "PENDING",
+                "readability_status": "PENDING",
+            },
+        ),
+        current_attachment_ids={1: "attachment-existing"},
+        refresh_dependency=refresh,
+    )
+
+    assert refreshed_payloads[0]["attachment_id"] == "attachment-existing"
+    assert gate.action == "enqueue_job"
+    assert [(item.file_id, item.version_id) for item in gate.dependencies] == [
+        ("file-ready", "version-ready")
+    ]
 
 
 def test_aitable_target_with_business_time_scope_does_not_query_workspace_files() -> None:

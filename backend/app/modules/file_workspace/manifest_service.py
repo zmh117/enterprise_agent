@@ -38,41 +38,8 @@ CONFLICT_ACTIONS = (
     FileAction.EDIT,
     FileAction.COMMIT,
 )
-TXT_OUTPUT_FORMAT_MARKERS = ("txt", "文本文件", "文本文档")
-MARKDOWN_OUTPUT_FORMAT_MARKERS = (
-    ".md",
-    "md文件",
-    "md文档",
-    "markdown文件",
-    "markdown文档",
-    "markdownfile",
-    "markdowndocument",
-)
 DOCUMENT_INPUT_SUFFIXES = frozenset(
     {".pdf", ".docx", ".pptx", ".xlsx", ".png", ".jpg", ".jpeg", ".webp"}
-)
-TXT_OUTPUT_ACTION_MARKERS = (
-    "生成",
-    "创建",
-    "新建",
-    "修改",
-    "编辑",
-    "保存",
-    "写入",
-    "制作",
-    "绘制",
-    "画",
-    "输出",
-    "导出",
-    "做",
-    "generate",
-    "create",
-    "edit",
-    "save",
-    "write",
-    "make",
-    "draw",
-    "export",
 )
 
 
@@ -82,16 +49,6 @@ def is_task_text_name(value: str) -> bool:
     except NonRetryableExecutionError:
         return False
     return True
-
-
-def is_explicit_text_output_request(message: str) -> bool:
-    """Conservative format+action signal for pre-creating a workspace."""
-
-    normalized = "".join(message.lower().split())
-    format_markers = [*TXT_OUTPUT_FORMAT_MARKERS, *MARKDOWN_OUTPUT_FORMAT_MARKERS]
-    if not any(marker in normalized for marker in format_markers):
-        return False
-    return any(marker in normalized for marker in TXT_OUTPUT_ACTION_MARKERS)
 
 
 class JobFileManifestService:
@@ -104,6 +61,11 @@ class JobFileManifestService:
     ) -> None:
         self.repository = repository
         self.workspace_service = workspace_service
+
+    def active_workspace(self, session_id: str) -> dict[str, Any] | None:
+        """Return the current workspace without creating or mutating one."""
+
+        return self.repository.get_active_workspace(session_id)
 
     def resolve_workspace(
         self,

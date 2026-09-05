@@ -32,6 +32,7 @@ contract = [
   "test_agent_context_audit_repository.py",
   "test_agent_job_debug_authorization.py",
   "test_agent_job_debug_queries.py",
+  "test_agent_job_file_admission.py",
   "test_agent_profile_creation.py",
   "test_agent_profile_model_connections.py",
   "test_agent_run_audit_repository.py",
