@@ -586,6 +586,18 @@ def test_output_request_can_still_use_explicit_time_window_file_sources() -> Non
     assert decision.dependencies[0].reason == "TIME_WINDOW"
 
 
+def test_aitable_target_with_business_time_scope_does_not_query_workspace_files() -> None:
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(
+        text="把我本周创建的bug填入到ai表工作-缺陷统计里",
+        now=now,
+    )
+
+    assert decision.dependencies == ()
+    assert decision.notice_kind == ""
+    assert evaluate_file_gate(decision).action == "enqueue_job"
+
+
 def test_parse_time_window_natural_week_and_calendar_dates() -> None:
     monday = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
     last_week = parse_time_window("上周的图", now=monday)
