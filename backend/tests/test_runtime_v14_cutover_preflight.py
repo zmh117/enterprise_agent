@@ -68,7 +68,7 @@ def test_runtime_v14_cutover_preflight_is_ready_only_for_drained_facts(
     assert report == {
         "mode": "read-only",
         "target_protocol_version": "1.4",
-        "schema_head": "129",
+        "schema_head": "130",
         "database": {
             "protocol_v13_nonterminal_jobs": 0,
             "protocol_v13_dispatch_outbox_nonterminal": 0,

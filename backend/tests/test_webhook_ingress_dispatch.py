@@ -102,6 +102,22 @@ def _receive(
     )
 
 
+def test_default_webhook_seed_pins_current_default_agent_publication() -> None:
+    c = _container()
+    webhook_publication = c.webhook_trigger_repository.get_publication(
+        "webhook_trigger_publication_grafana_v1"
+    )
+    agent_publication = c.agent_config_service.publication("agent_publication_default_v1")
+    pinned_agent = webhook_publication["snapshot"]["agent"]
+
+    assert webhook_publication["agent_publication_id"] == agent_publication["id"]
+    assert webhook_publication["agent_revision"] == agent_publication["revision"]
+    assert webhook_publication["agent_config_hash"] == agent_publication["config_hash"]
+    assert pinned_agent["publication_id"] == agent_publication["id"]
+    assert pinned_agent["revision"] == agent_publication["revision"]
+    assert pinned_agent["config_hash"] == agent_publication["config_hash"]
+
+
 def test_firing_is_persisted_then_dispatches_one_pinned_agent_job() -> None:
     c = _container()
     acknowledgement = _receive(c, _firing())
@@ -147,6 +163,29 @@ def test_firing_is_persisted_then_dispatches_one_pinned_agent_job() -> None:
     assert duplicate.event_id == acknowledgement.event_id
     assert c.agent_repository.count_rows("agent_job") == 1
     assert c.agent_repository.count_rows("webhook_outbox") == 1
+
+
+def test_dispatch_fails_closed_when_pinned_agent_hash_does_not_match() -> None:
+    c = _container()
+    acknowledgement = _receive(c, _firing("mismatched-agent-publication"))
+    publication = c.webhook_trigger_repository.get_publication(
+        "webhook_trigger_publication_grafana_v1"
+    )
+    snapshot = publication["snapshot"]
+    snapshot["agent"]["config_hash"] = "0" * 64
+    c.database.execute(
+        "update webhook_trigger_publication set snapshot_json = ? where id = ?",
+        (json.dumps(snapshot, sort_keys=True), publication["id"]),
+    )
+
+    assert c.webhook_outbox_publisher.publish_pending().published == 1
+    c.message_bus.consume_webhook_events(c.webhook_dispatcher.handle)
+
+    event = c.webhook_event_repository.get(acknowledgement.event_id)
+    assert event["status"] == "DISPATCH_FAILED"
+    assert event["error_summary"] == "Webhook Agent 配置完整性校验失败"
+    assert event["job_id"] is None
+    assert c.agent_repository.count_rows("agent_job") == 0
 
 
 def test_distinct_webhook_events_use_isolated_sessions_even_when_continuity_is_enabled() -> None:

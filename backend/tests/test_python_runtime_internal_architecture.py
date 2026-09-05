@@ -22,7 +22,7 @@ def _runtime_imports(path: Path) -> set[str]:
             imports.add(node.module.split(".", 1)[0])
             continue
         if node.module.startswith(f"{RUNTIME_PACKAGE}."):
-            imports.add(node.module.removeprefix(f"{RUNTIME_PACKAGE}." ).split(".", 1)[0])
+            imports.add(node.module.removeprefix(f"{RUNTIME_PACKAGE}.").split(".", 1)[0])
     return imports
 
 
@@ -40,8 +40,7 @@ def test_application_owns_the_single_runtime_client_port() -> None:
 
     assert "app.modules.agent.application.runtime_client" in executor_imports
     assert not any(
-        module and module.startswith("app.modules.agent.infrastructure")
-        for module in port_imports
+        module and module.startswith("app.modules.agent.infrastructure") for module in port_imports
     )
     assert "RuntimeClientRegistry" not in bootstrap
     assert "runtime_clients" not in bootstrap
@@ -123,7 +122,13 @@ def test_python_runtime_has_no_dynamic_plugin_or_runtime_registry() -> None:
                 continue
             assert len(node.args) == 1 and isinstance(node.args[0], ast.Constant)
             dynamic_imports.append(str(node.args[0].value))
-    assert dynamic_imports == ["claude_agent_sdk", "claude_code_sdk"]
+    assert sorted(dynamic_imports) == sorted(
+        [
+            "claude_agent_sdk",
+            "claude_code_sdk",
+            "claude_agent_sdk._cli_version",
+        ]
+    )
 
 
 def test_sdk_client_has_no_business_state_dependencies() -> None:

@@ -25,6 +25,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request as StarletteRequest
 
+import app.python_runtime.claude_client as claude_client_module
 from app.modules.agent.infrastructure.runtime_protocol import (
     CURRENT_RUNTIME_PROTOCOL_VERSION,
     SUPPORTED_RUNTIME_PROTOCOL_VERSIONS,
@@ -96,6 +97,60 @@ from backend.tests.business_mcp_fixtures import (
     business_mcp_test_policies,
 )
 from backend.tests.support.runtime import container, test_settings as build_settings
+
+
+def test_claude_cli_version_prefers_fixed_bundled_sdk_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def import_module(name: str) -> SimpleNamespace:
+        assert name == "claude_agent_sdk._cli_version"
+        return SimpleNamespace(__cli_version__="2.1.239")
+
+    monkeypatch.setattr(claude_client_module.importlib, "import_module", import_module)
+    monkeypatch.setattr(
+        claude_client_module.shutil,
+        "which",
+        lambda _name: pytest.fail("bundled CLI version must avoid executable discovery"),
+    )
+    claude_client_module.claude_cli_version.cache_clear()
+    try:
+        assert claude_client_module.claude_cli_version() == "2.1.239"
+    finally:
+        claude_client_module.claude_cli_version.cache_clear()
+
+
+def test_claude_cli_version_falls_back_to_fixed_executable_when_module_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def import_module(name: str) -> SimpleNamespace:
+        assert name == "claude_agent_sdk._cli_version"
+        raise ModuleNotFoundError(name)
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        commands.append(command)
+        assert kwargs == {
+            "capture_output": True,
+            "text": True,
+            "timeout": 2,
+            "check": False,
+        }
+        return SimpleNamespace(stdout="2.1.240\n", stderr="")
+
+    monkeypatch.setattr(claude_client_module.importlib, "import_module", import_module)
+    monkeypatch.setattr(
+        claude_client_module.shutil,
+        "which",
+        lambda name: "/opt/claude" if name == "claude" else None,
+    )
+    monkeypatch.setattr(claude_client_module.subprocess, "run", run)
+    claude_client_module.claude_cli_version.cache_clear()
+    try:
+        assert claude_client_module.claude_cli_version() == "2.1.240"
+        assert commands == [["/opt/claude", "--version"]]
+    finally:
+        claude_client_module.claude_cli_version.cache_clear()
 
 
 class FakePythonExecutor:

@@ -74,7 +74,7 @@ def test_file_turn_admission_expand_schema() -> None:
         default_migrations_dir(),
         migrator_build="file-turn-admission-schema-test",
     ).run()
-    assert result.head == "129"
+    assert result.head == "130"
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")
