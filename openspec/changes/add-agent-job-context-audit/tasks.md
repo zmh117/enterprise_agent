@@ -36,3 +36,10 @@
 - [x] 6.3 删除 `context_manifest` 可派生的 `rendered_text` 副本，保持完整 `content` 与统计口径
 - [x] 6.4 补充当前问题单次发送、相同正文历史保留、会话元数据最小化和审计单份存储回归
 - [x] 6.5 同步 execution-delivery delta 到 canonical spec，并完成聚焦测试、静态检查、Compose 与 strict OpenSpec 验证
+
+## 7. 修复超长审计正文展开卡死
+
+- [x] 7.1 修订 proposal/design/delta spec，明确初始 Job 详情只返回 invocation 摘要，完整正文按固定字段、服务端上限和游标延迟读取
+- [x] 7.2 实现受 Job 授权与业务范围保护的审计摘要和字段分页 API，覆盖不读取初始正文、有界分页、非法字段/游标及跨 Job audit ID 失败关闭
+- [x] 7.3 前端折叠区仅在展开后查询正文并只挂载当前分段，提供上一段/下一段导航及大载荷交互回归
+- [x] 7.4 完成后端/前端聚焦测试、Ruff、Mypy、ESLint、TypeScript、生产构建、Compose、strict OpenSpec、diff check 与浏览器验收

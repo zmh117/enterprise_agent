@@ -413,6 +413,22 @@ const runAuditSummarySchema = z
   })
   .passthrough()
 
+export const agentRunAuditFieldSchema = z.enum([
+  "context_manifest",
+  "system_prompt",
+  "user_prompt",
+  "tool_definitions",
+  "permission_snapshot",
+  "init_snapshot",
+  "sdk_messages",
+  "api_requests",
+  "api_responses",
+  "tool_executions",
+  "model_requests",
+  "usage",
+  "error",
+])
+
 const agentRunAuditSchema = z
   .object({
     id: z.string(),
@@ -422,18 +438,6 @@ const agentRunAuditSchema = z
     attempt_no: z.number().int().positive(),
     status: z.enum(["SUCCEEDED", "FAILED", "CANCELLED"]),
     audit_sha256: z.string(),
-    context_manifest: z.record(z.string(), z.unknown()).default({}),
-    system_prompt: z.string().default(""),
-    user_prompt: z.string().default(""),
-    tool_definitions: z.array(z.unknown()).default([]),
-    permission_snapshot: z.record(z.string(), z.unknown()).default({}),
-    init_snapshot: z.record(z.string(), z.unknown()).default({}),
-    sdk_messages: z.array(z.unknown()).default([]),
-    api_requests: z.array(z.unknown()).default([]),
-    api_responses: z.array(z.unknown()).default([]),
-    tool_executions: z.array(z.unknown()).default([]),
-    model_requests: z.array(z.unknown()).default([]),
-    usage: z.record(z.string(), z.unknown()).default({}),
     summary: runAuditSummarySchema.default({
       model_request_count: 0,
       max_request_context_tokens: 0,
@@ -454,12 +458,23 @@ const agentRunAuditSchema = z
       "not_applicable",
     ]),
     provider_thinking_disclosure: z.string().default(""),
-    error: z.record(z.string(), z.unknown()).default({}),
     started_at: z.string(),
     finished_at: z.string(),
     created_at: z.string(),
   })
-  .passthrough()
+  .strip()
+
+export const agentRunAuditFieldPageSchema = z.object({
+  audit_id: z.string(),
+  field: agentRunAuditFieldSchema,
+  content_type: z.enum(["json", "text"]),
+  content: z.string(),
+  start_offset: z.number().int().nonnegative(),
+  end_offset: z.number().int().nonnegative(),
+  total_chars: z.number().int().nonnegative(),
+  has_more: z.boolean(),
+  next_cursor: z.string().nullable(),
+})
 
 export const runtimeJobDetailSchema = z
   .object({
@@ -682,6 +697,10 @@ export type JobDispatch = z.infer<typeof jobDispatchSchema>
 export type FileWorkspaceEvidence = z.infer<typeof fileWorkspaceSchema>
 export type ToolContractEvidence = z.infer<typeof toolContractEvidenceSchema>
 export type AgentRunAudit = z.infer<typeof agentRunAuditSchema>
+export type AgentRunAuditField = z.infer<typeof agentRunAuditFieldSchema>
+export type AgentRunAuditFieldPage = z.infer<
+  typeof agentRunAuditFieldPageSchema
+>
 export type FileOperations = z.infer<typeof fileOperationsSchema>
 export const TEXT_RUNTIME_FILE_FORMATS = TEXT_FILE_FORMAT_CODES
 export const DOCUMENT_RUNTIME_FILE_FORMATS = DOCUMENT_FILE_FORMAT_CODES

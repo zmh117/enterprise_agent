@@ -1,9 +1,11 @@
 import {
   conversationDetailSchema,
   fileOperationsSchema,
+  agentRunAuditFieldPageSchema,
   modelCallPageSchema,
   runtimeJobDetailSchema,
   runtimeJobPageSchema,
+  type AgentRunAuditField,
 } from "@/contexts/operations/domain/runtime-record"
 import { ApiError, apiRequest } from "@/shared/api/api-client"
 
@@ -51,6 +53,22 @@ export async function getRuntimeJob(jobId: string) {
     })
   }
   return parsed.data
+}
+
+export async function getRuntimeJobAuditField(
+  jobId: string,
+  auditId: string,
+  field: AgentRunAuditField,
+  cursor = ""
+) {
+  const params = new URLSearchParams()
+  if (cursor) params.set("cursor", cursor)
+  const query = params.size ? `?${params.toString()}` : ""
+  return agentRunAuditFieldPageSchema.parse(
+    await apiRequest(
+      `/api/admin/jobs/${encodeURIComponent(jobId)}/run-audits/${encodeURIComponent(auditId)}/fields/${encodeURIComponent(field)}${query}`
+    )
+  )
 }
 
 export async function listRuntimeJobModelCalls(

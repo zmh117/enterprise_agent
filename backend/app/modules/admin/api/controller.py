@@ -395,8 +395,44 @@ def build_admin_router() -> APIRouter:
             from fastapi import HTTPException
 
             raise HTTPException(status_code=404, detail="未找到 Agent 任务")
-        evidence["run_audits"] = repository.job_run_audits(job_id)
+        evidence["run_audits"] = repository.job_run_audit_summaries(job_id)
         return evidence
+
+    @router.get("/jobs/{job_id}/run-audits/{audit_id}/fields/{field}")
+    def job_run_audit_field(
+        request: Request,
+        job_id: str,
+        audit_id: str,
+        field: str,
+        cursor: str = "",
+    ) -> dict[str, Any]:
+        principal = require_action(
+            request, resource_type="agent_job", resource_code="*", action="read"
+        )
+        c = container(request)
+        repository = AdminReadRepository(c.database)
+        scope_subject = repository.job_scope_subject(job_id)
+        if scope_subject is None or not _scope(c, principal).permits(scope_subject):
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="未找到 Agent 任务")
+        try:
+            page = repository.job_run_audit_field(
+                job_id=job_id,
+                audit_id=audit_id,
+                field=field,
+                offset=_audit_field_offset(cursor),
+            )
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+        if page is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="未找到 Agent 运行审计")
+        page["next_cursor"] = (
+            PageWindow.encode(str(page["end_offset"])) if page["has_more"] else None
+        )
+        return page
 
     @router.get("/conversations")
     def conversations(
@@ -583,9 +619,30 @@ def _job_cursor(cursor: str) -> tuple[str, str]:
 
 
 def _csv_values(value: str) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(item.strip()[:100] for item in value.split(",") if item.strip()))[
-        :20
-    ]
+    return tuple(
+        dict.fromkeys(item.strip()[:100] for item in value.split(",") if item.strip())
+    )[:20]
+
+
+def _audit_field_offset(cursor: str) -> int:
+    if not cursor:
+        return 0
+    try:
+        decoded = PageWindow.decode(cursor)
+        offset = int(decoded)
+    except Exception as exc:
+        raise NonRetryableExecutionError(
+            "Agent run audit pagination cursor is malformed",
+            safe_message="Agent 运行审计分页游标无效",
+            error_code="agent_run_audit_cursor_invalid",
+        ) from exc
+    if offset < 0 or offset > 2**63 - 1:
+        raise NonRetryableExecutionError(
+            "Agent run audit pagination cursor is outside the supported range",
+            safe_message="Agent 运行审计分页游标无效",
+            error_code="agent_run_audit_cursor_invalid",
+        )
+    return offset
 
 
 def _page(items: list[dict[str, Any]], page: PageWindow, time_field: str) -> dict[str, Any]:

@@ -4,9 +4,11 @@ import {
   getConversation,
   getFileOperations,
   getRuntimeJob,
+  getRuntimeJobAuditField,
   listRuntimeJobs,
   type RuntimeJobFilters,
 } from "@/contexts/operations/infrastructure/runtime-record-api"
+import type { AgentRunAuditField } from "@/contexts/operations/domain/runtime-record"
 
 export function useRuntimeJobs(filters: RuntimeJobFilters = {}) {
   return useQuery({
@@ -20,6 +22,29 @@ export function useRuntimeJob(jobId: string) {
     queryKey: ["operations", "jobs", jobId],
     queryFn: () => getRuntimeJob(jobId),
     enabled: Boolean(jobId),
+  })
+}
+
+export function useRuntimeJobAuditField(
+  jobId: string,
+  auditId: string,
+  field: AgentRunAuditField,
+  cursor: string,
+  enabled: boolean
+) {
+  return useQuery({
+    queryKey: [
+      "operations",
+      "jobs",
+      jobId,
+      "run-audits",
+      auditId,
+      field,
+      cursor,
+    ],
+    queryFn: () => getRuntimeJobAuditField(jobId, auditId, field, cursor),
+    enabled: Boolean(jobId && auditId && enabled),
+    gcTime: 0,
   })
 }
 

@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.repositories import (
+    RUN_AUDIT_FIELD_PAGE_CHARS,
+    AgentRepository,
+)
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.migrations import Migrator
@@ -87,6 +90,88 @@ def test_complete_audit_is_unfiltered_and_idempotent(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0]["system_prompt"] == audit["system_prompt"]
     assert rows[0]["api_responses"][0]["body"]["content"] in audit["system_prompt"]
+
+
+def test_admin_summary_omits_bodies_and_field_reader_pages_without_accumulation(
+    tmp_path: Path,
+) -> None:
+    repository, job_id = _repository(tmp_path)
+    system_prompt = "审计正文" * (RUN_AUDIT_FIELD_PAGE_CHARS // 4 + 100)
+    audit = _audit("summary-marker")
+    audit["system_prompt"] = system_prompt
+    audit_id = repository.record_run_audit(
+        job_id=job_id,
+        invocation_id=f"{job_id}.attempt-0",
+        request_digest="d" * 64,
+        attempt_no=1,
+        status="SUCCEEDED",
+        audit=audit,
+    )
+
+    summaries = repository.list_run_audit_summaries(job_id)
+    assert len(summaries) == 1
+    assert summaries[0]["id"] == audit_id
+    assert summaries[0]["summary"] == audit["summary"]
+    assert "system_prompt" not in summaries[0]
+    assert "api_responses" not in summaries[0]
+    assert system_prompt not in str(summaries[0])
+
+    first = repository.read_run_audit_field(
+        job_id=job_id,
+        audit_id=audit_id,
+        field="system_prompt",
+        offset=0,
+    )
+    assert first is not None
+    assert first["content_type"] == "text"
+    assert len(first["content"]) == RUN_AUDIT_FIELD_PAGE_CHARS
+    assert first["has_more"] is True
+
+    second = repository.read_run_audit_field(
+        job_id=job_id,
+        audit_id=audit_id,
+        field="system_prompt",
+        offset=int(first["end_offset"]),
+    )
+    assert second is not None
+    assert first["content"] + second["content"] == system_prompt
+    assert second["has_more"] is False
+    with pytest.raises(NonRetryableExecutionError, match="offset exceeds content length"):
+        repository.read_run_audit_field(
+            job_id=job_id,
+            audit_id=audit_id,
+            field="system_prompt",
+            offset=len(system_prompt) + 1,
+        )
+
+
+def test_field_reader_rejects_unknown_field_and_cross_job_audit_id(tmp_path: Path) -> None:
+    repository, job_id = _repository(tmp_path)
+    audit_id = repository.record_run_audit(
+        job_id=job_id,
+        invocation_id=f"{job_id}.attempt-0",
+        request_digest="d" * 64,
+        attempt_no=1,
+        status="SUCCEEDED",
+        audit=_audit(),
+    )
+
+    with pytest.raises(NonRetryableExecutionError, match="field is invalid"):
+        repository.read_run_audit_field(
+            job_id=job_id,
+            audit_id=audit_id,
+            field="credential",
+            offset=0,
+        )
+    assert (
+        repository.read_run_audit_field(
+            job_id="another-job",
+            audit_id=audit_id,
+            field="system_prompt",
+            offset=0,
+        )
+        is None
+    )
 
 
 def test_conflicting_invocation_replay_is_rejected(tmp_path: Path) -> None:

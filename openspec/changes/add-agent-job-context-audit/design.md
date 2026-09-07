@@ -53,13 +53,15 @@ migration 124 新增 `agent_run_audit`，以 `(job_id, invocation_id)` 唯一，
 
 `AgentRunResult` 增加 `run_audit`。Runtime 失败 terminal 在 Worker 重组完整审计后，把它附加到 typed exception；`AgentExecutor` 在成功和异常分支都调用同一 repository 方法。审计必须在 Job 成功落库或失败/重试处理完成前持久化；持久化失败不能伪装成模型成功。
 
-### 5. 授权检查先于大正文读取
+### 5. 授权检查先于大正文读取，正文按字段有界分页
 
-`GET /api/admin/jobs/{job_id}` 先读取不含完整审计的 Job evidence，执行既有 `jobs.read` 与 `AdminScope` 判断，通过后才单独查询 `agent_run_audit`。范围外查询返回 404，且 repository 不读取大正文。Debug evidence、Tool Call 和 MCP 查询不返回完整审计。
+`GET /api/admin/jobs/{job_id}` 先读取不含完整审计的 Job evidence，执行既有 `jobs.read` 与 `AdminScope` 判断，通过后只查询 `agent_run_audit` 的 invocation 身份、状态、时间和调优摘要，不读取完整正文。范围外查询返回 404，且 repository 不读取审计摘要或正文。Debug evidence、Tool Call 和 MCP 查询不返回完整审计。
 
-### 6. 页面在现有运行详情上增加四组折叠区
+完整正文使用 Job 详情下的专用 field endpoint 读取。endpoint 只接受代码固定的审计字段，先重复执行 `jobs.read` 与 `AdminScope` 判断，再按 `job_id + audit_id + field` 查询；正文以服务端固定上限的字符窗口和游标逐段返回。数据库直接截取已持久化 TEXT/JSON 文本，不在服务端反序列化整列，也不允许客户端扩大单次响应上限。错误字段、其它 Job 的 audit ID、非法 field 或非法游标均失败关闭。
 
-保留现有执行汇总、Tool contract、文件、Delivery 和模型轮次，不用旧页面整文件覆盖。Tool contract 卡片本身不折叠，标题、说明、状态和总体摘要始终可见；Job 快照以及每个 invocation 内的组件身份、四层契约和逐工具矩阵分别使用默认关闭的 `<details>`。摘要网格单元允许收缩，长 Invocation ID 等标识在自身单元内断行，不得覆盖相邻指标。新增 Context tuning 摘要，并按 attempt 显示四个默认关闭的 `<details>`：上下文与 Prompt、模型 request/response、完整工具执行、usage 与元数据。`pre` 使用固定最大高度、换行和滚动；历史 Job 显示明确空态。
+### 6. 页面在现有运行详情上增加四组按需折叠区
+
+保留现有执行汇总、Tool contract、文件、Delivery 和模型轮次，不用旧页面整文件覆盖。Tool contract 卡片本身不折叠，标题、说明、状态和总体摘要始终可见；Job 快照以及每个 invocation 内的组件身份、四层契约和逐工具矩阵分别使用默认关闭的 `<details>`。摘要网格单元允许收缩，长 Invocation ID 等标识在自身单元内断行，不得覆盖相邻指标。新增 Context tuning 摘要，并按 attempt 显示四个默认关闭的 `<details>`：上下文与 Prompt、模型 request/response、完整工具执行、usage 与元数据。折叠区关闭时不得挂载正文查询或正文 DOM；首次展开后才按字段读取首段。`pre` 只渲染当前分段，使用固定最大高度、换行和滚动，并提供上一段/下一段导航而不累计挂载历史分段。历史 Job 显示明确空态。小型调优摘要和审计身份可在初始详情中直接展示，但不得对完整正文执行同步 `JSON.stringify`。
 
 ### 7. 会话只保留一个模型可见表示，审计正文只保存一份
 
@@ -76,6 +78,7 @@ migration 124 新增 `agent_run_audit`，以 `(job_id, invocation_id)` 唯一，
 ## Risks / Trade-offs
 
 - [正文显著增大] → 仅详情按授权读取；分块传输和 SDK buffer 采用显式上限，列表不读取正文。
+- [浏览器展开超长审计卡死] → 初始详情只返回摘要，正文按字段固定上限分页；折叠关闭时不请求、不序列化、不挂载正文，页面始终只保留当前分段。
 - [Runtime 协议升级复杂] → v1.5 expand-first，Worker/contract 测试先落地，不原地修改 v1.4。
 - [完整正文包含企业敏感数据] → 用户已确认不脱敏；仍阻止运行凭据主动进入审计，并先鉴权后查询正文。
 - [会话去重误删历史] → 只按当前 Job 的规范 `input_message_id` 排除当前输入，不按正文相等判断；保留此前即使内容相同的独立消息。
@@ -87,5 +90,5 @@ migration 124 新增 `agent_run_audit`，以 `(job_id, invocation_id)` 唯一，
 
 1. 应用 migration 124 和支持 v1.5 的 Worker/管理 API；旧 v1.4 Job 继续可读。
 2. 发布带 v1.5 Recorder/分块事件的 Python Runtime，再切换新的 Agent Publication。
-3. 部署 Web，并用 Fake SDK 覆盖成功、失败、超时、多轮 Tool Loop、超长折叠和授权范围。
+3. 部署 Web，并用 Fake SDK 覆盖成功、失败、超时、多轮 Tool Loop、超长按需分页和授权范围。
 4. 回滚时先停止新 Publication；保留新表与 Worker 双读，不删除已采集正文。

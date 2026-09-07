@@ -595,9 +595,41 @@ class AdminReadRepository:
             },
         }
 
-    def job_run_audits(self, job_id: str) -> list[dict[str, Any]]:
-        """Load complete invocation bodies only after the API has passed Job scope."""
-        return AgentRepository(self.database).list_run_audits(job_id)
+    def job_run_audit_summaries(self, job_id: str) -> list[dict[str, Any]]:
+        """Load invocation metadata without selecting complete audit bodies."""
+        return AgentRepository(self.database).list_run_audit_summaries(job_id)
+
+    def job_scope_subject(self, job_id: str) -> dict[str, Any] | None:
+        """Load only the ownership and routing facts required by AdminScope."""
+        row = self.database.execute_one(
+            """
+            select id, internal_user_id, requester_id, routing_context_json
+              from agent_job
+             where id = ?
+            """,
+            (job_id,),
+        )
+        if row is None:
+            return None
+        subject = dict(row)
+        subject["routing"] = _json_object(subject.pop("routing_context_json", {}))
+        return subject
+
+    def job_run_audit_field(
+        self,
+        *,
+        job_id: str,
+        audit_id: str,
+        field: str,
+        offset: int,
+    ) -> dict[str, Any] | None:
+        """Load one server-bounded field page after the API has passed Job scope."""
+        return AgentRepository(self.database).read_run_audit_field(
+            job_id=job_id,
+            audit_id=audit_id,
+            field=field,
+            offset=offset,
+        )
 
     def tool_contract_evidence(self, job_id: str) -> dict[str, Any]:
         """Return only immutable, bounded Tool-contract audit facts."""

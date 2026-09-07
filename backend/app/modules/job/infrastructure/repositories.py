@@ -20,6 +20,24 @@ from app.shared.secret_redaction import (
 from app.shared.tool_contract import canonical_json_sha256
 
 
+RUN_AUDIT_FIELD_PAGE_CHARS = 64 * 1024
+RUN_AUDIT_FIELD_COLUMNS: dict[str, tuple[str, str]] = {
+    "context_manifest": ("context_manifest_json", "json"),
+    "system_prompt": ("system_prompt", "text"),
+    "user_prompt": ("user_prompt", "text"),
+    "tool_definitions": ("tool_definitions_json", "json"),
+    "permission_snapshot": ("permission_snapshot_json", "json"),
+    "init_snapshot": ("init_snapshot_json", "json"),
+    "sdk_messages": ("sdk_messages_json", "json"),
+    "api_requests": ("api_requests_json", "json"),
+    "api_responses": ("api_responses_json", "json"),
+    "tool_executions": ("tool_executions_json", "json"),
+    "model_requests": ("model_requests_json", "json"),
+    "usage": ("usage_json", "json"),
+    "error": ("error_json", "json"),
+}
+
+
 _SESSION_COLUMN_NAMES = (
     "id",
     "project_code",
@@ -1049,6 +1067,80 @@ class AgentRepository:
             item["attempt_no"] = int(item.get("attempt_no") or 0)
             result.append(item)
         return result
+
+    def list_run_audit_summaries(self, job_id: str) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select id, job_id, invocation_id, request_digest, attempt_no, status,
+                   audit_sha256, summary_json, raw_api_capture_status,
+                   provider_thinking_disclosure, started_at, finished_at, created_at
+              from agent_run_audit
+             where job_id = ?
+             order by attempt_no, invocation_id
+            """,
+            (job_id,),
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            summary = self._json_from_text(str(item.pop("summary_json", "") or ""))
+            item["summary"] = summary if isinstance(summary, dict) else {}
+            item["attempt_no"] = int(item.get("attempt_no") or 0)
+            result.append(item)
+        return result
+
+    def read_run_audit_field(
+        self,
+        *,
+        job_id: str,
+        audit_id: str,
+        field: str,
+        offset: int,
+    ) -> dict[str, Any] | None:
+        field_contract = RUN_AUDIT_FIELD_COLUMNS.get(field)
+        if field_contract is None:
+            raise NonRetryableExecutionError(
+                "Agent run audit field is invalid",
+                safe_message="Agent 运行审计字段无效",
+                error_code="agent_run_audit_field_invalid",
+            )
+        if offset < 0:
+            raise NonRetryableExecutionError(
+                "Agent run audit field offset is invalid",
+                safe_message="Agent 运行审计分页游标无效",
+                error_code="agent_run_audit_cursor_invalid",
+            )
+        column, content_type = field_contract
+        row = self.database.execute_one(
+            f"""
+            select length(coalesce({column}, '')) as total_chars,
+                   substr(coalesce({column}, ''), ?, ?) as content
+              from agent_run_audit
+             where job_id = ? and id = ?
+            """,
+            (offset + 1, RUN_AUDIT_FIELD_PAGE_CHARS, job_id, audit_id),
+        )
+        if row is None:
+            return None
+        content = str(row.get("content") or "")
+        total_chars = int(row.get("total_chars") or 0)
+        if offset > total_chars:
+            raise NonRetryableExecutionError(
+                "Agent run audit field offset exceeds content length",
+                safe_message="Agent 运行审计分页游标无效",
+                error_code="agent_run_audit_cursor_invalid",
+            )
+        end_offset = min(offset + len(content), total_chars)
+        return {
+            "audit_id": audit_id,
+            "field": field,
+            "content_type": content_type,
+            "content": content,
+            "start_offset": offset,
+            "end_offset": end_offset,
+            "total_chars": total_chars,
+            "has_more": end_offset < total_chars,
+        }
 
     def record_execution_policy_usage(
         self,

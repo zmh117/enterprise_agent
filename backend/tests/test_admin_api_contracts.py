@@ -13,6 +13,7 @@ from app.modules.admin.application.scope import AdminScope
 from app.modules.admin.infrastructure import AdminJobQuery, AdminReadRepository
 from app.modules.job.application.create_agent_job_service import _execution_scope_hash
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.repositories import RUN_AUDIT_FIELD_PAGE_CHARS
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.test_unified_identity_rbac import csrf_headers, login, unified_settings
 
@@ -453,7 +454,8 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         },
     )
     context_marker = "完整 Prompt 与模型响应审计正文"
-    container.agent_repository.record_run_audit(
+    large_system_prompt = f"system::{context_marker}" + "长" * RUN_AUDIT_FIELD_PAGE_CHARS
+    run_audit_id = container.agent_repository.record_run_audit(
         job_id=job.id,
         invocation_id=f"{job.id}.attempt-0",
         request_digest="a" * 64,
@@ -463,7 +465,7 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
             "started_at": "2026-07-20T00:00:01+00:00",
             "finished_at": "2026-07-20T00:00:02+00:00",
             "context_manifest": {"sources": [{"content": context_marker}]},
-            "system_prompt": f"system::{context_marker}",
+            "system_prompt": large_system_prompt,
             "user_prompt": f"user::{context_marker}",
             "tool_definitions": [{"name": "ones_work_item_search"}],
             "permission_snapshot": {"allowed_tools": ["ones_work_item_search"]},
@@ -543,6 +545,26 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         summary = client.get("/api/admin/jobs/summary")
         delivery_metrics = client.get("/api/admin/deliveries/metrics")
         detail = client.get(f"/api/admin/jobs/{job.id}")
+        system_prompt_page = client.get(
+            f"/api/admin/jobs/{job.id}/run-audits/{run_audit_id}/fields/system_prompt"
+        )
+        system_prompt_next_page = client.get(
+            f"/api/admin/jobs/{job.id}/run-audits/{run_audit_id}/fields/system_prompt",
+            params={"cursor": system_prompt_page.json()["next_cursor"]},
+        )
+        api_responses_page = client.get(
+            f"/api/admin/jobs/{job.id}/run-audits/{run_audit_id}/fields/api_responses"
+        )
+        invalid_field = client.get(
+            f"/api/admin/jobs/{job.id}/run-audits/{run_audit_id}/fields/credential"
+        )
+        invalid_cursor = client.get(
+            f"/api/admin/jobs/{job.id}/run-audits/{run_audit_id}/fields/system_prompt",
+            params={"cursor": "not-a-valid-cursor"},
+        )
+        cross_job_audit = client.get(
+            f"/api/admin/jobs/{job.id}/run-audits/run_audit_other/fields/system_prompt"
+        )
         conversations = client.get("/api/admin/conversations")
         conversation = client.get(f"/api/admin/conversations/{session.id}")
         attachments = client.get("/api/admin/attachments")
@@ -570,8 +592,32 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     assert jobs.json()["items"][0]["correlation_id"] == "correlation-ops"
     assert detail.json()["job"]["business_application_deployment_id"] == "deployment-ops"
     assert detail.json()["job"]["tool_call_count"] == 1
-    assert detail.json()["run_audits"][0]["system_prompt"] == f"system::{context_marker}"
-    assert detail.json()["run_audits"][0]["api_responses"][0]["body"]["content"] == (context_marker)
+    run_audit_summary = detail.json()["run_audits"][0]
+    assert run_audit_summary["id"] == run_audit_id
+    assert run_audit_summary["summary"]["model_request_count"] == 1
+    assert "system_prompt" not in run_audit_summary
+    assert "api_responses" not in run_audit_summary
+    assert context_marker not in str(detail.json())
+    assert (
+        system_prompt_page.status_code
+        == system_prompt_next_page.status_code
+        == api_responses_page.status_code
+        == 200
+    )
+    assert len(system_prompt_page.json()["content"]) == RUN_AUDIT_FIELD_PAGE_CHARS
+    assert system_prompt_page.json()["has_more"] is True
+    assert system_prompt_page.json()["next_cursor"]
+    assert (
+        system_prompt_page.json()["content"] + system_prompt_next_page.json()["content"]
+        == large_system_prompt
+    )
+    assert system_prompt_next_page.json()["has_more"] is False
+    assert system_prompt_next_page.json()["next_cursor"] is None
+    assert system_prompt_page.json()["content_type"] == "text"
+    assert context_marker in api_responses_page.json()["content"]
+    assert api_responses_page.json()["content_type"] == "json"
+    assert invalid_field.status_code == invalid_cursor.status_code == 400
+    assert cross_job_audit.status_code == 404
     assert jobs.json()["items"][0]["tool_call_count"] == 1
     assert [item["id"] for item in jobs_by_names.json()["items"]] == [job.id]
     assert jobs_by_unknown_name.json()["items"] == []
@@ -628,20 +674,30 @@ def test_job_detail_checks_scope_before_loading_large_run_audit(
         execution_policy=execution_policy_snapshot(),
         reply_route={"type": "none"},
     )
-    loaded: list[str] = []
+    loaded_summaries: list[str] = []
+    loaded_fields: list[str] = []
     monkeypatch.setattr(AdminScope, "permits", lambda _self, _item: False)
     monkeypatch.setattr(
         AdminReadRepository,
-        "job_run_audits",
-        lambda _self, job_id: loaded.append(job_id) or [],
+        "job_run_audit_summaries",
+        lambda _self, job_id: loaded_summaries.append(job_id) or [],
+    )
+    monkeypatch.setattr(
+        AdminReadRepository,
+        "job_run_audit_field",
+        lambda _self, **kwargs: loaded_fields.append(str(kwargs["audit_id"])) or None,
     )
 
     with TestClient(create_app(settings, container_factory=lambda _: container)) as client:
         login(client)
         response = client.get(f"/api/admin/jobs/{job.id}")
+        field_response = client.get(
+            f"/api/admin/jobs/{job.id}/run-audits/run_audit_scope/fields/system_prompt"
+        )
 
-    assert response.status_code == 404
-    assert loaded == []
+    assert response.status_code == field_response.status_code == 404
+    assert loaded_summaries == []
+    assert loaded_fields == []
 
 
 def test_job_query_filters_before_limit_and_uses_stable_keyset_pages() -> None:

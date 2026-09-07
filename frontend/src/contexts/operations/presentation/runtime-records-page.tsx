@@ -16,12 +16,14 @@ import {
   useConversation,
   useFileOperations,
   useRuntimeJob,
+  useRuntimeJobAuditField,
   useRuntimeJobs,
 } from "@/contexts/operations/application/runtime-record-queries"
 import {
   DOCUMENT_RUNTIME_FILE_FORMATS,
   TEXT_RUNTIME_FILE_FORMATS,
   type AgentRunAudit,
+  type AgentRunAuditField,
   type DeliveryAttempt,
   type DeliveryChunk,
   type DeliveryEvent,
@@ -461,7 +463,7 @@ export function RuntimeJobDetailPage() {
           ]}
         />
       </div>
-      <AgentRunAuditPanel audits={query.data.run_audits} />
+      <AgentRunAuditPanel jobId={job.id} audits={query.data.run_audits} />
       <ToolContractPanel value={query.data.tool_contract} />
       <FileWorkspacePolicyPanel value={query.data.file_workspace} />
       <ExecutionAccountingPanel summary={query.data.execution_summary} />
@@ -503,15 +505,20 @@ export function RuntimeJobDetailPage() {
   )
 }
 
-function AgentRunAuditPanel({ audits }: { audits: AgentRunAudit[] }) {
+function AgentRunAuditPanel({
+  jobId,
+  audits,
+}: {
+  jobId: string
+  audits: AgentRunAudit[]
+}) {
   const summary = summarizeRunAudits(audits)
   return (
     <Card className="mt-4 shadow-none">
       <CardHeader>
         <CardTitle>上下文与原始运行审计</CardTitle>
         <p className="text-sm text-muted-foreground">
-          完整展示实际送入模型的 Prompt、上下文、工具定义与结果，以及 SDK
-          可观测的模型原始响应。长内容默认折叠。
+          完整正文在展开后按需、分段加载；折叠状态不会下载或渲染长内容。
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -567,7 +574,11 @@ function AgentRunAuditPanel({ audits }: { audits: AgentRunAudit[] }) {
             </dl>
             <div className="space-y-3">
               {audits.map((audit) => (
-                <RunAuditInvocation key={audit.id} audit={audit} />
+                <RunAuditInvocation
+                  key={audit.id}
+                  jobId={jobId}
+                  audit={audit}
+                />
               ))}
             </div>
           </>
@@ -577,7 +588,13 @@ function AgentRunAuditPanel({ audits }: { audits: AgentRunAudit[] }) {
   )
 }
 
-function RunAuditInvocation({ audit }: { audit: AgentRunAudit }) {
+function RunAuditInvocation({
+  jobId,
+  audit,
+}: {
+  jobId: string
+  audit: AgentRunAudit
+}) {
   return (
     <section className="space-y-3 rounded-lg border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -593,26 +610,92 @@ function RunAuditInvocation({ audit }: { audit: AgentRunAudit }) {
           {formatDate(audit.started_at)} → {formatDate(audit.finished_at)}
         </p>
       </div>
-      <AuditDisclosure title="完整上下文与 Prompt">
-        <AuditJson label="上下文清单" value={audit.context_manifest} />
-        <AuditText label="System Prompt" value={audit.system_prompt} />
-        <AuditText label="User Prompt / 会话正文" value={audit.user_prompt} />
-      </AuditDisclosure>
-      <AuditDisclosure title="模型请求与原始响应">
-        <AuditJson label="逐请求上下文" value={audit.model_requests} />
-        <AuditJson label="原始 API 请求体" value={audit.api_requests} />
-        <AuditJson label="原始 API 响应体" value={audit.api_responses} />
-        <AuditJson label="SDK 原始消息流" value={audit.sdk_messages} />
-      </AuditDisclosure>
-      <AuditDisclosure title="工具定义、权限与执行原文">
-        <AuditJson label="注册 / 加载工具定义" value={audit.tool_definitions} />
-        <AuditJson label="权限快照" value={audit.permission_snapshot} />
-        <AuditJson label="工具输入与结果" value={audit.tool_executions} />
-      </AuditDisclosure>
-      <AuditDisclosure title="Token、成本与审计元数据">
-        <AuditJson label="Usage 原文" value={audit.usage} />
+      <RunAuditDisclosure title="完整上下文与 Prompt">
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="context_manifest"
+          label="上下文清单"
+        />
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="system_prompt"
+          label="System Prompt"
+        />
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="user_prompt"
+          label="User Prompt / 会话正文"
+        />
+      </RunAuditDisclosure>
+      <RunAuditDisclosure title="模型请求与原始响应">
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="model_requests"
+          label="逐请求上下文"
+        />
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="api_requests"
+          label="原始 API 请求体"
+        />
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="api_responses"
+          label="原始 API 响应体"
+        />
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="sdk_messages"
+          label="SDK 原始消息流"
+        />
+      </RunAuditDisclosure>
+      <RunAuditDisclosure title="工具定义、权限与执行原文">
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="tool_definitions"
+          label="注册 / 加载工具定义"
+        />
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="permission_snapshot"
+          label="权限快照"
+        />
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="tool_executions"
+          label="工具输入与结果"
+        />
+      </RunAuditDisclosure>
+      <RunAuditDisclosure title="Token、成本与审计元数据">
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="usage"
+          label="Usage 原文"
+        />
         <AuditJson label="调优摘要" value={audit.summary} />
-        <AuditJson label="SDK Init 快照" value={audit.init_snapshot} />
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="init_snapshot"
+          label="SDK Init 快照"
+        />
+        <AuditFieldViewer
+          jobId={jobId}
+          auditId={audit.id}
+          field="error"
+          label="错误原文"
+        />
         <AuditJson
           label="审计身份"
           value={{
@@ -620,12 +703,128 @@ function RunAuditInvocation({ audit }: { audit: AgentRunAudit }) {
             audit_sha256: audit.audit_sha256,
             raw_api_capture_status: audit.raw_api_capture_status,
             provider_thinking_disclosure: audit.provider_thinking_disclosure,
-            error: audit.error,
           }}
         />
-      </AuditDisclosure>
+      </RunAuditDisclosure>
     </section>
   )
+}
+
+function RunAuditDisclosure({
+  title,
+  children,
+}: {
+  title: string
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <details
+      className="group rounded-md border bg-muted/10"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="cursor-pointer px-3 py-2 text-sm font-medium select-none">
+        {title}
+      </summary>
+      {open ? <div className="space-y-3 border-t p-3">{children}</div> : null}
+    </details>
+  )
+}
+
+function AuditFieldViewer({
+  jobId,
+  auditId,
+  field,
+  label,
+}: {
+  jobId: string
+  auditId: string
+  field: AgentRunAuditField
+  label: string
+}) {
+  const [cursors, setCursors] = useState([""])
+  const cursor = cursors.at(-1) ?? ""
+  const query = useRuntimeJobAuditField(jobId, auditId, field, cursor, true)
+  const page = query.data
+
+  return (
+    <section className="space-y-2" data-audit-field={field}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-xs font-medium text-muted-foreground">{label}</h4>
+        {page ? (
+          <span className="text-xs text-muted-foreground">
+            {auditFieldRange(page.start_offset, page.end_offset)}，共{" "}
+            {page.total_chars} 字符
+          </span>
+        ) : null}
+      </div>
+      {query.isLoading ? <Skeleton className="h-28 w-full" /> : null}
+      {query.isError ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 p-3 text-xs text-destructive">
+          <span>正文加载失败，请重试。</span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void query.refetch()}
+          >
+            重试
+          </Button>
+        </div>
+      ) : null}
+      {page ? (
+        <>
+          <pre className="max-h-[32rem] overflow-auto rounded-md bg-muted/50 p-3 text-xs break-words whitespace-pre-wrap">
+            {page.content || "（空）"}
+          </pre>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs text-muted-foreground">
+              内容格式：{page.content_type === "json" ? "JSON" : "文本"}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-label={`${label}上一段`}
+                disabled={cursors.length === 1 || query.isFetching}
+                onClick={() =>
+                  setCursors((current) =>
+                    current.length > 1 ? current.slice(0, -1) : current
+                  )
+                }
+              >
+                上一段
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-label={`${label}下一段`}
+                disabled={
+                  !page.has_more || !page.next_cursor || query.isFetching
+                }
+                onClick={() => {
+                  if (page.next_cursor) {
+                    setCursors((current) => [
+                      ...current,
+                      page.next_cursor ?? "",
+                    ])
+                  }
+                }}
+              >
+                下一段
+              </Button>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </section>
+  )
+}
+
+function auditFieldRange(startOffset: number, endOffset: number) {
+  if (endOffset <= startOffset) return "0 字符"
+  return `第 ${startOffset + 1}–${endOffset} 字符`
 }
 
 function AuditDisclosure({

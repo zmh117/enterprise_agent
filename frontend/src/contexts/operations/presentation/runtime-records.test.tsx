@@ -446,27 +446,6 @@ function runAudit(overrides: Record<string, unknown> = {}) {
     attempt_no: 1,
     status: "SUCCEEDED",
     audit_sha256: "b".repeat(64),
-    context_manifest: {
-      sources: ["system_prompt", "session", "file_workspace"],
-      estimated_characters: 4096,
-    },
-    system_prompt: "完整 System Prompt 内容",
-    user_prompt: "完整会话正文与文件内容",
-    tool_definitions: [{ name: "mcp__file__read", input_schema: {} }],
-    permission_snapshot: { allowed_tools: ["mcp__file__read"] },
-    init_snapshot: { tools: ["mcp__file__read"] },
-    sdk_messages: [{ type: "assistant", content: "模型原始响应全文" }],
-    api_requests: [{ body: { system: "完整 System Prompt 内容" } }],
-    api_responses: [{ body: { content: "模型原始响应全文" } }],
-    tool_executions: [
-      {
-        tool_name: "mcp__file__read",
-        input: { path: "example.md" },
-        output: "工具结果原文",
-      },
-    ],
-    model_requests: [{ sequence: 1, context_tokens: 144 }],
-    usage: { input_tokens: 120, output_tokens: 32 },
     summary: {
       model_request_count: 1,
       max_request_context_tokens: 144,
@@ -483,12 +462,37 @@ function runAudit(overrides: Record<string, unknown> = {}) {
     },
     raw_api_capture_status: "captured",
     provider_thinking_disclosure: "仅展示上游 SDK/API 实际返回的可观测内容。",
-    error: {},
     started_at: "2026-07-24T10:00:00+00:00",
     finished_at: "2026-07-24T10:00:01+00:00",
     created_at: "2026-07-24T10:00:01+00:00",
     ...overrides,
   }
+}
+
+function runAuditFieldPage(
+  field: string,
+  content: string,
+  overrides: Record<string, unknown> = {}
+) {
+  return {
+    audit_id: "audit-1",
+    field,
+    content_type:
+      field === "system_prompt" || field === "user_prompt" ? "text" : "json",
+    content,
+    start_offset: 0,
+    end_offset: content.length,
+    total_chars: content.length,
+    has_more: false,
+    next_cursor: null,
+    ...overrides,
+  }
+}
+
+function auditFieldFromRequest(input: RequestInfo | URL) {
+  return (
+    new URL(String(input), "http://localhost").pathname.split("/").at(-1) ?? ""
+  )
 }
 
 function renderRoute(
@@ -646,51 +650,64 @@ describe("runtime provenance records", () => {
   })
 
   it("shows immutable application provenance in job detail", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      response({
-        job: job(),
-        session_ref: { id: "session-1" },
-        steps: [],
-        tool_calls: [],
-        execution_summary: executionSummary({
-          observed_model_turn_count: 2,
-          runtime_invocation_count: 1,
-        }),
-        model_calls: {
-          items: [modelCall()],
-          limit: 50,
-          has_more: false,
-          next_cursor: null,
-        },
-        run_audits: [runAudit()],
-        file_workspace: {
-          enabled: true,
-          manifest_schema_version: 5,
-          policy_source: "job_file_manifest",
-          formats: [
-            {
-              format_code: "LOG",
-              file_count: 1,
-              allowed_actions: ["MATERIALIZE", "DELIVER"],
-            },
-            {
-              format_code: "MARKDOWN",
-              file_count: 1,
-              allowed_actions: ["MATERIALIZE", "EDIT", "COMMIT", "DELIVER"],
-            },
-          ],
-          output_commits: [
-            {
-              format_code: "MARKDOWN",
-              status: "COMMITTED",
-              commit_count: 1,
-            },
-          ],
-        },
-        deliveries: { events: [], attempts: [], chunks: [] },
-        webhook_events: [],
+    const auditBodies: Record<string, string> = {
+      context_manifest: JSON.stringify({
+        sources: ["system_prompt", "session", "file_workspace"],
+      }),
+      system_prompt: "完整 System Prompt 内容",
+      user_prompt: "完整会话正文与文件内容",
+    }
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input) => {
+        if (String(input).includes("/run-audits/")) {
+          const field = auditFieldFromRequest(input)
+          return response(runAuditFieldPage(field, auditBodies[field] ?? ""))
+        }
+        return response({
+          job: job(),
+          session_ref: { id: "session-1" },
+          steps: [],
+          tool_calls: [],
+          execution_summary: executionSummary({
+            observed_model_turn_count: 2,
+            runtime_invocation_count: 1,
+          }),
+          model_calls: {
+            items: [modelCall()],
+            limit: 50,
+            has_more: false,
+            next_cursor: null,
+          },
+          run_audits: [runAudit()],
+          file_workspace: {
+            enabled: true,
+            manifest_schema_version: 5,
+            policy_source: "job_file_manifest",
+            formats: [
+              {
+                format_code: "LOG",
+                file_count: 1,
+                allowed_actions: ["MATERIALIZE", "DELIVER"],
+              },
+              {
+                format_code: "MARKDOWN",
+                file_count: 1,
+                allowed_actions: ["MATERIALIZE", "EDIT", "COMMIT", "DELIVER"],
+              },
+            ],
+            output_commits: [
+              {
+                format_code: "MARKDOWN",
+                status: "COMMITTED",
+                commit_count: 1,
+              },
+            ],
+          },
+          deliveries: { events: [], attempts: [], chunks: [] },
+          webhook_events: [],
+        })
       })
-    )
     renderRoute(
       "/operations/jobs/job-1",
       "/operations/jobs/:jobId",
@@ -727,15 +744,117 @@ describe("runtime provenance records", () => {
       .getByText("完整上下文与 Prompt")
       .closest("details")
     expect(contextDisclosure).not.toHaveAttribute("open")
+    expect(
+      screen.queryByText("完整 System Prompt 内容")
+    ).not.toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes("/run-audits/")
+      )
+    ).toHaveLength(0)
     fireEvent.click(screen.getByText("完整上下文与 Prompt"))
     expect(contextDisclosure).toHaveAttribute("open")
-    expect(screen.getByText("完整 System Prompt 内容")).toHaveClass(
+    expect(await screen.findByText("完整 System Prompt 内容")).toHaveClass(
       "max-h-[32rem]",
       "overflow-auto"
     )
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes("/run-audits/")
+      )
+    ).toHaveLength(3)
     expect(screen.getAllByText("模型请求与原始响应")).toHaveLength(1)
     expect(screen.getAllByText("工具定义、权限与执行原文")).toHaveLength(1)
     expect(screen.getAllByText("Token、成本与审计元数据")).toHaveLength(1)
+  })
+
+  it("loads raw model bodies only after opening and replaces the current page", async () => {
+    const firstResponsePage = "第一页响应"
+    const secondResponsePage = "第二页响应"
+    const totalChars = firstResponsePage.length + secondResponsePage.length
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input) => {
+        const requestUrl = new URL(String(input), "http://localhost")
+        if (requestUrl.pathname.includes("/run-audits/")) {
+          const field = auditFieldFromRequest(input)
+          if (field === "api_responses") {
+            if (requestUrl.searchParams.get("cursor") === "next-page") {
+              return response(
+                runAuditFieldPage(field, secondResponsePage, {
+                  start_offset: firstResponsePage.length,
+                  end_offset: totalChars,
+                  total_chars: totalChars,
+                })
+              )
+            }
+            return response(
+              runAuditFieldPage(field, firstResponsePage, {
+                end_offset: firstResponsePage.length,
+                total_chars: totalChars,
+                has_more: true,
+                next_cursor: "next-page",
+              })
+            )
+          }
+          return response(runAuditFieldPage(field, "{}"))
+        }
+        return response({
+          job: job(),
+          session_ref: { id: "session-1" },
+          steps: [],
+          tool_calls: [],
+          execution_summary: executionSummary(),
+          model_calls: {
+            items: [],
+            limit: 50,
+            has_more: false,
+            next_cursor: null,
+          },
+          run_audits: [runAudit()],
+          deliveries: { events: [], attempts: [], chunks: [] },
+          webhook_events: [],
+        })
+      })
+
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+
+    expect(await screen.findByText("模型请求与原始响应")).toBeInTheDocument()
+    expect(screen.queryByText(firstResponsePage)).not.toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes("/run-audits/")
+      )
+    ).toHaveLength(0)
+
+    fireEvent.click(screen.getByText("模型请求与原始响应"))
+    expect(await screen.findByText(firstResponsePage)).toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes("/run-audits/")
+      )
+    ).toHaveLength(4)
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "原始 API 响应体下一段" })
+    )
+    expect(await screen.findByText(secondResponsePage)).toBeInTheDocument()
+    expect(screen.queryByText(firstResponsePage)).not.toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "原始 API 响应体上一段" })
+    )
+    expect(await screen.findByText(firstResponsePage)).toBeInTheDocument()
+    expect(screen.queryByText(secondResponsePage)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText("模型请求与原始响应"))
+    await waitFor(() =>
+      expect(screen.queryByText(firstResponsePage)).not.toBeInTheDocument()
+    )
   })
 
   it("shows immutable per-invocation Tool contract layers and drift history", async () => {
