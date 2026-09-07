@@ -884,6 +884,58 @@ class BusinessAuthorizationService:
             scope=self._scope_summary(environment, base, workshop),
         )
 
+    def resource_access_projection(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+        tool_identifiers: tuple[str, ...],
+    ) -> tuple[dict[str, Any], ...]:
+        """Return current per-access Tool/scope pairs without cross-role joins."""
+
+        user = self.identity_repository.get_user(user_id)
+        application = self.repository.database.execute_one(
+            "select id, status from business_application where id = ?",
+            (application_id,),
+        )
+        if (
+            application is None
+            or str(user.get("status") or "") != "enabled"
+            or str(application.get("status") or "") != "enabled"
+        ):
+            return ()
+        requested = tuple(sorted({str(value) for value in tool_identifiers if str(value)}))
+        effective = {
+            identifier
+            for identifier in requested
+            if self.repository.application_tool_is_effective(application_id, identifier)
+        }
+        if not effective:
+            return ()
+        projections: list[dict[str, Any]] = []
+        for access in self.repository.business_access_for_user(
+            user_id=user_id,
+            application_id=application_id,
+        ):
+            access_tools = tuple(
+                sorted(effective.intersection(str(value) for value in access["tool_identifiers"]))
+            )
+            if not access_tools:
+                continue
+            for scope in access["scopes"]:
+                environment = str(scope.get("environment_code") or "")
+                if not environment:
+                    continue
+                projections.append(
+                    {
+                        "tool_identifiers": access_tools,
+                        "environment": environment,
+                        "base": str(scope.get("base_code") or ""),
+                        "workshop": str(scope.get("workshop_code") or ""),
+                    }
+                )
+        return tuple(projections)
+
     def capture_runtime_facts(
         self,
         *,

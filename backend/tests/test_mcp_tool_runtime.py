@@ -490,6 +490,30 @@ def test_aitable_search_restrictions_require_keyword_and_bounded_pagination() ->
     assert "full base_id" in with_search
 
 
+def test_resource_tool_restrictions_discover_before_target_and_do_not_repeat_failures() -> None:
+    with_directory = " ".join(
+        _tool_restrictions(
+            [
+                "list_available_tool_resources",
+                "get_schema_directory",
+                "query_database",
+                "query_redis_scan",
+            ]
+        )
+    )
+    without_directory = " ".join(_tool_restrictions(["query_database"]))
+
+    assert "call list_available_tool_resources before any target resource Tool" in with_directory
+    assert "resolution_status is AVAILABLE" in with_directory
+    assert "never select AMBIGUOUS" in with_directory
+    assert "do not retry the same arguments" in with_directory
+    assert "never infer from one failed target" in with_directory
+    assert "Redis SCAN pagination" in with_directory
+    assert "ask for that target" in without_directory
+    assert "list_available_tool_resources" not in without_directory
+    assert "never generalize one mcp_resource_not_resolved result" in without_directory
+
+
 @pytest.mark.parametrize("runtime_kind", ["python-v1"])
 def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_tools(
     runtime_kind: str,
@@ -755,7 +779,18 @@ def test_job_snapshot_does_not_freeze_routing_target_or_resolve_a_resource() -> 
             tool_identifier=frozen["snapshot"]["tools"][0]["tool_identifier"],
         )
         assert binding is not None
-        assert binding[0] == {}
+        assert binding[0]["snapshot_id"] == frozen["id"]
+        assert binding[0]["snapshot_hash"] == frozen["snapshot_hash"]
+        assert binding[0]["authorization_hash"] == frozen["authorization_hash"]
+        assert binding[0]["tool_identifiers"] == tuple(
+            item["tool_identifier"] for item in frozen["snapshot"]["tools"]
+        )
+        assert {
+            "environment_code",
+            "base_code",
+            "workshop_code",
+            "placement",
+        }.isdisjoint(binding[0])
         assert binding[1][0]["available_placements"] == []
         assert runtime.database.execute("select * from platform_resource") == []
     finally:

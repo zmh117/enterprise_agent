@@ -141,6 +141,7 @@ contract = [
   "test_task_file_workspace_compose.py",
   "test_task_workspace_retention.py",
   "test_tool_mcp.py",
+  "test_tool_pagination.py",
   "test_unified_identity_rbac.py",
   "test_variable_depth_topology.py",
   "test_webhook_api.py",

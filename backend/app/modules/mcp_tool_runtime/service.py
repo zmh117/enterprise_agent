@@ -14,6 +14,7 @@ from app.modules.mcp_tool_runtime.policies import (
 )
 from app.modules.mcp_tool_runtime.contracts import (
     ReadOnlyToolExecutor,
+    ResourceAccessGrant,
     ToolRequestContext,
     ToolResult,
 )
@@ -21,6 +22,7 @@ from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import PermissionDenied, ToolPolicyError
@@ -120,6 +122,7 @@ class ReadOnlyToolService:
                     safe_message="此 Job 快照未授权该工具",
                     error_code="mcp_tool_not_in_job_snapshot",
                 )
+            snapshot_context = exact[0]
             scope = _addressing_from_arguments(arguments)
             if job.business_application_id:
                 if self.business_authorization_service is None:
@@ -192,6 +195,8 @@ class ReadOnlyToolService:
                 user_id=user_id,
                 project_code=project_code,
                 tool_call_id=effective_tool_call_id,
+                application_id=str(job.business_application_id or ""),
+                snapshot_context=snapshot_context,
             )
             if managed_tool_call_id:
                 self.repository.complete_tool_call(
@@ -296,7 +301,7 @@ class ReadOnlyToolService:
         elif tool_name == "diagnose_loki_label_values":
             assert_loki_label(str(arguments.get("label", "")))
             assert_loki_diagnostic_bounds(arguments, self.limits)
-        elif tool_name != "get_schema_directory":
+        elif tool_name not in {"get_schema_directory", "list_available_tool_resources"}:
             raise ToolPolicyError(f"Tool {tool_name} is not registered for read-only MVP")
 
     def _execute(
@@ -308,6 +313,8 @@ class ReadOnlyToolService:
         user_id: str,
         project_code: str,
         tool_call_id: str,
+        application_id: str,
+        snapshot_context: dict[str, Any],
     ) -> ToolResult:
         context = ToolRequestContext(
             job_id=job_id,
@@ -315,7 +322,25 @@ class ReadOnlyToolService:
             project_code=project_code,
             correlation_id=correlation_id_var.get(),
             tool_call_id=tool_call_id,
+            application_id=application_id,
+            snapshot_hash=str(snapshot_context.get("snapshot_hash") or ""),
+            authorization_hash=str(snapshot_context.get("authorization_hash") or ""),
         )
+        if tool_name == "list_available_tool_resources":
+            grants = self._resource_access_grants(
+                user_id=user_id,
+                project_code=project_code,
+                application_id=application_id,
+                tool_identifiers=tuple(snapshot_context.get("tool_identifiers") or ()),
+            )
+            return self.tool_executor.list_available_tool_resources(
+                context=context,
+                grants=grants,
+                resource_kind=str(arguments.get("resource_kind") or ""),
+                query=str(arguments.get("query") or ""),
+                limit=int(arguments.get("limit") or 50),
+                cursor=str(arguments.get("cursor") or ""),
+            )
         if tool_name == "get_schema_directory":
             addressing = _addressing_from_arguments(arguments)
             if not addressing.get("environment"):
@@ -330,6 +355,7 @@ class ReadOnlyToolService:
                 base=resource_routing.pop("base", ""),
                 query=str(arguments.get("query", "")),
                 limit=int(arguments.get("limit", 50)),
+                cursor=str(arguments.get("cursor") or ""),
                 **resource_routing,
             )
         addressing = _addressing_from_arguments(arguments)
@@ -410,10 +436,68 @@ class ReadOnlyToolService:
                 datasource=str(arguments.get("datasource", "default")),
                 pattern=str(arguments["pattern"]),
                 limit=int(arguments.get("limit", self.limits.redis_scan_limit)),
+                cursor=str(arguments.get("cursor") or ""),
                 context=context,
                 **resource_routing,
             )
         raise ToolPolicyError(f"Tool {tool_name} is not registered")
+
+    def _resource_access_grants(
+        self,
+        *,
+        user_id: str,
+        project_code: str,
+        application_id: str,
+        tool_identifiers: tuple[str, ...],
+    ) -> tuple[ResourceAccessGrant, ...]:
+        resource_tools = tuple(
+            sorted(
+                identifier
+                for identifier in tool_identifiers
+                if (definition := MCP_TOOL_MANIFEST.get(identifier)) is not None
+                and definition.server_code == "tool-mcp"
+                and definition.resource_kind in {"database", "redis", "loki"}
+            )
+        )
+        if not resource_tools:
+            return ()
+        if application_id:
+            if self.business_authorization_service is None:
+                return ()
+            projections = self.business_authorization_service.resource_access_projection(
+                user_id=user_id,
+                application_id=application_id,
+                tool_identifiers=resource_tools,
+            )
+            return tuple(
+                ResourceAccessGrant(
+                    tool_identifier=identifier,
+                    resource_kind=MCP_TOOL_MANIFEST[identifier].resource_kind,
+                    environment=str(projection["environment"]),
+                    base=str(projection["base"]),
+                    workshop=str(projection["workshop"]),
+                )
+                for projection in projections
+                for identifier in projection["tool_identifiers"]
+            )
+        grants: list[ResourceAccessGrant] = []
+        for identifier in resource_tools:
+            try:
+                self.permission_service.assert_mcp_tool_use_grant(
+                    user_id=user_id,
+                    tool_identifier=identifier,
+                    project_code=project_code,
+                )
+            except (PermissionDenied, ToolPolicyError):
+                continue
+            grants.append(
+                ResourceAccessGrant(
+                    tool_identifier=identifier,
+                    resource_kind=MCP_TOOL_MANIFEST[identifier].resource_kind,
+                    unrestricted=True,
+                )
+            )
+        return tuple(grants)
 
 
 def _storage_summary(result: ToolResult) -> dict[str, Any]:

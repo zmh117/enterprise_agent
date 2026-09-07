@@ -37,6 +37,8 @@ class SchemaDirectory:
     tables: list[SchemaTable] = field(default_factory=list)
     truncated: bool = False
     limitation: str = ""
+    has_more_tables: bool = False
+    columns_truncated: bool = False
 
     def table_names(self) -> set[str]:
         return {table.name for table in self.tables}
@@ -53,6 +55,8 @@ class SchemaDirectory:
             "tables": [table.to_dict() for table in self.tables],
             "table_count": len(self.tables),
             "limitation": self.limitation,
+            "has_more": self.has_more_tables,
+            "columns_truncated": self.columns_truncated,
         }
 
 
@@ -65,6 +69,7 @@ class SchemaInspector(Protocol):
         query: str,
         table_limit: int,
         column_limit: int,
+        after_table: str = "",
     ) -> SchemaDirectory: ...
 
 

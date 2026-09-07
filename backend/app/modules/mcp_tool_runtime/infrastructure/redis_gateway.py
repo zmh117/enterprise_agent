@@ -5,7 +5,7 @@ from typing import Any, Protocol
 from app.shared.database import assert_external_io_allowed
 
 from ..domain.addressing import ResourceBinding
-from ..domain.errors import ResolutionError, UpstreamUnavailable
+from ..domain.errors import PolicyViolation, ResolutionError, UpstreamUnavailable
 from ..domain.results import ToolResponse
 from ..domain.topology import RedisMode
 
@@ -13,7 +13,13 @@ from ..domain.topology import RedisMode
 class RedisGateway(Protocol):
     def get(self, binding: ResourceBinding, key: str) -> ToolResponse: ...
 
-    def scan(self, binding: ResourceBinding, pattern: str, limit: int) -> ToolResponse: ...
+    def scan(
+        self,
+        binding: ResourceBinding,
+        pattern: str,
+        limit: int,
+        cursor: object = 0,
+    ) -> ToolResponse: ...
 
 
 class FakeRedisGateway:
@@ -26,11 +32,27 @@ class FakeRedisGateway:
         self.calls.append(("get", key))
         return ToolResponse(summary={"key": key, "value_summary": self._values.get(key, None)})
 
-    def scan(self, binding: ResourceBinding, pattern: str, limit: int) -> ToolResponse:
+    def scan(
+        self,
+        binding: ResourceBinding,
+        pattern: str,
+        limit: int,
+        cursor: object = 0,
+    ) -> ToolResponse:
         self.calls.append(("scan", pattern))
         literal_prefix = pattern.rstrip("*").replace("\\[", "[").replace("\\]", "]")
-        matched = [k for k in self._keys if k.startswith(literal_prefix)][:limit]
-        return ToolResponse(summary={"pattern": pattern, "keys": matched})
+        matched = [k for k in self._keys if k.startswith(literal_prefix)]
+        normalized_cursor = _normalize_scan_cursor(cursor)
+        if not isinstance(normalized_cursor, int):
+            raise PolicyViolation("Fake Redis SCAN does not support a cluster cursor")
+        start = normalized_cursor
+        page = matched[start : start + limit]
+        next_cursor = start + len(page) if start + len(page) < len(matched) else 0
+        return ToolResponse(
+            summary={"pattern": pattern, "keys": page},
+            truncated=bool(next_cursor),
+            metadata={"next_provider_cursor": next_cursor},
+        )
 
 
 class RealRedisGateway:
@@ -96,17 +118,69 @@ class RealRedisGateway:
         return ToolResponse(summary={"key": key, "value_summary": value})
 
     def scan(
-        self, binding: ResourceBinding, pattern: str, limit: int
+        self,
+        binding: ResourceBinding,
+        pattern: str,
+        limit: int,
+        cursor: object = 0,
     ) -> ToolResponse:  # pragma: no cover
         assert_external_io_allowed("tool_redis.scan")
         # Policy (workshop key prefix / bounded pattern) is enforced in PlatformService
         # before this method; both standalone and cluster clients honor match/count.
+        normalized_cursor = _normalize_scan_cursor(cursor)
         client = self._connect(binding)
         try:
-            cursor, keys = client.scan(cursor=0, match=pattern, count=limit)
+            provider_cursor, keys = client.scan(
+                cursor=normalized_cursor,
+                match=pattern,
+                count=limit,
+            )
         except Exception as exc:
             raise UpstreamUnavailable(f"Redis SCAN failed: {type(exc).__name__}") from exc
+        next_cursor = _normalize_scan_cursor(provider_cursor)
         return ToolResponse(
             summary={"pattern": pattern, "keys": list(keys)[:limit]},
-            truncated=str(cursor) not in {"0", "b'0'"},
+            truncated=not _scan_cursor_complete(next_cursor),
+            metadata={"next_provider_cursor": next_cursor},
         )
+
+
+def _normalize_scan_cursor(value: object) -> int | dict[str, int]:
+    if value is None or value == "" or value == b"":
+        return 0
+    if isinstance(value, bool):
+        raise PolicyViolation("Redis SCAN cursor is invalid")
+    if isinstance(value, int):
+        if value < 0:
+            raise PolicyViolation("Redis SCAN cursor is invalid")
+        return value
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise PolicyViolation("Redis SCAN cursor is invalid") from exc
+    if isinstance(value, str):
+        if not value.isdigit():
+            raise PolicyViolation("Redis SCAN cursor is invalid")
+        return int(value)
+    if isinstance(value, dict) and len(value) <= 256:
+        normalized: dict[str, int] = {}
+        for raw_node, raw_cursor in value.items():
+            node = str(raw_node or "")
+            if not node or len(node) > 256:
+                raise PolicyViolation("Redis Cluster SCAN cursor is invalid")
+            if isinstance(raw_cursor, bool):
+                raise PolicyViolation("Redis Cluster SCAN cursor is invalid")
+            try:
+                parsed = int(raw_cursor)
+            except (TypeError, ValueError) as exc:
+                raise PolicyViolation("Redis Cluster SCAN cursor is invalid") from exc
+            if parsed < 0:
+                raise PolicyViolation("Redis Cluster SCAN cursor is invalid")
+            normalized[node] = parsed
+        return dict(sorted(normalized.items()))
+    raise PolicyViolation("Redis SCAN cursor is invalid")
+
+
+def _scan_cursor_complete(value: int | dict[str, int]) -> bool:
+    return value == 0 or (isinstance(value, dict) and all(cursor == 0 for cursor in value.values()))

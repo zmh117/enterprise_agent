@@ -48,7 +48,9 @@ class UnsupportedSchemaInspector:
         query: str,
         table_limit: int,
         column_limit: int,
+        after_table: str = "",
     ) -> SchemaDirectory:
+        del after_table
         return SchemaDirectory(
             tables=[],
             limitation=f"Schema directory is not implemented for {self.engine.value}",
@@ -93,6 +95,7 @@ class FakeSchemaInspector:
         query: str,
         table_limit: int,
         column_limit: int,
+        after_table: str = "",
     ) -> SchemaDirectory:
         self.calls.append(
             {
@@ -100,19 +103,37 @@ class FakeSchemaInspector:
                 "base": binding.base.code,
                 "workshop": binding.workshop.code if binding.workshop else None,
                 "query": query,
+                "after_table": after_table,
             }
         )
-        tables = _filter_tables(
-            self.tables,
-            table_prefix=table_prefix,
-            query=query,
-            engine=self.engine,
+        tables = sorted(
+            _filter_tables(
+                self.tables,
+                table_prefix=table_prefix,
+                query=query,
+                engine=self.engine,
+            ),
+            key=lambda value: _table_sort_key(value.name, self.engine),
         )
-        truncated = len(tables) > table_limit
+        if after_table:
+            after_key = _table_sort_key(after_table, self.engine)
+            tables = [
+                table
+                for table in tables
+                if _table_sort_key(table.name, self.engine) > after_key
+            ]
+        has_more_tables = len(tables) > table_limit
+        selected = tables[:table_limit]
+        columns_truncated = any(len(table.columns) > column_limit for table in selected)
         bounded = [
-            SchemaTable(table.name, table.columns[:column_limit]) for table in tables[:table_limit]
+            SchemaTable(table.name, table.columns[:column_limit]) for table in selected
         ]
-        return SchemaDirectory(tables=bounded, truncated=truncated)
+        return SchemaDirectory(
+            tables=bounded,
+            truncated=has_more_tables or columns_truncated,
+            has_more_tables=has_more_tables,
+            columns_truncated=columns_truncated,
+        )
 
 
 class MySqlSchemaInspector:
@@ -124,6 +145,7 @@ class MySqlSchemaInspector:
         query: str,
         table_limit: int,
         column_limit: int,
+        after_table: str = "",
     ) -> SchemaDirectory:
         assert_external_io_allowed("tool_database.mysql_schema")
         db = _require_database(binding)
@@ -149,40 +171,56 @@ class MySqlSchemaInspector:
             cur = conn.cursor()
             cur.execute(
                 """
+                select table_name
+                from information_schema.tables
+                where table_schema = %s
+                  and table_name like %s escape '='
+                  and table_name like %s escape '='
+                  and table_name > %s
+                order by table_name
+                limit %s
+                """,
+                (
+                    db.database,
+                    _like_prefix(table_prefix, escape_char="="),
+                    _like_contains(query, escape_char="="),
+                    after_table,
+                    table_limit + 1,
+                ),
+            )
+            raw_names = [str(row[0]) for row in cur.fetchall()]
+            names = _filter_table_names(
+                raw_names,
+                table_prefix=table_prefix,
+                query=query,
+                engine=DatabaseEngine.MYSQL,
+            )
+            has_more_tables = len(names) > table_limit
+            selected = names[:table_limit]
+            if not selected:
+                return SchemaDirectory(tables=[], has_more_tables=has_more_tables)
+            placeholders = ", ".join("%s" for _ in selected)
+            cur.execute(
+                f"""
                 select table_name, column_name, data_type, is_nullable
                 from information_schema.columns
                 where table_schema = %s
-                  and table_name like %s escape '='
+                  and table_name in ({placeholders})
                 order by table_name, ordinal_position
                 """,
-                (db.database, _like_prefix(table_prefix, escape_char="=")),
+                (db.database, *selected),
             )
-            tables: dict[str, list[SchemaColumn]] = {}
-            columns_truncated = False
-            for table_name, column_name, data_type, is_nullable in cur.fetchall():
-                table = str(table_name)
-                if not table_name_has_prefix(
-                    table,
-                    table_prefix,
-                    engine=DatabaseEngine.MYSQL,
-                ):
-                    continue
-                if query and query.lower() not in table.lower():
-                    continue
-                columns = tables.setdefault(table, [])
-                if len(columns) < column_limit:
-                    columns.append(
-                        SchemaColumn(
-                            str(column_name), str(data_type), str(is_nullable).upper() == "YES"
-                        )
-                    )
-                else:
-                    columns_truncated = True
-            names = sorted(tables)
-            truncated = len(names) > table_limit
+            tables, columns_truncated = _tables_from_column_rows(
+                selected,
+                cur.fetchall(),
+                column_limit=column_limit,
+                nullable=lambda value: str(value).upper() == "YES",
+            )
             return SchemaDirectory(
-                tables=[SchemaTable(name, tables[name]) for name in names[:table_limit]],
-                truncated=truncated or columns_truncated,
+                tables=tables,
+                truncated=has_more_tables or columns_truncated,
+                has_more_tables=has_more_tables,
+                columns_truncated=columns_truncated,
             )
         except Exception as exc:  # pragma: no cover - needs live DB
             raise UpstreamUnavailable("MySQL schema inspection query failed") from exc
@@ -202,6 +240,7 @@ class OracleSchemaInspector:
         query: str,
         table_limit: int,
         column_limit: int,
+        after_table: str = "",
     ) -> SchemaDirectory:
         assert_external_io_allowed("tool_database.oracle_schema")
         db = _require_database(binding)
@@ -249,6 +288,7 @@ class OracleSchemaInspector:
                     WHERE owner = :owner
                       AND table_name LIKE :prefix ESCAPE '\\'
                       AND table_name LIKE :search ESCAPE '\\'
+                      AND table_name > :after_table
                     ORDER BY table_name
                 )
                 WHERE ROWNUM <= :row_limit
@@ -257,6 +297,7 @@ class OracleSchemaInspector:
                     "owner": owner,
                     "prefix": _like_prefix(table_prefix, uppercase=True),
                     "search": _like_contains(query, uppercase=True),
+                    "after_table": after_table.upper(),
                     "row_limit": table_limit + 1,
                 },
             )
@@ -267,10 +308,10 @@ class OracleSchemaInspector:
                 query=query,
                 engine=DatabaseEngine.ORACLE,
             )
-            truncated = len(names) > table_limit
+            has_more_tables = len(names) > table_limit
             selected = names[:table_limit]
             if not selected:
-                return SchemaDirectory(tables=[], truncated=truncated)
+                return SchemaDirectory(tables=[], has_more_tables=has_more_tables)
 
             placeholders = ", ".join(f":table_{index}" for index in range(len(selected)))
             binds: dict[str, object] = {"owner": owner}
@@ -293,7 +334,9 @@ class OracleSchemaInspector:
             )
             return SchemaDirectory(
                 tables=tables,
-                truncated=truncated or columns_truncated,
+                truncated=has_more_tables or columns_truncated,
+                has_more_tables=has_more_tables,
+                columns_truncated=columns_truncated,
             )
         except Exception as exc:  # pragma: no cover - needs live DB
             raise UpstreamUnavailable("Oracle schema inspection query failed") from exc
@@ -317,6 +360,7 @@ class SqlServerSchemaInspector:
         query: str,
         table_limit: int,
         column_limit: int,
+        after_table: str = "",
     ) -> SchemaDirectory:
         assert_external_io_allowed("tool_database.sqlserver_schema")
         db = _require_database(binding)
@@ -350,12 +394,14 @@ class SqlServerSchemaInspector:
                 WHERE s.name = %s
                   AND t.name LIKE %s ESCAPE '\\'
                   AND t.name LIKE %s ESCAPE '\\'
+                  AND t.name > %s
                 ORDER BY t.name
                 """,
                 (
                     schema,
                     _like_prefix(table_prefix),
                     _like_contains(query),
+                    after_table,
                 ),
             )
             raw_names = [str(row[0]) for row in cursor.fetchall()]
@@ -365,10 +411,10 @@ class SqlServerSchemaInspector:
                 query=query,
                 engine=DatabaseEngine.SQLSERVER,
             )
-            truncated = len(names) > table_limit
+            has_more_tables = len(names) > table_limit
             selected = names[:table_limit]
             if not selected:
-                return SchemaDirectory(tables=[], truncated=truncated)
+                return SchemaDirectory(tables=[], has_more_tables=has_more_tables)
 
             placeholders = ", ".join("%s" for _ in selected)
             cursor.execute(
@@ -392,7 +438,9 @@ class SqlServerSchemaInspector:
             )
             return SchemaDirectory(
                 tables=tables,
-                truncated=truncated or columns_truncated,
+                truncated=has_more_tables or columns_truncated,
+                has_more_tables=has_more_tables,
+                columns_truncated=columns_truncated,
             )
         except Exception as exc:  # pragma: no cover - needs live DB
             raise UpstreamUnavailable("SQL Server schema inspection query failed") from exc
@@ -449,11 +497,25 @@ def _like_prefix(
     return f"{_escape_like(text, escape_char=escape_char)}%"
 
 
-def _like_contains(value: str, *, uppercase: bool = False) -> str:
+def _like_contains(
+    value: str,
+    *,
+    uppercase: bool = False,
+    escape_char: str = "\\",
+) -> str:
     text = str(value or "").strip()
     if uppercase:
         text = text.upper()
-    return f"%{_escape_like(text)}%"
+    return f"%{_escape_like(text, escape_char=escape_char)}%"
+
+
+def _table_sort_key(table_name: str, engine: DatabaseEngine) -> tuple[str, str]:
+    normalized = (
+        str(table_name).upper()
+        if engine is DatabaseEngine.ORACLE
+        else str(table_name).casefold()
+    )
+    return normalized, str(table_name)
 
 
 def _filter_table_names(

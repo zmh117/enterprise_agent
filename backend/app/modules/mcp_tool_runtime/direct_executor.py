@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from app.modules.mcp_tool_runtime.domain.loki_policy import (
@@ -30,7 +31,8 @@ from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import RealRedisG
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
 
-from .contracts import ToolRequestContext, ToolResult
+from .contracts import ResourceAccessGrant, ToolRequestContext, ToolResult
+from .pagination import ToolPaginationCursorCodec
 from .resource_resolver import DirectResourceResolver, ResolvedToolResource
 
 
@@ -60,6 +62,156 @@ class DirectReadOnlyToolExecutor:
         )
         self.redis = RealRedisGateway()
 
+    def list_available_tool_resources(
+        self,
+        context: ToolRequestContext,
+        *,
+        grants: tuple[ResourceAccessGrant, ...],
+        resource_kind: str = "",
+        query: str = "",
+        limit: int = 50,
+        cursor: str = "",
+    ) -> ToolResult:
+        selected_kind = str(resource_kind or "").strip().lower()
+        normalized_query = str(query or "").strip().casefold()
+        if len(normalized_query) > 128:
+            raise ToolPolicyError(
+                "Resource directory query is too large",
+                safe_message="资源目录查询条件过长",
+                error_code="mcp_resource_directory_input_invalid",
+            )
+        page_limit = int(limit or 50)
+        if not 1 <= page_limit <= 50:
+            raise ToolPolicyError(
+                "Resource directory limit is invalid",
+                safe_message="资源目录每页数量必须在 1 到 50 之间",
+                error_code="mcp_resource_directory_input_invalid",
+            )
+        addresses = self.resolver.list_published_addresses(resource_kind=selected_kind)
+        visible: list[tuple[Any, tuple[str, ...]]] = []
+        for address in addresses:
+            usable_tools = tuple(
+                sorted(
+                    {
+                        grant.tool_identifier
+                        for grant in grants
+                        if self._grant_matches(grant, address)
+                    }
+                )
+            )
+            if usable_tools:
+                visible.append((address, usable_tools))
+        ambiguity_counts: dict[tuple[str, str, str, str, str], int] = {}
+        for address, _ in visible:
+            ambiguity_counts[address.resolution_key] = (
+                ambiguity_counts.get(address.resolution_key, 0) + 1
+            )
+        items = [
+            {
+                "resource_code": address.resource_code,
+                "resource_kind": address.resource_kind,
+                "environment": address.environment,
+                "base": address.base or None,
+                "workshop": address.workshop or None,
+                "placement": address.placement or None,
+                "resource_revision_id": address.resource_revision_id,
+                "resource_revision": address.resource_revision,
+                "resolution_status": (
+                    "AMBIGUOUS"
+                    if ambiguity_counts[address.resolution_key] > 1
+                    else "AVAILABLE"
+                ),
+                "usable_tools": list(usable_tools),
+                "_sort_key": list(address.sort_key),
+                "_content_hash": address.resource_content_hash,
+            }
+            for address, usable_tools in visible
+            if not normalized_query
+            or normalized_query
+            in " ".join(
+                (
+                    address.resource_code,
+                    address.resource_kind,
+                    address.environment,
+                    address.base,
+                    address.workshop,
+                    address.placement,
+                )
+            ).casefold()
+        ]
+        state_fingerprint = ToolPaginationCursorCodec.fingerprint(
+            [
+                {
+                    "sort_key": item["_sort_key"],
+                    "content_hash": item["_content_hash"],
+                    "usable_tools": item["usable_tools"],
+                    "resolution_status": item["resolution_status"],
+                }
+                for item in items
+            ]
+        )
+        request = {"resource_kind": selected_kind, "query": normalized_query}
+        after: tuple[str, ...] = ()
+        if cursor:
+            position = ToolPaginationCursorCodec.decode(
+                cursor,
+                context=context,
+                purpose="resource-directory",
+                request=request,
+                state_fingerprint=state_fingerprint,
+            )
+            if (
+                not isinstance(position, list)
+                or len(position) != 7
+                or any(not isinstance(value, str) for value in position)
+            ):
+                raise ToolPaginationCursorCodec._invalid(
+                    "Resource directory cursor position is invalid"
+                )
+            after = tuple(position)
+        remaining = [item for item in items if tuple(item["_sort_key"]) > after]
+        has_more = len(remaining) > page_limit
+        page = remaining[:page_limit]
+        next_cursor = ""
+        if has_more and page:
+            next_cursor = ToolPaginationCursorCodec.encode(
+                context=context,
+                purpose="resource-directory",
+                request=request,
+                state_fingerprint=state_fingerprint,
+                position=page[-1]["_sort_key"],
+            )
+        returned = [
+            {key: value for key, value in item.items() if not key.startswith("_")}
+            for item in page
+        ]
+        return ToolResult(
+            summary={
+                "resources": returned,
+                "resource_count": len(returned),
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+                "observed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "diagnostic_action": (
+                    "use_available_targets_only"
+                    if returned
+                    else "stop_and_report_no_authorized_resources"
+                ),
+            },
+            raw={"resource_count": len(returned)},
+            metadata={
+                "source": "tool-mcp-authorized-resource-directory",
+                "returned_resources": [
+                    {
+                        "resource_code": item["resource_code"],
+                        "resource_revision_id": item["resource_revision_id"],
+                    }
+                    for item in returned
+                ],
+            },
+            truncated=has_more,
+        )
+
     def get_schema_directory(
         self,
         context: ToolRequestContext,
@@ -70,29 +222,80 @@ class DirectReadOnlyToolExecutor:
         placement: str | None = None,
         query: str = "",
         limit: int = 50,
+        cursor: str = "",
     ) -> ToolResult:
-        del context
         resource = self._resolve("database", environment, base, workshop, placement)
+        page_limit = int(limit or 50)
+        if not 1 <= page_limit <= 50:
+            raise ToolPolicyError(
+                "Schema directory limit is invalid",
+                safe_message="Schema 目录每页数量必须在 1 到 50 之间",
+                error_code="mcp_schema_directory_input_invalid",
+            )
+        request = {
+            "environment": environment,
+            "base": base,
+            "workshop": workshop or "",
+            "placement": placement or "",
+            "query": str(query or "").strip(),
+        }
+        state_fingerprint = ToolPaginationCursorCodec.fingerprint(
+            {
+                "resource_revision_id": resource.resource_revision_id,
+                "resource_content_hash": resource.resource_content_hash,
+            }
+        )
+        after_table = ""
+        if cursor:
+            position = ToolPaginationCursorCodec.decode(
+                cursor,
+                context=context,
+                purpose="schema-directory",
+                request=request,
+                state_fingerprint=state_fingerprint,
+            )
+            if not isinstance(position, str) or not position:
+                raise ToolPolicyError(
+                    "Schema directory cursor position is invalid",
+                    safe_message="分页游标无效，请从第一页重新查询",
+                    error_code="mcp_pagination_cursor_invalid",
+                )
+            after_table = position
         directory = self.schema_inspectors.for_engine(resource.binding.engine).read(
             resource.binding,
             table_prefix=resource.table_prefix or None,
             query=query,
-            table_limit=max(1, min(int(limit), 100)),
+            table_limit=page_limit,
             column_limit=80,
+            after_table=after_table,
         )
+        next_cursor = ""
+        if directory.has_more_tables and directory.tables:
+            next_cursor = ToolPaginationCursorCodec.encode(
+                context=context,
+                purpose="schema-directory",
+                request=request,
+                state_fingerprint=state_fingerprint,
+                position=directory.tables[-1].name,
+            )
         summary = {
             "environment": resource.binding.environment.code,
             "base": base or None,
             "workshop": workshop or None,
             "engine": resource.binding.engine.value,
             **directory.to_summary(),
+            "next_cursor": next_cursor,
             "diagnostic_action": (
                 "use_listed_tables_and_columns_only"
                 if directory.tables
                 else "stop_and_report_insufficient_evidence"
             ),
         }
-        return self._result(resource, summary, truncated=directory.truncated)
+        return self._result(
+            resource,
+            summary,
+            truncated=directory.has_more_tables or directory.columns_truncated,
+        )
 
     def query_database(
         self,
@@ -214,8 +417,9 @@ class DirectReadOnlyToolExecutor:
         base: str | None = None,
         workshop: str | None = None,
         placement: str | None = None,
+        cursor: str = "",
     ) -> ToolResult:
-        del datasource, context
+        del datasource
         assert_read_command("scan")
         bounded = max(1, min(int(limit), self.limits.redis_scan_limit))
         resource = self._resolve("redis", environment or "", base or "", workshop, placement)
@@ -225,12 +429,72 @@ class DirectReadOnlyToolExecutor:
             scan_limit=self.limits.redis_scan_limit,
             limit=bounded,
         )
-        response = self.redis.scan(resource.binding, normalized, bounded)
+        request = {
+            "environment": environment or "",
+            "base": base or "",
+            "workshop": workshop or "",
+            "placement": placement or "",
+            "pattern": normalized,
+            "limit": bounded,
+        }
+        state_fingerprint = ToolPaginationCursorCodec.fingerprint(
+            {
+                "resource_revision_id": resource.resource_revision_id,
+                "resource_content_hash": resource.resource_content_hash,
+            }
+        )
+        provider_cursor: object = 0
+        if cursor:
+            provider_cursor = ToolPaginationCursorCodec.decode(
+                cursor,
+                context=context,
+                purpose="redis-scan",
+                request=request,
+                state_fingerprint=state_fingerprint,
+            )
+            if not self._valid_redis_provider_cursor(provider_cursor):
+                raise ToolPolicyError(
+                    "Redis pagination cursor position is invalid",
+                    safe_message="分页游标无效，请从第一页重新查询",
+                    error_code="mcp_pagination_cursor_invalid",
+                )
+        response = self.redis.scan(
+            resource.binding,
+            normalized,
+            bounded,
+            provider_cursor,
+        )
+        response_metadata = getattr(response, "metadata", {})
+        next_provider_cursor = (
+            response_metadata.get("next_provider_cursor", 0)
+            if isinstance(response_metadata, dict)
+            else 0
+        )
+        has_more = not self._redis_provider_cursor_complete(next_provider_cursor)
+        next_cursor = ""
+        if has_more:
+            if not self._valid_redis_provider_cursor(next_provider_cursor):
+                raise ToolPolicyError(
+                    "Redis provider returned an invalid pagination cursor",
+                    safe_message="Redis 返回了无效分页状态",
+                    error_code="mcp_redis_cursor_invalid",
+                )
+            next_cursor = ToolPaginationCursorCodec.encode(
+                context=context,
+                purpose="redis-scan",
+                request=request,
+                state_fingerprint=state_fingerprint,
+                position=next_provider_cursor,
+            )
         return self._result(
             resource,
-            response.summary,
+            {
+                **response.summary,
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+            },
             raw=response.raw,
-            truncated=response.truncated,
+            truncated=has_more or response.truncated,
         )
 
     def query_loki(
@@ -353,6 +617,44 @@ class DirectReadOnlyToolExecutor:
             base=base,
             workshop=workshop or "",
             placement=placement or "",
+        )
+
+    @staticmethod
+    def _grant_matches(grant: ResourceAccessGrant, address: Any) -> bool:
+        if grant.resource_kind != address.resource_kind:
+            return False
+        if grant.unrestricted:
+            return True
+        if grant.environment != address.environment:
+            return False
+        if grant.base and grant.base != address.base:
+            return False
+        if grant.workshop and grant.workshop != address.workshop:
+            return False
+        return True
+
+    @staticmethod
+    def _valid_redis_provider_cursor(value: object) -> bool:
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, int):
+            return value >= 0
+        if not isinstance(value, dict) or len(value) > 256:
+            return False
+        return all(
+            isinstance(node, str)
+            and bool(node)
+            and len(node) <= 256
+            and isinstance(cursor, int)
+            and not isinstance(cursor, bool)
+            and cursor >= 0
+            for node, cursor in value.items()
+        )
+
+    @classmethod
+    def _redis_provider_cursor_complete(cls, value: object) -> bool:
+        return cls._valid_redis_provider_cursor(value) and (
+            value == 0 or (isinstance(value, dict) and all(cursor == 0 for cursor in value.values()))
         )
 
     def _loki(self, resource: ResolvedToolResource) -> HttpLokiClient:

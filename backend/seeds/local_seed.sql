@@ -79,8 +79,8 @@ INSERT INTO agent_revision
    created_by, created_at, updated_at)
 VALUES
   ('agent_revision_default_v1', 'agent_default_diagnostic', 1, 'published',
-   '{"business_role":"Enterprise internal read-only diagnostic Agent","business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","model_policy":{"model":"claude-sonnet-4-20250514"},"execution":{"max_turns":12,"timeout_seconds":300},"tools":["get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"],"skills":[],"routing":{"project_code":"default"},"channels":{"ingress":["connector-dingtalk-stream-default"],"delivery":["connector-dingtalk-enterprise-default"]}}',
-   '10d416a6387ed3e14e36613e6782a7a1b1b5d3647f962fb1435b195a658d4441',
+   '{"business_role":"Enterprise internal read-only diagnostic Agent","business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","model_policy":{"model":"claude-sonnet-4-20250514"},"execution":{"max_turns":12,"timeout_seconds":300},"tools":["get_schema_directory","list_available_tool_resources","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"],"skills":[],"routing":{"project_code":"default"},"channels":{"ingress":["connector-dingtalk-stream-default"],"delivery":["connector-dingtalk-enterprise-default"]}}',
+   '4b82950853d776ed14aba88c0284072682cd4c0a45bae979107e40a92e75a70d',
    '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
    CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
@@ -91,8 +91,8 @@ INSERT INTO agent_publication
 VALUES
   ('agent_publication_default_v1', 'agent_default_diagnostic',
    'agent_revision_default_v1', 1, 3,
-   '{"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent","channels":{"delivery":["connector-dingtalk-enterprise-default"],"ingress":["connector-dingtalk-stream-default"]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"python-v1","skills":[],"supported_runtime_protocol_versions":["1.5"],"tools":["get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"]}',
-   '157389ea2e0f7457496e2d0c53e6fb4876e1a5b4241aac1d83f6cd038322e8fd',
+   '{"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent","channels":{"delivery":["connector-dingtalk-enterprise-default"],"ingress":["connector-dingtalk-stream-default"]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"python-v1","skills":[],"supported_runtime_protocol_versions":["1.5"],"tools":["get_schema_directory","list_available_tool_resources","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"]}',
+   '2eadbde7f8f9d7086133bc529da10c6f818b58e5693520abf9b5946f806db6ac',
    'python-v1', 'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
@@ -103,11 +103,12 @@ VALUES
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_label_values', 'dbdd1fb7009090387f2479f3e71ab691b67be3ea7fe76345e76c2468610b2796', '', 0, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_labels', '3fdb9c6cd548513b660a2995cbc5273878e896843aec6c9c6e9b6c1f40d71a27', '', 1, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_probe', 'f4f6881d4884b3111e905525c05dbc7f5fd0fb209f7dd3c5163a5d88b999bce1', '', 2, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'get_schema_directory', '7502f1b28fc46291047e9c9d5bc6ba910363596af55aed85a163ea3dc105a1ca', '', 3, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_database', '9b2fdee7c913e746f58b8149305990f5601044ad7c30b08bc7d4b017d53f6113', '', 4, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_loki', 'ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108', '', 5, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_get', 'e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50', '', 6, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_scan', 'f617799ffcb621770965e8bf02042e71ebfc80ba814c05a2b94a4ad0e15d0770', '', 7, CURRENT_TIMESTAMP)
+  ('agent_publication_default_v1', 'tool-mcp', 'get_schema_directory', '63e2fb32ff8c6dc8b8e07f7e7bd99035685a6a71817b0d924a7c2fd7bad6406d', '', 3, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'list_available_tool_resources', '98b066835914b160442a3b52b0a89b17a2130b2c8bb344fc17d157335a9e1461', '', 4, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_database', '9b2fdee7c913e746f58b8149305990f5601044ad7c30b08bc7d4b017d53f6113', '', 5, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_loki', 'ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108', '', 6, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_get', 'e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50', '', 7, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_scan', '656f38f4c50622781b70a0261d46152f4ab419337f2fe1c2e22f2662efecaae0', '', 8, CURRENT_TIMESTAMP)
 ON CONFLICT(agent_publication_id, tool_identifier) DO NOTHING;
 
 INSERT INTO agent_channel_binding
@@ -161,10 +162,10 @@ INSERT INTO webhook_trigger_publication
 VALUES
   ('webhook_trigger_publication_grafana_v1', 'webhook_trigger_grafana_default',
    'webhook_trigger_revision_grafana_v1', 1, 1,
-   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"157389ea2e0f7457496e2d0c53e6fb4876e1a5b4241aac1d83f6cd038322e8fd","read_only_tools":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_schema_directory","query_database","query_loki","query_redis_get","query_redis_scan"]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
+   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"2eadbde7f8f9d7086133bc529da10c6f818b58e5693520abf9b5946f806db6ac","read_only_tools":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_schema_directory","list_available_tool_resources","query_database","query_loki","query_redis_get","query_redis_scan"]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
    'fc5f064e955301b104fe7577f1a1c52c9656890e622de40514fa5fdc3d6313de',
    'agent_publication_default_v1', 1,
-   '157389ea2e0f7457496e2d0c53e6fb4876e1a5b4241aac1d83f6cd038322e8fd',
+   '2eadbde7f8f9d7086133bc529da10c6f818b58e5693520abf9b5946f806db6ac',
    'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 

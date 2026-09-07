@@ -179,7 +179,18 @@ class JobMcpToolSnapshotService:
             return None
         definition = MCP_TOOL_MANIFEST[tool_identifier]
         return (
-            {},
+            {
+                "snapshot_id": verified["id"],
+                "snapshot_hash": verified["snapshot_hash"],
+                "authorization_hash": verified["authorization_hash"],
+                "tool_identifiers": tuple(
+                    sorted(
+                        str(value.get("tool_identifier") or "")
+                        for value in snapshot.get("tools") or []
+                        if isinstance(value, dict) and value.get("tool_identifier")
+                    )
+                ),
+            },
             [
                 {
                     "tool_identifier": tool_identifier,

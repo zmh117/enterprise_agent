@@ -43,6 +43,38 @@ class ResolvedToolResource:
     binding: ResourceBinding
 
 
+@dataclass(frozen=True, slots=True)
+class PublishedToolResourceAddress:
+    resource_id: str
+    resource_code: str
+    resource_kind: str
+    resource_revision_id: str
+    resource_revision: int
+    resource_content_hash: str
+    environment: str
+    base: str
+    workshop: str
+    placement: str
+
+    @property
+    def target(self) -> tuple[str, str, str]:
+        return (self.environment, self.base, self.workshop)
+
+    @property
+    def resolution_key(self) -> tuple[str, str, str, str, str]:
+        return (
+            self.resource_kind,
+            self.environment,
+            self.base,
+            self.workshop,
+            self.placement,
+        )
+
+    @property
+    def sort_key(self) -> tuple[str, str, str, str, str, str, str]:
+        return (*self.resolution_key, self.resource_code, self.resource_revision_id)
+
+
 class DirectResourceResolver:
     """Resolve exactly one published Resource without an Application mapping table."""
 
@@ -128,20 +160,123 @@ class DirectResourceResolver:
     def directory(self) -> dict[str, Any]:
         """Return only non-secret Resource addresses for model context."""
 
-        resources = []
-        for kind in ("database", "redis", "loki"):
-            for row in self._latest_published(kind):
-                resources.append(
-                    {
-                        "code": str(row["code"]),
-                        "kind": kind,
-                        "environment": str(row.get("environment_code") or ""),
-                        "base": str(row.get("base_code") or ""),
-                        "workshop": str(row.get("workshop_code") or ""),
-                        "placement": str(row.get("placement") or ""),
-                    }
-                )
-        return {"resources": sorted(resources, key=lambda value: value["code"])}
+        return {
+            "resources": [
+                {
+                    "code": value.resource_code,
+                    "kind": value.resource_kind,
+                    "environment": value.environment,
+                    "base": value.base,
+                    "workshop": value.workshop,
+                    "placement": value.placement,
+                }
+                for value in self.list_published_addresses()
+            ]
+        }
+
+    def list_published_addresses(
+        self,
+        *,
+        resource_kind: str = "",
+    ) -> tuple[PublishedToolResourceAddress, ...]:
+        """Read current non-secret call targets without resolving provider credentials."""
+
+        selected_kind = str(resource_kind or "").strip().lower()
+        if selected_kind and selected_kind not in {"database", "redis", "loki"}:
+            raise ToolPolicyError(
+                f"Unsupported MCP Resource kind: {selected_kind}",
+                safe_message="工具资源类型无效",
+                error_code="mcp_resource_kind_invalid",
+            )
+        kinds = (selected_kind,) if selected_kind else ("database", "redis", "loki")
+        addresses: list[PublishedToolResourceAddress] = []
+        for kind in kinds:
+            for row in self._latest_published_address_rows(kind):
+                for environment, base, workshop in self._published_call_targets(row):
+                    if not self._matches(
+                        row,
+                        environment=environment,
+                        base=base,
+                        workshop=workshop,
+                        placement=str(row.get("placement") or ""),
+                    ):
+                        continue
+                    addresses.append(
+                        PublishedToolResourceAddress(
+                            resource_id=str(row["resource_id"]),
+                            resource_code=str(row["code"]),
+                            resource_kind=kind,
+                            resource_revision_id=str(row["resource_revision_id"]),
+                            resource_revision=int(row.get("revision") or 0),
+                            resource_content_hash=str(row.get("content_hash") or ""),
+                            environment=environment,
+                            base=base,
+                            workshop=workshop,
+                            placement=str(row.get("placement") or ""),
+                        )
+                    )
+        return tuple(sorted(addresses, key=lambda value: value.sort_key))
+
+    def _latest_published_address_rows(self, resource_kind: str) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select resource.id as resource_id, resource.code, resource.resource_kind,
+                   resource.scope_type, resource.placement,
+                   environment.code as environment_code,
+                   base.code as base_code, workshop.code as workshop_code,
+                   revision.id as resource_revision_id, revision.revision,
+                   revision.scope_bindings_json, revision.content_hash
+              from platform_resource resource
+              join platform_resource_revision revision
+                on revision.resource_id = resource.id
+              left join platform_environment environment
+                on environment.id = resource.environment_id
+              left join platform_base base on base.id = resource.base_id
+              left join platform_workshop workshop
+                on workshop.id = resource.workshop_id
+             where resource.status = 'enabled'
+               and resource.resource_kind = ?
+               and revision.status = 'PUBLISHED'
+             order by resource.code, revision.revision desc
+            """,
+            (resource_kind,),
+        )
+        latest: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            latest.setdefault(str(row["resource_id"]), row)
+        return list(latest.values())
+
+    @staticmethod
+    def _published_call_targets(row: dict[str, Any]) -> tuple[tuple[str, str, str], ...]:
+        try:
+            bindings = json.loads(str(row.get("scope_bindings_json") or "[]"))
+        except (TypeError, json.JSONDecodeError):
+            return ()
+        if not isinstance(bindings, list):
+            return ()
+        targets = {
+            (
+                str(value.get("environment_code") or "").strip(),
+                str(value.get("base_code") or "").strip(),
+                str(value.get("workshop_code") or "").strip(),
+            )
+            for value in bindings
+            if isinstance(value, dict) and str(value.get("environment_code") or "").strip()
+        }
+        if targets:
+            return tuple(sorted(targets))
+        if str(row.get("resource_kind") or "") == "loki":
+            return ()
+        environment = str(row.get("environment_code") or "").strip()
+        if not environment:
+            return ()
+        return (
+            (
+                environment,
+                str(row.get("base_code") or "").strip(),
+                str(row.get("workshop_code") or "").strip(),
+            ),
+        )
 
     def _latest_published(self, resource_kind: str) -> list[dict[str, Any]]:
         rows = self.database.execute(

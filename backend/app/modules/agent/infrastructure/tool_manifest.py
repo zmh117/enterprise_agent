@@ -39,6 +39,29 @@ _PLACEMENT_PROPERTY: dict[str, Any] = {
 
 
 TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "list_available_tool_resources": {
+        "description": (
+            "分页列出当前 Job、当前用户和当前业务应用共同授权的数据库、Redis 与 Loki "
+            "资源地址摘要。目标不明确或用户询问可用资源时应先调用本工具。"
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "resource_kind": {
+                    "type": "string",
+                    "enum": ["database", "redis", "loki"],
+                },
+                "query": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "description": "Optional filter over safe resource and target codes.",
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                "cursor": {"type": "string", "maxLength": 4096},
+            },
+            "additionalProperties": False,
+        },
+    },
     "get_schema_directory": {
         "description": (
             "返回目标环境、基地或车间允许访问的只读数据库结构目录。"
@@ -51,7 +74,8 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "type": "string",
                     "description": "Optional table-name filter; leave empty for the bounded directory.",
                 },
-                "limit": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                "cursor": {"type": "string", "maxLength": 4096},
                 **_ADDRESSING_PROPERTIES,
                 **_PLACEMENT_PROPERTY,
             },
@@ -193,6 +217,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "datasource": {"type": "string"},
                 "pattern": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1},
+                "cursor": {"type": "string", "maxLength": 4096},
                 **_ADDRESSING_PROPERTIES,
                 **_PLACEMENT_PROPERTY,
             },

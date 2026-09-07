@@ -407,7 +407,12 @@ class SqlServerSchemaInspectorTests(unittest.TestCase):
 
 class MySqlSchemaInspectorContractTests(unittest.TestCase):
     def test_reads_only_information_schema(self) -> None:
-        cursor = _ScriptedCursor([[("GL001_EBR_order", "order_no", "varchar", "NO")]])
+        cursor = _ScriptedCursor(
+            [
+                [("GL001_EBR_order",)],
+                [("GL001_EBR_order", "order_no", "varchar", "NO")],
+            ]
+        )
         connection = _FakeConnection(cursor)
         module = types.ModuleType("pymysql")
         cursors = types.ModuleType("pymysql.cursors")
@@ -426,19 +431,23 @@ class MySqlSchemaInspectorContractTests(unittest.TestCase):
 
         self.assertIsInstance(result, SchemaDirectory)
         self.assertEqual(["GL001_EBR_order"], [table.name for table in result.tables])
-        sql = cursor.calls[0][0].lower()
-        self.assertIn("information_schema.columns", sql)
-        self.assertNotIn("gl001_ebr_order", sql)
+        table_sql = cursor.calls[0][0].lower()
+        column_sql = cursor.calls[1][0].lower()
+        self.assertIn("information_schema.tables", table_sql)
+        self.assertIn("limit %s", table_sql)
+        self.assertIn("information_schema.columns", column_sql)
+        self.assertNotIn("gl001_ebr_order", column_sql)
         self.assertTrue(connection.closed)
 
     def test_escapes_exact_prefix_and_post_filters_like_wildcard_matches(self) -> None:
         cursor = _ScriptedCursor(
             [
                 [
-                    ("GL001_EBR_order", "order_no", "varchar", "NO"),
-                    ("GL001XEBR_order", "order_no", "varchar", "NO"),
-                    ("GL002_EBR_order", "order_no", "varchar", "NO"),
-                ]
+                    ("GL001_EBR_order",),
+                    ("GL001XEBR_order",),
+                    ("GL002_EBR_order",),
+                ],
+                [("GL001_EBR_order", "order_no", "varchar", "NO")],
             ]
         )
         connection = _FakeConnection(cursor)
@@ -461,6 +470,34 @@ class MySqlSchemaInspectorContractTests(unittest.TestCase):
         sql = cursor.calls[0][0].lower()
         self.assertIn("escape '='", sql)
         self.assertEqual("GL001=_%", cursor.calls[0][1][1])
+
+    def test_uses_after_table_keyset_and_limit_plus_one(self) -> None:
+        cursor = _ScriptedCursor(
+            [
+                [("orders_051",)],
+                [("orders_051", "id", "bigint", "NO")],
+            ]
+        )
+        connection = _FakeConnection(cursor)
+        module = types.ModuleType("pymysql")
+        cursors = types.ModuleType("pymysql.cursors")
+        cursors.Cursor = object  # type: ignore[attr-defined]
+        module.cursors = cursors  # type: ignore[attr-defined]
+        module.connect = MagicMock(return_value=connection)  # type: ignore[attr-defined]
+
+        with patch.dict(sys.modules, {"pymysql": module, "pymysql.cursors": cursors}):
+            result = MySqlSchemaInspector().read(
+                _binding(DatabaseEngine.MYSQL),
+                table_prefix=None,
+                query="orders",
+                table_limit=50,
+                column_limit=80,
+                after_table="orders_050",
+            )
+
+        self.assertEqual(["orders_051"], [table.name for table in result.tables])
+        self.assertEqual("orders_050", cursor.calls[0][1][3])
+        self.assertEqual(51, cursor.calls[0][1][4])
 
 
 class DialectAwarePrefixTests(unittest.TestCase):

@@ -46,6 +46,7 @@ _BUSINESS_CAPABILITY_NAMES_ZH = {
     "dingtalk_get_work_notification_progress": "查看工作通知进度",
     "dingtalk_get_work_notification_result": "查看工作通知结果",
     "get_schema_directory": "查看数据库结构目录",
+    "list_available_tool_resources": "查看可用工具资源",
     "diagnose_loki_labels": "诊断日志标签",
     "diagnose_loki_label_values": "诊断日志标签值",
     "diagnose_loki_probe": "探测日志数据",

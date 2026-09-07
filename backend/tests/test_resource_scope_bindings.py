@@ -52,9 +52,15 @@ class _RedisGateway:
         self.keys.append(key)
         return SimpleNamespace(summary={"found": True}, raw={}, truncated=False)
 
-    def scan(self, _binding: object, pattern: str, limit: int) -> SimpleNamespace:
+    def scan(
+        self,
+        _binding: object,
+        pattern: str,
+        limit: int,
+        _cursor: object = 0,
+    ) -> SimpleNamespace:
         self.keys.append(f"{pattern}:{limit}")
-        return SimpleNamespace(summary={"count": 0}, raw={}, truncated=False)
+        return SimpleNamespace(summary={"count": 0}, raw={}, truncated=False, metadata={})
 
 
 class _LokiGateway:

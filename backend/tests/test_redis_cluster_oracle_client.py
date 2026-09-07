@@ -145,6 +145,37 @@ class RedisClusterConfigTests(unittest.TestCase):
         client.scan.assert_called_once_with(cursor=0, match="GL001:*", count=2)
         self.assertEqual(["GL001:1", "GL001:2"], response.summary["keys"])
         self.assertTrue(response.truncated)
+        self.assertEqual(17, response.metadata["next_provider_cursor"])
+
+    def test_gateway_preserves_cluster_node_cursors(self) -> None:
+        binding = self._redis_binding(
+            RedisConnection(
+                host="10.0.0.1",
+                port=6379,
+                mode=RedisMode.CLUSTER,
+                nodes=(RedisNode("10.0.0.1", 6379), RedisNode("10.0.0.2", 6379)),
+            )
+        )
+        client = MagicMock()
+        client.scan.return_value = ({"node-a": 12, "node-b": 0}, ["GL001:1"])
+        gateway = RealRedisGateway()
+        with patch.object(gateway, "_connect", return_value=client):
+            response = gateway.scan(
+                binding,
+                "GL001:*",
+                2,
+                {"node-a": 4, "node-b": 0},
+            )
+        client.scan.assert_called_once_with(
+            cursor={"node-a": 4, "node-b": 0},
+            match="GL001:*",
+            count=2,
+        )
+        self.assertEqual(
+            {"node-a": 12, "node-b": 0},
+            response.metadata["next_provider_cursor"],
+        )
+        self.assertTrue(response.truncated)
 
     def test_cluster_still_enforces_workshop_prefix(self) -> None:
         enforce_key_namespace("GL001:order:1", key_prefix="GL001:")

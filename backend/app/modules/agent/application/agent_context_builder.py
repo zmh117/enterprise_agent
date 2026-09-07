@@ -288,8 +288,52 @@ def _tool_restrictions(
             restrictions.append(
                 "Call get_schema_directory before query_database using the same selected target."
             )
+    resource_query_tools = {
+        "get_schema_directory",
+        "query_database",
+        "query_redis_get",
+        "query_redis_scan",
+        "query_loki",
+        "diagnose_loki_labels",
+        "diagnose_loki_label_values",
+        "diagnose_loki_probe",
+    }
+    if "list_available_tool_resources" in assigned:
+        restrictions.extend(
+            [
+                (
+                    "When the user asks which Database, Redis, or Loki resources are available, "
+                    "or has not supplied one exact target, call list_available_tool_resources "
+                    "before any target resource Tool. Keep resource_kind and query unchanged while "
+                    "following next_cursor, reject a repeated cursor, and stop only when "
+                    "has_more=false or the Job Tool-call budget is exhausted."
+                ),
+                (
+                    "Use only a directory item whose resolution_status is AVAILABLE, copying its "
+                    "environment, base, workshop, and placement exactly; never select AMBIGUOUS "
+                    "items or invent, probe, broaden, or enumerate other target codes."
+                ),
+                (
+                    "After mcp_resource_not_resolved, do not retry the same arguments. Refresh the "
+                    "authorized resource directory once if needed; never infer from one failed "
+                    "target that the current user has no resources anywhere."
+                ),
+            ]
+        )
+    elif resource_query_tools & assigned:
+        restrictions.append(
+            "No authorized resource-directory Tool is assigned. If the user did not provide one "
+            "exact environment and any applicable base, workshop, or placement, ask for that "
+            "target; never guess, probe, or enumerate target codes, and never generalize one "
+            "mcp_resource_not_resolved result to all resources."
+        )
     if {"query_redis_get", "query_redis_scan"} & assigned:
         restrictions.append("Redis operations must be get or bounded scan.")
+    if "query_redis_scan" in assigned:
+        restrictions.append(
+            "For Redis SCAN pagination, keep the exact target, pattern, and limit unchanged when "
+            "returning next_cursor; stop on has_more=false and never reuse or modify a cursor."
+        )
     if "dingtalk_search_aitables" in assigned:
         restrictions.extend(
             [

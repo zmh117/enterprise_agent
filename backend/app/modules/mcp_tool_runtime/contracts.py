@@ -19,6 +19,19 @@ class ToolRequestContext:
     project_code: str
     correlation_id: str = "-"
     tool_call_id: str = ""
+    application_id: str = ""
+    snapshot_hash: str = ""
+    authorization_hash: str = ""
+
+
+@dataclass(frozen=True)
+class ResourceAccessGrant:
+    tool_identifier: str
+    resource_kind: str
+    environment: str = ""
+    base: str = ""
+    workshop: str = ""
+    unrestricted: bool = False
 
 
 class ReadOnlyToolExecutor(Protocol):
@@ -26,6 +39,17 @@ class ReadOnlyToolExecutor(Protocol):
 
     It is deliberately not an HTTP client and has no token or configurable URL.
     """
+
+    def list_available_tool_resources(
+        self,
+        context: ToolRequestContext,
+        *,
+        grants: tuple[ResourceAccessGrant, ...],
+        resource_kind: str = "",
+        query: str = "",
+        limit: int = 50,
+        cursor: str = "",
+    ) -> ToolResult: ...
 
     def get_schema_directory(
         self,
@@ -37,6 +61,7 @@ class ReadOnlyToolExecutor(Protocol):
         placement: str | None = None,
         query: str = "",
         limit: int = 50,
+        cursor: str = "",
     ) -> ToolResult: ...
 
     def query_database(
@@ -75,6 +100,7 @@ class ReadOnlyToolExecutor(Protocol):
         base: str | None = None,
         workshop: str | None = None,
         placement: str | None = None,
+        cursor: str = "",
     ) -> ToolResult: ...
 
     def query_loki(
