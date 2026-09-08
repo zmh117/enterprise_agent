@@ -40,6 +40,7 @@ import {
   type RuntimeJobFilters,
 } from "@/contexts/operations/infrastructure/runtime-record-api"
 import { ApplicationState } from "@/contexts/applications/presentation/application-state"
+import { ApiError } from "@/shared/api/api-client"
 
 const RUNTIME_JOB_FILTER_FIELDS: Array<{
   key: keyof RuntimeJobFilters
@@ -70,6 +71,14 @@ export function RuntimeRecordsPage() {
   const [appliedFilters, setAppliedFilters] = useState(filters)
   const query = useRuntimeJobs(appliedFilters)
   const fileOperations = useFileOperations()
+  const invalidTimeWindow =
+    query.error instanceof ApiError &&
+    query.error.code === "invalid_time_window"
+  const resetFilters = () => {
+    const defaults = defaultRuntimeJobFilters()
+    setFilters(defaults)
+    setAppliedFilters(defaults)
+  }
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -124,26 +133,22 @@ export function RuntimeRecordsPage() {
             />
           </label>
         ))}
-        <div className="flex gap-2 sm:col-span-2 xl:col-span-4">
+        <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-4">
           <Button type="submit">应用筛选</Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              const defaults = defaultRuntimeJobFilters()
-              setFilters(defaults)
-              setAppliedFilters(defaults)
-            }}
-          >
+          <Button type="button" variant="outline" onClick={resetFilters}>
             重置
           </Button>
+          <p className="text-xs text-muted-foreground">
+            单次最多查询 31 天，开始时间必须早于结束时间。
+          </p>
         </div>
       </form>
       {query.isLoading ? <Skeleton className="h-72 w-full" /> : null}
       {query.isError ? (
         <ApplicationState
           error={query.error}
-          retry={() => void query.refetch()}
+          retry={invalidTimeWindow ? resetFilters : () => void query.refetch()}
+          actionLabel={invalidTimeWindow ? "恢复最近 24 小时" : undefined}
         />
       ) : null}
       {query.data ? (

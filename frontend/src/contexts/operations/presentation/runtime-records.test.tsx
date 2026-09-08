@@ -649,6 +649,46 @@ describe("runtime provenance records", () => {
     expect(screen.queryByLabelText("模型")).not.toBeInTheDocument()
   })
 
+  it("shows an actionable error when the time window is too wide", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/admin/file-operations")) {
+        return response(fileOperations())
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            detail: {
+              code: "invalid_time_window",
+              message: "查询时间范围不能超过 31 天",
+              field_errors: [
+                {
+                  field: "start",
+                  message: "查询时间范围不能超过 31 天",
+                },
+              ],
+            },
+          }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      )
+    })
+
+    renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
+
+    expect(await screen.findByText("时间范围无效")).toBeInTheDocument()
+    expect(screen.getByText("查询时间范围不能超过 31 天")).toBeInTheDocument()
+    expect(
+      screen.getByText("单次最多查询 31 天，开始时间必须早于结束时间。")
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "恢复最近 24 小时" })
+    ).toBeInTheDocument()
+    expect(screen.queryByText("管理服务不可用")).not.toBeInTheDocument()
+  })
+
   it("shows immutable application provenance in job detail", async () => {
     const auditBodies: Record<string, string> = {
       context_manifest: JSON.stringify({

@@ -148,12 +148,89 @@ def test_page_and_time_windows_are_bounded_and_stable() -> None:
     now = datetime(2026, 7, 20, 12, tzinfo=timezone.utc)
     default = TimeWindow.parse(now=now)
     assert default.end - default.start == timedelta(hours=24)
-    with pytest.raises(NonRetryableExecutionError):
+
+    exact_limit = TimeWindow.parse(
+        start="2026-06-19T12:00:00Z",
+        end="2026-07-20T12:00:00Z",
+        now=now,
+    )
+    assert exact_limit.end - exact_limit.start == timedelta(days=31)
+
+    with pytest.raises(NonRetryableExecutionError) as too_wide:
         TimeWindow.parse(
             start="2026-01-01T00:00:00Z",
             end="2026-07-20T00:00:00Z",
             now=now,
         )
+    assert too_wide.value.error_code == "invalid_time_window"
+    assert too_wide.value.safe_message == "查询时间范围不能超过 31 天"
+    assert too_wide.value.field_errors == [
+        {"field": "start", "message": "查询时间范围不能超过 31 天"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected_field", "expected_message"),
+    [
+        (
+            "2026-07-20T12:00:00Z",
+            "2026-07-20T12:00:00Z",
+            "start",
+            "开始时间必须早于结束时间",
+        ),
+        (
+            "not-a-time",
+            "2026-07-20T12:00:00Z",
+            "start",
+            "开始时间必须是有效的日期和时间",
+        ),
+        (
+            "2026-07-20T11:00:00Z",
+            "2026-07-20T12:06:00Z",
+            "end",
+            "结束时间不能晚于当前时间",
+        ),
+    ],
+)
+def test_time_window_errors_are_safe_and_actionable(
+    start: str,
+    end: str,
+    expected_field: str,
+    expected_message: str,
+) -> None:
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        TimeWindow.parse(
+            start=start,
+            end=end,
+            now=datetime(2026, 7, 20, 12, tzinfo=timezone.utc),
+        )
+
+    assert raised.value.error_code == "invalid_time_window"
+    assert raised.value.safe_message == expected_message
+    assert raised.value.field_errors == [{"field": expected_field, "message": expected_message}]
+
+
+def test_admin_jobs_time_window_error_is_actionable() -> None:
+    settings = unified_settings()
+    container = build_test_container(settings, migrate=True, seed=True)
+    app = create_app(settings, container_factory=lambda _: container)
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.get(
+            "/api/admin/jobs",
+            params={
+                "start": "2020-01-01T00:00:00Z",
+                "end": "2020-02-02T00:00:00Z",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "message": "查询时间范围不能超过 31 天",
+        "code": "invalid_time_window",
+        "field_errors": [{"field": "start", "message": "查询时间范围不能超过 31 天"}],
+    }
 
 
 class FakeQueueStatus:

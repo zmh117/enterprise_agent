@@ -63,11 +63,23 @@ class TimeWindow:
             else end_at - timedelta(hours=DEFAULT_WINDOW_HOURS)
         )
         if start_at >= end_at:
-            raise _window_error("start must be before end", "start")
+            raise _window_error(
+                "start must be before end",
+                "start",
+                safe_message="开始时间必须早于结束时间",
+            )
         if end_at - start_at > timedelta(days=MAX_WINDOW_DAYS):
-            raise _window_error(f"time window cannot exceed {MAX_WINDOW_DAYS} days", "start")
+            raise _window_error(
+                f"time window cannot exceed {MAX_WINDOW_DAYS} days",
+                "start",
+                safe_message=f"查询时间范围不能超过 {MAX_WINDOW_DAYS} 天",
+            )
         if end_at > current + timedelta(minutes=5):
-            raise _window_error("end cannot be in the future", "end")
+            raise _window_error(
+                "end cannot be in the future",
+                "end",
+                safe_message="结束时间不能晚于当前时间",
+            )
         return cls(start=start_at, end=end_at)
 
     def as_iso(self) -> tuple[str, str]:
@@ -78,16 +90,26 @@ def _parse_timestamp(value: str, field: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise _window_error(f"{field} must be ISO-8601", field) from exc
+        label = "开始时间" if field == "start" else "结束时间"
+        raise _window_error(
+            f"{field} must be ISO-8601",
+            field,
+            safe_message=f"{label}必须是有效的日期和时间",
+        ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
 
 
-def _window_error(message: str, field: str) -> NonRetryableExecutionError:
+def _window_error(
+    message: str,
+    field: str,
+    *,
+    safe_message: str,
+) -> NonRetryableExecutionError:
     return NonRetryableExecutionError(
-        "Invalid administration time window",
-        safe_message=message,
+        message,
+        safe_message=safe_message,
         error_code="invalid_time_window",
-        field_errors=[{"field": field, "message": message}],
+        field_errors=[{"field": field, "message": safe_message}],
     )
