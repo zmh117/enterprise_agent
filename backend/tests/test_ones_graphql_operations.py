@@ -121,11 +121,56 @@ def test_graphql_client_uses_registered_document_path_and_variables_only() -> No
             "filterGroup": [
                 {"name_match": "fixed", "issueType_in": ["Rbk6XNBr"]}
             ],
-            "pagination": {"limit": 5, "preciseCount": True},
+            "pagination": {"limit": 5, "after": "", "preciseCount": True},
         },
     }
     assert result.output["items"][0]["name"] == "Bounded result"
     assert result.output["items"][0]["type"] == "task"
+    assert result.output["_provider_cursor"] == "cursor-1"
+
+
+def test_work_item_search_injects_only_the_server_resolved_provider_cursor() -> None:
+    http = _RecordingHttp(
+        {
+            "data": {
+                "buckets": [
+                    {
+                        "tasks": [],
+                        "pageInfo": {
+                            "count": 0,
+                            "totalCount": 50,
+                            "endCursor": "",
+                            "hasNextPage": False,
+                            "preciseCount": True,
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    client = OnesGraphqlClient(
+        http,  # type: ignore[arg-type]
+        GraphqlOperationRegistry((WORK_ITEM_SEARCH_OPERATION,)),
+    )
+
+    client.execute(
+        WORK_ITEM_SEARCH_OPERATION_CODE,
+        arguments={
+            "keyword": "fixed",
+            "issue_type": "task",
+            "limit": 20,
+            "provider_cursor": "provider-page-2",
+            "cumulative_returned": 50,
+        },
+        context={"user_id": "ones-user", "team_id": "ones-team"},
+        headers={"Ones-Auth-Token": "not-persisted-test-token"},
+    )
+
+    assert http.calls[0]["payload"]["variables"]["pagination"] == {
+        "limit": 20,
+        "after": "provider-page-2",
+        "preciseCount": True,
+    }
 
 
 def test_graphql_registry_rejects_arbitrary_or_mutating_operations() -> None:

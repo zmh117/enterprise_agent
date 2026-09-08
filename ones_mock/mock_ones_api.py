@@ -555,6 +555,16 @@ def _page_limit(variables: dict[str, Any]) -> int:
     return min(limit, 1000)
 
 
+def _page_after(variables: dict[str, Any]) -> str:
+    pagination = variables.get("pagination")
+    if not isinstance(pagination, dict):
+        return ""
+    after = pagination.get("after", "")
+    if not isinstance(after, str):
+        raise HTTPException(status_code=400, detail={"code": "invalid_cursor"})
+    return after
+
+
 def _matches_keyword(task: dict[str, Any], keyword: str) -> bool:
     normalized = keyword.removeprefix("#").strip().casefold()
     if not normalized:
@@ -595,7 +605,16 @@ def _group_task_data(config: MockOnesConfig, variables: dict[str, Any]) -> dict[
         and _matches_keyword(fixture, keyword)
     ]
     total_count = len(tasks)
-    tasks = tasks[: _page_limit(variables)]
+    after = _page_after(variables)
+    start = 0
+    if after:
+        for index, item in enumerate(tasks):
+            if after == f"mock-cursor-{item['number']}":
+                start = index + 1
+                break
+        else:
+            raise HTTPException(status_code=400, detail={"code": "invalid_cursor"})
+    tasks = tasks[start : start + _page_limit(variables)]
     count = len(tasks)
     start_cursor = f"mock-cursor-{tasks[0]['number']}" if tasks else ""
     end_cursor = f"mock-cursor-{tasks[-1]['number']}" if tasks else ""
@@ -607,11 +626,11 @@ def _group_task_data(config: MockOnesConfig, variables: dict[str, Any]) -> dict[
                     "pageInfo": {
                         "count": count,
                         "totalCount": total_count,
-                        "startPos": 0 if tasks else -1,
+                        "startPos": start if tasks else -1,
                         "startCursor": start_cursor,
-                        "endPos": count - 1,
+                        "endPos": start + count - 1,
                         "endCursor": end_cursor,
-                        "hasNextPage": total_count > count,
+                        "hasNextPage": start + count < total_count,
                         "preciseCount": total_count,
                     },
                     "tasks": tasks,

@@ -39,6 +39,8 @@ class WorkItemSearchOperation:
         issue_type = str(arguments["issue_type"])
         issue_type_uuid = ISSUE_TYPE_UUIDS[issue_type]
         limit = int(arguments["limit"])
+        provider_cursor = str(arguments.get("provider_cursor") or "")
+        cumulative_returned = int(arguments.get("cumulative_returned") or 0)
         return {
             "groupBy": {"tasks": {}},
             "groupOrderBy": None,
@@ -50,8 +52,13 @@ class WorkItemSearchOperation:
                     "issueType_in": [issue_type_uuid],
                 }
             ],
-            "pagination": {"limit": limit, "preciseCount": True},
+            "pagination": {
+                "limit": limit,
+                "after": provider_cursor,
+                "preciseCount": True,
+            },
             "_limit": limit,
+            "_cumulative_returned": cumulative_returned,
             "_issue_type": issue_type,
             "_issue_type_uuid": issue_type_uuid,
         }
@@ -63,16 +70,20 @@ class WorkItemSearchOperation:
         variables: dict[str, Any],
     ) -> dict[str, Any]:
         limit = bounded_int(variables.get("_limit"), minimum=1)
+        cumulative_returned = bounded_int(
+            variables.get("_cumulative_returned", 0), minimum=0
+        )
         expected_uuid = bounded_string(
             variables.get("_issue_type_uuid"), maximum=128
         )
         expected_type = variables.get("_issue_type")
         if expected_type not in ISSUE_TYPES:
             raise invalid_provider_response("ones_provider_schema_invalid")
-        items, total, truncated, _cursor = page_items(
+        items, total, truncated, provider_cursor = page_items(
             payload,
             collection="tasks",
             limit=limit,
+            prior_count=cumulative_returned,
         )
         normalized: list[dict[str, Any]] = []
         for item in items:
@@ -94,6 +105,7 @@ class WorkItemSearchOperation:
             "items": normalized,
             "total": total,
             "truncated": truncated,
+            "_provider_cursor": provider_cursor,
             "untrusted_data": True,
         }
 

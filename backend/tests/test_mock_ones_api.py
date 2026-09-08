@@ -140,6 +140,31 @@ class MockOnesApiTests(unittest.TestCase):
             {task["issueType"]["uuid"] for task in tasks},
         )
 
+    def test_group_task_data_supports_cursor_pagination(self) -> None:
+        first = self.graphql(
+            "group-task-data",
+            {"pagination": {"limit": 2, "after": "", "preciseCount": True}},
+        )
+        first_bucket = first.json()["data"]["buckets"][0]
+
+        second = self.graphql(
+            "group-task-data",
+            {
+                "pagination": {
+                    "limit": 2,
+                    "after": first_bucket["pageInfo"]["endCursor"],
+                    "preciseCount": True,
+                }
+            },
+        )
+        second_bucket = second.json()["data"]["buckets"][0]
+
+        self.assertEqual([900101, 900102], [item["number"] for item in first_bucket["tasks"]])
+        self.assertTrue(first_bucket["pageInfo"]["hasNextPage"])
+        self.assertEqual([900103], [item["number"] for item in second_bucket["tasks"]])
+        self.assertFalse(second_bucket["pageInfo"]["hasNextPage"])
+        self.assertEqual(3, second_bucket["pageInfo"]["totalCount"])
+
     def test_issue_type_scopes_are_project_scoped(self) -> None:
         response = self.graphql(
             "issueTypeScopes",

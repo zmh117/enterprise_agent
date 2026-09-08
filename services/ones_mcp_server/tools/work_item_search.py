@@ -17,6 +17,7 @@ from services.ones_mcp_server.contracts import (
     ISSUE_TYPES,
     PROVIDER_HEADERS,
     REQUIRED_SCOPE,
+    TOOL_DESCRIPTION,
     TOOL_INPUT_SCHEMA,
     TOOL_IDENTIFIER,
     TOOL_OUTPUT_SCHEMA,
@@ -26,6 +27,12 @@ from services.ones_mcp_server.errors import (
     OnesMcpError,
     OnesProviderUnauthorized,
     error_code,
+    invalid_provider_response,
+)
+from services.ones_mcp_server.pagination import (
+    MAX_WORK_ITEM_SEARCH_RESULTS,
+    OnesWorkItemSearchCursorCodec,
+    OnesWorkItemSearchPage,
 )
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
 from services.ones_mcp_server.provider.graphql.operations.work_item_search import (
@@ -41,7 +48,7 @@ class OnesSearchResult(dict[str, Any]):
 
 class OnesWorkItemSearchService:
     tool_identifier = TOOL_IDENTIFIER
-    description = "按关键字和类型查询当前用户默认 Team 的 ONES 工作项。"
+    description = TOOL_DESCRIPTION
     input_schema = TOOL_INPUT_SCHEMA
     output_schema = TOOL_OUTPUT_SCHEMA
     required_scope = REQUIRED_SCOPE
@@ -117,11 +124,31 @@ class OnesWorkItemSearchService:
                 business_request={"stage": "ones_principal_resolve"},
             )
             authorization_persisted = True
-            output = self._search_with_refresh(
+            page = OnesWorkItemSearchCursorCodec.decode(
+                str(tool_request.get("cursor") or ""),
+                claims=claims,
+                principal=principal,
+                request=tool_request,
+            )
+            provider_request = {
+                "keyword": tool_request["keyword"],
+                "issue_type": tool_request["issue_type"],
+                "limit": min(int(tool_request["limit"]), page.remaining),
+                "provider_cursor": page.provider_cursor,
+                "cumulative_returned": page.cumulative_returned,
+            }
+            provider_output = self._search_with_refresh(
                 claims=claims,
                 handle=handle,
                 principal=principal,
+                tool_request=provider_request,
+            )
+            output = self._public_page_output(
+                provider_output,
+                claims=claims,
+                principal=principal,
                 tool_request=tool_request,
+                page=page,
             )
             self.audit.complete(
                 handle,
@@ -240,7 +267,11 @@ class OnesWorkItemSearchService:
                 business_request=execution.request,
                 business_response={
                     "provider_response": execution.response,
-                    "tool": execution.output,
+                    "tool": {
+                        key: value
+                        for key, value in execution.output.items()
+                        if not key.startswith("_provider_")
+                    },
                 },
                 credential_revision=principal.credential.revision,
             )
@@ -264,12 +295,64 @@ class OnesWorkItemSearchService:
             raise
 
     @staticmethod
+    def _public_page_output(
+        provider_output: dict[str, Any],
+        *,
+        claims: dict[str, Any],
+        principal: ResolvedOnesPrincipal,
+        tool_request: dict[str, Any],
+        page: OnesWorkItemSearchPage,
+    ) -> dict[str, Any]:
+        items = provider_output.get("items")
+        total = provider_output.get("total")
+        truncated = provider_output.get("truncated")
+        provider_cursor = provider_output.get("_provider_cursor")
+        if (
+            not isinstance(items, list)
+            or type(total) is not int
+            or total < 0
+            or type(truncated) is not bool
+            or not isinstance(provider_cursor, str)
+        ):
+            raise invalid_provider_response("ones_provider_schema_invalid")
+        returned = len(items)
+        cumulative_returned = page.cumulative_returned + returned
+        if (
+            returned > int(tool_request["limit"])
+            or cumulative_returned > MAX_WORK_ITEM_SEARCH_RESULTS
+        ):
+            raise invalid_provider_response("ones_provider_schema_invalid")
+        pagination_limit_reached = (
+            truncated and cumulative_returned >= MAX_WORK_ITEM_SEARCH_RESULTS
+        )
+        output: dict[str, Any] = {
+            "items": items,
+            "total": total,
+            "returned": returned,
+            "cumulative_returned": cumulative_returned,
+            "truncated": truncated,
+            "pagination_limit_reached": pagination_limit_reached,
+            "untrusted_data": True,
+        }
+        if truncated and not pagination_limit_reached:
+            if not provider_cursor:
+                raise invalid_provider_response("ones_provider_schema_invalid")
+            output["next_cursor"] = OnesWorkItemSearchCursorCodec.encode(
+                provider_cursor=provider_cursor,
+                cumulative_returned=cumulative_returned,
+                claims=claims,
+                principal=principal,
+                request=tool_request,
+            )
+        return output
+
+    @staticmethod
     def _validate_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(arguments, dict) or set(arguments) != {
-            "keyword",
-            "issue_type",
-            "limit",
-        }:
+        if (
+            not isinstance(arguments, dict)
+            or not {"keyword", "issue_type", "limit"}.issubset(arguments)
+            or not set(arguments).issubset({"keyword", "issue_type", "limit", "cursor"})
+        ):
             raise OnesMcpError(
                 "ONES Tool input fields are invalid",
                 safe_message="ONES 查询参数无效",
@@ -278,16 +361,24 @@ class OnesWorkItemSearchService:
         keyword = arguments.get("keyword")
         issue_type = arguments.get("issue_type")
         limit = arguments.get("limit")
+        cursor = arguments.get("cursor", "")
         if (
             not isinstance(keyword, str)
             or not 1 <= len(keyword) <= 200
             or issue_type not in ISSUE_TYPES
             or type(limit) is not int
             or not 1 <= limit <= 50
+            or not isinstance(cursor, str)
+            or len(cursor) > 4096
         ):
             raise OnesMcpError(
                 "ONES Tool input values are invalid",
                 safe_message="ONES 查询参数无效",
                 error_code="ones_tool_input_invalid",
             )
-        return {"keyword": keyword, "issue_type": issue_type, "limit": limit}
+        return {
+            "keyword": keyword,
+            "issue_type": issue_type,
+            "limit": limit,
+            **({"cursor": cursor} if cursor else {}),
+        }

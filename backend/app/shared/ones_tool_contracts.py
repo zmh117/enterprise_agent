@@ -473,6 +473,7 @@ _LEGACY_WORK_ITEM_INPUT = _object_schema(
         "keyword": {"type": "string", "minLength": 1, "maxLength": 200},
         "issue_type": {"type": "string", "enum": ["demand", "task", "defect"]},
         "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        "cursor": {"type": "string", "maxLength": 4096},
     },
     required=("keyword", "issue_type", "limit"),
 )
@@ -493,10 +494,22 @@ _LEGACY_WORK_ITEM_OUTPUT = {
             ),
         },
         "total": {"type": "integer", "minimum": 0},
+        "returned": {"type": "integer", "minimum": 0, "maximum": 50},
+        "cumulative_returned": {"type": "integer", "minimum": 0, "maximum": 500},
         "truncated": {"type": "boolean"},
+        "pagination_limit_reached": {"type": "boolean"},
+        "next_cursor": {"type": "string", "minLength": 1, "maxLength": 4096},
         "untrusted_data": {"const": True},
     },
-    "required": ["items", "total", "truncated", "untrusted_data"],
+    "required": [
+        "items",
+        "total",
+        "returned",
+        "cumulative_returned",
+        "truncated",
+        "pagination_limit_reached",
+        "untrusted_data",
+    ],
     "additionalProperties": False,
 }
 
@@ -674,7 +687,7 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
     for contract in (
         _contract(
             "ones_work_item_search",
-            "按关键词和稳定类型查询当前用户默认 Team 的 ONES 工作项；仅用于兼容已有发布，复杂筛选请使用 ones_query_work_items。",
+            "按关键词和稳定类型分页查询当前用户默认 Team 的 ONES 工作项；单页最多 50 条。需要完整结果且 truncated=true、pagination_limit_reached=false 时，必须保持 keyword、issue_type、limit 不变并使用 next_cursor 继续分页，直到 truncated=false；不得在尚有 next_cursor 时声称结果完整。每条分页链累计最多返回 500 条，复杂筛选请使用 ones_query_work_items。",
             _LEGACY_WORK_ITEM_INPUT,
             _LEGACY_WORK_ITEM_OUTPUT,
         ),

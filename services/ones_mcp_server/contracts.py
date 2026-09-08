@@ -34,6 +34,7 @@ __all__ = [
     "SERVER_CODE",
     "SERVER_VERSION",
     "TOOL_IDENTIFIER",
+    "TOOL_DESCRIPTION",
     "TOOL_INPUT_SCHEMA",
     "TOOL_OUTPUT_SCHEMA",
     "WORK_ITEM_SEARCH_DOCUMENT",
@@ -48,12 +49,10 @@ TOOL_IDENTIFIER: Final = "ones_work_item_search"
 REQUIRED_SCOPE: Final = mcp_invoke_scope(SERVER_CODE, TOOL_IDENTIFIER)
 
 LOGIN_PATH: Final = "/project/api/project/auth/login"
-TOOL_INPUT_SCHEMA: Final[dict[str, Any]] = require_ones_tool_contract(
-    TOOL_IDENTIFIER
-).input_schema
-TOOL_OUTPUT_SCHEMA: Final[dict[str, Any]] = require_ones_tool_contract(
-    TOOL_IDENTIFIER
-).output_schema
+_TOOL_CONTRACT: Final = require_ones_tool_contract(TOOL_IDENTIFIER)
+TOOL_DESCRIPTION: Final = _TOOL_CONTRACT.description
+TOOL_INPUT_SCHEMA: Final[dict[str, Any]] = _TOOL_CONTRACT.input_schema
+TOOL_OUTPUT_SCHEMA: Final[dict[str, Any]] = _TOOL_CONTRACT.output_schema
 
 PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER: Final = "ones_list_project_role_members"
 PROJECT_ROLE_MEMBERS_REQUIRED_SCOPE: Final = mcp_invoke_scope(

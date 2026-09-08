@@ -75,6 +75,7 @@ def page_items(
     *,
     collection: str,
     limit: int,
+    prior_count: int = 0,
 ) -> tuple[list[dict[str, Any]], int, bool, str]:
     data = require_mapping(payload.get("data"))
     buckets = require_list(data.get("buckets"))
@@ -93,7 +94,7 @@ def page_items(
         has_next = page.get("hasNextPage", False)
         if type(has_next) is not bool:
             raise invalid_provider_response("ones_provider_schema_invalid")
-        truncated = truncated or has_next or bucket_total > count
+        truncated = truncated or has_next or bucket_total > prior_count + count
         cursor = page.get("endCursor")
         if cursor is not None:
             next_cursor = bounded_string(cursor, maximum=512, allow_empty=True)
@@ -165,4 +166,3 @@ def normalize_work_item(value: object) -> dict[str, Any]:
     if item.get("subTaskDoneCount") is not None:
         output["subtask_done_count"] = bounded_int(item.get("subTaskDoneCount"))
     return output
-

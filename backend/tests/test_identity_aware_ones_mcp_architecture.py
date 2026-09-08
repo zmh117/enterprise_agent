@@ -150,7 +150,10 @@ def test_ones_contract_exposes_code_owned_fixed_tools_and_confirmed_mutations() 
     assert ISSUE_TYPES == ("demand", "task", "defect")
     assert TOOL_INPUT_SCHEMA["additionalProperties"] is False
     assert TOOL_INPUT_SCHEMA["required"] == ["keyword", "issue_type", "limit"]
+    assert TOOL_INPUT_SCHEMA["properties"]["cursor"]["maxLength"] == 4096
     assert TOOL_OUTPUT_SCHEMA["properties"]["untrusted_data"] == {"const": True}
+    assert TOOL_OUTPUT_SCHEMA["properties"]["next_cursor"]["maxLength"] == 4096
+    assert TOOL_OUTPUT_SCHEMA["properties"]["cumulative_returned"]["maximum"] == 500
     assert LOGIN_PATH == "/project/api/project/auth/login"
     assert WORK_ITEM_SEARCH_PATH == (
         "/project/api/project/team/{team_uuid}/items/graphql"

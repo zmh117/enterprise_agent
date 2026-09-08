@@ -114,7 +114,7 @@ _EXISTING_ONES_SCHEMA_HASHES = {
     "ones_resolve_query_conditions": "2bcfa7c98012e3dccfb9de3c37d88584b3c937e045a6e3214173ed7237f8b8c8",
     "ones_search_projects": "c833ed4154d5d8bc80762b468a0ed4a1c0f331a936028f99c0474c90d2995928",
     "ones_search_team_users": "bbbb4652555ebcfd283172e7dd179766bde847b61206aaa89dd77943501328a6",
-    "ones_work_item_search": "ecd528fde74736d6f1dd89d7fcba260d00037d38aa2e9156ddff58d7d1fffe37",
+    "ones_work_item_search": "febc27bc2d6eb50c63410ed3bf4cc086911e8585a2eb11e30ef0a243c4fc3eaa",
 }
 
 
