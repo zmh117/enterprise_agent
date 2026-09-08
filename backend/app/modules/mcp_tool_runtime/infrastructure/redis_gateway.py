@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Protocol
 
 from app.shared.database import assert_external_io_allowed
+from app.shared.exceptions import ToolPolicyError
 
 from ..domain.addressing import ResourceBinding
 from ..domain.errors import PolicyViolation, ResolutionError, UpstreamUnavailable
+from ..domain.redis_pagination import (
+    RedisScanPosition,
+    scan_complete,
+    scan_fingerprint,
+    stale_scan_cursor,
+)
 from ..domain.results import ToolResponse
 from ..domain.topology import RedisMode
 
@@ -42,10 +50,10 @@ class FakeRedisGateway:
         self.calls.append(("scan", pattern))
         literal_prefix = pattern.rstrip("*").replace("\\[", "[").replace("\\]", "]")
         matched = [k for k in self._keys if k.startswith(literal_prefix)]
-        normalized_cursor = _normalize_scan_cursor(cursor)
-        if not isinstance(normalized_cursor, int):
+        position = RedisScanPosition.parse(cursor)
+        if position.topology_hash or position.offset:
             raise PolicyViolation("Fake Redis SCAN does not support a cluster cursor")
-        start = normalized_cursor
+        start = position.provider_cursor
         page = matched[start : start + limit]
         next_cursor = start + len(page) if start + len(page) < len(matched) else 0
         return ToolResponse(
@@ -72,21 +80,21 @@ class RealRedisGateway:
                     raise ResolutionError(
                         "Redis cluster mode requires startup nodes (nodes list or host)"
                     )
-                startup_nodes = [{"host": n.host, "port": n.port} for n in nodes]
                 try:
-                    from redis.cluster import RedisCluster
+                    from redis.cluster import ClusterNode, RedisCluster
                 except ImportError as exc:  # pragma: no cover - old redis
                     raise UpstreamUnavailable(
                         "Redis Cluster requires redis-py with RedisCluster support"
                     ) from exc
+                node_factory: Any = ClusterNode
                 return RedisCluster(
-                    startup_nodes=startup_nodes,
+                    startup_nodes=[node_factory(n.host, n.port) for n in nodes],
                     username=conn.username or None,
                     password=conn.password or None,
                     socket_timeout=5,
                     socket_connect_timeout=5,
                     ssl=conn.tls_enabled,
-                    ssl_cert_reqs=("required" if conn.tls_verify_certificate else None),
+                    ssl_cert_reqs=("required" if conn.tls_verify_certificate else "none"),
                     ssl_check_hostname=conn.tls_verify_certificate,
                     decode_responses=True,
                 )
@@ -99,7 +107,7 @@ class RealRedisGateway:
                 socket_timeout=5,
                 socket_connect_timeout=5,
                 ssl=conn.tls_enabled,
-                ssl_cert_reqs=("required" if conn.tls_verify_certificate else None),
+                ssl_cert_reqs=("required" if conn.tls_verify_certificate else "none"),
                 ssl_check_hostname=(conn.tls_enabled and conn.tls_verify_certificate),
                 decode_responses=True,
             )
@@ -115,6 +123,8 @@ class RealRedisGateway:
             value = client.get(key)
         except Exception as exc:
             raise UpstreamUnavailable(f"Redis GET failed: {type(exc).__name__}") from exc
+        finally:
+            client.close()
         return ToolResponse(summary={"key": key, "value_summary": value})
 
     def scan(
@@ -125,62 +135,70 @@ class RealRedisGateway:
         cursor: object = 0,
     ) -> ToolResponse:  # pragma: no cover
         assert_external_io_allowed("tool_redis.scan")
-        # Policy (workshop key prefix / bounded pattern) is enforced in PlatformService
-        # before this method; both standalone and cluster clients honor match/count.
-        normalized_cursor = _normalize_scan_cursor(cursor)
+        # Namespace policy is enforced by the executor before opening any connection.
+        position = RedisScanPosition.parse(cursor)
+        if type(limit) is not int or limit < 1:
+            raise PolicyViolation("Redis 扫描页大小必须为正整数")
         client = self._connect(binding)
         try:
+            node_count = 1
+            scan_options: dict[str, Any] = {}
+            node_name = ""
+            if binding.redis is not None and binding.redis.mode is RedisMode.CLUSTER:
+                nodes = sorted(client.get_primaries(), key=lambda node: node.name)
+                topology_hash = scan_fingerprint([node.name for node in nodes])
+                if not nodes:
+                    raise UpstreamUnavailable("Redis 集群没有可用主节点")
+                if (position.topology_hash and position.topology_hash != topology_hash) or (
+                    position.node_index >= len(nodes)
+                ):
+                    raise stale_scan_cursor()
+                position = replace(position, topology_hash=topology_hash)
+                node_count = len(nodes)
+                node = nodes[position.node_index]
+                node_name = node.name
+                scan_options["target_nodes"] = node
+            elif position.topology_hash:
+                raise stale_scan_cursor()
             provider_cursor, keys = client.scan(
-                cursor=normalized_cursor,
+                cursor=position.provider_cursor,
                 match=pattern,
                 count=limit,
+                **scan_options,
             )
+            if node_name:
+                if not isinstance(provider_cursor, dict) or set(provider_cursor) != {node_name}:
+                    raise UpstreamUnavailable("Redis 集群返回了无效扫描状态")
+                provider_cursor = provider_cursor[node_name]
+            next_provider_cursor = _provider_cursor(provider_cursor)
+            if not isinstance(keys, (list, tuple)) or any(not isinstance(k, str) for k in keys):
+                raise UpstreamUnavailable("Redis 返回了无效扫描结果")
+            page, next_position = position.page(
+                list(keys), next_cursor=next_provider_cursor, limit=limit, node_count=node_count
+            )
+        except (ToolPolicyError, UpstreamUnavailable):
+            raise
         except Exception as exc:
             raise UpstreamUnavailable(f"Redis SCAN failed: {type(exc).__name__}") from exc
-        next_cursor = _normalize_scan_cursor(provider_cursor)
+        finally:
+            client.close()
         return ToolResponse(
-            summary={"pattern": pattern, "keys": list(keys)[:limit]},
-            truncated=not _scan_cursor_complete(next_cursor),
-            metadata={"next_provider_cursor": next_cursor},
+            summary={"pattern": pattern, "keys": page},
+            truncated=not scan_complete(next_position),
+            metadata={"next_provider_cursor": next_position},
         )
 
 
-def _normalize_scan_cursor(value: object) -> int | dict[str, int]:
-    if value is None or value == "" or value == b"":
-        return 0
-    if isinstance(value, bool):
-        raise PolicyViolation("Redis SCAN cursor is invalid")
-    if isinstance(value, int):
-        if value < 0:
-            raise PolicyViolation("Redis SCAN cursor is invalid")
-        return value
+def _provider_cursor(value: object) -> int:
     if isinstance(value, bytes):
         try:
             value = value.decode("ascii")
         except UnicodeDecodeError as exc:
-            raise PolicyViolation("Redis SCAN cursor is invalid") from exc
+            raise UpstreamUnavailable("Redis 返回了无效扫描状态") from exc
     if isinstance(value, str):
-        if not value.isdigit():
-            raise PolicyViolation("Redis SCAN cursor is invalid")
-        return int(value)
-    if isinstance(value, dict) and len(value) <= 256:
-        normalized: dict[str, int] = {}
-        for raw_node, raw_cursor in value.items():
-            node = str(raw_node or "")
-            if not node or len(node) > 256:
-                raise PolicyViolation("Redis Cluster SCAN cursor is invalid")
-            if isinstance(raw_cursor, bool):
-                raise PolicyViolation("Redis Cluster SCAN cursor is invalid")
-            try:
-                parsed = int(raw_cursor)
-            except (TypeError, ValueError) as exc:
-                raise PolicyViolation("Redis Cluster SCAN cursor is invalid") from exc
-            if parsed < 0:
-                raise PolicyViolation("Redis Cluster SCAN cursor is invalid")
-            normalized[node] = parsed
-        return dict(sorted(normalized.items()))
-    raise PolicyViolation("Redis SCAN cursor is invalid")
-
-
-def _scan_cursor_complete(value: int | dict[str, int]) -> bool:
-    return value == 0 or (isinstance(value, dict) and all(cursor == 0 for cursor in value.values()))
+        if not value.isascii() or not value.isdigit() or len(value) > 20:
+            raise UpstreamUnavailable("Redis 返回了无效扫描状态")
+        value = int(value)
+    if type(value) is not int or not 0 <= value < 2**64:
+        raise UpstreamUnavailable("Redis 返回了无效扫描状态")
+    return value

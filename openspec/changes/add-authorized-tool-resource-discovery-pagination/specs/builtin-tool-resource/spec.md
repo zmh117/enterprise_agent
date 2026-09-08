@@ -51,6 +51,10 @@
 - **THEN** 第一页返回 50 张表、非空 `next_cursor` 和 `has_more=true`
 - **AND** 下一页返回第 51 张表且使用同一 Database Resource Revision
 
+#### Scenario: Oracle 第一页没有游标
+- **WHEN** Oracle Schema 目录首次查询没有 after_table
+- **THEN** 查询必须允许空下界而不执行与 NULL 的大小比较，返回符合范围的第一批表
+
 #### Scenario: Schema cursor 用于不同目标
 - **WHEN** Agent 把 environment、base、workshop、placement 或 query 与签发 cursor 时的值改变
 - **THEN** `tool-mcp` 在读取 schema 前拒绝 cursor
@@ -76,6 +80,16 @@
 #### Scenario: Redis cursor 与 pattern 不匹配
 - **WHEN** Agent 使用 cursor 时改变 pattern、目标或 placement
 - **THEN** `tool-mcp` 在调用 Redis 前拒绝请求并返回稳定分页游标错误
+
+#### Scenario: Redis 单批次超过页面上限
+- **WHEN** Redis 返回的键数超过 limit，包括 provider cursor 已为零的末批
+- **THEN** 本页仅返回 limit 项且提供非空 continuation，后续页返回该批剩余键
+- **AND** 重读批次期间结果变化必须返回 cursor stale，不得以扫描完成掩盖漏键
+
+#### Scenario: Redis 空批次与 Cluster 节点续查
+- **WHEN** Redis 返回空键列表但 provider cursor 非零，或 Cluster 还有未扫描主节点
+- **THEN** Tool 返回 has_more=true 并保留正确 continuation
+- **AND** Cluster 逐主节点调用 SCAN，cursor 不包含节点连接地址，拓扑变化须拒绝旧 continuation
 
 #### Scenario: Redis 翻页期间资源版本改变
 - **WHEN** cursor 绑定的 Redis Resource Revision 不再是该目标唯一解析的当前版本

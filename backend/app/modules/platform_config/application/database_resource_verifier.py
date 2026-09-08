@@ -412,7 +412,7 @@ class RedisResourceProbe:
             socket_connect_timeout=timeout_seconds,
             socket_timeout=timeout_seconds,
             ssl=bool(tls.get("enabled", False)),
-            ssl_cert_reqs=("required" if tls.get("verify_certificate", True) else None),
+            ssl_cert_reqs=("required" if tls.get("verify_certificate", True) else "none"),
             ssl_check_hostname=bool(
                 tls.get("enabled", False) and tls.get("verify_certificate", True)
             ),

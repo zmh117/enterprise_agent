@@ -565,7 +565,8 @@ def test_oracle_publication_verification_remains_blocked_without_real_gate() -> 
     assert probe_called is False
 
 
-def test_redis_probe_uses_canonical_database_auth_and_tls() -> None:
+@pytest.mark.parametrize("verify_certificate", [True, False])
+def test_redis_probe_uses_canonical_database_auth_and_tls(verify_certificate: bool) -> None:
     connect_kwargs: dict[str, Any] = {}
 
     class Client:
@@ -596,7 +597,7 @@ def test_redis_probe_uses_canonical_database_auth_and_tls() -> None:
             "password": "redis-canary-password",
             "tls": {
                 "enabled": True,
-                "verify_certificate": True,
+                "verify_certificate": verify_certificate,
             },
         },
         timeout_seconds=6,
@@ -606,7 +607,8 @@ def test_redis_probe_uses_canonical_database_auth_and_tls() -> None:
     assert connect_kwargs["username"] == "reader"
     assert connect_kwargs["password"] == "redis-canary-password"
     assert connect_kwargs["ssl"] is True
-    assert connect_kwargs["ssl_cert_reqs"] == "required"
+    assert connect_kwargs["ssl_cert_reqs"] == ("required" if verify_certificate else "none")
+    assert connect_kwargs["ssl_check_hostname"] is verify_certificate
     assert connect_kwargs["socket_connect_timeout"] == 6
     assert checks["tls"] is True
     assert "redis-canary-password" not in json.dumps(checks)

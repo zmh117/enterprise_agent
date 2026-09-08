@@ -74,7 +74,7 @@
 
 Schema inspector 协议增加 `after_table`，各数据库方言在表名查询阶段使用参数化 keyset 条件并读取 `limit + 1` 张表，再仅查询本页所选表的字段。MySQL 从当前一次读取全部 `information_schema.columns` 改为与 Oracle/SQL Server 一致的“两阶段：有界表名 + 本页字段”策略。`SchemaDirectory` 区分是否仍有后续表与字段被单表上限截断，避免把不可续查的字段截断错误编码为下一页。
 
-Redis gateway 的 `scan()` 接受 provider cursor 并返回下一 provider cursor。Tool 层把 provider cursor 包装到 Job/Revision/查询绑定 cursor 中；返回 cursor 非零即 `has_more=true`。standalone 与 cluster 返回形状分别标准化为可 JSON 编码的受控整数或节点游标映射，非法形状失败关闭。
+Redis gateway 的 `scan()` 接受受控扫描位置并返回下一扫描位置。Tool 层把位置包装到 Job/Revision/查询绑定 cursor 中；仅终止哨兵 `0` 表示 `has_more=false`。standalone 与 cluster 共用有界批次重读位置；Cluster 额外记录主节点序号与拓扑摘要，禁止把节点地址映射放入公开 cursor。非法形状失败关闭。
 
 ### 5. Manifest 漂移与 Agent 行为显式升级
 
@@ -83,6 +83,16 @@ Redis gateway 的 `scan()` 接受 provider cursor 并返回下一 provider curso
 Agent 指令在目录 Tool 已分配时规定：用户询问可用资源或没有给出唯一目标，先调用目录；自动续页时保持完全相同过滤条件、拒绝重复 cursor，并受 Job 最大 Tool Call 数约束。目录 Tool 未分配时，只能请用户提供一个精确目标，不能猜测、遍历或把一次零命中夸大为整个系统无资源。
 
 ## Risks / Trade-offs
+
+### 2026-09-08 正确性修订
+
+Redis COUNT 仅为工作量提示，不是响应数量上限。Gateway 必须保留超出单页的批次位置：continuation 记录原 provider cursor、已返回数量及完整批次摘要，下一页重读同一批次并验证摘要后续取；摘要变化返回 cursor stale，不得静默跳过。摘要包含规范排序后的 keys 和 provider next cursor，不把 key 正文写入 cursor，不新增持久化游标表。只有整个批次已返回才推进 provider cursor；空批次的非零 cursor 仍须继续。
+
+Cluster 按固定排序逐个主节点扫描，调用 redis-py 的单节点 SCAN，分别维护节点序号与 provider cursor；cursor 只包含节点拓扑摘要及序号，不包含 host/port。拓扑变化失败关闭。客户端在每次读取后释放连接。旧的节点字典 continuation 不再直接传入 SCAN。
+
+上述续查不提供数据库式快照：Redis 扫描期间发生写入、删除、过期或迁槽时仍受 SCAN 原生语义约束；批次摘要只保证未读完批次发生变化时明确拒绝，不承诺动态数据集 exactly-once。真实单机和三主节点 Cluster 的合成稳定数据集验收纳入 CI，覆盖 0/50/51/501 键；测试只创建和清理自身无持久化数据卷的隔离容器。
+
+Oracle 第一页使用空值游标时必须显式绕过 keyset 比较，避免空字符串被解释为 NULL 后把全部表过滤掉。后续页继续使用原始返回表名作为排他下界。
 
 - [目录构建需要扫描当前 Published Resource 摘要] → 只读取非敏感索引字段，在授权过滤后分页；用候选摘要检测翻页期间变化，不持久化目录副本。
 - [多个角色的工具和 scope 组合可能误放大权限] → 以单个 access 记录为单位匹配工具和 scope，再对合法结果求并集，禁止先分别合并工具与 scope。

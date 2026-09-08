@@ -179,6 +179,26 @@ class OracleSchemaInspectorIntegrationTests(unittest.TestCase):
             column_limit=20,
         )
         self.assertLessEqual(len(result.tables), 5)
+        self.assertTrue(result.tables, "Oracle fixture must contain at least one matching table")
+        first = OracleSchemaInspector().read(
+            binding,
+            table_prefix=os.getenv("ORACLE_SCHEMA_PREFIX") or None,
+            query=os.getenv("ORACLE_SCHEMA_QUERY", ""),
+            table_limit=1,
+            column_limit=20,
+        )
+        self.assertEqual(result.tables[0].name, first.tables[0].name)
+        if len(result.tables) > 1:
+            self.assertTrue(first.has_more_tables)
+            second = OracleSchemaInspector().read(
+                binding,
+                table_prefix=os.getenv("ORACLE_SCHEMA_PREFIX") or None,
+                query=os.getenv("ORACLE_SCHEMA_QUERY", ""),
+                table_limit=1,
+                column_limit=20,
+                after_table=first.tables[-1].name,
+            )
+            self.assertEqual(result.tables[1].name, second.tables[0].name)
 
 
 @unittest.skipUnless(

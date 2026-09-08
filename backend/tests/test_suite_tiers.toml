@@ -161,6 +161,7 @@ integration = [
   "test_rabbitmq4_job_failure_integration.py",
   "test_real_claude_integration.py",
   "test_redis_oracle_integration.py",
+  "test_redis_scan_pagination_integration.py",
 ]
 
 acceptance = [

@@ -33,6 +33,21 @@ jobs:
       - name: Full local backend regression (all classified tiers)
         run: make test-full
 
+  redis-pagination:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m venv .venv
+      - run: .venv/bin/pip install -e '.[dev,database]'
+      - run: docker pull redis:7.4
+      - name: Standalone and three-primary Redis pagination conformance
+        env:
+          RUN_REDIS_PAGINATION_INTEGRATION: '1'
+        run: .venv/bin/pytest -q backend/tests/test_redis_scan_pagination_integration.py
+
   dingtalk-runtime:
     runs-on: ubuntu-latest
     defaults:
@@ -68,10 +83,11 @@ jobs:
 
   runtime-images:
     runs-on: ubuntu-latest
-    needs: [backend-fast, backend-full, dingtalk-runtime, python-runtime-contract]
+    needs: [backend-fast, backend-full, redis-pagination, dingtalk-runtime, python-runtime-contract]
     if: >-
       always() &&
       needs.backend-fast.result == 'success' &&
+      needs.redis-pagination.result == 'success' &&
       needs.dingtalk-runtime.result == 'success' &&
       needs.python-runtime-contract.result == 'success' &&
       (needs.backend-full.result == 'success' || needs.backend-full.result == 'skipped')

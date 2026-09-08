@@ -7,6 +7,7 @@ from app.modules.mcp_tool_runtime.domain.loki_policy import (
     assert_loki_label_allowed,
     build_effective_selector,
 )
+from app.modules.mcp_tool_runtime.domain.redis_pagination import scan_complete, valid_scan_position
 from app.modules.mcp_tool_runtime.domain.redis_policy import (
     assert_read_command,
     enforce_key_namespace,
@@ -27,7 +28,7 @@ from app.modules.mcp_tool_runtime.infrastructure.db.schema_directory import (
     SqlServerSchemaInspector,
 )
 from app.modules.mcp_tool_runtime.infrastructure.loki_gateway import HttpLokiClient
-from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import RealRedisGateway
+from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import RealRedisGateway, RedisGateway
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
 
@@ -60,7 +61,7 @@ class DirectReadOnlyToolExecutor:
                 DatabaseEngine.ORACLE: OracleSchemaInspector(),
             }
         )
-        self.redis = RealRedisGateway()
+        self.redis: RedisGateway = RealRedisGateway()
 
     def list_available_tool_resources(
         self,
@@ -117,9 +118,7 @@ class DirectReadOnlyToolExecutor:
                 "resource_revision_id": address.resource_revision_id,
                 "resource_revision": address.resource_revision,
                 "resolution_status": (
-                    "AMBIGUOUS"
-                    if ambiguity_counts[address.resolution_key] > 1
-                    else "AVAILABLE"
+                    "AMBIGUOUS" if ambiguity_counts[address.resolution_key] > 1 else "AVAILABLE"
                 ),
                 "usable_tools": list(usable_tools),
                 "_sort_key": list(address.sort_key),
@@ -182,8 +181,7 @@ class DirectReadOnlyToolExecutor:
                 position=page[-1]["_sort_key"],
             )
         returned = [
-            {key: value for key, value in item.items() if not key.startswith("_")}
-            for item in page
+            {key: value for key, value in item.items() if not key.startswith("_")} for item in page
         ]
         return ToolResult(
             summary={
@@ -635,27 +633,11 @@ class DirectReadOnlyToolExecutor:
 
     @staticmethod
     def _valid_redis_provider_cursor(value: object) -> bool:
-        if isinstance(value, bool):
-            return False
-        if isinstance(value, int):
-            return value >= 0
-        if not isinstance(value, dict) or len(value) > 256:
-            return False
-        return all(
-            isinstance(node, str)
-            and bool(node)
-            and len(node) <= 256
-            and isinstance(cursor, int)
-            and not isinstance(cursor, bool)
-            and cursor >= 0
-            for node, cursor in value.items()
-        )
+        return valid_scan_position(value)
 
-    @classmethod
-    def _redis_provider_cursor_complete(cls, value: object) -> bool:
-        return cls._valid_redis_provider_cursor(value) and (
-            value == 0 or (isinstance(value, dict) and all(cursor == 0 for cursor in value.values()))
-        )
+    @staticmethod
+    def _redis_provider_cursor_complete(value: object) -> bool:
+        return scan_complete(value)
 
     def _loki(self, resource: ResolvedToolResource) -> HttpLokiClient:
         connection = resource.binding.loki

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import json
+from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
@@ -34,6 +36,7 @@ from app.modules.mcp_tool_runtime.infrastructure.db.oracle_client import (
     reset_oracle_client_state_for_tests,
 )
 from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import RealRedisGateway
+from app.shared.exceptions import ToolPolicyError
 from app.modules.platform_config.application.validation import (
     PlatformConfigValidationError,
     normalize_oracle_database_config,
@@ -79,6 +82,7 @@ class RedisClusterConfigTests(unittest.TestCase):
         redis_mod = types.ModuleType("redis")
         cluster_mod = types.ModuleType("redis.cluster")
         cluster_mod.RedisCluster = mock_cluster_cls  # type: ignore[attr-defined]
+        cluster_mod.ClusterNode = lambda host, port: SimpleNamespace(host=host, port=port)  # type: ignore[attr-defined]
         with patch.dict(sys.modules, {"redis": redis_mod, "redis.cluster": cluster_mod}):
             client = RealRedisGateway()._connect(binding)
         self.assertIs(fake_cluster, client)
@@ -86,7 +90,7 @@ class RedisClusterConfigTests(unittest.TestCase):
         kwargs = mock_cluster_cls.call_args.kwargs
         self.assertEqual(
             [{"host": "10.0.0.1", "port": 6379}, {"host": "10.0.0.2", "port": 6379}],
-            kwargs["startup_nodes"],
+            [{"host": node.host, "port": node.port} for node in kwargs["startup_nodes"]],
         )
         self.assertEqual("pw", kwargs["password"])
 
@@ -135,19 +139,23 @@ class RedisClusterConfigTests(unittest.TestCase):
         self.assertTrue(kwargs["ssl_check_hostname"])
         self.assertEqual("reader", kwargs["username"])
 
-    def test_gateway_scan_is_one_iteration_result_bounded_and_reports_cursor(self) -> None:
+    def test_gateway_drains_terminal_oversized_batch_before_finishing(self) -> None:
         binding = self._redis_binding(RedisConnection(host="redis.local", port=6379))
         client = MagicMock()
-        client.scan.return_value = (17, ["GL001:1", "GL001:2", "GL001:3"])
+        client.scan.return_value = (0, ["GL001:3", "GL001:1", "GL001:2"])
         gateway = RealRedisGateway()
         with patch.object(gateway, "_connect", return_value=client):
             response = gateway.scan(binding, "GL001:*", 2)
-        client.scan.assert_called_once_with(cursor=0, match="GL001:*", count=2)
+            second = gateway.scan(binding, "GL001:*", 2, response.metadata["next_provider_cursor"])
+        self.assertEqual(2, client.scan.call_count)
+        client.scan.assert_called_with(cursor=0, match="GL001:*", count=2)
         self.assertEqual(["GL001:1", "GL001:2"], response.summary["keys"])
         self.assertTrue(response.truncated)
-        self.assertEqual(17, response.metadata["next_provider_cursor"])
+        self.assertEqual(["GL001:3"], second.summary["keys"])
+        self.assertFalse(second.truncated)
+        self.assertEqual(0, second.metadata["next_provider_cursor"])
 
-    def test_gateway_preserves_cluster_node_cursors(self) -> None:
+    def test_gateway_scans_each_primary_with_scalar_cursor_and_drains_remainders(self) -> None:
         binding = self._redis_binding(
             RedisConnection(
                 host="10.0.0.1",
@@ -157,25 +165,70 @@ class RedisClusterConfigTests(unittest.TestCase):
             )
         )
         client = MagicMock()
-        client.scan.return_value = ({"node-a": 12, "node-b": 0}, ["GL001:1"])
+        node_a, node_b = (
+            SimpleNamespace(name="private-a:6379"),
+            SimpleNamespace(name="private-b:6379"),
+        )
+        client.get_primaries.return_value = [node_b, node_a]
+        client.scan.side_effect = [
+            ({node_a.name: 12}, []),
+            ({node_a.name: 0}, ["GL001:3", "GL001:2", "GL001:1"]),
+            ({node_a.name: 0}, ["GL001:1", "GL001:2", "GL001:3"]),
+            ({node_b.name: 0}, ["GL001:4"]),
+        ]
         gateway = RealRedisGateway()
         with patch.object(gateway, "_connect", return_value=client):
-            response = gateway.scan(
-                binding,
-                "GL001:*",
-                2,
-                {"node-a": 4, "node-b": 0},
-            )
-        client.scan.assert_called_once_with(
-            cursor={"node-a": 4, "node-b": 0},
-            match="GL001:*",
-            count=2,
+            cursor: object = 0
+            results = []
+            for _ in range(4):
+                response = gateway.scan(binding, "GL001:*", 2, cursor)
+                results.extend(response.summary["keys"])
+                cursor = response.metadata["next_provider_cursor"]
+                self.assertNotIn("private-", json.dumps(cursor))
+                self.assertNotIn("GL001:", json.dumps(cursor))
+        self.assertEqual(["GL001:1", "GL001:2", "GL001:3", "GL001:4"], results)
+        self.assertEqual(0, cursor)
+        self.assertFalse(response.truncated)
+        self.assertEqual(
+            [0, 12, 12, 0], [call.kwargs["cursor"] for call in client.scan.call_args_list]
         )
         self.assertEqual(
-            {"node-a": 12, "node-b": 0},
-            response.metadata["next_provider_cursor"],
+            [node_a, node_a, node_a, node_b],
+            [call.kwargs["target_nodes"] for call in client.scan.call_args_list],
         )
-        self.assertTrue(response.truncated)
+        self.assertEqual(4, client.close.call_count)
+
+    def test_gateway_rejects_changed_replay_batch_and_closes_client(self) -> None:
+        binding = self._redis_binding(RedisConnection(host="redis.local", port=6379))
+        client = MagicMock()
+        client.scan.side_effect = [(0, ["a", "b", "c"]), (0, ["a", "b", "d"])]
+        gateway = RealRedisGateway()
+        with patch.object(gateway, "_connect", return_value=client):
+            first = gateway.scan(binding, "GL001:*", 2)
+            with self.assertRaises(ToolPolicyError) as raised:
+                gateway.scan(binding, "GL001:*", 2, first.metadata["next_provider_cursor"])
+        self.assertEqual("mcp_pagination_cursor_stale", raised.exception.error_code)
+        self.assertEqual(2, client.close.call_count)
+
+    def test_gateway_rejects_changed_topology_before_scan(self) -> None:
+        binding = self._redis_binding(
+            RedisConnection(host="cluster", port=6379, mode=RedisMode.CLUSTER)
+        )
+        client = MagicMock()
+        client.get_primaries.side_effect = [
+            [SimpleNamespace(name="a:6379"), SimpleNamespace(name="b:6379")],
+            [SimpleNamespace(name="a:6379"), SimpleNamespace(name="c:6379")],
+        ]
+        client.scan.return_value = ({"a:6379": 0}, [])
+        gateway = RealRedisGateway()
+        with patch.object(gateway, "_connect", return_value=client):
+            first = gateway.scan(binding, "GL001:*", 2)
+            self.assertTrue(first.truncated)
+            with self.assertRaises(ToolPolicyError) as raised:
+                gateway.scan(binding, "GL001:*", 2, first.metadata["next_provider_cursor"])
+        self.assertEqual("mcp_pagination_cursor_stale", raised.exception.error_code)
+        client.scan.assert_called_once()
+        self.assertEqual(2, client.close.call_count)
 
     def test_cluster_still_enforces_workshop_prefix(self) -> None:
         enforce_key_namespace("GL001:order:1", key_prefix="GL001:")

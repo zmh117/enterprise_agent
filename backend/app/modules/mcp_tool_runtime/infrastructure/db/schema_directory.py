@@ -118,16 +118,12 @@ class FakeSchemaInspector:
         if after_table:
             after_key = _table_sort_key(after_table, self.engine)
             tables = [
-                table
-                for table in tables
-                if _table_sort_key(table.name, self.engine) > after_key
+                table for table in tables if _table_sort_key(table.name, self.engine) > after_key
             ]
         has_more_tables = len(tables) > table_limit
         selected = tables[:table_limit]
         columns_truncated = any(len(table.columns) > column_limit for table in selected)
-        bounded = [
-            SchemaTable(table.name, table.columns[:column_limit]) for table in selected
-        ]
+        bounded = [SchemaTable(table.name, table.columns[:column_limit]) for table in selected]
         return SchemaDirectory(
             tables=bounded,
             truncated=has_more_tables or columns_truncated,
@@ -288,7 +284,7 @@ class OracleSchemaInspector:
                     WHERE owner = :owner
                       AND table_name LIKE :prefix ESCAPE '\\'
                       AND table_name LIKE :search ESCAPE '\\'
-                      AND table_name > :after_table
+                      AND (:after_table IS NULL OR table_name > :after_table)
                     ORDER BY table_name
                 )
                 WHERE ROWNUM <= :row_limit
@@ -297,7 +293,7 @@ class OracleSchemaInspector:
                     "owner": owner,
                     "prefix": _like_prefix(table_prefix, uppercase=True),
                     "search": _like_contains(query, uppercase=True),
-                    "after_table": after_table.upper(),
+                    "after_table": after_table or None,
                     "row_limit": table_limit + 1,
                 },
             )
@@ -511,9 +507,7 @@ def _like_contains(
 
 def _table_sort_key(table_name: str, engine: DatabaseEngine) -> tuple[str, str]:
     normalized = (
-        str(table_name).upper()
-        if engine is DatabaseEngine.ORACLE
-        else str(table_name).casefold()
+        str(table_name).upper() if engine is DatabaseEngine.ORACLE else str(table_name).casefold()
     )
     return normalized, str(table_name)
 

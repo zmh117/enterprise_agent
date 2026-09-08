@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import sqlite3
 import types
 import unittest
 from typing import Any
@@ -126,6 +127,54 @@ class SchemaInspectorFactoryTests(unittest.TestCase):
 
 
 class OracleSchemaInspectorTests(unittest.TestCase):
+    def test_first_page_and_keyset_use_oracle_empty_string_null_semantics(self) -> None:
+        # Execute the actual predicates; scripted rows alone cannot detect col > NULL.
+        database = sqlite3.connect(":memory:")
+        self.addCleanup(database.close)
+        database.execute("CREATE TABLE all_tables(owner TEXT, table_name TEXT)")
+        database.execute(
+            "CREATE TABLE all_tab_columns(owner TEXT, table_name TEXT, column_name TEXT, "
+            "data_type TEXT, nullable TEXT, column_id INTEGER)"
+        )
+        # Quoted mixed-case identifiers must retain their exact keyset position too.
+        names = [f"T_{index:03d}" for index in range(49)] + ["a_049", "a_050"]
+        database.executemany("INSERT INTO all_tables VALUES ('READER', ?)", [(n,) for n in names])
+        database.executemany(
+            "INSERT INTO all_tab_columns VALUES ('READER', ?, 'ID', 'NUMBER', 'N', 1)",
+            [(n,) for n in names],
+        )
+
+        class OracleNullCursor(_ScriptedCursor):
+            def execute(self, sql: str, params: Any = None, **kwargs: Any) -> None:
+                binds = {k: None if v == "" else v for k, v in params.items()}
+                # Only adapt row limiting syntax, preserving the production WHERE clauses.
+                sql = sql.replace("WHERE ROWNUM <= :row_limit", "LIMIT :row_limit")
+                self._current = database.execute(sql, binds).fetchall()
+
+        connection = _FakeConnection(OracleNullCursor([]))
+        with (
+            patch.dict(sys.modules, {"oracledb": self._module(connection)}),
+            patch(
+                "app.modules.mcp_tool_runtime.infrastructure.db.schema_directory."
+                "assert_oracle_client_mode_ready"
+            ),
+        ):
+            inspector = OracleSchemaInspector()
+            options = dict(table_prefix=None, query="", table_limit=50, column_limit=10)
+            first = inspector.read(_binding(DatabaseEngine.ORACLE), **options)
+            self.assertEqual(names[:50], [table.name for table in first.tables])
+            self.assertTrue(first.has_more_tables)
+            second = inspector.read(
+                _binding(DatabaseEngine.ORACLE), after_table=first.tables[-1].name, **options
+            )
+            self.assertEqual(names[50:], [table.name for table in second.tables])
+            self.assertFalse(second.has_more_tables)
+            last = inspector.read(
+                _binding(DatabaseEngine.ORACLE), after_table=second.tables[-1].name, **options
+            )
+            self.assertEqual([], last.tables)
+            self.assertFalse(last.has_more_tables)
+
     def _module(self, connection: _FakeConnection) -> types.ModuleType:
         module = types.ModuleType("oracledb")
         module.connect = MagicMock(return_value=connection)  # type: ignore[attr-defined]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,7 +23,10 @@ from app.modules.mcp_tool_runtime.infrastructure.db.schema_directory import (
     FakeSchemaInspector,
     SchemaInspectorFactory,
 )
-from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import FakeRedisGateway
+from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import (
+    FakeRedisGateway,
+    RealRedisGateway,
+)
 from app.modules.mcp_tool_runtime.pagination import ToolPaginationCursorCodec
 from app.modules.mcp_tool_runtime.resource_resolver import (
     DirectResourceResolver,
@@ -432,3 +437,104 @@ def test_redis_scan_wraps_and_resumes_provider_cursor() -> None:
             cursor=first.summary["next_cursor"],
         )
     assert stale.value.error_code == "mcp_pagination_cursor_stale"
+
+
+@pytest.mark.parametrize("next_provider_cursor", [0, 29])
+def test_real_gateway_opaque_cursor_drains_51_keys_and_rejects_context_changes(
+    next_provider_cursor: int,
+) -> None:
+    resolver = _ResolvedRedisResourceResolver()
+    executor = DirectReadOnlyToolExecutor(resolver, limits=ExecutionSettings())  # type: ignore[arg-type]
+    gateway = RealRedisGateway()
+    executor.redis = gateway
+    client = MagicMock()
+    # Long keys must not be embedded into the 4096-character public cursor.
+    keys = [f"mes:{index:03d}:" + "x" * 500 for index in range(51)]
+    client.scan.return_value = (next_provider_cursor, keys)
+    options = dict(environment="prod", base="main", placement="cloud")
+    with patch.object(gateway, "_connect", return_value=client) as connect:
+        first = executor.query_redis_scan("ignored", "mes:*", 50, _context(), **options)
+        cursor = first.summary["next_cursor"]
+        assert first.summary["keys"] == keys[:50]
+        assert first.summary["has_more"] is True
+        assert 0 < len(cursor) <= ToolPaginationCursorCodec.MAX_CURSOR_CHARS
+        for context in (
+            replace(_context(), job_id="another-job"),
+            replace(_context(), user_id="another-user"),
+            replace(_context(), application_id="another-app"),
+            replace(_context(), authorization_hash="d" * 64),
+            replace(_context(), snapshot_hash="e" * 64),
+        ):
+            with pytest.raises(ToolPolicyError) as rejected:
+                executor.query_redis_scan("ignored", "mes:*", 50, context, cursor=cursor, **options)
+            assert rejected.value.error_code == "mcp_pagination_cursor_invalid"
+        with pytest.raises(ToolPolicyError):
+            executor.query_redis_scan("ignored", "mes:*", 49, _context(), cursor=cursor, **options)
+        assert connect.call_count == 1  # Reject before any new provider scan.
+        resolver.revision = "revision-redis-2"
+        with pytest.raises(ToolPolicyError) as stale:
+            executor.query_redis_scan("ignored", "mes:*", 50, _context(), cursor=cursor, **options)
+        assert stale.value.error_code == "mcp_pagination_cursor_stale"
+        assert connect.call_count == 1
+        resolver.revision = "revision-redis-1"
+        second = executor.query_redis_scan(
+            "ignored", "mes:*", 50, _context(), cursor=cursor, **options
+        )
+        assert second.summary["keys"] == keys[50:]
+        assert second.summary["has_more"] is bool(next_provider_cursor)
+        if next_provider_cursor:
+            client.scan.return_value = (0, [])
+            third = executor.query_redis_scan(
+                "ignored", "mes:*", 50, _context(), cursor=second.summary["next_cursor"], **options
+            )
+            assert third.summary["has_more"] is False
+            assert third.summary["next_cursor"] == ""
+            assert client.scan.call_args.kwargs["cursor"] == next_provider_cursor
+        else:
+            assert second.summary["next_cursor"] == ""
+
+
+@pytest.mark.parametrize("cursor", [True, -1, 2**64, 1.5, "0", {}, {"node:6379": 1}])
+def test_redis_rejects_malformed_position_before_connection(cursor: object) -> None:
+    resource = _ResolvedRedisResourceResolver().resolve()
+    gateway = RealRedisGateway()
+    with patch.object(gateway, "_connect") as connect, pytest.raises(ToolPolicyError) as rejected:
+        gateway.scan(resource.binding, "mes:*", 50, cursor)
+    assert rejected.value.error_code == "mcp_pagination_cursor_invalid"
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("provider_cursor", True),
+        ("provider_cursor", 2**64),
+        ("offset", -1),
+        ("offset", 1.5),
+        ("offset", 1),  # A remainder requires a batch hash.
+        ("batch_hash", "f" * 64),  # A hash without a remainder is invalid.
+        ("node_index", 1),  # A node index requires a topology hash.
+        ("topology_hash", "private-host:6379"),
+    ],
+)
+def test_redis_rejects_invalid_structured_position(field: str, value: object) -> None:
+    from app.modules.mcp_tool_runtime.domain.redis_pagination import RedisScanPosition
+
+    position = RedisScanPosition().as_cursor()
+    position[field] = value
+    test_redis_rejects_malformed_position_before_connection(position)
+
+
+def test_redis_empty_batch_with_nonzero_cursor_is_not_terminal() -> None:
+    resource = _ResolvedRedisResourceResolver().resolve()
+    gateway = RealRedisGateway()
+    client = MagicMock()
+    client.scan.side_effect = [(17, []), (0, ["mes:a"])]
+    with patch.object(gateway, "_connect", return_value=client):
+        first = gateway.scan(resource.binding, "mes:*", 50)
+        assert first.summary["keys"] == []
+        assert first.truncated is True
+        second = gateway.scan(resource.binding, "mes:*", 50, first.metadata["next_provider_cursor"])
+    assert second.summary["keys"] == ["mes:a"]
+    assert second.truncated is False
+    assert client.scan.call_args.kwargs["cursor"] == 17
