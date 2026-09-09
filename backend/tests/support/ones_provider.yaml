@@ -117,3 +117,4 @@ tasks:
     priority: normal
     custom_options:
       MOCK-CUSTOM-FIELD-SEVERITY: MOCK-CUSTOM-OPTION-HIGH
+# Synthetic test identities and payloads only; never configure a running Provider from this file.

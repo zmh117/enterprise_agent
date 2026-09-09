@@ -2,21 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import time
 import uuid
 from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-import yaml
-
 from app.bootstrap import Container, build_api_container
-from app.modules.identity.infrastructure.external_identity_credentials import (
-    CredentialSecretBundle,
-)
 from app.modules.job.domain.job_status import JobStatus
-from app.modules.job.infrastructure.repositories import now_iso
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import load_settings
 from app.shared.exceptions import NotFound
@@ -25,7 +18,6 @@ from app.shared.exceptions import NotFound
 ACTOR_USERNAME = "admin"
 AGENT_CODE = "default-diagnostic-agent"
 RUNTIME_KIND = "python-v1"
-ONES_TOOL = "ones_work_item_search"
 FILE_TOOL = "task_workspace_get"
 FILE_READ_TOOLS = (
     "task_workspace_get",
@@ -34,9 +26,7 @@ FILE_READ_TOOLS = (
     "file_get_metadata",
     "file_prepare_materialization",
 )
-ONES_MOCK_CONFIG_ENV = "ONES_MOCK_ACCEPTANCE_CONFIG"
 TEST_SECRET_CANARY = "python-runtime-acceptance-provider-secret-canary-v1"
-STALE_ONES_TOKEN = "python-runtime-acceptance-stale-ones-token"
 TERMINAL_DELIVERY_STATUSES = {"SUCCEEDED", "FAILED", "DEAD", "SKIPPED"}
 DEBUG_API_BASE_URL_ENV = "PYTHON_RUNTIME_ACCEPTANCE_API_BASE_URL"
 
@@ -247,66 +237,6 @@ def _activate_debug_application(
         "application_id": str(application["id"]),
         "execution_scope_id": str(scopes[0]["id"]),
     }
-
-
-def _configure_ones_mock_identity(
-    runtime: Container,
-    actor_id: str,
-) -> tuple[str, ...]:
-    config_path = Path(os.getenv(ONES_MOCK_CONFIG_ENV, ""))
-    if not config_path.is_file() or config_path.stat().st_size > 64 * 1024:
-        raise RuntimeError("ONES mock acceptance config is missing or too large")
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise RuntimeError("ONES mock acceptance config is invalid")
-    users = raw.get("users")
-    team = raw.get("team")
-    if not isinstance(users, list) or not users or not isinstance(users[0], dict):
-        raise RuntimeError("ONES mock acceptance user is invalid")
-    if not isinstance(team, dict):
-        raise RuntimeError("ONES mock acceptance Team is invalid")
-    primary = users[0]
-
-    def required(mapping: dict[str, Any], key: str) -> str:
-        value = str(mapping.get(key) or "").strip()
-        if not value:
-            raise RuntimeError("ONES mock acceptance field is missing")
-        return value
-
-    email = required(primary, "email")
-    password = required(primary, "password")
-    provider_user_id = required(primary, "uuid")
-    display_name = required(primary, "name")
-    provider_token = required(primary, "token")
-    team_id = required(team, "uuid")
-    team_name = required(team, "name")
-    identity = runtime.identity_repository.bind_external_identity(
-        user_id=actor_id,
-        provider="ones",
-        tenant_code="default",
-        external_subject_id=provider_user_id,
-        connector_id="",
-        display_name=display_name,
-        metadata={
-            "team_uuids": [team_id],
-            "teams": [{"id": team_id, "name": team_name}],
-            "default_team_id": team_id,
-        },
-    )
-    credentials = runtime.external_identity_credential_repository
-    if credentials is None:
-        raise RuntimeError("ONES credential repository is unavailable")
-    credentials.upsert_active(
-        external_identity_id=str(identity["id"]),
-        provider="ones",
-        secrets=CredentialSecretBundle(
-            email=email,
-            password=password,
-            token=STALE_ONES_TOKEN,
-        ),
-        verified_at=now_iso(),
-    )
-    return password, provider_token, STALE_ONES_TOKEN
 
 
 def _create_debug_job(
@@ -573,56 +503,7 @@ def main() -> int:
                 }
             )
 
-        sensitive_values = _configure_ones_mock_identity(runtime, actor_id)
-        mcp_tools = (ONES_TOOL,)
-        mcp_publication = _publish_agent(
-            runtime,
-            actor_id,
-            connection_revision_id=str(connection["id"]),
-            mcp_tool_ids=mcp_tools,
-        )
-        mcp_selection = _activate_debug_application(
-            runtime,
-            actor_id,
-            agent_publication_id=str(mcp_publication["id"]),
-            mcp_tool_ids=mcp_tools,
-        )
-        mcp_scenarios = (
-            (
-                "ones-mcp",
-                ONES_TOOL,
-                "[smoke:mcp:ones-mcp-concurrent]",
-                2,
-                True,
-            ),
-        )
-        for server_code, tool_name, marker, expected_calls, require_refresh in mcp_scenarios:
-            job_id = _create_debug_job(
-                selection=mcp_selection,
-                label=server_code,
-                question=f"{marker} isolated MCP acceptance",
-            )
-            job_ids.append(job_id)
-            job = _wait_for_job(runtime, job_id, expected=JobStatus.SUCCEEDED)
-            delivery = _wait_for_delivery(runtime, job_id)
-            _assert_chain_evidence(runtime, job_id)
-            _assert_mcp_evidence(
-                runtime,
-                job_id=job_id,
-                server_code=server_code,
-                tool_name=tool_name,
-                expected_calls=expected_calls,
-                require_refresh=require_refresh,
-            )
-            results.append(
-                {
-                    "scenario": server_code,
-                    "job_id": job_id,
-                    "job_status": job.status.value,
-                    "mcp_tool_calls": expected_calls,
-                    "delivery_status": delivery.status.value,
-                }
-            )
+        sensitive_values: tuple[str, ...] = ()
 
         file_features = {
             "workspace_enabled": True,
@@ -676,6 +557,13 @@ def main() -> int:
             json.dumps(
                 {
                     "status": "passed",
+                    "scope": "local_non_ones",
+                    "skipped_scenarios": [
+                        {
+                            "scenario": "ones-mcp",
+                            "reason": "ONES Mock was removed; real ONES acceptance is not included",
+                        }
+                    ],
                     "runtime_kind": RUNTIME_KIND,
                     "scenario_count": len(results),
                     "scenarios": results,

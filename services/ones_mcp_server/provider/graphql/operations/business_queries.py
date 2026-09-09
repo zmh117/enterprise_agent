@@ -53,9 +53,7 @@ def _project_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> d
 
 def _project_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
-    cumulative_returned = bounded_int(
-        variables.get("_cumulative_returned", 0), minimum=0
-    )
+    cumulative_returned = bounded_int(variables.get("_cumulative_returned", 0), minimum=0)
     raw, total, truncated, cursor = page_items(
         payload,
         collection="projects",
@@ -63,18 +61,19 @@ def _project_response(payload: dict[str, Any], variables: dict[str, Any]) -> dic
         prior_count=cumulative_returned,
     )
     projects: list[dict[str, Any]] = []
-    for value in raw:
+    for index, value in enumerate(raw):
+        path = f"data.buckets[0].projects[{index}]"
         project: dict[str, Any] = {
-            "uuid": bounded_string(value.get("uuid"), maximum=128),
-            "name": bounded_string(value.get("name"), maximum=300),
+            "uuid": bounded_string(value.get("uuid"), maximum=128, path=f"{path}.uuid"),
+            "name": bounded_string(value.get("name"), maximum=300, path=f"{path}.name"),
             "archived": value.get("isArchive") is True,
             "sample": value.get("isSample") is True,
         }
-        owner = optional_person(value.get("owner"))
+        owner = optional_person(value.get("owner"), path=f"{path}.owner")
         if owner is not None:
             project["owner"] = owner
         if value.get("status") is not None:
-            project["status"] = require_status(value.get("status"))
+            project["status"] = require_status(value.get("status"), path=f"{path}.status")
         projects.append(project)
     output = normalized_list("projects", projects, total=total, truncated=truncated)
     output["_provider_cursor"] = cursor
@@ -91,25 +90,28 @@ def _issue_type_variables(arguments: dict[str, Any], _context: dict[str, Any]) -
 
 
 def _issue_type_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
-    data = require_mapping(payload.get("data"))
-    raw_items = require_list(data.get("issueTypeScopes"))
+    data = require_mapping(payload.get("data"), path="data")
+    raw_items = require_list(data.get("issueTypeScopes"), path="data.issueTypeScopes")
     limit = bounded_int(variables.get("_limit", 100), minimum=1)
     offset = bounded_int(variables.get("_offset", 0), minimum=0)
     output: list[dict[str, Any]] = []
     uuids: list[str] = []
-    for raw in raw_items:
-        item = require_mapping(raw)
-        issue_type = require_mapping(item.get("issueType"))
+    for index, raw in enumerate(raw_items):
+        path = f"data.issueTypeScopes[{index}]"
+        item = require_mapping(raw, path=path)
+        issue_type = require_mapping(item.get("issueType"), path=f"{path}.issueType")
         sub = issue_type.get("subIssueType", False)
         if type(sub) is not bool:
             raise invalid_provider_response("ones_provider_schema_invalid")
-        uuid = bounded_string(issue_type.get("uuid"), maximum=128)
+        uuid = bounded_string(issue_type.get("uuid"), maximum=128, path=f"{path}.issueType.uuid")
         uuids.append(uuid)
         output.append(
             {
                 "uuid": uuid,
-                "scope_uuid": bounded_string(item.get("uuid"), maximum=128),
-                "name": bounded_string(issue_type.get("name"), maximum=200),
+                "scope_uuid": bounded_string(item.get("uuid"), maximum=128, path=f"{path}.uuid"),
+                "name": bounded_string(
+                    issue_type.get("name"), maximum=200, path=f"{path}.issueType.name"
+                ),
                 "sub_issue_type": sub,
             }
         )
@@ -183,9 +185,7 @@ def _work_item_variables(arguments: dict[str, Any], _context: dict[str, Any]) ->
 
 def _work_item_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
-    cumulative_returned = bounded_int(
-        variables.get("_cumulative_returned", 0), minimum=0
-    )
+    cumulative_returned = bounded_int(variables.get("_cumulative_returned", 0), minimum=0)
     raw, total, truncated, cursor = page_items(
         payload,
         collection="tasks",
@@ -194,7 +194,10 @@ def _work_item_response(payload: dict[str, Any], variables: dict[str, Any]) -> d
     )
     output = normalized_list(
         "items",
-        [normalize_work_item(item) for item in raw],
+        [
+            normalize_work_item(item, path=f"data.buckets[0].tasks[{index}]")
+            for index, item in enumerate(raw)
+        ],
         total=total,
         truncated=truncated,
     )
@@ -207,13 +210,16 @@ def _detail_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> di
 
 
 def _detail_response(payload: dict[str, Any], _variables: dict[str, Any]) -> dict[str, Any]:
-    data = require_mapping(payload.get("data"))
-    task = require_mapping(data.get("task"))
+    data = require_mapping(payload.get("data"), path="data")
+    task = require_mapping(data.get("task"), path="data.task")
     related_raw = task.get("relatedTasks", [])
-    related = require_list(related_raw)
+    related = require_list(related_raw, path="data.task.relatedTasks")
     output: dict[str, Any] = {
-        "work_item": normalize_work_item(task),
-        "related_items": [normalize_work_item(item) for item in related[:100]],
+        "work_item": normalize_work_item(task, path="data.task"),
+        "related_items": [
+            normalize_work_item(item, path=f"data.task.relatedTasks[{index}]")
+            for index, item in enumerate(related[:100])
+        ],
         "untrusted_data": True,
     }
     description = task.get("descriptionText")

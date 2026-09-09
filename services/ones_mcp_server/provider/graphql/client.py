@@ -5,6 +5,9 @@ import re
 from typing import Any
 
 from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
+from services.ones_mcp_server.provider.graphql.operations.normalization import (
+    validate_graphql_response,
+)
 from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
 
 
@@ -64,6 +67,7 @@ class OnesGraphqlClient:
                 headers=headers,
                 query=query,
             )
+        validate_graphql_response(response)
         output = operation.parse_response(
             response,
             variables=variables,

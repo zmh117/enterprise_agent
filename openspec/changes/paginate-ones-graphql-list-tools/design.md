@@ -1,5 +1,13 @@
 ## Context
 
+## 第三阶段：现场接口兼容与 Mock 下线
+
+- 以现场文档中的字段、类型、单位和请求投影核对所有已注册 ONES Operation；文档中未被当前工具使用的接口仅登记，不新增工具或扩大写权限。样例的业务值、认证头和身份信息不得复制进测试，回归使用独立合成值保持结构与单位一致。
+- 已复现迭代 `progress=10000000` 被 0..100 原值校验拒绝；百分比在 Provider 边界按 100000 的定点比例转换，公开输出允许保留小数。REST 迭代日期与测试用例创建时间按各接口明确的秒级单位处理，不依据长度混猜所有时间字段。
+- GraphQL 查询必须检查顶层 errors；字段校验错误包含代码固定的字段路径、期望约束与实际类型/空值/长度等安全形状，不带字段原值或上游原始错误消息，复用现有 error/error_code 审计和时间线。
+- 用例列表必须与其他 bucket 使用相同页完整性校验，不能在裁剪后推进原页尾 cursor；现场文档中 count 与保留条目不一致的节选不能作为放宽完整性校验的依据。
+- 删除 Mock 运行容器、Dockerfile 与可部署入口，测试替身移至 tests/support 且不读取环境 Provider 配置；现场文档保留，原独立 Compose 只删除 ones-mock 服务，其余数据库/Redis 服务、项目名称、脚本入口和数据卷不变。用户最终确认保留修复，但不改其他配置：恢复 .env.example、本地 .env 和主 Compose 原连接配置，ones-mcp 保持原启动/健康校验，不引入未配置上游模式或可选 profile。Compose 验收移除已删除 Mock 的模拟身份注入与调用，结果明确记录 local_non_ones 范围及跳过项，不修改已有身份/凭据数据，也不连接真实 ONES。
+
 ## 第二阶段决策（2026-09-09 用户已确认，替代本文第一阶段设计）
 
 - 官方依据：https://docs.ones.cn/project/open-api-doc/graphql/introduction.html#分页 。bucket pagination 支持 limit（替代 first）、after、hasNextPage、endCursor、unstable；同一查询必须保持过滤/排序不变，游标只在调用内暂存。totalCount 不能独立证明查询完整。

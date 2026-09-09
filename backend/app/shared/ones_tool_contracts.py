@@ -173,7 +173,7 @@ SPRINT_SCHEMA: Final[dict[str, Any]] = {
         "start_at": {"type": "string", "maxLength": 64},
         "end_at": {"type": "string", "maxLength": 64},
         "status": {"type": "string", "maxLength": 64},
-        "progress": {"type": "integer", "minimum": 0, "maximum": 100},
+        "progress": {"type": "number", "minimum": 0, "maximum": 100},
     },
     "required": ["uuid", "name", "project_uuid", "status"],
     "additionalProperties": False,

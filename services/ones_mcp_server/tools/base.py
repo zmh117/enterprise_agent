@@ -238,6 +238,7 @@ class BaseOnesQueryService(ABC):
                 error_code=error_code(exc),
                 duration_ms=int((time.monotonic() - started) * 1000),
                 business_request={"operation": self.tool_identifier},
+                business_response={"error": str(exc.safe_message), "error_code": error_code(exc)},
                 credential_revision=principal.credential.revision,
             )
             raise

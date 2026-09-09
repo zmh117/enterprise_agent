@@ -38,7 +38,6 @@ cp .env.example .env
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 make check
-docker compose -f ones_mock/docker-compose.ones-mock.yml up --build -d
 docker compose up --build
 ```
 
@@ -48,10 +47,10 @@ Shell 脚本使用 LF，避免 Linux 镜像把 CRLF shebang 解析为 `bash\r`�
 `${TMPDIR:-/tmp}/ea-secrets`，收紧为目录 `0700`、文件 `0400` 后再启动应用；原始宿主机
 Secret 不会被修改。具体安全边界见[平台固定 Master Key](docs/operations/platform-master-key.md)。
 
-`ones-mock` 是独立的本地开发服务，通过宿主机 `127.0.0.1:19121` 发布；主 Compose
-不再定义该服务，容器通过 `http://host.docker.internal:19121` 访问它。该 Mock 用于
-ONES 本人绑定、Token 刷新和 `ones_work_item_search` 验收。生产部署必须显式覆盖为
-受信 HTTPS ONES Provider，`APP_ENV=production` 会拒绝 HTTP Mock 地址。
+可部署的 ONES Mock 已删除。`ones_mock/ones` 保留现场接口文档；测试替身位于
+`backend/tests/support`，不启动网络服务。`ones-mcp` 的启动方式和连接配置保持不变。
+`ones_mock/docker-compose.ones-mock.yml` 保留原数据库/Redis 测试服务及数据卷，
+不再包含 `ones-mock` 服务。真实 ONES 验收需要单独安排。
 
 查看服务状态：
 

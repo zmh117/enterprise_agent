@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from ones_mock.mock_ones_api import MOCK_ISSUE_TYPES, MockOnesSettings, create_app
+from backend.tests.support.ones_provider import MOCK_ISSUE_TYPES, MockOnesSettings, create_app
 from services.ones_mcp_server.provider.task_update import OnesTaskUpdateProvider
 from services.ones_mcp_server.task_update_catalog import TaskUpdateFieldCatalog
 

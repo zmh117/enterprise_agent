@@ -10,7 +10,7 @@ import pytest
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.exceptions import AppError
 from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
-from ones_mock.mock_ones_api import MockOnesSettings, create_app
+from backend.tests.support.ones_provider import MockOnesSettings, create_app
 from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
 from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
@@ -524,7 +524,7 @@ def test_new_tool_validation_and_timeline_projection_fail_closed() -> None:
                 {
                     "uuid": "MESSAGE-1",
                     "type": "comment",
-                    "send_time": 1784736000000,
+                    "send_time": 1784736000000000,
                     "text": "See https://example.test/private?signature=discarded now",
                     "email": "discarded@example.test",
                     "avatar": "https://example.test/avatar",

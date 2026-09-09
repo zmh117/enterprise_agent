@@ -42,9 +42,7 @@ def _library_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> d
 
 def _library_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
-    cumulative_returned = bounded_int(
-        variables.get("_cumulative_returned", 0), minimum=0
-    )
+    cumulative_returned = bounded_int(variables.get("_cumulative_returned", 0), minimum=0)
     raw, total, truncated, cursor = page_items(
         payload,
         collection="testcaseLibraries",
@@ -52,16 +50,17 @@ def _library_response(payload: dict[str, Any], variables: dict[str, Any]) -> dic
         prior_count=cumulative_returned,
     )
     libraries: list[dict[str, Any]] = []
-    for raw_item in raw:
-        item = require_mapping(raw_item)
-        count = bounded_int(item.get("testcaseCaseCount", 0))
+    for index, raw_item in enumerate(raw):
+        path = f"data.buckets[0].testcaseLibraries[{index}]"
+        item = require_mapping(raw_item, path=path)
+        count = bounded_int(item.get("testcaseCaseCount", 0), path=f"{path}.testcaseCaseCount")
         sample = item.get("isSample", False)
         if type(sample) is not bool:
             raise invalid_provider_response("ones_provider_schema_invalid")
         libraries.append(
             {
-                "uuid": bounded_string(item.get("uuid"), maximum=128),
-                "name": bounded_string(item.get("name"), maximum=300),
+                "uuid": bounded_string(item.get("uuid"), maximum=128, path=f"{path}.uuid"),
+                "name": bounded_string(item.get("name"), maximum=300, path=f"{path}.name"),
                 "case_count": count,
                 "sample": sample,
             }
@@ -80,31 +79,34 @@ def _module_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> di
 
 
 def _module_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
-    data = require_mapping(payload.get("data"))
-    raw = require_list(data.get("testcaseModules"))
+    data = require_mapping(payload.get("data"), path="data")
+    raw = require_list(data.get("testcaseModules"), path="data.testcaseModules")
     limit = bounded_int(variables.get("_limit"), minimum=1)
     offset = bounded_int(variables.get("_offset", 0), minimum=0)
     modules: list[dict[str, Any]] = []
     uuids: list[str] = []
-    for raw_item in raw:
-        item = require_mapping(raw_item)
-        uuid = bounded_string(item.get("uuid"), maximum=128)
+    for index, raw_item in enumerate(raw):
+        path = f"data.testcaseModules[{index}]"
+        item = require_mapping(raw_item, path=path)
+        uuid = bounded_string(item.get("uuid"), maximum=128, path=f"{path}.uuid")
         uuids.append(uuid)
         module: dict[str, Any] = {
             "uuid": uuid,
-            "name": bounded_string(item.get("name"), maximum=300),
-            "path": bounded_string(item.get("path"), maximum=1000),
-            "case_count": bounded_int(item.get("testcaseCaseCount", 0)),
+            "name": bounded_string(item.get("name"), maximum=300, path=f"{path}.name"),
+            "path": bounded_string(item.get("path"), maximum=1000, path=f"{path}.path"),
+            "case_count": bounded_int(
+                item.get("testcaseCaseCount", 0), path=f"{path}.testcaseCaseCount"
+            ),
         }
         parent = item.get("parent")
         if isinstance(parent, dict) and parent.get("uuid"):
-            module["parent_uuid"] = bounded_string(parent.get("uuid"), maximum=128)
+            module["parent_uuid"] = bounded_string(
+                parent.get("uuid"), maximum=128, path=f"{path}.parent.uuid"
+            )
         modules.append(module)
     page = modules[offset : offset + limit]
     next_offset = offset + len(page)
-    output = normalized_list(
-        "modules", page, total=len(raw), truncated=next_offset < len(raw)
-    )
+    output = normalized_list("modules", page, total=len(raw), truncated=next_offset < len(raw))
     output["_next_offset"] = next_offset
     output["_collection_fingerprint"] = ordered_uuid_fingerprint(uuids)
     return output
@@ -126,9 +128,7 @@ def _plan_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict
 
 def _plan_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
-    cumulative_returned = bounded_int(
-        variables.get("_cumulative_returned", 0), minimum=0
-    )
+    cumulative_returned = bounded_int(variables.get("_cumulative_returned", 0), minimum=0)
     raw, total, truncated, cursor = page_items(
         payload,
         collection="testcasePlans",
@@ -136,26 +136,29 @@ def _plan_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[s
         prior_count=cumulative_returned,
     )
     plans: list[dict[str, Any]] = []
-    for raw_item in raw:
-        item = require_mapping(raw_item)
+    for index, raw_item in enumerate(raw):
+        path = f"data.buckets[0].testcasePlans[{index}]"
+        item = require_mapping(raw_item, path=path)
         sample = item.get("isSample", False)
         if type(sample) is not bool:
             raise invalid_provider_response("ones_provider_schema_invalid")
         plan: dict[str, Any] = {
-            "uuid": bounded_string(item.get("uuid"), maximum=128),
-            "name": bounded_string(item.get("name"), maximum=300),
+            "uuid": bounded_string(item.get("uuid"), maximum=128, path=f"{path}.uuid"),
+            "name": bounded_string(item.get("name"), maximum=300, path=f"{path}.name"),
             "sample": sample,
         }
-        owner = optional_person(item.get("owner"))
+        owner = optional_person(item.get("owner"), path=f"{path}.owner")
         if owner is not None:
             plan["owner"] = owner
         status = item.get("status")
         if isinstance(status, dict):
-            category = bounded_string(status.get("category"), maximum=40)
+            category = bounded_string(
+                status.get("category"), maximum=40, path=f"{path}.status.category"
+            )
             if category not in ONES_STATUS_CATEGORIES:
                 raise invalid_provider_response("ones_provider_schema_invalid")
             plan["status"] = {
-                "name": bounded_string(status.get("name"), maximum=200),
+                "name": bounded_string(status.get("name"), maximum=200, path=f"{path}.status.name"),
                 "category": category,
             }
         plans.append(plan)
@@ -164,9 +167,7 @@ def _plan_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[s
     return output
 
 
-def _module_case_variables(
-    arguments: dict[str, Any], _context: dict[str, Any]
-) -> dict[str, Any]:
+def _module_case_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
     return {
         "testCaseFilter": [
             {
@@ -182,14 +183,13 @@ def _module_case_variables(
         },
         "_limit": arguments["limit"],
         "_cumulative_returned": int(arguments.get("cumulative_returned") or 0),
+        "_case_collection": "testcaseCases",
     }
 
 
 def _plan_case_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
     return {
-        "testCaseFilter": [
-            {"testcasePlan_in": [arguments["source_uuid"]], "testcaseCase": {}}
-        ],
+        "testCaseFilter": [{"testcasePlan_in": [arguments["source_uuid"]], "testcaseCase": {}}],
         "planFilter": {"uuid_in": [arguments["source_uuid"]]},
         "moduleFilter": {},
         "orderByFilter": {"testcaseCase": {"priority": {"position": "ASC"}}},
@@ -200,43 +200,28 @@ def _plan_case_variables(arguments: dict[str, Any], _context: dict[str, Any]) ->
         },
         "_limit": arguments["limit"],
         "_cumulative_returned": int(arguments.get("cumulative_returned") or 0),
+        "_case_collection": "testcasePlanCases",
     }
 
 
-def _case_list_response(
-    payload: dict[str, Any], variables: dict[str, Any]
-) -> dict[str, Any]:
+def _case_list_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
-    bounded_int(variables.get("_cumulative_returned", 0), minimum=0)
-    data = require_mapping(payload.get("data"))
-    buckets = require_list(data.get("buckets"))
+    collection = variables["_case_collection"]
+    if collection not in {"testcaseCases", "testcasePlanCases"}:
+        raise ValueError("Invalid fixed testcase collection")
+    raw, total, truncated, cursor = page_items(
+        payload,
+        collection=collection,
+        limit=limit,
+        prior_count=bounded_int(variables.get("_cumulative_returned", 0)),
+    )
     items: list[dict[str, Any]] = []
-    total = 0
-    truncated = False
-    cursor = ""
-    for raw_bucket in buckets:
-        bucket = require_mapping(raw_bucket)
-        raw_cases = bucket.get("testcaseCases")
-        plan_cases = bucket.get("testcasePlanCases")
-        selected = require_list(raw_cases if raw_cases is not None else plan_cases)
-        for raw_item in selected:
-            item = require_mapping(raw_item)
-            if plan_cases is not None:
-                item = require_mapping(item.get("testcaseCase"))
-            items.append({"uuid": bounded_string(item.get("uuid"), maximum=128)})
-        page = require_mapping(bucket.get("pageInfo"))
-        count = bounded_int(page.get("count", len(selected)))
-        bucket_total = bounded_int(page.get("totalCount", count))
-        total += bucket_total
-        has_next = page.get("hasNextPage", False)
-        if type(has_next) is not bool:
-            raise invalid_provider_response("ones_provider_schema_invalid")
-        truncated = truncated or has_next
-        if isinstance(page.get("endCursor"), str):
-            cursor = str(page["endCursor"])[:512]
-    if len(items) > limit:
-        items = items[:limit]
-        truncated = True
+    for index, item in enumerate(raw):
+        path = f"data.buckets[0].{collection}[{index}]"
+        if collection == "testcasePlanCases":
+            path += ".testcaseCase"
+            item = require_mapping(item.get("testcaseCase"), path=path)
+        items.append({"uuid": bounded_string(item.get("uuid"), maximum=128, path=f"{path}.uuid")})
     output = normalized_list("test_cases", items, total=total, truncated=truncated)
     output["_provider_cursor"] = cursor
     return output
@@ -251,14 +236,15 @@ def _detail_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> di
 
 
 def _detail_response(payload: dict[str, Any], _variables: dict[str, Any]) -> dict[str, Any]:
-    data = require_mapping(payload.get("data"))
-    cases = require_list(data.get("testcaseCases"))
+    data = require_mapping(payload.get("data"), path="data")
+    cases = require_list(data.get("testcaseCases"), path="data.testcaseCases")
     if len(cases) != 1:
         raise invalid_provider_response("ones_provider_schema_invalid")
-    item = require_mapping(cases[0])
+    path = "data.testcaseCases[0]"
+    item = require_mapping(cases[0], path=path)
     test_case: dict[str, Any] = {
-        "uuid": bounded_string(item.get("uuid"), maximum=128),
-        "name": bounded_string(item.get("name"), maximum=500),
+        "uuid": bounded_string(item.get("uuid"), maximum=128, path=f"{path}.uuid"),
+        "name": bounded_string(item.get("name"), maximum=500, path=f"{path}.name"),
     }
     for source, target in (
         ("testcaseLibrary", "library_uuid"),
@@ -266,25 +252,35 @@ def _detail_response(payload: dict[str, Any], _variables: dict[str, Any]) -> dic
     ):
         value = item.get(source)
         if isinstance(value, dict) and value.get("uuid"):
-            test_case[target] = bounded_string(value.get("uuid"), maximum=128)
+            test_case[target] = bounded_string(
+                value.get("uuid"), maximum=128, path=f"{path}.{source}.uuid"
+            )
     if item.get("path") is not None:
-        test_case["path"] = bounded_string(item.get("path"), maximum=1000)
-    assignee = optional_person(item.get("assign"))
+        test_case["path"] = bounded_string(item.get("path"), maximum=1000, path=f"{path}.path")
+    assignee = optional_person(item.get("assign"), path=f"{path}.assign")
     if assignee is not None:
         test_case["assignee"] = assignee
     if item.get("createTime") is not None:
-        test_case["created_at"] = timestamp_text(item.get("createTime"))
+        test_case["created_at"] = timestamp_text(
+            item.get("createTime"), unit="seconds", path="data.testcaseCases[0].createTime"
+        )
     steps: list[dict[str, Any]] = []
-    for raw_step in require_list(data.get("testcaseCaseSteps"))[:100]:
-        step = require_mapping(raw_step)
+    for index, raw_step in enumerate(
+        require_list(data.get("testcaseCaseSteps"), path="data.testcaseCaseSteps")[:100]
+    ):
+        step_path = f"data.testcaseCaseSteps[{index}]"
+        step = require_mapping(raw_step, path=step_path)
         steps.append(
             {
-                "index": bounded_int(step.get("index")),
+                "index": bounded_int(step.get("index"), path=f"{step_path}.index"),
                 "description": bounded_string(
-                    step.get("desc", ""), maximum=2000, allow_empty=True
+                    step.get("desc", ""), maximum=2000, allow_empty=True, path=f"{step_path}.desc"
                 ),
                 "expected_result": bounded_string(
-                    step.get("result", ""), maximum=2000, allow_empty=True
+                    step.get("result", ""),
+                    maximum=2000,
+                    allow_empty=True,
+                    path=f"{step_path}.result",
                 ),
             }
         )

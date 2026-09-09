@@ -34,7 +34,7 @@ from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
 from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.exceptions import AppError, NonRetryableExecutionError
 from backend.tests.helpers import container, prepare_debug_application_access
-from ones_mock.mock_ones_api import MockOnesSettings, create_app as create_mock_app
+from backend.tests.support.ones_provider import MockOnesSettings, create_app as create_mock_app
 from services.ones_mcp_server.app import create_app as create_mcp_app
 from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
 from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
@@ -1310,7 +1310,10 @@ def test_ones_mcp_classifies_provider_failures_without_persisting_error_bodies(
     provider = next(row for row in rows if row["event_kind"] == "PROVIDER")
     assert provider["status"] == "FAILED"
     assert provider["error_code"] == error_code
-    assert json.loads(provider["provider_response_json"]) == {}
+    assert json.loads(provider["provider_response_json"]) == {
+        "error": raised.value.safe_message,
+        "error_code": error_code,
+    }
     timeline = fixture["runtime"].database.execute_one(
         "select status, response_summary from agent_tool_call where id = ?",
         (provider["agent_tool_call_id"],),
@@ -1319,6 +1322,8 @@ def test_ones_mcp_classifies_provider_failures_without_persisting_error_bodies(
     summary = json.loads(timeline["response_summary"])
     assert summary["error_code"] == error_code
     assert summary["error"] == raised.value.safe_message
+    if keyword == "__missing_field__":
+        assert "data.buckets[0].tasks[0].number" in summary["error"]
 
 
 def test_ones_mcp_classifies_provider_timeout_without_persisting_a_response() -> None:
@@ -1342,10 +1347,11 @@ def test_ones_mcp_classifies_provider_timeout_without_persisting_a_response() ->
         "from mcp_operation_audit where correlation_id = ? and event_kind = 'PROVIDER'",
         ("ones-query-provider-timeout",),
     )
-    assert provider == {
-        "status": "FAILED",
-        "error_code": "ones_provider_unavailable",
-        "provider_response_json": "{}",
+    assert provider["status"] == "FAILED"
+    assert provider["error_code"] == "ones_provider_unavailable"
+    assert json.loads(provider["provider_response_json"]) == {
+        "error": raised.value.safe_message,
+        "error_code": raised.value.error_code,
     }
 
 

@@ -156,9 +156,7 @@ def test_ones_contract_exposes_code_owned_fixed_tools_and_confirmed_mutations() 
     assert "next_cursor" not in TOOL_OUTPUT_SCHEMA["properties"]
     assert TOOL_OUTPUT_SCHEMA["properties"]["cumulative_returned"]["maximum"] == 1000
     assert LOGIN_PATH == "/project/api/project/auth/login"
-    assert WORK_ITEM_SEARCH_PATH == (
-        "/project/api/project/team/{team_uuid}/items/graphql"
-    )
+    assert WORK_ITEM_SEARCH_PATH == ("/project/api/project/team/{team_uuid}/items/graphql")
     assert WORK_ITEM_SEARCH_DOCUMENT.startswith("{")
     assert "tasks(" in WORK_ITEM_SEARCH_DOCUMENT
     assert "workItems(" not in WORK_ITEM_SEARCH_DOCUMENT
@@ -175,6 +173,7 @@ def test_ones_contract_exposes_code_owned_fixed_tools_and_confirmed_mutations() 
     assert PROJECT_ROLE_MEMBERS_OUTPUT_SCHEMA["properties"]["untrusted_data"] == {"const": True}
     production = _production_sources().lower()
     assert "ones_mock/ones" not in production
+    assert "tests.support.ones_provider" not in production
     for contract in ONES_TOOL_CONTRACTS.values():
         assert contract.identifier.startswith("ones_")
         assert contract.input_schema["additionalProperties"] is False
@@ -380,9 +379,7 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
     assert "typescript-agent-runtime" not in services
     runtime = services["python-agent-runtime"]
     assert runtime["environment"]["ONES_MCP_SERVER_URL"] == ("http://ones-mcp:9104/mcp")
-    assert runtime["environment"]["DINGTALK_MCP_SERVER_URL"] == (
-        "http://dingtalk-mcp:9107/mcp"
-    )
+    assert runtime["environment"]["DINGTALK_MCP_SERVER_URL"] == ("http://dingtalk-mcp:9107/mcp")
     assert runtime["depends_on"]["ones-mcp"]["condition"] == "service_healthy"
     assert runtime["depends_on"]["dingtalk-mcp"]["condition"] == "service_healthy"
     assert not {
@@ -443,22 +440,28 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
 
 
-def test_local_ones_mock_is_independent_and_host_published() -> None:
+def test_local_ones_mcp_runs_without_deployable_mock() -> None:
     compose = yaml.safe_load((REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     assert "ones-mock" not in compose["services"]
 
-    mock_compose = yaml.safe_load(
-        (REPOSITORY_ROOT / "ones_mock/docker-compose.ones-mock.yml").read_text(encoding="utf-8")
+    assert not compose["services"]["ones-mcp"].get("profiles")
+    for service in ("python-agent-runtime", "agent-worker"):
+        dependency = compose["services"][service]["depends_on"]["ones-mcp"]
+        assert dependency["condition"] == "service_healthy"
+        assert dependency.get("required", True) is True
+    for path in (
+        "ones_mock/Dockerfile",
+        "ones_mock/mock_ones_api.py",
+    ):
+        assert not (REPOSITORY_ROOT / path).exists()
+    assert (REPOSITORY_ROOT / "backend/tests/support/ones_provider.py").is_file()
+    test_compose = yaml.safe_load(
+        (REPOSITORY_ROOT / "ones_mock/docker-compose.ones-mock.yml").read_text()
     )
-    mock = mock_compose["services"]["ones-mock"]
-    assert mock["build"] == {
-        "context": ".",
-        "dockerfile": "Dockerfile",
-    }
-    assert mock["read_only"] is True
-    assert mock["cap_drop"] == ["ALL"]
-    assert mock["security_opt"] == ["no-new-privileges:true"]
-    assert mock["ports"] == ["127.0.0.1:19121:19121"]
-
-    dockerfile = (REPOSITORY_ROOT / "ones_mock/Dockerfile").read_text(encoding="utf-8")
-    assert "USER 10004:10004" in dockerfile
+    assert "ones-mock" not in test_compose["services"]
+    assert test_compose["name"] == "enterprise-agent-ones-mock"
+    acceptance = (
+        REPOSITORY_ROOT / "backend/app/acceptance/python_runtime_composition.py"
+    ).read_text()
+    assert "_configure_ones_mock_identity" not in acceptance
+    assert '"local_non_ones"' in acceptance

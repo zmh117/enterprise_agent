@@ -70,12 +70,8 @@ class WorkItemSearchOperation:
         variables: dict[str, Any],
     ) -> dict[str, Any]:
         limit = bounded_int(variables.get("_limit"), minimum=1)
-        cumulative_returned = bounded_int(
-            variables.get("_cumulative_returned", 0), minimum=0
-        )
-        expected_uuid = bounded_string(
-            variables.get("_issue_type_uuid"), maximum=128
-        )
+        cumulative_returned = bounded_int(variables.get("_cumulative_returned", 0), minimum=0)
+        expected_uuid = bounded_string(variables.get("_issue_type_uuid"), maximum=128)
         expected_type = variables.get("_issue_type")
         if expected_type not in ISSUE_TYPES:
             raise invalid_provider_response("ones_provider_schema_invalid")
@@ -86,9 +82,12 @@ class WorkItemSearchOperation:
             prior_count=cumulative_returned,
         )
         normalized: list[dict[str, Any]] = []
-        for item in items:
-            issue_type = require_mapping(item.get("issueType"))
-            issue_type_uuid = bounded_string(issue_type.get("uuid"), maximum=128)
+        for index, item in enumerate(items):
+            path = f"data.buckets[0].tasks[{index}]"
+            issue_type = require_mapping(item.get("issueType"), path=f"{path}.issueType")
+            issue_type_uuid = bounded_string(
+                issue_type.get("uuid"), maximum=128, path=f"{path}.issueType.uuid"
+            )
             if (
                 issue_type_uuid != expected_uuid
                 or ISSUE_TYPES_BY_UUID.get(issue_type_uuid) != expected_type
@@ -96,8 +95,8 @@ class WorkItemSearchOperation:
                 raise invalid_provider_response("ones_provider_schema_invalid")
             normalized.append(
                 {
-                    "number": bounded_int(item.get("number")),
-                    "name": bounded_string(item.get("name"), maximum=500),
+                    "number": bounded_int(item.get("number"), path=f"{path}.number"),
+                    "name": bounded_string(item.get("name"), maximum=500, path=f"{path}.name"),
                     "type": expected_type,
                 }
             )

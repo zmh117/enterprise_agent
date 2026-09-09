@@ -21,7 +21,7 @@ from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
 from app.shared.ones_tool_contracts import ONES_CREATE_BUG_TOOL_IDENTIFIER, ONES_TOOL_CONTRACTS
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
-from ones_mock.mock_ones_api import MockOnesSettings, create_app
+from backend.tests.support.ones_provider import MockOnesSettings, create_app
 from scripts.sync_ones_bug_create_field_catalog import build_catalog, render_catalog
 from services.ones_mcp_server.bug_create import (
     compile_bug_create,

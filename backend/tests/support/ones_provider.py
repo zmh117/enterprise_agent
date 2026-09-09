@@ -1,6 +1,7 @@
+"""In-process ONES test double. No deployed service or production imports."""
+
 from __future__ import annotations
 
-import os
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
@@ -15,7 +16,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("mock.yaml")
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("ones_provider.yaml")
 
 
 @dataclass(frozen=True)
@@ -120,7 +121,7 @@ class MockOnesSettings:
         return self.config.invalid_response_email
 
     @classmethod
-    def from_environment(cls) -> MockOnesSettings:
+    def from_fixture(cls) -> MockOnesSettings:
         return cls(config=load_config())
 
 
@@ -143,7 +144,7 @@ def _require_int(value: object, field_name: str) -> int:
 
 
 def load_config(path: str | Path | None = None) -> MockOnesConfig:
-    config_path = Path(path or os.getenv("ONES_MOCK_CONFIG") or DEFAULT_CONFIG_PATH)
+    config_path = Path(path or DEFAULT_CONFIG_PATH)
     if not config_path.is_file():
         raise FileNotFoundError(f"ONES mock config not found: {config_path}")
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -617,12 +618,10 @@ def _group_task_data(config: MockOnesConfig, variables: dict[str, Any]) -> dict[
         and (not assignees or str(fixture["assign"]["uuid"]) in assignees)
         and _matches_custom_options(fixture, custom_filters)
         and (
-            "gte" not in created
-            or _created_calendar_date(fixture["createTime"]) >= created["gte"]
+            "gte" not in created or _created_calendar_date(fixture["createTime"]) >= created["gte"]
         )
         and (
-            "lte" not in created
-            or _created_calendar_date(fixture["createTime"]) <= created["lte"]
+            "lte" not in created or _created_calendar_date(fixture["createTime"]) <= created["lte"]
         )
         and _matches_keyword(fixture, keyword)
     ]
@@ -1034,7 +1033,7 @@ def _test_case_detail(config: MockOnesConfig) -> dict[str, Any]:
                         "uuid": config.primary_user.uuid,
                         "name": config.primary_user.name,
                     },
-                    "createTime": 1784736000000000,
+                    "createTime": 1784736000,
                     "testcaseLibrary": {"uuid": "MOCK-ONES-LIBRARY-001"},
                     "testcaseModule": {"uuid": "MOCK-ONES-MODULE-001"},
                     "path": "MOCK-ONES-MODULE-001",
@@ -1270,9 +1269,9 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                         "title": "Mock Completed Sprint",
                         "project_uuid": config.project_uuid,
                         "project_name": config.project_name,
-                        "start_time": 1782144000000,
-                        "end_time": 1782748800000,
-                        "progress": 100,
+                        "start_time": 1782144000,
+                        "end_time": 1782748800,
+                        "progress": 10000000,
                         "statuses": [{"category": "done", "is_current_status": True}],
                     },
                     {
@@ -1280,9 +1279,9 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                         "title": "Mock Active Sprint",
                         "project_uuid": config.project_uuid,
                         "project_name": config.project_name,
-                        "start_time": 1784563200000,
-                        "end_time": 1785168000000,
-                        "progress": 50,
+                        "start_time": 1784563200,
+                        "end_time": 1785168000,
+                        "progress": 5000000,
                         "statuses": [{"category": "in_progress", "is_current_status": True}],
                     },
                 ]
@@ -1314,7 +1313,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 {
                     "uuid": "MOCK-ONES-MESSAGE-001",
                     "type": "comment",
-                    "send_time": 1784736000000,
+                    "send_time": 1784736000000000,
                     "text": "Synthetic timeline message.",
                 }
             ],
@@ -1477,7 +1476,10 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
         if mode == "not_ready":
             return {"ready": False, "can_create": False}
         project_uuid = str(payload.get("project_uuid") or "")
-        if project_uuid != config.project_uuid or payload.get("issue_type_uuid") != _BUG_ISSUE_TYPE_UUID:
+        if (
+            project_uuid != config.project_uuid
+            or payload.get("issue_type_uuid") != _BUG_ISSUE_TYPE_UUID
+        ):
             return {"ready": True, "can_create": False}
         user_uuids = payload.get("user_uuids")
         products = payload.get("product_uuids")
@@ -1511,9 +1513,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
             "required_field_uuids": sorted(_BUG_CREATE_REQUIRED_FIELD_UUIDS),
             "project": {"uuid": project_uuid, "name": config.project_name},
             "issue_type": {"uuid": _BUG_ISSUE_TYPE_UUID, "name": "缺陷"},
-            "users": [
-                {"uuid": uuid, "name": name} for uuid, name in sorted(known_users.items())
-            ],
+            "users": [{"uuid": uuid, "name": name} for uuid, name in sorted(known_users.items())],
             "products": [
                 {"uuid": uuid, "name": known_products.get(uuid, "")}
                 for uuid in products
@@ -1573,7 +1573,11 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
             or config.user_by_uuid(str(task.get("assign") or "")) is None
             or not isinstance(task.get("watchers"), list)
             or not isinstance(task.get("field_values"), list)
-            or {str(value.get("field_uuid") or "") for value in task["field_values"] if isinstance(value, dict)}
+            or {
+                str(value.get("field_uuid") or "")
+                for value in task["field_values"]
+                if isinstance(value, dict)
+            }
             != _BUG_CREATE_REQUIRED_FIELD_UUIDS
         ):
             raise HTTPException(status_code=400, detail={"code": "invalid_task"})
@@ -1597,9 +1601,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
             "bad_tasks": [],
         }
 
-    @app.get(
-        "/project/api/project/team/{team_uuid}/tasks/{task_uuid}/create_readback"
-    )
+    @app.get("/project/api/project/team/{team_uuid}/tasks/{task_uuid}/create_readback")
     async def read_created_bug(
         team_uuid: str,
         task_uuid: str,

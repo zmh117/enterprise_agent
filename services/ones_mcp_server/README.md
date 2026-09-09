@@ -3,6 +3,19 @@
 This is an internal, identity-aware MCP server. It publishes code-registered ONES
 tools over stateless Streamable HTTP. It is not an arbitrary GraphQL or HTTP proxy.
 
+## Provider compatibility and offline tests
+
+The deployable ONES Mock service has been removed. Test doubles live only in
+`backend/tests/support` and use in-process transport. Existing environment defaults,
+startup/readiness behavior and Provider security checks remain unchanged. Real ONES
+acceptance has not been performed in this local environment.
+
+Provider normalization uses explicit field units: sprint progress is a fixed-point
+percentage scaled by 100000; sprint dates and testcase creation times are seconds;
+task timestamps and message timestamps are microseconds. GraphQL errors reject
+partial data. Shared field validation reports safe paths and types, never source
+values or raw error messages, in both Provider and Tool failure audits.
+
 ## Automatic list collection and Job-local results
 
 The nine GraphQL list tools (including `ones_work_item_search`) now automatically
@@ -100,8 +113,8 @@ identity, Team, publication, permission, layout and references, persist a single
 Provider attempt, call fixed `add3`, and compare a full readback using the same
 pre-generated Task UUID. Conflicts, transport uncertainty, or interrupted attempts
 are never replayed with another UUID. The real Provider remains fail-closed until it
-implements the explicit preflight and readback contracts; the repository Mock is
-the current executable acceptance target.
+implements the explicit preflight and readback contracts. In-process test doubles
+verify those contracts but do not establish real Provider acceptance.
 
 ## Agent query orchestration
 
