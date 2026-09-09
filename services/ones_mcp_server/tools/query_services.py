@@ -6,6 +6,12 @@ from app.modules.mcp_audit import McpAuditHandle
 from services.ones_mcp_server.auth.principal import ResolvedOnesPrincipal
 from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
 from services.ones_mcp_server.contracts import PROVIDER_HEADERS
+from services.ones_mcp_server.errors import invalid_provider_response
+from services.ones_mcp_server.pagination import (
+    MAX_GRAPHQL_LIST_RESULTS,
+    OnesGraphqlListCursorCodec,
+    OnesGraphqlListPage,
+)
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
 from services.ones_mcp_server.provider.graphql.operations.business_queries import (
     ISSUE_TYPE_LIST,
@@ -81,41 +87,234 @@ class GraphqlQueryService(BaseOnesQueryService):
         )
 
 
-class OnesProjectSearchService(GraphqlQueryService):
+class PaginatedGraphqlQueryService(GraphqlQueryService):
+    pagination_mode = OnesGraphqlListCursorCodec.PROVIDER_MODE
+    output_field: str
+
+    @staticmethod
+    def response_summary(output: dict[str, Any]) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "result_keys": sorted(key for key in output if not key.startswith("_"))
+        }
+        for key in ("total", "returned", "truncated"):
+            if key in output:
+                summary[key] = output[key]
+        return summary
+
+    def prepare_provider_arguments(
+        self,
+        principal: ResolvedOnesPrincipal,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        del principal
+        return dict(arguments)
+
+    def _execute_with_refresh(
+        self,
+        *,
+        claims: dict[str, Any],
+        handle: McpAuditHandle,
+        principal: ResolvedOnesPrincipal,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        page = OnesGraphqlListCursorCodec.decode(
+            str(arguments.get("cursor") or ""),
+            tool_identifier=self.tool_identifier,
+            input_schema=self.input_schema,
+            mode=self.pagination_mode,
+            claims=claims,
+            principal=principal,
+            request=arguments,
+        )
+        provider_arguments = self.prepare_provider_arguments(
+            principal,
+            {key: value for key, value in arguments.items() if key != "cursor"},
+        )
+        provider_arguments.update(
+            {
+                "limit": min(int(arguments["limit"]), page.remaining),
+                "provider_cursor": page.provider_cursor,
+                "page_offset": page.offset,
+                "cumulative_returned": page.cumulative_returned,
+            }
+        )
+        provider_output = super()._execute_with_refresh(
+            claims=claims,
+            handle=handle,
+            principal=principal,
+            arguments=provider_arguments,
+        )
+        return self._public_page_output(
+            provider_output,
+            claims=claims,
+            principal=principal,
+            request=arguments,
+            page=page,
+        )
+
+    def _public_page_output(
+        self,
+        provider_output: dict[str, Any],
+        *,
+        claims: dict[str, Any],
+        principal: ResolvedOnesPrincipal,
+        request: dict[str, Any],
+        page: OnesGraphqlListPage,
+    ) -> dict[str, Any]:
+        items = provider_output.get(self.output_field)
+        total = provider_output.get("total")
+        returned_value = provider_output.get("returned")
+        truncated = provider_output.get("truncated")
+        if (
+            not isinstance(items, list)
+            or type(total) is not int
+            or total < 0
+            or type(returned_value) is not int
+            or returned_value != len(items)
+            or type(truncated) is not bool
+        ):
+            raise invalid_provider_response("ones_provider_schema_invalid")
+        returned = len(items)
+        cumulative_returned = page.cumulative_returned + returned
+        if (
+            returned > min(int(request["limit"]), page.remaining)
+            or cumulative_returned > MAX_GRAPHQL_LIST_RESULTS
+        ):
+            raise invalid_provider_response("ones_provider_schema_invalid")
+
+        continuation = self._continuation_page(
+            provider_output,
+            page=page,
+            returned=returned,
+            cumulative_returned=cumulative_returned,
+            truncated=truncated,
+        )
+        pagination_limit_reached = (
+            truncated and cumulative_returned >= MAX_GRAPHQL_LIST_RESULTS
+        )
+        output: dict[str, Any] = {
+            self.output_field: items,
+            "total": total,
+            "returned": returned,
+            "cumulative_returned": cumulative_returned,
+            "truncated": truncated,
+            "pagination_limit_reached": pagination_limit_reached,
+            "untrusted_data": True,
+        }
+        if truncated and not pagination_limit_reached:
+            if continuation is None:
+                raise invalid_provider_response("ones_provider_schema_invalid")
+            output["next_cursor"] = OnesGraphqlListCursorCodec.encode(
+                page=continuation,
+                tool_identifier=self.tool_identifier,
+                input_schema=self.input_schema,
+                claims=claims,
+                principal=principal,
+                request=request,
+            )
+        return output
+
+    def _continuation_page(
+        self,
+        provider_output: dict[str, Any],
+        *,
+        page: OnesGraphqlListPage,
+        returned: int,
+        cumulative_returned: int,
+        truncated: bool,
+    ) -> OnesGraphqlListPage | None:
+        if self.pagination_mode == OnesGraphqlListCursorCodec.PROVIDER_MODE:
+            provider_cursor = provider_output.get("_provider_cursor")
+            if not isinstance(provider_cursor, str):
+                raise invalid_provider_response("ones_provider_schema_invalid")
+            if truncated:
+                if (
+                    not returned
+                    or not provider_cursor
+                    or provider_cursor == page.provider_cursor
+                ):
+                    raise invalid_provider_response("ones_provider_schema_invalid")
+                return OnesGraphqlListPage(
+                    mode=self.pagination_mode,
+                    provider_cursor=provider_cursor,
+                    cumulative_returned=cumulative_returned,
+                )
+            return None
+
+        next_offset = provider_output.get("_next_offset")
+        collection_fingerprint = provider_output.get("_collection_fingerprint")
+        if (
+            type(next_offset) is not int
+            or not isinstance(collection_fingerprint, str)
+            or len(collection_fingerprint) != 64
+        ):
+            raise invalid_provider_response("ones_provider_schema_invalid")
+        if page.collection_fingerprint and (
+            collection_fingerprint != page.collection_fingerprint
+        ):
+            raise OnesGraphqlListCursorCodec.stale()
+        if truncated:
+            if not returned or next_offset <= page.offset or next_offset != cumulative_returned:
+                raise invalid_provider_response("ones_provider_schema_invalid")
+            return OnesGraphqlListPage(
+                mode=self.pagination_mode,
+                offset=next_offset,
+                collection_fingerprint=collection_fingerprint,
+                cumulative_returned=cumulative_returned,
+            )
+        return None
+
+
+def _cursor(arguments: dict[str, Any], result: dict[str, Any]) -> None:
+    if "cursor" in arguments:
+        value = text(arguments["cursor"], maximum=4096, allow_empty=True)
+        if value:
+            result["cursor"] = value
+
+
+class OnesProjectSearchService(PaginatedGraphqlQueryService):
     tool_identifier = "ones_search_projects"
     operation_code = PROJECT_SEARCH
+    output_field = "projects"
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"keyword", "limit"},
+            allowed={"keyword", "limit", "cursor"},
             required={"keyword", "limit"},
         )
-        return {
+        result = {
             "keyword": text(value["keyword"], maximum=200, allow_empty=True).strip(),
             "limit": integer(value["limit"], minimum=1, maximum=100),
         }
+        _cursor(value, result)
+        return result
 
 
-class OnesIssueTypeListService(GraphqlQueryService):
+class OnesIssueTypeListService(PaginatedGraphqlQueryService):
     tool_identifier = "ones_list_issue_types"
     operation_code = ISSUE_TYPE_LIST
+    output_field = "issue_types"
+    pagination_mode = OnesGraphqlListCursorCodec.SNAPSHOT_OFFSET_MODE
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"project_uuid", "limit"},
+            allowed={"project_uuid", "limit", "cursor"},
             required={"project_uuid", "limit"},
         )
-        return {
+        result = {
             "project_uuid": identifier(value["project_uuid"]),
             "limit": integer(value["limit"], minimum=1, maximum=100),
         }
+        _cursor(value, result)
+        return result
 
 
-class OnesWorkItemQueryService(GraphqlQueryService):
+class OnesWorkItemQueryService(PaginatedGraphqlQueryService):
     tool_identifier = "ones_query_work_items"
     operation_code = WORK_ITEM_QUERY
+    output_field = "items"
     _allowed = {
         "keyword",
         "project_uuid",
@@ -127,6 +326,7 @@ class OnesWorkItemQueryService(GraphqlQueryService):
         "created_from",
         "created_to",
         "limit",
+        "cursor",
     }
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -154,6 +354,7 @@ class OnesWorkItemQueryService(GraphqlQueryService):
             end = datetime.fromisoformat(result["created_to"].replace("Z", "+00:00"))
             if end <= start:
                 raise invalid_input("ONES work item time range is invalid")
+        _cursor(value, result)
         return result
 
     def selected_operation(self, arguments: dict[str, Any]) -> str:
@@ -181,11 +382,8 @@ class OnesCustomOptionWorkItemQueryService(OnesWorkItemQueryService):
         result["custom_option_filters"] = custom_option_filters(arguments["custom_option_filters"])
         return result
 
-    def _execute_with_refresh(
+    def prepare_provider_arguments(
         self,
-        *,
-        claims: dict[str, Any],
-        handle: McpAuditHandle,
         principal: ResolvedOnesPrincipal,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
@@ -196,12 +394,7 @@ class OnesCustomOptionWorkItemQueryService(OnesWorkItemQueryService):
                 team_uuid=principal.team_id,
                 filters=filters,
             )
-        return super()._execute_with_refresh(
-            claims=claims,
-            handle=handle,
-            principal=principal,
-            arguments=provider_arguments,
-        )
+        return provider_arguments
 
 
 class OnesWorkItemDetailService(GraphqlQueryService):
@@ -217,48 +410,59 @@ class OnesWorkItemDetailService(GraphqlQueryService):
         return {"work_item_uuid": identifier(value["work_item_uuid"])}
 
 
-class OnesTestcaseLibraryListService(GraphqlQueryService):
+class OnesTestcaseLibraryListService(PaginatedGraphqlQueryService):
     tool_identifier = "ones_list_testcase_libraries"
     operation_code = TESTCASE_LIBRARY_LIST
+    output_field = "libraries"
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        value = require_fields(arguments, allowed={"limit"}, required={"limit"})
-        return {"limit": integer(value["limit"], minimum=1, maximum=100)}
+        value = require_fields(arguments, allowed={"limit", "cursor"}, required={"limit"})
+        result = {"limit": integer(value["limit"], minimum=1, maximum=100)}
+        _cursor(value, result)
+        return result
 
 
-class OnesTestcaseModuleListService(GraphqlQueryService):
+class OnesTestcaseModuleListService(PaginatedGraphqlQueryService):
     tool_identifier = "ones_list_testcase_modules"
     operation_code = TESTCASE_MODULE_LIST
+    output_field = "modules"
+    pagination_mode = OnesGraphqlListCursorCodec.SNAPSHOT_OFFSET_MODE
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"library_uuid", "limit"},
+            allowed={"library_uuid", "limit", "cursor"},
             required={"library_uuid", "limit"},
         )
-        return {
+        result = {
             "library_uuid": identifier(value["library_uuid"]),
             "limit": integer(value["limit"], minimum=1, maximum=200),
         }
+        _cursor(value, result)
+        return result
 
 
-class OnesTestPlanListService(GraphqlQueryService):
+class OnesTestPlanListService(PaginatedGraphqlQueryService):
     tool_identifier = "ones_list_test_plans"
     operation_code = TEST_PLAN_LIST
+    output_field = "plans"
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        value = require_fields(arguments, allowed={"limit"}, required={"limit"})
-        return {"limit": integer(value["limit"], minimum=1, maximum=100)}
+        value = require_fields(arguments, allowed={"limit", "cursor"}, required={"limit"})
+        result = {"limit": integer(value["limit"], minimum=1, maximum=100)}
+        _cursor(value, result)
+        return result
 
 
-class OnesTestCaseQueryService(GraphqlQueryService):
+class OnesTestCaseQueryService(PaginatedGraphqlQueryService):
     tool_identifier = "ones_query_test_cases"
     operation_code = TESTCASE_MODULE_CASES
+    output_field = "test_cases"
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"source", "source_uuid", "library_uuid", "limit"},
+            allowed={"source", "source_uuid", "library_uuid", "limit", "cursor"},
             required={"source", "source_uuid", "limit"},
         )
         source = value["source"]
@@ -275,6 +479,7 @@ class OnesTestCaseQueryService(GraphqlQueryService):
             raise invalid_input("ONES module query requires a testcase library")
         if source == "plan" and "library_uuid" in result:
             raise invalid_input("ONES plan query does not accept a testcase library")
+        _cursor(value, result)
         return result
 
     def selected_operation(self, arguments: dict[str, Any]) -> str:

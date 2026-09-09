@@ -9,6 +9,18 @@ from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
 from services.ones_mcp_server.provider.graphql import documents
 from services.ones_mcp_server.provider.graphql.documents import load_graphql_document
 from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
+from services.ones_mcp_server.provider.graphql.operations.business_queries import (
+    PROJECT_SEARCH_OPERATION,
+    SPRINT_WORK_ITEM_QUERY_OPERATION,
+    WORK_ITEM_QUERY_OPERATION,
+)
+from services.ones_mcp_server.provider.graphql.operations.test_queries import (
+    TEST_PLAN_LIST_OPERATION,
+    TESTCASE_LIBRARY_LIST_OPERATION,
+    TESTCASE_MODULE_CASES_OPERATION,
+    TESTCASE_PLAN_CASES_OPERATION,
+)
+from services.ones_mcp_server.provider.graphql.operations.normalization import page_items
 from services.ones_mcp_server.provider.graphql.operations.work_item_search import (
     WORK_ITEM_SEARCH_DOCUMENT,
     WORK_ITEM_SEARCH_OPERATION,
@@ -241,3 +253,106 @@ def test_graphql_document_loader_fails_for_missing_empty_or_unsafe_resources(
     monkeypatch.setattr(documents.resources, "files", lambda _package: _EmptyResource())
     with pytest.raises(ValueError, match="empty"):
         load_graphql_document("empty.graphql")
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments", "limit"),
+    (
+        (
+            PROJECT_SEARCH_OPERATION,
+            {"keyword": "", "limit": 100},
+            100,
+        ),
+        (WORK_ITEM_QUERY_OPERATION, {"limit": 100}, 100),
+        (
+            SPRINT_WORK_ITEM_QUERY_OPERATION,
+            {"project_uuid": "project", "sprint_uuid": "sprint", "limit": 100},
+            100,
+        ),
+        (TESTCASE_LIBRARY_LIST_OPERATION, {"limit": 100}, 100),
+        (TEST_PLAN_LIST_OPERATION, {"limit": 100}, 100),
+        (
+            TESTCASE_MODULE_CASES_OPERATION,
+            {
+                "source": "module",
+                "source_uuid": "module",
+                "library_uuid": "library",
+                "limit": 200,
+            },
+            200,
+        ),
+        (
+            TESTCASE_PLAN_CASES_OPERATION,
+            {"source": "plan", "source_uuid": "plan", "limit": 200},
+            200,
+        ),
+    ),
+)
+def test_graphql_bucket_operations_inject_exact_server_pagination(
+    operation: Any,
+    arguments: dict[str, Any],
+    limit: int,
+) -> None:
+    client = OnesGraphqlClient(
+        _RecordingHttp({}),  # type: ignore[arg-type]
+        GraphqlOperationRegistry((operation,)),
+    )
+
+    request = client.build_request(
+        operation.code,
+        arguments={
+            **arguments,
+            "provider_cursor": "provider-page-2",
+            "cumulative_returned": limit,
+        },
+        context={"team_id": "ones-team"},
+    )
+
+    assert request["variables"]["pagination"] == {
+        "limit": limit,
+        "after": "provider-page-2",
+        "preciseCount": True,
+    }
+    assert "pagination: $pagination" in operation.document
+    assert 'after: ""' not in operation.document
+
+
+def test_graphql_collection_limits_preserve_the_provider_page_probe_boundary() -> None:
+    assert "projects(limit: 101" in PROJECT_SEARCH_OPERATION.document
+    assert "tasks(" in WORK_ITEM_QUERY_OPERATION.document
+    assert "limit: 101" in WORK_ITEM_QUERY_OPERATION.document
+    assert "limit: 101" in SPRINT_WORK_ITEM_QUERY_OPERATION.document
+    assert "testcasePlans(" in TEST_PLAN_LIST_OPERATION.document
+    assert "limit: 101" in TEST_PLAN_LIST_OPERATION.document
+    assert "testcaseCases(" in TESTCASE_MODULE_CASES_OPERATION.document
+    assert "limit: 201" in TESTCASE_MODULE_CASES_OPERATION.document
+    assert "testcasePlanCases(" in TESTCASE_PLAN_CASES_OPERATION.document
+    assert "limit: 201" in TESTCASE_PLAN_CASES_OPERATION.document
+
+
+def test_provider_total_count_cannot_create_a_false_continuation() -> None:
+    items, total, truncated, cursor = page_items(
+        {
+            "data": {
+                "buckets": [
+                    {
+                        "tasks": [{"uuid": "task-1"}],
+                        "pageInfo": {
+                            "count": 1,
+                            "totalCount": 101,
+                            "endCursor": "provider-terminal",
+                            "hasNextPage": False,
+                        },
+                    }
+                ]
+            }
+        },
+        collection="tasks",
+        limit=100,
+        prior_count=0,
+    )
+
+    assert items == [{"uuid": "task-1"}]
+    assert total == 101
+    assert truncated is False
+    assert cursor == "provider-terminal"

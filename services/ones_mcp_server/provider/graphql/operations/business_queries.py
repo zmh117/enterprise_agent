@@ -11,6 +11,7 @@ from services.ones_mcp_server.provider.graphql.operations.normalization import (
     bounded_string,
     normalize_work_item,
     normalized_list,
+    ordered_uuid_fingerprint,
     optional_person,
     page_items,
     require_list,
@@ -34,18 +35,33 @@ def _project_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> d
     keyword = str(arguments.get("keyword") or "").strip()
     if keyword:
         filters["name_match"] = keyword
+    limit = int(arguments["limit"])
     return {
         "projectOrderBy": {"isPin": "DESC", "namePinyin": "ASC", "createTime": "DESC"},
         "projectFilterGroup": [filters],
         "groupBy": {"projects": {}},
         "orderBy": None,
-        "_limit": arguments["limit"],
+        "pagination": {
+            "limit": limit,
+            "after": str(arguments.get("provider_cursor") or ""),
+            "preciseCount": True,
+        },
+        "_limit": limit,
+        "_cumulative_returned": int(arguments.get("cumulative_returned") or 0),
     }
 
 
 def _project_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
-    raw, total, truncated, cursor = page_items(payload, collection="projects", limit=limit)
+    cumulative_returned = bounded_int(
+        variables.get("_cumulative_returned", 0), minimum=0
+    )
+    raw, total, truncated, cursor = page_items(
+        payload,
+        collection="projects",
+        limit=limit,
+        prior_count=cumulative_returned,
+    )
     projects: list[dict[str, Any]] = []
     for value in raw:
         project: dict[str, Any] = {
@@ -60,9 +76,9 @@ def _project_response(payload: dict[str, Any], variables: dict[str, Any]) -> dic
         if value.get("status") is not None:
             project["status"] = require_status(value.get("status"))
         projects.append(project)
-    return normalized_list(
-        "projects", projects, total=total, truncated=truncated, next_cursor=cursor
-    )
+    output = normalized_list("projects", projects, total=total, truncated=truncated)
+    output["_provider_cursor"] = cursor
+    return output
 
 
 def _issue_type_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
@@ -78,27 +94,36 @@ def _issue_type_response(payload: dict[str, Any], variables: dict[str, Any]) -> 
     data = require_mapping(payload.get("data"))
     raw_items = require_list(data.get("issueTypeScopes"))
     limit = bounded_int(variables.get("_limit", 100), minimum=1)
+    offset = bounded_int(variables.get("_offset", 0), minimum=0)
     output: list[dict[str, Any]] = []
-    for raw in raw_items[:limit]:
+    uuids: list[str] = []
+    for raw in raw_items:
         item = require_mapping(raw)
         issue_type = require_mapping(item.get("issueType"))
         sub = issue_type.get("subIssueType", False)
         if type(sub) is not bool:
             raise invalid_provider_response("ones_provider_schema_invalid")
+        uuid = bounded_string(issue_type.get("uuid"), maximum=128)
+        uuids.append(uuid)
         output.append(
             {
-                "uuid": bounded_string(issue_type.get("uuid"), maximum=128),
+                "uuid": uuid,
                 "scope_uuid": bounded_string(item.get("uuid"), maximum=128),
                 "name": bounded_string(issue_type.get("name"), maximum=200),
                 "sub_issue_type": sub,
             }
         )
-    return normalized_list(
+    page = output[offset : offset + limit]
+    next_offset = offset + len(page)
+    result = normalized_list(
         "issue_types",
-        output,
+        page,
         total=len(raw_items),
-        truncated=len(raw_items) > limit,
+        truncated=next_offset < len(raw_items),
     )
+    result["_next_offset"] = next_offset
+    result["_collection_fingerprint"] = ordered_uuid_fingerprint(uuids)
+    return result
 
 
 def _calendar_date(value: str) -> str:
@@ -146,21 +171,35 @@ def _work_item_variables(arguments: dict[str, Any], _context: dict[str, Any]) ->
         "groupFilter": None,
         "orderBy": {"position": "ASC", "createTime": "DESC"},
         "filterGroup": [filters] if filters else [],
-        "pagination": {"limit": limit, "preciseCount": True},
+        "pagination": {
+            "limit": limit,
+            "after": str(arguments.get("provider_cursor") or ""),
+            "preciseCount": True,
+        },
         "_limit": limit,
+        "_cumulative_returned": int(arguments.get("cumulative_returned") or 0),
     }
 
 
 def _work_item_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
-    raw, total, truncated, cursor = page_items(payload, collection="tasks", limit=limit)
-    return normalized_list(
+    cumulative_returned = bounded_int(
+        variables.get("_cumulative_returned", 0), minimum=0
+    )
+    raw, total, truncated, cursor = page_items(
+        payload,
+        collection="tasks",
+        limit=limit,
+        prior_count=cumulative_returned,
+    )
+    output = normalized_list(
         "items",
         [normalize_work_item(item) for item in raw],
         total=total,
         truncated=truncated,
-        next_cursor=cursor,
     )
+    output["_provider_cursor"] = cursor
+    return output
 
 
 def _detail_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
@@ -197,6 +236,7 @@ ISSUE_TYPE_LIST_OPERATION: Final = FixedGraphqlOperation(
     lambda arguments, context: {
         **_issue_type_variables(arguments, context),
         "_limit": arguments["limit"],
+        "_offset": int(arguments.get("page_offset") or 0),
     },
     _issue_type_response,
 )

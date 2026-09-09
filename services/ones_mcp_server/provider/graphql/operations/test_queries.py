@@ -10,6 +10,7 @@ from services.ones_mcp_server.provider.graphql.operations.normalization import (
     bounded_int,
     bounded_string,
     normalized_list,
+    ordered_uuid_fingerprint,
     optional_person,
     page_items,
     require_list,
@@ -27,13 +28,28 @@ TESTCASE_DETAIL = "testcase_detail"
 
 
 def _library_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
-    return {"pagination": {"limit": arguments["limit"]}, "_limit": arguments["limit"]}
+    limit = int(arguments["limit"])
+    return {
+        "pagination": {
+            "limit": limit,
+            "after": str(arguments.get("provider_cursor") or ""),
+            "preciseCount": True,
+        },
+        "_limit": limit,
+        "_cumulative_returned": int(arguments.get("cumulative_returned") or 0),
+    }
 
 
 def _library_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
+    cumulative_returned = bounded_int(
+        variables.get("_cumulative_returned", 0), minimum=0
+    )
     raw, total, truncated, cursor = page_items(
-        payload, collection="testcaseLibraries", limit=limit
+        payload,
+        collection="testcaseLibraries",
+        limit=limit,
+        prior_count=cumulative_returned,
     )
     libraries: list[dict[str, Any]] = []
     for raw_item in raw:
@@ -50,15 +66,16 @@ def _library_response(payload: dict[str, Any], variables: dict[str, Any]) -> dic
                 "sample": sample,
             }
         )
-    return normalized_list(
-        "libraries", libraries, total=total, truncated=truncated, next_cursor=cursor
-    )
+    output = normalized_list("libraries", libraries, total=total, truncated=truncated)
+    output["_provider_cursor"] = cursor
+    return output
 
 
 def _module_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
     return {
         "moduleFilter": {"testcaseLibrary_in": [arguments["library_uuid"]]},
         "_limit": arguments["limit"],
+        "_offset": int(arguments.get("page_offset") or 0),
     }
 
 
@@ -66,11 +83,15 @@ def _module_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict
     data = require_mapping(payload.get("data"))
     raw = require_list(data.get("testcaseModules"))
     limit = bounded_int(variables.get("_limit"), minimum=1)
+    offset = bounded_int(variables.get("_offset", 0), minimum=0)
     modules: list[dict[str, Any]] = []
-    for raw_item in raw[:limit]:
+    uuids: list[str] = []
+    for raw_item in raw:
         item = require_mapping(raw_item)
+        uuid = bounded_string(item.get("uuid"), maximum=128)
+        uuids.append(uuid)
         module: dict[str, Any] = {
-            "uuid": bounded_string(item.get("uuid"), maximum=128),
+            "uuid": uuid,
             "name": bounded_string(item.get("name"), maximum=300),
             "path": bounded_string(item.get("path"), maximum=1000),
             "case_count": bounded_int(item.get("testcaseCaseCount", 0)),
@@ -79,19 +100,40 @@ def _module_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict
         if isinstance(parent, dict) and parent.get("uuid"):
             module["parent_uuid"] = bounded_string(parent.get("uuid"), maximum=128)
         modules.append(module)
-    return normalized_list(
-        "modules", modules, total=len(raw), truncated=len(raw) > limit
+    page = modules[offset : offset + limit]
+    next_offset = offset + len(page)
+    output = normalized_list(
+        "modules", page, total=len(raw), truncated=next_offset < len(raw)
     )
+    output["_next_offset"] = next_offset
+    output["_collection_fingerprint"] = ordered_uuid_fingerprint(uuids)
+    return output
 
 
 def _plan_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:
-    return {"planFilter": {}, "_limit": arguments["limit"]}
+    limit = int(arguments["limit"])
+    return {
+        "planFilter": {},
+        "pagination": {
+            "limit": limit,
+            "after": str(arguments.get("provider_cursor") or ""),
+            "preciseCount": True,
+        },
+        "_limit": limit,
+        "_cumulative_returned": int(arguments.get("cumulative_returned") or 0),
+    }
 
 
 def _plan_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
+    cumulative_returned = bounded_int(
+        variables.get("_cumulative_returned", 0), minimum=0
+    )
     raw, total, truncated, cursor = page_items(
-        payload, collection="testcasePlans", limit=limit
+        payload,
+        collection="testcasePlans",
+        limit=limit,
+        prior_count=cumulative_returned,
     )
     plans: list[dict[str, Any]] = []
     for raw_item in raw:
@@ -117,7 +159,9 @@ def _plan_response(payload: dict[str, Any], variables: dict[str, Any]) -> dict[s
                 "category": category,
             }
         plans.append(plan)
-    return normalized_list("plans", plans, total=total, truncated=truncated, next_cursor=cursor)
+    output = normalized_list("plans", plans, total=total, truncated=truncated)
+    output["_provider_cursor"] = cursor
+    return output
 
 
 def _module_case_variables(
@@ -131,7 +175,13 @@ def _module_case_variables(
             }
         ],
         "orderByFilter": {"priority": {"position": "ASC"}},
+        "pagination": {
+            "limit": int(arguments["limit"]),
+            "after": str(arguments.get("provider_cursor") or ""),
+            "preciseCount": True,
+        },
         "_limit": arguments["limit"],
+        "_cumulative_returned": int(arguments.get("cumulative_returned") or 0),
     }
 
 
@@ -143,7 +193,13 @@ def _plan_case_variables(arguments: dict[str, Any], _context: dict[str, Any]) ->
         "planFilter": {"uuid_in": [arguments["source_uuid"]]},
         "moduleFilter": {},
         "orderByFilter": {"testcaseCase": {"priority": {"position": "ASC"}}},
+        "pagination": {
+            "limit": int(arguments["limit"]),
+            "after": str(arguments.get("provider_cursor") or ""),
+            "preciseCount": True,
+        },
         "_limit": arguments["limit"],
+        "_cumulative_returned": int(arguments.get("cumulative_returned") or 0),
     }
 
 
@@ -151,6 +207,7 @@ def _case_list_response(
     payload: dict[str, Any], variables: dict[str, Any]
 ) -> dict[str, Any]:
     limit = bounded_int(variables.get("_limit"), minimum=1)
+    bounded_int(variables.get("_cumulative_returned", 0), minimum=0)
     data = require_mapping(payload.get("data"))
     buckets = require_list(data.get("buckets"))
     items: list[dict[str, Any]] = []
@@ -174,15 +231,15 @@ def _case_list_response(
         has_next = page.get("hasNextPage", False)
         if type(has_next) is not bool:
             raise invalid_provider_response("ones_provider_schema_invalid")
-        truncated = truncated or has_next or bucket_total > count
+        truncated = truncated or has_next
         if isinstance(page.get("endCursor"), str):
             cursor = str(page["endCursor"])[:512]
     if len(items) > limit:
         items = items[:limit]
         truncated = True
-    return normalized_list(
-        "test_cases", items, total=total, truncated=truncated, next_cursor=cursor
-    )
+    output = normalized_list("test_cases", items, total=total, truncated=truncated)
+    output["_provider_cursor"] = cursor
+    return output
 
 
 def _detail_variables(arguments: dict[str, Any], _context: dict[str, Any]) -> dict[str, Any]:

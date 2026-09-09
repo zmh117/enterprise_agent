@@ -104,6 +104,41 @@ def _list_output(
     }
 
 
+def _paginated_list_output(
+    field: str,
+    item_schema: dict[str, Any],
+    *,
+    maximum: int,
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            field: {
+                "type": "array",
+                "maxItems": maximum,
+                "items": item_schema,
+            },
+            "total": {"type": "integer", "minimum": 0},
+            "returned": {"type": "integer", "minimum": 0, "maximum": maximum},
+            "cumulative_returned": {"type": "integer", "minimum": 0, "maximum": 500},
+            "truncated": {"type": "boolean"},
+            "pagination_limit_reached": {"type": "boolean"},
+            "next_cursor": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "untrusted_data": {"const": True},
+        },
+        "required": [
+            field,
+            "total",
+            "returned",
+            "cumulative_returned",
+            "truncated",
+            "pagination_limit_reached",
+            "untrusted_data",
+        ],
+        "additionalProperties": False,
+    }
+
+
 PROJECT_SCHEMA: Final[dict[str, Any]] = {
     "type": "object",
     "properties": {
@@ -570,6 +605,7 @@ _WORK_ITEM_QUERY_INPUT = _object_schema(
         "created_from": {"type": "string", "format": "date-time", "maxLength": 64},
         "created_to": {"type": "string", "format": "date-time", "maxLength": 64},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "cursor": {"type": "string", "maxLength": 4096},
     },
     required=("limit",),
 )
@@ -699,15 +735,16 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_search_projects",
-            "按名称关键词查询当前用户默认 Team 中可见的 ONES 项目，返回项目 UUID、名称和状态。",
+            "按名称关键词分页查询当前用户默认 Team 中可见的 ONES 项目；单页最多 100 条。truncated=true 且 pagination_limit_reached=false 时，保持筛选与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
             _object_schema(
                 {
                     "keyword": {"type": "string", "maxLength": 200},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "cursor": {"type": "string", "maxLength": 4096},
                 },
                 required=("keyword", "limit"),
             ),
-            _list_output("projects", PROJECT_SCHEMA, maximum=100),
+            _paginated_list_output("projects", PROJECT_SCHEMA, maximum=100),
         ),
         _contract(
             "ones_list_project_sprints",
@@ -723,27 +760,28 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_list_issue_types",
-            "查询指定 ONES 项目可用的工作项类型，供后续工作项查询使用；不猜测租户类型 UUID。",
+            "分页查询指定 ONES 项目可用的工作项类型；单页最多 100 条，不猜测租户类型 UUID。truncated=true 且 pagination_limit_reached=false 时，保持 project_uuid 与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
             _object_schema(
                 {
                     "project_uuid": _identifier(),
                     "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "cursor": {"type": "string", "maxLength": 4096},
                 },
                 required=("project_uuid", "limit"),
             ),
-            _list_output("issue_types", ISSUE_TYPE_SCHEMA, maximum=100),
+            _paginated_list_output("issue_types", ISSUE_TYPE_SCHEMA, maximum=100),
         ),
         _contract(
             "ones_query_work_items",
-            "按项目、迭代、类型、状态、处理人、创建时间或关键词组合查询当前默认 Team 的工作项；所有筛选均为业务参数。",
+            "按项目、迭代、类型、状态、处理人、创建时间或关键词分页查询当前默认 Team 的工作项；单页最多 100 条。truncated=true 且 pagination_limit_reached=false 时，保持筛选与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
             _WORK_ITEM_QUERY_INPUT,
-            _list_output("items", WORK_ITEM_SCHEMA, maximum=100),
+            _paginated_list_output("items", WORK_ITEM_SCHEMA, maximum=100),
         ),
         _contract(
             "ones_query_work_items_with_custom_options",
-            "按项目、迭代、类型、状态、处理人、自定义选项、创建时间或关键词组合查询当前默认 Team 的工作项；自定义字段和值必须来自受管条件字典。",
+            "按项目、迭代、类型、状态、处理人、自定义选项、创建时间或关键词分页查询当前默认 Team 的工作项；单页最多 100 条，自定义字段和值必须来自受管条件字典。truncated=true 且 pagination_limit_reached=false 时，保持筛选与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
             _CUSTOM_WORK_ITEM_QUERY_INPUT,
-            _list_output("items", WORK_ITEM_SCHEMA, maximum=100),
+            _paginated_list_output("items", WORK_ITEM_SCHEMA, maximum=100),
         ),
         _contract(
             "ones_resolve_query_conditions",
@@ -840,12 +878,15 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_list_testcase_libraries",
-            "查询当前用户默认 Team 的 ONES 测试用例库列表。",
+            "分页查询当前用户默认 Team 的 ONES 测试用例库；单页最多 100 条。truncated=true 且 pagination_limit_reached=false 时，保持 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
             _object_schema(
-                {"limit": {"type": "integer", "minimum": 1, "maximum": 100}},
+                {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "cursor": {"type": "string", "maxLength": 4096},
+                },
                 required=("limit",),
             ),
-            _list_output(
+            _paginated_list_output(
                 "libraries",
                 _object_schema(
                     {
@@ -861,15 +902,16 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_list_testcase_modules",
-            "查询一个明确测试用例库中的模块路径。",
+            "分页查询一个明确测试用例库中的模块路径；单页最多 200 条。truncated=true 且 pagination_limit_reached=false 时，保持 library_uuid 与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
             _object_schema(
                 {
                     "library_uuid": _identifier(),
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                    "cursor": {"type": "string", "maxLength": 4096},
                 },
                 required=("library_uuid", "limit"),
             ),
-            _list_output(
+            _paginated_list_output(
                 "modules",
                 _object_schema(
                     {
@@ -886,12 +928,15 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_list_test_plans",
-            "查询当前用户默认 Team 的 ONES 测试计划列表。",
+            "分页查询当前用户默认 Team 的 ONES 测试计划；单页最多 100 条。truncated=true 且 pagination_limit_reached=false 时，保持 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
             _object_schema(
-                {"limit": {"type": "integer", "minimum": 1, "maximum": 100}},
+                {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "cursor": {"type": "string", "maxLength": 4096},
+                },
                 required=("limit",),
             ),
-            _list_output(
+            _paginated_list_output(
                 "plans",
                 _object_schema(
                     {
@@ -919,17 +964,18 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_query_test_cases",
-            "按测试库模块或测试计划查询用例 UUID；module 模式必须同时提供 library_uuid。",
+            "按测试库模块或测试计划分页查询用例 UUID；module 模式必须同时提供 library_uuid，单页最多 200 条。truncated=true 且 pagination_limit_reached=false 时，保持筛选与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
             _object_schema(
                 {
                     "source": {"type": "string", "enum": ["module", "plan"]},
                     "source_uuid": _identifier(),
                     "library_uuid": _identifier(),
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                    "cursor": {"type": "string", "maxLength": 4096},
                 },
                 required=("source", "source_uuid", "limit"),
             ),
-            _list_output("test_cases", TESTCASE_SCHEMA, maximum=200),
+            _paginated_list_output("test_cases", TESTCASE_SCHEMA, maximum=200),
         ),
         _contract(
             "ones_get_test_case_detail",

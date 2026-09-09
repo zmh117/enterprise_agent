@@ -1,5 +1,5 @@
 query TESTCASE_PLAN_CASE_LIST_UUIDS($testCaseFilter: Filter, $planFilter: Filter, $moduleFilter: Filter, $orderByFilter: Filter) {
-  buckets(groupBy: {testcasePlanCases: {}}, pagination: {limit: 201, after: "", preciseCount: false}) {
+  buckets(groupBy: {testcasePlanCases: {}}, pagination: $pagination) {
     testcasePlanCases(filterGroup: $testCaseFilter, orderBy: $orderByFilter, limit: 201) {
       testcaseCase { uuid }
     }

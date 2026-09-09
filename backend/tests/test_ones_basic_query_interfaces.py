@@ -125,6 +125,20 @@ def _assert_contract(identifier: str, output: dict[str, Any]) -> None:
     Draft202012Validator(ONES_TOOL_CONTRACTS[identifier].output_schema).validate(output)
 
 
+def _assert_internal_provider_page(output: dict[str, Any]) -> None:
+    assert output["returned"] >= 0
+    assert output["total"] >= output["returned"]
+    assert type(output["truncated"]) is bool
+    assert output["untrusted_data"] is True
+    assert "next_cursor" not in output
+    assert "cumulative_returned" not in output
+    assert "pagination_limit_reached" not in output
+    assert "_provider_cursor" in output or {
+        "_next_offset",
+        "_collection_fingerprint",
+    } <= set(output)
+
+
 def test_all_ones_tool_contracts_are_valid_shared_manifest_facts() -> None:
     assert NEW_TOOL_IDENTIFIERS < set(ONES_TOOL_CONTRACTS)
     for identifier, contract in ONES_TOOL_CONTRACTS.items():
@@ -141,7 +155,7 @@ def test_all_ones_tool_contracts_are_valid_shared_manifest_facts() -> None:
     legacy_query = MCP_TOOL_MANIFEST["ones_query_work_items"]
     custom_query = MCP_TOOL_MANIFEST["ones_query_work_items_with_custom_options"]
     assert legacy_query.schema_hash == (
-        "914d1fe3e2e8e15e60335ad55b432c4ad8d3a97b2a8fb64d85c13a9d085e521a"
+        "bbe5c63df0b6e702bf347de2271a402492fb6fdb89561b65378f455b49e71024"
     )
     assert "custom_option_filters" not in legacy_query.input_schema["properties"]
     assert "custom_option_filters" in custom_query.input_schema["properties"]
@@ -165,7 +179,12 @@ def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -
     assert projects.output["projects"][0]["uuid"] == settings.config.project_uuid
     assert "query" not in projects.request
     assert not any(key.startswith("_") for key in projects.request["variables"])
-    _assert_contract("ones_search_projects", projects.output)
+    _assert_internal_provider_page(projects.output)
+    assert projects.request["variables"]["pagination"] == {
+        "limit": 10,
+        "after": "",
+        "preciseCount": True,
+    }
 
     issue_types = client.execute(
         ISSUE_TYPE_LIST,
@@ -174,7 +193,7 @@ def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -
         headers=headers,
     )
     assert issue_types.output["returned"] == 3
-    _assert_contract("ones_list_issue_types", issue_types.output)
+    _assert_internal_provider_page(issue_types.output)
 
     work_items = client.execute(
         SPRINT_WORK_ITEM_QUERY,
@@ -188,7 +207,7 @@ def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -
         headers=headers,
     )
     assert [item["number"] for item in work_items.output["items"]] == [900102]
-    _assert_contract("ones_query_work_items", work_items.output)
+    _assert_internal_provider_page(work_items.output)
 
     keyword_items = client.execute(
         WORK_ITEM_QUERY,
@@ -201,7 +220,7 @@ def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -
         {"name_match": "status"}
     ]
     assert "search" not in keyword_items.request["variables"]
-    _assert_contract("ones_query_work_items", keyword_items.output)
+    _assert_internal_provider_page(keyword_items.output)
 
     date_items = client.execute(
         WORK_ITEM_QUERY,
@@ -217,7 +236,7 @@ def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -
     assert date_items.request["variables"]["filterGroup"] == [
         {"createTime_range": {"gte": "2026-07-23", "lte": "2026-07-23"}}
     ]
-    _assert_contract("ones_query_work_items", date_items.output)
+    _assert_internal_provider_page(date_items.output)
 
     custom_filtered = client.execute(
         SPRINT_WORK_ITEM_QUERY,
@@ -244,7 +263,7 @@ def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -
             "_MOCK-CUSTOM-FIELD-SEVERITY_in": ["MOCK-CUSTOM-OPTION-HIGH"],
         }
     ]
-    _assert_contract("ones_query_work_items_with_custom_options", custom_filtered.output)
+    _assert_internal_provider_page(custom_filtered.output)
 
     detail = client.execute(
         WORK_ITEM_DETAIL,
@@ -307,7 +326,7 @@ def test_fixed_testcase_graphql_operations_execute_against_the_mock_contract() -
             headers=headers,
         )
         assert execution.output[field]
-        _assert_contract(tool, execution.output)
+        _assert_internal_provider_page(execution.output)
 
     detail = client.execute(
         TESTCASE_DETAIL,

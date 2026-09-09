@@ -1,5 +1,5 @@
 query QUERY_TEST_PLAN_LIST {
-  buckets(pagination: {limit: 50, preciseCount: true}, groupBy: {testcasePlans: {}}) {
+  buckets(pagination: $pagination, groupBy: {testcasePlans: {}}) {
     testcasePlans(filter: $planFilter, orderBy: {namePinyin: ASC}, limit: 101) {
       uuid
       name

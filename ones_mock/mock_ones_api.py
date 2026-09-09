@@ -565,6 +565,28 @@ def _page_after(variables: dict[str, Any]) -> str:
     return after
 
 
+def _require_fixed_query_pagination(query: str, variables: dict[str, Any]) -> None:
+    if "$pagination" not in query:
+        return
+    pagination = variables.get("pagination")
+    if not isinstance(pagination, dict) or set(pagination) != {
+        "limit",
+        "after",
+        "preciseCount",
+    }:
+        raise HTTPException(status_code=400, detail={"code": "invalid_pagination"})
+    limit = pagination.get("limit")
+    after = pagination.get("after")
+    precise_count = pagination.get("preciseCount")
+    if (
+        type(limit) is not int
+        or not 1 <= limit <= 500
+        or not isinstance(after, str)
+        or type(precise_count) is not bool
+    ):
+        raise HTTPException(status_code=400, detail={"code": "invalid_pagination"})
+
+
 def _matches_keyword(task: dict[str, Any], keyword: str) -> bool:
     normalized = keyword.removeprefix("#").strip().casefold()
     if not normalized:
@@ -711,25 +733,41 @@ def _project_list(config: MockOnesConfig, variables: dict[str, Any]) -> dict[str
                 "uuid": config.primary_user.uuid,
                 "name": config.primary_user.name,
             },
-        }
+        },
+        {
+            "uuid": "MOCK-ONES-PROJECT-002",
+            "name": "Mock Legacy Archive",
+            "status": {
+                "uuid": "MOCK-PROJECT-STATUS-DONE",
+                "name": "已完成",
+                "category": "done",
+            },
+            "isSample": False,
+            "isArchive": False,
+            "owner": {
+                "uuid": config.primary_user.uuid,
+                "name": config.primary_user.name,
+            },
+        },
+        {
+            "uuid": "MOCK-ONES-PROJECT-003",
+            "name": "Mock Quality Project",
+            "status": {
+                "uuid": "MOCK-PROJECT-STATUS-ACTIVE",
+                "name": "进行中",
+                "category": "in_progress",
+            },
+            "isSample": True,
+            "isArchive": False,
+            "owner": {
+                "uuid": config.primary_user.uuid,
+                "name": config.primary_user.name,
+            },
+        },
     ]
     if keyword:
         projects = [item for item in projects if keyword in str(item["name"]).casefold()]
-    return {
-        "data": {
-            "buckets": [
-                {
-                    "projects": projects,
-                    "pageInfo": {
-                        "count": len(projects),
-                        "totalCount": len(projects),
-                        "endCursor": "mock-project-cursor" if projects else "",
-                        "hasNextPage": False,
-                    },
-                }
-            ]
-        }
-    }
+    return _test_bucket("projects", projects, variables)
 
 
 def _work_item_detail(
@@ -839,17 +877,33 @@ def _apply_task_field_value(
     return True
 
 
-def _test_bucket(collection: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+def _test_bucket(
+    collection: str,
+    items: list[dict[str, Any]],
+    variables: dict[str, Any],
+) -> dict[str, Any]:
+    total = len(items)
+    after = _page_after(variables)
+    start = 0
+    prefix = f"mock-{collection}-cursor-"
+    if after:
+        if not after.startswith(prefix) or not after.removeprefix(prefix).isdigit():
+            raise HTTPException(status_code=400, detail={"code": "invalid_cursor"})
+        start = int(after.removeprefix(prefix))
+        if not 0 <= start <= total:
+            raise HTTPException(status_code=400, detail={"code": "invalid_cursor"})
+    page = items[start : start + _page_limit(variables)]
+    end = start + len(page)
     return {
         "data": {
             "buckets": [
                 {
-                    collection: items,
+                    collection: page,
                     "pageInfo": {
-                        "count": len(items),
-                        "totalCount": len(items),
-                        "endCursor": f"mock-{collection}-cursor" if items else "",
-                        "hasNextPage": False,
+                        "count": len(page),
+                        "totalCount": total,
+                        "endCursor": f"{prefix}{end}" if page else "",
+                        "hasNextPage": end < total,
                     },
                 }
             ]
@@ -857,7 +911,7 @@ def _test_bucket(collection: str, items: list[dict[str, Any]]) -> dict[str, Any]
     }
 
 
-def _testcase_libraries() -> dict[str, Any]:
+def _testcase_libraries(variables: dict[str, Any]) -> dict[str, Any]:
     return _test_bucket(
         "testcaseLibraries",
         [
@@ -866,8 +920,21 @@ def _testcase_libraries() -> dict[str, Any]:
                 "name": "Mock Regression Library",
                 "isSample": False,
                 "testcaseCaseCount": 1,
-            }
+            },
+            {
+                "uuid": "MOCK-ONES-LIBRARY-002",
+                "name": "Mock Smoke Library",
+                "isSample": False,
+                "testcaseCaseCount": 2,
+            },
+            {
+                "uuid": "MOCK-ONES-LIBRARY-003",
+                "name": "Mock Sample Library",
+                "isSample": True,
+                "testcaseCaseCount": 3,
+            },
         ],
+        variables,
     )
 
 
@@ -881,13 +948,27 @@ def _testcase_modules() -> dict[str, Any]:
                     "path": "MOCK-ONES-MODULE-001",
                     "parent": None,
                     "testcaseCaseCount": 1,
-                }
+                },
+                {
+                    "uuid": "MOCK-ONES-MODULE-002",
+                    "name": "Mock Payment Module",
+                    "path": "MOCK-ONES-MODULE-002",
+                    "parent": None,
+                    "testcaseCaseCount": 2,
+                },
+                {
+                    "uuid": "MOCK-ONES-MODULE-003",
+                    "name": "Mock Payment Refund Module",
+                    "path": "MOCK-ONES-MODULE-002/MOCK-ONES-MODULE-003",
+                    "parent": {"uuid": "MOCK-ONES-MODULE-002"},
+                    "testcaseCaseCount": 1,
+                },
             ]
         }
     }
 
 
-def _test_plans(config: MockOnesConfig) -> dict[str, Any]:
+def _test_plans(config: MockOnesConfig, variables: dict[str, Any]) -> dict[str, Any]:
     return _test_bucket(
         "testcasePlans",
         [
@@ -900,18 +981,43 @@ def _test_plans(config: MockOnesConfig) -> dict[str, Any]:
                 },
                 "status": {"name": "进行中", "category": "in_progress"},
                 "isSample": False,
-            }
+            },
+            {
+                "uuid": "MOCK-ONES-PLAN-002",
+                "name": "Mock Smoke Verification",
+                "owner": {
+                    "uuid": config.primary_user.uuid,
+                    "name": config.primary_user.name,
+                },
+                "status": {"name": "未开始", "category": "to_do"},
+                "isSample": False,
+            },
+            {
+                "uuid": "MOCK-ONES-PLAN-003",
+                "name": "Mock Completed Verification",
+                "owner": {
+                    "uuid": config.primary_user.uuid,
+                    "name": config.primary_user.name,
+                },
+                "status": {"name": "已完成", "category": "done"},
+                "isSample": True,
+            },
         ],
+        variables,
     )
 
 
-def _test_cases(*, plan: bool) -> dict[str, Any]:
-    item: dict[str, Any] = {"uuid": "MOCK-ONES-TESTCASE-001"}
+def _test_cases(variables: dict[str, Any], *, plan: bool) -> dict[str, Any]:
+    items: list[dict[str, Any]] = [
+        {"uuid": "MOCK-ONES-TESTCASE-001"},
+        {"uuid": "MOCK-ONES-TESTCASE-002"},
+        {"uuid": "MOCK-ONES-TESTCASE-003"},
+    ]
     collection = "testcaseCases"
     if plan:
         collection = "testcasePlanCases"
-        item = {"testcaseCase": item}
-    return _test_bucket(collection, [item])
+        items = [{"testcaseCase": item} for item in items]
+    return _test_bucket(collection, items, variables)
 
 
 def _test_case_detail(config: MockOnesConfig) -> dict[str, Any]:
@@ -1265,6 +1371,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 status_code=404,
                 detail={"code": "team_not_found", "message": "mock team does not exist"},
             )
+        _require_fixed_query_pagination(payload.query, payload.variables)
         if query_type == "group-task-data":
             keyword = _search_keyword(payload.variables)
             if keyword in {"__403__", "__team_revoked__"}:
@@ -1322,15 +1429,15 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
         if query_type == "Task":
             return _work_item_detail(config, payload.variables, task_state=task_state)
         if query_type == "QUERY_LIBRARY_LIST":
-            return _testcase_libraries()
+            return _testcase_libraries(payload.variables)
         if query_type == "library-module-list-tree-NCdREx5Y":
             return _testcase_modules()
         if query_type == "plan-list":
-            return _test_plans(config)
+            return _test_plans(config, payload.variables)
         if query_type == "library-testcase-list-uuids":
-            return _test_cases(plan=False)
+            return _test_cases(payload.variables, plan=False)
         if query_type == "plan-testcase-list-uuids":
-            return _test_cases(plan=True)
+            return _test_cases(payload.variables, plan=True)
         if query_type == "library-testcase-detail":
             return _test_case_detail(config)
         raise HTTPException(

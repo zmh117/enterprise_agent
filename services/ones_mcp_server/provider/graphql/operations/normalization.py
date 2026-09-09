@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
+import json
 from typing import Any
 
 from app.shared.ones_tool_contracts import ONES_STATUS_CATEGORIES
@@ -77,6 +79,7 @@ def page_items(
     limit: int,
     prior_count: int = 0,
 ) -> tuple[list[dict[str, Any]], int, bool, str]:
+    bounded_int(prior_count, minimum=0)
     data = require_mapping(payload.get("data"))
     buckets = require_list(data.get("buckets"))
     items: list[dict[str, Any]] = []
@@ -94,7 +97,7 @@ def page_items(
         has_next = page.get("hasNextPage", False)
         if type(has_next) is not bool:
             raise invalid_provider_response("ones_provider_schema_invalid")
-        truncated = truncated or has_next or bucket_total > prior_count + count
+        truncated = truncated or has_next
         cursor = page.get("endCursor")
         if cursor is not None:
             next_cursor = bounded_string(cursor, maximum=512, allow_empty=True)
@@ -122,6 +125,13 @@ def normalized_list(
     if truncated and next_cursor:
         result["next_cursor"] = next_cursor
     return result
+
+
+def ordered_uuid_fingerprint(uuids: list[str]) -> str:
+    if len(set(uuids)) != len(uuids):
+        raise invalid_provider_response("ones_provider_schema_invalid")
+    canonical = json.dumps(uuids, ensure_ascii=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def normalize_work_item(value: object) -> dict[str, Any]:
