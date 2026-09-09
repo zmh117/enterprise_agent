@@ -2199,7 +2199,18 @@ function formatToolResponseSummary(value: unknown): string {
   }
 
   const parts: string[] = []
-  const total = safeSummaryCount(summary.total)
+  // These fields come from the backend's bounded, secret-filtered Tool Call
+  // summary, not the raw provider response. Show them before success counters.
+  const error =
+    typeof summary.error === "string" ? summary.error.slice(0, 500) : ""
+  const errorCode =
+    typeof summary.error_code === "string"
+      ? summary.error_code.slice(0, 128)
+      : ""
+  if (error || errorCode)
+    return [error || "工具调用失败", errorCode].filter(Boolean).join(" · ")
+  const total =
+    safeSummaryCount(summary.returned) ?? safeSummaryCount(summary.total)
   if (total !== null) parts.push(`返回 ${total.toLocaleString()} 项`)
 
   if (typeof summary.truncated === "boolean") {

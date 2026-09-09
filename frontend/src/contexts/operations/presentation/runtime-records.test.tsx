@@ -1211,6 +1211,48 @@ describe("runtime provenance records", () => {
     expect(screen.queryByText("must-not-render")).not.toBeInTheDocument()
   })
 
+  it.each([
+    {
+      error: "分页游标无效，请从第一页重新查询",
+      error_code: "mcp_pagination_cursor_invalid",
+    },
+    JSON.stringify({
+      error: "ONES 返回了无效业务数据",
+      error_code: "ones_provider_schema_invalid",
+    }),
+  ])(
+    "shows safe tool failure messages and codes in the timeline",
+    async (summary) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+        response({
+          job: job({ tool_call_count: 1 }),
+          session_ref: { id: "session-1" },
+          steps: [],
+          tool_calls: [
+            {
+              id: "failed-call",
+              tool_name: "ones_query_work_items",
+              status: "FAILED",
+              response_summary: summary,
+            },
+          ],
+          deliveries: { events: [], attempts: [], chunks: [] },
+          webhook_events: [],
+        })
+      )
+      renderRoute(
+        "/operations/jobs/job-1",
+        "/operations/jobs/:jobId",
+        <RuntimeJobDetailPage />
+      )
+      const value = typeof summary === "string" ? JSON.parse(summary) : summary
+      expect(
+        await screen.findByText(`${value.error} · ${value.error_code}`)
+      ).toBeInTheDocument()
+      expect(screen.queryByText("已记录结构化安全摘要")).not.toBeInTheDocument()
+    }
+  )
+
   it("loads the next model-call page without replacing prior rows", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")

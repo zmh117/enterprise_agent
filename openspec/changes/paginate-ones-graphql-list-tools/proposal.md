@@ -1,5 +1,7 @@
 ## Why
 
+2026-09-09 用户确认的新范围替代下述第一阶段方案：九个 GraphQL 列表（包含 `ones_work_item_search`）由程序自动分页，每批最多 200 条、每次默认/最多 1000 条，不再向模型公开 cursor；Runtime 将结果写入 Job 只读临时沙盒并在 Job 终态清理。Tool Call 时间线显示既有安全错误报文与错误码。下方旧 cursor/500 条范围只保留为第一阶段背景，不再作为当前实施契约；以本 change 最新 delta 和 design 的第二阶段决策为准。
+
 除 `ones_work_item_search` 外，当前 ONES GraphQL 列表 Tool 最多只返回首屏：部分 Operation 虽返回 Provider `endCursor`，公开输入却不能提交 cursor；另一些无 Provider cursor 的列表只在本地截断。Agent 因而无法完整读取项目、工作项类型、复杂工作项、测试库、测试模块、测试计划和测试用例，也可能把固定首屏误述为全部结果。
 
 ## What Changes

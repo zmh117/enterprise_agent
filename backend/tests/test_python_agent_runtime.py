@@ -2933,6 +2933,15 @@ def test_python_test_only_fake_provider_calls_ones_concurrently_with_exact_meta(
         )
 
     monkeypatch.setattr("app.python_runtime.executor.urlopen", fake_urlopen)
+
+    # This test exercises the deterministic urllib MCP caller. The production
+    # bridge's live contract and materialization are covered separately.
+    async def synthetic_bridge_connect(_bridge: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "app.python_runtime.ones_result_bridge.OnesResultBridge.connect", synthetic_bridge_connect
+    )
     executor = PythonRuntimeExecutor(
         cast(PythonModelBindingResolver, FakePythonBindingResolver()),
         limits=build_settings().execution,

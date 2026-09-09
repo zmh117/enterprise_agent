@@ -1,5 +1,17 @@
 ## Context
 
+## 第二阶段决策（2026-09-09 用户已确认，替代本文第一阶段设计）
+
+- 官方依据：https://docs.ones.cn/project/open-api-doc/graphql/introduction.html#分页 。bucket pagination 支持 limit（替代 first）、after、hasNextPage、endCursor、unstable；同一查询必须保持过滤/排序不变，游标只在调用内暂存。totalCount 不能独立证明查询完整。
+- 覆盖九个 GraphQL 列表，含旧关键词搜索；limit 改为可选总量上限，默认/最多 1000；Provider bucket 每批最多 200，移除内层 51/101/201 及额外祖先扩展，避免游标与结果裁剪不一致。直接完整列表只读取一次并有界截取，不伪造 Provider 分页支持。
+- 自动收集器置于 ONES 服务内，完整收集失败关闭；总请求次数最多 50、收集时间预算 90 秒、规范化结果最多 8MiB，另受既有单页 HTTP 超时/字节上限和 Job 总超时约束。1000/调用方上限仍有后续时返回明确 truncated 和 pagination_limit_reached；重复 UUID/编号、空续页、游标不前进、unstable 和多 bucket 返回稳定中文错误，不把部分数据标记成功。
+- Runtime 新增专用 ONES 结果 bridge，保留冻结 input schema/授权检查和 MCP call 关联；仅九个集合结果物化，其他详情/REST/写工具保持原契约。ONES 进程不能直接写 Runtime 路径；bridge 通过现有原子预算预留器创建 work 下只读 Markdown（内含 JSON 数据），返回文件路径、数量、完整性和读取提示，不向模型重复发送全量正文。
+- 只有冻结这些工具的 Job 派生 Read/Glob/Grep，不能因此增加 Write/Edit、文件提交、跨 Job 访问或 Bash。文件写入失败回滚预留，成功/失败/取消/超时和恢复扫描使用原 Job Sandbox 清理生命周期。中间文件清理不删除独立审计事实，也不自动形成持久 File Version。
+- 时间线展示服务端已有安全 error/error_code，兼容对象和 JSON 字符串，并优先显示 returned 而非把 total 当成本页条数。不显示原始 Provider body、认证 Header 或堆栈。Provider 调用失败继续持久化根 Tool Call FAILED 和安全原因。
+- 新输入契约和 Prompt 派生工具改变需重建相关组件并重新发布；历史 Publication/Job 不静默升级。旧公开 cursor 模块及其断言被自动分页测试替代；真实 ONES 未验收仍明确列为待办。
+
+以下内容为第一阶段历史决策，不再定义第二阶段行为。
+
 当前 ONES MCP 有八个除 `ones_work_item_search` 外的 GraphQL 列表 Tool。它们都返回有界数组和 `truncated`，但公开输入均不能提交 cursor。五类 `buckets` Operation 已能取得 `pageInfo.endCursor/hasNextPage`，其中项目、测试计划和测试用例文档仍把 `after` 固定为空字符串；工作项与测试库虽把 Provider cursor 投影为 `next_cursor`，也没有可信公开续页入口。工作项类型和测试模块 Operation 返回不带 `pageInfo` 的直接完整列表，Parser 仅在本地切片。
 
 现有 `ones_work_item_search` 已实现 Job/授权/身份/查询绑定的平台不透明 cursor 和 500 条累计上限，可以复用安全模型，但不能复用其固定关键词/类型 request binding。所有新 schema 仍受 Publication/Application/Job 冻结约束；真实 ONES 行为必须与 Mock 分开验收。

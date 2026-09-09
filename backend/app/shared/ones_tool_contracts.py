@@ -9,6 +9,17 @@ ONES_STATUS_CATEGORIES: Final = ("to_do", "in_progress", "done")
 ONES_CREATE_BUG_TOOL_IDENTIFIER: Final = "ones_create_bug"
 ONES_UPDATE_TASK_TOOL_IDENTIFIER: Final = "ones_update_task"
 ONES_CONFIRMATION_POLICY: Final = "external_action_card_v1"
+ONES_COLLECTED_LIST_FIELDS: Final = {
+    "ones_work_item_search": "items",
+    "ones_search_projects": "projects",
+    "ones_list_issue_types": "issue_types",
+    "ones_query_work_items": "items",
+    "ones_query_work_items_with_custom_options": "items",
+    "ones_list_testcase_libraries": "libraries",
+    "ones_list_testcase_modules": "modules",
+    "ones_list_test_plans": "plans",
+    "ones_query_test_cases": "test_cases",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,10 +131,9 @@ def _paginated_list_output(
             },
             "total": {"type": "integer", "minimum": 0},
             "returned": {"type": "integer", "minimum": 0, "maximum": maximum},
-            "cumulative_returned": {"type": "integer", "minimum": 0, "maximum": 500},
+            "cumulative_returned": {"type": "integer", "minimum": 0, "maximum": 1000},
             "truncated": {"type": "boolean"},
             "pagination_limit_reached": {"type": "boolean"},
-            "next_cursor": {"type": "string", "minLength": 1, "maxLength": 4096},
             "untrusted_data": {"const": True},
         },
         "required": [
@@ -507,10 +517,9 @@ _LEGACY_WORK_ITEM_INPUT = _object_schema(
     {
         "keyword": {"type": "string", "minLength": 1, "maxLength": 200},
         "issue_type": {"type": "string", "enum": ["demand", "task", "defect"]},
-        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
-        "cursor": {"type": "string", "maxLength": 4096},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000},
     },
-    required=("keyword", "issue_type", "limit"),
+    required=("keyword", "issue_type"),
 )
 
 _LEGACY_WORK_ITEM_OUTPUT = {
@@ -518,7 +527,7 @@ _LEGACY_WORK_ITEM_OUTPUT = {
     "properties": {
         "items": {
             "type": "array",
-            "maxItems": 50,
+            "maxItems": 1000,
             "items": _object_schema(
                 {
                     "number": {"type": "integer"},
@@ -529,11 +538,10 @@ _LEGACY_WORK_ITEM_OUTPUT = {
             ),
         },
         "total": {"type": "integer", "minimum": 0},
-        "returned": {"type": "integer", "minimum": 0, "maximum": 50},
-        "cumulative_returned": {"type": "integer", "minimum": 0, "maximum": 500},
+        "returned": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "cumulative_returned": {"type": "integer", "minimum": 0, "maximum": 1000},
         "truncated": {"type": "boolean"},
         "pagination_limit_reached": {"type": "boolean"},
-        "next_cursor": {"type": "string", "minLength": 1, "maxLength": 4096},
         "untrusted_data": {"const": True},
     },
     "required": [
@@ -604,10 +612,9 @@ _WORK_ITEM_QUERY_INPUT = _object_schema(
         },
         "created_from": {"type": "string", "format": "date-time", "maxLength": 64},
         "created_to": {"type": "string", "format": "date-time", "maxLength": 64},
-        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-        "cursor": {"type": "string", "maxLength": 4096},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000},
     },
-    required=("limit",),
+    required=(),
 )
 
 _CUSTOM_WORK_ITEM_QUERY_INPUT = {
@@ -632,7 +639,7 @@ _CUSTOM_WORK_ITEM_QUERY_INPUT = {
             ),
         },
     },
-    "required": ["limit", "custom_option_filters"],
+    "required": ["custom_option_filters"],
 }
 
 _QUERY_CONDITION_OUTPUT = {
@@ -723,7 +730,7 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
     for contract in (
         _contract(
             "ones_work_item_search",
-            "按关键词和稳定类型分页查询当前用户默认 Team 的 ONES 工作项；单页最多 50 条。需要完整结果且 truncated=true、pagination_limit_reached=false 时，必须保持 keyword、issue_type、limit 不变并使用 next_cursor 继续分页，直到 truncated=false；不得在尚有 next_cursor 时声称结果完整。每条分页链累计最多返回 500 条，复杂筛选请使用 ones_query_work_items。",
+            "按关键词和稳定类型分页查询当前用户默认 Team 的 ONES 工作项；程序自动翻页，每批最多200条，limit为本次总量上限，默认1000、最多1000条；无需cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _LEGACY_WORK_ITEM_INPUT,
             _LEGACY_WORK_ITEM_OUTPUT,
         ),
@@ -735,16 +742,15 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_search_projects",
-            "按名称关键词分页查询当前用户默认 Team 中可见的 ONES 项目；单页最多 100 条。truncated=true 且 pagination_limit_reached=false 时，保持筛选与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
+            "按名称关键词分页查询当前用户默认 Team 中可见的 ONES 项目；程序自动翻页，每批最多200条，limit为本次总量上限，默认1000、最多1000条；无需cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _object_schema(
                 {
                     "keyword": {"type": "string", "maxLength": 200},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-                    "cursor": {"type": "string", "maxLength": 4096},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000},
                 },
-                required=("keyword", "limit"),
+                required=("keyword",),
             ),
-            _paginated_list_output("projects", PROJECT_SCHEMA, maximum=100),
+            _paginated_list_output("projects", PROJECT_SCHEMA, maximum=1000),
         ),
         _contract(
             "ones_list_project_sprints",
@@ -760,28 +766,27 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_list_issue_types",
-            "分页查询指定 ONES 项目可用的工作项类型；单页最多 100 条，不猜测租户类型 UUID。truncated=true 且 pagination_limit_reached=false 时，保持 project_uuid 与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
+            "分页查询指定 ONES 项目可用的工作项类型；程序自动翻页，每批最多200条，limit为本次总量上限，默认1000、最多1000条；无需cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _object_schema(
                 {
                     "project_uuid": _identifier(),
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-                    "cursor": {"type": "string", "maxLength": 4096},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000},
                 },
-                required=("project_uuid", "limit"),
+                required=("project_uuid",),
             ),
-            _paginated_list_output("issue_types", ISSUE_TYPE_SCHEMA, maximum=100),
+            _paginated_list_output("issue_types", ISSUE_TYPE_SCHEMA, maximum=1000),
         ),
         _contract(
             "ones_query_work_items",
-            "按项目、迭代、类型、状态、处理人、创建时间或关键词分页查询当前默认 Team 的工作项；单页最多 100 条。truncated=true 且 pagination_limit_reached=false 时，保持筛选与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
+            "按项目、迭代、类型、状态、处理人、创建时间或关键词分页查询当前默认 Team 的工作项；程序自动翻页，每批最多200条，limit为本次总量上限，默认1000、最多1000条；无需cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _WORK_ITEM_QUERY_INPUT,
-            _paginated_list_output("items", WORK_ITEM_SCHEMA, maximum=100),
+            _paginated_list_output("items", WORK_ITEM_SCHEMA, maximum=1000),
         ),
         _contract(
             "ones_query_work_items_with_custom_options",
-            "按项目、迭代、类型、状态、处理人、自定义选项、创建时间或关键词分页查询当前默认 Team 的工作项；单页最多 100 条，自定义字段和值必须来自受管条件字典。truncated=true 且 pagination_limit_reached=false 时，保持筛选与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
+            "按项目、迭代、类型、状态、处理人、自定义选项、创建时间或关键词分页查询当前默认 Team 的工作项；程序自动翻页，每批最多200条，limit为本次总量上限，默认1000、最多1000条；无需cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _CUSTOM_WORK_ITEM_QUERY_INPUT,
-            _paginated_list_output("items", WORK_ITEM_SCHEMA, maximum=100),
+            _paginated_list_output("items", WORK_ITEM_SCHEMA, maximum=1000),
         ),
         _contract(
             "ones_resolve_query_conditions",
@@ -878,13 +883,12 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_list_testcase_libraries",
-            "分页查询当前用户默认 Team 的 ONES 测试用例库；单页最多 100 条。truncated=true 且 pagination_limit_reached=false 时，保持 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
+            "分页查询当前用户默认 Team 的 ONES 测试用例库；程序自动翻页，每批最多200条，limit为本次总量上限，默认1000、最多1000条；无需cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _object_schema(
                 {
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-                    "cursor": {"type": "string", "maxLength": 4096},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000},
                 },
-                required=("limit",),
+                required=(),
             ),
             _paginated_list_output(
                 "libraries",
@@ -897,19 +901,18 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
                     },
                     required=("uuid", "name", "case_count", "sample"),
                 ),
-                maximum=100,
+                maximum=1000,
             ),
         ),
         _contract(
             "ones_list_testcase_modules",
-            "分页查询一个明确测试用例库中的模块路径；单页最多 200 条。truncated=true 且 pagination_limit_reached=false 时，保持 library_uuid 与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
+            "分页查询一个明确测试用例库中的模块路径；程序自动翻页，每批最多200条，limit为本次总量上限，默认1000、最多1000条；无需cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _object_schema(
                 {
                     "library_uuid": _identifier(),
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
-                    "cursor": {"type": "string", "maxLength": 4096},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000},
                 },
-                required=("library_uuid", "limit"),
+                required=("library_uuid",),
             ),
             _paginated_list_output(
                 "modules",
@@ -923,18 +926,17 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
                     },
                     required=("uuid", "name", "path", "case_count"),
                 ),
-                maximum=200,
+                maximum=1000,
             ),
         ),
         _contract(
             "ones_list_test_plans",
-            "分页查询当前用户默认 Team 的 ONES 测试计划；单页最多 100 条。truncated=true 且 pagination_limit_reached=false 时，保持 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
+            "分页查询当前用户默认 Team 的 ONES 测试计划；程序自动翻页，每批最多200条，limit为本次总量上限，默认1000、最多1000条；无需cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _object_schema(
                 {
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-                    "cursor": {"type": "string", "maxLength": 4096},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000},
                 },
-                required=("limit",),
+                required=(),
             ),
             _paginated_list_output(
                 "plans",
@@ -959,23 +961,22 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
                     },
                     required=("uuid", "name", "sample"),
                 ),
-                maximum=100,
+                maximum=1000,
             ),
         ),
         _contract(
             "ones_query_test_cases",
-            "按测试库模块或测试计划分页查询用例 UUID；module 模式必须同时提供 library_uuid，单页最多 200 条。truncated=true 且 pagination_limit_reached=false 时，保持筛选与 limit 不变并使用 next_cursor 继续；每条分页链累计最多 500 条。",
+            "按测试库模块或测试计划分页查询用例 UUID；程序自动翻页，每批最多200条，limit为本次总量上限，默认1000、最多1000条；无需cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _object_schema(
                 {
                     "source": {"type": "string", "enum": ["module", "plan"]},
                     "source_uuid": _identifier(),
                     "library_uuid": _identifier(),
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
-                    "cursor": {"type": "string", "maxLength": 4096},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000},
                 },
-                required=("source", "source_uuid", "limit"),
+                required=("source", "source_uuid"),
             ),
-            _paginated_list_output("test_cases", TESTCASE_SCHEMA, maximum=200),
+            _paginated_list_output("test_cases", TESTCASE_SCHEMA, maximum=1000),
         ),
         _contract(
             "ones_get_test_case_detail",

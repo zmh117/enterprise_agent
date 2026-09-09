@@ -42,9 +42,7 @@ class _RecordingHttp:
         headers: dict[str, str],
         query: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        self.calls.append(
-            {"path": path, "payload": payload, "headers": headers, "query": query}
-        )
+        self.calls.append({"path": path, "payload": payload, "headers": headers, "query": query})
         return self.response
 
 
@@ -130,9 +128,7 @@ def test_graphql_client_uses_registered_document_path_and_variables_only() -> No
             "groupOrderBy": None,
             "groupFilter": None,
             "orderBy": {"position": "ASC", "createTime": "DESC"},
-            "filterGroup": [
-                {"name_match": "fixed", "issueType_in": ["Rbk6XNBr"]}
-            ],
+            "filterGroup": [{"name_match": "fixed", "issueType_in": ["Rbk6XNBr"]}],
             "pagination": {"limit": 5, "after": "", "preciseCount": True},
         },
     }
@@ -317,17 +313,20 @@ def test_graphql_bucket_operations_inject_exact_server_pagination(
     assert 'after: ""' not in operation.document
 
 
-def test_graphql_collection_limits_preserve_the_provider_page_probe_boundary() -> None:
-    assert "projects(limit: 101" in PROJECT_SEARCH_OPERATION.document
-    assert "tasks(" in WORK_ITEM_QUERY_OPERATION.document
-    assert "limit: 101" in WORK_ITEM_QUERY_OPERATION.document
-    assert "limit: 101" in SPRINT_WORK_ITEM_QUERY_OPERATION.document
-    assert "testcasePlans(" in TEST_PLAN_LIST_OPERATION.document
-    assert "limit: 101" in TEST_PLAN_LIST_OPERATION.document
-    assert "testcaseCases(" in TESTCASE_MODULE_CASES_OPERATION.document
-    assert "limit: 201" in TESTCASE_MODULE_CASES_OPERATION.document
-    assert "testcasePlanCases(" in TESTCASE_PLAN_CASES_OPERATION.document
-    assert "limit: 201" in TESTCASE_PLAN_CASES_OPERATION.document
+def test_graphql_collection_page_size_is_only_controlled_by_bucket_pagination() -> None:
+    for operation in (
+        PROJECT_SEARCH_OPERATION,
+        WORK_ITEM_QUERY_OPERATION,
+        SPRINT_WORK_ITEM_QUERY_OPERATION,
+        TEST_PLAN_LIST_OPERATION,
+        TESTCASE_MODULE_CASES_OPERATION,
+        TESTCASE_PLAN_CASES_OPERATION,
+    ):
+        assert "pagination: $pagination" in operation.document
+        assert "limit: 101" not in operation.document
+        assert "limit: 201" not in operation.document
+        assert "includeAncestors" not in operation.document
+        assert "unstable" in operation.document
 
 
 def test_provider_total_count_cannot_create_a_false_continuation() -> None:

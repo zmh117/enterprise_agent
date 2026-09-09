@@ -1,12 +1,12 @@
 query QUERY_TEST_PLAN_LIST {
   buckets(pagination: $pagination, groupBy: {testcasePlans: {}}) {
-    testcasePlans(filter: $planFilter, orderBy: {namePinyin: ASC}, limit: 101) {
+    testcasePlans(filter: $planFilter, orderBy: {namePinyin: ASC}) {
       uuid
       name
       owner { uuid name }
       status { name category }
       isSample
     }
-    pageInfo { count totalCount endCursor hasNextPage }
+    pageInfo { count totalCount endCursor hasNextPage unstable }
   }
 }

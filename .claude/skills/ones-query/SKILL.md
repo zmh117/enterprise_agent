@@ -24,6 +24,6 @@ Use this skill when a user asks a multi-step ONES question or requests an ONES s
 ## Query and calculate
 
 1. Use `ones_query_work_items` for standard filters. When a confirmed custom option is required, use `ones_query_work_items_with_custom_options` and pass only `field_uuid` and `option_uuids`; never construct Provider filter keys.
-2. Fetch work-item details or messages only when the requested fields or timestamps require them. Keep every call bounded and disclose `truncated` results. Do not claim an “all” result when the assigned Tool cannot continue pagination.
+2. GraphQL list tools automatically collect up to 1000 records by default; `limit` is a total cap, not page size. Do not supply cursors. Runtime returns a read-only Job-local result file: use Read/Grep/Glob to inspect it in bounded portions. Files disappear when the Job ends. Fetch details/messages only when needed. Disclose `truncated`/`pagination_limit_reached`; neither a saved file nor Provider `total` proves complete coverage.
 3. Completion, response time, first response, working hours, exclusions, grouping, and month boundaries are user-defined rules. Apply only definitions explicit in the current request. If an omitted definition can materially change the result, clarify it before calculating; do not import a historical formula or default SLA.
 4. State the scope, condition interpretation, time boundary, exclusions, grouping, result count, and incomplete coverage in the answer. Distinguish a general status category from an exact workflow status or custom option.

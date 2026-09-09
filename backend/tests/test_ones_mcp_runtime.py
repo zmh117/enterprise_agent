@@ -32,7 +32,7 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.mcp_server_policy import ONES_MCP_SERVER_CODE
 from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
 from app.modules.mcp_audit import McpAuditCoordinator
-from app.shared.exceptions import AppError, NonRetryableExecutionError, ToolPolicyError
+from app.shared.exceptions import AppError, NonRetryableExecutionError
 from backend.tests.helpers import container, prepare_debug_application_access
 from ones_mock.mock_ones_api import MockOnesSettings, create_app as create_mock_app
 from services.ones_mcp_server.app import create_app as create_mcp_app
@@ -45,11 +45,6 @@ from services.ones_mcp_server.contracts import (
 )
 from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshService
 from services.ones_mcp_server.errors import OnesMcpError
-from services.ones_mcp_server.pagination import (
-    OnesGraphqlListCursorCodec,
-    OnesGraphqlListPage,
-    OnesWorkItemSearchCursorCodec,
-)
 from services.ones_mcp_server.provider.graphql.client import (
     GraphqlExecution,
     OnesGraphqlClient,
@@ -590,7 +585,7 @@ def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None
     provider = next(row for row in rows if row["event_kind"] == "PROVIDER")
     tool = next(row for row in rows if row["event_kind"] == "TOOL")
     authorization = next(row for row in rows if row["event_kind"] == "AUTHORIZATION")
-    assert json.loads(provider["business_request_json"])["variables"] == {
+    assert json.loads(provider["business_request_json"])["pages"][0]["variables"] == {
         "groupBy": {"tasks": {}},
         "groupOrderBy": None,
         "groupFilter": None,
@@ -601,14 +596,9 @@ def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None
                 "issueType_in": ["WE3uoYoq"],
             }
         ],
-        "pagination": {"limit": 10, "after": "", "preciseCount": True},
+        "pagination": {"limit": 10, "preciseCount": True},
     }
-    assert (
-        json.loads(provider["business_response_json"])["provider_response"]["data"][
-            "buckets"
-        ][0]["tasks"][0]["name"]
-        == result["items"][0]["name"]
-    )
+    assert json.loads(provider["business_response_json"])["returned"] == 1
     assert json.loads(tool["tool_request_json"])["keyword"] == "traceability"
     assert json.loads(tool["tool_response_json"]) == result
     assert provider["provider_email"] == fixture["mock"].email
@@ -632,199 +622,6 @@ def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None
     assert {row["agent_tool_call_id"] for row in linked} == {tool_call_id}
     assert {row["mcp_call_id"] for row in rows} == {result.audit_handle.mcp_call_id}
     assert tool["audit_event_id"]
-
-
-def test_ones_work_item_search_pages_to_a_terminal_result() -> None:
-    fixture = _fixture()
-    graphql = _PagingGraphql(
-        [
-            _normalized_work_item_page(
-                start=1,
-                count=50,
-                total=80,
-                truncated=True,
-                provider_cursor="provider-50",
-            ),
-            _normalized_work_item_page(
-                start=51,
-                count=30,
-                total=80,
-                truncated=False,
-                provider_cursor="provider-80",
-            ),
-        ]
-    )
-    fixture["service"].graphql = graphql
-    arguments = {"keyword": "Defect", "issue_type": "defect", "limit": 50}
-
-    first = fixture["service"].search(
-        claims=fixture["claims"],
-        arguments=arguments,
-        correlation_id="ones-page-first",
-    )
-    second = fixture["service"].search(
-        claims=fixture["claims"],
-        arguments={**arguments, "cursor": first["next_cursor"]},
-        correlation_id="ones-page-second",
-    )
-
-    assert first["returned"] == 50
-    assert first["cumulative_returned"] == 50
-    assert first["truncated"] is True
-    assert first["pagination_limit_reached"] is False
-    assert "provider-50" not in json.dumps(first)
-    assert second["returned"] == 30
-    assert second["cumulative_returned"] == 80
-    assert second["truncated"] is False
-    assert second["pagination_limit_reached"] is False
-    assert "next_cursor" not in second
-    assert graphql.calls[0]["arguments"]["provider_cursor"] == ""
-    assert graphql.calls[1]["arguments"]["provider_cursor"] == "provider-50"
-    assert graphql.calls[1]["arguments"]["cumulative_returned"] == 50
-
-
-def test_ones_work_item_search_clamps_last_page_at_500_results() -> None:
-    fixture = _fixture()
-    service = fixture["service"]
-    principal = service.resolver.resolve(
-        fixture["claims"], tool_identifier=service.tool_identifier
-    )
-    arguments = {"keyword": "Defect", "issue_type": "defect", "limit": 30}
-    cursor = OnesWorkItemSearchCursorCodec.encode(
-        provider_cursor="provider-480",
-        cumulative_returned=480,
-        claims=fixture["claims"],
-        principal=principal,
-        request=arguments,
-    )
-    graphql = _PagingGraphql(
-        [
-            _normalized_work_item_page(
-                start=481,
-                count=20,
-                total=600,
-                truncated=True,
-                provider_cursor="provider-500",
-            )
-        ]
-    )
-    service.graphql = graphql
-
-    result = service.search(
-        claims=fixture["claims"],
-        arguments={**arguments, "cursor": cursor},
-        correlation_id="ones-page-cap",
-    )
-
-    assert graphql.calls[0]["arguments"]["limit"] == 20
-    assert result["returned"] == 20
-    assert result["cumulative_returned"] == 500
-    assert result["truncated"] is True
-    assert result["pagination_limit_reached"] is True
-    assert "next_cursor" not in result
-
-
-def test_ones_work_item_search_rejects_missing_provider_cursor_for_more_results() -> None:
-    fixture = _fixture()
-    fixture["service"].graphql = _PagingGraphql(
-        [
-            _normalized_work_item_page(
-                start=1,
-                count=10,
-                total=20,
-                truncated=True,
-                provider_cursor="",
-            )
-        ]
-    )
-
-    with pytest.raises(AppError) as raised:
-        fixture["service"].search(
-            claims=fixture["claims"],
-            arguments={"keyword": "Defect", "issue_type": "defect", "limit": 10},
-            correlation_id="ones-page-missing-cursor",
-        )
-
-    assert raised.value.error_code == "ones_provider_schema_invalid"
-
-
-def test_ones_work_item_search_rejects_tampered_or_cross_query_cursor_before_provider() -> None:
-    fixture = _fixture()
-    graphql = _PagingGraphql(
-        [
-            _normalized_work_item_page(
-                start=1,
-                count=10,
-                total=20,
-                truncated=True,
-                provider_cursor="provider-10",
-            )
-        ]
-    )
-    fixture["service"].graphql = graphql
-    arguments = {"keyword": "Defect", "issue_type": "defect", "limit": 10}
-    first = fixture["service"].search(
-        claims=fixture["claims"],
-        arguments=arguments,
-        correlation_id="ones-page-cursor-source",
-    )
-    cursor = first["next_cursor"]
-    tampered = cursor[:-1] + ("A" if cursor[-1] != "A" else "B")
-
-    for continuation in (
-        {**arguments, "cursor": tampered},
-        {**arguments, "keyword": "Other", "cursor": cursor},
-    ):
-        with pytest.raises(ToolPolicyError):
-            fixture["service"].search(
-                claims=fixture["claims"],
-                arguments=continuation,
-                correlation_id=f"ones-page-rejected-{continuation['keyword']}",
-            )
-
-    assert len(graphql.calls) == 1
-
-
-def test_ones_work_item_cursor_rejects_cross_execution_facts() -> None:
-    fixture = _fixture()
-    service = fixture["service"]
-    principal = service.resolver.resolve(
-        fixture["claims"], tool_identifier=service.tool_identifier
-    )
-    arguments = {"keyword": "Defect", "issue_type": "defect", "limit": 10}
-    cursor = OnesWorkItemSearchCursorCodec.encode(
-        provider_cursor="provider-10",
-        cumulative_returned=10,
-        claims=fixture["claims"],
-        principal=principal,
-        request=arguments,
-    )
-    variants = (
-        (fixture["claims"], replace(principal, job_id="other-job")),
-        (fixture["claims"], replace(principal, actor_user_id="other-user")),
-        (
-            fixture["claims"],
-            replace(principal, business_application_id="other-application"),
-        ),
-        (
-            {**fixture["claims"], "authorization_hash": "f" * 64},
-            principal,
-        ),
-        (
-            fixture["claims"],
-            replace(principal, external_identity_id="other-identity"),
-        ),
-        (fixture["claims"], replace(principal, team_id="other-team")),
-    )
-
-    for claims, changed_principal in variants:
-        with pytest.raises(ToolPolicyError):
-            OnesWorkItemSearchCursorCodec.decode(
-                cursor,
-                claims=claims,
-                principal=changed_principal,
-                request=arguments,
-            )
 
 
 def test_ones_mcp_refreshes_stale_token_once_and_retries_mock_query() -> None:
@@ -884,10 +681,12 @@ def test_new_project_query_uses_job_scope_refresh_and_safe_provider_audit() -> N
     request = json.loads(provider_rows[1]["business_request_json"])
     response = json.loads(provider_rows[1]["business_response_json"])
     assert request["operation"] == "project_search"
-    assert request["query_type"] == "projects-group-list-for-project-view"
+    assert request["pages"][0]["query_type"] == "projects-group-list-for-project-view"
     assert "query" not in request
     assert response == {
         "result_keys": [
+            "cumulative_returned",
+            "pagination_limit_reached",
             "projects",
             "returned",
             "total",
@@ -903,7 +702,7 @@ def test_new_project_query_uses_job_scope_refresh_and_safe_provider_audit() -> N
     assert fixture["mock"].password not in evidence
 
 
-def test_all_graphql_list_tools_page_to_terminal_results_with_opaque_cursors() -> None:
+def test_all_graphql_list_tools_automatically_return_bounded_collections() -> None:
     capabilities = (
         "ones_search_projects",
         "ones_list_issue_types",
@@ -968,319 +767,18 @@ def test_all_graphql_list_tools_page_to_terminal_results_with_opaque_cursors() -
         claims = service.authenticate(fixture["token"])
         first = service.invoke(
             claims=claims,
-            arguments=arguments,
+            arguments={**arguments, "limit": 1000},
             correlation_id=f"ones-graphql-page-{index}-1",
             invocation_id=invocation_id,
         )
-        second = service.invoke(
-            claims=claims,
-            arguments={**arguments, "cursor": first["next_cursor"]},
-            correlation_id=f"ones-graphql-page-{index}-2",
-            invocation_id=invocation_id,
-        )
-        third = service.invoke(
-            claims=claims,
-            arguments={**arguments, "cursor": second["next_cursor"]},
-            correlation_id=f"ones-graphql-page-{index}-3",
-            invocation_id=invocation_id,
-        )
-
-        assert first["returned"] == second["returned"] == third["returned"] == 1
-        assert first["cumulative_returned"] == 1
-        assert second["cumulative_returned"] == 2
-        assert third["cumulative_returned"] == 3
-        assert first["truncated"] is second["truncated"] is True
-        assert third["truncated"] is False
+        assert first["returned"] == first["cumulative_returned"] == 3
+        assert first["truncated"] is False
         assert first["pagination_limit_reached"] is False
-        assert third["pagination_limit_reached"] is False
-        assert "next_cursor" not in third
-        assert first[field][0] != second[field][0] != third[field][0]
-        assert "mock-" not in first["next_cursor"].casefold()
-        for output in (first, second, third):
-            Draft202012Validator(
-                ONES_TOOL_CONTRACTS[service.tool_identifier].output_schema
-            ).validate(output)
-
-
-def test_graphql_list_pagination_clamps_a_non_divisible_last_page_at_500() -> None:
-    fixture = _fixture(capabilities=("ones_search_projects",))
-    service = fixture["project_search_service"]
-    claims = service.authenticate(fixture["token"])
-    principal = service.resolver.resolve(claims, tool_identifier=service.tool_identifier)
-    arguments = {"keyword": "", "limit": 30}
-    cursor = OnesGraphqlListCursorCodec.encode(
-        page=OnesGraphqlListPage(
-            mode=OnesGraphqlListCursorCodec.PROVIDER_MODE,
-            provider_cursor="provider-480",
-            cumulative_returned=480,
-        ),
-        tool_identifier=service.tool_identifier,
-        input_schema=service.input_schema,
-        claims=claims,
-        principal=principal,
-        request=arguments,
-    )
-    graphql = _PagingGraphql(
-        [
-            _normalized_project_page(
-                start=481,
-                count=20,
-                total=600,
-                truncated=True,
-                provider_cursor="provider-500",
-            )
-        ]
-    )
-    service.graphql = graphql
-
-    result = service.invoke(
-        claims=claims,
-        arguments={**arguments, "cursor": cursor},
-        correlation_id="ones-graphql-page-cap",
-        invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
-    )
-
-    assert graphql.calls[0]["arguments"]["limit"] == 20
-    assert result["returned"] == 20
-    assert result["cumulative_returned"] == 500
-    assert result["truncated"] is True
-    assert result["pagination_limit_reached"] is True
-    assert "next_cursor" not in result
-
-
-def test_graphql_list_pagination_rejects_invalid_provider_continuation_states() -> None:
-    fixture = _fixture(capabilities=("ones_search_projects",))
-    service = fixture["project_search_service"]
-    claims = service.authenticate(fixture["token"])
-    invocation_id = f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}"
-    invalid_outputs = (
-        _normalized_project_page(
-            start=1,
-            count=1,
-            total=2,
-            truncated=True,
-            provider_cursor="",
-        ),
-        _normalized_project_page(
-            start=1,
-            count=0,
-            total=2,
-            truncated=True,
-            provider_cursor="provider-empty",
-        ),
-    )
-    for index, output in enumerate(invalid_outputs):
-        service.graphql = _PagingGraphql([output])
-        with pytest.raises(AppError) as raised:
-            service.invoke(
-                claims=claims,
-                arguments={"keyword": "", "limit": 1},
-                correlation_id=f"ones-graphql-invalid-provider-{index}",
-                invocation_id=invocation_id,
-            )
-        assert raised.value.error_code == "ones_provider_schema_invalid"
-
-    principal = service.resolver.resolve(claims, tool_identifier=service.tool_identifier)
-    request = {"keyword": "", "limit": 1}
-    cursor = OnesGraphqlListCursorCodec.encode(
-        page=OnesGraphqlListPage(
-            mode=OnesGraphqlListCursorCodec.PROVIDER_MODE,
-            provider_cursor="provider-same",
-            cumulative_returned=1,
-        ),
-        tool_identifier=service.tool_identifier,
-        input_schema=service.input_schema,
-        claims=claims,
-        principal=principal,
-        request=request,
-    )
-    service.graphql = _PagingGraphql(
-        [
-            _normalized_project_page(
-                start=2,
-                count=1,
-                total=3,
-                truncated=True,
-                provider_cursor="provider-same",
-            )
-        ]
-    )
-    with pytest.raises(AppError) as raised:
-        service.invoke(
-            claims=claims,
-            arguments={**request, "cursor": cursor},
-            correlation_id="ones-graphql-provider-cursor-not-advanced",
-            invocation_id=invocation_id,
+        assert "next_cursor" not in first
+        assert len(first[field]) == 3
+        Draft202012Validator(ONES_TOOL_CONTRACTS[service.tool_identifier].output_schema).validate(
+            first
         )
-    assert raised.value.error_code == "ones_provider_schema_invalid"
-
-
-def test_graphql_snapshot_offset_rejects_collection_drift_without_returning_a_page() -> None:
-    fixture = _fixture(capabilities=("ones_list_issue_types",))
-    service = fixture["issue_type_service"]
-    claims = service.authenticate(fixture["token"])
-    arguments = {"project_uuid": fixture["mock"].config.project_uuid, "limit": 1}
-    first_graphql = _PagingGraphql(
-        [
-            {
-                "issue_types": [
-                    {
-                        "uuid": "type-1",
-                        "scope_uuid": "scope-1",
-                        "name": "Type 1",
-                        "sub_issue_type": False,
-                    }
-                ],
-                "total": 2,
-                "returned": 1,
-                "truncated": True,
-                "_next_offset": 1,
-                "_collection_fingerprint": "a" * 64,
-                "untrusted_data": True,
-            }
-        ]
-    )
-    service.graphql = first_graphql
-    first = service.invoke(
-        claims=claims,
-        arguments=arguments,
-        correlation_id="ones-snapshot-drift-first",
-        invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
-    )
-    continuation_graphql = _PagingGraphql(
-        [
-            {
-                "issue_types": [
-                    {
-                        "uuid": "type-2",
-                        "scope_uuid": "scope-2",
-                        "name": "Type 2",
-                        "sub_issue_type": False,
-                    }
-                ],
-                "total": 2,
-                "returned": 1,
-                "truncated": False,
-                "_next_offset": 2,
-                "_collection_fingerprint": "b" * 64,
-                "untrusted_data": True,
-            }
-        ]
-    )
-    service.graphql = continuation_graphql
-
-    with pytest.raises(ToolPolicyError) as raised:
-        service.invoke(
-            claims=claims,
-            arguments={**arguments, "cursor": first["next_cursor"]},
-            correlation_id="ones-snapshot-drift-second",
-            invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
-        )
-
-    assert raised.value.error_code == "mcp_pagination_cursor_stale"
-    assert len(continuation_graphql.calls) == 1
-
-
-def test_graphql_list_cursor_rejects_tampering_cross_query_and_cross_tool_before_provider() -> None:
-    fixture = _fixture(
-        capabilities=("ones_search_projects", "ones_list_issue_types")
-    )
-    service = fixture["project_search_service"]
-    claims = service.authenticate(fixture["token"])
-    graphql = _PagingGraphql(
-        [
-            _normalized_project_page(
-                start=1,
-                count=1,
-                total=2,
-                truncated=True,
-                provider_cursor="provider-1",
-            )
-        ]
-    )
-    service.graphql = graphql
-    arguments = {"keyword": "", "limit": 1}
-    first = service.invoke(
-        claims=claims,
-        arguments=arguments,
-        correlation_id="ones-graphql-cursor-source",
-        invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
-    )
-    cursor = first["next_cursor"]
-    tampered = cursor[:-1] + ("A" if cursor[-1] != "A" else "B")
-
-    for index, continuation in enumerate(
-        (
-            {**arguments, "cursor": tampered},
-            {**arguments, "keyword": "changed", "cursor": cursor},
-        )
-    ):
-        with pytest.raises(ToolPolicyError):
-            service.invoke(
-                claims=claims,
-                arguments=continuation,
-                correlation_id=f"ones-graphql-cursor-rejected-{index}",
-                invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
-            )
-    assert len(graphql.calls) == 1
-
-    principal = service.resolver.resolve(claims, tool_identifier=service.tool_identifier)
-    with pytest.raises(ToolPolicyError):
-        OnesGraphqlListCursorCodec.decode(
-            cursor,
-            tool_identifier="ones_list_issue_types",
-            input_schema=fixture["issue_type_service"].input_schema,
-            mode=OnesGraphqlListCursorCodec.SNAPSHOT_OFFSET_MODE,
-            claims=claims,
-            principal=principal,
-            request=arguments,
-        )
-
-
-def test_graphql_list_cursor_rejects_cross_execution_and_identity_facts() -> None:
-    fixture = _fixture(capabilities=("ones_search_projects",))
-    service = fixture["project_search_service"]
-    claims = service.authenticate(fixture["token"])
-    principal = service.resolver.resolve(claims, tool_identifier=service.tool_identifier)
-    request = {"keyword": "", "limit": 10}
-    cursor = OnesGraphqlListCursorCodec.encode(
-        page=OnesGraphqlListPage(
-            mode=OnesGraphqlListCursorCodec.PROVIDER_MODE,
-            provider_cursor="provider-10",
-            cumulative_returned=10,
-        ),
-        tool_identifier=service.tool_identifier,
-        input_schema=service.input_schema,
-        claims=claims,
-        principal=principal,
-        request=request,
-    )
-    variants = (
-        (claims, replace(principal, job_id="other-job")),
-        (claims, replace(principal, actor_user_id="other-user")),
-        (claims, replace(principal, business_application_id="other-application")),
-        (claims, replace(principal, agent_publication_id="other-agent-publication")),
-        (
-            claims,
-            replace(principal, application_publication_id="other-app-publication"),
-        ),
-        ({**claims, "authorization_hash": "f" * 64}, principal),
-        (claims, replace(principal, external_identity_id="other-identity")),
-        (claims, replace(principal, provider_user_id="other-provider-user")),
-        (claims, replace(principal, team_id="other-team")),
-    )
-
-    for changed_claims, changed_principal in variants:
-        with pytest.raises(ToolPolicyError):
-            OnesGraphqlListCursorCodec.decode(
-                cursor,
-                tool_identifier=service.tool_identifier,
-                input_schema=service.input_schema,
-                mode=OnesGraphqlListCursorCodec.PROVIDER_MODE,
-                claims=changed_claims,
-                principal=changed_principal,
-                request=request,
-            )
 
 
 def test_custom_option_query_is_dictionary_validated_before_fixed_graphql() -> None:
@@ -1309,7 +807,7 @@ def test_custom_option_query_is_dictionary_validated_before_fixed_graphql() -> N
     )
     assert provider is not None
     request = json.loads(provider["business_request_json"])
-    assert request["variables"]["filterGroup"] == [
+    assert request["pages"][0]["variables"]["filterGroup"] == [
         {"_MOCK-CUSTOM-FIELD-SEVERITY_in": ["MOCK-CUSTOM-OPTION-HIGH"]}
     ]
     assert "query" not in request
@@ -1813,6 +1311,14 @@ def test_ones_mcp_classifies_provider_failures_without_persisting_error_bodies(
     assert provider["status"] == "FAILED"
     assert provider["error_code"] == error_code
     assert json.loads(provider["provider_response_json"]) == {}
+    timeline = fixture["runtime"].database.execute_one(
+        "select status, response_summary from agent_tool_call where id = ?",
+        (provider["agent_tool_call_id"],),
+    )
+    assert timeline["status"] == "FAILED"
+    summary = json.loads(timeline["response_summary"])
+    assert summary["error_code"] == error_code
+    assert summary["error"] == raised.value.safe_message
 
 
 def test_ones_mcp_classifies_provider_timeout_without_persisting_a_response() -> None:
@@ -2162,9 +1668,12 @@ def test_mcp_audit_detail_requires_audit_read_and_records_the_read() -> None:
 
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
-    assert authorized.json()["event"]["provider_request"]["variables"][
-        "filterGroup"
-    ][0]["name_match"] == "traceability"
+    assert (
+        authorized.json()["event"]["provider_request"]["pages"][0]["variables"]["filterGroup"][0][
+            "name_match"
+        ]
+        == "traceability"
+    )
     assert read_audit == {"actor_id": "user_local_admin"}
     assert filtered.status_code == 200
     assert len(filtered.json()["events"]) == 1

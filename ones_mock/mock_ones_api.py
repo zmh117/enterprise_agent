@@ -580,7 +580,7 @@ def _require_fixed_query_pagination(query: str, variables: dict[str, Any]) -> No
     precise_count = pagination.get("preciseCount")
     if (
         type(limit) is not int
-        or not 1 <= limit <= 500
+        or not 1 <= limit <= 200
         or not isinstance(after, str)
         or type(precise_count) is not bool
     ):
@@ -653,6 +653,7 @@ def _group_task_data(config: MockOnesConfig, variables: dict[str, Any]) -> dict[
                         "endPos": start + count - 1,
                         "endCursor": end_cursor,
                         "hasNextPage": start + count < total_count,
+                        "unstable": False,
                         "preciseCount": total_count,
                     },
                     "tasks": tasks,

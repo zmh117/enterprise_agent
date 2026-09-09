@@ -155,7 +155,7 @@ def test_all_ones_tool_contracts_are_valid_shared_manifest_facts() -> None:
     legacy_query = MCP_TOOL_MANIFEST["ones_query_work_items"]
     custom_query = MCP_TOOL_MANIFEST["ones_query_work_items_with_custom_options"]
     assert legacy_query.schema_hash == (
-        "bbe5c63df0b6e702bf347de2271a402492fb6fdb89561b65378f455b49e71024"
+        "b0cd30af0fb74e044f87b447331400ec3d3c38a99f1e8acb97a32a7425150cb2"
     )
     assert "custom_option_filters" not in legacy_query.input_schema["properties"]
     assert "custom_option_filters" in custom_query.input_schema["properties"]
@@ -216,9 +216,7 @@ def test_fixed_business_graphql_operations_execute_against_the_mock_contract() -
         headers=headers,
     )
     assert [item["number"] for item in keyword_items.output["items"]] == [900103]
-    assert keyword_items.request["variables"]["filterGroup"] == [
-        {"name_match": "status"}
-    ]
+    assert keyword_items.request["variables"]["filterGroup"] == [{"name_match": "status"}]
     assert "search" not in keyword_items.request["variables"]
     _assert_internal_provider_page(keyword_items.output)
 

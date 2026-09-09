@@ -1,5 +1,7 @@
 ## 1. 共享契约与游标
 
+> 第 1 至 5 节保留第一阶段完成事实；第二阶段以第 6 节及最新 delta 为准，不能沿用第一阶段部署/测试作为本次验收。
+
 - [x] 1.1 为八个 GraphQL 列表 Tool 增加可选 cursor 输入和统一分页输出字段，更新描述与 schema hash 断言
 - [x] 1.2 实现通用 ONES GraphQL 列表游标，覆盖 provider 与 snapshot-offset 两种模式、执行上下文/查询绑定和 500 条累计上限
 
@@ -27,3 +29,12 @@
 - [x] 5.1 运行 ONES MCP、Mock、Principal、Runtime、共享 Manifest 定向测试、静态检查、Compose 配置、git diff 检查和严格 OpenSpec 校验
 - [x] 5.2 重建并替换本地受影响服务，核对健康状态、容器内关键文件与新 Tool schema
 - [ ] 5.3 重新发布 Agent/Application 后，对真实 ONES 的 provider-cursor 与 snapshot-offset 代表 Tool 完成只读首/续/终页验收；无授权或无足量数据时明确保留待验收
+
+## 6. 自动翻页、临时结果文件与失败诊断
+
+- [x] 6.1 按官方 bucket 分页修复九个列表并移除模型 cursor，默认/最多 1000，Provider 每批最多 200，覆盖直接列表与稳定性/预算失败
+- [x] 6.2 通过受控 Runtime bridge 将列表结果写入 Job 只读沙盒，复用原子预算、派生只读工具、终态与异常恢复清理
+- [x] 6.3 Tool Call 时间线显示安全 error/error_code，验证失败审计与对象/JSON 摘要兼容
+- [x] 6.4 更新合成 Mock、共享契约、自动翻页/沙盒/权限/错误测试，完成静态检查、前端验证、Compose 和严格 OpenSpec；全 backend mypy 的既有身份模块错误单独记录于 evidence-auto-collection.md
+- [x] 6.5 重建受影响本地组件及 ONES Mock，核对部署构建/健康和容器内1000条合成分页、结果文件清理
+- [ ] 6.6 对明确选定的 Agent/Application 重新发布，以新 Job 完成真实 ONES 查询、文件读取和失败时间线验收；不能以 Mock 或容器健康替代

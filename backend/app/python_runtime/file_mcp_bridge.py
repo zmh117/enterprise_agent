@@ -108,7 +108,7 @@ class PythonRuntimeFileBridge(Protocol):
 PythonRuntimeFileBridgeFactory = Callable[..., PythonRuntimeFileBridge]
 
 
-def _safe_meta(result: types.CallToolResult) -> dict[str, Any] | None:
+def safe_meta(result: types.CallToolResult) -> dict[str, Any] | None:
     source = result.meta if isinstance(result.meta, dict) else {}
     retained = {
         key: value
@@ -118,7 +118,7 @@ def _safe_meta(result: types.CallToolResult) -> dict[str, Any] | None:
     return retained or None
 
 
-def _call_tool_result(
+def call_tool_result(
     *,
     content: list[Any],
     is_error: bool = False,
@@ -133,11 +133,11 @@ def _call_tool_result(
     return types.CallToolResult.model_validate(payload)
 
 
-def _result_is_error(result: types.CallToolResult) -> bool:
+def result_is_error(result: types.CallToolResult) -> bool:
     return bool(getattr(result, "is_error", getattr(result, "isError", False)))
 
 
-def _result_structured_content(result: types.CallToolResult) -> Any | None:
+def result_structured_content(result: types.CallToolResult) -> Any | None:
     return getattr(
         result,
         "structured_content",
@@ -145,7 +145,7 @@ def _result_structured_content(result: types.CallToolResult) -> Any | None:
     )
 
 
-def _session_timeout(seconds: float) -> Any:
+def session_timeout(seconds: float) -> Any:
     # MCP 2.x uses float seconds while legacy MCP 1.x requires
     # datetime.timedelta; tolerate mixed-version rollout windows.
     if getattr(streamable_http_module, "httpx2", None) is not None:
@@ -178,7 +178,7 @@ def _mcp_list_tools_next_cursor(page: Any) -> str:
 
 
 def _safe_error(code: str) -> types.CallToolResult:
-    return _call_tool_result(
+    return call_tool_result(
         content=[
             types.TextContent(
                 type="text",
@@ -340,7 +340,7 @@ class ClaudePythonFileBridge:
                         except (LogEvidenceScanError, asyncio.CancelledError):
                             pass
                         raise
-                    return _call_tool_result(
+                    return call_tool_result(
                         content=[
                             types.TextContent(
                                 type="text",
@@ -363,7 +363,7 @@ class ClaudePythonFileBridge:
                         relative_path=relative_path,
                         context=self._context,
                     )
-                    return _call_tool_result(
+                    return call_tool_result(
                         content=[
                             types.TextContent(
                                 type="text",
@@ -378,14 +378,14 @@ class ClaudePythonFileBridge:
                 if name not in self._frozen:
                     return _safe_error("file_tool_not_frozen")
                 remote, bridge_result = await self._forward_remote(name, arguments)
-                if _result_is_error(remote) or bridge_result is None:
-                    return _call_tool_result(
+                if result_is_error(remote) or bridge_result is None:
+                    return call_tool_result(
                         content=list(remote.content),
-                        structured_content=_result_structured_content(remote),
-                        is_error=_result_is_error(remote),
-                        meta=_safe_meta(remote),
+                        structured_content=result_structured_content(remote),
+                        is_error=result_is_error(remote),
+                        meta=safe_meta(remote),
                     )
-                return _call_tool_result(
+                return call_tool_result(
                     content=[
                         *remote.content,
                         types.TextContent(
@@ -397,9 +397,9 @@ class ClaudePythonFileBridge:
                             ),
                         ),
                     ],
-                    structured_content=_result_structured_content(remote),
+                    structured_content=result_structured_content(remote),
                     is_error=False,
-                    meta=_safe_meta(remote),
+                    meta=safe_meta(remote),
                 )
             except FileTransferBoundaryError as exc:
                 return _safe_error(exc.code)
@@ -455,7 +455,7 @@ class ClaudePythonFileBridge:
         arguments: dict[str, Any],
     ) -> tuple[types.CallToolResult, dict[str, Any] | None]:
         remote = await self._call_remote(name, arguments)
-        if _result_is_error(remote) or name not in {_MATERIALIZE_TOOL, _COMMIT_TOOL}:
+        if result_is_error(remote) or name not in {_MATERIALIZE_TOOL, _COMMIT_TOOL}:
             return remote, None
         envelope = remote.model_dump(by_alias=True, exclude_none=True)
         bridge_result = await asyncio.to_thread(
@@ -490,11 +490,11 @@ class ClaudePythonFileBridge:
         remote = await session.call_tool(
             name,
             arguments,
-            read_timeout_seconds=_session_timeout(self._timeout_seconds),
+            read_timeout_seconds=session_timeout(self._timeout_seconds),
         )
-        structured = _result_structured_content(remote)
+        structured = result_structured_content(remote)
         if (
-            _result_is_error(remote)
+            result_is_error(remote)
             and isinstance(structured, dict)
             and structured.get("error_code") == "file_principal_time_invalid"
             and self._context.principal_token_provider is not None
@@ -503,7 +503,7 @@ class ClaudePythonFileBridge:
             remote = await session.call_tool(
                 name,
                 arguments,
-                read_timeout_seconds=_session_timeout(self._timeout_seconds),
+                read_timeout_seconds=session_timeout(self._timeout_seconds),
             )
         if not isinstance(remote, types.CallToolResult):
             raise FileTransferBoundaryError(
@@ -534,7 +534,7 @@ class ClaudePythonFileBridge:
             _MATERIALIZE_TOOL,
             {"file_id": file_id, "version_id": version_id},
         )
-        if _result_is_error(remote):
+        if result_is_error(remote):
             raise FileTransferBoundaryError(
                 "file_auto_materialization_denied",
                 "File Service rejected automatic materialization",
@@ -618,7 +618,7 @@ class ClaudePythonFileBridge:
                 ClientSession(
                     read_stream,
                     write_stream,
-                    read_timeout_seconds=_session_timeout(self._timeout_seconds),
+                    read_timeout_seconds=session_timeout(self._timeout_seconds),
                 )
             )
             initialization = await session.initialize()

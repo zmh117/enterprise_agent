@@ -1,10 +1,10 @@
 {
   buckets(groupBy: $groupBy, orderBy: $groupOrderBy, pagination: $pagination, filter: $groupFilter) {
-    tasks(filterGroup: $filterGroup, orderBy: $orderBy, limit: 51, includeAncestors: {pathField: "path"}, orderByPath: "path") {
+    tasks(filterGroup: $filterGroup, orderBy: $orderBy) {
       number
       name
       issueType { uuid }
     }
-    pageInfo { count totalCount endCursor hasNextPage preciseCount }
+    pageInfo { count totalCount endCursor hasNextPage unstable }
   }
 }

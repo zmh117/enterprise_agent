@@ -82,6 +82,10 @@ def page_items(
     bounded_int(prior_count, minimum=0)
     data = require_mapping(payload.get("data"))
     buckets = require_list(data.get("buckets"))
+    # All registered collection operations request an ungrouped bucket. A
+    # cursor from one bucket must never be used to skip another bucket.
+    if len(buckets) > 1:
+        raise invalid_provider_response("ones_provider_schema_invalid")
     items: list[dict[str, Any]] = []
     total = 0
     truncated = False
@@ -92,6 +96,11 @@ def page_items(
         items.extend(require_mapping(item) for item in raw_items)
         page = require_mapping(bucket.get("pageInfo"))
         count = bounded_int(page.get("count", len(raw_items)))
+        unstable = page.get("unstable", False)
+        if type(unstable) is not bool or unstable:
+            raise invalid_provider_response("ones_pagination_unstable")
+        if count != len(raw_items):
+            raise invalid_provider_response("ones_provider_page_size_invalid")
         bucket_total = bounded_int(page.get("totalCount", count))
         total += bucket_total
         has_next = page.get("hasNextPage", False)
@@ -102,8 +111,9 @@ def page_items(
         if cursor is not None:
             next_cursor = bounded_string(cursor, maximum=512, allow_empty=True)
     if len(items) > limit:
-        items = items[:limit]
-        truncated = True
+        # Slicing here would discard rows while advancing past them with the
+        # provider endCursor, permanently skipping data on the next request.
+        raise invalid_provider_response("ones_provider_page_size_invalid")
     return items, total, truncated, next_cursor
 
 
@@ -137,9 +147,7 @@ def ordered_uuid_fingerprint(uuids: list[str]) -> str:
 def normalize_work_item(value: object) -> dict[str, Any]:
     item = require_mapping(value)
     project = require_mapping(item.get("project"))
-    project_output: dict[str, Any] = {
-        "uuid": bounded_string(project.get("uuid"), maximum=128)
-    }
+    project_output: dict[str, Any] = {"uuid": bounded_string(project.get("uuid"), maximum=128)}
     if project.get("name") is not None:
         project_output["name"] = bounded_string(project.get("name"), maximum=300)
     issue_type = require_mapping(item.get("issueType"))

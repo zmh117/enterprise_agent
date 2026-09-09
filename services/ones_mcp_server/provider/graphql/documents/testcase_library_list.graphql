@@ -6,6 +6,6 @@ query QUERY_LIBRARY_LIST {
       isSample
       testcaseCaseCount
     }
-    pageInfo { count totalCount endCursor hasNextPage }
+    pageInfo { count totalCount endCursor hasNextPage unstable }
   }
 }

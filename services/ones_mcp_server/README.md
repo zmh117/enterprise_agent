@@ -3,7 +3,31 @@
 This is an internal, identity-aware MCP server. It publishes code-registered ONES
 tools over stateless Streamable HTTP. It is not an arbitrary GraphQL or HTTP proxy.
 
-## Module boundaries
+## Automatic list collection and Job-local results
+
+The nine GraphQL list tools (including `ones_work_item_search`) now automatically
+collect up to an optional `limit` of 1–1000, default 1000. Bucket requests use at most
+200 records and preserve filters/order while passing `endCursor` to `after` exactly,
+following [ONES pagination](https://docs.ones.cn/project/open-api-doc/graphql/introduction.html#分页).
+Public `cursor` / `next_cursor` are removed. Direct complete lists (issue types and
+test modules) are fetched once and bounded locally; no native cursor is invented.
+`hasNextPage`, not `totalCount`, determines continuation. Repeated rows/cursors,
+unstable or malformed pages fail closed; a valid collection hitting its limit
+returns `truncated=true` and `pagination_limit_reached=true`.
+
+The Runtime ONES bridge validates the frozen/live contract and result, writes a
+read-only `work/ones-*.md` JSON data artifact through the shared Sandbox reservation
+budget, and returns metadata plus a read hint. ONES-only Jobs gain only Read/Glob/Grep.
+No persistent workspace version or export is created. Job success/failure/cancellation/
+timeout and residual recovery clean these files; separately governed audit records
+retain their existing lifecycle. REST/detail/mutation tools keep their contracts.
+
+Failure Tool Call summaries retain safe `error` / `error_code` and the operations
+timeline displays both. Provider bodies, headers, credentials and stack traces are
+not exposed. Changed schemas require rebuilding the related services and explicitly
+republishing Agent/Application before new Jobs; historical snapshots are not upgraded.
+
+## Implementation modules
 
 - `app.py`: MCP transport, HTTP security middleware, readiness, and lifecycle.
 - `bootstrap.py`: platform dependency assembly.
@@ -48,9 +72,8 @@ Every tool accepts only bounded business arguments. Provider origin, default Tea
 credential headers, HTTP path, GraphQL document, and fixed query type remain
 server-owned. New tools become callable only after the normal Agent/Application
 publication flow freezes them into a new Job; adding them to the code manifest does
-not widen an existing publication. The existing `ones_query_work_items` contract is
-unchanged; custom-option support is a separate Tool so its schema hash cannot drift
-for historical Publications or Jobs.
+not widen an existing publication. Custom-option support remains a separate Tool;
+the automatic-collection schema change requires a new publication for both queries.
 
 ## Confirmed defect update
 

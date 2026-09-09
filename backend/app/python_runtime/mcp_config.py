@@ -56,6 +56,8 @@ from app.shared.config import ExecutionSettings
 from app.shared.build_identity import BuildIdentity, build_identity_from_environment
 from app.shared.exceptions import ExecutionPolicyExceeded, NonRetryableExecutionError
 from app.python_runtime.tool_contract import build_tool_contract_observation
+from app.python_runtime.ones_result_bridge import OnesResultBridge
+from app.shared.ones_tool_contracts import ONES_COLLECTED_LIST_FIELDS
 
 
 _OPAQUE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -192,6 +194,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         sandbox_manager: JobSandboxManager | None = None,
         cancellation_event: threading.Event | None = None,
         file_bridge_factory: PythonRuntimeFileBridgeFactory = (create_python_runtime_file_bridge),
+        ones_bridge_factory: Callable[..., OnesResultBridge] = OnesResultBridge,
         runtime_build_identity: BuildIdentity | None = None,
         tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
@@ -243,6 +246,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         self._file_principal_token_provider = file_principal_token_provider
         self._file_bridge_factory = file_bridge_factory
         self._file_bridge: PythonRuntimeFileBridge | None = None
+        self._ones_bridge_factory = ones_bridge_factory
+        self._ones_bridge: OnesResultBridge | None = None
         self._runtime_build_identity = runtime_build_identity or build_identity_from_environment(
             "python-runtime"
         )
@@ -387,7 +392,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         if not file_bindings:
             self._set_tool_contract_observation(request, None)
             self._require_matching_tool_contract()
-            return servers
+            return await self._open_ones_bridge(request, sdk, servers)
         sandbox = self._sandbox.get()
         if sandbox is None:
             raise NonRetryableExecutionError(
@@ -436,6 +441,45 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         self._set_tool_contract_observation(request, bridge)
         self._require_matching_tool_contract()
         servers[mcp_sdk_server_alias(FILE_MCP_SERVER_CODE)] = bridge.server
+        return await self._open_ones_bridge(request, sdk, servers)
+
+    async def _open_ones_bridge(
+        self,
+        request: AgentRunRequest,
+        sdk: Any,
+        servers: dict[str, Any],
+    ) -> dict[str, Any]:
+        bindings = {
+            item.tool_name: item.tool_schema_hash
+            for item in request.context.mcp_bindings
+            if item.server_code == ONES_MCP_SERVER_CODE
+        }
+        if not set(bindings).intersection(ONES_COLLECTED_LIST_FIELDS):
+            return servers
+        sandbox = self._sandbox.get()
+        if sandbox is None:
+            raise NonRetryableExecutionError(
+                "Missing sandbox",
+                safe_message="当前任务沙盒不可用",
+                error_code="runtime_sandbox_unavailable",
+            )
+        alias = mcp_sdk_server_alias(ONES_MCP_SERVER_CODE)
+        remote = servers[alias]
+        bridge = self._ones_bridge_factory(
+            sdk=sdk,
+            url=remote["url"],
+            headers=remote["headers"],
+            frozen=bindings,
+            sandbox=sandbox,
+            timeout=float(request.context.timeout_seconds),
+        )
+        self._ones_bridge = bridge
+        try:
+            await bridge.connect()
+        except BaseException:
+            await self._close_mcp_server()
+            raise
+        servers[alias] = bridge.server
         return servers
 
     def _require_matching_tool_contract(self) -> None:
@@ -491,6 +535,9 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             self._tool_contract_observer(dict(observation))
 
     async def _close_mcp_server(self) -> None:
+        ones_bridge, self._ones_bridge = self._ones_bridge, None
+        if ones_bridge is not None:
+            await ones_bridge.close()
         bridge = self._file_bridge
         self._file_bridge = None
         self._effective_context = None
@@ -711,7 +758,11 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                     )
                     else allow(dict(tool_input))
                 )
-            if file_job and tool_name in ALLOWED_FILE_TOOLS:
+            if (
+                file_job
+                and tool_name in ALLOWED_FILE_TOOLS
+                and tool_name in context.effective_tool_names
+            ):
                 try:
                     return allow(sandbox.authorize_tool(tool_name, tool_input))
                 except JobSandboxError:
@@ -736,7 +787,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                     "NotebookEdit",
                     "Shell",
                 )
-                if not file_job or tool not in ALLOWED_FILE_TOOLS
+                if tool not in context.effective_tool_names or tool not in ALLOWED_FILE_TOOLS
             ],
             permission_mode="default",
             max_turns=context.max_turns,

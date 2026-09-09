@@ -1,6 +1,6 @@
 {
   buckets(groupBy: $groupBy, orderBy: $groupOrderBy, pagination: $pagination, filter: $groupFilter) {
-    tasks(filterGroup: $filterGroup, orderBy: $orderBy, limit: 101, includeAncestors: {pathField: "path"}, orderByPath: "path") {
+    tasks(filterGroup: $filterGroup, orderBy: $orderBy) {
       uuid
       number
       name
@@ -15,6 +15,6 @@
       assign { uuid name }
       sprint { uuid name }
     }
-    pageInfo { count totalCount endCursor hasNextPage preciseCount }
+    pageInfo { count totalCount endCursor hasNextPage unstable }
   }
 }
