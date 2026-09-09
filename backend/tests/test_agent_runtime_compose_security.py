@@ -74,6 +74,14 @@ def test_python_runtime_and_standard_mcp_are_hardened_and_secret_scoped() -> Non
     assert "runtime_grant_private_key" not in python_runtime["secrets"]
     assert python_runtime["environment"]["MCP_TOOL_SERVER_URL"] == ("http://tool-mcp:9103/mcp")
     assert python_runtime["environment"]["FILE_MCP_SERVER_URL"] == ("http://file-service:9105/mcp")
+    assert python_runtime["environment"]["FILE_PRINCIPAL_REFRESH_BASE_URL"] == (
+        "http://api-server:8000"
+    )
+    assert python_runtime["environment"]["FILE_PRINCIPAL_REFRESH_ALLOWED_HOSTS"] == (
+        "api-server"
+    )
+    assert "principal_jwt_private_key" not in python_runtime["secrets"]
+    assert "principal_jwks" not in python_runtime["secrets"]
     assert python_runtime["environment"]["AGENT_RUNTIME_TEST_PROVIDER_MODE"] == (
         "${AGENT_RUNTIME_TEST_PROVIDER_MODE:-disabled}"
     )

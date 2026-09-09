@@ -718,7 +718,9 @@ def _build_container(
         TaskWorkspaceService(file_workspace_repository),
     )
     principal_token_issuer: PrincipalTokenIssuer | None = None
-    if service_name == "agent-worker" and runtime_client_override is None:
+    if (service_name == "agent-worker" and runtime_client_override is None) or (
+        service_name == "api-server" and settings.principal_jwt.signing_private_key_file
+    ):
         principal_token_issuer = PrincipalTokenIssuer(
             database,
             mcp_tool_snapshot_service,

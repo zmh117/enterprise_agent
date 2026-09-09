@@ -141,6 +141,16 @@ class AgentRuntimeSettings:
     grant_private_key_file: str = ""
     model_probe_auth_token_file: str = ""
     allow_insecure_internal_http: bool = False
+    file_principal_refresh_base_url: str = "http://api-server:8000"
+    file_principal_refresh_allowed_hosts: tuple[str, ...] = ("api-server",)
+    file_principal_refresh_timeout_seconds: int = 5
+    file_principal_refresh_skew_seconds: int = 60
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.file_principal_refresh_timeout_seconds <= 120:
+            raise ValueError("File Principal refresh timeout is invalid")
+        if not 5 <= self.file_principal_refresh_skew_seconds < 300:
+            raise ValueError("File Principal refresh skew is invalid")
 
 
 @dataclass(frozen=True)
@@ -408,6 +418,18 @@ def load_settings() -> Settings:
             grant_private_key_file=os.getenv("RUNTIME_GRANT_PRIVATE_KEY_FILE", ""),
             model_probe_auth_token_file=os.getenv("MODEL_PROBE_AUTH_TOKEN_FILE", ""),
             allow_insecure_internal_http=_env_bool("AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP"),
+            file_principal_refresh_base_url=os.getenv(
+                "FILE_PRINCIPAL_REFRESH_BASE_URL", "http://api-server:8000"
+            ),
+            file_principal_refresh_allowed_hosts=_csv_tuple(
+                os.getenv("FILE_PRINCIPAL_REFRESH_ALLOWED_HOSTS", "api-server")
+            ),
+            file_principal_refresh_timeout_seconds=int(
+                os.getenv("FILE_PRINCIPAL_REFRESH_TIMEOUT_SECONDS", "5")
+            ),
+            file_principal_refresh_skew_seconds=int(
+                os.getenv("FILE_PRINCIPAL_REFRESH_SKEW_SECONDS", "60")
+            ),
         ),
         principal_jwt=PrincipalJwtSettings(
             signing_private_key_file=os.getenv("PRINCIPAL_JWT_PRIVATE_KEY_FILE", ""),

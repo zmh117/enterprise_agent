@@ -41,6 +41,7 @@ from app.python_runtime.mcp_config import (
     FixedMcpClaudeSdkClient,
     fixed_mcp_server_url,
 )
+from app.python_runtime.file_principal import FilePrincipalTokenClient
 from app.python_runtime.tool_policy import normalize_tool_events
 from app.shared.config import ExecutionSettings
 from app.shared.build_identity import BuildIdentity, build_identity_from_environment
@@ -91,6 +92,10 @@ class PythonRuntimeExecutor:
         mcp_server_url: str,
         business_mcp_server_urls: Mapping[str, str] | None = None,
         file_mcp_server_url: str = "http://file-service:9105/mcp",
+        file_principal_refresh_base_url: str = "",
+        file_principal_refresh_allowed_hosts: tuple[str, ...] = (),
+        file_principal_refresh_timeout_seconds: int = 5,
+        file_principal_refresh_skew_seconds: int = 60,
         server_policies: Mapping[str, McpServerPolicy] | None = None,
         sdk_version: str | None = None,
         cli_version: str | None = None,
@@ -130,6 +135,10 @@ class PythonRuntimeExecutor:
             file_mcp_server_url,
             server_code="file-service",
         )
+        self._file_principal_refresh_base_url = file_principal_refresh_base_url
+        self._file_principal_refresh_allowed_hosts = file_principal_refresh_allowed_hosts
+        self._file_principal_refresh_timeout_seconds = file_principal_refresh_timeout_seconds
+        self._file_principal_refresh_skew_seconds = file_principal_refresh_skew_seconds
         self._sdk_version: str = sdk_version or claude_sdk_version()
         self._cli_version: str = cli_version or claude_cli_version()
         self._fake_provider_mode = fake_provider_mode
@@ -163,6 +172,19 @@ class PythonRuntimeExecutor:
         if cancel_event.is_set():
             return self._cancelled(provenance)
         run_request = agent_request_from_runtime_request(request, resolved.binding)
+        file_principal_token = secret_context.file_principal_token if secret_context else ""
+        file_principal_token_provider = (
+            FilePrincipalTokenClient(
+                base_url=self._file_principal_refresh_base_url,
+                allowed_hosts=self._file_principal_refresh_allowed_hosts,
+                initial_token=file_principal_token,
+                job_id=str(request["job_id"]),
+                timeout_seconds=self._file_principal_refresh_timeout_seconds,
+                refresh_skew_seconds=self._file_principal_refresh_skew_seconds,
+            )
+            if file_principal_token and self._file_principal_refresh_base_url
+            else None
+        )
         client = FixedMcpClaudeSdkClient(
             limits=self._limits,
             api_key=resolved.api_key,
@@ -170,13 +192,16 @@ class PythonRuntimeExecutor:
             business_mcp_server_urls=self._business_mcp_server_urls,
             mcp_principal_tokens=(secret_context.mcp_principal_tokens if secret_context else {}),
             file_mcp_server_url=self._file_mcp_server_url,
-            file_principal_token=(secret_context.file_principal_token if secret_context else ""),
+            file_principal_token=file_principal_token,
+            file_principal_token_provider=file_principal_token_provider,
             server_policies=self._server_policies,
             sandbox_manager=self._sandbox_manager,
             cancellation_event=cancel_event,
             runtime_build_identity=self._build_identity,
             tool_contract_observer=tool_contract_observer,
         )
+        if file_principal_token_provider is not None:
+            file_principal_token_provider.start()
         try:
             if self._fake_provider_mode:
                 client.observe_tool_contract(run_request)
@@ -272,6 +297,9 @@ class PythonRuntimeExecutor:
                 },
                 tool_contract_observation=dict(client.last_tool_contract_observation),
             )
+        finally:
+            if file_principal_token_provider is not None:
+                file_principal_token_provider.close()
         if cancel_event.is_set():
             return self._cancelled(
                 provenance,

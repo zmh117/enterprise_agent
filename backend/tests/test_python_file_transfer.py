@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -95,6 +96,48 @@ class _Port:
         )
 
 
+class _RefreshingPrincipal:
+    def __init__(self) -> None:
+        self.forced = 0
+
+    def access_token(self, *, force_refresh: bool = False) -> str:
+        if force_refresh:
+            self.forced += 1
+        return "principal-refreshed" if self.forced else "principal-expired"
+
+
+class _TimeRejectingUploadPort:
+    def __init__(self) -> None:
+        self.tokens: list[str] = []
+
+    def download(self, **_kwargs: Any) -> Iterable[bytes]:
+        return ()
+
+    def upload(
+        self,
+        *,
+        principal_token: str,
+        content: Iterable[bytes],
+        **_kwargs: Any,
+    ) -> FileUploadReceipt:
+        self.tokens.append(principal_token)
+        body = b"".join(content)
+        if len(self.tokens) == 1:
+            raise FileTransferBoundaryError(
+                "file_principal_time_invalid",
+                "expired before upload",
+            )
+        return FileUploadReceipt(
+            file_id="file-2",
+            version_id="version-2",
+            size_bytes=len(body),
+            sha256=hashlib.sha256(body).hexdigest(),
+            status="COMMITTED",
+            delivery_id="delivery-2",
+            delivery_status="PENDING",
+        )
+
+
 def test_python_file_transfer_matches_typescript_control_and_safe_result(
     tmp_path: Path,
 ) -> None:
@@ -143,6 +186,38 @@ def test_python_file_transfer_matches_typescript_control_and_safe_result(
     assert CONTENT.decode() not in serialized
     assert "edited result" not in serialized
     assert "principal-token-not-for-json" not in serialized
+
+
+def test_upload_refreshes_once_when_file_principal_expires_at_commit_time(
+    tmp_path: Path,
+) -> None:
+    port = _TimeRejectingUploadPort()
+    coordinator = FileTransferCoordinator(port)
+    sandbox = JobSandboxManager(tmp_path / "sandboxes").create("job-1")
+    provider = _RefreshingPrincipal()
+    context = FileTransferContext(
+        job_id="job-1",
+        workspace_path=sandbox.path,
+        principal_token="principal-expired",
+        principal_token_provider=provider,
+        sandbox=sandbox,
+    )
+    output = sandbox.path / "outputs/report.md"
+    output.write_text("generated report", encoding="utf-8")
+    selected = coordinator.select_sandbox_output(
+        relative_path="outputs/report.md",
+        context=context,
+    )
+    control = _upload_control("MARKDOWN")
+    control["_meta"][FILE_TRANSFER_META_KEY]["sandbox_entry_handle"] = selected[
+        "sandbox_entry_handle"
+    ]
+
+    committed = coordinator.process_mcp_control_result(control, context)
+
+    assert committed["action"] == "COMMITTED"
+    assert port.tokens == ["principal-expired", "principal-refreshed"]
+    assert provider.forced == 1
 
 
 def test_python_file_transfer_rejects_paths_urls_object_keys_and_unknown_fields() -> None:

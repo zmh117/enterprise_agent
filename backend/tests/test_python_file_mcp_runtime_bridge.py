@@ -119,6 +119,72 @@ class _RemoteFileSession:
         )
 
 
+class _RefreshingFilePrincipal:
+    def __init__(self) -> None:
+        self.calls: list[bool] = []
+
+    def access_token(self, *, force_refresh: bool = False) -> str:
+        self.calls.append(force_refresh)
+        return "principal-refreshed" if force_refresh else "principal-expiring"
+
+
+class _TimeRejectingRemoteFileSession(_RemoteFileSession):
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        **kwargs: Any,
+    ) -> types.CallToolResult:
+        if self.calls == 0:
+            self.calls += 1
+            self.read_timeouts.append(kwargs.get("read_timeout_seconds"))
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="凭证已失效")],
+                structuredContent={
+                    "error": "平台文件身份凭证无效",
+                    "error_code": "file_principal_time_invalid",
+                },
+                isError=True,
+            )
+        return await super().call_tool(name, arguments, **kwargs)
+
+
+def test_file_mcp_call_refreshes_and_retries_once_on_principal_time_error(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    remote = _TimeRejectingRemoteFileSession()
+    provider = _RefreshingFilePrincipal()
+    sandbox = JobSandboxManager(tmp_path / "refresh-sandboxes").create("job-refresh")
+    bridge = ClaudePythonFileBridge(
+        sdk=load_claude_agent_sdk(),
+        mcp_server_url="http://file-service:9105/mcp",
+        headers={"Authorization": "Bearer principal-expiring"},
+        frozen_tool_names=("file_create_commit_intent",),
+        context=FileTransferContext(
+            job_id="job-refresh",
+            workspace_path=sandbox.path,
+            principal_token="principal-expiring",
+            principal_token_provider=provider,
+            sandbox=sandbox,
+        ),
+        timeout_seconds=30,
+        remote_session=remote,
+    )
+
+    result = asyncio.run(
+        bridge._call_remote(
+            "file_create_commit_intent",
+            {"sandbox_entry_handle": "entry-refresh"},
+        )
+    )
+
+    assert result.is_error is False
+    assert remote.calls == 2
+    assert provider.calls == [False, True]
+
+
 class _TransferPort:
     def __init__(self) -> None:
         self.uploaded: list[bytes] = []

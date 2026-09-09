@@ -506,6 +506,16 @@ def _default_dependencies() -> PythonRuntimeDependencies:
             "FILE_MCP_SERVER_URL",
             "http://file-service:9105/mcp",
         ),
+        file_principal_refresh_base_url=(settings.agent_runtime.file_principal_refresh_base_url),
+        file_principal_refresh_allowed_hosts=(
+            settings.agent_runtime.file_principal_refresh_allowed_hosts
+        ),
+        file_principal_refresh_timeout_seconds=(
+            settings.agent_runtime.file_principal_refresh_timeout_seconds
+        ),
+        file_principal_refresh_skew_seconds=(
+            settings.agent_runtime.file_principal_refresh_skew_seconds
+        ),
         fake_provider_mode=_fake_provider_mode(settings.environment),
         sandbox_manager=sandbox_manager,
         build_identity=build_identity_from_environment("python-runtime"),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,7 +12,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.modules.identity.api import build_service_principal_router
+from app.modules.identity.api import (
+    build_file_principal_refresh_router,
+    build_service_principal_router,
+)
+from app.python_runtime.file_principal import FilePrincipalTokenClient
+from app.shared.exceptions import RetryableExecutionError
 from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalSigningKey
 from app.modules.identity.application.service_principal import (
     DELIVERY_WORKER_AUTHORIZED_PARTY,
@@ -25,7 +31,6 @@ from app.modules.identity.application.service_principal import (
     ServicePrincipalTokenError,
     ServicePrincipalTokenIssuer,
 )
-from app.shared.exceptions import RetryableExecutionError
 from services.file_service.auth import (
     FilePrincipalError,
     FilePrincipalVerifier,
@@ -66,6 +71,158 @@ def _issuer(*, now: int = 1_900_000_000) -> tuple[ServicePrincipalTokenIssuer, _
         jti_factory=lambda: "service-jti",
     )
     return issuer, audit
+
+
+def _file_refresh_token(*, expires_at: int, jti: str) -> str:
+    return str(
+        jwt.encode(
+            {"job_id": "job-1", "exp": expires_at, "jti": jti},
+            key="",
+            algorithm="none",
+        )
+    )
+
+
+class _RefreshIssuer:
+    def __init__(self, refreshed: str) -> None:
+        self.refreshed = refreshed
+        self.tokens: list[str] = []
+
+    def refresh_file_for_job(self, token: str) -> str:
+        self.tokens.append(token)
+        return self.refreshed
+
+
+class _FilePrincipalExchangeTransport:
+    def __init__(self, refreshed: str) -> None:
+        self.refreshed = refreshed
+        self.calls: list[dict[str, object]] = []
+        self.called = threading.Event()
+
+    def exchange(
+        self,
+        *,
+        url: str,
+        current_token: str,
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        self.called.set()
+        self.calls.append(
+            {
+                "url": url,
+                "current_token": current_token,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return {
+            "access_token": self.refreshed,
+            "token_type": "Bearer",
+            "expires_in": 300,
+        }
+
+
+def test_internal_file_principal_refresh_exchanges_only_bearer_without_body() -> None:
+    initial = _file_refresh_token(expires_at=1_900_000_060, jti="initial")
+    refreshed = _file_refresh_token(expires_at=1_900_000_300, jti="refreshed")
+    issuer = _RefreshIssuer(refreshed)
+    app = FastAPI()
+    app.state.container = SimpleNamespace(principal_token_issuer=issuer)
+    app.include_router(build_file_principal_refresh_router())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/internal/file-principal/token",
+            headers={"Authorization": f"Bearer {initial}"},
+            content=b"",
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "access_token": refreshed,
+        "token_type": "Bearer",
+        "expires_in": 300,
+    }
+    assert response.headers["cache-control"] == "no-store"
+    assert issuer.tokens == [initial]
+    assert initial not in json.dumps(dict(response.headers))
+
+
+def test_internal_file_principal_refresh_rejects_malformed_request_without_token_leak() -> None:
+    refreshed = _file_refresh_token(expires_at=1_900_000_300, jti="refreshed")
+    issuer = _RefreshIssuer(refreshed)
+    audit = _Audit()
+    app = FastAPI()
+    app.state.container = SimpleNamespace(
+        principal_token_issuer=issuer,
+        audit_service=audit,
+    )
+    app.include_router(build_file_principal_refresh_router())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/internal/file-principal/token",
+            headers={"Authorization": "Bearer should-not-appear"},
+            content=b"unexpected",
+        )
+
+    assert response.status_code == 401
+    assert issuer.tokens == []
+    assert audit.events[-1]["event_type"] == "principal.jwt.refresh_denied"
+    assert "should-not-appear" not in json.dumps(audit.events)
+
+
+def test_runtime_refreshes_file_principal_before_expiry_and_hides_tokens() -> None:
+    now = 1_900_000_000
+    clock = [float(now)]
+    initial = _file_refresh_token(expires_at=now + 300, jti="initial")
+    refreshed = _file_refresh_token(expires_at=now + 545, jti="refreshed")
+    transport = _FilePrincipalExchangeTransport(refreshed)
+    client = FilePrincipalTokenClient(
+        base_url="http://api-server:8000",
+        allowed_hosts=("api-server",),
+        initial_token=initial,
+        job_id="job-1",
+        timeout_seconds=5,
+        refresh_skew_seconds=60,
+        transport=transport,
+        now=lambda: clock[0],
+    )
+
+    assert client.access_token() == initial
+    clock[0] = now + 241
+    assert client.access_token() == refreshed
+    assert client.access_token() == refreshed
+    assert transport.calls == [
+        {
+            "url": "http://api-server:8000/api/internal/file-principal/token",
+            "current_token": initial,
+            "timeout_seconds": 5,
+        }
+    ]
+    assert initial not in repr(client)
+    assert refreshed not in repr(client)
+
+
+def test_runtime_background_refreshes_during_long_running_invocation() -> None:
+    now = 1_900_000_000
+    initial = _file_refresh_token(expires_at=now + 4, jti="initial")
+    refreshed = _file_refresh_token(expires_at=now + 300, jti="refreshed")
+    transport = _FilePrincipalExchangeTransport(refreshed)
+    client = FilePrincipalTokenClient(
+        base_url="http://api-server:8000",
+        allowed_hosts=("api-server",),
+        initial_token=initial,
+        job_id="job-1",
+        transport=transport,
+        now=lambda: float(now),
+    )
+
+    client.start()
+    assert transport.called.wait(timeout=1.0)
+    client.close()
+
+    assert client.access_token() == refreshed
+    assert transport.calls[0]["current_token"] == initial
 
 
 def test_issuer_produces_exact_role_bound_file_worker_token() -> None:

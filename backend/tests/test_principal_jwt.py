@@ -460,6 +460,122 @@ def test_issuer_creates_a_separate_audience_bound_file_principal() -> None:
     assert token not in json.dumps(audit.events)
 
 
+def test_file_principal_refresh_reissues_equivalent_short_lived_claims() -> None:
+    snapshot = _Snapshot()
+    snapshot.value["snapshot"]["tools"] = [
+        {
+            "server_code": "file-service",
+            "tool_identifier": "file_create_commit_intent",
+            "schema_hash": "d" * 64,
+        }
+    ]
+    clock = [NOW]
+    jtis = iter(("principal-jti-initial", "principal-jti-refreshed"))
+    signing_key, _ = _key()
+    audit = _Audit()
+    authorization = _BusinessAuthorization()
+    issuer = PrincipalTokenIssuer(
+        _Database(
+            task_workspace_id="workspace-1",
+            workspace_tenant_id="tenant-1",
+        ),  # type: ignore[arg-type]
+        snapshot,  # type: ignore[arg-type]
+        authorization,
+        signing_key,
+        audit,  # type: ignore[arg-type]
+        now=lambda: clock[0],
+        jti_factory=lambda: next(jtis),
+    )
+
+    initial = issuer.issue_file_for_job(job_id="job-1")
+    clock[0] = NOW + 245
+    refreshed = issuer.refresh_file_for_job(initial)
+    initial_claims = jwt.decode(initial, options={"verify_signature": False})
+    refreshed_claims = jwt.decode(refreshed, options={"verify_signature": False})
+
+    stable_claims = set(initial_claims) - {"jti", "iat", "nbf", "exp"}
+    assert {name: initial_claims[name] for name in stable_claims} == {
+        name: refreshed_claims[name] for name in stable_claims
+    }
+    assert refreshed_claims["jti"] == "principal-jti-refreshed"
+    assert refreshed_claims["iat"] == NOW + 245
+    assert refreshed_claims["exp"] == NOW + 545
+    assert audit.events[-1]["event_type"] == "principal.jwt.refreshed"
+    assert audit.events[-1]["payload"]["previous_jti"] == "principal-jti-initial"
+    assert initial not in json.dumps(audit.events)
+    assert refreshed not in json.dumps(audit.events)
+
+
+def test_file_principal_refresh_rejects_an_expired_subject_token() -> None:
+    snapshot = _Snapshot()
+    snapshot.value["snapshot"]["tools"] = [
+        {
+            "server_code": "file-service",
+            "tool_identifier": "file_create_commit_intent",
+            "schema_hash": "d" * 64,
+        }
+    ]
+    clock = [NOW]
+    signing_key, _ = _key()
+    audit = _Audit()
+    issuer = PrincipalTokenIssuer(
+        _Database(
+            task_workspace_id="workspace-1",
+            workspace_tenant_id="tenant-1",
+        ),  # type: ignore[arg-type]
+        snapshot,  # type: ignore[arg-type]
+        _BusinessAuthorization(),
+        signing_key,
+        audit,  # type: ignore[arg-type]
+        now=lambda: clock[0],
+    )
+    initial = issuer.issue_file_for_job(job_id="job-1")
+
+    clock[0] = NOW + 306
+    with pytest.raises(PrincipalTokenError) as rejected:
+        issuer.refresh_file_for_job(initial)
+
+    assert rejected.value.error_code == "file_principal_refresh_token_expired"
+    assert audit.events[-1]["event_type"] == "principal.jwt.refresh_denied"
+    assert initial not in json.dumps(audit.events)
+
+
+def test_file_principal_refresh_rechecks_that_job_is_still_running() -> None:
+    snapshot = _Snapshot()
+    snapshot.value["snapshot"]["tools"] = [
+        {
+            "server_code": "file-service",
+            "tool_identifier": "file_create_commit_intent",
+            "schema_hash": "d" * 64,
+        }
+    ]
+    database = _Database(
+        task_workspace_id="workspace-1",
+        workspace_tenant_id="tenant-1",
+    )
+    clock = [NOW]
+    signing_key, _ = _key()
+    audit = _Audit()
+    issuer = PrincipalTokenIssuer(
+        database,  # type: ignore[arg-type]
+        snapshot,  # type: ignore[arg-type]
+        _BusinessAuthorization(),
+        signing_key,
+        audit,  # type: ignore[arg-type]
+        now=lambda: clock[0],
+    )
+    initial = issuer.issue_file_for_job(job_id="job-1")
+    database.row["status"] = "SUCCEEDED"
+    clock[0] = NOW + 245
+
+    with pytest.raises(PrincipalTokenError) as rejected:
+        issuer.refresh_file_for_job(initial)
+
+    assert rejected.value.error_code == "principal_job_not_running"
+    assert audit.events[-1]["event_type"] == "principal.jwt.refresh_denied"
+    assert initial not in json.dumps(audit.events)
+
+
 def test_file_principal_issuance_requires_a_job_bound_workspace() -> None:
     snapshot = _Snapshot()
     snapshot.value["snapshot"]["tools"] = [

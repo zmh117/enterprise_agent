@@ -231,6 +231,7 @@ class ClaudePythonFileBridge:
         self._async_client_factory = async_client_factory
         self._stack: AsyncExitStack | None = None
         self._session: Any | None = remote_session
+        self._http_client: Any | None = None
         self._injected_session = remote_session is not None
         self._coordinator = FileTransferCoordinator(
             transfer_port
@@ -485,17 +486,43 @@ class ClaudePythonFileBridge:
                 "file_service_unavailable",
                 "File Service is unavailable",
             )
+        await self._refresh_remote_principal()
         remote = await session.call_tool(
             name,
             arguments,
             read_timeout_seconds=_session_timeout(self._timeout_seconds),
         )
+        structured = _result_structured_content(remote)
+        if (
+            _result_is_error(remote)
+            and isinstance(structured, dict)
+            and structured.get("error_code") == "file_principal_time_invalid"
+            and self._context.principal_token_provider is not None
+        ):
+            await self._refresh_remote_principal(force_refresh=True)
+            remote = await session.call_tool(
+                name,
+                arguments,
+                read_timeout_seconds=_session_timeout(self._timeout_seconds),
+            )
         if not isinstance(remote, types.CallToolResult):
             raise FileTransferBoundaryError(
                 "file_service_unavailable",
                 "File Service returned an unsupported result",
             )
         return remote
+
+    async def _refresh_remote_principal(self, *, force_refresh: bool = False) -> None:
+        if self._context.principal_token_provider is None:
+            return
+        token = await asyncio.to_thread(
+            self._context.access_token,
+            force_refresh=force_refresh,
+        )
+        authorization = f"Bearer {token}"
+        self._headers["Authorization"] = authorization
+        if self._http_client is not None:
+            self._http_client.headers["Authorization"] = authorization
 
     async def prepare_materialization(
         self,
@@ -578,6 +605,7 @@ class ClaudePythonFileBridge:
                     follow_redirects=False,
                 )
             )
+            self._http_client = client
             streams = await stack.enter_async_context(
                 streamable_http_module.streamable_http_client(
                     self._mcp_server_url,
@@ -747,6 +775,7 @@ class ClaudePythonFileBridge:
         stack = self._stack
         self._stack = None
         self._session = None
+        self._http_client = None
         if stack is not None:
             await stack.aclose()
 

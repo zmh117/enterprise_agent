@@ -290,6 +290,7 @@ def create_app(
     from app.modules.identity.api import (
         build_auth_router,
         build_external_identity_router,
+        build_file_principal_refresh_router,
         build_identity_admin_router,
         build_service_principal_router,
     )
@@ -310,6 +311,7 @@ def create_app(
     app.include_router(build_public_webhook_router())
     app.include_router(build_runtime_control_router())
     app.include_router(build_service_principal_router())
+    app.include_router(build_file_principal_refresh_router())
 
     management_surface_enabled = settings.feature_configuration.web_admin_enabled
     if management_surface_enabled:

@@ -40,7 +40,11 @@ from app.python_runtime.file_mcp_bridge import (
     PythonRuntimeFileBridgeFactory,
     create_python_runtime_file_bridge,
 )
-from app.python_runtime.file_transfer import FileTransferBoundaryError, FileTransferContext
+from app.python_runtime.file_transfer import (
+    FilePrincipalTokenProvider,
+    FileTransferBoundaryError,
+    FileTransferContext,
+)
 from app.python_runtime.job_sandbox import (
     ALLOWED_FILE_TOOLS,
     FILE_TOOL_NAMES,
@@ -183,6 +187,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         mcp_principal_tokens: Mapping[str, str] | None = None,
         file_mcp_server_url: str = "http://file-service:9105/mcp",
         file_principal_token: str = "",
+        file_principal_token_provider: FilePrincipalTokenProvider | None = None,
         server_policies: Mapping[str, McpServerPolicy] | None = None,
         sandbox_manager: JobSandboxManager | None = None,
         cancellation_event: threading.Event | None = None,
@@ -235,6 +240,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         self._mcp_principal_tokens = MappingProxyType(raw_principal_tokens)
         self._file_mcp_server_url = file_mcp_server_url
         self._file_principal_token = file_principal_token
+        self._file_principal_token_provider = file_principal_token_provider
         self._file_bridge_factory = file_bridge_factory
         self._file_bridge: PythonRuntimeFileBridge | None = None
         self._runtime_build_identity = runtime_build_identity or build_identity_from_environment(
@@ -389,12 +395,17 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 safe_message="当前任务沙盒不可用",
                 error_code="runtime_sandbox_unavailable",
             )
+        file_principal_token = (
+            self._file_principal_token_provider.access_token()
+            if self._file_principal_token_provider is not None
+            else self._file_principal_token
+        )
         bridge = self._file_bridge_factory(
             sdk=sdk,
             mcp_server_url=self._file_mcp_server_url,
             headers={
                 **self._shared_headers(request),
-                "Authorization": f"Bearer {self._file_principal_token}",
+                "Authorization": f"Bearer {file_principal_token}",
             },
             frozen_tool_names=file_bindings,
             frozen_tool_schema_hashes={
@@ -405,7 +416,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             context=FileTransferContext(
                 job_id=request.job_id,
                 workspace_path=sandbox.path,
-                principal_token=self._file_principal_token,
+                principal_token=file_principal_token,
+                principal_token_provider=self._file_principal_token_provider,
                 sandbox=sandbox,
             ),
             timeout_seconds=float(request.context.timeout_seconds),
@@ -695,9 +707,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                     deny()
                     if contains_forbidden_tool_input(
                         tool_input,
-                        declared_root_fields=declared_input_fields.get(
-                            tool_name, frozenset()
-                        ),
+                        declared_root_fields=declared_input_fields.get(tool_name, frozenset()),
                     )
                     else allow(dict(tool_input))
                 )

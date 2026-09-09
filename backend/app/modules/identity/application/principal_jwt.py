@@ -32,13 +32,13 @@ from app.shared.mcp_server_policy import (
 )
 from app.shared.database import Database
 from app.shared.exceptions import AppError, NonRetryableExecutionError
+from app.shared.principal_token_contract import MAX_PRINCIPAL_TOKEN_BYTES
 
 
 PRINCIPAL_ISSUER = "enterprise-agent-identity"
 FILE_PRINCIPAL_AUDIENCE = FILE_MCP_SERVER_CODE
 PRINCIPAL_AUTHORIZED_PARTY = "agent-runtime"
 MAX_PRINCIPAL_TTL_SECONDS = 5 * 60
-MAX_PRINCIPAL_TOKEN_BYTES = 8 * 1024
 _AUTHORIZATION_HASH_LENGTH = 64
 _ALLOWED_CLAIMS = frozenset(
     {
@@ -58,6 +58,7 @@ _ALLOWED_CLAIMS = frozenset(
         "exp",
     }
 )
+_FILE_ALLOWED_CLAIMS = _ALLOWED_CLAIMS | {"tenant_id"}
 
 
 class PrincipalTokenError(NonRetryableExecutionError):
@@ -504,6 +505,156 @@ class PrincipalTokenIssuer:
                 "File Principal JWT issuance failed",
                 safe_message="平台文件身份凭证签发失败",
                 error_code=error_code,
+            ) from exc
+
+    def refresh_file_for_job(self, token: str) -> str:
+        audit: dict[str, Any] = {
+            "kid": self.signing_key.kid,
+            "audience": FILE_PRINCIPAL_AUDIENCE,
+        }
+        try:
+            claims = self._verify_refreshable_file_token(token)
+            job_id = str(claims["job_id"])
+            previous_jti = str(claims["jti"])
+            audit.update({"job_id": job_id, "previous_jti": previous_jti})
+            refreshed = self.issue_file_for_job(job_id=job_id)
+            refreshed_claims = jwt.decode(
+                refreshed,
+                options={
+                    "verify_signature": False,
+                    "verify_aud": False,
+                    "verify_iss": False,
+                },
+            )
+            stable = _FILE_ALLOWED_CLAIMS - {"jti", "iat", "nbf", "exp"}
+            if any(claims.get(name) != refreshed_claims.get(name) for name in stable):
+                raise PrincipalTokenError(
+                    "Refreshed File Principal does not match its subject token",
+                    safe_message="平台文件身份凭证与当前任务不匹配",
+                    error_code="file_principal_refresh_binding_mismatch",
+                )
+            audit.update(
+                {
+                    "jti": str(refreshed_claims["jti"]),
+                    "issued_at": int(refreshed_claims["iat"]),
+                    "not_before": int(refreshed_claims["nbf"]),
+                    "expires_at": int(refreshed_claims["exp"]),
+                    "scope": list(refreshed_claims["scope"]),
+                }
+            )
+            self.audit_service.record(
+                "principal.jwt.refreshed",
+                status="success",
+                summary="Principal JWT refreshed for frozen File MCP Tools",
+                job_id=job_id,
+                actor_id=str(refreshed_claims["sub"]),
+                payload=audit,
+            )
+            return refreshed
+        except Exception as exc:
+            error_code = str(getattr(exc, "error_code", "") or "file_principal_refresh_denied")
+            audit["error_code"] = error_code
+            self.audit_service.record(
+                "principal.jwt.refresh_denied",
+                status="denied",
+                summary="File Principal JWT refresh denied",
+                job_id=str(audit.get("job_id") or "") or None,
+                payload=audit,
+            )
+            if isinstance(exc, AppError):
+                raise
+            raise PrincipalTokenError(
+                "File Principal JWT refresh failed",
+                safe_message="平台文件身份凭证刷新失败",
+                error_code=error_code,
+            ) from exc
+
+    def _verify_refreshable_file_token(self, token: str) -> dict[str, Any]:
+        try:
+            if not token or len(token.encode("ascii")) > MAX_PRINCIPAL_TOKEN_BYTES:
+                raise ValueError("File Principal refresh token size is invalid")
+            header = jwt.get_unverified_header(token)
+            if (
+                set(header) != {"alg", "kid", "typ"}
+                or header.get("alg") != "EdDSA"
+                or header.get("typ") != "JWT"
+                or header.get("kid") != self.signing_key.kid
+            ):
+                raise ValueError("File Principal refresh header is invalid")
+            jwks = PrincipalJwks.from_dict(self.signing_key.public_jwks())
+            public_key = jwks.get(self.signing_key.kid)
+            if public_key is None:
+                raise ValueError("File Principal refresh key is unavailable")
+            claims = dict(
+                jwt.decode(
+                    token,
+                    key=public_key.key,
+                    algorithms=["EdDSA"],
+                    audience=FILE_PRINCIPAL_AUDIENCE,
+                    issuer=PRINCIPAL_ISSUER,
+                    options={
+                        "require": sorted(_FILE_ALLOWED_CLAIMS),
+                        "verify_exp": False,
+                        "verify_iat": False,
+                        "verify_nbf": False,
+                    },
+                )
+            )
+            if set(claims) != _FILE_ALLOWED_CLAIMS:
+                raise ValueError("File Principal refresh claims are invalid")
+            string_claims = _FILE_ALLOWED_CLAIMS - {"scope", "iat", "nbf", "exp"}
+            if any(
+                not isinstance(claims.get(name), str) or not claims[name] or len(claims[name]) > 256
+                for name in string_claims
+            ):
+                raise ValueError("File Principal refresh string claims are invalid")
+            scopes = claims.get("scope")
+            if (
+                not isinstance(scopes, list)
+                or not scopes
+                or scopes != sorted(set(scopes))
+                or any(
+                    not isinstance(scope, str)
+                    or not scope.startswith(f"mcp:{FILE_PRINCIPAL_AUDIENCE}:")
+                    or not scope.endswith(":invoke")
+                    or len(scope) > 256
+                    for scope in scopes
+                )
+            ):
+                raise ValueError("File Principal refresh scopes are invalid")
+            authorization_hash = str(claims["authorization_hash"])
+            if len(authorization_hash) != _AUTHORIZATION_HASH_LENGTH or any(
+                character not in "0123456789abcdef" for character in authorization_hash
+            ):
+                raise ValueError("File Principal refresh authorization hash is invalid")
+            if any(type(claims.get(name)) is not int for name in ("iat", "nbf", "exp")):
+                raise ValueError("File Principal refresh time claims are invalid")
+            issued_at = int(claims["iat"])
+            not_before = int(claims["nbf"])
+            expires_at = int(claims["exp"])
+            now = self._now()
+            if expires_at <= now - 5:
+                raise PrincipalTokenError(
+                    "Expired File Principal cannot be refreshed",
+                    safe_message="平台文件身份凭证已过期，无法刷新",
+                    error_code="file_principal_refresh_token_expired",
+                )
+            if (
+                issued_at > now + 5
+                or not_before > now + 5
+                or not_before > issued_at
+                or expires_at <= issued_at
+                or expires_at - issued_at > MAX_PRINCIPAL_TTL_SECONDS
+            ):
+                raise ValueError("File Principal refresh time window is invalid")
+            return claims
+        except PrincipalTokenError:
+            raise
+        except (jwt.PyJWTError, UnicodeError, ValueError, TypeError) as exc:
+            raise PrincipalTokenError(
+                "File Principal refresh token verification failed",
+                safe_message="平台文件身份凭证刷新失败",
+                error_code="file_principal_refresh_token_invalid",
             ) from exc
 
     def _job_facts(self, job_id: str) -> dict[str, str]:

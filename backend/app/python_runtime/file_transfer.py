@@ -5,7 +5,7 @@ import hashlib
 import os
 import stat
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Protocol
 
@@ -31,12 +31,25 @@ class FileTransferBoundaryError(ValueError):
         self.code = code
 
 
+class FilePrincipalTokenProvider(Protocol):
+    def access_token(self, *, force_refresh: bool = False) -> str: ...
+
+
 @dataclass(frozen=True)
 class FileTransferContext:
     job_id: str
     workspace_path: Path
-    principal_token: str
+    principal_token: str = field(repr=False)
+    principal_token_provider: FilePrincipalTokenProvider | None = field(
+        default=None,
+        repr=False,
+    )
     sandbox: JobSandbox | None = None
+
+    def access_token(self, *, force_refresh: bool = False) -> str:
+        if self.principal_token_provider is not None:
+            return self.principal_token_provider.access_token(force_refresh=force_refresh)
+        return self.principal_token
 
 
 @dataclass(frozen=True)
@@ -534,7 +547,7 @@ class FileTransferCoordinator:
                 for chunk in self._port.download(
                     transfer_id=str(control["transfer_id"]),
                     job_id=context.job_id,
-                    principal_token=context.principal_token,
+                    principal_token=context.access_token(),
                 ):
                     if not isinstance(chunk, bytes):
                         raise FileTransferBoundaryError(
@@ -625,24 +638,36 @@ class FileTransferCoordinator:
                 "sandbox entry must reference a regular file",
             )
         validated_size, validated_sha256 = _validate_agent_output(target)
-        digest = hashlib.sha256()
-        size_bytes = 0
 
-        def content() -> Iterable[bytes]:
-            nonlocal size_bytes
-            with target.open("rb") as source:
-                while chunk := source.read(64 * 1024):
-                    size_bytes += len(chunk)
-                    digest.update(chunk)
-                    yield chunk
+        def upload_once(*, force_refresh: bool = False) -> tuple[FileUploadReceipt, int, str]:
+            digest = hashlib.sha256()
+            size_bytes = 0
 
-        receipt = self._port.upload(
-            commit_id=str(control["commit_id"]),
-            job_id=context.job_id,
-            principal_token=context.principal_token,
-            content=content(),
-        )
-        actual_sha256 = digest.hexdigest()
+            def content() -> Iterable[bytes]:
+                nonlocal size_bytes
+                with target.open("rb") as source:
+                    while chunk := source.read(64 * 1024):
+                        size_bytes += len(chunk)
+                        digest.update(chunk)
+                        yield chunk
+
+            receipt = self._port.upload(
+                commit_id=str(control["commit_id"]),
+                job_id=context.job_id,
+                principal_token=context.access_token(force_refresh=force_refresh),
+                content=content(),
+            )
+            return receipt, size_bytes, digest.hexdigest()
+
+        try:
+            receipt, size_bytes, actual_sha256 = upload_once()
+        except FileTransferBoundaryError as exc:
+            if (
+                exc.code != "file_principal_time_invalid"
+                or context.principal_token_provider is None
+            ):
+                raise
+            receipt, size_bytes, actual_sha256 = upload_once(force_refresh=True)
         if (
             validated_size != state.st_size
             or size_bytes != validated_size
