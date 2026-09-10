@@ -29,6 +29,7 @@ from app.modules.job.application.create_agent_job_service import CreateAgentJobC
 from app.modules.job.infrastructure.execution_audit_repository import (
     ExecutionAuditRepository,
 )
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.mcp_server_policy import (
     DINGTALK_MCP_SERVER_CODE,
     ONES_MCP_SERVER_CODE,
@@ -43,7 +44,7 @@ from app.shared.exceptions import (
     RetryableExecutionError,
 )
 from app.shared.build_identity import BuildIdentity
-from app.shared.tool_contract import canonical_json_sha256
+from app.shared.tool_contract import PROMPT_TEMPLATE_VERSION, canonical_json_sha256
 from app.python_runtime.executor import agent_request_from_runtime_request
 from app.python_runtime.run_audit import encode_audit_chunks
 from app.python_runtime.tool_contract import build_tool_contract_observation
@@ -606,9 +607,7 @@ def test_worker_reassembles_complete_v15_run_audit_with_metadata_only_chunk_even
     result = client.run(_request())
 
     assert result.run_audit == run_audit
-    chunk_events = [
-        event for event in persisted_events if event["event_type"] == "audit_chunk"
-    ]
+    chunk_events = [event for event in persisted_events if event["event_type"] == "audit_chunk"]
     assert chunk_events
     assert [event["sequence"] for event in persisted_events] == list(
         range(1, len(persisted_events) + 1)
@@ -652,9 +651,7 @@ def test_v15_audit_chunk_metadata_keeps_real_runtime_event_repository_contiguous
     assert [event["sequence"] for event in persisted_events] == list(
         range(1, len(persisted_events) + 1)
     )
-    chunk_events = [
-        event for event in persisted_events if event["event_type"] == "audit_chunk"
-    ]
+    chunk_events = [event for event in persisted_events if event["event_type"] == "audit_chunk"]
     assert chunk_events
     assert all("content" not in event["payload"] for event in chunk_events)
     assert all(event["payload"]["content_status"] == "OMITTED" for event in chunk_events)
@@ -1069,6 +1066,175 @@ def test_worker_rejects_sequence_gap_before_committing_terminal() -> None:
         client.run(_request())
 
     assert raised.value.error_code == "runtime_protocol_error"
+    assert "事件身份、协议版本或序号不一致" in raised.value.safe_message
+
+
+@pytest.mark.parametrize("protocol_version", ["1.4", "1.5"])
+@pytest.mark.parametrize("ones_result_job", [False, True])
+def test_default_prompt_version_crosses_worker_and_runtime_observation(
+    protocol_version: str,
+    ones_result_job: bool,
+) -> None:
+    transport = GoldenTransport()
+    events: list[dict[str, Any]] = []
+    client, _ = _client(transport, events=events, principal_token_issuer=_PrincipalTokenIssuer())
+    context = replace(_context(), runtime_protocol_version=protocol_version)
+    if ones_result_job:
+        tool = MCP_TOOL_MANIFEST["ones_work_item_search"]
+        context = replace(
+            context,
+            mcp_bindings=(
+                McpRuntimeBinding(
+                    server_code=tool.server_code,
+                    tool_name="ones_work_item_search",
+                    required_scope="mcp:ones-mcp:ones_work_item_search:invoke",
+                    tool_schema_hash=tool.schema_hash,
+                ),
+            ),
+        )
+    # Do not replace the default version with the observation's version in this test.
+    result = client.run(replace(_request(), context=context))
+    observation = events[1]["payload"]
+    assert transport.request["prompt"]["template_version"] == PROMPT_TEMPLATE_VERSION
+    assert observation["prompt"]["template_version"] == context.prompt_template_version
+    assert result.final_answer == "final answer"
+    assert events[-1]["event_type"] == "terminal"
+    if ones_result_job:
+        builtins = {
+            item["tool_name"]
+            for item in observation["effective_tools"]
+            if item["origin"] == "sdk_builtin"
+        }
+        assert builtins == {"Read", "Glob", "Grep"}
+
+
+class MismatchedToolContractTransport(GoldenTransport):
+    def __init__(self, field: str, actual: str = "agent-system-prompt-v5") -> None:
+        super().__init__()
+        self.field, self.actual = field, actual
+
+    def stream(self, **kwargs: Any) -> Iterator[bytes]:
+        for line in super().stream(**kwargs):
+            event = json.loads(line)
+            if event["event_type"] == "tool_contract_observed":
+                payload = event["payload"]
+                if self.field == "prompt.template_version":
+                    payload["prompt"]["template_version"] = self.actual
+                elif self.field == "snapshot_hash":
+                    payload["snapshot_hash"] = "0" * 64
+                elif self.field.endswith("build_identity"):
+                    component = (
+                        "control-plane"
+                        if self.field.startswith("control_plane")
+                        else "agent-worker"
+                    )
+                    for identity in payload["component_build_identities"]:
+                        if identity["component"] == component:
+                            identity["build_id"] = "synthetic-sensitive-build-must-not-echo"
+                payload["observation_hash"] = canonical_json_sha256(
+                    {k: v for k, v in payload.items() if k != "observation_hash"}
+                )
+                if self.field == "observation_hash":
+                    payload["observation_hash"] = "0" * 64
+            yield (json.dumps(event) + "\n").encode()
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "prompt.template_version",
+        "snapshot_hash",
+        "observation_hash",
+        "control_plane_build_identity",
+        "worker_build_identity",
+    ],
+)
+def test_contract_rejection_preserves_safe_difference_without_accepting_event(field: str) -> None:
+    events: list[dict[str, Any]] = []
+    client, _ = _client(MismatchedToolContractTransport(field), events=events)
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        client.run(_request())
+    error = raised.value
+    assert error.error_code == "runtime_protocol_error"
+    assert error.diagnostics["runtime_protocol_field"] == field
+    assert error.diagnostics["runtime_event_sequence"] == 2
+    assert field in error.safe_message
+    assert "事件 #2" in error.safe_message
+    assert "期望" in error.safe_message and "实际" in error.safe_message
+    assert "synthetic-sensitive-build" not in error.safe_message
+    assert [event["event_type"] for event in events] == ["execution_started"]
+    assert error.tool_events == []
+
+
+def test_protocol_difference_reaches_job_error_step_and_execution_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = container(allow_direct_jobs=True)
+    runtime.create_agent_job_service.published_agent_runtime_enabled = True
+    runtime.create_agent_job_service.runtime_readiness_guard = None
+    job = runtime.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="runtime-version-failure-evidence",
+            requester_id="user_local_admin",
+            user_message="synthetic protocol test",
+            source_channel="debug_api",
+        )
+    )
+    audit = ExecutionAuditRepository(runtime.database)
+    client, _ = _client(
+        MismatchedToolContractTransport("prompt.template_version"),
+        event_sink=audit.record_runtime_event,
+    )
+    monkeypatch.setattr(runtime.agent_executor.context_builder, "build", lambda _job: _context())
+    runtime.agent_executor.runtime_client = client
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        runtime.agent_executor.execute(job.id, fail_on_error=False)
+    error = raised.value
+    assert error.error_code == "runtime_protocol_error"
+    action = runtime.retry_service.handle_failure(
+        runtime.agent_repository.get_job(job.id),
+        error,
+        "synthetic-protocol-failure",
+    )
+    assert action == "dead"
+    steps = runtime.database.execute(
+        "select content from agent_step where job_id = ? and step_type = 'error'",
+        (job.id,),
+    )
+    assert [step["content"] for step in steps] == [error.safe_message]
+    summary = audit.rebuild_summary(job.id)
+    assert summary["failure_summary"] == error.safe_message
+    assert summary["failure_code"] == "runtime_protocol_error"
+    assert summary["execution_failure_stage"] == "RUNTIME_PROTOCOL"
+    assert "期望 agent-system-prompt-v6，实际 agent-system-prompt-v5" in error.safe_message
+    assert runtime.agent_repository.list_tool_calls(job.id) == []
+    assert [
+        event["event_type"] for event in runtime.agent_repository.list_runtime_events(job.id)
+    ] == ["execution_started"]
+
+
+@pytest.mark.parametrize(
+    "actual",
+    [
+        "Authorization: Bearer synthetic-secret-do-not-echo",
+        "https://user:synthetic-password@invalid.example/business-message",
+        "agent-system-prompt-v6\nsynthetic-private-body",
+        "synthetic-private-body",
+        "agent-system-prompt-v" + "9" * 100,
+    ],
+)
+def test_prompt_version_diagnostics_never_echo_noncanonical_strings(actual: str) -> None:
+    client, _ = _client(MismatchedToolContractTransport("prompt.template_version", actual))
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        client.run(_request())
+    error = raised.value
+    assert actual not in error.safe_message
+    assert actual not in json.dumps(error.diagnostics)
+    if error.diagnostics:
+        assert error.diagnostics["runtime_actual"] == "无效格式（值已省略）"
+    else:
+        assert "事件结构或字段格式无效" in error.safe_message
+    assert len(error.safe_message) < 300
 
 
 def _resequence_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

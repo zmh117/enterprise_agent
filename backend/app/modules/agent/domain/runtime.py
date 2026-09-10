@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.shared.exceptions import ExecutionPolicyExceeded
+from app.shared.tool_contract import PROMPT_TEMPLATE_VERSION
 from app.modules.model_connection.domain import ModelRuntimeBinding
 
 
@@ -60,7 +61,7 @@ class AgentExecutionContext:
     runtime_protocol_version: str = "1.5"
     job_tool_snapshot_hash: str = ""
     control_plane_build_identity: dict[str, str] = field(default_factory=dict)
-    prompt_template_version: str = "agent-system-prompt-v5"
+    prompt_template_version: str = PROMPT_TEMPLATE_VERSION
     worker_build_identity: dict[str, str] = field(default_factory=dict)
     effective_tool_names: tuple[str, ...] = ()
     prompt_contract_hash: str = ""

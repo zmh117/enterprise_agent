@@ -6,14 +6,17 @@ from app.modules.agent.domain.runtime import AgentExecutionContext
 from app.shared.build_identity import BuildIdentity
 from app.shared.mcp_server_policy import FILE_MCP_SERVER_CODE
 from app.shared.ones_tool_contracts import ONES_COLLECTED_LIST_FIELDS
-from app.shared.tool_contract import canonical_json_sha256, tool_schema_hash
+from app.shared.tool_contract import (
+    PROMPT_TEMPLATE_VERSION,
+    canonical_json_sha256,
+    tool_schema_hash,
+)
 
 from .file_mcp_bridge import LOCAL_FILE_OUTPUT_TOOL
 from .job_sandbox import FILE_TOOL_NAMES
 from .log_evidence_scanner import LOG_EVIDENCE_INPUT_SCHEMA, LOG_EVIDENCE_TOOL
 
 
-PROMPT_TEMPLATE_VERSION = "agent-system-prompt-v6"
 _SELECT_OUTPUT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,

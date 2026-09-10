@@ -1413,6 +1413,13 @@ function ExecutionAccountingPanel({ summary }: { summary: ExecutionSummary }) {
             : " · 未定位到执行失败"}
           {summary.retry_exhausted ? " · Job 重试已耗尽" : ""}
         </p>
+        {summary.failure_code || summary.failure_summary ? (
+          <div className="mt-3 text-sm break-words text-destructive">
+            <p className="font-medium">执行失败原因</p>
+            {summary.failure_code ? <p>{summary.failure_code}</p> : null}
+            {summary.failure_summary ? <p>{summary.failure_summary}</p> : null}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )

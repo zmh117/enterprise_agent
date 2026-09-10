@@ -1,5 +1,12 @@
 ## Context
 
+## 第四阶段：Runtime 提示词版本回归修复（2026-09-10）
+
+- Worker 默认上下文仍声明 Prompt v5，而 ONES 结果只读工具接入后 Runtime 观测声明 v6；Worker 在接收 tool_contract_observed 时严格比较失败。版本定义移至两侧已共享且都被镜像复制的 app.shared.tool_contract，不通过放宽校验兼容不一致组件。
+- 协议拒绝仍使用 runtime_protocol_error，但安全消息须明确代码固定的拒绝原因；工具契约差异包含事件序号、固定字段名和安全期望/实际值。仅固定格式的 Prompt 版本及 SHA-256 可显示值，构建身份只显示匹配状态；无效字段不回显。未通过校验的 Runtime 事件不得进入已验证事件账本。
+- 复用现有 Job 错误步骤、error_message、execution_summary.failure_summary 与失败码，运行记录直接展示安全原因，不新增审计主账或伪造 Tool Call。默认上下文必须通过 Runtime 真实观测构造与 Worker NDJSON 接收链回归，同时测试不一致及恶意字段仍失败关闭。
+- 本次只部署和验证本地受影响组件；原失败 Job 保持历史事实，不自动重跑或修改 Publication/环境配置，真实 ONES 验收仍待办。
+
 ## 第三阶段：现场接口兼容与 Mock 下线
 
 - 以现场文档中的字段、类型、单位和请求投影核对所有已注册 ONES Operation；文档中未被当前工具使用的接口仅登记，不新增工具或扩大写权限。样例的业务值、认证头和身份信息不得复制进测试，回归使用独立合成值保持结构与单位一致。

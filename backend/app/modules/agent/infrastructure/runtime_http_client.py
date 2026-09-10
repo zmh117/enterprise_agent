@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -62,6 +63,33 @@ IN_PROGRESS_RECOVERY_ATTEMPTS = 12
 IN_PROGRESS_RECOVERY_DELAY_SECONDS = 0.5
 STANDARD_TOOL_MCP_CODE = TOOL_MCP_SERVER_CODE
 FILE_MCP_CODE = FILE_MCP_SERVER_CODE
+
+_PROTOCOL_ERROR_REASONS = {
+    "Runtime event stream exceeds its byte boundary": "事件流超过字节上限",
+    "Runtime event stream exceeds its event boundary": "事件数量超过上限",
+    "Runtime emitted an invalid event": "事件结构或字段格式无效",
+    "Runtime event identity or sequence mismatch": "事件身份、协议版本或序号不一致",
+    "Runtime event preceded the Tool contract observation": "工具契约观测前出现了后续事件",
+    "Runtime emitted more than one Tool contract observation": "重复收到工具契约观测",
+    "Runtime Tool contract observation identity mismatch": "工具契约字段不一致",
+    "Runtime continued execution after Tool contract drift": "工具契约未匹配却继续执行",
+    "Runtime terminal omitted the Tool contract observation": "终态缺少工具契约观测",
+    "Runtime succeeded despite Tool contract drift": "工具契约未匹配却返回成功",
+    "Runtime terminal sequence mismatch": "终态序号不一致",
+    "Runtime Agent run audit is incomplete or invalid": "执行审计分块不完整或校验失败",
+}
+
+
+def _safe_contract_value(field: str, value: object) -> str:
+    # Schema-valid strings can still carry arbitrary text. Never echo it.
+    pattern = (
+        r"agent-system-prompt-v[0-9]{1,4}"
+        if field == "prompt.template_version"
+        else r"[a-f0-9]{64}"
+    )
+    if isinstance(value, str) and re.fullmatch(pattern, value):
+        return value
+    return "无效格式（值已省略）"
 
 
 def _audit_chunk_event_for_persistence(event: dict[str, Any]) -> dict[str, Any]:
@@ -706,17 +734,48 @@ class AgentRuntimeHttpClient:
                 observation = dict(event["payload"])
                 observation_hash = str(observation.pop("observation_hash", ""))
                 identities = observation.get("component_build_identities") or []
-                if (
-                    observation_hash != canonical_json_sha256(observation)
-                    or observation.get("snapshot_hash") != request["job_tool_snapshot_hash"]
-                    or observation.get("prompt", {}).get("template_version")
-                    != request["prompt"]["template_version"]
-                    or request["control_plane_build_identity"] not in identities
-                    or request["worker_build_identity"] not in identities
-                ):
+                checks = (
+                    ("observation_hash", canonical_json_sha256(observation), observation_hash),
+                    (
+                        "snapshot_hash",
+                        request["job_tool_snapshot_hash"],
+                        observation.get("snapshot_hash"),
+                    ),
+                    (
+                        "prompt.template_version",
+                        request["prompt"]["template_version"],
+                        observation.get("prompt", {}).get("template_version"),
+                    ),
+                    (
+                        "control_plane_build_identity",
+                        True,
+                        request["control_plane_build_identity"] in identities,
+                    ),
+                    ("worker_build_identity", True, request["worker_build_identity"] in identities),
+                )
+                for field, expected, actual in checks:
+                    if expected == actual:
+                        continue
+                    build_identity = field.endswith("build_identity")
+                    safe_expected = (
+                        "与请求一致" if build_identity else _safe_contract_value(field, expected)
+                    )
+                    safe_actual = (
+                        "缺失或不一致" if build_identity else _safe_contract_value(field, actual)
+                    )
                     raise self._protocol_error(
                         "Runtime Tool contract observation identity mismatch",
                         tool_events,
+                        safe_detail=(
+                            f"事件 #{event['sequence']} 的 {field}"
+                            f"（期望 {safe_expected}，实际 {safe_actual}）"
+                        ),
+                        diagnostics={
+                            "runtime_protocol_field": field,
+                            "runtime_event_sequence": event["sequence"],
+                            "runtime_expected": safe_expected,
+                            "runtime_actual": safe_actual,
+                        },
                     )
                 tool_contract_status = str(observation.get("status") or "")
             elif tool_contract_status != "MATCH" and event_type in {
@@ -1140,11 +1199,18 @@ class AgentRuntimeHttpClient:
 
     @staticmethod
     def _protocol_error(
-        message: str, tool_events: list[dict[str, Any]]
+        message: str,
+        tool_events: list[dict[str, Any]],
+        *,
+        safe_detail: str = "",
+        diagnostics: dict[str, Any] | None = None,
     ) -> NonRetryableExecutionError:
+        reason = _PROTOCOL_ERROR_REASONS.get(message, "响应未满足执行协议")
         return NonRetryableExecutionError(
             message,
-            safe_message="Agent Runtime 协议校验失败",
+            safe_message=f"Agent Runtime 协议校验失败：{reason}"
+            + (f"；{safe_detail}" if safe_detail else ""),
             tool_events=tool_events,
             error_code="runtime_protocol_error",
+            diagnostics=diagnostics,
         )

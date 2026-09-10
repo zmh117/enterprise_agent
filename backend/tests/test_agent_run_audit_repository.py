@@ -113,6 +113,22 @@ def test_runtime_events_are_idempotently_projected_and_summary_is_rebuilt(
     assert len(AgentRepository(database).list_runtime_events(job_id)) == 5
 
 
+def test_worker_protocol_rejection_is_visible_without_a_runtime_terminal(tmp_path: Path) -> None:
+    database, job_id = _database(tmp_path)
+    summary_text = "Agent Runtime 协议校验失败：工具契约字段不一致；事件 #2 的 prompt.template_version（期望 agent-system-prompt-v6，实际 agent-system-prompt-v5）"
+    database.execute(
+        "update agent_job set status = 'FAILED', last_error_code = ?, error_message = ? where id = ?",
+        ("runtime_protocol_error", summary_text, job_id),
+    )
+    repository = ExecutionAuditRepository(database)
+    repository.record_runtime_event(job_id, _events()[0])
+    summary = repository.rebuild_summary(job_id)
+    assert summary["execution_failure_stage"] == "RUNTIME_PROTOCOL"
+    assert summary["failure_code"] == "runtime_protocol_error"
+    assert summary["failure_summary"] == summary_text
+    assert repository.list_model_calls(job_id, limit=20)["items"] == []
+
+
 def test_conflicting_model_call_replay_is_rejected(tmp_path: Path) -> None:
     database, job_id = _database(tmp_path)
     repository = ExecutionAuditRepository(database)

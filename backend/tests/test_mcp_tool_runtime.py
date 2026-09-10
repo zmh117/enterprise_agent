@@ -31,6 +31,7 @@ from app.modules.agent.application.conversation_context import ConversationConte
 from app.python_runtime.claude_client import build_system_prompt
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
+from app.shared.tool_contract import PROMPT_TEMPLATE_VERSION
 from backend.tests.helpers import container, test_settings as _test_settings
 
 
@@ -586,8 +587,8 @@ def test_conversation_context_is_rendered_once_without_model_visible_message_ids
     assert context.conversation_summary == (
         "older-summary-marker\nuser(历史用户): previous-question-marker"
     )
-    assert context.prompt_template_version == "agent-system-prompt-v5"
-    assert "Prompt template agent-system-prompt-v5" in system_prompt
+    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION
+    assert f"Prompt template {PROMPT_TEMPLATE_VERSION}" in system_prompt
     assert system_prompt.count("older-summary-marker") == 1
     assert system_prompt.count("previous-question-marker") == 1
     assert "history-message-1" not in system_prompt

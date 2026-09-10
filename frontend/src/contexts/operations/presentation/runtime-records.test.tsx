@@ -1211,6 +1211,42 @@ describe("runtime provenance records", () => {
     expect(screen.queryByText("must-not-render")).not.toBeInTheDocument()
   })
 
+  it("shows a safe protocol failure even when no tool call or audit was produced", async () => {
+    const failure =
+      "Agent Runtime 协议校验失败：工具契约字段不一致；事件 #2 的 prompt.template_version（期望 agent-system-prompt-v6，实际 agent-system-prompt-v5）"
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job({ status: "FAILED" }),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [],
+        execution_summary: executionSummary({
+          execution_status: "FAILED",
+          execution_failure_stage: "RUNTIME_PROTOCOL",
+          display_failure_stage: "RUNTIME_PROTOCOL",
+          failure_code: "runtime_protocol_error",
+          failure_summary: failure,
+        }),
+        model_calls: {
+          items: [],
+          limit: 50,
+          has_more: false,
+          next_cursor: null,
+        },
+        deliveries: { events: [], attempts: [], chunks: [] },
+        webhook_events: [],
+      })
+    )
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+    expect(await screen.findByText("执行失败原因")).toBeInTheDocument()
+    expect(screen.getByText("runtime_protocol_error")).toBeInTheDocument()
+    expect(screen.getByText(failure)).toBeInTheDocument()
+  })
+
   it.each([
     {
       error: "分页游标无效，请从第一页重新查询",

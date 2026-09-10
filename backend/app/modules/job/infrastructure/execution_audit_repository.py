@@ -275,6 +275,13 @@ class ExecutionAuditRepository:
             execution_status = _execution_status(str(job.get("status") or ""))
             failure_code = event_failure_code or bounded_text(job.get("last_error_code"), 128)
             failure_summary = event_failure_summary or bounded_text(job.get("error_message"), 2048)
+            if (
+                failure_stage is None
+                and execution_status == ExecutionStatus.FAILED
+                and failure_code == "runtime_protocol_error"
+            ):
+                # A Worker-side rejection cannot have a validated terminal event.
+                failure_stage = ExecutionFailureStage.RUNTIME_PROTOCOL
             if execution_status == ExecutionStatus.SUCCEEDED:
                 failure_stage = None
                 failure_code = None
