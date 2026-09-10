@@ -7,11 +7,13 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from app.shared.ones_tool_contracts import ONES_DEFAULT_COLLECTION_LIMIT
 from services.ones_mcp_server.errors import OnesMcpError, invalid_provider_response
 
 PAGE_SIZE = 200
-MAX_RESULTS = 1000
+MAX_RESULTS = ONES_DEFAULT_COLLECTION_LIMIT
 MAX_PAGES = 50
+TESTCASE_MAX_PAGES = 200
 MAX_SECONDS = 90
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 
@@ -22,25 +24,25 @@ def collect_pages(
     *,
     field: str,
     direct_list: bool = False,
+    max_results: int = MAX_RESULTS,
+    max_pages: int = MAX_PAGES,
 ) -> dict[str, Any]:
     """Publish only a validated collection, never a successful partial failure."""
-    limit = arguments["limit"]
-    if type(limit) is not int or not 1 <= limit <= MAX_RESULTS:
-        raise invalid_provider_response("ones_provider_schema_invalid")
+    # These budgets are selected by the service, never from tool arguments.
     started = time.monotonic()
     items: list[dict[str, Any]] = []
     identities: set[object] = set()
     cursors: set[str] = set()
     cursor = ""
     size = 0
-    for page_number in range(1, MAX_PAGES + 1):
+    for page_number in range(1, max_pages + 1):
         if time.monotonic() - started >= MAX_SECONDS:
             raise OnesMcpError(
                 "ONES collection deadline exceeded",
                 safe_message="ONES 自动翻页超时，结果未标记为完整，请缩小查询范围后重试",
                 error_code="ones_collection_timeout",
             )
-        page_limit = limit if direct_list else min(PAGE_SIZE, limit - len(items))
+        page_limit = max_results if direct_list else min(PAGE_SIZE, max_results - len(items))
         output = fetch(
             {
                 **arguments,
@@ -74,14 +76,14 @@ def collect_pages(
         if size > MAX_RESULT_BYTES:
             raise invalid_provider_response("ones_collection_size_exceeded")
         items.extend(page)
-        if not more or len(items) == limit or direct_list:
+        if not more or len(items) == max_results or direct_list:
             return {
                 field: items,
                 "total": total,
                 "returned": len(items),
                 "cumulative_returned": len(items),
                 "truncated": more,
-                "pagination_limit_reached": more and len(items) == limit,
+                "pagination_limit_reached": more and len(items) == max_results,
                 "untrusted_data": True,
             }
         next_cursor = output.get("_provider_cursor")

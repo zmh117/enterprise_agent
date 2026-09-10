@@ -1,10 +1,10 @@
 # 统一身份 ONES MCP
 
-`ones-mcp` 是代码注册、身份感知、只读的独立 MCP Server。当前只发布两个 Tool：
+`ones-mcp` 是代码注册、身份感知的独立 MCP Server。以下列举两个只读 Tool；完整当前契约见 `services/ones_mcp_server/README.md` 和 `backend/app/shared/ones_tool_contracts.py`：
 
 | Tool identifier | 输入 | 当前 Provider 调用 |
 |---|---|---|
-| `ones_work_item_search` | `keyword`、`issue_type=demand|task|defect`、`limit=1..50` | 固定 GraphQL operation |
+| `ones_work_item_search` | `keyword`、`issue_type=demand|task|defect` | 固定 GraphQL operation，自动分页累计最多1000条；MCP入参不接受limit，内部每页最多200条 |
 | `ones_list_project_role_members` | `project_uuid` | 固定项目角色成员 REST operation，再用固定 Team 用户 operation 补齐姓名 |
 
 两个工具都返回有界 schema，并标记 `untrusted_data=true`。模型不能提交 Team、用户、

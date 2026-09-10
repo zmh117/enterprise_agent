@@ -150,7 +150,7 @@ def test_ones_contract_exposes_code_owned_fixed_tools_and_confirmed_mutations() 
     assert ISSUE_TYPES == ("demand", "task", "defect")
     assert TOOL_INPUT_SCHEMA["additionalProperties"] is False
     assert TOOL_INPUT_SCHEMA["required"] == ["keyword", "issue_type"]
-    assert TOOL_INPUT_SCHEMA["properties"]["limit"]["maximum"] == 1000
+    assert "limit" not in TOOL_INPUT_SCHEMA["properties"]
     assert "cursor" not in TOOL_INPUT_SCHEMA["properties"]
     assert TOOL_OUTPUT_SCHEMA["properties"]["untrusted_data"] == {"const": True}
     assert "next_cursor" not in TOOL_OUTPUT_SCHEMA["properties"]

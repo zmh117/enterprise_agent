@@ -155,7 +155,7 @@ def test_all_ones_tool_contracts_are_valid_shared_manifest_facts() -> None:
     legacy_query = MCP_TOOL_MANIFEST["ones_query_work_items"]
     custom_query = MCP_TOOL_MANIFEST["ones_query_work_items_with_custom_options"]
     assert legacy_query.schema_hash == (
-        "b0cd30af0fb74e044f87b447331400ec3d3c38a99f1e8acb97a32a7425150cb2"
+        "13fed3cbc1b6f6476486865000a63cf8d48e6dfb18285c7a8906610a7f55b3d0"
     )
     assert "custom_option_filters" not in legacy_query.input_schema["properties"]
     assert "custom_option_filters" in custom_query.input_schema["properties"]
@@ -456,13 +456,12 @@ def test_new_tool_validation_and_timeline_projection_fail_closed() -> None:
     conditions = object.__new__(OnesQueryConditionResolverService)
 
     for arguments in (
-        {"sprint_uuid": "SPRINT-1", "limit": 10},
+        {"sprint_uuid": "SPRINT-1"},
         {
             "created_from": "2026-08-02T00:00:00Z",
             "created_to": "2026-08-01T00:00:00Z",
-            "limit": 10,
         },
-        {"query": "mutation Forbidden { update }", "limit": 10},
+        {"query": "mutation Forbidden { update }"},
     ):
         with pytest.raises(AppError) as raised:
             work_items.validate_arguments(arguments)
@@ -481,17 +480,16 @@ def test_new_tool_validation_and_timeline_projection_fail_closed() -> None:
                         "option_uuids": ["OPTION-2"],
                     },
                 ],
-                "limit": 10,
             }
         )
     assert duplicate_custom_field.value.error_code == "ones_tool_input_invalid"
 
     with pytest.raises(AppError) as missing_custom_filter:
-        custom_work_items.validate_arguments({"limit": 10})
+        custom_work_items.validate_arguments({})
     assert missing_custom_filter.value.error_code == "ones_tool_input_invalid"
 
     with pytest.raises(AppError) as missing_library:
-        test_cases.validate_arguments({"source": "module", "source_uuid": "MODULE-1", "limit": 10})
+        test_cases.validate_arguments({"source": "module", "source_uuid": "MODULE-1"})
     assert missing_library.value.error_code == "ones_tool_input_invalid"
 
     for arguments in (

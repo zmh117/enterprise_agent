@@ -558,7 +558,7 @@ def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None
     service = fixture["service"]
     result = service.search(
         claims=fixture["claims"],
-        arguments={"keyword": "traceability", "issue_type": "demand", "limit": 10},
+        arguments={"keyword": "traceability", "issue_type": "demand"},
         correlation_id="ones-query-1",
     )
 
@@ -596,7 +596,7 @@ def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None
                 "issueType_in": ["WE3uoYoq"],
             }
         ],
-        "pagination": {"limit": 10, "preciseCount": True},
+        "pagination": {"limit": 200, "preciseCount": True},
     }
     assert json.loads(provider["business_response_json"])["returned"] == 1
     assert json.loads(tool["tool_request_json"])["keyword"] == "traceability"
@@ -628,7 +628,7 @@ def test_ones_mcp_refreshes_stale_token_once_and_retries_mock_query() -> None:
     fixture = _fixture(initial_token="stale-test-token")
     result = fixture["service"].search(
         claims=fixture["claims"],
-        arguments={"keyword": "#900103", "issue_type": "defect", "limit": 5},
+        arguments={"keyword": "#900103", "issue_type": "defect"},
         correlation_id="ones-query-refresh",
     )
 
@@ -662,7 +662,7 @@ def test_new_project_query_uses_job_scope_refresh_and_safe_provider_audit() -> N
 
     result = service.invoke(
         claims=service.authenticate(fixture["token"]),
-        arguments={"keyword": "Manufacturing", "limit": 10},
+        arguments={"keyword": "Manufacturing"},
         correlation_id="ones-project-search-refresh",
         invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
     )
@@ -718,15 +718,15 @@ def test_all_graphql_list_tools_automatically_return_bounded_collections() -> No
     cases = (
         (
             fixture["project_search_service"],
-            {"keyword": "", "limit": 1},
+            {"keyword": ""},
             "projects",
         ),
         (
             fixture["issue_type_service"],
-            {"project_uuid": fixture["mock"].config.project_uuid, "limit": 1},
+            {"project_uuid": fixture["mock"].config.project_uuid},
             "issue_types",
         ),
-        (fixture["work_item_query_service"], {"limit": 1}, "items"),
+        (fixture["work_item_query_service"], {}, "items"),
         (
             fixture["custom_work_item_query_service"],
             {
@@ -740,24 +740,22 @@ def test_all_graphql_list_tools_automatically_return_bounded_collections() -> No
                         ],
                     }
                 ],
-                "limit": 1,
             },
             "items",
         ),
-        (fixture["testcase_library_service"], {"limit": 1}, "libraries"),
+        (fixture["testcase_library_service"], {}, "libraries"),
         (
             fixture["testcase_module_service"],
-            {"library_uuid": "MOCK-ONES-LIBRARY-001", "limit": 1},
+            {"library_uuid": "MOCK-ONES-LIBRARY-001"},
             "modules",
         ),
-        (fixture["test_plan_service"], {"limit": 1}, "plans"),
+        (fixture["test_plan_service"], {}, "plans"),
         (
             fixture["test_case_service"],
             {
                 "source": "module",
                 "source_uuid": "MOCK-ONES-MODULE-001",
                 "library_uuid": "MOCK-ONES-LIBRARY-001",
-                "limit": 1,
             },
             "test_cases",
         ),
@@ -767,7 +765,7 @@ def test_all_graphql_list_tools_automatically_return_bounded_collections() -> No
         claims = service.authenticate(fixture["token"])
         first = service.invoke(
             claims=claims,
-            arguments={**arguments, "limit": 1000},
+            arguments=arguments,
             correlation_id=f"ones-graphql-page-{index}-1",
             invocation_id=invocation_id,
         )
@@ -794,7 +792,6 @@ def test_custom_option_query_is_dictionary_validated_before_fixed_graphql() -> N
                     "option_uuids": ["MOCK-CUSTOM-OPTION-HIGH"],
                 }
             ],
-            "limit": 10,
         },
         correlation_id="ones-custom-filter",
         invocation_id=invocation_id,
@@ -822,7 +819,6 @@ def test_custom_option_query_is_dictionary_validated_before_fixed_graphql() -> N
                         "option_uuids": ["MOCK-CUSTOM-OPTION-UNKNOWN"],
                     }
                 ],
-                "limit": 10,
             },
             correlation_id="ones-custom-filter-unknown",
             invocation_id=invocation_id,
@@ -1216,7 +1212,6 @@ def test_ones_mcp_v2_stateless_http_requires_bearer_and_supports_both_protocol_e
                     "arguments": {
                         "keyword": "traceability",
                         "issue_type": "demand",
-                        "limit": 10,
                     },
                 },
             },
@@ -1298,7 +1293,7 @@ def test_ones_mcp_classifies_provider_failures_without_persisting_error_bodies(
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
             claims=fixture["claims"],
-            arguments={"keyword": keyword, "issue_type": "defect", "limit": 5},
+            arguments={"keyword": keyword, "issue_type": "defect"},
             correlation_id="ones-query-provider-failure",
         )
 
@@ -1337,7 +1332,7 @@ def test_ones_mcp_classifies_provider_timeout_without_persisting_a_response() ->
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
             claims=fixture["claims"],
-            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            arguments={"keyword": "traceability", "issue_type": "demand"},
             correlation_id="ones-query-provider-timeout",
         )
 
@@ -1402,7 +1397,7 @@ def test_ones_mcp_refresh_fails_closed_when_login_identity_is_not_current(
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
             claims=fixture["claims"],
-            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            arguments={"keyword": "traceability", "issue_type": "demand"},
             correlation_id=f"ones-query-refresh-{refresh_outcome}",
         )
 
@@ -1439,7 +1434,7 @@ def test_ones_mcp_refresh_cas_conflict_does_not_overwrite_the_winning_token(
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
             claims=fixture["claims"],
-            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            arguments={"keyword": "traceability", "issue_type": "demand"},
             correlation_id="ones-query-refresh-cas-conflict",
         )
 
@@ -1457,7 +1452,7 @@ def test_ones_mcp_second_401_marks_credential_reverification_required() -> None:
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
             claims=fixture["claims"],
-            arguments={"keyword": "__401__", "issue_type": "defect", "limit": 5},
+            arguments={"keyword": "__401__", "issue_type": "defect"},
             correlation_id="ones-query-second-401",
         )
 
@@ -1479,7 +1474,6 @@ def test_ones_mcp_rejects_extra_identity_fields_before_resolving_credentials() -
             arguments={
                 "keyword": "traceability",
                 "issue_type": "demand",
-                "limit": 5,
                 "user_id": "forged-user",
             },
             correlation_id="ones-query-forged-identity",
@@ -1504,7 +1498,7 @@ def test_ones_mcp_fails_closed_for_missing_or_ambiguous_current_identity() -> No
     with pytest.raises(AppError) as no_credential:
         missing["service"].search(
             claims=missing["claims"],
-            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            arguments={"keyword": "traceability", "issue_type": "demand"},
             correlation_id="ones-query-no-credential",
         )
     assert no_credential.value.error_code == "ones_credential_reverification_required"
@@ -1525,7 +1519,7 @@ def test_ones_mcp_fails_closed_for_missing_or_ambiguous_current_identity() -> No
     with pytest.raises(AppError) as multiple:
         ambiguous["service"].search(
             claims=ambiguous["claims"],
-            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            arguments={"keyword": "traceability", "issue_type": "demand"},
             correlation_id="ones-query-ambiguous",
         )
     assert multiple.value.error_code == "ones_identity_ambiguous"
@@ -1568,7 +1562,7 @@ def test_ones_mcp_rechecks_current_user_identity_and_tool_grant(
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
             claims=fixture["claims"],
-            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            arguments={"keyword": "traceability", "issue_type": "demand"},
             correlation_id=f"ones-query-{revoked_fact}",
         )
 
@@ -1626,7 +1620,7 @@ def test_mcp_audit_detail_requires_audit_read_and_records_the_read() -> None:
     fixture = _fixture()
     fixture["service"].search(
         claims=fixture["claims"],
-        arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+        arguments={"keyword": "traceability", "issue_type": "demand"},
         correlation_id="ones-audit-read",
     )
     runtime = fixture["runtime"]
@@ -1703,7 +1697,7 @@ def test_ones_mcp_fails_closed_when_required_business_audit_cannot_commit(
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
             claims=fixture["claims"],
-            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            arguments={"keyword": "traceability", "issue_type": "demand"},
             correlation_id="ones-query-audit-down",
         )
 
@@ -1733,7 +1727,7 @@ def test_mcp_audit_failure_rolls_back_platform_audit_and_logs_only_error_type(
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
             claims=fixture["claims"],
-            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            arguments={"keyword": "traceability", "issue_type": "demand"},
             correlation_id="ones-query-audit-transaction",
         )
 
@@ -1768,7 +1762,7 @@ def test_ones_mcp_rejects_provider_auth_fields_before_business_audit() -> None:
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
             claims=fixture["claims"],
-            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            arguments={"keyword": "traceability", "issue_type": "demand"},
             correlation_id="ones-query-secret-field",
         )
 
@@ -1785,7 +1779,7 @@ def test_mcp_audit_retention_deletes_business_payload_and_invalid_config_is_unre
     fixture = _fixture()
     fixture["service"].search(
         claims=fixture["claims"],
-        arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+        arguments={"keyword": "traceability", "issue_type": "demand"},
         correlation_id="ones-query-expired-audit",
     )
     fixture["runtime"].database.execute(

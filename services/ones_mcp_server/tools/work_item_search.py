@@ -8,7 +8,7 @@ from services.ones_mcp_server.provider.graphql.operations.work_item_search impor
 )
 from services.ones_mcp_server.tools.base import OnesToolResult
 from services.ones_mcp_server.tools.query_services import AutomaticGraphqlQueryService
-from services.ones_mcp_server.tools.validation import integer, invalid_input, require_fields, text
+from services.ones_mcp_server.tools.validation import invalid_input, require_fields, text
 
 OnesSearchResult = OnesToolResult
 
@@ -27,7 +27,7 @@ class OnesWorkItemSearchService(AutomaticGraphqlQueryService):
     def _validate_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"keyword", "issue_type", "limit"},
+            allowed={"keyword", "issue_type"},
             required={"keyword", "issue_type"},
         )
         if value["issue_type"] not in ISSUE_TYPES:
@@ -35,7 +35,6 @@ class OnesWorkItemSearchService(AutomaticGraphqlQueryService):
         return {
             "keyword": text(value["keyword"], maximum=200),
             "issue_type": value["issue_type"],
-            "limit": integer(value.get("limit", 1000), minimum=1, maximum=1000),
         }
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:

@@ -539,11 +539,11 @@ sequenceDiagram
     OM-->>RT: 有界结果或稳定安全错误
 ```
 
-当前固定两个只读 Tool：
+以下列举两个固定只读 Tool；完整当前契约见 `services/ones_mcp_server/README.md` 和 `backend/app/shared/ones_tool_contracts.py`：
 
 | Tool | 输入 | Provider 行为 |
 |---|---|---|
-| `ones_work_item_search` | `keyword`、`issue_type=demand|task|defect`、`limit=1..50` | 固定 GraphQL operation |
+| `ones_work_item_search` | `keyword`、`issue_type=demand|task|defect` | 固定 GraphQL operation，自动分页累计最多1000条；MCP入参不接受limit，内部每页最多200条 |
 | `ones_list_project_role_members` | `project_uuid` | 固定项目角色 REST，再用固定 Team 用户 REST 补姓名 |
 
 Tool scope 由代码生成，格式为 `mcp:<server_code>:<tool_identifier>:invoke`。模型不能传

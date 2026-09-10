@@ -429,7 +429,7 @@ class PythonRuntimeExecutor:
                     else self._first_frozen_tool(request, business_server_code)
                 ),
                 arguments=(
-                    {"keyword": "traceability", "issue_type": "demand", "limit": 5}
+                    {"keyword": "traceability", "issue_type": "demand"}
                     if business_server_code == ONES_MCP_SERVER_CODE
                     else {}
                 ),

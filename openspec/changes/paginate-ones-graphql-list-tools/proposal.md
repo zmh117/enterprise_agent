@@ -1,5 +1,9 @@
 ## Why
 
+2026-09-10 后续确认：仅 ones_list_testcase_libraries、ones_list_testcase_modules、ones_list_test_plans、ones_query_test_cases 四个测试资产列表累计上限提高到10000。其余五个 GraphQL 列表仍为1000，详情/REST/写工具不变；bucket单页最多200，测试资产最多200次请求以覆盖50条短页，保留90秒、8MiB及沙盒预算与清理。公开输入不新增limit/cursor。
+
+2026-09-10 用户确认：九个 GraphQL 列表由服务端固定收集到终页或1000条，移除 MCP 入参 limit，防止模型把累计上限降到50。ONES 内部 pagination.limit 仍只表示单次请求页大小，最多200。REST接口不变，旧发布快照不静默升级。
+
 第三阶段（用户要求，2026-09-09）：移除可运行的 ONES Mock 干扰，以 `ones_mock/ones` 中的现场接口结构逐项核对当前已注册 Operation，修复进度/时间单位、响应解析和安全错误定位。现场材料仅作为结构证据，认证材料与业务正文不得进入代码、测试或日志；现场文档保留，测试替身仅放在 tests 中用于进程内校验。用户最终确认：保留接口修复，只删除 Mock 服务，恢复环境示例及额外配置改动；ones-mcp 保持原启动方式和连接配置，不连接真实 ONES。本阶段明确包含 REST 和详情解析，不沿用下方第一阶段的排除项。
 
 2026-09-09 用户确认的新范围替代下述第一阶段方案：九个 GraphQL 列表（包含 `ones_work_item_search`）由程序自动分页，每批最多 200 条、每次默认/最多 1000 条，不再向模型公开 cursor；Runtime 将结果写入 Job 只读临时沙盒并在 Job 终态清理。Tool Call 时间线显示既有安全错误报文与错误码。下方旧 cursor/500 条范围只保留为第一阶段背景，不再作为当前实施契约；以本 change 最新 delta 和 design 的第二阶段决策为准。

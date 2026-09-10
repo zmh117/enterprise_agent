@@ -97,25 +97,25 @@ class _McpAudit:
         self.events.append({"kind": "complete", **values})
 
 
-# Snapshot refreshed after approved automatic collection (input schema changes).
+# Snapshot refreshed after removing the public GraphQL collection limit.
 _EXISTING_ONES_SCHEMA_HASHES = {
     "ones_get_test_case_detail": "81f646d23d550f7adb5243bbbd841f2ae25afd34897546f00d6158d7f1002153",
     "ones_get_users_by_uuids": "e56c66b8b87a71f6c1ef9b6bc7e90c0be32a32b22af0bd411a05dbb960eb0a72",
     "ones_get_work_item_detail": "9e6564274e6ca35e58d30fdaca2e9816e41a9e6cbda1e4432df1081e73c07b7c",
-    "ones_list_issue_types": "fd9c4550a2365fe2c7b27500216dc731a3ba9608add14e5446110302c9d30448",
+    "ones_list_issue_types": "9fa3c7b5f5683f721d8e6a850a3acd0c944e47a77f0768d9956869134e5233a0",
     "ones_list_project_role_members": "3db73cd406df6c67411c65fa6518434282eebeef527467fd200115892a48807d",
     "ones_list_project_sprints": "5e304bab23739ff953b45e2fc386e04df7216aaf9495a5723b8346c9e22f6ed3",
-    "ones_list_test_plans": "796221352786e2ebe449f250a116948aa6bd0f706a971d78d39a447c5e7cd459",
-    "ones_list_testcase_libraries": "796221352786e2ebe449f250a116948aa6bd0f706a971d78d39a447c5e7cd459",
-    "ones_list_testcase_modules": "2b2190ecb9c04162d53f23f07482224a51e4435f4a8f01e64ec3c48b4bf19caf",
+    "ones_list_test_plans": "d746974fa9afd5e951f76f9af38954b0ad7f436f2120dc974da65e5ee39f856f",
+    "ones_list_testcase_libraries": "d746974fa9afd5e951f76f9af38954b0ad7f436f2120dc974da65e5ee39f856f",
+    "ones_list_testcase_modules": "18efbb53a0ee38e85a4c07941170bb67923e4dbb46f198c6a4b8c6a2c724bf56",
     "ones_list_work_item_messages": "d58ffbb7041cdf58846ace1c2ed944af82ec3d115abb36972cff2db62d898dfb",
-    "ones_query_test_cases": "cf5daa9d8309bb85b2226da4fe449295a8da7b28b7b9fd08aae1eb4fc44aad5f",
-    "ones_query_work_items": "b0cd30af0fb74e044f87b447331400ec3d3c38a99f1e8acb97a32a7425150cb2",
-    "ones_query_work_items_with_custom_options": "0c465d2b00dcf20d68952cd5f7e4c3c9cf27df3dc477f355f3a3f8a605e4a8b8",
+    "ones_query_test_cases": "f513b54c17dd412d48e7e0f48fb15b6aa3aa7fb9b37ed96bee2dbda71989fdd2",
+    "ones_query_work_items": "13fed3cbc1b6f6476486865000a63cf8d48e6dfb18285c7a8906610a7f55b3d0",
+    "ones_query_work_items_with_custom_options": "9bcd66f2686e65cfd0d98cbf2be0ebb9d659c33184e004cd39b046aa6e0fda97",
     "ones_resolve_query_conditions": "2bcfa7c98012e3dccfb9de3c37d88584b3c937e045a6e3214173ed7237f8b8c8",
-    "ones_search_projects": "b6f0fe902261d4d96328d5e258b960790200a5f6e415bf300cc9295628589e24",
+    "ones_search_projects": "ef9d94d8ef15b077fe82915c42d05791d955ace5d9ddaf51b7dd1d2941dbf40d",
     "ones_search_team_users": "bbbb4652555ebcfd283172e7dd179766bde847b61206aaa89dd77943501328a6",
-    "ones_work_item_search": "7562db1870f6c391479503316d8d5d2d4cd3a68b1eb4fbbe518bcd81d84bf426",
+    "ones_work_item_search": "4db89dfe08dcd1a7bbc730c4754bd65ae2b64d6698493b811ed44973ffc10d97",
 }
 
 

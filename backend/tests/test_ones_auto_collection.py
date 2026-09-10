@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,14 +15,25 @@ from app.python_runtime.job_sandbox import JobSandboxError, JobSandboxManager
 from app.python_runtime.ones_result_bridge import OnesResultBridge, materialize_result
 from app.shared.ones_tool_contracts import ONES_COLLECTED_LIST_FIELDS, ONES_TOOL_CONTRACTS
 from app.shared.tool_contract import tool_schema_hash
+from app.shared.exceptions import NonRetryableExecutionError
 from services.ones_mcp_server.errors import OnesMcpError
 from services.ones_mcp_server.provider.graphql.collection import collect_pages
 from services.ones_mcp_server.provider.graphql.operations.normalization import page_items
+from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
+from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
+from services.ones_mcp_server.provider.graphql.operations.business_queries import (
+    BUSINESS_GRAPHQL_OPERATIONS,
+)
+from services.ones_mcp_server.tools import query_services
+from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
 from tests.test_ones_mcp_runtime import _fixture, _PagingGraphql, _normalized_project_page
 
 
 @pytest.mark.parametrize("ending", ["success", "failure", "cancel", "timeout"])
-def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, ending):
+@pytest.mark.parametrize(
+    "name,count", [("ones_search_projects", 1000), ("ones_query_test_cases", 10000)]
+)
+def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, ending, name, count):
     from app.modules.agent.domain.runtime import (
         AgentExecutionContext,
         AgentRunRequest,
@@ -33,7 +45,6 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
     from app.shared.exceptions import AppError
     from backend.tests.support.runtime import test_settings
 
-    name = "ones_search_projects"
     contract = ONES_TOOL_CONTRACTS[name]
     captured = {}
     cancel = threading.Event()
@@ -54,7 +65,19 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
                 {
                     "content": [],
                     "isError": False,
-                    "structuredContent": _project_result(),
+                    "structuredContent": (
+                        _project_result()
+                        if name == "ones_search_projects"
+                        else {
+                            "test_cases": [{"uuid": f"CASE-{i}"} for i in range(count)],
+                            "total": count,
+                            "returned": count,
+                            "cumulative_returned": count,
+                            "truncated": False,
+                            "pagination_limit_reached": False,
+                            "untrusted_data": True,
+                        }
+                    ),
                     "_meta": {"enterprise-agent/mcp-call-id": "audit"},
                 }
             )
@@ -68,10 +91,17 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
         captured["cwd"] = options["cwd"]
         assert set(options["tools"]) == {"Read", "Glob", "Grep"}
         assert {"Write", "Edit", "Bash"} <= set(options["disallowed_tools"])
-        result = await captured["bridge"].call_tool(name, {"keyword": ""})
+        arguments = (
+            {"keyword": ""}
+            if name == "ones_search_projects"
+            else {"source": "plan", "source_uuid": "PLAN"}
+        )
+        result = await captured["bridge"].call_tool(name, arguments)
         summary = result.model_dump(by_alias=True)["structuredContent"]
         path = Path(options["cwd"]) / summary["result_file"]
-        assert "Project 1000" in path.read_text()
+        assert summary["returned"] == count
+        marker = "Project 1000" if name == "ones_search_projects" else "CASE-9999"
+        assert marker in path.read_text()
         allowed = await options["can_use_tool"]("Read", {"file_path": str(path)}, None)
         assert allowed["behavior"] == "allow"
         denied = await options["can_use_tool"](
@@ -84,7 +114,7 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
             cancel.set()
         if ending in {"cancel", "timeout"}:
             await asyncio.sleep(10)
-        yield {"type": "result", "result": "已读取1000条", "is_error": False}
+        yield {"type": "result", "result": f"已读取{count}条", "is_error": False}
 
     sdk = ClaudeSdk(
         query=query,
@@ -153,7 +183,7 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
         job_id="job-bridge", user_id="user", project_code="test", context=context
     )
     if ending == "success":
-        assert client.run(request).final_answer == "已读取1000条"
+        assert client.run(request).final_answer == f"已读取{count}条"
     else:
         with pytest.raises(AppError):
             client.run(request)
@@ -162,19 +192,21 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
 
 
 @pytest.mark.parametrize(
-    "count,limit",
+    "count",
     [
-        (0, 1000),
-        (199, 1000),
-        (200, 1000),
-        (201, 1000),
-        (999, 1000),
-        (1000, 1000),
-        (1001, 1000),
-        (1100, 953),
+        0,
+        199,
+        200,
+        201,
+        256,
+        999,
+        1000,
+        1001,
+        1100,
     ],
 )
-def test_service_collects_pages_with_exact_internal_cursors(count, limit):
+def test_service_collects_pages_with_exact_internal_cursors(count):
+    limit = 1000
     fixture = _fixture(capabilities=("ones_search_projects",))
     service = fixture["project_search_service"]
     pages = [
@@ -195,7 +227,7 @@ def test_service_collects_pages_with_exact_internal_cursors(count, limit):
     service.graphql = graphql
     output = service.invoke(
         claims=service.authenticate(fixture["token"]),
-        arguments={"keyword": "", "limit": limit},
+        arguments={"keyword": ""},
         correlation_id="auto-pages",
         invocation_id="",
     )
@@ -209,6 +241,120 @@ def test_service_collects_pages_with_exact_internal_cursors(count, limit):
             "" if not index else f"opaque-{index * 200}"
         )
     Draft202012Validator(service.output_schema).validate(output)
+
+
+@pytest.mark.parametrize(
+    "service_type,arguments",
+    [
+        (OnesWorkItemSearchService, {"keyword": "synthetic", "issue_type": "task"}),
+        (query_services.OnesProjectSearchService, {"keyword": ""}),
+        (query_services.OnesIssueTypeListService, {"project_uuid": "PROJECT"}),
+        (query_services.OnesWorkItemQueryService, {}),
+        (
+            query_services.OnesCustomOptionWorkItemQueryService,
+            {"custom_option_filters": [{"field_uuid": "FIELD", "option_uuids": ["OPTION"]}]},
+        ),
+        (query_services.OnesTestcaseLibraryListService, {}),
+        (query_services.OnesTestcaseModuleListService, {"library_uuid": "LIBRARY"}),
+        (query_services.OnesTestPlanListService, {}),
+        (query_services.OnesTestCaseQueryService, {"source": "plan", "source_uuid": "PLAN"}),
+    ],
+)
+def test_all_nine_service_validators_reject_model_collection_controls(service_type, arguments):
+    service = object.__new__(service_type)
+    contract = ONES_TOOL_CONTRACTS[service.tool_identifier]
+    Draft202012Validator(contract.input_schema).validate(arguments)
+    assert "limit" not in service.validate_arguments(arguments)
+    for control in (
+        {"limit": 50},
+        {"limit": 1000},
+        {"limit": 10000},
+        {"limit": 0},
+        {"limit": None},
+        {"cursor": "cursor"},
+    ):
+        assert not Draft202012Validator(contract.input_schema).is_valid({**arguments, **control})
+        with pytest.raises(OnesMcpError) as error:
+            service.validate_arguments({**arguments, **control})
+        assert error.value.error_code == "ones_tool_input_invalid"
+
+
+@pytest.mark.parametrize("count", [256, 1000, 1001])
+def test_work_item_service_continues_50_item_provider_pages(count):
+    fixture = _fixture(capabilities=("ones_query_work_items",))
+    service = fixture["work_item_query_service"]
+    requests = []
+
+    class ShortPageHttp:
+        def post_json(self, path, payload, **kwargs):
+            variables = payload["variables"]
+            requests.append(deepcopy(variables))
+            pagination = variables["pagination"]
+            start = int(pagination["after"] or 0)
+            end = min(start + 50, start + pagination["limit"], count)
+            rows = [
+                {
+                    "uuid": f"SYNTHETIC-{i}",
+                    "number": i,
+                    "name": "Synthetic",
+                    "project": {"uuid": "P"},
+                    "issueType": {"uuid": "I"},
+                    "status": {"uuid": "S", "name": "New", "category": "to_do"},
+                    "sprint": {"uuid": "", "name": ""},
+                }
+                for i in range(start, end)
+            ]
+            return {
+                "data": {
+                    "buckets": [
+                        {
+                            "tasks": rows,
+                            "pageInfo": {
+                                "count": len(rows),
+                                "totalCount": count,
+                                "hasNextPage": end < count,
+                                "endCursor": str(end),
+                                "unstable": False,
+                            },
+                        }
+                    ]
+                }
+            }
+
+    service.graphql = OnesGraphqlClient(
+        ShortPageHttp(), GraphqlOperationRegistry(BUSINESS_GRAPHQL_OPERATIONS)
+    )
+    result = service.invoke(
+        claims=service.authenticate(fixture["token"]),
+        arguments={"keyword": "synthetic", "status_categories": ["to_do"]},
+        correlation_id="short-provider-pages",
+        invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
+    )
+    assert result["returned"] == min(count, 1000)
+    assert result["truncated"] is result["pagination_limit_reached"] is (count > 1000)
+    assert len(requests) == (min(count, 1000) + 49) // 50
+    assert all(1 <= request["pagination"]["limit"] <= 200 for request in requests)
+    for index, request in enumerate(requests):
+        assert request["pagination"]["after"] == (str(index * 50) if index else "")
+        assert request["filterGroup"] == requests[0]["filterGroup"]
+        assert request["orderBy"] == requests[0]["orderBy"]
+    Draft202012Validator(service.output_schema).validate(result)
+
+
+def test_internal_legacy_limit_cannot_lower_server_collection_cap():
+    def fetch(arguments):
+        start = arguments["cumulative_returned"]
+        end = min(start + arguments["limit"], 256)
+        return {
+            "items": [{"uuid": str(i)} for i in range(start, end)],
+            "total": 256,
+            "truncated": end < 256,
+            "_provider_cursor": str(end),
+        }
+
+    result = collect_pages(fetch, {"limit": 50}, field="items")
+    assert result["returned"] == 256
+    assert result["pagination_limit_reached"] is result["truncated"] is False
 
 
 @pytest.mark.parametrize("field", list(ONES_COLLECTED_LIST_FIELDS.values()))
@@ -256,11 +402,11 @@ def test_provider_page_integrity_is_checked(change, code):
     assert error.value.error_code == code
 
 
-def test_all_graphql_tools_default_to_1000_and_reject_model_cursor():
+def test_all_graphql_tools_have_no_model_limit_or_cursor():
     for name in ONES_COLLECTED_LIST_FIELDS:
         contract = ONES_TOOL_CONTRACTS[name]
         assert "limit" not in contract.input_schema["required"]
-        assert contract.input_schema["properties"]["limit"]["maximum"] == 1000
+        assert "limit" not in contract.input_schema["properties"]
         assert "cursor" not in contract.input_schema["properties"]
         assert "next_cursor" not in contract.output_schema["properties"]
     fixture = _fixture()
@@ -362,3 +508,18 @@ def test_bridge_keeps_remote_error_and_audit_link_and_checks_frozen_schema(tmp_p
 
     asyncio.run(run())
     assert not list((bridge.sandbox.path / "work").iterdir())
+
+    # A frozen publication with the former optional limit cannot silently upgrade.
+    previous_schema = deepcopy(contract.input_schema)
+    previous_schema["properties"]["limit"] = {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000,
+        "default": 1000,
+    }
+    bridge.frozen = {contract.identifier: tool_schema_hash(previous_schema)}
+    bridge.session = Session()
+    with pytest.raises(NonRetryableExecutionError) as error:
+        asyncio.run(bridge.connect())
+    assert error.value.error_code == "runtime_ones_tool_contract_invalid"
+    assert bridge.session is None

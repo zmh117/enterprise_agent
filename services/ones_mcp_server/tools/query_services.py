@@ -3,11 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 from app.modules.mcp_audit import McpAuditHandle
+from app.shared.ones_tool_contracts import ONES_COLLECTION_LIMITS, ONES_TESTCASE_LIST_TOOLS
 from services.ones_mcp_server.auth.principal import ResolvedOnesPrincipal
 from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
 from services.ones_mcp_server.contracts import PROVIDER_HEADERS
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
-from services.ones_mcp_server.provider.graphql.collection import collect_pages
+from services.ones_mcp_server.provider.graphql.collection import (
+    MAX_PAGES,
+    TESTCASE_MAX_PAGES,
+    collect_pages,
+)
 from services.ones_mcp_server.provider.graphql.operations.business_queries import (
     ISSUE_TYPE_LIST,
     PROJECT_SEARCH,
@@ -112,6 +117,10 @@ class AutomaticGraphqlQueryService(GraphqlQueryService):
         self, principal: ResolvedOnesPrincipal, arguments: dict[str, Any]
     ) -> ProviderCall:
         prepared = dict(arguments)
+        collection_limit = ONES_COLLECTION_LIMITS[self.tool_identifier]
+        max_pages = (
+            TESTCASE_MAX_PAGES if self.tool_identifier in ONES_TESTCASE_LIST_TOOLS else MAX_PAGES
+        )
         requests: list[dict[str, Any]] = []
 
         def fetch(page: dict[str, Any]) -> dict[str, Any]:
@@ -133,12 +142,14 @@ class AutomaticGraphqlQueryService(GraphqlQueryService):
             prepared,
             field=self.output_field,
             direct_list=self.direct_list,
+            max_results=collection_limit,
+            max_pages=max_pages,
         )
         return ProviderCall(
             output,
             {
                 "operation": self.selected_operation(prepared),
-                "limit": prepared["limit"],
+                "collection_limit": collection_limit,
                 "page_count": len(requests),
                 "pages": requests,
             },
@@ -154,12 +165,11 @@ class OnesProjectSearchService(AutomaticGraphqlQueryService):
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"keyword", "limit"},
+            allowed={"keyword"},
             required={"keyword"},
         )
         result = {
             "keyword": text(value["keyword"], maximum=200, allow_empty=True).strip(),
-            "limit": integer(value.get("limit", 1000), minimum=1, maximum=1000),
         }
         return result
 
@@ -173,12 +183,11 @@ class OnesIssueTypeListService(AutomaticGraphqlQueryService):
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"project_uuid", "limit"},
+            allowed={"project_uuid"},
             required={"project_uuid"},
         )
         result = {
             "project_uuid": identifier(value["project_uuid"]),
-            "limit": integer(value.get("limit", 1000), minimum=1, maximum=1000),
         }
         return result
 
@@ -197,14 +206,11 @@ class OnesWorkItemQueryService(AutomaticGraphqlQueryService):
         "assignee_uuids",
         "created_from",
         "created_to",
-        "limit",
     }
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(arguments, allowed=self._allowed, required=set())
-        result: dict[str, Any] = {
-            "limit": integer(value.get("limit", 1000), minimum=1, maximum=1000)
-        }
+        result: dict[str, Any] = {}
         if "keyword" in value:
             result["keyword"] = text(value["keyword"], maximum=200, allow_empty=True).strip()
         for key in ("project_uuid", "sprint_uuid"):
@@ -288,8 +294,8 @@ class OnesTestcaseLibraryListService(AutomaticGraphqlQueryService):
     output_field = "libraries"
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        value = require_fields(arguments, allowed={"limit"}, required=set())
-        result = {"limit": integer(value.get("limit", 1000), minimum=1, maximum=1000)}
+        require_fields(arguments, allowed=set(), required=set())
+        result: dict[str, Any] = {}
         return result
 
 
@@ -302,12 +308,11 @@ class OnesTestcaseModuleListService(AutomaticGraphqlQueryService):
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"library_uuid", "limit"},
+            allowed={"library_uuid"},
             required={"library_uuid"},
         )
         result = {
             "library_uuid": identifier(value["library_uuid"]),
-            "limit": integer(value.get("limit", 1000), minimum=1, maximum=1000),
         }
         return result
 
@@ -318,8 +323,8 @@ class OnesTestPlanListService(AutomaticGraphqlQueryService):
     output_field = "plans"
 
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        value = require_fields(arguments, allowed={"limit"}, required=set())
-        result = {"limit": integer(value.get("limit", 1000), minimum=1, maximum=1000)}
+        require_fields(arguments, allowed=set(), required=set())
+        result: dict[str, Any] = {}
         return result
 
 
@@ -331,7 +336,7 @@ class OnesTestCaseQueryService(AutomaticGraphqlQueryService):
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"source", "source_uuid", "library_uuid", "limit"},
+            allowed={"source", "source_uuid", "library_uuid"},
             required={"source", "source_uuid"},
         )
         source = value["source"]
@@ -340,7 +345,6 @@ class OnesTestCaseQueryService(AutomaticGraphqlQueryService):
         result: dict[str, Any] = {
             "source": source,
             "source_uuid": identifier(value["source_uuid"]),
-            "limit": integer(value.get("limit", 1000), minimum=1, maximum=1000),
         }
         if "library_uuid" in value:
             result["library_uuid"] = identifier(value["library_uuid"])
