@@ -1669,7 +1669,11 @@ function ExecutionEvidenceTimeline({
                 <TimelineItem
                   key={String(toolCall.id ?? index)}
                   label={`${String(toolCall.tool_name ?? "tool")} · ${String(toolCall.status ?? "")}`}
-                  value={formatToolResponseSummary(toolCall.response_summary)}
+                  value={formatToolResponseSummary(
+                    toolCall.response_summary,
+                    String(toolCall.tool_name ?? ""),
+                    String(toolCall.status ?? "")
+                  )}
                 />
               ))}
             </ol>
@@ -2197,14 +2201,12 @@ function formatCounter(value: number | null): string {
   return value === null ? "未知" : value.toLocaleString()
 }
 
-function formatToolResponseSummary(value: unknown): string {
-  if (value === null || value === undefined || value === "") return ""
-
-  const summary = structuredSummary(value)
-  if (!summary) {
-    return typeof value === "string" ? value : "已记录结构化安全摘要"
-  }
-
+function formatToolResponseSummary(
+  value: unknown,
+  toolName: string,
+  status: string
+): string {
+  const summary = structuredSummary(value) ?? {}
   const parts: string[] = []
   // These fields come from the backend's bounded, secret-filtered Tool Call
   // summary, not the raw provider response. Show them before success counters.
@@ -2216,10 +2218,30 @@ function formatToolResponseSummary(value: unknown): string {
       : ""
   if (error || errorCode)
     return [error || "工具调用失败", errorCode].filter(Boolean).join(" · ")
-  const total =
-    safeSummaryCount(summary.returned) ?? safeSummaryCount(summary.total)
-  if (total !== null) parts.push(`返回 ${total.toLocaleString()} 项`)
+  if (status === "FAILED" || status === "DENIED" || summary.is_error === true)
+    return "工具调用失败（无可用安全错误详情）"
+  if (status === "STARTED") return "工具执行中"
 
+  const fileAction =
+    status === "SUCCEEDED" ? fileToolAction(toolName) : undefined
+  if (fileAction) parts.push(fileAction)
+  const returned = safeSummaryCount(summary.returned)
+  const total = safeSummaryCount(summary.total)
+  const count = returned ?? total ?? safeSummaryCount(summary.count)
+  if (count !== null) parts.push(`返回 ${count.toLocaleString()} 项`)
+  if (returned !== null && total !== null && returned !== total)
+    parts.push(`总计 ${total.toLocaleString()} 项`)
+  const cumulative = safeSummaryCount(summary.cumulative_returned)
+  if (cumulative !== null && cumulative !== count)
+    parts.push(`累计 ${cumulative.toLocaleString()} 项`)
+  const size =
+    safeSummaryCount(summary.size_bytes) ??
+    safeSummaryCount(summary.content_bytes)
+  if (size !== null) parts.push(`${size.toLocaleString()} 字节`)
+
+  if (summary.complete === true) parts.push("结果完整")
+  if (summary.complete === false) parts.push("结果不完整")
+  if (summary.pagination_limit_reached === true) parts.push("已达查询条数上限")
   if (typeof summary.truncated === "boolean") {
     parts.push(summary.truncated ? "已截断" : "未截断")
   }
@@ -2228,21 +2250,59 @@ function formatToolResponseSummary(value: unknown): string {
   }
   if (parts.length) return parts.join(" · ")
 
-  if (summary.is_error === true) return "工具返回错误"
-  if (summary.available === false) return "无可用安全摘要"
-  return "已记录结构化安全摘要"
+  return status === "SUCCEEDED"
+    ? "操作已完成（未提供可展示元数据）"
+    : "无可用安全摘要"
 }
 
-function structuredSummary(value: unknown): Record<string, unknown> | null {
+function fileToolAction(toolName: string): string | undefined {
+  const actions: Record<string, string> = {
+    Read: "已读取文件（正文不展示）",
+    Write: "已写入 Job 沙盒（尚未提交）",
+    Edit: "已修改 Job 沙盒（尚未提交）",
+    Glob: "文件匹配完成（路径不展示）",
+    Grep: "文件检索完成（正文不展示）",
+    file_create_commit_intent: "已创建文件提交意图（尚未提交）",
+    select_sandbox_output: "已选择沙盒输出（尚未提交）",
+  }
+  const name = toolName.split("__").at(-1) ?? ""
+  return Object.hasOwn(actions, name) ? actions[name] : undefined
+}
+
+function structuredSummary(
+  value: unknown,
+  depth = 0
+): Record<string, unknown> | null {
+  if (depth >= 6) return null
   if (typeof value === "string") {
+    if (value.length > 1_048_576) return null
     try {
-      const parsed: unknown = JSON.parse(value)
-      return isSummaryRecord(parsed) ? parsed : null
+      return structuredSummary(JSON.parse(value), depth + 1)
     } catch {
       return null
     }
   }
-  return isSummaryRecord(value) ? value : null
+  if (Array.isArray(value)) {
+    const block: unknown = value.length === 1 ? value[0] : null
+    return isSummaryRecord(block) && block.type === "text"
+      ? structuredSummary(block.text, depth + 1)
+      : null
+  }
+  if (!isSummaryRecord(value)) return null
+  for (const field of [
+    "structuredContent",
+    "structured_content",
+    "runtime_file_bridge",
+  ]) {
+    if (field in value) return structuredSummary(value[field], depth + 1)
+  }
+  if ("payload" in value)
+    return value.truncated === true
+      ? null
+      : structuredSummary(value.payload, depth + 1)
+  if (Array.isArray(value.content))
+    return structuredSummary(value.content, depth + 1)
+  return value
 }
 
 function isSummaryRecord(value: unknown): value is Record<string, unknown> {

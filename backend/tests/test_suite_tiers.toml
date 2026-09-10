@@ -22,6 +22,7 @@ unit = [
   "test_retired_legacy_platform_contract.py",
   "test_test_suite_governance.py",
   "test_text_format_policy.py",
+  "test_tool_response_summary.py",
   "test_user_visible_message_localization.py",
   "test_webhook_architecture.py",
 ]

@@ -12,6 +12,7 @@ from app.modules.job.infrastructure.repositories import (
     source_connector_projection,
 )
 from app.shared.database import Database
+from app.shared.tool_response_summary import MAX_TOOL_SUMMARY_SOURCE_CHARS, tool_response_summary
 
 
 @dataclass(frozen=True)
@@ -539,14 +540,18 @@ class AdminReadRepository:
         )
         tools = self.database.execute(
             """
-            select id, tool_name, substr(response_summary, 1, 2000) as response_summary,
+            select id, tool_name,
+                   case when length(response_summary) <= ? then response_summary
+                        else null end as response_summary,
                    status, duration_ms, risk_level, audit_id, created_at,
                    invocation_id, runtime_tool_call_id, tool_origin,
                    server_code, mcp_call_id, persisted_by
             from agent_tool_call where job_id = ? order by created_at, id
             """,
-            (job_id,),
+            (MAX_TOOL_SUMMARY_SOURCE_CHARS, job_id),
         )
+        for tool in tools:
+            tool["response_summary"] = tool_response_summary(tool["response_summary"])
         from app.modules.job.infrastructure.execution_audit_repository import (
             ExecutionAuditRepository,
         )

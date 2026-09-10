@@ -170,11 +170,7 @@ def test_phase3a_secret_material_is_confined_to_encrypted_store_and_runtime_memo
             "secret_ref": secret_ref,
         }
     }
-    assert tool_calls[0]["response_summary"]["token"] == "[REDACTED]"
-    assert json.loads(tool_calls[0]["response_summary"]["payload"]) == {
-        "nonce": "[REDACTED]",
-        "result": "safe",
-    }
+    assert tool_calls[0]["response_summary"] == {"available": False}
     assert audit_rows
     assert secret_ref in _serialized(tool_calls)
     assert secret_ref in _serialized(audit_rows)

@@ -1289,6 +1289,134 @@ describe("runtime provenance records", () => {
     }
   )
 
+  it.each([
+    {
+      name: "ones_query_work_items",
+      summary: {
+        payload: JSON.stringify({
+          items: [{ name: "must-not-render".repeat(200) }],
+          returned: 43,
+          total: 101,
+          complete: false,
+          pagination_limit_reached: true,
+        }),
+        truncated: false,
+      },
+      expected: "返回 43 项 · 总计 101 项 · 结果不完整 · 已达查询条数上限",
+    },
+    {
+      name: "ones_query_work_items",
+      summary: '{"items":[{"name":"must-not-render',
+      expected: "操作已完成（未提供可展示元数据）",
+    },
+    {
+      name: "Read",
+      summary: { payload: '{"file_tool_result":"omitted"}' },
+      expected: "已读取文件（正文不展示）",
+    },
+    {
+      name: "Write",
+      summary: { content_bytes: 25, content: "must-not-render" },
+      expected: "已写入 Job 沙盒（尚未提交） · 25 字节",
+    },
+    {
+      name: "Edit",
+      summary: {},
+      expected: "已修改 Job 沙盒（尚未提交）",
+    },
+    {
+      name: "Glob",
+      summary: { result: ["must-not-render"] },
+      expected: "文件匹配完成（路径不展示）",
+    },
+    {
+      name: "Grep",
+      summary: {},
+      expected: "文件检索完成（正文不展示）",
+    },
+    {
+      name: "mcp__file_service__file_create_commit_intent",
+      summary: {},
+      expected: "已创建文件提交意图（尚未提交）",
+    },
+    {
+      name: "mcp__file_service__select_sandbox_output",
+      summary: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              runtime_file_bridge: {
+                size_bytes: 25,
+                selected: true,
+                relative_path: "must-not-render",
+              },
+            }),
+          },
+        ],
+      },
+      expected: "已选择沙盒输出（尚未提交） · 25 字节",
+    },
+  ])(
+    "shows safe and stage-specific summaries for $name",
+    async ({ name, summary, expected }) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+        response({
+          job: job({ tool_call_count: 1 }),
+          session_ref: { id: "session-1" },
+          steps: [],
+          tool_calls: [
+            {
+              id: "tool-call-1",
+              tool_name: name,
+              status: "SUCCEEDED",
+              response_summary: summary,
+            },
+          ],
+          deliveries: { events: [], attempts: [], chunks: [] },
+          webhook_events: [],
+        })
+      )
+      renderRoute(
+        "/operations/jobs/job-1",
+        "/operations/jobs/:jobId",
+        <RuntimeJobDetailPage />
+      )
+      expect(await screen.findByText(expected)).toBeInTheDocument()
+      expect(document.body.textContent).not.toContain("must-not-render")
+      expect(screen.queryByText("已记录结构化安全摘要")).not.toBeInTheDocument()
+    }
+  )
+
+  it("never describes a failed file operation as completed", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job({ tool_call_count: 1 }),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [
+          {
+            id: "tool-call-1",
+            tool_name: "Write",
+            status: "FAILED",
+            response_summary: { file_tool_result: "omitted" },
+          },
+        ],
+        deliveries: { events: [], attempts: [], chunks: [] },
+        webhook_events: [],
+      })
+    )
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+    expect(
+      await screen.findByText("工具调用失败（无可用安全错误详情）")
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain("已写入 Job 沙盒")
+  })
+
   it("loads the next model-call page without replacing prior rows", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")

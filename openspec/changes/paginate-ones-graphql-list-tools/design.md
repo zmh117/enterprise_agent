@@ -1,5 +1,12 @@
 ## Context
 
+## 第五阶段：空关联与时间线摘要（2026-09-10）
+
+- 可选 sprint、owner、assign 的 null、空对象或 uuid/name 均为缺失/null/空字符串表示没有关联，规范化时省略整个字段；有名称无 UUID、有 UUID 无名称以及类型错误仍失败关闭。复用同一可选具名关联函数，必填 project/issueType/status/工作项本身不放宽，不改变公开 schema。
+- 新 MCP 根 Tool Call 写入固定元数据白名单摘要，不再复制整个集合正文到 response_summary。管理和 Debug 读取历史行时，在大小预算内解包已知 JSON/payload/MCP text/runtime_file_bridge 包装并提取白名单，再输出完整小 JSON；无效、超限或已截断内容只标记不可用，不猜测截断 JSON，不改变已有审计正文或历史数据库记录。
+- 摘要仅包含有界计数/大小、布尔完整性、安全错误和固定操作状态；不返回工作项名称、人员、文件正文、路径、提交凭证或业务对象。错误先使用平台脱敏再限长，不把传输包装层 truncated 当作查询结果截断。保留既有详细审计授权、call id 与单次调用事实关联。
+- Read/Write/Edit/Glob/Grep 的内容继续省略，Write 仅可展示已观测请求内容字节数；界面用工具名和真实调用状态显示完成语义，明确“提交意图”和“选择输出”不等于正式文件提交。历史摘要无法恢复的大小/计数不得捏造。
+
 ## 第四阶段：Runtime 提示词版本回归修复（2026-09-10）
 
 - Worker 默认上下文仍声明 Prompt v5，而 ONES 结果只读工具接入后 Runtime 观测声明 v6；Worker 在接收 tool_contract_observed 时严格比较失败。版本定义移至两侧已共享且都被镜像复制的 app.shared.tool_contract，不通过放宽校验兼容不一致组件。

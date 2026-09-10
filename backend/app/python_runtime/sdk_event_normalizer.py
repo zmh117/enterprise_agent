@@ -8,6 +8,7 @@ from typing import Any
 
 from app.python_runtime.error_mapper import redact_sensitive_text
 from app.shared.config import ExecutionSettings
+from app.shared.tool_response_summary import tool_response_summary
 from app.python_runtime.log_evidence_scanner import (
     LOG_EVIDENCE_SCANNER_VERSION,
     LOG_EVIDENCE_TOOL,
@@ -337,12 +338,20 @@ def extract_tool_events(
             response = safe_log_evidence_response(
                 sdk_value(block, "content") or sdk_value(block, "result") or {}
             )
-        else:
-            response = (
-                {"file_tool_result": "omitted"}
-                if tool_name in {"Read", "Grep", "Write", "Edit"}
-                else sdk_value(block, "content") or sdk_value(block, "result") or {}
+        elif tool_name in {"Read", "Grep", "Glob", "Write", "Edit"}:
+            response = {"file_tool_result": "omitted"}
+            if (
+                tool_name == "Write"
+                and status == "SUCCEEDED"
+                and "content_bytes" in request_payload
+            ):
+                response["content_bytes"] = request_payload["content_bytes"]
+        elif tool_name.split("__")[-1] in {"file_create_commit_intent", "select_sandbox_output"}:
+            response = tool_response_summary(
+                sdk_value(block, "content") or sdk_value(block, "result") or {}
             )
+        else:
+            response = sdk_value(block, "content") or sdk_value(block, "result") or {}
         duration_ms = (
             int(response.get("elapsed_ms") or 0)
             if isinstance(response, dict)
@@ -374,7 +383,7 @@ def safe_file_tool_request(tool_name: str, value: Any) -> Any:
             "scanner_version": LOG_EVIDENCE_SCANNER_VERSION,
             "input_count": len(paths) if isinstance(paths, list) else 0,
         }
-    if tool_name not in {"Read", "Grep", "Write", "Edit"} or not isinstance(value, dict):
+    if tool_name not in {"Read", "Grep", "Glob", "Write", "Edit"} or not isinstance(value, dict):
         return value
     path = value.get("file_path", value.get("path"))
     result: dict[str, Any] = {}

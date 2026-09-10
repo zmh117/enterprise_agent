@@ -19,9 +19,13 @@ from services.ones_mcp_server.provider.graphql.operation import GraphqlOperation
 from services.ones_mcp_server.provider.graphql.operations.business_queries import (
     BUSINESS_GRAPHQL_OPERATIONS,
     WORK_ITEM_QUERY,
+    _detail_response as _work_item_detail_response,
     _work_item_response,
 )
-from services.ones_mcp_server.provider.graphql.operations.normalization import timestamp_text
+from services.ones_mcp_server.provider.graphql.operations.normalization import (
+    normalize_work_item,
+    timestamp_text,
+)
 from services.ones_mcp_server.provider.graphql.operations.test_queries import (
     _case_list_response,
     _detail_response,
@@ -49,6 +53,77 @@ def _page(collection: str, rows: list[dict]) -> dict:
             ]
         }
     }
+
+
+def _task(index: int = 1) -> dict:
+    return {
+        "uuid": f"SYNTHETIC-TASK-{index}",
+        "number": index,
+        "name": "Synthetic task",
+        "project": {"uuid": "P"},
+        "issueType": {"uuid": "I"},
+        "status": {"uuid": "S", "name": "New", "category": "to_do"},
+    }
+
+
+@pytest.mark.parametrize(
+    "field,target", [("sprint", "sprint"), ("owner", "owner"), ("assign", "assignee")]
+)
+@pytest.mark.parametrize(
+    "empty", [None, {}, {"uuid": "", "name": ""}, {"uuid": None, "name": None}]
+)
+def test_empty_optional_relations_do_not_drop_the_51st_work_item(
+    field: str, target: str, empty: object
+) -> None:
+    rows = [_task(index) for index in range(51)]
+    rows[-1][field] = empty
+    result = _work_item_response(_page("tasks", rows), {"_limit": 200})
+    assert result["returned"] == result["total"] == 51
+    assert result["truncated"] is False
+    assert result["items"][-1]["uuid"] == rows[-1]["uuid"]
+    assert target not in result["items"][-1]
+
+
+def test_detail_and_related_work_items_share_optional_relation_normalization() -> None:
+    task = _task()
+    task.update(sprint={"uuid": "", "name": ""}, owner={}, assign=None)
+    task["relatedTasks"] = [dict(_task(2), sprint={}, owner=None, assign={"uuid": "", "name": ""})]
+    result = _work_item_detail_response({"data": {"task": task}}, {})
+    for item in [result["work_item"], *result["related_items"]]:
+        assert not {"sprint", "owner", "assignee"}.intersection(item)
+
+
+@pytest.mark.parametrize("field", ["sprint", "owner", "assign"])
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "",
+        [],
+        {"uuid": "", "name": "present"},
+        {"uuid": "U", "name": ""},
+        {"uuid": 0, "name": ""},
+        {"uuid": "U" * 129, "name": "N"},
+    ],
+)
+def test_malformed_optional_relations_remain_strict(field: str, invalid: object) -> None:
+    task = dict(_task(), **{field: invalid})
+    with pytest.raises(AppError) as caught:
+        normalize_work_item(task, path="data.task")
+    assert caught.value.error_code == "ones_provider_schema_invalid"
+    assert f"data.task.{field}" in caught.value.safe_message
+
+
+@pytest.mark.parametrize("field", ["project", "issueType", "status"])
+def test_empty_required_relations_remain_invalid(field: str) -> None:
+    with pytest.raises(AppError) as caught:
+        normalize_work_item(dict(_task(), **{field: {"uuid": "", "name": ""}}))
+    assert caught.value.error_code == "ones_provider_schema_invalid"
+
+
+def test_populated_optional_relations_are_preserved() -> None:
+    reference = {"uuid": "U", "name": "Synthetic reference"}
+    result = normalize_work_item(dict(_task(), sprint=reference, owner=reference, assign=reference))
+    assert result["sprint"] == result["owner"] == result["assignee"] == reference
 
 
 @pytest.mark.parametrize(

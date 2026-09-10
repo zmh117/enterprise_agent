@@ -54,6 +54,45 @@ def _coordinator_fixture() -> tuple[object, object, McpAuditCoordinator, McpAudi
     return runtime, job, coordinator, context
 
 
+@pytest.mark.parametrize("body_length", [2500, 5000])
+def test_root_summary_projects_metadata_before_audit_payload_truncation(body_length: int) -> None:
+    runtime, job, coordinator, context = _coordinator_fixture()
+    handle = coordinator.begin(context, business_request={})
+    metadata = {"returned": 51, "total": 51, "truncated": False, "untrusted_data": True}
+    body = {"items": [{"name": "x" * body_length}], **metadata}
+    coordinator.complete(handle, status="SUCCEEDED", business_response=body, duration_ms=1)
+    root = runtime.database.execute_one(
+        "select response_summary from agent_tool_call where id = ?", (handle.agent_tool_call_id,)
+    )
+    assert json.loads(root["response_summary"]) == metadata
+    assert runtime.agent_repository.list_tool_calls(job.id)[0]["response_summary"] == metadata
+    audit = runtime.database.execute_one(
+        "select business_response_json, response_truncated from mcp_operation_audit where id = ?",
+        (handle.root_audit_id,),
+    )
+    if body_length == 2500:
+        assert json.loads(audit["business_response_json"]) == body
+        assert not audit["response_truncated"]
+    else:
+        assert audit["response_truncated"]
+
+
+def test_root_failure_retains_safe_reason_and_separate_error_code() -> None:
+    runtime, job, coordinator, context = _coordinator_fixture()
+    handle = coordinator.begin(context, business_request={})
+    coordinator.complete(
+        handle,
+        status="FAILED",
+        business_response={"error": "ONES 响应字段无效"},
+        error_code="ones_provider_schema_invalid",
+        duration_ms=1,
+    )
+    assert runtime.agent_repository.list_tool_calls(job.id)[0]["response_summary"] == {
+        "error": "ONES 响应字段无效",
+        "error_code": "ones_provider_schema_invalid",
+    }
+
+
 def test_coordinator_creates_and_completes_one_exact_fact_tree() -> None:
     runtime, job, coordinator, context = _coordinator_fixture()
 

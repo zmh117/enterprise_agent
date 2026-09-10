@@ -11,6 +11,7 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.infrastructure.repositories import new_id, now_iso
 from app.shared.database import Database, operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.tool_response_summary import tool_response_summary
 
 
 MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id"
@@ -540,10 +541,14 @@ class McpAuditCoordinator:
             raise ValueError("MCP audit completion status is invalid")
         try:
             response = self._serialize(business_response)
+            summary = tool_response_summary(business_response)
+            if error_code:
+                summary.update(tool_response_summary({"error_code": error_code}))
             self._complete(
                 handle,
                 status=status,
                 response=response,
+                response_summary=json.dumps(summary, ensure_ascii=False),
                 duration_ms=max(0, duration_ms),
                 error_code=error_code[:128],
             )
@@ -563,6 +568,7 @@ class McpAuditCoordinator:
         *,
         status: str,
         response: _SerializedBusinessPayload,
+        response_summary: str,
         duration_ms: int,
         error_code: str,
     ) -> None:
@@ -597,7 +603,7 @@ class McpAuditCoordinator:
                set response_summary = ?, status = ?, duration_ms = ?
              where id = ? and status = 'STARTED'
             """,
-            (response.text, status, duration_ms, handle.agent_tool_call_id),
+            (response_summary, status, duration_ms, handle.agent_tool_call_id),
         )
         self.database.execute(
             """

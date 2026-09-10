@@ -18,6 +18,10 @@ from app.shared.secret_redaction import (
     sanitize_for_persistence,
 )
 from app.shared.tool_contract import canonical_json_sha256
+from app.shared.tool_response_summary import (
+    MAX_TOOL_SUMMARY_SOURCE_CHARS,
+    tool_response_summary,
+)
 
 
 RUN_AUDIT_FIELD_PAGE_CHARS = 64 * 1024
@@ -3605,7 +3609,9 @@ class AgentRepository:
         self.get_job(job_id)
         rows = self.database.execute(
             """
-            select id, job_id, tool_name, request_payload, response_summary,
+            select id, job_id, tool_name, request_payload,
+                   case when length(response_summary) <= ? then response_summary
+                        else null end as response_summary,
                    status, duration_ms, risk_level, audit_id, created_at,
                    invocation_id, runtime_tool_call_id, tool_origin,
                    server_code, mcp_call_id, persisted_by
@@ -3613,7 +3619,7 @@ class AgentRepository:
             where job_id = ?
             order by created_at, id
             """,
-            (job_id,),
+            (MAX_TOOL_SUMMARY_SOURCE_CHARS, job_id),
         )
         return [self._tool_call_from_row(row) for row in rows]
 
@@ -4136,9 +4142,7 @@ class AgentRepository:
             "request_payload": sanitize_for_persistence(
                 self._json_from_text(row["request_payload"])
             ),
-            "response_summary": sanitize_for_persistence(
-                self._json_from_text(row["response_summary"])
-            ),
+            "response_summary": tool_response_summary(row["response_summary"]),
             "status": row["status"],
             "duration_ms": int(row["duration_ms"]),
             "risk_level": row["risk_level"],

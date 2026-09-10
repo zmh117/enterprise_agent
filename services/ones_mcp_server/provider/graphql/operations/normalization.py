@@ -41,12 +41,20 @@ def bounded_int(value: object, *, minimum: int = 0, path: str = "response") -> i
 
 
 def optional_person(value: object, *, path: str = "person") -> dict[str, str] | None:
+    return optional_named_reference(value, path=path, name_maximum=200)
+
+
+def optional_named_reference(
+    value: object, *, path: str, name_maximum: int
+) -> dict[str, str] | None:
     if value is None:
         return None
     item = require_mapping(value, path=path)
+    if item.get("uuid") in (None, "") and item.get("name") in (None, ""):
+        return None
     return {
         "uuid": bounded_string(item.get("uuid"), maximum=128, path=f"{path}.uuid"),
-        "name": bounded_string(item.get("name"), maximum=200, path=f"{path}.name"),
+        "name": bounded_string(item.get("name"), maximum=name_maximum, path=f"{path}.name"),
     }
 
 
@@ -197,17 +205,9 @@ def normalize_work_item(value: object, *, path: str = "task") -> dict[str, Any]:
         person = optional_person(item.get(source), path=f"{path}.{source}")
         if person is not None:
             output[target] = person
-    sprint = item.get("sprint")
+    sprint = optional_named_reference(item.get("sprint"), path=f"{path}.sprint", name_maximum=300)
     if sprint is not None:
-        sprint_item = require_mapping(sprint, path=f"{path}.sprint")
-        output["sprint"] = {
-            "uuid": bounded_string(
-                sprint_item.get("uuid"), maximum=128, path=f"{path}.sprint.uuid"
-            ),
-            "name": bounded_string(
-                sprint_item.get("name"), maximum=300, path=f"{path}.sprint.name"
-            ),
-        }
+        output["sprint"] = sprint
     if item.get("createTime") is not None:
         output["created_at"] = timestamp_text(
             item.get("createTime"), unit="microseconds", path=f"{path}.createTime"

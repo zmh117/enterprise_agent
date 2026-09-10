@@ -566,7 +566,12 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         job_id=job.id,
         tool_name="ones_work_item_search",
         request_payload={},
-        response_summary={"total": 1, "truncated": False},
+        response_summary={
+            "items": [{"body": context_marker * 200}],
+            "returned": 51,
+            "total": 51,
+            "truncated": False,
+        },
         status="SUCCEEDED",
         duration_ms=4,
         risk_level="low",
@@ -622,6 +627,7 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         summary = client.get("/api/admin/jobs/summary")
         delivery_metrics = client.get("/api/admin/deliveries/metrics")
         detail = client.get(f"/api/admin/jobs/{job.id}")
+        debug_tool_calls = container.agent_repository.list_tool_calls(job.id)
         system_prompt_page = client.get(
             f"/api/admin/jobs/{job.id}/run-audits/{run_audit_id}/fields/system_prompt"
         )
@@ -669,6 +675,16 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     assert jobs.json()["items"][0]["correlation_id"] == "correlation-ops"
     assert detail.json()["job"]["business_application_deployment_id"] == "deployment-ops"
     assert detail.json()["job"]["tool_call_count"] == 1
+    assert detail.json()["tool_calls"][0]["response_summary"] == {
+        "returned": 51,
+        "total": 51,
+        "truncated": False,
+    }
+    assert debug_tool_calls[0]["response_summary"] == {
+        "returned": 51,
+        "total": 51,
+        "truncated": False,
+    }
     run_audit_summary = detail.json()["run_audits"][0]
     assert run_audit_summary["id"] == run_audit_id
     assert run_audit_summary["summary"]["model_request_count"] == 1

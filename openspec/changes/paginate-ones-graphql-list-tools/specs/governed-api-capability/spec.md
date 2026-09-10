@@ -20,6 +20,17 @@ ONES 服务 MUST 只返回通过固定类型和大小校验的工作项摘要，
 
 ## ADDED Requirements
 
+### Requirement: ONES可选具名关联必须识别空占位
+ONES 可选迭代、负责人和处理人关联 MUST 将 null、空对象或 uuid/name 均为缺失/null/空字符串的对象规范化为无关联并省略输出字段。半空关联或类型错误 MUST 继续失败关闭；必填工作项、项目、类型、状态标识 MUST NOT 因该兼容规则被放宽。共享列表、详情与关联工作项解析 MUST 使用一致规则。
+
+#### Scenario: 多条工作项中出现空迭代
+- **WHEN** 第51条工作项返回空迭代占位且其余必填字段合法
+- **THEN** 该条工作项保留，仅省略 sprint，整页不因空占位失败
+
+#### Scenario: 关联对象不完整
+- **WHEN** 关联包含非空名称但 UUID 为空或类型错误
+- **THEN** 返回带安全字段路径的 schema 错误，不丢弃关联后伪装成功
+
 ### Requirement: 删除ONES模拟服务不得改变其他运行配置
 仓库 MUST NOT 提供可部署的 ONES Mock 服务；离线测试替身 MUST 仅存在于测试目录，不被生产代码导入、不监听网络。删除 Mock MUST 保留现场文档、原独立 Compose 中其他数据库/Redis测试服务及数据卷；MUST NOT 顺带改变环境示例、连接配置、非 Mock 服务启动/健康校验、项目名称或脚本入口。ones-mcp MUST 保持原方式运行。无真实 ONES 的本地验收 MUST 明确跳过 ONES 链路，不注入模拟身份，不声称真实 ONES 验收通过。
 

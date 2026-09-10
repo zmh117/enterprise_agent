@@ -2597,6 +2597,80 @@ def test_python_runtime_extracts_real_sdk_block_objects_without_file_content() -
     assert "outputs/result.md" in serialized
     assert "sensitive generated body" not in serialized
     assert "success" not in serialized
+    assert json.loads(completed[0]["response_summary"]["payload"]) == {
+        "file_tool_result": "omitted",
+        "content_bytes": len("sensitive generated body".encode("utf-8")),
+    }
+
+
+@pytest.mark.parametrize("tool_name", ["Read", "Grep", "Glob", "Edit"])
+def test_sdk_file_results_omit_body_and_paths(tool_name: str) -> None:
+    calls: dict[str, dict[str, Any]] = {}
+    limits = build_settings().execution
+    extract_tool_events(
+        {"content": [{"type": "tool_use", "id": "file-1", "name": tool_name, "input": {}}]},
+        limits,
+        calls,
+    )
+    completed = extract_tool_events(
+        {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "file-1",
+                    "content": "synthetic-private-path-and-body",
+                }
+            ]
+        },
+        limits,
+        calls,
+    )
+    assert "synthetic-private" not in json.dumps(completed)
+    assert json.loads(completed[0]["response_summary"]["payload"]) == {
+        "file_tool_result": "omitted"
+    }
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["mcp__file_service__file_create_commit_intent", "mcp__file_service__select_sandbox_output"],
+)
+def test_sdk_file_bridge_result_keeps_only_safe_metadata(tool_name: str) -> None:
+    calls: dict[str, dict[str, Any]] = {}
+    limits = build_settings().execution
+    extract_tool_events(
+        {"content": [{"type": "tool_use", "id": "file-1", "name": tool_name, "input": {}}]},
+        limits,
+        calls,
+    )
+    completed = extract_tool_events(
+        {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "file-1",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "runtime_file_bridge": {
+                                        "size_bytes": 25,
+                                        "intent_token": "synthetic-private-handle",
+                                        "relative_path": "synthetic-private-path",
+                                    }
+                                }
+                            ),
+                        }
+                    ],
+                }
+            ]
+        },
+        limits,
+        calls,
+    )
+    assert json.loads(completed[0]["response_summary"]["payload"]) == {"size_bytes": 25}
+    assert "synthetic-private" not in json.dumps(completed)
 
 
 def test_python_runtime_keeps_real_sdk_tool_events_when_model_result_fails() -> None:
