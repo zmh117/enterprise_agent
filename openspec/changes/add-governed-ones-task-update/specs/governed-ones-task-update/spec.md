@@ -29,6 +29,12 @@
 - **THEN** 编译器以纯文本生成 `descriptionText` 和安全转义的 `desc_rich`
 - **AND** 不接受调用方提供的任意 HTML
 
+#### Scenario: 改写指定缺陷描述并发起更新
+- **WHEN** 用户要求改写指定缺陷描述且明确要求更新到 ONES
+- **THEN** Agent 调用 `ones_update_task`，只提供目标 `uuid` 与改写后的 `description`
+- **AND** 必须先生成原值与新值的确认差异，等待原用户确认后才可写入
+- **AND** 不得把只返回可复制文本当作更新完成，也不得修改未请求的其它字段
+
 #### Scenario: 未提供业务变更
 - **WHEN** 调用只提供 `uuid`
 - **THEN** Tool 返回稳定合同错误且不读取或写入 Provider
@@ -90,6 +96,12 @@ ONES MCP MUST 在创建 Action Intent 前读取当前 Task、项目、工作项�
 - **WHEN** 当前 Job 来自可验证的钉钉私聊或群聊 Connector
 - **THEN** 系统始终把独立确认卡片私发给该 Job 的原始操作人
 - **AND** 每个 Intent 使用独立 `outTrackId`，不得复用其它操作的卡片实例
+
+#### Scenario: 实际Stream入站来源识别
+- **WHEN** 当前 Job 的 `source_channel` 为钉钉 Stream adapter 产生的 `dingding_stream`
+- **THEN** 系统将其识别为支持的钉钉来源，并继续校验 Job 与会话的来源 Connector 一致、Connector 类型及启用状态、企业状态、私聊或群聊会话和原操作人身份
+- **AND** 不得仅因其不同于历史来源值 `dingtalk` 或 `dingding` 而拒绝
+- **AND** 不得因此接受 Web、后台来源或绕过任何确认及授权校验
 
 #### Scenario: Web或后台Job发起更新
 - **WHEN** 当前 Job 来自 Web、后台任务、无来源 Connector 或无法唯一解析原始钉钉操作人

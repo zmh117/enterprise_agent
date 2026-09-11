@@ -94,6 +94,10 @@ ONES MCP 在当前短时 Principal 下完成以下准备步骤：
 
 只有当前 Job 能服务端解析到来源钉钉 Connector、企业和原始操作人的钉钉主体时才可准备 Intent。群聊和私聊来源均可，但卡片一律私发原始操作人；Web、无 Connector 或后台 Job 在准备阶段拒绝。
 
+来源识别包括实际钉钉 Stream adapter 写入的 `dingding_stream`，并兼容已有 `dingtalk`、`dingding` 值。来源值不是独立授权依据：仍须验证 Job/Session 的 Connector 一致、钉钉 Stream Connector 启用且允许入站、企业 ACTIVE、可定位的私聊/群聊，以及企业内唯一的原操作人钉钉身份。此共用路由也用于 ONES 缺陷创建，回归应同时覆盖两种 mutation 的既有行为。
+
+用户要求改写指定缺陷描述并明确要更新到 ONES 时，沿用 `ones_update_task(uuid, description)` 流程，只准备描述差异与新确认；不能以文本草稿替代更新流程，也不能跳过确认。此处修复来源识别，不修改工具 schema、Provider 请求合同或发布授权范围。
+
 Intent 幂等指纹由 Job、Tool、规范化参数摘要、ONES 外部身份、Team、Task UUID、`serverUpdateStamp` 和字段目录摘要共同计算。同一快照上的完全相同请求复用同一 Intent；Task 或目录变化后相同业务 Patch 必须生成新 Intent 和新确认。
 
 ### 4. 同一张表区分确认渠道与执行 Provider

@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 from types import SimpleNamespace
 
+from app.modules.dingding.application.dingtalk_stream_service import (
+    DingTalkStreamIncomingMessage,
+    DingTalkStreamMessageService,
+)
 from app.modules.external_action.domain import (
     ExternalActionIntentFacts,
     canonical_json,
@@ -984,38 +988,53 @@ def test_ones_update_task_rejects_web_route_before_provider_or_intent() -> None:
     assert actions.prepared == []
 
 
-@pytest.mark.parametrize("conversation_type", ["direct", "group"])
-def test_confirmation_route_is_always_the_originating_dingtalk_operator(
-    conversation_type: str,
-) -> None:
-    class _RouteDatabase:
-        @staticmethod
-        def execute_one(_query: str, _params: object) -> dict[str, object]:
-            return {
-                "source_connector_id": "connector-1",
-                "source_channel": "dingtalk",
-                "session_source_connector_id": "connector-1",
-                "conversation_type": conversation_type,
-                "external_conversation_id": "conversation-1",
-                "connector_type": "dingtalk_enterprise_stream",
-                "enabled": 1,
-                "allow_ingress": 1,
-                "dingtalk_enterprise_id": "enterprise-1",
-                "enterprise_status": "ACTIVE",
-            }
+class _ConfirmationRouteDatabase:
+    def __init__(self, **overrides: object) -> None:
+        self.route = {
+            "source_connector_id": "connector-1",
+            "source_channel": "dingding_stream",
+            "session_source_connector_id": "connector-1",
+            "conversation_type": "direct",
+            "external_conversation_id": "conversation-1",
+            "connector_type": "dingtalk_enterprise_stream",
+            "enabled": 1,
+            "allow_ingress": 1,
+            "dingtalk_enterprise_id": "enterprise-1",
+            "enterprise_status": "ACTIVE",
+            **overrides,
+        }
+        self.identities = [{"external_subject_id": "staff-1", "union_id": "union-1"}]
+        self.identity_reads = 0
 
-        @staticmethod
-        def execute(_query: str, _params: object) -> list[dict[str, object]]:
-            return [{"external_subject_id": "staff-1", "union_id": "union-1"}]
+    def execute_one(self, _query: str, _params: object) -> dict[str, object]:
+        return self.route
 
-    resolver = OnesPrincipalResolver(
-        _RouteDatabase(),  # type: ignore[arg-type]
+    def execute(self, _query: str, params: object) -> list[dict[str, str]]:
+        assert params == ("user-1", "enterprise-1")
+        self.identity_reads += 1
+        return self.identities
+
+
+def _confirmation_resolver(database: _ConfirmationRouteDatabase) -> OnesPrincipalResolver:
+    return OnesPrincipalResolver(
+        database,  # type: ignore[arg-type]
         SimpleNamespace(),  # type: ignore[arg-type]
         SimpleNamespace(),  # type: ignore[arg-type]
         SimpleNamespace(),  # type: ignore[arg-type]
         SimpleNamespace(),  # type: ignore[arg-type]
     )
 
+
+@pytest.mark.parametrize("source_channel", ["dingtalk", "dingding", "dingding_stream"])
+@pytest.mark.parametrize("conversation_type", ["direct", "group"])
+def test_confirmation_route_is_always_the_originating_dingtalk_operator(
+    source_channel: str, conversation_type: str,
+) -> None:
+    resolver = _confirmation_resolver(
+        _ConfirmationRouteDatabase(
+            source_channel=source_channel, conversation_type=conversation_type,
+        )
+    )
     route = resolver.resolve_confirmation_route(
         SimpleNamespace(job_id="job-1", session_id="session-1", actor_user_id="user-1")
     )
@@ -1023,6 +1042,99 @@ def test_confirmation_route_is_always_the_originating_dingtalk_operator(
     assert route.conversation_type == conversation_type
     assert route.target_external_subject_id == "staff-1"
     assert route.target_union_id == "union-1"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"source_channel": "debug_api"},
+        {"source_channel": "webhook"},
+        {"source_channel": ""},
+        {"source_channel": "dingtalk_untrusted"},
+        {"session_source_connector_id": "other-connector"},
+        {"connector_type": "generic_webhook"},
+        {"enabled": 0},
+        {"allow_ingress": 0},
+        {"enterprise_status": "PENDING_VERIFICATION"},
+        {"conversation_type": "unknown"},
+        {"external_conversation_id": ""},
+    ],
+)
+def test_stream_confirmation_route_still_requires_trusted_source_facts(
+    overrides: dict[str, object],
+) -> None:
+    database = _ConfirmationRouteDatabase(**overrides)
+    resolver = _confirmation_resolver(database)
+    with pytest.raises(OnesMcpError) as caught:
+        resolver.resolve_confirmation_route(
+            SimpleNamespace(job_id="job-1", session_id="session-1", actor_user_id="user-1")
+        )
+    assert caught.value.error_code == "ones_mutation_dingtalk_source_required"
+    assert database.identity_reads == 0
+
+
+@pytest.mark.parametrize("identity_count", [0, 2])
+def test_stream_confirmation_route_requires_unique_originating_identity(identity_count: int) -> None:
+    database = _ConfirmationRouteDatabase()
+    database.identities *= identity_count
+    with pytest.raises(OnesMcpError) as caught:
+        _confirmation_resolver(database).resolve_confirmation_route(
+            SimpleNamespace(job_id="job-1", session_id="session-1", actor_user_id="user-1")
+        )
+    assert caught.value.error_code == "ones_mutation_dingtalk_identity_required"
+
+
+@pytest.mark.parametrize("conversation_type", ["direct", "group"])
+def test_stream_description_rewrite_prepares_update_using_real_confirmation_resolver(
+    conversation_type: str,
+) -> None:
+    stream = DingTalkStreamMessageService(
+        channel_ingress_service=SimpleNamespace(),  # type: ignore[arg-type]
+        audit_service=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+    event = stream.to_channel_event(
+        message=DingTalkStreamIncomingMessage(
+            conversation_id="conversation-1", user_id="staff-1",
+            message_id="message-1", event_id="event-1",
+            content="帮我改写下这个缺陷描述，描述具体些", conversation_type=conversation_type,
+        ),
+        payload={}, source_connector_id="connector-1", correlation_id="correlation-1",
+    )
+    database = _ConfirmationRouteDatabase(
+        source_channel=event.source.type,
+        source_connector_id=event.source.connector_id,
+        session_source_connector_id=event.source.connector_id,
+        conversation_type=event.source.metadata["conversation_type"],
+        external_conversation_id=event.source.conversation_id,
+    )
+    catalog = TaskUpdateFieldCatalog.load()
+    provider = _PreparationProvider(_snapshot_for_field("description"))
+    actions = _PreparationActions()
+    service = _preparation_service(catalog, provider, actions)
+    # Keep the actual production route resolver, including the Stream source check.
+    service.resolver.resolve_confirmation_route = _confirmation_resolver(  # type: ignore[method-assign]
+        database
+    ).resolve_confirmation_route
+    description = "操作步骤：在设备列表打印标签。\n实际结果：审计追踪修改后值显示为 /。"
+
+    result = service.invoke(
+        claims={"job_id": "job-1"}, arguments={"uuid": "task-1", "description": description},
+        correlation_id="correlation-1", invocation_id="job-1.attempt-0",
+    )
+
+    assert result["status"] == "confirmation_required"
+    assert provider.read_calls == 1
+    assert provider.update_calls == 0
+    assert len(actions.prepared) == 1
+    facts = actions.prepared[0]["facts"]
+    assert isinstance(facts, ExternalActionIntentFacts)
+    assert facts.tool_identifier == "ones_update_task"
+    assert facts.target_external_subject_id == "staff-1"
+    assert facts.target_resource_id == "task-1"
+    assert facts.source_connector_id == event.source.connector_id
+    frozen = actions.prepared[0]["arguments"]
+    assert isinstance(frozen, dict)
+    assert frozen["request"] == {"uuid": "task-1", "description": description}
 
 
 def test_ones_update_task_short_circuits_no_change_without_intent() -> None:

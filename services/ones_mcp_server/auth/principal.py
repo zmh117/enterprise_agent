@@ -257,7 +257,9 @@ class OnesPrincipalResolver:
         )
         if (
             route is None
-            or str(route.get("source_channel") or "") not in {"dingtalk", "dingding"}
+            # DingTalkStreamMessageService persists "dingding_stream" on real ingress Jobs.
+            or str(route.get("source_channel") or "")
+            not in {"dingtalk", "dingding", "dingding_stream"}
             or str(route.get("session_source_connector_id") or "")
             != str(route.get("source_connector_id") or "")
             or str(route.get("connector_type") or "") != "dingtalk_enterprise_stream"

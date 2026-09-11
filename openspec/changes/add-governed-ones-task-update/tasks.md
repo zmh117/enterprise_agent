@@ -51,3 +51,9 @@
 - [ ] 7.4 以新 Agent/Application Publication 和新 Job 完成真实 ONES 验收：钉钉私聊/群聊来源私发同模板卡片、Web 拒绝、单/多字段修改、状态/非缺陷拒绝、清空、超长差异、拒绝卡片、任意更新戳冲突、确认后解绑身份、Provider 失败以及成功回读。
 - [ ] 7.5 保存不含 Secret 的 Action Intent、MCP call、Agent Tool Call、Job、卡片点击、Provider attempt 和结果卡片审计证据，并明确区分自动测试通过与真实端到端验收通过。
 - [x] 7.6 运行 `openspec validate add-governed-ones-task-update --strict`，确认所有工件与最终实现一致后再进入 sync/archive。
+
+## 8. 钉钉 Stream 来源误拒修复
+
+- [x] 8.1 补充实际 Stream adapter 来源的私聊/群聊描述更新回归，复现 `dingding_stream` 被拒；覆盖旧来源兼容、非钉钉来源、连接器/企业与原操作人校验。
+- [x] 8.2 修复共用 ONES 确认路由对 Stream 来源的识别，验证改写描述进入 `ones_update_task` 待确认流程且确认前不写入，并回归缺陷创建共用路径。
+- [x] 8.3 运行目标测试、静态/规格检查及 ONES MCP 镜像验证，记录部署状态与真实卡片验收边界。见 `evidence/2026-09-11-stream-source-fix.md`；服务当前停止，真实验收仍在 7.4、7.5 跟踪。
