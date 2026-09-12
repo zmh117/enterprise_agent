@@ -9,7 +9,7 @@ from app.shared.exceptions import NonRetryableExecutionError
 EXECUTION_POLICY_SCHEMA_VERSION = 1
 MAX_TURNS_RANGE = (1, 100)
 TIMEOUT_SECONDS_RANGE = (10, 3600)
-MAX_TOOL_CALLS_RANGE = (0, 200)
+MAX_TOOL_CALLS_RANGE = (0, 500)
 
 
 @dataclass(frozen=True)

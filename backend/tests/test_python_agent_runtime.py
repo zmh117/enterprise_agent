@@ -1536,7 +1536,7 @@ def _tool_budget_test_context(max_tool_calls: int) -> AgentExecutionContext:
     )
 
 
-@pytest.mark.parametrize("maximum, allowed_calls", [(1, 1), (0, 0)])
+@pytest.mark.parametrize("maximum, allowed_calls", [(1, 1), (0, 0), (500, 500)])
 def test_python_runtime_tool_budget_hard_interrupts_before_authorization(
     maximum: int,
     allowed_calls: int,

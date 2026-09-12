@@ -25,3 +25,9 @@
 - [x] 4.2 运行受影响模块的完整测试与静态检查，执行 `git diff --check`，确认无数据库 migration、协议 schema、Sandbox 容量或 Publication 快照变更。
 - [x] 4.3 严格校验 `enforce-runtime-execution-budgets` OpenSpec change，并用受控测试 Job 验证 `max_tool_calls=1` 的第二次请求无越界执行、短墙钟任务无重试且终态为 `TIMEOUT`，记录可复核证据。
 - [x] 4.4 更新部署说明，明确先发布兼容新失败映射的控制面/Agent Worker，再发布 Python Runtime，并说明既有 Job 策略保持冻结、无需数据迁移。
+
+## 5. 最大工具调用上限提高至500
+
+- [x] 5.1 统一 Web、管理 API、应用领域策略与 Job 快照的调用次数上限为 500，默认值、旧配置及其它预算不变。
+- [x] 5.2 同步当前受支持 Runtime 合同及指纹的调用次数上限，验证 500 次可传递、第 501 次仍安全终止。
+- [x] 5.3 补充保存、发布、Job 固定策略及边界回归，完成后端测试、前端构建和严格规格检查，记录未部署与真实验收边界。见 `evidence/2026-09-12-tool-call-limit-500.md`。

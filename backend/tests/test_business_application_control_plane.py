@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.bootstrap import build_test_container
 from app.main import create_app
+from app.modules.business_application.api.controller import ExecutionPolicyRequest
 from app.modules.business_application.domain.policies import (
     canonical_json,
     normalize_routing_key,
@@ -901,6 +903,28 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "isolation_key_version",
         "history_read_only",
     } <= session_columns
+
+
+@pytest.mark.parametrize("maximum", [30, 50, 200, 201, 500])
+def test_application_tool_call_limit_accepts_up_to_500(maximum: int) -> None:
+    request = ExecutionPolicyRequest(max_tool_calls=maximum)
+    policy = validate_execution_policy(request.model_dump())
+    assert policy["max_tool_calls"] == maximum
+
+
+@pytest.mark.parametrize("maximum", [-1, 501])
+def test_application_tool_call_limit_rejects_out_of_range(maximum: int) -> None:
+    with pytest.raises(ValidationError):
+        ExecutionPolicyRequest(max_tool_calls=maximum)
+    with pytest.raises(NonRetryableExecutionError):
+        validate_execution_policy({"max_tool_calls": maximum})
+
+
+def test_application_tool_call_limit_keeps_default_30() -> None:
+    assert ExecutionPolicyRequest().max_tool_calls == 30
+    assert validate_execution_policy({})["max_tool_calls"] == 30
+    schema = ExecutionPolicyRequest.model_json_schema()
+    assert schema["properties"]["max_tool_calls"]["maximum"] == 500
 
 
 def test_domain_policies_reject_unsafe_or_unknown_configuration() -> None:

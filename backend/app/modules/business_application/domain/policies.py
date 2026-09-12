@@ -322,7 +322,7 @@ def validate_execution_policy(value: dict[str, Any]) -> dict[str, Any]:
     ranges = {
         "max_turns": (1, 100),
         "timeout_seconds": (10, 3600),
-        "max_tool_calls": (0, 200),
+        "max_tool_calls": (0, 500),
     }
     for key, (minimum, maximum) in ranges.items():
         if not minimum <= normalized[key] <= maximum:

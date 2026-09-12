@@ -782,7 +782,8 @@ def test_unmatched_group_route_rejection_mentions_original_sender() -> None:
     assert notifier.sender_user_ids == ["local-user"]
 
 
-def test_routed_job_pins_requested_and_effective_execution_policy() -> None:
+@pytest.mark.parametrize("maximum", [4, 50, 500])
+def test_routed_job_pins_requested_and_effective_execution_policy(maximum: int) -> None:
     container = _container()
     _, _, publication = _publish(
         container,
@@ -796,7 +797,7 @@ def test_routed_job_pins_requested_and_effective_execution_policy() -> None:
         execution_policy={
             "max_turns": 99,
             "timeout_seconds": 120,
-            "max_tool_calls": 4,
+            "max_tool_calls": maximum,
         },
     )
     _activate(
@@ -817,12 +818,12 @@ def test_routed_job_pins_requested_and_effective_execution_policy() -> None:
     assert job.execution_policy["requested"] == {
         "max_turns": 99,
         "timeout_seconds": 120,
-        "max_tool_calls": 4,
+        "max_tool_calls": maximum,
     }
     assert job.execution_policy["effective"] == {
         "max_turns": 12,
         "timeout_seconds": 120,
-        "max_tool_calls": 4,
+        "max_tool_calls": maximum,
     }
     assert (
         job.execution_policy["sources"]["business_application_publication_id"] == publication["id"]

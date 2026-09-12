@@ -659,11 +659,21 @@ describe("Business Application workbench", () => {
     })
     expect(mcpTool).toBeChecked()
     expect(requiredFileTool).toBeChecked()
+    const toolCallLimit = screen.getByLabelText("最大工具调用")
+    expect(toolCallLimit).toHaveValue(30)
+    expect(toolCallLimit).toHaveAttribute("max", "500")
+    fireEvent.change(toolCallLimit, { target: { value: "501" } })
+    expect(toolCallLimit).toBeInvalid()
+    fireEvent.change(toolCallLimit, { target: { value: "500" } })
+    expect(toolCallLimit).toBeValid()
     fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
 
     await waitFor(() =>
       expect(savedBody).toMatchObject({
         agent_publication_id: "agent_publication_default_v2",
+        execution_policy: {
+          max_tool_calls: 500,
+        },
         session_policy: {
           conversation_mode: "channel",
           continuous_conversation_enabled: true,

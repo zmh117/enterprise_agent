@@ -87,7 +87,7 @@
         "max_tool_calls": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 128
+          "maximum": 500
         }
       }
     },

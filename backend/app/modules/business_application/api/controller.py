@@ -251,7 +251,7 @@ class SessionPolicyRequest(StrictRequest):
 class ExecutionPolicyRequest(StrictRequest):
     max_turns: int = Field(default=12, ge=1, le=100)
     timeout_seconds: int = Field(default=300, ge=10, le=3600)
-    max_tool_calls: int = Field(default=30, ge=0, le=200)
+    max_tool_calls: int = Field(default=30, ge=0, le=500)
 
 
 class TriggerConfigRequest(StrictRequest):

@@ -9,6 +9,7 @@ from app.modules.agent.domain.runtime import AgentRunResult, ToolCallBudget
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.execution_policy import (
     EffectiveExecutionPolicyResolver,
+    ExecutionPolicyValues,
     JobExecutionPolicySnapshot,
 )
 from app.modules.job.domain.job_status import JobStatus
@@ -60,6 +61,37 @@ def test_business_application_policy_only_tightens_agent_limits() -> None:
         "max_tool_calls": 0,
     }
     assert snapshot.sources["source_kind"] == "business_application"
+
+
+@pytest.mark.parametrize("maximum", [0, 30, 50, 200, 201, 500])
+def test_job_tool_call_limit_round_trips_without_changing_other_limits(maximum: int) -> None:
+    resolver = EffectiveExecutionPolicyResolver(ExecutionSettings())
+    snapshot = resolver.resolve(
+        application_policy={"max_turns": 100, "timeout_seconds": 600, "max_tool_calls": maximum},
+        agent_snapshot={"execution": {"max_turns": 12, "timeout_seconds": 300}},
+        sources={
+            "business_application_publication_id": "application-publication-test",
+            "agent_publication_id": "agent-publication-test",
+            "business_application_config_hash": "a" * 64,
+            "agent_config_hash": "b" * 64,
+        },
+    )
+    restored = JobExecutionPolicySnapshot.from_dict(snapshot.to_dict())
+    assert restored.requested.max_tool_calls == maximum
+    assert restored.effective.max_tool_calls == maximum
+    assert restored.effective.max_turns == 12
+    assert restored.effective.timeout_seconds == 300
+    assert ExecutionSettings().max_tool_calls == 30
+
+
+@pytest.mark.parametrize("maximum", [-1, 501])
+def test_job_tool_call_limit_rejects_out_of_range(maximum: int) -> None:
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        ExecutionPolicyValues.from_mapping(
+            {"max_turns": 12, "timeout_seconds": 300, "max_tool_calls": maximum},
+            field="effective",
+        )
+    assert raised.value.error_code == "execution_policy_integrity_error"
 
 
 def test_non_business_job_uses_versioned_runtime_default_snapshot() -> None:

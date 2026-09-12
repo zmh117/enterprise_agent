@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from app.modules.agent.infrastructure.generated_runtime_contracts_v1_4 import (
+    CONTRACT_SCHEMA_SHA256 as CONTRACT_SCHEMA_SHA256_V14,
+)
 from app.modules.agent.infrastructure.generated_runtime_contracts_v1_5 import (
     CONTRACT_SCHEMA_SHA256,
     validate_contract,
@@ -34,9 +37,34 @@ def test_current_and_previous_runtime_contracts_are_published_and_hash_matches()
     assert hashlib.sha256((CONTRACT_ROOT / "protocol.schema.json").read_bytes()).hexdigest() == (
         CONTRACT_SCHEMA_SHA256
     )
+    assert hashlib.sha256(
+        (HISTORICAL_CONTRACT_ROOT / "protocol.schema.json").read_bytes()
+    ).hexdigest() == CONTRACT_SCHEMA_SHA256_V14
     assert not any((CONTRACT_ROOT.parent / "v1").rglob("*.*"))
     assert not any((CONTRACT_ROOT.parent / "v1.1").rglob("*.*"))
     assert not any((CONTRACT_ROOT.parent / "v1.2").rglob("*.*"))
+
+
+@pytest.mark.parametrize("version", SUPPORTED_RUNTIME_PROTOCOL_VERSIONS)
+@pytest.mark.parametrize("maximum", [0, 30, 50, 128, 200, 201, 500])
+def test_runtime_tool_call_limit_accepts_up_to_500(version: str, maximum: int) -> None:
+    root = CONTRACT_ROOT.parent / f"v{version}"
+    request = json.loads((root / "golden" / "execution-request.json").read_text())
+    request["limits"]["max_tool_calls"] = maximum
+    request["request_digest"] = canonical_request_digest(request)
+    assert validate_execution_request(request)["limits"]["max_tool_calls"] == maximum
+
+
+@pytest.mark.parametrize("version", SUPPORTED_RUNTIME_PROTOCOL_VERSIONS)
+@pytest.mark.parametrize("maximum", [-1, 501])
+def test_runtime_tool_call_limit_rejects_out_of_range(version: str, maximum: int) -> None:
+    root = CONTRACT_ROOT.parent / f"v{version}"
+    request = json.loads((root / "golden" / "execution-request.json").read_text())
+    request["limits"]["max_tool_calls"] = maximum
+    request["request_digest"] = canonical_request_digest(request)
+    with pytest.raises(RuntimeProtocolError) as raised:
+        validate_execution_request(request)
+    assert raised.value.code == "runtime_request_invalid"
 
 
 def test_current_empty_file_context_request_is_valid() -> None:

@@ -9,6 +9,7 @@
 - 将 Job 固定 `timeout_seconds` 导致的本地墙钟超时归类为终态超时：取消当前 SDK session、保留已有安全工具事件、直接把 Job 转为 `TIMEOUT`，且不进入自动重试。
 - 增加 Runtime、重试服务和执行审计回归测试，覆盖工具预算边界、稳定错误码、无越界工具执行、超时不重试、`TIMEOUT` 终态及证据保留。
 - 本次不调整 timeout 默认值或上限，不扩大 Job Sandbox，不跨 attempt 复用沙盒，也不引入日志专用提取工具。
+- 2026-09-12 按用户要求，将最大工具调用次数的可配置上限由 200 提高至 500，并统一管理 API、领域校验、Job 快照、Web 和当前支持的 Runtime 协议字段上限；默认值 30、已有应用配置和 Job 冻结值不变。
 
 ## Capabilities
 
@@ -19,10 +20,11 @@
 ### Modified Capabilities
 
 - `execution-delivery`: 明确内部工具调用预算耗尽必须终止当前 attempt，并明确由 Job 固定墙钟预算触发的本地 Runtime timeout 是不自动重试的 `TIMEOUT` 终态。
+- `business-application`: 最大工具调用配置支持至 500 次；超过 500 拒绝，只有显式修改并发布激活的应用影响新 Job。
 
 ## Impact
 
 - Python Runtime 的工具授权回调、SDK timeout 异常分类与安全工具事件传播。
 - Job retry service 的重试判定和终态映射。
 - Agent execution policy 使用量审计及相关单元/集成测试。
-- 不涉及数据库 migration、外部 API schema、发布快照结构或文件工作区容量变化。
+- 不涉及数据库 migration、发布快照结构或文件工作区容量变化。追加调整只扩大执行策略数字字段的允许范围，不增加 API 或 Runtime 协议字段。

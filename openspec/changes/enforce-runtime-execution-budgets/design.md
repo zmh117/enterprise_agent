@@ -18,7 +18,7 @@ Canonical `execution-delivery` 已规定真实 Claude Agent 必须受 Job 冻结
 
 **Non-Goals:**
 
-- 不改变 Execution Policy 的默认值、可配置上限、Publication/Job 快照规则或既有 Job 的冻结策略。
+- 不改变 Execution Policy 的默认值、Publication/Job 快照规则或既有 Job 的冻结策略；可配置上限仅按下述追加范围提高 `max_tool_calls`。
 - 不扩大 Job Sandbox，不跨 attempt 保留或复用沙盒，不改变 File Service 提交边界。
 - 不为大日志引入解析器、分片编排、断点续跑或任意脚本执行能力。
 - 不改变 provider/network、429/5xx、CLI transport 等真实瞬时故障的有限重试语义。
@@ -73,3 +73,13 @@ Job retry service 将 `ExecutionTimeout` 明确排除在可重试集合之外，
 ## Open Questions
 
 无。日志提取和大文件分段属于后续独立 change。
+
+## 2026-09-12 追加：最大工具调用支持500次
+
+用户明确要求提高当前代码允许的上限，不是把某个应用或所有 Job 自动设为 500。管理 API、应用领域策略、Job 快照和 Web 数字输入均改为最高 500；默认 30、已有配置和不可变 Publication/Job 原值保持不变。轮次、超时、工具种类数量、查询分页、沙盒容量和权限校验不随此变更扩大。
+
+当前代码支持 Runtime 1.4 与 1.5，两者的 `ExecutionLimits.max_tool_calls` 仍有 128 的旧校验上限。为避免前端允许但执行失败，两个当前受支持协议的该数值上限兼容性扩大至 500，并同步 schema 指纹。请求和事件结构、协议版本、digest 算法、golden 既有请求及旧策略数值不变；退役的 1.3 合同不修改。500 是允许的调用次数，不改变 128 个工具定义数量的独立限制。
+
+验证覆盖 201/500 被各层接受、501/-1 被拒绝、缺省值仍为 30、旧 50 次快照不变，以及 Runtime 前 500 次沿用授权、第 501 次在副作用前硬停止。组件测试使用合成请求，不发起 500 次真实模型或外部工具调用。
+
+部署时先更新接收扩大范围请求的 Python Runtime，再更新 API、执行/入站 Worker 和 Web；所有相关组件升级完成后才在 Web 中提高应用配置并发布激活，避免新请求发送到仍只接受 128 次的旧 Runtime。无数据迁移，不自动修改应用；本次代码交付不代替生产发布和真实 Job 验收。

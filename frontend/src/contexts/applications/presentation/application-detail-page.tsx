@@ -758,7 +758,7 @@ function PolicyEditor({
           label="最大工具调用"
           value={form.execution_policy.max_tool_calls}
           min={0}
-          max={200}
+          max={500}
           onChange={(value) =>
             setForm({
               ...form,
