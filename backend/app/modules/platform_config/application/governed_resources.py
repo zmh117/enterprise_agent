@@ -68,6 +68,12 @@ class ResourceTechnicalVerifier(Protocol):
     ) -> ResourceVerificationOutcome: ...
 
 
+class DelegatedResourceVerifier(Protocol):
+    def verify(
+        self, *, resource: dict[str, Any], draft: dict[str, Any], actor_id: str,
+    ) -> ResourceVerificationOutcome: ...
+
+
 class UnavailableResourceTechnicalVerifier:
     def verify(
         self,
@@ -92,12 +98,14 @@ class GovernedResourceService:
         permission_service: PermissionService,
         verifier: ResourceTechnicalVerifier | None = None,
         provider_contracts: ProviderContractRegistry | None = None,
+        oracle_verifier: DelegatedResourceVerifier | None = None,
     ) -> None:
         self.repository = repository
         self.config_repository = config_repository
         self.permission_service = permission_service
         self.verifier = verifier or UnavailableResourceTechnicalVerifier()
         self.provider_contracts = provider_contracts or ProviderContractRegistry()
+        self.oracle_verifier = oracle_verifier
 
     def require_admin(self, actor_id: str) -> None:
         if not actor_id:
@@ -497,10 +505,10 @@ class GovernedResourceService:
             resource_kind=str(resource["resource_kind"]),
             scope_type=str(resource["scope_type"]),
         )
-        outcome = (verifier or self.verifier).verify(
-            resource=resource,
-            draft=draft,
-        )
+        if verifier is None and draft["provider_type"] == "oracle" and self.oracle_verifier:
+            outcome = self.oracle_verifier.verify(resource=resource, draft=draft, actor_id=actor_id)
+        else:
+            outcome = (verifier or self.verifier).verify(resource=resource, draft=draft)
         status = str(outcome.status).upper()
         if status not in {"PASSED", "FAILED", "BLOCKED"}:
             raise NonRetryableExecutionError(
@@ -517,6 +525,8 @@ class GovernedResourceService:
             )
         safe_checks = sanitize_for_persistence(outcome.checks)
         with self.repository.database.unit_of_work():
+            self.require_admin(actor_id)
+            self._require_identity_enabled(self._resource(code))
             current_draft = self.repository.get_draft(str(resource["id"]))
             if (
                 current_draft["id"] != draft["id"]

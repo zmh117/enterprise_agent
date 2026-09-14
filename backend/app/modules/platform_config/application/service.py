@@ -13,6 +13,7 @@ from app.modules.platform_config.application.runtime_config import (
 )
 from app.modules.permission.application.permission_service import PermissionService
 from app.modules.platform_config.application.governed_resources import (
+    DelegatedResourceVerifier,
     GovernedResourceService,
 )
 from app.modules.platform_config.application.loki_draft_discovery import (
@@ -79,6 +80,7 @@ class PlatformConfigService:
         secret_provider: SecretProviderPort,
         *,
         environment: str = "production",
+        oracle_verifier: DelegatedResourceVerifier | None = None,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -99,6 +101,7 @@ class PlatformConfigService:
                 resolve_secret=secret_provider.resolve,
                 allow_privileged_database_accounts=environment == "local",
             ),
+            oracle_verifier=oracle_verifier,
         )
         self.loki_draft_discovery = LokiDraftDiscoveryService(
             GovernedResourceRepository(repository.database),

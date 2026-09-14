@@ -93,6 +93,7 @@ contract = [
   "test_governed_tool_resource_api.py",
   "test_governed_tool_resource_lifecycle.py",
   "test_governed_tool_resource_schema.py",
+  "test_oracle_resource_verification.py",
   "test_job_dispatch_atomic_creation.py",
   "test_job_dispatch_cutover.py",
   "test_job_dispatch_operations.py",

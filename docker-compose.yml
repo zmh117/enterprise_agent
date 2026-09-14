@@ -32,6 +32,8 @@ x-worker-env: &worker-env
 
 x-api-env: &api-env
   <<: *worker-env
+  ORACLE_VERIFICATION_BASE_URL: ${ORACLE_VERIFICATION_BASE_URL:-http://tool-mcp:9103}
+  ORACLE_VERIFICATION_ALLOWED_HOSTS: ${ORACLE_VERIFICATION_ALLOWED_HOSTS:-tool-mcp}
   MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
   SERVICE_PRINCIPAL_ENABLED: "true"
   PRINCIPAL_JWT_PRIVATE_KEY_FILE: /run/secrets/principal_jwt_private_key

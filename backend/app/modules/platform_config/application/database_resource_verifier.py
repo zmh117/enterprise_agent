@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 import json
+import re
 from typing import Any, Protocol
 import urllib.error
 import urllib.parse
@@ -18,6 +19,110 @@ from .governed_resources import ResourceVerificationOutcome
 
 class ReadonlyAccountViolation(RuntimeError):
     """The configured account has effective write or administrative privileges."""
+
+
+class OracleProbeFailure(RuntimeError):
+    def __init__(
+        self,
+        code: str,
+        safe_message: str,
+        *,
+        connection: bool = False,
+        status: str = "FAILED",
+        driver_code: str = "",
+    ) -> None:
+        super().__init__(safe_message)
+        self.outcome = ResourceVerificationOutcome(
+            status=status,
+            provider_contract_version="oracle_11g_v1",
+            checks={
+                "connection": connection,
+                "real_connection_verified": False,
+                "error_code": code,
+                **({"driver_code": driver_code} if driver_code else {}),
+            },
+            safe_error_summary=safe_message + (f"（{driver_code}）" if driver_code else ""),
+        )
+
+
+def oracle_failure(exc: Exception, *, connection: bool = False) -> OracleProbeFailure:
+    if isinstance(exc, OracleProbeFailure):
+        return exc
+    if isinstance(exc, ModuleNotFoundError):
+        return OracleProbeFailure(
+            "oracle_client_unavailable",
+            "Oracle 客户端未安装，请检查 tool-mcp 镜像",
+            status="BLOCKED",
+        )
+    if isinstance(exc, ReadonlyAccountViolation):
+        return OracleProbeFailure(
+            "oracle_readonly_denied", "Oracle 账号未通过只读权限检查", connection=connection
+        )
+    # Only extract a canonical driver code. Never persist the exception text or DSN.
+    detail = exc.args[0] if exc.args else exc
+    match = re.search(
+        r"\b(?:ORA-\d{5}|DPI-\d{4}|DPY-\d{4})\b",
+        str(getattr(detail, "full_code", "")) or str(detail),
+    )
+    driver_code = match.group(0) if match else ""
+    if driver_code in {"ORA-01017", "ORA-28000", "ORA-28001", "ORA-28040"}:
+        code, message, status = (
+            "oracle_authentication_failed",
+            "Oracle 认证失败，请检查账号、凭据、锁定/过期状态或认证协议",
+            "FAILED",
+        )
+    elif driver_code in {"ORA-12154", "ORA-12505", "ORA-12514"}:
+        code, message, status = (
+            "oracle_service_not_found",
+            "Oracle 服务标识不可用，请核对 Service Name 或 SID 及监听注册",
+            "FAILED",
+        )
+    elif driver_code in {
+        "ORA-12170",
+        "ORA-12535",
+        "DPI-1067",
+        "DPI-1080",
+        "DPY-4024",
+    } or isinstance(exc, TimeoutError):
+        code, message, status = (
+            "oracle_timeout",
+            "Oracle 连接或只读探针超时，请检查网络与数据库负载",
+            "FAILED",
+        )
+    elif driver_code in {
+        "ORA-12541",
+        "ORA-12543",
+        "ORA-12545",
+        "ORA-12537",
+        "ORA-03113",
+        "ORA-03114",
+    }:
+        code, message, status = (
+            "oracle_network_failed",
+            "Oracle 网络或监听连接失败，请检查地址、端口及防火墙",
+            "FAILED",
+        )
+    elif driver_code == "ORA-01031":
+        code, message, status = (
+            "oracle_readonly_denied",
+            "Oracle 账号缺少执行只读验证所需权限",
+            "FAILED",
+        )
+    elif driver_code in {"DPI-1047", "DPI-1072", "DPY-3010"}:
+        code, message, status = (
+            "oracle_client_unavailable",
+            "Oracle Thick 客户端不可用，请检查 tool-mcp 的 64 位 Instant Client 19c 与架构",
+            "BLOCKED",
+        )
+    else:
+        code, message, status = (
+            "oracle_probe_failed",
+            "Oracle 技术探针失败，请核对数据库配置与运行状态",
+            "FAILED",
+        )
+    return OracleProbeFailure(
+        code, message, connection=connection, status=status, driver_code=driver_code
+    )
 
 
 class DatabaseReadonlyProbe(Protocol):
@@ -269,7 +374,14 @@ class Oracle11gReadonlyAccountProbe:
                 assert_oracle_client_mode_ready,
             )
 
-            assert_oracle_client_mode_ready(OracleClientMode.THICK)
+            try:
+                assert_oracle_client_mode_ready(OracleClientMode.THICK)
+            except Exception as exc:
+                raise OracleProbeFailure(
+                    "oracle_client_unavailable",
+                    "Oracle Thick 客户端不可用，请检查 tool-mcp 的 64 位 Instant Client 19c、架构和依赖库",
+                    status="BLOCKED",
+                ) from exc
         else:
             self._client_ready()
         oracledb = self._oracledb_module
@@ -278,11 +390,17 @@ class Oracle11gReadonlyAccountProbe:
 
             oracledb = imported_oracledb
         if bool(oracledb.is_thin_mode()):
-            raise ReadonlyAccountViolation("python-oracledb is not using Thick mode")
+            raise OracleProbeFailure(
+                "oracle_client_unavailable",
+                "Oracle 11g 必须使用 Thick 客户端，禁止 Thin 回退",
+                status="BLOCKED",
+            )
         service_name = str(config.get("service_name") or "").strip()
         sid = str(config.get("sid") or "").strip()
         if bool(service_name) == bool(sid):
-            raise ReadonlyAccountViolation("Oracle requires exactly one Service Name or SID")
+            raise OracleProbeFailure(
+                "oracle_service_invalid", "Oracle 必须且只能填写 Service Name 或 SID 中的一项"
+            )
         dsn = (
             oracledb.makedsn(
                 config["host"],
@@ -296,16 +414,28 @@ class Oracle11gReadonlyAccountProbe:
                 sid=sid,
             )
         )
-        connection = oracledb.connect(
-            user=config["user"],
-            password=config["password"],
-            dsn=dsn,
+        # Generated by makedsn from validated fields, never an arbitrary user descriptor.
+        dsn = dsn.replace(
+            "(DESCRIPTION=",
+            (
+                f"(DESCRIPTION=(CONNECT_TIMEOUT={timeout_seconds})"
+                f"(TRANSPORT_CONNECT_TIMEOUT={timeout_seconds})(RETRY_COUNT=0)"
+            ),
+            1,
         )
+        try:
+            connection = oracledb.connect(user=config["user"], password=config["password"], dsn=dsn)
+        except Exception as exc:
+            raise oracle_failure(exc) from exc
         try:
             connection.call_timeout = timeout_seconds * 1000
             version = str(getattr(connection, "version", "") or "")
             if not version.startswith("11.2.0.4"):
-                raise ReadonlyAccountViolation("Oracle server is not 11.2.0.4")
+                raise OracleProbeFailure(
+                    "oracle_version_unsupported",
+                    "当前 Oracle 服务端版本不符合 11.2.0.4 契约",
+                    connection=True,
+                )
             cursor = connection.cursor()
             try:
                 schema = str(config.get("schema") or "").strip()
@@ -342,8 +472,10 @@ class Oracle11gReadonlyAccountProbe:
                     "NLS_CHARACTERSET": "AL32UTF8",
                     "NLS_NCHAR_CHARACTERSET": "AL16UTF16",
                 }:
-                    raise ReadonlyAccountViolation(
-                        "Oracle database character sets are incompatible"
+                    raise OracleProbeFailure(
+                        "oracle_charset_unsupported",
+                        "Oracle 字符集不符合当前契约：需要 AL32UTF8 / AL16UTF16",
+                        connection=True,
                     )
                 cursor.execute("SET TRANSACTION READ ONLY")
                 cursor.execute("SELECT 1 FROM dual")
@@ -363,6 +495,7 @@ class Oracle11gReadonlyAccountProbe:
                 client_architecture = client.architecture or client_architecture
             return {
                 "connection": True,
+                "real_connection_verified": True,
                 "readonly_account": readonly_account,
                 "privileged_account_allowed": not readonly_account,
                 "readonly_transaction": True,
@@ -372,6 +505,10 @@ class Oracle11gReadonlyAccountProbe:
                 "client_version": client_version,
                 "client_architecture": client_architecture,
             }
+        except (OracleProbeFailure, ReadonlyAccountViolation):
+            raise
+        except Exception as exc:
+            raise oracle_failure(exc, connection=True) from exc
         finally:
             connection.close()
 
@@ -589,7 +726,7 @@ class GovernedResourceTechnicalVerifier:
                     "available": False,
                     "real_connection_verified": False,
                 },
-                safe_error_summary=("真实 Oracle 11.2.0.4 连接验收尚未完成，禁止发布"),
+                safe_error_summary="Oracle 真实验证服务尚未接通，请由管理 API 委派 tool-mcp 执行技术测试",
             )
         if probe is None:
             return ResourceVerificationOutcome(
@@ -626,14 +763,20 @@ class GovernedResourceTechnicalVerifier:
                     else ""
                 ),
             )
-        except ModuleNotFoundError:
+        except OracleProbeFailure as exc:
+            return exc.outcome
+        except ModuleNotFoundError as exc:
+            if provider_type == "oracle":
+                return oracle_failure(exc).outcome
             return ResourceVerificationOutcome(
                 status="BLOCKED",
                 provider_contract_version=contract.contract_version,
                 checks={"available": False},
                 safe_error_summary="数据库客户端未安装，无法执行技术验证",
             )
-        except ReadonlyAccountViolation:
+        except ReadonlyAccountViolation as exc:
+            if provider_type == "oracle":
+                return oracle_failure(exc, connection=True).outcome
             return ResourceVerificationOutcome(
                 status="FAILED",
                 provider_contract_version=contract.contract_version,
@@ -650,7 +793,9 @@ class GovernedResourceTechnicalVerifier:
                 checks={"connection": False},
                 safe_error_summary="资源连接或技术探针执行失败",
             )
-        except Exception:
+        except Exception as exc:
+            if provider_type == "oracle":
+                return oracle_failure(exc).outcome
             return ResourceVerificationOutcome(
                 status="FAILED",
                 provider_contract_version=contract.contract_version,

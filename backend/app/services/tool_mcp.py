@@ -37,6 +37,9 @@ from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import load_settings
 from app.shared.exceptions import AppError, ToolPolicyError
 from app.shared.secret_redaction import sanitize_for_persistence
+from app.modules.platform_config.infrastructure.oracle_verification import (
+    MAX_REQUEST_BYTES, ORACLE_VERIFY_PATH, OracleVerificationHandler,
+)
 
 logger = logging.getLogger(__name__)
 SERVER_CODE = "tool-mcp"
@@ -395,6 +398,7 @@ def create_app(
     service: JobToolService,
     *,
     allowed_hosts: tuple[str, ...] = ("tool-mcp", "tool-mcp:9103", "127.0.0.1:9103"),
+    oracle_verification: OracleVerificationHandler | None = None,
 ) -> CredentialRejectingMiddleware:
     server = create_tool_server(service)
     manager = StreamableHTTPSessionManager(
@@ -419,6 +423,25 @@ def create_app(
                 status_code=503,
             )
 
+    async def verify_oracle(request: Request) -> JSONResponse:
+        if oracle_verification is None:
+            return JSONResponse({"error_code": "oracle_verification_unavailable"}, status_code=503)
+        try:
+            raw = bytearray()
+            async with asyncio.timeout(5):
+                async for chunk in request.stream():
+                    raw.extend(chunk)
+                    if len(raw) > MAX_REQUEST_BYTES:
+                        return JSONResponse({"error_code": "oracle_verification_request_too_large"}, status_code=413)
+            envelope = json.loads(raw)
+            if not isinstance(envelope, dict):
+                raise ValueError("Invalid Oracle verification envelope")
+            result = await asyncio.to_thread(oracle_verification.handle, envelope)
+            return JSONResponse(result)
+        except Exception:
+            # Never log the signed ticket, connection details or raw driver exceptions.
+            return JSONResponse({"error_code": "oracle_verification_denied"}, status_code=403)
+
     @asynccontextmanager
     async def lifespan(_: Starlette) -> Any:
         async with manager.run():
@@ -427,6 +450,7 @@ def create_app(
     app = Starlette(
         routes=[
             Route("/health", health, methods=["GET"]),
+            Route(ORACLE_VERIFY_PATH, verify_oracle, methods=["POST"]),
             Route("/mcp", endpoint=_StreamableHttpApp(manager)),
         ],
         lifespan=lifespan,
@@ -441,7 +465,25 @@ def create_default_app() -> CredentialRejectingMiddleware:
         seed=settings.seed_local_config,
         service_name=SERVER_CODE,
     )
-    return create_app(_service_from_container(runtime))
+    from app.modules.platform_config.application.database_resource_verifier import (
+        GovernedResourceTechnicalVerifier,
+    )
+
+    allow_privileged = runtime.settings.environment == "local"
+    return create_app(
+        _service_from_container(runtime),
+        oracle_verification=OracleVerificationHandler(
+            resources=runtime.platform_config_service.governed_resources,
+            master_key=runtime.settings.app_config_master_key,
+            allow_privileged_account=allow_privileged,
+            verifier=GovernedResourceTechnicalVerifier(
+                resolve_secret=runtime.platform_config_service.secret_provider.resolve,
+                allow_oracle_real_verification=True,
+                allow_privileged_database_accounts=allow_privileged,
+                timeout_seconds=5,
+            ),
+        ),
+    )
 
 
 def _service_from_container(runtime: Container) -> JobToolService:

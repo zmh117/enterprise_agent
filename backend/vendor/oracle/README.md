@@ -59,3 +59,53 @@ descriptor、RAC/SCAN、Thin/auto 模式或 12c `FETCH FIRST` 兼容开关。
 
 本地没有真实 Oracle 11.2.0.4 时，单元/镜像测试不能替代真实连接验收，
 Oracle Draft 必须保持 blocked，不能发布。
+
+## Web 技术测试与跨环境部署
+
+管理端的 Oracle 技术测试由 API 授权后委派 `tool-mcp` 执行，不在 API 内加载客户端。
+API 只传递绑定当前草稿与操作人的限时签名票据，tool-mcp 从现有数据库读取草稿、
+校验权限并解析凭据。请求不包含数据库密码；此入口不是 Agent 可用的 MCP 工具。
+
+1. 按上面的许可与架构要求，将 Instant Client 19c 放入**目标机器**的构建上下文。
+   客户端二进制不受 Git 管理，因此只拉取最新代码不会自动补齐它。
+2. 确保 API 与 tool-mcp 使用同一平台数据库与原有 `app_config_master_key` Secret。
+   不要为修复连接问题重新生成主密钥，否则已有加密凭据可能无法解析。
+3. Compose 默认内部地址已经配置，无需填写 Oracle 数据库地址到下列变量：
+
+   ```dotenv
+   ORACLE_VERIFICATION_BASE_URL=http://tool-mcp:9103
+   ORACLE_VERIFICATION_ALLOWED_HOSTS=tool-mcp
+   ```
+
+   非 Compose 部署需要把服务地址和主机白名单一起修改；不接受重定向、URL 用户名/密码、
+   路径或查询参数。这里的白名单是验证服务主机，不是 Oracle 数据库主机。
+4. 在确认升级窗口后构建并更新两个服务（此变更自身没有数据库迁移）：
+
+   ```bash
+   docker compose build api-server tool-mcp
+   docker compose up -d --no-deps api-server tool-mcp
+   ```
+
+5. 在工具资源页对 Oracle 当前草稿重新执行“技术测试”。旧 BLOCKED 记录不会自动变成通过。
+   只有当前草稿的 PASSED 结果才能发布；验证期间编辑草稿或停用身份会使结果不能用于发布。
+
+失败说明：
+
+| 安全错误码 | 处理方向 |
+| --- | --- |
+| `oracle_client_unavailable` | tool-mcp 的 64 位 19c 客户端、容器架构、动态库依赖或 Thick 初始化 |
+| `oracle_verification_unavailable` | API 到 tool-mcp 的内部地址、主机白名单、服务版本与主密钥一致性 |
+| `oracle_verification_timeout` / `oracle_timeout` | 验证服务响应、数据库网络或探针耗时 |
+| `oracle_authentication_failed` | 凭据中心配置、账号锁定/过期或认证协议，不要把密码发到日志或聊天 |
+| `oracle_service_not_found` | 数据库 Service Name/SID 及监听注册；二者只能填写一项 |
+| `oracle_network_failed` | 从 tool-mcp 容器到数据库地址/端口的网络与防火墙 |
+| `oracle_version_unsupported` | 当前契约要求真实服务端 11.2.0.4，而非笼统的 11g |
+| `oracle_charset_unsupported` | 当前探针要求 AL32UTF8 / AL16UTF16；不会自动修改数据库字符集 |
+| `oracle_readonly_denied` | 账号的只读系统权限、对象权限、角色及只读事务；非本地策略不放行高权限账号 |
+
+连接描述符由结构化字段生成，使用 `CONNECT_TIMEOUT`、`TRANSPORT_CONNECT_TIMEOUT` 和
+`RETRY_COUNT=0`，不接受调用者提供任意描述符；查询保留 `call_timeout`。
+参数语义参考 [Oracle Net 19c 文档](https://docs.oracle.com/en/database/oracle/oracle-database/19/netrf/local-naming-parameters-in-tns-ora-file.html)。
+
+真实验收：目标环境中完成连接、只读事务、版本及字符集检查后，核对页面 PASSED 与当前草稿版本。
+本地单元测试、Mock HTTP、镜像构建成功均不等于已经连接你的 Oracle。

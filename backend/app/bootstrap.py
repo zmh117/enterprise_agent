@@ -638,11 +638,19 @@ def _build_container(
         authorization_evaluator,
         audit_service,
     )
+    from app.modules.platform_config.infrastructure.oracle_verification import RemoteOracleVerifier
+
     platform_config_service = PlatformConfigService(
         platform_config_repository,
         permission_service,
         model_secret_provider,
         environment=settings.environment,
+        oracle_verifier=RemoteOracleVerifier(
+            base_url=settings.oracle_verification_base_url,
+            allowed_hosts=settings.oracle_verification_allowed_hosts,
+            master_key=settings.app_config_master_key,
+            allow_privileged_account=settings.environment == "local",
+        ) if service_name == "api-server" else None,
     )
     model_connection_service = ModelConnectionService(
         model_connection_repository,
