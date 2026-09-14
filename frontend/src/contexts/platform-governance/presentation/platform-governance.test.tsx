@@ -11,7 +11,11 @@ import { describe, expect, it, vi } from "vitest"
 
 import { createDebugJob } from "@/contexts/operations/infrastructure/debug-job-api"
 import { DebugJobPage } from "@/contexts/operations/presentation/debug-job-page"
-import { createGovernedResource } from "@/contexts/platform-governance/infrastructure/platform-governance-api"
+import type { ResourceFormInput } from "@/contexts/platform-governance/domain/platform-governance"
+import {
+  createGovernedResource,
+  saveGovernedResourceDraft,
+} from "@/contexts/platform-governance/infrastructure/platform-governance-api"
 import { CredentialCenterPage } from "@/contexts/platform-governance/presentation/credential-center-page"
 import { RuntimeConfigPage } from "@/contexts/platform-governance/presentation/runtime-config-page"
 import { ToolResourcesPage } from "@/contexts/platform-governance/presentation/tool-resources-page"
@@ -675,106 +679,155 @@ describe("Phase 5 platform governance UI", () => {
     ).toBeInTheDocument()
   })
 
-  it("discovers arbitrary Loki labels and saves the exact selector in the same Draft", async () => {
-    let savedBody: Record<string, unknown> | undefined
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      const url = String(input)
-      if (url.endsWith("/api/platform/resources/loki_test/loki/test")) {
-        return response({
-          test_session_id: "loki-session-1",
-          draft_revision: 1,
-          labels: ["cluster", "kubernetes_namespace_name"],
-          label_count: 2,
-          truncated: false,
-          expires_at: "2026-08-17T12:05:00Z",
-        })
+  it.each(["environment", "global"])(
+    "saves exact Loki selectors after changing %s scope targets without Workshop",
+    async (scopeType) => {
+      let savedBody: Record<string, unknown> | undefined
+      const resource = {
+        ...governedLokiResource({ draft: true, published: false }),
+        scope_type: scopeType,
+        environment_code: scopeType === "global" ? "" : "agent_test",
       }
-      if (url.endsWith("/api/platform/resources/loki_test/loki/label-values")) {
-        return response({
-          label: "kubernetes_namespace_name",
-          values: ["mes-production"],
-          value_count: 1,
-          truncated: false,
-        })
-      }
-      if (url.endsWith("/api/platform/resources/loki_test/draft") && init?.method === "PUT") {
-        savedBody = JSON.parse(String(init.body)) as Record<string, unknown>
-        return response({
-          draft: {
-            ...governedLokiResource({ draft: true, published: false }).draft,
-            draft_revision: 2,
-            scope_bindings: (savedBody.scope_bindings as unknown[]) ?? [],
-          },
-        })
-      }
-      if (url.endsWith("/api/platform/resources")) {
-        return response({ resources: [governedLokiResource({ draft: true, published: false })] })
-      }
-      if (url.includes("/api/platform/secrets")) return response({ secrets: [] })
-      if (url.includes("/api/platform/environments")) {
-        return response({
-          environments: [
-            {
-              id: "environment-agent-test",
-              code: "agent_test",
-              display_name: "Agent Test",
-              status: "enabled",
+      vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+        const url = String(input)
+        if (url.endsWith("/api/platform/resources/loki_test/loki/test")) {
+          return response({
+            test_session_id: "loki-session-1",
+            draft_revision: 1,
+            labels: ["cluster", "kubernetes_namespace_name"],
+            label_count: 2,
+            truncated: false,
+            expires_at: "2026-08-17T12:05:00Z",
+          })
+        }
+        if (
+          url.endsWith("/api/platform/resources/loki_test/loki/label-values")
+        ) {
+          return response({
+            label: "kubernetes_namespace_name",
+            values: ["mes-production"],
+            value_count: 1,
+            truncated: false,
+          })
+        }
+        if (
+          url.endsWith("/api/platform/resources/loki_test/draft") &&
+          init?.method === "PUT"
+        ) {
+          savedBody = JSON.parse(String(init.body)) as Record<string, unknown>
+          return response({
+            draft: {
+              ...governedLokiResource({ draft: true, published: false }).draft,
+              draft_revision: 2,
+              scope_bindings: (savedBody.scope_bindings as unknown[]) ?? [],
             },
-          ],
+          })
+        }
+        if (url.endsWith("/api/platform/resources")) {
+          return response({ resources: [resource] })
+        }
+        if (url.includes("/api/platform/secrets"))
+          return response({ secrets: [] })
+        if (url.includes("/api/platform/environments")) {
+          return response({
+            environments: [
+              {
+                id: "environment-agent-test",
+                code: "agent_test",
+                display_name: "Agent Test",
+                status: "enabled",
+              },
+              {
+                id: "environment-other",
+                code: "other_test",
+                status: "enabled",
+              },
+            ],
+          })
+        }
+        if (url.includes("/api/platform/bases"))
+          return response({
+            bases: [
+              {
+                id: "base-one",
+                code: "base_one",
+                environment_code: "agent_test",
+                status: "enabled",
+              },
+            ],
+          })
+        if (url.includes("/api/platform/workshops"))
+          return response({ workshops: [] })
+        if (url.includes("/api/platform/provider-contracts"))
+          return response({ contracts: [] })
+        throw new Error(`unexpected request: ${url}`)
+      })
+      renderWithQuery(<ToolResourcesPage />)
+
+      expect(await screen.findByText("Loki 测试环境")).toBeInTheDocument()
+      fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
+      async function chooseTarget(label: string, value: string) {
+        fireEvent.click(
+          screen.getByRole("combobox", { name: label })
+        )
+        const option = await screen.findByRole("option", {
+          name: value,
         })
+        fireEvent.pointerDown(option, { pointerType: "mouse", button: 0 })
+        fireEvent.click(option)
       }
-      if (url.includes("/api/platform/bases")) return response({ bases: [] })
-      if (url.includes("/api/platform/workshops")) return response({ workshops: [] })
-      if (url.includes("/api/platform/provider-contracts")) return response({ contracts: [] })
-      throw new Error(`unexpected request: ${url}`)
-    })
-    renderWithQuery(<ToolResourcesPage />)
+      if (scopeType === "global") {
+        await chooseTarget("Environment", "other_test")
+        await chooseTarget("Environment", "agent_test")
+      }
+      await chooseTarget("Base（可选）", "base_one")
+      await chooseTarget("Base（可选）", "不选择")
+      expect(
+        screen.queryByLabelText("Workshop（可选）")
+      ).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole("button", { name: "连接并发现 Labels" }))
 
-    expect(await screen.findByText("Loki 测试环境")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
-    fireEvent.click(screen.getByRole("button", { name: "连接并发现 Labels" }))
+      const labelSelect = await screen.findByRole("combobox", {
+        name: "范围 1 Loki label",
+      })
+      fireEvent.click(labelSelect)
+      const labelOption = await screen.findByRole("option", {
+        name: "kubernetes_namespace_name",
+      })
+      fireEvent.pointerDown(labelOption, { pointerType: "mouse", button: 0 })
+      fireEvent.click(labelOption)
+      fireEvent.click(screen.getByRole("button", { name: "查值" }))
 
-    const labelSelect = await screen.findByRole("combobox", {
-      name: "范围 1 Loki label",
-    })
-    fireEvent.click(labelSelect)
-    const labelOption = await screen.findByRole("option", {
-      name: "kubernetes_namespace_name",
-    })
-    fireEvent.pointerDown(labelOption, { pointerType: "mouse", button: 0 })
-    fireEvent.click(labelOption)
-    fireEvent.click(screen.getByRole("button", { name: "查值" }))
+      const valueSelect = await screen.findByRole("combobox", {
+        name: "范围 1 Loki value",
+      })
+      await waitFor(() => expect(valueSelect).not.toBeDisabled())
+      fireEvent.click(valueSelect)
+      const valueOption = await screen.findByRole("option", {
+        name: "mes-production",
+      })
+      fireEvent.pointerDown(valueOption, { pointerType: "mouse", button: 0 })
+      fireEvent.click(valueOption)
+      fireEvent.click(screen.getByRole("button", { name: "添加" }))
 
-    const valueSelect = await screen.findByRole("combobox", {
-      name: "范围 1 Loki value",
-    })
-    await waitFor(() => expect(valueSelect).not.toBeDisabled())
-    fireEvent.click(valueSelect)
-    const valueOption = await screen.findByRole("option", {
-      name: "mes-production",
-    })
-    fireEvent.pointerDown(valueOption, { pointerType: "mouse", button: 0 })
-    fireEvent.click(valueOption)
-    fireEvent.click(screen.getByRole("button", { name: "添加" }))
+      expect(screen.getByLabelText("范围 1 最终 Selector")).toHaveValue(
+        '{kubernetes_namespace_name="mes-production"}'
+      )
+      fireEvent.click(screen.getByRole("button", { name: "保存 Draft" }))
 
-    expect(screen.getByLabelText("范围 1 最终 Selector")).toHaveValue(
-      '{kubernetes_namespace_name="mes-production"}'
-    )
-    fireEvent.click(screen.getByRole("button", { name: "保存 Draft" }))
-
-    await waitFor(() =>
-      expect(savedBody).toMatchObject({
-        scope_bindings: [
+      await waitFor(() =>
+        expect(savedBody?.scope_bindings).toEqual([
           {
             environment_code: "agent_test",
+            base_code: "",
             selector_conditions: {
               kubernetes_namespace_name: "mes-production",
             },
           },
-        ],
-      })
-    )
-  })
+        ])
+      )
+    }
+  )
 
   it("creates a new Resource Draft directly from a Published revision", async () => {
     let copied = false
@@ -1080,6 +1133,120 @@ describe("Phase 5 platform governance UI", () => {
     )
     expect(lifecycleBody).toEqual({ expected_revision: 1 })
   })
+
+  describe.each(["create", "edit"] as const)(
+    "%s resource scope serialization",
+    (operation) => {
+      function form(binding: Record<string, unknown>): ResourceFormInput {
+        return {
+          code: "loki_test",
+          name: "Loki 测试",
+          resource_kind: "loki",
+          provider_type: "loki",
+          scope_type: "environment",
+          environment_code: "agent_test",
+          base_code: "",
+          workshop_code: "",
+          config: { base_url: "http://loki.test:3100" },
+          secret_refs: {},
+          scope_bindings: [binding],
+        }
+      }
+
+      async function submit(input: ResourceFormInput) {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+          response({
+            resource: { id: "resource-loki-test" },
+            draft: governedLokiResource({ draft: true, published: false })
+              .draft,
+          })
+        )
+        if (operation === "create") await createGovernedResource(input)
+        else
+          await saveGovernedResourceDraft(input.code, {
+            ...input,
+            expected_revision: 1,
+          })
+        const [url, options] = fetchMock.mock.calls[0]!
+        expect(String(url)).toBe(
+          operation === "create"
+            ? "/api/platform/resources"
+            : "/api/platform/resources/loki_test/draft"
+        )
+        expect(options?.method).toBe(operation === "create" ? "POST" : "PUT")
+        const body = JSON.parse(String(options?.body)) as ResourceFormInput & {
+          expected_revision?: number
+        }
+        if (operation === "edit") expect(body.expected_revision).toBe(1)
+        return body
+      }
+
+      it.each(["", null, undefined])(
+        "omits an empty Loki Workshop value %s without mutating the form",
+        async (workshop) => {
+          const binding = Object.freeze({
+            environment_code: "agent_test",
+            base_code: "base_one",
+            workshop_code: workshop,
+            selector_conditions: { app: "test" },
+          })
+          const input = Object.freeze(form(binding))
+          Object.freeze(input.scope_bindings)
+          const body = await submit(input)
+          expect(body.scope_bindings).toEqual([
+            {
+              environment_code: "agent_test",
+              base_code: "base_one",
+              selector_conditions: { app: "test" },
+            },
+          ])
+          expect(body.scope_bindings[0]).not.toHaveProperty("workshop_code")
+          expect(input.scope_bindings[0]).toHaveProperty(
+            "workshop_code",
+            workshop
+          )
+          expect(body.workshop_code).toBe("")
+          expect(body.config).toEqual(input.config)
+        }
+      )
+
+      it("preserves unsupported nonempty fields for strict rejection", async () => {
+        const binding = {
+          environment_code: "agent_test",
+          base_code: "base_one",
+          workshop_code: "GL001",
+          selector_conditions: { app: "test" },
+          unknown_scope: "invalid",
+        }
+        expect((await submit(form(binding))).scope_bindings).toEqual([binding])
+      })
+
+      it.each(["database", "redis"] as const)(
+        "preserves %s Workshop and prefix fields",
+        async (kind) => {
+          const binding = {
+            environment_code: "agent_test",
+            base_code: "base_one",
+            workshop_code: "GL001",
+            ...(kind === "database"
+              ? { table_prefix: "GL001_" }
+              : { namespace_prefixes: ["mes:GL001:"] }),
+          }
+          const input: ResourceFormInput = {
+            ...form(binding),
+            resource_kind: kind,
+            provider_type: kind === "database" ? "mysql" : "redis",
+            scope_type: "workshop",
+            base_code: "base_one",
+            workshop_code: "GL001",
+          }
+          const body = await submit(input)
+          expect(body.scope_bindings).toEqual([binding])
+          expect(body.workshop_code).toBe("GL001")
+        }
+      )
+    }
+  )
 
   it("serializes a resource Draft with only the selected Secret reference", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>

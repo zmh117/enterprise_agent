@@ -1618,7 +1618,7 @@ function ScopeBindingsEditor({
                   ...binding,
                   environment_code: value,
                   base_code: "",
-                  workshop_code: "",
+                  ...(resourceKind === "loki" ? {} : { workshop_code: "" }),
                 })
               }
             />
@@ -1634,7 +1634,11 @@ function ScopeBindingsEditor({
                 )
                 .map((item) => item.code)}
               onChange={(value) =>
-                replace(index, { ...binding, base_code: value, workshop_code: "" })
+                replace(index, {
+                  ...binding,
+                  base_code: value,
+                  ...(resourceKind === "loki" ? {} : { workshop_code: "" }),
+                })
               }
             />
             {resourceKind !== "loki" ? (

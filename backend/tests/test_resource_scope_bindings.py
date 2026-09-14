@@ -221,6 +221,62 @@ def test_loki_scope_binding_accepts_arbitrary_discovered_exact_labels() -> None:
     ) == normalized[0]
 
 
+@pytest.mark.parametrize("base", ["", "guanlan"])
+@pytest.mark.parametrize("scope_type", ["global", "environment"])
+def test_loki_form_scope_accepts_environment_and_optional_base_without_workshop(
+    base: str,
+    scope_type: str,
+) -> None:
+    binding = {
+        "environment_code": "prod",
+        "base_code": base,
+        "selector_conditions": {"app": "example"},
+    }
+    assert normalize_resource_scope_bindings(
+        [binding],
+        resource_kind="loki",
+        scope_type=scope_type,
+        environment_code="prod" if scope_type == "environment" else "",
+        base_code="",
+        workshop_code="",
+    ) == [
+        {
+            "environment_code": "prod",
+            **({"base_code": base} if base else {}),
+            "selector_conditions": {"app": "example"},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"workshop_code": ""},
+        {"workshop_code": None},
+        {"workshop_code": "GL001"},
+        {"unknown_scope": "invalid"},
+    ],
+)
+def test_loki_backend_still_rejects_unknown_or_workshop_fields(extra: dict[str, Any]) -> None:
+    with pytest.raises(NonRetryableExecutionError) as error:
+        normalize_resource_scope_bindings(
+            [
+                {
+                    "environment_code": "prod",
+                    "base_code": "guanlan",
+                    "selector_conditions": {"app": "example"},
+                    **extra,
+                }
+            ],
+            resource_kind="loki",
+            scope_type="global",
+            environment_code="",
+            base_code="",
+            workshop_code="",
+        )
+    assert error.value.error_code == "resource_scope_bindings_invalid"
+
+
 def test_scope_binding_rejects_wildcards_and_duplicate_targets() -> None:
     with pytest.raises(NonRetryableExecutionError) as wildcard:
         normalize_resource_scope_bindings(

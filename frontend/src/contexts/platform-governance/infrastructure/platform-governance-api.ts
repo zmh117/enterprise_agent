@@ -73,11 +73,26 @@ export async function listProviderContracts() {
   )
 }
 
+function resourceSaveBody<T extends ResourceFormInput>(input: T): T {
+  if (input.resource_kind !== "loki") return input
+  return {
+    ...input,
+    scope_bindings: input.scope_bindings.map((binding) => {
+      const normalized = { ...binding }
+      // Only remove empty UI placeholders; invalid nonempty scope stays fail-closed.
+      if (normalized.workshop_code === "" || normalized.workshop_code == null) {
+        delete normalized.workshop_code
+      }
+      return normalized
+    }),
+  }
+}
+
 export async function createGovernedResource(input: ResourceFormInput) {
   return resourceCreateResponseSchema.parse(
     await apiRequest("/api/platform/resources", {
       method: "POST",
-      body: input,
+      body: resourceSaveBody(input),
     })
   )
 }
@@ -89,7 +104,7 @@ export async function saveGovernedResourceDraft(
   return resourceDraftResponseSchema.parse(
     await apiRequest(
       `/api/platform/resources/${encodeURIComponent(code)}/draft`,
-      { method: "PUT", body: input }
+      { method: "PUT", body: resourceSaveBody(input) }
     )
   ).draft
 }
