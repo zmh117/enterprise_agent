@@ -214,6 +214,23 @@ def test_governed_resource_revision_action_routes_disable_and_archive() -> None:
         "api_resource_mysql",
         actor_id=ADMIN_ID,
     )
+    resources.create_draft_from_revision(
+        "api_resource_mysql",
+        published["id"],
+        actor_id=ADMIN_ID,
+    )
+    resources.verify_draft(
+        "api_resource_mysql",
+        actor_id=ADMIN_ID,
+        verifier=PassingVerifier(),
+    )
+    latest = resources.publish_draft("api_resource_mysql", actor_id=ADMIN_ID)
+    resources.set_revision_status(
+        "api_resource_mysql",
+        latest["id"],
+        "archived",
+        actor_id=ADMIN_ID,
+    )
     app = create_app(_settings(), container_factory=lambda _: runtime)
     revision_path = f"/api/platform/resources/api_resource_mysql/revisions/{published['id']}"
 
@@ -234,6 +251,16 @@ def test_governed_resource_revision_action_routes_disable_and_archive() -> None:
     separated_resource = separated.json()["resources"][0]
     assert separated_resource["status"] == "enabled"
     assert separated_resource["published_revision"]["status"] == "ARCHIVED"
+    assert separated_resource["published_revision"]["id"] == latest["id"]
+    assert separated_resource["revisions"] == [
+        {
+            "id": revision["id"],
+            "revision": revision["revision"],
+            "status": "ARCHIVED",
+            "published_at": revision["published_at"],
+        }
+        for revision in (published, latest)
+    ]
     runtime.database.close()
 
 

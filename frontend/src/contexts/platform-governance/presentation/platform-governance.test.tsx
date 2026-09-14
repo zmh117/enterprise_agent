@@ -915,6 +915,83 @@ describe("Phase 5 platform governance UI", () => {
     ).toBeInTheDocument()
   })
 
+  it("retires a hidden MySQL revision and archives only that identity, not same-environment Loki", async () => {
+    const template = governedLokiResource({ draft: false, published: true })
+    const older = {
+      ...template.published_revision!,
+      id: "mysql-r1",
+      resource_id: "resource-mysql",
+      provider_type: "mysql",
+      revision: 1,
+      status: "PUBLISHED",
+    }
+    const latest = { ...older, id: "mysql-r2", revision: 2, status: "DISABLED" }
+    const mysql = {
+      ...template,
+      id: "resource-mysql",
+      code: "mysql_wrong_scope",
+      name: "填错范围的 MySQL",
+      resource_kind: "database",
+      status: "disabled",
+      revision: 2,
+      published_revision: latest,
+      revisions: [older, latest],
+    }
+    const loki = governedLokiResource({ draft: false, published: true })
+    const writes: string[] = []
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (init?.method === "POST") writes.push(url)
+      if (url === "/api/platform/resources") return response({ resources: [mysql, loki] })
+      if (url.endsWith("/mysql_wrong_scope/revisions/mysql-r1/disable")) {
+        older.status = "DISABLED"
+        return response({ revision: older })
+      }
+      if (url.endsWith("/mysql_wrong_scope/revisions/mysql-r1/archive")) {
+        older.status = "ARCHIVED"
+        return response({ revision: older })
+      }
+      if (url.endsWith("/mysql_wrong_scope/lifecycle/archive")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ expected_revision: 2 })
+        mysql.status = "archived"
+        mysql.revision = 3
+        return response({ resource: mysql })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderWithQuery(<ToolResourcesPage />)
+    const mysqlTitle = await screen.findByText("填错范围的 MySQL")
+    const mysqlCard = within(mysqlTitle.closest('[data-slot="card"]') as HTMLElement)
+    const lokiCard = within(screen.getByText("Loki 测试环境").closest('[data-slot="card"]') as HTMLElement)
+    expect(mysqlCard.getByRole("button", { name: "归档资源身份" })).toBeDisabled()
+    expect(mysqlCard.getByText(/仍有已发布版本：r1/)).toBeInTheDocument()
+    expect(mysqlCard.queryByText(/仍有已发布版本：r2/)).not.toBeInTheDocument()
+    fireEvent.click(mysqlCard.getByText("发布版本历史（2）"))
+    fireEvent.click(mysqlCard.getByRole("button", { name: "停用 r1" }))
+    expect(within(screen.getByRole("alertdialog")).getByText(
+      /当前资源：填错范围的 MySQL（mysql_wrong_scope） · r1/
+    )).toBeInTheDocument()
+    expect(writes).toEqual([])
+    fireEvent.click(screen.getByRole("button", { name: "确认" }))
+    await waitFor(() => expect(mysqlCard.getByRole("button", { name: "归档资源身份" })).toBeEnabled())
+
+    fireEvent.click(mysqlCard.getByRole("button", { name: "归档 r1" }))
+    fireEvent.click(screen.getByRole("button", { name: "确认" }))
+    await waitFor(() => expect(mysqlCard.queryByRole("button", { name: "归档 r1" })).not.toBeInTheDocument())
+    fireEvent.click(mysqlCard.getByRole("button", { name: "归档资源身份" }))
+    expect(within(screen.getByRole("alertdialog")).getByText(/原编码不可复用/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "确认" }))
+    await waitFor(() => expect(mysqlCard.getByText("资源身份：归档")).toBeInTheDocument())
+
+    expect(writes).toEqual([
+      "/api/platform/resources/mysql_wrong_scope/revisions/mysql-r1/disable",
+      "/api/platform/resources/mysql_wrong_scope/revisions/mysql-r1/archive",
+      "/api/platform/resources/mysql_wrong_scope/lifecycle/archive",
+    ])
+    expect(lokiCard.getByText("资源身份：启用")).toBeInTheDocument()
+    expect(lokiCard.getByText("r1 · PUBLISHED")).toBeInTheDocument()
+  })
+
   it("separates Resource Identity and latest Revision lifecycle filters", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)

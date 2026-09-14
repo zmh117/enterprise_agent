@@ -80,6 +80,7 @@ import {
 import type {
   GovernedResource,
   ResourceFormInput,
+  ResourceRevisionSummary,
   ResourceVerification,
   TopologyItem,
 } from "@/contexts/platform-governance/domain/platform-governance"
@@ -97,6 +98,7 @@ type ConfirmAction = {
     | "restore-identity"
     | "archive-identity"
   resource: GovernedResource
+  revision?: ResourceRevisionSummary
 }
 
 const providerLabels: Record<Provider, string> = {
@@ -255,11 +257,12 @@ export function ToolResourcesPage() {
       )
       return
     }
-    if (!resource.published_revision) return
+    const revision = confirm.revision
+    if (!revision) return
     setRevisionStatus.mutate(
       {
         code: resource.code,
-        revisionId: resource.published_revision.id,
+        revisionId: revision.id,
         action: confirm.type === "disable-revision" ? "disable" : "archive",
       },
       { onSuccess: () => setConfirm(null) }
@@ -353,11 +356,11 @@ export function ToolResourcesPage() {
                   revisionId: resource.published_revision.id,
                 })
               }}
-              onConfirm={(type) => {
+              onConfirm={(type, revision) => {
                 removeDraft.reset()
                 setRevisionStatus.reset()
                 setIdentityStatus.reset()
-                setConfirm({ type, resource })
+                setConfirm({ type, resource, revision })
               }}
             />
           ))}
@@ -414,6 +417,12 @@ export function ToolResourcesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>{confirmTitle(confirm?.type)}</AlertDialogTitle>
             <AlertDialogDescription>
+              {confirm ? (
+                <span className="mb-2 block break-words font-medium text-foreground">
+                  当前资源：{confirm.resource.name}（{confirm.resource.code}）
+                  {confirm.revision ? ` · r${confirm.revision.revision}` : ""}
+                </span>
+              ) : null}
               {confirmDescription(confirm?.type)}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -547,15 +556,19 @@ function ResourceCard({
   onVerify: () => void
   onPublish: () => void
   onCreateDraft: () => void
-  onConfirm: (type: ConfirmAction["type"]) => void
+  onConfirm: (type: ConfirmAction["type"], revision?: ResourceRevisionSummary) => void
 }) {
   const published = resource.published_revision
   const draft = resource.draft
   const activeDocument = draft ?? published
   const identityEnabled = resource.status === "enabled"
+  const revisions = resource.revisions.length
+    ? resource.revisions
+    : published ? [published] : []
+  const blockingRevisions = revisions.filter((revision) => revision.status === "PUBLISHED")
   const identityArchiveBlocked =
     Boolean(draft) ||
-    published?.status === "PUBLISHED"
+    blockingRevisions.length > 0
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -606,6 +619,55 @@ function ResourceCard({
           <dt className="text-muted-foreground">数据范围</dt>
           <dd>{activeDocument?.scope_bindings.length ?? 0} 条绑定</dd>
         </dl>
+        {resource.status === "disabled" && identityArchiveBlocked ? (
+          <div className="rounded-lg border p-3 text-sm" role="status">
+            <p className="font-medium">当前资源的归档阻塞项</p>
+            {draft ? <p>仍有活动草稿，请先删除草稿。</p> : null}
+            {blockingRevisions.length ? (
+              <p className="break-words">
+                仍有已发布版本：{blockingRevisions.map((revision) => `r${revision.revision}`).join("、")}。
+                请展开下方“发布版本历史”逐个停用。
+              </p>
+            ) : null}
+            <p>仅处理当前资源，无需停用同环境的其他资源。</p>
+          </div>
+        ) : null}
+        {revisions.length ? (
+          <details className="rounded-lg border p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              发布版本历史（{revisions.length}）
+            </summary>
+            <p className="mt-2 text-xs text-muted-foreground">
+              以下版本仅属于 {resource.code}；停用或归档版本不会改动其他资源。
+            </p>
+            <ul className="mt-3 max-h-80 space-y-2 overflow-y-auto">
+              {[...revisions].reverse().map((revision) => (
+                <li key={revision.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-sm">
+                  <div>
+                    <span className="font-medium">r{revision.revision}</span>
+                    <span className="ml-2">{resourceRevisionLabel(revision.status)}</span>
+                    <time className="mt-1 block text-xs text-muted-foreground" dateTime={revision.published_at}>
+                      发布时间：{revision.published_at}
+                    </time>
+                  </div>
+                  {revision.status !== "ARCHIVED" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={pending}
+                      onClick={() => onConfirm(
+                        revision.status === "PUBLISHED" ? "disable-revision" : "archive-revision",
+                        revision
+                      )}
+                    >
+                      {revision.status === "PUBLISHED" ? "停用" : "归档"} r{revision.revision}
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
         {verification ? (
           <p
             role="status"
@@ -671,7 +733,7 @@ function ResourceCard({
             <Button
               size="sm"
               variant="destructive"
-              onClick={() => onConfirm("disable-revision")}
+              onClick={() => onConfirm("disable-revision", published)}
               disabled={pending}
             >
               停用发布版本
@@ -680,7 +742,7 @@ function ResourceCard({
             <Button
               size="sm"
               variant="destructive"
-              onClick={() => onConfirm("archive-revision")}
+              onClick={() => onConfirm("archive-revision", published)}
               disabled={pending}
             >
               归档发布版本
@@ -712,7 +774,7 @@ function ResourceCard({
                 disabled={pending || identityArchiveBlocked}
                 title={
                   identityArchiveBlocked
-                    ? "请先删除草稿、停用发布版本并解除活动应用引用"
+                    ? "请先处理上方列出的当前资源归档阻塞项"
                     : undefined
                 }
               >
@@ -993,6 +1055,12 @@ function ResourceFormSheet({
                   )}
                 </SelectContent>
               </Select>
+              {resource ? (
+                <FieldDescription>
+                  作用域属于固定资源身份，不能通过编辑草稿修改。填错时请停用并归档当前资源，
+                  再用新编码和正确作用域新建；无需停用同环境其他资源。
+                </FieldDescription>
+              ) : null}
             </Field>
             {form.scope_type !== "global" ? (
               <TopologyCombobox
@@ -1912,6 +1980,10 @@ function resourceIdentityLabel(status: GovernedResource["status"]) {
   return { enabled: "启用", disabled: "停用", archived: "归档" }[status]
 }
 
+function resourceRevisionLabel(status: ResourceRevisionSummary["status"]) {
+  return { PUBLISHED: "已发布", DISABLED: "已停用", ARCHIVED: "已归档" }[status]
+}
+
 function confirmTitle(type: ConfirmAction["type"] | undefined) {
   if (type === "delete-draft") return "删除当前 Draft？"
   if (type === "disable-revision") return "停用已发布版本？"
@@ -1926,7 +1998,7 @@ function confirmDescription(type: ConfirmAction["type"] | undefined) {
     return "只删除可编辑草稿，不影响已有 Published 版本。"
   }
   if (type === "disable-revision") {
-    return "发布版本不会被物理删除；停用后新的 MCP Tool 调用不再解析该版本。"
+    return "仅停用上述资源的指定版本，不会停用同环境的其他资源。发布版本不会被物理删除；停用后新的 MCP Tool 调用不再解析该版本。"
   }
   if (type === "archive-revision") {
     return "归档后该发布版本不可恢复为可用状态，历史与审计仍会保留。"
@@ -1937,7 +2009,7 @@ function confirmDescription(type: ConfirmAction["type"] | undefined) {
   if (type === "restore-identity") {
     return "恢复后可以继续管理新的资源草稿；历史发布版本状态不会改变。"
   }
-  return "资源身份归档后不可恢复。系统只允许归档无草稿、无已发布版本且无活动应用引用的已停用身份。"
+  return "仅归档当前资源身份，不影响同环境其他资源。系统要求身份已停用、无活动草稿、其全部版本均已停用或归档，且无活动应用引用。归档不可恢复，历史与审计保留，原编码不可复用；作用域填错时，请用新编码和正确作用域新建资源。"
 }
 
 function MutationError({ error }: { error: unknown }) {

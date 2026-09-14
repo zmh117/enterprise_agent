@@ -58,6 +58,13 @@ const resourceVerificationSchema = z
   })
   .passthrough()
 
+const resourceRevisionSummarySchema = resourceRevisionSchema.pick({
+  id: true,
+  revision: true,
+  status: true,
+  published_at: true,
+}).strip()
+
 const governedResourceSchema = z
   .object({
     id: z.string(),
@@ -83,6 +90,7 @@ const governedResourceSchema = z
     draft: resourceDraftSchema.nullable(),
     draft_verification: resourceVerificationSchema.nullable().default(null),
     published_revision: resourceRevisionSchema.nullable(),
+    revisions: z.array(resourceRevisionSummarySchema).default([]),
   })
   .passthrough()
 
@@ -177,6 +185,7 @@ export type PlatformSecret = z.infer<typeof secretSchema>
 export type GovernedResource = z.infer<typeof governedResourceSchema>
 export type ResourceDraft = z.infer<typeof resourceDraftSchema>
 export type ResourceRevision = z.infer<typeof resourceRevisionSchema>
+export type ResourceRevisionSummary = z.infer<typeof resourceRevisionSummarySchema>
 export type ResourceVerification = z.infer<typeof resourceVerificationSchema>
 export type TopologyItem = z.infer<typeof topologyItemSchema>
 

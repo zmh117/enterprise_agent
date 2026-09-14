@@ -655,6 +655,104 @@ def test_resource_identity_lifecycle_is_concurrent_and_dependency_guarded() -> N
         runtime.database.close()
 
 
+def test_history_exposes_archive_blockers_without_touching_other_resources() -> None:
+    class PassingLokiVerifier:
+        def verify(self, **_kwargs: object) -> ResourceVerificationOutcome:
+            return ResourceVerificationOutcome(
+                status="PASSED", provider_contract_version="loki_v1", checks={"connection": True}
+            )
+
+    runtime, service, created = _create_resource()
+    try:
+        service.create_resource(
+            {
+                "code": "same_environment_loki",
+                "name": "同环境 Loki",
+                "resource_kind": "loki",
+                "scope_type": "environment",
+                "environment_code": "governed_env",
+                "provider_type": "loki",
+                "config": {
+                    "base_url": "http://loki:3100",
+                    "tenant_id": "",
+                    "timeout_seconds": 5,
+                    "max_minutes": 60,
+                    "max_lines": 100,
+                    "max_response_bytes": 65536,
+                },
+                "secret_refs": {},
+                "scope_bindings": [
+                    {
+                        "environment_code": "governed_env",
+                        "selector_conditions": {"env": "governed_env"},
+                    }
+                ],
+            },
+            actor_id="local-user",
+        )
+        service.verify_draft(
+            "same_environment_loki", actor_id="local-user", verifier=PassingLokiVerifier()
+        )
+        loki_revision = service.publish_draft("same_environment_loki", actor_id="local-user")
+        loki_before = next(
+            r for r in service.list_resources() if r["code"] == "same_environment_loki"
+        )
+
+        service.verify_draft("governed_mysql", actor_id="local-user", verifier=PassingVerifier())
+        first = service.publish_draft("governed_mysql", actor_id="local-user")
+        service.create_draft_from_revision("governed_mysql", first["id"], actor_id="local-user")
+        service.verify_draft("governed_mysql", actor_id="local-user", verifier=PassingVerifier())
+        second = service.publish_draft("governed_mysql", actor_id="local-user")
+        service.set_revision_status(
+            "governed_mysql", second["id"], "disabled", actor_id="local-user"
+        )
+        identity = service.set_resource_status(
+            "governed_mysql", "disabled", expected_revision=1, actor_id="local-user"
+        )
+        listed = next(r for r in service.list_resources() if r["code"] == "governed_mysql")
+        assert listed["published_revision"]["id"] == second["id"]
+        assert [(r["revision"], r["status"]) for r in listed["revisions"]] == [
+            (1, "PUBLISHED"),
+            (2, "DISABLED"),
+        ]
+        for revision in listed["revisions"]:
+            assert set(revision) == {"id", "revision", "status", "published_at"}
+        with pytest.raises(NonRetryableExecutionError) as blocked:
+            service.set_resource_status(
+                "governed_mysql",
+                "archived",
+                expected_revision=identity["revision"],
+                actor_id="local-user",
+            )
+        assert blocked.value.error_code == "resource_identity_has_published_revision"
+        assert "r1" in blocked.value.safe_message
+        assert "r2" not in blocked.value.safe_message
+        assert "其他资源" in blocked.value.safe_message
+        with pytest.raises(NotFound):
+            service.set_revision_status(
+                "governed_mysql", loki_revision["id"], "disabled", actor_id="local-user"
+            )
+
+        service.set_revision_status(
+            "governed_mysql", first["id"], "disabled", actor_id="local-user"
+        )
+        archived = service.set_resource_status(
+            "governed_mysql",
+            "archived",
+            expected_revision=identity["revision"],
+            actor_id="local-user",
+        )
+        assert archived["status"] == "archived"
+        assert len(service.repository.list_revisions(created["resource"]["id"])) == 2
+        assert service.repository.get_resource_by_code("governed_mysql") is not None
+        assert (
+            next(r for r in service.list_resources() if r["code"] == "same_environment_loki")
+            == loki_before
+        )
+    finally:
+        runtime.database.close()
+
+
 def test_resource_identity_archive_requires_no_published_revision() -> None:
     runtime, service, _created = _create_resource()
     try:

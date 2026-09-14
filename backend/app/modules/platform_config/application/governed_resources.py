@@ -139,6 +139,11 @@ class GovernedResourceService:
                     "draft": draft,
                     "draft_verification": draft_verification,
                     "published_revision": published,
+                    # History is lifecycle metadata only, not another copy of connection config.
+                    "revisions": [
+                        {key: revision[key] for key in ("id", "revision", "status", "published_at")}
+                        for revision in revisions
+                    ],
                 }
             )
         return result
@@ -739,13 +744,23 @@ class GovernedResourceService:
                     safe_message="资源身份仍有活动草稿，请先删除草稿",
                     error_code="resource_identity_has_draft",
                 )
-            if any(
-                str(revision["status"]) == "PUBLISHED"
+            published_revisions = [
+                revision
                 for revision in self.repository.list_revisions(str(resource["id"]))
-            ):
+                if str(revision["status"]) == "PUBLISHED"
+            ]
+            if published_revisions:
+                version_labels = "、".join(
+                    f"r{revision['revision']}" for revision in published_revisions[:20]
+                )
+                if len(published_revisions) > 20:
+                    version_labels += f" 等共 {len(published_revisions)} 个版本"
                 raise NonRetryableExecutionError(
                     "Resource Identity still has a published Revision",
-                    safe_message="资源身份仍有已发布版本，请先停用该版本",
+                    safe_message=(
+                        f"当前资源仍有已发布版本：{version_labels}。"
+                        "请在本资源的发布版本历史中逐个停用；无需停用同环境的其他资源。"
+                    ),
                     error_code="resource_identity_has_published_revision",
                 )
             active_references = self.repository.list_active_application_references(
