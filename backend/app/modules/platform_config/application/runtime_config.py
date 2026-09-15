@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from app.shared.loki_contract import DEFAULT_LOKI_PLATFORM_MAX_LINES
+
 from ..infrastructure.repository import PlatformConfigRepository
 from .validation import (
     PlatformConfigValidationError,
@@ -188,7 +190,11 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         "MAX_LOKI_MINUTES", "int", 60, service_names=("agent-worker", "tool-mcp")
     ),
     RuntimeConfigDefinitionSpec(
-        "MAX_LOKI_LINES", "int", 500, service_names=("agent-worker", "tool-mcp")
+        "MAX_LOKI_LINES",
+        "int",
+        DEFAULT_LOKI_PLATFORM_MAX_LINES,
+        service_names=("agent-worker", "tool-mcp"),
+        description="单次 Loki 工具调用的行数上限，不累计 Job 行数；实际取平台与已发布资源上限的较小值。",
     ),
     RuntimeConfigDefinitionSpec(
         "REDIS_SCAN_LIMIT", "int", 200, service_names=("agent-worker", "tool-mcp")
@@ -200,7 +206,9 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         service_names=("tool-mcp",),
     ),
     RuntimeConfigDefinitionSpec("LOKI_MAX_MINUTES", "int", 60, service_names=("tool-mcp",)),
-    RuntimeConfigDefinitionSpec("LOKI_MAX_LINES", "int", 500, service_names=("tool-mcp",)),
+    RuntimeConfigDefinitionSpec(
+        "LOKI_MAX_LINES", "int", DEFAULT_LOKI_PLATFORM_MAX_LINES, service_names=("tool-mcp",)
+    ),
     RuntimeConfigDefinitionSpec(
         "LOKI_MAX_RESPONSE_CHARS", "int", 4000, service_names=("tool-mcp",)
     ),

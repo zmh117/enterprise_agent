@@ -8,6 +8,7 @@ from app.modules.platform_config.application.validation import (
     PlatformConfigValidationError,
     validate_secret_ref,
 )
+from app.shared.loki_contract import LOKI_RESOURCE_MAX_LINES
 
 
 @dataclass(frozen=True)
@@ -142,7 +143,7 @@ _CONTRACTS = {
                 "type": "integer",
                 "required": True,
                 "minimum": 1,
-                "maximum": 5000,
+                "maximum": LOKI_RESOURCE_MAX_LINES,
             },
             {
                 "name": "max_response_bytes",
@@ -408,7 +409,7 @@ class ProviderContractRegistry:
                 config["max_lines"],
                 field="max_lines",
                 minimum=1,
-                maximum=5000,
+                maximum=LOKI_RESOURCE_MAX_LINES,
             ),
             "max_response_bytes": self._integer(
                 config["max_response_bytes"],

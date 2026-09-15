@@ -1,4 +1,4 @@
-"""Syntax shared by Loki tool schemas and runtime checks; names are not grants."""
+"""Shared Loki syntax and configuration limits; label names are not grants."""
 
 from __future__ import annotations
 
@@ -7,6 +7,9 @@ import re
 from typing import Any
 
 from app.shared.exceptions import ToolPolicyError
+
+DEFAULT_LOKI_PLATFORM_MAX_LINES = 10000
+LOKI_RESOURCE_MAX_LINES = 1000
 
 # The end assertion also rejects a final newline (unlike JSON Schema's `$`).
 LOKI_LABEL_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\s\S])"

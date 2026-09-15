@@ -1382,6 +1382,7 @@ function ProviderFields({
       numeric?: boolean
       min?: number
       max?: number
+      description?: string
     } = {}
   ) => {
     const field = contract?.schema.fields.find((item) => item.name === name)
@@ -1402,6 +1403,9 @@ function ProviderFields({
           )
         }
       />
+      {options.description ? (
+        <FieldDescription>{options.description}</FieldDescription>
+      ) : null}
     </Field>
     )
   }
@@ -1426,7 +1430,9 @@ function ProviderFields({
           required: true,
           numeric: true,
           min: 1,
-          max: 5000,
+          max: 1000,
+          description:
+            "单次调用上限，范围 1–1000，不累计整个 Job；实际取平台与资源上限的较小值。Agent 未指定 limit 时查询 100 条，超限请求会被拒绝。",
         })}
         {input("max_response_bytes", "最大响应字节", {
           required: true,

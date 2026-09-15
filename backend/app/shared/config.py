@@ -10,6 +10,7 @@ from app.shared.feature_configuration import (
     feature_configuration_from_values,
     resolve_feature_configuration,
 )
+from app.shared.loki_contract import DEFAULT_LOKI_PLATFORM_MAX_LINES
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class ExecutionSettings:
     max_tool_calls: int = 30
     max_tool_response_chars: int = 4000
     max_loki_minutes: int = 60
-    max_loki_lines: int = 500
+    max_loki_lines: int = DEFAULT_LOKI_PLATFORM_MAX_LINES
     redis_scan_limit: int = 200
 
 
@@ -316,7 +317,7 @@ class DingTalkSettings:
 class LokiSettings:
     base_url: str = "http://host.docker.internal:3100"
     max_minutes: int = 60
-    max_lines: int = 500
+    max_lines: int = DEFAULT_LOKI_PLATFORM_MAX_LINES
     max_response_chars: int = 4000
     tenant_id: str = ""
 
@@ -575,7 +576,7 @@ def load_settings() -> Settings:
         loki=LokiSettings(
             base_url=os.getenv("LOKI_BASE_URL", "http://host.docker.internal:3100"),
             max_minutes=int(os.getenv("LOKI_MAX_MINUTES", "60")),
-            max_lines=int(os.getenv("LOKI_MAX_LINES", "500")),
+            max_lines=int(os.getenv("LOKI_MAX_LINES", str(DEFAULT_LOKI_PLATFORM_MAX_LINES))),
             max_response_chars=int(os.getenv("LOKI_MAX_RESPONSE_CHARS", "4000")),
             tenant_id=os.getenv("LOKI_TENANT_ID", ""),
         ),
@@ -628,7 +629,7 @@ def load_settings() -> Settings:
             max_tool_calls=int(os.getenv("AGENT_MAX_TOOL_CALLS", "30")),
             max_tool_response_chars=int(os.getenv("MAX_TOOL_RESPONSE_CHARS", "4000")),
             max_loki_minutes=int(os.getenv("MAX_LOKI_MINUTES", "60")),
-            max_loki_lines=int(os.getenv("MAX_LOKI_LINES", "500")),
+            max_loki_lines=int(os.getenv("MAX_LOKI_LINES", str(DEFAULT_LOKI_PLATFORM_MAX_LINES))),
             redis_scan_limit=int(os.getenv("REDIS_SCAN_LIMIT", "200")),
         ),
         delivery=DeliverySettings(

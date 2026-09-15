@@ -721,6 +721,64 @@ describe("Phase 5 platform governance UI", () => {
     )
   })
 
+  it.each(["new", "edit"])(
+    "enforces the per-call Loki resource limit in the %s form",
+    async (mode) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+        const url = String(input)
+        if (url.endsWith("/api/platform/provider-contracts")) {
+          return response({ contracts: [{
+            provider_type: "mysql",
+            contract_version: "mysql_v1",
+            resource_kind: "database",
+            available: true,
+            schema: { type: "object", additionalProperties: false, fields: [] },
+          }, {
+            provider_type: "loki",
+            contract_version: "loki_v1",
+            resource_kind: "loki",
+            available: true,
+            schema: { type: "object", additionalProperties: false, fields: [{
+              name: "max_lines", type: "integer", required: true,
+              minimum: 1, maximum: 1000,
+            }] },
+          }] })
+        }
+        if (url.endsWith("/api/platform/resources")) {
+          return response({ resources: mode === "edit"
+            ? [governedLokiResource({ draft: true, published: false })] : [] })
+        }
+        if (url.includes("/secrets")) return response({ secrets: [] })
+        if (url.includes("/environments")) return response({ environments: [] })
+        if (url.includes("/bases")) return response({ bases: [] })
+        return response({ workshops: [] })
+      })
+      renderWithQuery(<ToolResourcesPage />)
+      if (mode === "new") {
+        await screen.findByText("当前筛选下没有工具资源")
+        fireEvent.click(screen.getByRole("button", { name: "新建资源" }))
+        fireEvent.click(screen.getByRole("combobox", { name: "Provider" }))
+        const provider = await screen.findByRole("option", { name: "Loki" })
+        fireEvent.pointerDown(provider, { pointerType: "mouse", button: 0 })
+        fireEvent.click(provider)
+      } else {
+        await screen.findByText("Loki 测试环境")
+        fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
+      }
+      const limit = await screen.findByRole("spinbutton", { name: "最大行数" })
+      expect(limit).toHaveValue(mode === "new" ? 1000 : 200)
+      expect(limit).toHaveAttribute("min", "1")
+      expect(limit).toHaveAttribute("max", "1000")
+      expect(screen.getByText(/不累计整个 Job/)).toBeInTheDocument()
+      fireEvent.change(limit, { target: { value: "1001" } })
+      expect(limit).toBeInvalid()
+      fireEvent.change(limit, { target: { value: "0" } })
+      expect(limit).toBeInvalid()
+      fireEvent.change(limit, { target: { value: "1000" } })
+      expect(limit).toBeValid()
+    }
+  )
+
   it("shows the technical verification status and safe failure reason", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)

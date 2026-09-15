@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.shared.loki_contract import LOKI_RESOURCE_MAX_LINES
+
 
 class ResourceKind(str, Enum):
     DATABASE = "database"
@@ -81,7 +83,7 @@ class LokiConnection:
     auth_token: str = ""
     timeout_seconds: int = 10
     max_minutes: int = 60
-    max_lines: int = 500
+    max_lines: int = LOKI_RESOURCE_MAX_LINES
     max_response_bytes: int = 1024 * 1024
 
 
