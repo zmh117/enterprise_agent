@@ -1,26 +1,7 @@
 from __future__ import annotations
 
-from .errors import PolicyViolation
-import re
-
-ALLOWED_SELECTOR_LABELS = {
-    "app",
-    "cluster",
-    "container",
-    "logtype",
-    "region",
-    "replica",
-    "role",
-    "service",
-    "service_name",
-}
-ALLOWED_DISCOVERY_LABELS = ALLOWED_SELECTOR_LABELS.union({"customer", "workshop"})
-_EXACT_VALUE = re.compile(r"[^\x00-\x1f*?{}|]{1,256}")
-
-
-def assert_loki_label_allowed(label: str) -> None:
-    if label not in ALLOWED_DISCOVERY_LABELS:
-        raise PolicyViolation(f"Loki selector label is not allowed: {label}")
+from app.shared.exceptions import ToolPolicyError
+from app.shared.loki_contract import assert_loki_selector
 
 
 def build_effective_selector(
@@ -29,20 +10,25 @@ def build_effective_selector(
     mandatory_conditions: tuple[tuple[str, str], ...] = (),
     require_mandatory: bool = False,
 ) -> dict[str, str]:
-    """AND exact diagnostic filters with an immutable mandatory Scope Policy."""
-
+    """AND exact diagnostic filters with the published resource's fixed scope."""
+    assert_loki_selector(selector, allow_empty=True)
     mandatory = dict(mandatory_conditions)
     if require_mandatory and not mandatory:
-        raise PolicyViolation("Published Loki Scope Policy is required")
+        raise ToolPolicyError(
+            "Published Loki resource scope is required",
+            safe_message="Loki 资源缺少已发布的固定标签范围，禁止无范围查询",
+            error_code="loki_resource_scope_required",
+        )
+    assert_loki_selector(mandatory, allow_empty=not require_mandatory)
     effective = dict(mandatory)
     for label, value in selector.items():
-        if label not in ALLOWED_SELECTOR_LABELS:
-            raise PolicyViolation(f"Loki selector label is not allowed: {label}")
         if label in mandatory:
-            raise PolicyViolation("Loki diagnostic filter cannot override mandatory scope")
-        if _EXACT_VALUE.fullmatch(str(value)) is None:
-            raise PolicyViolation("Loki selector value must be exact")
+            raise ToolPolicyError(
+                "Loki diagnostic filter cannot override mandatory scope",
+                safe_message=f"标签 {label} 已由 Loki 资源固定；请仅提交其他标签条件",
+                error_code="loki_fixed_label_conflict",
+            )
         effective[label] = str(value)
     if not effective:
-        raise PolicyViolation("Loki selector is required")
+        assert_loki_selector(effective)
     return effective

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.shared.resource_role import RESOURCE_ROLE_PATTERN
+from app.shared.loki_contract import loki_label_schema, loki_selector_schema
 
 # compatibility with the flat datasource contract; required by the topology-aware platform.
 _ADDRESSING_PROPERTIES: dict[str, Any] = {
@@ -19,15 +20,6 @@ _ADDRESSING_PROPERTIES: dict[str, Any] = {
         "description": "Workshop code within a partitioned base, e.g. 'GL001'.",
     },
 }
-_LOKI_SELECTOR_PROPERTIES: dict[str, Any] = {
-    "cluster": {"type": "string"},
-    "container": {"type": "string"},
-    "region": {"type": "string"},
-    "service": {"type": "string"},
-    "service_name": {"type": "string"},
-    "workshop": {"type": "string"},
-}
-
 _PLACEMENT_PROPERTY: dict[str, Any] = {
     "placement": {
         "type": "string",
@@ -90,18 +82,13 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "query_loki": {
         "description": (
             "使用精确匹配的标签选择器和有界结果数量查询 Loki 日志。"
-            "selector 可使用 cluster、service_name、container、region 或 service 等标签，"
-            "例如 {'cluster': 'mes-cluster'}。"
+            "可追加任意合法的非固定标签，例如 app、logtype 或自定义标签。"
+            "资源固定条件由后端强制注入，selector 不得包含固定标签；{} 表示仅使用固定范围。"
         ),
         "schema": {
             "type": "object",
             "properties": {
-                "selector": {
-                    "type": "object",
-                    "properties": _LOKI_SELECTOR_PROPERTIES,
-                    "additionalProperties": False,
-                    "minProperties": 1,
-                },
+                "selector": loki_selector_schema(),
                 "service": {
                     "type": "string",
                     "description": "Backward-compatible shortcut for selector.service.",
@@ -117,7 +104,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "diagnose_loki_labels": {
         "description": (
-            "列出已解析环境、基地或车间范围内可见的有界 Loki 标签名称。"
+            "列出已发布资源固定标签范围内可见的有界 Loki 标签名称，支持合法自定义标签。"
             "当 Loki 查询无结果或服务标签不明确时使用。"
         ),
         "schema": {
@@ -133,23 +120,13 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "diagnose_loki_label_values": {
         "description": (
-            "列出允许的 Loki 标签的有界取值，例如 service、service_name、"
-            "container、cluster、region 或 workshop。"
+            "列出任意合法 Loki 标签在已发布资源固定范围内的有界取值，如 app、logtype 或自定义标签。"
+            "枚举固定标签也不会扩大资源范围；无匹配返回空列表，不代表无权限。"
         ),
         "schema": {
             "type": "object",
             "properties": {
-                "label": {
-                    "type": "string",
-                    "enum": [
-                        "cluster",
-                        "container",
-                        "region",
-                        "service",
-                        "service_name",
-                        "workshop",
-                    ],
-                },
+                "label": loki_label_schema(),
                 "minutes": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1},
                 **_ADDRESSING_PROPERTIES,
@@ -160,18 +137,14 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "diagnose_loki_probe": {
         "description": (
-            "使用有界的 Loki 标签选择器和关键词探测无结果原因；"
+            "在资源固定范围内追加任意合法非固定标签的精确条件和关键词，探测无结果原因；"
+            "固定标签由后端注入，不得重复提交；{} 表示只使用固定范围。"
             "返回 stream_count、line_count 和安全的空结果提示。"
         ),
         "schema": {
             "type": "object",
             "properties": {
-                "selector": {
-                    "type": "object",
-                    "properties": _LOKI_SELECTOR_PROPERTIES,
-                    "additionalProperties": False,
-                    "minProperties": 1,
-                },
+                "selector": loki_selector_schema(),
                 "query": {"type": "string"},
                 "minutes": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1},

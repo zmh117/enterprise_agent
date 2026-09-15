@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import re
 from typing import Any
 
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.loki_contract import (
+    MAX_LOKI_SELECTOR_CONDITIONS,
+    is_loki_exact_value,
+    is_loki_label,
+)
 
 from .validation import validate_topology_code
 
 
-_LABEL_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
-_FORBIDDEN_EXACT_VALUE_FRAGMENTS = ("*", "?", "!=", "=~", "!~", "|", "{", "}")
 _FORBIDDEN_PREFIX_FRAGMENTS = ("*", "?", "[", "]", "\\", "^", "(", ")", "{", "}", "|")
 _MAX_BINDINGS = 128
-_MAX_SELECTOR_CONDITIONS = 8
+_MAX_SELECTOR_CONDITIONS = MAX_LOKI_SELECTOR_CONDITIONS
 _MAX_NAMESPACE_PREFIXES = 16
 
 
@@ -198,17 +200,11 @@ def _selector_conditions(value: object) -> dict[str, str]:
     for raw_key, raw_value in value.items():
         key = str(raw_key or "").strip()
         text = str(raw_value)
-        if _LABEL_KEY.fullmatch(key) is None:
+        if not is_loki_label(key):
             raise _invalid("Loki selector label key 无效")
         if key in normalized:
             raise _invalid("Loki selector label key 不能重复")
-        if (
-            not text
-            or text != text.strip()
-            or len(text) > 256
-            or any(ord(character) < 32 for character in text)
-            or any(fragment in text for fragment in _FORBIDDEN_EXACT_VALUE_FRAGMENTS)
-        ):
+        if not is_loki_exact_value(text):
             raise _invalid("Loki selector 只允许精确、非空的 label value")
         normalized[key] = text
     return dict(sorted(normalized.items()))

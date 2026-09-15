@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 import json
-import re
 import socket
 from typing import Any, Protocol
 import urllib.error
@@ -18,11 +17,14 @@ from app.modules.platform_config.infrastructure.governed_resource_repository imp
 from app.modules.platform_config.infrastructure.repository import new_id
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.loki_contract import (
+    MAX_LOKI_SELECTOR_CONDITIONS,
+    is_loki_exact_value,
+    is_loki_label,
+)
 
 
-_LABEL_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
-_FORBIDDEN_EXACT_VALUE_FRAGMENTS = ("*", "?", "!=", "=~", "!~", "|", "{", "}")
-_MAX_CONDITIONS = 8
+_MAX_CONDITIONS = MAX_LOKI_SELECTOR_CONDITIONS
 _MAX_LABEL_KEYS = 64
 _MAX_LABEL_VALUES = 100
 _MAX_DISCOVERY_BYTES = 32 * 1024
@@ -344,13 +346,7 @@ def normalize_exact_conditions(raw: object) -> dict[str, str]:
     for key, value in raw.items():
         label = _label_key(str(key))
         text = str(value)
-        if (
-            not text
-            or text != text.strip()
-            or len(text) > 256
-            or any(ord(character) < 32 for character in text)
-            or any(fragment in text for fragment in _FORBIDDEN_EXACT_VALUE_FRAGMENTS)
-        ):
+        if not is_loki_exact_value(text):
             raise _discovery_error("Loki 标签发现只允许精确、非空的 label value")
         normalized[label] = text
     return dict(sorted(normalized.items()))
@@ -358,7 +354,7 @@ def normalize_exact_conditions(raw: object) -> dict[str, str]:
 
 def _label_key(value: str) -> str:
     text = str(value or "").strip()
-    if _LABEL_KEY.fullmatch(text) is None:
+    if not is_loki_label(text):
         raise _discovery_error("Loki label key 无效")
     return text
 

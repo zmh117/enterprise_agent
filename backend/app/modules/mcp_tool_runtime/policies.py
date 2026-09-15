@@ -4,6 +4,8 @@ import re
 
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
+from app.shared.loki_contract import assert_loki_label as assert_loki_label
+from app.shared.loki_contract import assert_loki_selector
 
 FORBIDDEN_SQL = {
     "insert",
@@ -32,16 +34,6 @@ FORBIDDEN_REDIS = {
     "eval",
     "script",
 }
-
-ALLOWED_LOKI_SELECTOR_LABELS = {
-    "cluster",
-    "container",
-    "region",
-    "service",
-    "service_name",
-    "workshop",
-}
-LOKI_SELECTOR_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.:/-]+$")
 
 
 def assert_readonly_sql(sql: str) -> None:
@@ -81,21 +73,8 @@ def assert_loki_bounds(
     limit: int,
     settings: ExecutionSettings,
 ) -> None:
-    if not selector:
-        raise ToolPolicyError("Loki selector is required", safe_message="必须填写 Loki 选择器")
-    for label, value in selector.items():
-        if label not in ALLOWED_LOKI_SELECTOR_LABELS:
-            raise ToolPolicyError(f"Loki selector label is not allowed: {label}")
-        if not value:
-            raise ToolPolicyError(
-                "Loki selector value is required",
-                safe_message="必须填写 Loki 选择器值",
-            )
-        if not LOKI_SELECTOR_VALUE_PATTERN.fullmatch(value):
-            raise ToolPolicyError(
-                "Loki selector contains unsafe characters",
-                safe_message="Loki 选择器包含不安全字符",
-            )
+    # Empty additions are safe only because the executor injects mandatory scope.
+    assert_loki_selector(selector, allow_empty=True)
     if minutes <= 0 or minutes > settings.max_loki_minutes:
         raise ToolPolicyError(
             "Loki time range exceeds configured maximum",
@@ -106,8 +85,3 @@ def assert_loki_bounds(
             "Loki result size exceeds configured maximum",
             safe_message="Loki 查询结果数量超过配置上限",
         )
-
-
-def assert_loki_label(label: str) -> None:
-    if label not in ALLOWED_LOKI_SELECTOR_LABELS:
-        raise ToolPolicyError(f"Loki selector label is not allowed: {label}")

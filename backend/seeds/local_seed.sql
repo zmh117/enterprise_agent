@@ -100,13 +100,13 @@ INSERT INTO agent_publication_mcp_tool
   (agent_publication_id, server_code, tool_identifier, schema_hash,
    model_description, selection_order, created_at)
 VALUES
-  ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_label_values', 'dbdd1fb7009090387f2479f3e71ab691b67be3ea7fe76345e76c2468610b2796', '', 0, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_label_values', '0271f381b0cf4da18521dc29fd68cd49a50d5d3468736597c4cab33b6a9210ed', '', 0, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_labels', '3fdb9c6cd548513b660a2995cbc5273878e896843aec6c9c6e9b6c1f40d71a27', '', 1, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_probe', 'f4f6881d4884b3111e905525c05dbc7f5fd0fb209f7dd3c5163a5d88b999bce1', '', 2, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_probe', '1bf71811237901ff047dea5f3a4dc1d1b6e4813e7c3b820a830ebc2f951fe236', '', 2, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'get_schema_directory', 'c69bbaf2589b607dfd5ce949e943fe1fe7e215f1ac6f44cf8751cfcdce0ace76', '', 3, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'list_available_tool_resources', '98b066835914b160442a3b52b0a89b17a2130b2c8bb344fc17d157335a9e1461', '', 4, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'query_database', '211aa27e728cb77a2dcb9f14d3055ed6312886db054e79fcb055845762cffa96', '', 5, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_loki', 'ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108', '', 6, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_loki', '94f4df6cbfa34684aad2513157bad44c9e156652bb74916c565605166669e0a3', '', 6, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'query_redis_get', '814d5c62239f10597c5d7df714ba14ad79c22f268fe1d0844c42f110ce4c3866', '', 7, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'query_redis_scan', 'd2a6c91deab7333a7fc62ba23d840a7b09f4f5826eddf15d20a4e8ccb9b92726', '', 8, CURRENT_TIMESTAMP)
 ON CONFLICT(agent_publication_id, tool_identifier) DO NOTHING;

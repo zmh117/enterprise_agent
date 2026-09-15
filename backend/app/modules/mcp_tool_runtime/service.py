@@ -27,6 +27,7 @@ from app.modules.permission.application.permission_service import PermissionServ
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import PermissionDenied, ToolPolicyError
 from app.shared.logging import correlation_id_var
+from app.shared.loki_contract import assert_loki_selector
 from app.shared.resource_role import normalize_resource_role, RESOURCE_ROLE_MESSAGE
 
 
@@ -300,7 +301,7 @@ class ReadOnlyToolService:
         elif tool_name == "diagnose_loki_labels":
             assert_loki_diagnostic_bounds(arguments, self.limits)
         elif tool_name == "diagnose_loki_label_values":
-            assert_loki_label(str(arguments.get("label", "")))
+            assert_loki_label(arguments.get("label", ""))
             assert_loki_diagnostic_bounds(arguments, self.limits)
         elif tool_name not in {"get_schema_directory", "list_available_tool_resources"}:
             raise ToolPolicyError(f"Tool {tool_name} is not registered for read-only MVP")
@@ -394,7 +395,7 @@ class ReadOnlyToolService:
                 environment=addressing["environment"],
                 base=addressing.get("base", ""),
                 workshop=addressing.get("workshop"),
-                label=str(arguments.get("label", "")),
+                label=arguments.get("label", ""),
                 minutes=int(arguments.get("minutes", 15)),
                 limit=int(arguments.get("limit", 100)),
             )
@@ -572,18 +573,6 @@ def _loki_selector_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:
     selector = arguments.get("selector")
     if selector is None:
         service = str(arguments.get("service", "")).strip()
-        return {"service": service} if service else {}
-    if not isinstance(selector, dict):
-        raise ToolPolicyError(
-            "Loki selector must be an object",
-            safe_message="Loki 选择器必须是对象",
-        )
-    normalized: dict[str, str] = {}
-    for key, value in selector.items():
-        if not isinstance(value, str):
-            raise ToolPolicyError(
-                "Loki selector values must be strings",
-                safe_message="Loki 选择器值必须是文本",
-            )
-        normalized[str(key)] = value.strip()
-    return normalized
+        selector = {"service": service} if service else {}
+    assert_loki_selector(selector, allow_empty=True)
+    return dict(selector)

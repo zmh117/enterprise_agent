@@ -365,7 +365,13 @@ def _tool_restrictions(
         "diagnose_loki_label_values",
         "diagnose_loki_probe",
     } & assigned:
-        restrictions.append("Loki queries must be bounded by service, time range, and result size.")
+        restrictions.append(
+            "Loki tools always use the published resource's mandatory label scope. "
+            "Discover labels and values only within that scope; any syntactically valid label "
+            "may be used, not just service/app/logtype. Submit only additional exact labels; "
+            "never repeat or override a fixed label. An empty selector uses only fixed scope. "
+            "Keep time range and result size bounded; log labels do not grant authorization."
+        )
     confirmation_gated = {
         tool_name
         for tool_name in assigned

@@ -16,10 +16,15 @@ from app.modules.mcp_tool_runtime.infrastructure.loki_client import (
 )
 from app.modules.mcp_tool_runtime.infrastructure.loki_schemas import LokiQuery
 from app.shared.database import assert_external_io_allowed
+from app.shared.loki_contract import (
+    MAX_LOKI_SELECTOR_CONDITIONS,
+    assert_loki_label,
+    assert_loki_selector,
+    is_loki_label,
+)
 
 from ..domain.addressing import ResourceBinding
 from ..domain.errors import PolicyViolation, ResolutionError, UpstreamUnavailable
-from ..domain.loki_policy import ALLOWED_SELECTOR_LABELS
 from ..domain.results import ToolResponse
 
 _RETRYABLE_UPSTREAM_STATUSES = {429, 502, 503, 504}
@@ -91,6 +96,7 @@ class HttpLokiClient:
         minutes: int,
         limit: int,
     ) -> ToolResponse:
+        assert_loki_selector(selector, max_conditions=2 * MAX_LOKI_SELECTOR_CONDITIONS)
         self._validate_binding_and_bounds(
             binding,
             minutes=minutes,
@@ -119,28 +125,11 @@ class HttpLokiClient:
         limit: int,
     ) -> ToolResponse:
         self._validate_binding_and_bounds(binding, minutes=minutes, limit=limit)
-        if selector:
-            body = self._fetch_series(binding, selector=selector, minutes=minutes)
-            values = sorted(
-                {
-                    label
-                    for series in _series_items(body)
-                    for label in series
-                    if label in ALLOWED_SELECTOR_LABELS
-                }
-            )
-        else:
-            body = self._fetch_json(
-                binding,
-                "/loki/api/v1/labels",
-                self._range_params(minutes),
-            )
-            raw_values = _nested_value(body, ["data"])
-            values = (
-                sorted(str(value) for value in raw_values if str(value) in ALLOWED_SELECTOR_LABELS)
-                if isinstance(raw_values, list)
-                else []
-            )
+        assert_loki_selector(selector)
+        body = self._fetch_series(binding, selector=selector, minutes=minutes)
+        values = sorted(
+            {label for series in _series_items(body) for label in series if is_loki_label(label)}
+        )
         bounded, truncated = _bounded_strings(values, limit=limit)
         return ToolResponse(
             summary={
@@ -166,26 +155,16 @@ class HttpLokiClient:
         limit: int,
     ) -> ToolResponse:
         self._validate_binding_and_bounds(binding, minutes=minutes, limit=limit)
-        if selector:
-            body = self._fetch_series(binding, selector=selector, minutes=minutes)
-            values = sorted(
-                {
-                    str(series[label])
-                    for series in _series_items(body)
-                    if label in series and series[label] is not None
-                }
-            )
-        else:
-            encoded = urllib.parse.quote(label, safe="")
-            body = self._fetch_json(
-                binding,
-                f"/loki/api/v1/label/{encoded}/values",
-                self._range_params(minutes),
-            )
-            raw_values = _nested_value(body, ["data"])
-            values = (
-                sorted(str(value) for value in raw_values) if isinstance(raw_values, list) else []
-            )
+        assert_loki_label(label)
+        assert_loki_selector(selector)
+        body = self._fetch_series(binding, selector=selector, minutes=minutes)
+        values = sorted(
+            {
+                str(series[label])
+                for series in _series_items(body)
+                if label in series and series[label] is not None
+            }
+        )
         bounded, truncated = _bounded_strings(values, limit=limit)
         return ToolResponse(
             summary={

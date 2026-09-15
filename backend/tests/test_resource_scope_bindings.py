@@ -534,7 +534,7 @@ def test_direct_executor_injects_arbitrary_mandatory_loki_selector() -> None:
         }
     ]
 
-    with pytest.raises(PolicyViolation):
+    with pytest.raises(ToolPolicyError, match="cannot override mandatory scope"):
         executor.query_loki(
             {"cluster": "override"},
             "",

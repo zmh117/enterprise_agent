@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from io import BytesIO
+import json
+from unittest.mock import Mock
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 from starlette.testclient import TestClient
 
@@ -7,6 +12,9 @@ from app.bootstrap import Container
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.job.infrastructure.repositories import now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.modules.mcp_tool_runtime.direct_executor import DirectReadOnlyToolExecutor
+from app.modules.mcp_tool_runtime.resource_resolver import DirectResourceResolver
+from app.modules.mcp_tool_runtime.infrastructure.loki_gateway import HttpLokiClient
 from app.modules.mcp_audit import McpAuditCoordinator
 from app.modules.platform_config.application.governed_resources import (
     ResourceVerificationOutcome,
@@ -324,3 +332,147 @@ def test_tool_mcp_audit_failure_closes_before_tool_execution(
 
     assert raised.value.error_code == "mcp_audit_unavailable"
     assert executed is False
+
+
+def test_loki_invalid_label_keeps_specific_error_in_mcp_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = "diagnose_loki_label_values"
+    runtime, job, service = _runtime_job(capabilities=(tool,))
+    try:
+        selected_job, descriptor = service.descriptor(job.id, tool)
+
+        def forbidden_provider(**_kwargs):
+            raise AssertionError("Invalid label must not reach the provider")
+
+        monkeypatch.setattr(runtime.tool_service.tool_executor, tool, forbidden_provider)
+        with pytest.raises(ToolPolicyError) as error:
+            service.invoke(
+                job=selected_job,
+                descriptor=descriptor,
+                arguments={"environment": "local", "base": "debug-base", "label": "app\n"},
+                request_identity=_request_identity(job, "loki-invalid-label"),
+            )
+        assert error.value.error_code == "loki_label_invalid"
+        assert "标签名" in error.value.safe_message
+        row = runtime.database.execute_one(
+            "select status, error_code from mcp_operation_audit where id = ?",
+            (error.value.mcp_audit_handle.root_audit_id,),
+        )
+        assert row is not None and row["status"] == "DENIED"
+        assert row["error_code"] == "loki_label_invalid"
+    finally:
+        runtime.database.close()
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["query_loki", "diagnose_loki_probe", "diagnose_loki_labels", "diagnose_loki_label_values"],
+)
+def test_loki_job_uses_published_fixed_scope_with_custom_labels(
+    tool: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, job, service = _runtime_job(capabilities=(tool,))
+    requests = []
+    fixed = {"customer": "A", "workshop": "GL001"}
+
+    class Verifier:
+        def verify(self, **_kwargs):
+            return ResourceVerificationOutcome(
+                status="PASSED", provider_contract_version="loki_v1", checks={"connection": True}
+            )
+
+    def fetch(request, timeout):
+        requests.append(request)
+        if urlparse(request.full_url).path.endswith("/series"):
+            body = {
+                "status": "success",
+                "data": [{**fixed, "app": "mes-run", "logtype": "error", "custom_label": "v1"}],
+            }
+        else:
+            body = {"status": "success", "data": {"resultType": "streams", "result": []}}
+        return BytesIO(json.dumps(body).encode())
+
+    try:
+        resources = runtime.platform_config_service.governed_resources
+        resources.create_resource(
+            {
+                "code": "loki_scoped_test",
+                "name": "范围隔离测试",
+                "resource_kind": "loki",
+                "scope_type": "environment",
+                "environment_code": "local",
+                "provider_type": "loki",
+                "config": {
+                    "base_url": "http://loki.test:3100",
+                    "tenant_id": "test-tenant",
+                    "timeout_seconds": 5,
+                    "max_minutes": 60,
+                    "max_lines": 100,
+                    "max_response_bytes": 65536,
+                },
+                "secret_refs": {},
+                "scope_bindings": [
+                    {
+                        "environment_code": "local",
+                        "base_code": "debug-base",
+                        "selector_conditions": fixed,
+                    }
+                ],
+            },
+            actor_id="user_local_admin",
+        )
+        resources.verify_draft("loki_scoped_test", actor_id="user_local_admin", verifier=Verifier())
+        resources.publish_draft("loki_scoped_test", actor_id="user_local_admin")
+        client = HttpLokiClient(
+            max_minutes=60, max_lines=100, max_response_chars=8000, urlopen_func=fetch
+        )
+        secrets = Mock()
+        executor = DirectReadOnlyToolExecutor(
+            DirectResourceResolver(runtime.database, secret_provider=secrets),
+            limits=runtime.settings.execution,
+        )
+        monkeypatch.setattr(runtime.tool_service, "tool_executor", executor)
+        monkeypatch.setattr(executor, "_loki", lambda _resource: client)
+        selected_job, descriptor = service.descriptor(job.id, tool)
+        args = {"environment": "local", "base": "debug-base", "limit": 10}
+        if tool in ("query_loki", "diagnose_loki_probe"):
+            args["selector"] = {"custom_label": "v1", "logtype": "error"}
+        elif tool == "diagnose_loki_label_values":
+            args["label"] = "custom_label"
+        result = service.invoke(
+            job=selected_job,
+            descriptor=descriptor,
+            arguments=args,
+            request_identity=_request_identity(job, "loki-scoped-job"),
+        )
+        assert result.payload["metadata"]["resource_code"] == "loki_scoped_test"
+        assert result.payload["metadata"]["resource_revision_id"]
+        assert len(requests) == 1
+        secrets.resolve.assert_not_called()
+        params = parse_qs(urlparse(requests[0].full_url).query)
+        expression = params.get("query", params.get("match[]"))[0]
+        assert 'customer="A"' in expression and 'workshop="GL001"' in expression
+        row = runtime.database.execute_one(
+            "select status from mcp_operation_audit where id = ?",
+            (result.audit_handle.root_audit_id,),
+        )
+        assert row is not None and row["status"] == "SUCCEEDED"
+        if tool in ("query_loki", "diagnose_loki_probe"):
+            with pytest.raises(ToolPolicyError) as error:
+                service.invoke(
+                    job=selected_job,
+                    descriptor=descriptor,
+                    arguments={**args, "selector": {"customer": "B"}},
+                    request_identity=_request_identity(job, "loki-scope-conflict"),
+                )
+            assert error.value.error_code == "loki_fixed_label_conflict"
+            assert len(requests) == 1
+            row = runtime.database.execute_one(
+                "select status, error_code from mcp_operation_audit where id = ?",
+                (error.value.mcp_audit_handle.root_audit_id,),
+            )
+            assert row is not None and row["status"] == "DENIED"
+            assert row["error_code"] == "loki_fixed_label_conflict"
+    finally:
+        runtime.database.close()

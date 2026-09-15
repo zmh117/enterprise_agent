@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import socket
 import time
 import urllib.error
@@ -12,13 +11,13 @@ from urllib.request import Request, urlopen
 
 from app.shared.config import LokiSettings
 from app.shared.database import assert_external_io_allowed
+from app.shared.exceptions import ToolPolicyError
+from app.shared.loki_contract import assert_loki_selector
 
 from .loki_envelope import LocalPlatformError, redact_text, safe_error_text
 from .loki_schemas import LokiQuery, LocalToolResult
 
 
-SELECTOR_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.:/-]+$")
-ALLOWED_SELECTOR_LABELS = {"cluster", "container", "region", "service", "service_name"}
 MAX_QUERY_CHARS = 300
 RETRYABLE_UPSTREAM_STATUSES = {429, 502, 503, 504}
 
@@ -137,31 +136,11 @@ def _selector_from_payload(payload: dict[str, Any]) -> dict[str, str]:
     if not isinstance(raw_selector, dict):
         raise LocalPlatformError(400, "invalid_loki_query", "selector must be an object")
 
-    selector: dict[str, str] = {}
-    for raw_label, raw_value in raw_selector.items():
-        label = str(raw_label).strip()
-        if label not in ALLOWED_SELECTOR_LABELS:
-            raise LocalPlatformError(
-                400,
-                "invalid_loki_query",
-                f"selector label is not allowed: {label}",
-            )
-        if not isinstance(raw_value, str):
-            raise LocalPlatformError(400, "invalid_loki_query", "selector values must be strings")
-        value = raw_value.strip()
-        if not value:
-            raise LocalPlatformError(400, "invalid_loki_query", "selector value is required")
-        if not SELECTOR_VALUE_PATTERN.fullmatch(value):
-            raise LocalPlatformError(
-                400,
-                "invalid_loki_query",
-                "selector contains unsafe characters",
-            )
-        selector[label] = value
-
-    if not selector:
-        raise LocalPlatformError(400, "invalid_loki_query", "selector is required")
-    return selector
+    try:
+        assert_loki_selector(raw_selector)
+    except ToolPolicyError as exc:
+        raise LocalPlatformError(400, exc.error_code, exc.safe_message) from exc
+    return dict(raw_selector)
 
 
 def summarize_loki_response(

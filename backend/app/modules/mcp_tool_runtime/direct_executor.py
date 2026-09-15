@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.modules.mcp_tool_runtime.domain.loki_policy import (
-    assert_loki_label_allowed,
     build_effective_selector,
 )
 from app.modules.mcp_tool_runtime.domain.redis_pagination import scan_complete, valid_scan_position
@@ -31,6 +30,7 @@ from app.modules.mcp_tool_runtime.infrastructure.loki_gateway import HttpLokiCli
 from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import RealRedisGateway, RedisGateway
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
+from app.shared.loki_contract import assert_loki_label
 
 from .contracts import ResourceAccessGrant, ToolRequestContext, ToolResult
 from .pagination import ToolPaginationCursorCodec
@@ -543,9 +543,12 @@ class DirectReadOnlyToolExecutor:
     ) -> ToolResult:
         del context
         resource = self._resolve("loki", environment, base, workshop, None)
+        effective = build_effective_selector(
+            {}, mandatory_conditions=resource.loki_selector_conditions, require_mandatory=True
+        )
         response = self._loki(resource).labels(
             resource.binding,
-            selector=dict(resource.loki_selector_conditions),
+            selector=effective,
             minutes=int(minutes),
             limit=int(limit),
         )
@@ -565,12 +568,15 @@ class DirectReadOnlyToolExecutor:
         limit: int = 100,
     ) -> ToolResult:
         del context
-        assert_loki_label_allowed(label)
+        assert_loki_label(label)
         resource = self._resolve("loki", environment, base, workshop, None)
+        effective = build_effective_selector(
+            {}, mandatory_conditions=resource.loki_selector_conditions, require_mandatory=True
+        )
         response = self._loki(resource).label_values(
             resource.binding,
             label=label,
-            selector=dict(resource.loki_selector_conditions),
+            selector=effective,
             minutes=int(minutes),
             limit=int(limit),
         )
@@ -592,13 +598,14 @@ class DirectReadOnlyToolExecutor:
     ) -> ToolResult:
         del context
         resource = self._resolve("loki", environment, base, workshop, None)
+        effective = build_effective_selector(
+            selector,
+            mandatory_conditions=resource.loki_selector_conditions,
+            require_mandatory=True,
+        )
         response = self._loki(resource).probe(
             resource.binding,
-            selector=build_effective_selector(
-                selector,
-                mandatory_conditions=resource.loki_selector_conditions,
-                require_mandatory=True,
-            ),
+            selector=effective,
             query=query,
             minutes=int(minutes),
             limit=int(limit),
