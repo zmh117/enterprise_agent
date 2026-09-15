@@ -197,6 +197,7 @@ migration = [
   "test_schema_fact_source_manifest.py",
   "test_schema_migration_postgres_integration.py",
   "test_schema_migration_runtime.py",
+  "test_knowledge_import.py",
   "test_schema_retirement_gates.py",
   "test_task_file_workspace_migration.py",
   "test_webhook_migration_and_service_accounts.py",

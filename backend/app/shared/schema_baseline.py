@@ -164,9 +164,10 @@ def _sqlite_schema_payload(database: Database) -> dict[str, Any]:
 def _postgres_schema_payload(database: Database) -> dict[str, Any]:
     table_rows = database.execute(
         """
-        select table_name
+        select case when table_schema = 'public' then table_name
+                    else table_schema || '.' || table_name end as table_name
           from information_schema.tables
-         where table_schema = 'public'
+         where table_schema in ('public', 'knowledge')
            and table_type = 'BASE TABLE'
            and table_name not in ('schema_migration', 'schema_baseline_adoption')
          order by table_name
@@ -175,23 +176,26 @@ def _postgres_schema_payload(database: Database) -> dict[str, Any]:
     table_names = [str(row["table_name"]) for row in table_rows]
     columns = database.execute(
         """
-        select table_name, column_name, ordinal_position, data_type,
+        select case when table_schema = 'public' then table_name
+                    else table_schema || '.' || table_name end as table_name,
+               column_name, ordinal_position, data_type,
                is_nullable, column_default
           from information_schema.columns
-         where table_schema = 'public'
+         where table_schema in ('public', 'knowledge')
            and table_name not in ('schema_migration', 'schema_baseline_adoption')
          order by table_name, ordinal_position
         """
     )
     constraints = database.execute(
         """
-        select relation.relname as table_name,
+        select case when namespace.nspname = 'public' then relation.relname
+                    else namespace.nspname || '.' || relation.relname end as table_name,
                constraint_row.contype as constraint_type,
                pg_get_constraintdef(constraint_row.oid, true) as definition
           from pg_constraint constraint_row
           join pg_class relation on relation.oid = constraint_row.conrelid
           join pg_namespace namespace on namespace.oid = relation.relnamespace
-         where namespace.nspname = 'public'
+         where namespace.nspname in ('public', 'knowledge')
            and relation.relkind in ('r', 'p')
            and relation.relname not in ('schema_migration', 'schema_baseline_adoption')
          order by relation.relname, constraint_row.contype,
@@ -200,7 +204,8 @@ def _postgres_schema_payload(database: Database) -> dict[str, Any]:
     )
     indexes = database.execute(
         """
-        select table_relation.relname as tablename,
+        select case when namespace.nspname = 'public' then table_relation.relname
+                    else namespace.nspname || '.' || table_relation.relname end as tablename,
                index_relation.relname as indexname,
                pg_get_indexdef(index_relation.oid) as indexdef
           from pg_index index_row
@@ -209,7 +214,7 @@ def _postgres_schema_payload(database: Database) -> dict[str, Any]:
           join pg_namespace namespace on namespace.oid = table_relation.relnamespace
           left join pg_constraint constraint_row
             on constraint_row.conindid = index_relation.oid
-         where namespace.nspname = 'public'
+         where namespace.nspname in ('public', 'knowledge')
            and constraint_row.oid is null
            and table_relation.relname not in
                ('schema_migration', 'schema_baseline_adoption')
@@ -265,7 +270,8 @@ def postgres_comment_snapshot(database: Database) -> dict[str, Any]:
         raise ValueError("PostgreSQL comments can only be read from PostgreSQL")
     rows = database.execute(
         """
-        select relation.relname as table_name,
+        select case when namespace.nspname = 'public' then relation.relname
+                    else namespace.nspname || '.' || relation.relname end as table_name,
                attribute.attname as column_name,
                description.description as comment
           from pg_description description
@@ -274,7 +280,7 @@ def postgres_comment_snapshot(database: Database) -> dict[str, Any]:
          left join pg_attribute attribute
             on attribute.attrelid = relation.oid
            and attribute.attnum = description.objsubid
-         where namespace.nspname = 'public'
+         where namespace.nspname in ('public', 'knowledge')
            and relation.relkind in ('r', 'p')
            and relation.relname not in ('schema_migration', 'schema_baseline_adoption')
            and description.description is not null

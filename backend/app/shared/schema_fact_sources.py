@@ -13,7 +13,7 @@ FACT_SOURCE_MANIFEST_FILENAME = "schema_fact_sources.json"
 FACT_SOURCE_SCHEMA_FILENAME = "schema_fact_sources.schema.json"
 
 _CREATE_TABLE_BLOCK = re.compile(
-    r"CREATE\s+TABLE\s+(?P<table>[a-z_][a-z0-9_]*)\s*\((?P<body>.*?)\);",
+    r'CREATE\s+TABLE\s+"?(?P<table>(?:knowledge\.)?[a-z_][a-z0-9_]*)"?\s*\((?P<body>.*?)\);',
     re.IGNORECASE | re.DOTALL,
 )
 _COLUMN_DEFINITION = re.compile(
@@ -22,7 +22,7 @@ _COLUMN_DEFINITION = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _ADD_COLUMN = re.compile(
-    r"ALTER\s+TABLE\s+(?P<table>[a-z_][a-z0-9_]*)\s+"
+    r'ALTER\s+TABLE\s+"?(?P<table>(?:knowledge\.)?[a-z_][a-z0-9_]*)"?\s+'
     r"ADD\s+COLUMN\s+(?P<column>[a-z_][a-z0-9_]*)",
     re.IGNORECASE,
 )

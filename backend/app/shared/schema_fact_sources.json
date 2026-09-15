@@ -9,6 +9,204 @@
   },
   "entries": [
     {
+      "id": "knowledge.source",
+      "object_type": "table",
+      "table": "knowledge.source",
+      "owner": "knowledge",
+      "semantics": "知识来源身份；离线来源未确认时不得用于在线同步或授权",
+      "classification": "canonical_mutable_fact",
+      "writers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
+      "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
+      "audit_requirement": "仅记录批次、计数、哈希、机器错误码；不记录正文、URL 或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代或移除须经明确规范变更与数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:131_expand_knowledge_text_storage",
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+      ]
+    },
+    {
+      "id": "knowledge.knowledge_base",
+      "object_type": "table",
+      "table": "knowledge.knowledge_base",
+      "owner": "knowledge",
+      "semantics": "知识库收录身份；本阶段仅存储，不构成已发布资源或数据访问授权",
+      "classification": "canonical_mutable_fact",
+      "writers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
+      "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
+      "audit_requirement": "仅记录批次、计数、哈希、机器错误码；不记录正文、URL 或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代或移除须经明确规范变更与数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:131_expand_knowledge_text_storage",
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+      ]
+    },
+    {
+      "id": "knowledge.import_run",
+      "object_type": "table",
+      "table": "knowledge.import_run",
+      "owner": "knowledge",
+      "semantics": "离线导入批次及事务性检查点，不保存原始失败行或异常正文",
+      "classification": "operational_coordination_fact",
+      "writers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
+      "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
+      "audit_requirement": "仅记录批次、计数、哈希、机器错误码；不记录正文、URL 或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代或移除须经明确规范变更与数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:131_expand_knowledge_text_storage",
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+      ]
+    },
+    {
+      "id": "knowledge.document",
+      "object_type": "table",
+      "table": "knowledge.document",
+      "owner": "knowledge",
+      "semantics": "跨知识库复用的来源文档稳定身份，类型变化不改变身份",
+      "classification": "canonical_mutable_fact",
+      "writers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
+      "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
+      "audit_requirement": "仅记录批次、计数、哈希、机器错误码；不记录正文、URL 或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代或移除须经明确规范变更与数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:131_expand_knowledge_text_storage",
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+      ]
+    },
+    {
+      "id": "knowledge.document_revision",
+      "object_type": "table",
+      "table": "knowledge.document_revision",
+      "owner": "knowledge",
+      "semantics": "受限来源快照和规范化内容的不可变版本；不含可访问 URL 或认证信息",
+      "classification": "immutable_snapshot",
+      "source_contract": "ones-offline-text/v1：安全清洗的离线详情/list 快照，非已授权在线事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "lifecycle": "不可变；仅新增版本，不覆盖原文",
+      "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
+      "audit_requirement": "仅记录批次、计数、哈希、机器错误码；不记录正文、URL 或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代或移除须经明确规范变更与数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:131_expand_knowledge_text_storage",
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+      ]
+    },
+    {
+      "id": "knowledge.knowledge_base_document",
+      "object_type": "table",
+      "table": "knowledge.knowledge_base_document",
+      "owner": "knowledge",
+      "semantics": "知识库与来源文档的多对多收录关系，不扩大来源访问权限",
+      "classification": "canonical_mutable_fact",
+      "writers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
+      "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
+      "audit_requirement": "仅记录批次、计数、哈希、机器错误码；不记录正文、URL 或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代或移除须经明确规范变更与数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:131_expand_knowledge_text_storage",
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+      ]
+    },
+    {
+      "id": "knowledge.document_relation",
+      "object_type": "table",
+      "table": "knowledge.document_relation",
+      "owner": "knowledge",
+      "semantics": "绑定来源快照的原始工作项关联观察，未解析目标不创建虚假正文",
+      "classification": "derived_projection",
+      "canonical_source": "knowledge.document_revision.source_snapshot",
+      "writers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/import_service.py"
+      ],
+      "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
+      "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
+      "audit_requirement": "仅记录批次、计数、哈希、机器错误码；不记录正文、URL 或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代或移除须经明确规范变更与数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:131_expand_knowledge_text_storage",
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+      ]
+    },
+    {
       "id": "session.aggregate",
       "object_type": "table",
       "table": "agent_session",

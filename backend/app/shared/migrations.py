@@ -98,11 +98,11 @@ RETAINED_DATA_TABLES = (
 
 CREATE_TABLE = re.compile(
     r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
-    r"(?P<table>[a-z_][a-z0-9_]*)",
+    r'"?(?P<table>(?:knowledge\.)?[a-z_][a-z0-9_]*)"?',
     re.IGNORECASE,
 )
 ADD_COLUMN = re.compile(
-    r"\bALTER\s+TABLE\s+(?P<table>[a-z_][a-z0-9_]*)\s+"
+    r'\bALTER\s+TABLE\s+"?(?P<table>(?:knowledge\.)?[a-z_][a-z0-9_]*)"?\s+'
     r"ADD\s+COLUMN\s+(?P<column>[a-z_][a-z0-9_]*)",
     re.IGNORECASE,
 )
@@ -474,16 +474,18 @@ class SchemaMigrationLedger:
 
         column_rows = self.database.execute(
             """
-            select table_name, column_name
+            select case when table_schema = 'public' then table_name
+                        else table_schema || '.' || table_name end as table_name,
+                   column_name
               from information_schema.columns
-             where table_schema = 'public'
+             where table_schema in ('public', 'knowledge')
             """
         )
         index_rows = self.database.execute(
             """
             select indexname
               from pg_indexes
-             where schemaname = 'public'
+             where schemaname in ('public', 'knowledge')
             """
         )
         columns = frozenset(
@@ -1213,7 +1215,7 @@ class Migrator:
                 """
                 select table_name
                   from information_schema.tables
-                 where table_schema = 'public'
+                 where table_schema in ('public', 'knowledge')
                    and table_type = 'BASE TABLE'
                    and table_name not in
                        ('schema_migration', 'schema_baseline_adoption')
