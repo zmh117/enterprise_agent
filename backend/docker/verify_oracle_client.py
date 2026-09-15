@@ -11,6 +11,11 @@ import zipfile
 from pathlib import Path
 
 
+# This must not overlap Python/argparse failure codes (1/2). The installer
+# treats only this outcome as a successfully inspected but unsupported ZIP.
+ARCHIVE_NO_19C = 3
+
+
 def normalize_architecture(value: str) -> str:
     return {
         "amd64": "x86_64",
@@ -52,10 +57,17 @@ def main() -> int:
     parser.add_argument("library", type=Path, nargs="?")
     parser.add_argument("--find-in-archive", type=Path)
     parser.add_argument(
+        "--load-client",
+        action="store_true",
+        help="Initialize python-oracledb Thick after ELF checks; never connect to a database",
+    )
+    parser.add_argument(
         "--runtime-architecture",
         default=platform.machine(),
     )
     args = parser.parse_args()
+    if args.load_client and args.find_in_archive is not None:
+        parser.error("--load-client requires an installed library, not an archive")
     if args.find_in_archive is not None:
         try:
             with zipfile.ZipFile(args.find_in_archive) as archive:
@@ -72,9 +84,9 @@ def main() -> int:
                     "",
                 )
         except (OSError, zipfile.BadZipFile):
-            return 1
+            parser.error("Oracle client archive cannot be read; provide a valid ZIP")
         if not member:
-            return 1
+            return ARCHIVE_NO_19C
         print(member)
         return 0
     if args.library is None:
@@ -87,6 +99,21 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     print(f"approved Oracle Instant Client: {version} {architecture}")
+    if args.load_client:
+        try:
+            # Import lazily: archive discovery does not require the driver.
+            import oracledb
+
+            # The installer sets LD_LIBRARY_PATH before this process starts.
+            oracledb.init_oracle_client()
+            if oracledb.is_thin_mode():
+                raise ValueError("driver remained in Thin mode")
+            client_version = oracledb.clientversion()
+            if not client_version or client_version[0] != 19:
+                raise ValueError("loaded Oracle Instant Client must be 19c")
+        except Exception as exc:
+            parser.error(f"Oracle Thick initialization failed: {exc}")
+        print("verified Oracle Thick client: " + ".".join(map(str, client_version)))
     return 0
 
 

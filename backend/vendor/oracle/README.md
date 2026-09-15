@@ -43,6 +43,59 @@ docker compose build \
 - `ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient`
 - `LD_LIBRARY_PATH=/opt/oracle/instantclient`
 
+## libaio 兼容与构建期加载检查
+
+Debian 等发行版可能提供 `libaio1t64`，其库名为 `libaio.so.1t64`，而 19c
+客户端仍依赖 `libaio.so.1`。安装器会在验证客户端是匹配架构的 64 位 19c 后，
+检查旧库名能否加载；如不能，从已安装包清单定位 t64 库，并仅在 Oracle 安装目录
+建立兼容链接。不覆盖已有文件或链接，不修改系统库，也不下载其他发行版的旧 deb。
+此方式参考 [Oracle 驱动安装文档](https://python-oracledb.readthedocs.io/en/latest/user_guide/installation.html#oracle-instant-client-zip-files)。
+
+提供合规客户端时，安装器还会在构建期调用 `oracledb.init_oracle_client()`，确认
+**Thick 模式且实际客户端主版本为 19**。缺少动态库依赖、驱动初始化失败、实际版本
+不匹配均会终止构建，不再仅凭 `libclntsh.so.19*` 文件存在就判定可用。
+成功日志包含 `verified Oracle Thick client: 19.x...`；失败日志包含
+`Oracle Thick initialization failed` 和加载错误。检查不连接数据库、不需要数据库凭据。
+完全未提供客户端或仅提供其他版本时仍可构建，但 Oracle 保持 blocked。
+
+## Windows 行尾兼容与镜像更新
+
+Git 为 shell 和 `backend/docker/*.py` 固定 LF。即使旧 checkout 或手动复制导致
+Oracle 脚本仍是 CRLF，Docker 也会在执行前处理两个脚本的行尾，再显式使用 `bash`
+和 `python`，不依赖检测脚本的 shebang 或可执行权限。不需要修改全局 Git 配置。
+
+构建检测结果分为三类：
+
+- 检测成功且命中 19c：继续解压、检查 ELF / 64 位 / 架构并安装。
+- 合法 ZIP 不含 19c（检测器退出码 3），或未放置客户端：保留原行为，Oracle
+  blocked，其他 Provider 可用。
+- ZIP 损坏或不可读、Python 检测器不能运行或异常退出：**构建失败**，不再当作
+  “未提供客户端”静默跳过。请根据 `Oracle client verifier cannot run`、
+  `Oracle client archive cannot be read` 或 `Oracle client archive detection failed`
+  检查脚本及 ZIP；不要通过放宽 Thick 校验绕过。
+
+代码拉取、构建成功或 `docker compose restart` 都不会把已有容器自动换成新镜像。
+这次仅 Oracle 构建链路修复，在目标机器准备好合规 ZIP 后执行以下命令
+（PowerShell / Bash 均可逐行运行；会短暂重建 tool-mcp）：
+
+```text
+docker compose build tool-mcp
+docker compose up -d --no-deps --force-recreate tool-mcp
+```
+
+若目标机器采用镜像分发，不在本机构建，则先拉取**已包含对应架构 19c 客户端**的
+新 tool-mcp 镜像，再执行上面的 `up` 命令。不能仅在另一台机器构建而不更新目标容器。
+不要同时运行 `--build` 覆盖分发镜像；客户端 ZIP 不在 Git 中，仅拉代码不会补齐。
+
+在目标容器中可先做不连接数据库的 Thick 初始化自检：
+
+```text
+docker compose exec tool-mcp python -c "import oracledb; oracledb.init_oracle_client(); print('client_version=', oracledb.clientversion()); print('thick=', not oracledb.is_thin_mode())"
+```
+
+只有输出客户端版本 19.x 且 `thick=True`，才证明该容器已加载客户端；这不等于真实
+Oracle 11.2.0.4 连接验收，仍须回到 Web 对当前 Oracle 草稿重新执行技术测试。
+
 ## 运行时行为
 
 - 若存在 64-bit 19c 动态库且架构与容器一致，`tool-mcp` 进程会初始化一次 Thick

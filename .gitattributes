@@ -1,1 +1,2 @@
 *.sh text eol=lf
+backend/docker/*.py text eol=lf

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install only an approved 64-bit Oracle Instant Client 19c.
-# Unrelated or unsupported archives are ignored and Oracle remains unavailable.
+# Valid non-19c archives are ignored; verifier and archive errors fail the build.
 set -euo pipefail
 
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://mirrors.aliyun.com/debian}"
@@ -9,12 +9,44 @@ VENDOR_DIR="${ORACLE_VENDOR_DIR:-/tmp/oracle-vendor}"
 INSTALL_DIR="${ORACLE_CLIENT_LIB_DIR:-/opt/oracle/instantclient}"
 VERIFIER="${ORACLE_CLIENT_VERIFIER:-/tmp/verify_oracle_client.py}"
 
+configure_libaio_compatibility() {
+  local libaio_package="$1" oracle_dir="$2" libaio_target
+  if [[ "${libaio_package}" != "libaio1t64" ]] || \
+      python -c 'import ctypes; ctypes.CDLL("libaio.so.1")' >/dev/null 2>&1; then
+    return 0
+  fi
+  # Use the installed distro package, never download an old deb or replace a
+  # system library. The client has already passed the 64-bit/architecture check.
+  libaio_target="$(dpkg-query -L "${libaio_package}" | awk '/\/libaio[.]so[.]1t64$/ { print }')"
+  if [[ -z "${libaio_target}" || ! -f "${libaio_target}" ]]; then
+    echo "Oracle libaio compatibility target is missing or ambiguous" >&2
+    return 1
+  fi
+  if [[ ! -e "${oracle_dir}/libaio.so.1" && ! -L "${oracle_dir}/libaio.so.1" ]]; then
+    ln -s "${libaio_target}" "${oracle_dir}/libaio.so.1"
+  fi
+}
+
+# Use the image's interpreter, not an executable bit or a possibly CRLF shebang.
+if ! python "${VERIFIER}" --help >/dev/null; then
+  echo "Oracle client verifier cannot run; refusing to build without verification" >&2
+  exit 1
+fi
+
 client_library="$(find "${VENDOR_DIR}" -type f -name 'libclntsh.so.19*' -print -quit 2>/dev/null || true)"
 client_zip=""
 while IFS= read -r archive; do
-  if "${VERIFIER}" --find-in-archive "${archive}" >/dev/null; then
+  if python "${VERIFIER}" --find-in-archive "${archive}" >/dev/null; then
     client_zip="${archive}"
     break
+  else
+    detection_status=$?
+    # Exit 3 is reserved for a readable ZIP without a 19c member. Python
+    # failures (including exit 1) must never be interpreted as no client.
+    if [[ "${detection_status}" -ne 3 ]]; then
+      echo "Oracle client archive detection failed (exit ${detection_status}); refusing to skip client installation" >&2
+      exit "${detection_status}"
+    fi
   fi
 done < <(find "${VENDOR_DIR}" -maxdepth 2 -type f -name '*.zip' -print 2>/dev/null)
 
@@ -69,9 +101,13 @@ else
   client_dir="$(dirname "${client_library}")"
 fi
 
-"${VERIFIER}" "${client_library}"
+python "${VERIFIER}" "${client_library}"
 cp -a "${client_dir}/." "${INSTALL_DIR}/"
-"${VERIFIER}" "$(find "${INSTALL_DIR}" -maxdepth 1 -type f -name 'libclntsh.so.19*' -print -quit)"
+configure_libaio_compatibility "${libaio_pkg}" "${INSTALL_DIR}"
+ldconfig
+# Set the loader path before starting Python. Finding an ELF file alone does
+# not prove the OS dependencies or python-oracledb Thick initialization work.
+LD_LIBRARY_PATH="${INSTALL_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+  python "${VERIFIER}" "$(find "${INSTALL_DIR}" -maxdepth 1 -type f -name 'libclntsh.so.19*' -print -quit)" --load-client
 
 rm -rf "${VENDOR_DIR}" /tmp/oracle-unzip
-ldconfig || true

@@ -167,8 +167,8 @@ COPY backend/docker/setup_oracle_client.sh /tmp/setup_oracle_client.sh
 COPY backend/docker/verify_oracle_client.py /tmp/verify_oracle_client.py
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['tool-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
-    && chmod +x /tmp/setup_oracle_client.sh /tmp/verify_oracle_client.py \
-    && ORACLE_VENDOR_DIR=/tmp/oracle-vendor /tmp/setup_oracle_client.sh \
+    && sed -i 's/\r$//' /tmp/setup_oracle_client.sh /tmp/verify_oracle_client.py \
+    && ORACLE_VENDOR_DIR=/tmp/oracle-vendor bash /tmp/setup_oracle_client.sh \
     && rm -f /tmp/setup_oracle_client.sh /tmp/verify_oracle_client.py \
     && groupadd --system --gid 10001 tool-mcp \
     && useradd --system --uid 10001 --gid 10001 --no-create-home tool-mcp
