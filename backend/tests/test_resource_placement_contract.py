@@ -11,7 +11,6 @@ from app.modules.platform_config.application.validation import (
     PlatformConfigValidationError,
     validate_resource_placement,
 )
-from app.modules.platform_config.domain import ResourcePlacement
 from app.shared.config import IdentitySettings, Settings
 
 
@@ -30,13 +29,13 @@ def _settings() -> Settings:
     )
 
 
-def test_resource_placement_is_optional_and_has_only_cloud_or_edge() -> None:
+def test_resource_role_is_optional_bounded_and_preserves_exact_values() -> None:
     assert validate_resource_placement(None) is None
     assert validate_resource_placement("") is None
-    assert validate_resource_placement("cloud") is ResourcePlacement.CLOUD
-    assert validate_resource_placement("edge") is ResourcePlacement.EDGE
+    for role in ("cloud", "edge", "云", "边", "Cloud", "主库_01", "a" * 64):
+        assert validate_resource_placement(f" {role} ") == role
 
-    for invalid in ("none", "default", "standalone", "Cloud", "cloud,edge"):
+    for invalid in ("cloud,edge", "a b", "a/b", "a" * 65, "云\x00边", "cloud\n", 5, ["cloud"]):
         with pytest.raises(PlatformConfigValidationError) as raised:
             validate_resource_placement(invalid)
         assert raised.value.error_code == "resource_placement_invalid"
@@ -54,7 +53,7 @@ def test_placement_cannot_be_submitted_as_role_data_scope() -> None:
         )
 
 
-def test_placement_is_persisted_on_resource_identity_not_role_scope() -> None:
+def test_placement_is_persisted_on_revisions_not_authorization_scope() -> None:
     runtime = build_test_container(_settings(), migrate=True, seed=False)
     try:
         resource_columns = {
@@ -75,6 +74,10 @@ def test_placement_is_persisted_on_resource_identity_not_role_scope() -> None:
         }
 
         assert "placement" in resource_columns
+        for table in ("platform_resource_draft", "platform_resource_revision"):
+            assert "placement" in {
+                row["name"] for row in runtime.database.execute(f"pragma table_info({table})")
+            }
         assert "placement" not in access_scope_columns
         assert "placement" not in topology_columns
         assert (

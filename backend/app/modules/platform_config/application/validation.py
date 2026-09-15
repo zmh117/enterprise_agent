@@ -5,13 +5,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.resource_role import normalize_resource_role, RESOURCE_ROLE_MESSAGE
 
 from ..domain import (
     AccessEffect,
     ConfigValueType,
     ConfigStatus,
     ResourceKind,
-    ResourcePlacement,
     ResourceScopeType,
     RuntimeConfigScope,
     SecretProvider,
@@ -82,16 +82,13 @@ def validate_topology_code(
 
 def validate_resource_placement(
     value: object | None,
-) -> ResourcePlacement | None:
-    if value is None or value == "":
-        return None
-    text = str(value).strip()
+) -> str | None:
     try:
-        return ResourcePlacement(text)
+        return normalize_resource_role(value) or None
     except ValueError as exc:
         raise PlatformConfigValidationError(
-            f"Invalid Resource placement: {text}",
-            safe_message="资源位置只能为 cloud、edge 或缺省",
+            "Invalid Resource role",
+            safe_message=RESOURCE_ROLE_MESSAGE,
             error_code="resource_placement_invalid",
         ) from exc
 

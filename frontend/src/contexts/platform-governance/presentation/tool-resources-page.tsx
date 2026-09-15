@@ -157,6 +157,7 @@ function emptyForm(): ResourceFormInput {
     environment_code: "",
     base_code: "",
     workshop_code: "",
+    placement: "",
     provider_type: "mysql",
     config: { ...defaultConfigs.mysql },
     secret_refs: {},
@@ -177,6 +178,7 @@ function formForResource(resource: GovernedResource | null) {
     environment_code: resource.environment_code,
     base_code: resource.base_code,
     workshop_code: resource.workshop_code,
+    placement: source.placement,
     provider_type: source.provider_type as Provider,
     config: { ...source.config },
     secret_refs: { ...source.secret_refs },
@@ -375,6 +377,11 @@ export function ToolResourcesPage() {
         <ResourceFormSheet
           open
           resource={editing}
+          roleOptions={[...new Set((resources.data ?? []).flatMap((item) => [
+            item.draft?.placement,
+            item.published_revision?.placement,
+            ...item.revisions.map((revision) => revision.placement),
+          ]).filter((role): role is string => Boolean(role)))].sort()}
           pending={create.isPending || save.isPending}
           error={create.error ?? save.error}
           onOpenChange={(open) => {
@@ -600,6 +607,15 @@ function ResourceCard({
           </dd>
           <dt className="text-muted-foreground">范围</dt>
           <dd>{scopeLabel(resource)}</dd>
+          {resource.resource_kind !== "loki" ? (
+            <>
+              <dt className="text-muted-foreground">资源角色</dt>
+              <dd className="break-all">
+                最新发布：{published ? published.placement || "未指定" : "尚未发布"}
+                {draft ? `；草稿：${draft.placement || "未指定"}` : ""}
+              </dd>
+            </>
+          ) : null}
           <dt className="text-muted-foreground">资源身份状态</dt>
           <dd>
             {resourceIdentityLabel(resource.status)} · r{resource.revision}
@@ -791,6 +807,7 @@ function ResourceCard({
 function ResourceFormSheet({
   open,
   resource,
+  roleOptions,
   pending,
   error,
   onOpenChange,
@@ -798,6 +815,7 @@ function ResourceFormSheet({
 }: {
   open: boolean
   resource: GovernedResource | null
+  roleOptions: string[]
   pending: boolean
   error: unknown
   onOpenChange: (open: boolean) => void
@@ -894,6 +912,7 @@ function ResourceFormSheet({
       environment_code: provider === "loki" ? "" : form.environment_code,
       base_code: provider === "loki" ? "" : form.base_code,
       workshop_code: provider === "loki" ? "" : form.workshop_code,
+      placement: provider === "loki" ? "" : form.placement,
       config: structuredClone(defaultConfigs[provider]),
       secret_refs: {},
       scope_bindings: [],
@@ -919,6 +938,7 @@ function ResourceFormSheet({
       environment_code: normalizedEnvironmentCode,
       base_code: normalizedBaseCode,
       workshop_code: normalizedWorkshopCode,
+      placement: form.provider_type === "loki" ? "" : (form.placement ?? "").trim(),
       config: { ...form.config },
     }
     if (createsEnvironment) normalized.create_environment_if_missing = true
@@ -1109,6 +1129,28 @@ function ResourceFormSheet({
                   setForm({ ...form, workshop_code: workshopCode })
                 }
               />
+            ) : null}
+            {form.resource_kind !== "loki" ? (
+              <Field>
+                <FieldLabel htmlFor="resource-role">资源角色</FieldLabel>
+                <Input
+                  id="resource-role"
+                  list="resource-role-options"
+                  value={form.placement ?? ""}
+                  maxLength={64}
+                  pattern={"[A-Za-z0-9\\u3400-\\u9fff_.:\\-]{0,64}"}
+                  placeholder="可留空，输入新角色或选择历史值"
+                  onChange={(event) => setForm({ ...form, placement: event.target.value })}
+                />
+                <datalist id="resource-role-options">
+                  {roleOptions.map((role) => <option key={role} value={role} />)}
+                </datalist>
+                <FieldDescription>
+                  用于区分同一环境、基地、车间的多个实例，例如“云”“边”；不是用户权限角色。
+                  支持中文、字母、数字及 _ . : -，最多 64 字符。
+                  新值保存后可复用，清空表示未指定；修改后须重新验证并发布才生效。
+                </FieldDescription>
+              </Field>
             ) : null}
             {createsBase && form.resource_kind === "redis" ? (
               <Field>

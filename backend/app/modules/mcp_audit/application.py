@@ -327,7 +327,7 @@ class McpAuditCoordinator:
                 resource_code=resource_code[:128],
                 resource_deployment_id=resource_deployment_id[:128],
                 resource_revision_id=resource_revision_id[:128],
-                resource_placement=resource_placement[:16],
+                resource_placement=resource_placement[:64],
                 target_type=target_type[:128],
                 target_id=target_id[:256],
                 target_name=target_name[:512],

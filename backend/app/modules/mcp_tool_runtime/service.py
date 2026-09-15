@@ -27,6 +27,7 @@ from app.modules.permission.application.permission_service import PermissionServ
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import PermissionDenied, ToolPolicyError
 from app.shared.logging import correlation_id_var
+from app.shared.resource_role import normalize_resource_role, RESOURCE_ROLE_MESSAGE
 
 
 class ReadOnlyToolService:
@@ -524,17 +525,14 @@ def _addressing_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:
 def _placement_from_arguments(
     arguments: dict[str, Any],
 ) -> str | None:
-    value = arguments.get("placement")
-    if value is None:
-        return None
-    placement = str(value).strip().lower()
-    if placement not in {"cloud", "edge"}:
+    try:
+        return normalize_resource_role(arguments.get("placement")) or None
+    except ValueError as exc:
         raise ToolPolicyError(
-            "Resource placement must be cloud or edge",
-            safe_message="资源位置只能选择 cloud 或 edge",
+            "Invalid resource role",
+            safe_message=RESOURCE_ROLE_MESSAGE,
             error_code="resource_placement_invalid",
-        )
-    return placement
+        ) from exc
 
 
 def _resource_routing_from_arguments(

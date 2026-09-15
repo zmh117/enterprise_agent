@@ -144,12 +144,16 @@ class GovernedResourceService:
             result.append(
                 {
                     **resource,
+                    "placement": (published or draft or {}).get("placement") or None,
                     "draft": draft,
                     "draft_verification": draft_verification,
                     "published_revision": published,
                     # History is lifecycle metadata only, not another copy of connection config.
                     "revisions": [
-                        {key: revision[key] for key in ("id", "revision", "status", "published_at")}
+                        {
+                            key: revision[key]
+                            for key in ("id", "revision", "status", "published_at", "placement")
+                        }
                         for revision in revisions
                     ],
                 }
@@ -174,8 +178,7 @@ class GovernedResourceService:
             )
         resource_kind = str(payload.get("resource_kind") or "").lower()
         scope_type = str(payload.get("scope_type") or "").lower()
-        placement_value = validate_resource_placement(payload.get("placement"))
-        placement = placement_value.value if placement_value is not None else None
+        placement = validate_resource_placement(payload.get("placement"))
         if scope_type not in SCOPE_TYPES:
             raise NonRetryableExecutionError(
                 f"Unsupported Resource scope: {scope_type}",
@@ -186,7 +189,7 @@ class GovernedResourceService:
             if placement is not None:
                 raise NonRetryableExecutionError(
                     "Loki Resource cannot declare placement",
-                    safe_message="Loki 工具资源不能配置 placement",
+                    safe_message="Loki 工具资源不能配置资源角色 placement",
                     error_code="resource_placement_invalid",
                 )
             if scope_type not in {"global", "environment"}:
@@ -380,15 +383,13 @@ class GovernedResourceService:
                 safe_message="工具资源作用域与环境、基地、车间不匹配",
                 error_code="resource_scope_invalid",
             )
-        provider_type, config, secret_refs, scope_bindings, content_hash = (
-            self._draft_payload(
-                resource_kind=resource_kind,
-                scope_type=scope_type,
-                environment_code=environment_code,
-                base_code=base_code,
-                workshop_code=workshop_code,
-                payload=payload,
-            )
+        provider_type, config, secret_refs, scope_bindings, content_hash = self._draft_payload(
+            resource_kind=resource_kind,
+            scope_type=scope_type,
+            environment_code=environment_code,
+            base_code=base_code,
+            workshop_code=workshop_code,
+            payload=payload,
         )
         resource = self.repository.create_resource(
             code=code,
@@ -398,12 +399,13 @@ class GovernedResourceService:
             environment_id=str(environment_id) if environment_id else None,
             base_id=str(base_id) if base_id else None,
             workshop_id=str(workshop_id) if workshop_id else None,
-            placement=placement,
+            placement=None,  # Legacy identity column; new selectors belong to revisions.
             actor_id=actor_id,
         )
         draft = self.repository.insert_draft(
             resource_id=str(resource["id"]),
             draft_revision=1,
+            placement=placement or "",
             provider_type=provider_type,
             config=config,
             secret_refs=secret_refs,
@@ -434,17 +436,18 @@ class GovernedResourceService:
         resource = self._resource(code)
         self._require_identity_enabled(resource)
         before = self.repository.get_draft(str(resource["id"]))
-        provider_type, config, secret_refs, scope_bindings, content_hash = (
-            self._draft_payload(
-                resource_kind=str(resource["resource_kind"]),
-                scope_type=str(resource["scope_type"]),
-                environment_code=str(resource.get("environment_code") or ""),
-                base_code=str(resource.get("base_code") or ""),
-                workshop_code=str(resource.get("workshop_code") or ""),
-                payload=payload,
-            )
+        payload = {"placement": before.get("placement", ""), **payload}
+        placement = validate_resource_placement(payload.get("placement")) or ""
+        provider_type, config, secret_refs, scope_bindings, content_hash = self._draft_payload(
+            resource_kind=str(resource["resource_kind"]),
+            scope_type=str(resource["scope_type"]),
+            environment_code=str(resource.get("environment_code") or ""),
+            base_code=str(resource.get("base_code") or ""),
+            workshop_code=str(resource.get("workshop_code") or ""),
+            payload=payload,
         )
         draft = self.repository.update_draft(
+            placement=placement,
             resource_id=str(resource["id"]),
             expected_revision=expected_revision,
             provider_type=provider_type,
@@ -500,6 +503,7 @@ class GovernedResourceService:
         resource = self._resource(code)
         self._require_identity_enabled(resource)
         draft = self.repository.get_draft(str(resource["id"]))
+        self._require_current_draft_hash(draft)
         assert_resource_scope_bindings_publishable(
             draft.get("scope_bindings"),
             resource_kind=str(resource["resource_kind"]),
@@ -579,6 +583,7 @@ class GovernedResourceService:
         resource = self._resource(code)
         self._require_identity_enabled(resource)
         draft = self.repository.get_draft(str(resource["id"]))
+        self._require_current_draft_hash(draft)
         verification = self.repository.matching_verification(
             resource_id=str(resource["id"]),
             draft_revision=int(draft["draft_revision"]),
@@ -597,6 +602,7 @@ class GovernedResourceService:
                 error_code="resource_not_verified",
             )
         revision = self.repository.insert_revision(
+            placement=str(draft["placement"]),
             resource_id=str(resource["id"]),
             revision=self.repository.next_resource_revision(str(resource["id"])),
             provider_type=str(draft["provider_type"]),
@@ -646,11 +652,12 @@ class GovernedResourceService:
         draft = self.repository.insert_draft(
             resource_id=str(resource["id"]),
             draft_revision=self.repository.next_draft_revision(str(resource["id"])),
+            placement=str(revision["placement"]),
             provider_type=str(revision["provider_type"]),
             config=dict(revision["config"]),
             secret_refs=dict(revision["secret_refs"]),
             scope_bindings=list(revision["scope_bindings"]),
-            content_hash=str(revision["content_hash"]),
+            content_hash=self._content_hash(revision),
             actor_id=actor_id,
         )
         self._audit(
@@ -822,6 +829,13 @@ class GovernedResourceService:
         workshop_code: str,
         payload: dict[str, Any],
     ) -> tuple[str, dict[str, Any], dict[str, str], list[dict[str, Any]], str]:
+        placement = validate_resource_placement(payload.get("placement")) or ""
+        if resource_kind == "loki" and placement:
+            raise NonRetryableExecutionError(
+                "Loki Resource cannot declare a role",
+                safe_message="Loki 工具资源不能配置资源角色 placement",
+                error_code="resource_placement_invalid",
+            )
         providers = RESOURCE_PROVIDERS.get(resource_kind)
         provider_type = str(payload.get("provider_type") or "").lower()
         if not providers or provider_type not in providers:
@@ -873,24 +887,43 @@ class GovernedResourceService:
                     safe_message="所选凭据不存在、已禁用或未配置",
                     error_code="resource_secret_unavailable",
                 )
-        canonical = json.dumps(
+        content_hash = self._content_hash(
             {
                 "provider_type": provider_type,
                 "config": config,
                 "secret_refs": secret_refs,
                 "scope_bindings": scope_bindings,
+                "placement": placement,
             },
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
         )
         return (
             document.provider_type,
             config,
             secret_refs,
             scope_bindings,
-            hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            content_hash,
         )
+
+    @staticmethod
+    def _content_hash(document: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            {
+                key: document[key]
+                for key in ("provider_type", "config", "secret_refs", "scope_bindings", "placement")
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _require_current_draft_hash(self, draft: dict[str, Any]) -> None:
+        if self._content_hash(draft) != draft["content_hash"]:
+            raise NonRetryableExecutionError(
+                "Resource Draft hash requires current role contract",
+                safe_message="资源草稿尚未按当前资源角色契约保存，请先保存草稿并重新技术验证",
+                error_code="resource_draft_contract_stale",
+            )
 
     def _assert_scope_binding_targets_exist(
         self,

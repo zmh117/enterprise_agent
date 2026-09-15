@@ -173,6 +173,78 @@ function governedLokiResource({
 }
 
 describe("Phase 5 platform governance UI", () => {
+  it("starts roles blank and reuses saved draft and revision roles without preset values", async () => {
+    const resource = {
+      ...governedOracleResource(),
+      draft: { ...governedOracleResource().draft, placement: "云" },
+      revisions: [{ id: "old-role", revision: 1, status: "DISABLED", published_at: "2026-09-15T00:00:00Z", placement: "边" }],
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.includes("/api/platform/resources")) return response({ resources: [resource] })
+      if (url.includes("/api/platform/secrets")) return response({ secrets: [] })
+      if (url.includes("/api/platform/environments")) return response({ environments: [] })
+      if (url.includes("/api/platform/bases")) return response({ bases: [] })
+      return response({ workshops: [] })
+    })
+    renderWithQuery(<ToolResourcesPage />)
+    await screen.findByText("Oracle 订单库")
+    fireEvent.click(screen.getByRole("button", { name: "新建资源" }))
+    const role = screen.getByLabelText("资源角色") as HTMLInputElement
+    expect(role).toHaveValue("")
+    expect(role).not.toBeRequired()
+    expect(Array.from(role.list!.options).map((option) => option.value)).toEqual(["云", "边"])
+    fireEvent.change(role, { target: { value: "报表库" } })
+    expect(role).toHaveValue("报表库")
+    expect(role).toHaveAttribute("maxlength", "64")
+  })
+
+  it.each(["边", ""])("edits and saves a resource role as %j independently of immutable topology", async (newRole) => {
+    const resource = {
+      ...governedOracleResource(),
+      draft: { ...governedOracleResource().draft, placement: "云" },
+    }
+    let saved: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/draft") && init?.method === "PUT") {
+        saved = JSON.parse(String(init.body))
+        return response({ draft: { ...resource.draft, placement: newRole, draft_revision: 2 } })
+      }
+      if (url.includes("/api/platform/resources")) return response({ resources: [resource] })
+      if (url.includes("/api/platform/secrets")) return response({ secrets: [platformSecret] })
+      if (url.includes("/api/platform/environments")) return response({ environments: [] })
+      if (url.includes("/api/platform/bases")) return response({ bases: [] })
+      return response({ workshops: [] })
+    })
+    renderWithQuery(<ToolResourcesPage />)
+    await screen.findByText("Oracle 订单库")
+    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
+    const role = screen.getByLabelText("资源角色")
+    expect(role).toHaveValue("云")
+    expect(role).not.toBeDisabled()
+    expect(screen.getByLabelText("作用域层级")).toBeDisabled()
+    fireEvent.change(role, { target: { value: newRole } })
+    fireEvent.submit(role.closest("form")!)
+    await waitFor(() => expect(saved?.placement).toBe(newRole))
+    expect(saved?.expected_revision).toBe(1)
+  })
+
+  it("does not expose a role for Loki", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.includes("/api/platform/resources")) return response({ resources: [governedLokiResource({ draft: true, published: false })] })
+      if (url.includes("/api/platform/secrets")) return response({ secrets: [] })
+      if (url.includes("/api/platform/environments")) return response({ environments: [] })
+      if (url.includes("/api/platform/bases")) return response({ bases: [] })
+      return response({ workshops: [] })
+    })
+    renderWithQuery(<ToolResourcesPage />)
+    await screen.findByText("Loki 测试环境")
+    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
+    expect(screen.queryByLabelText("资源角色")).not.toBeInTheDocument()
+  })
+
   it("exposes governance navigation with separate resources and credential center", () => {
     const group = navigationGroups.find((item) => item.label === "平台治理")
     expect(group?.items.map((item) => item.href)).toEqual([

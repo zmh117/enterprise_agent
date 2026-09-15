@@ -55,7 +55,7 @@ def test_027_fresh_schema_enforces_enterprise_and_identity_invariants() -> None:
             default_migrations_dir(),
             migrator_build="dingtalk-enterprise-test",
         ).run()
-        assert result.head == "131"
+        assert result.head == "132"
         _seed_enterprise_and_users(database)
         with pytest.raises(sqlite3.IntegrityError):
             database.execute(
@@ -134,8 +134,8 @@ def test_130_upgrades_clean_129_database_and_restores_both_indexes(tmp_path: Pat
             migrator_build="dingtalk-index-after",
         ).run()
 
-        assert result.head == "131"
-        assert result.applied == ("130", "131")
+        assert result.head == "132"
+        assert result.applied == ("130", "131", "132")
         assert {
             "idx_dingtalk_identity_enterprise_subject",
             "idx_dingtalk_identity_user_enterprise_current",

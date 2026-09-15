@@ -27,6 +27,7 @@ from app.modules.platform_config.domain.provider_contracts import (
 )
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, ToolPolicyError
+from app.shared.resource_role import normalize_resource_role, RESOURCE_ROLE_MESSAGE
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +103,13 @@ class DirectResourceResolver:
         environment = str(environment or "").strip()
         base = str(base or "").strip()
         workshop = str(workshop or "").strip()
-        placement = str(placement or "").strip().lower()
+        try:
+            placement = normalize_resource_role(placement)
+        except ValueError as exc:
+            raise ToolPolicyError(
+                "Invalid MCP Resource role", safe_message=RESOURCE_ROLE_MESSAGE,
+                error_code="mcp_resource_placement_invalid",
+            ) from exc
         if kind not in {"database", "redis", "loki"}:
             raise ToolPolicyError(
                 f"Unsupported MCP Resource kind: {kind}",
@@ -115,10 +122,10 @@ class DirectResourceResolver:
                 safe_message="工具调用必须指定环境",
                 error_code="mcp_resource_target_incomplete",
             )
-        if placement and placement not in {"cloud", "edge"}:
+        if placement and kind == "loki":
             raise ToolPolicyError(
                 f"Invalid MCP Resource placement: {placement}",
-                safe_message="资源位置只能为 cloud 或 edge",
+                safe_message="Loki 工具资源不能配置资源角色 placement",
                 error_code="mcp_resource_placement_invalid",
             )
 
@@ -142,7 +149,7 @@ class DirectResourceResolver:
         if len(candidates) != 1:
             raise ToolPolicyError(
                 "Multiple published MCP Resources match the Job target",
-                safe_message="当前 Job 目标匹配到多个工具资源，请明确 placement 或停用重复资源",
+                safe_message="当前 Job 目标匹配到多个工具资源，请明确资源角色 placement；同角色重复时请修正资源配置",
                 error_code="mcp_resource_ambiguous",
                 diagnostics={
                     "candidate_count": len(candidates),
@@ -221,7 +228,7 @@ class DirectResourceResolver:
         rows = self.database.execute(
             """
             select resource.id as resource_id, resource.code, resource.resource_kind,
-                   resource.scope_type, resource.placement,
+                   resource.scope_type, revision.placement,
                    environment.code as environment_code,
                    base.code as base_code, workshop.code as workshop_code,
                    revision.id as resource_revision_id, revision.revision,
@@ -282,7 +289,7 @@ class DirectResourceResolver:
         rows = self.database.execute(
             """
             select resource.id as resource_id, resource.code, resource.resource_kind,
-                   resource.scope_type, resource.placement,
+                   resource.scope_type, revision.placement,
                    environment.code as environment_code,
                    base.code as base_code, workshop.code as workshop_code,
                    revision.id as resource_revision_id, revision.revision,

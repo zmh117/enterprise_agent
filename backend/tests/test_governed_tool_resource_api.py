@@ -258,6 +258,7 @@ def test_governed_resource_revision_action_routes_disable_and_archive() -> None:
             "revision": revision["revision"],
             "status": "ARCHIVED",
             "published_at": revision["published_at"],
+            "placement": revision["placement"],
         }
         for revision in (published, latest)
     ]

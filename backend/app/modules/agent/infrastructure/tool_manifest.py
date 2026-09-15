@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.shared.resource_role import RESOURCE_ROLE_PATTERN
+
 # compatibility with the flat datasource contract; required by the topology-aware platform.
 _ADDRESSING_PROPERTIES: dict[str, Any] = {
     "environment": {
@@ -29,10 +31,12 @@ _LOKI_SELECTOR_PROPERTIES: dict[str, Any] = {
 _PLACEMENT_PROPERTY: dict[str, Any] = {
     "placement": {
         "type": "string",
-        "enum": ["cloud", "edge"],
+        "maxLength": 64,
+        "pattern": RESOURCE_ROLE_PATTERN,
         "description": (
-            "Required when the Job exposes both cloud and edge resources; "
-            "omit it when the Job has only one or no placement."
+            "资源角色（不是用户授权角色），可为云、边、cloud、edge 或其他自定义值。"
+            "从资源目录原样使用 placement，精确区分同环境/基地/车间的多个实例；"
+            "目标不明确时询问用户，不按资源名称猜测，不选择 AMBIGUOUS 条目。"
         ),
     }
 }

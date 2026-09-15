@@ -103,10 +103,13 @@ class DirectReadOnlyToolExecutor:
             if usable_tools:
                 visible.append((address, usable_tools))
         ambiguity_counts: dict[tuple[str, str, str, str, str], int] = {}
+        target_counts: dict[tuple[str, str, str, str], int] = {}
         for address, _ in visible:
             ambiguity_counts[address.resolution_key] = (
                 ambiguity_counts.get(address.resolution_key, 0) + 1
             )
+            target = address.resolution_key[:-1]
+            target_counts[target] = target_counts.get(target, 0) + 1
         items = [
             {
                 "resource_code": address.resource_code,
@@ -118,7 +121,10 @@ class DirectReadOnlyToolExecutor:
                 "resource_revision_id": address.resource_revision_id,
                 "resource_revision": address.resource_revision,
                 "resolution_status": (
-                    "AMBIGUOUS" if ambiguity_counts[address.resolution_key] > 1 else "AVAILABLE"
+                    "AMBIGUOUS"
+                    if ambiguity_counts[address.resolution_key] > 1
+                    or (not address.placement and target_counts[address.resolution_key[:-1]] > 1)
+                    else "AVAILABLE"
                 ),
                 "usable_tools": list(usable_tools),
                 "_sort_key": list(address.sort_key),

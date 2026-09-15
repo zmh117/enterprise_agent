@@ -314,6 +314,13 @@ def _tool_restrictions(
                     "items or invent, probe, broaden, or enumerate other target codes."
                 ),
                 (
+                    "placement is the configured resource role, not an authorization role. "
+                    "It can be a custom value such as 云 or 边 and is case-sensitive. "
+                    "When several AVAILABLE instances match the user's target and the user "
+                    "has not chosen a resource role, ask which instance to use; never choose "
+                    "a default or translate role values implicitly."
+                ),
+                (
                     "After mcp_resource_not_resolved, do not retry the same arguments. Refresh the "
                     "authorized resource directory once if needed; never infer from one failed "
                     "target that the current user has no resources anywhere."

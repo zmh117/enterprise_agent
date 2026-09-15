@@ -191,6 +191,40 @@ def test_authorized_resource_directory_pages_without_resolving_secrets() -> None
     assert second.summary["next_cursor"] == ""
 
 
+def test_directory_roles_are_exact_and_ambiguity_is_not_hidden_by_search() -> None:
+    rows = [
+        {**_resource(1), "placement": "云"},
+        {**_resource(2), "placement": "边"},
+        {**_resource(3), "placement": ""},
+        {**_resource(4, environment="secret"), "placement": "云"},
+    ]
+    executor = DirectReadOnlyToolExecutor(
+        DirectResourceResolver(_RowsDatabase(rows), secret_provider=_SecretMustNotResolve()),
+        limits=ExecutionSettings(),
+    )
+    grants = (
+        ResourceAccessGrant(
+            tool_identifier="query_database", resource_kind="database", environment="prod"
+        ),
+    )
+    result = executor.list_available_tool_resources(
+        _context(), grants=grants, resource_kind="database"
+    )
+    assert {
+        item["placement"]: item["resolution_status"] for item in result.summary["resources"]
+    } == {
+        "云": "AVAILABLE",
+        "边": "AVAILABLE",
+        None: "AMBIGUOUS",
+    }
+    rows.append({**_resource(5), "placement": "云"})
+    filtered = executor.list_available_tool_resources(
+        _context(), grants=grants, resource_kind="database", query="db-001", limit=1
+    )
+    assert len(filtered.summary["resources"]) == 1
+    assert filtered.summary["resources"][0]["resolution_status"] == "AMBIGUOUS"
+
+
 class _ProjectionDatabase:
     def execute_one(self, _sql: str, _parameters: tuple[object, ...]) -> dict[str, str]:
         return {"id": "app-1", "status": "enabled"}

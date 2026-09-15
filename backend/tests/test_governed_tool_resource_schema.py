@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
+from pathlib import Path
 
 import pytest
 
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
+from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME
 
 
 def _insert_topology(database: Database) -> None:
@@ -54,7 +57,7 @@ def test_governed_resource_schema_has_stable_revision_records_without_legacy_map
         migrator_build="resource-schema-test",
     ).run()
 
-    assert result.head == "131"
+    assert result.head == "132"
     tables = {
         row["name"]
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -95,7 +98,65 @@ def test_governed_resource_schema_has_stable_revision_records_without_legacy_map
     }
     assert "scope_bindings_json" in draft_columns
     assert "scope_bindings_json" in revision_columns
+    assert "placement" in draft_columns & revision_columns
     database.close()
+
+
+def test_role_migration_preserves_old_selectors_and_published_hashes(tmp_path: Path) -> None:
+    old_catalog = tmp_path / "migrations-131"
+    old_catalog.mkdir()
+    source = default_migrations_dir()
+    shutil.copy2(source / LEGACY_MANIFEST_FILENAME, old_catalog / LEGACY_MANIFEST_FILENAME)
+    for path in source.glob("*.sql"):
+        if int(path.name.split("_", 1)[0]) <= 131:
+            shutil.copy2(path, old_catalog / path.name)
+    database = Database("sqlite:///:memory:")
+    try:
+        assert Migrator(database, old_catalog, migrator_build="before-role").run().head == "131"
+        _insert_topology(database)
+        for index, role in enumerate((None, "cloud", "edge")):
+            resource_id = f"legacy-role-{index}"
+            _insert_resource(database, resource_id=resource_id, code=resource_id)
+            database.execute(
+                "update platform_resource set placement = ? where id = ?", (role, resource_id)
+            )
+            database.execute(
+                """insert into platform_resource_draft
+                (id, resource_id, draft_revision, provider_type, config_json, secret_refs_json,
+                 content_hash, status, created_at, updated_at)
+                values (?, ?, 1, 'mysql', '{}', '{}', ?, 'VERIFIED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                (f"draft-{index}", resource_id, "a" * 64),
+            )
+            database.execute(
+                """insert into platform_resource_verification
+                (id, resource_id, draft_id, draft_revision, content_hash, status, provider_contract_version, checks_json, verified_at)
+                values (?, ?, ?, 1, ?, 'PASSED', 'mysql_v1', '{}', CURRENT_TIMESTAMP)""",
+                (f"verification-{index}", resource_id, f"draft-{index}", "a" * 64),
+            )
+            database.execute(
+                """insert into platform_resource_revision
+                (id, resource_id, revision, provider_type, provider_contract_version, config_json, secret_refs_json,
+                 content_hash, verification_id, status, published_by, published_at)
+                values (?, ?, 1, 'mysql', 'mysql_v1', '{}', '{}', ?, ?, 'PUBLISHED', 'test', CURRENT_TIMESTAMP)""",
+                (f"revision-{index}", resource_id, "a" * 64, f"verification-{index}"),
+            )
+        result = Migrator(database, source, migrator_build="after-role").run()
+        assert result.applied == ("132",)
+        for table, status in (
+            ("platform_resource_draft", "DRAFT"),
+            ("platform_resource_revision", "PUBLISHED"),
+        ):
+            rows = database.execute(
+                f"select placement, content_hash, status from {table} order by resource_id"
+            )
+            assert rows == [
+                {"placement": role, "content_hash": "a" * 64, "status": status}
+                for role in ("", "cloud", "edge")
+            ]
+        assert Migrator(database, source, migrator_build="replay-role").run().applied == ()
+        assert database.execute("pragma foreign_key_check") == []
+    finally:
+        database.close()
 
 
 def test_resource_scope_draft_and_revision_constraints_fail_closed() -> None:

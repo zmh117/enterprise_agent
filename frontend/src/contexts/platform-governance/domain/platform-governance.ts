@@ -21,6 +21,7 @@ const resourceDraftSchema = z
     id: z.string(),
     resource_id: z.string(),
     draft_revision: z.number().int().positive(),
+    placement: z.string().default(""),
     provider_type: z.string(),
     config: z.record(z.string(), z.unknown()),
     secret_refs: z.record(z.string(), z.string()),
@@ -37,6 +38,7 @@ const resourceRevisionSchema = z
     id: z.string(),
     resource_id: z.string(),
     revision: z.number().int().positive(),
+    placement: z.string().default(""),
     provider_type: z.string(),
     provider_contract_version: z.string(),
     config: z.record(z.string(), z.unknown()),
@@ -63,6 +65,7 @@ const resourceRevisionSummarySchema = resourceRevisionSchema.pick({
   revision: true,
   status: true,
   published_at: true,
+  placement: true,
 }).strip()
 
 const governedResourceSchema = z
@@ -82,7 +85,7 @@ const governedResourceSchema = z
       .nullish()
       .transform((value) => value ?? ""),
     placement: z
-      .enum(["cloud", "edge"])
+      .string()
       .nullish()
       .transform((value) => value ?? ""),
     status: z.enum(["enabled", "disabled", "archived"]),
@@ -197,7 +200,7 @@ export type ResourceFormInput = {
   environment_code: string
   base_code: string
   workshop_code: string
-  placement?: "cloud" | "edge" | ""
+  placement?: string
   provider_type: "mysql" | "sqlserver" | "oracle" | "redis" | "loki"
   config: Record<string, unknown>
   secret_refs: Record<string, string>

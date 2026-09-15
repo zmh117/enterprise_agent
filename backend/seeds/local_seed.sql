@@ -103,12 +103,12 @@ VALUES
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_label_values', 'dbdd1fb7009090387f2479f3e71ab691b67be3ea7fe76345e76c2468610b2796', '', 0, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_labels', '3fdb9c6cd548513b660a2995cbc5273878e896843aec6c9c6e9b6c1f40d71a27', '', 1, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'diagnose_loki_probe', 'f4f6881d4884b3111e905525c05dbc7f5fd0fb209f7dd3c5163a5d88b999bce1', '', 2, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'get_schema_directory', '63e2fb32ff8c6dc8b8e07f7e7bd99035685a6a71817b0d924a7c2fd7bad6406d', '', 3, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'get_schema_directory', 'c69bbaf2589b607dfd5ce949e943fe1fe7e215f1ac6f44cf8751cfcdce0ace76', '', 3, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'list_available_tool_resources', '98b066835914b160442a3b52b0a89b17a2130b2c8bb344fc17d157335a9e1461', '', 4, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_database', '9b2fdee7c913e746f58b8149305990f5601044ad7c30b08bc7d4b017d53f6113', '', 5, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_database', '211aa27e728cb77a2dcb9f14d3055ed6312886db054e79fcb055845762cffa96', '', 5, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'query_loki', 'ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108', '', 6, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_get', 'e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50', '', 7, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_scan', '656f38f4c50622781b70a0261d46152f4ab419337f2fe1c2e22f2662efecaae0', '', 8, CURRENT_TIMESTAMP)
+  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_get', '814d5c62239f10597c5d7df714ba14ad79c22f268fe1d0844c42f110ce4c3866', '', 7, CURRENT_TIMESTAMP),
+  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_scan', 'd2a6c91deab7333a7fc62ba23d840a7b09f4f5826eddf15d20a4e8ccb9b92726', '', 8, CURRENT_TIMESTAMP)
 ON CONFLICT(agent_publication_id, tool_identifier) DO NOTHING;
 
 INSERT INTO agent_channel_binding

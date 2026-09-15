@@ -322,12 +322,13 @@ def test_code_owned_mcp_manifest_has_stable_unique_tool_contracts() -> None:
         assert require_mcp_tool(identifier) is definition
 
 
-def test_direct_resource_resolution_requires_exact_target_or_placement() -> None:
+@pytest.mark.parametrize("roles", [("cloud", "edge"), ("云", "边"), ("Cloud", "cloud")])
+def test_direct_resource_resolution_requires_exact_target_or_placement(roles) -> None:
     resolver = DirectResourceResolver(
         _RowsDatabase(
             [
-                _database_resource(code="mysql-test-cloud", placement="cloud"),
-                _database_resource(code="mysql-test-edge", placement="edge"),
+                _database_resource(code="mysql-test-cloud", placement=roles[0]),
+                _database_resource(code="mysql-test-edge", placement=roles[1]),
             ]
         ),
         secret_provider=_SecretProvider(),
@@ -340,10 +341,10 @@ def test_direct_resource_resolution_requires_exact_target_or_placement() -> None
     resolved = resolver.resolve(
         resource_kind="database",
         environment="test",
-        placement="edge",
+        placement=roles[1],
     )
     assert resolved.resource_code == "mysql-test-edge"
-    assert resolved.placement == "edge"
+    assert resolved.placement == roles[1]
     assert resolved.binding.database is not None
     assert resolved.binding.database.password == "resolved-only-at-invocation"
 

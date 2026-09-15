@@ -77,6 +77,21 @@ def test_root_summary_projects_metadata_before_audit_payload_truncation(body_len
         assert audit["response_truncated"]
 
 
+def test_resource_role_audit_preserves_the_full_supported_length() -> None:
+    runtime, _, coordinator, context = _coordinator_fixture()
+    try:
+        handle = coordinator.begin(context, business_request={})
+        role = "云端报表" * 16
+        event_id = coordinator.append_event(
+            handle, event_kind="RESOURCE", status="SUCCEEDED", resource_placement=role
+        )
+        assert runtime.database.execute_one(
+            "select resource_placement from mcp_operation_audit where id = ?", (event_id,)
+        ) == {"resource_placement": role}
+    finally:
+        runtime.database.close()
+
+
 def test_root_failure_retains_safe_reason_and_separate_error_code() -> None:
     runtime, job, coordinator, context = _coordinator_fixture()
     handle = coordinator.begin(context, business_request={})

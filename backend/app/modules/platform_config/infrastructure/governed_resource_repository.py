@@ -141,6 +141,7 @@ class GovernedResourceRepository:
         scope_bindings: list[dict[str, Any]],
         content_hash: str,
         actor_id: str,
+        placement: str = "",
     ) -> dict[str, Any]:
         draft_id = new_id("resource_draft")
         timestamp = now_iso()
@@ -149,8 +150,8 @@ class GovernedResourceRepository:
             insert into platform_resource_draft
               (id, resource_id, draft_revision, provider_type, config_json,
                secret_refs_json, scope_bindings_json, content_hash, status, created_by, updated_by,
-               created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?)
+               created_at, updated_at, placement)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?)
             """,
             (
                 draft_id,
@@ -165,6 +166,7 @@ class GovernedResourceRepository:
                 actor_id,
                 timestamp,
                 timestamp,
+                placement,
             ),
         )
         return self.get_draft(resource_id)
@@ -180,6 +182,7 @@ class GovernedResourceRepository:
         scope_bindings: list[dict[str, Any]],
         content_hash: str,
         actor_id: str,
+        placement: str = "",
     ) -> dict[str, Any]:
         rows = self.database.execute(
             """
@@ -189,6 +192,7 @@ class GovernedResourceRepository:
                    config_json = ?,
                    secret_refs_json = ?,
                    scope_bindings_json = ?,
+                   placement = ?,
                    content_hash = ?,
                    status = 'DRAFT',
                    updated_by = ?,
@@ -201,6 +205,7 @@ class GovernedResourceRepository:
                 json_text(config),
                 json_text(secret_refs),
                 json_text(scope_bindings),
+                placement,
                 content_hash,
                 actor_id,
                 now_iso(),
@@ -385,6 +390,7 @@ class GovernedResourceRepository:
         content_hash: str,
         verification_id: str,
         actor_id: str,
+        placement: str = "",
     ) -> dict[str, Any]:
         revision_id = new_id("resource_revision")
         self.database.execute(
@@ -393,8 +399,8 @@ class GovernedResourceRepository:
               (id, resource_id, revision, provider_type,
                provider_contract_version, config_json, secret_refs_json,
                scope_bindings_json, content_hash, verification_id, status, published_by,
-               published_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PUBLISHED', ?, ?)
+               published_at, placement)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PUBLISHED', ?, ?, ?)
             """,
             (
                 revision_id,
@@ -409,6 +415,7 @@ class GovernedResourceRepository:
                 verification_id,
                 actor_id,
                 now_iso(),
+                placement,
             ),
         )
         return self.get_revision(revision_id)

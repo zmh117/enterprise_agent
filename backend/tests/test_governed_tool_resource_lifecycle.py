@@ -130,6 +130,127 @@ def _create_resource() -> tuple[object, object, dict[str, object]]:
     return runtime, service, created
 
 
+def test_role_changes_are_versioned_and_do_not_affect_published_resolution() -> None:
+    from unittest.mock import Mock
+    from app.modules.mcp_tool_runtime.resource_resolver import DirectResourceResolver
+    from app.shared.exceptions import ToolPolicyError
+
+    runtime, service, created = _create_resource()
+    try:
+        resolver = DirectResourceResolver(
+            runtime.database, secret_provider=Mock(resolve=lambda _: "test")
+        )
+        target = dict(resource_kind="database", environment="governed_env", base="governed_base")
+        service.verify_draft("governed_mysql", actor_id="local-user", verifier=PassingVerifier())
+        first = service.publish_draft("governed_mysql", actor_id="local-user")
+        draft = service.create_draft_from_revision(
+            "governed_mysql", first["id"], actor_id="local-user"
+        )
+        saved = service.save_draft(
+            "governed_mysql",
+            {**draft, "placement": " 云 "},
+            expected_revision=draft["draft_revision"],
+            actor_id="local-user",
+        )
+        assert saved["placement"] == "云"
+        assert saved["content_hash"] != first["content_hash"]
+        assert resolver.resolve(**target).placement == ""
+        with pytest.raises(NonRetryableExecutionError, match="not verified"):
+            service.publish_draft("governed_mysql", actor_id="local-user")
+        service.verify_draft("governed_mysql", actor_id="local-user", verifier=PassingVerifier())
+        second = service.publish_draft("governed_mysql", actor_id="local-user")
+        assert second["placement"] == "云"
+        assert resolver.resolve(**target, placement="云").resource_revision_id == second["id"]
+        assert service.repository.get_revision(first["id"])["placement"] == ""
+        # Historical identity is never a fallback for the current published role.
+        runtime.database.execute(
+            "update platform_resource set placement = 'edge' where id = ?",
+            (created["resource"]["id"],),
+        )
+        with pytest.raises(ToolPolicyError) as wrong_role:
+            resolver.resolve(**target, placement="edge")
+        assert wrong_role.value.error_code == "mcp_resource_not_resolved"
+        draft = service.create_draft_from_revision(
+            "governed_mysql", second["id"], actor_id="local-user"
+        )
+        assert draft["placement"] == "云"
+        without_role = {key: value for key, value in draft.items() if key != "placement"}
+        preserved = service.save_draft(
+            "governed_mysql",
+            without_role,
+            expected_revision=draft["draft_revision"],
+            actor_id="local-user",
+        )
+        assert preserved["placement"] == "云"
+        cleared = service.save_draft(
+            "governed_mysql",
+            {**preserved, "placement": ""},
+            expected_revision=preserved["draft_revision"],
+            actor_id="local-user",
+        )
+        assert cleared["placement"] == ""
+        listed = next(item for item in service.list_resources() if item["code"] == "governed_mysql")
+        assert listed["placement"] == "云"
+        assert listed["draft"]["placement"] == ""
+        assert [item["placement"] for item in listed["revisions"]] == ["", "云"]
+    finally:
+        runtime.database.close()
+
+
+@pytest.mark.parametrize("resource_kind", ["database", "redis"])
+def test_new_custom_role_is_persisted_in_draft_not_legacy_identity(resource_kind) -> None:
+    runtime, service, created = _create_resource()
+    try:
+        payload = {
+            **created["draft"],
+            "code": f"custom_role_{resource_kind}",
+            "resource_kind": resource_kind,
+            "scope_type": "base",
+            "environment_code": "governed_env",
+            "base_code": "governed_base",
+            "placement": "云",
+        }
+        if resource_kind == "redis":
+            payload.update(
+                provider_type="redis",
+                config={
+                    "host": "redis.internal",
+                    "port": 6379,
+                    "database": 0,
+                    "username": "",
+                    "tls": {"enabled": False, "verify_certificate": True},
+                },
+                secret_refs={},
+            )
+        saved = service.create_resource(payload, actor_id="local-user")
+        assert saved["draft"]["placement"] == "云"
+        assert saved["resource"]["placement"] is None
+    finally:
+        runtime.database.close()
+
+
+def test_pre_role_draft_requires_resave_even_with_passed_verification() -> None:
+    runtime, service, created = _create_resource()
+    try:
+        service.verify_draft("governed_mysql", actor_id="local-user", verifier=PassingVerifier())
+        runtime.database.execute(
+            "update platform_resource_draft set content_hash = ? where id = ?",
+            ("a" * 64, created["draft"]["id"]),
+        )
+        for operation in (service.verify_draft, service.publish_draft):
+            with pytest.raises(NonRetryableExecutionError) as stale:
+                operation("governed_mysql", actor_id="local-user")
+            assert stale.value.error_code == "resource_draft_contract_stale"
+        saved = service.save_draft(
+            "governed_mysql", created["draft"], expected_revision=1, actor_id="local-user"
+        )
+        assert saved["status"] == "DRAFT"
+        service.verify_draft("governed_mysql", actor_id="local-user", verifier=PassingVerifier())
+        assert service.publish_draft("governed_mysql", actor_id="local-user")["placement"] == ""
+    finally:
+        runtime.database.close()
+
+
 def test_environment_scoped_resource_atomically_creates_an_explicit_missing_environment() -> None:
     runtime = container()
     _grant_platform_config_management(runtime, "user_local_admin")
@@ -223,8 +344,7 @@ def test_base_scoped_resource_atomically_creates_an_explicit_missing_topology() 
         assert created["resource"]["base_id"] == base["id"]
         audits = runtime.platform_config_service.repository.list_config_audit(limit=20)
         assert {
-            (item["entity_type"], item["action"], item["correlation_id"])
-            for item in audits
+            (item["entity_type"], item["action"], item["correlation_id"]) for item in audits
         }.issuperset(
             {
                 ("environment", "create_from_tool_resource", "custom-base-test"),
@@ -716,7 +836,7 @@ def test_history_exposes_archive_blockers_without_touching_other_resources() -> 
             (2, "DISABLED"),
         ]
         for revision in listed["revisions"]:
-            assert set(revision) == {"id", "revision", "status", "published_at"}
+            assert set(revision) == {"id", "revision", "status", "published_at", "placement"}
         with pytest.raises(NonRetryableExecutionError) as blocked:
             service.set_resource_status(
                 "governed_mysql",
