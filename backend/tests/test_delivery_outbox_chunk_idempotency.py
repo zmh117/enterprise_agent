@@ -2,14 +2,49 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from app.modules.agent.domain.runtime import AgentRunResult
 from app.modules.channel.domain.channel_event import ReplyRoute
+from app.modules.delivery.application.report_chunker import ReportChunker
 from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,
 )
 from app.shared.exceptions import RetryableExecutionError
 from backend.tests.helpers import container
+
+
+@pytest.mark.parametrize("max_chars", [200, 3500, 20_000])
+def test_complete_detail_list_chunking_preserves_all_records_and_full_titles(
+    max_chars: int,
+) -> None:
+    # Synthetic final text tests transport preservation, not model compliance.
+    identifiers = [f"SYNTHETIC-{index:04d}" for index in range(1, 21)]
+    titles = [f"合成标题 {index}…保留原文 " + "完整长标题字段；" * 60 for index in range(1, 21)]
+    report = "完整明细：20 条\n\n" + "\n\n".join(
+        f"{index}. {identifier}\n   标题：{title}"
+        for index, (identifier, title) in enumerate(zip(identifiers, titles, strict=True), start=1)
+    )
+    chunker = ReportChunker(max_chars=max_chars)
+
+    chunks = chunker.chunks(report)
+    assert all(len(chunk) <= max_chars for chunk in chunks)
+    assert "".join(chunks) == report
+    titled = chunker.titled_chunks(title="合成验收清单", text=report)
+    assert len(titled) == len(chunks)
+    if len(chunks) == 1:
+        assert titled == [("合成验收清单", report)]
+        reconstructed = titled[0][1]
+    else:
+        for index, (title, text) in enumerate(titled, start=1):
+            assert title == f"合成验收清单 part {index}/{len(chunks)}"
+            assert text.startswith(f"part {index}/{len(chunks)}\n\n")
+        reconstructed = "".join(text.split("\n\n", 1)[1] for _, text in titled)
+    assert reconstructed == report
+    for identifier, title in zip(identifiers, titles, strict=True):
+        assert reconstructed.count(identifier) == 1
+        assert title in reconstructed
 
 
 class _LongResultClient:

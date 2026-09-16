@@ -1206,7 +1206,7 @@ def test_protocol_difference_reaches_job_error_step_and_execution_summary(
     assert summary["failure_summary"] == error.safe_message
     assert summary["failure_code"] == "runtime_protocol_error"
     assert summary["execution_failure_stage"] == "RUNTIME_PROTOCOL"
-    assert "期望 agent-system-prompt-v6，实际 agent-system-prompt-v5" in error.safe_message
+    assert f"期望 {PROMPT_TEMPLATE_VERSION}，实际 agent-system-prompt-v5" in error.safe_message
     assert runtime.agent_repository.list_tool_calls(job.id) == []
     assert [
         event["event_type"] for event in runtime.agent_repository.list_runtime_events(job.id)
