@@ -1,0 +1,368 @@
+[
+  {
+    "name": "add-agent-job-context-audit",
+    "archive": "2026-09-16-add-agent-job-context-audit",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 24,
+    "pending_tasks": 1,
+    "canonical_domains": [
+      "execution-delivery"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "add-authorized-tool-resource-discovery-pagination",
+    "archive": "2026-09-16-add-authorized-tool-resource-discovery-pagination",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 16,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "builtin-tool-resource"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "add-bounded-log-evidence-scanner",
+    "archive": "2026-09-16-add-bounded-log-evidence-scanner",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 22,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "execution-delivery",
+      "task-file-workspace"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "add-governed-dingtalk-user-message",
+    "archive": "2026-09-16-add-governed-dingtalk-user-message",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 21,
+    "pending_tasks": 5,
+    "canonical_domains": [
+      "channel-conversation",
+      "governed-api-capability",
+      "identity-access",
+      "platform-operations"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "add-governed-ones-bug-create",
+    "archive": "2026-09-16-add-governed-ones-bug-create",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 44,
+    "pending_tasks": 3,
+    "canonical_domains": [
+      "governed-api-capability"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "add-governed-ones-task-update",
+    "archive": "2026-09-16-add-governed-ones-task-update",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 34,
+    "pending_tasks": 2,
+    "canonical_domains": [
+      "governed-api-capability",
+      "identity-access"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "add-ones-mcp-query-interfaces",
+    "archive": "2026-09-16-add-ones-mcp-query-interfaces",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 17,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "governed-api-capability"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "allow-rebinding-unbound-ones-identity",
+    "archive": "2026-09-16-allow-rebinding-unbound-ones-identity",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 10,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "identity-access"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "allow-resource-scoped-loki-labels",
+    "archive": "2026-09-16-allow-resource-scoped-loki-labels",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 8,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "builtin-tool-resource"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "configure-tool-resource-roles",
+    "archive": "2026-09-16-configure-tool-resource-roles",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 7,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "builtin-tool-resource",
+      "platform-operations"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "deepen-agent-job-file-admission",
+    "archive": "2026-09-16-deepen-agent-job-file-admission",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 17,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "task-file-workspace"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "enable-oracle-resource-live-verification",
+    "archive": "2026-09-16-enable-oracle-resource-live-verification",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 6,
+    "pending_tasks": 1,
+    "canonical_domains": [
+      "builtin-tool-resource"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "enforce-runtime-execution-budgets",
+    "archive": "2026-09-16-enforce-runtime-execution-budgets",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 19,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "business-application",
+      "execution-delivery"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "expand-governed-dingtalk-mcp-phase-2",
+    "archive": "2026-09-16-expand-governed-dingtalk-mcp-phase-2",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 44,
+    "pending_tasks": 3,
+    "canonical_domains": [
+      "channel-conversation",
+      "governed-api-capability",
+      "identity-access",
+      "platform-operations"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "expose-job-tool-contract-evidence",
+    "archive": "2026-09-16-expose-job-tool-contract-evidence",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 25,
+    "pending_tasks": 3,
+    "canonical_domains": [
+      "execution-delivery",
+      "platform-operations"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "extend-ones-mcp-query-conditions",
+    "archive": "2026-09-16-extend-ones-mcp-query-conditions",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 18,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "agent-model",
+      "governed-api-capability"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "fix-loki-resource-scope-form",
+    "archive": "2026-09-16-fix-loki-resource-scope-form",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 4,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "builtin-tool-resource"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "harden-log-evidence-tool-inputs",
+    "archive": "2026-09-16-harden-log-evidence-tool-inputs",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 4,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "execution-delivery",
+      "task-file-workspace"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "harden-oracle-client-windows-build",
+    "archive": "2026-09-16-harden-oracle-client-windows-build",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 9,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "builtin-tool-resource"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "import-ones-knowledge-text-foundation",
+    "archive": "2026-09-16-import-ones-knowledge-text-foundation",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 9,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "platform-operations"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "normalize-wps-null-image-placeholders",
+    "archive": "2026-09-16-normalize-wps-null-image-placeholders",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 5,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "document-file-processing"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "paginate-ones-graphql-list-tools",
+    "archive": "2026-09-16-paginate-ones-graphql-list-tools",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 38,
+    "pending_tasks": 2,
+    "canonical_domains": [
+      "execution-delivery",
+      "governed-api-capability",
+      "task-file-workspace"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "paginate-ones-work-item-search",
+    "archive": "2026-09-16-paginate-ones-work-item-search",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 10,
+    "pending_tasks": 1,
+    "canonical_domains": [
+      "governed-api-capability"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "pin-docling-model-digests-by-platform",
+    "archive": "2026-09-16-pin-docling-model-digests-by-platform",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 8,
+    "pending_tasks": 1,
+    "canonical_domains": [
+      "document-file-processing",
+      "platform-operations"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "preserve-complete-detail-replies",
+    "archive": "2026-09-16-preserve-complete-detail-replies",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 3,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "execution-delivery"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "recover-agent-publication-after-runtime-upgrade",
+    "archive": "2026-09-16-recover-agent-publication-after-runtime-upgrade",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 14,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "agent-model"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "repair-backend-baseline-regressions",
+    "archive": "2026-09-16-repair-backend-baseline-regressions",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 11,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "platform-operations"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "scale-docling-processing-concurrency-two",
+    "archive": "2026-09-16-scale-docling-processing-concurrency-two",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 20,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "business-application",
+      "document-file-processing",
+      "platform-operations"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  },
+  {
+    "name": "support-docling-multi-provenance-ocr",
+    "archive": "2026-09-16-support-docling-multi-provenance-ocr",
+    "status": "closed-during-code-baseline-rebuild",
+    "task_state_preserved": true,
+    "completed_tasks": 16,
+    "pending_tasks": 0,
+    "canonical_domains": [
+      "document-file-processing"
+    ],
+    "sync_policy": "code-reconciled; obsolete delta not blindly applied"
+  }
+]

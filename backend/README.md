@@ -4,8 +4,9 @@
 
 ```text
 Ingress -> API/Dispatcher -> RabbitMQ -> Worker
-       -> Python/TypeScript Agent Runtime -> tool-mcp
-       -> Published Resource Revision -> bounded readonly adapter
+       -> Python Agent Runtime -> tool-mcp / ones-mcp / dingtalk-mcp / File MCP
+       -> Published Resource / current business identity / governed file version
+       -> external mutation: intent -> confirmation -> external-action-worker
        -> result/delivery/audit
 ```
 
@@ -18,12 +19,17 @@ Ingress -> API/Dispatcher -> RabbitMQ -> Worker
 - `mcp_tool_runtime`：固定 MCP Tool Manifest、Job 快照复核、资源解析和只读执行。
 - `platform_config`：工具资源、Secret Ref、业务数据范围拓扑和配置审计。
 - `managed_channel`、`webhook`、`dingding`：渠道入口、身份解析和结果投递。
+- `external_action`：外部操作意图、确认、固定Provider分派与结果卡片。
+- `file_workspace`、`document_processing`：文件事实、准入、Docling处理与生命周期。
+- `knowledge`：统一来源与版本、知识库收录、受限ONES离线文本导入；当前不提供Agent检索或Embedding。
+
+当前协议为Runtime 1.5（代码支持1.4），迁移目录为100..132。规范入口为[领域导航](../openspec/specs/README.md)，代码存在不等于目标环境验收通过。
 
 API Capability、Handler、API Connection、Resource Mapping、Tool Release 生命周期和 Internal API Platform 不属于当前后端。
 
 ## 只读工具边界
 
-代码 Manifest 当前包含：
+`tool-mcp`的资源工具目录包含：
 
 - `get_schema_directory`
 - `query_database`
@@ -33,13 +39,14 @@ API Capability、Handler、API Connection、Resource Mapping、Tool Release 生�
 - `diagnose_loki_label_values`
 - `diagnose_loki_probe`
 - `query_loki`
+- `list_available_tool_resources`
 
 约束：
 
 - SQL 只允许有界 `SELECT` / `WITH`，并按已发布资源的 schema/表范围限制。
 - Redis 只允许有界 GET/SCAN 和已配置前缀。
 - Loki 强制 selector、时间窗口、返回行数和响应大小限制。
-- 不提供 Bash、Shell、文件写入、更新 SQL、部署、任意 HTTP 或动态 MCP Server URL。
+- 资源工具不提供更新SQL、Redis mutation、部署、任意HTTP或动态MCP Server URL。文件Sandbox内的受限Write/Edit与File MCP提交，以及ONES/钉钉逐次确认mutation，分别属于独立治理边界；不能把资源工具只读限制扩展成全平台没有任何写能力。
 - Secret 不进入 Prompt、Runtime Event、Tool Call 摘要、错误或审计载荷。
 
 ## 本地命令

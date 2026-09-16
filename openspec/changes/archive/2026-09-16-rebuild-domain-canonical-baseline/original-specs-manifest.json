@@ -1,0 +1,14 @@
+{
+  "agent-model/spec.md": "970e38dc9d7d441a0232457d0c3862733f313e661179c52b99dd7a2634143608",
+  "builtin-tool-resource/spec.md": "f892385fa19ec72b3f8597ad2eff0cade02cfc89a0b34b3e5bf77f301ce8e724",
+  "business-application/spec.md": "ee8ff30536077e11e15ce74e2f365f22b34d44cc9bfcac4b8051a67f17707c64",
+  "channel-conversation/spec.md": "29ada82a853d4d3aecb43284c8dd33dffc027edc7a918567bf3650971f97a686",
+  "dingtalk-mcp/spec.md": "fec5d7ef63354f82a50ac6b38c48a13ecf5051ca6301ee7e58fd5fb58559d150",
+  "document-file-processing/spec.md": "f551447b2a2c15651525d3085b3167e6e73c35488ee3fef7e831dda461701605",
+  "execution-delivery/spec.md": "1ee103f5b029ce38a8c2e3507981ba5799c0794a53bd5013c27ace55882bfae8",
+  "governed-api-capability/spec.md": "0d46c9a456b9d1818016fee4cb586f571d4bc4b012f0be15ee8d367b55988708",
+  "governed-external-action-confirmation/spec.md": "e66a993da9a4d51ea18ff0dc964369f1287ef3d4681dcf9475bbed8aca8109e2",
+  "identity-access/spec.md": "a9c907982c3545b88f7a9c9036ac121c9f3a7f5259485fdf6cd46d044c199d69",
+  "platform-operations/spec.md": "fbc6786a070619bb8f8bf9385defcb96a838e6e0a447115657323f0b390f08b8",
+  "task-file-workspace/spec.md": "f59ca7ed2aa4b0073a8280bf8602c0dcb550bbedce8748014de0db106308be57"
+}

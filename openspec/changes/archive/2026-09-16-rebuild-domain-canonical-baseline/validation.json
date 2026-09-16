@@ -1,0 +1,28 @@
+{
+  "canonical_domains": [
+    "agent-model",
+    "builtin-tool-resource",
+    "business-application",
+    "channel-conversation",
+    "document-file-processing",
+    "execution-delivery",
+    "governed-api-capability",
+    "identity-access",
+    "platform-operations",
+    "task-file-workspace"
+  ],
+  "active_changes": 0,
+  "historical_changes_closed": 29,
+  "pending_tasks_preserved": 22,
+  "original_archive_directories_preserved": 73,
+  "original_archive_files_verified": 893,
+  "relocated_files_verified": 193,
+  "original_spec_snapshots": 12,
+  "strict_specs_passed": 10,
+  "markdown_links": "passed",
+  "git_diff_check": "passed",
+  "isolated_sqlite_catalog_count": 33,
+  "isolated_sqlite_head": "132",
+  "real_environment_acceptance": "not_executed",
+  "product_code_changed": false
+}

@@ -1,22 +1,10 @@
 # platform-operations Specification
 
 ## Purpose
-
-定义部署拓扑、配置与Secret、Schema迁移、运行就绪、测试及规范治理的当前责任边界，确保基础设施启动、数据变更、故障恢复和验收声明均可按代码与明确证据核对。
-
-## 领域边界
-
-资源选择/技术验证语义见 builtin-tool-resource，Provider操作见 governed-api-capability，Job与外部操作执行见 execution-delivery，文件内容和处理状态分别见两个文件领域。本领域保留基础设施、部署和验收职责；knowledge目前仅是平台存储和受限离线导入。
-
-## 实现依据与验证边界
-
-代码：`docker-compose.yml`、`backend/docker/docling-serve/Dockerfile`、`backend/app/shared/migrations.py`、`backend/app/shared/schema_baseline.py`、`backend/app/shared/feature_configuration.py`、`backend/app/modules/platform_config/application/runtime_config.py`、`backend/app/modules/knowledge/`、`backend/app/cli/import_ones_knowledge.py`、`backend/migrations/`。
-
-检查入口：`Makefile`、`scripts/check_markdown_links.py`、`backend/tests/test_runtime_config_reconciliation.py`、`backend/tests/test_schema_migration_runtime.py`、`backend/tests/test_knowledge_import.py`。
-
-本规格于 2026-09-16 按当前代码重建。代码与测试定义可定位实现和覆盖范围；本次文档重建不代表执行了真实模型、Provider、数据库升级或部署验收。
-
+定义平台配置、Secret、Migration、Compose、测试环境、运行验收及 canonical 规格读取治理。
 ## Requirements
+
+<!-- Reconciled from mcp_new capability: `agent-test-data-environment` -->
 
 ### Requirement: Compose 按 profile 提供两套独立测试基地
 系统 SHALL 在 `agent-test-data` Compose profile 中提供 MySQL、SQL Server 两个数据库服务，并为每个数据库服务提供一一对应且不共享数据卷的 Redis 服务。该 profile 未启用时，四个测试数据服务 SHALL 不启动。
@@ -67,7 +55,7 @@
 播种流程 SHALL 在 MySQL 和 SQL Server 中建立语义一致的 MES 测试模型，至少包含生产订单、设备、设备告警、物料库存、质量检验和生产事件。两种方言 SHALL 使用相同的业务标识、字段语义和确定性时间基准，同时允许 DDL 使用各自正确的数据类型和语法。
 
 #### Scenario: Schema 预览可发现同构模型
-- **WHEN** 通过 固定MCP `get_schema_directory` 分别预览两个测试基地
+- **WHEN** 通过 `/tools/schema/directory` 分别预览两个测试基地
 - **THEN** 两个结果都包含六类规定的业务表及其核心字段
 - **THEN** 结果不依赖随机 ID 或当前系统时间才能对应
 
@@ -129,6 +117,8 @@
 - **WHEN** ARM64 主机上的 SQL Server 容器未在有界时间内变为健康
 - **THEN** 启动或验证命令返回失败并提示使用 x86-64 Docker 主机
 - **THEN** 不得将 MySQL 和 Redis 成功误报为完整环境成功
+
+<!-- Reconciled from mcp_new capability: `compose-infrastructure-major-upgrade` -->
 
 ### Requirement: Compose 必须默认运行 PostgreSQL 18 和 RabbitMQ 4
 系统 SHALL 将 Compose 默认数据库镜像设为 `postgres:18`，将默认消息代理镜像设为 `rabbitmq:4-management`，并 MUST 保持现有服务名、容器内端口及应用连接契约不变。
@@ -192,6 +182,8 @@
 - **WHEN** 新基础设施和应用服务全部启动
 - **THEN** 验证结果包含数据库版本与数据核验、RabbitMQ 版本与队列拓扑、API ready、Agent Job 成功执行以及 retry/dead-letter 路径
 
+<!-- Reconciled from mcp_new capability: `db-backed-config-compose-smoke` -->
+
 ### Requirement: Compose smoke shall verify DB-backed config end to end
 系统 SHALL 提供 Docker Compose 下的 smoke 验证流程，覆盖 PostgreSQL migration、api-server、agent-worker、Web-managed secret、DB-backed runtime config overlay、RabbitMQ 消费和 Agent job 完成状态。
 
@@ -235,6 +227,8 @@
 #### Scenario: Default smoke does not require external model
 - **WHEN** 开发者执行默认 smoke 流程
 - **THEN** 流程 MUST 不要求真实 DeepSeek API key，也不得调用外部模型 API
+
+<!-- Reconciled from mcp_new capability: `feature-configuration-simplification` -->
 
 ### Requirement: 普通部署只暴露三个顶层功能开关
 系统 SHALL 将 `FEATURE_WEB_ADMIN`、`FEATURE_PUBLISHED_AGENT_RUNTIME` 和 `FEATURE_REAL_CLAUDE` 作为普通部署模板中的顶层 `FEATURE_*` 配置。标准 `tool-mcp` 是否可执行由固定服务部署、Agent/Application Tool 子集、当前授权和 Published Resource Revision 共同决定，不得恢复独立真实工具开关。
@@ -317,6 +311,8 @@
 - **THEN** 生成结果保持为待确认草稿
 - **AND** 迁移工具不得自动发布、修改消息路由或开启外部调用
 
+<!-- Reconciled from mcp_new capability: `platform-config-api` -->
+
 ### Requirement: API responses do not leak secret values
 系统 SHALL 确保所有平台配置 API 响应只返回 secret reference 元数据，MUST NOT 返回任何解析后的真实密钥值。
 
@@ -378,7 +374,7 @@
 - **THEN** 系统拒绝该管理读取，而不是仅因为用户能使用 Agent 就返回密钥元数据
 
 ### Requirement: Platform API exposes effective feature diagnostics
-系统 SHALL 向具有配置读取权限的管理员提供只读有效功能配置诊断，返回三个顶层开关、派生管理能力、受治理策略、来源、弃用状态和冲突信息。
+系统 SHALL 向具有配置读取权限的管理员提供只读有效功能配置诊断，返回四个顶层开关、派生管理能力、受治理策略、来源、弃用状态和冲突信息。
 
 #### Scenario: Authorized administrator reads diagnostics
 - **WHEN** 具有配置读取权限的管理员请求有效功能配置
@@ -406,6 +402,8 @@
 #### Scenario: 已有数据库包含未赋值旧定义
 - **WHEN** 数据库升级前只剩未设置 value 的旧 Internal API 配置定义
 - **THEN** 迁移仍删除这些 definition，配置 API 不再展示或接受它们
+
+<!-- Reconciled from mcp_new capability: `platform-config-registry` -->
 
 ### Requirement: Platform topology is persisted in PostgreSQL
 系统 SHALL 在 PostgreSQL 中持久化 Environment、可选 Base 和可选 Workshop 的真实层级关系、启停状态、别名和扩展元数据；平台 MUST NOT 要求每个 Environment 都有 Base 或每个 Base 都有 Workshop，也不得保存用于补层级的虚节点。
@@ -453,7 +451,7 @@
 - **THEN** 系统为被创建或更新的配置实体写入审计记录
 
 ### Requirement: Runtime and configuration data share one database with logical isolation
-系统 SHALL 使用同一个 PostgreSQL database 保存 Web 配置、Agent job、聊天记录、工具调用和审计数据，并 MUST 通过表前缀、模块 repository 和迁移边界进行逻辑隔离。
+系统 SHALL 在第一版使用同一个 PostgreSQL database 保存 Web 配置、Agent job、聊天记录、工具调用和审计数据，并 MUST 通过表前缀、模块 repository 和迁移边界进行逻辑隔离。
 
 #### Scenario: Query platform configuration without reading chat tables
 - **WHEN** Web 配置 API 查询 platform topology
@@ -464,31 +462,19 @@
 - **THEN** 系统可以通过 repository 配置切换运行数据存储，而不改变 platform configuration 的领域 API
 
 ### Requirement: Registry exposes stable runtime revision
-系统 SHALL 为 Environment/Base/Workshop topology、Resource Identity 和 Resource Revision 暴露规范化 revision 或 content hash，用于审计管理变更和证明每次 Tool Call 的实际资源事实。新 Resource Revision 的 content hash MUST 同时覆盖 Provider 连接配置、Secret references、数据范围 bindings 和资源角色 placement；系统 MUST NOT 生成 Application Resource Mapping、独立范围 Policy Revision、activation generation 或 Job-frozen Resource Revision。历史角色事实须从旧身份配置保留，不根据资源名称猜测，且不得重写旧发布哈希。
-
+系统 SHALL 为 Environment/Base/Workshop topology、Resource Identity 和 Resource Revision 暴露规范化 revision 或 content hash，用于审计管理变更和证明每次 Tool Call 的实际资源事实。Resource Revision 的 content hash MUST 同时覆盖 Provider 连接配置、Secret references 和数据范围 bindings；系统 MUST NOT 生成 Application Resource Mapping、独立范围 Policy Revision、activation generation 或 Job-frozen Resource Revision。
 #### Scenario: Configuration changes revision
 - **WHEN** Environment/Base/Workshop 或 Resource 发布新的不可变 revision
 - **THEN** 对应 revision/hash 发生变化，既有 Published Revision 内容保持不变
-
 #### Scenario: Tool Call reports revision
 - **WHEN** `tool-mcp` 为一次调用解析唯一 Published Resource Revision
 - **THEN** Tool Call 与 MCP Operation Audit 包含 Tool identifier/schema hash、Resource ID/revision/content hash 和实际 placement 的安全摘要
-
 #### Scenario: Resource draft changes only
 - **WHEN** 管理员修改尚未发布的 Resource Draft
 - **THEN** 既有 Published Revision 与当前 Tool Call 解析结果不发生变化
-
 #### Scenario: Resource scope binding changes
 - **WHEN** 管理员修改 Draft 中的 DB table prefix、Redis namespace 或 Loki selector conditions
 - **THEN** 同一个 Draft revision 和 content hash 变化，旧技术验证失效且 Published Revision 保持不变
-
-#### Scenario: 已有资源修改角色
-- **WHEN** 管理员从现有发布版本新建草稿并修改资源角色
-- **THEN** 系统保存角色到该草稿并使旧验证失效，重新验证发布后才以新角色解析；其他资源与旧发布不变
-
-#### Scenario: 升级前草稿验证不覆盖角色
-- **WHEN** 升级前草稿哈希尚未纳入角色
-- **THEN** 系统要求先保存草稿并重新技术验证，不复用旧验证发布
 
 ### Requirement: Registry keeps secret references unresolved outside infrastructure
 系统 SHALL 在 registry、public snapshot、配置审计和运行时状态中只保留 secret reference，不得保存或返回解析后的真实密钥值。
@@ -535,7 +521,7 @@
 - **THEN** registry 拒绝保存并要求使用 secret_refs
 
 ### Requirement: Provider 字段契约必须与运行时实现一致
-Registry MUST 以单一 schema 定义管理 API、前端表单、验证器和运行时适配器字段；数据库Provider只允许 MySQL、SQL Server、Oracle，Redis 和 Loki 使用各自统一字段。
+Registry MUST 以单一 schema 定义管理 API、前端表单、验证器和运行时适配器字段；数据库第一阶段只允许 MySQL、SQL Server、Oracle，Redis 和 Loki 使用各自统一字段。
 
 #### Scenario: 数据库字段名称不一致
 - **WHEN** 请求同时使用旧 `user` 和新 `username` 或其他歧义字段
@@ -575,16 +561,28 @@ Registry MUST 分别持久化 Resource Identity、Resource Draft、Verification 
 - **WHEN** 生命周期请求携带的 expected Identity revision 已过期
 - **THEN** 系统以并发冲突拒绝请求，要求刷新后重试
 
-### Requirement: 资源角色必须按当前代码合同保存
-Registry SHALL 将placement作为DB/Redis资源的可选精确角色，遵守shared/resource_role.py的1–64位中文、字母数字及_.:-语法；空值表示未指定，不限于cloud/edge枚举，也不将default等合法名称当成保留占位。Loki拒绝非空角色。角色随Draft及Published Revision保存，哈希与技术验证覆盖它，不能只改Identity影响旧发布。
+### Requirement: Registry must enforce optional placement representation
+Registry SHALL 只在 Resource Identity 实际存在物理位置差异时保存 `cloud` 或 `edge` placement；无 placement 的 Resource address MUST 保存为缺省值而非字符串占位，并且单个 Resource Identity 不得同时包含多个 placement。
+#### Scenario: Save non-placement resource
+- **WHEN** 管理端保存一个没有云边差异的 Redis Resource Identity
+- **THEN** Registry 持久化缺省 placement 并拒绝 `none`、`standalone` 或 `default`
+#### Scenario: Save one placement value
+- **WHEN** 管理端保存 edge Resource Identity
+- **THEN** Registry 只保存枚举值 `edge`，不把它写入 Environment/Base/Workshop code
 
-#### Scenario: 自定义角色
-- **WHEN** 管理员为数据库或Redis保存合法自定义资源角色
-- **THEN** 该值进入当前Draft及其hash，必须重新验证发布后才影响调用目标。
+### Requirement: JavaScript 构建与 CI 必须统一使用 npm
+仓库 SHALL 以现有 npm lockfile 为唯一 JavaScript 依赖锁，CI 和容器构建 MUST 使用 `npm ci`，不得继续引用不存在或非权威的 pnpm lockfile。
 
-#### Scenario: 角色留空或不合法
-- **WHEN** 管理员清空角色，或向Loki提交非空角色
-- **THEN** 清空按未指定保存；Loki非空与不符合语法的值被拒绝。
+#### Scenario: Pull Request 执行前端门禁
+- **WHEN** CI 安装前端依赖
+- **THEN** CI 必须使用 `npm ci` 并在 lockfile 与 package manifest 不一致时失败
+
+### Requirement: 实施必须遵循六阶段 Gate
+变更 MUST 按严格授权、Migrator/UoW/Outbox、Secret/Resource、资源重置/Oracle/热加载、管理界面、完整验收六阶段推进；前一阶段未取得测试与数据证据时不得切换下一阶段核心路径。
+
+#### Scenario: 阶段 Gate 未通过
+- **WHEN** 当前阶段仍有失败测试、未核验迁移或未解决的数据不变量
+- **THEN** 后续阶段不得执行破坏性切换
 
 ### Requirement: 本地验收必须证明真实端到端业务链路
 最终本地验收 MUST 使用真实本地 Grafana Webhook、Bearer 认证、Inbox/Outbox、RabbitMQ、Job/Worker、真实只读 MySQL 或 SQL Server 工具、结果、Delivery Outbox 和真实 DingTalk 回复形成一条新鲜链路。
@@ -614,6 +612,8 @@ Registry SHALL 将placement作为DB/Redis资源的可选精确角色，遵守sha
 #### Scenario: 本地 HTTP 链路通过
 - **WHEN** Compose 内 HTTP Webhook 功能验证成功
 - **THEN** 报告只能声明本地功能通过，不得声明公网生产安全
+
+<!-- Reconciled from mcp_new capability: `platform-runtime-config` -->
 
 ### Requirement: Runtime settings are persisted as typed configuration
 系统 SHALL 将可 Web 配置的运行参数以 typed key 形式持久化到 PostgreSQL，而不是保存整份 `.env` 文本。
@@ -724,6 +724,8 @@ DB、Redis、Loki runtime MUST 只消费 PostgreSQL 中启用 Resource Identity 
 - **WHEN** 管理员显式执行旧资源迁移
 - **THEN** env 值只读取一次并转换为平台 Secret，运行时资源不再直接引用 env
 
+<!-- Reconciled from mcp_new capability: `platform-schema-migration-runtime` -->
+
 ### Requirement: 只有一次性 Migrator 可以修改平台 schema
 系统 MUST 由独立 one-shot Migrator 应用 schema migration；API、Worker、Dispatcher、Agent Runtime、`tool-mcp`、ONES MCP 和 File Service MUST NOT 在自身启动或请求处理中执行 migration。
 #### Scenario: Compose 启动平台
@@ -763,7 +765,7 @@ Migrator MUST 拒绝重复版本，并在执行前校验已应用 migration 的 
 - **THEN** 本地数据库事务必须在外部调用前完成，外部副作用通过 Outbox 或独立步骤驱动
 
 ### Requirement: 最终项目 Schema 必须具有完整中文注释
-系统 MUST 通过向前迁移为 PostgreSQL public 和 knowledge schema 中最终保留的每张项目自有表和每个字段设置非空中文注释；注释 SHALL 描述领域含义、关联对象、状态、版本、时间或安全边界，不得使用统一无语义占位文本。schema_migration 迁移账本、PostgreSQL 系统表和第三方扩展表不属于项目注释范围。
+系统 MUST 通过向前迁移为 PostgreSQL `public` schema 中最终保留的每张项目自有表和每个字段设置非空中文注释；注释 SHALL 描述领域含义、关联对象、状态、版本、时间或安全边界，不得使用统一无语义占位文本。`schema_migration` 迁移账本、PostgreSQL 系统表和第三方扩展表不属于项目注释范围。
 
 #### Scenario: 已有数据库升级
 - **WHEN** 已执行到前一 schema head 的 PostgreSQL 数据库升级
@@ -775,7 +777,7 @@ Migrator MUST 拒绝重复版本，并在执行前校验已应用 migration 的 
 
 #### Scenario: SQLite 运行迁移
 - **WHEN** 测试或本地环境使用 SQLite 执行同一迁移目录
-- **THEN** PostgreSQL COMMENT ON 语句被兼容跳过，最终 SQLite schema 仍与静态注释清单进行完整性对照
+- **THEN** PostgreSQL `COMMENT ON` 语句被兼容跳过，最终 SQLite schema 仍与静态注释清单进行完整性对照
 
 ### Requirement: 活动迁移目录必须从最终 Schema 基线开始
 系统 MUST 使用 `100_baseline_v1.sql` 作为第一代活动 schema 基线；空 SQLite 或 PostgreSQL 数据库 MUST 直接得到与旧 001–042 完整迁移链最终状态等价的表、字段、约束、索引和适用的 PostgreSQL 中文注释，后续迁移版本 MUST 从 101 单调递增。
@@ -835,6 +837,8 @@ Compose 和受支持的部署脚本 MUST 按“schema migration、初始管理�
 #### Scenario: 管理员 Bootstrap 失败
 - **WHEN** 初始管理员缺少必需安全输入或身份写入失败
 - **THEN** Compose migrator 失败且依赖 `service_completed_successfully` 的服务保持未启动
+
+<!-- Reconciled from mcp_new capability: `platform-secret-management` -->
 
 ### Requirement: Web-managed secrets are encrypted before persistence
 系统 SHALL 允许管理端提交 secret 明文值，但 MUST 在写入持久化存储前加密或转存到 Secret Provider，并且 MUST NOT 在 PostgreSQL 配置表、审计、日志、API 响应或 Agent prompt 中保存明文。
@@ -957,6 +961,8 @@ Compose 和受支持的部署脚本 MUST 按“schema migration、初始管理�
 - **WHEN** 管理 API 或 Compose 尝试配置已退役专用 Secret
 - **THEN** 配置校验失败且不得形成兼容用途
 
+<!-- Reconciled from mcp_new capability: `safe-real-model-tool-testing` -->
+
 ### Requirement: Real model tests shall use synthetic or sanitized evidence by default
 系统 SHALL 默认只使用合成日志、合成业务问题或已脱敏工具摘要执行真实 Claude/DeepSeek + real-tools 端到端测试。
 
@@ -989,45 +995,51 @@ Compose 和受支持的部署脚本 MUST 按“schema migration、初始管理�
 - **THEN** 文档 SHALL 提供不调用真实外部模型的受控测试路径
 
 ### Requirement: Canonical 主规格是唯一当前规范基线
-仓库 SHALL 只把 AGENTS.md 与 openspec/specs/README.md 列出的十个领域 spec.md 作为当前已接受规范；索引、当前架构摘要、ADR、active change 与 archive 都不是第二套基线。用户要求按代码重建时 SHALL 核对代码事实并记录修正；日常实现与规范有差异时 MUST 明示差异并通过明确变更解决，不能让旧文档静默覆盖代码事实或新规范。
+仓库 SHALL 仅将 `openspec/specs/<canonical-domain>/spec.md` 视为当前已接受规范的 canonical baseline。Active change、archive、proposal、design、tasks、evidence、ADR 和运行手册 MUST NOT 覆盖 canonical Requirement；需要改变当前规范时 MUST 通过明确的 OpenSpec change 更新 canonical specs。
 
-#### Scenario: 判断领域规范
-- **WHEN** Codex处理普通领域需求
-- **THEN** 先按领域索引定位相关spec，再核对所需代码；不递归加载十个领域及历史change。
+#### Scenario: 判断当前已接受规范
+- **WHEN** Codex 或维护者需要确定项目当前的规范要求
+- **THEN** 其以相关领域的 canonical spec 为规范事实源，不从历史 change 或辅助文档推断替代要求
 
-#### Scenario: 重建规范
-- **WHEN** 维护者按明确授权修正旧规范
-- **THEN** 保存来源映射和未完成验收边界，旧文本保留为历史快照。
+#### Scenario: 辅助文档与主规格冲突
+- **WHEN** ADR、运行手册或历史 evidence 与 canonical Requirement 表述冲突
+- **THEN** 系统维护流程将冲突记录为待处理 change，而不静默改写或绕过 canonical spec
 
 ### Requirement: Codex 默认按领域读取 Canonical 主规格
-一般设计、实现、评审与诊断 SHALL 默认只读取请求相关的 canonical spec；查询代码不是加载历史规范。仅当用户点名change或当前执行propose/apply/sync/archive时才读对应active artifacts；仅在明确历史、审计或追溯任务中才读相关archive。工作流 MUST 将碎片capability映射到现有领域，不得仅按旧delta目录名重建第十一个主规格。
+仓库级 Codex 指令 SHALL 要求 Codex 在一般规格、设计和实现任务中只默认读取与请求相关的 canonical domain specs。只有在用户指定 active change、执行 OpenSpec change 工作流或明确要求历史审计时，Codex 才可读取对应 change 或 archive，并 MUST 明确区分其非当前规范身份。
 
-#### Scenario: 普通领域请求
-- **WHEN** 用户询问ONES工具或钉钉外部操作且未指定change
-- **THEN** 默认读取governed-api-capability；身份或异步确认涉及其他边界时再读对应相关领域。
+#### Scenario: 处理普通领域需求
+- **WHEN** 用户提出身份、Agent、业务应用、Channel、执行、内置工具、API Capability 或平台运维需求且未指定 change
+- **THEN** Codex 只加载相关 canonical domain spec 作为默认规格上下文
 
-#### Scenario: 归档碎片change
-- **WHEN** 历史delta以dingtalk-mcp或governed-ones-task-update等能力名组织
-- **THEN** 先按当前代码与领域映射对账，再跳过重复spec复制归档；不恢复旧碎片目录。
+#### Scenario: 处理指定 Active Change
+- **WHEN** 用户指定某个 active change 或要求执行 propose、apply、sync、archive 工作流
+- **THEN** Codex 可读取该 change 的 artifacts，并以 delta 相对 canonical baseline 的语义处理，而不加载无关 change 或 archive
 
-#### Scenario: 历史追溯
-- **WHEN** 用户明确要求核对一项历史决策
-- **THEN** 只读取相关archive并标记为历史证据，不覆盖canonical。
+#### Scenario: 明确追溯历史
+- **WHEN** 用户明确要求审计历史决策或归档证据
+- **THEN** Codex 可读取相关 archive，但将其标记为历史证据且不把它当作当前规范
 
 ### Requirement: Archive 保持完整且不参与默认规范解析
-基线重建 MUST 保留既有archive的文件路径和内容。历史active关闭 SHALL 原样移动到日期化archive，保留任务勾选、delta、proposal、design和evidence；归档不等于任务完成或真实验收通过。归档前后 MUST 校验文件清单及SHA-256，并单独记录未完成事项、现代码的规范归属与已失效的历史部署步骤。
+基线重建 SHALL 保留 `openspec/changes/archive/` 下的历史内容，不得为了减少默认上下文而删除或改写既有 archive。默认规范解析 MUST 排除 archive；历史内容只有在显式追溯时才参与证据分析。分叉分支合并涉及旧规格路径和 archive 内迁移快照的 rename／modify 交叉时，维护流程 MUST 独立验证 archive manifest，并将目标分支的已接受差异重新同步到 canonical domain，而不得接受仅有“无 Git 冲突”的结果。
 
-#### Scenario: 关闭未完成验收的change
-- **WHEN** 用户明确批准关闭含未完成任务的历史change
-- **THEN** 未勾选项保持未勾选，关闭记录列出验收欠账，不生成虚假通过证据。
+#### Scenario: 重建 Canonical Baseline
+- **WHEN** 维护者替换或重组主规格文件
+- **THEN** 既有 archive 的目录、proposal、design、tasks、delta specs 和 evidence 保持不变
 
-#### Scenario: 验证旧archive
-- **WHEN** 重建结束后检查归档树
-- **THEN** 所有既有文件路径和摘要与重建前一致，新增目录单独记录。
+#### Scenario: 默认规格检索
+- **WHEN** Codex 搜索当前领域要求且用户没有请求历史
+- **THEN** 搜索范围排除 `openspec/changes/archive/`
 
-#### Scenario: 分叉合并触及旧路径
-- **WHEN** 旧分支修改了已迁到历史快照的主规格
-- **THEN** 维护者核对快照完整性和新领域对账，不以Git无冲突代替语义核对。
+#### Scenario: 分叉分支修改了被迁移的旧规格
+- **WHEN** canonical baseline 提交把旧规格移动到 archive，而目标分支在共同基点后修改了同一旧规格路径
+- **THEN** 合并流程验证 archive 快照仍与其冻结 manifest 一致，并把目标差异同步到对应 canonical domain
+- **AND** 流程不得因为 Git merge 无文本冲突就宣称 canonical 对账完成
+
+#### Scenario: 领域化后归档旧 Capability Delta
+- **WHEN** 一个 completed change 的 delta 仍按领域化之前的 capability 路径组织
+- **THEN** 维护流程先按明确映射把 delta 语义同步到 canonical domains，再使用跳过重复同步的方式归档
+- **AND** 归档不得重新创建碎片主规格目录
 
 ### Requirement: 项目文档必须具有单一入口和稳定分类
 仓库 MUST 在 `docs/README.md` 提供文档总索引，并 SHALL 将当前文档按 architecture、guides、operations、verification 和 reference 分类；历史材料 MUST 位于 archive 分类，不得与当前操作指引平铺混放。
@@ -1063,7 +1075,7 @@ Compose 和受支持的部署脚本 MUST 按“schema migration、初始管理�
 - **THEN** 文档质量门禁返回非零状态并阻止将整理工作标记完成
 
 ### Requirement: Compose 部署 File Service 并以 File Worker 替换附件 Worker
-默认Compose SHALL 保持`file-service`与替换旧`attachment-worker`的`file-worker`，并部署内部`docling-serve`和两个独立`file-processing-worker`实例；不得长期并存两个附件消费者，也不得新增独立`file-mcp`容器。`file-service`同时承载内部REST与File MCP接口；`file-worker`继续消费原附件队列并承担来源下载/导入、工作区过期、保留内容和提交暂存清理；`file-processing-worker`只消费文档处理队列并编排Docling；现有Agent Worker和Delivery Dispatcher继续独立运行。
+默认Compose SHALL 保持`file-service`与替换旧`attachment-worker`的`file-worker`，并新增内部`docling-serve`和独立`file-processing-worker`；不得长期并存两个附件消费者，也不得新增独立`file-mcp`容器。`file-service`同时承载内部REST与File MCP接口；`file-worker`继续消费原附件队列并承担来源下载/导入、工作区过期、保留内容和提交暂存清理；`file-processing-worker`只消费文档处理队列并编排Docling；现有Agent Worker和Delivery Dispatcher继续独立运行。
 #### Scenario: 从现有部署升级
 - **WHEN** 现有附件或processing队列中存在ready/unacked消息并部署新版本
 - **THEN** `file-worker`保持兼容附件队列，`file-processing-worker`按独立版本化拓扑消费processing消息
@@ -1152,7 +1164,7 @@ Python Runtime临时文件系统配置 MUST对每个Job实施64个常规文件�
 - **AND** 后续重试仍从真实Sandbox使用量重新校验
 
 ### Requirement: 当前运行态只支持Python并保留历史TypeScript事实
-当前源码、API、Agent bootstrap、Worker 和 Compose MUST 只支持新建、发布与执行 `python-v1` Agent，并 MUST 拒绝新的 `typescript-v1` Agent、Publication、Application 激活或 Job 执行。数据库中退役前形成的 TypeScript Definition、Publication、终态 Job 和审计事实 MAY 保留并 MUST 保留原始 runtime kind，不承诺所有旧Publication可通过当前详情校验；系统不得声称当前存在源码中没有的退役预检 CLI、自动排空或跨 Runtime 迁移命令。
+当前源码、API、Agent bootstrap、Worker 和 Compose MUST 只支持新建、发布与执行 `python-v1` Agent，并 MUST 拒绝新的 `typescript-v1` Agent、Publication、Application 激活或 Job 执行。数据库中退役前形成的 TypeScript Definition、Publication、终态 Job 和审计事实 MAY 保留并 MUST 只读展示原始 runtime kind；系统不得声称当前存在源码中没有的退役预检 CLI、自动排空或跨 Runtime 迁移命令。
 
 #### Scenario: 创建或发布TypeScript Agent
 - **WHEN** 当前 API 收到 `typescript-v1` Agent 创建、草稿、发布、回滚或新应用激活请求
@@ -1164,7 +1176,7 @@ Python Runtime临时文件系统配置 MUST对每个Job实施64个常规文件�
 
 #### Scenario: 只剩历史TypeScript事实
 - **WHEN** 管理查询读取退役前的 TypeScript Definition、Publication、终态 Job 或审计
-- **THEN** 系统保留原始 `typescript-v1` 元信息，不改写为Python；详情完整性校验不支持的记录失败关闭
+- **THEN** 系统保留原始 `typescript-v1` 和只读状态
 - **AND** 不允许这些事实恢复为当前可执行配置
 
 #### Scenario: 运维查找退役命令
@@ -1180,68 +1192,44 @@ Python Runtime临时文件系统配置 MUST对每个Job实施64个常规文件�
 - **AND** migration完成前不删除对象
 
 ### Requirement: 文件工作区验收覆盖真实端到端链路
-Compose验收 MUST 使用合成TXT、LOG、Markdown、born-digital PDF、扫描PDF、DOCX、PPTX、XLSX、带文字图片和无文字图片及假凭据，证明钉钉或受控Channel入口、File Worker、File Service、PostgreSQL、MinIO、File Domain Outbox、processing RabbitMQ拓扑、File Processing Worker、Docling、Agent Worker、Python Runtime 当前 Runtime 协议（见 execution-delivery）、Job Sandbox、File MCP live对账、Runtime effective registry、Prompt contract、原件Delivery和文本结果形成新鲜链路。验收还 MUST 覆盖无附件文字Job、Principal/API Key拒绝、越权文件、MIME伪装、加密/损坏/超大小/超页数、PARTIAL、NO_TEXT、Markdown超限、Docling重启、结果取得后Worker崩溃、幂等重试、40个输入工作集边界、沙盒/representation staging清理、交付重试、工具契约失败关闭和Secret不泄漏；不得以容器healthy替代业务证据。
-
+Compose验收 MUST 使用合成TXT、LOG、Markdown、born-digital PDF、扫描PDF、DOCX、PPTX、XLSX、带文字图片和无文字图片及假凭据，证明钉钉或受控Channel入口、File Worker、File Service、PostgreSQL、MinIO、File Domain Outbox、processing RabbitMQ拓扑、File Processing Worker、Docling、Agent Worker、Python Runtime protocol 1.3、Job Sandbox、File MCP、原件Delivery和文本结果形成新鲜链路。验收还 MUST 覆盖无附件文字Job、Principal/API Key拒绝、越权文件、MIME伪装、加密/损坏/超大小/超页数、PARTIAL、NO_TEXT、Markdown超限、Docling重启、结果取得后Worker崩溃、幂等重试、40个输入工作集边界、沙盒/representation staging清理、交付重试和Secret不泄漏；不得以容器healthy替代业务证据。
 #### Scenario: PDF总结并交付原件
 - **WHEN** 合成用户上传合法PDF并要求总结后转发原件
-- **THEN** 证据关联原附件、source Version、processing run、Markdown/JSON representation、Manifest v5、Working Set、沙盒Markdown读取、工具契约观测、Agent结果和原PDF Delivery
+- **THEN** 证据关联原附件、source Version、processing run、Markdown/JSON representation、Manifest v5、Working Set、沙盒Markdown读取、Agent结果和原PDF Delivery
 - **AND** Agent沙盒、模型上下文和Delivery均未混淆原件与representation
-
 #### Scenario: 扫描件OCR成功
 - **WHEN** 合成扫描PDF或带文字图片在`docling-layout-ocr-v2`内完成OCR
 - **THEN** Agent只通过Markdown读取提取文字并给出基于该文字与布局坐标的结果
 - **AND** 系统不声称获得未提取的视觉语义
-
 #### Scenario: 无文字图片拒绝模型调用
 - **WHEN** 只有一张合法但OCR为NO_TEXT的图片
 - **THEN** Job不调用模型并通过原reply route返回安全说明
-
 #### Scenario: Docling重启恢复
 - **WHEN** Docling在已返回task ID后重启并丢失临时任务
 - **THEN** 同一processing run创建受控新attempt并最终成功或确定失败
 - **AND** 不产生重复source Version或representation
-
 #### Scenario: 文档处理Secret不泄漏
-- **WHEN** 验收检查容器环境、MQ、Job、Tool事件、工具契约观测、审计、API和日志
-- **THEN** 不存在MinIO Secret、Docling API Key、Service bootstrap credential、Principal JWT；普通日志与安全事件不得包含完整Prompt、完整Tool Schema或原始正文，授权完整运行审计的独立存储边界以execution-delivery为准；不得出现、对象键或真实业务文件
-
+- **WHEN** 验收检查容器环境、MQ、Job、Tool事件、审计、API和日志
+- **THEN** 不存在MinIO Secret、Docling API Key、Service bootstrap credential、原始正文、对象键或真实业务文件
 #### Scenario: 无附件文字消息正常执行
 - **WHEN** 合成用户只发送非空文字且不上传或引用文件
-- **THEN** Job使用当前 Runtime 协议（见 execution-delivery）和空schema v5文件上下文完成模型执行与文字Delivery
-- **AND** 工具契约观测明确区分适用的Runtime effective事实与未绑定的File MCP观测
-
-#### Scenario: File MCP缺少冻结提交工具
-- **WHEN** 受控验收替身使Job冻结`file_create_commit_intent`但File MCP `tools/list`不声明该工具
-- **THEN** Runtime在模型调用前产生`DRIFT`观测并以稳定错误失败关闭
-- **AND** 运行记录详情显示`MISSING_REMOTE`且不依赖模型文字回答
-
-#### Scenario: Runtime派生工具不被误报
-- **WHEN** 匹配的File MCP与Job Snapshot使Runtime按规则注册`select_sandbox_output`
-- **THEN** 运行记录把它显示为`runtime_derived`并关联`file_create_commit_intent`授权前提
-- **AND** 不要求File MCP `tools/list`声明该派生工具
-
+- **THEN** Job使用protocol 1.3和空schema v5文件上下文完成模型执行与文字Delivery
+- **AND** 不出现旧Manifest投影或文件合同校验错误
 #### Scenario: 旧合同不存在于发布产物
 - **WHEN** CI检查后端、前端和Runtime发布产物
-- **THEN** 不存在`text-v1`、`docling-text-v1`、`docling-layout-ocr-v1`、Manifest v1-v4或Runtime protocol 1.0-v1.3可执行实现
-- **AND** 历史只读Schema、migration与变更文档中的旧版本说明不被误判为运行支持
+- **THEN** 不存在`text-v1`、`docling-text-v1`、`docling-layout-ocr-v1`、Manifest v1-v4或Runtime protocol 1.0-v1.2运行实现
+- **AND** migration与变更文档中的删除说明不被误判为运行支持
 
 ### Requirement: Docling服务固定版本并保持内部隔离
-默认Compose MUST 使用仓库Dockerfile构建的`docling-serve`包装镜像，其上游基础镜像固定tag与多架构OCI index digest，并由代码发布合同同时固定每个受支持平台的子manifest digest；部署现场不得通过环境变量或override替换模型artifact期望摘要。服务 MUST 禁用UI、远程services、HTTP URL source、Callback、自定义VLM/图片描述配置和外部插件；服务不得映射宿主端口，只能由`file-processing-worker`通过专用内部网络和独立API Key访问。容器 MUST 使用非root、只读根文件系统、受控scratch、CPU、内存、PID和时间限制，并在运行前准备所需模型artifacts而不是运行时访问互联网。
-
+默认Compose MUST 使用固定tag与digest的官方`docling-serve`镜像，禁用UI、远程services、HTTP URL source、Callback、自定义VLM/图片描述配置和外部插件；服务不得映射宿主端口，只能由`file-processing-worker`通过专用内部网络和独立API Key访问。容器 MUST 使用非root、只读根文件系统、受控scratch、CPU、内存、PID和时间限制，并在运行前准备所需模型artifacts而不是运行时访问互联网。
 #### Scenario: 检查Docling Compose配置
 - **WHEN** 运维渲染默认Compose配置
-- **THEN** `docling-serve`的Dockerfile上游基础镜像使用固定OCI index digest、发布合同包含当前平台对应的固定子manifest、无宿主端口、UI关闭且远程/自定义能力关闭
-- **AND** 不存在PostgreSQL、RabbitMQ、MinIO、平台Principal Secret或`DOCLING_MODEL_ARTIFACT_DIGEST`部署覆盖
-
+- **THEN** `docling-serve`使用固定镜像digest、无宿主端口、UI关闭且远程/自定义能力关闭
+- **AND** 不存在PostgreSQL、RabbitMQ、MinIO或平台Principal Secret
 #### Scenario: Docling模型尚未就绪
-- **WHEN** `/health`成功但`/ready`因模型加载、artifact校验或内部编排器失败返回非就绪
+- **WHEN** `/health`成功但`/ready`因模型加载或内部编排器失败返回非就绪
 - **THEN** 平台文档处理状态不得报告READY
 - **AND** processing worker不得把请求发送到未就绪实例
-
-#### Scenario: OCI index的平台成员不符合发布合同
-- **WHEN** 发布校验发现固定index解析出的AMD64或ARM64子manifest与代码发布映射不一致
-- **THEN** 镜像发布和部署失败
-- **AND** 不通过修改环境变量、采用本地缓存镜像或忽略平台差异继续启动
 
 ### Requirement: 文件处理队列具有独立有界拓扑
 平台 SHALL 为文档processing request提供版本化durable主队列、延迟重试队列和dead-letter队列，并由`file-processing-worker`独占消费；拓扑 MUST 与附件下载、Agent Job和Delivery队列分离。消息与dead-letter摘要只能包含稳定run/source身份、attempt、Profile hash、correlation和安全错误码。
@@ -1277,6 +1265,8 @@ Compose验收 MUST 使用合成TXT、LOG、Markdown、born-digital PDF、扫描P
 - **THEN** 系统保持切换前备份、旧镜像和旧数据环境可恢复，不自动删除或覆盖它们
 - **THEN** 只有尚未执行后续 migration 的 adoption-only 数据库可以使用受控 rollback；其他情况必须恢复逻辑备份
 
+<!-- Integrated from archived change: `2026-08-23-stabilize-schema-baseline-and-runtime-config/specs/platform-operations` -->
+
 ### Requirement: 内置 Runtime Config Definition 对账必须语义幂等
 系统 SHALL 在受控初始化或显式管理同步中对账代码内置 runtime config definition，并 MUST 以规范化后的 key、类型、默认值、敏感性、bootstrap 边界、适用服务集合、描述和状态判断语义变化。语义相同的重复对账 MUST NOT 更新记录、递增 revision、改变 `updated_at` 或生成变化审计。
 
@@ -1295,6 +1285,8 @@ Compose验收 MUST 使用合成TXT、LOG、Markdown、born-digital PDF、扫描P
 - **THEN** 唯一 key 最终只对应一条语义正确的记录
 - **THEN** 每个真实创建或更新最多计入一次 revision 变化，其余竞争者重读后返回 unchanged 或安全重试
 
+<!-- Integrated from archived change: `2026-08-23-stabilize-schema-baseline-and-runtime-config/specs/platform-operations` -->
+
 ### Requirement: Runtime Config 只读路径不得隐式注册定义
 Runtime config definition 列表、effective snapshot、ready diagnostics 和其他只读请求 MUST NOT 创建或更新 definition。若受控初始化没有完成，读取路径 SHALL 返回安全的缺失或 degraded 诊断，不得通过 GET、snapshot 构建或健康检查自我修复数据库。
 
@@ -1306,6 +1298,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **WHEN** effective snapshot 或 ready diagnostics 发现预期内置 definition 尚未由受控初始化注册
 - **THEN** 系统返回不泄漏敏感信息的 missing-definition 或 degraded 诊断
 - **THEN** 读取事务不得插入 definition 或修改任何 runtime config revision
+
+<!-- Integrated from archived change: `2026-08-23-stabilize-schema-baseline-and-runtime-config/specs/platform-operations` -->
 
 ### Requirement: Runtime Config 聚合版本必须反映真实持久化变化
 系统 SHALL 为 runtime config definition、value 和相关 Secret metadata 提供稳定的聚合 revision 与内容 hash。任一受支持的真实持久化变化 MUST 改变聚合版本标识；无变化对账和纯读取 MUST 保持聚合版本标识不变。调用方 MUST 将该标识视为不透明并发与观测令牌，不得依赖其具体数值。
@@ -1319,6 +1313,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **THEN** 聚合 revision 和内容 hash 保持稳定
 - **THEN** 构建 snapshot 不产生数据库写入或配置审计
 
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/platform-operations` -->
+
 ### Requirement: Schema 事实源必须登记并可审计
 系统 SHALL 在版本控制中维护 schema fact-source manifest，按表及关键列登记领域所有者、事实语义、分类、writer、reader、生命周期、保留/审计要求和退役状态。分类至少 MUST 区分 canonical mutable fact、immutable snapshot、derived projection、compatibility shadow、operational coordination fact 和 one-time migration artifact。
 
@@ -1330,6 +1326,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **WHEN** 两个字段或表包含相似数据但分别承担可变草稿和不可变发布快照职责
 - **THEN** manifest 将二者登记为不同生命周期事实
 - **AND** consolidation 不得把不可变历史误判为需要消除的双写
+
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/platform-operations` -->
 
 ### Requirement: Schema consolidation 必须按阶段推进并禁止长期双写
 系统 MUST 按 expand、verify/backfill、read cutover、write cutover、observation、contract/drop 的顺序推进事实源收敛，每个阶段 SHALL 具有可重复的前置检查、成功证据、失败关闭行为和回滚边界。兼容双写只能存在于已登记且有截止门禁的迁移窗口。
@@ -1348,6 +1346,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **THEN** 运维方可以回滚应用版本并按已登记边界恢复兼容写入
 - **AND** 不删除新事实或重写不可变历史
 
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/platform-operations` -->
+
 ### Requirement: 字段和表退役必须满足统一门禁
 系统 SHALL 仅在目标字段或表已证明零生产 writer、零生产 reader、无未完成事务/重试/恢复职责、达到保留期、完成必要审计导出、具备备份恢复证据且所有 owner 批准后执行 contract/drop。行数为零、名称含 `legacy` 或 `cutover`、以及本地代码搜索无引用均 MUST NOT 单独满足退役门禁。
 
@@ -1360,6 +1360,28 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **WHEN** 身份 challenge、outbox、Runtime ledger、claim 或 event 表被提议退役
 - **THEN** 评审必须证明其安全、幂等、重试或恢复职责已被一个明确的新 canonical fact 完整替代并完成所有调用方切换
 - **AND** 不得仅因当前零行或低行数批准删除
+
+<!-- Integrated from archived change: `2026-08-23-consolidate-schema-fact-sources-and-retire-legacy-tables/specs/platform-operations` -->
+
+### Requirement: Consolidation migration 必须以 Baseline 100 adoption 为前置
+系统 MUST 在目标数据库已完成精确 `042 → 100` Baseline Adoption、migration ledger 与 baseline checksum 校验通过后，才允许执行本 change 的后续 migration。真实 backfill、cutover 或 contract/drop SHALL 分别获得部署授权和维护窗口，不得由构建、测试、应用启动或 OpenSpec apply 自动执行。
+
+#### Scenario: 目标数据库仍停留在042
+- **WHEN** consolidation preflight 发现 migration ledger 的精确 head 仍为 `042`
+- **THEN** 系统仅报告应先执行 Baseline 100 Adoption
+- **AND** 不写入本 change 的 migration ledger、业务表或兼容字段
+
+#### Scenario: Active change 发生migration编号竞争
+- **WHEN** 实施时发现另一个 active change 已占用计划中的 migration 版本
+- **THEN** 实施者根据当前 migration catalog 重新分配唯一版本并更新 checksum 与测试
+- **AND** 不修改已部署 migration 的内容或身份
+
+#### Scenario: 执行contract drop
+- **WHEN** 所有 consolidation 门禁通过并获得明确部署授权与维护窗口
+- **THEN** Migrator 在全局互斥和完整事务边界内执行 contract migration
+- **AND** 保存不含业务正文或凭据的 migration、备份和验收证据
+
+<!-- Integrated from archived change: `2026-08-23-harden-management-and-runtime-boundaries/specs/platform-operations` -->
 
 ### Requirement: Compose 管理 Web 必须随管理面失败关闭
 当前普通 Compose 配置 SHALL 包含 `admin-web` 服务定义。`admin-web` 容器入口 MUST 要求 `FEATURE_WEB_ADMIN=true`；该值不为 `true` 时容器必须以非零状态退出且不得提供静态管理页面。启用时，管理 Web MUST 只代理已挂载且受现有 Session 与 RBAC 保护的管理 API；规范不得声称当前 Compose 使用已注释掉的 admin profile。
@@ -1377,6 +1399,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **WHEN** `FEATURE_WEB_ADMIN=true` 且依赖服务满足启动条件
 - **THEN** `admin-web` 启动并只代理已挂载且受认证授权保护的管理 API
 
+<!-- Integrated from archived change: `2026-08-23-harden-management-and-runtime-boundaries/specs/platform-operations` -->
+
 ### Requirement: 管理前端必须区分权限错误与系统错误
 管理前端 SHALL 使用全局渲染错误边界，并在 capability 查询中区分 401、403、网络/5xx 和客户端解析错误。系统错误 MUST 提供安全重试或刷新入口，不得显示为“无权访问”，也不得展示堆栈、原始响应或敏感配置。
 
@@ -1392,6 +1416,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **WHEN** 任一管理路由组件在渲染生命周期抛出异常
 - **THEN** 全局错误边界显示安全恢复页面且不暴露错误详情
 
+<!-- Integrated from archived change: `2026-08-23-harden-management-and-runtime-boundaries/specs/platform-operations` -->
+
 ### Requirement: 非本地对象存储凭据必须失败关闭
 非 local/test/testing/development 环境 MUST 显式提供对象存储访问凭据，且 access key 与 secret key 均不得为空或等于仓库内置本地默认值。配置校验 MUST 在依赖对象存储的服务执行外部 I/O 前失败，不得静默使用 Compose 或代码 fallback。
 
@@ -1406,6 +1432,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 #### Scenario: 本地开发显式使用本地 MinIO
 - **WHEN** local/test 环境使用 Compose 本地 MinIO bootstrap
 - **THEN** 系统允许本地占位流程，但凭据仍只进入 MinIO/bootstrap Secret 边界
+
+<!-- Integrated from archived change: `2026-08-23-scale-task-workspace-with-bounded-job-working-sets/specs/platform-operations` -->
 
 ### Requirement: 工作区文件数量与计费容量使用受治理tenant运行配置
 平台 Runtime Config SHALL注册两个非敏感整数定义：`FILE_WORKSPACE_ACTIVE_FILE_LIMIT`默认200、代码硬上限1000；`FILE_WORKSPACE_BILLABLE_BYTES_LIMIT`默认2GiB、代码硬上限10GiB；二者仅适用`file-service`。Runtime Config scope SHALL增加`tenant`，但只有代码显式声明tenant-compatible的定义才可使用；scope code MUST从已认证管理上下文中的平台tenant身份校验，不得由普通业务请求或Agent输入覆盖。
@@ -1432,6 +1460,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **THEN** 平台在保存前拒绝
 - **AND** 不扩大该配置在其它tenant或服务中的作用范围
 
+<!-- Integrated from archived change: `2026-08-23-scale-task-workspace-with-bounded-job-working-sets/specs/platform-operations` -->
+
 ### Requirement: 提升tenant工作区配额前必须通过兼容预检
 平台在把任一tenant有效工作区文件数量从20或更低提升到20以上前，MUST只读检查该tenant所有启用且使用任务工作区的Agent/Application Publication是否冻结兼容的`task_workspace_search_files`及必要File MCP Tool。任一不兼容发布 MUST阻止文件数量提升，并返回有界、非敏感的Application/Publication身份和修复原因；预检 MUST NOT原地修改或自动重发任何Publication。容量覆盖可以独立变更，但两个定义均必须经过同一tenant配置治理、硬上限和审计。
 
@@ -1449,6 +1479,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **WHEN** 运维把已启用大工作区的tenant有效上限降回20
 - **THEN** 已完成Job、追加工作集事实和已有文件保持不变
 - **AND** 超过20个ACTIVE文件的工作区保持可读但拒绝新增逻辑文件
+
+<!-- Integrated from archived change: `2026-08-23-scale-task-workspace-with-bounded-job-working-sets/specs/platform-operations` -->
 
 ### Requirement: 大工作区上线必须保存容量与全链证据
 上线验收 MUST覆盖200和1000个ACTIVE文件、默认2GiB与硬上限10GiB、冻结目录revision的50项分页、40个内容工作集项、64文件分区、224MiB共享容量、并发目录变化、并发Job和Docling Representation状态，并记录目录revision成员行数、Manifest大小、Job创建与搜索延迟、数据库查询计划以及工作集/容量上限拒绝。验收 MUST覆盖自动物化、File MCP物化、Write/Edit和内部临时文件全部经过统一预算，特别证明File MCP不能绕过文件数或容量检查。生产就绪声明 MUST至少包含一次真实Runtime调用File MCP搜索、选择精确版本、物化可读内容并形成Agent结果或Delivery的全链证据；容器健康或单元测试单独不足以证明完成。
@@ -1468,23 +1500,22 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **THEN** Runtime在下载首字节前通过统一预算接受或稳定拒绝
 - **AND** 证据证明拒绝路径没有目标文件、部分内容或未释放预留
 
+<!-- Integrated from archived change: `2026-08-23-add-governed-office-embedded-image-layout-ocr/specs/platform-operations` -->
+
 ### Requirement: 布局OCR复用隔离处理拓扑并固定模型artifact
-默认部署 SHALL 复用内部`docling-serve`、独立`file-processing-worker`、File Service、File Domain Outbox和RabbitMQ文档处理边界来执行parent、picture item与assembly任务，不得把Docling或OCR暴露为Agent Tool/MCP，也不得新增可绕过File Service的图片对象入口。Docling/OCR/layout所需模型与配置 MUST 在构建或受控部署阶段固定revision、摘要算法、多架构OCI index以及每个受支持平台的子manifest和模型artifact digest并离线可用；完整平台映射 MUST 属于Profile canonical payload，运行时实算仅用于校验所选平台条目且不得反向成为配置。运行时下载、远程services、自定义模型、Callback、HTTP source和外部插件 MUST 保持关闭。
+默认部署 SHALL 复用内部`docling-serve`、独立`file-processing-worker`、File Service、File Domain Outbox和RabbitMQ文档处理边界来执行parent、picture item与assembly任务，不得把Docling或OCR暴露为Agent Tool/MCP，也不得新增可绕过File Service的图片对象入口。Docling/OCR/layout所需模型与配置 MUST 在构建或受控部署阶段固定revision与digest并离线可用；运行时下载、远程services、自定义模型、Callback、HTTP source和外部插件 MUST 保持关闭。
 
 #### Scenario: 检查处理组件Secret和网络
 - **WHEN** 运维检查File Processing Worker、Docling和File Service的环境、Secret、网络及挂载
-- **THEN** 只有File Service具有对象存储凭据，Worker只有角色bootstrap/RabbitMQ/Docling API Key，Docling只有自身固定API Key与代码发布的模型artifact映射
+- **THEN** 只有File Service具有对象存储凭据，Worker只有角色bootstrap/RabbitMQ/Docling API Key，Docling只有自身固定API Key与模型artifact
 - **AND** 任何处理组件都不获得任意对象键、其它Worker凭据或外网图片/模型访问
 
 #### Scenario: 固定OCR模型缺失
-- **WHEN** 容器离线启动但Profile为当前平台固定的OCR/layout artifact不存在、digest不匹配或无法加载
+- **WHEN** 容器离线启动但Profile固定的OCR/layout artifact不存在、digest不匹配或无法加载
 - **THEN** Docling/Worker readiness失败且布局Profile不得报告READY
-- **AND** 不尝试访问互联网下载、采用现场实算值或回退到其它平台/模型
+- **AND** 不尝试访问互联网下载或回退到其它模型
 
-#### Scenario: 两个平台验证同一发布合同
-- **WHEN** 发布流程分别验证`linux/amd64`和`linux/arm64`镜像
-- **THEN** 每个平台的实际模型目录摘要与完整Profile映射中对应条目一致，且两端Profile hash相同
-- **AND** 只有升级固定OCI index或模型内容的代码变更才可更新映射并产生新的Profile hash
+<!-- Integrated from archived change: `2026-08-23-add-governed-office-embedded-image-layout-ocr/specs/platform-operations` -->
 
 ### Requirement: 布局OCR资源与积压可安全观测
 平台 MUST 对parent parse、picture item、assembly、asset staging、Representation staging、retry、dead-letter和cleanup分别提供有界积压计数、最早时间、Profile/processor版本、阶段、attempt和白名单错误分类。readiness MUST 验证Profile registry/hash、layout schema、必需输出集合、固定模型artifact、File Service内部流、RabbitMQ拓扑和Docling真实就绪；日志、健康、指标和运维API不得显示业务文件名、图片、OCR文字、坐标、对象键、响应正文或凭据。
@@ -1498,6 +1529,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **WHEN** 组件进程running但File Service不认识Profile要求的`OCR_LAYOUT_JSON` schema或输出集合
 - **THEN** readiness返回非就绪并阻止新布局OCR run
 - **AND** 不以容器health替代契约就绪
+
+<!-- Integrated from archived change: `2026-08-23-add-governed-office-embedded-image-layout-ocr/specs/platform-operations` -->
 
 ### Requirement: 布局OCR验收覆盖坐标、恢复和能力边界
 上线验收 MUST 使用不含真实业务数据的合成DOCX/PPTX，覆盖内嵌图片文字、重复图片、图片自身EXIF方向、Office显示层旋转/裁剪未应用且明确提示、低置信度、多block、无文字、损坏图片、超图片数、超像素、超输出大小及提示注入。证据 MUST 关联source Version、parent run、picture asset/occurrence/item、三种Representation、Manifest、Runtime Markdown读取、Agent结果与原件Delivery，并验证逐图重试、Docling重启、Worker崩溃、幂等assembly、asset/representation清理和Secret不泄漏；不得以单元测试或容器healthy代替新鲜业务链路。
@@ -1522,6 +1555,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **THEN** Agent把它作为不可信文件内容处理且服务端权限/工具集合保持不变
 - **AND** MQ、日志和审计不出现该OCR正文
 
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
+
 ### Requirement: 自动化测试必须具有唯一且失败关闭的执行层级
 仓库 SHALL 将每个自动化测试文件唯一分类为 `unit`、`contract`、`integration`、`acceptance` 或 `migration`；分类 SHALL 由版本控制下的机器可读事实驱动。新增测试缺少分类、同时命中多个分类或清单引用不存在文件时，测试收集 MUST 失败，而不是静默选择默认层级。
 
@@ -1536,6 +1571,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 #### Scenario: 按层级执行测试
 - **WHEN** 开发者或 CI 选择任一测试层级
 - **THEN** 系统只收集该层级的测试并报告稳定的收集数、通过数、跳过数和耗时
+
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
 
 ### Requirement: 快速反馈不得替代完整回归
 仓库 SHALL 提供稳定的 PR 快速测试入口和后端完整回归入口。快速入口 MUST 只选择已分类的 `unit` 与 `contract` 测试；完整入口 MUST 保持所有本地可执行测试的现有覆盖，并由主分支或发布门禁执行。存在快速入口不得成为删除 `integration`、`acceptance`、`migration`、拒绝路径或恢复路径测试的依据。
@@ -1552,6 +1589,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **WHEN** 快速入口通过而 `acceptance`、`migration` 或其他完整回归层级失败
 - **THEN** 系统不得把该变更报告为完整质量验收通过
 
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
+
 ### Requirement: 测试数据库加速必须保持逐测试隔离和迁移真实性
 非 migration 语义的 SQLite 测试 MAY 复用一次构建的已迁移只读模板，但每个测试 MUST 使用唯一数据库副本并独立执行 seed 与写入。验证 Migrator、schema baseline、checksum、legacy ledger、升级路径或指定初始数据库状态的测试 MUST 绕过模板并执行真实迁移流程。测试不得依赖执行顺序或其他测试留下的状态。
 
@@ -1567,8 +1606,10 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **WHEN** 同一测试进程使用的活动 migration 身份与模板身份不一致
 - **THEN** 测试基础设施拒绝复用旧模板并重新构建或失败关闭
 
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
+
 ### Requirement: 测试反馈预算必须可测量且不得通过缩减覆盖达成
-仓库 SHALL 提供可复现的测试基线命令并输出执行环境、收集数、通过/跳过数、总耗时和最慢测试。当前Makefile输出durations并按层级选择测试；耗时结论必须注明环境与本次实际结果，历史120/300秒目标不能当作当前已通过事实。预算只能通过测试分层、隔离基础设施复用、无语义损失的 fixture 重构或经过隔离验证的并行执行达成，不得通过删除规范覆盖、隐藏失败、依赖重试或改变测试选择口径达成。
+仓库 SHALL 提供可复现的测试基线命令并输出执行环境、收集数、通过/跳过数、总耗时和最慢测试。该变更在约定参考环境中的验收目标为 PR 快速套件不超过 120 秒、后端完整套件不超过 300 秒。预算只能通过测试分层、隔离基础设施复用、无语义损失的 fixture 重构或经过隔离验证的并行执行达成，不得通过删除规范覆盖、隐藏失败、依赖重试或改变测试选择口径达成。
 
 #### Scenario: 记录优化前后基线
 - **WHEN** 维护者评估测试优化效果
@@ -1580,7 +1621,9 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 
 #### Scenario: 参考环境未达到预算
 - **WHEN** 实现完成后快速套件超过 120 秒或后端完整套件超过 300 秒
-- **THEN** 对应性能任务保持未完成并记录差距，不得仅以测试全部通过宣称该性能目标已达成
+- **THEN** 对应性能任务保持未完成并记录差距，不得仅以测试全部通过宣称本变更完成
+
+<!-- Integrated from archived change: `2026-08-23-optimize-test-suite-feedback-and-maintainability/specs/platform-operations` -->
 
 ### Requirement: 删除重复测试必须具有规范覆盖等价证据
 删除或合并自动化测试前，维护者 MUST 记录原测试、替代测试、对应 canonical Requirement，以及正常、拒绝、恢复、审计和 Secret 边界的覆盖等价关系。仅代码相似、使用相同 fixture、文件过长或希望减少行数均不得作为删除依据。
@@ -1592,6 +1635,8 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 #### Scenario: 重复测试具有完整替代证据
 - **WHEN** 维护者证明替代测试覆盖同一 Requirement 及全部相关边界，并且完整回归通过
 - **THEN** 可以删除重复测试并在变更证据中记录映射
+
+<!-- Integrated from archived change: `2026-08-23-converge-single-current-file-rule/specs/platform-operations` -->
 
 ### Requirement: 开放测试文件域重置必须显式且完整
 平台 SHALL 提供一次性、显式确认的开放测试文件域重置命令。命令 MUST 先只读预检并拒绝任何非终态文件processing run、Agent Job、Delivery、Outbox或相关RabbitMQ消息，再通过File Service对象存储适配器删除受管文件对象，并按外键拓扑事务性删除旧附件正文、附件文件绑定、Workspace、Catalog、Working Set、Manifest、File/Version、Representation、processing、提交、保留、文件Delivery及其强关联终态测试事实。命令不得接受任意bucket、对象前缀、数据库表名或外部URL。
@@ -1611,364 +1656,40 @@ Runtime config definition 列表、effective snapshot、ready diagnostics 和其
 - **THEN** 命令删除受管对象与目标测试事实并执行数据库和对象存储空域核验
 - **AND** 任一删除或核验失败都返回非零状态且不得宣称完成
 
+<!-- Integrated from archived change: `2026-08-23-converge-single-current-file-rule/specs/platform-operations` -->
+
+### Requirement: 单一文件合同migration必须删除旧结构并拒绝遗留引用
+一次性Migrator MUST 在文件域重置完成后执行前向migration，删除`attachment_content`、重复文件身份影子列、未使用的Job文档Profile字段、可切换文本策略字段及其旧约束，并把Profile、Manifest和Runtime执行摘要约束收缩到`NONE|docling-layout-ocr-v2`、schema v5和protocol 1.3。migration MUST 在任何旧Profile、旧Manifest、旧Runtime协议、活动部署或非终态引用仍存在时失败关闭，不得更新、投影或回填成当前合同。
+
+#### Scenario: 旧测试数据未清空
+- **WHEN** Migrator发现旧Manifest行、旧Profile引用、旧附件正文或旧协议执行摘要
+- **THEN** migration整体回滚并提示先运行显式开放测试文件域重置
+- **AND** 不保留半数新约束或半数旧列
+
+#### Scenario: 重置完成后应用migration
+- **WHEN** 预检确认只剩当前Profile引用且文件域与旧执行事实为空
+- **THEN** migration在单事务中删除旧结构并安装唯一当前约束
+- **AND** schema contract只声明当前列、表和允许值
+
+<!-- Integrated from archived change: `2026-08-23-converge-single-current-file-rule/specs/platform-operations` -->
+
 ### Requirement: 单一合同部署不得保留回退服务
-部署编排 SHALL 一次性重建API、File Service、File/Processing Worker、Agent Worker、Python Runtime和管理端，并且不得并行运行包含旧Profile、旧Manifest或Runtime protocol 1.0至1.3可执行实现的镜像。入口恢复前 MUST 验证所有消费者、生产者、数据库约束和管理端bundle符合同一不可变发布清单，相关服务报告预期`source_revision`、`build_id`和platform，Python Runtime health只声明当前 Runtime 协议（见 execution-delivery）；实际镜像digest可按平台分别记录但不得缺失时伪造。
+部署编排 SHALL 一次性重建API、File Service、File/Processing Worker、Agent Worker、Python Runtime和管理端，并且不得并行运行包含旧Profile、旧Manifest或旧Runtime协议的镜像。入口恢复前 MUST 验证所有消费者、生产者、数据库约束和管理端bundle来自同一构建版本。
 
 #### Scenario: 仍有旧Worker镜像消费队列
 - **WHEN** 部署预检发现任一旧Agent Worker、File Worker、Processing Worker或Runtime实例仍注册或消费
 - **THEN** 入口流量不得恢复
 - **AND** 系统不依靠双写、版本协商或重试到旧服务维持运行
 
-#### Scenario: 组件来自不同发布
-- **WHEN** API、Agent Worker、Python Runtime或File Service报告的revision/build ID不符合本次发布清单
-- **THEN** 部署预检失败并按组件输出安全差异
-- **AND** 容器healthy或工具名称偶然相同均不得替代发布一致性证据
+<!-- Integrated from change: `add-governed-dingtalk-mcp-mvp/specs/platform-operations` -->
 
-#### Scenario: 当前 Runtime 协议（见 execution-delivery）入口恢复
-- **WHEN** 所有旧消费者已停止、非终态1.3事实为零、migration成功且新鲜合同与E2E通过
-- **THEN** 平台只恢复当前 Runtime 协议（见 execution-delivery）入口和消费者
-- **AND** 入口恢复后不回退到protocol 1.3或恢复旧Job执行
+### Requirement: dingtalk-mcp 与 Action worker 必须进入固定部署拓扑
+平台 Compose SHALL 部署固定 `dingtalk-mcp` Streamable HTTP 服务和外部操作 worker，使用非 root 身份、只读镜像文件系统、私网 MCP 地址、独立健康/就绪检查与数据库 claim。Agent Runtime、API 和 `dingtalk-runtime` MUST NOT 接收 Connector Secret 原值。
 
-### Requirement: 业务MCP与外部操作worker必须保持固定部署及凭据边界
-Compose SHALL 部署固定dingtalk-mcp和external-action-worker，隔离Agent模型与Provider凭据。平台API受信配置基础设施可解析Connector Secret，并只向通过内部认证与有效runtime lease的dingtalk-runtime进程提供建立Stream所需AppSecret；业务MCP与外部worker也只在各自受信适配器内解析。Secret MUST NOT进入Agent Runtime/模型、普通管理响应、Job/Tool快照或日志。
+#### Scenario: dingtalk-mcp 未就绪
+- **WHEN** MCP 服务、Action worker、migration 或卡片回调能力任一未就绪
+- **THEN** 新 Application Publication 不得宣称 `dingtalk_create_todo` 可运行
 
-#### Scenario: Stream连接取配置
-- **WHEN** DingTalk Runtime通过内部认证并持有有效lease请求desired-config
-- **THEN** API返回建立连接必需的受信配置，SDK仅在运行内存中消费AppSecret，普通管理接口不回显。
-
-#### Scenario: Agent请求凭据
-- **WHEN** Agent或普通管理调用试图取得Connector Secret
-- **THEN** 接口/权限边界拒绝，不把Stream内部通道变成凭据读取Tool。
-
-### Requirement: 部署必须注入可比较的组件构建身份
-平台 SHALL 为Control Plane、Agent Worker、Python Runtime和File Service注入有界安全构建身份，至少包含固定组件名、源码`source_revision`、发布`build_id`和标准OS/architecture `platform`；部署系统能够准确取得实际镜像摘要时还 SHALL提供`image_digest`。`source_revision`与`build_id` MUST由构建流水线和发布清单产生且不可由Agent、Application、外部请求、模型输出或Job payload覆盖。服务不得挂载Docker socket、查询容器daemon或把可变tag伪装成digest来补全身份。
-
-必需身份缺失或格式无效时，相关服务readiness MUST失败。Control Plane SHALL在Job创建事实中关联自身身份，Worker SHALL在当前 Runtime 协议（见 execution-delivery） invocation事实中关联自身身份，Runtime SHALL在安全事件中声明自身身份，File Service SHALL在已认证MCP初始化元数据中声明自身身份；运行记录只展示这些安全字段，不展示registry凭据、环境变量或原始容器配置。
-
-#### Scenario: 同一发布的组件身份一致
-- **WHEN** 部署预检比较API、Agent Worker、Python Runtime和File Service
-- **THEN** 各组件`source_revision`和`build_id`符合当前不可变发布清单
-- **AND** 任一组件缺失、格式无效或引用另一发布时入口不得恢复
-
-#### Scenario: 部署无法取得镜像digest
-- **WHEN** 某本地Compose环境无法准确向容器注入实际镜像digest
-- **THEN** 组件明确报告该可选字段未观测，同时仍报告必需revision、build ID和platform
-- **AND** 系统不得使用镜像tag、容器ID或猜测值冒充digest
-
-#### Scenario: 跨架构镜像摘要不同
-- **WHEN** Mac arm64与Windows或Linux amd64由同一源码revision和build ID构建且工具契约hash一致，但平台与镜像digest不同
-- **THEN** 系统把不同digest保留为各自产物证据而不单独判为工具契约漂移
-- **AND** 操作者仍可使用platform和digest定位两端实际运行产物
-
-### Requirement: Compose固定部署双Processing Worker和单Docling双执行器
-默认Compose MUST 在无需额外scale参数的情况下启动两个独立`file-processing-worker`实例，并只启动一个`docling-serve`容器。两个Processing Worker MUST 使用相同代码镜像、Profile hash、角色权限和processing队列契约，每个实例 MUST 保持单消费者与RabbitMQ `prefetch=1`；Docling MUST 使用`local` engine、`single-use results`和恰好两个共享模型的local execution workers。`docker compose build`后执行`docker compose up -d` MUST 产生该固定拓扑。
-
-#### Scenario: 新环境使用默认命令部署
-- **WHEN** 操作者在已初始化Secret且满足资源前提的新环境更新代码、执行Compose build并执行`up -d`
-- **THEN** Compose启动两个Processing Worker和一个包含两个local execution workers的Docling容器
-- **AND** 不要求操作者修改Profile hash、模型digest、Worker并发参数或额外传入`--scale`
-
-#### Scenario: 两个Processing Worker消费共享队列
-- **WHEN** processing队列中同时存在多个父文件或图片任务
-- **THEN** 两个实例分别以`prefetch=1`竞争消费独立消息并通过File Service申请全局槽位
-- **AND** 单实例进程内并发保持`1`，跨实例总Docling并发由PostgreSQL严格限制为`2`
-
-#### Scenario: 尝试横向扩展本地Docling容器
-- **WHEN** 有效Compose配置在`local` engine和`single-use results`模式下解析出两个或更多`docling-serve`副本
-- **THEN** 配置校验失败并阻止部署被标记为可用
-- **AND** submit、poll和fetch不得依赖未定义的负载均衡粘性命中同一容器
-
-#### Scenario: 检查受限依赖拓扑
-- **WHEN** 运维审查文档处理服务、网络和依赖
-- **THEN** 拓扑不包含Docling RQ、Redis、Ray或外部调度器
-- **AND** Processing Worker不直接取得PostgreSQL凭据，而是通过已认证File Service内部接口协调槽位
-
-### Requirement: 文档处理就绪聚合两个Worker与两个槽位
-File Service SHALL 接收每个Processing Worker使用不透明实例ID提交的有时效安全心跳，并 MUST 聚合期望实例数`2`、有效实例数、固定Profile hash、processing队列契约、Docling readiness、Docling执行器配置和两个数据库槽位的占用/隔离状态。只有两个合规Worker、单个双执行器Docling、队列、File Service安全闸门和两个槽位均可验证时，文档处理能力才能报告`READY`；任何实例缺失、配置漂移、第三实例、槽位不确定或依赖不可用都 MUST 报告`CONFIGURED_UNAVAILABLE`，但不得使Business Application管理读写接口整体不可用。
-
-#### Scenario: 一个Worker实例停止心跳
-- **WHEN** 两个实例中一个心跳超过固定有效期且另一个仍可安全处理
-- **THEN** 聚合状态报告期望实例`2`、有效实例`1`和稳定降级原因码
-- **AND** 不因剩余容器running而继续报告完整`READY`
-
-#### Scenario: 出现第三个合规Worker实例
-- **WHEN** 滚动部署残留或错误scale使三个实例同时报告有效心跳
-- **THEN** 聚合状态失败关闭并报告拓扑漂移
-- **AND** 数据库两个槽位上限仍不得扩大
-
-#### Scenario: 运维查看槽位诊断
-- **WHEN** 操作者读取文档处理安全诊断
-- **THEN** 系统展示槽位总数、占用数、隔离数、Worker有效数量、最早安全时间和白名单原因码
-- **AND** 不展示文件名、正文、对象键、外部task ID、凭据或原始异常
-
-#### Scenario: 容器健康但并发链路无效
-- **WHEN** 所有容器均为healthy但十文件并发验收出现超过两个在途任务、重复Representation或消息丢失
-- **THEN** 部署不得被验收为文档处理并发可用
-- **AND** 运维必须保留队列、processing run、槽位和终态计数的非敏感证据
-
-### Requirement: 钉钉权限不足必须形成精确降级事实
-系统 SHALL 为 contacts、department、tasks、calendar、notable、robot 和 notice 的固定 Provider 操作维护所需权限说明，并把权限不足分类为对应 Tool/Profile 的稳定非重试错误。单个 Profile 权限不足 MUST NOT 使已满足依赖的其它 Tool 绕过授权或被误报为不可用。
-
-#### Scenario: Calendar 权限缺失
-- **WHEN** 钉钉应用缺少当前 calendar Tool 所需权限
-- **THEN** 该调用返回稳定权限错误并记录安全 Provider attempt，其它已授权 Profile 保持独立
-
-#### Scenario: mutation 写权限缺失
-- **WHEN** 用户已确认但 Provider 明确拒绝对应写权限
-- **THEN** Intent 进入 FAILED 而不是自动重试或改用其它 endpoint/Credential
-
-### Requirement: 外部操作worker的分派与健康观测必须分开
-外部操作worker SHALL 按代码固定的operation/Tool合同执行，并使用数据库条件claim保证同一Intent只有一个执行者；未知operation或合同不兼容的实际执行必须失败关闭。当前进程串行run_once，Compose health只检查heartbeat文件存在，没有全局并发槽位或严格心跳时效判断。系统 MUST NOT 把该health当作逐个Provider权限、所有handler可执行或发布链已验证的证明。
-
-#### Scenario: 重复领取同一意图
-- **WHEN** 两个worker尝试领取同一个APPROVED Intent
-- **THEN** 数据库条件更新只允许一个取得执行权；此事实不限制所有不同Intent的全局并发。
-
-#### Scenario: 观察到heartbeat文件
-- **WHEN** Compose health检查到文件存在
-- **THEN** 只能说明该检查条件满足，不能证明worker持续活跃、Provider就绪或端到端成功。
-
-### Requirement: 批量机器人消息发布校验与执行前校验必须分层
-`dingtalk_batch_send_message_to_users_by_robot` SHALL 使用固定schema/effect/policy、operation、endpoint、Provider字段投影与执行器。应用组合校验按代码检查Trigger、所需robotCode/工作通知Agent ID及确认模板；身份、企业、Credential和Provider权限由实际调用链复核。发布路径不调用外部worker health或向钉钉验证每项权限，MUST NOT把发布成功表述为这些依赖已经真实可用。userIds人数与payload边界以本地合同为准，不能把未证实的阈值宣称为官方上限。
-
-#### Scenario: 缺少发布依赖
-- **WHEN** 应用选择该Tool但当前Trigger或所需机器人标识/确认模板不合法
-- **THEN** 组合校验拒绝；纯只读Tool不因缺确认模板而被同样拒绝。
-
-#### Scenario: 运行时Provider拒绝
-- **WHEN** 已发布应用执行确认后的批量请求但Provider拒绝权限
-- **THEN** 执行保存安全失败事实，不回退工作通知、别的Connector或任意endpoint。
-
-#### Scenario: 消息被受理
-- **WHEN** Provider返回processQueryKey等受理结果
-- **THEN** 结果只表示受理，不能冒充每位接收者已最终收到消息。
-
-### Requirement: 上线证据必须覆盖真实人员解析和单人及多人发送链
-上线证据 SHALL 使用当前代码、新 Agent/Application Publication、明确角色 grant 和全新钉钉 Job，验证真实命中联系人搜索、两个同名候选消歧、单人消息、多人整批消息、取消链、重复点击和旧 Job 不可见。证据 MUST 关联 Job、Tool Call、Action Intent、卡片、唯一 Provider attempt 和外部结果，且不得保存完整 userId 列表、用户完整目录、手机号、邮箱、Secret、Token、消息正文或原始 Provider 响应。
-
-#### Scenario: 真实同名搜索成功
-- **WHEN** 当前 App 可见范围内存在两个同名员工且执行联系人搜索
-- **THEN** 有界证据显示两个非空 userId 候选以及后续详情消歧成功
-- **AND** 不再出现因字符串列表投影导致的 `dingtalk_response_invalid`
-
-#### Scenario: 当前 Job 的详情 Tool 被实际使用
-- **WHEN** 新 Job Snapshot 已授权 `dingtalk_get_user` 且搜索结果需要消歧
-- **THEN** 证据显示 Agent 在本轮实际调用详情 Tool
-- **AND** 不因历史 Job 的拒绝结果跳过当前授权 Tool
-
-#### Scenario: 单用户消息同意
-- **WHEN** 原用户确认向一个明确 userId 发送
-- **THEN** 证据显示唯一 Provider attempt 的接收人数为一且真实目标收到机器人消息
-
-#### Scenario: 多用户消息整批同意
-- **WHEN** 原用户明确选择多个目标并确认一次
-- **THEN** 证据显示只创建一个 Intent、一张确认卡和一个 Provider batch attempt
-- **AND** attempt 的有界结果表明冻结目标数量一致且真实目标均收到机器人消息
-
-#### Scenario: 用户取消
-- **WHEN** 原用户取消单人或多人确认卡
-- **THEN** Intent 为拒绝终态、消息 Provider attempt 为零且卡片不可再次执行
-
-#### Scenario: 旧 Job 验证隔离
-- **WHEN** 新代码已部署但旧 Job 或旧 Publication 未包含新增 Tool
-- **THEN** 新能力不可见且旧消息/工作通知语义不发生变化
-
-### Requirement: 表重建 migration 必须恢复仍生效的约束与索引
-
-系统使用前向 migration 重建已有表时，MUST 在同一 migration 结果中恢复所有仍由 canonical domain 要求的唯一约束、检查约束和索引，并 MUST 验证 SQLite 与 PostgreSQL 的最终业务不变量等价。后续发现已发布 migration 遗漏约束时，系统 MUST 通过新版本前向 migration 修复，不得原地修改已应用 migration。
-
-#### Scenario: SQLite 重建外部身份表
-- **WHEN** migration 为调整某一 provider 的身份生命周期而在 SQLite 重建共享外部身份表
-- **THEN** 最终 schema 仍强制执行其它 provider 已接受的主体唯一性和当前用户绑定唯一性
-
-#### Scenario: 已发布 migration 遗漏唯一索引
-- **WHEN** 当前 migration head 已发布且后续验证发现一个 canonical 唯一索引缺失
-- **THEN** 系统分配新的唯一 migration 版本幂等恢复索引，不修改旧 migration 文件或 checksum
-
-#### Scenario: 恢复唯一索引时存在冲突数据
-- **WHEN** 前向 migration 创建唯一索引时检测到不满足不变量的既有数据
-- **THEN** migration 整体失败且不登记新 head，不得静默删除、合并或选择任一业务记录
-
-### Requirement: 内置初始化 fixture 必须保持跨 Publication 引用自洽
-
-版本控制下用于本地或测试初始化的内置 fixture SHALL 保持所有 Publication ID、revision、config hash 和 snapshot 派生引用自洽。更新被引用 Publication 的冻结事实时，维护者 MUST 同步重新生成同一 fixture 图中的依赖快照，或创建新的 Publication 并显式切换引用；运行时完整性校验不得为兼容坏 fixture 而放宽。
-
-#### Scenario: Fresh bootstrap 初始化默认 Webhook
-- **WHEN** 空数据库应用当前 migration 并载入默认 Agent 与 Webhook Trigger fixture
-- **THEN** Trigger Publication 冻结的 Agent publication ID、revision 和 config hash 与被引用 Agent Publication 完全一致
-
-#### Scenario: 默认 Agent fixture 的 hash 变化
-- **WHEN** 维护者更新默认 Agent Publication snapshot 并导致 config hash 变化
-- **THEN** 跨 Publication 完整性测试在所有依赖 fixture 同步前失败，并且 Dispatcher 继续拒绝不一致快照
-
-### Requirement: 知识存储通过统一来源身份和独立收录关系管理
-系统 SHALL 在同一平台 PostgreSQL 的 knowledge schema 中保存 source、document、document_revision、knowledge_base、knowledge_base_document、import_run 和 document_relation。来源工作项身份 MUST 独立于知识库和可变工作项类型，内容版本 MUST 可追溯，收录 MUST NOT 自动产生 Agent 或用户读取授权。
-
-#### Scenario: 同一来源内容被多个知识库收录
-- **WHEN** 相同来源工作项进入两个知识库
-- **THEN** 系统复用稳定 document 和内容版本并建立不同收录关系，不复制来源文档
-
-#### Scenario: 来源团队未确认
-- **WHEN** 本地导出缺少可信团队或实例身份
-- **THEN** 系统仅记录来源未确认的离线命名空间，不猜测或接续现有 ONES 身份
-
-#### Scenario: 判断知识导入是否已提供检索能力
-- **WHEN** 当前代码完成knowledge表和离线导入
-- **THEN** 该事实不代表已有Agent知识查询、Embedding、OCR或Qdrant索引；不自动增加读取授权。
-
-### Requirement: ONES 离线文本导入必须预检并可恢复且幂等
-导入 CLI MUST 校验详情/list 完整关联、重复身份、数据形状及显式输入数量；MUST 分开 ID 和显示名称，保留受限安全快照、正文、业务属性、采集完整性及版本。批次 MUST 具有输入摘要、明确进度和安全失败事实；相同输入重放 MUST NOT 增加重复文档或版本，旧来源版本 MUST NOT 覆盖新版本。导入 MUST NOT 下载附件、调用 ONES/Embedding/OCR、写 Qdrant 或发布资源。
-
-#### Scenario: 导入五千条已声明缺陷
-- **WHEN** 用户指定预检通过的详情/list 导出且声明主记录都是缺陷
-- **THEN** 系统保存五千条 defect 文档和收录，相关工单引用不得被生成为缺陷正文
-
-#### Scenario: 中途停止后重放
-- **WHEN** 导入在已提交部分文档后中断并使用同一输入再次运行
-- **THEN** 系统从持久批次进度恢复，已完成记录不重复写入
-
-#### Scenario: 安全边界
-- **WHEN** 来源字段包含可访问 URL、Base64 或明显凭据
-- **THEN** 系统在入库前移除敏感片段，命令结果与日志只提供安全统计和错误码，原始输入不修改
-
-### Requirement: 工作项关联必须保留外部身份和来源证据
-系统 MUST 保存原始关联类型/方向、来源快照及两端外部身份；关联目标尚未导入时 MUST 保持内部目标 ID 未解析，不创建虚假正文。目标后续导入时 SHALL 补齐引用。未确认完整的关联集合 MUST NOT 用于推断关系删除或推断因果语义。
-
-#### Scenario: 目标正文尚未入库
-- **WHEN** 缺陷引用一个未导入的工单
-- **THEN** 系统保留工单外部身份和原始关联观察，并标识未解析状态
-
-#### Scenario: 重复或过时关联观察
-- **WHEN** 同一来源版本的关系再次被导入或旧文件被重放
-- **THEN** 系统幂等保存，不把旧观察伪装成当前完整关系集合
-
-### Requirement: 知识 schema 必须纳入现有迁移与事实源治理
-knowledge DDL MUST 仅通过一次性 Migrator 的版本化事务执行。结构、约束、索引、注释和事实源清单 MUST 覆盖 public 与 knowledge；SQLite 测试 SHALL 保持等价领域对象且不得影响现有表。导入器 MUST 只检查 schema head，不执行迁移。
-
-#### Scenario: 新 schema 建表后验收
-- **WHEN** 新迁移执行完成
-- **THEN** PostgreSQL 真实存在七张 knowledge 表且结构检查、中文注释覆盖和事实源清单能够识别全部对象
-
-### Requirement: 管理端资源角色可创建并复用
-数据库和 Redis 资源新建及编辑页面 SHALL 提供“资源角色”输入选择，初始为空，不预置角色；用户可保存新值并选择历史保存值，历史候选来自资源元数据，不读取连接凭据。角色 SHALL 与 RBAC 用户角色区分；Loki 不显示该输入且服务端拒绝非空值。
-
-#### Scenario: 保存和复用新角色
-- **WHEN** 管理员输入合法新角色并保存资源草稿
-- **THEN** 后续新建或编辑可从历史值中选择该角色，同时仍可不填或新建其他角色
-
-#### Scenario: 清空角色
-- **WHEN** 管理员清空草稿角色并保存
-- **THEN** 系统保存未指定状态；若发布后产生同目标多候选，仍按歧义规则拒绝，不隐式选择数据库
-
-### Requirement: JavaScript构建入口必须区分实际依赖锁与执行命令
-当前 Makefile 的 frontend-check SHALL 按其 pnpm frozen-lockfile 入口运行，GitHub CI 中的 npm ci SHALL 使用所在工作目录的 npm lockfile。维护者 MUST 核对具体包、锁文件与容器构建入口，不得声称仓库已经统一单一包管理器，也不得在文档整理时自动更新依赖或锁文件。
-
-#### Scenario: 复现前端检查
-- **WHEN** 维护者执行 make frontend-check
-- **THEN** 按Makefile的pnpm流程安装与校验，和CI结果分别记录。
-
-#### Scenario: 判断CI通过范围
-- **WHEN** 维护者查看某个GitHub job结果
-- **THEN** 以job实际工作目录、锁文件和命令为准，不把一次入口成功当成所有入口通过。
-
-### Requirement: 当前Schema目录与已有数据库升级必须分开判断
-活动 migration catalog SHALL 从 `100_baseline_v1.sql` 开始，并按当前代码目录解析 forward head；本次基线重建时目录为 `100..132`。空库可按当前 deployable catalog 建库，既有数据库 MUST 先通过版本、checksum、前置状态与 contract 门禁。精确 legacy 042 的 adoption 必须使用仅含100的独立artifact，当前包含101及以后版本的checkout不能直接完成adoption。业务服务与导入器只校验schema，不执行DDL。
-
-#### Scenario: 创建空库
-- **WHEN** 一次性Migrator连接没有业务结构与账本的新数据库
-- **THEN** 依次执行当前目录，初始化用户/业务fixture仍是独立步骤。
-
-#### Scenario: 现有数据库落后
-- **WHEN** 只读服务发现ledger不是当前deployable head或checksum不符
-- **THEN** 就绪失败且不自动迁移、不猜测兼容范围。
-
-#### Scenario: 尝试直接采纳旧账本
-- **WHEN** 包含101及以后迁移的当前artifact尝试adopt legacy 042
-- **THEN** 服务拒绝，需单独准备baseline-only artifact与恢复证据。
-
-### Requirement: 当前文件Schema与历史迁移必须保持边界
-当前文件合同 SHALL 使用 `NONE|docling-layout-ocr-v2`、Manifest v5与代码声明的Runtime协议范围；旧attachment_content、可切换直接文本规则和冗余文件身份不得作为当前读写事实源。迁移119、120、124、125分别记录其引入时的约束，文档 MUST NOT 要求重复执行旧清库、把全部历史Job改成当前协议或原地修改已应用migration。
-
-#### Scenario: 检查当前执行事实
-- **WHEN** 服务校验新Job、Manifest或Profile
-- **THEN** 使用当前代码合同，无法验证的事实失败关闭。
-
-#### Scenario: 读取终态历史
-- **WHEN** 存量终态Job保留旧协议和审计
-- **THEN** 保留原版本与缺失观测，不补造当前工具合同或完整审计。
-
-### Requirement: 钉钉业务 MCP Provider 配置必须固定且按工具就绪
-平台 SHALL 继续以代码固定 `dingtalk-mcp` 与 Provider operation 注册表运行，不读取 `ACTIVE_PROFILES` 或动态 YAML。Connector Secret 只由基础设施解析；工作通知 Tool 还 MUST 要求 Connector 具有合法非敏感 `work_notification_agent_id`，机器人 Tool MUST 具有可解析 robot code 和当前来源路由。
-
-#### Scenario: Connector 缺少工作通知 Agent ID
-- **WHEN** Publication 选择工作通知发送或状态 Tool，但 Connector 没有合法正整数 Agent ID
-- **THEN** 发布、激活或运行就绪检查失败关闭并给出稳定配置提示
-
-#### Scenario: 环境变量包含官方 Profile
-- **WHEN** Compose 或进程环境设置 `ACTIVE_PROFILES`
-- **THEN** 固定服务忽略该变量且 readiness 展示的工具数不发生变化
-
-#### Scenario: mutation 应用缺少确认卡模板
-- **WHEN** 业务应用选择任一 `confirmation_policy=external_action_card_v1` 的 Tool，但其已启用钉钉来源 Connector 未配置 `external_action_confirmation` 或合同版本不兼容
-- **THEN** 发布或激活失败关闭并指出缺少外部操作确认卡片模板；纯只读 Tool 不受该配置缺失影响
-
-### Requirement: 钉钉业务 MCP 上线必须验证真实读写链路
-上线证据 SHALL 使用全新 Job 和当前 Publication/角色快照，至少覆盖每个只读 Profile 的真实成功或明确权限拒绝，以及待办、日历、AI 表格记录、机器人消息和工作通知 mutation 的确认同意与拒绝。验收 MUST 关联 Job、Tool Call、Action Intent、卡片、Provider attempt 和终态，并不得保存 Secret 或无界业务正文。
-
-#### Scenario: 只读 Profile 验收
-- **WHEN** 运维执行联系人、部门、待办、日历、AI 表格和通知状态的代表性真实查询
-- **THEN** 证据区分成功、外部无数据和明确权限不足，不以 health 代替 Tool 调用
-
-#### Scenario: mutation 拒绝验收
-- **WHEN** 原用户在任一新 mutation 确认卡选择拒绝
-- **THEN** 证据显示 Intent 为 REJECTED、Provider 写入 attempt 为零且卡片进入不会执行终态
-
-#### Scenario: mutation 同意验收
-- **WHEN** 原用户确认代表性的待办、日历、AI 表格、机器人消息或工作通知操作
-- **THEN** 证据可从 Tool Call 追溯到唯一 Provider attempt 与真实外部结果
-
-### Requirement: 钉钉测试数据重建必须显式受保护
-系统 SHALL 提供仅限非生产环境的一次性钉钉测试数据重建命令；常规数据库迁移、应用启动和管理页面 MUST NOT 自动执行该清理。
-
-#### Scenario: 只读预检重建范围
-- **WHEN** 操作者运行重建命令的默认预检模式
-- **THEN** 系统只读取并报告环境、数据库指纹、目标连接、各类待清记录数、受影响应用渠道绑定、Secret 撤销范围、明确保留项和计划 Hash，不删除或修改记录
-
-#### Scenario: 使用匹配计划执行重建
-- **WHEN** 非生产环境已停止钉钉写入，操作者提交固定确认文字、显式执行参数和仍与当前数据匹配的计划 Hash
-- **THEN** 系统在单一事务中清理约定钉钉身份与渠道测试数据、停用旧连接并撤销其专属 Secret，成功后输出实际数量和保留数据复核
-
-#### Scenario: 生产环境请求重建
-- **WHEN** 生产环境以任何参数调用重建命令
-- **THEN** 系统永久拒绝执行且不得开始删除事务
-
-#### Scenario: 预检后数据发生变化
-- **WHEN** 执行时数据库指纹、目标集合或记录数量与计划 Hash 不一致
-- **THEN** 系统拒绝执行并要求重新预检，不得使用旧确认继续
-
-#### Scenario: 重建事务中途失败
-- **WHEN** 任一删除、Secret 撤销或引用处理步骤失败
-- **THEN** 系统整体回滚并报告安全错误，不留下部分清理状态
-
-### Requirement: 重建保留跨域运行历史
-钉钉测试数据重建 MUST 保留平台人员、角色、登录会话、ONES 身份与个人 Credential、Agent、业务应用与 MCP Tool 发布配置，以及全部 Agent Job、Tool Call 结果和 Delivery 记录；历史 Publication 中的旧 connector 引用 SHALL 只标记为不可运行历史来源，不得被静默改写到新 connector。
-
-#### Scenario: 清理存在历史Job的旧连接
-- **WHEN** 待清理钉钉 connector 已经产生 Agent Job、Tool Call 和 Delivery 记录
-- **THEN** 系统保留这些运行记录，使其旧 connector 来源可审计但不可继续路由
-
-#### Scenario: 清理后重新接入
-- **WHEN** 重建成功后管理员创建企业和新应用 connector
-- **THEN** 既有业务应用主体仍存在，但必须显式选择新 connector 并重新发布
-- **AND** 不得自动把历史 Publication 改指新 connector
-
-### Requirement: 核心就绪与领域观测不能替代工具或Provider验收
-`/api/ready` SHALL 按当前代码计算数据库、schema、RabbitMQ和Master Key的core_ready，并把其他可观测运行态作为独立字段。管理Dashboard提供Job、Delivery和队列计数；文件运维按内部接口探测其领域依赖。上述结果 MUST NOT 被解释为所有业务MCP、外部worker、Provider权限或新Job链路已经可用。
-
-#### Scenario: API核心就绪
-- **WHEN** 数据库、schema、RabbitMQ和Master Key均通过API的当前检查
-- **THEN** API可以报告core_ready，但仍需分别检查实际Tool准入、对应服务和真实Provider调用结果。
-
-#### Scenario: Dashboard显示无积压
-- **WHEN** 管理页面显示Job和队列计数正常
-- **THEN** 该观测不产生Tool调用证据，也不改变发布或Provider权限事实。
+#### Scenario: 扫描 Compose 配置
+- **WHEN** 运维渲染生产 Compose
+- **THEN** Secret 只通过既有平台 Secret 解析路径到达拥有外部连接的 worker，且不出现在环境示例明文中

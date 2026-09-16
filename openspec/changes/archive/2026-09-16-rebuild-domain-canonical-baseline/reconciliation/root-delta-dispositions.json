@@ -1,0 +1,218 @@
+[
+  {
+    "old_requirement": "原型提供Agent应用平台静态Shell",
+    "disposition": "静态原型展示约束退出当前运行基线；真实管理界面由本领域API和权限条款覆盖，原文保存在重建快照"
+  },
+  {
+    "old_requirement": "Dashboard明确区分原型数据与真实运行数据",
+    "disposition": "静态原型展示约束退出当前运行基线；真实管理界面由本领域API和权限条款覆盖，原文保存在重建快照"
+  },
+  {
+    "old_requirement": "Dashboard展示目标控制面全景",
+    "disposition": "静态原型展示约束退出当前运行基线；真实管理界面由本领域API和权限条款覆盖，原文保存在重建快照"
+  },
+  {
+    "old_requirement": "原型不得执行真实业务或网络行为",
+    "disposition": "静态原型展示约束退出当前运行基线；真实管理界面由本领域API和权限条款覆盖，原文保存在重建快照"
+  },
+  {
+    "old_requirement": "原型支持桌面和窄屏评审",
+    "disposition": "静态原型展示约束退出当前运行基线；真实管理界面由本领域API和权限条款覆盖，原文保存在重建快照"
+  },
+  {
+    "source": "openspec/changes/extend-ones-mcp-query-conditions/specs/agent-model/spec.md",
+    "requirement": "Agent必须通过ONES查询Skill编排复杂只读查询",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/recover-agent-publication-after-runtime-upgrade/specs/agent-model/spec.md",
+    "requirement": "Agent Runtime 协议升级后必须可由管理面恢复",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "old_requirement": "Web必须提供默认Agent Profile管理入口",
+    "disposition": "非默认Python Agent已支持按资源权限编辑；删除默认Agent独占写入的过时场景"
+  },
+  {
+    "old_requirement": "Agent管理界面只管理Python Runtime并只读展示历史TypeScript事实",
+    "disposition": "当前服务不保证TypeScript Publication详情兼容；保留原始历史身份并明确拒绝执行"
+  },
+  {
+    "old_requirement": "原型展示一个Runtime多个业务应用的产品模型",
+    "disposition": "静态原型要求由真实应用控制面合同替代；动态API Capability概念不再作为当前功能"
+  },
+  {
+    "old_requirement": "原型展示三个代表性业务应用",
+    "disposition": "静态原型要求由真实应用控制面合同替代；动态API Capability概念不再作为当前功能"
+  },
+  {
+    "old_requirement": "原型展示应用工作区目标页签",
+    "disposition": "静态原型要求由真实应用控制面合同替代；动态API Capability概念不再作为当前功能"
+  },
+  {
+    "old_requirement": "原型区分确定性API节点与Agent自主能力",
+    "disposition": "静态原型要求由真实应用控制面合同替代；动态API Capability概念不再作为当前功能"
+  },
+  {
+    "old_requirement": "原型展示API Capability而非底层数据源工具",
+    "disposition": "静态原型要求由真实应用控制面合同替代；动态API Capability概念不再作为当前功能"
+  },
+  {
+    "old_requirement": "原型展示能力授权交集和版本冻结",
+    "disposition": "静态原型要求由真实应用控制面合同替代；动态API Capability概念不再作为当前功能"
+  },
+  {
+    "source": "openspec/changes/scale-docling-processing-concurrency-two/specs/business-application/spec.md",
+    "requirement": "Profile hash更新不得阻断应用管理和重新发布",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/scale-docling-processing-concurrency-two/specs/business-application/spec.md",
+    "requirement": "Profile hash切换前必须排空旧hash非终态处理",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/enforce-runtime-execution-budgets/specs/business-application/spec.md",
+    "requirement": "最大工具调用次数必须支持配置至500",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "old_requirement": "控制面变更不自动改变现有数据面",
+    "disposition": "旧条款宣称激活仍runtime_wired=false、入口固定默认Agent，与当前routing实现相反；替换为显式激活合同"
+  },
+  {
+    "old_requirement": "第一阶段运行时只接管受支持的钉钉Trigger",
+    "disposition": "runtime.py 当前明确支持三种入口，第一阶段仅钉钉限制已失效"
+  },
+  {
+    "source": "openspec/changes/expose-job-tool-contract-evidence/specs/platform-operations/spec.md",
+    "requirement": "部署必须注入可比较的组件构建身份",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/expose-job-tool-contract-evidence/specs/platform-operations/spec.md",
+    "requirement": "文件工作区验收覆盖真实端到端链路",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/expose-job-tool-contract-evidence/specs/platform-operations/spec.md",
+    "requirement": "单一文件合同migration必须删除旧结构并拒绝遗留引用",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/expose-job-tool-contract-evidence/specs/platform-operations/spec.md",
+    "requirement": "单一合同部署不得保留回退服务",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/scale-docling-processing-concurrency-two/specs/platform-operations/spec.md",
+    "requirement": "Compose固定部署双Processing Worker和单Docling双执行器",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/scale-docling-processing-concurrency-two/specs/platform-operations/spec.md",
+    "requirement": "文档处理就绪聚合两个Worker与两个槽位",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/pin-docling-model-digests-by-platform/specs/platform-operations/spec.md",
+    "requirement": "Docling服务固定版本并保持内部隔离",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/pin-docling-model-digests-by-platform/specs/platform-operations/spec.md",
+    "requirement": "布局OCR复用隔离处理拓扑并固定模型artifact",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/expand-governed-dingtalk-mcp-phase-2/specs/platform-operations/spec.md",
+    "requirement": "Phase 2 Provider 配置必须固定且按工具就绪",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/expand-governed-dingtalk-mcp-phase-2/specs/platform-operations/spec.md",
+    "requirement": "钉钉权限不足必须形成精确降级事实",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/expand-governed-dingtalk-mcp-phase-2/specs/platform-operations/spec.md",
+    "requirement": "外部操作 worker 必须按固定 operation 注册表就绪",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/expand-governed-dingtalk-mcp-phase-2/specs/platform-operations/spec.md",
+    "requirement": "Phase 2 上线必须验证真实读写链路",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/add-governed-dingtalk-user-message/specs/platform-operations/spec.md",
+    "requirement": "官方用户批量机器人消息必须具有固定 Provider 合同和就绪门禁",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/add-governed-dingtalk-user-message/specs/platform-operations/spec.md",
+    "requirement": "上线证据必须覆盖真实人员解析和单人及多人发送链",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/repair-backend-baseline-regressions/specs/platform-operations/spec.md",
+    "requirement": "表重建 migration 必须恢复仍生效的约束与索引",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/repair-backend-baseline-regressions/specs/platform-operations/spec.md",
+    "requirement": "内置初始化 fixture 必须保持跨 Publication 引用自洽",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/import-ones-knowledge-text-foundation/specs/platform-operations/spec.md",
+    "requirement": "知识存储通过统一来源身份和独立收录关系管理",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/import-ones-knowledge-text-foundation/specs/platform-operations/spec.md",
+    "requirement": "ONES 离线文本导入必须预检并可恢复且幂等",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/import-ones-knowledge-text-foundation/specs/platform-operations/spec.md",
+    "requirement": "工作项关联必须保留外部身份和来源证据",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/import-ones-knowledge-text-foundation/specs/platform-operations/spec.md",
+    "requirement": "知识 schema 必须纳入现有迁移与事实源治理",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/import-ones-knowledge-text-foundation/specs/platform-operations/spec.md",
+    "requirement": "最终项目 Schema 必须具有完整中文注释",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/configure-tool-resource-roles/specs/platform-operations/spec.md",
+    "requirement": "Registry exposes stable runtime revision",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "source": "openspec/changes/configure-tool-resource-roles/specs/platform-operations/spec.md",
+    "requirement": "管理端资源角色可创建并复用",
+    "disposition": "按代码核对后合入本领域；后续定点纠正过时语义"
+  },
+  {
+    "old_requirement": "实施必须遵循六阶段 Gate",
+    "disposition": "旧单次实施计划，不是代码长期运行约束；保留当前Migrator/事务/授权/恢复门禁"
+  },
+  {
+    "old_requirement": "Consolidation migration 必须以 Baseline 100 adoption 为前置",
+    "disposition": "该句错误排除fresh generation；以新库100起步和精确042独立adoption的实际代码边界替代"
+  },
+  {
+    "old_requirement": "JavaScript 构建与 CI 必须统一使用 npm",
+    "disposition": "当前Makefile/frontend容器与CI包管理器并未统一；根据实际入口记录，不虚构统一已实现"
+  },
+  {
+    "old_requirement": "单一文件合同migration必须删除旧结构并拒绝遗留引用",
+    "disposition": "旧119/120切换步骤退出当前常态规范；由当前Schema与历史迁移边界覆盖，原任务不改写"
+  }
+]

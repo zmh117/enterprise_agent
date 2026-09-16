@@ -1,6 +1,8 @@
-# 企业级只读诊断 Agent 平台
+# 企业级受治理 Agent 平台
 
-这是一个面向企业内部诊断场景的 Agent 平台。平台保留身份、RBAC、应用发布、资源、Secret、审计和 Job 历史治理；工具协议统一为标准 MCP，不提供任意 URL、脚本、Shell 或写操作执行器。
+这是一个面向企业内部诊断、查询、文件处理和受确认外部操作的 Agent 平台。平台保留身份、RBAC、应用发布、资源、Secret、审计和 Job 历史治理；工具协议统一为标准 MCP。DB/Redis/Loki保持只读，ONES与钉钉的代码固定mutation通过逐次确认和独立worker执行，不提供任意URL、脚本或Shell。
+
+当前规范从 [10个领域主规格导航](openspec/specs/README.md) 进入；旧change和archive仅作显式历史追溯。规范与代码实现、真实环境验收分别判断。
 
 ```text
 钉钉 / Webhook / Debug API
@@ -9,8 +11,9 @@
   -> file-worker -> file-service -> MinIO
   -> agent-worker
   -> Python Runtime
-  -> tool-mcp、ones-mcp 或 File MCP 接口
-  -> 已发布工具资源 / 当前用户加密 ONES 凭据 / 受治理文件版本
+  -> tool-mcp、ones-mcp、dingtalk-mcp 或 File MCP 接口
+  -> 已发布工具资源 / 当前用户业务身份 / 受治理文件版本
+  -> 外部mutation: Action Intent -> 用户确认 -> external-action-worker
   -> Job / Tool Call / Delivery / Audit
 ```
 
@@ -21,9 +24,10 @@ ONES 本人身份绑定属于统一身份体系，独立于旧 API Platform。�
 ## 当前边界
 
 - 唯一 Agent Runtime：`python-v1`；历史 `typescript-v1` 事实仅供只读审计。
-- 一个 Worker 负责调度，并按 Agent Publication 固定的 Python Runtime 协议执行。
-- 标准 MCP Server：`tool-mcp` 继续无个人认证；`ones-mcp` 使用 MCP Python SDK 2.0 无状态 Streamable HTTP，仅发布 `ones_work_item_search` 并验证短期 Principal JWT；第一阶段不提供 Cursor/stdio 旁路。
-- 任务文件：File Service 内置固定 File MCP 和内部流式 API，是唯一 MinIO 入口；第一阶段仅支持 UTF-8 TXT。逻辑工作区保存在 PostgreSQL/MinIO，物理 Job 沙盒位于 Runtime 容器 tmpfs 并在终态删除。
+- 当前Runtime协议为1.5，代码仍支持1.4；Job、重试与Publication保持各自冻结事实。
+- 标准MCP：`tool-mcp`复核私有Job上下文；`ones-mcp`与`dingtalk-mcp`验证各自audience的短期Principal JWT，按固定目录提供查询和受确认mutation。完整工具合同见相关canonical领域与代码Manifest。
+- 任务文件：File Service内置File MCP与内部流式API，是唯一业务对象存储入口；TXT/Markdown可读写，LOG只读。PDF、DOCX、PPTX、XLSX、PNG、JPEG、WebP使用固定Docling/OCR Profile派生Markdown，原件不进入Job Sandbox。
+- 文档处理：两个Processing Worker各单并发，一个Docling容器含两个执行器；全局两个槽位由PostgreSQL经File Service协调。
 - 只读工具：ER、业务流、数据库 schema/query、Redis、Loki。
 - 工具资源：Draft、技术验证、Publish、Disable、Archive；运行时只解析已发布 Revision。
 - 工具目标由 Agent 根据用户输入和发布 Skill 在每次 Tool Call 中显式提供，服务端实时复核角色、应用、数据范围和唯一资源。
@@ -34,7 +38,7 @@ ONES 本人身份绑定属于统一身份体系，独立于旧 API Platform。�
 已有数据库升级前先阅读 [Schema Baseline 升级手册](docs/operations/schema-baseline-upgrade.md)。`migrator` 是唯一 schema 写入入口；失败时必须修复迁移，不要绕过 `service_completed_successfully`。
 
 ```bash
-cp .env.example .env
+test -e .env || cp .env.example .env
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 make check
@@ -65,8 +69,9 @@ Compose 的核心执行服务为：
 - `postgres`、`rabbitmq`
 - `agent-worker`
 - `python-agent-runtime`
-- `tool-mcp`、`ones-mcp`（本地 Mock 由独立 Compose 启动）
+- `tool-mcp`、`ones-mcp`、`dingtalk-mcp`、`external-action-worker`（无可部署ONES Mock）
 - `file-service` 和替代旧附件消费者的 `file-worker`；无独立 `file-mcp`
+- `file-processing-worker`、`file-processing-worker-2` 和内部 `docling-serve`
 - 钉钉、Webhook 和独立投递 Worker
 
 ## 配置与 Secret

@@ -62,7 +62,7 @@ docker compose up -d api-server agent-worker
 docker compose ps
 ```
 
-`migrator` 必须成功完成空库 `100..119 -> initial admin bootstrap -> runtime grants`；
+`migrator` 必须成功完成空库 `100..132 -> initial admin bootstrap -> runtime grants`；
 依赖服务使用 `service_completed_successfully`，禁止跳过。Schema 代际、legacy 042 adoption
 和管理员 Secret 输入见 [Schema Baseline 升级手册](schema-baseline-upgrade.md) 与
 [空库手册](schema-baseline-bootstrap.md)。

@@ -7,6 +7,7 @@ context: |
   identity-access、agent-model、business-application、channel-conversation、
   document-file-processing、execution-delivery、builtin-tool-resource、
   governed-api-capability、platform-operations、task-file-workspace。
+  领域导航位于 openspec/specs/README.md，导航本身不是规范。
   创建或修改 OpenSpec artifact 时，只读取与当前请求相关的 canonical domain spec。
   不得默认扫描 openspec/changes/ 或 openspec/changes/archive/；只有用户指定 active change、
   执行 change 工作流或明确要求历史审计时，才读取对应目录。
@@ -14,22 +15,15 @@ context: |
   canonical Requirement。需要改变当前规范时，必须通过明确 change 更新 canonical specs。
   Canonical spec 表达已接受规范，不自动证明运行能力已经实现；实现状态仍需代码、migration、
   测试和必要的运行证据，并区分 Confirmed-current 与 Documented-intent。
+  2026-09-16 基线重建关闭此前全部 active change，未完成验收保持未完成。
+  旧 capability delta 必须先映射到上述领域，不得按旧目录名重建碎片主规格。
+  ONES 和钉钉业务 MCP 归 governed-api-capability；通用 Action Intent 执行归 execution-delivery。
+  用户指定按代码重建时，应记录代码与旧文档差异，不能机械复制历史 delta 或假称真实环境验收通过。
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
-
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - 明确受影响的 canonical 领域和当前代码事实；历史提案不自动构成当前需求。
+  specs:
+    - delta 相对于当前 canonical 领域，保留仍生效的授权、安全、失败和恢复边界。
+  tasks:
+    - 区分代码修改、本地验证与真实环境验收；归档不得把未完成项改为完成。

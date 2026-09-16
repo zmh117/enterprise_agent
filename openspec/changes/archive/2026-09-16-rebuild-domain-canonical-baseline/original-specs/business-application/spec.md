@@ -1,22 +1,10 @@
 # business-application Specification
 
 ## Purpose
-
-定义业务应用组合 Agent/Workflow/Tool、策略、入口和投递的草稿、发布、激活与运行准入合同。
-
-## 领域边界
-
-应用的部署环境固定为 `local`，与每次工具调用的业务数据 environment/base/workshop 分离。身份授权见 `identity-access`，消息事实见 `channel-conversation`，运行预算见 `execution-delivery`，文件语义见两个文件领域。
-
-## 实现依据与验证边界
-
-代码：`backend/app/modules/business_application/domain/policies.py`、`domain/runtime.py`、`application/service.py`、`application/mcp_tool_composition.py`（后三者相对于该模块）、`backend/app/modules/job/domain/execution_policy.py`、`frontend/src/contexts/applications/`。
-
-测试定义：`backend/tests/test_business_application_control_plane.py`、`backend/tests/test_business_application_runtime_routing.py`、`backend/tests/test_job_execution_policy.py`。
-
-本规格于 2026-09-16 按当前代码重建。代码与测试定义可定位实现和覆盖范围；本次文档重建不代表执行了真实模型、Provider、数据库升级或部署验收。
-
+定义业务应用对 Agent、Workflow、代码注册 MCP Tool、入口、权限、文件策略和运行策略的装配、发布与路由契约。
 ## Requirements
+
+<!-- Reconciled from mcp_new capability: `application-tool-resource-composition` -->
 
 ### Requirement: Agent 与 Application 必须冻结精确 MCP Tool 子集
 Agent Publication SHALL 冻结代码 Manifest 中精确 Tool identifier 与 schema hash；Application Publication MUST 只冻结所选 Agent Tool Envelope 的显式子集，不得保存 Capability Release、Handler Version、Resource Mapping 或动态 Server URL。
@@ -37,7 +25,7 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **THEN** Agent 可以按 Skill 以 `environment=test` 调用已分配 Tool，服务端不得用空 Routing Context 覆盖或拒绝该目标
 
 ### Requirement: Tool 可调用性必须满足业务治理交集
-运行时 MUST 只暴露同时满足 Agent Envelope、Application 子集、有效角色 Tool grant、应用访问、业务数据范围、Manifest/schema 与 effect/policy 一致的 Tool。资源型 Tool 还必须唯一解析已发布 Resource；业务 MCP 按对应 Provider 身份与范围复核，不能套用 DB/Redis/Loki Resource 解析。
+运行时 MUST 只暴露同时满足 Agent Envelope、Application 子集、有效角色 Tool grant、应用访问、业务数据范围、Manifest/schema 一致和唯一资源解析的 Tool。
 
 #### Scenario: 用户有工具权限但应用未选择
 - **WHEN** 用户具有 Tool grant 但 Application Publication 未选择该 Tool
@@ -47,8 +35,10 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 系统 MUST NOT 保留 `business_application_revision_target`、`business_application_publication_target`、`agent_job_execution_scope` 或 `agent_job.execution_scope_id/execution_scope_hash` 作为运行目标或授权事实；会话隔离继续使用 `agent_session.execution_scope_hash`，实际工具目标只来自本次 Tool Call 并实时鉴权。
 
 #### Scenario: 已有数据库升级
-- **WHEN** 检查当前数据库 schema 和运行读写路径
-- **THEN** 退役目标表与Job目标列不作为当前事实源，而历史 Job 主记录、Tool Call 审计与会话隔离事实保持可读
+- **WHEN** 已执行旧目标冻结迁移的数据库升级到本变更最终 schema
+- **THEN** 遗留目标表、Job 目标列和索引被删除，而历史 Job 主记录、Tool Call 审计与会话隔离事实保持可读
+
+<!-- Reconciled from mcp_new capability: `business-application-admin-workbench` -->
 
 ### Requirement: 管理API受统一身份和应用级权限保护
 系统 SHALL 复用现有Web Session、RBAC和CSRF保护Business Application管理API，并 MUST 使用`business_application`资源及read、create、edit、publish、activate动作进行授权。
@@ -113,7 +103,7 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 #### Scenario: 前端未登录
 - **WHEN** 管理API返回401
 - **THEN** 页面显示需要现有管理会话的明确状态
-- **AND** 不显示虚构业务应用、模拟成功数据或重复的登录表单
+- **AND** 不显示虚构业务应用、模拟成功数据或本变更内的登录表单
 
 ### Requirement: Web支持受控的应用编辑、校验和发布
 系统 SHALL 为有权限用户提供严格表单来创建应用、编辑草稿、请求校验、发布和管理环境激活，并 MUST 根据权限、revision和校验结果控制动作可用性。页面 MUST 使用服务端统一评估器返回的 `runtime_wired`、`runtime_status` 和逐组件状态展示真实接线情况，不得把已接管或仅存储的组件统一描述为“尚未接线”。
@@ -158,6 +148,8 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **WHEN** 用户通过键盘或辅助技术浏览、提交或查看错误
 - **THEN** 表单标签、状态、错误摘要、按钮和禁用原因具有可理解名称
 - **AND** 关键状态不只通过颜色表达
+
+<!-- Reconciled from mcp_new capability: `business-application-control-plane` -->
 
 ### Requirement: 系统持久化稳定的业务应用聚合
 系统 SHALL 为每个 Business Application 持久化唯一编码、名称、描述、项目范围、负责人、生命周期状态和当前修订信息，并 MUST 将业务应用作为 Agent Publication、Workflow Publication、Trigger、Delivery、会话与执行策略、文档处理配置以及 MCP Tool 子集的装配边界。
@@ -230,6 +222,21 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **THEN** 系统将应用标记为 archived 并从默认可编辑列表中隐藏
 - **AND** 历史查询仍可读取其 publication 和 audit
 
+### Requirement: 控制面变更不自动改变现有数据面
+系统 MUST 将业务应用草稿、发布和激活作为控制面配置管理，第一版 MUST NOT 自动修改钉钉入口、Webhook入口、Agent Job创建、RabbitMQ消费或Delivery路径。
+
+#### Scenario: 发布并激活应用
+- **WHEN** 管理员发布业务应用并在测试环境激活
+- **THEN** 系统更新业务应用控制面数据和解析读模型
+- **AND** 现有钉钉和Webhook消息仍沿用原默认Agent执行链路
+
+#### Scenario: 查询应用运行时接线状态
+- **WHEN** 管理端读取应用详情或激活结果
+- **THEN** 响应明确返回当前 `runtime_wired=false` 或等效状态
+- **AND** 不暗示该应用已经接管生产入口
+
+<!-- Reconciled from mcp_new capability: `business-application-execution-policy` -->
+
 ### Requirement: 业务应用执行策略必须固定到Agent Job
 系统 MUST 在业务应用路由命中且创建 Agent Job 前，从命中的 Business Application Publication 读取 `max_turns`、`timeout_seconds` 和 `max_tool_calls`，计算有效执行策略并把请求值、有效值、策略版本及来源 Publication 一并持久化到 Job。迁移后的每个新 Agent Job MUST 具有合法 v1 Execution Policy 快照；Worker MUST 只使用 Job 固定的策略，MUST NOT 在消费、重试或执行时重新解析当前活动 Deployment。
 
@@ -265,6 +272,11 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **THEN** Job 的有效 `timeout_seconds` 为 `180`
 - **AND** 管理端能够看到请求值 `300` 和有效值 `180`
 
+#### Scenario: 禁止所有工具调用
+- **WHEN** 业务应用配置 `max_tool_calls=0`
+- **THEN** Agent 可以生成不调用工具的答复
+- **AND** 第一次内部工具调用在进入 ToolRegistry 前被策略拒绝
+
 ### Requirement: Worker必须强制执行三个策略字段
 系统 MUST 对每次 Agent 执行 attempt 强制执行有效 `max_turns`、`timeout_seconds` 和 `max_tool_calls`。工具调用次数 SHALL 统计该 attempt 内所有进入内部 MCP 工具桥的成功或失败调用尝试，超过上限的调用 MUST NOT 进入 ToolRegistry 或任何下游数据源。
 
@@ -276,7 +288,7 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 #### Scenario: 达到墙钟超时
 - **WHEN** Agent attempt 超过固定的 `timeout_seconds`
 - **THEN** 系统取消当前 SDK 执行并记录安全超时原因
-- **AND** Job 进入 TIMEOUT 并复用失败投递链；timeout 不按普通瞬时错误重试
+- **AND** 后续是否重试继续遵守现有 timeout retry 策略及同一固定执行策略
 
 #### Scenario: 超过最大工具调用数
 - **WHEN** 当前 attempt 已使用完 `max_tool_calls`
@@ -317,12 +329,15 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **AND** 整体 `runtime_status` 保持 `partially_wired`
 
 ### Requirement: retention_days当前仅保存且不执行自动清理
-系统 SHALL 将 `retention_days` 作为 stored_only 的会话治理配置，当前没有由它触发的会话、消息、Job 或审计自动清理。文件工作区的独立生命周期以 task-file-workspace 为准。
+系统 MUST NOT 因本变更新增按 `retention_days` 删除或归档会话、消息、摘要、附件、Job、工具调用或审计事件的 Worker、定时任务或队列。
 
 #### Scenario: retention_days已经到期
 - **WHEN** 某会话年龄超过其保存的 `retention_days`
-- **THEN** 系统不因该字段自动删除或归档该会话数据
+- **THEN** 本变更不自动删除或归档该会话数据
 - **AND** 管理端继续把该字段标记为尚未接线的治理能力
+
+
+<!-- Reconciled from mcp_new capability: `business-application-publication` -->
 
 ### Requirement: 发布前执行跨组件完整校验
 系统 MUST 在创建 Business Application Publication 前校验应用状态、草稿完整性、Agent Publication、Workflow Publication、Channel Connector、Trigger、Actor、Delivery、MCP Tool 子集、业务范围和策略约束。所选 Agent Publication MUST 包含受支持且一致的 `python-v1` runtime kind；应用草稿不得保存 Runtime override、API Capability 或 Resource Mapping。历史 `typescript-v1` Application Publication 只可读取，不得用于创建新 Publication。
@@ -453,6 +468,8 @@ Business Application 管理 API 与前端 SHALL 允许管理员从有效 Python 
 - **WHEN** 已被应用引用的 Python Agent 发布新 revision
 - **THEN** 应用继续使用原 Agent Publication，直到管理员显式更新、发布并激活应用
 
+<!-- Reconciled from mcp_new capability: `business-application-role-access` -->
+
 ### Requirement: 业务应用是用户运行授权的入口对象
 系统 SHALL 允许角色对具体业务应用授予 `invoke` 或等价使用能力。业务应用路由下命中的应用授权 MUST 封装该应用固定的项目和 Agent 运行入口许可，普通管理员不得再为同一路径手工组合项目和 Agent 使用权限。
 
@@ -465,22 +482,22 @@ Business Application 管理 API 与前端 SHALL 允许管理员从有效 Python 
 - **THEN** 系统在创建 Agent job 前拒绝请求并返回“当前用户无权使用该业务应用”
 
 ### Requirement: 每个业务应用独立配置能力和数据范围
-系统 SHALL 让角色在每个业务应用授权项下独立选择代码注册的业务能力和环境、基地、车间范围。同一角色绑定多个业务应用时，一个应用的数据范围 MUST NOT 自动用于另一个应用。
+系统 SHALL 让角色在每个业务应用授权项下独立选择只读业务能力和环境、基地、车间范围。同一角色绑定多个业务应用时，一个应用的数据范围 MUST NOT 自动用于另一个应用。
 
 #### Scenario: 同一角色的两个应用使用不同范围
 - **WHEN** 角色为生产应用选择生产一号基地、为测试应用选择测试基地
 - **THEN** 两个应用分别使用自己的能力和范围进行授权，不发生跨应用继承
 
 ### Requirement: 业务能力选择受多层安全上限约束
-系统 SHALL 只允许角色选择同时满足“业务应用已装配、Agent publication 已允许、平台工具已启用、工具已注册且effect/confirmation policy合法”的业务能力。任一上限后续收紧时 MUST 立即从有效能力集合中排除对应能力。
+系统 SHALL 只允许角色选择同时满足“业务应用已装配、Agent publication 已允许、平台工具已启用、工具已注册且只读”的业务能力。任一上限后续收紧时 MUST 立即从有效能力集合中排除对应能力。
 
 #### Scenario: 角色勾选未装配能力
 - **WHEN** 客户端提交不属于目标业务应用装配集合的能力
 - **THEN** 后端拒绝整个授权区提交
 
-#### Scenario: 应用切换到更严格的Agent发布
-- **WHEN** 应用显式发布并激活引用新Agent Publication的版本，且该版本不再装配角色曾选择的工具
-- **THEN** 后续授权复核按活动应用的精确Tool集合阻止调用；旧Job快照保持原值，单独发布Agent不自动改变应用
+#### Scenario: Agent 移除已授权工具
+- **WHEN** 新 Agent publication 不再允许角色曾经选择的工具
+- **THEN** 该工具不再暴露给运行时，授权中心显示“被 Agent 安全上限阻止”
 
 ### Requirement: 当前全部保存明确资源集合
 系统 SHALL 将管理员选择的“当前全部”展开为保存时存在的明确环境、基地或车间标识集合，不得创建包含未来新增资源的动态通配授权。
@@ -503,16 +520,16 @@ Business Application 管理 API 与前端 SHALL 允许管理员从有效 Python 
 - **WHEN** `platform-admin` 未加入任何业务访问角色
 - **THEN** 该用户可以创建和配置角色，但不能直接运行受保护业务应用
 
-### Requirement: 业务应用访问必须使用当前角色授权且不得回退旧策略
-BusinessAuthorizationService SHALL 从当前有效角色的应用访问、精确Tool集合与数据范围求值；没有对应应用访问时返回no_application_role，不能因旧项目/Agent allow或管理员身份自动放行。显式拒绝继续优先；历史原始策略不能作为现角色配置缺失时的兼容授权来源。
+### Requirement: 旧原始策略仅作为受控兼容和高级例外
+系统 SHALL 在独立身份授权重置 change 完成前保留现有用户/角色原始策略的安全兼容读取，不得删除或静默扩大旧策略。命中的应用级显式拒绝 MUST 阻止旧策略回退；新角色配置不得要求普通管理员理解旧策略。
 
-#### Scenario: 未配置应用访问
-- **WHEN** 用户只有旧项目或Agent允许记录，没有当前应用角色访问项
-- **THEN** 业务授权拒绝，不保持旧策略的隐式运行效果。
+#### Scenario: 旧用户尚未重新配置
+- **WHEN** 用户尚无新业务应用授权但仍命中既有项目和 Agent 允许策略
+- **THEN** 兼容模式可以保持其原有授权效果，并在授权解释中标记“旧策略兼容”
 
-#### Scenario: 存在显式拒绝
-- **WHEN** 用户命中应用或更高优先级拒绝
-- **THEN** 拒绝优先，不能靠另一允许记录绕过。
+#### Scenario: 应用级拒绝存在
+- **WHEN** 用户命中目标业务应用的高级拒绝
+- **THEN** 系统拒绝访问，不得用旧项目或 Agent 允许策略绕过
 
 ### Requirement: 服务账号仅通过业务授权参与非交互式入口
 系统 SHALL 允许服务账号通过业务访问角色获得 Webhook 等非交互式业务应用权限，但 MUST NOT 因该角色获得管理后台登录或功能权限。
@@ -520,6 +537,8 @@ BusinessAuthorizationService SHALL 从当前有效角色的应用访问、精确
 #### Scenario: Webhook 服务账号有业务角色
 - **WHEN** Webhook 触发器的启用服务账号获得目标业务应用、能力和数据范围授权
 - **THEN** 系统按该服务账号的角色执行应用授权和工具范围检查
+
+<!-- Reconciled from mcp_new capability: `business-application-runtime-routing` -->
 
 ### Requirement: 应用部署只使用local且与业务数据环境相互独立
 系统 MUST 只允许创建、激活、回退、查询或停用 `local` Business Application Deployment，并 MUST NOT 使用 Channel event 的业务数据 `routing.environment` 选择应用版本。
@@ -556,6 +575,23 @@ BusinessAuthorizationService SHALL 从当前有效角色的应用访问、精确
 - **WHEN** `FEATURE_PUBLISHED_AGENT_RUNTIME` 关闭
 - **THEN** `runtime_wired` 为 `false` 且整体状态为 `not_wired`
 - **AND** 响应明确指出数据面闸门未开启
+
+### Requirement: 第一阶段运行时只接管受支持的钉钉Trigger
+系统 MUST 只将 `dingtalk_private + CURRENT_SENDER` 和 `dingtalk_group + CURRENT_SENDER` 标记为当前可执行 Trigger，并 SHALL 将 Webhook 和未执行的 Workflow 路径明确标记为 `stored_only` 或 `unsupported`。MCP Tool 可用性 MUST 由已发布 Agent/Application 交集和当前授权独立判断，不得沿用旧 API Capability 目录状态。
+
+#### Scenario: 评估钉钉私聊应用
+- **WHEN** Publication 包含合法 `dingtalk_private` Trigger 和当前发送人 actor policy
+- **THEN** 运行时就绪评估器按钉钉私聊支持矩阵校验该 Trigger
+
+#### Scenario: 评估Webhook Trigger
+- **WHEN** Publication 包含 Webhook Trigger
+- **THEN** Business Application Resolver 不接管该 Webhook
+- **AND** 管理端状态明确为 `stored_only` 而不是已生效
+
+#### Scenario: Publication包含未授权MCP Tool
+- **WHEN** 应用选择的 MCP Tool 不在 Agent Publication Envelope 或当前业务授权内
+- **THEN** 发布或执行校验失败关闭
+- **AND** 系统不得将其映射为任意数据库、Redis、Loki 或动态内部工具
 
 ### Requirement: 活动路由解析是确定性的三态结果
 系统 SHALL 将运行时路由解析结果建模为 `matched`、`not_matched` 或 `blocked`，并 MUST 使用部署环境、Trigger type、受信 connector ID 和规范化 routing key 唯一解析活动应用。
@@ -642,6 +678,71 @@ BusinessAuthorizationService SHALL 从当前有效角色的应用访问、精确
 - **WHEN** route 因完整性或策略错误被阻止
 - **THEN** 审计记录稳定 reason code 和安全摘要
 - **AND** 管理员可以从运行记录定位到对应应用版本
+
+<!-- Reconciled from mcp_new capability: `business-application-ui-prototype` -->
+
+### Requirement: 原型展示一个Runtime多个业务应用的产品模型
+系统 SHALL 展示一个共享Agent Runtime、多个Agent Profile和多个Business Application之间的关系，业务应用 MUST 作为前端主要管理对象，而不是把Channel、Workflow、Profile和Capability展示为缺少装配关系的平行资源。
+
+#### Scenario: 查看业务应用组成
+- **WHEN** 用户查看任一业务应用卡片或关系摘要
+- **THEN** 页面展示该应用引用的Agent Profile、Workflow、触发方式、API Capability数量、输出渠道和发布状态
+- **AND** 不暗示每个应用需要部署独立Agent Runtime
+
+### Requirement: 原型展示三个代表性业务应用
+系统 SHALL 展示钉钉私聊诊断助手、钉钉群聊诊断助手和Webhook告警分析助手，三个示例 MUST 体现不同的会话主体、触发身份和流程形态。
+
+#### Scenario: 查看钉钉私聊应用
+- **WHEN** 用户查看钉钉私聊诊断助手
+- **THEN** 页面展示按应用、租户和钉钉用户构成的人员会话语义
+- **AND** API调用主体来自当前消息发送人的内部身份
+
+#### Scenario: 查看钉钉群聊应用
+- **WHEN** 用户查看钉钉群聊诊断助手
+- **THEN** 页面展示群会话上下文和必须@机器人等触发条件
+- **AND** 明确API权限仍按当前消息发送人判断而不是按群共享
+
+#### Scenario: 查看Webhook告警应用
+- **WHEN** 用户查看Webhook告警分析助手
+- **THEN** 页面展示签名与幂等、服务账号、固定API节点、Agent分析和钉钉投递的静态流程
+- **AND** 不把Webhook请求伪装成真实人员身份
+
+### Requirement: 原型展示应用工作区目标页签
+系统 SHALL 以静态页签或关系卡形式展示应用概览、流程设计、渠道与触发器、能力授权和发布管理的目标结构，但 MUST NOT 实现真实路由和编辑行为。
+
+#### Scenario: 评审应用工作区
+- **WHEN** 用户查看业务应用区域
+- **THEN** 页面能够识别五个目标工作区及各自职责
+- **AND** 编辑、测试、保存、发布和回滚入口处于不可操作状态
+
+### Requirement: 原型区分确定性API节点与Agent自主能力
+系统 SHALL 在Workflow预览中区分显式API Capability节点和Agent自主决策节点，并展示两种模式可以在同一流程内组合。
+
+#### Scenario: 查看Webhook混合流程
+- **WHEN** 用户查看Webhook告警分析流程
+- **THEN** 固定告警查询和日志查询以显式API节点展示
+- **AND** Agent节点展示其可继续自主选择的只读Capability集合
+
+### Requirement: 原型展示API Capability而非底层数据源工具
+系统 SHALL 使用业务能力编码、名称、描述、风险、环境和可用状态展示Capability，并 MUST NOT 提供数据库、Redis、Loki连接或任意查询语言的配置入口。
+
+#### Scenario: 查看能力目录预览
+- **WHEN** 用户查看API能力区域
+- **THEN** 页面展示类似`log.query.application`、`order.query.detail`和`cache.query.status`的业务能力
+- **AND** 不展示DSN、数据库方言、Redis地址、Loki地址、SQL、Redis命令、LogQL、Shell或任意HTTP URL
+
+### Requirement: 原型展示能力授权交集和版本冻结
+系统 SHALL 展示有效能力由平台发布、应用授权、Workflow节点授权、Agent Profile授权和当前主体数据权限取交集，并展示应用发布冻结所引用的Profile、Workflow、Capability、Channel和策略版本。
+
+#### Scenario: 评审应用有效能力
+- **WHEN** 用户查看应用的能力授权摘要
+- **THEN** 页面展示权限交集而不是“允许全部API”的单一开关
+- **AND** 高风险写能力显示为未授权或MVP不可用
+
+#### Scenario: 评审发布快照
+- **WHEN** 用户查看发布管理摘要
+- **THEN** 页面展示发布版本引用的Profile Revision、Workflow Revision、Capability Version和Channel Binding
+- **AND** 不提供真实发布或回滚操作
 
 ### Requirement: Business Application 草稿配置任务工作区自然周期
 系统 SHALL 在 Business Application 草稿中提供严格结构的 `task_workspace_retention_period`，只允许 `DAY`、`WEEK` 或 `MONTH`，新草稿默认选择 `WEEK`。该字段只控制任务工作区自然周期，MUST NOT 被解释为消息附件、保留文件、消息、Job、工具调用或审计的内容保留期。
@@ -791,6 +892,8 @@ Business Application 草稿选择 `docling-layout-ocr-v2` 时，系统 MUST 在�
 - **THEN** 系统保持既有Manifest-only兼容行为
 - **AND** 不向该Job授予运行中动态选择Manifest外文件的能力
 
+<!-- Integrated from archived change: `2026-08-23-add-governed-office-embedded-image-layout-ocr/specs/business-application` -->
+
 ### Requirement: 管理端准确展示布局OCR能力边界
 管理端 SHALL 把`docling-layout-ocr-v2`展示为“Office内嵌图片布局OCR v2”，并 MUST 说明它提取文字、坐标、阅读顺序、几何关系和上游可用时的置信度，置信度未提供时会明确标注，而不提供VLM、箭头、颜色、图标、照片语义或精确图表因果。管理端 MUST 同时说明OCR使用Office包内原始嵌入图片、仅应用图片自身EXIF方向、不应用Office显示裁剪/旋转/翻转且结果可能包含已裁掉区域。管理端只能选择代码Profile，不得输入Docling URL、OCR引擎、模型、prompt、坐标阈值或原始options；依赖未全部就绪时不得显示READY。
 
@@ -804,6 +907,8 @@ Business Application 草稿选择 `docling-layout-ocr-v2` 时，系统 MUST 在�
 - **THEN** 管理端显示已配置但依赖未就绪并阻止激活或运行态READY
 - **AND** 不从静态Profile注册推断真实可用
 
+<!-- Integrated from archived change: `2026-08-23-converge-single-current-file-rule/specs/business-application` -->
+
 ### Requirement: Business Application不得配置直接文本规则版本
 Business Application Revision、Publication、canonical snapshot、管理API和管理端 MUST NOT 暴露或持久化可切换的直接文本规则版本。所有启用任务文件能力的应用 SHALL 使用平台代码固定的`text-v2`行为；调用方提交文件格式策略字段 MUST 被识别为不允许的未知字段，而不是被忽略或兼容解释。
 
@@ -816,6 +921,8 @@ Business Application Revision、Publication、canonical snapshot、管理API和�
 - **WHEN** 客户端提交`text-v1`、`text-v2`或任意文件格式策略选择字段
 - **THEN** 管理API返回字段级合同错误
 - **AND** 不静默丢弃、不保存兼容影子值且不创建Revision
+
+<!-- Integrated from change: `add-governed-dingtalk-mcp-mvp/specs/business-application` -->
 
 ### Requirement: Application 可显式冻结受确认保护的 mutation Tool
 Agent/Application Publication SHALL 仅在代码 Manifest 同时声明稳定 Tool identifier、schema hash、`effect=mutation` 和受支持确认策略时选择 mutation Tool，并 MUST 将 effect 与确认策略冻结到 Job Tool Snapshot。未知、缺失或漂移的策略 MUST 阻止发布、Job 创建和调用。
@@ -834,88 +941,3 @@ Agent/Application Publication SHALL 仅在代码 Manifest 同时声明稳定 Too
 #### Scenario: 用户已确认过一次创建待办
 - **WHEN** 同一用户在后续 Job 提出另一待办
 - **THEN** 系统创建新的待确认意图而不复用旧确认
-
-### Requirement: Profile hash更新不得阻断应用管理和重新发布
-当代码发布的`docling-layout-ocr-v2`保持同一Profile code但完整payload与hash发生变化时，系统 MUST 保留旧Revision、Publication、Deployment、历史终态Job和processing run的不可变身份与只读可见性。旧hash不再是当前可激活Profile时，管理端列表、详情、编辑入口和创建新Revision MUST 继续可用；系统 SHALL 把旧Publication的文档处理组件标记为`CONFIGURED_UNAVAILABLE`并返回稳定的Profile过期原因，而不得把管理服务整体报告为不可用、把Application事实删除或原地改写旧hash。
-
-#### Scenario: 更新代码后打开使用旧hash的应用
-- **WHEN** 管理员打开仍引用旧`docling-layout-ocr-v2` hash的Business Application
-- **THEN** 列表和详情返回原Application、Revision、Publication及只读旧hash状态
-- **AND** 页面允许管理员进入组成配置并创建使用当前Profile的新Revision
-
-#### Scenario: 从旧Publication创建新Revision
-- **WHEN** 管理员基于旧Publication编辑且继续选择`docling-layout-ocr-v2`
-- **THEN** 新Revision解析并冻结代码当前发布的完整Profile payload与hash
-- **AND** 旧Revision、旧Publication、历史Job和历史终态run保持不变
-
-#### Scenario: 尝试重新激活旧hash Publication
-- **WHEN** 管理员尝试激活不再受当前代码支持的旧Profile hash Publication
-- **THEN** 激活预检以稳定Profile过期原因拒绝
-- **AND** 管理端继续允许查看旧Publication并发布当前Profile的新Revision
-
-#### Scenario: 发布并激活当前hash
-- **WHEN** 管理员完成当前Profile新Revision的校验、发布和显式激活
-- **THEN** 后续新Job固定新Publication和新Profile hash
-- **AND** 系统不自动改绑旧route、旧Job、旧run或旧Representation
-
-### Requirement: Profile hash切换前必须排空旧hash非终态处理
-部署切换预检 MUST 统计旧Profile hash关联的非终态parent run、picture item和仍可能存在的外部Docling task，并在计数非零或状态不可确定时失败关闭。只有旧hash文档处理工作已确定终态，系统才能启用新的双Worker双执行器拓扑；该排空规则不得把旧Revision、Publication、Deployment或历史终态事实当作需要删除或原地迁移的对象。
-
-#### Scenario: 旧hash仍有运行中任务
-- **WHEN** 部署预检发现旧hash存在`QUEUED`、`SUBMITTED`、`RUNNING`或`RETRY_WAIT`的parent或picture工作
-- **THEN** 切换被阻止并只报告按状态聚合的安全计数
-- **AND** 运维先让旧拓扑排空或按既有确定失败流程终结任务
-
-#### Scenario: 只剩旧hash历史终态事实
-- **WHEN** 旧hash仅被历史Revision、Publication、Deployment、终态Job、终态run或不可变Representation引用
-- **THEN** 部署预检允许继续
-- **AND** 系统保留这些事实供审计与既有Job读取，不要求数据库改写hash
-
-#### Scenario: 切换后管理旧Publication
-- **WHEN** 新拓扑已就绪但管理员尚未重新发布某个旧hash应用
-- **THEN** 该应用仍可进入、查看和编辑，文档处理组件明确显示不可用及重新发布指引
-- **AND** 其它不依赖旧Profile hash的管理能力不得因该组件状态失败
-
-### Requirement: 最大工具调用次数必须支持配置至500
-系统 SHALL 在 Web、管理 API、业务应用策略、Job 冻结策略及当前受支持的 Runtime 执行协议中统一允许 `max_tool_calls` 最高为 500。系统 MUST 拒绝超过 500 的配置，并保留缺省值 30、已有应用与 Job 的固定值；MUST NOT 因上限扩展自动提高现有策略或其它执行、容量和授权边界。
-
-#### Scenario: 管理员配置500次
-- **WHEN** 管理员将最大工具调用设为 500 并保存、发布和激活应用
-- **THEN** 新 Job 的请求及有效工具调用上限均为 500，Runtime 接受该合法请求
-- **AND** 前 500 次仍逐次接受权限校验，第 501 次在工具副作用前以稳定策略耗尽错误停止
-
-#### Scenario: 请求超过500次
-- **WHEN** 管理 API、应用领域策略、Job 快照或 Runtime 请求包含 `max_tool_calls=501`
-- **THEN** 对应入口拒绝该超范围值，不能创建有效策略或启动执行
-
-#### Scenario: 保留默认和旧Job
-- **WHEN** 部署上限扩展代码但没有修改业务应用配置
-- **THEN** 缺省调用数仍为 30，已配置 50 次的应用及旧 Job 仍保留 50 次
-- **AND** 调整并发布新应用策略不得修改此前 Job 冻结的策略
-
-#### Scenario: 应用保存入口接收零值
-- **WHEN** 当前 `validate_execution_policy` 接收到 `max_tool_calls=0` 或缺省值
-- **THEN** 该入口按现有 `value or 30` 规则规范化为 30；不能把应用输入零值解释为已关闭工具
-- **AND** 已冻结执行快照中合法零值的执行拒绝语义属于 `execution-delivery`；若要改变应用零值归一化，应另行修改代码与合同。
-
-### Requirement: 控制面变更与运行路由切换必须明确分离
-保存草稿和创建 Publication MUST NOT 自动改变已激活路由。显式激活 SHALL 在固定部署环境 `local` 建立当前活动入口解析事实，后续匹配请求使用所选 Application/Agent Publication；停用阻止后续命中，但不得改写已经创建的 Job。不得继续将当前应用描述为仅存储且所有入口沿用默认 Agent。
-
-#### Scenario: 保存和发布
-- **WHEN** 管理员保存草稿或创建新的应用 Publication
-- **THEN** 现有 Deployment 和已入队 Job 保持原版本，需显式激活才改变后续入口。
-
-#### Scenario: 激活并接受新消息
-- **WHEN** 受权管理员激活合法 Publication 且新消息命中其入口
-- **THEN** 服务按新活动路由固定应用与 Agent Publication，旧 Job 仍使用自己的冻结事实。
-
-### Requirement: 运行时接管受支持的钉钉与Webhook入口
-应用运行态 SHALL 支持 `dingtalk_private`、`dingtalk_group` 与 `webhook` 三种已发布 Trigger。钉钉使用 CURRENT_SENDER 与 `bot:` 或 `conversation:` 路由键；Webhook 使用 SERVICE_ACCOUNT 与 `webhook:` 路由键。未知类型、错误前缀、主体策略不匹配或无有效来源依赖 MUST 失败关闭。
-
-#### Scenario: 钉钉入口
-- **WHEN** 受信消息匹配启用的私聊或群聊 Trigger
-- **THEN** 服务按当前发送人解析身份和角色，并固定命中的应用发布版本。
-
-#### Scenario: Webhook入口
-- **WHEN** 受治理Webhook绑定启用服务账号与已发布应用
-- **THEN** 服务通过完整认证授权链创建Job，不回退默认Agent或人工主体。

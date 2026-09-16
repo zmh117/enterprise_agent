@@ -1,4 +1,4 @@
-# 空库 Baseline 100、当前迁移 119 与初始管理员
+# 空库 Baseline 100、当前迁移 132 与初始管理员
 
 本文适用于全新空数据库。Schema、初始管理员和本地业务样例是三个独立步骤，禁止把用户或 fixture 写入 baseline SQL。
 
@@ -6,9 +6,12 @@
 
 Compose 的 `migrator` 依次执行：
 
-1. `python -m app.cli.migrate`
-2. `python -m app.cli.bootstrap_admin --non-interactive`
-3. `python -m app.cli.apply_agent_runtime_grants`
+1. `python -m app.cli.docling_profile_cutover_preflight`
+2. `python -m app.cli.migrate`
+3. `python -m app.cli.bootstrap_file_storage_secrets`（受本地初始化开关控制）
+4. `python -m app.cli.bootstrap_admin --non-interactive`
+5. `python -m app.cli.bootstrap_agents`
+6. `python -m app.cli.apply_agent_runtime_grants`
 
 依赖服务使用 `service_completed_successfully`，任一步失败都会阻止 API、Worker 和 Runtime 接管。不要临时删除依赖条件或手工伪造 `schema_migration`。
 
@@ -20,13 +23,13 @@ docker compose ps
 docker compose logs migrator
 ```
 
-空库先执行 `100_baseline_v1.sql`，再顺序执行当前 forward migration `101..119`；当前
-checkout 的账本 head 必须为 `119`。Baseline `100` 是建库起点，不是当前 deployable
+空库先执行 `100_baseline_v1.sql`，再顺序执行当前 forward migration `101..132`；当前
+checkout 的账本 head 必须为 `132`。Baseline `100` 是建库起点，不是当前 deployable
 head。如果不存在任何启用的平台管理员，bootstrap 创建：
 
 - 用户名：`admin`
 - 显示名称：`Administrator`
-- 本地测试初始密码：`111111111111`
+- 初始密码：按 bootstrap 的 local/test 策略初始化，本文不复制密码；生产环境必须使用受限文件或交互输入。
 
 数据库只保存 Argon2 哈希。首次登录后应立即修改密码；重复启动不会重置密码、用户状态、revision、角色或成员关系。默认 Agent、应用、Connector 和测试数据仍由独立 local seed 管理。
 
@@ -56,6 +59,6 @@ join rbac_role r on r.id = ur.role_id and r.status = 'enabled'
 where r.code = 'platform-admin';
 ```
 
-当前 checkout 的新库应看到连续 `100..119`，最终行为 `119`；缺号、重复、未知版本或
+当前 checkout 的新库应看到连续 `100..132`，最终行为 `132`；缺号、重复、未知版本或
 checksum 不一致都必须失败关闭。管理员结果必须至少一行。不要查询或输出
 `user_password_credential.password_hash` 作为常规验收证据。
