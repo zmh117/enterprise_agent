@@ -12,6 +12,7 @@ from app.shared.tool_response_summary import tool_response_summary
 from app.python_runtime.log_evidence_scanner import (
     LOG_EVIDENCE_SCANNER_VERSION,
     LOG_EVIDENCE_TOOL,
+    log_evidence_failure,
 )
 
 
@@ -370,6 +371,11 @@ def extract_tool_events(
                 "risk_level": risk_level(tool_name),
                 "mcp_call_id": metadata["mcp_call_id"],
                 "persisted_tool_call_id": metadata["persisted_tool_call_id"],
+                **(
+                    {"error_code": log_evidence_failure(response.get("error_code"))["code"]}
+                    if _is_log_evidence_tool(tool_name) and status == "FAILED"
+                    else {}
+                ),
             }
         )
     return events
@@ -411,12 +417,11 @@ def safe_log_evidence_response(value: Any) -> dict[str, Any]:
     payload = _log_evidence_json_payload(value)
     bridge = payload.get("runtime_file_bridge") if isinstance(payload, dict) else None
     source = bridge if isinstance(bridge, dict) else payload if isinstance(payload, dict) else {}
-    error_code = identifier_or_none(source.get("error_code"))
-    if error_code is not None:
+    if "error_code" in source:
         return {
             "contract": "runtime-derived/file-service/scan_log_evidence",
             "scanner_version": LOG_EVIDENCE_SCANNER_VERSION,
-            "error_code": error_code,
+            "error_code": log_evidence_failure(source.get("error_code"))["code"],
         }
     result: dict[str, Any] = {
         "contract": "runtime-derived/file-service/scan_log_evidence",

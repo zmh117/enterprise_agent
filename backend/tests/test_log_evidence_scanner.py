@@ -6,9 +6,11 @@ from pathlib import Path
 import threading
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from app.python_runtime.log_evidence_scanner import (
     LOG_EVIDENCE_PACK_MAX_BYTES,
+    LOG_EVIDENCE_INPUT_SCHEMA,
     LogEvidenceScanError,
     LogEvidenceSource,
     execute_log_evidence_scan,
@@ -130,9 +132,52 @@ def test_log_evidence_scanner_is_deterministic_and_reports_exact_coverage(
 
 
 @pytest.mark.parametrize(
+    ("terms", "expected"),
+    [
+        (["ERROR", "error", "WARN", "warn"], ("ERROR", "WARN")),
+        (["Exception", "exception"], ("Exception",)),
+        (["ERROR", "ERROR", "Error"], ("ERROR",)),
+        (["Straße", "STRASSE", "其他"], ("Straße", "其他")),
+    ],
+)
+def test_log_evidence_terms_deduplicate_casefold_with_schema_agreement_and_reuse(
+    tmp_path: Path, terms: list[str], expected: tuple[str, ...]
+) -> None:
+    sandbox = JobSandboxManager(tmp_path / "sandboxes").create("job-log-terms")
+    try:
+        _materialized_log(sandbox)
+        raw = {"relative_paths": ["inputs/service.log"], "literal_terms": terms}
+        Draft202012Validator(LOG_EVIDENCE_INPUT_SCHEMA).validate(raw)
+        assert normalize_log_evidence_request(raw).literal_terms == expected
+        first = execute_log_evidence_scan(raw, sandbox=sandbox)
+        canonical = {**raw, "literal_terms": list(expected)}
+        second = execute_log_evidence_scan(canonical, sandbox=sandbox)
+        assert first["coverage_complete"] is True
+        assert first["scanner_version"] == "log-evidence-v2"
+        assert first["request_digest"] == second["request_digest"]
+        assert first["sha256"] == second["sha256"]
+        assert second["reused"] is True
+        assert sandbox.partition_usage()["work_outputs"][0] == 1
+    finally:
+        sandbox.cleanup()
+
+
+@pytest.mark.parametrize("terms", [["ERROR"] * 33, ["界" * 128] * 11, ["x" * 129] * 2])
+def test_log_evidence_deduplication_does_not_bypass_raw_input_budgets(
+    terms: list[str],
+) -> None:
+    with pytest.raises(LogEvidenceScanError) as captured:
+        normalize_log_evidence_request(
+            {"relative_paths": ["inputs/service.log"], "literal_terms": terms}
+        )
+    assert captured.value.code == "log_evidence_input_invalid"
+
+
+@pytest.mark.parametrize(
     "payload",
     [
         {"relative_paths": []},
+        {"relative_paths": ["a.log"]},
         {"relative_paths": ["/inputs/a.log"]},
         {"relative_paths": ["inputs/../a.log"]},
         {"relative_paths": [r"inputs\a.log"]},

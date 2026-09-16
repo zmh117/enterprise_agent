@@ -15,7 +15,7 @@ from app.python_runtime.job_sandbox import JobSandbox, JobSandboxError
 
 
 LOG_EVIDENCE_TOOL = "scan_log_evidence"
-LOG_EVIDENCE_SCANNER_VERSION = "log-evidence-v1"
+LOG_EVIDENCE_SCANNER_VERSION = "log-evidence-v2"
 LOG_EVIDENCE_PACK_MAX_BYTES = 4 * 1024 * 1024
 LOG_EVIDENCE_MAX_INPUTS = 40
 LOG_EVIDENCE_MAX_LITERAL_TERMS = 32
@@ -40,6 +40,11 @@ LOG_EVIDENCE_INPUT_SCHEMA: dict[str, object] = {
     "properties": {
         "relative_paths": {
             "type": "array",
+            "description": (
+                "使用物化结果中的完整 POSIX 相对路径，例如 inputs/service.log。必须保留 inputs/ "
+                "前缀且为当前 Job 已物化的 LOG；即使宿主机为 Windows，也不得使用裸文件名、"
+                "盘符、绝对路径、反斜杠或路径穿越。不接受通配符或目录。"
+            ),
             "minItems": 1,
             "maxItems": LOG_EVIDENCE_MAX_INPUTS,
             "uniqueItems": True,
@@ -47,8 +52,11 @@ LOG_EVIDENCE_INPUT_SCHEMA: dict[str, object] = {
         },
         "literal_terms": {
             "type": "array",
+            "description": (
+                "可省略。仅字面匹配，不区分大小写；重复词按 casefold 自动去重并保留首次顺序。"
+                "原始数组最多 32 项，每项最多 128 字符，合计最多 4096 UTF-8 字节。"
+            ),
             "maxItems": LOG_EVIDENCE_MAX_LITERAL_TERMS,
-            "uniqueItems": True,
             "items": {
                 "type": "string",
                 "minLength": 1,
@@ -69,6 +77,69 @@ LOG_EVIDENCE_INPUT_SCHEMA: dict[str, object] = {
         },
     },
 }
+
+
+# Only code-owned messages may enter ordinary Tool events or the operations UI.
+_LOG_EVIDENCE_FAILURE_MESSAGES: dict[str, str] = {
+    "log_evidence_input_invalid": (
+        "日志扫描参数不合法。relative_paths 必须是 1–40 个不重复路径的数组；"
+        "literal_terms 可省略，原始数组最多 32 项，每项 1–128 字符，合计最多 4096 UTF-8 字节；"
+        "context_lines 为 0–20 的整数，max_evidence_items 为 1–500 的整数。"
+        "不要传 null、正则/Profile/输出路径等额外字段；请纠正参数后再调用，不要原样重试。"
+    ),
+    "log_evidence_path_invalid": (
+        "日志扫描路径不合法。请原样使用物化结果中的 inputs/ 前缀 POSIX 相对 LOG 路径"
+        "（例如 inputs/service.log）；不要使用裸文件名、盘符、绝对路径、反斜杠或 ..。"
+        "宿主机为 Windows 时也相同；请纠正路径后再调用，不要猜测或原样重试。"
+    ),
+    "log_evidence_input_not_materialized": (
+        "日志尚未在当前 Job 中完成精确物化。请先通过已授权的物化工具取得 LOG，"
+        "再原样使用返回的 inputs/ 路径，不要猜测文件名或原样重试。"
+    ),
+    "log_evidence_source_invalid": "日志扫描源无效，请核对当前 Job 的已物化 LOG。",
+    "log_evidence_source_integrity_error": "已物化日志的完整性校验失败，扫描已停止。",
+    "log_evidence_pack_integrity_error": "日志证据包完整性校验失败，不能使用该证据包。",
+    "log_evidence_record_limit_exceeded": "日志行或记录块超过扫描上限，请缩小或拆分输入。",
+    "log_evidence_pack_limit_exceeded": "日志证据包超过大小上限，请缩小扫描范围。",
+    "log_evidence_read_failed": "日志读取暂时失败，可在现有执行预算内重试。",
+    "log_evidence_write_failed": "日志证据包写入暂时失败，可在现有执行预算内重试。",
+    "file_encoding_invalid": "日志不是有效 UTF-8 文本，请转换编码后重新上传。",
+    "file_tool_not_frozen": "当前 Job 未授权日志扫描所依赖的文件物化能力。",
+    "runtime_cancelled": "日志扫描已取消。",
+    "runtime_timeout": "日志扫描已达到执行时限，请缩小范围后重新发起。",
+    "sandbox_capacity_exceeded": "当前 Job 沙盒容量不足，请缩小输入或输出范围。",
+    "sandbox_file_count_exceeded": "当前 Job 沙盒文件数量已达上限，请缩小工作集。",
+    "sandbox_file_limit_exceeded": "当前 Job 沙盒文件大小超过上限，请缩小输入。",
+    "sandbox_input_file_count_exceeded": "当前 Job 已物化输入文件数量已达上限。",
+    "sandbox_path_invalid": "沙盒路径不合法，请使用当前 Job 已物化的 inputs/ 相对路径。",
+    "sandbox_symlink_denied": "日志扫描不允许使用符号链接。",
+    "sandbox_special_file_denied": "日志扫描只允许读取已物化的普通 LOG 文件。",
+    "sandbox_entry_conflict": "沙盒文件身份冲突，请核对当前 Job 的物化状态。",
+    "sandbox_entry_invalid": "沙盒文件身份无效，不能继续扫描。",
+    "sandbox_entry_missing": "沙盒文件身份不存在，不能继续扫描。",
+    "sandbox_reservation_invalid": "沙盒文件预留无效，不能继续扫描。",
+    "sandbox_partition_invalid": "沙盒分区无效，不能继续扫描。",
+    "sandbox_write_partition_denied": "日志证据包不能写入该沙盒分区。",
+}
+
+
+def log_evidence_failure(code: object) -> dict[str, str]:
+    """Return fixed safe diagnostics, never echo arbitrary codes or exception text."""
+    if not isinstance(code, str) or code not in _LOG_EVIDENCE_FAILURE_MESSAGES:
+        return {
+            "code": "runtime_tool_failed",
+            "retry_class": "TRANSIENT",
+            "safe_message": "工具调用失败",
+        }
+    return {
+        "code": code,
+        "retry_class": (
+            "TRANSIENT"
+            if code in {"log_evidence_read_failed", "log_evidence_write_failed"}
+            else "NEVER"
+        ),
+        "safe_message": _LOG_EVIDENCE_FAILURE_MESSAGES[code],
+    }
 
 
 class CancellationSignal(Protocol):
@@ -555,10 +626,7 @@ def normalize_log_evidence_request(raw: object) -> LogEvidenceRequest:
         term_bytes += len(encoded)
         folded = value.casefold()
         if folded in folded_terms:
-            raise LogEvidenceScanError(
-                "log_evidence_input_invalid",
-                "literal_terms must be unique",
-            )
+            continue
         folded_terms.add(folded)
         terms.append(value)
     if term_bytes > LOG_EVIDENCE_MAX_LITERAL_TERM_BYTES:

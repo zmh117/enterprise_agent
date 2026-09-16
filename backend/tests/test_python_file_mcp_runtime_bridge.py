@@ -473,7 +473,7 @@ def test_file_bridge_registers_and_runs_local_scanner_without_body_or_auto_commi
                     LOG_EVIDENCE_TOOL,
                     {
                         "relative_paths": ["inputs/service.log"],
-                        "literal_terms": ["现场关键字"],
+                        "literal_terms": ["ERROR", "error", "WARN", "warn", "ERROR"],
                         "context_lines": 0,
                     },
                 )
@@ -481,7 +481,7 @@ def test_file_bridge_registers_and_runs_local_scanner_without_body_or_auto_commi
                     LOG_EVIDENCE_TOOL,
                     {
                         "relative_paths": ["inputs/service.log"],
-                        "literal_terms": ["现场关键字"],
+                        "literal_terms": ["ERROR", "WARN"],
                         "context_lines": 0,
                     },
                 )
@@ -496,6 +496,9 @@ def test_file_bridge_registers_and_runs_local_scanner_without_body_or_auto_commi
     assert set(bridge.local_tool_names) == {LOG_EVIDENCE_TOOL}
     assert LOG_EVIDENCE_TOOL in tools
     assert tools[LOG_EVIDENCE_TOOL].input_schema == LOG_EVIDENCE_INPUT_SCHEMA
+    assert "inputs/" in tools[LOG_EVIDENCE_TOOL].description
+    assert "Windows" in tools[LOG_EVIDENCE_TOOL].description
+    assert "重复词自动去重" in tools[LOG_EVIDENCE_TOOL].description
     assert first["runtime_file_bridge"]["coverage_complete"] is True
     assert first["runtime_file_bridge"]["reused"] is False
     assert second["runtime_file_bridge"]["reused"] is True
@@ -506,6 +509,76 @@ def test_file_bridge_registers_and_runs_local_scanner_without_body_or_auto_commi
     assert (sandbox.path / relative_path).is_file()
     assert not list((sandbox.path / "outputs").iterdir())
     assert remote.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_code", "message_part"),
+    [
+        ({"relative_paths": ["synthetic-private.log"]}, "log_evidence_path_invalid", "inputs/"),
+        (
+            {"relative_paths": [r"inputs\synthetic-private.log"]},
+            "log_evidence_path_invalid",
+            "Windows",
+        ),
+        (
+            {"relative_paths": ["inputs/../synthetic-private.log"]},
+            "log_evidence_path_invalid",
+            "inputs/",
+        ),
+        (
+            {"relative_paths": ["/tmp/synthetic-private.log"]},
+            "log_evidence_path_invalid",
+            "inputs/",
+        ),
+        (
+            {
+                "relative_paths": ["inputs/synthetic-private.log"],
+                "literal_terms": ["界" * 128] * 11,
+            },
+            "log_evidence_input_invalid",
+            "4096",
+        ),
+        (
+            {"relative_paths": ["inputs/synthetic-private.log"]},
+            "log_evidence_input_not_materialized",
+            "物化",
+        ),
+    ],
+)
+def test_file_bridge_scanner_errors_are_actionable_without_echoing_arguments(
+    tmp_path: Path, arguments: dict[str, Any], expected_code: str, message_part: str
+) -> None:
+    import asyncio
+
+    remote = _ContractSession(tool_names=("file_prepare_materialization",))
+    bridge = _contract_bridge(
+        tmp_path, remote=remote, frozen_tool_names=("file_prepare_materialization",)
+    )
+
+    async def exercise() -> types.CallToolResult:
+        await bridge.connect()
+        config = bridge.server
+        instance = config["instance"] if isinstance(config, dict) else config.instance
+        async with InMemoryTransport(instance) as streams:
+            async with ClientSession(*streams) as session:
+                await session.initialize()
+                return await session.call_tool(LOG_EVIDENCE_TOOL, arguments)
+
+    try:
+        result = asyncio.run(exercise())
+        assert result.is_error is True
+        payload = json.loads(result.content[0].text)  # type: ignore[union-attr]
+        assert payload["error_code"] == expected_code
+        assert payload["retry_class"] == "NEVER"
+        assert message_part in payload["error"]
+        assert "synthetic-private" not in json.dumps(payload)
+        assert "界" not in json.dumps(payload, ensure_ascii=False)
+        assert remote.calls == 0
+        assert bridge._context.sandbox is not None
+        assert bridge._context.sandbox.partition_usage()["work_outputs"][0] == 0
+    finally:
+        assert bridge._context.sandbox is not None
+        bridge._context.sandbox.cleanup()
 
 
 def test_file_bridge_does_not_derive_scanner_without_materialization_tool(

@@ -37,6 +37,7 @@ from app.modules.mcp_tool_runtime import ONES_MCP_SERVER_CODE
 from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
+    AgentRunResult,
     McpRuntimeBinding,
     ToolCallBudget,
 )
@@ -45,6 +46,7 @@ from app.modules.model_connection.domain import (
     DEFAULT_MODEL_CONNECTION_CODE,
     ModelRuntimeBinding,
 )
+from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.python_runtime.grant import RuntimeGrantVerifier
 from app.python_runtime.invocations import (
     PythonInvocationRegistry,
@@ -59,6 +61,7 @@ from app.python_runtime.log_evidence_scanner import (
     LOG_EVIDENCE_INPUT_SCHEMA,
     LOG_EVIDENCE_SCANNER_VERSION,
     LOG_EVIDENCE_TOOL,
+    log_evidence_failure,
 )
 from app.python_runtime.claude_client import ClaudeSdk, ClaudeSdkClient, build_system_prompt
 from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
@@ -85,6 +88,7 @@ from app.shared.exceptions import (
 )
 from app.shared.build_identity import BuildIdentity
 from app.shared.tool_contract import PROMPT_TEMPLATE_VERSION, tool_schema_hash
+from app.shared.tool_response_summary import tool_response_summary
 from app.shared.migrations import Migrator
 from app.shared.model_probe_envelope import (
     ModelProbeEnvelopeCipher,
@@ -1319,6 +1323,188 @@ def test_log_evidence_tool_events_persist_only_bounded_safe_metadata() -> None:
     response_summary = json.loads(completed[0]["response_summary"]["payload"])
     assert response_summary["scanned_bytes"] == 100
     assert response_summary["sha256"] == "a" * 64
+
+
+@pytest.mark.parametrize(
+    ("error_code", "expected_code", "expected_retry"),
+    [
+        ("log_evidence_input_invalid", "log_evidence_input_invalid", "NEVER"),
+        ("log_evidence_path_invalid", "log_evidence_path_invalid", "NEVER"),
+        ("log_evidence_input_not_materialized", "log_evidence_input_not_materialized", "NEVER"),
+        ("sandbox_capacity_exceeded", "sandbox_capacity_exceeded", "NEVER"),
+        ("log_evidence_source_integrity_error", "log_evidence_source_integrity_error", "NEVER"),
+        ("runtime_timeout", "runtime_timeout", "NEVER"),
+        ("log_evidence_read_failed", "log_evidence_read_failed", "TRANSIENT"),
+        ("log_evidence_write_failed", "log_evidence_write_failed", "TRANSIENT"),
+        ("synthetic_private_error", "runtime_tool_failed", "TRANSIENT"),
+        ({"private": "synthetic-private"}, "runtime_tool_failed", "TRANSIENT"),
+    ],
+)
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_log_evidence_errors_survive_safe_event_projection_without_raw_inputs(
+    error_code: object, expected_code: str, expected_retry: str, wrapped: bool
+) -> None:
+    calls: dict[str, dict[str, Any]] = {}
+    limits = build_settings().execution
+    started = extract_tool_events(
+        AssistantMessage(
+            model="synthetic-model",
+            content=[
+                ToolUseBlock(
+                    id="synthetic-scan-call",
+                    name="mcp__file_service__scan_log_evidence",
+                    input={
+                        "relative_paths": ["inputs/synthetic-private.log"],
+                        "literal_terms": ["synthetic-private-term"],
+                    },
+                )
+            ],
+        ),
+        limits,
+        calls,
+    )
+    payload = {
+        "error_code": error_code,
+        "error": "synthetic-private-exception-body",
+        "safe_message": "synthetic-private-forged-message",
+        "retry_class": "FORGED",
+    }
+    completed = extract_tool_events(
+        UserMessage(
+            content=[
+                ToolResultBlock(
+                    tool_use_id="synthetic-scan-call",
+                    is_error=True,
+                    content=[
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {"runtime_file_bridge": payload} if wrapped else payload
+                            ),
+                        }
+                    ],
+                )
+            ]
+        ),
+        limits,
+        calls,
+    )
+    request = {
+        "protocol_version": "1.5",
+        "mcp_servers": [
+            {
+                "server_code": "file-service",
+                "tools": [{"tool_name": "file_prepare_materialization"}],
+            }
+        ],
+    }
+    events = normalize_tool_events([*started, *completed], request)
+    assert "error_code" not in started[0]
+    assert completed[0]["error_code"] == expected_code
+    assert events[1]["tool_origin"] == "sdk_custom"
+    assert events[1]["status"] == "FAILED"
+    assert events[1]["failure"] == log_evidence_failure(error_code)
+    assert events[1]["failure"]["retry_class"] == expected_retry
+    # The control-plane UI consumes this bounded failure summary, not raw SDK I/O.
+    summary = tool_response_summary(events[1])
+    assert summary["error_code"] == expected_code
+    assert summary["error"] == events[1]["failure"]["safe_message"]
+    serialized = json.dumps((started, completed, events, summary), ensure_ascii=False)
+    assert "synthetic-private" not in serialized
+    assert "synthetic_private_error" not in serialized
+    assert "FORGED" not in serialized
+    assert events[0]["request_summary"] == {"available": True}
+
+
+def test_log_evidence_failure_mapping_does_not_change_denials_or_other_tools() -> None:
+    request = {
+        "protocol_version": "1.5",
+        "mcp_servers": [
+            {
+                "server_code": "file-service",
+                "tools": [{"tool_name": "file_prepare_materialization"}],
+            }
+        ],
+    }
+    events = normalize_tool_events(
+        [
+            {
+                "tool_call_id": "synthetic-read-call",
+                "tool_name": "Read",
+                "status": "FAILED",
+                "error_code": "existing_read_error",
+            },
+            {
+                "tool_call_id": "synthetic-denied-call",
+                "tool_name": "mcp__file_service__scan_log_evidence",
+                "status": "REJECTED",
+                "error_code": "existing_denied_error",
+            },
+        ],
+        request,
+    )
+    assert events[0]["failure"]["code"] == "existing_read_error"
+    assert events[0]["failure"]["safe_message"] == "工具调用失败"
+    assert events[1]["failure"]["code"] == "existing_denied_error"
+    assert events[1]["failure"]["retry_class"] == "NEVER"
+    assert events[1]["failure"]["safe_message"] == "工具调用未获授权"
+
+
+@pytest.mark.parametrize("error_code", ["log_evidence_input_invalid", "log_evidence_path_invalid"])
+def test_scanner_failure_reaches_persisted_tool_summary_without_failing_completed_job(
+    error_code: str,
+) -> None:
+    tool_events = normalize_tool_events(
+        [
+            {
+                "tool_call_id": "synthetic-scan-failed",
+                "tool_name": "mcp__file_service__scan_log_evidence",
+                "status": "FAILED",
+                "error_code": error_code,
+            }
+        ],
+        {
+            "protocol_version": "1.5",
+            "mcp_servers": [
+                {
+                    "server_code": "file-service",
+                    "tools": [{"tool_name": "file_prepare_materialization"}],
+                }
+            ],
+        },
+    )
+
+    class CompletedDiagnosticClient:
+        def run(self, _request: AgentRunRequest) -> AgentRunResult:
+            return AgentRunResult(
+                final_answer="合成验收：扫描失败，仅提供有界诊断说明，不声称完整覆盖。",
+                tool_events=list(tool_events),
+            )
+
+    runtime = container(allow_direct_jobs=True)
+    try:
+        runtime.agent_executor.runtime_client = CompletedDiagnosticClient()  # type: ignore[assignment]
+        job = runtime.create_agent_job_service.execute(
+            CreateAgentJobCommand(
+                idempotency_key=f"synthetic-scanner-error-{error_code}",
+                requester_id="user_local_admin",
+                user_message="合成日志扫描验收",
+                source_channel="debug_api",
+            )
+        )
+        runtime.agent_executor.execute(job.id)
+        assert runtime.agent_repository.get_job(job.id).status.value == "SUCCEEDED"
+        calls = runtime.agent_repository.list_tool_calls(job.id)
+        assert len(calls) == 1
+        assert calls[0]["status"] == "FAILED"
+        assert calls[0]["tool_name"] == "scan_log_evidence"
+        assert calls[0]["response_summary"]["error_code"] == error_code
+        assert (
+            calls[0]["response_summary"]["error"]
+            == log_evidence_failure(error_code)["safe_message"]
+        )
+    finally:
+        runtime.database.close()
 
 
 def test_log_evidence_tool_consumes_one_existing_budget_slot_before_execution(
