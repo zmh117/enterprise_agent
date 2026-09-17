@@ -280,7 +280,7 @@ def test_real_postgres_migration_import_constraints_and_lock(tmp_path):
     contender = Database(os.environ["KNOWLEDGE_TEST_POSTGRES_DSN"])
     try:
         result = Migrator(database, default_migrations_dir(), migrator_build="knowledge-postgres-test").run()
-        assert result.head == "134"
+        assert result.head == "135"
         assert not Migrator(database, default_migrations_dir(), migrator_build="knowledge-postgres-test").run().applied
         snapshot = schema_snapshot(database)
         assert "knowledge.document" in snapshot["tables"]

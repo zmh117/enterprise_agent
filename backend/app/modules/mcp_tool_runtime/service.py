@@ -23,6 +23,7 @@ from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.modules.mcp_tool_runtime.schema_cursor_store import SchemaPaginationCursorStore
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import PermissionDenied, ToolPolicyError
@@ -42,6 +43,7 @@ class ReadOnlyToolService:
         limits: ExecutionSettings,
         business_authorization_service: BusinessAuthorizationService | None = None,
         mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
+        schema_cursor_store: SchemaPaginationCursorStore | None = None,
     ) -> None:
         self.tool_executor = tool_executor
         self.permission_service = permission_service
@@ -50,6 +52,7 @@ class ReadOnlyToolService:
         self.limits = limits
         self.business_authorization_service = business_authorization_service
         self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
+        self.schema_cursor_store = schema_cursor_store
 
     def is_tool_visible_for_job(self, *, job_id: str, tool_name: str) -> bool:
         job = self.repository.get_job(job_id)
@@ -190,9 +193,18 @@ class ReadOnlyToolService:
                     audit_id=audit_id,
                 )
             effective_tool_call_id = managed_tool_call_id or persisted_tool_call_id
+            execution_arguments = {**arguments, **scope}
+            if tool_name == "get_schema_directory":
+                cursor = str(arguments.get("cursor") or "")
+                if cursor.startswith(SchemaPaginationCursorStore.PREFIX):
+                    if self.schema_cursor_store is None:
+                        raise SchemaPaginationCursorStore.unavailable()
+                    execution_arguments["cursor"] = self.schema_cursor_store.resolve(
+                        job_id=job_id, reference=cursor,
+                    )
             result = self._execute(
                 tool_name,
-                {**arguments, **scope},
+                execution_arguments,
                 job_id=job_id,
                 user_id=user_id,
                 project_code=project_code,
@@ -200,6 +212,12 @@ class ReadOnlyToolService:
                 application_id=str(job.business_application_id or ""),
                 snapshot_context=snapshot_context,
             )
+            if tool_name == "get_schema_directory" and result.summary.get("next_cursor"):
+                if self.schema_cursor_store is None:
+                    raise SchemaPaginationCursorStore.unavailable()
+                result.summary["next_cursor"] = self.schema_cursor_store.issue(
+                    job_id=job_id, original_cursor=str(result.summary["next_cursor"]),
+                )
             if managed_tool_call_id:
                 self.repository.complete_tool_call(
                     managed_tool_call_id,

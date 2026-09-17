@@ -62,6 +62,9 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "description": (
             "返回目标环境、基地或车间允许访问的只读数据库结构目录。"
             "编写 SQL 前应先调用本工具，且只能查询本工具列出的表和字段。"
+            "若返回 next_cursor，请保持目标和 query 不变，将此短分页标识原样放入 cursor 续页；"
+            "不要解码、改写或自行构造标识。直到 has_more=false 才表示表目录已读完，"
+            "字段截断仍需单独说明；改用关键词查询不等于完成原目录分页。"
         ),
         "schema": {
             "type": "object",

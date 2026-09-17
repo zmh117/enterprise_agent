@@ -9,6 +9,29 @@
   },
   "entries": [
     {
+      "id": "mcp_schema_pagination_cursor",
+      "object_type": "table",
+      "table": "mcp_schema_pagination_cursor",
+      "owner": "mcp_tool_runtime",
+      "semantics": "Schema 分页短引用到原始有界游标的临时映射，不是授权凭据",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "已授权 Schema 查询签发的上下文及资源绑定游标",
+      "writers": ["code:backend/app/modules/mcp_tool_runtime/schema_cursor_store.py"],
+      "readers": ["code:backend/app/modules/mcp_tool_runtime/schema_cursor_store.py"],
+      "lifecycle": "仅 RUNNING Job 签发和使用；跨实例持久化；不修改旧引用",
+      "retention_policy": "24 小时到期；tool-mcp 每分钟最多清理 500 项；Job 删除级联清理",
+      "audit_requirement": "仅短引用和稳定错误码，不保存认证材料或业务记录正文",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": ["停止签发并耗尽运行中分页状态后方可退役"]
+      },
+      "evidence_refs": [
+        "migration:135_expand_schema_pagination_cursors",
+        "builtin-tool-resource:Schema 分页必须区分下一张表和字段截断"
+      ]
+    },
+    {
       "id": "knowledge.vector_index",
       "object_type": "table",
       "table": "knowledge.vector_index",

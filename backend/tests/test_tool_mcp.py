@@ -14,12 +14,18 @@ from app.modules.job.infrastructure.repositories import now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.mcp_tool_runtime.direct_executor import DirectReadOnlyToolExecutor
 from app.modules.mcp_tool_runtime.resource_resolver import DirectResourceResolver
+from app.modules.mcp_tool_runtime.domain.schema_directory import SchemaColumn, SchemaTable
+from app.modules.mcp_tool_runtime.domain.topology import DatabaseEngine
+from app.modules.mcp_tool_runtime.infrastructure.db.schema_directory import (
+    FakeSchemaInspector, SchemaInspectorFactory,
+)
+from app.modules.mcp_tool_runtime.schema_cursor_store import SchemaPaginationCursorStore
 from app.modules.mcp_tool_runtime.infrastructure.loki_gateway import HttpLokiClient
 from app.modules.mcp_audit import McpAuditCoordinator
 from app.modules.platform_config.application.governed_resources import (
     ResourceVerificationOutcome,
 )
-from app.shared.exceptions import ToolPolicyError
+from app.shared.exceptions import AppError, NonRetryableExecutionError, ToolPolicyError
 from app.services.tool_mcp import (
     JobToolService,
     ToolMcpError,
@@ -186,6 +192,112 @@ def test_standard_tool_mcp_invokes_current_python_job() -> None:
     assert [item["tool_name"] for item in runtime.agent_repository.list_tool_calls(job.id)] == [
         TOOL_NAME
     ]
+
+
+@pytest.fixture
+def paged_schema_runtime():
+    runtime, job, service = _runtime_job()
+    secret_provider = Mock()
+    secret_provider.resolve.return_value = "test-only-password"
+    executor = DirectReadOnlyToolExecutor(
+        DirectResourceResolver(runtime.database, secret_provider=secret_provider),
+        limits=runtime.settings.execution,
+    )
+    inspector = FakeSchemaInspector([
+        SchemaTable(f"orders_{i:03d}", [SchemaColumn("id", "bigint", False)])
+        for i in range(151)
+    ])
+    executor.schema_inspectors = SchemaInspectorFactory({DatabaseEngine.MYSQL: inspector})
+    runtime.tool_service.tool_executor = executor
+    yield runtime, job, service, inspector
+    runtime.database.close()
+
+
+def _schema_page(job, service, **overrides):
+    selected_job, descriptor = service.descriptor(job.id, TOOL_NAME)
+    return service.invoke(
+        job=selected_job, descriptor=descriptor,
+        arguments={**TOOL_ARGUMENTS, "limit": 50, **overrides},
+        request_identity=_request_identity(job, "schema-pagination-test"),
+    )
+
+
+def test_schema_mcp_four_pages_expose_only_short_cursors_and_keep_exact_positions(paged_schema_runtime):
+    runtime, job, service, inspector = paged_schema_runtime
+    cursor = ""
+    collected = []
+    for page in range(4):
+        result = _schema_page(job, service, cursor=cursor)
+        data = result.payload["data"]
+        collected.extend(item["name"] for item in data["tables"])
+        cursor = data["next_cursor"]
+        if page < 3:
+            assert len(cursor) == 19 and cursor.startswith("pg_")
+            original = runtime.tool_service.schema_cursor_store.resolve(job_id=job.id, reference=cursor)
+            assert original not in json.dumps(result.payload)
+            # Discard the store instance between requests; no in-memory cache is required.
+            runtime.tool_service.schema_cursor_store = SchemaPaginationCursorStore(runtime.database)
+        else:
+            assert cursor == "" and data["has_more"] is False
+    assert collected == [f"orders_{i:03d}" for i in range(151)]
+    assert [call["after_table"] for call in inspector.calls] == ["", "orders_049", "orders_099", "orders_149"]
+
+
+def test_schema_mcp_legacy_cursor_continues_but_issues_short_cursor(paged_schema_runtime):
+    runtime, job, service, inspector = paged_schema_runtime
+    first = _schema_page(job, service)
+    original = runtime.tool_service.schema_cursor_store.resolve(
+        job_id=job.id, reference=first.payload["data"]["next_cursor"],
+    )
+    second = _schema_page(job, service, cursor=original)
+    assert inspector.calls[-1]["after_table"] == "orders_049"
+    assert len(second.payload["data"]["next_cursor"]) == 19
+
+
+@pytest.mark.parametrize("case", ["typo", "query", "revision", "authorization", "storage", "corrupt_original"])
+def test_schema_mcp_short_cursor_keeps_fail_closed_checks(paged_schema_runtime, case, monkeypatch):
+    runtime, job, service, inspector = paged_schema_runtime
+    first = _schema_page(job, service)
+    cursor = first.payload["data"]["next_cursor"]
+    args = {"cursor": cursor}
+    expected = "mcp_pagination_cursor_invalid"
+    if case == "typo":
+        args["cursor"] = cursor[:-1] + ("0" if cursor[-1] != "0" else "1")
+    elif case == "query":
+        args["query"] = "different"
+    elif case == "revision":
+        runtime.database.execute(
+            "update platform_resource_revision set content_hash = ? where resource_id = "
+            "(select id from platform_resource where code = ?)",
+            ("d" * 64, "tool_mcp_test_database"),
+        )
+        expected = "mcp_pagination_cursor_stale"
+    elif case == "authorization":
+        from app.shared.exceptions import PermissionDenied
+        denied = PermissionDenied("synthetic revoked grant", safe_message="当前授权已撤销")
+        monkeypatch.setattr(runtime.business_authorization_service, "require", Mock(side_effect=denied))
+        expected = denied.error_code
+    elif case == "corrupt_original":
+        runtime.database.execute(
+            "update mcp_schema_pagination_cursor set original_cursor = ? where job_id = ? and reference = ?",
+            ("malformed-original", job.id, cursor),
+        )
+    else:
+        runtime.database.execute("drop table mcp_schema_pagination_cursor")
+        expected = "mcp_pagination_store_unavailable"
+    with pytest.raises(AppError) as error:
+        _schema_page(job, service, **args)
+    assert error.value.error_code == expected
+    assert len(inspector.calls) == 1  # Never query Provider with an invalid continuation.
+
+
+def test_schema_mcp_cannot_report_pagination_success_when_state_cannot_be_saved(paged_schema_runtime):
+    runtime, job, service, _ = paged_schema_runtime
+    runtime.database.execute("drop table mcp_schema_pagination_cursor")
+    with pytest.raises(NonRetryableExecutionError) as error:
+        _schema_page(job, service)
+    assert error.value.error_code == "mcp_pagination_store_unavailable"
+    assert runtime.agent_repository.list_tool_calls(job.id)[-1]["status"] == "FAILED"
 
 
 def test_standard_mcp_http_has_no_auth_protocol_and_rejects_credentials() -> None:

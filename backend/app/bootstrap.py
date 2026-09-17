@@ -86,6 +86,7 @@ from app.modules.dingding.application.dingtalk_stream_service import (
 )
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
 from app.modules.mcp_tool_runtime.service import ReadOnlyToolService
+from app.modules.mcp_tool_runtime.schema_cursor_store import SchemaPaginationCursorStore
 from app.modules.mcp_tool_runtime.contracts import (
     FakeReadOnlyToolExecutor,
     ReadOnlyToolExecutor,
@@ -963,6 +964,7 @@ def _build_container(
         limits=settings.execution,
         business_authorization_service=business_authorization_service,
         mcp_tool_snapshot_service=mcp_tool_snapshot_service,
+        schema_cursor_store=SchemaPaginationCursorStore(database),
     )
     tool_registry = ToolRegistry(tool_service)
     runtime_delegate: AgentRuntimeClient | None = None

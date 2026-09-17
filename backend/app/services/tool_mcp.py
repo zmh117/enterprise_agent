@@ -6,7 +6,7 @@ import logging
 import os
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +25,7 @@ from app.bootstrap import Container, build_worker_container
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
+from app.modules.mcp_tool_runtime.schema_cursor_store import SchemaPaginationCursorStore
 from app.modules.mcp_audit import (
     McpAuditContext,
     McpAuditCoordinator,
@@ -445,7 +446,13 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: Starlette) -> Any:
         async with manager.run():
-            yield
+            cleanup = asyncio.create_task(_cleanup_schema_cursors(service))
+            try:
+                yield
+            finally:
+                cleanup.cancel()
+                with suppress(asyncio.CancelledError):
+                    await cleanup
 
     app = Starlette(
         routes=[
@@ -456,6 +463,17 @@ def create_app(
         lifespan=lifespan,
     )
     return CredentialRejectingMiddleware(app)
+
+
+async def _cleanup_schema_cursors(service: JobToolService) -> None:
+    store = SchemaPaginationCursorStore(service.repository.database)
+    while True:
+        try:
+            await asyncio.to_thread(store.purge_expired)
+        except Exception:
+            # Never log stored cursor values or dynamic database errors.
+            logger.warning("Schema pagination cleanup failed: mcp_pagination_store_unavailable")
+        await asyncio.sleep(60)
 
 
 def create_default_app() -> CredentialRejectingMiddleware:

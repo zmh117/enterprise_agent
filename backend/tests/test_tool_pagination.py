@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -33,7 +35,9 @@ from app.modules.mcp_tool_runtime.resource_resolver import (
     ResolvedToolResource,
 )
 from app.shared.config import ExecutionSettings
-from app.shared.exceptions import ToolPolicyError
+from app.shared.exceptions import NonRetryableExecutionError, ToolPolicyError
+from app.shared.database import Database, default_migrations_dir
+from app.modules.mcp_tool_runtime.schema_cursor_store import SchemaPaginationCursorStore
 
 
 def _context(*, job_id: str = "job-1") -> ToolRequestContext:
@@ -115,6 +119,144 @@ def test_tool_cursor_rejects_tampering_and_stale_state() -> None:
             state_fingerprint="revision-2",
         )
     assert stale.value.error_code == "mcp_pagination_cursor_stale"
+
+
+@pytest.fixture
+def cursor_database(tmp_path: Path):
+    database = Database(f"sqlite:///{tmp_path / 'cursors.sqlite'}")
+    database.execute("create table agent_job (id text primary key, status text not null)")
+    database.execute("insert into agent_job values ('job-1', 'RUNNING'), ('job-2', 'RUNNING')")
+    # Apply the actual new table DDL against a minimal synthetic parent table.
+    ddl = (default_migrations_dir() / "135_expand_schema_pagination_cursors.sql").read_text()
+    for statement in ddl.split("-- postgres-only", 1)[0].split(";"):
+        if statement.strip():
+            database.execute(statement)
+    yield database
+    database.close()
+
+
+def test_short_schema_cursor_survives_new_store_and_database_connection(cursor_database, tmp_path):
+    original = ToolPaginationCursorCodec.encode(
+        context=_context(), purpose="schema-directory", request={"query": ""},
+        state_fingerprint="revision-1", position="orders_049",
+    )
+    reference = SchemaPaginationCursorStore(cursor_database).issue(
+        job_id="job-1", original_cursor=original,
+    )
+    assert reference.startswith("pg_") and len(reference) == 19
+    other_connection = Database(f"sqlite:///{tmp_path / 'cursors.sqlite'}")
+    try:
+        restored = SchemaPaginationCursorStore(other_connection).resolve(
+            job_id="job-1", reference=reference,
+        )
+        assert restored == original
+        assert ToolPaginationCursorCodec.decode(
+            restored, context=_context(), purpose="schema-directory", request={"query": ""},
+            state_fingerprint="revision-1",
+        ) == "orders_049"
+    finally:
+        other_connection.close()
+
+
+@pytest.mark.parametrize("case", ["other_job", "changed_character", "unknown", "uppercase", "expired", "terminal"])
+def test_short_schema_cursor_rejects_invalid_or_expired_reference(cursor_database, case):
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    store = SchemaPaginationCursorStore(cursor_database, clock=lambda: now)
+    reference = store.issue(job_id="job-1", original_cursor="synthetic-original")
+    job_id = "job-1"
+    if case == "other_job":
+        job_id = "job-2"
+    elif case == "changed_character":
+        reference = reference[:-1] + ("0" if reference[-1] != "0" else "1")
+    elif case == "unknown":
+        cursor_database.execute("delete from mcp_schema_pagination_cursor")
+    elif case == "uppercase":
+        reference = reference.upper()
+    elif case == "expired":
+        now += store.TTL
+    else:
+        cursor_database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-1'")
+    with pytest.raises(ToolPolicyError) as error:
+        store.resolve(job_id=job_id, reference=reference)
+    assert error.value.error_code == "mcp_pagination_cursor_invalid"
+    assert reference not in error.value.safe_message
+
+
+def test_short_schema_cursor_expiry_cleanup_is_bounded_and_job_delete_cascades(cursor_database):
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    store = SchemaPaginationCursorStore(cursor_database, clock=lambda: now)
+    for _ in range(3):
+        store.issue(job_id="job-1", original_cursor="synthetic-original")
+    now += timedelta(hours=24)
+    fresh = store.issue(job_id="job-2", original_cursor="synthetic-fresh")
+    assert store.purge_expired(batch_size=2) == 2
+    assert store.purge_expired(batch_size=2) == 1
+    assert store.resolve(job_id="job-2", reference=fresh) == "synthetic-fresh"
+    cursor_database.execute("delete from agent_job where id = 'job-2'")
+    assert cursor_database.execute("select reference from mcp_schema_pagination_cursor") == []
+
+
+def test_short_schema_cursor_collision_never_overwrites_existing_state(cursor_database):
+    store = SchemaPaginationCursorStore(cursor_database)
+    with patch("app.modules.mcp_tool_runtime.schema_cursor_store.secrets.token_hex", return_value="a" * 16):
+        reference = store.issue(job_id="job-1", original_cursor="first-original")
+        with pytest.raises(NonRetryableExecutionError) as error:
+            store.issue(job_id="job-1", original_cursor="second-original")
+    assert error.value.error_code == "mcp_pagination_store_unavailable"
+    assert store.resolve(job_id="job-1", reference=reference) == "first-original"
+
+
+@pytest.mark.parametrize("binding", ["user_id", "application_id", "snapshot_hash", "authorization_hash"])
+def test_restored_schema_cursor_still_checks_original_context(cursor_database, binding):
+    original = ToolPaginationCursorCodec.encode(
+        context=_context(), purpose="schema-directory", request={"query": ""},
+        state_fingerprint="revision-1", position="orders_049",
+    )
+    store = SchemaPaginationCursorStore(cursor_database)
+    reference = store.issue(job_id="job-1", original_cursor=original)
+    restored = store.resolve(job_id="job-1", reference=reference)
+    with pytest.raises(ToolPolicyError) as error:
+        ToolPaginationCursorCodec.decode(
+            restored, context=replace(_context(), **{binding: "changed"}),
+            purpose="schema-directory", request={"query": ""}, state_fingerprint="revision-1",
+        )
+    assert error.value.error_code == "mcp_pagination_cursor_invalid"
+
+
+@pytest.mark.parametrize("value", ["", "x" * 4097])
+def test_short_schema_cursor_enforces_original_cursor_bound(cursor_database, value):
+    with pytest.raises(ToolPolicyError) as error:
+        SchemaPaginationCursorStore(cursor_database).issue(job_id="job-1", original_cursor=value)
+    assert error.value.error_code == "mcp_pagination_cursor_invalid"
+    assert cursor_database.execute("select reference from mcp_schema_pagination_cursor") == []
+
+
+def test_short_schema_cursor_does_not_issue_for_terminal_job(cursor_database):
+    cursor_database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-1'")
+    with pytest.raises(NonRetryableExecutionError):
+        SchemaPaginationCursorStore(cursor_database).issue(job_id="job-1", original_cursor="synthetic")
+    assert cursor_database.execute("select reference from mcp_schema_pagination_cursor") == []
+
+
+@pytest.mark.parametrize("batch_size", [0, 501, True])
+def test_short_schema_cursor_enforces_cleanup_bound(cursor_database, batch_size):
+    with pytest.raises(ValueError):
+        SchemaPaginationCursorStore(cursor_database).purge_expired(batch_size=batch_size)
+
+
+@pytest.mark.parametrize("operation", ["issue", "resolve", "purge_expired"])
+def test_short_schema_cursor_storage_failure_is_safe(cursor_database, operation):
+    store = SchemaPaginationCursorStore(cursor_database)
+    cursor_database.execute("drop table mcp_schema_pagination_cursor")
+    with pytest.raises(NonRetryableExecutionError) as error:
+        if operation == "issue":
+            store.issue(job_id="job-1", original_cursor="private-synthetic-original")
+        elif operation == "resolve":
+            store.resolve(job_id="job-1", reference="pg_" + "a" * 16)
+        else:
+            store.purge_expired()
+    assert error.value.error_code == "mcp_pagination_store_unavailable"
+    assert "private" not in error.value.safe_message and "table" not in error.value.safe_message
 
 
 class _RowsDatabase:
