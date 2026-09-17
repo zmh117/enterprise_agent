@@ -76,6 +76,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("131", "131_expand_knowledge_text_storage.sql"),
         ("132", "132_expand_resource_revision_roles.sql"),
         ("133", "133_expand_knowledge_chunks.sql"),
+        ("134", "134_expand_knowledge_vector_indexes.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -113,6 +114,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "131",
         "132",
         "133",
+        "134",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -170,7 +172,7 @@ def test_external_action_intent_separates_confirmation_route_from_execution_prov
         migrator_build="ones-external-action-provider-split-test",
     ).run()
 
-    assert result.head == "133"
+    assert result.head == "134"
     columns = {
         row["name"]: row for row in database.execute("pragma table_info(external_action_intent)")
     }
@@ -263,7 +265,7 @@ def test_confirmation_card_template_migration_backfills_connector_and_outbox(
         migrator_build="card-binding-after",
     ).run()
 
-    assert result.applied == ("128", "129", "130", "131", "132", "133")
+    assert result.applied == ("128", "129", "130", "131", "132", "133", "134")
     connector = database.execute_one(
         "select metadata, revision from integration_connector where id = ?",
         ("connector-card-history",),
@@ -432,7 +434,7 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "133"
+    assert first.head == "134"
     assert first.baselined == 0
     assert first.applied == (
         "100",
@@ -469,8 +471,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
         "131",
         "132",
         "133",
+        "134",
     )
-    assert second.head == "133"
+    assert second.head == "134"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -488,7 +491,7 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         include_schema_contract=True,
     ).run()
 
-    assert result.head == "133"
+    assert result.head == "134"
     assert result.applied == (
         "100",
         "101",
@@ -524,8 +527,9 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         "131",
         "132",
         "133",
+        "134",
     )
-    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "133"
+    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "134"
     assert (
         Migrator(
             database,
@@ -626,6 +630,7 @@ def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
         "131",
         "132",
         "133",
+        "134",
     )
     assert repeated.applied == ()
     assert database.execute_one(
@@ -742,7 +747,7 @@ def test_release_unbound_ones_identity_migration_preserves_history_and_constrain
         migrator_build="ones-release-upgrade",
     ).run()
 
-    assert result.applied == ("126", "127", "128", "129", "130", "131", "132", "133")
+    assert result.applied == ("126", "127", "128", "129", "130", "131", "132", "133", "134")
     assert database.execute_one(
         """
         select user_id, status from user_external_identity
@@ -1038,7 +1043,7 @@ def test_runtime_v14_migration_preserves_terminal_v13_history(tmp_path: Path) ->
           from agent_job where id = 'migration-120-job'
         """
     )
-    assert result.head == "133"
+    assert result.head == "134"
     assert row == {
         "agent_runtime_protocol_version": "1.3",
         "tool_contract_status": "NOT_OBSERVED",
@@ -1122,6 +1127,7 @@ def test_existing_database_contract_requires_separate_approval(tmp_path: Path) -
         "131",
         "132",
         "133",
+        "134",
     )
     assert "user_message" not in {
         row["name"] for row in database.execute("pragma table_info(agent_job)")
@@ -1441,7 +1447,7 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
     assert len({table for table in owned_tables if not table.startswith("knowledge.")}) == 129
     assert len({column for column in owned_columns if not column[0].startswith("knowledge.")}) == 1736
-    assert len({table for table in owned_tables if table.startswith("knowledge.")}) == 9
+    assert len({table for table in owned_tables if table.startswith("knowledge.")}) == 11
     database.close()
 
 
@@ -1647,7 +1653,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 133",
+        match="ledger is missing; expected head 134",
     ):
         SchemaHeadValidator(
             database,

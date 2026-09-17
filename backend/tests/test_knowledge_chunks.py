@@ -250,7 +250,7 @@ def test_real_postgres_chunk_storage_constraints_and_replay(tmp_path):
             with db.unit_of_work():
                 db.execute('update knowledge.document_chunk set source_end=source_end+1 where chunk_set_id=?',(sets[0]["id"],))
         comments=postgres_comment_snapshot(db)
-        assert sum(name.startswith("knowledge.") for name in comments["tables"]) == 9
+        assert sum(name.startswith("knowledge.") for name in comments["tables"]) == 11
         for name in ("document_chunk_set","document_chunk"):
             count=db.execute_one("select count(*) as n from information_schema.columns where table_schema='knowledge' and table_name=?",(name,))["n"]
             assert sum(key.startswith("knowledge."+name+".") for key in comments["columns"]) == count

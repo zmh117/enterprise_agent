@@ -15,6 +15,7 @@ from app.shared.database import Database
 TABLES = frozenset({
     "source", "document", "document_revision", "knowledge_base", "knowledge_base_document",
     "import_run", "document_relation", "document_chunk_set", "document_chunk",
+    "vector_index", "vector_index_item",
 })
 _SQLITE_LOCK = threading.Lock()
 

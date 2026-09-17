@@ -1,0 +1,95 @@
+# Optional overlay. Run from the repository root with:
+# docker compose -f docker-compose.yml -f knowledge/compose.yml ...
+# Build paths are relative to the FIRST Compose file, not this directory.
+services:
+  postgres:
+    networks:
+      - knowledge-internal
+
+  knowledge-embedding:
+    profiles: [knowledge]
+    image: enterprise-agent/knowledge-embedding:bge-m3-v1
+    build:
+      context: .
+      dockerfile: services/knowledge_embedding/Dockerfile
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - knowledge-models:/models:ro
+    networks: [knowledge-internal]
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 4
+    mem_limit: 8g
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8096/ready',timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 120s
+
+  knowledge-model-prepare:
+    profiles: [knowledge-prepare]
+    image: enterprise-agent/knowledge-embedding:bge-m3-v1
+    build:
+      context: .
+      dockerfile: services/knowledge_embedding/Dockerfile
+    command: [python, -m, services.knowledge_embedding.model_files]
+    volumes:
+      - knowledge-models:/models
+    networks: [provider-egress]
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    restart: "no"
+
+  knowledge-qdrant:
+    profiles: [knowledge]
+    image: qdrant/qdrant:v1.17.0@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+      QDRANT__LOG_LEVEL: ERROR
+    volumes:
+      - knowledge-qdrant:/qdrant/storage
+    networks: [knowledge-internal]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 2g
+
+  knowledge-ops:
+    profiles: [knowledge]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: migrator
+      # YAML anchors cannot cross files; tested against root release-build-args.
+      args:
+        BUILD_SOURCE_REVISION: ${BUILD_SOURCE_REVISION:-local-dev}
+        BUILD_ID: ${BUILD_ID:-local-dev}
+        BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
+    environment:
+      DATABASE_DSN: ${DATABASE_DSN:?配置知识库必须设置 DATABASE_DSN，指向同库 PostgreSQL 内部地址}
+      APP_CONFIG_MASTER_KEY_FILE: ""
+      APP_ENV: local
+    entrypoint: []
+    networks: [knowledge-internal]
+    command: [python, -m, app.cli.index_knowledge]
+    read_only: true
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+
+volumes:
+  knowledge-models:
+  knowledge-qdrant:
+
+networks:
+  knowledge-internal:
+    internal: true

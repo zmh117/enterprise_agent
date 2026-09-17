@@ -280,12 +280,12 @@ def test_real_postgres_migration_import_constraints_and_lock(tmp_path):
     contender = Database(os.environ["KNOWLEDGE_TEST_POSTGRES_DSN"])
     try:
         result = Migrator(database, default_migrations_dir(), migrator_build="knowledge-postgres-test").run()
-        assert result.head == "133"
+        assert result.head == "134"
         assert not Migrator(database, default_migrations_dir(), migrator_build="knowledge-postgres-test").run().applied
         snapshot = schema_snapshot(database)
         assert "knowledge.document" in snapshot["tables"]
         comments = postgres_comment_snapshot(database)
-        assert sum(key.startswith("knowledge.") for key in comments["tables"]) == 9
+        assert sum(key.startswith("knowledge.") for key in comments["tables"]) == 11
         column_count = database.execute_one("select count(*) as n from information_schema.columns where table_schema='knowledge'")["n"]
         assert sum(key.startswith("knowledge.") for key in comments["columns"]) == column_count
         source_code = f"synthetic_{uuid.uuid4().hex}"

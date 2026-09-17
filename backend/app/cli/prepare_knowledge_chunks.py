@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.commit:
             validator.require_current()
         else:
-            validator.require_current_or_previous(allowed_previous_heads=frozenset({"132"}))
+            validator.require_current_or_previous(allowed_previous_heads=frozenset({"132", "133"}))
         result = ChunkService(database).run(
             knowledge_base_code=args.knowledge_base_code, expected_count=args.expected_count, commit=args.commit,
             progress=lambda counts: print(json.dumps({"event": "chunk_progress", **counts}), flush=True),
