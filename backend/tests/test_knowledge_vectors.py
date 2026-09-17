@@ -19,7 +19,7 @@ from app.modules.knowledge.vector_contract import VectorError, fingerprint, prof
 from app.modules.knowledge.vector_repository import payload, point_id
 from app.modules.knowledge.vector_service import VectorService
 from app.shared.database import Database, assert_external_io_allowed, default_migrations_dir
-from app.shared.migrations import Migrator
+from app.shared.migrations import Migrator, deployable_migration_catalog, load_migration_catalog
 from backend.tests.test_knowledge_chunks import import_rows, source_fingerprint
 from backend.tests.test_knowledge_import import export_row
 from services.knowledge_embedding.api import create_app
@@ -406,7 +406,9 @@ def test_real_postgres_qdrant_replay_constraints_and_repair(tmp_path):
         return delegate.handle_request(request)
     qdrant = QdrantClient(transport=httpx.MockTransport(route))
     try:
-        assert Migrator(db, default_migrations_dir(), migrator_build='knowledge-vector-isolated').run().head == '134'
+        catalog = deployable_migration_catalog(load_migration_catalog(default_migrations_dir()))
+        migrated = Migrator(db, default_migrations_dir(), migrator_build='knowledge-vector-isolated').run()
+        assert migrated.head == catalog[-1].version
         code = 'synthetic_' + uuid.uuid4().hex
         import_rows(db, tmp_path, [export_row(), export_row(2)], source=code, base=code)
         count = ChunkService(db).run(knowledge_base_code=code, expected_count=2, commit=True)['counts']['chunks']

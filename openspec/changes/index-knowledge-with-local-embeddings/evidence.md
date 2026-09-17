@@ -18,7 +18,7 @@
 - 对现有 PostgreSQL、Embedding、Qdrant 的容器 ID、启动时间、挂载和网络计算摘要，前后相同。本轮未启动、重建或停止容器，未迁移数据库、生成向量、下载模型或删除数据卷。
 - 扩展存储/迁移回归：87 passed / 2 skipped / 11 failed（32.11 秒）。11 条均位于 `test_schema_migration_runtime.py`：工作期间另一项分页变更新增 `135_expand_schema_pagination_cursors.sql`，旧 head/applied/catalog/public 表数量断言仍对应 134。未修改该并行变更或其断言；不能据此报告全库回归通过。后续正式迁移必须重新核对最新 catalog，不能使用历史 head 134 作为部署目标。
 
-本 change 当前 15/18 项完成；5.2–5.4 的正式迁移、全量索引、恢复/重启验收及最终回归仍未完成。
+本次拆分验收时 change 为 15/18 项完成；5.2–5.4 的正式迁移、全量索引、恢复/重启验收及最终回归仍未完成。
 
 ## 范围提交前验收（2026-09-17）
 
@@ -31,6 +31,27 @@
 - MyPy 定向检查 10 个文件时，通过传递导入报出 1 条身份模块错误：`service_principal.py:19` 中 `principal_jwt` 未显式导出 `MAX_PRINCIPAL_TOKEN_BYTES`。单独检查该文件同样复现；这两个身份文件均与 HEAD 相同，不属于本次修改，未扩展修复范围。不能报告 MyPy 全通过。
 
 上节的 11 条失败是当时混合工作区的运行记录，保留不改写；本次独立快照只证明知识库提交在自身 migration 134 边界下回归通过，不代替并行分页变更合并后的验收，也不代表正式全量索引已完成。
+
+## 合并后全量回归修复（2026-09-17）
+
+在 `cd4f66e` 干净工作区的回归发现：后端全量 2394 passed / 2 failed / 41 skipped / 2 subtests passed；真实知识存储补测 2 passed / 1 failed；MyPy 有 1 条常量间接导入错误。用户随后确认修复这四处，不授权正式迁移、业务服务重启或全量索引。
+
+修复范围：
+
+- 业务应用测试移除停留在 130 的重复迁移文件清单，改为核验当前 deployable catalog 的实际应用序列、head 和重复执行无增量。精确文件名/版本/校验和的治理断言仍保留在 `test_schema_migration_runtime.py`，没有删除全局迁移门禁。
+- 知识向量真实集成测试不再固定期望 head 134；按当前 deployable catalog 验证实际迁移结果，继续执行向量写入、查询、幂等、丢点恢复、并发锁及数据库约束校验。
+- 旧鉴权架构扫描仍覆盖全部生产目录；HS256 唯一例外限定为 Oracle 模块内的 `OracleVerificationTickets` 类，不放行整个模块。新增 8 条扫描/反向用例，证明 Business Principal、Service Principal、业务 MCP、Oracle 模块级代码、其他票据类及类装饰器不被例外放行。其他禁用标识仍检查完整源文本；不修改 Oracle 或 Principal 的运行算法。
+- 服务身份的 token 字节上限直接从 `app.shared.principal_token_contract` 导入，值仍为 8 KiB，不修改签发、验证或权限语义。
+
+修复后已验证：
+
+- 定向测试 98 passed / 1 skipped（16.64 秒）。
+- 临时 PostgreSQL 18 / Qdrant 1.17 使用独立容器、随机 loopback 端口和 tmpfs，仅含合成数据：三个真实知识存储用例全部通过（3.62 秒）；此前因版本断言提前停止的 Qdrant 分支本次实际执行通过。测试后容器和临时数据已清理，无正式卷挂载。
+- Ruff 通过；MyPy 后端全部 431 个源码文件通过。两种 Compose config --quiet、OpenSpec strict、Markdown 链接和 git diff --check 通过。
+- 前端 15 个测试文件 / 158 条用例全部通过；lint、typecheck、build 通过。现有 Vite native config 的 `__dirname` 与单个 JS 包超过 500 kB 警告仍在，不属于这四处修复。
+- 后端全量复跑：2404 passed / 41 skipped / 2 subtests passed（315.97 秒），无失败。41 条跳过中，三个知识真实存储用例已在上述隔离环境单独执行通过；其余外部验收不能据此视为通过。任务 4.4 完成，change 当前 16/19；5.2–5.4 保持待办。
+
+正式迁移、全量真实语料索引与恢复/重启验收仍未执行，不将上述合成/隔离存储测试当作真实业务 Recall@K 或完整部署验收。
 
 ## 已取得证据
 
@@ -80,4 +101,4 @@
 
 ## 尚未验收
 
-正式迁移 134；全量 8309 点构建、逐点核验、重放及重启后的真实语料查询；全量完成后的最终回归与验收记录。无人工标注，不报告真实 Recall@K。
+正式迁移到执行时重新核实的 deployable head（须包含知识向量迁移 134，当前代码也已有分页迁移 135）；全量 8309 点构建、逐点核验、重放及重启后的真实语料查询；全量完成后的最终回归与验收记录。无人工标注，不报告真实 Recall@K。

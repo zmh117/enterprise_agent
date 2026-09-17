@@ -30,7 +30,7 @@ from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError, ToolPolicyError
-from app.shared.migrations import Migrator
+from app.shared.migrations import Migrator, deployable_migration_catalog, load_migration_catalog
 from backend.tests.support.authorization import grant_test_application_access
 from backend.tests.support.channels import ensure_active_dingtalk_test_enterprise
 from backend.tests.test_unified_identity_rbac import (
@@ -832,8 +832,15 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         default_migrations_dir(),
         migrator_build="business-application-schema-test",
     )
-    migrator.run()
-    migrator.run()
+    first = migrator.run()
+    repeated = migrator.run()
+    # Exact filenames/checksums belong to test_schema_migration_runtime; this
+    # domain test verifies application of the current catalog and idempotency.
+    catalog = deployable_migration_catalog(load_migration_catalog(default_migrations_dir()))
+    assert first.head == catalog[-1].version
+    assert first.applied == tuple(artifact.version for artifact in catalog)
+    assert repeated.head == first.head
+    assert repeated.applied == ()
     tables = {
         str(row["name"])
         for row in db.execute("select name from sqlite_master where type = 'table'")
@@ -862,40 +869,6 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
             values ('orphan', 'missing', 1, 'actor', 'now', 'now')
             """
         )
-    migration_names = [path.name for path in sorted(default_migrations_dir().glob("*.sql"))]
-    assert migration_names == [
-        "100_baseline_v1.sql",
-        "101_expand_canonical_job_message.sql",
-        "102_schema_consolidation_checkpoint.sql",
-        "103_contract_retire_compatibility_shadows.sql",
-        "104_add_identity_aware_ones_mcp.sql",
-        "105_expand_unified_mcp_operation_audit.sql",
-        "106_expand_agent_run_audit.sql",
-        "107_expand_task_file_workspaces.sql",
-        "108_stage_attachment_only_messages.sql",
-        "109_allow_file_service_mcp_publications.sql",
-        "110_expand_file_source_received_time.sql",
-        "111_expand_text_file_format_policy.sql",
-        "112_expand_resource_revision_scope_bindings.sql",
-        "113_expand_document_file_processing.sql",
-        "114_expand_execution_summary_protocol_v13.sql",
-        "115_expand_file_turn_admission.sql",
-        "116_expand_office_embedded_image_layout_ocr.sql",
-        "117_expand_docling_layout_ocr_v2.sql",
-        "118_expand_bounded_workspace_working_sets.sql",
-        "119_contract_single_current_file_rule.sql",
-        "120_expand_runtime_tool_contract_evidence.sql",
-        "121_expand_docling_processing_concurrency.sql",
-        "122_document_processing_concurrency_comments.sql",
-        "123_expand_governed_external_actions.sql",
-        "124_expand_agent_job_context_audit.sql",
-        "125_expand_runtime_audit_chunk_event_projection.sql",
-        "126_release_unbound_ones_identity.sql",
-        "127_expand_external_action_provider_facts.sql",
-        "128_expand_dingtalk_confirmation_card_templates.sql",
-        "129_expand_external_action_proposal_chains.sql",
-        "130_restore_dingtalk_identity_indexes.sql",
-    ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
         "application_publication_id",

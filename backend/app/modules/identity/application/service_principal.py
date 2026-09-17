@@ -17,10 +17,10 @@ from urllib.parse import urlsplit
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.principal_jwt import (
-    MAX_PRINCIPAL_TOKEN_BYTES,
     PrincipalSigningKey,
 )
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from app.shared.principal_token_contract import MAX_PRINCIPAL_TOKEN_BYTES
 
 
 SERVICE_PRINCIPAL_ISSUER = "enterprise-agent-service-identity"

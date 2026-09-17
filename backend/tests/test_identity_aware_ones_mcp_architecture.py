@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 import stat
@@ -36,19 +37,41 @@ from services.ones_mcp_server.condition_dictionary import (
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+ORACLE_TICKET_MODULE = "backend/app/modules/platform_config/infrastructure/oracle_verification.py"
 
 
-def _production_sources() -> str:
+def _production_sources_by_path() -> dict[str, str]:
     roots = (
         REPOSITORY_ROOT / "backend/app",
         REPOSITORY_ROOT / "services",
     )
-    sources: list[str] = []
+    sources: dict[str, str] = {}
     for root in roots:
         for path in sorted(root.rglob("*")):
             if path.suffix in {".py", ".ts", ".json"} and "__pycache__" not in path.parts:
-                sources.append(path.read_text(encoding="utf-8"))
-    return "\n".join(sources)
+                sources[path.relative_to(REPOSITORY_ROOT).as_posix()] = path.read_text(encoding="utf-8")
+    return sources
+
+
+def _production_sources() -> str:
+    return "\n".join(_production_sources_by_path().values())
+
+
+def _assert_hs256_is_confined_to_oracle_tickets(sources: dict[str, str]) -> None:
+    violations: list[str] = []
+    for path, source in sources.items():
+        if path == ORACLE_TICKET_MODULE:
+            # Only the private Oracle ticket class is exempt, not its entire
+            # module or any Business/Service Principal implementation.
+            lines = source.splitlines(keepends=True)
+            for node in ast.parse(source).body:
+                if isinstance(node, ast.ClassDef) and node.name == "OracleVerificationTickets":
+                    for index in range(node.lineno - 1, node.end_lineno or node.lineno):
+                        lines[index] = ""
+            source = "".join(lines)
+        if "hs256" in source.lower():
+            violations.append(path)
+    assert not violations, f"HS256 outside private Oracle tickets: {sorted(violations)}"
 
 
 def _walk_property_names(value: Any) -> set[str]:
@@ -71,7 +94,6 @@ def test_retired_mcp_and_api_platform_architecture_cannot_return() -> None:
         "runtime-tool-mcp",
         "mcp_signing_key",
         "mcp_access_token",
-        "hs256",
         "generic_http_tool",
         "generic_graphql_tool",
     ):
@@ -84,6 +106,35 @@ def test_retired_mcp_and_api_platform_architecture_cannot_return() -> None:
     )
     for root in retired_module_roots:
         assert not list(root.rglob("*.py")) if root.exists() else True
+
+
+def test_hs256_remains_confined_to_private_oracle_verification_tickets() -> None:
+    _assert_hs256_is_confined_to_oracle_tickets(_production_sources_by_path())
+
+
+@pytest.mark.parametrize(
+    "path, source",
+    [
+        ("backend/app/modules/identity/application/principal_jwt.py", 'algorithm = "HS256"'),
+        ("backend/app/modules/identity/application/service_principal.py", 'algorithm = "HS256"'),
+        ("services/ones_mcp_server/auth.py", 'algorithm = "hs256"'),
+        (ORACLE_TICKET_MODULE, 'algorithm = "HS256"'),
+        (ORACLE_TICKET_MODULE, 'class OtherTicket:\n    algorithm = "HS256"\n'),
+        (ORACLE_TICKET_MODULE, '@signed("HS256")\nclass OracleVerificationTickets:\n    pass\n'),
+    ],
+)
+def test_hs256_guard_rejects_business_auth_and_oracle_module_scope(path: str, source: str) -> None:
+    with pytest.raises(AssertionError, match="HS256 outside private Oracle tickets"):
+        _assert_hs256_is_confined_to_oracle_tickets({path: source})
+
+
+def test_hs256_guard_exempts_only_the_oracle_ticket_class() -> None:
+    private_ticket = 'class OracleVerificationTickets:\n    algorithm = "HS256"\n'
+    _assert_hs256_is_confined_to_oracle_tickets({ORACLE_TICKET_MODULE: private_ticket})
+    with pytest.raises(AssertionError, match="HS256 outside private Oracle tickets"):
+        _assert_hs256_is_confined_to_oracle_tickets({
+            ORACLE_TICKET_MODULE: private_ticket + '\nalgorithm = "HS256"\n',
+        })
 
 
 def test_runtime_protocol_has_no_caller_controlled_mcp_target_or_credential() -> None:
