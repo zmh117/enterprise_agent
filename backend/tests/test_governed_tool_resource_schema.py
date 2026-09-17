@@ -57,7 +57,7 @@ def test_governed_resource_schema_has_stable_revision_records_without_legacy_map
         migrator_build="resource-schema-test",
     ).run()
 
-    assert result.head == "132"
+    assert result.head == "133"
     tables = {
         row["name"]
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -141,7 +141,7 @@ def test_role_migration_preserves_old_selectors_and_published_hashes(tmp_path: P
                 (f"revision-{index}", resource_id, "a" * 64, f"verification-{index}"),
             )
         result = Migrator(database, source, migrator_build="after-role").run()
-        assert result.applied == ("132",)
+        assert result.applied == ("132", "133")
         for table, status in (
             ("platform_resource_draft", "DRAFT"),
             ("platform_resource_revision", "PUBLISHED"),

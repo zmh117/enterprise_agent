@@ -9,6 +9,64 @@
   },
   "entries": [
     {
+      "id": "knowledge.document_chunk_set",
+      "object_type": "table",
+      "table": "knowledge.document_chunk_set",
+      "owner": "knowledge",
+      "semantics": "来源版本与分块配置对应的完整派生集合；不覆盖原版本",
+      "classification": "derived_projection",
+      "canonical_source": "knowledge.document_revision and versioned chunk profile",
+      "writers": [
+        "code:backend/app/modules/knowledge/chunk_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/chunk_service.py"
+      ],
+      "lifecycle": "来源版本与配置共同确定；完整集合按事务首次提交，不覆盖历史结果",
+      "retention_policy": "跟随来源版本的受控保留；不随 Agent Job 自动删除",
+      "audit_requirement": "只记录计数、哈希、机器错误码；不输出真实正文或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "删除或重建须先核对来源及后续索引依赖"
+        ]
+      },
+      "evidence_refs": [
+        "migration:133_expand_knowledge_chunks",
+        "platform-operations:知识清洗分块必须作为来源版本的可追溯派生结果"
+      ]
+    },
+    {
+      "id": "knowledge.document_chunk",
+      "object_type": "table",
+      "table": "knowledge.document_chunk",
+      "owner": "knowledge",
+      "semantics": "可定位的事实片段及待向量化文本；不代表已索引或已授权",
+      "classification": "derived_projection",
+      "canonical_source": "knowledge.document_revision and versioned chunk profile",
+      "writers": [
+        "code:backend/app/modules/knowledge/chunk_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/chunk_service.py"
+      ],
+      "lifecycle": "来源版本与配置共同确定；完整集合按事务首次提交，不覆盖历史结果",
+      "retention_policy": "跟随来源版本的受控保留；不随 Agent Job 自动删除",
+      "audit_requirement": "只记录计数、哈希、机器错误码；不输出真实正文或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "删除或重建须先核对来源及后续索引依赖"
+        ]
+      },
+      "evidence_refs": [
+        "migration:133_expand_knowledge_chunks",
+        "platform-operations:知识清洗分块必须作为来源版本的可追溯派生结果"
+      ]
+    },
+    {
       "id": "knowledge.source",
       "object_type": "table",
       "table": "knowledge.source",
@@ -47,7 +105,8 @@
         "code:backend/app/modules/knowledge/import_service.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/import_service.py",
+        "code:backend/app/modules/knowledge/chunk_service.py"
       ],
       "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
@@ -103,7 +162,8 @@
         "code:backend/app/modules/knowledge/import_service.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/import_service.py",
+        "code:backend/app/modules/knowledge/chunk_service.py"
       ],
       "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
@@ -132,7 +192,8 @@
         "code:backend/app/modules/knowledge/import_service.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/import_service.py",
+        "code:backend/app/modules/knowledge/chunk_service.py"
       ],
       "lifecycle": "不可变；仅新增版本，不覆盖原文",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
@@ -160,7 +221,8 @@
         "code:backend/app/modules/knowledge/import_service.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/import_service.py",
+        "code:backend/app/modules/knowledge/chunk_service.py"
       ],
       "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",

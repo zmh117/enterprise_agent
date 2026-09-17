@@ -4,37 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
-import hashlib
-import threading
 from typing import Any
 import uuid
 
 from app.modules.knowledge.ones_export import (
-    ExportValidationError, PreparedExport, PreparedRecord, canonical_json, digest, identifier,
+    ExportValidationError, PreparedExport, PreparedRecord, digest, identifier,
 )
+from app.modules.knowledge.storage import insert, now, source_lock, stable_id, table
 from app.shared.database import Database
-
-
-TABLES = frozenset({
-    "source", "document", "document_revision", "knowledge_base", "knowledge_base_document",
-    "import_run", "document_relation",
-})
-_SQLITE_LOCK = threading.Lock()
-
-
-def table(database: Database, name: str) -> str:
-    if name not in TABLES:
-        raise ValueError("Unknown knowledge table")
-    return f'"knowledge.{name}"' if database.engine == "sqlite" else f"knowledge.{name}"
-
-
-def stable_id(kind: str, *parts: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_json(["enterprise-agent-knowledge", kind, *parts])))
-
-
-def now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 class KnowledgeImportService:
@@ -43,32 +20,11 @@ class KnowledgeImportService:
 
     @contextmanager
     def _source_lock(self, source_id: str) -> Iterator[None]:
-        # session 固定连接，事务之间仍持有 advisory lock；进程退出后由数据库释放。
-        with self.database.session():
-            if self.database.engine == "postgres":
-                key = int.from_bytes(hashlib.sha256(source_id.encode()).digest()[:8], "big", signed=True)
-                result = self.database.execute_one("select pg_try_advisory_lock(?) as acquired", (key,))
-                if not result or not result["acquired"]:
-                    raise ExportValidationError("knowledge_source_import_busy")
-                try:
-                    yield
-                finally:
-                    self.database.execute("select pg_advisory_unlock(?)", (key,))
-            else:
-                if not _SQLITE_LOCK.acquire(blocking=False):
-                    raise ExportValidationError("knowledge_source_import_busy")
-                try:
-                    yield
-                finally:
-                    _SQLITE_LOCK.release()
+        with source_lock(self.database, source_id):
+            yield
 
     def _insert(self, name: str, values: dict[str, Any], *, conflict: str = "") -> None:
-        columns = ", ".join(values)
-        placeholders = ", ".join("?" for _ in values)
-        self.database.execute(
-            f"insert into {table(self.database, name)} ({columns}) values ({placeholders}) {conflict}",
-            tuple(canonical_json(v) if isinstance(v, (dict, list)) else v for v in values.values()),
-        )
+        insert(self.database, name, values, conflict=conflict)
 
     def import_export(
         self, prepared: PreparedExport, *, source_code: str, knowledge_base_code: str,
