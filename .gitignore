@@ -9,6 +9,7 @@ enterprise_agent.db
 .env
 antvX6/
 .local/compose-infra-upgrade/
+.local/knowledge-evaluation/
 .local/dingtalk-rebuild-*/
 # Oracle Instant Client binaries (license-restricted); keep README only in git.
 backend/vendor/oracle/instantclient/
@@ -25,5 +26,5 @@ enterprise-agent-master-key.tar
 .agents/
 skills-lock.json
 ones_mock/ones
-知识库/
+ones知识库/
 backend/vendor/instantclient-basic-linux.x64-19.12.0.0.0dbru.zip

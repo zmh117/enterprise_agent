@@ -1,0 +1,25 @@
+{
+  "contract": "knowledge-evaluation/v1",
+  "dataset_version": "synthetic-format-v1",
+  "basis": "synthetic",
+  "labels_complete": false,
+  "knowledge_base_code": "synthetic_base",
+  "source_id": "00000000-0000-0000-0000-000000000001",
+  "annotation": {"origin": "synthetic_fixture", "reviewed": true},
+  "cases": [
+    {
+      "query_id": "q1",
+      "query": "合成设备报错 E_DEMO，提交后无法继续，该查哪条缺陷？",
+      "category": "error_code",
+      "no_answer": false,
+      "relevant": [{"kind": "work_item", "id": "synthetic_item_1"}]
+    },
+    {
+      "query_id": "q2",
+      "query": "合成系统是否存在尚未收录的 Z_DEMO 问题？",
+      "category": "no_answer",
+      "no_answer": true,
+      "relevant": []
+    }
+  ]
+}
