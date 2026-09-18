@@ -29,11 +29,14 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 `knowledge-model-prepare` 和 `knowledge-ops` 都是一次性任务。不要用不指定服务的 `--profile knowledge up` 代替以上命令。基准、迁移门禁、显式提交、断点恢复及查询见[完整运行手册](../docs/runbooks/knowledge-local-vector-index.md)。当前模型锁针对 Linux ARM64，其他架构不能直接照搬。
 
+平台新增迁移后，已存在的 `knowledge-ops` 镜像不会自动更新。运行知识 CLI 前应定向重建该镜像并核验 schema 门禁；不需要重新下载模型或重建索引。更新与知识服务定向重启见[运维镜像更新](../docs/runbooks/knowledge-local-vector-index.md#运维镜像更新与定向重启)。
+
 ## 数据、网络与运维边界
 
 - 共用平台 PostgreSQL 的 `knowledge` schema，不另建 PostgreSQL。数据库迁移仍属于平台统一 catalog：不用知识服务的环境升级后端时也必须满足对应 schema head，但不会自动导入缺陷或生成向量。
 - 扩展只为 PostgreSQL 追加 `knowledge-internal`，保留默认和运行控制网络。Embedding、Qdrant、运维 CLI 仅使用 internal 网络，不发布宿主机端口；准备任务只使用下载网络，不获得数据库配置或平台 Secret。
 - 保留 `knowledge-models`、`knowledge-qdrant` 卷键名；同一项目仍使用原有模型和 Qdrant 数据。文件拆分不搬迁或清空任何卷。
+- Qdrant 固定为 `v1.19.1` 和已核验的镜像 digest，不使用浮动 latest。已有卷跨次版本升级必须先备份并逐级演练，不能直接换最新镜像跳级启动；见[升级与恢复记录](../docs/runbooks/knowledge-local-vector-index.md#qdrant-版本升级与恢复)。
 - 已有 PostgreSQL 若尚未接入知识网络，须在批准的维护流程中补充网络及 `postgres` 别名；不能为此直接重建数据库。新部署由叠加配置管理。当前本机已经接入，拆分不要求重启。
 - 部署了知识服务的环境，后续 Compose 运维命令应始终叠加两个文件（即使此次只操作某个业务服务），避免把知识容器误判为 orphan。禁止仅用主文件执行 `--remove-orphans`，不要用全项目 `down -v` 停用知识库。
 - 若只暂停知识服务，用叠加配置定向 `stop knowledge-embedding knowledge-qdrant`，保留卷和数据库网络；正式卸载/删卷另行审批。

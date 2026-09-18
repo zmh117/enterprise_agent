@@ -72,3 +72,48 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledg
 - CLI 合成查询成功；按长度分层取 10 条原文自查询均在首位找回对应文档，仅证明计算与检索链路，不是人工标注业务召回评测。
 
 此处是上述日期的运行证据，不是长期健康承诺。后续变更语料或配置前，仍须按本手册重新核对版本、数量与来源；不能据此直接启用 Agent/MCP 权限。
+
+## Qdrant 版本升级与恢复
+
+当前可选知识 Compose 固定 `qdrant/qdrant:v1.19.1@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10`，2026-09-18 已在本机 Linux ARM64 正式运行验证。镜像摘要与 image ID 是不同对象，不能互相替代；版本标签为空也不能据此判断镜像无用。
+
+已有数据必须遵循 [Qdrant 官方升级路径](https://qdrant.tech/documentation/upgrades/)，单节点也不能跳过中间次版本。本次执行 `1.17.0 → 1.17.1 → 1.18.3 → 1.19.1`，每一级使用明确版本和摘要；先在冷备复制出的隔离卷验证，再仅对 `knowledge-qdrant` 使用 Compose `up -d --no-deps --pull never`。未重启 PostgreSQL、Embedding 或业务服务，未执行 DDL、重新向量化或授权发布。
+
+### 2026-09-18 升级验收
+
+- 正式容器实际二进制为 `qdrant 1.19.1`；保留原卷 `enterprise_agent_knowledge-qdrant`、internal 网络和无宿主机端口边界。
+- 冷备文件摘要匹配，并在独立卷用 1.17.0 启动证明可恢复；演练与正式各级升级、最终重启后的 8309 个点/向量摘要及集合关键配置均与升级前一致。
+- 现有应用客户端逐点匹配 PostgreSQL 索引清单：5000 文档、8309 点、READY；本地 Embedding 合成查询返回 10 条，命中文档顺序摘要一致。5 个向量自查询探针全部在 top 10 找回自身，结果序列也一致。
+- 本次核验未读取真实 ONES，不代表 Agent/MCP/角色授权或业务召回率验收。
+- 当时正式 schema 已为 136，原 `knowledge-ops` 镜像仍落后并触发 schema 门禁。只读应用核验使用主栈现有的当前 `enterprise_agent-migrator` 镜像；没有绕过门禁、执行迁移或顺带重建业务镜像。后续运行默认 knowledge-ops 前应按当前 catalog 重建/验收运维镜像。
+
+### 保留的恢复点
+
+- 本机冷备卷：`enterprise_agent_qdrant_backup_1170_20260918_ynsbow`，约 83 MiB，未挂到常驻服务，不自动删除。
+- 对应原镜像：`qdrant/qdrant:v1.17.0@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb`。
+- 文件内容清单 SHA-256：`6ef9de07a8be77224d16d191d30227ae6242af071a68e04a698d61f77b065cc8`（按相对路径排序后，对各文件 SHA-256 清单再取摘要）。
+- 演练容器与专用演练卷已清理；正式卷、冷备卷、原镜像保留。冷备属于本机恢复点，不是异地备份。
+
+回退必须先停止知识写入，确认后续数据变化及恢复窗口，从冷备复制到一个新的明确恢复卷，用对应 1.17.0 镜像隔离验证，再在维护窗口定向切换。不得用旧镜像直接打开已被 1.19.1 迁移的正式卷，也不得覆盖冷备或使用 `down -v`。有升级后新增写入时，不能未经核对直接回退到本恢复点。
+
+升级验收当时 Docker 可用磁盘约 0.7 GiB，需要另行规划扩容或明确范围的清理；本次没有删除其他项目镜像、卷或旧验收容器。
+
+## 运维镜像更新与定向重启
+
+`knowledge-ops` 使用与平台一致的 migration catalog，但其本机镜像不会随主栈镜像自动刷新。数据库已升级而旧 CLI 报 `knowledge_schema_head_mismatch` 时，先核对仓库 catalog 与已部署版本，再定向构建；不要关闭门禁或为了旧镜像降级数据库。
+
+```sh
+# 只更新一次性运维镜像，不更新模型或其他服务。
+docker compose -f docker-compose.yml -f knowledge/compose.yml \
+  --profile knowledge --progress quiet build knowledge-ops
+
+# 仅在需要维护重启时执行；保留模型/向量卷，不重启 PostgreSQL。
+docker compose -f docker-compose.yml -f knowledge/compose.yml \
+  --profile knowledge restart knowledge-qdrant knowledge-embedding
+```
+
+先确认没有运行中的索引写入任务，并等待 Qdrant `/readyz`、Embedding `/ready` 就绪，再按上文查询命令使用默认 `knowledge-ops` 镜像验证 schema 门禁与本地检索。`knowledge-ops` 没有常驻进程，无需 `up` 或 `restart`；以 `run --rm --no-deps` 重新运行明确的一次性命令即可。运维镜像刷新不需要 `--commit`、模型准备任务或数据库迁移。
+
+### 2026-09-18 运维镜像刷新验收
+
+用户授权后已定向构建默认 `knowledge-ops`，镜像内 catalog 包含 migration 136；上文记录的旧镜像门禁失败已解决。Qdrant/Embedding 已定向重启并就绪，默认运维镜像无需临时覆盖即可通过 schema 门禁、5000 文档/8309 点身份核验及合成问题检索；点/向量和命中序列摘要保持不变。其他 23 个既有容器身份和启动时间未变，没有迁移、重新索引或删除恢复点。当前 Docker 数据盘约 1.4 GiB 可用（98% 已用），容量维护仍需单独安排。
