@@ -8,6 +8,7 @@ from typing import Any
 
 from app.python_runtime.error_mapper import redact_sensitive_text
 from app.shared.config import ExecutionSettings
+from app.shared.sandbox_contract import SANDBOX_CAPACITY_BYTES, SANDBOX_INPUT_FILE_LIMIT
 from app.shared.tool_response_summary import tool_response_summary
 from app.python_runtime.log_evidence_scanner import (
     LOG_EVIDENCE_SCANNER_VERSION,
@@ -431,9 +432,9 @@ def safe_log_evidence_response(value: Any) -> dict[str, Any]:
         ),
     }
     bounded_counts = {
-        "input_count": 40,
-        "input_bytes": 224 * 1024 * 1024,
-        "scanned_bytes": 224 * 1024 * 1024,
+        "input_count": SANDBOX_INPUT_FILE_LIMIT,
+        "input_bytes": SANDBOX_CAPACITY_BYTES,
+        "scanned_bytes": SANDBOX_CAPACITY_BYTES,
         "logical_line_count": 100_000_000,
         "candidate_count": 100_000_000,
         "retained_count": 500,

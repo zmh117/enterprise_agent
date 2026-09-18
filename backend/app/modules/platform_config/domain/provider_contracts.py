@@ -8,7 +8,7 @@ from app.modules.platform_config.application.validation import (
     PlatformConfigValidationError,
     validate_secret_ref,
 )
-from app.shared.loki_contract import LOKI_RESOURCE_MAX_LINES
+from app.shared.loki_contract import LOKI_RESOURCE_MAX_LINES, LOKI_MAX_MINUTES
 
 
 @dataclass(frozen=True)
@@ -136,7 +136,7 @@ _CONTRACTS = {
                 "type": "integer",
                 "required": True,
                 "minimum": 1,
-                "maximum": 1440,
+                "maximum": LOKI_MAX_MINUTES,
             },
             {
                 "name": "max_lines",
@@ -144,13 +144,6 @@ _CONTRACTS = {
                 "required": True,
                 "minimum": 1,
                 "maximum": LOKI_RESOURCE_MAX_LINES,
-            },
-            {
-                "name": "max_response_bytes",
-                "type": "integer",
-                "required": True,
-                "minimum": 1024,
-                "maximum": 10485760,
             },
         ),
     ),
@@ -264,6 +257,8 @@ class ProviderContractRegistry:
             projected["db"] = projected.pop("database")
         elif document.resource_kind == "loki":
             projected["tenant"] = projected.pop("tenant_id", "")
+            # Old immutable revisions may still contain this retired setting.
+            projected.pop("max_response_bytes", None)
         return projected
 
     def _database(
@@ -360,13 +355,14 @@ class ProviderContractRegistry:
             self._rename(config, "tenant", "tenant_id")
         if "tenant" in config:
             raise self._field_error("Loki tenant is not canonical; use tenant_id")
+        # Accept old drafts/clients without retaining a per-resource byte cap.
+        config.pop("max_response_bytes", None)
         allowed = {
             "base_url",
             "tenant_id",
             "timeout_seconds",
             "max_minutes",
             "max_lines",
-            "max_response_bytes",
         }
         self._reject_unknown(config, allowed)
         self._require_fields(
@@ -376,7 +372,6 @@ class ProviderContractRegistry:
                 "timeout_seconds",
                 "max_minutes",
                 "max_lines",
-                "max_response_bytes",
             },
         )
         base_url = self._text(config["base_url"])
@@ -403,19 +398,13 @@ class ProviderContractRegistry:
                 config["max_minutes"],
                 field="max_minutes",
                 minimum=1,
-                maximum=1440,
+                maximum=LOKI_MAX_MINUTES,
             ),
             "max_lines": self._integer(
                 config["max_lines"],
                 field="max_lines",
                 minimum=1,
                 maximum=LOKI_RESOURCE_MAX_LINES,
-            ),
-            "max_response_bytes": self._integer(
-                config["max_response_bytes"],
-                field="max_response_bytes",
-                minimum=1024,
-                maximum=10485760,
             ),
         }
 

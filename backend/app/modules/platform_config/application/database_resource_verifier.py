@@ -13,6 +13,7 @@ from app.modules.platform_config.domain.provider_contracts import (
     ProviderContractRegistry,
 )
 from app.shared.database import assert_external_io_allowed
+from app.shared.query_result_contract import QUERY_RESULT_MAX_BYTES
 
 from .governed_resources import ResourceVerificationOutcome
 
@@ -627,7 +628,6 @@ class LokiResourceProbe:
             "timeout_seconds": int(config["timeout_seconds"]),
             "max_minutes": int(config["max_minutes"]),
             "max_lines": int(config["max_lines"]),
-            "max_response_bytes": int(config["max_response_bytes"]),
             **scope_checks,
         }
 
@@ -663,8 +663,8 @@ class LokiResourceProbe:
                 method="GET",
             )
             with self._urlopen_func(request, timeout=timeout_seconds) as response:
-                raw = response.read(int(config["max_response_bytes"]) + 1)
-            if len(raw) > int(config["max_response_bytes"]):
+                raw = response.read(QUERY_RESULT_MAX_BYTES + 1)
+            if len(raw) > QUERY_RESULT_MAX_BYTES:
                 raise RuntimeError("Loki selector verification response is too large")
             parsed = json.loads(raw.decode("utf-8"))
             if not isinstance(parsed, dict) or parsed.get("status") not in {None, "success"}:

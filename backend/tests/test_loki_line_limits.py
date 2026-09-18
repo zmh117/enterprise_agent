@@ -80,20 +80,19 @@ def _resource_config(max_lines: object) -> dict:
         "timeout_seconds": 5,
         "max_minutes": 60,
         "max_lines": max_lines,
-        "max_response_bytes": 1048576,
     }
 
 
-@pytest.mark.parametrize("max_lines", [1, 100, 1000])
-def test_resource_contract_accepts_at_most_1000(max_lines: int) -> None:
+@pytest.mark.parametrize("max_lines", [1, 100, 1000, 10000])
+def test_resource_contract_accepts_at_most_10000(max_lines: int) -> None:
     registry = ProviderContractRegistry()
     document = registry.normalize(provider_type="loki", config=_resource_config(max_lines))
     assert document.config["max_lines"] == max_lines
     field = next(item for item in registry.require("loki").fields if item["name"] == "max_lines")
-    assert (field["minimum"], field["maximum"]) == (1, 1000)
+    assert (field["minimum"], field["maximum"]) == (1, 10000)
 
 
-@pytest.mark.parametrize("max_lines", [0, -1, 1001, 5000, 10000, True, "invalid"])
+@pytest.mark.parametrize("max_lines", [0, -1, 10001, True, "invalid"])
 def test_resource_contract_rejects_invalid_max_lines(max_lines: object) -> None:
     with pytest.raises(PlatformConfigValidationError):
         ProviderContractRegistry().normalize(
@@ -183,7 +182,7 @@ def test_all_tools_accept_resource_boundary_and_reject_before_http(tool: str) ->
     service, requests = _service()
     _call(service, tool, limit=1000)
     assert len(requests) == 1
-    with pytest.raises(PolicyViolation):
+    with pytest.raises(ToolPolicyError, match="result size"):
         _call(service, tool, limit=1001)
     assert len(requests) == 1
 

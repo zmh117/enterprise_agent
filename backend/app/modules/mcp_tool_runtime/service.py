@@ -28,7 +28,7 @@ from app.modules.permission.application.permission_service import PermissionServ
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import PermissionDenied, ToolPolicyError
 from app.shared.logging import correlation_id_var
-from app.shared.loki_contract import assert_loki_selector
+from app.shared.loki_contract import assert_loki_selector, assert_loki_query_limits
 from app.shared.resource_role import normalize_resource_role, RESOURCE_ROLE_MESSAGE
 
 
@@ -567,16 +567,10 @@ def _resource_routing_from_arguments(
 def assert_loki_diagnostic_bounds(arguments: dict[str, Any], limits: ExecutionSettings) -> None:
     minutes = int(arguments.get("minutes", 15))
     limit = int(arguments.get("limit", 100))
-    if minutes <= 0 or minutes > limits.max_loki_minutes:
-        raise ToolPolicyError(
-            "Loki time range exceeds configured maximum",
-            safe_message="Loki 查询时间范围超过配置上限",
-        )
-    if limit <= 0 or limit > limits.max_loki_lines:
-        raise ToolPolicyError(
-            "Loki result size exceeds configured maximum",
-            safe_message="Loki 查询结果数量超过配置上限",
-        )
+    assert_loki_query_limits(
+        minutes=minutes, limit=limit,
+        max_minutes=limits.max_loki_minutes, max_lines=limits.max_loki_lines,
+    )
 
 
 def _risk_level(tool_name: str) -> str:

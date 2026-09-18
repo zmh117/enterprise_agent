@@ -74,6 +74,15 @@ def ensure_agent_publication_mcp_tools(
         raise AssertionError(
             "Test Agent publication does not contain requested MCP Tools: " + ", ".join(missing)
         )
+    # The migration seed represents an old publication. This test-only builder
+    # constructs a current publication; production upgrades must republish.
+    for identifier in requested:
+        definition = MCP_TOOL_MANIFEST[identifier]
+        container.database.execute(
+            "update agent_publication_mcp_tool set schema_hash = ?, model_description = ? "
+            "where agent_publication_id = ? and tool_identifier = ?",
+            (definition.schema_hash, definition.description, agent_publication_id, identifier),
+        )
     return requested
 
 

@@ -266,14 +266,15 @@ def test_python_text_v2_sandbox_allows_markdown_write_and_denies_log_mutation(
         sandbox.cleanup()
 
 
-def test_sandbox_v2_reserves_40_inputs_16_work_outputs_and_8_tmp_slots(
+def test_sandbox_v2_reserves_40_inputs_80_work_outputs_and_8_tmp_slots(
     tmp_path: Path,
 ) -> None:
     sandbox = _manager(tmp_path).create(f"job-budget-{os.getpid()}")
     try:
-        assert sandbox.limits.max_files == 64
+        assert sandbox.limits.max_files == 128
+        assert sandbox.limits.capacity_bytes == 512 * 1024 * 1024
         assert sandbox.limits.max_input_files == 40
-        assert sandbox.limits.max_work_output_files == 16
+        assert sandbox.limits.max_work_output_files == 80
         assert sandbox.limits.max_tmp_files == 8
         for index in range(40):
             sandbox.reserve_input(
@@ -286,7 +287,7 @@ def test_sandbox_v2_reserves_40_inputs_16_work_outputs_and_8_tmp_slots(
                 expected_size_bytes=0,
             )
         assert input_limit.value.code == "sandbox_input_file_count_exceeded"
-        for index in range(16):
+        for index in range(80):
             sandbox.reserve_work_output(
                 relative_path=f"outputs/result-{index}.txt",
                 expected_size_bytes=0,
@@ -303,6 +304,25 @@ def test_sandbox_v2_reserves_40_inputs_16_work_outputs_and_8_tmp_slots(
                 expected_size_bytes=0,
             )
         assert output_limit.value.code == "sandbox_file_count_exceeded"
+    finally:
+        sandbox.cleanup()
+
+
+def test_sandbox_v2_capacity_includes_all_pending_reservations(tmp_path: Path) -> None:
+    sandbox = _manager(tmp_path).create("job-capacity-512")
+    try:
+        for index in range(34):
+            sandbox.reserve_work_output(
+                relative_path=f"work/large-{index}.md",
+                expected_size_bytes=15 * 1024 * 1024,
+            )
+        sandbox.reserve_work_output(
+            relative_path="work/remaining.md",
+            expected_size_bytes=2 * 1024 * 1024,
+        )
+        with pytest.raises(JobSandboxError) as error:
+            sandbox.reserve_work_output(relative_path="work/overflow.md", expected_size_bytes=1)
+        assert error.value.code == "sandbox_capacity_exceeded"
     finally:
         sandbox.cleanup()
 

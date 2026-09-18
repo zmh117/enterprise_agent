@@ -171,22 +171,22 @@ def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardene
 def test_runtime_tmpfs_and_per_job_limits_are_explicitly_configured() -> None:
     services = _compose()["services"]
     service = services["python-agent-runtime"]
-    assert "${AGENT_RUNTIME_TMPFS_SIZE:-256m}" in service["tmpfs"][0]
+    assert "${AGENT_RUNTIME_TMPFS_SIZE:-1g}" in service["tmpfs"][0]
     environment = service["environment"]
     assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES"] == (
-        "${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-234881024}"
+        "${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-536870912}"
     )
     assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES"] == (
         "${AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES:-15728640}"
     )
     assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILES"] == (
-        "${AGENT_RUNTIME_SANDBOX_MAX_FILES:-64}"
+        "${AGENT_RUNTIME_SANDBOX_MAX_FILES:-128}"
     )
     assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_INPUT_FILES"] == (
         "${AGENT_RUNTIME_SANDBOX_MAX_INPUT_FILES:-40}"
     )
     assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_WORK_OUTPUT_FILES"] == (
-        "${AGENT_RUNTIME_SANDBOX_MAX_WORK_OUTPUT_FILES:-16}"
+        "${AGENT_RUNTIME_SANDBOX_MAX_WORK_OUTPUT_FILES:-80}"
     )
     assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_TMP_FILES"] == (
         "${AGENT_RUNTIME_SANDBOX_MAX_TMP_FILES:-8}"

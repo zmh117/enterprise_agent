@@ -221,15 +221,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             try:
                 runtime.sandbox_manager.root.mkdir(parents=True, exist_ok=True, mode=0o700)
                 available = shutil.disk_usage(runtime.sandbox_manager.root).free
-                if (
-                    limits.capacity_bytes == 224 * 1024 * 1024
-                    and limits.max_files == 64
-                    and limits.max_file_bytes == 15 * 1024 * 1024
-                    and limits.max_input_files == 40
-                    and limits.max_work_output_files == 16
-                    and limits.max_tmp_files == 8
-                    and available >= 224 * 1024 * 1024
-                ):
+                if limits == JobSandboxLimits() and available >= limits.capacity_bytes:
                     sandbox_status = "ready"
             except OSError:
                 sandbox_status = "unavailable"
@@ -446,6 +438,31 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
     return app
 
 
+def _sandbox_limits_from_environment() -> JobSandboxLimits:
+    defaults = JobSandboxLimits()
+    values = {
+        name: int(
+            os.getenv(f"PYTHON_AGENT_RUNTIME_SANDBOX_{name.upper()}", str(getattr(defaults, name)))
+        )
+        for name in (
+            "capacity_bytes",
+            "max_files",
+            "max_file_bytes",
+            "max_input_files",
+            "max_work_output_files",
+            "max_tmp_files",
+        )
+    }
+    limits = JobSandboxLimits(**values)
+    if limits != defaults:
+        raise ValueError(
+            "Python Runtime sandbox limits must match sandbox-v2: "
+            "512 MiB, 128 files, 15 MiB/file, 40 inputs, 80 work/outputs, 8 tmp; "
+            "update the existing deployment environment"
+        )
+    return limits
+
+
 def _default_dependencies() -> PythonRuntimeDependencies:
     settings = load_master_key_settings(load_settings())
     database = Database(settings.database_dsn)
@@ -464,30 +481,8 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         raise ValueError("PYTHON_AGENT_RUNTIME_SANDBOX_ROOT must be absolute")
     sandbox_manager = JobSandboxManager(
         sandbox_root,
-        limits=JobSandboxLimits(
-            capacity_bytes=int(
-                os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES", str(224 * 1024 * 1024))
-            ),
-            max_files=int(os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILES", "64")),
-            max_file_bytes=int(
-                os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES", str(15 * 1024 * 1024))
-            ),
-            max_input_files=int(os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_INPUT_FILES", "40")),
-            max_work_output_files=int(
-                os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_WORK_OUTPUT_FILES", "16")
-            ),
-            max_tmp_files=int(os.getenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_TMP_FILES", "8")),
-        ),
+        limits=_sandbox_limits_from_environment(),
     )
-    if (
-        sandbox_manager.limits.capacity_bytes != 224 * 1024 * 1024
-        or sandbox_manager.limits.max_files != 64
-        or sandbox_manager.limits.max_file_bytes != 15 * 1024 * 1024
-        or sandbox_manager.limits.max_input_files != 40
-        or sandbox_manager.limits.max_work_output_files != 16
-        or sandbox_manager.limits.max_tmp_files != 8
-    ):
-        raise ValueError("Python Runtime sandbox limits must match sandbox-v2")
     executor = PythonRuntimeExecutor(
         binding_resolver,
         limits=settings.execution,

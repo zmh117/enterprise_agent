@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.modules.mcp_tool_runtime.domain.addressing import ResourceBinding
@@ -56,6 +56,7 @@ class PublishedToolResourceAddress:
     base: str
     workshop: str
     placement: str
+    query_limits: dict[str, int] = field(default_factory=dict)
 
     @property
     def target(self) -> tuple[str, str, str]:
@@ -220,6 +221,7 @@ class DirectResourceResolver:
                             base=base,
                             workshop=workshop,
                             placement=str(row.get("placement") or ""),
+                            query_limits=self._published_query_limits(row, kind),
                         )
                     )
         return tuple(sorted(addresses, key=lambda value: value.sort_key))
@@ -232,7 +234,7 @@ class DirectResourceResolver:
                    environment.code as environment_code,
                    base.code as base_code, workshop.code as workshop_code,
                    revision.id as resource_revision_id, revision.revision,
-                   revision.scope_bindings_json, revision.content_hash
+                   revision.scope_bindings_json, revision.content_hash, revision.config_json
               from platform_resource resource
               join platform_resource_revision revision
                 on revision.resource_id = resource.id
@@ -252,6 +254,23 @@ class DirectResourceResolver:
         for row in rows:
             latest.setdefault(str(row["resource_id"]), row)
         return list(latest.values())
+
+    @staticmethod
+    def _published_query_limits(row: dict[str, Any], kind: str) -> dict[str, int]:
+        if kind != "loki":
+            return {}
+        try:
+            config = json.loads(str(row["config_json"]))
+            result = {key: config[key] for key in ("max_minutes", "max_lines")}
+            if any(type(value) is not int or value < 1 for value in result.values()):
+                raise ValueError("Invalid numeric limits")
+            return result
+        except (KeyError, ValueError, TypeError):
+            raise ToolPolicyError(
+                "Published resource query limits are invalid",
+                safe_message="已发布资源查询限制无效，请管理员重新验证并发布",
+                error_code="resource_query_limits_invalid",
+            ) from None
 
     @staticmethod
     def _published_call_targets(row: dict[str, Any]) -> tuple[tuple[str, str, str], ...]:
@@ -461,7 +480,6 @@ class DirectResourceResolver:
                 timeout_seconds=int(projected["timeout_seconds"]),
                 max_minutes=int(projected["max_minutes"]),
                 max_lines=int(projected["max_lines"]),
-                max_response_bytes=int(projected["max_response_bytes"]),
             )
         environment_code = environment or str(row.get("environment_code") or "global")
         base_code = base or str(row.get("base_code") or "environment")

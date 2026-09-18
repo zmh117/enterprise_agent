@@ -38,6 +38,7 @@ from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import load_settings
 from app.shared.exceptions import AppError, ToolPolicyError
 from app.shared.secret_redaction import sanitize_for_persistence
+from app.shared.query_result_contract import QUERY_RESULT_MAX_BYTES, QUERY_RESULT_TOOLS
 from app.modules.platform_config.infrastructure.oracle_verification import (
     MAX_REQUEST_BYTES, ORACLE_VERIFY_PATH, OracleVerificationHandler,
 )
@@ -189,7 +190,8 @@ class JobToolService:
                     "metadata": result.metadata,
                     "truncated": result.truncated,
                     "security": {"trust": "untrusted_internal_evidence"},
-                }
+                },
+                max_bytes=(QUERY_RESULT_MAX_BYTES if descriptor.name in QUERY_RESULT_TOOLS else MAX_RESPONSE_BYTES),
             )
             self.audit_coordinator.complete(
                 handle,
@@ -611,11 +613,11 @@ def _encoded(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _bounded_result(value: dict[str, Any]) -> dict[str, Any]:
+def _bounded_result(value: dict[str, Any], *, max_bytes: int = MAX_RESPONSE_BYTES) -> dict[str, Any]:
     safe = sanitize_for_persistence(value)
     if not isinstance(safe, dict):
         raise TypeError("Sanitized MCP tool result must remain an object")
-    if len(_encoded(safe)) > MAX_RESPONSE_BYTES:
+    if len(_encoded(safe)) > max_bytes:
         raise ToolMcpError("tool_mcp_response_too_large", "只读工具响应超过大小限制")
     return safe
 

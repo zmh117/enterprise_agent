@@ -31,7 +31,7 @@ _BEARER_PATTERN = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _MASTER_KEY_PATTERN = re.compile(r"\bEA_MASTER_KEY_V1:[A-Za-z0-9_-]{20,}\b")
 _PRIVATE_KEY_PATTERN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 _URI_CREDENTIAL_PATTERN = re.compile(
-    r"(?P<prefix>[a-z][a-z0-9+.-]*://[^:/@\s]+:)"
+    r"(?<![a-z0-9+.-])(?P<prefix>[a-z][a-z0-9+.-]*://[^:/@\s]+:)"
     r"(?P<password>[^@\s/]+)"
     r"(?P<suffix>@)",
     re.IGNORECASE,
@@ -66,10 +66,11 @@ def redact_sensitive_text(value: str, *, parse_json: bool = True) -> str:
         return REDACTED
     redacted = _BEARER_PATTERN.sub("Bearer [REDACTED]", value)
     redacted = _MASTER_KEY_PATTERN.sub(REDACTED, redacted)
-    redacted = _URI_CREDENTIAL_PATTERN.sub(
-        lambda match: f"{match.group('prefix')}{REDACTED}{match.group('suffix')}",
-        redacted,
-    )
+    if "://" in redacted:
+        redacted = _URI_CREDENTIAL_PATTERN.sub(
+            lambda match: f"{match.group('prefix')}{REDACTED}{match.group('suffix')}",
+            redacted,
+        )
     return _ASSIGNMENT_PATTERN.sub(
         lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}",
         redacted,

@@ -740,7 +740,7 @@ describe("Phase 5 platform governance UI", () => {
             available: true,
             schema: { type: "object", additionalProperties: false, fields: [{
               name: "max_lines", type: "integer", required: true,
-              minimum: 1, maximum: 1000,
+              minimum: 1, maximum: 10000,
             }] },
           }] })
         }
@@ -768,13 +768,14 @@ describe("Phase 5 platform governance UI", () => {
       const limit = await screen.findByRole("spinbutton", { name: "最大行数" })
       expect(limit).toHaveValue(mode === "new" ? 1000 : 200)
       expect(limit).toHaveAttribute("min", "1")
-      expect(limit).toHaveAttribute("max", "1000")
+      expect(limit).toHaveAttribute("max", "10000")
+      expect(screen.queryByRole("spinbutton", { name: "最大响应字节" })).not.toBeInTheDocument()
       expect(screen.getByText(/不累计整个 Job/)).toBeInTheDocument()
-      fireEvent.change(limit, { target: { value: "1001" } })
+      fireEvent.change(limit, { target: { value: "10001" } })
       expect(limit).toBeInvalid()
       fireEvent.change(limit, { target: { value: "0" } })
       expect(limit).toBeInvalid()
-      fireEvent.change(limit, { target: { value: "1000" } })
+      fireEvent.change(limit, { target: { value: "10000" } })
       expect(limit).toBeValid()
     }
   )
@@ -956,6 +957,8 @@ describe("Phase 5 platform governance UI", () => {
           },
         ])
       )
+      expect(savedBody?.config).not.toHaveProperty("max_response_bytes")
+      expect(resource.draft?.config).toHaveProperty("max_response_bytes", 65536)
     }
   )
 

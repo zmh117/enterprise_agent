@@ -64,6 +64,18 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_postgres_sandbox_v2_quota_migration_preserves_history(postgres_database_dsn: str) -> None:
+    from backend.tests.test_task_file_workspace_migration import (
+        assert_sandbox_v2_quota_migration_preserves_history,
+    )
+
+    database = Database(postgres_database_dsn)
+    try:
+        assert_sandbox_v2_quota_migration_preserves_history(database)
+    finally:
+        database.close()
+
+
 def test_postgres_admin_job_query_uses_json_filters_and_keyset_limit(
     postgres_database_dsn: str,
 ) -> None:
@@ -230,7 +242,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "126"
+        assert result.head == "136"
         assert result.applied == (
             "100",
             "101",
@@ -259,6 +271,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "124",
             "125",
             "126",
+            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136",
         )
         assert database.execute_one(
             """
@@ -268,9 +281,9 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 129}
-        assert comments["table_count"] == 129
-        assert comments["column_count"] == 1714
+        ) == {"count": 130}
+        assert comments["table_count"] == 141
+        assert comments["column_count"] == 1868
     finally:
         database.close()
 

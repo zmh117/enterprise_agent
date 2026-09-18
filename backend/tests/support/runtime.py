@@ -76,4 +76,11 @@ def container(
     if allow_direct_jobs:
         runtime.create_agent_job_service.published_agent_runtime_enabled = True
         runtime.create_agent_job_service.runtime_readiness_guard = None
+    from backend.tests.support.applications import ensure_agent_publication_mcp_tools
+    ensure_agent_publication_mcp_tools(runtime, tuple(
+        str(row["tool_identifier"]) for row in runtime.database.execute(
+            "select tool_identifier from agent_publication_mcp_tool where agent_publication_id = ?",
+            ("agent_publication_default_v1",),
+        )
+    ))
     return runtime

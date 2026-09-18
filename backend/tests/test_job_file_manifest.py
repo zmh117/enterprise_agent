@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -41,6 +42,24 @@ from backend.tests.test_file_workspace_repository import (
 )
 def test_current_rule_requires_explicit_markdown_file_output_intent(message: str) -> None:
     assert plan_file_admission(text=message).effective_output_intent is True
+
+
+@pytest.mark.parametrize("last_bytes", [2 * 1024 * 1024, 2 * 1024 * 1024 + 1])
+def test_manifest_preflight_matches_expanded_sandbox_capacity(last_bytes):
+    sizes = {str(index): 15 * 1024 * 1024 for index in range(34)}
+    sizes["34"] = last_bytes
+    service = JobFileManifestService.__new__(JobFileManifestService)
+    service.repository = SimpleNamespace(
+        require_content_available=lambda version_id: {"size_bytes": sizes[version_id]}
+    )
+    items = [{"file_id": key, "version_id": key, "auto_materialize": True} for key in sizes]
+    if last_bytes == 2 * 1024 * 1024:
+        service._preflight_working_set(items)
+    else:
+        with pytest.raises(NonRetryableExecutionError) as error:
+            service._preflight_working_set(items)
+        assert error.value.error_code == "job_file_working_set_capacity_exceeded"
+        assert "512 MiB" in error.value.safe_message
 
 
 @pytest.mark.parametrize(
@@ -279,8 +298,8 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
     assert first["active_file_limit_source"] == "definition-default"
     assert first["billable_bytes_limit_source"] == "definition-default"
     assert first["job_input_limit"] == 40
-    assert first["sandbox_file_limit"] == 64
-    assert first["sandbox_capacity_bytes"] == 224 * 1024 * 1024
+    assert first["sandbox_file_limit"] == 128
+    assert first["sandbox_capacity_bytes"] == 512 * 1024 * 1024
     assert first["sandbox_limit_version"] == "sandbox-v2"
     assert first["items"][0]["source_received_at"] is None
     assert first["items"][0]["version_created_at"]
@@ -1284,13 +1303,16 @@ def test_manifest_recalls_unlinked_retained_version_without_restoring_old_worksp
         )
         is None
     )
-    assert repository.database.execute_one(
-        """
+    assert (
+        repository.database.execute_one(
+            """
         select status from task_workspace_file
          where workspace_id = ? and file_id = 'file-retained'
         """,
-        (old_workspace["id"],),
-    )["status"] == "REMOVED"
+            (old_workspace["id"],),
+        )["status"]
+        == "REMOVED"
+    )
 
 
 def test_force_create_opens_empty_workspace_without_file_input() -> None:

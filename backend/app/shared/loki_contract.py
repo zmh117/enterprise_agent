@@ -9,7 +9,25 @@ from typing import Any
 from app.shared.exceptions import ToolPolicyError
 
 DEFAULT_LOKI_PLATFORM_MAX_LINES = 10000
-LOKI_RESOURCE_MAX_LINES = 1000
+DEFAULT_LOKI_RESOURCE_MAX_LINES = 1000
+LOKI_RESOURCE_MAX_LINES = 10000
+LOKI_MAX_MINUTES = 30 * 24 * 60
+
+
+def assert_loki_query_limits(*, minutes: int, limit: int, max_minutes: int, max_lines: int) -> None:
+    effective_minutes = min(max_minutes, LOKI_MAX_MINUTES)
+    if not 1 <= minutes <= effective_minutes:
+        raise ToolPolicyError(
+            "Loki time range exceeds configured maximum",
+            safe_message=f"Loki 查询时间范围超过配置上限：允许 1–{effective_minutes} 分钟",
+            error_code="loki_time_range_exceeded",
+        )
+    if not 1 <= limit <= max_lines:
+        raise ToolPolicyError(
+            "Loki result size exceeds configured maximum",
+            safe_message=f"Loki 查询结果数量超过配置上限：允许 1–{max_lines} 条",
+            error_code="loki_result_limit_exceeded",
+        )
 
 # The end assertion also rejects a final newline (unlike JSON Schema's `$`).
 LOKI_LABEL_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\s\S])"

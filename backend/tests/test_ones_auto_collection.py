@@ -13,6 +13,10 @@ from mcp import types
 
 from app.python_runtime.job_sandbox import JobSandboxError, JobSandboxManager
 from app.python_runtime.ones_result_bridge import OnesResultBridge, materialize_result
+from app.python_runtime.tool_result_bridge import ToolResultBridge
+from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
+from app.shared.query_result_contract import QUERY_RESULT_TOOLS
+from backend.tests.test_tool_query_results import _payload as _query_payload
 from app.shared.ones_tool_contracts import ONES_COLLECTED_LIST_FIELDS, ONES_TOOL_CONTRACTS
 from app.shared.tool_contract import tool_schema_hash
 from app.shared.exceptions import NonRetryableExecutionError
@@ -31,7 +35,7 @@ from tests.test_ones_mcp_runtime import _fixture, _PagingGraphql, _normalized_pr
 
 @pytest.mark.parametrize("ending", ["success", "failure", "cancel", "timeout"])
 @pytest.mark.parametrize(
-    "name,count", [("ones_search_projects", 1000), ("ones_query_test_cases", 10000)]
+    "name,count", [("ones_search_projects", 1000), ("ones_query_test_cases", 10000), ("query_database", 10000), ("query_loki", 1)]
 )
 def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, ending, name, count):
     from app.modules.agent.domain.runtime import (
@@ -45,7 +49,9 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
     from app.shared.exceptions import AppError
     from backend.tests.support.runtime import test_settings
 
-    contract = ONES_TOOL_CONTRACTS[name]
+    resource_query = name in QUERY_RESULT_TOOLS
+    server_code = "tool-mcp" if resource_query else "ones-mcp"
+    contract = SimpleNamespace(input_schema=TOOL_DEFINITIONS[name]["schema"]) if resource_query else ONES_TOOL_CONTRACTS[name]
     captured = {}
     cancel = threading.Event()
 
@@ -65,7 +71,7 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
                 {
                     "content": [],
                     "isError": False,
-                    "structuredContent": (
+                    "structuredContent": _query_payload(name, count) if resource_query else (
                         _project_result()
                         if name == "ones_search_projects"
                         else {
@@ -83,7 +89,7 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
             )
 
     def factory(**kwargs):
-        bridge = OnesResultBridge(**kwargs, session=Session())
+        bridge = (ToolResultBridge if resource_query else OnesResultBridge)(**kwargs, session=Session())
         captured["bridge"] = bridge
         return bridge
 
@@ -100,7 +106,7 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
         summary = result.model_dump(by_alias=True)["structuredContent"]
         path = Path(options["cwd"]) / summary["result_file"]
         assert summary["returned"] == count
-        marker = "Project 1000" if name == "ones_search_projects" else "CASE-9999"
+        marker = ('"id": 9999' if name == "query_database" else "正文") if resource_query else ("Project 1000" if name == "ones_search_projects" else "CASE-9999")
         assert marker in path.read_text()
         allowed = await options["can_use_tool"]("Read", {"file_path": str(path)}, None)
         assert allowed["behavior"] == "allow"
@@ -150,9 +156,9 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
         job_tool_snapshot_hash="0" * 64,
         mcp_bindings=(
             McpRuntimeBinding(
-                server_code="ones-mcp",
+                server_code=server_code,
                 tool_name=name,
-                required_scope=f"mcp:ones-mcp:{name}:invoke",
+                required_scope=f"mcp:{server_code}:{name}:invoke",
                 tool_schema_hash=tool_schema_hash(contract.input_schema),
             ),
         ),
@@ -173,10 +179,10 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
         limits=test_settings().execution,
         api_key="synthetic-key",
         mcp_server_url="http://tool.invalid/mcp",
-        mcp_principal_tokens={"ones-mcp": "synthetic-principal"},
+        mcp_principal_tokens={} if resource_query else {server_code: "synthetic-principal"},
         sandbox_manager=JobSandboxManager(tmp_path),
         cancellation_event=cancel,
-        ones_bridge_factory=factory,
+        **{("tool_result_bridge_factory" if resource_query else "ones_bridge_factory"): factory},
     )
     client.sdk_loader = lambda: sdk
     request = AgentRunRequest(

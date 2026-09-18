@@ -14,6 +14,7 @@ unit = [
   "test_job_execution_policy.py",
   "test_loki_resource_scoped_labels.py",
   "test_loki_line_limits.py",
+  "test_tool_query_results.py",
   "test_master_key_file.py",
   "test_master_key_runbook_contract.py",
   "test_object_storage_settings.py",

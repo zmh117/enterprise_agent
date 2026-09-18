@@ -122,7 +122,6 @@ def _executor(fixed: dict[str, str] | None = None):
                 timeout_seconds=5,
                 max_minutes=60,
                 max_lines=100,
-                max_response_bytes=65536,
             )
         ),
         resource_code="loki-test",
@@ -240,7 +239,7 @@ def test_fixed_and_custom_label_values_are_bounded_and_empty_is_not_denied() -> 
 @pytest.mark.parametrize("tool", TOOLS)
 def test_time_and_result_bounds_still_reject_before_http(tool: str) -> None:
     executor, requests = _executor()
-    for args in ({"minutes": 100000}, {"limit": 100000}):
+    for args in ({"minutes": 43200}, {"limit": 100000}):
         with pytest.raises(ToolPolicyError):
             _invoke(executor, tool, **args)
     assert not requests

@@ -16,16 +16,18 @@ from app.modules.file_workspace.text_format_policy import (
     text_format_for_name,
 )
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.sandbox_contract import (
+    SANDBOX_FILE_LIMIT,
+    SANDBOX_CAPACITY_BYTES,
+    SANDBOX_FILE_BYTES,
+    SANDBOX_INPUT_FILE_LIMIT,
+    SANDBOX_WORK_OUTPUT_FILE_LIMIT,
+    SANDBOX_TMP_FILE_LIMIT,
+)
 
 
 SANDBOX_MARKER = ".enterprise-agent-sandbox.json"
 SANDBOX_SCHEMA_VERSION = 1
-SANDBOX_FILE_LIMIT = 64
-SANDBOX_CAPACITY_BYTES = 224 * 1024 * 1024
-SANDBOX_FILE_BYTES = 15 * 1024 * 1024
-SANDBOX_INPUT_FILE_LIMIT = 40
-SANDBOX_WORK_OUTPUT_FILE_LIMIT = 16
-SANDBOX_TMP_FILE_LIMIT = 8
 FILE_TOOL_NAMES = ("Read", "Glob", "Grep", "Edit", "Write")
 ALLOWED_FILE_TOOLS = frozenset(FILE_TOOL_NAMES)
 ALLOWED_TOP_LEVEL = frozenset({"inputs", "work", "outputs", "tmp"})

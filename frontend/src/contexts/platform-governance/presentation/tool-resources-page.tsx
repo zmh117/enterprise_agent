@@ -144,7 +144,6 @@ const defaultConfigs: Record<Provider, Record<string, unknown>> = {
     timeout_seconds: 10,
     max_minutes: 60,
     max_lines: 1000,
-    max_response_bytes: 1048576,
   },
 }
 
@@ -962,6 +961,9 @@ function ResourceFormSheet({
         delete normalized.config.sid
       }
     }
+    if (normalized.provider_type === "loki") {
+      delete normalized.config.max_response_bytes
+    }
     onSubmit(normalized)
   }
 
@@ -1424,21 +1426,16 @@ function ProviderFields({
           required: true,
           numeric: true,
           min: 1,
-          max: 1440,
+          max: 43200,
+          description: "最多 43200 分钟（30 天）；实际取平台与已发布资源限制的较小值。",
         })}
         {input("max_lines", "最大行数", {
           required: true,
           numeric: true,
           min: 1,
-          max: 1000,
+          max: 10000,
           description:
-            "单次调用上限，范围 1–1000，不累计整个 Job；实际取平台与资源上限的较小值。Agent 未指定 limit 时查询 100 条，超限请求会被拒绝。",
-        })}
-        {input("max_response_bytes", "最大响应字节", {
-          required: true,
-          numeric: true,
-          min: 1024,
-          max: 10485760,
+            "单次调用上限，默认 1000、范围 1–10000，不累计整个 Job；实际取平台与资源上限的较小值。Agent 未指定 limit 时查询 100 条，超限请求会被拒绝。",
         })}
         <SecretCombobox
           label="认证凭据（可选）"

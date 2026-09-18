@@ -16,6 +16,8 @@ from app.modules.mcp_tool_runtime.infrastructure.loki_client import (
 )
 from app.modules.mcp_tool_runtime.infrastructure.loki_schemas import LokiQuery
 from app.shared.database import assert_external_io_allowed
+from app.shared.query_result_contract import QUERY_RESULT_MAX_BYTES
+from app.shared.loki_contract import assert_loki_query_limits
 from app.shared.loki_contract import (
     MAX_LOKI_SELECTOR_CONDITIONS,
     assert_loki_label,
@@ -244,9 +246,9 @@ class HttpLokiClient:
                 request,
                 timeout=binding.loki.timeout_seconds,
             ) as response:
-                raw = response.read(binding.loki.max_response_bytes + 1)
-                if len(raw) > binding.loki.max_response_bytes:
-                    raise PolicyViolation("Loki response exceeds configured byte limit")
+                raw = response.read(QUERY_RESULT_MAX_BYTES + 1)
+                if len(raw) > QUERY_RESULT_MAX_BYTES:
+                    raise PolicyViolation("Loki response exceeds platform byte limit")
                 parsed = json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as exc:
             if exc.code in _RETRYABLE_UPSTREAM_STATUSES:
@@ -277,10 +279,9 @@ class HttpLokiClient:
             binding.loki.max_minutes,
         )
         max_lines = min(self._max_lines, binding.loki.max_lines)
-        if minutes < 1 or minutes > max_minutes:
-            raise PolicyViolation("Loki time range exceeds configured maximum")
-        if limit < 1 or limit > max_lines:
-            raise PolicyViolation("Loki result size exceeds configured maximum")
+        assert_loki_query_limits(
+            minutes=minutes, limit=limit, max_minutes=max_minutes, max_lines=max_lines,
+        )
 
     @staticmethod
     def _range_params(minutes: int) -> dict[str, str]:

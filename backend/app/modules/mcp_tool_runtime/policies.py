@@ -5,7 +5,7 @@ import re
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
 from app.shared.loki_contract import assert_loki_label as assert_loki_label
-from app.shared.loki_contract import assert_loki_selector
+from app.shared.loki_contract import assert_loki_selector, assert_loki_query_limits
 
 FORBIDDEN_SQL = {
     "insert",
@@ -75,13 +75,7 @@ def assert_loki_bounds(
 ) -> None:
     # Empty additions are safe only because the executor injects mandatory scope.
     assert_loki_selector(selector, allow_empty=True)
-    if minutes <= 0 or minutes > settings.max_loki_minutes:
-        raise ToolPolicyError(
-            "Loki time range exceeds configured maximum",
-            safe_message="Loki 查询时间范围超过配置上限",
-        )
-    if limit <= 0 or limit > settings.max_loki_lines:
-        raise ToolPolicyError(
-            "Loki result size exceeds configured maximum",
-            safe_message="Loki 查询结果数量超过配置上限",
-        )
+    assert_loki_query_limits(
+        minutes=minutes, limit=limit,
+        max_minutes=settings.max_loki_minutes, max_lines=settings.max_loki_lines,
+    )

@@ -30,6 +30,7 @@ from app.modules.file_workspace.text_format_policy import (
 )
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.sandbox_contract import SANDBOX_CAPACITY_BYTES
 
 
 CONFLICT_ACTIONS = (
@@ -543,10 +544,10 @@ class JobFileManifestService:
                 row = self.repository.require_content_available(str(item["version_id"]))
                 size = int(row["size_bytes"])
             planned_bytes += size
-        if planned_bytes > 224 * 1024 * 1024:
+        if planned_bytes > SANDBOX_CAPACITY_BYTES:
             raise NonRetryableExecutionError(
                 "Automatic Job inputs exceed the Sandbox capacity",
-                safe_message="任务输入总容量超过 224 MiB，请缩小工作集",
+                safe_message=f"任务输入总容量超过 {SANDBOX_CAPACITY_BYTES // (1024 * 1024)} MiB，请缩小工作集",
                 error_code="job_file_working_set_capacity_exceeded",
             )
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.shared.resource_role import RESOURCE_ROLE_PATTERN
-from app.shared.loki_contract import loki_label_schema, loki_selector_schema
+from app.shared.loki_contract import loki_label_schema, loki_selector_schema, LOKI_MAX_MINUTES
+from app.shared.query_result_contract import DATABASE_MAX_ROWS, QUERY_RESULT_TOOLS
 
 # compatibility with the flat datasource contract; required by the topology-aware platform.
 _ADDRESSING_PROPERTIES: dict[str, Any] = {
@@ -20,6 +21,7 @@ _ADDRESSING_PROPERTIES: dict[str, Any] = {
         "description": "Workshop code within a partitioned base, e.g. 'GL001'.",
     },
 }
+
 _PLACEMENT_PROPERTY: dict[str, Any] = {
     "placement": {
         "type": "string",
@@ -206,3 +208,19 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
     },
 }
+
+# Keep the published schema hash aligned with the Runtime result-file contract.
+for _name in QUERY_RESULT_TOOLS:
+    TOOL_DEFINITIONS[_name]["description"] += (
+        " 成功查询正文写入当前 Job 只读临时文件；根据 result_file 使用 Read/Grep 按需读取，"
+        "Job 结束自动删除。complete=false 时不得声称查全。"
+    )
+    TOOL_DEFINITIONS[_name]["schema"]["description"] = "job-query-result-file-v1"
+TOOL_DEFINITIONS["query_database"]["schema"]["properties"]["limit"]["maximum"] = DATABASE_MAX_ROWS
+TOOL_DEFINITIONS["query_database"]["description"] += " 默认 100 行，显式最多 10000 行。"
+TOOL_DEFINITIONS["list_available_tool_resources"]["description"] += (
+    " effective_limits 为实际有效查询上限；Loki 的分钟/行数取平台与已发布资源较小值。"
+)
+for _name in ("query_loki", "diagnose_loki_probe", "diagnose_loki_labels", "diagnose_loki_label_values"):
+    TOOL_DEFINITIONS[_name]["schema"]["properties"]["minutes"]["maximum"] = LOKI_MAX_MINUTES
+    TOOL_DEFINITIONS[_name]["description"] += " 先查看资源目录 effective_limits，不得猜测上限或反复超限试探。"

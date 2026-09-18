@@ -31,6 +31,12 @@ from app.modules.file_workspace.domain import (
 )
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
+from app.shared.sandbox_contract import (
+    SANDBOX_CAPACITY_BYTES,
+    SANDBOX_FILE_LIMIT,
+    SANDBOX_INPUT_FILE_LIMIT,
+    SANDBOX_LIMIT_VERSION,
+)
 
 
 def _now() -> str:
@@ -419,7 +425,7 @@ class FileWorkspaceRepository:
                    job_input_limit, sandbox_file_limit, sandbox_capacity_bytes,
                    sandbox_limit_version, created_at)
                 values (?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?, ?, ?, ?, ?,
-                        40, 64, 234881024, 'sandbox-v2', ?)
+                        ?, ?, ?, ?, ?)
                 """,
                 (
                     snapshot_id,
@@ -436,6 +442,10 @@ class FileWorkspaceRepository:
                     quota.config_revision,
                     quota.active_file_limit_source,
                     quota.billable_bytes_limit_source,
+                    SANDBOX_INPUT_FILE_LIMIT,
+                    SANDBOX_FILE_LIMIT,
+                    SANDBOX_CAPACITY_BYTES,
+                    SANDBOX_LIMIT_VERSION,
                     timestamp,
                 ),
             )

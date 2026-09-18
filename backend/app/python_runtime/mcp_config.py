@@ -57,6 +57,8 @@ from app.shared.build_identity import BuildIdentity, build_identity_from_environ
 from app.shared.exceptions import ExecutionPolicyExceeded, NonRetryableExecutionError
 from app.python_runtime.tool_contract import build_tool_contract_observation
 from app.python_runtime.ones_result_bridge import OnesResultBridge
+from app.python_runtime.tool_result_bridge import ToolResultBridge
+from app.shared.query_result_contract import QUERY_RESULT_TOOLS
 from app.shared.ones_tool_contracts import ONES_COLLECTED_LIST_FIELDS
 
 
@@ -195,6 +197,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         cancellation_event: threading.Event | None = None,
         file_bridge_factory: PythonRuntimeFileBridgeFactory = (create_python_runtime_file_bridge),
         ones_bridge_factory: Callable[..., OnesResultBridge] = OnesResultBridge,
+        tool_result_bridge_factory: Callable[..., ToolResultBridge] = ToolResultBridge,
         runtime_build_identity: BuildIdentity | None = None,
         tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
@@ -248,6 +251,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         self._file_bridge: PythonRuntimeFileBridge | None = None
         self._ones_bridge_factory = ones_bridge_factory
         self._ones_bridge: OnesResultBridge | None = None
+        self._tool_result_bridge_factory = tool_result_bridge_factory
+        self._tool_result_bridge: ToolResultBridge | None = None
         self._runtime_build_identity = runtime_build_identity or build_identity_from_environment(
             "python-runtime"
         )
@@ -455,7 +460,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             if item.server_code == ONES_MCP_SERVER_CODE
         }
         if not set(bindings).intersection(ONES_COLLECTED_LIST_FIELDS):
-            return servers
+            return await self._open_tool_result_bridge(request, sdk, servers)
         sandbox = self._sandbox.get()
         if sandbox is None:
             raise NonRetryableExecutionError(
@@ -474,6 +479,36 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             timeout=float(request.context.timeout_seconds),
         )
         self._ones_bridge = bridge
+        try:
+            await bridge.connect()
+        except BaseException:
+            await self._close_mcp_server()
+            raise
+        servers[alias] = bridge.server
+        return await self._open_tool_result_bridge(request, sdk, servers)
+
+    async def _open_tool_result_bridge(
+        self, request: AgentRunRequest, sdk: Any, servers: dict[str, Any],
+    ) -> dict[str, Any]:
+        bindings = {
+            item.tool_name: item.tool_schema_hash for item in request.context.mcp_bindings
+            if item.server_code == "tool-mcp"
+        }
+        if not set(bindings).intersection(QUERY_RESULT_TOOLS):
+            return servers
+        sandbox = self._sandbox.get()
+        if sandbox is None:
+            raise NonRetryableExecutionError(
+                "Missing sandbox", safe_message="当前任务沙盒不可用",
+                error_code="runtime_sandbox_unavailable",
+            )
+        alias = mcp_sdk_server_alias("tool-mcp")
+        remote = servers[alias]
+        bridge = self._tool_result_bridge_factory(
+            sdk=sdk, url=remote["url"], headers=remote["headers"], frozen=bindings,
+            sandbox=sandbox, timeout=float(request.context.timeout_seconds),
+        )
+        self._tool_result_bridge = bridge
         try:
             await bridge.connect()
         except BaseException:
@@ -535,17 +570,18 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             self._tool_contract_observer(dict(observation))
 
     async def _close_mcp_server(self) -> None:
+        tool_bridge, self._tool_result_bridge = self._tool_result_bridge, None
         ones_bridge, self._ones_bridge = self._ones_bridge, None
-        if ones_bridge is not None:
-            await ones_bridge.close()
-        bridge = self._file_bridge
+        file_bridge = self._file_bridge
         self._file_bridge = None
         self._effective_context = None
-        if bridge is not None:
-            try:
-                await bridge.close()
-            except Exception:
-                pass
+        for bridge in (tool_bridge, ones_bridge, file_bridge):
+            if bridge is not None:
+                try:
+                    await bridge.close()
+                except Exception:
+                    # Failure closing one transport must not strand the others.
+                    pass
 
     async def _prepare_context(
         self,

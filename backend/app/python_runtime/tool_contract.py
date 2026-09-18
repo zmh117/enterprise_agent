@@ -6,6 +6,7 @@ from app.modules.agent.domain.runtime import AgentExecutionContext
 from app.shared.build_identity import BuildIdentity
 from app.shared.mcp_server_policy import FILE_MCP_SERVER_CODE
 from app.shared.ones_tool_contracts import ONES_COLLECTED_LIST_FIELDS
+from app.shared.query_result_contract import QUERY_RESULT_TOOLS
 from app.shared.tool_contract import (
     PROMPT_TEMPLATE_VERSION,
     canonical_json_sha256,
@@ -157,11 +158,15 @@ def build_tool_contract_observation(
         item.server_code == "ones-mcp" and item.tool_name in ONES_COLLECTED_LIST_FIELDS
         for item in context.mcp_bindings
     )
-    if file_job or ones_result_job:
+    resource_result_job = any(
+        item.server_code == "tool-mcp" and item.tool_name in QUERY_RESULT_TOOLS
+        for item in context.mcp_bindings
+    )
+    if file_job or ones_result_job or resource_result_job:
         for name in FILE_TOOL_NAMES if file_job else ("Read", "Glob", "Grep"):
             effective.append(
                 {
-                    "server_code": FILE_MCP_SERVER_CODE if file_job else "ones-mcp",
+                    "server_code": FILE_MCP_SERVER_CODE if file_job else ("ones-mcp" if ones_result_job else "tool-mcp"),
                     "tool_name": name,
                     "sdk_tool_name": name,
                     "origin": "sdk_builtin",

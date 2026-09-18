@@ -14,6 +14,58 @@ from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME
 TIMESTAMP = "2026-08-14T00:00:00+00:00"
 
 
+def assert_sandbox_v2_quota_migration_preserves_history(database: Database) -> None:
+    database.execute_script(
+        """
+        CREATE TABLE agent_job_file_snapshot (
+            id TEXT PRIMARY KEY,
+            manifest_hash TEXT NOT NULL,
+            sandbox_file_limit INTEGER NOT NULL DEFAULT 64 CHECK (sandbox_file_limit = 64),
+            sandbox_capacity_bytes BIGINT NOT NULL DEFAULT 234881024 CHECK (sandbox_capacity_bytes = 234881024),
+            sandbox_limit_version TEXT NOT NULL DEFAULT 'sandbox-v2' CHECK (sandbox_limit_version = 'sandbox-v2')
+        );
+        INSERT INTO agent_job_file_snapshot(id, manifest_hash) VALUES ('old', 'unchanged');
+    """,
+        ignore_existing_errors=False,
+    )
+    original = database.execute_one("select * from agent_job_file_snapshot where id = 'old'")
+    migration = default_migrations_dir() / "136_expand_sandbox_v2_capacity.sql"
+    with database.unit_of_work():
+        database.execute_script(migration.read_text(), ignore_existing_errors=False)
+    assert (
+        database.execute_one("select * from agent_job_file_snapshot where id = 'old'") == original
+    )
+    database.execute(
+        "insert into agent_job_file_snapshot(id, manifest_hash) values ('new', 'new-hash')"
+    )
+    assert database.execute_one("select * from agent_job_file_snapshot where id = 'new'") == {
+        "id": "new",
+        "manifest_hash": "new-hash",
+        "sandbox_file_limit": 128,
+        "sandbox_capacity_bytes": 536870912,
+        "sandbox_limit_version": "sandbox-v2",
+    }
+    # Unknown numeric values and version changes remain rejected.
+    for column, value in (
+        ("sandbox_file_limit", 129),
+        ("sandbox_capacity_bytes", 536870913),
+        ("sandbox_limit_version", "sandbox-v3"),
+    ):
+        with pytest.raises(Exception):
+            with database.unit_of_work():
+                database.execute(
+                    f"update agent_job_file_snapshot set {column} = ? where id = 'new'", (value,)
+                )
+
+
+def test_sandbox_v2_quota_migration_keeps_existing_rows_and_updates_defaults() -> None:
+    database = Database("sqlite:///:memory:")
+    try:
+        assert_sandbox_v2_quota_migration_preserves_history(database)
+    finally:
+        database.close()
+
+
 def _catalog_through(tmp_path: Path, head: int) -> Path:
     source = default_migrations_dir()
     target = tmp_path / f"migrations-through-{head}"
@@ -77,7 +129,7 @@ def test_workspace_expand_schema_enforces_active_owner_and_version_constraints()
         default_migrations_dir(),
         migrator_build="task-file-workspace-schema-test",
     ).run()
-    assert result.head == "135"
+    assert result.head == "136"
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")

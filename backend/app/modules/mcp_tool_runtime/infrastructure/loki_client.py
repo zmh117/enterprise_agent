@@ -148,11 +148,12 @@ def summarize_loki_response(
     loki_query: LokiQuery,
     max_response_chars: int,
 ) -> LocalToolResult:
+    # Kept in the signature for legacy callers; data now goes to a bounded
+    # Job result file, not an inline character-limited model summary.
+    del max_response_chars
     streams = []
     highlights: list[str] = []
     total_lines = 0
-    total_chars = 0
-    truncated = False
     for item in _loki_result_items(body):
         stream = item.get("stream") if isinstance(item, dict) else {}
         values = item.get("values") if isinstance(item, dict) else []
@@ -165,13 +166,9 @@ def summarize_loki_response(
                     continue
                 total_lines += 1
                 stream_line_count += 1
-                redacted = redact_text(line)
-                if total_chars + len(redacted) <= max_response_chars:
-                    highlights.append(redacted)
-                    total_chars += len(redacted)
-                else:
-                    truncated = True
+                highlights.append(redact_text(line))
         streams.append({"labels": labels, "line_count": stream_line_count})
+    truncated = total_lines >= loki_query.limit
     summary = {
         "selector": loki_query.selector,
         "service": loki_query.selector.get("service", ""),
@@ -184,6 +181,9 @@ def summarize_loki_response(
         "streams": streams,
         "empty_result_hints": _empty_result_hints(loki_query) if total_lines == 0 else [],
         "truncated": truncated,
+        "truncation_reasons": ["line_limit_reached"] if truncated else [],
+        "returned": total_lines,
+        "complete": not truncated,
     }
     raw = {
         "result_type": _nested_value(body, ["data", "resultType"]),

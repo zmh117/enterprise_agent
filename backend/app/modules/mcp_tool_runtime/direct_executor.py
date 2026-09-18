@@ -30,7 +30,8 @@ from app.modules.mcp_tool_runtime.infrastructure.loki_gateway import HttpLokiCli
 from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import RealRedisGateway, RedisGateway
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
-from app.shared.loki_contract import assert_loki_label
+from app.shared.loki_contract import assert_loki_label, LOKI_MAX_MINUTES
+from app.shared.query_result_contract import DATABASE_MAX_ROWS, QUERY_RESULT_MAX_BYTES
 
 from .contracts import ResourceAccessGrant, ToolRequestContext, ToolResult
 from .pagination import ToolPaginationCursorCodec
@@ -48,7 +49,7 @@ class DirectReadOnlyToolExecutor:
     ) -> None:
         self.resolver = resolver
         self.limits = limits
-        max_bytes = max(4096, limits.max_tool_response_chars * 8)
+        max_bytes = QUERY_RESULT_MAX_BYTES
         self.executors: dict[DatabaseEngine, QueryExecutor] = {
             DatabaseEngine.MYSQL: MysqlExecutor(max_response_bytes=max_bytes),
             DatabaseEngine.SQLSERVER: SqlServerExecutor(max_response_bytes=max_bytes),
@@ -127,6 +128,7 @@ class DirectReadOnlyToolExecutor:
                     else "AVAILABLE"
                 ),
                 "usable_tools": list(usable_tools),
+                "effective_limits": self._effective_limits(address),
                 "_sort_key": list(address.sort_key),
                 "_content_hash": address.resource_content_hash,
             }
@@ -151,6 +153,7 @@ class DirectReadOnlyToolExecutor:
                     "content_hash": item["_content_hash"],
                     "usable_tools": item["usable_tools"],
                     "resolution_status": item["resolution_status"],
+                    "effective_limits": item["effective_limits"],
                 }
                 for item in items
             ]
@@ -327,7 +330,13 @@ class DirectReadOnlyToolExecutor:
             allowed_schema = database.schema or "dbo"
         elif binding.engine is DatabaseEngine.ORACLE:
             allowed_schema = database.schema or database.user or None
-        maximum = max(1, min(int(limit or 100), 100))
+        maximum = int(limit)
+        if not 1 <= maximum <= DATABASE_MAX_ROWS:
+            raise ToolPolicyError(
+                "Database row limit exceeds configured maximum",
+                safe_message=f"数据库单次查询允许 1–{DATABASE_MAX_ROWS} 行，默认 100 行",
+                error_code="database_row_limit_exceeded",
+            )
         analyzed = analyze_readonly_query(
             sql,
             engine=binding.engine,
@@ -365,6 +374,12 @@ class DirectReadOnlyToolExecutor:
             timeout_seconds=min(30, max(1, self.limits.timeout_seconds)),
             max_rows=maximum,
         )
+        reasons = []
+        if len(executed.rows) >= maximum:
+            reasons.append("row_limit_reached")
+        if executed.truncated:
+            reasons.append("provider_result_truncated")
+        truncated = bool(reasons)
         return self._result(
             resource,
             {
@@ -373,9 +388,12 @@ class DirectReadOnlyToolExecutor:
                 "row_count": len(executed.rows),
                 "columns": executed.columns,
                 "rows": executed.rows,
+                "returned": len(executed.rows),
+                "complete": not truncated,
+                "truncation_reasons": reasons,
             },
             raw={"row_count": len(executed.rows)},
-            truncated=executed.truncated,
+            truncated=truncated,
         )
 
     def query_redis_get(
@@ -656,10 +674,26 @@ class DirectReadOnlyToolExecutor:
         connection = resource.binding.loki
         assert connection is not None
         return HttpLokiClient(
-            max_minutes=min(self.limits.max_loki_minutes, connection.max_minutes),
+            max_minutes=min(self.limits.max_loki_minutes, connection.max_minutes, LOKI_MAX_MINUTES),
             max_lines=min(self.limits.max_loki_lines, connection.max_lines),
             max_response_chars=self.limits.max_tool_response_chars,
         )
+
+    def _effective_limits(self, address: Any) -> dict[str, int]:
+        if address.resource_kind == "database":
+            return {"max_rows": DATABASE_MAX_ROWS, "default_limit": 100,
+                    "max_response_bytes": QUERY_RESULT_MAX_BYTES}
+        if address.resource_kind == "redis":
+            return {"max_scan_keys": self.limits.redis_scan_limit,
+                    "max_response_bytes": QUERY_RESULT_MAX_BYTES}
+        configured = address.query_limits
+        return {
+            "max_minutes": min(self.limits.max_loki_minutes, configured["max_minutes"], LOKI_MAX_MINUTES),
+            "max_lines": min(self.limits.max_loki_lines, configured["max_lines"]),
+            "default_minutes": 15, "default_limit": 100,
+            "max_response_bytes": QUERY_RESULT_MAX_BYTES,
+            "max_result_bytes": QUERY_RESULT_MAX_BYTES,
+        }
 
     @staticmethod
     def _result(

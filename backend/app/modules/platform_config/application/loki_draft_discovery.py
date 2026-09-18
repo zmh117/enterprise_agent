@@ -17,6 +17,7 @@ from app.modules.platform_config.infrastructure.governed_resource_repository imp
 from app.modules.platform_config.infrastructure.repository import new_id
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.query_result_contract import QUERY_RESULT_MAX_BYTES
 from app.shared.loki_contract import (
     MAX_LOKI_SELECTOR_CONDITIONS,
     is_loki_exact_value,
@@ -140,10 +141,10 @@ class HttpLokiDraftDiscoveryGateway:
                 request,
                 timeout=min(int(runtime["timeout_seconds"]), 10),
             ) as response:
-                raw = response.read(int(runtime["max_response_bytes"]) + 1)
+                raw = response.read(QUERY_RESULT_MAX_BYTES + 1)
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, socket.timeout):
             raise _discovery_error("Loki 连接或标签发现失败") from None
-        if len(raw) > int(runtime["max_response_bytes"]):
+        if len(raw) > QUERY_RESULT_MAX_BYTES:
             raise _discovery_error("Loki 标签发现响应超过字节上限")
         try:
             parsed = json.loads(raw.decode("utf-8"))
