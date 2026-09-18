@@ -8,162 +8,32 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from starlette.testclient import TestClient
 
-from app.bootstrap import Container
-from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-from app.modules.job.infrastructure.repositories import now_iso
-from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.mcp_tool_runtime.direct_executor import DirectReadOnlyToolExecutor
 from app.modules.mcp_tool_runtime.resource_resolver import DirectResourceResolver
 from app.modules.mcp_tool_runtime.domain.schema_directory import SchemaColumn, SchemaTable
 from app.modules.mcp_tool_runtime.domain.topology import DatabaseEngine
 from app.modules.mcp_tool_runtime.infrastructure.db.schema_directory import (
-    FakeSchemaInspector, SchemaInspectorFactory,
+    FakeSchemaInspector,
+    SchemaInspectorFactory,
 )
 from app.modules.mcp_tool_runtime.schema_cursor_store import SchemaPaginationCursorStore
 from app.modules.mcp_tool_runtime.infrastructure.loki_gateway import HttpLokiClient
-from app.modules.mcp_audit import McpAuditCoordinator
 from app.modules.platform_config.application.governed_resources import (
     ResourceVerificationOutcome,
 )
 from app.shared.exceptions import AppError, NonRetryableExecutionError, ToolPolicyError
 from app.services.tool_mcp import (
-    JobToolService,
     ToolMcpError,
-    ToolRequestIdentity,
     create_app,
 )
-from backend.tests.helpers import container, prepare_debug_application_access
 
 
-TOOL_NAME = "get_schema_directory"
-TOOL_ARGUMENTS = {
-    "environment": "local",
-    "base": "debug-base",
-    "query": "order",
-    "limit": 10,
-}
-
-
-class _PassingMysqlVerifier:
-    def verify(self, **_: object) -> ResourceVerificationOutcome:
-        return ResourceVerificationOutcome(
-            status="PASSED",
-            provider_contract_version="mysql_v1",
-            checks={"connection": "passed", "readonly": True},
-        )
-
-
-def _publish_database_resource(runtime: Container) -> None:
-    platform_config_service = runtime.platform_config_service
-    platform_config_service.create_platform_secret(
-        {
-            "code": "tool_mcp_test_password",
-            "value": "test-only-password",
-        },
-        actor_id="user_local_admin",
-    )
-    resource_service = platform_config_service.governed_resources
-    resource_service.create_resource(
-        {
-            "code": "tool_mcp_test_database",
-            "name": "Tool MCP Test Database",
-            "resource_kind": "database",
-            "scope_type": "base",
-            "environment_code": "local",
-            "base_code": "debug-base",
-            "provider_type": "mysql",
-            "config": {
-                "host": "mysql.test.internal",
-                "port": 3306,
-                "database": "diagnostics",
-                "username": "readonly",
-            },
-            "secret_refs": {
-                "password_ref": "secret://platform/tool_mcp_test_password",
-            },
-        },
-        actor_id="user_local_admin",
-    )
-    resource_service.verify_draft(
-        "tool_mcp_test_database",
-        actor_id="user_local_admin",
-        verifier=_PassingMysqlVerifier(),
-    )
-    resource_service.publish_draft(
-        "tool_mcp_test_database",
-        actor_id="user_local_admin",
-    )
-
-
-def _runtime_job(*, capabilities: tuple[str, ...] = (TOOL_NAME,)):
-    runtime = container()
-    if "ones_work_item_search" in capabilities:
-        definition = MCP_TOOL_MANIFEST["ones_work_item_search"]
-        next_order = runtime.database.execute_one(
-            "select coalesce(max(selection_order), -1) + 1 as value "
-            "from agent_publication_mcp_tool where agent_publication_id = ?",
-            ("agent_publication_default_v1",),
-        )
-        assert next_order is not None
-        runtime.database.execute(
-            """
-            insert into agent_publication_mcp_tool
-              (agent_publication_id, server_code, tool_identifier, schema_hash,
-               model_description, selection_order, created_at)
-            values (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "agent_publication_default_v1",
-                definition.server_code,
-                definition.identifier,
-                definition.schema_hash,
-                definition.description,
-                int(next_order["value"]),
-                now_iso(),
-            ),
-        )
-    selection = prepare_debug_application_access(
-        runtime,
-        application_code="tool-mcp-application",
-        role_code="tool-mcp-role",
-        capabilities=capabilities,
-    )
-    if TOOL_NAME in capabilities:
-        _publish_database_resource(runtime)
-    job, _ = runtime.debug_job_access_service.create_job(
-        user_id="user_local_admin",
-        display_name="Administrator",
-        message="diagnose",
-        application_id=selection["application_id"],
-        execution_scope_id=selection["execution_scope_id"],
-        idempotency_key="tool-mcp-job",
-        correlation_id="tool-mcp-test",
-        environment="local",
-    )
-    claimed = runtime.agent_repository.claim_job(job.id, "agent-worker-test")
-    assert claimed is not None
-    service = JobToolService(
-        repository=runtime.agent_repository,
-        tool_registry=ToolRegistry(runtime.tool_service),
-        snapshot_service=runtime.mcp_tool_snapshot_service,
-        audit_coordinator=McpAuditCoordinator(
-            runtime.database,
-            max_payload_bytes=512 * 1024,
-            audit_service=runtime.audit_service,
-        ),
-    )
-    return runtime, claimed, service
-
-
-def _request_identity(job, correlation_id: str) -> ToolRequestIdentity:
-    return ToolRequestIdentity(
-        invocation_id=f"{job.id}.attempt-{job.retry_count}",
-        app_user_id=job.internal_user_id,
-        project_code=job.project_code,
-        agent_publication_id=job.agent_publication_id,
-        application_publication_id=job.business_application_publication_id,
-        correlation_id=correlation_id,
-    )
+from backend.tests.support.tool_mcp import (
+    TOOL_ARGUMENTS,
+    TOOL_NAME,
+    request_identity as _request_identity,
+    runtime_job as _runtime_job,
+)
 
 
 def test_tool_mcp_excludes_tools_owned_by_other_mcp_servers() -> None:
@@ -203,10 +73,9 @@ def paged_schema_runtime():
         DirectResourceResolver(runtime.database, secret_provider=secret_provider),
         limits=runtime.settings.execution,
     )
-    inspector = FakeSchemaInspector([
-        SchemaTable(f"orders_{i:03d}", [SchemaColumn("id", "bigint", False)])
-        for i in range(151)
-    ])
+    inspector = FakeSchemaInspector(
+        [SchemaTable(f"orders_{i:03d}", [SchemaColumn("id", "bigint", False)]) for i in range(151)]
+    )
     executor.schema_inspectors = SchemaInspectorFactory({DatabaseEngine.MYSQL: inspector})
     runtime.tool_service.tool_executor = executor
     yield runtime, job, service, inspector
@@ -216,13 +85,16 @@ def paged_schema_runtime():
 def _schema_page(job, service, **overrides):
     selected_job, descriptor = service.descriptor(job.id, TOOL_NAME)
     return service.invoke(
-        job=selected_job, descriptor=descriptor,
+        job=selected_job,
+        descriptor=descriptor,
         arguments={**TOOL_ARGUMENTS, "limit": 50, **overrides},
         request_identity=_request_identity(job, "schema-pagination-test"),
     )
 
 
-def test_schema_mcp_four_pages_expose_only_short_cursors_and_keep_exact_positions(paged_schema_runtime):
+def test_schema_mcp_four_pages_expose_only_short_cursors_and_keep_exact_positions(
+    paged_schema_runtime,
+):
     runtime, job, service, inspector = paged_schema_runtime
     cursor = ""
     collected = []
@@ -233,28 +105,38 @@ def test_schema_mcp_four_pages_expose_only_short_cursors_and_keep_exact_position
         cursor = data["next_cursor"]
         if page < 3:
             assert len(cursor) == 19 and cursor.startswith("pg_")
-            original = runtime.tool_service.schema_cursor_store.resolve(job_id=job.id, reference=cursor)
+            original = runtime.tool_service.schema_cursor_store.resolve(
+                job_id=job.id, reference=cursor
+            )
             assert original not in json.dumps(result.payload)
             # Discard the store instance between requests; no in-memory cache is required.
             runtime.tool_service.schema_cursor_store = SchemaPaginationCursorStore(runtime.database)
         else:
             assert cursor == "" and data["has_more"] is False
     assert collected == [f"orders_{i:03d}" for i in range(151)]
-    assert [call["after_table"] for call in inspector.calls] == ["", "orders_049", "orders_099", "orders_149"]
+    assert [call["after_table"] for call in inspector.calls] == [
+        "",
+        "orders_049",
+        "orders_099",
+        "orders_149",
+    ]
 
 
 def test_schema_mcp_legacy_cursor_continues_but_issues_short_cursor(paged_schema_runtime):
     runtime, job, service, inspector = paged_schema_runtime
     first = _schema_page(job, service)
     original = runtime.tool_service.schema_cursor_store.resolve(
-        job_id=job.id, reference=first.payload["data"]["next_cursor"],
+        job_id=job.id,
+        reference=first.payload["data"]["next_cursor"],
     )
     second = _schema_page(job, service, cursor=original)
     assert inspector.calls[-1]["after_table"] == "orders_049"
     assert len(second.payload["data"]["next_cursor"]) == 19
 
 
-@pytest.mark.parametrize("case", ["typo", "query", "revision", "authorization", "storage", "corrupt_original"])
+@pytest.mark.parametrize(
+    "case", ["typo", "query", "revision", "authorization", "storage", "corrupt_original"]
+)
 def test_schema_mcp_short_cursor_keeps_fail_closed_checks(paged_schema_runtime, case, monkeypatch):
     runtime, job, service, inspector = paged_schema_runtime
     first = _schema_page(job, service)
@@ -274,8 +156,11 @@ def test_schema_mcp_short_cursor_keeps_fail_closed_checks(paged_schema_runtime, 
         expected = "mcp_pagination_cursor_stale"
     elif case == "authorization":
         from app.shared.exceptions import PermissionDenied
+
         denied = PermissionDenied("synthetic revoked grant", safe_message="当前授权已撤销")
-        monkeypatch.setattr(runtime.business_authorization_service, "require", Mock(side_effect=denied))
+        monkeypatch.setattr(
+            runtime.business_authorization_service, "require", Mock(side_effect=denied)
+        )
         expected = denied.error_code
     elif case == "corrupt_original":
         runtime.database.execute(
@@ -291,7 +176,9 @@ def test_schema_mcp_short_cursor_keeps_fail_closed_checks(paged_schema_runtime, 
     assert len(inspector.calls) == 1  # Never query Provider with an invalid continuation.
 
 
-def test_schema_mcp_cannot_report_pagination_success_when_state_cannot_be_saved(paged_schema_runtime):
+def test_schema_mcp_cannot_report_pagination_success_when_state_cannot_be_saved(
+    paged_schema_runtime,
+):
     runtime, job, service, _ = paged_schema_runtime
     runtime.database.execute("drop table mcp_schema_pagination_cursor")
     with pytest.raises(NonRetryableExecutionError) as error:

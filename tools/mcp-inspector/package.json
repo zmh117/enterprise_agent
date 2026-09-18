@@ -1,0 +1,12 @@
+{
+  "name": "enterprise-agent-mcp-inspector-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "项目 MCP 的独立客户端冒烟测试依赖",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/inspector": "2.7.0"
+  }
+}

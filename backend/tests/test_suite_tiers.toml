@@ -31,6 +31,7 @@ unit = [
 ]
 
 contract = [
+  "test_mcp_inspector_runner.py",
   "test_knowledge_compose.py",
   "test_knowledge_vectors.py",
   "test_admin_api_contracts.py",
@@ -163,6 +164,7 @@ contract = [
 ]
 
 integration = [
+  "test_mcp_inspector_smoke.py",
   "test_business_application_runtime_routing_postgres_integration.py",
   "test_job_dispatch_fault_integration.py",
   "test_phase2b_postgres_rabbitmq_integration.py",

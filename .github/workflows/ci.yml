@@ -81,15 +81,35 @@ jobs:
           backend/tests/test_python_file_mcp_runtime_bridge.py
           backend/tests/test_mcp_meta_fidelity.py
 
+  mcp-inspector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: tools/mcp-inspector/.node-version
+          cache: npm
+          cache-dependency-path: tools/mcp-inspector/package-lock.json
+      - run: python -m venv .venv
+      - run: .venv/bin/pip install -e '.[dev,tool-mcp]'
+      - run: npm ci --prefix tools/mcp-inspector --no-audit --no-fund
+      - name: Independent Inspector client against loopback tool-mcp
+        run: make test-mcp-inspector
+
   runtime-images:
     runs-on: ubuntu-latest
-    needs: [backend-fast, backend-full, redis-pagination, dingtalk-runtime, python-runtime-contract]
+    needs: [backend-fast, backend-full, redis-pagination, dingtalk-runtime, python-runtime-contract, mcp-inspector]
     if: >-
       always() &&
       needs.backend-fast.result == 'success' &&
       needs.redis-pagination.result == 'success' &&
       needs.dingtalk-runtime.result == 'success' &&
       needs.python-runtime-contract.result == 'success' &&
+      needs.mcp-inspector.result == 'success' &&
       (needs.backend-full.result == 'success' || needs.backend-full.result == 'skipped')
     steps:
       - uses: actions/checkout@v4

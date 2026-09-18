@@ -1,4 +1,4 @@
-.PHONY: check compile format-check lint typecheck test test-fast test-full test-unit test-contract test-integration test-acceptance test-migration unittest frontend-check openspec-validate schema-baseline-check docs-link-check smoke-db-backed-config
+.PHONY: check compile format-check lint typecheck test test-fast test-full test-unit test-contract test-integration test-mcp-inspector test-acceptance test-migration unittest frontend-check openspec-validate schema-baseline-check docs-link-check smoke-db-backed-config
 
 compile:
 	python3 -m compileall backend
@@ -21,13 +21,16 @@ test-fast:
 
 test-full:
 	@echo "Full local backend regression: all classified tiers; external integrations may skip explicitly."
-	.venv/bin/pytest -q --durations=30 backend/tests
+	.venv/bin/pytest -q -rs --durations=30 backend/tests
 
 test-unit:
 	.venv/bin/pytest -q --durations=20 -m unit backend/tests
 
 test-contract:
 	.venv/bin/pytest -q --durations=20 -m contract backend/tests
+
+test-mcp-inspector:
+	RUN_MCP_INSPECTOR_SMOKE=1 .venv/bin/python -m backend.tests.support.mcp_inspector
 
 test-integration:
 	.venv/bin/pytest -q --durations=20 -m integration backend/tests
