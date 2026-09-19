@@ -47,6 +47,7 @@ contract = [
   "test_knowledge_resources.py",
   "test_knowledge_ones_verification.py",
   "test_knowledge_governance.py",
+  "test_knowledge_source_confirmation.py",
   "test_knowledge_evaluation.py",
   "test_mcp_inspector_runner.py",
   "test_knowledge_compose.py",

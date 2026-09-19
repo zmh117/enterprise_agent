@@ -108,6 +108,7 @@ class KnowledgeResourceReader:
             {
                 "config": config,
                 "binding": binding["verification_hash"],
+                "source_confirmation": binding["attestation_hash"],
                 "target": binding["target_hash"],
                 "source": binding["corpus_hash"],
                 "published": revision["id"],

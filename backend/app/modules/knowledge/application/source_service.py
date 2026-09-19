@@ -147,6 +147,59 @@ class SourceBindingService(KnowledgeAdministration):
             verified=verified,
         )
 
+    def confirm_import(
+        self,
+        *,
+        actor_id: str,
+        source_id: str,
+        instance_code: str,
+        team_id: str,
+        expected_revision: int,
+        confirmed: bool,
+    ) -> dict[str, Any]:
+        """导入侧一次性确认归属；无业务读取，不伪造 ONES 技术核验或 Job。"""
+        self.require_admin(actor_id)
+        checked_identifier(actor_id)
+        checked_identifier(source_id)
+        checked_identifier(team_id)
+        checked_identifier(instance_code)
+        checked_revision(expected_revision)
+        target = self._verifier()
+        if confirmed is not True or instance_code != target.instance_code:
+            raise KnowledgeGovernanceError("knowledge_input_invalid")
+        with self.store.source_lock(source_id), self.store.unit_of_work():
+            self.require_admin(actor_id)
+            self.store.get("source", source_id, lock=True)
+            if self.store.latest_source_revision(source_id) != expected_revision:
+                raise KnowledgeGovernanceError("knowledge_revision_conflict")
+            items = self.store.source_items(source_id)
+            timestamp = now()
+            identifier = str(uuid.uuid4())
+            values = {
+                "id": identifier,
+                "source_id": source_id,
+                "revision": expected_revision + 1,
+                "instance_code": instance_code,
+                "target_hash": target.target_hash,
+                "team_id": team_id,
+                "state": "CONFIRMED",
+                "corpus_hash": self.store.source_hash(items),
+                "document_count": len(items),
+                "created_by": actor_id,
+                "created_at": timestamp,
+            }
+            # 摘要追溯本次声明，绝不冒充外部证明文件或 Provider 读取结果。
+            values["attestation_hash"] = fingerprint({"kind": "import_confirmation_v1", **values})
+            self.store.revoke_source_bindings(source_id, actor_id, timestamp)
+            self.store.add("source_binding", values)
+            self.record(
+                "source.confirmed",
+                actor_id=actor_id,
+                identifier=identifier,
+                revision=expected_revision + 1,
+            )
+            return self.store.get("source_binding", identifier)
+
     def verify(self, *, actor_id: str, binding_id: str, job_id: str) -> dict[str, Any]:
         self.require_admin(actor_id)
         checked_identifier(job_id)

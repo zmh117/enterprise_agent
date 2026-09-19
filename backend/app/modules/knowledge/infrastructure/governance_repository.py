@@ -150,10 +150,20 @@ class GovernanceStore:
         }
 
     def catalog(self) -> dict[str, Any]:
+        bases = self.database.execute(
+            f"select id,code,display_name,state from {self.t('knowledge_base')} order by id"
+        )
+        memberships = self.database.execute(
+            f"select distinct m.knowledge_base_id,d.source_id from {self.t('knowledge_base_document')} m "
+            f"join {self.t('document')} d on d.id=m.document_id "
+            "where m.state='included' and d.lifecycle_state='active'"
+        )
+        for base in bases:
+            base["source_ids"] = sorted(
+                row["source_id"] for row in memberships if row["knowledge_base_id"] == base["id"]
+            )
         return {
-            "bases": self.database.execute(
-                f"select id,code,display_name,state from {self.t('knowledge_base')} order by id"
-            ),
+            "bases": bases,
             "indexes": self.database.execute(
                 f"select id,code,knowledge_base_id,state,profile_hash,corpus_hash from {self.t('vector_index')} order by id"
             ),
@@ -223,7 +233,8 @@ class GovernanceStore:
             "target_hash"
         ] != checked_hash(target_hash):
             raise KnowledgeGovernanceError("knowledge_source_changed")
-        if binding["state"] != ("VERIFIED" if verified else "PENDING"):
+        allowed = {"CONFIRMED", "VERIFIED"} if verified else {"PENDING"}
+        if binding["state"] not in allowed:
             raise KnowledgeGovernanceError("knowledge_source_unavailable")
         items = self.source_items(binding["source_id"])
         if (

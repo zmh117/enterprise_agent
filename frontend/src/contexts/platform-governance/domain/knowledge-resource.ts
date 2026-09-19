@@ -9,7 +9,7 @@ export const knowledgeBindingSchema = z.object({
   revision,
   instance_code: identifier,
   team_id: identifier,
-  state: z.enum(["PENDING", "VERIFIED", "REVOKED"]),
+  state: z.enum(["PENDING", "CONFIRMED", "VERIFIED", "REVOKED"]),
 })
 export const knowledgeSourcesSchema = z.object({
   sources: z.array(
@@ -30,6 +30,7 @@ export const knowledgeCatalogSchema = z.object({
       code: z.string(),
       display_name: z.string(),
       state: z.string(),
+      source_ids: z.array(identifier),
     })
   ),
   indexes: z.array(
@@ -79,16 +80,6 @@ export const newKnowledgeResourceSchema = z
     name: z.string().trim().min(1).max(120),
   })
   .strict()
-export const newKnowledgeBindingSchema = z
-  .object({
-    source_id: identifier,
-    instance_code: identifier,
-    team_id: identifier,
-    expected_revision: revision,
-    batch_attested: z.literal(true),
-    attestation_hash: hash,
-  })
-  .strict()
 export type KnowledgeCommand =
   | { kind: "create"; input: z.infer<typeof newKnowledgeResourceSchema> }
   | {
@@ -106,9 +97,6 @@ export type KnowledgeCommand =
       id: string
       input: { expected_revision: number; status: KnowledgeResource["status"] }
     }
-  | { kind: "source-create"; input: z.infer<typeof newKnowledgeBindingSchema> }
-  | { kind: "source-verify"; id: string; input: { job_id: string } }
-  | { kind: "source-revoke"; id: string; input: Record<string, never> }
 
 export function canPublishKnowledge(resource: KnowledgeResource) {
   return (
@@ -124,11 +112,12 @@ export function knowledgeStatus(value: string) {
     (
       {
         storage_only: "仅存储",
-        offline_unverified: "离线来源待核验",
+        offline_unverified: "离线导入",
         READY: "已就绪",
         BUILDING: "构建中",
         FAILED: "失败",
         PENDING: "待核验",
+        CONFIRMED: "来源已确认",
         VERIFIED: "已核验",
         REVOKED: "已撤销",
         enabled: "启用",

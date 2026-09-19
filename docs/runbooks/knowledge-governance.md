@@ -4,7 +4,7 @@
 
 ## 数据库和部署边界
 
-治理表通过平台前向迁移 `137_expand_knowledge_retrieval_governance.sql` 加入现有数据库的 `knowledge` schema；角色 KB 关系 `rbac_role_application_knowledge_base` 留在现有 RBAC 所属的 public schema，以外键引用逻辑 KB。不新建数据库，也不改变现有 source/knowledge_base 的离线存储状态、文档、分块或向量身份。迁移不创建真实来源绑定、发布或角色授权。
+治理表通过平台前向迁移 `137_expand_knowledge_retrieval_governance.sql` 加入现有数据库的 `knowledge` schema；角色 KB 关系 `rbac_role_application_knowledge_base` 留在现有 RBAC 所属的 public schema，以外键引用逻辑 KB。不新建数据库，也不改变现有 source/knowledge_base 的离线存储状态、文档、分块或向量身份。迁移不创建真实来源绑定、发布或角色授权。`138_expand_knowledge_source_confirmation.sql` 新增 CONFIRMED 状态，保留所有旧绑定及引用，不把 PENDING 自动升级；其含义是导入来源已明确确认，不是 Provider 已完成抽样核验。
 
 API/Worker/ONES 镜像更新仍须经过正式 Migrator 和平台 schema readiness 门禁；本轮没有执行正式迁移或服务重启。不要在未升级 schema 时只替换后端，也不要在新库上直接回滚到只认识旧 schema 的镜像。停用知识检索时保留表、文档、索引和向量卷，不执行降级删表或重编码。
 
@@ -12,20 +12,30 @@ API/Worker/ONES 镜像更新仍须经过正式 Migrator 和平台 schema readine
 
 入口位于 `/api/platform/knowledge`，仅开启 Web 管理的后端注册。读操作要求 `platform_config/read`，写操作要求登录 Cookie、现有 CSRF/Origin 校验和 `platform_config/manage`。客户端不提交 JWT、连接地址、凭据、环境 placement 或技术核验结果。
 
-1. `GET /sources` 查看来源及绑定元数据；管理员先在系统外确认完整离线批次的可信实例和 Team，将确认记录留在受限位置，仅提交其摘要。
-2. `POST /source-bindings` 提交 `source_id`、固定部署 `instance_code`、ONES 原生 `team_id`、`expected_revision`（首次为 0）、`batch_attested=true` 和 64 位小写十六进制 `attestation_hash`。Team/项目显示名称不替代原生 ID。新绑定为 PENDING，换版撤销旧绑定。
-3. `POST /source-bindings/{id}/verify` 仅提交 `job_id`。该 Job 必须属于当前管理员、处于 RUNNING，且是具备已发布和当前授权的 `ones_get_work_item_detail` 的业务应用 Job。平台在内存中签发该 Job 的现有完整 scope ONES Principal，调用固定 ONES 内部核验入口；不接受历史 Token、直接 Agent 或管理员代其他用户核验。
-4. 核验对完整来源身份/版本生成摘要，最多抽样 20 个工作项检查本人默认 Team、原生 UUID、项目 UUID。抽样不是完整批次归属证明，不能替代第 1 步的人工确认。Provider 错误不是核验成功。ONES 内部入口不会向管理端返回正文或 Token，也不注册为模型工具。
-5. `GET /catalog` 选择明确 KB/READY index；`POST /resources` 提交 `knowledge_base_id`、`code`、`name`。一个 KB 最多一个启用资源，创建不等于发布。
-6. `PUT /resources/{id}/draft` 提交 `expected_revision`、`binding_id`、`index_id`，追加配置版本。`POST /resources/{id}/verify` 校验当前来源、完整索引语料、Embedding profile、Qdrant 配置及点数；`POST /resources/{id}/publish` 只发布该草稿最新成功验证的版本。两者均提交最新 `expected_revision`。
+1. 导入方明确整批数据的 ONES 实例和原生 Team。导入后使用下述受限 CLI 做一次来源确认；不需要证明文件摘要或正在运行的 Job，不调用 ONES，不自动发布。原 source/KB 的离线存储状态不变。
+2. `GET /sources`、`GET /catalog` 查看来源与数据集元数据；Web 只读继承数据集的唯一有效 CONFIRMED 或历史 VERIFIED 来源。缺失、撤销或多义时不能保存草稿，不允许手选其他数据集的来源。
+3. `POST /resources` 提交 `knowledge_base_id`、`code`、`name`；一个 KB 最多一个启用资源，创建不等于发布。
+4. `PUT /resources/{id}/draft` 提交 `expected_revision`、继承的 `binding_id`、明确选择的 `index_id`；服务端仍检查完整成员归属。验证与发布分别通过 `POST /resources/{id}/verify` 和 `POST /resources/{id}/publish`，均需最新修订。索引、Embedding profile、Qdrant 配置/点数及返回前并发复核不变。
+
+受限导入后入口（示例均为占位符，替换为已确认的非敏感 ID；不在本次自动执行）：
+
+```bash
+python -m app.cli.confirm_knowledge_source \
+  --source-id SOURCE_ID --actor-id ADMIN_USER_ID \
+  --instance-code INSTANCE_CODE --team-id TEAM_ID --expected-revision 0
+```
+
+默认仅预检；确认整批归属后，显式追加 `--confirm-source --commit` 才写入。CLI 使用当前数据库配置，要求 schema 为最新且操作人具有当前平台管理权限，实例必须匹配固定部署；不签发 JWT、不读取 ONES 凭据或打印业务正文。首次 revision 为 0，换源需填写当前修订，立即撤销旧绑定，依赖旧绑定的资源须重新配置验证发布。未知来源不能猜测填写；已有 5,000 条离线批次仍待真实确认。在线采集尚未实现，后续应复用导入侧确认用例，不把来源配置放回资源页面。
+
+旧 `POST /source-bindings` 与 `/{id}/verify` 仅保留已有管理客户端兼容，不是新 Web 流程的前置条件；原 JWT、本人 RUNNING Job 和技术核验约束不放宽。历史 VERIFIED 证据不重写。来源确认不是数据读取授权，运行时仍执行 KB＋当前用户 ONES 逐项检查。
 
 管理 API 只投影来源/资源/索引 ID、状态、版本与摘要，不返回业务正文或任意连接配置。来源核验和资源验证在外部 I/O 期间不持有数据库事务，结束后复核管理授权、配置和来源；并发修改不能覆盖旧结果。
 
 Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页签并列，选择该页签后才加载知识目录。它复用上述 API：
 
 - 列表和详情分别显示存储、来源核验、索引就绪及发布状态；新建资源只关联已入库 KB，不提供正文上传、OCR、自动采集、任意地址或凭据配置。
-- 草稿只选择明确的已核验绑定和当前 KB 的 READY 索引，不自动选择第一项；后台仍核验完整来源、索引和权限。保存/验证/发布依次使用返回的新 revision，发布、停用、恢复和归档需要明确确认。
-- 来源区显示历史绑定；新修订需要完整批次人工确认摘要，明确提示会撤销旧核验。技术核验只填写本人 RUNNING 业务应用 Job ID，不填写 JWT。撤销不删除文本或向量。
+- 草稿只选择当前 KB 的 READY 索引；来源只读继承唯一有效绑定，不自动选择第一候选；后台仍核验完整来源、索引和权限。保存/验证/发布依次使用返回的新 revision，发布、停用、恢复和归档需要明确确认。
+- 原“来源确认与核验”区域与手工摘要、Job ID 输入已删除。详情仅展示来源，不提供来源写入操作；来源建立、换版归导入流程，撤销 API 保留，撤销不删除文本或向量。
 - 读写能力沿用 `platform.read/manage`，只读用户不可修改；前端隐藏不代替服务端管理鉴权。401、403、服务异常和 revision 冲突分开显示固定中文信息，不直接展示原始异常。
 - 并发冲突不自动重试或丢弃本地输入；显式“重新载入最新配置（替换本地输入）”才更新编辑基线。角色侧仍只是按应用选择允许 KB，不复制资源配置或增加拒绝选项。
 
@@ -128,8 +138,8 @@ CLI、bootstrap、ONES 和 Embedding 镜像均使用新分层路径，不保留�
 | --- | --- |
 | `knowledge_revision_conflict` | 重新读取当前 revision，确认差异后重试，不自动覆盖 |
 | `knowledge_verifier_unavailable` | 检查受信 ONES 部署配置；不要输入临时 URL 或改用共享凭据 |
-| `knowledge_verification_failed` | 核对当前本人 Job、详情权限、默认 Team、来源和依赖服务；只查安全审计，不导出 Token/响应正文 |
-| `knowledge_source_changed` | 完整离线批次或绑定目标已变化，需要新的人工确认及绑定核验；不能沿用旧证明 |
+| `knowledge_verification_failed` | 核对来源、索引与依赖服务；只查安全审计，不导出 Token/响应正文 |
+| `knowledge_source_changed` | 完整离线批次或绑定目标已变化，需要在导入流程重新确认；不能沿用旧证明 |
 | `knowledge_resource_unavailable` | 检查发布/启停状态和来源绑定；不切换未发布或旧索引作为 fallback |
 | `knowledge_resource_changed` | 本次固定版本失效，放弃结果并重新发起查询 |
 | `knowledge_bridge_unavailable` | 知识组件未装配；先完成可选部署与 MCP 接线，不临时绕过双身份桥 |

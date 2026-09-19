@@ -35,7 +35,6 @@ import {
   KnowledgeField,
   knowledgeInputClass,
 } from "@/contexts/platform-governance/presentation/knowledge-resource-ui"
-import { KnowledgeSourcePanel } from "@/contexts/platform-governance/presentation/knowledge-source-panel"
 
 export function KnowledgeResourcesPage() {
   const capabilities = useAdminCapabilitySummary()
@@ -48,6 +47,7 @@ export function KnowledgeResourcesPage() {
   const inventory = useKnowledgeInventory(canRead)
   const mutation = useKnowledgeCommand()
   const [editing, setEditing] = useState<KnowledgeResource | null | undefined>()
+  const [editorGeneration, setEditorGeneration] = useState(0)
   const [confirmation, setConfirmation] = useState<{
     command: KnowledgeCommand
     message: string
@@ -74,10 +74,11 @@ export function KnowledgeResourcesPage() {
   }
   async function reloadEditor() {
     const result = await inventory.refetch()
-    if (result.data && editing) {
+    if (result.isSuccess && result.data && editing) {
       const latest = result.data.resources.find((r) => r.id === editing.id)
       if (latest) {
         setEditing(latest)
+        setEditorGeneration((value) => value + 1)
         mutation.reset()
       }
     }
@@ -110,8 +111,8 @@ export function KnowledgeResourcesPage() {
         <div>
           <h1 className="text-2xl font-semibold">工具资源 · 知识库</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            选择已有知识库、核验来源与 READY
-            索引。草稿验证后才可发布；角色仍在各业务应用下选择允许使用的知识库。
+            选择已有知识库与已就绪索引，来源由导入记录提供。
+            草稿验证后才可发布；角色仍在各业务应用下选择允许使用的知识库。
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
             首版支持 ONES
@@ -167,7 +168,7 @@ export function KnowledgeResourcesPage() {
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-left text-sm">
               <caption className="p-3 text-left text-muted-foreground">
-                入库、核验、索引和发布是不同状态；发布也不能替代 KB＋本人 ONES
+                入库、来源确认、索引和发布是不同状态；发布也不能替代 KB＋本人 ONES
                 双重授权。
               </caption>
               <thead className="border-b bg-muted/40">
@@ -253,13 +254,6 @@ export function KnowledgeResourcesPage() {
               </p>
             )}
           </div>
-          <KnowledgeSourcePanel
-            data={data}
-            canManage={canManage}
-            pending={mutation.isPending}
-            execute={execute}
-            confirm={confirm}
-          />
           <Sheet
             open={editing !== undefined}
             onOpenChange={(open) => {
@@ -279,7 +273,7 @@ export function KnowledgeResourcesPage() {
                 <KnowledgeError error={mutation.error} />
                 {editing ? (
                   <KnowledgeResourceEditor
-                    key={`${editing.id}:${editing.revision}`}
+                    key={`${editing.id}:${editing.revision}:${editorGeneration}`}
                     resource={editing}
                     data={data}
                     canManage={canManage}
@@ -354,16 +348,28 @@ function KnowledgeResourceEditor({
   reload,
 }: EditorProps) {
   const initial = resource.draft ?? resource.published
-  const [binding, setBinding] = useState(initial?.binding_id ?? "")
+  const sourceIds =
+    data.bases.find((b) => b.id === resource.knowledge_base_id)?.source_ids ?? []
+  const bindings = data.bindings.filter(
+    (b) =>
+      sourceIds.length === 1 &&
+      b.source_id === sourceIds[0] &&
+      (b.state === "CONFIRMED" || b.state === "VERIFIED")
+  )
+  // 编辑期间不因目录刷新静默换源；显式重新载入配置才更新基线。
+  const [binding] = useState(bindings.length === 1 ? bindings[0].id : "")
+  const selectedSource =
+    bindings.length === 1 && bindings[0].id === binding
+      ? bindings[0]
+      : undefined
   const [index, setIndex] = useState(initial?.index_id ?? "")
   const writable = canManage && resource.status !== "archived"
-  const bindings = data.bindings.filter((b) => b.state === "VERIFIED")
   const indexes = data.indexes.filter(
     (i) =>
       i.knowledge_base_id === resource.knowledge_base_id && i.state === "READY"
   )
   const selectedReady =
-    bindings.some((b) => b.id === binding) &&
+    Boolean(selectedSource) &&
     indexes.some((i) => i.id === index)
   const input = { expected_revision: resource.revision }
   return (
@@ -407,26 +413,27 @@ function KnowledgeResourceEditor({
       >
         <h3 className="font-medium">草稿配置</h3>
         <fieldset disabled={!writable || pending} className="grid gap-3">
-          <KnowledgeField label="已核验来源绑定">
-            <select
-              required
-              className={knowledgeInputClass}
-              value={binding}
-              onChange={(e) => setBinding(e.target.value)}
-            >
-              <option value="">请选择已核验来源</option>
-              {binding && !bindings.some((b) => b.id === binding) && (
-                <option value={binding}>当前绑定不可用 · {binding}</option>
-              )}
-              {bindings.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {data.sources.find((s) => s.id === b.source_id)
-                    ?.display_name ?? b.source_id}{" "}
-                  · {b.instance_code}/{b.team_id} · v{b.revision}
-                </option>
-              ))}
-            </select>
-          </KnowledgeField>
+          <div
+            className="grid gap-2 text-sm"
+            role="group"
+            aria-label="数据来源（只读）"
+          >
+            <p className="font-medium">数据来源（由导入记录提供）</p>
+            {selectedSource ? (
+              <p>
+                {data.sources.find((s) => s.id === selectedSource.source_id)
+                  ?.display_name ?? selectedSource.source_id}
+                {" · "}
+                {selectedSource.instance_code}/{selectedSource.team_id}
+                {" · "}
+                {knowledgeStatus(selectedSource.state)}
+              </p>
+            ) : (
+              <p>
+                数据来源尚未确认、已变化或不唯一。请在导入流程确认后重新载入配置，不能在此指定其他来源。
+              </p>
+            )}
+          </div>
           <KnowledgeField label="已就绪向量索引">
             <select
               required

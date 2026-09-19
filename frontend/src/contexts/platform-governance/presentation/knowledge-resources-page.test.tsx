@@ -96,6 +96,7 @@ function setup({
                 code: "kb",
                 display_name: "合成入库知识库",
                 state: "storage_only",
+                source_ids: ["source"],
               },
             ],
             indexes: [
@@ -176,22 +177,6 @@ function setup({
         r.revision = Number(r.revision) + 1
         return reply(r)
       }
-      if (url === `${prefix}/source-bindings`) {
-        const binding = {
-          id: "binding2",
-          ...body,
-          revision: Number(body.expected_revision) + 1,
-          state: "PENDING",
-        }
-        state.bindings = [{ ...state.bindings[0], state: "REVOKED" }, binding]
-        return reply(binding)
-      }
-      if (url.endsWith("/verify"))
-        return reply({ ...state.bindings[0], state: "VERIFIED" })
-      if (url.endsWith("/revoke")) {
-        state.bindings[0].state = "REVOKED"
-        return reply({ revoked: true })
-      }
       throw new Error("unexpected synthetic request")
     }
   )
@@ -248,12 +233,10 @@ describe("知识资源管理", () => {
       target: { value: "合成缺陷库" },
     })
     fireEvent.click(screen.getByRole("button", { name: "创建资源身份" }))
-    const binding = await screen.findByLabelText("已核验来源绑定")
-    expect(binding).toHaveValue("")
+    expect(await screen.findByRole("group", { name: "数据来源（只读）" })).toHaveTextContent("default/team")
     expect(
       screen.queryByRole("option", { name: /尚未构建完成|其他知识库索引/ })
     ).not.toBeInTheDocument()
-    fireEvent.change(binding, { target: { value: "binding" } })
     fireEvent.change(screen.getByLabelText("已就绪向量索引"), {
       target: { value: "index" },
     })
@@ -291,9 +274,6 @@ describe("知识资源管理", () => {
     const f = setup({ fail: "knowledge_revision_conflict" })
     f.render()
     await openResource()
-    fireEvent.change(screen.getByLabelText("已核验来源绑定"), {
-      target: { value: "binding" },
-    })
     fireEvent.change(screen.getByLabelText("已就绪向量索引"), {
       target: { value: "index2" },
     })
@@ -336,7 +316,7 @@ describe("知识资源管理", () => {
     expect(
       screen.queryByRole("button", { name: "新建知识资源" })
     ).not.toBeInTheDocument()
-    expect(within(dialog).getByLabelText("已核验来源绑定")).toBeDisabled()
+    expect(within(dialog).getByRole("group", { name: "数据来源（只读）" })).toHaveTextContent("default/team")
     expect(
       screen.queryByRole("button", { name: "发布知识资源" })
     ).not.toBeInTheDocument()
@@ -358,40 +338,14 @@ describe("知识资源管理", () => {
       ).toBe(false)
     }
   )
-  it("来源需要明确证明及确认，不自动技术核验", async () => {
+  it("页面删除来源手工表单，不提供摘要、Job 或来源写操作", async () => {
     const f = setup()
     f.render()
     await screen.findByText("合成缺陷库")
-    fireEvent.click(screen.getByText("来源确认与核验"))
-    fireEvent.change(screen.getByLabelText("离线来源"), {
-      target: { value: "source" },
-    })
-    fireEvent.change(screen.getByLabelText("受信 ONES 实例编码"), {
-      target: { value: "default" },
-    })
-    fireEvent.change(screen.getByLabelText("ONES 原生 Team ID"), {
-      target: { value: "team" },
-    })
-    fireEvent.change(screen.getByLabelText("批次来源证明 SHA-256 摘要"), {
-      target: { value: hash },
-    })
-    expect(screen.getByRole("button", { name: "建立来源绑定" })).toBeDisabled()
-    fireEvent.click(
-      screen.getByLabelText("我已确认完整批次来源，证明原件保留在受限位置")
-    )
-    fireEvent.click(screen.getByRole("button", { name: "建立来源绑定" }))
+    expect(screen.queryByText("来源确认与核验")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/SHA-256|RUNNING Job/)).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /建立来源绑定|核验来源|撤销核验/ })).not.toBeInTheDocument()
     expect(f.calls).toHaveLength(0)
-    fireEvent.click(screen.getByRole("button", { name: "确认操作" }))
-    await waitFor(() => expect(f.calls).toHaveLength(1))
-    expect(f.calls[0].body).toEqual({
-      source_id: "source",
-      instance_code: "default",
-      team_id: "team",
-      expected_revision: 1,
-      batch_attested: true,
-      attestation_hash: hash,
-    })
-    expect(f.calls[0].url).toBe(`${prefix}/source-bindings`)
   })
   it("后端撤销管理权限时写入拒绝，不能由可见按钮绕过", async () => {
     const f = setup({ fail: "forbidden" })
@@ -407,36 +361,32 @@ describe("知识资源管理", () => {
     expect(f.state.resources[0].status).toBe("enabled")
     expect(document.body).not.toHaveTextContent("synthetic-private")
   })
-  it("来源核验只提交 Job ID；撤销需要确认且不删除数据", async () => {
+  it("导入已确认来源可直接保存草稿，无需 ONES 抽样核验", async () => {
     const f = setup()
+    f.state.bindings[0].state = "CONFIRMED"
     f.render()
-    await screen.findByText("合成缺陷库")
-    fireEvent.click(screen.getByText("来源确认与核验"))
-    fireEvent.change(screen.getByLabelText("本人 RUNNING Job ID（binding）"), {
-      target: { value: "synthetic-job" },
-    })
-    fireEvent.click(screen.getByRole("button", { name: "核验来源" }))
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "撤销核验" })).toBeEnabled()
-    )
-    expect(f.calls[0]).toEqual({
-      url: `${prefix}/source-bindings/binding/verify`,
-      method: "POST",
-      body: { job_id: "synthetic-job" },
-    })
-    fireEvent.click(screen.getByRole("button", { name: "撤销核验" }))
-    expect(f.calls).toHaveLength(1)
-    fireEvent.click(screen.getByRole("button", { name: "确认操作" }))
-    await waitFor(() =>
-      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
-    )
-    expect(f.calls[1]).toEqual({
-      url: `${prefix}/source-bindings/binding/revoke`,
-      method: "POST",
-      body: {},
-    })
-    expect(screen.getByText(/已撤销/)).toBeInTheDocument()
+    await openResource()
+    expect(screen.getByRole("group", { name: "数据来源（只读）" })).toHaveTextContent("来源已确认")
+    fireEvent.change(screen.getByLabelText("已就绪向量索引"), { target: { value: "index" } })
+    fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+    await waitFor(() => expect(f.calls).toHaveLength(1))
+    expect(f.calls[0].body.binding_id).toBe("binding")
+    expect(f.calls[0].url).toBe(`${prefix}/resources/res/draft`)
   })
+  it.each(["PENDING", "REVOKED", "OTHER_SOURCE", "AMBIGUOUS"])(
+    "来源 %s 不静默绑定或允许保存", async (kind) => {
+      const f = setup()
+      if (kind === "OTHER_SOURCE") f.state.bindings[0].source_id = "other"
+      else if (kind === "AMBIGUOUS") f.state.bindings.push({ ...f.state.bindings[0], id: "binding2" })
+      else f.state.bindings[0].state = kind
+      f.render()
+      await openResource()
+      fireEvent.change(screen.getByLabelText("已就绪向量索引"), { target: { value: "index" } })
+      expect(screen.getByRole("button", { name: "保存新草稿" })).toBeDisabled()
+      expect(screen.getByRole("group", { name: "数据来源（只读）" })).toHaveTextContent("请在导入流程确认")
+      expect(f.calls).toHaveLength(0)
+    }
+  )
   it("刷新失败仍保留编辑器输入，不把缓存状态误当空资源", async () => {
     const f = setup()
     f.render()
@@ -456,5 +406,23 @@ describe("知识资源管理", () => {
     expect(screen.getByLabelText("已就绪向量索引")).toHaveValue("index2")
     expect(document.body).not.toHaveTextContent("synthetic-private")
     expect(f.calls).toHaveLength(0)
+  })
+  it("来源换版需显式载入，旧草稿不会阻止选择新导入来源", async () => {
+    const f = setup()
+    f.state.resources[0].draft = {
+      id: "draft", revision: 1, binding_id: "binding", index_id: "index", config_hash: hash,
+    }
+    f.render()
+    await openResource()
+    expect(screen.getByRole("group", { name: "数据来源（只读）" })).toHaveTextContent("default/team")
+    f.state.bindings = [
+      { ...f.state.bindings[0], state: "REVOKED" },
+      { ...f.state.bindings[0], id: "new-binding", revision: 2, team_id: "new-team", state: "CONFIRMED" },
+    ]
+    fireEvent.click(screen.getByRole("button", { name: "重新载入最新配置（替换本地输入）" }))
+    await waitFor(() => expect(screen.getByRole("group", { name: "数据来源（只读）" })).toHaveTextContent("default/new-team"))
+    fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+    await waitFor(() => expect(f.calls).toHaveLength(1))
+    expect(f.calls[0].body.binding_id).toBe("new-binding")
   })
 })

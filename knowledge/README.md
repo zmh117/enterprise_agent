@@ -64,7 +64,7 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 配置入口将角色限制为无角色继承、无超级用户/建库/建角色/复制/RLS 绕过权限；按当前实际查询逐列授予元数据及知识证据读取，只给三张审计表必要的 INSERT/UPDATE，不给业务写入或 DELETE。既有列级授权会收紧，PUBLIC 或其他途径的超额权限导致检查失败，不会自动修改全平台 PUBLIC 权限。后续 schema 变更需要重新核对列合同和授予；启动也会检查角色，误配平台账号会拒绝启动。
 
 5. 依平台维护流程更新 API（新凭据桥）、ONES、Runtime/Worker 和 Web 的对应代码版本。确认内部 Embedding/Qdrant、PostgreSQL/schema 已就绪后，使用三个文件定向启动 `knowledge-mcp`；不要用无服务名的 `up` 启动一次性运维任务。API 与 MCP 不互相声明启动依赖，桥未可用时检索明确失败关闭。
-6. `/health` 仅验证 schema/审计依赖，不能代替向量、ONES、权限和真实 Job 验收。先完成任务 7.3 的阻塞依赖预算与隔离完整链路测试，再按批准流程在 Web 配置来源/资源、角色应用 KB 范围和新的 Agent/Application Publication。不得把旧 Job 当成新增知识工具的验收。
+6. `/health` 仅验证 schema/审计依赖，不能代替向量、ONES、权限和真实 Job 验收。先完成任务 7.3 的阻塞依赖预算与隔离完整链路测试，再按批准流程在导入侧确认来源，在 Web 配置资源、角色应用 KB 范围和新的 Agent/Application Publication。来源确认入口见[管理手册](../docs/runbooks/knowledge-governance.md#管理流程)，Web 不再要求证明摘要或运行中 Job ID。不得把旧 Job 当成新增知识工具的验收。
 
 停用时先停用知识资源与相关新工具发布，再定向 `stop knowledge-mcp`，保留 PostgreSQL、模型及 Qdrant 卷。API 中的可选凭据移除需受控更新；其他仍使用知识库的应用未退出前不得撤去。不要 `down -v`，不降级 schema，不自动重分块或重编码。
 

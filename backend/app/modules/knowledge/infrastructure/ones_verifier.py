@@ -43,7 +43,7 @@ class OnesSourceVerifier:
     def __init__(
         self,
         database: Database,
-        issuer: PrincipalTokenIssuer,
+        issuer: PrincipalTokenIssuer | None,
         *,
         instance_code: str,
         provider_origin: str,
@@ -56,6 +56,8 @@ class OnesSourceVerifier:
         self._transport = transport
 
     def _authorize(self, actor_id: str, job_id: str) -> str:
+        if self.issuer is None:
+            raise KnowledgeGovernanceError("knowledge_verifier_unavailable")
         job = self.database.execute_one(
             "select j.business_application_id,j.business_application_publication_id from agent_job j "
             "join app_user u on u.id=j.internal_user_id where j.id=? and j.internal_user_id=? "
@@ -94,6 +96,8 @@ class OnesSourceVerifier:
     ) -> bool:
         del team_id  # Team 只能由 ones-mcp 的本人绑定与存储来源决定，不能由 HTTP 调用者覆盖。
         authorization_hash = self._authorize(actor_id, job_id)
+        if self.issuer is None:
+            raise KnowledgeGovernanceError("knowledge_verifier_unavailable")
         binding = GovernanceStore(self.database).get("source_binding", binding_id)
         # 不缩减 ONES scope；签发器仍签发该 Server 冻结且当前获授权的完整集合。
         token = self.issuer.issue_business_mcp_for_job(job_id=job_id, server_code="ones-mcp")

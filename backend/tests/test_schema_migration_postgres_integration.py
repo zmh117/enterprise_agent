@@ -242,7 +242,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "137"
+        assert result.head == "138"
         assert result.applied == (
             "100",
             "101",
@@ -271,7 +271,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "124",
             "125",
             "126",
-            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137",
+            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138",
         )
         assert database.execute_one(
             """
@@ -281,9 +281,19 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 130}
-        assert comments["table_count"] == 141
-        assert comments["column_count"] == 1868
+        ) == {"count": 131}
+        assert comments["table_count"] == 146
+        assert comments["column_count"] == 1924
+    finally:
+        database.close()
+
+
+def test_postgres_knowledge_source_confirmation_preserves_history(postgres_database_dsn, tmp_path):
+    from backend.tests.test_knowledge_source_confirmation import assert_confirmation_migration_preserves_history
+
+    database = Database(postgres_database_dsn)
+    try:
+        assert_confirmation_migration_preserves_history(database, tmp_path)
     finally:
         database.close()
 

@@ -25,13 +25,11 @@ export function KnowledgeError({ error }: { error: unknown }) {
       knowledge_revision_conflict:
         "配置已被其他操作修改。本地输入已保留，请重新载入最新配置后再保存。",
       knowledge_input_invalid: "知识配置参数无效，请检查输入。",
-      knowledge_source_unavailable: "来源尚未完成核验或已不可用。",
-      knowledge_source_changed: "来源版本已变化，需要重新确认和核验。",
+      knowledge_source_unavailable: "来源尚未确认或已不可用，请在导入流程完成来源确认。",
+      knowledge_source_changed: "来源版本已变化，请在导入流程确认后重新载入配置。",
       knowledge_verifier_unavailable: "受信 ONES 核验服务尚未配置。",
       knowledge_verification_failed:
         "技术核验失败，请检查来源、本人 ONES 权限和依赖服务。",
-      knowledge_verification_job_invalid:
-        "请使用本人正在运行且获准 ONES 详情工具的业务应用 Job。",
       knowledge_resource_unavailable:
         "资源状态不允许此操作，请检查来源、草稿验证和启停状态。",
       knowledge_resource_conflict: "该知识库已有启用资源，或资源编码已存在。",

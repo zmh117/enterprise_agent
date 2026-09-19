@@ -99,16 +99,15 @@ def readable_fixture(knowledge_contract, tmp_path, request):
     sources = SourceBindingService(
         GovernanceStore(db), c.permission_service, c.audit_service, verifier
     )
-    binding = sources.create(
+    binding = sources.confirm_import(
         actor_id="user_local_admin",
         source_id=db.execute_one('select id from "knowledge.source"')["id"],
         instance_code="default",
         team_id=mock.team_uuid,
         expected_revision=0,
-        batch_attested=True,
-        attestation_hash="a" * 64,
+        confirmed=True,
     )
-    sources.verify(actor_id="user_local_admin", binding_id=binding["id"], job_id=f["job"].id)
+    assert binding["state"] == "CONFIRMED" and not verifier.calls
     resources = KnowledgeResourceService(
         sources,
         VectorRepository(sources.store.database),

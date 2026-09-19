@@ -31,11 +31,11 @@
 | 检索资源 | 稳定 resource_id、knowledge_base_id、管理名称、身份状态、draft/current published 指针 | 一个知识库首版最多一个启用检索资源，避免同名或多索引自动择一 |
 | 检索资源版本和验证事实 | draft/revision、source binding revision、READY index id/profile hash、配置 hash、技术验证摘要、发布时间 | 草稿验证后不可变发布；编辑使验证失效 |
 
-来源绑定保留修订历史；核验依据包括操作者对离线批次来源的明确确认及本地技术交叉验证，不能把抽样 UUID 存在当成整个批次来源已获证明。现有 source 的 `offline_unverified`、KB 的 `storage_only` 是导入来源/存储合同，保持不变；新增已核验绑定与发布资源共同表示“允许受治理检索”。Web 分开展示存储状态、来源核验和检索发布状态，避免用一个状态覆盖三件事。
+来源绑定保留修订历史；按用户最新确认，来源归属在导入侧一次性明确，系统核对完整批次元数据并生成声明摘要，状态为 CONFIRMED；不冒充 Provider 技术核验。历史 VERIFIED 保留，PENDING 不自动升级。现有 source 的 `offline_unverified`、KB 的 `storage_only` 是导入来源/存储合同，保持不变；新增已确认绑定与发布资源共同表示“允许受治理检索”。Web 分开展示存储状态、来源核验和检索发布状态，避免用一个状态覆盖三件事。
 
 绑定不得修改 document/revision/chunk/point ID、现有哈希或 Qdrant payload。读取时以 PostgreSQL 中的 task UUID、source_project_id 和来源绑定定位，不把项目显示名称当 UUID。更换实例/Team 必须新建绑定修订、重新验证和发布；既有验证不可沿用。
 
-来源技术核验复用现有 ONES Business Principal JWT，不新增身份凭据体系。JWT 证明当前操作者和业务应用 Job 的平台身份/工具权限，并由 ones-mcp 解析其本人 ONES 绑定与受管凭据；JWT 本身不是 ONES 登录 Token，也不能代替当前 ONES 工作项可读性检查。不得使用已结束 Job 的历史 Token，或把管理权限转成隐式 ONES 读取授权。有效 JWT 仅在服务内存中传递，不进入来源记录、浏览器或模型；既有完整 scope、audience、有效期、RUNNING Job 和当前 grant 校验保持不变。
+2026-09-19 用户确认删除 Web 来源确认与核验表单。新流程不需要管理员手填证明摘要或借用 RUNNING Job：受限导入后 CLI 必须显式提供来源、固定实例、Team、操作管理员与预期修订，确认后才写入，未确认批次不能发布。确认摘要只追溯声明，不是外部来源证明。来源管理不调用 ONES、不授予读取权限；每次检索仍用当前 Job 的既有完整 scope ONES Principal，核对本人实例/Team、工作项 UUID/项目与可读权限。旧来源核验 API 仅为已有调用兼容保留，不作为新 Web 流程的前置条件，不放宽其 JWT 或 Job 门禁。
 
 **取舍：** 不把离线 source 直接改成在线来源，不为每个知识库新建数据库/Qdrant，也不建立提前支持任意 Provider 的抽象注册中心。这样原导入器和索引重放仍能按原合同运行。
 
@@ -45,7 +45,7 @@
 
 角色授予逻辑知识库身份，不授予物理 Resource Revision、Qdrant collection 或 environment/placement。选择“当前全部知识库”在保存时展开明确 ID，不包含未来新增知识库。授权变更进入现有 authorization hash 和实时复核，不另建旁路 ACL。
 
-Web 在“工具资源”增加知识库类型入口，表单选择已存在 KB、已核验来源绑定及兼容 READY 索引，统一执行 DRAFT → VERIFIED → PUBLISHED、停用/归档；不要求虚构环境，不接收任意 PostgreSQL/Qdrant/Embedding URL 或凭据。首版复用部署固定连接，页面只显示安全状态和关联 ID。角色页面只在各业务应用下引用明确 KB ID，通过勾选/取消勾选管理允许范围，不创建、复制或编辑知识资源配置。
+Web 在“工具资源”增加知识库类型入口，表单选择已存在 KB 及兼容 READY 索引，来源从该数据集的唯一有效 CONFIRMED/历史 VERIFIED 绑定只读继承，缺失、变化或多义时拒绝而不择一，统一执行 DRAFT → VERIFIED → PUBLISHED、停用/归档；不要求虚构环境，不接收任意 PostgreSQL/Qdrant/Embedding URL 或凭据。首版复用部署固定连接，页面只显示安全状态和关联 ID。角色页面只在各业务应用下引用明确 KB ID，通过勾选/取消勾选管理允许范围，不创建、复制或编辑知识资源配置。
 
 调用时解析该知识库当前唯一启用的 Published Revision，并在单次调用中固定资源/绑定/索引版本，审计记录实际版本；返回前重验授权、来源和发布状态。若本次期间版本变化则拒绝并要求重试，不拼接新旧结果。新的调用可采用显式发布的新版本，不冻结全部知识资源到 Agent Publication，也不自动切换到未发布或旧索引作为 fallback。Tool 的精确 Job Snapshot 规则保持不变。
 
@@ -148,7 +148,7 @@ Runtime → ones-mcp：Agent 用现有详情工具读取当前正文，再由 Ag
 
 ## Risks / Trade-offs
 
-- [离线批次来源未核实] → 发布门槛要求人工来源确认与技术交叉验证；不更改历史 source 身份来掩盖缺口。
+- [离线批次来源未核实] → 发布门槛要求导入侧明确来源确认与本地批次/索引一致性验证，运行时逐项 ONES 校验；不更改历史 source 身份来掩盖缺口。
 - [逐工作项 ONES 校验增加延迟和限流风险] → 去重、最多 50 个工作项/4 并发/60 秒总 deadline，真实测量后再提出独立优化；不跨调用缓存允许结果。
 - [授权后过滤使 top_k 不满] → 有界扩候选、保留 partial；不宣称全库穷尽，不返回被过滤数量帮助探测。
 - [ONES 项目/字段权限或工作项归属变化] → 当前本人详情可读性和身份核对，首版不返回离线正文；详情读取时再次验证。

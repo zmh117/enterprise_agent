@@ -31,14 +31,14 @@
       "owner": "knowledge",
       "semantics": "离线来源绑定修订；不改变来源存储身份或授予业务权限",
       "classification": "operational_coordination_fact",
-      "canonical_source": "人工批次来源确认和受信 ONES 目标技术交叉核验",
+      "canonical_source": "导入侧显式确认的受信实例、Team 和批次摘要；历史技术核验单独留存",
       "writers": [
         "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
       ],
       "readers": [
         "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
       ],
-      "lifecycle": "新增默认未核验或未发布；替换保留历史；撤销禁止运行读取",
+      "lifecycle": "默认不确认；导入侧显式确认产生 CONFIRMED，历史 VERIFIED 保留；替换保留历史，撤销禁止读取",
       "retention_policy": "不自动删除；清理须显式授权并核对发布和审计依赖",
       "audit_requirement": "只记录标识、版本、计数和安全摘要；不保存凭据、正文或原始响应",
       "retirement": {
@@ -49,7 +49,8 @@
         ]
       },
       "evidence_refs": [
-        "migration:137_expand_knowledge_retrieval_governance"
+        "migration:137_expand_knowledge_retrieval_governance",
+        "migration:138_expand_knowledge_source_confirmation"
       ]
     },
     {

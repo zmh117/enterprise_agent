@@ -36,7 +36,7 @@ class KnowledgeServices:
 
     def sources(self) -> SourceBindingService:
         verifier = None
-        if self.issuer and self.provider_origin:
+        if self.provider_origin:
             try:
                 verifier = OnesSourceVerifier(
                     self.database,
