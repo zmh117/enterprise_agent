@@ -71,12 +71,12 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 ## 数据、网络与运维边界
 
 - 共用平台 PostgreSQL 的 `knowledge` schema，不另建 PostgreSQL。数据库迁移仍属于平台统一 catalog：不用知识服务的环境升级后端时也必须满足对应 schema head，但不会自动导入缺陷或生成向量。
-- 扩展只为 PostgreSQL 追加 `knowledge-internal`，保留默认和运行控制网络。Embedding、Qdrant、运维 CLI 仅使用 internal 网络，不发布宿主机端口；准备任务只使用下载网络，不获得数据库配置或平台 Secret。
+- 离线扩展为 PostgreSQL 与 API 追加 `knowledge-internal`，保留默认和运行控制网络；API 由此执行资源的本地技术验证，不需要先启用在线 MCP 或新增服务凭据。Embedding、Qdrant、运维 CLI 仅使用 internal 网络，不发布宿主机端口；准备任务只使用下载网络，不获得数据库配置或平台 Secret。
 - 保留 `knowledge-models`、`knowledge-qdrant` 卷键名；同一项目仍使用原有模型和 Qdrant 数据。文件拆分不搬迁或清空任何卷。
 - Qdrant 固定为 `v1.19.1` 和已核验的镜像 digest，不使用浮动 latest。已有卷跨次版本升级必须先备份并逐级演练，不能直接换最新镜像跳级启动；见[升级与恢复记录](../docs/runbooks/knowledge-local-vector-index.md#qdrant-版本升级与恢复)。
 - 已有 PostgreSQL 若尚未接入知识网络，须在批准的维护流程中补充网络及 `postgres` 别名；不能为此直接重建数据库。新部署由叠加配置管理。当前本机已经接入，拆分不要求重启。
 - 部署了知识服务的环境，后续 Compose 运维命令应始终叠加已启用的文件（离线两个，在线三个，即使此次只操作某个业务服务），避免把知识容器误判为 orphan。禁止仅用主文件执行 `--remove-orphans`，不要用全项目 `down -v` 停用知识库。
-- 在线 MCP 使用 `knowledge-internal` 与 `agent-runtime-control` 两个内部网络，无宿主机端口或出网网络；仅连接 PostgreSQL、Embedding/Qdrant 和固定 API 桥，不直接连接 ONES Provider。API 追加知识网络以执行资源验证；主文件和离线扩展不因此增加在线 Secret。
+- 在线 MCP 使用 `knowledge-internal` 与 `agent-runtime-control` 两个内部网络，无宿主机端口或出网网络；仅连接 PostgreSQL、Embedding/Qdrant 和固定 API 桥，不直接连接 ONES Provider。API 沿用离线扩展的知识网络；主文件和离线扩展不因此增加在线 Secret。
 - 若只暂停知识服务，用叠加配置定向 `stop knowledge-embedding knowledge-qdrant`，保留卷和数据库网络；正式卸载/删卷另行审批。
 
 配置与隔离合成测试通过不意味着已正式部署或完成业务召回验收；本地资源验证、双用户 ONES、Agent 新 Job 和人工质量评测仍需单独验收。

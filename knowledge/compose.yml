@@ -6,6 +6,11 @@ services:
     networks:
       - knowledge-internal
 
+  # Resource verification needs local dependencies even before online MCP is enabled.
+  api-server:
+    networks:
+      - knowledge-internal
+
   knowledge-embedding:
     profiles: [knowledge]
     image: enterprise-agent/knowledge-embedding:bge-m3-v1

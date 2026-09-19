@@ -6,7 +6,9 @@
 
 治理表通过平台前向迁移 `137_expand_knowledge_retrieval_governance.sql` 加入现有数据库的 `knowledge` schema；角色 KB 关系 `rbac_role_application_knowledge_base` 留在现有 RBAC 所属的 public schema，以外键引用逻辑 KB。不新建数据库，也不改变现有 source/knowledge_base 的离线存储状态、文档、分块或向量身份。迁移不创建真实来源绑定、发布或角色授权。`138_expand_knowledge_source_confirmation.sql` 新增 CONFIRMED 状态，保留所有旧绑定及引用，不把 PENDING 自动升级；其含义是历史导入声明，不是 Provider 权限证明。`139_relax_knowledge_resource_source_binding.sql` 允许新资源版本不关联来源绑定，保留全部历史和外键；旧资源版本必须重新保存、验证、发布，不能复用旧验证或直接改 hash。
 
-API/Worker/ONES 镜像更新仍须经过正式 Migrator 和平台 schema readiness 门禁；本轮没有执行正式迁移或服务重启。不要在未升级 schema 时只替换后端，也不要在新库上直接回滚到只认识旧 schema 的镜像。停用知识检索时保留表、文档、索引和向量卷，不执行降级删表或重编码。
+API/Worker/ONES 镜像更新仍须经过正式 Migrator 和平台 schema readiness 门禁。2026-09-19 经用户批准，本机已执行迁移 139、更新相关服务和 Web、恢复 Embedding/Qdrant；资源仍未保存新草稿或发布，未新增授权，也未部署在线 Knowledge MCP。仅此本机部署证据不能替代真实 Agent 检索验收。不要在未升级 schema 时只替换后端，也不要在新库上直接回滚到只认识旧 schema 的镜像。停用知识检索时保留表、文档、索引和向量卷，不执行降级删表或重编码。
+
+即使尚未启用在线 MCP，资源技术验证也需要 API 连接内部 Embedding/Qdrant。叠加 `knowledge/compose.yml` 会为 API 和 PostgreSQL 追加知识网络，不新增在线服务凭据；后续定向更新 API 时须保留此叠加文件，不能只用根 Compose 覆盖网络。
 
 ## 管理流程
 

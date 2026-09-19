@@ -51,7 +51,7 @@ Web 在“工具资源”增加知识库类型入口，表单选择已存在 KB 
 
 入口固定 32 KiB 请求与 256 KiB 工具结果；4 个真实在途工作槽位覆盖目录、检索及健康探测，不增加无界排队。ASGI 观察断开并传递取消信号，嵌套预算继承取消与截止，超时线程实际退出前不释放槽位。MCP 根审计只存工具名、安全版本/计数/错误码与既有审计关联 ID，不保存 query、cursor、命中 UUID 或正文。该实现不等于阻塞数据库/DNS 的物理取消已完成；任务 7.3 保留这部分验收。
 
-在线部署使用 `backend/Dockerfile` 的独立 knowledge-mcp target 和可选 `knowledge/mcp.compose.yml`，在根文件与离线 `knowledge/compose.yml` 之后叠加。保留原模型/向量卷、项目名和仅离线环境的无新增凭据合同。MCP 不发布宿主机端口，仅接两个内部网络；API 追加知识网络用于固定依赖验证。服务仅挂载公开 JWKS 和自己的 bootstrap，不挂载平台主密钥、签名私钥或 ONES 凭据；知识 MCP 不再需要 ONES 实例/地址配置，实际 ONES 目标与本人身份校验归平台桥和 ones-mcp。
+在线部署使用 `backend/Dockerfile` 的独立 knowledge-mcp target 和可选 `knowledge/mcp.compose.yml`，在根文件与离线 `knowledge/compose.yml` 之后叠加。保留原模型/向量卷、项目名和仅离线环境的无新增凭据合同。MCP 不发布宿主机端口，仅接两个内部网络；API 在离线扩展中即追加知识网络，用于发布前的固定依赖验证，无需先配置在线 MCP 凭据。服务仅挂载公开 JWKS 和自己的 bootstrap，不挂载平台主密钥、签名私钥或 ONES 凭据；知识 MCP 不再需要 ONES 实例/地址配置，实际 ONES 目标与本人身份校验归平台桥和 ones-mcp。
 
 数据库仍共用原库，单独使用固定角色 `knowledge_mcp_reader`。显式运维 CLI 按当前调用的明确列授予 SELECT，只给 audit_event、agent_tool_call、mcp_operation_audit 必要审计写入，无业务写入/DELETE；启动检查角色、成员关系、schema 与表/列权限，拒绝管理员 DSN 或超额授权。列合同变化必须重审，不借表级 SELECT 自动扩权，不在启动时创建角色或变更平台 PUBLIC 权限。隔离 PostgreSQL 权限验证和镜像 COPY 导入验证不替代任务 10.4 的完整容器运行验收。
 

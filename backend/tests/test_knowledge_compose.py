@@ -25,8 +25,9 @@ def test_knowledge_definitions_are_exclusively_opt_in():
     assert not {'knowledge-models', 'knowledge-qdrant'}.intersection(base['volumes'])
     assert 'knowledge-internal' not in base['services']['postgres']['networks']
     assert not base.get('include')
-    assert set(overlay['services']) == KNOWLEDGE_SERVICES | {'postgres'}
+    assert set(overlay['services']) == KNOWLEDGE_SERVICES | {'postgres', 'api-server'}
     assert overlay['services']['postgres'] == {'networks': ['knowledge-internal']}
+    assert overlay['services']['api-server'] == {'networks': ['knowledge-internal']}
     assert set(overlay['volumes']) == {'knowledge-models', 'knowledge-qdrant'}
     assert overlay['networks'] == {'knowledge-internal': {'internal': True}}
     assert not overlay.get('name')
@@ -119,7 +120,7 @@ def test_overlay_profiles_and_base_services_are_preserved(compose_cli, profiles,
     assert KNOWLEDGE_SERVICES.intersection(combined['services']) == expected
     for name, service in base['services'].items():
         actual = combined['services'][name]
-        if name == 'postgres':
+        if name in {'postgres', 'api-server'}:
             actual = dict(actual, networks=dict(actual['networks']))
             assert 'knowledge-internal' in actual['networks']
             actual['networks'].pop('knowledge-internal')

@@ -60,10 +60,9 @@ def test_online_overlay_only_changes_knowledge_mcp_and_bridge():
     assert set(overlay["secrets"]) == {"knowledge_bootstrap_token"}
     assert not overlay.get("volumes") and not overlay.get("networks")
     api = overlay["services"]["api-server"]
-    assert set(api) == {"environment", "secrets", "networks"}
+    assert set(api) == {"environment", "secrets"}
     assert set(api["environment"]) == {"KNOWLEDGE_BOOTSTRAP_TOKEN_FILE"}
     assert api["secrets"] == ["knowledge_bootstrap_token"]
-    assert api["networks"] == ["knowledge-internal"]
     assert (
         "knowledge-mcp"
         not in yaml.safe_load((ROOT / "knowledge/compose.yml").read_text())["services"]

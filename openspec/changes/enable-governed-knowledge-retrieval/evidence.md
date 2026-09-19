@@ -267,3 +267,15 @@
 - Web 全量 **177 passed（16 文件）**，其中知识页面 17 项，覆盖无来源绑定保存/验证/发布、历史绑定不控制新草稿、旧版本必须重新验证、技术故障不提示 ONES 来源确认及既有权限/冲突/刷新边界。TypeScript/Vite build、ESLint 通过；既有 native config 与大 chunk 警告未扩大处理。
 - Ruff、MyPy（54 文件）、严格 OpenSpec、Markdown 链接、diff 检查通过；主/离线 Compose quiet 校验通过，在线 Compose 用合成配置合同回归。任务 14.1–14.3 完成，总进度 **41/48**；旧来源确认任务 11.1 经用户取消，不记为验收通过。
 - 本轮不操作正式库、不读取真实凭据或缺陷正文、不调用真实 ONES/聊天/Embedding，不发布资源/角色/应用，不重编码、提交、推送或归档。正式本机迁移/部署已单独询问用户，当前尚未执行。任务 7.3、10.4、11.2–11.6 继续保留真实或完整运行验收缺口。
+
+## 本机更新与配置依赖恢复（2026-09-19，用户继续批准部署）
+
+- 本次授权仅包含迁移 139、相关服务/Web 更新及恢复既有 Embedding/Qdrant，不包括自动保存/发布知识资源、配置角色/应用、创建新凭据或在线 MCP 首次部署。
+- 部署前数据库 head=138；Agent Job、文件处理、消息投递均无非终态任务。已有知识资源 revision=3、无草稿/发布，来源绑定为 0；索引 READY，5000 文档、8309 分块。Docker 数据盘有约 65 GB 可用空间。
+- 发现主 API 与 PostgreSQL 均未连接知识网络；把 API 的网络追加从在线 MCP 扩展移至离线 `knowledge/compose.yml`，保留主部署无知识依赖、离线环境无新增凭据合同。PostgreSQL 只追加既有内部网络与别名，没有重建或重启；API 随定向更新接入网络。Compose 合成回归 **17 passed**，Ruff 与 quiet 配置检查通过。
+- 相关后端镜像以源码 `d71370c63210`、build_id=`knowledge-local-publication-20260919`、平台 `linux/arm64` 构建。对 API、Worker、Processing Worker、Runtime、ONES/DingTalk/Tool MCP、File Service 和 Migrator 共 9 类新旧镜像比较 Python 包版本，全部无依赖变化。Web 定向重建；未升级模型镜像、Qdrant 或其他基础服务。
+- 在确认无非终态任务后暂停入口及业务服务，只运行正式一次性 Migrator 的 `app.cli.migrate`，不运行账号/Agent/授权 bootstrap。结果 `head=139 baselined=0 applied=139`；binding_id 已允许空值。随后恢复对应主服务与原钉钉入口。
+- 迁移前后 document=5000、document_revision=5000、document_chunk=8309、vector_index_item=8309；身份/修订/内容 hash、分块 embedding/evidence hash 与索引成员状态的聚合指纹完全一致。没有重导入、重分块、重编码、Qdrant 写入或删除卷。
+- 本机 `/platform/resources` 与 API `/api/ready` 均 HTTP 200，API status=ready；所有已配置 healthcheck 的主服务均 healthy。新 Web 静态资产已包含“无需确认 ONES 地址或 Team”。API 容器内使用正式客户端只读检查 Embedding profile、Qdrant collection metadata 与精确点数 **8309** 通过，Qdrant collection 状态 green。
+- 在只读数据库事务内调用正式资源配置解析器，真实 KB/索引配置通过且 requires_source_binding=false；资源仍 revision=3、无草稿/发布。检查未调用 ONES、聊天模型或 Embedding 编码接口。
+- Chrome 浏览器连接不可用，因此未宣称已完成登录 Web 点击验收；用户需刷新后依次保存草稿、验证、显式发布。在线 Knowledge MCP、双用户 ONES、新 Job 和人工评测仍未验收，任务进度保持 **41/48**，11.3 只记录本次已完成部分。

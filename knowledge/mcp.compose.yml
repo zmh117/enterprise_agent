@@ -6,8 +6,6 @@ services:
       KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /run/secrets/knowledge_bootstrap_token
     secrets:
       - knowledge_bootstrap_token
-    networks:
-      - knowledge-internal
 
   knowledge-mcp:
     profiles: [knowledge]
