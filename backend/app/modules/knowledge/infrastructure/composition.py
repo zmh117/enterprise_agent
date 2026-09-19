@@ -6,7 +6,10 @@ from typing import Any
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.permission.application.permission_service import PermissionService
 from app.modules.identity.application.principal_jwt import PrincipalTokenIssuer
-from app.modules.knowledge.application.source_service import SourceBindingService
+from app.modules.knowledge.application.source_service import (
+    KnowledgeAdministration,
+    SourceBindingService,
+)
 from app.modules.knowledge.application.resource_service import KnowledgeResourceService
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
@@ -51,7 +54,10 @@ class KnowledgeServices:
         )
 
     def resources(self) -> KnowledgeResourceService:
-        return KnowledgeResourceService(self.sources(), VectorRepository(self.database))
+        return KnowledgeResourceService(
+            KnowledgeAdministration(GovernanceStore(self.database), self.permissions, self.audit),
+            VectorRepository(self.database),
+        )
 
     def verify_resource(self, **arguments: Any) -> dict[str, Any]:
         with ExitStack() as cleanup:
@@ -60,6 +66,11 @@ class KnowledgeServices:
             qdrant = QdrantClient()
             cleanup.callback(qdrant.http.close)
             service = KnowledgeResourceService(
-                self.sources(), VectorRepository(self.database), embedding=embedding, qdrant=qdrant
+                KnowledgeAdministration(
+                    GovernanceStore(self.database), self.permissions, self.audit
+                ),
+                VectorRepository(self.database),
+                embedding=embedding,
+                qdrant=qdrant,
             )
             return service.verify_draft(**arguments)

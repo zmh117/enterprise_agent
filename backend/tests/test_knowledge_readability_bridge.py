@@ -99,7 +99,7 @@ def bridge_fixture(readable_fixture):
         ),
         issuer,
         endpoint.gate,
-        instance_code=endpoint.resources.instance_code,
+        instance_code=endpoint.instance_code,
         transport=httpx.MockTransport(transport),
     )
     bridge = KnowledgeReadabilityBridge(gateway, endpoint.resources, runtime.audit_service)
@@ -384,6 +384,14 @@ def test_platform_rechecks_persistent_facts_even_after_successful_ones(
     else:
         f["runtime"].database.execute(statements[mutation])
     response = post(f)
+    if mutation == "default_team" and not during:
+        assert response.status_code == 200
+        assert all(
+            item == {"chunk_id": item["chunk_id"], "readable": False}
+            for item in response.json()["items"]
+        )
+        assert f["exchanges"]  # 采用本人新 Team，并由 Provider 明确不可读结果过滤。
+        return
     assert response.status_code in {401, 503} and "items" not in response.json()
     if not during:
         assert not f["exchanges"]

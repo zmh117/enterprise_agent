@@ -34,7 +34,6 @@ READ_COLUMNS = {
         "public.schema_migration": "version name checksum applied_at duration_ms migrator_build",
         "public.schema_baseline_adoption": "target_baseline source_generation source_head legacy_catalog_digest schema_fingerprint comment_manifest_digest retained_data_counts_json retained_data_digest baseline_name baseline_checksum migrator_build adopted_at",
         "knowledge.source": "id code created_at display_name identity_metadata origin_state source_system",
-        "knowledge.source_binding": "id source_id revision instance_code target_hash team_id state attestation_hash corpus_hash document_count checked_count verification_hash created_by created_at verified_by verified_at verified_job_id revoked_by revoked_at",
         "knowledge.retrieval_resource": "id knowledge_base_id code name status revision state_revision draft_revision_id published_revision_id created_by created_at updated_at",
         "knowledge.retrieval_revision": "id resource_id revision binding_id index_id profile_hash corpus_hash config_hash created_by created_at published_by published_at",
         "knowledge.knowledge_base": "id code display_name description state created_at",

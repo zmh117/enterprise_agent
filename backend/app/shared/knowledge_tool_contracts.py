@@ -62,7 +62,7 @@ _DOCUMENT = _object(
         "document_id": _ID,
         "revision_id": _ID,
         "index_id": _ID,
-        "source_binding_id": _ID,
+        "source_id": _ID,
         "work_item_uuid": _ID,
         "number": {"type": "integer", "minimum": 1},
         "score": {"type": "number"},

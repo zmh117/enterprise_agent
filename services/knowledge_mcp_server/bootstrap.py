@@ -15,7 +15,6 @@ from app.modules.knowledge.application.resource_service import KnowledgeResource
 from app.modules.knowledge.application.search import KnowledgeSearch
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
 from app.modules.knowledge.infrastructure.job_access import KnowledgeJobGate
-from app.modules.knowledge.infrastructure.ones_verifier import ones_target_hash
 from app.modules.knowledge.infrastructure.reader_access import KnowledgePrincipalAccess
 from app.modules.knowledge.infrastructure.readability_client import KnowledgeReadabilityClient
 from app.modules.knowledge.infrastructure.vector_clients import EmbeddingClient, QdrantClient
@@ -36,8 +35,6 @@ def build_tools(
     public_keys: PrincipalJwks,
     *,
     bootstrap_file: str,
-    instance_code: str,
-    provider_origin: str,
     cleanup: ExitStack,
 ) -> KnowledgeMcpTools:
     audit = AuditService(AuditRepository(database))
@@ -53,8 +50,6 @@ def build_tools(
     resources = KnowledgeResourceReader(
         GovernanceStore(database),
         VectorRepository(database),
-        instance_code=instance_code,
-        target_hash=ones_target_hash(instance_code, provider_origin),
     )
     embedding = EmbeddingClient()
     cleanup.callback(embedding.http.close)
@@ -83,8 +78,6 @@ def build_app() -> KnowledgeSecurityMiddleware:
             "DATABASE_DSN",
             "PRINCIPAL_JWKS_FILE",
             "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE",
-            "ONES_IDENTITY_INSTANCE_CODE",
-            "ONES_MCP_PROVIDER_BASE_URL",
         )
         if any(not os.environ.get(name, "").strip() for name in required):
             raise ValueError
@@ -97,8 +90,6 @@ def build_app() -> KnowledgeSecurityMiddleware:
             database,
             PrincipalJwks.from_file(os.environ["PRINCIPAL_JWKS_FILE"]),
             bootstrap_file=os.environ["KNOWLEDGE_BOOTSTRAP_TOKEN_FILE"],
-            instance_code=os.environ["ONES_IDENTITY_INSTANCE_CODE"],
-            provider_origin=os.environ["ONES_MCP_PROVIDER_BASE_URL"],
             cleanup=cleanup,
         )
 

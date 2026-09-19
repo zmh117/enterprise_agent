@@ -242,7 +242,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "138"
+        assert result.head == "139"
         assert result.applied == (
             "100",
             "101",
@@ -271,7 +271,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "124",
             "125",
             "126",
-            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138",
+            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139",
         )
         assert database.execute_one(
             """
@@ -311,7 +311,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "126"
+        assert result.head == "139"
         assert result.applied == (
             "100",
             "101",
@@ -340,9 +340,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "124",
             "125",
             "126",
+            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139",
         )
-        assert comments["table_count"] == 129
-        assert comments["column_count"] == 1714
+        assert comments["table_count"] == 146
+        assert comments["column_count"] == 1924
         assert {
             "dingding_conversation_id",
             "dingding_user_id",

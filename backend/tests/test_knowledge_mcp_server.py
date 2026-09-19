@@ -425,8 +425,6 @@ def test_bootstrap_has_no_platform_container_or_credential_loading(search_fixtur
             f["runtime"].database,
             PrincipalJwks.from_dict(f["key"].public_jwks()),
             bootstrap_file="/synthetic/not-read",
-            instance_code="default",
-            provider_origin="http://ones-mock:8001",
             cleanup=cleanup,
         )
         assert service.auth.access.verifier.expected_audience == "knowledge-mcp"

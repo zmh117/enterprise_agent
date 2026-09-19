@@ -133,7 +133,7 @@ def test_cursor_isolated_and_invalidated(directory_fixture, change, monkeypatch)
         sql = {
             "role": "delete from rbac_role_application_knowledge_base where knowledge_base_id='kb-page-0001'",
             "resource": "update \"knowledge.retrieval_resource\" set status='disabled' where knowledge_base_id='kb-page-0001'",
-            "binding": "update \"knowledge.source_binding\" set state='REVOKED',revoked_at='2026-09-19',revoked_by='synthetic'",
+            "binding": 'update "knowledge.source" set source_system=\'other\'',
             "identity": 'update user_external_identity set metadata_json=\'{"team_uuids":["other"],"default_team_id":"other"}\' where provider=\'ones\'',
             "name": "update \"knowledge.retrieval_resource\" set name='changed' where knowledge_base_id='kb-page-0001'",
         }[change]
@@ -190,6 +190,7 @@ def test_current_user_source_and_no_document_metadata(directory_fixture):
     db.execute(
         "update user_external_identity set tenant_code='other-instance' where provider='ones'"
     )
-    assert listing(f)["items"] == []
+    # 目录只说明 KB 可检索；固定 ONES 实例及逐项权限由内部桥再次校验。
+    assert len(listing(f)["items"]) == 1
     with pytest.raises(AppError):
         f["directory"].list_bases(token=f["token"], arguments={})

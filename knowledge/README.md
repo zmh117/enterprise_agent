@@ -33,7 +33,7 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 人工相关性基线使用[本地评测入口](../docs/runbooks/knowledge-retrieval-evaluation.md)。真实问题/标签留在 Git 排除的受限目录；合成、自查询和人工效果分别报告，不把运维检索成功当成 Agent 读取授权。
 
-来源绑定、工具资源 Web 页面和检索资源管理合同见[知识治理管理与排障](../docs/runbooks/knowledge-governance.md)。代码已接线不等于真实资源已发布或 Agent 已通过真实检索验收。
+工具资源 Web 页面和检索资源管理合同见[知识治理管理与排障](../docs/runbooks/knowledge-governance.md)。代码已接线不等于真实资源已发布或 Agent 已通过真实检索验收。
 
 ## 在线 Knowledge MCP（独立可选扩展）
 
@@ -61,10 +61,10 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
   python -m services.knowledge_mcp_server.provision_database
 ```
 
-配置入口将角色限制为无角色继承、无超级用户/建库/建角色/复制/RLS 绕过权限；按当前实际查询逐列授予元数据及知识证据读取，只给三张审计表必要的 INSERT/UPDATE，不给业务写入或 DELETE。既有列级授权会收紧，PUBLIC 或其他途径的超额权限导致检查失败，不会自动修改全平台 PUBLIC 权限。后续 schema 变更需要重新核对列合同和授予；启动也会检查角色，误配平台账号会拒绝启动。
+配置入口将角色限制为无角色继承、无超级用户/建库/建角色/复制/RLS 绕过权限；按当前实际查询逐列授予元数据及知识证据读取，只给三张审计表必要的 INSERT/UPDATE，不给业务写入或 DELETE。既有列级授权会收紧，PUBLIC 或其他途径的超额权限导致检查失败，不会自动修改全平台 PUBLIC 权限。本次取消来源确认后读取合同不再包含 source_binding，已部署角色需要显式重跑配置入口收紧旧授权。后续 schema 变更需要重新核对列合同和授予；启动也会检查角色，误配平台账号会拒绝启动。
 
 5. 依平台维护流程更新 API（新凭据桥）、ONES、Runtime/Worker 和 Web 的对应代码版本。确认内部 Embedding/Qdrant、PostgreSQL/schema 已就绪后，使用三个文件定向启动 `knowledge-mcp`；不要用无服务名的 `up` 启动一次性运维任务。API 与 MCP 不互相声明启动依赖，桥未可用时检索明确失败关闭。
-6. `/health` 仅验证 schema/审计依赖，不能代替向量、ONES、权限和真实 Job 验收。先完成任务 7.3 的阻塞依赖预算与隔离完整链路测试，再按批准流程在导入侧确认来源，在 Web 配置资源、角色应用 KB 范围和新的 Agent/Application Publication。来源确认入口见[管理手册](../docs/runbooks/knowledge-governance.md#管理流程)，Web 不再要求证明摘要或运行中 Job ID。不得把旧 Job 当成新增知识工具的验收。
+6. `/health` 仅验证 schema/审计依赖，不能代替向量、ONES、权限和真实 Job 验收。先完成任务 7.3 的阻塞依赖预算与隔离完整链路测试，再按批准流程在 Web 配置资源、角色应用 KB 范围和新的 Agent/Application Publication。配置流程见[管理手册](../docs/runbooks/knowledge-governance.md#管理流程)，不要求 ONES 地址/Team 来源确认、证明摘要或运行中 Job ID。不得把旧 Job 当成新增知识工具的验收。
 
 停用时先停用知识资源与相关新工具发布，再定向 `stop knowledge-mcp`，保留 PostgreSQL、模型及 Qdrant 卷。API 中的可选凭据移除需受控更新；其他仍使用知识库的应用未退出前不得撤去。不要 `down -v`，不降级 schema，不自动重分块或重编码。
 
@@ -79,4 +79,4 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 - 在线 MCP 使用 `knowledge-internal` 与 `agent-runtime-control` 两个内部网络，无宿主机端口或出网网络；仅连接 PostgreSQL、Embedding/Qdrant 和固定 API 桥，不直接连接 ONES Provider。API 追加知识网络以执行资源验证；主文件和离线扩展不因此增加在线 Secret。
 - 若只暂停知识服务，用叠加配置定向 `stop knowledge-embedding knowledge-qdrant`，保留卷和数据库网络；正式卸载/删卷另行审批。
 
-配置与隔离合成测试通过不意味着已正式部署或完成业务召回验收；真实来源、双用户 ONES、Agent 新 Job 和人工质量评测仍需单独验收。
+配置与隔离合成测试通过不意味着已正式部署或完成业务召回验收；本地资源验证、双用户 ONES、Agent 新 Job 和人工质量评测仍需单独验收。

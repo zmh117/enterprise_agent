@@ -88,8 +88,6 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
         "DATABASE_DSN",
         "PRINCIPAL_JWKS_FILE",
         "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE",
-        "ONES_IDENTITY_INSTANCE_CODE",
-        "ONES_MCP_PROVIDER_BASE_URL",
     }
     assert service["environment"]["DATABASE_DSN"].startswith("postgresql://knowledge_mcp_reader:")
     assert set(service["networks"]) == {"knowledge-internal", "agent-runtime-control"}

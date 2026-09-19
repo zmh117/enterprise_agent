@@ -99,15 +99,8 @@ def readable_fixture(knowledge_contract, tmp_path, request):
     sources = SourceBindingService(
         GovernanceStore(db), c.permission_service, c.audit_service, verifier
     )
-    binding = sources.confirm_import(
-        actor_id="user_local_admin",
-        source_id=db.execute_one('select id from "knowledge.source"')["id"],
-        instance_code="default",
-        team_id=mock.team_uuid,
-        expected_revision=0,
-        confirmed=True,
-    )
-    assert binding["state"] == "CONFIRMED" and not verifier.calls
+    sources.verifier = None
+    assert sources.catalog()["bindings"] == []
     resources = KnowledgeResourceService(
         sources,
         VectorRepository(sources.store.database),
@@ -125,7 +118,6 @@ def readable_fixture(knowledge_contract, tmp_path, request):
         actor_id="user_local_admin",
         resource_id=resource["id"],
         expected_revision=resource["revision"],
-        binding_id=binding["id"],
         index_id=index["id"],
     )
     checked = resources.verify_draft(
@@ -158,7 +150,6 @@ def readable_fixture(knowledge_contract, tmp_path, request):
             actor_id="user_local_admin",
             resource_id=created["id"],
             expected_revision=created["revision"],
-            binding_id=binding["id"],
             index_id=extra_vector.repository.get(key)["id"],
         )
         checked = extra_resource.verify_draft(
@@ -185,10 +176,9 @@ def readable_fixture(knowledge_contract, tmp_path, request):
         KnowledgeResourceReader(
             GovernanceStore(db),
             VectorRepository(db),
-            instance_code="default",
-            target_hash=verifier.target_hash,
         ),
         projection,
+        instance_code="default",
     )
     body = {
         "knowledge_base_id": snapshot["knowledge_base_id"],
@@ -347,7 +337,7 @@ def test_revocation_before_or_during_provider_discards_result(readable_fixture, 
         "revision": "update \"knowledge.document\" set lifecycle_state='deleted'",
         "index": "update \"knowledge.vector_index\" set state='FAILED'",
         "identity": "update user_external_identity set tenant_code='other-instance' where provider='ones'",
-        "binding": "update \"knowledge.source_binding\" set state='REVOKED',revoked_by='synthetic',revoked_at='2026-09-19T00:00:00+00:00'",
+        "binding": 'update "knowledge.source" set source_system=\'other\'',
         "project": "update \"knowledge.document_revision\" set source_project_id='other-project'",
         "default_team": 'update user_external_identity set metadata_json=\'{"team_uuids":["other-team"],"default_team_id":"other-team"}\' where provider=\'ones\'',
         "detail": "delete from rbac_role_application_mcp_tool where tool_identifier='ones_get_work_item_detail'",
@@ -363,8 +353,11 @@ def test_revocation_before_or_during_provider_discards_result(readable_fixture, 
         f["provider_http"]._open_response = revoke
     else:
         db.execute(statements[mutation])
-    assert post(f).status_code == 503
-    assert bool(f["calls"]) == during
+    # 调用前已切换到另一个有效默认 Team 时，按本人新 Team 请求并依赖 Provider 可读结果；
+    # 不再要求匹配知识库预填 Team。调用中切换仍必须丢弃结果。
+    new_default = mutation == "default_team" and not during
+    assert post(f).status_code == (200 if new_default else 503)
+    assert bool(f["calls"]) == (during or new_default)
 
 
 @pytest.mark.parametrize(

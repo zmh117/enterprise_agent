@@ -28,7 +28,7 @@ class PinnedKnowledgeResource:
     knowledge_base_id: str
     resource_id: str
     revision_id: str
-    binding_id: str
+    source_id: str
     index_id: str
     index_code: str
     fingerprint: str

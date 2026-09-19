@@ -1,29 +1,25 @@
 ## ADDED Requirements
 
-### Requirement: 离线知识来源必须在导入侧显式确认后才能受治理回源
-系统 SHALL 用独立、有修订和审计的来源绑定记录，将离线 source 显式绑定到受信 ONES 实例与 Team。允许发布前 MUST 在导入侧取得整个批次来源的明确确认，核对批次完整性与固定目标，记录 CONFIRMED、操作者、时间及系统生成的声明摘要，不将其标成 ONES 技术核验成功。Web MUST NOT 要求手填证明摘要或 RUNNING Job ID。历史 VERIFIED 与证据原样保留，PENDING MUST NOT 自动升级；发布仍需本地索引技术验证，每次命中仍需当前 KB＋本人 ONES 双重校验。抽样工作项存在、项目同名或索引完成 MUST NOT 单独证明全批次来源。来源撤销或换版 MUST 使依赖它的检索验证失效并重新发布。
+### Requirement: 知识资源配置只验证本地数据与索引，不要求 ONES 来源确认
+保存、验证和发布 SHALL 不要求用户填写或确认 ONES 地址、实例或 Team，不要求导入确认 CLI、证明摘要、Job 或 ONES 凭据。系统 SHALL 从已有 KB 成员派生本地来源，核对完整文档身份/修订/项目、READY 索引和 profile/hash；技术验证 SHALL 检查固定内部 Embedding、Qdrant 兼容性与点数。外部 Provider 授权 SHALL 留在运行时逐项检查，不得用配置验证成功替代。
 
-既有离线 source 的 origin_state、存储 KB 状态、document/revision/chunk/point ID 及哈希 MUST 保持原导入/重放合同；新的检索发布状态 MUST 与存储状态分开表达。来源绑定 MUST NOT 保存凭据、原始业务消息或改写历史来源证据。
+新资源修订 MUST NOT 创建虚假 CONFIRMED 来源或沿用历史来源确认门禁。历史绑定及资源/验证/发布证据原样保留；旧版本 MUST 重新保存、验证和发布，不自动改写 hash 或授权。source/KB 离线状态和 document/revision/chunk/point 身份及原 hash MUST 保持不变，不重编码。
 
-#### Scenario: 未核验离线批次
-- **WHEN** 数据已经入库、分块和向量化，但没有明确实例/Team 的来源确认
-- **THEN** 仍可做受限离线运维检查，但不得发布成真实用户 ONES 检索资源
+#### Scenario: 没有来源确认记录
+- **WHEN** 已入库 KB 和兼容 READY 索引可用，没有任何来源绑定或 ONES 身份
+- **THEN** 有管理权限的用户可以保存草稿并完成本地技术验证及发布，不发出 ONES 请求、不要求地址/Team 或凭据
 
-#### Scenario: 建立合法来源绑定后重放
-- **WHEN** 导入侧显式确认并新增来源绑定，随后重放同一导入或索引
-- **THEN** 原 source/KB/document/chunk/point 身份及幂等校验保持有效，不因治理绑定而重复建文档或重算向量
+#### Scenario: 技术依赖不具备条件
+- **WHEN** 数据成员/修订变化，索引不兼容，或 Embedding/Qdrant 不可用
+- **THEN** 系统拒绝验证或发布，不能以移除来源确认为由跳过技术验证
 
-#### Scenario: 更换 ONES 来源
-- **WHEN** 操作者需要调整绑定的实例或 Team
-- **THEN** 系统保留旧修订，要求新修订来源确认和资源重新验证发布，不直接覆盖历史或复用旧技术验证
+#### Scenario: 历史配置升级
+- **WHEN** 系统应用前向迁移
+- **THEN** 历史来源绑定与发布/验证及外键保留；不自动发布，新草稿直接固定本地来源摘要
 
-#### Scenario: 导入侧确认不需要运行中的业务任务
-- **WHEN** 有效平台管理员通过受限导入后入口显式确认完整批次的固定 ONES 实例与 Team
-- **THEN** 系统生成可审计 CONFIRMED 绑定，不要求 Job、Token 或手填摘要，不调用 Provider，不自动发布或授予业务权限
-
-#### Scenario: 已确认来源仍须本人逐项权限检查
-- **WHEN** 当前应用用户检索来源已确认的知识库
-- **THEN** 系统仍核验有效 RUNNING Job、KB 授权、本人 ONES 实例/Team 及工作项当前可读性，不将导入管理员的确认当作用户授权
+#### Scenario: 资源已发布但用户不可读
+- **WHEN** 用户没有当前 KB grant，或本人 ONES 身份无效/工作项不可读
+- **THEN** 系统拒绝访问或过滤候选，不返回未经双重授权的引用或缓存正文
 
 ### Requirement: 知识检索效果必须使用独立人工标注基线
 系统 SHALL 提供本地评测集格式、校验和可重放评测入口，首批真实效果验收使用约 50 条人工确认问法，包含 query_id、KB/来源、人工相关文档标注、无答案标记、分类和标注来源。真实问题与标签 MUST 保存在受限本地目录，不进入 Git、通用日志、外部模型或外部遥测；仓库 SHALL 仅保存合成样例和脱敏汇总。缺失标签 MUST NOT 用模型生成、自查询命中或相似度阈值冒充。
@@ -56,7 +52,7 @@
 ### Requirement: 知识服务必须可选部署并保留真实验收缺口
 knowledge-mcp、Qdrant 和本地 Embedding SHALL 继续由可选 knowledge 部署单元管理，固定内部地址和受管凭据；未启用环境 MUST 不依赖这些服务或其新增服务凭据。治理元数据 SHALL 使用同一 PostgreSQL 的现有 knowledge schema 及现有 RBAC 事实源，通过前向 Migrator 和当前 schema catalog 交付，不修改历史迁移或自动迁移/删除已有文本、分块和索引。新治理事实 MUST 默认未核验、未发布、无业务授权。
 
-上线记录 MUST 分开列出合成/静态、容器/数据库、来源证明、真实 ONES 本人权限、本地 Embedding 与现有聊天模型真实新 Job 证据。缺失来源、真实模型链路或人工标签时 MUST 保留未完成任务；健康容器、Mock、索引成功或 OpenSpec 校验不能替代这些门槛。回退 SHALL 停用新增读取入口而保留数据及既有会话访问/保留约束。
+上线记录 MUST 分开列出合成/静态、容器/数据库、本地数据/索引验证、真实 ONES 本人权限、本地 Embedding 与现有聊天模型真实新 Job 证据。缺失真实 ONES 可读性、模型链路或人工标签时 MUST 保留未完成任务；健康容器、Mock、索引成功或 OpenSpec 校验不能替代这些门槛。回退 SHALL 停用新增读取入口而保留数据及既有会话访问/保留约束。
 
 #### Scenario: 另一个环境不启用知识库
 - **WHEN** 环境只启动原主系统部署
@@ -64,7 +60,7 @@ knowledge-mcp、Qdrant 和本地 Embedding SHALL 继续由可选 knowledge 部�
 
 #### Scenario: 新代码和迁移部署
 - **WHEN** 用户批准正式部署知识检索功能
-- **THEN** 先核对非终态工作、镜像与 schema 兼容，执行正式 Migrator 并验证 readiness，来源/授权/Publication 仍需显式配置
+- **THEN** 先核对非终态工作、镜像与 schema 兼容，执行正式 Migrator 并验证 readiness，知识资源/授权/Publication 仍需显式配置
 
 #### Scenario: 合成测试通过但真实前提缺失
 - **WHEN** 测试全部通过，但没有真实 ONES 可读性或已配置聊天模型的新 Job 证据

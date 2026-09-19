@@ -236,7 +236,7 @@ class SyntheticReadability:
                     task_id=row["external_id"],
                     document_id=row["id"],
                     revision_id=row["current_revision_id"],
-                    source_binding_id=facts.pin.binding_id,
+                    source_id=facts.pin.source_id,
                     number=1,
                 )
             items.append(item)
@@ -452,7 +452,7 @@ def test_bridge_client_does_not_relabel_exhausted_budget_as_permission_failure(
         ("source", False, True),
         ("resource", False, True),
         ("index", False, True),
-        ("team", False, True),
+        ("team", True, False),
         ("user", None, True),
         ("role", None, True),
         ("member", None, True),
@@ -473,7 +473,7 @@ def test_directory_search_share_current_kb_gate_but_directory_is_not_ones_permis
     )
     commands = {
         "kb": "delete from rbac_role_application_knowledge_base",
-        "source": "update \"knowledge.source_binding\" set state='REVOKED',revoked_at='2026-09-19',revoked_by='synthetic'",
+        "source": 'update "knowledge.source" set source_system=\'other\'',
         "resource": "update \"knowledge.retrieval_resource\" set status='disabled'",
         "index": "update \"knowledge.vector_index\" set state='FAILED'",
         "team": 'update user_external_identity set metadata_json=\'{"team_uuids":["other"],"default_team_id":"other"}\' where provider=\'ones\'',
@@ -508,4 +508,5 @@ def test_directory_search_share_current_kb_gate_but_directory_is_not_ones_permis
         assert not f["hops"] and not f["vector"].qdrant.search_limits
     else:
         result = search(f)
+        # 合成 Provider 不存在新 Team 的任务，必须过滤，不能以目录可见代替可读。
         assert bool(result["documents"]) is (change == "none")

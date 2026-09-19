@@ -65,6 +65,7 @@ def test_postgres_reader_readiness_and_explicit_columns(isolated_policy_database
         "select * from agent_session where false",
         "select * from external_identity_credential where false",
         "select * from knowledge.document_revision where false",
+        "select * from knowledge.source_binding where false",
         "select * from audit_event where false",
         "select * from mcp_operation_audit where false",
         "update knowledge.retrieval_resource set status='disabled' where false",

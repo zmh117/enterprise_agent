@@ -76,17 +76,21 @@ def create_binding(f, headers):
     )
 
 
-def test_admin_resource_lifecycle_and_safe_management_projection(managed):
-    _, client, vector, _, _ = managed
+@pytest.mark.parametrize("with_legacy_binding", [False, True])
+def test_admin_resource_lifecycle_and_safe_management_projection(managed, with_legacy_binding):
+    runtime, client, vector, sources, _ = managed
     headers = csrf_headers(login(client))
-    binding = create_binding(managed, headers)
-    assert binding.status_code == 200, binding.text
-    response = client.post(
-        ROOT + "/source-bindings/" + binding.json()["id"] + "/verify",
-        headers=headers,
-        json={"job_id": "synthetic_job"},
-    )
-    assert response.status_code == 200 and response.json()["state"] == "VERIFIED"
+    if with_legacy_binding:
+        binding = create_binding(managed, headers)
+        assert binding.status_code == 200, binding.text
+        response = client.post(
+            ROOT + "/source-bindings/" + binding.json()["id"] + "/verify",
+            headers=headers,
+            json={"job_id": "synthetic_job"},
+        )
+        assert response.status_code == 200 and response.json()["state"] == "VERIFIED"
+    else:
+        sources.verifier = None
     catalog = client.get(ROOT + "/catalog").json()
     resource = client.post(
         ROOT + "/resources",
@@ -104,11 +108,24 @@ def test_admin_resource_lifecycle_and_safe_management_projection(managed):
         headers=headers,
         json={
             "expected_revision": resource.json()["revision"],
-            "binding_id": binding.json()["id"],
             "index_id": catalog["indexes"][0]["id"],
         },
     )
     assert saved.status_code == 200, saved.text
+    assert saved.json()["draft"]["binding_id"] is None
+    # 旧来源参数也不接受，避免悄悄改回 ONES 配置校验。
+    assert (
+        client.put(
+            path + "/draft",
+            headers=headers,
+            json={
+                "expected_revision": saved.json()["revision"],
+                "index_id": catalog["indexes"][0]["id"],
+                "binding_id": "legacy",
+            },
+        ).status_code
+        == 400
+    )
     verified = client.post(
         path + "/verify", headers=headers, json={"expected_revision": saved.json()["revision"]}
     )
@@ -123,10 +140,13 @@ def test_admin_resource_lifecycle_and_safe_management_projection(managed):
         json={"expected_revision": published.json()["revision"], "status": "disabled"},
     )
     assert disabled.status_code == 200 and disabled.json()["status"] == "disabled"
-    revoked = client.post(
-        ROOT + "/source-bindings/" + binding.json()["id"] + "/revoke", headers=headers, json={}
-    )
-    assert revoked.status_code == 200 and revoked.json() == {"revoked": True}
+    if with_legacy_binding:
+        revoked = client.post(
+            ROOT + "/source-bindings/" + binding.json()["id"] + "/revoke", headers=headers, json={}
+        )
+        assert revoked.status_code == 200 and revoked.json() == {"revoked": True}
+    else:
+        assert runtime.database.execute('select * from "knowledge.source_binding"') == []
     for suffix in ("sources", "resources", "catalog"):
         response = client.get(ROOT + "/" + suffix)
         assert response.status_code == 200
@@ -168,6 +188,36 @@ def test_authentication_csrf_and_permission_are_checked_before_parsing(managed):
         == 403
     )
     assert not runtime.database.execute('select * from "knowledge.retrieval_resource"')
+
+
+def test_resource_composition_does_not_construct_ones_source_verifier(managed, monkeypatch):
+    runtime, client, _, _, _ = managed
+
+    def forbidden():
+        raise AssertionError("resource configuration must not inspect ONES source settings")
+
+    monkeypatch.setattr(runtime.knowledge_services, "sources", forbidden)
+    headers = csrf_headers(login(client))
+    catalog = client.get(ROOT + "/catalog").json()
+    created = client.post(
+        ROOT + "/resources",
+        headers=headers,
+        json={
+            "knowledge_base_id": catalog["bases"][0]["id"],
+            "code": "no-ones",
+            "name": "本地索引",
+        },
+    )
+    assert created.status_code == 200
+    saved = client.put(
+        ROOT + "/resources/" + created.json()["id"] + "/draft",
+        headers=headers,
+        json={
+            "expected_revision": created.json()["revision"],
+            "index_id": catalog["indexes"][0]["id"],
+        },
+    )
+    assert saved.status_code == 200 and saved.json()["draft"]["binding_id"] is None
 
 
 @pytest.mark.parametrize(

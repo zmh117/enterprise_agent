@@ -60,7 +60,7 @@
 - **THEN** 保存整体拒绝，不部分写入 KB grant，不覆盖其他授权分区
 
 ### Requirement: 知识命中必须通过当前双重权限
-知识 MCP MUST 在候选上游访问前校验当前平台授权，在任何命中引用返回前同时满足 KB 角色授权和当前 Job 发起人的 ONES 工作项可读权限。平台检查 MUST 包含有效用户、当前业务应用及其 Publication 和授权、精确 Snapshot、来源匹配及当前资源状态；ONES 检查 MUST 使用本人唯一启用绑定和默认 Team。拒绝或未知权限的工作项 MUST NOT 通过缓存数据、共享账号、管理员账号或历史允许结果返回。
+知识 MCP MUST 在候选上游访问前校验当前平台授权，在任何命中引用返回前同时满足 KB 角色授权和当前 Job 发起人的 ONES 工作项可读权限。平台检查 MUST 包含有效用户、当前业务应用及其 Publication 和授权、精确 Snapshot、本地数据/索引一致性及当前资源状态；ONES 检查 MUST 使用本人唯一启用绑定和默认 Team。拒绝或未知权限的工作项 MUST NOT 通过缓存数据、共享账号、管理员账号或历史允许结果返回。
 
 #### Scenario: 有 KB grant 但无 ONES 权限
 - **WHEN** 用户获准调用知识 Tool 且 KB 范围有效，但 ONES 不允许读取候选工作项
@@ -71,7 +71,7 @@
 - **THEN** 系统在向量/知识内容检索前拒绝，不因 Provider 可读而扩大平台范围
 
 #### Scenario: 查询期间撤销授权
-- **WHEN** Token 未过期但用户停用、角色成员、应用/Tool/KB grant 或来源状态已撤销
+- **WHEN** Token 未过期但用户停用、角色成员、应用/Tool/KB grant 已撤销或本地数据/资源版本已变化
 - **THEN** 返回前复核拒绝本次结果；下次调用不得复用上次允许事实
 
 ### Requirement: ONES 可读性桥必须限定同一 Job 和固定只读用途

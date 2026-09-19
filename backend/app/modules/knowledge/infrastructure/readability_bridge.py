@@ -81,7 +81,6 @@ class PlatformOnesReadabilityGateway:
                 or not isinstance(default, str)
                 or not default
                 or teams.count(default) != 1
-                or default != candidates.binding["team_id"]
                 or row["tenant_code"] != self.instance_code
                 or not row["external_subject_id"]
                 or not row["credential_id"]

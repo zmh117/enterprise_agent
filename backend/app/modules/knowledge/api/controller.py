@@ -133,7 +133,7 @@ def build_knowledge_router() -> APIRouter:
     @router.put("/resources/{resource_id}/draft")
     async def draft_resource(resource_id: str, request: Request) -> Any:
         user_id = actor(request)
-        value = await payload(request, {"expected_revision", "binding_id", "index_id"})
+        value = await payload(request, {"expected_revision", "index_id"})
         return await invoke(
             services(request).resources().save_draft,
             actor_id=user_id,

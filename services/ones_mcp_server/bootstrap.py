@@ -242,8 +242,7 @@ def build_knowledge_readability(
         KnowledgeResourceReader(
             GovernanceStore(runtime.database),
             VectorRepository(runtime.database),
-            instance_code=source.instance_code,
-            target_hash=source.target_hash,
         ),
         source.detail,
+        instance_code=source.instance_code,
     )

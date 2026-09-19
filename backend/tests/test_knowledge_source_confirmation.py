@@ -91,7 +91,7 @@ def test_confirmation_requires_current_management_authority_and_fixed_target(gov
         confirm(governance)
 
 
-def test_confirmed_source_can_publish_and_revoke_without_borrowing_a_job(governance):
+def test_legacy_confirmation_is_not_required_by_new_publication(governance):
     db, vector, snapshot, sources, _, verifier, _ = governance
     vector.build("synthetic-v1", snapshot)
     binding = confirm(governance)
@@ -111,7 +111,6 @@ def test_confirmed_source_can_publish_and_revoke_without_borrowing_a_job(governa
         actor_id="synthetic_admin",
         resource_id=resource["id"],
         expected_revision=1,
-        binding_id=binding["id"],
         index_id=vector.repository.get("synthetic-v1")["id"],
     )
     verified = service.verify_draft(
@@ -129,8 +128,7 @@ def test_confirmed_source_can_publish_and_revoke_without_borrowing_a_job(governa
     assert sources.catalog()["bindings"][0]["state"] == "CONFIRMED"
     assert service.catalog()["bases"][0]["source_ids"] == [governance[6]]
     sources.revoke(actor_id="synthetic_admin", binding_id=binding["id"])
-    with pytest.raises(KnowledgeGovernanceError, match="knowledge_source_unavailable"):
-        service.recheck(pinned)
+    service.recheck(pinned)  # 历史来源确认不再控制新发布。
     assert db.execute("pragma foreign_key_check") == []
 
 
@@ -209,6 +207,75 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
         f"create table synthetic_source_reference (binding_id TEXT NOT NULL REFERENCES {table(db, 'source_binding')}(id))"
     )
     db.execute("insert into synthetic_source_reference(binding_id) values (?)", ("verified",))
+    # 同时覆盖 139 对有历史发布/验证与双向外键的资源版本表升级。
+    from app.modules.knowledge.application.chunk_service import ChunkService
+    from app.modules.knowledge.infrastructure.chunk_repository import ChunkRepository
+    from app.modules.knowledge.application.vector_service import VectorService
+    from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
+    from app.modules.knowledge.domain.chunking import DEFAULT_PROFILE
+    from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
+    from backend.tests.test_knowledge_vectors import SyntheticEmbedding, SyntheticQdrant
+
+    chunks = ChunkService(ChunkRepository(db)).run(
+        knowledge_base_code="synthetic_base", expected_count=1, commit=True
+    )["counts"]["chunks"]
+    vector = VectorService(VectorRepository(db), SyntheticEmbedding(), SyntheticQdrant())
+    snapshot = vector.repository.snapshot(
+        vector.repository.scope("synthetic_base"), DEFAULT_PROFILE.fingerprint, 1, chunks
+    )
+    vector.build("synthetic-migration", snapshot)
+    index = vector.repository.get("synthetic-migration")
+    store = GovernanceStore(db)
+    store.add(
+        "retrieval_resource",
+        {
+            "id": "legacy-resource",
+            "knowledge_base_id": index["knowledge_base_id"],
+            "code": "legacy-resource",
+            "name": "合成历史资源",
+            "created_by": "synthetic_admin",
+            "created_at": "2026-09-19",
+            "updated_at": "2026-09-19",
+        },
+    )
+    store.add(
+        "retrieval_revision",
+        {
+            "id": "legacy-revision",
+            "resource_id": "legacy-resource",
+            "revision": 1,
+            "binding_id": "verified",
+            "index_id": index["id"],
+            "profile_hash": index["profile_hash"],
+            "corpus_hash": index["corpus_hash"],
+            "config_hash": "e" * 64,
+            "created_by": "synthetic_admin",
+            "created_at": "2026-09-19",
+        },
+    )
+    store.add(
+        "retrieval_verification",
+        {
+            "id": "legacy-verification",
+            "resource_id": "legacy-resource",
+            "resource_revision": 1,
+            "revision_id": "legacy-revision",
+            "config_hash": "e" * 64,
+            "status": "VERIFIED",
+            "evidence_hash": "f" * 64,
+            "created_by": "synthetic_admin",
+            "created_at": "2026-09-19",
+        },
+    )
+    store.publish("legacy-resource", "legacy-revision", "synthetic_admin")
+    history = {
+        name: db.execute(f"select * from {table(db, name)}")
+        for name in (
+            "retrieval_resource",
+            "retrieval_revision",
+            "retrieval_verification",
+        )
+    }
     before = db.execute(f"select * from {table(db, 'source_binding')} order by id")
     data_tables = (
         "source",
@@ -218,12 +285,17 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
         "knowledge_base_document",
         "import_run",
         "document_relation",
+        "document_chunk",
+        "document_chunk_set",
+        "vector_index",
+        "vector_index_item",
     )
     content = {name: db.execute(f"select * from {table(db, name)}") for name in data_tables}
     result = Migrator(db, default_migrations_dir(), migrator_build="confirmation-after").run()
-    assert result.applied == ("138",)
+    assert result.applied == ("138", "139")
     assert db.execute(f"select * from {table(db, 'source_binding')} order by id") == before
     assert {name: db.execute(f"select * from {table(db, name)}") for name in data_tables} == content
+    assert {name: db.execute(f"select * from {table(db, name)}") for name in history} == history
     assert db.execute_one("select binding_id from synthetic_source_reference") == {
         "binding_id": "verified"
     }
@@ -257,6 +329,33 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
     assert binding["state"] == "CONFIRMED" and binding["verified_job_id"] is None
     assert service.assert_current(binding)
     assert service.store.get("source_binding", "verified")["verification_hash"] == "d" * 64
+    resources = KnowledgeResourceService(
+        service, vector.repository, embedding=vector.embedding, qdrant=vector.qdrant
+    )
+    with pytest.raises(KnowledgeGovernanceError):
+        resources.resolve(index["knowledge_base_id"])
+    current = resources.view("legacy-resource")
+    draft = resources.save_draft(
+        actor_id="synthetic_admin",
+        resource_id=current["id"],
+        expected_revision=current["revision"],
+        index_id=index["id"],
+    )
+    assert draft["draft"]["binding_id"] is None
+    checked = resources.verify_draft(
+        actor_id="synthetic_admin", resource_id=current["id"], expected_revision=draft["revision"]
+    )
+    resources.publish(
+        actor_id="synthetic_admin", resource_id=current["id"], expected_revision=checked["revision"]
+    )
+    assert resources.resolve(index["knowledge_base_id"])
+    assert store.get("retrieval_revision", "legacy-revision") == history["retrieval_revision"][0]
+    assert (
+        store.get("retrieval_verification", "legacy-verification")
+        == history["retrieval_verification"][0]
+    )
+    if db.engine == "sqlite":
+        assert db.execute("pragma foreign_key_check") == []
 
 
 def test_forward_confirmation_migration_preserves_pending_and_verified_history(tmp_path):

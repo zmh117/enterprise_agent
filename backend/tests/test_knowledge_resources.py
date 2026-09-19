@@ -9,6 +9,7 @@ from backend.tests.test_knowledge_governance import (
     governance as governance_fixture,
     prepared as prepared_fixture,
     create as create_binding,
+    SyntheticVerifier,
 )
 
 
@@ -21,8 +22,8 @@ ACTOR = "synthetic_admin"
 def resources(governance):
     db, vector, snapshot, sources, permission, _, _ = governance
     vector.build("synthetic-v1", snapshot)
-    binding = create_binding(governance)
-    sources.verify(actor_id=ACTOR, binding_id=binding["id"], job_id="synthetic_job")
+    binding = None
+    sources.verifier = None  # 发布本地索引不需要 ONES 来源确认或凭据。
     service = KnowledgeResourceService(
         sources,
         VectorRepository(sources.store.database),
@@ -45,7 +46,6 @@ def draft(f):
         actor_id=ACTOR,
         resource_id=resource["id"],
         expected_revision=current["revision"],
-        binding_id=binding["id"],
         index_id=vector.repository.get("synthetic-v1")["id"],
     )
 
@@ -117,7 +117,7 @@ def test_pinned_calls_reject_revocation_or_version_change_without_fallback(resou
             status=change,
         )
     elif change == "source":
-        service.sources.revoke(actor_id=ACTOR, binding_id=binding["id"])
+        db.execute('update "knowledge.document_revision" set source_project_id=?', ("changed",))
     elif change == "index":
         db.execute("update \"knowledge.vector_index\" set state='FAILED'")
     elif change == "profile":
@@ -219,7 +219,7 @@ def test_validation_external_io_has_no_transaction_and_changes_are_rechecked(res
         if change == "draft":
             draft(resources)
         elif change == "source":
-            service.sources.revoke(actor_id=ACTOR, binding_id=binding["id"])
+            db.execute('update "knowledge.document_revision" set source_project_id=?', ("changed",))
         elif change == "status":
             service.set_status(
                 actor_id=ACTOR,
@@ -271,3 +271,64 @@ def test_later_failed_verification_cannot_reuse_earlier_success_even_when_clock_
         )
     stored = json.dumps(db.execute('select * from "knowledge.retrieval_verification"'), default=str)
     assert "hidden provider" not in stored
+
+
+def test_no_ones_binding_required_and_no_source_or_vector_rewrites(resources):
+    from copy import deepcopy
+    from backend.tests.test_knowledge_chunks import source_fingerprint
+
+    db, vector, service, resource, _, _ = resources
+    before = source_fingerprint(db)
+    points = deepcopy(vector.qdrant.points)
+    current = publish(resources)
+    pin = service.resolve(resource["knowledge_base_id"])
+    assert current["published"]["binding_id"] is None
+    assert pin.source_id == db.execute_one('select id from "knowledge.source"')["id"]
+    assert db.execute('select * from "knowledge.source_binding"') == []
+    assert source_fingerprint(db) == before and vector.qdrant.points == points
+
+
+@pytest.mark.parametrize("dependency", ["embedding", "qdrant", "point_count"])
+def test_no_binding_does_not_bypass_technical_validation(resources, dependency, monkeypatch):
+    _, vector, service, resource, _, _ = resources
+    saved = draft(resources)
+
+    def unavailable(*args):
+        raise RuntimeError("synthetic private dependency detail")
+
+    if dependency == "point_count":
+        monkeypatch.setattr(vector.qdrant, "count", lambda _: 0)
+    else:
+        monkeypatch.setattr(getattr(vector, dependency), "check", unavailable)
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_verification_failed"):
+        service.verify_draft(
+            actor_id=ACTOR, resource_id=resource["id"], expected_revision=saved["revision"]
+        )
+    current = service.view(resource["id"])
+    assert current["verification"]["status"] == "FAILED"
+    with pytest.raises(KnowledgeGovernanceError):
+        service.publish(
+            actor_id=ACTOR, resource_id=resource["id"], expected_revision=current["revision"]
+        )
+
+
+def test_legacy_binding_publication_requires_explicit_resave_without_rewriting_history(
+    resources, governance
+):
+    db, _, service, resource, _, _ = resources
+    governance[3].verifier = SyntheticVerifier()
+    binding = create_binding(governance)
+    current = publish(resources)
+    # 模拟迁移保留的旧版本：binding_id 非空，不可借用旧验证自动切换规则。
+    db.execute(
+        'update "knowledge.retrieval_revision" set binding_id=? where id=?',
+        (binding["id"], current["published"]["id"]),
+    )
+    old = service.view(resource["id"])["published"]
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.resolve(resource["knowledge_base_id"])
+    updated = publish(resources)
+    assert updated["published"]["binding_id"] is None
+    assert updated["published"]["id"] != old["id"]
+    assert service.store.get("retrieval_revision", old["id"]) == old
+    assert service.resolve(resource["knowledge_base_id"])

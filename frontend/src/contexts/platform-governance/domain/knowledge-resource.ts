@@ -47,7 +47,7 @@ export const knowledgeCatalogSchema = z.object({
 const resourceRevision = z.object({
   id: identifier,
   revision,
-  binding_id: identifier,
+  binding_id: identifier.nullable(),
   index_id: identifier,
   config_hash: hash,
 })
@@ -85,7 +85,7 @@ export type KnowledgeCommand =
   | {
       kind: "draft"
       id: string
-      input: { expected_revision: number; binding_id: string; index_id: string }
+      input: { expected_revision: number; index_id: string }
     }
   | {
       kind: "verify" | "publish"
@@ -102,6 +102,7 @@ export function canPublishKnowledge(resource: KnowledgeResource) {
   return (
     resource.status === "enabled" &&
     resource.draft !== null &&
+    resource.draft.binding_id === null &&
     resource.verification?.status === "VERIFIED" &&
     resource.verification.config_hash === resource.draft.config_hash
   )

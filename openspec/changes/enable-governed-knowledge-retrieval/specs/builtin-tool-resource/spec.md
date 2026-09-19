@@ -18,26 +18,26 @@ Python Runtime SHALL 只连接部署固定的 `tool-mcp`、`file-mcp`、`ones-mc
 ## ADDED Requirements
 
 ### Requirement: 知识检索资源必须独立于环境拓扑受治理
-系统 SHALL 在 Web 工具资源中管理知识检索资源，引用本平台明确 knowledge_base_id、导入侧已确认或历史已核验来源绑定修订和兼容 READY 索引，通过 DRAFT → VERIFIED → PUBLISHED 生命周期形成不可变发布版本。技术验证 MUST 绑定配置 hash，修改任一引用使验证失效；身份停用/归档 MUST 阻止后续读取。首版每知识库最多存在一个启用检索资源，MUST NOT 借用 Environment/Base/Workshop/placement 表示知识库权限，或接受任意 PostgreSQL/Qdrant/Embedding 连接和凭据。
+系统 SHALL 在 Web 工具资源中管理知识检索资源，引用本平台明确 knowledge_base_id、由本地成员派生的数据身份和兼容 READY 索引，通过 DRAFT → VERIFIED → PUBLISHED 生命周期形成不可变发布版本。技术验证 MUST 绑定配置 hash，修改任一引用使验证失效；身份停用/归档 MUST 阻止后续读取。首版每知识库最多存在一个启用检索资源，MUST NOT 借用 Environment/Base/Workshop/placement 表示知识库权限，或接受任意 PostgreSQL/Qdrant/Embedding 连接和凭据。
 
 #### Scenario: 配置 ONES 知识库
-- **WHEN** 有权管理员在工具资源中选择已存在 KB、有效来源绑定和 READY 索引
+- **WHEN** 有权管理员在工具资源中选择已存在 KB 和 READY 索引
 - **THEN** 系统保存知识资源草稿，技术验证通过后才可发布，不要求创建环境拓扑
 
 #### Scenario: 索引或来源不具备条件
-- **WHEN** 索引非 READY、profile/hash 不匹配、来源未确认或存在多个启用资源
+- **WHEN** 索引非 READY、profile/hash 不匹配、本地成员或文档修订不一致或存在多个启用资源
 - **THEN** 系统拒绝发布或解析，不选择第一候选、不沿用旧验证、不回退旧索引
 
 #### Scenario: Web 展示状态
-- **WHEN** 管理员查看已入库但来源未确认或未发布的 KB
-- **THEN** 页面分别显示存储、来源、索引和检索发布状态，不把 storage_only 或索引存在展示为用户可检索
+- **WHEN** 管理员查看已入库但未发布的 KB
+- **THEN** 页面分别显示存储、本地导入来源、索引和检索发布状态，不把 storage_only 或索引存在展示为用户可检索
 
 #### Scenario: 新建知识资源不再手填来源核验字段
 - **WHEN** 管理员选择已有数据集与 READY 索引
-- **THEN** Web 只读显示该数据集唯一有效的来源绑定，不提供 SHA-256、Job ID 或跨数据集来源选择；缺失、撤销或多义时阻止保存并提示在导入流程处理
+- **THEN** Web 只读显示本地导入来源，不提供 ONES 地址、Team、SHA-256 或 Job ID；没有来源确认记录不阻止保存，服务端仍检查本地数据和索引兼容性
 
 ### Requirement: 知识库目录必须分页且不证明文档读取权限
-`knowledge_list_bases` SHALL 只列出当前用户/Job 同时获准目录和检索 Tool、具有明确 KB 范围、来源匹配且资源已发布可用的知识库。输出 SHALL 限于 KB 身份、管理名称和安全状态，不含文档计数、样本、缺陷标题或正文。目录 MUST 默认且最多每页 50 项，以稳定身份 keyset 分页；不透明 cursor MUST 绑定当前 Job、用户、应用、Snapshot、授权与可见资源摘要，长度最多 4096 字符。目录可见 MUST NOT 被解释为库内所有工作项均可读。
+`knowledge_list_bases` SHALL 只列出当前用户/Job 同时获准目录和检索 Tool、具有明确 KB 范围、本地数据/索引一致且资源已发布可用的知识库。输出 SHALL 限于 KB 身份、管理名称和安全状态，不含文档计数、样本、缺陷标题或正文。目录 MUST 默认且最多每页 50 项，以稳定身份 keyset 分页；不透明 cursor MUST 绑定当前 Job、用户、应用、Snapshot、授权与可见资源摘要，长度最多 4096 字符。目录可见 MUST NOT 被解释为库内所有工作项均可读。
 
 #### Scenario: 超过一页
 - **WHEN** 当前授权集合有 51 个可检索知识库
@@ -69,10 +69,10 @@ Python Runtime SHALL 只连接部署固定的 `tool-mcp`、`file-mcp`、`ones-mc
 - **THEN** 该候选不进入结果，响应不携带其编号、项目、块 ID、分数或被过滤计数
 
 ### Requirement: 知识检索必须保持单次资源版本一致
-每次知识检索 SHALL 解析当前唯一启用 Published Resource，并固定本次资源修订、来源绑定修订、索引/profile 和当前文档事实，审计实际版本。返回前 MUST 再核对当前授权、来源及资源发布状态；发生不兼容变化时 MUST 拒绝本次结果并要求重试，不拼接新旧配置。后续独立调用可以读取显式发布的新版本，MUST NOT 静默选择未发布索引或重写 Job Tool Snapshot。
+每次知识检索 SHALL 解析当前唯一启用 Published Resource，并固定本次资源修订、本地来源与数据摘要、索引/profile 和当前文档事实，审计实际版本。返回前 MUST 再核对当前授权、来源及资源发布状态；发生不兼容变化时 MUST 拒绝本次结果并要求重试，不拼接新旧配置。后续独立调用可以读取显式发布的新版本，MUST NOT 静默选择未发布索引或重写 Job Tool Snapshot。
 
 #### Scenario: 检索过程中停用或换版
-- **WHEN** 获取候选后资源被停用、来源撤销或发布修订发生变化
+- **WHEN** 获取候选后资源被停用、本地数据变化或发布修订发生变化
 - **THEN** 调用不返回旧命中，不把首次检查视为整段查询的永久授权
 
 #### Scenario: 后续调用使用新索引

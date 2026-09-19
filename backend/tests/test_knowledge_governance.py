@@ -123,7 +123,7 @@ def test_forward_migration_is_empty_replayable_and_does_not_modify_old_tables(tm
         result = Migrator(
             db, default_migrations_dir(), migrator_build="knowledge-governance-after"
         ).run()
-        assert result.applied == ("137", "138")
+        assert result.applied == ("137", "138", "139")
         assert source_fingerprint(db) == before
         assert {
             name: db.execute(f"select * from {name} order by 1,2,3") for name in publication_tables

@@ -130,7 +130,6 @@ from app.modules.knowledge.infrastructure.vector_repository import VectorReposit
 from app.modules.knowledge.application.readability_bridge import KnowledgeReadabilityBridge
 from app.modules.knowledge.infrastructure.readability_bridge import PlatformOnesReadabilityGateway
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
-from app.modules.knowledge.infrastructure.ones_verifier import ones_target_hash
 from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalTokenVerifier
 from app.modules.identity.application.service_principal import KnowledgeServicePrincipalVerifier
 from app.modules.job.application.job_retry_service import JobRetryService
@@ -784,10 +783,6 @@ def _build_container(
         knowledge_resource_reader = KnowledgeResourceReader(
             GovernanceStore(database),
             VectorRepository(database),
-            instance_code=settings.ones_identity.instance_code,
-            target_hash=ones_target_hash(
-                settings.ones_identity.instance_code, settings.ones_mcp.provider_base_url
-            ),
         )
         knowledge_readability_bridge = KnowledgeReadabilityBridge(
             PlatformOnesReadabilityGateway(

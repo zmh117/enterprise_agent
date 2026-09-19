@@ -12,8 +12,8 @@ class KnowledgeGovernanceError(NonRetryableExecutionError):
             safe_message={
                 "knowledge_input_invalid": "知识资源参数无效",
                 "knowledge_revision_conflict": "知识配置已变化，请刷新后重试",
-                "knowledge_source_unavailable": "知识来源不可用，请在导入流程完成来源确认",
-                "knowledge_source_changed": "知识来源版本已变化，请在导入流程重新确认",
+                "knowledge_source_unavailable": "知识库本地数据来源或文档身份不完整，请检查导入数据",
+                "knowledge_source_changed": "知识库数据或工作项归属已变化，请检查数据并重新保存、验证和发布",
                 "knowledge_verifier_unavailable": "受信 ONES 来源核验服务尚未配置",
                 "knowledge_verification_failed": "知识资源技术核验失败，请检查来源与服务状态",
                 "knowledge_verification_busy": "知识来源核验繁忙，请稍后重试",

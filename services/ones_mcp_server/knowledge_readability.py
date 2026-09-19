@@ -24,15 +24,16 @@ class OnesKnowledgeReadability:
         gate: KnowledgeJobGate,
         resources: KnowledgeResourceReader,
         detail: OnesWorkItemReferenceService,
+        *,
+        instance_code: str,
     ) -> None:
         self.gate = gate
         self.resources = resources
         self.detail = detail
+        self.instance_code = checked_identifier(instance_code)
         self._slots = threading.BoundedSemaphore(4)
 
-    def _identity(
-        self, token: str, binding: dict[str, Any]
-    ) -> tuple[dict[str, Any], tuple[str, ...]]:
+    def _identity(self, token: str) -> tuple[dict[str, Any], tuple[str, ...]]:
         claims = self.detail.authenticate(token)
         principal = self.detail.resolver.resolve(
             claims, tool_identifier=self.detail.tool_identifier
@@ -41,14 +42,8 @@ class OnesKnowledgeReadability:
             "select tenant_code from user_external_identity where id=?",
             (principal.external_identity_id,),
         )
-        if (
-            not identity
-            or identity["tenant_code"] != self.resources.instance_code
-            or binding["instance_code"] != self.resources.instance_code
-            or binding["target_hash"] != self.resources.target_hash
-            or binding["team_id"] != principal.team_id
-        ):
-            raise KnowledgeGovernanceError("knowledge_source_unavailable")
+        if not identity or identity["tenant_code"] != self.instance_code:
+            raise KnowledgeGovernanceError("knowledge_source_identity_invalid")
         return claims, (
             principal.actor_user_id,
             principal.external_identity_id,
@@ -79,15 +74,15 @@ class OnesKnowledgeReadability:
     ) -> dict[str, Any]:
         started = time.monotonic()
         candidates = ReadabilityCandidates.load(self.resources, request)
-        pin, binding = candidates.pin, candidates.binding
-        claims, identity = self._identity(token, binding)
+        pin = candidates.pin
+        claims, identity = self._identity(token)
         evidence, documents = candidates.evidence, candidates.documents
         references: dict[str, dict[str, Any]] = {}
         for document_id in sorted(documents):
             if time.monotonic() - started >= 60:
                 raise KnowledgeGovernanceError("knowledge_readability_timeout")
             self.gate.recheck(access)
-            claims, current_identity = self._identity(token, binding)
+            claims, current_identity = self._identity(token)
             if current_identity != identity:
                 raise KnowledgeGovernanceError("knowledge_authorization_changed")
             document = documents[document_id]
@@ -109,7 +104,7 @@ class OnesKnowledgeReadability:
             if (
                 reference.get("task_id") != document["external_id"]
                 or reference.get("project_id") != document["source_project_id"]
-                or reference.get("team_id") != binding["team_id"]
+                or reference.get("team_id") != identity[3]
             ):
                 raise KnowledgeGovernanceError("knowledge_source_changed")
             references[document_id] = {
@@ -118,10 +113,10 @@ class OnesKnowledgeReadability:
                 "number": reference["number"],
                 "document_id": document_id,
                 "revision_id": document["current_revision_id"],
-                "source_binding_id": binding["id"],
+                "source_id": pin.source_id,
             }
         # 任何 Provider 故障都不会落入空命中；检查结束后仍须校验 JWT、当前授权和成员版本。
-        _, current_identity = self._identity(token, binding)
+        _, current_identity = self._identity(token)
         self.gate.recheck(access)
         candidates.recheck(self.resources)
         if current_identity != identity:

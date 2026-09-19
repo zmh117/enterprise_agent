@@ -38,7 +38,7 @@
       "readers": [
         "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
       ],
-      "lifecycle": "默认不确认；导入侧显式确认产生 CONFIRMED，历史 VERIFIED 保留；替换保留历史，撤销禁止读取",
+      "lifecycle": "保留历史来源确认与核验证据；新知识资源不依赖此绑定，撤销不控制新资源读取",
       "retention_policy": "不自动删除；清理须显式授权并核对发布和审计依赖",
       "audit_requirement": "只记录标识、版本、计数和安全摘要；不保存凭据、正文或原始响应",
       "retirement": {
@@ -88,7 +88,7 @@
       "owner": "knowledge",
       "semantics": "知识检索资源不可变配置版本；编辑创建新版本",
       "classification": "immutable_snapshot",
-      "source_contract": "配置修订固定来源绑定、索引及其摘要；编辑只创建新版本，不覆盖已验证配置",
+      "source_contract": "配置修订通过摘要固定本地来源、数据成员与索引；新版本不需要 ONES 来源绑定，历史版本须重新保存验证发布，不改写旧证据",
       "canonical_source": "显式知识资源管理操作及固定来源和索引版本",
       "writers": [
         "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"

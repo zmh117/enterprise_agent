@@ -24,8 +24,6 @@ services:
       DATABASE_DSN: ${KNOWLEDGE_DATABASE_DSN:?在线知识检索需要独立 knowledge_mcp_reader 数据库账号}
       PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
       KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /run/secrets/knowledge_bootstrap_token
-      ONES_IDENTITY_INSTANCE_CODE: ${ONES_IDENTITY_INSTANCE_CODE:-default}
-      ONES_MCP_PROVIDER_BASE_URL: ${ONES_MCP_PROVIDER_BASE_URL:-http://host.docker.internal:19121}
     secrets:
       - principal_jwks
       - knowledge_bootstrap_token

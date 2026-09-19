@@ -115,12 +115,6 @@ class KnowledgeSearch:
     ) -> dict[str, Any]:
         identity = self.access.identity(access.actor_id)
         pin = self.resources.resolve(request.knowledge_base_id)
-        binding = self.resources.store.get("source_binding", pin.binding_id)
-        if (
-            binding["instance_code"] != identity.instance_code
-            or binding["team_id"] != identity.team_id
-        ):
-            raise KnowledgeGovernanceError("knowledge_source_identity_invalid")
         index = self.resources.vectors.get(pin.index_code)
         if index is None:
             raise KnowledgeGovernanceError("knowledge_index_unavailable")
@@ -172,7 +166,7 @@ class KnowledgeSearch:
                         {
                             **document,
                             "index_id": pin.index_id,
-                            "source_binding_id": pin.binding_id,
+                            "source_id": pin.source_id,
                             "work_item_uuid": reference["task_id"],
                             "number": reference["number"],
                         }

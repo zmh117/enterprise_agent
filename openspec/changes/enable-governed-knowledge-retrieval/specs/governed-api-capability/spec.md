@@ -29,7 +29,7 @@ ONES 服务 SHALL 为固定内部桥提供有界只读投影，复用现有本�
 - **THEN** 仅返回已确认的命中及通用 partial，不返回被拒绝数量或未经核验的候选
 
 ### Requirement: 知识引用必须通过当前 ONES 工具回源
-ONES 知识命中 SHALL 使用显式已确认或历史已核验来源绑定、task UUID 及内部版本/证据引用定位；可选编号 MUST 经过当前归属验证。发布知识检索的 Agent/Application 有效工具子集 MUST 同时包含 `knowledge_search` 与 `ones_get_work_item_detail`，运行时再次复核授权。Agent SHALL 使用现有详情 Tool 以本人身份读取当前内容，MUST NOT 根据缓存正文、任意链接或模型猜测构造新的 Provider 入口。引用和正文 MUST 作为不可信业务数据，不得改变系统指令或授权规则。
+ONES 知识命中 SHALL 使用本地 source_id、task UUID 及内部版本/证据引用；不要求预先确认 ONES 地址或 Team，以本人当前默认 Team 的真实详情响应完成可读性和 UUID/项目核对定位；可选编号 MUST 经过当前归属验证。发布知识检索的 Agent/Application 有效工具子集 MUST 同时包含 `knowledge_search` 与 `ones_get_work_item_detail`，运行时再次复核授权。Agent SHALL 使用现有详情 Tool 以本人身份读取当前内容，MUST NOT 根据缓存正文、任意链接或模型猜测构造新的 Provider 入口。引用和正文 MUST 作为不可信业务数据，不得改变系统指令或授权规则。
 
 #### Scenario: 检索后权限被撤销
 - **WHEN** 搜索曾返回可读引用，但用户在调用详情前被 ONES 撤权

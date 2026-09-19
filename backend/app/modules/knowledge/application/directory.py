@@ -77,12 +77,6 @@ class KnowledgeDirectory:
                 if exc.error_code not in _UNAVAILABLE:
                     raise
                 continue
-            binding = self.resources.store.get("source_binding", pin.binding_id)
-            if (
-                binding["instance_code"] != identity.instance_code
-                or binding["team_id"] != identity.team_id
-            ):
-                continue
             base = self.resources.store.get("knowledge_base", base_id)
             resource = self.resources.store.get("retrieval_resource", pin.resource_id)
             item = {

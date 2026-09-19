@@ -168,7 +168,7 @@ export function KnowledgeResourcesPage() {
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-left text-sm">
               <caption className="p-3 text-left text-muted-foreground">
-                入库、来源确认、索引和发布是不同状态；发布也不能替代 KB＋本人 ONES
+                入库、索引和发布是不同状态；发布也不能替代 KB＋本人 ONES
                 双重授权。
               </caption>
               <thead className="border-b bg-muted/40">
@@ -194,9 +194,6 @@ export function KnowledgeResourcesPage() {
                       (b) => b.id === resource.knowledge_base_id
                     )
                     const revision = resource.published ?? resource.draft
-                    const binding = data.bindings.find(
-                      (b) => b.id === revision?.binding_id
-                    )
                     const index = data.indexes.find(
                       (i) => i.id === revision?.index_id
                     )
@@ -212,7 +209,13 @@ export function KnowledgeResourcesPage() {
                           {base ? knowledgeStatus(base.state) : "未找到知识库"}
                         </td>
                         <td className="p-3">
-                          {binding ? knowledgeStatus(binding.state) : "未绑定"}
+                          {base?.source_ids
+                            .map(
+                              (id) =>
+                                data.sources.find((s) => s.id === id)
+                                  ?.display_name ?? id
+                            )
+                            .join("、") || "无已收录数据"}
                         </td>
                         <td className="p-3">
                           {index ? knowledgeStatus(index.state) : "未选择"}
@@ -349,28 +352,15 @@ function KnowledgeResourceEditor({
 }: EditorProps) {
   const initial = resource.draft ?? resource.published
   const sourceIds =
-    data.bases.find((b) => b.id === resource.knowledge_base_id)?.source_ids ?? []
-  const bindings = data.bindings.filter(
-    (b) =>
-      sourceIds.length === 1 &&
-      b.source_id === sourceIds[0] &&
-      (b.state === "CONFIRMED" || b.state === "VERIFIED")
-  )
-  // 编辑期间不因目录刷新静默换源；显式重新载入配置才更新基线。
-  const [binding] = useState(bindings.length === 1 ? bindings[0].id : "")
-  const selectedSource =
-    bindings.length === 1 && bindings[0].id === binding
-      ? bindings[0]
-      : undefined
+    data.bases.find((b) => b.id === resource.knowledge_base_id)?.source_ids ??
+    []
   const [index, setIndex] = useState(initial?.index_id ?? "")
   const writable = canManage && resource.status !== "archived"
   const indexes = data.indexes.filter(
     (i) =>
       i.knowledge_base_id === resource.knowledge_base_id && i.state === "READY"
   )
-  const selectedReady =
-    Boolean(selectedSource) &&
-    indexes.some((i) => i.id === index)
+  const selectedReady = indexes.some((i) => i.id === index)
   const input = { expected_revision: resource.revision }
   return (
     <>
@@ -388,10 +378,15 @@ function KnowledgeResourceEditor({
         <dt>当前发布版本</dt>
         <dd>
           {resource.published
-            ? `v${resource.published.revision} · 索引 ${resource.published.index_id} · 来源绑定 ${resource.published.binding_id}`
+            ? `v${resource.published.revision} · 索引 ${resource.published.index_id}`
             : "尚未发布"}
         </dd>
       </dl>
+      {initial?.binding_id && (
+        <p role="status" className="text-sm">
+          此版本使用旧来源确认规则，请重新保存草稿、验证并发布；历史记录保留。
+        </p>
+      )}
       <Button
         variant="outline"
         disabled={pending}
@@ -407,7 +402,7 @@ function KnowledgeResourceEditor({
             void execute({
               kind: "draft",
               id: resource.id,
-              input: { ...input, binding_id: binding, index_id: index },
+              input: { ...input, index_id: index },
             })
         }}
       >
@@ -419,20 +414,18 @@ function KnowledgeResourceEditor({
             aria-label="数据来源（只读）"
           >
             <p className="font-medium">数据来源（由导入记录提供）</p>
-            {selectedSource ? (
-              <p>
-                {data.sources.find((s) => s.id === selectedSource.source_id)
-                  ?.display_name ?? selectedSource.source_id}
-                {" · "}
-                {selectedSource.instance_code}/{selectedSource.team_id}
-                {" · "}
-                {knowledgeStatus(selectedSource.state)}
-              </p>
-            ) : (
-              <p>
-                数据来源尚未确认、已变化或不唯一。请在导入流程确认后重新载入配置，不能在此指定其他来源。
-              </p>
-            )}
+            <p>
+              {sourceIds
+                .map(
+                  (id) =>
+                    data.sources.find((s) => s.id === id)?.display_name ?? id
+                )
+                .join("、") || "无已收录数据"}
+            </p>
+            <p>
+              无需确认 ONES 地址或 Team。实际检索仍使用当前用户的 ONES
+              身份检查工作项可读权限。
+            </p>
           </div>
           <KnowledgeField label="已就绪向量索引">
             <select
@@ -453,7 +446,8 @@ function KnowledgeResourceEditor({
             </select>
           </KnowledgeField>
           <p className="text-xs text-muted-foreground">
-            服务端还会核对完整来源归属及索引兼容性。修改草稿会使旧验证失效，不改变已发布版本。
+            服务端核对本地数据与索引兼容性，验证时检查 Embedding 和 Qdrant
+            服务。修改草稿会使旧验证失效，不改变已发布版本。
           </p>
           {writable && (
             <Button type="submit" disabled={!selectedReady}>
@@ -466,7 +460,9 @@ function KnowledgeResourceEditor({
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
-            disabled={pending || !resource.draft}
+            disabled={
+              pending || !resource.draft || Boolean(resource.draft.binding_id)
+            }
             onClick={() =>
               void execute({ kind: "verify", id: resource.id, input })
             }
