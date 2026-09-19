@@ -97,7 +97,7 @@ class ApplicationMcpToolCompositionService:
         if errors:
             raise NonRetryableExecutionError(
                 "Knowledge Tool dependency is missing",
-                safe_message="知识检索必须同时选择 ONES 工作项详情工具",
+                safe_message=errors[0]["message"],
                 error_code="validation_failed",
                 field_errors=errors,
             )

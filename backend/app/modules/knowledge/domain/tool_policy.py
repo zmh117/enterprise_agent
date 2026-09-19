@@ -20,6 +20,8 @@ def uses_knowledge_tools(tools: Iterable[Any]) -> bool:
 
 def knowledge_tool_dependency_errors(tools: Iterable[Any]) -> list[dict[str, str]]:
     names = {tool.get("tool_identifier") if isinstance(tool, dict) else tool for tool in tools}
+    if names & KNOWLEDGE_TOOL_IDS and not KNOWLEDGE_TOOL_IDS <= names:
+        return [{"field": "mcp_tools", "message": "知识库目录与知识检索工具必须同时选择"}]
     if "knowledge_search" in names and "ones_get_work_item_detail" not in names:
         return [{"field": "mcp_tools", "message": "知识检索必须同时选择 ONES 工作项详情工具"}]
     return []

@@ -1,4 +1,4 @@
-"""真实 Job/发布/快照和 RBAC；知识合同仅在测试进程注册，未对生产开放。"""
+"""正式知识工具合同上的合成 Job/发布/快照和 RBAC。"""
 
 import json
 
@@ -9,8 +9,6 @@ from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.domain.vector_contract import fingerprint
 from app.modules.mcp_tool_runtime.manifest import (
     MCP_TOOL_MANIFEST,
-    McpToolDefinition,
-    mcp_tool_schema_hash,
 )
 from app.shared import mcp_server_policy
 from app.shared.exceptions import AppError
@@ -27,32 +25,14 @@ from backend.tests.test_ones_mcp_runtime import _fixture
 
 
 @pytest.fixture
-def knowledge_contract(monkeypatch):
-    monkeypatch.setattr(
-        ToolRegistry, "READONLY_TOOLS", frozenset({*ToolRegistry.READONLY_TOOLS, *KNOWLEDGE_TOOLS})
-    )
-    policies = {
-        **mcp_server_policy.MCP_SERVER_POLICIES,
-        "knowledge-mcp": mcp_server_policy.McpServerPolicy(
-            server_code="knowledge-mcp",
-            auth_mode=mcp_server_policy.McpServerAuthMode.BUSINESS_PRINCIPAL_JWT,
-        ),
-    }
-    monkeypatch.setattr(mcp_server_policy, "MCP_SERVER_POLICIES", policies)
+def knowledge_contract():
+    # 保留共享 fixture 名称，但不再动态注入合同；测试必须经过生产目录与发布路径。
+    assert set(KNOWLEDGE_TOOLS) <= ToolRegistry.READONLY_TOOLS
+    policy = mcp_server_policy.require_business_principal_server("knowledge-mcp")
+    assert policy.auth_mode == mcp_server_policy.McpServerAuthMode.BUSINESS_PRINCIPAL_JWT
     for name in KNOWLEDGE_TOOLS:
-        schema = {"type": "object", "additionalProperties": False, "properties": {}}
-        monkeypatch.setitem(
-            MCP_TOOL_MANIFEST,
-            name,
-            McpToolDefinition(
-                server_code="knowledge-mcp",
-                identifier=name,
-                description="仅合成测试使用",
-                input_schema=schema,
-                schema_hash=mcp_tool_schema_hash(schema),
-                required_scope=name,
-            ),
-        )
+        assert MCP_TOOL_MANIFEST[name].server_code == "knowledge-mcp"
+        assert MCP_TOOL_MANIFEST[name].required_scope == f"mcp:knowledge-mcp:{name}:invoke"
 
 
 @pytest.fixture

@@ -39,8 +39,10 @@ def publish(c, config):
     return service.publish(actor_id=ADMIN_ID, agent_code=AGENT_CODE, revision_id=draft["id"])
 
 
-@pytest.mark.parametrize("missing_detail", [False, True])
-def test_external_chat_publication_needs_no_internal_approval(knowledge_contract, missing_detail):
+@pytest.mark.parametrize(
+    "missing_tool", [None, "ones_get_work_item_detail", "knowledge_search", "knowledge_list_bases"]
+)
+def test_external_chat_publication_needs_no_internal_approval(knowledge_contract, missing_tool):
     c = container()
     try:
         connection = ready_connection(c)
@@ -50,8 +52,8 @@ def test_external_chat_publication_needs_no_internal_approval(knowledge_contract
             "knowledge_search",
             "ones_get_work_item_detail",
         ]
-        if missing_detail:
-            config["mcp_tool_ids"].remove("ones_get_work_item_detail")
+        if missing_tool:
+            config["mcp_tool_ids"].remove(missing_tool)
             with pytest.raises(NonRetryableExecutionError):
                 publish(c, config)
         else:

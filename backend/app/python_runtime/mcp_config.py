@@ -19,6 +19,7 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.mcp_server_policy import (
     FILE_MCP_SERVER_CODE,
     DINGTALK_MCP_SERVER_CODE,
+    KNOWLEDGE_MCP_SERVER_CODE,
     MCP_SERVER_POLICIES,
     ONES_MCP_SERVER_CODE,
     TOOL_MCP_SERVER_CODE,
@@ -218,6 +219,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             {
                 ONES_MCP_SERVER_CODE: "http://ones-mcp:9104/mcp",
                 DINGTALK_MCP_SERVER_CODE: "http://dingtalk-mcp:9107/mcp",
+                KNOWLEDGE_MCP_SERVER_CODE: "http://knowledge-mcp:9108/mcp",
             }
             if business_mcp_server_urls is None
             else dict(business_mcp_server_urls)

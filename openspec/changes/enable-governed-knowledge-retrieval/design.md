@@ -55,6 +55,14 @@ Web 在“工具资源”增加知识库类型入口，表单选择已存在 KB�
 
 代码固定注册 `knowledge-mcp`，使用独立 audience 的 Business Principal JWT 和标准 Streamable HTTP。接入现有 Manifest、Tool 目录、Agent/Application 发布子集、Runtime 固定 Server policy、精确 Snapshot 与当前授权复核，不接受模型覆盖执行地址或认证方式。
 
+按用户要求，服务代码统一位于 `services/knowledge_mcp_server/`，与 ONES、钉钉 MCP 同级，不新增单数 service 目录。该目录仅拥有 MCP/ASGI 传输、身份上下文适配、有界执行、安全 MCP 审计和狭窄依赖装配；目录、召回、权限与引用校验继续复用 knowledge 四层模块。启动不构造平台全量 Container，不加载平台主密钥、签名私钥、模型 Key 或 ONES 凭据仓储。
+
+入口固定 32 KiB 请求与 256 KiB 工具结果；4 个真实在途工作槽位覆盖目录、检索及健康探测，不增加无界排队。ASGI 观察断开并传递取消信号，嵌套预算继承取消与截止，超时线程实际退出前不释放槽位。MCP 根审计只存工具名、安全版本/计数/错误码与既有审计关联 ID，不保存 query、cursor、命中 UUID 或正文。该实现不等于阻塞数据库/DNS 的物理取消已完成；任务 7.3 保留这部分验收。
+
+在线部署使用 `backend/Dockerfile` 的独立 knowledge-mcp target 和可选 `knowledge/mcp.compose.yml`，在根文件与离线 `knowledge/compose.yml` 之后叠加。保留原模型/向量卷、项目名和仅离线环境的无新增凭据合同。MCP 不发布宿主机端口，仅接两个内部网络；API 追加知识网络用于固定依赖验证。服务仅挂载公开 JWKS 和自己的 bootstrap，不挂载平台主密钥、签名私钥或 ONES 凭据；来源实例/目标配置只用于一致性匹配。
+
+数据库仍共用原库，单独使用固定角色 `knowledge_mcp_reader`。显式运维 CLI 按当前调用的明确列授予 SELECT，只给 audit_event、agent_tool_call、mcp_operation_audit 必要审计写入，无业务写入/DELETE；启动检查角色、成员关系、schema 与表/列权限，拒绝管理员 DSN 或超额授权。列合同变化必须重审，不借表级 SELECT 自动扩权，不在启动时创建角色或变更平台 PUBLIC 权限。隔离 PostgreSQL 权限验证和镜像 COPY 导入验证不替代任务 10.4 的完整容器运行验收。
+
 | Tool | 输入 | 输出边界 |
 | --- | --- | --- |
 | `knowledge_list_bases` | 可选不透明 cursor；每页默认且最多 50 项 | 当前获授权、来源匹配、已发布可检索 KB 的 id/code/管理名称及安全状态；无文档数量、样本或业务标题 |
@@ -111,7 +119,7 @@ Runtime → ones-mcp：Agent 用现有详情工具读取当前正文，再由 Ag
 
 撤去为旧要求新增的 INTERNAL_MODEL_POLICY_FILE、部署认可状态、internal_only Publication/运行门禁和 SDK 特殊覆盖，不实现 Session/摘要/产物标记继承，也不为此扩展 Runtime 协议。保留既有模型连接、冻结版本、规范化别名映射、Anthropic-compatible 合同、Runtime 请求签名和最小数据库权限；Runtime 不新增读取 Job/Session/RBAC 的能力。历史 Publication 不重写，新增发布不再写入旧数据边界标记。
 
-保留知识检索必须同时发布 ONES 详情 Tool 的依赖。Worker 在解析模型/历史摘要前复核当前知识工具和详情授权，检索返回前仍执行完整 KB + 本人 ONES 双重校验。允许外部聊天不是授权旁路。通用诊断只记录安全 ID、版本、耗时和错误码，不增加业务 query/向量/正文/凭据；受控运行记录保持原访问与保留合同。
+保留知识检索必须同时发布 ONES 详情 Tool 的依赖。目录和检索工具成套选择，Agent Envelope 与 Application 子集在发布前校验三者，和既有 Job 门禁对齐；不自动补选或授权，避免允许发布后才因缺失必需工具而启动失败。Worker 在解析模型/历史摘要前复核当前知识工具和详情授权，检索返回前仍执行完整 KB + 本人 ONES 双重校验。允许外部聊天不是授权旁路。通用诊断只记录安全 ID、版本、耗时和错误码，不增加业务 query/向量/正文/凭据；受控运行记录保持原访问与保留合同。
 
 **取舍：** 复用已有可用模型链路，不另建模型认可制度或跨会话数据标记系统。真实 Agent 验收仍需证明现有模型能完成授权后的引用回源与分析，但不再以“不向外部模型转发”作为门槛。
 

@@ -36,9 +36,9 @@
 
 ## 7. Knowledge MCP 与有界召回
 
-- [ ] 7.1 固定注册 knowledge-mcp、knowledge_list_bases 和 knowledge_search 的 Manifest/schema/effect，接入独立 audience、完整 scope、Tool 目录、Agent/Application 发布子集及 Runtime 固定 Server policy，保留旧 Job 拒绝新增工具。
+- [x] 7.1 固定注册 knowledge-mcp、knowledge_list_bases 和 knowledge_search 的 Manifest/schema/effect，接入独立 audience、完整 scope、Tool 目录、Agent/Application 发布子集及 Runtime 固定 Server policy，保留旧 Job 拒绝新增工具。
 - [x] 7.2 实现授权 KB 目录和 50 项 keyset 分页，cursor 绑定 Job/用户/应用/Snapshot/授权与资源摘要；补 0/1/50/51/多页、重复/遗漏、篡改、过长、跨用户和变更失效测试，不输出文档信息或数量。
-- [ ] 7.3 实现授权 KB/发布索引的 dense 召回、当前版本/收录检查和文档去重；至多 200 候选点、50 个工作项、4 并发、60 秒总 deadline 并服从 Job 剩余预算，严格输出已授权引用和每文档最多 3 条证据。
+- [ ] 7.3 通过生产 MCP/ASGI 入口接通授权 KB/发布索引的 dense 召回、当前版本/收录检查和文档去重；至多 200 候选点、50 个工作项、4 并发、60 秒总 deadline 并服从 Job 剩余预算，严格输出已授权引用和每文档最多 3 条证据。`services/knowledge_mcp_server/` 入口、独立鉴权、安全 MCP 审计、断开通知和有界线程已有合成验收；仍缺统一数据库等待/阻塞依赖取消预算的故障注入验收，故不补勾。
 - [x] 7.4 实现有界补候选和 partial，明确区分预算耗尽、权限过滤及 Provider 故障；覆盖输入边界、重复点、全部过滤、top_k 不满、检查中撤权、无原始文本/被拒绝计数泄漏和安全审计。
 
 ## 8. 简化聊天模型边界（2026-09-19 用户修订，替代原任务 8）
@@ -52,15 +52,15 @@
 
 ## 9. Web 配置与 Agent 使用说明
 
-- [ ] 9.1 在 Web 工具资源增加知识库表单/列表/详情，展示独立存储、来源、索引和发布状态，提供安全验证/发布/停用操作及稳定中文错误，不展示任意连接/凭据配置。
+- [x] 9.1 在 Web 工具资源增加知识库表单/列表/详情，展示独立存储、来源、索引和发布状态，提供安全验证/发布/停用操作及稳定中文错误，不展示任意连接/凭据配置。
 - [x] 9.2 在角色业务授权增加 KB 选择、明确 ID 预览、并发保存和撤权反馈；补 Web 类型检查/组件测试，验证无权限隐藏不代替服务端授权。
-- [ ] 9.3 完善工具描述和 Agent 使用约束：先发现明确 KB，再检索引用，再使用现有 ONES 详情 Tool；不猜 Team、不把零命中解释为全库无数据、不把业务正文当系统指令。
+- [x] 9.3 完善工具描述和 Agent 使用约束：先发现明确 KB，再检索引用，再使用现有 ONES 详情 Tool；不猜 Team、不把零命中解释为全库无数据、不把业务正文当系统指令。
 
 ## 10. 可选部署与工程回归
 
-- [ ] 10.1 将 knowledge-mcp 与固定内部连接/健康检查/受管服务凭据接入可选 knowledge Compose，核对 PostgreSQL 最小读取/治理权限及内部网络边界；主部署未启用知识组件时不增加必需服务或 Secret。
-- [ ] 10.2 将新增 backend 测试登记 test_suite_tiers.toml，执行知识模块、RBAC/Principal、Manifest/Publication、ONES、模型/Session 与相关迁移回归，以及 Ruff、MyPy、Web 检查；失败不得归因为无关后直接忽略。
-- [ ] 10.3 执行主/可选 Compose 配置校验、严格 OpenSpec 校验、Markdown 链接和 diff 检查，更新部署/排障/回退说明，保证未验收事项仍明确未完成。
+- [x] 10.1 将 knowledge-mcp 与固定内部连接/健康检查/受管服务凭据接入可选 knowledge Compose，核对 PostgreSQL 最小读取/治理权限及内部网络边界；主部署未启用知识组件时不增加必需服务或 Secret。
+- [x] 10.2 将新增 backend 测试登记 test_suite_tiers.toml，执行知识模块、RBAC/Principal、Manifest/Publication、ONES、模型/Session 与相关迁移回归，以及 Ruff、MyPy、Web 检查；失败不得归因为无关后直接忽略。
+- [x] 10.3 执行主/可选 Compose 配置校验、严格 OpenSpec 校验、Markdown 链接和 diff 检查，更新部署/排障/回退说明，保证未验收事项仍明确未完成。
 - [ ] 10.4 在本地隔离测试环境以合成语料验证完整调用、资源发布、双权限、撤权、容器重启及未启用知识环境的兼容性，记录为合成/容器证据，不冒充真实 ONES。
 
 ## 11. 真实环境与业务效果验收

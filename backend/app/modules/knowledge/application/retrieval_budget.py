@@ -59,6 +59,7 @@ class RetrievalBudget:
                 raise KnowledgeGovernanceError("knowledge_input_invalid")
             duration = min(duration, deadline_ms / 1000 - wall.timestamp())
         parent = current_budget()
+        self._parent = parent
         if parent is not None:
             duration = min(duration, parent.remaining())
         self.deadline = entered + duration
@@ -69,6 +70,8 @@ class RetrievalBudget:
         return self.deadline - time.monotonic()
 
     def check(self) -> None:
+        if self._parent is not None:
+            self._parent.check()
         if self.remaining() <= 0:
             raise KnowledgeGovernanceError("knowledge_search_budget_exhausted")
         row = self._job()

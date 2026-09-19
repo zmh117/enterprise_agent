@@ -6,6 +6,7 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST, validate_mc
 from app.shared.mcp_server_policy import (
     FILE_MCP_SERVER_CODE,
     DINGTALK_MCP_SERVER_CODE,
+    KNOWLEDGE_MCP_SERVER_CODE,
     MCP_SERVER_POLICIES,
     ONES_MCP_SERVER_CODE,
     TOOL_MCP_SERVER_CODE,
@@ -29,6 +30,7 @@ def test_fixed_mcp_servers_have_one_closed_auth_mode() -> None:
         TOOL_MCP_SERVER_CODE: McpServerAuthMode.JOB_CONTEXT,
         ONES_MCP_SERVER_CODE: McpServerAuthMode.BUSINESS_PRINCIPAL_JWT,
         DINGTALK_MCP_SERVER_CODE: McpServerAuthMode.BUSINESS_PRINCIPAL_JWT,
+        KNOWLEDGE_MCP_SERVER_CODE: McpServerAuthMode.BUSINESS_PRINCIPAL_JWT,
         FILE_MCP_SERVER_CODE: McpServerAuthMode.FILE_PRINCIPAL_JWT,
     }
     validate_mcp_tool_manifest()

@@ -111,13 +111,15 @@ function toApiError(status: number, payload: unknown): ApiError {
   const code =
     typeof detail.code === "string"
       ? detail.code
-      : status === 401
-        ? "authentication_required"
-        : status === 403
-          ? "forbidden"
-          : status === 404
-            ? "not_found"
-            : "request_failed"
+      : typeof detail.error_code === "string"
+        ? detail.error_code
+        : status === 401
+          ? "authentication_required"
+          : status === 403
+            ? "forbidden"
+            : status === 404
+              ? "not_found"
+              : "request_failed"
   const fieldErrors = Array.isArray(detail.field_errors)
     ? detail.field_errors.flatMap((value) => {
         if (!isRecord(value)) return []

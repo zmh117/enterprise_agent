@@ -42,6 +42,7 @@ from app.python_runtime.error_mapper import (
     sdk_error_message,
 )
 from app.shared.config import ExecutionSettings
+from app.shared.knowledge_tool_contracts import KNOWLEDGE_USAGE_INSTRUCTIONS
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import (
     DiagnosticLoopExhausted,
@@ -713,6 +714,11 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
             ),
             "Safety rules:\n" + _numbered(context.safety_rules),
             "Tool restrictions:\n" + _numbered(context.tool_restrictions),
+            (
+                KNOWLEDGE_USAGE_INSTRUCTIONS
+                if any(name.startswith("mcp__knowledge_mcp__") for name in declared_tools)
+                else ""
+            ),
             (
                 f"Current callable tools for Prompt template {context.prompt_template_version} "
                 f"(contract {context.prompt_contract_hash}):\n" + _numbered(declared_tools)

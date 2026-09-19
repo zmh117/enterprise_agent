@@ -86,6 +86,8 @@ import type {
 } from "@/contexts/platform-governance/domain/platform-governance"
 import type { ProviderContract } from "@/contexts/platform-governance/domain/provider-contract"
 import { ApiError } from "@/shared/api/api-client"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { KnowledgeResourcesPage } from "@/contexts/platform-governance/presentation/knowledge-resources-page"
 
 type Provider = ResourceFormInput["provider_type"]
 type ResourceKind = ResourceFormInput["resource_kind"]
@@ -186,6 +188,26 @@ function formForResource(resource: GovernedResource | null) {
 }
 
 export function ToolResourcesPage() {
+  const [tab, setTab] = useState("connections")
+  return (
+    <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
+      <div className="mx-auto w-full max-w-[1500px] px-4 pt-5 sm:px-6 lg:px-8">
+        <TabsList aria-label="工具资源类型">
+          <TabsTrigger value="connections">数据库 / Redis / Loki</TabsTrigger>
+          <TabsTrigger value="knowledge">知识库</TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value="connections">
+        {tab === "connections" && <ConnectionResourcesPage />}
+      </TabsContent>
+      <TabsContent value="knowledge">
+        {tab === "knowledge" && <KnowledgeResourcesPage />}
+      </TabsContent>
+    </Tabs>
+  )
+}
+
+function ConnectionResourcesPage() {
   const resources = useGovernedResources()
   const create = useCreateGovernedResource()
   const save = useSaveGovernedResourceDraft()

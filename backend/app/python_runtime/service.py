@@ -31,6 +31,7 @@ from app.shared.mcp_server_policy import (
     MAX_MCP_PRINCIPAL_TOKEN_BYTES,
     MCP_SERVER_POLICIES,
     DINGTALK_MCP_SERVER_CODE,
+    KNOWLEDGE_MCP_SERVER_CODE,
     ONES_MCP_SERVER_CODE,
     McpServerAuthMode,
     McpServerPolicy,
@@ -488,6 +489,9 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         limits=settings.execution,
         mcp_server_url=os.getenv("MCP_TOOL_SERVER_URL", "http://tool-mcp:9103/mcp"),
         business_mcp_server_urls={
+            KNOWLEDGE_MCP_SERVER_CODE: os.getenv(
+                "KNOWLEDGE_MCP_SERVER_URL", "http://knowledge-mcp:9108/mcp"
+            ),
             ONES_MCP_SERVER_CODE: os.getenv(
                 "ONES_MCP_SERVER_URL",
                 "http://ones-mcp:9104/mcp",

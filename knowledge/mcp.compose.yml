@@ -1,0 +1,58 @@
+# Online retrieval only. Overlay root docker-compose.yml, knowledge/compose.yml,
+# then this file. Offline indexing retains its existing two-file configuration.
+services:
+  api-server:
+    environment:
+      KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /run/secrets/knowledge_bootstrap_token
+    secrets:
+      - knowledge_bootstrap_token
+    networks:
+      - knowledge-internal
+
+  knowledge-mcp:
+    profiles: [knowledge]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: knowledge-mcp
+      args:
+        BUILD_SOURCE_REVISION: ${BUILD_SOURCE_REVISION:-local-dev}
+        BUILD_ID: ${BUILD_ID:-local-dev}
+        BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
+    restart: unless-stopped
+    environment:
+      DATABASE_DSN: ${KNOWLEDGE_DATABASE_DSN:?在线知识检索需要独立 knowledge_mcp_reader 数据库账号}
+      PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
+      KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /run/secrets/knowledge_bootstrap_token
+      ONES_IDENTITY_INSTANCE_CODE: ${ONES_IDENTITY_INSTANCE_CODE:-default}
+      ONES_MCP_PROVIDER_BASE_URL: ${ONES_MCP_PROVIDER_BASE_URL:-http://host.docker.internal:19121}
+    secrets:
+      - principal_jwks
+      - knowledge_bootstrap_token
+    expose: ["9108"]
+    networks: [knowledge-internal, agent-runtime-control]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777,uid=10008,gid=10008"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1
+    mem_limit: 512m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      knowledge-embedding:
+        condition: service_healthy
+      knowledge-qdrant:
+        condition: service_started
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9108/health',timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+secrets:
+  knowledge_bootstrap_token:
+    file: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:?在线知识检索需要独立受管 bootstrap 文件}

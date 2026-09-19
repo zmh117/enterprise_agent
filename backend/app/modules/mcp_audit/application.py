@@ -647,7 +647,7 @@ class McpAuditCoordinator:
             )
         return len(rows)
 
-    def assert_ready(self) -> None:
+    def assert_ready(self, *, retention_cleanup: bool = True) -> None:
         try:
             row = self.database.execute_one(
                 """
@@ -674,6 +674,20 @@ class McpAuditCoordinator:
                     "agent_tool_call": ("SELECT", "INSERT", "UPDATE"),
                     "mcp_operation_audit": ("SELECT", "INSERT", "UPDATE", "DELETE"),
                 }
+                if not retention_cleanup:
+                    # 独立只读业务 MCP 只写自身审计；清理和读取完整审计由平台负责。
+                    privileges = {table: ("INSERT", "UPDATE") for table in privileges}
+                    for table, columns in {
+                        "agent_tool_call": ("id", "mcp_call_id", "status"),
+                        "mcp_operation_audit": ("id", "agent_tool_call_id", "status"),
+                    }.items():
+                        for column in columns:
+                            allowed = self.database.execute_one(
+                                "select has_column_privilege(current_user, ?, ?, 'SELECT') as allowed",
+                                (f"public.{table}", column),
+                            )
+                            if not allowed or not allowed["allowed"]:
+                                raise ValueError("MCP audit correlation read grant is missing")
                 for table, required in privileges.items():
                     for privilege in required:
                         allowed = self.database.execute_one(

@@ -32,6 +32,9 @@ unit = [
 ]
 
 contract = [
+  "test_knowledge_mcp_server.py",
+  "test_knowledge_database_policy.py",
+  "test_knowledge_mcp_contract.py",
   "test_knowledge_authorization.py",
   "test_knowledge_job_access.py",
   "test_knowledge_readability.py",
@@ -47,6 +50,7 @@ contract = [
   "test_knowledge_evaluation.py",
   "test_mcp_inspector_runner.py",
   "test_knowledge_compose.py",
+  "test_knowledge_online_compose.py",
   "test_knowledge_vectors.py",
   "test_admin_api_contracts.py",
   "test_admin_web_proxy.py",
@@ -178,6 +182,7 @@ contract = [
 ]
 
 integration = [
+  "test_knowledge_database_policy_postgres.py",
   "test_mcp_inspector_smoke.py",
   "test_business_application_runtime_routing_postgres_integration.py",
   "test_job_dispatch_fault_integration.py",

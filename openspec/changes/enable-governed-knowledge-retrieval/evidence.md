@@ -16,9 +16,9 @@
 | --- | --- | --- |
 | 代码与静态合同 | 实施中 | 按实际修改与检查记录，不代表已部署 |
 | 合成单元/接口 | 已分阶段执行，端到端未完成 | 不使用真实业务文本/凭据；详见下方逐轮记录 |
-| 隔离数据库/容器 | 待执行 | 不迁移正式库，不替代真实 Provider |
+| 隔离数据库/容器 | PostgreSQL 权限边界已验证，完整容器链路未完成 | 临时 tmpfs 数据库，不迁移正式库，不替代真实 Provider |
 | 真实 ONES 来源和本人权限 | 未完成 | 待批次来源确认、技术交叉验证及两位测试用户 |
-| 内网模型与出口 | 未完成 | 待实际模型/网关和所有映射出口证据 |
+| 本地 Embedding 与既有聊天模型 | 真实链路未完成 | 用户已取消强制内网聊天；仍需真实新 Job 证据 |
 | 人工业务效果 | 未完成 | 待约 50 条人工标签及用户确认质量/时延目标 |
 
 原文自查询、合成案例和真实人工评测必须分别记录。任何失败不得回显查询、标签、原始 Provider 响应、凭据或业务正文。
@@ -202,3 +202,44 @@
 - Ruff 通过；后端及相关适配入口 MyPy **477 source files** 通过；本轮分层/入口文件格式检查通过。主 Compose、可选 knowledge Compose 配置、严格 OpenSpec、Markdown 链接与 git diff 检查均通过。精简镜像证据仅为按 Dockerfile COPY 白名单独立导入，不是实际 Docker 构建/启动验收。
 - 本轮完成修订后的 **8.1–8.4、12.1–12.4**，整体 **29/43**。7.1 生产 MCP 注册/接线、7.3 完整墙钟 deadline、知识资源 Web、可选部署及全部真实环境/人工评测门槛仍未完成，不补勾。无新增 Web 验收声明。
 - 本轮没有读取真实凭据或原始业务消息，没有真实 ONES/聊天模型/Embedding 请求、正式迁移、重导入、重分块、重编码、资源/角色发布、服务重启、提交、推送或归档。删除的旧限制实现保留在本机临时源码备份；现有数据与索引无需重建。
+
+## 正式工具合同与 Runtime 固定路由（2026-09-19，继续实施）
+
+- 完成任务 **7.1、9.3**，进度 **31/43**。`knowledge_list_bases` / `knowledge_search` 的输入、引用型输出和中文说明进入共享纯合同、生产 Manifest、Tool/角色目录以及 Agent/Application 发布链。知识测试不再 monkeypatch 注册工具，改为使用正式合同；领域/应用层仍不依赖 Runtime 或外部客户端。
+- 固定 `knowledge-mcp` Business Principal 策略，独立 audience 与 `mcp:knowledge-mcp:<tool>:invoke` scope；Runtime 默认路由 `http://knowledge-mcp:9108/mcp`，保持部署主机校验及按冻结 Server 集合建立连接。合成测试覆盖两种 audience 凭证隔离、旧 Job 不获得新工具、Manifest 元数据漂移、严格输入/引用型输出，以及无知识工具时不注入知识提示。
+- 对齐发布前依赖与既有 Job 门禁：知识目录、检索、ONES 详情必须成套选择，Agent Envelope/Application 子集缺任一项即中文拒绝，不自动扩权。共享工具说明和按有效工具启用的系统提示要求先发现明确 KB、检索引用、再回源详情；不猜 Team，不将零命中/部分结果/服务故障混为全库无数据，业务文本只作不可信数据。
+- 新增合同专项 **27 passed**，已包含在以下知识全量中，不重复累计。知识全量 **607 passed、3 skipped（153.45 秒）**；跳过项仍为显式隔离 PostgreSQL 与 PostgreSQL+Qdrant 集成，执行前移除继承端点变量。既有导入/分块/profile/向量身份、授权撤销、分页、桥、预算、分层和最小镜像导入测试继续通过；主/可选 Compose 的合成配置校验包含在该套件中。
+- 独立扩展回归 **311 passed（44.99 秒）**：Runtime/SDK、固定 Server 策略、Principal、模型/Agent 发布、业务应用、角色授权、ONES、Runtime 协议和测试分类。两组为不同文件，合计 **918 passed、3 skipped**。Ruff、MyPy（backend/app，**473 source files**）、本轮合同/依赖/测试格式、严格 OpenSpec、Markdown 链接和 diff 检查通过；没有新增 Web 或容器运行验收声明。
+- **固定注册不等于检索已上线**。生产 MCP/ASGI 服务入口、安全 MCP 审计与整条链路截止/取消接线仍属于未完成的 7.3，任务描述已显式保留；可选 Compose/最小数据库权限、知识资源 Web、隔离完整服务验收、真实来源与双用户 ONES/模型/人工质量验收仍未完成。未调用真实 Provider/聊天/Embedding、读取正式业务数据、执行正式迁移、重建索引、发布真实资源/角色、重启服务、提交、推送或归档。
+
+## 同级独立 Knowledge MCP 服务入口（2026-09-19，按用户目录要求继续）
+
+- 新增 `services/knowledge_mcp_server/`，与 ONES、钉钉 MCP 同级，不创建单数 service 目录。包含 ASGI/MCP 入口、身份上下文适配、安全错误映射、有界执行、工具适配及狭窄 bootstrap；目录与检索仍由 knowledge 四层用例拥有。新增 `knowledge-mcp` 可选依赖组，沿用项目 `mcp==2.0.0`，不更新其他依赖或引入兼容转发层。
+- 固定 `/mcp` 无状态 Streamable HTTP + JSON 响应、9108 端口和 `/health`。独立 Knowledge audience/完整 scope、RUNNING Job、冻结授权、当前角色/应用/KB 与 ONES 双权限继续生效；核对请求上下文与持久化 Job attempt/发布身份。严格关键头/Host/JSON/32 KiB 请求、256 KiB 工具结果检查；SDK 参数错误与依赖异常不回显输入。MCP 根审计不存 query、cursor、库名、命中 UUID 或正文，只保存工具名、安全版本/计数/错误码及关联 ID。
+- 服务启动只装配公开 JWKS、受限数据库访问组件、固定内部 Embedding/Qdrant、独立服务短期身份和平台桥，不创建平台全量 Container、不加载主密钥/签名私钥/模型 Key/ONES 凭据仓储。bootstrap 测试使用不存在的合成服务凭据路径，确认装配不提前读取；没有新增真实配置。`/health` 仅证明 schema/审计依赖，不作为向量/ONES/业务资源 readiness 证据。
+- 从入口开始收紧 60 秒预算，超时/客户端断开设置取消信号；嵌套 RetrievalBudget 检查父预算，使已有用例在后续检查点观察取消。SDK JSON 等待本身不读断开事件，ASGI 显式监听并取消等待。固定 4 个真实在途线程槽位，未退出的超时线程仍占槽位，不将取消 Future 误当工作线程停止，也不新增无界排队。数据库/DNS 等阻塞 I/O 的物理取消仍待补齐，不声称进程内所有依赖都在截止瞬间退出。
+- 入口专项 **30 passed**（已计入知识全量）：官方 MCP SDK initialize/list/call 与 in-process ASGI 传输、两工具完整合成调用、独立 audience/撤权/执行上下文拒绝、非法请求与异常不泄漏、51 个 KB 按 50+1 续页且游标不进审计、过期请求/迟到结果丢弃、取消向嵌套预算传播、HTTP 断开和超时线程继续占并发名额。全部使用合成 SQLite 和 Mock Embedding/Qdrant/平台桥/ONES，不是 Docker 或真实 Provider 验收。
+- 最终知识全量 **637 passed、3 skipped（159.33 秒）**；显式移除 `KNOWLEDGE_TEST_POSTGRES_DSN` / `KNOWLEDGE_TEST_QDRANT_URL` 后运行，三项跳过仍需隔离 PostgreSQL、PostgreSQL+Qdrant。独立扩展回归 **349 passed（30.92 秒）**，覆盖 MCP 审计、Server policy、Principal/服务身份、ONES/钉钉 MCP、Runtime/协议/架构及 Tool Runtime。两组不同文件，合计 **986 passed、3 skipped**，不重复累计入口专项。
+- Ruff、MyPy（backend/app + 新服务，**480 source files**）、新增/修改入口格式、严格 OpenSpec、Markdown 链接、diff 检查通过；新增测试登记 contract tier。主/可选 Compose 合成配置兼容测试包含在知识套件内，没有改 Compose/Dockerfile、构建或重启服务。
+- 任务 **7.3 部分实施，仍不勾选**，整体保持 **31/43**：尚缺数据库池/SQL 等待的统一截止、阻塞依赖取消/清理故障注入；可选部署/最小数据库 grant、工具资源 Web、完整隔离容器及真实验收仍分别保留。按 OpenSpec 保留未完成项，不将入口代码存在替代验收。未读取真实凭据/原始业务消息，未调用真实 Provider/聊天/Embedding，未正式迁移、重建索引、发布资源/角色、提交、推送或归档。
+
+## 知识资源 Web、可选在线部署与独立数据库账号（2026-09-19）
+
+- 完成 **9.1、10.1–10.3**，进度 **35/43**。工具资源新增知识库页签及来源/资源表单、列表和详情：明确区分存储、来源核验、索引、发布；创建、草稿、验证、确认发布/停用/恢复/归档沿用既有管理 API。角色仍仅按应用配置 KB 允许范围，无 deny 或重复连接配置。
+- 新的 API/领域解析和查询模块保持前端分层；严格投影安全字段，不展示业务正文或任意地址/凭据。权限失败、系统异常和并发冲突用固定中文信息；冲突不自动重试或覆盖输入。目录刷新失败保留已有编辑输入，只有显式成功重新载入才更新编辑基线。共享 API 错误解析补 `detail.error_code`，保留既有 `detail.code` 优先级。
+- 保留原 `knowledge/compose.yml` 离线用法，新增 `knowledge/mcp.compose.yml` 在线扩展：独立 MCP Docker target、非 root/只读根目录/受限 tmpfs、固定健康检查、仅内部网络；API 追加知识网络与独立 bootstrap。主部署和仅离线环境不新增必需服务或 Secret，不改现有模型/向量卷。
+- 新增固定 `knowledge_mcp_reader` 列级读取合同、显式运维配置 CLI 与启动权限检查。允许读取当前授权/来源/索引及证据必要字段，只允许三张审计表必要写入；无原始消息、完整 ONES 凭据、完整文档修订、业务写入、DELETE 或角色继承/提权。审计协调器增加仅记录 readiness 选项，默认清理权限检查保持原行为。
+- 使用已有 postgres:18 镜像创建独立 tmpfs 容器（无持久卷、512 MiB 内存上限、仅回环测试端口），只运行当前迁移及合成账号/审计。**18 项 PostgreSQL 专项**验证 schema readiness、每张表的明确读取列、审计写入、原始/凭据/业务写入拒绝、额外表/列权限与 schema CREATE 拒绝、收紧旧列权限。容器已停止并自动删除，tmpfs 合成数据随之清理；未连接正式数据库。
+- 知识全量 **664 passed、3 skipped（170.55 秒）**，已包含上述 18 项 PostgreSQL 专项、SQLite 实际目录/检索 SQL 表面采集及 Compose 主/离线/在线兼容检查。只设置新的隔离权限测试 DSN；显式取消继承原导入/分块/向量端点，三项跳过仍是需要显式 PostgreSQL 或 PostgreSQL+Qdrant 的外部集成，不以权限测试冒充数据流水线验收。
+- 独立扩展回归 **432 passed（55.90 秒）**：MCP 审计、RBAC/Principal/服务身份、Agent/Application/模型发布、ONES、Runtime/Worker/Session、schema/迁移、Secret/Compose 和测试分类。与知识套件为不同文件，合计 **1096 passed、3 skipped**；中间专项重跑不重复累计。
+- Web 全量 **171 passed（16 个文件）**，其中知识资源 **11 项**覆盖完整操作链、修订冲突、只读/403/503、来源证明与 Job 核验/撤销、失败刷新保留输入、页签按需加载。TypeScript 构建、Vite production build、全前端 ESLint 通过；无浏览器实际部署验收。Vite 仍提示 native config 的 `__dirname` 兼容与大 chunk，构建成功，本轮未扩大为全站构建拆包改造。
+- Ruff 全仓库通过，MyPy **482 source files** 通过；本轮 Python 格式、主/可选 Compose 合成配置、严格 OpenSpec、Markdown 链接与 diff 检查通过。镜像 COPY 白名单独立导入通过，但没有实际构建/重启整套知识服务。运行手册新增独立账号、受管凭据、维护顺序和无删卷回退步骤。
+- **7.3、10.4、11.1–11.6 保持未完成**：数据库/DNS 阻塞等待与取消、完整隔离容器/重启、真实来源确认、正式部署批准、双用户 ONES/新 Job 和人工召回质量仍缺证据。没有读取真实 Secret/业务消息、真实 Provider/聊天/Embedding 请求、正式迁移、数据重编码、资源/角色发布、提交、推送或归档。
+
+## 预算故障复现与 DNS 取消设计关卡（2026-09-19，后续核对）
+
+- 继续任务 7.3 前，核对现有数据库池、Unit of Work、Knowledge/平台桥/ONES 预算及 HTTP 传输。数据库池和 SQL 尚不消费调用内剩余预算；只在阶段后检查不能提前终止已阻塞操作。平台桥在进入 RetrievalBudget 之前的鉴权数据库访问也须纳入入口预算。
+- 合成 SQLite 单连接池测试：另一线程占住连接，池等待配置 300 ms，外层调用预算 50 ms；实际约 **301 ms** 才报 TimeoutError。只使用内存库和 `select 1`，线程、连接已回收；该实验不是 PostgreSQL 查询取消证据。
+- 合成 DNS 测试：将本进程 resolver 替换为延迟 800 ms 后失败的函数，固定虚构域名，不发真实 DNS/HTTP 请求；`request_bytes` 配置 100 ms，总耗时约 **855 ms** 才报 TimeoutError。当前 `asyncio.run` 的 executor 清理等待尚未结束的 DNS 线程，网络协程取消不等于解析线程已退出。
+- 需要确认的小范围实现取舍：数据库池等待/SQL/事务收尾仅在知识读取上下文中消费统一剩余预算，并主动取消超时操作、淘汰异常连接；DNS 保留操作系统解析语义，但只把域名解析放入可终止的短生命周期子进程，不把 JWT、查询或业务正文交给它，不迁移整个 MCP 为多进程。另需明确 deadline 后不再返回业务结果，清理有独立有界收尾，不能承诺所有系统调用在同一时刻消失。
+- 依 apply 的设计关卡先请求用户确认，尚未实现此方案或改写已接受设计；任务仍 **35/43**。本轮只新增上述证据，不修改生产代码、依赖、真实配置或部署，不补勾 7.3/10.4。

@@ -11,9 +11,11 @@ from app.shared.dingtalk_tool_contracts import (
 )
 from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
 from app.shared.ones_tool_contracts import ONES_CONFIRMATION_POLICY
+from app.shared.knowledge_tool_contracts import KNOWLEDGE_TOOL_CONTRACTS
 from app.shared.mcp_server_policy import (
     DINGTALK_MCP_SERVER_CODE,
     FILE_MCP_SERVER_CODE,
+    KNOWLEDGE_MCP_SERVER_CODE,
     MCP_SERVER_POLICIES,
     ONES_MCP_SERVER_CODE,
     TOOL_MCP_SERVER_CODE,
@@ -116,6 +118,16 @@ for _dingtalk_contract in DINGTALK_TOOL_CONTRACTS.values():
         open_world=_dingtalk_contract.open_world,
     )
 
+for _knowledge_contract in KNOWLEDGE_TOOL_CONTRACTS.values():
+    MCP_TOOL_MANIFEST[_knowledge_contract.identifier] = McpToolDefinition(
+        server_code=KNOWLEDGE_MCP_SERVER_CODE,
+        identifier=_knowledge_contract.identifier,
+        description=_knowledge_contract.description,
+        input_schema=_knowledge_contract.input_schema,
+        schema_hash=mcp_tool_schema_hash(_knowledge_contract.input_schema),
+        required_scope=_knowledge_contract.required_scope,
+    )
+
 for _identifier, _file_tool in FILE_TOOL_MANIFEST.items():
     MCP_TOOL_MANIFEST[_identifier] = McpToolDefinition(
         server_code=FILE_MCP_SERVER_CODE,
@@ -190,6 +202,24 @@ def validate_mcp_tool_manifest(
                 or definition.open_world != ones_contract.open_world
             ):
                 raise ValueError("ONES MCP Tool execution metadata is inconsistent")
+        if definition.server_code == KNOWLEDGE_MCP_SERVER_CODE:
+            knowledge_contract = KNOWLEDGE_TOOL_CONTRACTS.get(identifier)
+            if (
+                knowledge_contract is None
+                or definition.input_schema != knowledge_contract.input_schema
+                or definition.schema_hash != mcp_tool_schema_hash(knowledge_contract.input_schema)
+                or definition.description != knowledge_contract.description
+                or definition.required_scope != knowledge_contract.required_scope
+                or definition.effect != "read"
+                or definition.resource_kind
+                or definition.operation_code
+                or definition.target_policy
+                or definition.risk_level != "low"
+                or definition.destructive
+                or definition.idempotent
+                or definition.open_world
+            ):
+                raise ValueError("Knowledge MCP Tool execution metadata is inconsistent")
 
 
 validate_mcp_server_policies()

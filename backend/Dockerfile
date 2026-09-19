@@ -179,6 +179,22 @@ RUN python -c "import app.services.tool_mcp"
 USER 10001:10001
 CMD ["python", "-m", "uvicorn", "app.services.tool_mcp:create_default_app", "--factory", "--host", "0.0.0.0", "--port", "9103"]
 
+FROM python-deps AS knowledge-mcp
+COPY backend/app/__init__.py /app/backend/app/
+COPY backend/app/shared /app/backend/app/shared
+COPY backend/app/modules /app/backend/app/modules
+COPY backend/migrations /app/backend/migrations
+COPY services/__init__.py /app/services/
+COPY services/knowledge_mcp_server /app/services/knowledge_mcp_server
+ENV PYTHONPATH=/app/backend:/app PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['knowledge-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    && groupadd --system --gid 10008 knowledge-mcp \
+    && useradd --system --uid 10008 --gid 10008 --no-create-home knowledge-mcp \
+    && python -c "import services.knowledge_mcp_server.bootstrap; import services.knowledge_mcp_server.app"
+USER 10008:10008
+CMD ["python", "-m", "services.knowledge_mcp_server.app"]
+
 FROM api-server AS ones-mcp
 USER root
 COPY services /app/services
