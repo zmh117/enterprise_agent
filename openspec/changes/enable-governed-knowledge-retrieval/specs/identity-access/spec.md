@@ -1,5 +1,20 @@
 ## MODIFIED Requirements
 
+### Requirement: 统一 RBAC 是唯一授权事实源
+系统 MUST 以现行 `rbac_*` 角色、成员、管理能力、应用访问、MCP Tool grant、数据范围及适用领域的受管显式拒绝计算权限，不得读取旧 `permission_policy`、`platform_access_grant` 或从历史数据自动回填权限。用户、角色和成员关系必须启用，成员关系过期后不再参与新决策。知识库范围 SHALL 只使用当前角色业务应用记录内的明确允许列表，MUST NOT 新增知识库显式拒绝配置；未授权即不可使用，其他应用的允许不得借用。
+
+#### Scenario: 旧策略允许但现行角色未授权
+- **WHEN** 用户没有当前有效应用或 Tool grant
+- **THEN** 系统拒绝业务访问，不执行兼容 fallback
+
+#### Scenario: 多个业务角色重叠
+- **WHEN** 适用显式拒绝的非知识库领域中，有效角色提供多个允许范围且某目标命中显式拒绝
+- **THEN** 允许范围取并集，命中的显式拒绝优先，并保留安全来源解释
+
+#### Scenario: 知识库没有额外拒绝配置
+- **WHEN** 当前应用存在一条同时满足应用、Tool、KB 的有效角色允许记录，而另一角色未配置该 KB
+- **THEN** 未配置记录不否决完整允许记录；知识库读取仍须通过其他发布、来源和 ONES 检查
+
 ### Requirement: 平台 Principal 按 MCP 认证模式隔离
 代码固定的 MCP Server policy SHALL 分别声明 `tool-mcp` 的 Job-context、`ones-mcp`、`dingtalk-mcp` 与 `knowledge-mcp` 的 Business Principal JWT、`file-service` 的 File Principal JWT。系统 MUST NOT 运行时注册任意认证模式、将一种凭证用于另一 Server 或以旧 Internal API Bearer 作为工具授权替代。
 
@@ -18,7 +33,19 @@
 ## ADDED Requirements
 
 ### Requirement: 知识库范围必须进入现有角色业务授权事实源
-知识库权限 SHALL 以明确 knowledge_base_id 进入角色业务访问记录、业务 revision、预览、委派上限、原子保存、显式拒绝和 authorization hash。应用内 Tool 与 KB 范围 MUST 在同一条允许的角色访问记录中共同满足，不得跨角色拼接；直接 Agent 也 MUST 具有明确 KB 范围而非仅依赖项目 use grant。平台管理能力、知识入库和索引存在 MUST NOT 自动授予业务读取。角色 MUST NOT 授予物理 Resource Revision、Qdrant collection 或以 environment/placement 代替 KB。
+知识库权限 SHALL 以明确 knowledge_base_id 允许列表进入角色业务访问记录、业务 revision、预览、委派上限、原子保存和 authorization hash。应用内 Tool 与 KB 范围 MUST 在同一条允许的角色访问记录中共同满足，不得跨角色拼接。一个角色可关联多个应用，各应用知识库范围 MUST 独立配置；未配置不授予，MUST NOT 新增 KB 显式拒绝字段或把某应用的授权扩展到其他应用。工具资源负责知识库资源配置，角色页面 SHALL 只引用已有 KB，不重复维护来源或索引。首版知识工具 MUST 仅供具有有效业务应用及其 Publication 的 Job 使用；直接 Agent MUST 被拒绝，不得以项目 use grant、其他应用授权或虚构应用身份替代。平台管理能力、知识入库和索引存在 MUST NOT 自动授予业务读取。角色 MUST NOT 授予物理 Resource Revision、Qdrant collection 或以 environment/placement 代替 KB。
+
+#### Scenario: 同一角色关联的应用具有不同知识库范围
+- **WHEN** 角色 A 同时关联 app1 和 app2，仅 app1 授予 KB，且用户无其他有效记录授予 app2 此 KB
+- **THEN** 用户在 app1 可按完整授权合同使用该 KB，在 app2 不可发现或检索此 KB
+
+#### Scenario: 提交额外拒绝规则
+- **WHEN** 知识库授权请求提交 deny、effect 或其他未声明字段
+- **THEN** 严格管理合同拒绝请求，不创建新拒绝规则
+
+#### Scenario: 直接 Agent 尝试知识检索
+- **WHEN** Job 没有业务应用及其有效 Publication，即使发起人拥有项目 use grant 或其他应用的知识库授权
+- **THEN** 系统在模型、Embedding、Qdrant 和 ONES 访问之前拒绝知识执行，不建立旁路直接 Agent ACL
 
 #### Scenario: 分别拥有 Tool 和 KB
 - **WHEN** 角色 A 只有知识检索 Tool，角色 B 只有 KB 范围，且没有一条记录同时满足
@@ -33,7 +60,7 @@
 - **THEN** 保存整体拒绝，不部分写入 KB grant，不覆盖其他授权分区
 
 ### Requirement: 知识命中必须通过当前双重权限
-知识 MCP MUST 在候选上游访问前校验当前平台授权，在任何命中引用返回前同时满足 KB 角色授权和当前 Job 发起人的 ONES 工作项可读权限。平台检查 MUST 包含有效用户、适用应用/直接 Agent 授权、精确 Snapshot、来源匹配及当前资源状态；ONES 检查 MUST 使用本人唯一启用绑定和默认 Team。拒绝或未知权限的工作项 MUST NOT 通过缓存数据、共享账号、管理员账号或历史允许结果返回。
+知识 MCP MUST 在候选上游访问前校验当前平台授权，在任何命中引用返回前同时满足 KB 角色授权和当前 Job 发起人的 ONES 工作项可读权限。平台检查 MUST 包含有效用户、当前业务应用及其 Publication 和授权、精确 Snapshot、来源匹配及当前资源状态；ONES 检查 MUST 使用本人唯一启用绑定和默认 Team。拒绝或未知权限的工作项 MUST NOT 通过缓存数据、共享账号、管理员账号或历史允许结果返回。
 
 #### Scenario: 有 KB grant 但无 ONES 权限
 - **WHEN** 用户获准调用知识 Tool 且 KB 范围有效，但 ONES 不允许读取候选工作项

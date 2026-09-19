@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.modules.knowledge.domain.tool_policy import knowledge_tool_dependency_errors
 from app.modules.business_application.domain.policies import required_file_mcp_tools
 from app.modules.job.infrastructure.repositories import now_iso
 from app.shared.database import Database
@@ -92,6 +93,14 @@ class ApplicationMcpToolCompositionService:
             ):
                 raise self._invalid(index, "所选 MCP Tool 不在 Agent 发布范围内或 Schema 已变化")
             selected.append(identifier)
+        errors = knowledge_tool_dependency_errors(selected)
+        if errors:
+            raise NonRetryableExecutionError(
+                "Knowledge Tool dependency is missing",
+                safe_message="知识检索必须同时选择 ONES 工作项详情工具",
+                error_code="validation_failed",
+                field_errors=errors,
+            )
         return [
             {
                 "server_code": MCP_TOOL_MANIFEST[identifier].server_code,

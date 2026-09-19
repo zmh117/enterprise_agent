@@ -57,6 +57,7 @@ export const roleApplicationAccessSchema = z.object({
   application_name: z.string(),
   status: z.string(),
   tool_identifiers: z.array(z.string()),
+  knowledge_base_ids: z.array(z.string()).default([]),
   scopes: z.array(roleScopeSchema),
 })
 
@@ -101,7 +102,7 @@ export const roleAuditSchema = z.object({
       status: z.string(),
       created_at: z.string(),
       action_zh: z.string(),
-    }),
+    })
   ),
   notice: z.string(),
 })
@@ -113,6 +114,15 @@ export const catalogApplicationSchema = z.object({
   description: z.string(),
   project_code: z.string(),
   status: z.string(),
+  knowledge_bases: z
+    .array(
+      z.object({
+        id: z.string(),
+        code: z.string(),
+        display_name: z.string(),
+      })
+    )
+    .default([]),
   mcp_tools: z.array(
     z.object({
       tool_identifier: z.string(),
@@ -121,7 +131,7 @@ export const catalogApplicationSchema = z.object({
       version_constraint: z.string(),
       effect: z.enum(["read", "mutation"]).default("read"),
       confirmation_policy: z.string().default("none"),
-    }),
+    })
   ),
 })
 
@@ -167,6 +177,7 @@ export type ExplanationInput = {
   user_id: string
   application_id: string
   tool_identifier: string
+  knowledge_base_id?: string
   environment: string
   base: string
   workshop: string

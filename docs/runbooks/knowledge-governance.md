@@ -1,0 +1,118 @@
+# 知识治理管理与排障
+
+本页描述 `enable-governed-knowledge-retrieval` 已实现的来源、资源管理、角色应用 KB 允许范围、Job/ONES 内部投影、平台双身份桥与目录/检索应用服务，不代表 Agent 检索已经开放。Knowledge MCP 的生产注册/传输、整条链路的 deadline 验收和真实验收仍须完成。仅部署 Embedding/Qdrant 不会自动发布资源或赋予业务权限。
+
+## 数据库和部署边界
+
+治理表通过平台前向迁移 `137_expand_knowledge_retrieval_governance.sql` 加入现有数据库的 `knowledge` schema；角色 KB 关系 `rbac_role_application_knowledge_base` 留在现有 RBAC 所属的 public schema，以外键引用逻辑 KB。不新建数据库，也不改变现有 source/knowledge_base 的离线存储状态、文档、分块或向量身份。迁移不创建真实来源绑定、发布或角色授权。
+
+API/Worker/ONES 镜像更新仍须经过正式 Migrator 和平台 schema readiness 门禁；本轮没有执行正式迁移或服务重启。不要在未升级 schema 时只替换后端，也不要在新库上直接回滚到只认识旧 schema 的镜像。停用知识检索时保留表、文档、索引和向量卷，不执行降级删表或重编码。
+
+## 管理流程
+
+入口位于 `/api/platform/knowledge`，仅开启 Web 管理的后端注册。读操作要求 `platform_config/read`，写操作要求登录 Cookie、现有 CSRF/Origin 校验和 `platform_config/manage`。客户端不提交 JWT、连接地址、凭据、环境 placement 或技术核验结果。
+
+1. `GET /sources` 查看来源及绑定元数据；管理员先在系统外确认完整离线批次的可信实例和 Team，将确认记录留在受限位置，仅提交其摘要。
+2. `POST /source-bindings` 提交 `source_id`、固定部署 `instance_code`、ONES 原生 `team_id`、`expected_revision`（首次为 0）、`batch_attested=true` 和 64 位小写十六进制 `attestation_hash`。Team/项目显示名称不替代原生 ID。新绑定为 PENDING，换版撤销旧绑定。
+3. `POST /source-bindings/{id}/verify` 仅提交 `job_id`。该 Job 必须属于当前管理员、处于 RUNNING，且是具备已发布和当前授权的 `ones_get_work_item_detail` 的业务应用 Job。平台在内存中签发该 Job 的现有完整 scope ONES Principal，调用固定 ONES 内部核验入口；不接受历史 Token、直接 Agent 或管理员代其他用户核验。
+4. 核验对完整来源身份/版本生成摘要，最多抽样 20 个工作项检查本人默认 Team、原生 UUID、项目 UUID。抽样不是完整批次归属证明，不能替代第 1 步的人工确认。Provider 错误不是核验成功。ONES 内部入口不会向管理端返回正文或 Token，也不注册为模型工具。
+5. `GET /catalog` 选择明确 KB/READY index；`POST /resources` 提交 `knowledge_base_id`、`code`、`name`。一个 KB 最多一个启用资源，创建不等于发布。
+6. `PUT /resources/{id}/draft` 提交 `expected_revision`、`binding_id`、`index_id`，追加配置版本。`POST /resources/{id}/verify` 校验当前来源、完整索引语料、Embedding profile、Qdrant 配置及点数；`POST /resources/{id}/publish` 只发布该草稿最新成功验证的版本。两者均提交最新 `expected_revision`。
+
+管理 API 只投影来源/资源/索引 ID、状态、版本与摘要，不返回业务正文或任意连接配置。工具资源的 Web 表单尚未接线。来源核验和资源验证在外部 I/O 期间不持有数据库事务，结束后复核管理授权、配置和来源；并发修改不能覆盖旧结果。
+
+## 角色与应用的知识库允许范围
+
+知识资源只在工具资源侧配置；角色页面沿用“角色 → 业务应用与数据范围 → 每个应用”的授权结构，只选择逻辑 KB，不重复编辑来源、索引或连接。角色 A 同时关联 app1、app2，只有 app1 勾选 KB，则该角色用户仅在 app1 获得 KB 授权，app2 不继承。
+
+- 不新增 deny/effect 或显式拒绝选项。未选择表示该角色应用记录不授予；另一角色在同一应用下的完整允许可以生效。单条记录必须同时允许所需 Tool 和 KB，不能跨角色拼接。
+- 角色业务授权 `PUT /api/admin/authorization/roles/{id}/business-access` 的每个 application 可提交 `knowledge_base_ids`；`knowledge_current_all=true` 在保存事务中展开操作者当时可授予的明确 ID，不存通配符，未来新增不自动加入。省略 KB 字段表示空集合，集成客户端须同步升级，避免全量保存时意外撤销已有 KB 授权。
+- 与原业务分区共用 `expected_revision`、二次确认、委派上限和原子保存。冲突返回 `revision_conflict`，Web 保留本地选择。撤销勾选后保存即移除当前记录的 KB 允许；平台管理员只管理配置，不能绕过业务读取范围。
+- Web 显示已选择 ID 与撤权提示；当前不可授予的旧 ID 保留展示并允许显式移除，不静默丢弃。授权预览可选择当前应用、Tool、KB，只验证当前 RBAC，不证明发布资源、RUNNING Job 或 ONES 可读性。
+- 新 Job 的既有 authorization hash 纳入 KB 集合、角色/成员修订；授权变更不重写旧 Job 快照。知识 Tool 冻结不依赖环境范围；旧 Job 的 KB 集合与当前完整允许记录取交集，后来新增 KB grant 不扩权旧 Job。平台管理权限不进入此集合。
+
+## Job 与 ONES 内部可读性关卡
+
+知识 Job 关卡要求本人启用 human 用户、RUNNING 业务应用 Job、匹配的 Session/Agent/Application Publication、发布内容完整性、精确工具快照以及当前详情 Tool grant。目录与检索共同使用逐记录 Tool/KB 允许投影；返回前比较当前授权摘要，变更后放弃结果。直接 Agent 携带知识能力时在创建 Job 前拒绝。知识 Principal 签发必须显式接入此关卡，未配置时失败关闭。
+
+`ones-mcp` 内部 `POST /internal/knowledge/work-item-readability` 使用该 Job 的完整 scope ONES Principal，不注册为模型工具。请求只含 `knowledge_base_id`、`resource_revision_id`、`index_id` 和最多 50 个唯一 `chunk_ids`；无 actor、Team、Provider 地址、操作或任意工作项 UUID。服务端按当前发布资源、来源、索引成员和当前文档版本解析 ONES UUID，同一文档的多个块只检查一次。
+
+- 仅持有固定目标配置和公共验签能力；资源只读解析器不需要管理权限或 JWT 签发器。复用现有详情 Operation、本人唯一 ONES 身份、默认 Team 和一次 401 刷新，返回前重验授权、身份、资源与候选。
+- Host/Origin、唯一 Bearer、8 KiB 请求体、严格 JSON 字段及每实例最多 4 个在途批次均独立覆盖此入口。调用内 60 秒预算缩短 Provider/登录超时与刷新锁等待，过期结果丢弃；完整检索的 Job 剩余预算和调用方总 deadline 仍属待接线的任务 7.3。来源管理核验入口仍使用独立的 4 KiB 限额。
+- 明确的 Provider 403/404 返回此候选不可读，不附 UUID、标题或正文；其他 Provider/凭据/解析/预算故障使整个批次失败，不返回部分允许项。允许结果不跨调用缓存。
+- 成功只返回已核验引用与编号，正文只在详情解析的内存中短暂存在；响应和该投影的操作审计均不保存正文或 Token。不得把此入口当作来源管理核验、全库权限证明或通用 ONES 代理。
+
+## 平台双身份桥
+
+`POST /api/internal/knowledge/work-item-readability` 只接受固定 API 内部 Host，无浏览器 Origin、Cookie 或 URL 参数。`Authorization: Bearer` 使用独立知识服务短期身份，`X-Knowledge-Principal: Bearer` 使用原用户的 Knowledge Principal；两者必须同时有效。请求仍只包含上述 KB/资源版本/索引/块引用字段，8 KiB 上限，两端共用候选成员校验。
+
+- 服务身份固定 `sub/azp=knowledge-mcp`、`aud=knowledge-readability-bridge` 和 scope `internal:knowledge:work-item:readability`。它不授予业务权限，不与文件 Worker 或其他 Business Principal 互通。
+- 可选 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 供现有身份签发器按独立受管文件读取；仅启用知识组件时配置，并要求原 `SERVICE_PRINCIPAL_ENABLED` 开启。文件权限沿用现有 Secret 合同，内容不得与其他服务相同。知识服务按现有短期兑换机制获取不超过 300 秒的服务 Token，不持有签名私钥。
+- API 在签发前复核完整 Knowledge scope、RUNNING Job、角色应用/KB/详情权限、当前发布资源、来源和候选成员，再按原完整 scope 签发 ONES Principal，仅调用固定 `http://ones-mcp:9104/internal/knowledge/work-item-readability`。无环境代理、重定向、通用 HTTP/MCP 代调用或 Token 交换响应。
+- 平台按持久化文档 ID/版本/UUID 严格校验最多 64 KiB 的引用响应，重验两种 Principal、当前授权、身份/默认 Team/凭据 ACTIVE 状态以及资源/候选；查询中撤权、身份解绑或候选变化均丢弃结果。仅检查凭据状态，不读取或解密 ONES 凭据。401 刷新仍由原 ONES 链路负责。
+- 审计仅记录安全状态、Job/用户/KB/资源版本，不记录请求头、业务正文、被拒绝数量、Provider 原响应或任何 Token；响应禁止缓存。Bridge 不可用/依赖故障不能解释为没有相关缺陷。
+
+当前未配置此可选凭据时平台桥返回不可用，不新增主部署的必需 Secret。可选 Compose 接线尚未完成；不要现在为生产开启该配置。生产 Manifest 尚未注册两个知识工具，旧 Job 无法通过关卡；后续仍须完成 MCP/部署接线与验收，再开放 Agent 知识检索。
+
+## 目录与检索核心（尚未接入生产 MCP）
+
+目录仅返回冻结与当前授权交集内、资源已发布、来源匹配本人 ONES 实例与默认 Team 的 KB，包含 ID、编码、管理名称和可用状态，不返回文档数量或样本。固定每页 50 项，按稳定 KB ID 续页。cursor 绑定 Job/用户/应用/发布/快照/授权、可见资源与本人来源，300 秒有效。进程重启、另一实例或篡改导致 invalid；授权或可见资源变化导致 stale，均须从首页重查。游标不可当作授权票据，也不承诺跨副本连续分页。
+
+检索仅接受一个 KB、1–2000 字符的 query、1–20 的 top_k（默认 10）。固定一次读取最多 200 个候选点，回 PostgreSQL 校验当前版本/收录和点身份，按文档去重后逐批通过双身份桥检查本人可读性，最多 50 个工作项、每实例最多 4 个并行检索。输出只包含允许引用和每文档至多 3 个证据位置，不输出缓存标题/正文/附件 URL、向量或拒绝计数。Agent 后续仍需经现有 ONES 详情工具读取当前内容。
+
+- 明确 403/404 仅过滤该项；Provider/凭据/解析失败使整次检索失败，即使先前已有允许项也不返回部分成功。
+- 候选上限或预留返回复核时间使 top_k 不满时，返回已确认可读引用及 `partial=true`、通用 `bounded_search`；不能据此宣称全库无数据。硬预算已经耗尽则报错并丢弃结果。
+- 已实现的调用内预算取 60 秒与当前 Job attempt 剩余时间的较小值，以 `locked_at` 和执行策略识别当前 claim；重试/终态改变后结果失效。在线 Embedding/Qdrant 不额外重试，离线构建仍保留原超时与重试。
+- 内部 `X-Knowledge-Deadline-Ms`（UTC 毫秒）已从搜索传播到平台/ONES；接收方再次取本地 60 秒与当前 Job attempt 剩余预算的较小值。Header 不增加权限，重复/格式错误/过期拒绝；未提供时仍有本地 Job 限额。部署需同步各服务时钟。服务身份缓存命中、刷新锁、兑换、ONES 登录和 Provider 使用同一剩余预算，超时不标记正常 ONES 凭据失效。
+- 生产知识 HTTP 已有可取消网络协程的整次请求 timeout，覆盖连接/响应及持续滴流，不只是 socket 空闲超时；不继承代理、不跟随重定向、请求 identity 编码并拒绝压缩响应。目标验证、本人身份、详情解析及一次 401 刷新仍归原客户端，普通 ONES 与离线索引调用保持旧传输合同。本机临时 HTTP 服务测试证明慢响应会中止连接，不代表真实 Provider/部署验收。
+- **任务 7.3 仍未完成**：当前还没有生产 MCP/ASGI 整体调用的取消接线、数据库连接池/SQL 等待的统一截止控制；同步入口中 DNS 解析及事件循环清理也未取得故障注入证据。不得把网络慢响应专项通过当作整条链路 60 秒墙钟保证。返回前仍会检查预算并丢弃迟到结果。
+- 成功审计仅有授权后的 KB/资源版本/索引、返回数量和 partial；失败仅安全错误码及已认证 Job/用户。无 query、原始异常、业务正文、被拒绝身份/数量或 Token。返回前重验当前授权、身份、来源、发布资源与证据；撤权后不返回旧结果。
+
+## 模型边界：本地 Embedding，沿用已配置聊天模型
+
+用户已接受授权后的检索结果、ONES 正文和历史上下文进入 Agent 既有聊天模型（包括外部模型）。本地 Embedding 只保证向量化不外发，不表示聊天分析阶段也不外发。检索、索引仍使用部署固定的内部 Embedding，失败不回退外部向量服务。
+
+不再配置 INTERNAL_MODEL_POLICY_FILE，不再输出 internal_model_deployment 或新增 model_data_boundary；旧的强制内网认可与执行拒绝已撤去。不为此增加 Runtime 协议字段或 Session/摘要/产物继承。保留模型连接白名单、Publication 固定 revision/config hash、既有别名映射和 Runtime 签名；Runtime 仍无权读取 Job、Session、Publication、RBAC 等业务表。历史 Publication 不自动改写。
+
+knowledge_search 的 Agent Envelope 与 Application 子集仍必须同时选择 ones_get_work_item_detail，不自动补工具或授权。Worker 在模型解析和历史摘要前复核当前知识工具/详情授权，具体命中继续双权限验证。外部聊天获准不代表扩大知识读取范围。通用日志/外部遥测不增加 query、向量或业务正文；受控运行记录遵守原有访问/保留合同。
+
+该调整不是生产 Knowledge MCP 已开放的证明：Manifest、MCP 传输、可选部署与真实新 Job 仍按未完成任务验收。本次不调用真实聊天模型或发送业务内容。
+
+## Knowledge 代码分层
+
+| 层 | 职责 |
+| --- | --- |
+| domain | 规范化、分块、稳定身份与点 payload、领域输入规则、Tool 依赖；无数据库/文件/HTTP I/O |
+| application | 导入、分块、索引、评测和来源/资源/目录/检索用例，通过实际所需端口访问依赖 |
+| infrastructure | SQL/锁/事务、受限文件、固定 Embedding profile、HTTP/身份适配及静态装配 |
+| api | HTTP 参数、登录/CSRF、用例调用与安全响应，不写 SQL 或构造客户端 |
+
+CLI、bootstrap、ONES 和 Embedding 镜像均使用新分层路径，不保留平铺兼容层。分层测试保护依赖方向，原行为测试继续覆盖回滚、断点、幂等和权限。没有新通用 CRUD 框架、事件总线或插件层。
+
+源记录、修订、分块、向量点 ID、内容 hash、Embedding profile/锁文件和点 payload 不变；无需重导入、重分块或重编码。评测的实现 code_hash 因代码变化更新，这是预期的追溯信息，不是语料或索引身份变化。
+
+## 停用与失败处理
+
+| 安全错误或状态 | 处理方式 |
+| --- | --- |
+| `knowledge_revision_conflict` | 重新读取当前 revision，确认差异后重试，不自动覆盖 |
+| `knowledge_verifier_unavailable` | 检查受信 ONES 部署配置；不要输入临时 URL 或改用共享凭据 |
+| `knowledge_verification_failed` | 核对当前本人 Job、详情权限、默认 Team、来源和依赖服务；只查安全审计，不导出 Token/响应正文 |
+| `knowledge_source_changed` | 完整离线批次或绑定目标已变化，需要新的人工确认及绑定核验；不能沿用旧证明 |
+| `knowledge_resource_unavailable` | 检查发布/启停状态和来源绑定；不切换未发布或旧索引作为 fallback |
+| `knowledge_resource_changed` | 本次固定版本失效，放弃结果并重新发起查询 |
+| `knowledge_bridge_unavailable` | 知识组件未装配；先完成可选部署与 MCP 接线，不临时绕过双身份桥 |
+| `knowledge_bridge_identity_invalid` | 核对独立服务身份、当前 Knowledge Principal 和 Job/角色授权；不导出或复用历史 Token |
+| `knowledge_readability_failed` | 检查当前授权、来源、ONES 身份和依赖服务；整批失败，不降级为零命中 |
+| `knowledge_readability_busy` | 已达固定在途上限，稍后重试，不扩大候选数量 |
+| `knowledge_cursor_invalid` / `knowledge_cursor_stale` | 从第一页重新发现；不要复用其他 Job、实例或旧权限下的游标 |
+| `knowledge_source_identity_invalid` | 核验本人 ONES 身份、受信实例和默认 Team，不猜测其他 Team |
+| `knowledge_search_busy` | 已有 4 个检索在途，稍后重试，不扩大服务内无界队列 |
+| `knowledge_search_budget_exhausted` | 本次检索或当前 Job attempt 预算已耗尽；本次结果作废，不继续扩大候选 |
+| `knowledge_search_dependency_failed` | 检查内部 Embedding/Qdrant 和安全审计；不能解释为零命中或改走外部服务 |
+
+`POST /resources/{id}/status` 提交 `expected_revision` 和 `status`（enabled/disabled/archived）；归档不可重新启用。停用再启用会递增状态版本，旧在途调用仍失效。编辑未发布草稿不会改变正在使用的发布版本。
+
+`POST /source-bindings/{id}/revoke` 只接受空 JSON 对象，幂等撤销绑定；所有引用该绑定的检索随后拒绝。撤销不删除历史证据或现有索引。来源换版和重新发布必须显式进行，不能由运行请求自动修复。
+
+完整部署与回退继续遵守[可选知识部署说明](../../knowledge/README.md)和[本地索引运行手册](knowledge-local-vector-index.md)。合成/Mock 通过仅证明代码合同；真实 ONES、正式 PostgreSQL/服务部署、本地 Embedding 和已配置聊天模型的真实新 Job 须分别验收。

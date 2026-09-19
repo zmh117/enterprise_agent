@@ -1,5 +1,6 @@
 [tiers]
 unit = [
+  "test_knowledge_architecture.py",
   "test_build_identity.py",
   "test_business_mcp_principal_policy.py",
   "test_database_driver_boundaries.py",
@@ -31,6 +32,18 @@ unit = [
 ]
 
 contract = [
+  "test_knowledge_authorization.py",
+  "test_knowledge_job_access.py",
+  "test_knowledge_readability.py",
+  "test_knowledge_readability_bridge.py",
+    "test_knowledge_directory.py",
+    "test_knowledge_deadline.py",
+    "test_knowledge_model_boundary.py",
+  "test_knowledge_search.py",
+  "test_knowledge_api.py",
+  "test_knowledge_resources.py",
+  "test_knowledge_ones_verification.py",
+  "test_knowledge_governance.py",
   "test_knowledge_evaluation.py",
   "test_mcp_inspector_runner.py",
   "test_knowledge_compose.py",

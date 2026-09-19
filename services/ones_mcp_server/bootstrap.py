@@ -1,7 +1,10 @@
 from __future__ import annotations
+from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
+from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
 
 from dataclasses import replace
 from typing import cast
+from services.ones_mcp_server.knowledge_readability import OnesKnowledgeReadability
 
 from app.bootstrap import Container
 from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalTokenVerifier
@@ -54,6 +57,11 @@ from services.ones_mcp_server.tools.query_services import (
     OnesUsersByUuidService,
 )
 from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
+from services.ones_mcp_server.knowledge_verification import (
+    OnesSourceVerification,
+    OnesWorkItemReferenceService,
+)
+from app.modules.knowledge.infrastructure.ones_verifier import ones_target_hash
 
 
 def build_work_item_search_service(runtime: Container) -> OnesWorkItemSearchService:
@@ -192,4 +200,50 @@ def build_tool_registry(runtime: Container) -> OnesToolRegistry:
         authenticate=work_item_search.authenticate,
         tools=(work_item_search, project_role_members, *query_tools, bug_create, task_update),
         audit=work_item_search.audit,
+    )
+
+
+def build_source_verification(
+    runtime: Container, registry: OnesToolRegistry
+) -> OnesSourceVerification:
+    detail = registry.require("ones_get_work_item_detail")
+    if not isinstance(detail, OnesWorkItemDetailService):
+        raise ValueError("ONES detail service is required for source verification")
+    projection = OnesWorkItemReferenceService(
+        detail.resolver,
+        detail.credentials,
+        detail.audit,
+        detail.credential_refresh,
+        graphql=detail.graphql,
+    )
+    instance = runtime.settings.ones_identity.instance_code
+    target_hash = ones_target_hash(instance, detail.graphql.http.target.base_url)
+    return OnesSourceVerification(
+        runtime.database,
+        runtime.permission_service,
+        projection,
+        instance_code=instance,
+        target_hash=target_hash,
+    )
+
+
+def build_knowledge_readability(
+    runtime: Container, source: OnesSourceVerification
+) -> OnesKnowledgeReadability:
+    from app.modules.knowledge.infrastructure.job_access import KnowledgeJobGate
+    from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
+
+    return OnesKnowledgeReadability(
+        KnowledgeJobGate(
+            runtime.database,
+            runtime.mcp_tool_snapshot_service,
+            runtime.business_authorization_service,
+        ),
+        KnowledgeResourceReader(
+            GovernanceStore(runtime.database),
+            VectorRepository(runtime.database),
+            instance_code=source.instance_code,
+            target_hash=source.target_hash,
+        ),
+        source.detail,
     )

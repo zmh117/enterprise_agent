@@ -23,6 +23,9 @@ from app.bootstrap import Container, build_worker_container
 from app.modules.mcp_audit import McpAuditHandle
 from app.shared.config import load_settings
 from app.shared.exceptions import AppError
+from app.modules.knowledge.domain.governance import strict_object
+from app.modules.knowledge.application.readability import MAX_REQUEST_BYTES as READABILITY_MAX_BYTES
+from app.modules.knowledge.application.retrieval_budget import DEADLINE_HEADER, deadline_from_headers
 from services.ones_mcp_server.contracts import (
     SERVER_CODE,
     SERVER_VERSION,
@@ -30,6 +33,15 @@ from services.ones_mcp_server.contracts import (
 from services.ones_mcp_server.errors import OnesMcpError
 from services.ones_mcp_server.tools.registry import OnesToolRegistry
 from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
+from services.ones_mcp_server.knowledge_verification import (
+    OnesSourceVerification,
+    SOURCE_VERIFICATION_PATH,
+)
+from services.ones_mcp_server.knowledge_readability import (
+    READABILITY_PATH,
+    OnesKnowledgeReadability,
+    ReadabilityRequest,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -51,12 +63,18 @@ class OnesMcpSecurityMiddleware:
         app: Callable[[Scope, Receive, Send], Awaitable[None]],
         *,
         max_request_bytes: int,
+        internal_allowed_hosts: tuple[str, ...] = (),
     ) -> None:
         self.app = app
         self.max_request_bytes = max_request_bytes
+        self.internal_allowed_hosts = internal_allowed_hosts
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope.get("type") != "http" or scope.get("path") != "/mcp":
+        if scope.get("type") != "http" or scope.get("path") not in {
+            "/mcp",
+            SOURCE_VERIFICATION_PATH,
+            READABILITY_PATH,
+        }:
             await self.app(scope, receive, send)
             return
         headers: dict[str, list[str]] = {}
@@ -90,13 +108,26 @@ class OnesMcpSecurityMiddleware:
                 code="ones_mcp_origin_forbidden",
             )
             return
+        internal = scope.get("path") in {SOURCE_VERIFICATION_PATH, READABILITY_PATH}
+        if internal and (headers.get("host") or []) not in [
+            [host] for host in self.internal_allowed_hosts
+        ]:
+            await self._reject(scope, receive, send, status=403, code="ones_mcp_host_forbidden")
+            return
         body = bytearray()
         while True:
             message = await receive()
             if message.get("type") == "http.disconnect":
                 return
             body.extend(message.get("body") or b"")
-            if len(body) > self.max_request_bytes:
+            if len(body) > (
+                min(
+                    self.max_request_bytes,
+                    READABILITY_MAX_BYTES if scope.get("path") == READABILITY_PATH else 4096,
+                )
+                if internal
+                else self.max_request_bytes
+            ):
                 await self._reject(
                     scope,
                     receive,
@@ -207,8 +238,7 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
         "Enterprise ONES MCP",
         version=SERVER_VERSION,
         instructions=(
-            "Identity-aware, code-registered ONES reads plus confirmed defect creation "
-            "and updates."
+            "Identity-aware, code-registered ONES reads plus confirmed defect creation and updates."
         ),
         on_list_tools=list_tools,
         on_call_tool=call_tool,
@@ -222,6 +252,8 @@ def create_app(
     max_request_bytes: int,
     audit_retention_days: int,
     platform_audit_service: Any | None = None,
+    source_verification: OnesSourceVerification | None = None,
+    knowledge_readability: OnesKnowledgeReadability | None = None,
     allowed_hosts: tuple[str, ...] = (
         "ones-mcp",
         "ones-mcp:9104",
@@ -304,14 +336,122 @@ def create_app(
                 with suppress(asyncio.CancelledError):
                     await retention_task
 
+    async def verify_source(request: Request) -> JSONResponse:
+        if source_verification is None:
+            return JSONResponse(
+                {"error_code": "knowledge_verifier_unavailable", "error": "来源核验服务未配置"},
+                status_code=503,
+            )
+        try:
+            source_verification.detail.authenticate(_bearer(request))
+        except AppError:
+            return JSONResponse(
+                {"error_code": "ones_mcp_authentication_failed", "error": "平台身份凭证无效"},
+                status_code=401,
+            )
+        try:
+            value = json.loads(await request.body(), object_pairs_hook=strict_object)
+            if (
+                not isinstance(value, dict)
+                or set(value) != {"binding_id"}
+                or not isinstance(value["binding_id"], str)
+                or not 1 <= len(value["binding_id"]) <= 128
+            ):
+                raise ValueError("invalid")
+        except (ValueError, UnicodeError, RecursionError):
+            return JSONResponse(
+                {"error_code": "knowledge_input_invalid", "error": "来源核验参数无效"},
+                status_code=400,
+            )
+        try:
+            result = await asyncio.to_thread(
+                source_verification.verify, token=_bearer(request), binding_id=value["binding_id"]
+            )
+            return JSONResponse(result)
+        except AppError as exc:
+            busy = exc.error_code == "knowledge_verification_busy"
+            return JSONResponse(
+                {
+                    "error_code": "knowledge_verification_busy"
+                    if busy
+                    else "knowledge_verification_failed",
+                    "error": "来源核验繁忙，请稍后重试"
+                    if busy
+                    else "来源核验未通过，请检查身份、授权及来源",
+                },
+                status_code=429 if busy else 403,
+            )
+        except Exception:
+            # 不记录动态异常：HTTP 客户端异常可能包含请求 Authorization 或 Provider 响应。
+            return JSONResponse(
+                {"error_code": "knowledge_verification_failed", "error": "来源核验服务暂时不可用"},
+                status_code=503,
+            )
+
+    async def check_readability(request: Request) -> JSONResponse:
+        assert knowledge_readability is not None
+        try:
+            knowledge_readability.detail.authenticate(_bearer(request))
+        except AppError:
+            return JSONResponse(
+                {"error_code": "ones_mcp_authentication_failed", "error": "平台身份凭证无效"},
+                status_code=401,
+            )
+        try:
+            parsed = ReadabilityRequest.parse(
+                json.loads(await request.body(), object_pairs_hook=strict_object)
+            )
+            deadline_ms = deadline_from_headers(request.headers.getlist(DEADLINE_HEADER))
+        except (ValueError, UnicodeError, RecursionError, AppError):
+            return JSONResponse(
+                {"error_code": "knowledge_input_invalid", "error": "知识候选参数无效"},
+                status_code=400,
+            )
+        try:
+            result = await asyncio.to_thread(
+                knowledge_readability.check,
+                token=_bearer(request),
+                request=parsed,
+                deadline_ms=deadline_ms,
+            )
+            return JSONResponse(result)
+        except AppError as exc:
+            # 不回传 Provider 的动态诊断或部分结果；只有固定安全错误码。
+            code = (
+                "knowledge_readability_busy"
+                if exc.error_code == "knowledge_readability_busy"
+                else "knowledge_readability_failed"
+            )
+            return JSONResponse(
+                {"error_code": code, "error": "知识可读性检查未完成，请检查权限或稍后重试"},
+                status_code=429 if code == "knowledge_readability_busy" else 503,
+            )
+        except Exception:
+            return JSONResponse(
+                {"error_code": "knowledge_readability_failed", "error": "知识可读性检查暂时不可用"},
+                status_code=503,
+            )
+
     app = Starlette(
         routes=[
             Route("/health", health, methods=["GET"]),
             Route("/mcp", endpoint=_StreamableHttpApp(manager)),
+            *(
+                [Route(SOURCE_VERIFICATION_PATH, verify_source, methods=["POST"])]
+                if source_verification
+                else []
+            ),
+            *(
+                [Route(READABILITY_PATH, check_readability, methods=["POST"])]
+                if knowledge_readability
+                else []
+            ),
         ],
         lifespan=lifespan,
     )
-    return OnesMcpSecurityMiddleware(app, max_request_bytes=max_request_bytes)
+    return OnesMcpSecurityMiddleware(
+        app, max_request_bytes=max_request_bytes, internal_allowed_hosts=allowed_hosts
+    )
 
 
 def service_from_container(runtime: Container) -> OnesWorkItemSearchService:
@@ -333,12 +473,22 @@ def create_default_app() -> OnesMcpSecurityMiddleware:
         seed=settings.seed_local_config,
         service_name=SERVER_CODE,
     )
+    registry = registry_from_container(runtime)
+    from services.ones_mcp_server.bootstrap import (
+        build_source_verification,
+        build_knowledge_readability,
+    )
+
+    source_verification = build_source_verification(runtime, registry)
+
     return create_app(
-        registry_from_container(runtime),
+        registry,
         database=runtime.database,
         max_request_bytes=settings.ones_mcp.max_request_bytes,
         audit_retention_days=settings.ones_mcp.audit_retention_days,
         platform_audit_service=runtime.audit_service,
+        source_verification=source_verification,
+        knowledge_readability=build_knowledge_readability(runtime, source_verification),
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from collections.abc import Callable
 
 from app.modules.agent.domain.runtime import AgentExecutionContext
 from app.modules.agent.application.conversation_context import ConversationContextService
@@ -11,6 +12,7 @@ from app.modules.file_workspace.manifest_service import JobFileManifestService
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.modules.knowledge.domain.tool_policy import uses_knowledge_tools
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.build_identity import BuildIdentity, BuildIdentityError
 
@@ -29,12 +31,14 @@ class AgentContextBuilder:
         conversation_service: ConversationContextService | None = None,
         agent_config_service: AgentConfigService | None = None,
         file_manifest_service: JobFileManifestService | None = None,
+        knowledge_job_check: Callable[[str, str], None] | None = None,
     ) -> None:
         self.tool_registry = tool_registry
         self.skill_loader = skill_loader
         self.conversation_service = conversation_service
         self.agent_config_service = agent_config_service
         self.file_manifest_service = file_manifest_service
+        self.knowledge_job_check = knowledge_job_check
 
     def build(self, job: AgentJob) -> AgentExecutionContext:
         if job.input_message is None:
@@ -59,6 +63,15 @@ class AgentContextBuilder:
         snapshot = publication.get("snapshot") if publication else {}
         if not isinstance(snapshot, dict):
             snapshot = {}
+        allowed_tools = self._allowed_tools(job, publication)
+        if uses_knowledge_tools(snapshot.get("mcp_tool_envelope") or []):
+            if self.knowledge_job_check is None:
+                raise NonRetryableExecutionError(
+                    "Knowledge execution gate is unavailable",
+                    safe_message="知识工具运行门禁不可用",
+                    error_code="knowledge_job_denied",
+                )
+            self.knowledge_job_check(job.id, job.internal_user_id)
         model_policy = snapshot.get("model_policy") or {}
         model_runtime_binding = None
         model_connection = snapshot.get("model_connection") or {}
@@ -88,7 +101,6 @@ class AgentContextBuilder:
                     safe_message="固定的模型连接完整性校验失败",
                     error_code="model_connection_integrity_failed",
                 )
-        allowed_tools = self._allowed_tools(job, publication)
         file_job = bool(getattr(job, "task_workspace_id", "")) and any(
             (definition := MCP_TOOL_MANIFEST.get(tool_name)) is not None
             and definition.server_code == "file-service"

@@ -22,6 +22,8 @@ from app.modules.identity.application.ones_identity import (
 from app.shared.config import OnesIdentitySettings
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from app.shared.ones_io_budget import has_ones_io_budget, ones_io_timeout
+from app.shared.bounded_read_http import request_bytes
 
 ONES_LOGIN_PATH = "/project/api/project/auth/login"
 PRODUCTION_ENVIRONMENTS = {"prod", "production"}
@@ -69,12 +71,13 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
                 safe_message="ONES 身份验证不可用",
                 error_code="ones_connection_unavailable",
             )
+        request_body = json.dumps(
+            {"email": email.strip(), "password": password},
+            ensure_ascii=False,
+        ).encode("utf-8")
         request = Request(
             self._url,
-            data=json.dumps(
-                {"email": email.strip(), "password": password},
-                ensure_ascii=False,
-            ).encode("utf-8"),
+            data=request_body,
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
@@ -82,20 +85,36 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
             method="POST",
         )
         try:
-            response = self._open(request)
-            with response:
-                status = int(getattr(response, "status", 200))
+            if has_ones_io_budget() and self._open_response is None:
+                status, raw = request_bytes(
+                    "POST",
+                    self._url,
+                    headers=dict(request.header_items()),
+                    content=request_body,
+                    timeout=self.settings.timeout_seconds,
+                    max_bytes=self.settings.max_response_bytes,
+                )
                 if status != 200:
                     raise self._status_error(status)
-                raw = response.read(self.settings.max_response_bytes + 1)
+            else:
+                response = self._open(request)
+                with response:
+                    status = int(getattr(response, "status", 200))
+                    if status != 200:
+                        raise self._status_error(status)
+                    raw = response.read(self.settings.max_response_bytes + 1)
+            ones_io_timeout(float(self.settings.timeout_seconds))
         except HTTPError as exc:
             raise self._status_error(exc.code) from None
         except (URLError, TimeoutError, socket.timeout, OSError) as exc:
+            ones_io_timeout(float(self.settings.timeout_seconds))
             raise RetryableExecutionError(
                 f"ONES identity verification failed: {type(exc).__name__}",
                 safe_message="ONES 身份验证暂时不可用",
                 error_code="ones_connection_unavailable",
             ) from None
+        except ValueError:
+            raise self._invalid_response("invalid bounded response") from None
         if len(raw) > self.settings.max_response_bytes:
             raise self._invalid_response("response is too large")
         try:
@@ -105,11 +124,12 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
         return self._parse_identity(payload)
 
     def _open(self, request: Request) -> Any:
+        timeout = ones_io_timeout(float(self.settings.timeout_seconds))
         if self._open_response is not None:
-            return self._open_response(request, float(self.settings.timeout_seconds))
+            return self._open_response(request, timeout)
         if self._opener is None:
             self._opener = build_opener(ProxyHandler({}), NoRedirectHandler())
-        return self._opener.open(request, timeout=float(self.settings.timeout_seconds))
+        return self._opener.open(request, timeout=timeout)
 
     def _validated_login_url(self) -> str:
         base_url = self.settings.base_url.strip()

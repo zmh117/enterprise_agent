@@ -116,6 +116,148 @@ afterEach(() => {
 })
 
 describe("角色授权中心", () => {
+  it.each([200, 409])(
+    "知识库按应用保存，已有授权不丢失，并发状态 %s 保留本地选择",
+    async (status) => {
+      let submitted: Record<string, unknown> | undefined
+      const bases = [
+        { id: "kb-ones", code: "ones", display_name: "ONES 缺陷" },
+        { id: "kb-ops", code: "ops", display_name: "运维知识" },
+      ]
+      const apps = ["app1", "app2"].map((id) => ({
+        id,
+        code: id,
+        name: id,
+        description: "",
+        project_code: "default",
+        status: "enabled",
+        knowledge_bases: bases,
+        mcp_tools: [
+          {
+            tool_identifier: "knowledge_search",
+            display_name_zh: "知识检索",
+            description: "合成工具",
+            version_constraint: "",
+          },
+        ],
+      }))
+      const businessDetail = {
+        ...detail(),
+        business: {
+          revision: 3,
+          applications: apps.map((app) => ({
+            id: `access-${app.id}`,
+            application_id: app.id,
+            application_code: app.id,
+            application_name: app.name,
+            status: "enabled",
+            tool_identifiers: ["knowledge_search"],
+            scopes: [],
+            knowledge_base_ids: app.id === "app1" ? ["kb-ones"] : [],
+          })),
+        },
+      }
+      vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+        const url = String(input)
+        if (url.endsWith("/api/admin/capabilities"))
+          return response({
+            capabilities: ["authorization.read", "authorization.manage"],
+            modules: {},
+          })
+        if (
+          url.endsWith(
+            "/authorization/roles/role-diagnostic/business-access"
+          ) &&
+          init?.method === "PUT"
+        ) {
+          submitted = JSON.parse(String(init.body))
+          return status === 200
+            ? response({ revision: 4, applications: [] })
+            : response(
+                {
+                  detail: {
+                    code: "revision_conflict",
+                    message: "角色配置已被其他管理员更新，请刷新后重试",
+                    field_errors: [],
+                    correlation_id: "kb-test",
+                  },
+                },
+                409
+              )
+        }
+        if (url.endsWith("/authorization/roles/role-diagnostic"))
+          return response(businessDetail)
+        if (url.endsWith("/authorization/assignable-catalog"))
+          return response({
+            applications: apps,
+            topology: [],
+            scope_mode: "explicit_current_set",
+            scope_notice: "当前全部保存明确集合",
+          })
+        throw new Error(`Unexpected request: ${url}`)
+      })
+      renderDetail()
+      await screen.findByText("诊断操作员")
+      fireEvent.click(screen.getByRole("tab", { name: "业务应用与数据范围" }))
+      expect(
+        await screen.findByRole("checkbox", {
+          name: /^app1 知识库 ONES 缺陷 kb-ones/,
+        })
+      ).toHaveAttribute("data-checked")
+      expect(
+        screen.getByRole("checkbox", { name: /^app2 知识库 ONES 缺陷 kb-ones/ })
+      ).not.toHaveAttribute("data-checked")
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: /^app1 知识库 运维知识 kb-ops/ })
+      )
+      expect(screen.getByLabelText("app1 知识库授权预览")).toHaveTextContent(
+        "kb-ones、kb-ops"
+      )
+      expect(screen.getByLabelText("app2 知识库授权预览")).toHaveTextContent(
+        "无（本角色不授予此应用知识库权限）"
+      )
+      expect(
+        screen.queryByRole("checkbox", { name: /拒绝/ })
+      ).not.toBeInTheDocument()
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: /我已确认本次高风险授权变更/ })
+      )
+      fireEvent.change(screen.getByLabelText("授权变更原因"), {
+        target: { value: "仅授权 app1 运维知识库" },
+      })
+      fireEvent.click(screen.getByRole("button", { name: "原子保存业务授权" }))
+      await waitFor(() =>
+        expect(submitted).toEqual({
+          expected_revision: 3,
+          confirmed: true,
+          reason: "仅授权 app1 运维知识库",
+          applications: [
+            {
+              application_id: "app1",
+              tool_identifiers: ["knowledge_search"],
+              knowledge_base_ids: ["kb-ones", "kb-ops"],
+              scopes: [],
+            },
+            {
+              application_id: "app2",
+              tool_identifiers: ["knowledge_search"],
+              knowledge_base_ids: [],
+              scopes: [],
+            },
+          ],
+        })
+      )
+      if (status === 409) {
+        expect(
+          await screen.findByText("角色配置已被其他管理员更新，请刷新后重试")
+        ).toBeInTheDocument()
+        expect(
+          screen.getByRole("checkbox", { name: /^app1 知识库 运维知识 kb-ops/ })
+        ).toHaveAttribute("data-checked")
+      }
+    }
+  )
+
   it("从安全模板创建角色时只预填用途和说明", async () => {
     let submitted: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
@@ -438,6 +580,7 @@ describe("角色授权中心", () => {
           {
             application_id: "app-test",
             tool_identifiers: ["query_database", "dingtalk_create_todo"],
+            knowledge_base_ids: [],
             scopes: [{ environment_id: "environment-test" }],
           },
         ],
@@ -458,10 +601,7 @@ describe("角色授权中心", () => {
             application_code: "diagnostic-app",
             application_name: "诊断应用",
             status: "enabled",
-            tool_identifiers: [
-              "query_database",
-              "dingtalk_send_robot_message",
-            ],
+            tool_identifiers: ["query_database", "dingtalk_send_robot_message"],
             scopes: [],
           },
         ],
@@ -546,6 +686,7 @@ describe("角色授权中心", () => {
             application_id: "app-test",
             tool_identifiers: ["query_database"],
             scopes: [],
+            knowledge_base_ids: [],
           },
         ],
       })

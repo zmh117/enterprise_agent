@@ -17,6 +17,10 @@
 - **WHEN** 操作者需要调整绑定的实例或 Team
 - **THEN** 系统保留旧修订，要求新修订核验和资源重新验证发布，不直接覆盖历史或复用旧技术验证
 
+#### Scenario: 复用既有 JWT 核验来源身份
+- **WHEN** 来源技术核验使用操作者本人业务应用 Job 的 ONES Principal
+- **THEN** 系统沿用现有完整 scope、audience、有效期、RUNNING Job 和当前授权校验，再使用本人 ONES 绑定和凭据访问固定只读详情；不得将历史 JWT、平台管理员身份或 JWT 签名有效等同于 ONES 数据读取权
+
 ### Requirement: 知识检索效果必须使用独立人工标注基线
 系统 SHALL 提供本地评测集格式、校验和可重放评测入口，首批真实效果验收使用约 50 条人工确认问法，包含 query_id、KB/来源、人工相关文档标注、无答案标记、分类和标注来源。真实问题与标签 MUST 保存在受限本地目录，不进入 Git、通用日志、外部模型或外部遥测；仓库 SHALL 仅保存合成样例和脱敏汇总。缺失标签 MUST NOT 用模型生成、自查询命中或相似度阈值冒充。
 
@@ -48,7 +52,7 @@
 ### Requirement: 知识服务必须可选部署并保留真实验收缺口
 knowledge-mcp、Qdrant 和本地 Embedding SHALL 继续由可选 knowledge 部署单元管理，固定内部地址和受管凭据；未启用环境 MUST 不依赖这些服务或其新增服务凭据。治理元数据 SHALL 使用同一 PostgreSQL 的现有 knowledge schema 及现有 RBAC 事实源，通过前向 Migrator 和当前 schema catalog 交付，不修改历史迁移或自动迁移/删除已有文本、分块和索引。新治理事实 MUST 默认未核验、未发布、无业务授权。
 
-上线记录 MUST 分开列出合成/静态、容器/数据库、来源证明、真实 ONES 本人权限、内网模型出口与真实新 Job 证据。缺失来源、内网模型或人工标签时 MUST 保留未完成任务；健康容器、Mock、索引成功或 OpenSpec 校验不能替代这些门槛。回退 SHALL 停用新增读取入口而保留数据与内网会话限制。
+上线记录 MUST 分开列出合成/静态、容器/数据库、来源证明、真实 ONES 本人权限、本地 Embedding 与现有聊天模型真实新 Job 证据。缺失来源、真实模型链路或人工标签时 MUST 保留未完成任务；健康容器、Mock、索引成功或 OpenSpec 校验不能替代这些门槛。回退 SHALL 停用新增读取入口而保留数据及既有会话访问/保留约束。
 
 #### Scenario: 另一个环境不启用知识库
 - **WHEN** 环境只启动原主系统部署
@@ -59,5 +63,18 @@ knowledge-mcp、Qdrant 和本地 Embedding SHALL 继续由可选 knowledge 部�
 - **THEN** 先核对非终态工作、镜像与 schema 兼容，执行正式 Migrator 并验证 readiness，来源/授权/Publication 仍需显式配置
 
 #### Scenario: 合成测试通过但真实前提缺失
-- **WHEN** 测试全部通过，但没有真实 ONES 可读性或内网聊天模型证据
+- **WHEN** 测试全部通过，但没有真实 ONES 可读性或已配置聊天模型的新 Job 证据
 - **THEN** 只记录工程验收完成，真实 Agent 链路和对应任务保持未完成
+
+### Requirement: 知识模块必须按职责分层且保留已有数据身份
+knowledge SHALL 按 api/application/domain/infrastructure 分离。domain MUST 只包含规则和数据合同，不执行数据库、HTTP 或文件 I/O；application MUST 通过当前用例所需端口访问存储和外部服务，不直接写 SQL、读取数据库属性或构造网络客户端。SQL、事务实现、文件、HTTP 与具体依赖装配 SHALL 留在 infrastructure 或组件入口。
+
+重构 MUST 保持既有文档/修订/分块/点 ID、内容 hash、Embedding profile、事务与断点续跑语义，不触发数据迁移、重导入或重编码。系统 MUST NOT 为分层引入无当前调用者的通用 CRUD 框架或插件扩展层。
+
+#### Scenario: 规则或用例引入基础设施依赖
+- **WHEN** domain 导入 SQL/HTTP/文件组件，或 application 直接访问数据库或构造客户端
+- **THEN** 架构回归阻止该依赖，规则与实现不能只靠文件夹名称区分
+
+#### Scenario: 重构后重复导入和索引重放
+- **WHEN** 使用同一批输入、版本和索引重放
+- **THEN** 原身份与 profile/payload 保持一致，保留幂等、回滚与 checkpoint 行为，代码实现指纹允许如实变化

@@ -9,7 +9,6 @@ import hashlib
 from html import unescape
 from html.parser import HTMLParser
 import json
-from pathlib import Path
 import re
 from typing import Any
 
@@ -44,20 +43,41 @@ _SECRET_TOKEN = re.compile(
 )
 
 FIELD_MAPPING = {
-    "所属产品": "product_names", "所属功能模块": "module_names", "环境": "environment_text",
-    "影响版本-MES": "affected_versions", "修复版本-MES": "fixed_versions",
-    "验证版本-MES": "verified_versions", "解决方案": "solution_text",
-    "缺陷产生原因": "cause_category", "影响面分析": "impact_text",
-    "处理结果": "resolution_category", "严重程度": "severity",
-    "优先级（任务内置）": "priority", "重现概率": "reproducibility",
-    "是否线上缺陷": "is_production_label", "是否历史缺陷": "is_historical_label",
-    "标签": "labels", "关闭时间": "closed_at_raw", "解决时间": "resolved_at_raw",
-    "创建者": "creator_name", "负责人": "assignee_name", "解决者": "resolver_name",
-    "所属人": "owner_names", "发现难易程度": "discovery_difficulty",
-    "缺陷发现阶段": "discovery_stage", "紧急程度": "urgency", "Svn版本号": "svn_revision",
+    "所属产品": "product_names",
+    "所属功能模块": "module_names",
+    "环境": "environment_text",
+    "影响版本-MES": "affected_versions",
+    "修复版本-MES": "fixed_versions",
+    "验证版本-MES": "verified_versions",
+    "解决方案": "solution_text",
+    "缺陷产生原因": "cause_category",
+    "影响面分析": "impact_text",
+    "处理结果": "resolution_category",
+    "严重程度": "severity",
+    "优先级（任务内置）": "priority",
+    "重现概率": "reproducibility",
+    "是否线上缺陷": "is_production_label",
+    "是否历史缺陷": "is_historical_label",
+    "标签": "labels",
+    "关闭时间": "closed_at_raw",
+    "解决时间": "resolved_at_raw",
+    "创建者": "creator_name",
+    "负责人": "assignee_name",
+    "解决者": "resolver_name",
+    "所属人": "owner_names",
+    "发现难易程度": "discovery_difficulty",
+    "缺陷发现阶段": "discovery_stage",
+    "紧急程度": "urgency",
+    "Svn版本号": "svn_revision",
 }
 _DUPLICATE_FIELDS = {
-    "标题", "描述", "描述富文本", "状态", "所属项目", "工作项类型", "所属迭代",
+    "标题",
+    "描述",
+    "描述富文本",
+    "状态",
+    "所属项目",
+    "工作项类型",
+    "所属迭代",
 }
 
 
@@ -69,7 +89,9 @@ class ExportValidationError(ValueError):
 
 
 def canonical_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
 
 
 def digest(value: Any) -> str:
@@ -89,10 +111,13 @@ class Sanitizer:
     def text(self, value: str) -> str:
         value = unescape(value).replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")
         for code, pattern in (
-            ("private_key", _PRIVATE_KEY), ("credential_xml", _XML_SECRET),
-            ("credential_line", _CREDENTIAL_LINE), ("authorization", _BEARER),
+            ("private_key", _PRIVATE_KEY),
+            ("credential_xml", _XML_SECRET),
+            ("credential_line", _CREDENTIAL_LINE),
+            ("authorization", _BEARER),
             ("credential_token", _SECRET_TOKEN),
-            ("url", _URL), ("inline_data", _DATA_URI),
+            ("url", _URL),
+            ("inline_data", _DATA_URI),
         ):
             value, count = pattern.subn("[敏感内容已移除]", value)
             self.counts[code] += count
@@ -137,13 +162,15 @@ class RichText(HTMLParser):
             attributes = dict(attrs)
             raw_id = attributes.get("data-uuid") or ""
             source = attributes.get("src") or ""
-            self.images.append({
-                "occurrence_index": len(self.images),
-                "source_attachment_id": raw_id if _IDENTIFIER.fullmatch(raw_id) else None,
-                "source_kind": "inline_data" if source.startswith("data:") else "reference",
-                "state": "not_collected",
-                "anchor": {"field": "desc_rich", "text_offset": sum(map(len, self.parts))},
-            })
+            self.images.append(
+                {
+                    "occurrence_index": len(self.images),
+                    "source_attachment_id": raw_id if _IDENTIFIER.fullmatch(raw_id) else None,
+                    "source_kind": "inline_data" if source.startswith("data:") else "reference",
+                    "state": "not_collected",
+                    "anchor": {"field": "desc_rich", "text_offset": sum(map(len, self.parts))},
+                }
+            )
 
     def handle_endtag(self, tag: str) -> None:
         if tag in {"script", "style"}:
@@ -181,37 +208,6 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], str]:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
-        raise ExportValidationError("knowledge_input_file_invalid")
-    result = []
-    hasher = hashlib.sha256()
-    identities: set[str] = set()
-    with path.open("rb") as stream:
-        line_no = 0
-        while line := stream.readline(MAX_ROW_BYTES + 1):
-            line_no += 1
-            if len(line) > MAX_ROW_BYTES or line_no > MAX_RECORDS:
-                raise ExportValidationError("knowledge_input_limit_exceeded", line_no)
-            hasher.update(line)
-            try:
-                row = json.loads(line, object_pairs_hook=_unique_object)
-                if not isinstance(row, dict):
-                    raise ExportValidationError("knowledge_record_invalid")
-                external_id = identifier(row.get("uuid"))
-                if external_id in identities:
-                    raise ExportValidationError("knowledge_duplicate_document")
-                identities.add(external_id)
-                # 拒绝 NaN、Infinity 和非法 UTF-8 代理字符。
-                canonical_json(row).encode("utf-8")
-            except ExportValidationError as exc:
-                raise ExportValidationError(exc.code, line_no) from None
-            except (ValueError, UnicodeError, RecursionError):
-                raise ExportValidationError("knowledge_json_invalid", line_no) from None
-            result.append(row)
-    return result, hasher.hexdigest()
-
-
 def _timestamp(value: Any) -> str | None:
     if value is None:
         return None
@@ -237,7 +233,12 @@ def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -
     title = row.get("summary")
     body = row.get("desc")
     rich = row.get("desc_rich") or ""
-    if not isinstance(title, str) or not title.strip() or not isinstance(body, str) or not isinstance(rich, str):
+    if (
+        not isinstance(title, str)
+        or not title.strip()
+        or not isinstance(body, str)
+        or not isinstance(rich, str)
+    ):
         raise ExportValidationError("knowledge_body_invalid")
     project = listing.get("project")
     status = listing.get("status")
@@ -268,12 +269,14 @@ def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -
             attributes[FIELD_MAPPING[key]] = clean.value(field.get("value"))
         elif key not in _DUPLICATE_FIELDS:
             attributes["unmapped_fields"][key] = clean.value(field.get("value"))
-    attributes.update({
-        "sprint_id": identifier(sprint.get("uuid")) if sprint else None,
-        "sprint_name": clean.value(sprint.get("name")) if sprint else None,
-        "source_issue_type_display": clean.value(row.get("issue_type_uuid")),
-        "export_id_mapping": "detail_display_values_joined_to_list_ids",
-    })
+    attributes.update(
+        {
+            "sprint_id": identifier(sprint.get("uuid")) if sprint else None,
+            "sprint_name": clean.value(sprint.get("name")) if sprint else None,
+            "source_issue_type_display": clean.value(row.get("issue_type_uuid")),
+            "export_id_mapping": "detail_display_values_joined_to_list_ids",
+        }
+    )
     links = row.get("links") or []
     related = row.get("related_tasks") or []
     if not isinstance(links, list) or not isinstance(related, list):
@@ -293,10 +296,20 @@ def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -
     for item in related:
         if not isinstance(item, dict):
             raise ExportValidationError("knowledge_relation_invalid")
-        related_refs.append({"uuid": identifier(item.get("uuid")), "readable": item.get("readable") is True})
-    snapshot_detail = {key: value for key, value in row.items() if key not in {
-        "desc_rich", "field_values", "related_tasks", "SkipCheckFieldPermissions",
-    }}
+        related_refs.append(
+            {"uuid": identifier(item.get("uuid")), "readable": item.get("readable") is True}
+        )
+    snapshot_detail = {
+        key: value
+        for key, value in row.items()
+        if key
+        not in {
+            "desc_rich",
+            "field_values",
+            "related_tasks",
+            "SkipCheckFieldPermissions",
+        }
+    }
     snapshot_detail["desc_rich_text"] = safe_rich
     snapshot_detail["related_task_references"] = related_refs
     # 字段值保留在规范化属性中，避免第二份富文本/Base64 原样进入快照。
@@ -306,7 +319,8 @@ def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -
     if any(type(v) is not int or v < 0 for v in (discussion_count, attachment_count)):
         raise ExportValidationError("knowledge_content_counts_invalid")
     values = {
-        "title": clean.text(title), "body_text": clean.text(body).strip() or safe_rich,
+        "title": clean.text(title),
+        "body_text": clean.text(body).strip() or safe_rich,
         "source_project_id": identifier(project.get("uuid")),
         "source_project_name": clean.value(row.get("project_uuid")) or "",
         "source_status_id": identifier(status.get("uuid")),
@@ -317,42 +331,19 @@ def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -
         "source_snapshot": {"detail": clean.value(snapshot_detail), "list": clean.value(listing)},
         "attributes": attributes,
         "completeness": {
-            "detail": "collected", "discussion": "not_collected", "attachments": "not_collected",
-            "ocr": "not_requested", "relation_set": "unverified", "discussion_count": discussion_count,
-            "attachment_count": attachment_count, "inline_image_count": len(parser.images),
+            "detail": "collected",
+            "discussion": "not_collected",
+            "attachments": "not_collected",
+            "ocr": "not_requested",
+            "relation_set": "unverified",
+            "discussion_count": discussion_count,
+            "attachment_count": attachment_count,
+            "inline_image_count": len(parser.images),
         },
         "normalizer_version": NORMALIZER_VERSION,
     }
     if not values["title"].strip() or not values["body_text"].strip():
         raise ExportValidationError("knowledge_text_empty")
-    return PreparedRecord(external_id, str(row["number"]), values, tuple(relations.values()), digest(values))
-
-
-def prepare_export(detail_path: Path, list_path: Path, *, expected_count: int) -> PreparedExport:
-    if not 1 <= expected_count <= MAX_RECORDS:
-        raise ExportValidationError("knowledge_expected_count_invalid")
-    details, detail_hash = _read_jsonl(detail_path)
-    listings, list_hash = _read_jsonl(list_path)
-    if len(details) != expected_count or len(listings) != expected_count:
-        raise ExportValidationError("knowledge_record_count_mismatch")
-    indexed = {row["uuid"]: row for row in listings}
-    if {row["uuid"] for row in details} != indexed.keys():
-        raise ExportValidationError("knowledge_record_set_mismatch")
-    clean = Sanitizer()
-    prepared = []
-    for line_no, row in enumerate(details, 1):
-        try:
-            prepared.append(_normalize(row, indexed[row["uuid"]], clean))
-        except ExportValidationError as exc:
-            raise ExportValidationError(exc.code, line_no) from None
-    manifest = {
-        "detail_sha256": detail_hash, "list_sha256": list_hash, "record_count": expected_count,
-        "normalizer_version": NORMALIZER_VERSION, "document_kind": "defect",
-        "timestamp_contract": "ones-export-epoch-microseconds",
-    }
-    return PreparedExport(tuple(prepared), manifest, {
-        "records": len(prepared), "projects": len({r.values["source_project_id"] for r in prepared}),
-        "relation_observations": sum(len(r.relations) for r in prepared),
-        "image_references": sum(r.values["completeness"]["inline_image_count"] for r in prepared),
-        "redactions": dict(clean.counts),
-    })
+    return PreparedRecord(
+        external_id, str(row["number"]), values, tuple(relations.values()), digest(values)
+    )

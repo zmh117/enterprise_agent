@@ -167,6 +167,7 @@ class ServicePrincipalSettings:
     file_worker_bootstrap_token_file: str = ""
     file_processing_worker_bootstrap_token_file: str = ""
     delivery_worker_bootstrap_token_file: str = ""
+    knowledge_bootstrap_token_file: str = ""
     identity_base_url: str = "http://api-server:8000"
     identity_allowed_hosts: tuple[str, ...] = ("api-server",)
     timeout_seconds: int = 5
@@ -174,6 +175,8 @@ class ServicePrincipalSettings:
     refresh_skew_seconds: int = 60
 
     def __post_init__(self) -> None:
+        if self.knowledge_bootstrap_token_file and not self.enabled:
+            raise ValueError("Knowledge service identity requires Service Principal enabled")
         if not 1 <= self.ttl_seconds <= 5 * 60:
             raise ValueError("Service Principal TTL must be between 1 and 300 seconds")
         if not 0 <= self.refresh_skew_seconds < self.ttl_seconds:
@@ -450,6 +453,7 @@ def load_settings() -> Settings:
             delivery_worker_bootstrap_token_file=os.getenv(
                 "DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE", ""
             ),
+            knowledge_bootstrap_token_file=os.getenv("KNOWLEDGE_BOOTSTRAP_TOKEN_FILE", ""),
             identity_base_url=os.getenv(
                 "SERVICE_IDENTITY_INTERNAL_BASE_URL", "http://api-server:8000"
             ),

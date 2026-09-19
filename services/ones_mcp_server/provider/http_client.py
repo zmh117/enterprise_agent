@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.shared.ones_io_budget import has_ones_io_budget, ones_io_timeout
+from app.shared.bounded_read_http import request_bytes
+
 import json
 import re
 import socket
@@ -106,22 +109,40 @@ class OnesProviderHttpClient:
             method=method,
         )
         try:
-            if self._open_response is not None:
-                response = self._open_response(request, float(self.timeout_seconds))
+            timeout = ones_io_timeout(float(self.timeout_seconds))
+            if has_ones_io_budget() and self._open_response is None:
+                status, raw = request_bytes(
+                    method,
+                    request.full_url,
+                    headers=dict(request.header_items()),
+                    content=request_data,
+                    timeout=timeout,
+                    max_bytes=self.max_response_bytes,
+                )
+                if status != 200:
+                    raise self.status_error(status)
             else:
-                response = self._opener.open(request, timeout=float(self.timeout_seconds))
-            with response:
-                if int(getattr(response, "status", 200)) != 200:
-                    raise self.status_error(int(response.status))
-                raw = response.read(self.max_response_bytes + 1)
+                response = (
+                    self._open_response(request, timeout)
+                    if self._open_response is not None
+                    else self._opener.open(request, timeout=timeout)
+                )
+                with response:
+                    if int(getattr(response, "status", 200)) != 200:
+                        raise self.status_error(int(response.status))
+                    raw = response.read(self.max_response_bytes + 1)
+            ones_io_timeout(float(self.timeout_seconds))
         except HTTPError as exc:
             raise self.status_error(int(exc.code)) from None
         except (URLError, TimeoutError, socket.timeout, OSError):
+            ones_io_timeout(float(self.timeout_seconds))
             raise RetryableExecutionError(
                 "ONES Provider request failed",
                 safe_message="ONES 查询暂时不可用",
                 error_code="ones_provider_unavailable",
             ) from None
+        except ValueError:
+            raise invalid_provider_response("ones_provider_response_invalid") from None
         if len(raw) > self.max_response_bytes:
             raise invalid_provider_response("ones_provider_response_too_large")
         try:

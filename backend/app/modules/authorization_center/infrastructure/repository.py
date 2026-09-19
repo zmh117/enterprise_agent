@@ -5,6 +5,7 @@ from typing import Any
 
 from app.modules.job.infrastructure.repositories import new_id, now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.modules.knowledge.infrastructure.storage import table as knowledge_table
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
@@ -312,6 +313,7 @@ class AuthorizationCenterRepository:
             (role_id,),
         )
         for access in accesses:
+            access["knowledge_base_ids"] = self.knowledge_base_ids(str(access["id"]))
             access["tool_identifiers"] = [
                 str(row["tool_identifier"])
                 for row in self.database.execute(
@@ -406,6 +408,12 @@ class AuthorizationCenterRepository:
                         """,
                         (new_id("role_app_mcp_tool"), access_id, identifier, timestamp),
                     )
+                for base_id in application.get("knowledge_base_ids", []):
+                    self.database.execute(
+                        "insert into rbac_role_application_knowledge_base "
+                        "(application_access_id,knowledge_base_id,created_at) values (?,?,?)",
+                        (access_id, base_id, timestamp),
+                    )
                 for scope in application["scopes"]:
                     self.database.execute(
                         """
@@ -484,6 +492,7 @@ class AuthorizationCenterRepository:
             (user_id, application_id, now_iso()),
         )
         for row in rows:
+            row["knowledge_base_ids"] = self.knowledge_base_ids(str(row["id"]))
             row["tool_identifiers"] = [
                 str(item["tool_identifier"])
                 for item in self.database.execute(
@@ -509,6 +518,22 @@ class AuthorizationCenterRepository:
                 (row["id"],),
             )
         return rows
+
+    def knowledge_base_ids(self, access_id: str) -> list[str]:
+        return [
+            str(row["knowledge_base_id"])
+            for row in self.database.execute(
+                "select knowledge_base_id from rbac_role_application_knowledge_base "
+                "where application_access_id=? order by knowledge_base_id",
+                (access_id,),
+            )
+        ]
+
+    def knowledge_base_catalog(self) -> list[dict[str, Any]]:
+        return self.database.execute(
+            f"select id,code,display_name from {knowledge_table(self.database, 'knowledge_base')} "
+            "where state='storage_only' order by id"
+        )
 
     def application_catalog(self) -> list[dict[str, Any]]:
         applications = self.database.execute(

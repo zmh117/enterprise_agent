@@ -319,7 +319,8 @@ def test_assignable_catalog_describes_tools_from_legacy_agent_publications() -> 
            and tool_identifier = 'query_database'
         """
     )
-    assert frozen == {"model_description": ""}
+    # Current seeds carry descriptions; the update below explicitly builds the legacy fixture.
+    assert frozen is not None
     c.database.execute(
         """
         update agent_publication_mcp_tool

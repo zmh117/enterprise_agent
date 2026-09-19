@@ -2,7 +2,7 @@
 
 import os
 
-from app.modules.knowledge.vector_contract import MAX_TOKENS, VectorError, validate_vector
+from app.modules.knowledge.domain.vector_contract import MAX_TOKENS, VectorError, validate_vector
 from services.knowledge_embedding.model_files import MODEL_DIR, verify_model
 
 
@@ -18,9 +18,11 @@ class EmbeddingEngine:
         torch.set_num_threads(4)
         torch.set_num_interop_threads(1)
         self.model = SentenceTransformer(
-            str(MODEL_DIR), device="cpu", local_files_only=True, trust_remote_code=False,
-            model_kwargs={"weights_only": True, "use_safetensors": False,
-                          "dtype": torch.float32},
+            str(MODEL_DIR),
+            device="cpu",
+            local_files_only=True,
+            trust_remote_code=False,
+            model_kwargs={"weights_only": True, "use_safetensors": False, "dtype": torch.float32},
         )
         self.model.max_seq_length = MAX_TOKENS
         self.model.eval()
@@ -32,7 +34,12 @@ class EmbeddingEngine:
         return [len(ids) for ids in encoded["input_ids"]]
 
     def encode(self, texts: list[str]) -> list[list[float]]:
-        vectors = self.model.encode(texts, batch_size=len(texts), show_progress_bar=False,
-                                    normalize_embeddings=True, convert_to_numpy=True,
-                                    precision="float32").tolist()
+        vectors = self.model.encode(
+            texts,
+            batch_size=len(texts),
+            show_progress_bar=False,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            precision="float32",
+        ).tolist()
         return [validate_vector(v) for v in vectors]

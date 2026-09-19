@@ -68,7 +68,7 @@ def test_python_runtime_and_standard_mcp_are_hardened_and_secret_scoped() -> Non
         "/tmp/python-agent-runtime/.claude"
     )
     assert python_runtime["tmpfs"] == [
-        "/tmp/python-agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-256m},mode=0700,uid=10002,gid=10002"
+        "/tmp/python-agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-1g},mode=0700,uid=10002,gid=10002"
     ]
     assert "runtime_grant_public_key" in python_runtime["secrets"]
     assert "runtime_grant_private_key" not in python_runtime["secrets"]

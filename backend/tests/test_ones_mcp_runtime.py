@@ -184,6 +184,9 @@ def _mock_dictionary(settings: MockOnesSettings) -> QueryConditionDictionary:
 def _fixture(
     *,
     initial_token: str | None = None,
+    before_job: Any = None,
+    before_application: Any = None,
+    current_agent_envelope: bool = False,
     capabilities: tuple[str, ...] = (
         "ones_work_item_search",
         PROJECT_ROLE_MEMBERS_TOOL_IDENTIFIER,
@@ -215,12 +218,31 @@ def _fixture(
                 now_iso(),
             ),
         )
+    if current_agent_envelope:
+        from app.modules.agent_config.application.service import agent_config_hash
+
+        row = runtime.database.execute_one(
+            "select snapshot_json from agent_publication where id='agent_publication_default_v1'"
+        )
+        snapshot = json.loads(row["snapshot_json"])
+        snapshot["mcp_tool_envelope"] = runtime.database.execute(
+            "select server_code,tool_identifier,schema_hash from agent_publication_mcp_tool "
+            "where agent_publication_id='agent_publication_default_v1' order by selection_order"
+        )
+        runtime.database.execute(
+            "update agent_publication set snapshot_json=?,config_hash=? where id='agent_publication_default_v1'",
+            (json.dumps(snapshot), agent_config_hash(snapshot)),
+        )
+    if before_application is not None:
+        before_application(runtime)
     selection = prepare_debug_application_access(
         runtime,
         application_code="ones-mcp-runtime-test",
         role_code="ones-mcp-runtime-reader",
         capabilities=capabilities,
     )
+    if before_job is not None:
+        before_job(runtime, selection)
     job, _ = runtime.debug_job_access_service.create_job(
         user_id="user_local_admin",
         display_name="Administrator",
@@ -425,6 +447,7 @@ def _fixture(
         "job": claimed,
         "identity": identity,
         "token": token,
+        "issuer": issuer,
         "claims": registry.authenticate(token, tool_identifier=capabilities[0]),
         "service": service,
         "role_service": role_service,

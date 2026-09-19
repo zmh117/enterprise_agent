@@ -2,21 +2,33 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
 import hashlib
 import threading
 from typing import Any
-import uuid
 
-from app.modules.knowledge.ones_export import ExportValidationError, canonical_json
+from app.modules.knowledge.domain.normalization import ExportValidationError, canonical_json
 from app.shared.database import Database
 
 
-TABLES = frozenset({
-    "source", "document", "document_revision", "knowledge_base", "knowledge_base_document",
-    "import_run", "document_relation", "document_chunk_set", "document_chunk",
-    "vector_index", "vector_index_item",
-})
+TABLES = frozenset(
+    {
+        "source",
+        "document",
+        "document_revision",
+        "knowledge_base",
+        "knowledge_base_document",
+        "import_run",
+        "document_relation",
+        "document_chunk_set",
+        "document_chunk",
+        "vector_index",
+        "vector_index_item",
+        "source_binding",
+        "retrieval_resource",
+        "retrieval_revision",
+        "retrieval_verification",
+    }
+)
 _SQLITE_LOCK = threading.Lock()
 
 
@@ -24,14 +36,6 @@ def table(database: Database, name: str) -> str:
     if name not in TABLES:
         raise ValueError("Unknown knowledge table")
     return f'"knowledge.{name}"' if database.engine == "sqlite" else f"knowledge.{name}"
-
-
-def stable_id(kind: str, *parts: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_json(["enterprise-agent-knowledge", kind, *parts])))
-
-
-def now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def insert(database: Database, name: str, values: dict[str, Any], *, conflict: str = "") -> None:
@@ -45,7 +49,9 @@ def insert(database: Database, name: str, values: dict[str, Any], *, conflict: s
 def source_lock(database: Database, source_id: str) -> Iterator[None]:
     with database.session():
         if database.engine == "postgres":
-            key = int.from_bytes(hashlib.sha256(source_id.encode()).digest()[:8], "big", signed=True)
+            key = int.from_bytes(
+                hashlib.sha256(source_id.encode()).digest()[:8], "big", signed=True
+            )
             result = database.execute_one("select pg_try_advisory_lock(?) as acquired", (key,))
             if not result or not result["acquired"]:
                 raise ExportValidationError("knowledge_source_import_busy")

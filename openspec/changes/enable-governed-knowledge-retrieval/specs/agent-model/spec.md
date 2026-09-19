@@ -1,39 +1,31 @@
 ## ADDED Requirements
 
-### Requirement: 知识工具发布必须限定内网模型全链路
-包含知识工具的 Agent Publication SHALL 固定 `internal_only` 模型数据边界，并要求受信部署认可的本地/内网模型连接。认可 MUST 绑定模型连接 revision/config hash、实际路由和允许模型映射，具备不向外部模型转发的部署及出口控制证据；普通编辑者的勾选、私网地址或一次调用成功 MUST NOT 单独作为认可依据。主模型、Opus/Sonnet/Haiku、Subagent、压缩、总结和 fallback 的全部实际模型路径 MUST 满足该边界，未配置映射按现有规则继承主模型。
+### Requirement: 知识分析沿用既有聊天模型而向量化保持本地
+系统 SHALL 保持知识 Embedding 在本地或内网执行，不因聊天模型故障而回退到外部 Embedding 服务。用户已明确接受：经双重授权获得的检索引用、ONES 正文及其上下文可以进入 Agent 现有配置的聊天模型，包括外部模型；本地 Embedding MUST NOT 被描述为全文链路不外发。
 
-系统 MUST 复用现有 Anthropic-compatible 协议和内部网关校验，不因知识接入增加任意协议、地址或 Runtime Adapter。边界未验证或任一路径不受控 MUST 阻止知识工具发布；无知识能力且不含受保护上下文的既有 Agent 保持原有模型合同。
+知识能力 MUST 复用现有模型连接、Publication 冻结版本、Runtime 签名和模型映射规则。系统 MUST NOT 为知识工具另设强制内网模型认可文件、internal_only 发布门禁或 Session/摘要/产物继承机制，也不为此升级 Runtime 协议或扩大 Runtime 数据库读取权限。
 
-#### Scenario: 本地 Embedding 但外部聊天模型
-- **WHEN** 知识库使用本地向量化，但 Agent 主模型或某个子 Agent/总结/fallback 映射指向外部模型
-- **THEN** 发布拒绝，不能以 Embedding 本地作为正文不外发的充分条件
+#### Scenario: 本地 Embedding 配合外部聊天模型
+- **WHEN** Agent 配置合法且可用的外部聊天模型，并满足知识工具发布依赖
+- **THEN** 允许发布和按既有模型配置执行，不要求新增部署认可；向量化仍使用内部 Embedding
 
-#### Scenario: 内网网关转发公网模型
-- **WHEN** 网关地址在私网，但未获得不向外部转发的受信部署认可
-- **THEN** 系统按模型边界未核验拒绝知识工具发布，不由 Agent 编辑者自行覆盖
+#### Scenario: 模型冻结与 Runtime 隔离
+- **WHEN** 已发布 Agent 使用知识能力
+- **THEN** 仍按既有固定模型版本、签名请求和最小数据库权限执行，不允许知识参数覆盖模型连接或凭据
 
-#### Scenario: 继承默认模型
-- **WHEN** 模型别名或 Subagent 配置为空并按当前规则继承主模型
-- **THEN** 系统校验规范化后的全部有效映射，并在 Publication 固定它们及数据边界
+#### Scenario: Embedding 服务不可用
+- **WHEN** 本地 Embedding 调用失败
+- **THEN** 返回安全依赖错误，不将查询或文档转发外部 Embedding，也不解释为无相关记录
 
-### Requirement: 内网数据边界必须先于模型请求并传播到会话
-知识工具 Job MUST 在首次模型 I/O 前确定 `internal_only`，运行前复核固定模型版本与当前受信部署状态。该 Job 的问题、检索结果、ONES 正文及其摘要/历史/受保护结果引用 MUST 仅进入本地/内网模型，错误重试、压缩、子 Agent 与 fallback 均不得转外部模型。边界 MUST 随 Session、历史摘要及供模型读取的产物传播，不能因下一 Job 移除知识 Tool、切换 Agent、恢复旧 Publication 或复制历史而清除。
+### Requirement: 允许外部聊天不得放宽知识读取和诊断边界
+knowledge_search 的 Agent Envelope 与 Application 有效工具子集 MUST 同时包含 ones_get_work_item_detail。Worker MUST 在模型或摘要处理前验证当前业务应用 Job、知识工具与详情 Tool 的有效授权；具体命中仍需 KB 与本人 ONES 双重校验。移除强制内网聊天限制 MUST NOT 绕过这些条件，也不自动注册或授权新工具。
 
-无法保持边界时系统 MUST 在模型访问前拒绝，并要求不携带受保护历史或附件的新会话；MUST NOT 静默删除标记后发送上下文。诊断和外部遥测 MUST NOT 携带检索 query、向量、业务正文或受保护摘要；既有受控运行记录的访问/保留要求保持生效。
+通用日志、指标和外部遥测 MUST NOT 新增检索 query、向量、业务正文、被拒绝候选或凭据。既有受控运行记录的访问、保留和导出合同保持生效。
 
-#### Scenario: 内网模型不可用
-- **WHEN** 知识 Job 的内部模型不可用或部署认可被撤销
-- **THEN** 当前执行安全失败，不回退外部模型，不把查询或 ONES 内容发送到外部探测服务
+#### Scenario: 应用子集缺少详情工具
+- **WHEN** 应用选择 knowledge_search 但没有 ones_get_work_item_detail
+- **THEN** 发布拒绝，不自动授予详情权限
 
-#### Scenario: 下次 Job 不再包含知识工具
-- **WHEN** 用户恢复已有知识结果的会话并选择外部模型，即使新 Job 未包含知识工具
-- **THEN** 系统在首个模型请求前拒绝复用该上下文，保留 internal_only 标记
-
-#### Scenario: 受保护结果被导入另一会话
-- **WHEN** 历史摘要或结果产物被后续 Job 引用为模型输入
-- **THEN** 接收方必须继承并校验内网边界，不能通过产物或历史复制绕过限制
-
-#### Scenario: 发布或运行回退
-- **WHEN** 操作者停用知识工具并回退到旧 Publication 或执行版本
-- **THEN** 已含知识数据的会话仍受内网限制；不能执行该限制的旧运行版本不得恢复它
+#### Scenario: 执行前权限被撤销
+- **WHEN** 当前 Job 的知识工具或详情 Tool grant 已失效
+- **THEN** Worker 在解析模型和生成历史摘要前拒绝，外部聊天获准不代表读取获准

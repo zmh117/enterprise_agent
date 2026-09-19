@@ -9,6 +9,136 @@
   },
   "entries": [
     {
+      "id": "rbac_role_application_knowledge_base",
+      "object_type": "table",
+      "table": "rbac_role_application_knowledge_base",
+      "owner": "authorization_center",
+      "semantics": "现有角色应用业务访问记录的明确知识库允许集合；不支持显式拒绝或跨应用继承",
+      "classification": "canonical_mutable_fact",
+      "canonical_source": "角色业务访问分区的明确授权操作",
+      "writers": ["code:backend/app/modules/authorization_center/infrastructure/repository.py"],
+      "readers": ["code:backend/app/modules/authorization_center/infrastructure/repository.py"],
+      "lifecycle": "随业务分区 revision 原子替换，当前全部展开明确 ID，移除应用记录级联撤销",
+      "retention_policy": "当前事实保留至撤销；授权变更摘要保留于既有审计",
+      "audit_requirement": "记录角色、应用、KB 标识和业务修订；不记录知识正文或凭据",
+      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["替代授权事实源必须明确迁移"]},
+      "evidence_refs": ["migration:137_expand_knowledge_retrieval_governance"]
+    },
+    {
+      "id": "knowledge.source_binding",
+      "object_type": "table",
+      "table": "knowledge.source_binding",
+      "owner": "knowledge",
+      "semantics": "离线来源绑定修订；不改变来源存储身份或授予业务权限",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "人工批次来源确认和受信 ONES 目标技术交叉核验",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
+      ],
+      "lifecycle": "新增默认未核验或未发布；替换保留历史；撤销禁止运行读取",
+      "retention_policy": "不自动删除；清理须显式授权并核对发布和审计依赖",
+      "audit_requirement": "只记录标识、版本、计数和安全摘要；不保存凭据、正文或原始响应",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代治理及历史引用留存须先明确确认"
+        ]
+      },
+      "evidence_refs": [
+        "migration:137_expand_knowledge_retrieval_governance"
+      ]
+    },
+    {
+      "id": "knowledge.retrieval_resource",
+      "object_type": "table",
+      "table": "knowledge.retrieval_resource",
+      "owner": "knowledge",
+      "semantics": "知识检索逻辑资源；草稿和发布指针不授予用户读取权",
+      "classification": "canonical_mutable_fact",
+      "canonical_source": "显式知识资源管理操作及固定来源和索引版本",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
+      ],
+      "lifecycle": "新增默认未核验或未发布；替换保留历史；撤销禁止运行读取",
+      "retention_policy": "不自动删除；清理须显式授权并核对发布和审计依赖",
+      "audit_requirement": "只记录标识、版本、计数和安全摘要；不保存凭据、正文或原始响应",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代治理及历史引用留存须先明确确认"
+        ]
+      },
+      "evidence_refs": [
+        "migration:137_expand_knowledge_retrieval_governance"
+      ]
+    },
+    {
+      "id": "knowledge.retrieval_revision",
+      "object_type": "table",
+      "table": "knowledge.retrieval_revision",
+      "owner": "knowledge",
+      "semantics": "知识检索资源不可变配置版本；编辑创建新版本",
+      "classification": "immutable_snapshot",
+      "source_contract": "配置修订固定来源绑定、索引及其摘要；编辑只创建新版本，不覆盖已验证配置",
+      "canonical_source": "显式知识资源管理操作及固定来源和索引版本",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
+      ],
+      "lifecycle": "新增默认未核验或未发布；替换保留历史；撤销禁止运行读取",
+      "retention_policy": "不自动删除；清理须显式授权并核对发布和审计依赖",
+      "audit_requirement": "只记录标识、版本、计数和安全摘要；不保存凭据、正文或原始响应",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代治理及历史引用留存须先明确确认"
+        ]
+      },
+      "evidence_refs": [
+        "migration:137_expand_knowledge_retrieval_governance"
+      ]
+    },
+    {
+      "id": "knowledge.retrieval_verification",
+      "object_type": "table",
+      "table": "knowledge.retrieval_verification",
+      "owner": "knowledge",
+      "semantics": "知识检索配置技术验证事实；不代替发布和业务授权",
+      "classification": "immutable_snapshot",
+      "source_contract": "每次验证追加结果，绑定明确配置修订及摘要；旧结果不能用于变更后的配置",
+      "canonical_source": "显式知识资源管理操作及固定来源和索引版本",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
+      ],
+      "lifecycle": "新增默认未核验或未发布；替换保留历史；撤销禁止运行读取",
+      "retention_policy": "不自动删除；清理须显式授权并核对发布和审计依赖",
+      "audit_requirement": "只记录标识、版本、计数和安全摘要；不保存凭据、正文或原始响应",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代治理及历史引用留存须先明确确认"
+        ]
+      },
+      "evidence_refs": [
+        "migration:137_expand_knowledge_retrieval_governance"
+      ]
+    },
+    {
       "id": "mcp_schema_pagination_cursor",
       "object_type": "table",
       "table": "mcp_schema_pagination_cursor",
@@ -40,10 +170,10 @@
       "classification": "operational_coordination_fact",
       "canonical_source": "knowledge.document_chunk and versioned local embedding profile",
       "writers": [
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "lifecycle": "显式索引版本；BUILDING 完整核验后 READY，中断可恢复，版本变化不覆盖",
       "retention_policy": "不自动删除；清理须明确授权并核对依赖",
@@ -69,10 +199,10 @@
       "classification": "operational_coordination_fact",
       "canonical_source": "knowledge.document_chunk and versioned local embedding profile",
       "writers": [
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "lifecycle": "显式索引版本；BUILDING 完整核验后 READY，中断可恢复，版本变化不覆盖",
       "retention_policy": "不自动删除；清理须明确授权并核对依赖",
@@ -98,11 +228,11 @@
       "classification": "derived_projection",
       "canonical_source": "knowledge.document_revision and versioned chunk profile",
       "writers": [
-        "code:backend/app/modules/knowledge/chunk_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/chunk_service.py",
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "lifecycle": "来源版本与配置共同确定；完整集合按事务首次提交，不覆盖历史结果",
       "retention_policy": "跟随来源版本的受控保留；不随 Agent Job 自动删除",
@@ -128,11 +258,11 @@
       "classification": "derived_projection",
       "canonical_source": "knowledge.document_revision and versioned chunk profile",
       "writers": [
-        "code:backend/app/modules/knowledge/chunk_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/chunk_service.py",
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "lifecycle": "来源版本与配置共同确定；完整集合按事务首次提交，不覆盖历史结果",
       "retention_policy": "跟随来源版本的受控保留；不随 Agent Job 自动删除",
@@ -157,10 +287,10 @@
       "semantics": "知识来源身份；离线来源未确认时不得用于在线同步或授权",
       "classification": "canonical_mutable_fact",
       "writers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
@@ -185,12 +315,12 @@
       "semantics": "知识库收录身份；本阶段仅存储，不构成已发布资源或数据访问授权",
       "classification": "canonical_mutable_fact",
       "writers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py",
-        "code:backend/app/modules/knowledge/chunk_service.py",
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
@@ -215,10 +345,10 @@
       "semantics": "离线导入批次及事务性检查点，不保存原始失败行或异常正文",
       "classification": "operational_coordination_fact",
       "writers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
@@ -243,12 +373,12 @@
       "semantics": "跨知识库复用的来源文档稳定身份，类型变化不改变身份",
       "classification": "canonical_mutable_fact",
       "writers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py",
-        "code:backend/app/modules/knowledge/chunk_service.py",
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
@@ -274,12 +404,12 @@
       "classification": "immutable_snapshot",
       "source_contract": "ones-offline-text/v1：安全清洗的离线详情/list 快照，非已授权在线事实",
       "writers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py",
-        "code:backend/app/modules/knowledge/chunk_service.py",
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "lifecycle": "不可变；仅新增版本，不覆盖原文",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
@@ -304,12 +434,12 @@
       "semantics": "知识库与来源文档的多对多收录关系，不扩大来源访问权限",
       "classification": "canonical_mutable_fact",
       "writers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py",
-        "code:backend/app/modules/knowledge/chunk_service.py",
-        "code:backend/app/modules/knowledge/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
       "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
@@ -335,10 +465,10 @@
       "classification": "derived_projection",
       "canonical_source": "knowledge.document_revision.source_snapshot",
       "writers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/import_service.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
       ],
       "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",

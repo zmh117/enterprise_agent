@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import jwt
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from urllib.parse import urlsplit
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.principal_jwt import (
+    PrincipalJwks,
     PrincipalSigningKey,
 )
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
@@ -47,6 +49,9 @@ FILE_PROCESSING_WORKER_SCOPES = frozenset(
 DELIVERY_WORKER_SCOPES = frozenset({"internal:file-service:delivery:read"})
 MAX_SERVICE_PRINCIPAL_TTL_SECONDS = 5 * 60
 SERVICE_PRINCIPAL_TOKEN_PATH = "/api/internal/service-principal/token"
+KNOWLEDGE_AUTHORIZED_PARTY = "knowledge-mcp"
+KNOWLEDGE_BRIDGE_AUDIENCE = "knowledge-readability-bridge"
+KNOWLEDGE_BRIDGE_SCOPES = frozenset({"internal:knowledge:work-item:readability"})
 
 
 class ServicePrincipalTokenError(NonRetryableExecutionError):
@@ -88,6 +93,12 @@ SERVICE_PRINCIPAL_GRANTS = {
         scopes=DELIVERY_WORKER_SCOPES,
     ),
 }
+REQUIRED_SERVICE_PRINCIPAL_ROLES = frozenset(SERVICE_PRINCIPAL_GRANTS)
+SERVICE_PRINCIPAL_GRANTS[KNOWLEDGE_AUTHORIZED_PARTY] = ServicePrincipalGrant(
+    subject=KNOWLEDGE_AUTHORIZED_PARTY,
+    audience=KNOWLEDGE_BRIDGE_AUDIENCE,
+    scopes=KNOWLEDGE_BRIDGE_SCOPES,
+)
 
 
 def _read_bootstrap_credential(path: str, *, label: str) -> str:
@@ -145,7 +156,11 @@ class ServicePrincipalTokenIssuer:
     ) -> None:
         if not 1 <= ttl_seconds <= MAX_SERVICE_PRINCIPAL_TTL_SECONDS:
             raise ValueError("Service Principal TTL is invalid")
-        if set(bootstrap_credentials) != set(SERVICE_PRINCIPAL_GRANTS):
+        if not (
+            REQUIRED_SERVICE_PRINCIPAL_ROLES
+            <= set(bootstrap_credentials)
+            <= set(SERVICE_PRINCIPAL_GRANTS)
+        ):
             raise ValueError("Service Principal bootstrap roles are incomplete")
         values = tuple(bootstrap_credentials.values())
         if len(values) != len(set(values)) or any(not value for value in values):
@@ -168,6 +183,7 @@ class ServicePrincipalTokenIssuer:
         audit_service: AuditService,
         environment: str,
         ttl_seconds: int = MAX_SERVICE_PRINCIPAL_TTL_SECONDS,
+        knowledge_bootstrap_file: str = "",
     ) -> ServicePrincipalTokenIssuer:
         return cls(
             signing_key=PrincipalSigningKey.from_file(
@@ -186,6 +202,15 @@ class ServicePrincipalTokenIssuer:
                 DELIVERY_WORKER_AUTHORIZED_PARTY: _read_bootstrap_credential(
                     delivery_worker_bootstrap_file,
                     label="Delivery Worker bootstrap credential",
+                ),
+                **(
+                    {
+                        KNOWLEDGE_AUTHORIZED_PARTY: _read_bootstrap_credential(
+                            knowledge_bootstrap_file, label="Knowledge MCP bootstrap credential"
+                        )
+                    }
+                    if knowledge_bootstrap_file
+                    else {}
                 ),
             },
             audit_service=audit_service,
@@ -248,13 +273,90 @@ class ServicePrincipalTokenIssuer:
         )
 
 
+class KnowledgeServicePrincipalVerifier:
+    """仅允许固定知识服务访问可读性桥；不授予任何用户或业务数据权限。"""
+
+    def __init__(self, jwks: PrincipalJwks, *, now: Callable[[], int] | None = None) -> None:
+        self.jwks = jwks
+        self._now = now or (lambda: int(time.time()))
+
+    def verify(self, token: str) -> None:
+        grant = SERVICE_PRINCIPAL_GRANTS[KNOWLEDGE_AUTHORIZED_PARTY]
+        try:
+            if not 1 <= len(token.encode("ascii")) <= MAX_PRINCIPAL_TOKEN_BYTES:
+                raise ValueError
+            header = jwt.get_unverified_header(token)
+            if (
+                set(header) != {"alg", "kid", "typ"}
+                or header.get("alg") != "EdDSA"
+                or header.get("typ") != "JWT"
+                or not isinstance(header.get("kid"), str)
+            ):
+                raise ValueError
+            key = self.jwks.get(header["kid"])
+            if key is None:
+                raise ValueError
+            fields = {
+                "iss",
+                "sub",
+                "aud",
+                "azp",
+                "scope",
+                "authorization_hash",
+                "jti",
+                "iat",
+                "nbf",
+                "exp",
+            }
+            claims = jwt.decode(
+                token,
+                key=key.key,
+                algorithms=["EdDSA"],
+                audience=grant.audience,
+                issuer=SERVICE_PRINCIPAL_ISSUER,
+                options={
+                    "require": sorted(fields),
+                    "verify_exp": False,
+                    "verify_iat": False,
+                    "verify_nbf": False,
+                },
+            )
+            if (
+                set(claims) != fields
+                or claims["sub"] != grant.subject
+                or claims["azp"] != grant.subject
+                or claims["aud"] != grant.audience
+                or claims["scope"] != sorted(grant.scopes)
+                or claims["authorization_hash"] != _authorization_hash(grant)
+                or not isinstance(claims["jti"], str)
+                or not 1 <= len(claims["jti"]) <= 128
+                or any(type(claims[name]) is not int for name in ("iat", "nbf", "exp"))
+            ):
+                raise ValueError
+            now = self._now()
+            if (
+                claims["iat"] > now
+                or claims["nbf"] > now
+                or claims["nbf"] > claims["iat"]
+                or claims["exp"] <= now
+                or not 1 <= claims["exp"] - claims["iat"] <= MAX_SERVICE_PRINCIPAL_TTL_SECONDS
+            ):
+                raise ValueError
+        except (jwt.PyJWTError, UnicodeError, ValueError, TypeError, KeyError):
+            raise ServicePrincipalTokenError(
+                "Knowledge service identity rejected",
+                safe_message="知识服务身份无效",
+                error_code="knowledge_service_identity_invalid",
+            ) from None
+
+
 class ServiceIdentityExchangeTransport(Protocol):
     def exchange(
         self,
         *,
         url: str,
         bootstrap_credential: str,
-        timeout_seconds: int,
+        timeout_seconds: float,
     ) -> Mapping[str, Any]: ...
 
 
@@ -264,8 +366,12 @@ class UrllibServiceIdentityExchangeTransport:
         *,
         url: str,
         bootstrap_credential: str,
-        timeout_seconds: int,
+        timeout_seconds: float,
     ) -> Mapping[str, Any]:
+        from app.shared.ones_io_budget import has_ones_io_budget
+        from app.shared.bounded_read_http import request_bytes
+        from email.message import Message
+
         request = urllib.request.Request(
             url,
             data=b"",
@@ -276,8 +382,22 @@ class UrllibServiceIdentityExchangeTransport:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                payload = response.read(64 * 1024 + 1)
+            if has_ones_io_budget():
+                status, payload = request_bytes(
+                    "POST",
+                    url,
+                    headers=dict(request.header_items()),
+                    content=b"",
+                    timeout=timeout_seconds,
+                    max_bytes=64 * 1024,
+                )
+                if status != 200:
+                    raise urllib.error.HTTPError(
+                        url, status, "identity_exchange_failed", Message(), None
+                    )
+            else:
+                with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                    payload = response.read(64 * 1024 + 1)
         except urllib.error.HTTPError as exc:
             if 400 <= exc.code < 500:
                 raise ServicePrincipalTokenError(
@@ -290,7 +410,7 @@ class UrllibServiceIdentityExchangeTransport:
                 safe_message="内部身份服务暂时不可用",
                 error_code="service_identity_unavailable",
             ) from exc
-        except (OSError, TimeoutError) as exc:
+        except (OSError, TimeoutError, ValueError) as exc:
             raise RetryableExecutionError(
                 "Service identity exchange failed",
                 safe_message="内部身份服务暂时不可用",
@@ -363,10 +483,21 @@ class ServicePrincipalTokenClient:
         return f"ServicePrincipalTokenClient(url={self.url!r}, credential=<hidden>, token=<hidden>)"
 
     def access_token(self) -> str:
+        from app.shared.ones_io_budget import ones_io_timeout
+
+        ones_io_timeout(60)
         now = self._now()
         if self._token and now < self._expires_at - self.refresh_skew_seconds:
             return self._token
-        with self._lock:
+        if not self._lock.acquire(timeout=ones_io_timeout(-1)):
+            ones_io_timeout(0)
+            raise RetryableExecutionError(
+                "Service identity refresh wait timed out",
+                safe_message="内部服务身份刷新等待超时",
+                error_code="service_identity_unavailable",
+            )
+        try:
+            ones_io_timeout(60)
             now = self._now()
             if self._token and now < self._expires_at - self.refresh_skew_seconds:
                 return self._token
@@ -377,8 +508,9 @@ class ServicePrincipalTokenClient:
                         self.bootstrap_credential_file,
                         label="Service bootstrap credential",
                     ),
-                    timeout_seconds=self.timeout_seconds,
+                    timeout_seconds=ones_io_timeout(self.timeout_seconds),
                 )
+                ones_io_timeout(60)
                 token = response.get("access_token")
                 token_type = response.get("token_type")
                 expires_in = response.get("expires_in")
@@ -392,6 +524,7 @@ class ServicePrincipalTokenClient:
                 ):
                     raise ValueError("Service identity token response is invalid")
             except RetryableExecutionError:
+                ones_io_timeout(60)
                 if self._token and self._now() < self._expires_at - 5:
                     return self._token
                 raise
@@ -404,3 +537,5 @@ class ServicePrincipalTokenClient:
             self._token = token
             self._expires_at = now + expires_in
             return token
+        finally:
+            self._lock.release()

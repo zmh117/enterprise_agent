@@ -12,6 +12,7 @@ from app.modules.identity.application.authorization import AuthorizationEvaluato
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.model_connection.application import ModelConnectionService
 from app.modules.model_connection.domain import DEFAULT_MODEL_CONNECTION_CODE
+from app.modules.knowledge.domain.tool_policy import knowledge_tool_dependency_errors
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
@@ -836,6 +837,11 @@ class AgentConfigService:
                         )
         elif model not in self.allowed_models:
             errors.append({"field": "model_policy.model", "message": "模型尚未注册"})
+        tool_ids = config.get("mcp_tool_ids") or []
+        errors.extend(
+            {**error, "field": "mcp_tool_ids"}
+            for error in knowledge_tool_dependency_errors(tool_ids)
+        )
         available_skills = set(self.skill_loader.load())
         for skill_code in config.get("skills") or []:
             if str(skill_code) not in available_skills:

@@ -93,7 +93,7 @@ export function RoleAuthorizationPage() {
             角色与授权
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-            一个角色可以同时包含管理后台功能权限和业务应用只读权限。多角色允许并集，显式拒绝优先。
+            一个角色可以同时包含管理后台功能权限和业务应用权限。知识库按应用独立授权，未选择即不授予，不配置显式拒绝。
           </p>
         </div>
         <Button
@@ -838,6 +838,7 @@ function AdminCapabilitiesPanel({ detail }: { detail: RoleDetail }) {
 type ApplicationSelection = {
   toolIdentifiers: Set<string>
   scopeKeys: Set<string>
+  knowledgeBaseIds: Set<string>
 }
 
 function BusinessAccessPanel({ detail }: { detail: RoleDetail }) {
@@ -849,6 +850,7 @@ function BusinessAccessPanel({ detail }: { detail: RoleDetail }) {
       application.application_id,
       {
         toolIdentifiers: new Set(application.tool_identifiers),
+        knowledgeBaseIds: new Set(application.knowledge_base_ids),
         scopeKeys: new Set(application.scopes.map((scope) => scope.scope_key)),
       },
     ])
@@ -884,6 +886,7 @@ function BusinessAccessPanel({ detail }: { detail: RoleDetail }) {
       applications: [...selection.entries()].map(([application_id, value]) => ({
         application_id,
         tool_identifiers: [...value.toolIdentifiers],
+        knowledge_base_ids: [...value.knowledgeBaseIds].sort(),
         scopes: [...value.scopeKeys]
           .map((key) => topologyByScope.get(key))
           .filter(Boolean),
@@ -961,7 +964,11 @@ function BusinessApplicationCard({
             onCheckedChange={(checked) =>
               onChange(
                 checked
-                  ? { toolIdentifiers: new Set(), scopeKeys: new Set() }
+                  ? {
+                      toolIdentifiers: new Set(),
+                      scopeKeys: new Set(),
+                      knowledgeBaseIds: new Set(),
+                    }
                   : undefined
               )
             }
@@ -1000,7 +1007,9 @@ function BusinessApplicationCard({
                       {identifier}
                     </span>
                     <span className="mt-1 block text-xs leading-5 text-destructive">
-                      MCP Tool 已从当前应用 Publication 移除，请取消选择后保存新授权；历史角色审计和既有 Job 快照不会被改写。
+                      MCP Tool 已从当前应用 Publication
+                      移除，请取消选择后保存新授权；历史角色审计和既有 Job
+                      快照不会被改写。
                     </span>
                   </span>
                 </label>
@@ -1013,9 +1022,7 @@ function BusinessApplicationCard({
                   <Checkbox
                     className="mt-0.5"
                     aria-label={`${tool.display_name_zh} ${tool.tool_identifier}`}
-                    checked={selected.toolIdentifiers.has(
-                      tool.tool_identifier
-                    )}
+                    checked={selected.toolIdentifiers.has(tool.tool_identifier)}
                     onCheckedChange={(checked) => {
                       const identifiers = new Set(selected.toolIdentifiers)
                       if (checked) identifiers.add(tool.tool_identifier)
@@ -1048,6 +1055,92 @@ function BusinessApplicationCard({
                 </p>
               ) : null}
             </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-medium">知识库使用范围</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              仅引用“工具资源”中的知识库，不重复配置资源。勾选只对当前应用生效；实际检索还需本应用的工具授权、有效发布资源和本人
+              ONES 可读权限。
+            </p>
+            {application.knowledge_bases.length > 0 ? (
+              <label className="mt-3 flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={application.knowledge_bases.every((base) =>
+                    selected.knowledgeBaseIds.has(base.id)
+                  )}
+                  onCheckedChange={(checked) => {
+                    const ids = new Set(selected.knowledgeBaseIds)
+                    application.knowledge_bases.forEach((base) =>
+                      checked ? ids.add(base.id) : ids.delete(base.id)
+                    )
+                    update({ ...selected, knowledgeBaseIds: ids })
+                  }}
+                />
+                当前全部知识库（保存明确 ID，未来新增不自动授权）
+              </label>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                当前没有可授权的知识库。
+              </p>
+            )}
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {application.knowledge_bases.map((base) => (
+                <label
+                  key={base.id}
+                  className="flex items-start gap-3 rounded-md border p-3 text-sm"
+                >
+                  <Checkbox
+                    aria-label={`${application.name} 知识库 ${base.display_name} ${base.id}`}
+                    checked={selected.knowledgeBaseIds.has(base.id)}
+                    onCheckedChange={(checked) => {
+                      const ids = new Set(selected.knowledgeBaseIds)
+                      if (checked) ids.add(base.id)
+                      else ids.delete(base.id)
+                      update({ ...selected, knowledgeBaseIds: ids })
+                    }}
+                  />
+                  <span>
+                    {base.display_name}
+                    <span className="block font-mono text-xs break-all text-muted-foreground">
+                      {base.id}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              {[...selected.knowledgeBaseIds]
+                .filter(
+                  (id) =>
+                    !application.knowledge_bases.some((base) => base.id === id)
+                )
+                .map((id) => (
+                  <label
+                    key={id}
+                    className="flex items-start gap-3 rounded-md border border-destructive/50 p-3 text-sm"
+                  >
+                    <Checkbox
+                      aria-label={`${application.name} 移除不可授权知识库 ${id}`}
+                      checked
+                      onCheckedChange={() => {
+                        const ids = new Set(selected.knowledgeBaseIds)
+                        ids.delete(id)
+                        update({ ...selected, knowledgeBaseIds: ids })
+                      }}
+                    />
+                    <span className="break-all">
+                      {id}：当前不可授权，取消选择后保存以撤销。
+                    </span>
+                  </label>
+                ))}
+            </div>
+            <p
+              className="mt-3 text-xs break-all text-muted-foreground"
+              aria-label={`${application.name} 知识库授权预览`}
+            >
+              保存的知识库 ID：
+              {[...selected.knowledgeBaseIds].sort().join("、") ||
+                "无（本角色不授予此应用知识库权限）"}
+              。取消勾选并保存会撤销本记录授权；其他角色的完整允许仍可生效。
+            </p>
           </div>
           <div>
             <h3 className="text-sm font-medium">local 数据范围</h3>
@@ -1189,6 +1282,7 @@ function AuthorizationPreviewPanel() {
   const [userId, setUserId] = useState("")
   const [applicationId, setApplicationId] = useState("")
   const [capability, setCapability] = useState("")
+  const [knowledgeBaseId, setKnowledgeBaseId] = useState("")
 
   const application = catalog.data?.applications.find(
     (item) => item.id === applicationId
@@ -1198,7 +1292,8 @@ function AuthorizationPreviewPanel() {
       <CardHeader>
         <CardTitle>有效权限模拟</CardTitle>
         <CardDescription>
-          使用与真实运行链一致的求值器，结果只显示安全的角色、应用、能力和范围摘要。
+          检查当前角色、应用、工具与知识库范围；不代表资源已发布、Job 已授权或
+          ONES 可读性已通过。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -1224,6 +1319,7 @@ function AuthorizationPreviewPanel() {
               onChange={(event) => {
                 setApplicationId(event.target.value)
                 setCapability("")
+                setKnowledgeBaseId("")
               }}
             >
               <option value="">请选择业务应用</option>
@@ -1248,6 +1344,21 @@ function AuthorizationPreviewPanel() {
               ))}
             </select>
           </Labeled>
+          <Labeled label="知识库范围">
+            <select
+              className={`${nativeSelectClass} w-full`}
+              value={knowledgeBaseId}
+              disabled={!capability}
+              onChange={(event) => setKnowledgeBaseId(event.target.value)}
+            >
+              <option value="">不检查知识库</option>
+              {application?.knowledge_bases.map((base) => (
+                <option key={base.id} value={base.id}>
+                  {base.display_name}（{base.id}）
+                </option>
+              ))}
+            </select>
+          </Labeled>
         </div>
         <Button
           disabled={!userId || !applicationId || mutation.isPending}
@@ -1256,6 +1367,7 @@ function AuthorizationPreviewPanel() {
               user_id: userId,
               application_id: applicationId,
               tool_identifier: capability,
+              knowledge_base_id: capability ? knowledgeBaseId : "",
               environment: "",
               base: "",
               workshop: "",
@@ -1445,6 +1557,7 @@ function serializeApplicationSelection(
         applicationId,
         [...selection.toolIdentifiers].sort(),
         [...selection.scopeKeys].sort(),
+        [...selection.knowledgeBaseIds].sort(),
       ])
       .sort()
   )
@@ -1461,6 +1574,8 @@ function toLocalDateTime(value: string) {
 function decisionMessage(reason: string) {
   const messages: Record<string, string> = {
     application_role_allow: "用户通过有效角色获得该业务应用权限。",
+    application_knowledge_base_denied:
+      "当前应用没有同一条角色记录共同授予所选工具与知识库。",
     no_application_role: "用户未获得该业务应用的使用权限。",
     application_tool_safety_ceiling:
       "所选 MCP Tool 超出业务应用安全上限，角色不能授予。",

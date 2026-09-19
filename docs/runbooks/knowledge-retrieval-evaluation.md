@@ -1,10 +1,10 @@
 # 知识检索本地评测
 
-本入口只运行离线 dense 检索基线，不实现用户授权、真实 ONES 回源或内网聊天模型验收。它复用现有 `VectorService.query`，不导入数据、不迁移数据库、不创建索引或发布资源。首批业务效果建议准备约 50 条人工问法，不能用原文自查询代替。
+本入口只运行离线 dense 检索基线，不实现用户授权、真实 ONES 回源或聊天模型端到端验收。它复用现有 `VectorService.query`，不导入数据、不迁移数据库、不创建索引或发布资源。首批业务效果建议准备约 50 条人工问法，不能用原文自查询代替。
 
 ## 标注集和受限目录
 
-格式见[纯合成样例](../../knowledge/evaluation/synthetic.dataset.json)；严格合同由[评测集校验器](../../backend/app/modules/knowledge/evaluation_dataset.py)的 `DATASET_SCHEMA` 定义。样例中的 source/工作项身份都是虚构的，只能用于格式演示，不能对正式索引直接运行。
+格式见[纯合成样例](../../knowledge/evaluation/synthetic.dataset.json)；严格合同由[评测集校验器](../../backend/app/modules/knowledge/domain/evaluation.py)的 `DATASET_SCHEMA` 定义。样例中的 source/工作项身份都是虚构的，只能用于格式演示，不能对正式索引直接运行。
 
 - 每个文件固定一个知识库 code、一个明确离线 source ID 和一个 dataset version。多知识库/来源分别评测，禁止按显示名称猜来源。
 - `basis=human` 必须由人工标注并复核，`annotation.origin=human_reviewed`、`reviewed=true`；这只是标注人声明，不是系统自动证明质量达标。

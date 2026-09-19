@@ -10,6 +10,7 @@ from app.modules.identity.infrastructure.external_identity_credentials import (
 )
 from app.modules.mcp_audit import McpAuditCoordinator, McpAuditHandle
 from app.shared.exceptions import AppError
+from app.shared.ones_io_budget import ones_io_timeout
 from services.ones_mcp_server.auth.principal import (
     OnesPrincipalResolver,
     ResolvedOnesPrincipal,
@@ -44,11 +45,20 @@ class OnesCredentialRefreshService:
     ) -> ResolvedOnesPrincipal:
         original_revision = principal.credential.revision
         lock = self._lock_for(principal.credential.id)
-        with lock:
+        if not lock.acquire(timeout=ones_io_timeout(-1)):
+            raise OnesMcpError(
+                "ONES refresh lock budget exhausted",
+                safe_message="ONES 身份刷新等待超时",
+                error_code="ones_read_budget_exhausted",
+            )
+        try:
+            ones_io_timeout(60)
             current = self.resolver.resolve(claims, tool_identifier=tool_identifier)
             if current.credential.revision == original_revision:
                 self._refresh(handle, current)
             return self.resolver.resolve(claims, tool_identifier=tool_identifier)
+        finally:
+            lock.release()
 
     def reject_after_second_unauthorized(
         self,
@@ -86,6 +96,7 @@ class OnesCredentialRefreshService:
                 email=principal.credential.secrets.email,
                 password=principal.credential.secrets.password,
             )
+            ones_io_timeout(60)
             if (
                 verified.user_uuid != principal.provider_user_id
                 or principal.team_id not in verified.team_uuids
@@ -114,7 +125,10 @@ class OnesCredentialRefreshService:
                 },
             )
         except AppError as exc:
-            if getattr(exc, "error_code", "") == "mcp_audit_unavailable":
+            if getattr(exc, "error_code", "") in {
+                "mcp_audit_unavailable",
+                "ones_read_budget_exhausted",
+            }:
                 raise
             try:
                 self.credentials.mark_reauth_required(

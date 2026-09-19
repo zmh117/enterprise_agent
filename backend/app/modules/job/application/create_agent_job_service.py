@@ -579,6 +579,18 @@ class CreateAgentJobService:
                 )
             agent_definition_id = str(definition["id"])
             agent_publication_id = str(publication["id"])
+            if not command.business_application_id and self.repository.database.execute_one(
+                "select tool_identifier from agent_publication_mcp_tool "
+                "where agent_publication_id=? and "
+                "(server_code='knowledge-mcp' or tool_identifier in "
+                "('knowledge_list_bases','knowledge_search')) limit 1",
+                (agent_publication_id,),
+            ):
+                raise PermissionDenied(
+                    "Knowledge tools require a Business Application Job",
+                    safe_message="知识库工具仅允许通过已授权的业务应用使用",
+                    error_code="knowledge_business_application_required",
+                )
             agent_revision = int(publication["revision"])
             agent_config_hash = str(publication["config_hash"])
             agent_runtime_kind = str(publication.get("runtime_kind") or "")

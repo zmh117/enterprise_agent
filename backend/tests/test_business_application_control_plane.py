@@ -32,6 +32,7 @@ from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError, ToolPolicyError
 from app.shared.migrations import Migrator, deployable_migration_catalog, load_migration_catalog
 from backend.tests.support.authorization import grant_test_application_access
+from backend.tests.support.applications import ensure_agent_publication_mcp_tools
 from backend.tests.support.channels import ensure_active_dingtalk_test_enterprise
 from backend.tests.test_unified_identity_rbac import (
     csrf_headers,
@@ -960,6 +961,7 @@ def test_new_drafts_reject_legacy_shared_session_modes(legacy_mode: str) -> None
 
 def test_repository_is_append_only_and_enforces_revision_conflicts() -> None:
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    ensure_agent_publication_mcp_tools(container, ("query_database", "get_schema_directory"))
     service = container.business_application_service
     application = service.create(
         actor_id="user_local_admin",

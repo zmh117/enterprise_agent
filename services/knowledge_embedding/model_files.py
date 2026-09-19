@@ -7,7 +7,8 @@ import time
 import urllib.request
 from typing import Any
 
-from app.modules.knowledge.vector_contract import MODEL, VectorError
+from app.modules.knowledge.infrastructure.embedding_profile import MODEL
+from app.modules.knowledge.domain.vector_contract import VectorError
 
 MODEL_DIR = Path("/models") / MODEL["revision"]
 
@@ -52,8 +53,13 @@ def prepare_model(root: Path = MODEL_DIR) -> None:
             raise VectorError("knowledge_model_file_invalid")
         for attempt in range(3):
             try:
-                url = f"https://huggingface.co/{MODEL['model_id']}/resolve/{MODEL['revision']}/{name}"
-                with urllib.request.urlopen(url, timeout=60) as response, partial.open("wb") as output:
+                url = (
+                    f"https://huggingface.co/{MODEL['model_id']}/resolve/{MODEL['revision']}/{name}"
+                )
+                with (
+                    urllib.request.urlopen(url, timeout=60) as response,
+                    partial.open("wb") as output,
+                ):
                     total, reported = 0, 0
                     while chunk := response.read(8 * 1024 * 1024):
                         total += len(chunk)
@@ -61,8 +67,16 @@ def prepare_model(root: Path = MODEL_DIR) -> None:
                             raise VectorError("knowledge_model_file_invalid")
                         output.write(chunk)
                         if total - reported >= 128 * 1024 * 1024:
-                            print(json.dumps({"event": "model_download_progress", "bytes": total,
-                                              "total_bytes": expected["size"]}), flush=True)
+                            print(
+                                json.dumps(
+                                    {
+                                        "event": "model_download_progress",
+                                        "bytes": total,
+                                        "total_bytes": expected["size"],
+                                    }
+                                ),
+                                flush=True,
+                            )
                             reported = total
                 verify_file(partial, expected)
                 partial.replace(target)
@@ -71,7 +85,7 @@ def prepare_model(root: Path = MODEL_DIR) -> None:
             except Exception:
                 if attempt == 2:
                     raise VectorError("knowledge_model_download_failed") from None
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
     verify_model(root)
 
 
@@ -80,5 +94,8 @@ if __name__ == "__main__":
         prepare_model()
         print('{"event":"model_prepared"}', flush=True)
     except Exception:
-        print('{"event":"model_prepare_failed","error_code":"knowledge_model_prepare_failed"}', flush=True)
+        print(
+            '{"event":"model_prepare_failed","error_code":"knowledge_model_prepare_failed"}',
+            flush=True,
+        )
         raise SystemExit(1) from None

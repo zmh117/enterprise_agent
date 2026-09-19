@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.modules.knowledge.domain.tool_policy import knowledge_tool_dependency_errors
+
 from app.modules.agent.infrastructure.runtime_readiness import AgentRuntimeReadinessGuard
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.business_application.application.ports import (
@@ -461,6 +463,14 @@ class BusinessApplicationService:
                 safe_message="未找到业务应用发布版本",
             )
         self._require_python_application_publication(publication)
+        tool_errors = knowledge_tool_dependency_errors(publication["snapshot"].get("mcp_tools") or [])
+        if tool_errors:
+            raise NonRetryableExecutionError(
+                "Knowledge application tool dependency is unavailable",
+                safe_message="知识应用缺少 ONES 详情工具依赖",
+                error_code="validation_failed",
+                field_errors=tool_errors,
+            )
         profile, _ = publication_document_processing_profile(publication["snapshot"])
         if (
             profile["code"] == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
@@ -709,6 +719,7 @@ class BusinessApplicationService:
                 components["deliveries"].append(reference)
         if agent is None and not str(revision.get("agent_publication_id") or ""):
             errors.append({"field": "agent_publication_id", "message": "必须选择 Agent 发布版本"})
+        errors.extend(knowledge_tool_dependency_errors(revision.get("mcp_tools") or []))
         errors.extend(
             self.mcp_tool_composition_service.file_feature_errors(
                 agent_publication_id=str(revision.get("agent_publication_id") or ""),

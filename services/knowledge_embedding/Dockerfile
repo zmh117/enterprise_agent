@@ -8,7 +8,9 @@ RUN --mount=type=cache,target=/root/.cache/pip pip install --require-hashes --no
 COPY backend/app/__init__.py /app/backend/app/
 COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/knowledge/__init__.py /app/backend/app/modules/knowledge/
-COPY backend/app/modules/knowledge/vector_contract.py backend/app/modules/knowledge/embedding_model.json backend/app/modules/knowledge/embedding_runtime.lock /app/backend/app/modules/knowledge/
+COPY backend/app/modules/knowledge/embedding_model.json backend/app/modules/knowledge/embedding_runtime.lock /app/backend/app/modules/knowledge/
+COPY backend/app/modules/knowledge/domain/__init__.py backend/app/modules/knowledge/domain/vector_contract.py /app/backend/app/modules/knowledge/domain/
+COPY backend/app/modules/knowledge/infrastructure/__init__.py backend/app/modules/knowledge/infrastructure/embedding_profile.py /app/backend/app/modules/knowledge/infrastructure/
 COPY services/__init__.py /app/services/
 COPY services/knowledge_embedding /app/services/knowledge_embedding
 RUN groupadd --gid 10007 embedding && useradd --uid 10007 --gid 10007 --no-create-home embedding \

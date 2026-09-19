@@ -123,6 +123,16 @@ from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDi
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
+from app.modules.knowledge.infrastructure.job_access import KnowledgeJobGate
+from app.modules.knowledge.infrastructure.composition import KnowledgeServices
+from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
+from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
+from app.modules.knowledge.application.readability_bridge import KnowledgeReadabilityBridge
+from app.modules.knowledge.infrastructure.readability_bridge import PlatformOnesReadabilityGateway
+from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
+from app.modules.knowledge.infrastructure.ones_verifier import ones_target_hash
+from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalTokenVerifier
+from app.modules.identity.application.service_principal import KnowledgeServicePrincipalVerifier
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.infrastructure.repositories import (
@@ -240,6 +250,8 @@ class Container:
     channel_dispatch_service: ChannelDispatchService
     external_action_service: ExternalActionService | None
     service_principal_token_issuer: ServicePrincipalTokenIssuer | None = None
+    knowledge_readability_bridge: KnowledgeReadabilityBridge | None = None
+    knowledge_services: KnowledgeServices | None = None
 
 
 ContainerFactory = Callable[[Settings], Container]
@@ -651,7 +663,9 @@ def _build_container(
             allowed_hosts=settings.oracle_verification_allowed_hosts,
             master_key=settings.app_config_master_key,
             allow_privileged_account=settings.environment == "local",
-        ) if service_name == "api-server" else None,
+        )
+        if service_name == "api-server"
+        else None,
     )
     model_connection_service = ModelConnectionService(
         model_connection_repository,
@@ -740,6 +754,9 @@ def _build_container(
             ),
             audit_service,
             ttl_seconds=settings.principal_jwt.ttl_seconds,
+            knowledge_job_gate=KnowledgeJobGate(
+                database, mcp_tool_snapshot_service, business_authorization_service
+            ),
         )
     service_principal_token_issuer: ServicePrincipalTokenIssuer | None = None
     if service_name == "api-server" and settings.service_principal.enabled:
@@ -754,9 +771,36 @@ def _build_container(
             delivery_worker_bootstrap_file=(
                 settings.service_principal.delivery_worker_bootstrap_token_file
             ),
+            knowledge_bootstrap_file=settings.service_principal.knowledge_bootstrap_token_file,
             audit_service=audit_service,
             environment=settings.environment,
             ttl_seconds=settings.service_principal.ttl_seconds,
+        )
+    knowledge_readability_bridge: KnowledgeReadabilityBridge | None = None
+    if service_name == "api-server" and settings.service_principal.knowledge_bootstrap_token_file:
+        if principal_token_issuer is None or service_principal_token_issuer is None:
+            raise ValueError("Knowledge readability requires platform identity issuers")
+        public_keys = PrincipalJwks.from_dict(principal_token_issuer.signing_key.public_jwks())
+        knowledge_resource_reader = KnowledgeResourceReader(
+            GovernanceStore(database),
+            VectorRepository(database),
+            instance_code=settings.ones_identity.instance_code,
+            target_hash=ones_target_hash(
+                settings.ones_identity.instance_code, settings.ones_mcp.provider_base_url
+            ),
+        )
+        knowledge_readability_bridge = KnowledgeReadabilityBridge(
+            PlatformOnesReadabilityGateway(
+                KnowledgeServicePrincipalVerifier(public_keys),
+                PrincipalTokenVerifier(public_keys, expected_audience="knowledge-mcp"),
+                principal_token_issuer,
+                KnowledgeJobGate(
+                    database, mcp_tool_snapshot_service, business_authorization_service
+                ),
+                instance_code=settings.ones_identity.instance_code,
+            ),
+            knowledge_resource_reader,
+            audit_service,
         )
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
@@ -1117,6 +1161,9 @@ def _build_container(
             ),
             agent_config_service=agent_config_service,
             file_manifest_service=file_manifest_service,
+            knowledge_job_check=KnowledgeJobGate(
+                database, mcp_tool_snapshot_service, business_authorization_service
+            ).check_before_model,
         ),
         runtime_client=runtime_client,
         tool_registry=tool_registry,
@@ -1143,6 +1190,15 @@ def _build_container(
         external_identity_credential_repository=external_identity_credential_repository,
         principal_token_issuer=principal_token_issuer,
         service_principal_token_issuer=service_principal_token_issuer,
+        knowledge_readability_bridge=knowledge_readability_bridge,
+        knowledge_services=KnowledgeServices(
+            database,
+            permission_service,
+            audit_service,
+            principal_token_issuer,
+            instance_code=settings.ones_identity.instance_code,
+            provider_origin=settings.ones_mcp.provider_base_url,
+        ),
         identity_discovery_repository=identity_discovery_repository,
         identity_discovery_service=identity_discovery_service,
         identity_admin_service=identity_admin_service,

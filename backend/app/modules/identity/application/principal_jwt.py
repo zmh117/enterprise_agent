@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TYPE_CHECKING
 
 import jwt
 from cryptography.hazmat.primitives import serialization
@@ -33,6 +33,9 @@ from app.shared.mcp_server_policy import (
 from app.shared.database import Database
 from app.shared.exceptions import AppError, NonRetryableExecutionError
 from app.shared.principal_token_contract import MAX_PRINCIPAL_TOKEN_BYTES
+
+if TYPE_CHECKING:
+    from app.modules.knowledge.infrastructure.job_access import KnowledgeJobGate
 
 
 PRINCIPAL_ISSUER = "enterprise-agent-identity"
@@ -265,6 +268,7 @@ class PrincipalTokenIssuer:
         jti_factory: Callable[[], str] | None = None,
         server_policies: Mapping[str, McpServerPolicy] | None = None,
         tool_manifest: Mapping[str, McpToolDefinition] | None = None,
+        knowledge_job_gate: KnowledgeJobGate | None = None,
     ) -> None:
         if not 1 <= ttl_seconds <= MAX_PRINCIPAL_TTL_SECONDS:
             raise ValueError("Principal JWT TTL must be between 1 and 300 seconds")
@@ -273,6 +277,7 @@ class PrincipalTokenIssuer:
         self.business_authorization_service = business_authorization_service
         self.signing_key = signing_key
         self.audit_service = audit_service
+        self.knowledge_job_gate = knowledge_job_gate
         self.ttl_seconds = ttl_seconds
         self._now = now or (lambda: int(time.time()))
         self._jti_factory = jti_factory or (lambda: uuid.uuid4().hex)
@@ -301,6 +306,14 @@ class PrincipalTokenIssuer:
                     error_code="principal_server_denied",
                 ) from exc
             facts = self._job_facts(job_id)
+            if server_code == "knowledge-mcp":
+                if self.knowledge_job_gate is None:
+                    raise PrincipalTokenError(
+                        "Knowledge Job authorization gate is unavailable",
+                        safe_message="知识库任务鉴权尚未配置",
+                        error_code="knowledge_job_denied",
+                    )
+                self.knowledge_job_gate.resolve(job_id=job_id, actor_id=facts["internal_user_id"])
             verified = self.snapshot_service.verify(job_id)
             tool_identifiers, authorization_hash = self._business_tools(
                 facts,

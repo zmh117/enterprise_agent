@@ -297,6 +297,8 @@ def create_app(
     from app.modules.identity_discovery.api import build_identity_discovery_router
     from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
     from app.modules.platform_config.api import build_platform_config_router
+    from app.modules.knowledge.api.controller import build_knowledge_router
+    from app.modules.knowledge.api.readability_controller import build_knowledge_readability_router
     from app.modules.workflow.api import build_workflow_router
     from app.modules.webhook.api import (
         build_public_webhook_router,
@@ -312,11 +314,13 @@ def create_app(
     app.include_router(build_runtime_control_router())
     app.include_router(build_service_principal_router())
     app.include_router(build_file_principal_refresh_router())
+    app.include_router(build_knowledge_readability_router())
 
     management_surface_enabled = settings.feature_configuration.web_admin_enabled
     if management_surface_enabled:
         app.include_router(build_agent_job_debug_router())
         app.include_router(build_platform_config_router())
+        app.include_router(build_knowledge_router())
         app.include_router(build_workflow_router())
         app.include_router(build_business_application_router())
         app.include_router(build_authorization_center_router())

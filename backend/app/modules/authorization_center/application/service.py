@@ -18,6 +18,7 @@ from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
 
 _ROLE_CODE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
+_KNOWLEDGE_TOOLS = frozenset({"knowledge_list_bases", "knowledge_search"})
 _ROLE_AUDIT_LABELS = {
     "authorization.role.created": "创建角色",
     "authorization.role.metadata.updated": "更新基本信息",
@@ -163,6 +164,7 @@ class AuthorizationCenterService:
                             "application_id": item["application_id"],
                             "tool_identifiers": item["tool_identifiers"],
                             "scopes": item["scopes"],
+                            "knowledge_base_ids": item["knowledge_base_ids"],
                         }
                         for item in applications
                     ],
@@ -279,13 +281,13 @@ class AuthorizationCenterService:
         reason: str,
     ) -> dict[str, Any]:
         self._require_catalog(actor_id, "authorization.manage", resource_code=role_id)
-        normalized = self._normalize_business_applications(
-            actor_id=actor_id,
-            applications=applications,
-            confirmed=confirmed,
-            reason=reason,
-        )
         with self.repository.database.unit_of_work():
+            normalized = self._normalize_business_applications(
+                actor_id=actor_id,
+                applications=applications,
+                confirmed=confirmed,
+                reason=reason,
+            )
             before = self.repository.list_business_access(role_id)
             result = self.repository.replace_business_access(
                 role_id,
@@ -301,6 +303,20 @@ class AuthorizationCenterService:
                     "role_id": role_id,
                     "before_application_ids": [item["application_id"] for item in before],
                     "after_application_ids": [item["application_id"] for item in normalized],
+                    "before_knowledge_scopes": [
+                        {
+                            "application_id": item["application_id"],
+                            "knowledge_base_ids": item["knowledge_base_ids"],
+                        }
+                        for item in before
+                    ],
+                    "after_knowledge_scopes": [
+                        {
+                            "application_id": item["application_id"],
+                            "knowledge_base_ids": item["knowledge_base_ids"],
+                        }
+                        for item in normalized
+                    ],
                     "reason": reason.strip(),
                 },
             )
@@ -455,11 +471,13 @@ class AuthorizationCenterService:
                         "source_role_codes": [],
                         "tool_identifiers": [],
                         "scopes": [],
+                        "knowledge_base_ids": [],
                     },
                 )
                 item["source_role_codes"].append(str(role["code"]))
                 item["tool_identifiers"].extend(access["tool_identifiers"])
                 item["scopes"].extend(access["scopes"])
+                item["knowledge_base_ids"].extend(access["knowledge_base_ids"])
         management = AdminCapabilityService(self.identity_repository, self.authorization).summary(
             user_id
         )
@@ -471,6 +489,7 @@ class AuthorizationCenterService:
                     **item,
                     "source_role_codes": sorted(set(item["source_role_codes"])),
                     "tool_identifiers": sorted(set(item["tool_identifiers"])),
+                    "knowledge_base_ids": sorted(set(item["knowledge_base_ids"])),
                     "scopes": list(
                         {str(scope["scope_key"]): scope for scope in item["scopes"]}.values()
                     ),
@@ -484,6 +503,9 @@ class AuthorizationCenterService:
         self._require_catalog(actor_id, "authorization.read")
         platform_admin = "platform-admin" in self.identity_repository.role_codes_for_user(actor_id)
         applications = self.repository.application_catalog()
+        knowledge_bases = self.repository.knowledge_base_catalog()
+        for application in applications:
+            application["knowledge_bases"] = knowledge_bases
         topology = self.repository.topology_catalog()
         if not platform_admin:
             actor_access: dict[str, list[dict[str, Any]]] = {}
@@ -507,6 +529,16 @@ class AuthorizationCenterService:
                             for identifier in access["tool_identifiers"]
                         }
                     ],
+                    "knowledge_bases": [
+                        base
+                        for base in knowledge_bases
+                        if base["id"]
+                        in {
+                            base_id
+                            for access in actor_access[str(application["id"])]
+                            for base_id in access["knowledge_base_ids"]
+                        }
+                    ],
                 }
                 for application in applications
                 if str(application["id"]) in actor_access
@@ -524,6 +556,58 @@ class AuthorizationCenterService:
             "scope_mode": "explicit_current_set",
             "scope_notice": "“当前全部”会保存当前已有范围的明确集合，未来新增范围不会自动获得。",
         }
+
+    def _knowledge_selection(
+        self,
+        item: dict[str, Any],
+        *,
+        actor_id: str,
+        platform_admin: bool,
+        tools: list[str],
+        field: str,
+    ) -> list[str]:
+        allowed_fields = {
+            "application_id",
+            "tool_identifiers",
+            "scopes",
+            "current_all",
+            "knowledge_base_ids",
+            "knowledge_current_all",
+        }
+        if set(item) - allowed_fields:
+            self._field_error(field, "业务授权包含未声明字段，不支持显式拒绝配置")
+        ids = item.get("knowledge_base_ids", [])
+        current_all = item.get("knowledge_current_all", False)
+        if (
+            not isinstance(ids, list)
+            or len(ids) > 1000
+            or type(current_all) is not bool
+            or any(
+                not isinstance(value, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value)
+                for value in ids
+            )
+            or len(ids) != len(set(ids))
+        ):
+            self._field_error(field + ".knowledge_base_ids", "知识库范围必须是唯一的明确标识集合")
+        known = {str(base["id"]) for base in self.repository.knowledge_base_catalog()}
+        grantable = known
+        if not platform_admin:
+            required_tools = _KNOWLEDGE_TOOLS.intersection(tools)
+            grantable = {
+                str(base_id)
+                for access in self.repository.business_access_for_user(
+                    user_id=actor_id, application_id=str(item["application_id"])
+                )
+                if required_tools.issubset(access["tool_identifiers"])
+                for base_id in access["knowledge_base_ids"]
+            } & known
+        selected = set(ids) | (grantable if current_all else set())
+        if not selected <= grantable or len(selected) > 1000:
+            self._field_error(
+                field + ".knowledge_base_ids", "知识库不可授权或超出你在此应用的可授权范围"
+            )
+        return sorted(selected)
 
     def _validate_admin_bindings(
         self,
@@ -630,8 +714,7 @@ class AuthorizationCenterService:
                     )
                 definition = MCP_TOOL_MANIFEST.get(identifier)
                 if definition is None or (
-                    definition.effect == "mutation"
-                    and definition.confirmation_policy == "none"
+                    definition.effect == "mutation" and definition.confirmation_policy == "none"
                 ):
                     self._field_error(
                         f"applications.{index}.tool_identifiers",
@@ -684,11 +767,19 @@ class AuthorizationCenterService:
                         "不能授予超出你可授权范围的数据范围",
                     )
             seen_apps.add(application_id)
+            knowledge_base_ids = self._knowledge_selection(
+                item,
+                actor_id=actor_id,
+                platform_admin=actor_is_platform_admin,
+                tools=tool_identifiers,
+                field=f"applications.{index}",
+            )
             result.append(
                 {
                     "application_id": application_id,
                     "tool_identifiers": tool_identifiers,
                     "scopes": scopes,
+                    "knowledge_base_ids": knowledge_base_ids,
                 }
             )
         if applications and (not confirmed or not reason.strip()):
@@ -795,6 +886,7 @@ class BusinessAuthorizationService:
         application_id: str = "",
         application_code: str = "",
         tool_identifier: str = "",
+        knowledge_base_id: str = "",
         environment: str = "",
         base: str = "",
         workshop: str = "",
@@ -816,6 +908,16 @@ class BusinessAuthorizationService:
             return self._decision(False, stage, "user_disabled", [], application)
         if str(application["status"]) != "enabled":
             return self._decision(False, stage, "application_disabled", [], application)
+        if not isinstance(knowledge_base_id, str) or (
+            knowledge_base_id
+            and (
+                not tool_identifier
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", knowledge_base_id)
+            )
+        ):
+            return self._decision(
+                False, stage, "application_knowledge_base_denied", [], application
+            )
         role_codes = self.identity_repository.role_codes_for_user(user_id)
         if tool_identifier:
             if not self.repository.application_tool_is_effective(
@@ -828,7 +930,7 @@ class BusinessAuthorizationService:
                     list(role_codes),
                     application,
                     tool_identifier=tool_identifier,
-                    scope=self._scope_summary(environment, base, workshop),
+                    scope=self._scope_summary(environment, base, workshop, knowledge_base_id),
                 )
         accesses = self.repository.business_access_for_user(
             user_id=user_id, application_id=str(application["id"])
@@ -840,6 +942,8 @@ class BusinessAuthorizationService:
             if tool_identifier and tool_identifier not in access["tool_identifiers"]:
                 continue
             tool_allowed = True
+            if knowledge_base_id and knowledge_base_id not in access["knowledge_base_ids"]:
+                continue
             if environment or base or workshop:
                 if not any(
                     self._scope_matches(
@@ -861,10 +965,16 @@ class BusinessAuthorizationService:
                 matching_roles,
                 application,
                 tool_identifier=tool_identifier,
-                scope=self._scope_summary(environment, base, workshop),
+                scope=self._scope_summary(environment, base, workshop, knowledge_base_id),
             )
         if accesses:
-            reason = "application_tool_denied" if not tool_allowed else "application_scope_denied"
+            reason = (
+                "application_tool_denied"
+                if not tool_allowed
+                else "application_knowledge_base_denied"
+                if knowledge_base_id
+                else "application_scope_denied"
+            )
             return self._decision(
                 False,
                 stage,
@@ -872,7 +982,7 @@ class BusinessAuthorizationService:
                 [str(item["role_code"]) for item in accesses],
                 application,
                 tool_identifier=tool_identifier,
-                scope=self._scope_summary(environment, base, workshop),
+                scope=self._scope_summary(environment, base, workshop, knowledge_base_id),
             )
         return self._decision(
             False,
@@ -881,7 +991,7 @@ class BusinessAuthorizationService:
             list(role_codes),
             application,
             tool_identifier=tool_identifier,
-            scope=self._scope_summary(environment, base, workshop),
+            scope=self._scope_summary(environment, base, workshop, knowledge_base_id),
         )
 
     def resource_access_projection(
@@ -936,6 +1046,64 @@ class BusinessAuthorizationService:
                 )
         return tuple(projections)
 
+    def knowledge_access_projection(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+        tool_identifiers: tuple[str, ...],
+    ) -> tuple[dict[str, Any], ...]:
+        """当前应用下逐条完整允许记录；目录和检索共享，不能拼接角色。"""
+        if (
+            not tool_identifiers
+            or not self.decide(user_id=user_id, application_id=application_id)["allowed"]
+        ):
+            return ()
+        if not all(
+            self.repository.application_tool_is_effective(application_id, tool)
+            for tool in tool_identifiers
+        ):
+            return ()
+        return tuple(
+            {
+                "access_id": access["id"],
+                "role_id": access["role_id"],
+                "knowledge_base_ids": tuple(access["knowledge_base_ids"]),
+            }
+            for access in self.repository.business_access_for_user(
+                user_id=user_id, application_id=application_id
+            )
+            if set(tool_identifiers).issubset(access["tool_identifiers"])
+            and access["knowledge_base_ids"]
+        )
+
+    def knowledge_authorization_facts(self, *, user_id: str, application_id: str) -> dict[str, Any]:
+        """供 Job 摘要与调用前后复核使用；只含授权元数据，不是额外授权源。"""
+        roles = {
+            str(role["id"]): role for role in self.repository.active_role_rows_for_user(user_id)
+        }
+        accesses = self.repository.business_access_for_user(
+            user_id=user_id, application_id=application_id
+        )
+        return {
+            "application_id": application_id,
+            "knowledge_grants": [
+                {
+                    "role_id": access["role_id"],
+                    "access_id": access["id"],
+                    "business_revision": roles[str(access["role_id"])]["business_revision"],
+                    "role_metadata_revision": roles[str(access["role_id"])]["metadata_revision"],
+                    "membership_id": roles[str(access["role_id"])]["membership_id"],
+                    "membership_revision": roles[str(access["role_id"])]["membership_row_revision"],
+                    "membership_expires_at": roles[str(access["role_id"])]["expires_at"],
+                    "tool_identifiers": sorted(access["tool_identifiers"]),
+                    "knowledge_base_ids": access["knowledge_base_ids"],
+                }
+                for access in accesses
+                if str(access["role_id"]) in roles and access["knowledge_base_ids"]
+            ],
+        }
+
     def capture_runtime_facts(
         self,
         *,
@@ -976,13 +1144,10 @@ class BusinessAuthorizationService:
                 safe_message="业务应用发布版本不可用",
                 error_code="job_runtime_facts_invalid",
             ) from exc
-        if (
-            not isinstance(snapshot, dict)
-            or not verify_publication_snapshot(
-                snapshot,
-                schema_version=int(publication.get("schema_version") or 0),
-                expected_hash=publication_config_hash,
-            )
+        if not isinstance(snapshot, dict) or not verify_publication_snapshot(
+            snapshot,
+            schema_version=int(publication.get("schema_version") or 0),
+            expected_hash=publication_config_hash,
         ):
             raise PermissionDenied(
                 "Business Application publication integrity check failed",
@@ -994,7 +1159,7 @@ class BusinessAuthorizationService:
             user_id=user_id,
             application_id=application_id,
         )
-        return self._capture_exact_builtin_runtime_facts(
+        facts = self._capture_exact_builtin_runtime_facts(
             application_id=application_id,
             publication=publication,
             snapshot=snapshot,
@@ -1003,6 +1168,12 @@ class BusinessAuthorizationService:
             base=base,
             workshop=workshop,
         )
+        knowledge = self.knowledge_authorization_facts(
+            user_id=user_id, application_id=application_id
+        )
+        if knowledge["knowledge_grants"]:
+            facts.update(knowledge)
+        return facts
 
     def _capture_exact_builtin_runtime_facts(
         self,
@@ -1041,7 +1212,7 @@ class BusinessAuthorizationService:
         }
         roles_by_tool: dict[str, set[str]] = {str(tool["tool_identifier"]): set() for tool in tools}
         for access in accesses:
-            if not any(
+            scope_matches = any(
                 self._scope_matches(
                     scope,
                     environment=environment,
@@ -1049,11 +1220,16 @@ class BusinessAuthorizationService:
                     workshop=workshop,
                 )
                 for scope in access["scopes"]
-            ):
-                continue
+            )
             for tool_identifier in (
                 set(str(value) for value in access["tool_identifiers"]) & roles_by_tool.keys()
             ):
+                # KB 是独立的逻辑数据范围，不要求伪造 environment/placement grant。
+                if tool_identifier in _KNOWLEDGE_TOOLS:
+                    if not access["knowledge_base_ids"]:
+                        continue
+                elif not scope_matches:
+                    continue
                 roles_by_tool[tool_identifier].add(str(access["role_code"]))
         return {
             "schema_version": 3,
@@ -1229,8 +1405,13 @@ class BusinessAuthorizationService:
         return True
 
     @staticmethod
-    def _scope_summary(environment: str, base: str, workshop: str) -> dict[str, str]:
-        return {"environment": environment, "base": base, "workshop": workshop}
+    def _scope_summary(
+        environment: str, base: str, workshop: str, knowledge_base_id: str = ""
+    ) -> dict[str, str]:
+        scope = {"environment": environment, "base": base, "workshop": workshop}
+        if knowledge_base_id:
+            scope["knowledge_base_id"] = knowledge_base_id
+        return scope
 
     @staticmethod
     def _decision(

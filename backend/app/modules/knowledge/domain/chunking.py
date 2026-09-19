@@ -7,7 +7,11 @@ from dataclasses import asdict, dataclass
 import re
 from typing import Any
 
-from app.modules.knowledge.ones_export import NORMALIZER_VERSION, ExportValidationError, digest
+from app.modules.knowledge.domain.normalization import (
+    NORMALIZER_VERSION,
+    ExportValidationError,
+    digest,
+)
 
 
 @dataclass(frozen=True)
@@ -22,9 +26,11 @@ class ChunkProfile:
     embedding_chars: int = 1800
 
     def validate(self) -> None:
-        if not (0 <= self.overlap_chars < self.soft_chars <= self.max_chars <= 1200
-                and 100 <= self.context_chars <= 550
-                and self.max_chars + self.context_chars + 32 <= self.embedding_chars <= 1800):
+        if not (
+            0 <= self.overlap_chars < self.soft_chars <= self.max_chars <= 1200
+            and 100 <= self.context_chars <= 550
+            and self.max_chars + self.context_chars + 32 <= self.embedding_chars <= 1800
+        ):
             raise ExportValidationError("knowledge_chunk_profile_invalid")
 
     @property
@@ -34,13 +40,43 @@ class ChunkProfile:
 
 DEFAULT_PROFILE = ChunkProfile()
 CHUNK_VALUE_COLUMNS = (
-    "ordinal", "chunk_kind", "source_field", "source_start", "source_end", "evidence_text",
-    "embedding_text", "char_count", "embedding_char_count", "evidence_hash", "embedding_hash", "quality_flags",
+    "ordinal",
+    "chunk_kind",
+    "source_field",
+    "source_start",
+    "source_end",
+    "evidence_text",
+    "embedding_text",
+    "char_count",
+    "embedding_char_count",
+    "evidence_hash",
+    "embedding_hash",
+    "quality_flags",
 )
 _CONTROLS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufeff]")
 _FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*$", re.MULTILINE)
-_HEADING = re.compile(r"(?m)^(?:[ \t]*#{1,6}[ \t]+|[ \t]*(?:\d+[.、）)]|步骤|操作步骤|预期结果|实际结果|复现步骤))")
-_PLACEHOLDERS = frozenset({"已处理", "已修复", "已解决", "已关闭", "修复", "完成", "关闭", "无", "暂无", "待处理", "n/a", "null", "none", "-", "/"})
+_HEADING = re.compile(
+    r"(?m)^(?:[ \t]*#{1,6}[ \t]+|[ \t]*(?:\d+[.、）)]|步骤|操作步骤|预期结果|实际结果|复现步骤))"
+)
+_PLACEHOLDERS = frozenset(
+    {
+        "已处理",
+        "已修复",
+        "已解决",
+        "已关闭",
+        "修复",
+        "完成",
+        "关闭",
+        "无",
+        "暂无",
+        "待处理",
+        "n/a",
+        "null",
+        "none",
+        "-",
+        "/",
+    }
+)
 
 
 def clean_text(value: str) -> str:
@@ -68,7 +104,10 @@ def _fences(text: str) -> list[tuple[int, int]]:
 def _ranges(text: str, profile: ChunkProfile) -> list[tuple[int, int, list[str]]]:
     fences = _fences(text)
     protected = [(a, b) for a, b in fences if b - a <= profile.max_chars]
-    paragraphs = sorted({m.end() for m in re.finditer(r"\n[ \t]*\n", text)} | {m.start() for m in _HEADING.finditer(text)})
+    paragraphs = sorted(
+        {m.end() for m in re.finditer(r"\n[ \t]*\n", text)}
+        | {m.start() for m in _HEADING.finditer(text)}
+    )
     lines = [m.end() for m in re.finditer("\n", text)]
     sentences = [m.end() for m in re.finditer(r"[。！？；.!?;](?:[ \t]+|\n|$)", text)]
 
@@ -115,7 +154,9 @@ def _ranges(text: str, profile: ChunkProfile) -> list[tuple[int, int, list[str]]
     return result
 
 
-def _context(record: dict[str, Any], body: str, kind: str, profile: ChunkProfile) -> tuple[str, bool]:
+def _context(
+    record: dict[str, Any], body: str, kind: str, profile: ChunkProfile
+) -> tuple[str, bool]:
     pieces: list[str] = []
     cropped = False
 
@@ -129,7 +170,7 @@ def _context(record: dict[str, Any], body: str, kind: str, profile: ChunkProfile
         if not text:
             return
         if len(text) > budget:
-            text = text[:budget - 1] + "…"
+            text = text[: budget - 1] + "…"
             cropped = True
         pieces.append(f"{label}：{text}")
 
@@ -138,12 +179,17 @@ def _context(record: dict[str, Any], body: str, kind: str, profile: ChunkProfile
         add("问题片段", body, 180)
     add("项目", record.get("source_project_name"), 60)
     attrs = record["attributes"]
-    for key, label in (("product_names", "产品"), ("module_names", "模块"), ("environment_text", "环境"),
-                       ("affected_versions", "影响版本"), ("fixed_versions", "修复版本")):
+    for key, label in (
+        ("product_names", "产品"),
+        ("module_names", "模块"),
+        ("environment_text", "环境"),
+        ("affected_versions", "影响版本"),
+        ("fixed_versions", "修复版本"),
+    ):
         add(label, attrs.get(key), 80)
     result = "\n".join(pieces)
     if len(result) > profile.context_chars:
-        result = result[:profile.context_chars - 1] + "…"
+        result = result[: profile.context_chars - 1] + "…"
         cropped = True
     return result, cropped
 
@@ -159,12 +205,18 @@ class PreparedChunks:
         return digest(asdict(self))
 
 
-def prepare_chunks(record: dict[str, Any], profile: ChunkProfile = DEFAULT_PROFILE) -> PreparedChunks:
+def prepare_chunks(
+    record: dict[str, Any], profile: ChunkProfile = DEFAULT_PROFILE
+) -> PreparedChunks:
     profile.validate()
     if record.get("normalizer_version") != NORMALIZER_VERSION:
         raise ExportValidationError("knowledge_chunk_source_profile_unsupported")
-    if (not isinstance(record.get("body_text"), str) or not isinstance(record.get("title"), str)
-            or not isinstance(record.get("attributes"), dict) or not isinstance(record.get("completeness"), dict)):
+    if (
+        not isinstance(record.get("body_text"), str)
+        or not isinstance(record.get("title"), str)
+        or not isinstance(record.get("attributes"), dict)
+        or not isinstance(record.get("completeness"), dict)
+    ):
         raise ExportValidationError("knowledge_chunk_source_invalid")
     if len(record["body_text"]) > 2 * 1024 * 1024:
         raise ExportValidationError("knowledge_chunk_source_limit")
@@ -200,20 +252,37 @@ def prepare_chunks(record: dict[str, Any], profile: ChunkProfile = DEFAULT_PROFI
         context, cropped = _context(record, body, kind, profile)
         for start, end, flags in _ranges(fields[field], profile):
             evidence = fields[field][start:end]
-            embedding = f"{context}\n{'问题证据' if kind == 'problem' else '解决方案证据'}：\n{evidence}"
-            chunks.append({
-                "ordinal": len(chunks), "chunk_kind": kind, "source_field": field,
-                "source_start": start, "source_end": end, "evidence_text": evidence, "embedding_text": embedding,
-                "char_count": len(evidence), "embedding_char_count": len(embedding),
-                "evidence_hash": digest(evidence), "embedding_hash": digest(embedding),
-                "quality_flags": sorted(set(base_flags + flags + (["context_truncated"] if cropped else []))),
-            })
-    prepared = PreparedChunks(fields, {
-        "solution_state": solution_state,
-        "body_normalized": body != record["body_text"],
-        "solution_normalized": isinstance(raw_solution, str) and solution != raw_solution,
-        "source_flags": base_flags,
-    }, tuple(chunks))
+            embedding = (
+                f"{context}\n{'问题证据' if kind == 'problem' else '解决方案证据'}：\n{evidence}"
+            )
+            chunks.append(
+                {
+                    "ordinal": len(chunks),
+                    "chunk_kind": kind,
+                    "source_field": field,
+                    "source_start": start,
+                    "source_end": end,
+                    "evidence_text": evidence,
+                    "embedding_text": embedding,
+                    "char_count": len(evidence),
+                    "embedding_char_count": len(embedding),
+                    "evidence_hash": digest(evidence),
+                    "embedding_hash": digest(embedding),
+                    "quality_flags": sorted(
+                        set(base_flags + flags + (["context_truncated"] if cropped else []))
+                    ),
+                }
+            )
+    prepared = PreparedChunks(
+        fields,
+        {
+            "solution_state": solution_state,
+            "body_normalized": body != record["body_text"],
+            "solution_normalized": isinstance(raw_solution, str) and solution != raw_solution,
+            "source_flags": base_flags,
+        },
+        tuple(chunks),
+    )
     validate_chunks(prepared, profile)
     return prepared
 
@@ -231,16 +300,23 @@ def validate_chunks(prepared: PreparedChunks, profile: ChunkProfile = DEFAULT_PR
         start, end = chunk["source_start"], chunk["source_end"]
         require(chunk["ordinal"] == ordinal and 0 <= start < end <= len(fields[field]))
         require(start >= max(0, cursors[field] - profile.overlap_chars) and end > cursors[field])
-        require(not fields[field][cursors[field]:start].strip())
+        require(not fields[field][cursors[field] : start].strip())
         text = chunk["evidence_text"]
         require(bool(text.strip()) and text == fields[field][start:end])
         require(chunk["char_count"] == len(text) <= profile.max_chars)
-        require(chunk["embedding_char_count"] == len(chunk["embedding_text"]) <= profile.embedding_chars)
-        require(chunk["evidence_hash"] == digest(text) and chunk["embedding_hash"] == digest(chunk["embedding_text"]))
+        require(
+            chunk["embedding_char_count"] == len(chunk["embedding_text"]) <= profile.embedding_chars
+        )
+        require(
+            chunk["evidence_hash"] == digest(text)
+            and chunk["embedding_hash"] == digest(chunk["embedding_text"])
+        )
         require(chunk["embedding_text"].endswith(text))
         require(chunk["chunk_kind"] == ("problem" if field == "body_text" else "solution"))
         cursors[field] = end
     require(bool(prepared.chunks))
-    require(not fields["body_text"][cursors["body_text"]:].strip())
+    require(not fields["body_text"][cursors["body_text"] :].strip())
     if prepared.quality["solution_state"] == "included":
-        require(not fields["attributes.solution_text"][cursors["attributes.solution_text"]:].strip())
+        require(
+            not fields["attributes.solution_text"][cursors["attributes.solution_text"] :].strip()
+        )

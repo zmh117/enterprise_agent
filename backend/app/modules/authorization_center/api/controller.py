@@ -69,6 +69,8 @@ class ApplicationAccessRequest(StrictRequest):
     tool_identifiers: list[str] = Field(default_factory=list, max_length=200)
     scopes: list[ApplicationScopeRequest] = Field(default_factory=list, max_length=1000)
     current_all: list[CurrentAllScopeRequest] = Field(default_factory=list, max_length=100)
+    knowledge_base_ids: list[str] = Field(default_factory=list, max_length=1000)
+    knowledge_current_all: bool = Field(default=False, strict=True)
 
 
 class BusinessAccessRequest(StrictRequest):
@@ -108,6 +110,7 @@ class ExplanationRequest(StrictRequest):
     application_id: str = Field(default="", max_length=200)
     application_code: str = Field(default="", max_length=120)
     tool_identifier: str = Field(default="", max_length=120)
+    knowledge_base_id: str = Field(default="", max_length=128)
     environment: str = Field(default="", max_length=120)
     base: str = Field(default="", max_length=120)
     workshop: str = Field(default="", max_length=120)
