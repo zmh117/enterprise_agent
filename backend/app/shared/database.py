@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 import uuid
 from collections.abc import Iterable
 from contextlib import AbstractContextManager, contextmanager
@@ -11,6 +12,13 @@ from functools import wraps
 from pathlib import Path
 from queue import Empty, LifoQueue
 from typing import Any, Callable, Iterator, Literal, ParamSpec, Protocol, TypeVar
+
+from app.shared.io_deadline import (
+    IODeadlineExceeded,
+    POLL_SECONDS,
+    current_io_deadline,
+    io_wait_timeout,
+)
 
 
 DEFAULT_POOL_MIN_SIZE = 1
@@ -23,6 +31,19 @@ _ACTIVE_UNIT_OF_WORK_DEPTH: ContextVar[int] = ContextVar(
     "active_database_unit_of_work_depth",
     default=0,
 )
+
+
+@contextmanager
+def _bounded_lock(lock: Any) -> Iterator[None]:
+    if current_io_deadline() is None:
+        lock.acquire()
+    else:
+        while not lock.acquire(timeout=io_wait_timeout(POLL_SECONDS)):
+            pass
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 class ExternalIOInUnitOfWorkError(RuntimeError):
@@ -50,6 +71,35 @@ class _ConnectionPool(Protocol):
     def close(self) -> None: ...
 
     def snapshot(self) -> PoolSnapshot: ...
+
+
+class _DeadlineSQLiteConnection(sqlite3.Connection):
+    configured_wait_seconds: float = 5.0
+
+    def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+        budget = current_io_deadline()
+        if budget is None:
+            return super().execute(sql, parameters)
+        until = time.monotonic() + self.configured_wait_seconds
+        while True:
+            budget.check()
+            super().execute(
+                f"PRAGMA busy_timeout = {max(1, int(budget.timeout(POLL_SECONDS) * 1000))}"
+            )
+            try:
+                result = super().execute(sql, parameters)
+                budget.check()
+                return result
+            except sqlite3.OperationalError as exc:
+                budget.check()
+                if getattr(exc, "sqlite_errorcode", 0) & 0xFF not in {
+                    sqlite3.SQLITE_BUSY,
+                    sqlite3.SQLITE_LOCKED,
+                }:
+                    raise
+                if time.monotonic() >= until:
+                    raise
+                time.sleep(budget.timeout(POLL_SECONDS))
 
 
 class _SQLiteConnectionPool:
@@ -93,7 +143,9 @@ class _SQLiteConnectionPool:
             check_same_thread=False,
             timeout=self._timeout_seconds,
             uri=self._is_memory,
+            factory=_DeadlineSQLiteConnection,
         )
+        connection.configured_wait_seconds = self._timeout_seconds
         if self._template_path is not None:
             with self._template_lock:
                 if not self._template_loaded:
@@ -127,10 +179,19 @@ class _SQLiteConnectionPool:
                         self._opened -= 1
                     raise
             else:
-                try:
-                    connection = self._idle.get(timeout=self._timeout_seconds)
-                except Empty as exc:
-                    raise TimeoutError("Timed out waiting for a database connection") from exc
+                until = time.monotonic() + self._timeout_seconds
+                while True:
+                    remaining = until - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Timed out waiting for a database connection")
+                    timeout = io_wait_timeout(remaining)
+                    if current_io_deadline() is not None:
+                        timeout = min(timeout, POLL_SECONDS)
+                    try:
+                        connection = self._idle.get(timeout=timeout)
+                        break
+                    except Empty:
+                        continue
         with self._lock:
             if self._closed:
                 connection.close()
@@ -157,9 +218,29 @@ class _SQLiteConnectionPool:
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         connection = self._acquire()
+        budget = current_io_deadline()
         try:
+            if budget is not None:
+                budget.check()
+                connection.execute(
+                    f"PRAGMA busy_timeout = {max(1, int(budget.timeout(self._timeout_seconds) * 1000))}"
+                )
+                connection.set_progress_handler(
+                    lambda: int((current_io_deadline() or budget).expired()), 1000
+                )
             yield connection
+            if budget is not None:
+                budget.check()
+        except sqlite3.OperationalError:
+            if budget is not None and budget.expired():
+                raise IODeadlineExceeded() from None
+            raise
         finally:
+            if budget is not None:
+                connection.set_progress_handler(None, 0)
+                sqlite3.Connection.execute(
+                    connection, f"PRAGMA busy_timeout = {max(1, int(self._timeout_seconds * 1000))}"
+                )
             self._release(connection)
 
     def close(self) -> None:
@@ -198,13 +279,16 @@ class _PostgresConnectionPool:
         try:
             from psycopg.rows import dict_row
             from psycopg_pool import ConnectionPool
+            from app.shared.deadline_postgres import DeadlineConnection
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "psycopg with the pool extra is required for PostgreSQL connections"
             ) from exc
         self._timeout_seconds = timeout_seconds
         self._max_size = max_size
+        self._connect_cancelled = threading.Event()
         self._pool = ConnectionPool(
+            connection_class=DeadlineConnection,
             conninfo=dsn,
             min_size=min_size,
             max_size=max_size,
@@ -212,6 +296,14 @@ class _PostgresConnectionPool:
             kwargs={
                 "autocommit": True,
                 "row_factory": dict_row,
+                **(
+                    {
+                        "bounded_connect_timeout": min(timeout_seconds, 5),
+                        "bounded_connect_cancelled": self._connect_cancelled.is_set,
+                    }
+                    if current_io_deadline()
+                    else {}
+                ),
             },
             open=False,
             name=f"enterprise-agent-{uuid.uuid4().hex[:8]}",
@@ -222,21 +314,51 @@ class _PostgresConnectionPool:
     def _ensure_open(self) -> None:
         if self._opened:
             return
-        with self._open_lock:
+        with _bounded_lock(self._open_lock):
             if self._opened:
                 return
-            self._pool.open(wait=True, timeout=self._timeout_seconds)
+            self._pool.open(
+                wait=current_io_deadline() is None, timeout=io_wait_timeout(self._timeout_seconds)
+            )
             self._opened = True
 
     @contextmanager
     def connection(self) -> Iterator[Any]:
+        from psycopg_pool import PoolTimeout
+        from app.shared.deadline_postgres import postgres_deadline
+
         self._ensure_open()
-        with self._pool.connection(timeout=self._timeout_seconds) as connection:
-            yield connection
+        if current_io_deadline() is None:
+            with self._pool.connection(timeout=self._timeout_seconds) as connection:
+                yield connection
+            return
+        until = time.monotonic() + self._timeout_seconds
+        while True:
+            remaining = until - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Timed out waiting for a database connection")
+            timeout = io_wait_timeout(remaining)
+            if current_io_deadline() is not None:
+                timeout = min(timeout, POLL_SECONDS)
+            try:
+                connection = self._pool.getconn(timeout=timeout)
+                break
+            except PoolTimeout:
+                continue
+        try:
+            with postgres_deadline(connection), connection:
+                yield connection
+        finally:
+            self._pool.putconn(connection)
 
     def close(self) -> None:
         if self._opened:
-            self._pool.close(timeout=self._timeout_seconds)
+            self._connect_cancelled.set()
+            self._pool.close(
+                timeout=min(self._timeout_seconds, 1)
+                if current_io_deadline()
+                else self._timeout_seconds
+            )
             self._opened = False
 
     def snapshot(self) -> PoolSnapshot:
@@ -292,10 +414,16 @@ class UnitOfWork:
         if connection is None:
             raise RuntimeError("Database session did not provide a connection")
         self.connection = connection
-        if self._parent is None and self.database.engine == "sqlite":
-            self.database._sqlite_transaction_lock.acquire()
-            self._sqlite_lock_acquired = True
         try:
+            if self._parent is None and self.database.engine == "sqlite":
+                if current_io_deadline() is None:
+                    self.database._sqlite_transaction_lock.acquire()
+                else:
+                    while not self.database._sqlite_transaction_lock.acquire(
+                        timeout=io_wait_timeout(POLL_SECONDS)
+                    ):
+                        pass
+                self._sqlite_lock_acquired = True
             if self._parent is None:
                 connection.execute(
                     "BEGIN IMMEDIATE" if self.database.engine == "sqlite" else "BEGIN"
@@ -331,7 +459,18 @@ class UnitOfWork:
         if self.connection is None or self._token is None or self._external_io_token is None:
             raise RuntimeError("Unit of Work was not entered")
         try:
-            if self._parent is None:
+            budget = current_io_deadline()
+            if budget is not None and exc_type is None:
+                budget.check()
+            if (
+                self.database.engine == "postgres"
+                and self.connection.closed
+                and exc_type is not None
+            ):
+                # Deadline cancellation already discarded this connection. Preserve the
+                # original failure instead of attempting savepoint/rollback on a dead socket.
+                pass
+            elif self._parent is None:
                 if exc_type is None:
                     self.connection.commit()
                 else:
@@ -400,7 +539,7 @@ class Database:
             raise RuntimeError("Database is closed")
         if self._pool is not None:
             return self._pool
-        with self._pool_lock:
+        with _bounded_lock(self._pool_lock):
             if self._pool is None:
                 if self.engine == "sqlite":
                     self._pool = _SQLiteConnectionPool(
@@ -435,6 +574,9 @@ class Database:
 
     @contextmanager
     def session(self) -> Iterator[Any]:
+        budget = current_io_deadline()
+        if budget is not None:
+            budget.check()
         current = self._scope.get()
         if current is not None:
             yield current.connection
@@ -484,7 +626,8 @@ class Database:
                 return [dict(row) for row in rows]
             except Exception:
                 if implicit:
-                    connection.rollback()
+                    if self.engine == "sqlite" or not connection.closed:
+                        connection.rollback()
                 raise
 
     def execute_one(

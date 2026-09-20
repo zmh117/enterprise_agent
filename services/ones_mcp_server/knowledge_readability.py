@@ -15,6 +15,10 @@ from app.modules.knowledge.application.readability import (
 )
 from app.shared.exceptions import AppError
 from app.modules.knowledge.infrastructure.reader_access import job_budget
+from app.modules.knowledge.application.retrieval_budget import (
+    MAX_RETRIEVAL_SECONDS,
+    knowledge_entry,
+)
 from services.ones_mcp_server.knowledge_verification import OnesWorkItemReferenceService
 
 
@@ -51,6 +55,7 @@ class OnesKnowledgeReadability:
             principal.team_id,
         )
 
+    @knowledge_entry
     def check(
         self, *, token: str, request: ReadabilityRequest, deadline_ms: int | None = None
     ) -> dict[str, Any]:
@@ -79,7 +84,7 @@ class OnesKnowledgeReadability:
         evidence, documents = candidates.evidence, candidates.documents
         references: dict[str, dict[str, Any]] = {}
         for document_id in sorted(documents):
-            if time.monotonic() - started >= 60:
+            if time.monotonic() - started >= MAX_RETRIEVAL_SECONDS:
                 raise KnowledgeGovernanceError("knowledge_readability_timeout")
             self.gate.recheck(access)
             claims, current_identity = self._identity(token)
@@ -121,7 +126,7 @@ class OnesKnowledgeReadability:
         candidates.recheck(self.resources)
         if current_identity != identity:
             raise KnowledgeGovernanceError("knowledge_authorization_changed")
-        if time.monotonic() - started >= 60:
+        if time.monotonic() - started >= MAX_RETRIEVAL_SECONDS:
             raise KnowledgeGovernanceError("knowledge_readability_timeout")
         return {
             "knowledge_base_id": pin.knowledge_base_id,

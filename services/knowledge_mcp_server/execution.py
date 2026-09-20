@@ -10,14 +10,18 @@ from typing import TypeVar
 
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from services.knowledge_mcp_server.errors import failure
+from app.modules.knowledge.application.retrieval_budget import MAX_RETRIEVAL_SECONDS, entry_budget
+from app.shared.io_deadline import io_deadline
 
 T = TypeVar("T")
 
 
 class CallControl:
-    def __init__(self, *, deadline_ms: int | None = None, seconds: float = 60) -> None:
+    def __init__(
+        self, *, deadline_ms: int | None = None, seconds: float = MAX_RETRIEVAL_SECONDS
+    ) -> None:
         # seconds 只供服务装配/测试收紧；不是客户端参数。
-        seconds = min(60, seconds)
+        seconds = min(MAX_RETRIEVAL_SECONDS, seconds)
         wall = time.time()
         if deadline_ms is not None:
             seconds = min(seconds, deadline_ms / 1000 - wall)
@@ -47,10 +51,14 @@ class BoundedCalls:
 
         def invoke() -> T:
             try:
-                control.check()
-                result = work()
-                control.check()
-                return result
+                with (
+                    entry_budget(control.deadline_ms),
+                    io_deadline(control.remaining(), cancelled=control.cancelled.is_set),
+                ):
+                    control.check()
+                    result = work()
+                    control.check()
+                    return result
             finally:
                 self._slots.release()
 

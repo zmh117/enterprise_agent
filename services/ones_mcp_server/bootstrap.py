@@ -239,9 +239,10 @@ def build_knowledge_readability(
             runtime.mcp_tool_snapshot_service,
             runtime.business_authorization_service,
         ),
-        KnowledgeResourceReader(
-            GovernanceStore(runtime.database),
-            VectorRepository(runtime.database),
+        runtime.knowledge_services.resources()
+        if runtime.knowledge_services is not None
+        else KnowledgeResourceReader(
+            GovernanceStore(runtime.database), VectorRepository(runtime.database)
         ),
         source.detail,
         instance_code=source.instance_code,

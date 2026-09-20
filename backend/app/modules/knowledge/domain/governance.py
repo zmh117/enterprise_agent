@@ -11,6 +11,10 @@ class KnowledgeGovernanceError(NonRetryableExecutionError):
             error_code=code,
             safe_message={
                 "knowledge_input_invalid": "知识资源参数无效",
+                "knowledge_storage_config_invalid": "知识存储连接配置无效，请选择凭据中心引用，不要填写密码或 DSN",
+                "knowledge_storage_unavailable": "知识内容存储不可用，请检查连接、内容表结构和读取权限",
+                "knowledge_storage_readonly_unavailable": "知识内容连接未启用只读事务，请检查数据库连接设置；无需更换管理员账号",
+                "knowledge_storage_credentials_unavailable": "知识连接凭据缺失、已停用或不可用，请检查凭据中心",
                 "knowledge_revision_conflict": "知识配置已变化，请刷新后重试",
                 "knowledge_source_unavailable": "知识库本地数据来源或文档身份不完整，请检查导入数据",
                 "knowledge_source_changed": "知识库数据或工作项归属已变化，请检查数据并重新保存、验证和发布",

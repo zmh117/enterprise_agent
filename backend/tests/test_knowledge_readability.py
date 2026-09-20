@@ -453,7 +453,7 @@ def test_budget_caps_io_and_drops_late_result_without_leaking_context(
     def late(request, timeout):
         assert 0 < timeout <= 5
         result = original(request, timeout)
-        clock[0] += 61
+        clock[0] += 121
         return result
 
     f["provider_http"]._open_response = late

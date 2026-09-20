@@ -352,6 +352,7 @@ function dependencyTypeLabel(type: string) {
       webhook_revision: "Webhook Draft",
       webhook_publication: "Webhook Publication",
       model_connection_revision: "模型连接版本",
+      knowledge_resource_revision: "知识资源版本",
     }[type] ?? type
   )
 }

@@ -20,6 +20,7 @@ class PlatformSecretUsageService:
     ) -> list[dict[str, Any]]:
         dependencies: list[dict[str, Any]] = []
         dependencies.extend(self._resource_dependencies(secret_ref))
+        dependencies.extend(self._knowledge_dependencies(secret_ref))
         dependencies.extend(self._runtime_config_dependencies(secret_ref))
         dependencies.extend(self._reference_dependencies(secret_ref))
         dependencies.extend(self._connector_dependencies(secret_ref))
@@ -72,6 +73,42 @@ class PlatformSecretUsageService:
                             },
                         )
                     )
+        return result
+
+    def _knowledge_dependencies(self, secret_ref: str) -> list[dict[str, Any]]:
+        database = self.repository.database
+        resource = (
+            '"knowledge.retrieval_resource"'
+            if database.engine == "sqlite"
+            else "knowledge.retrieval_resource"
+        )
+        revision = (
+            '"knowledge.retrieval_revision"'
+            if database.engine == "sqlite"
+            else "knowledge.retrieval_revision"
+        )
+        rows = database.execute(
+            f"select v.id,v.revision,v.storage_config_json,r.code,r.status,"
+            f"r.draft_revision_id,r.published_revision_id from {revision} v "
+            f"join {resource} r on r.id=v.resource_id where v.storage_config_json is not null"
+        )
+        result = []
+        for row in rows:
+            paths = _json_reference_paths(row["storage_config_json"], secret_ref)
+            if not paths:
+                continue
+            current = row["id"] in {row["draft_revision_id"], row["published_revision_id"]}
+            status = str(row["status"]) if current else "superseded"
+            result.append(
+                _dependency(
+                    dependency_type="knowledge_resource_revision",
+                    row=row,
+                    code=str(row["code"]),
+                    status=status,
+                    field_paths=paths,
+                    metadata={"revision": int(row["revision"])},
+                )
+            )
         return result
 
     def _runtime_config_dependencies(

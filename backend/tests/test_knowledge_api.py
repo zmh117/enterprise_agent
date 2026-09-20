@@ -170,8 +170,10 @@ def test_authentication_csrf_and_permission_are_checked_before_parsing(managed):
             == 401
         )
     assert client.post(ROOT + "/resources", content="invalid").status_code == 401
+    assert client.post(ROOT + "/content-catalog", content="invalid").status_code == 401
     csrf = login(client)
     assert client.post(ROOT + "/resources", content="invalid").status_code == 403
+    assert client.post(ROOT + "/content-catalog", content="invalid").status_code == 403
     assert (
         client.post(
             ROOT + "/resources",
@@ -188,6 +190,53 @@ def test_authentication_csrf_and_permission_are_checked_before_parsing(managed):
         == 403
     )
     assert not runtime.database.execute('select * from "knowledge.retrieval_resource"')
+
+
+def test_content_catalog_and_resource_configuration_share_managed_connection(managed, monkeypatch):
+    from backend.tests.test_knowledge_storage_connections import SyntheticContentAccess, connection
+
+    runtime, client, vectors, _, resources = managed
+    access = SyntheticContentAccess(runtime.database, vectors)
+    resources.content_access = access
+    monkeypatch.setattr(runtime.knowledge_services, "resources", lambda: resources)
+    headers = csrf_headers(login(client))
+    response = client.post(
+        ROOT + "/content-catalog", headers=headers, json={"storage": connection()}
+    )
+    assert response.status_code == 200
+    assert access.calls[-1][0] == connection()
+    catalog = response.json()
+    assert "embedding_text" not in response.text and "password_ref" not in response.text
+    body = {
+        "knowledge_base_id": catalog["bases"][0]["id"],
+        "code": "synthetic",
+        "name": "合成独立库",
+        "index_id": catalog["indexes"][0]["id"],
+        "storage": connection(),
+    }
+    invalid = {**connection(), "password": "synthetic-plaintext"}
+    response = client.post(ROOT + "/content-catalog", headers=headers, json={"storage": invalid})
+    assert response.status_code == 400 and "synthetic-plaintext" not in response.text
+    created = client.post(ROOT + "/resources", headers=headers, json=body)
+    assert created.status_code == 200 and created.json()["published"] is None
+    assert created.json()["draft"]["storage"] == connection()
+    assert (
+        client.post(
+            ROOT + "/content-catalog",
+            headers={**headers, "origin": "https://elsewhere.invalid"},
+            json={"storage": connection()},
+        ).status_code
+        == 403
+    )
+    runtime.database.execute("delete from rbac_user_role where user_id=?", (ADMIN_ID,))
+    before = len(access.calls)
+    assert (
+        client.post(
+            ROOT + "/content-catalog", headers=headers, json={"storage": connection()}
+        ).status_code
+        == 403
+    )
+    assert len(access.calls) == before
 
 
 def test_resource_composition_does_not_construct_ones_source_verifier(managed, monkeypatch):

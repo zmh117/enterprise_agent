@@ -88,7 +88,7 @@
       "owner": "knowledge",
       "semantics": "知识检索资源不可变配置版本；编辑创建新版本",
       "classification": "immutable_snapshot",
-      "source_contract": "配置修订通过摘要固定本地来源、数据成员与索引；新版本不需要 ONES 来源绑定，历史版本须重新保存验证发布，不改写旧证据",
+      "source_contract": "配置修订固定知识内容连接、凭据引用、来源、成员和索引；平台治理留在平台库，索引引用通过用例校验跨实例归属；NULL 连接配置保留旧发布摘要与原部署连接，不含凭据明文",
       "canonical_source": "显式知识资源管理操作及固定来源和索引版本",
       "writers": [
         "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
@@ -107,7 +107,8 @@
         ]
       },
       "evidence_refs": [
-        "migration:137_expand_knowledge_retrieval_governance"
+        "migration:137_expand_knowledge_retrieval_governance",
+        "migration:140_expand_knowledge_storage_connections"
       ]
     },
     {

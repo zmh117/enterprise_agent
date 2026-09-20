@@ -36,7 +36,9 @@ def actor(request: Request) -> str:
     return principal.user_id
 
 
-async def payload(request: Request, fields: set[str]) -> dict[str, Any]:
+async def payload(
+    request: Request, fields: set[str], optional: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     raw = bytearray()
     async for part in request.stream():
         raw.extend(part)
@@ -46,7 +48,11 @@ async def payload(request: Request, fields: set[str]) -> dict[str, Any]:
             )
     try:
         value = json.loads(raw, object_pairs_hook=strict_object)
-        if not isinstance(value, dict) or set(value) != fields:
+        if (
+            not isinstance(value, dict)
+            or not fields <= set(value)
+            or not set(value) <= fields | optional
+        ):
             raise ValueError("fields")
         return value
     except (ValueError, UnicodeError, RecursionError):
@@ -124,16 +130,24 @@ def build_knowledge_router() -> APIRouter:
         require_action(request, resource_type="platform_config", resource_code="*", action="read")
         return services(request).resources().list_resources()
 
+    @router.post("/content-catalog")
+    async def content_catalog(request: Request) -> Any:
+        actor(request)
+        value = await payload(request, {"storage"})
+        return await invoke(services(request).resources().catalog, **value)
+
     @router.post("/resources")
     async def create_resource(request: Request) -> Any:
         user_id = actor(request)
-        value = await payload(request, {"knowledge_base_id", "code", "name"})
+        value = await payload(
+            request, {"knowledge_base_id", "code", "name"}, frozenset({"storage", "index_id"})
+        )
         return await invoke(services(request).resources().create, actor_id=user_id, **value)
 
     @router.put("/resources/{resource_id}/draft")
     async def draft_resource(resource_id: str, request: Request) -> Any:
         user_id = actor(request)
-        value = await payload(request, {"expected_revision", "index_id"})
+        value = await payload(request, {"expected_revision", "index_id"}, frozenset({"storage"}))
         return await invoke(
             services(request).resources().save_draft,
             actor_id=user_id,

@@ -279,3 +279,61 @@
 - 本机 `/platform/resources` 与 API `/api/ready` 均 HTTP 200，API status=ready；所有已配置 healthcheck 的主服务均 healthy。新 Web 静态资产已包含“无需确认 ONES 地址或 Team”。API 容器内使用正式客户端只读检查 Embedding profile、Qdrant collection metadata 与精确点数 **8309** 通过，Qdrant collection 状态 green。
 - 在只读数据库事务内调用正式资源配置解析器，真实 KB/索引配置通过且 requires_source_binding=false；资源仍 revision=3、无草稿/发布。检查未调用 ONES、聊天模型或 Embedding 编码接口。
 - Chrome 浏览器连接不可用，因此未宣称已完成登录 Web 点击验收；用户需刷新后依次保存草稿、验证、显式发布。在线 Knowledge MCP、双用户 ONES、新 Job 和人工评测仍未验收，任务进度保持 **41/48**，11.3 只记录本次已完成部分。
+
+## 平台管理与知识内容连接分离（2026-09-20，用户确认保留主密钥隔离）
+
+- 平台逻辑 KB、资源/草稿/验证/发布、角色应用 KB grant、Job、审计继续使用平台连接；内容 PostgreSQL/Qdrant 按资源修订明确绑定。应用层新增实际使用的内容读取端口；SQL、连接、关闭和凭据装配留在基础设施，不增加通用 CRUD 或向量后端插件层。API 验证、平台可读性桥、ONES 内部核验、Knowledge MCP 都使用所选内容库，不回退平台旧数据。
+- migration 140 增加可空 storage_config_json，解除 retrieval_revision.index_id 到平台 vector_index 的外键；外部索引由用例验证归属。旧值为 NULL，保留原部署连接、配置 hash、发布历史和数据身份。外部 KB 首次注册只创建平台逻辑身份，不复制正文。SQLite/PostgreSQL 的历史升级、外键保留与重复迁移均通过；目标内容连接不执行平台 Migrator 或 schema-head 校验。
+- Web 新建/草稿可配置 PostgreSQL（固定 knowledge schema）、Qdrant 及凭据中心引用，读取目标内容目录后选择 KB/READY 索引。修改连接使旧目录失效，保存新草稿撤去旧验证但不改变发布版本。密码/Key 无明文表单；凭据中心列出知识资源版本依赖。未配置连接的旧流程和角色按应用允许列表不变，不恢复 ONES 地址/Team 确认。
+- 平台固定 storage-connection 内部入口仅接受 KB/当前发布修订，必须同时通过知识服务 Service Principal、Knowledge JWT、RUNNING Job、当前 Tool/KB grant；返回前重验。拒绝 Cookie/Origin、其他服务、任意 Secret 引用、未发布/跨 KB 请求，审计先完成且只含安全 ID。MCP 不加载主密钥/Secret 仓储，单调用取得连接凭据、不缓存；合成加密 Secret 轮换立即使用新值，停用后失败关闭。服务 Token 精确 scope 增加固定连接操作，要求 API/MCP 配套更新并重新兑换。
+- 外部 PostgreSQL 使用只读事务及单阶段连接/SQL/锁等待限制；拒绝超级用户、内容表所有者、管理/表级/列级写权限及 schema CREATE。Qdrant 不跟随重定向，凭据只作为请求头，不进入模型参数、普通日志、错误或资源草稿。连接异常稳定脱敏。此处不宣称任务 7.3 的全链路物理取消已完成。
+- 在线 Compose 为 MCP 增加专用内容出网网络；Embedding/本地 Qdrant 保持原 internal 网络，没有新增宿主机端口、主密钥挂载或必需外部服务。目录与停用读取平台治理事实，不依赖外部内容服务可达。保持原项目、数据卷和离线 CLI 连接方式。
+- 后端知识、相关迁移/schema 与服务身份主回归 **787 passed、23 skipped（220.62 秒）**。其中 20 项 PostgreSQL 最小权限测试已在独立容器显式运行并通过；其余 3 项需外部导入/分块/向量条件，未验收。另资源/API/平台 Secret 安全 **44 passed**；补充真实代码路径的合成 Secret 轮换/停用后，存储专项 **22 passed（7.42 秒）**。重复覆盖不合计为新增测试数。
+- 使用已有 postgres:18 镜像创建独立回环随机端口、256 MiB tmpfs 容器，没有业务卷：权限专项 **20 passed**，完整 PostgreSQL migration 集成 **20 passed**，覆盖 fresh/并发/失败回滚与历史升级。按新列修正注释数量为 146 表/1925 列，并更新并发迁移测试残留的 head 126 列表至当前 140。临时容器已停止并自动删除，只有合成临时数据被清理。
+- Web 全量 **179 passed（16 文件）**，含知识页面 19 项；TypeScript、Vite build、ESLint、Prettier 通过。Ruff、MyPy（60 文件）、严格 OpenSpec、Markdown 本地链接及 diff 检查通过。Compose 合成配置/隔离回归包含在后端主回归；Vite 既有 native config/大 chunk 提醒不在本次范围。
+- 本次 **15.1–15.4 完成，总进度 45/52**。未执行正式迁移 140、业务服务更新、真实外部内容库接入、真实 ONES/聊天请求、数据搬迁/重编码、资源发布/授权或提交推送。7.3、10.4、11.2–11.6 仍未完成，不能以本次工程验收替代完整容器/双用户/新 Job/人工质量验收。
+
+## 本机连接拆分部署（2026-09-20，用户继续批准）
+
+- 本轮范围为 migration 140、既有业务服务/Web 配套更新及原 Embedding/Qdrant 恢复，不包含在线 MCP 首次部署、创建凭据/授权、数据迁移或资源发布。部署前平台 head=139，已有资源 revision=6 且已发布；Job、文件处理、投递和调度无非终态工作，两个待确认外部动作均已过期且不代为处理。Docker 数据盘约 126 GB，总可用约 63 GB。
+- 镜像使用 source_revision=`b7a0dde-dirty`、build_id=`knowledge-storage-split-20260920`、platform=`linux/arm64` 构建，明确包含当前未提交改造。API、Agent Worker、Processing Worker、Python Runtime、File Service、Tool/ONES/DingTalk MCP 共 8 类新旧 Python 依赖全部一致（Python 3.12.13）。未升级 PostgreSQL、Qdrant、Embedding 或 Docling 镜像，也未重新下载模型。
+- 暂停 API/钉钉入口，复核无执行中任务后停止对应消费者，正式一次性 Migrator 结果 `head=140 baselined=0 applied=140`。核对新增可空 storage_config_json、旧发布值仍为 NULL、平台本地 index_id 外键已解除。随后定向更新配套服务，保留项目、PostgreSQL/模型/向量卷与原数据库网络；API 重新带上离线知识网络。
+- 迁移前后 document=5000、document_revision=5000、document_chunk=8309、vector_index_item=8309、retrieval_revision=1、retrieval_resource=1。文档修订/内容 hash、分块 embedding/evidence hash、向量成员身份/状态、资源版本/草稿/发布指针与配置 hash 的服务器端聚合摘要全部一致。没有读取业务正文、重导入、重编码或向量写入。
+- 恢复钉钉入口时，`docker compose start dingtalk-runtime` 意外连带启动旧 Migrator 与 MinIO 初始化容器。旧 Migrator 在版本账本检查报 `Migration ledger contains versions unknown to this build` 并退出 1；命令链中后续账号/Agent/授权 bootstrap 未执行。MinIO 初始化重申既有私有桶配置，没有删除对象。改为 `docker start enterprise_agent-dingtalk-runtime-1` 后入口 healthy；正式迁移账本仍为上述 140，本轮未回滚 schema。旧失败 Migrator 为已退出的一次性容器，不作为当前服务健康证据；后续须使用新镜像和受控迁移命令。
+- 最终本机 `/platform/resources` HTTP 200，Web 静态资产含“知识内容存储 / 为此知识库配置连接”；`/api/ready` HTTP 200、status=ready、schema_head=140，API/Runtime 返回上述构建身份。主服务现有 healthcheck 全部 healthy，钉钉入口与 Embedding 也 healthy。仅在只读事务内运行正式已发布配置解析器，真实现有 KB 配置可解析且无需重新发布；未调用 ONES 或模型。API 容器中正式客户端检查 Embedding profile、Qdrant collection metadata 和精确点数 **8309** 通过，Qdrant green，未调用编码接口。
+- 在线扩展配置校验仍明确缺 `KNOWLEDGE_DATABASE_DSN`，平台没有 `knowledge_mcp_reader` 角色，没有在线 Knowledge MCP 容器；未用平台管理连接绕过独立账号合同。真实外部内容库、登录 Web 点击、新 Agent Job、双用户 ONES 和人工质量验收仍未完成。任务维持 **45/52**，11.3 仅记录本轮部署部分，不补勾；没有提交、推送或归档。
+
+## 内容账号可具备管理或写权限（2026-09-20，用户修订）
+
+- 用户明确希望后续管理知识内容，确认内容 PostgreSQL 可以使用管理员账号。本轮只取消外部内容账号的超级用户/所有者/写权限准入拒绝，不提前实现编辑、任意 SQL、建库或数据搬迁，不更改真实数据库角色；Knowledge MCP 平台治理连接的固定最小权限合同不变。
+- 外部内容连接继续以固定 startup options 启用 default_transaction_read_only=on、5 秒连接/SQL 与 3 秒锁等待上限，并在交给用例前检查 transaction_read_only。只读状态缺失或未启用返回专用安全错误，不回退平台连接；凭据引用、TLS、schema、配置 hash 与旧发布不变。此项不是全链路 deadline 物理取消验收。
+- Web 将“内容只读用户名”改为“内容数据库用户名”，明确允许管理员/读写/只读账号，但现有读取不修改内容。TLS 不自动关闭；本机 PostgreSQL 未启用 TLS 时仍需用户显式选择“不加密（仅受信内网）”。这次未实现连接失败的全面分类，不将通用错误文案当成 TLS 故障已修复。
+- 后端知识 API/治理/存储/平台权限/检索/可读性桥/MCP 回归 **312 passed（69.62 秒）**。另初始存储与权限专项 **28 passed** 是重复覆盖，不累计；合成测试覆盖只读会话启用、未启用/缺失拒绝、连接关闭和 startup options 保留。
+- 使用已有 postgres:18 创建独立回环随机端口、256 MiB tmpfs 容器，不挂业务卷；PostgreSQL 权限专项 **21 passed（8.66 秒）**。确认真实超级用户可读取内容目录，两次独立读取连接的 INSERT/UPDATE/DELETE/建表及事务内写入均被 PostgreSQL ReadOnlySqlTransaction 拒绝；原管理员连接仍可写。普通账号具备列级写权限不阻止内容读取，缺少必要 SELECT 仍拒绝；同一账号的超额权限作为平台治理连接仍被拒绝。首次测试的探针误用 name 字段，改为实际 display_name 后完整复测通过；临时容器已停止并自动删除，仅合成数据被清理。
+- Web 全量 **179 passed（16 文件）**，包含管理员用户名与凭据引用提交、连接变更失效和既有发布边界；TypeScript/Vite build、ESLint、Prettier、Ruff、MyPy、严格 OpenSpec、Markdown 链接、离线 Compose quiet 与 diff 检查通过。既有 Vite 提示未扩大处理。
+- 16.1–16.2 完成，总进度 **47/54**。用户随后批准只更新本机 API、ONES MCP 与 Web；部署结果另记，不自动保存草稿、发布知识资源或创建凭据。完整 MCP/真实 ONES/新 Job/质量与超时验收仍保留缺口。
+- 用户批准后，构建并定向更新上述三个服务，source_revision=`b7a0dde-dirty`、build_id=`knowledge-content-admin-20260920`、platform=`linux/arm64`。新旧 API/ONES Python 依赖完全一致；更新前无非终态 Job，没有运行 Migrator、启动 Knowledge MCP、重启数据库或重跑 bootstrap。
+- API 与 ONES MCP healthy，API `/api/ready` 返回 ready/head=140 及新构建身份；Web 静态资产包含新用户名和允许管理/读写账号说明。两个部署容器的 ManagedContentAccess 代码摘要与工作区一致，旧账号权限拒绝已移除，只读会话检查保留。服务器端文档/修订/分块/向量成员/资源与发布聚合摘要前后一致。未代替用户使用当前凭据执行登录 Web 连接测试；刷新后仍需将本机 TLS 显式改为匹配服务端的“不加密”，不宣称这条真实凭据已验证或完整 Agent 检索已验收。
+
+## 120 秒统一截止与阻塞依赖取消（2026-09-20，用户确认）
+
+- 用户确认实施此前待定的数据库/DNS 取消方案，并把单次知识调用上限从 60 秒改为 **120 秒**，仍服从当前 Job attempt 剩余时间、上游截止和父调用预算。代码、工具描述、design/delta/任务及运行手册同步；既有更短 Provider/登录配置不扩大，旧 Job/授权/Publication 不改写。
+- MCP 及两个内部 HTTP 入口在首次鉴权前建立 I/O 截止。请求体读取、服务身份、池/锁等待、SQL/fetch、事务结束和 HTTP 使用剩余预算；跨跳只收紧。修复 ONES 正文回放伪造断开的问题，实际断开才触发取消；取消后不提前释放仍工作的 MCP 槽位。
+- PostgreSQL 使用请求级服务器超时和驱动轮询，支持时最多 1 秒发送取消；不使用旧 libpq 的无界取消 fallback。异常连接淘汰、正常设置恢复，嵌套事务对已关闭连接不再回滚覆盖原始超时。SQLite 连接池/文件锁/长递归查询/事务结束有隔离回归，普通调用仍使用原连接池及等待策略。
+- DNS 保留 OS getaddrinfo 与原 Host/TLS，只有域名解析进入短生命周期标准库子进程，空继承环境、输入只含域名/端口/解析参数，输出有界；不传 URL、JWT、查询、正文或数据库凭据。数值 IP 不建子进程；故障测试证明挂起解析被终止回收，无默认 executor DNS 线程拖延 asyncio.run 收尾。内容池建连使用同一解析，并能随临时池关闭取消。
+- 合成故障预算使用约 80–150 ms，覆盖首个 Job/平台/ONES/MCP 鉴权池等待、慢 SQL、文件/数据库锁、过期/嵌套事务、网络滴流、DNS 挂起、PostgreSQL 握手不返回、真实断开和槽位复用；断言读取停止及下一次调用恢复，不等待真实 120 秒。独立 PostgreSQL 容器验证 pg_sleep 取消、后端连接更换、会话设置恢复、锁等待与不误提交；只使用合成数据和回环随机端口，无业务卷。
+- 最终知识全量 + Database UoW/测试分类：**751 passed、3 skipped（200.67 秒）**，包括 **7 项独立 PostgreSQL 截止测试**和原 **21 项 PostgreSQL 权限测试**。3 项跳过仍是未配置导入/分块/向量的显式外部集成，未借用正式连接。独立 ONES/身份/审计扩展 **126 passed（9.04 秒）**，与前组文件不同，合计 **877 passed、3 skipped**；最后工具描述及 Host 保留专项 **69 passed（9.04 秒）** 是重复覆盖，不累计。
+- 回归中修复 120 秒边界的旧 60 秒测试值，以及池淘汰后后台补建暂被快照计为借出的时序断言；测试先证明新连接能正常执行再验证回收。没有将这些失败归为无关。全仓 Ruff、MyPy **495 source files**、改动文件格式、严格 OpenSpec、Markdown 链接、离线 Compose quiet 与 diff 检查通过。
+- 7.3 完成，总进度 **48/54**。本轮没有正式迁移、镜像构建/重启、凭据读取或配置、资源/角色/应用发布、真实 ONES/聊天/Embedding 请求、提交或推送。120 秒改动尚未部署；10.4、11.2–11.6 保持未完成。驱动取消、DNS/临时池回收与失败审计各有至多 1 秒有界收尾，不承诺所有系统调用在 deadline 同一时刻消失，也不把隔离故障通过当真实业务延迟达标。
+- 临时容器 `ea-knowledge-deadline-test-20260920` 已停止并自动移除，两个临时数据库随 tmpfs 丢弃（仅可重建的合成数据）；已确认无同名残留容器，未清理正式数据或卷。
+
+## 完整隔离容器链路（2026-09-20，任务 10.4）
+
+- 新增显式 opt-in `backend/tests/test_knowledge_container_acceptance.py` 和独立测试 Compose/驱动。只继承 Docker 所需 PATH/HOME，Compose 使用 `/dev/null` 环境文件、随机测试项目、internal 网络，无宿主端口或业务卷。API/ONES MCP/Knowledge MCP 构建正式 target；pytest 与合成 Provider/Embedding 仅在额外测试镜像。PostgreSQL 18 使用 tmpfs，Qdrant v1.19.1 使用随机项目专属临时卷以验证重启数据保留；不改原离线或在线 Compose。
+- 容器检查发现上一轮未部署的 DeadlineConnection 总向父 `_connect_gen` 传 timeout。本机 psycopg 3.3.4 接受此参数，而镜像实际安装 3.3.6 已将 timeout 移入 wait_conn，导致普通建连也失败。修复为仅转发实际驱动 connect 传来的 kwargs，不硬编码版本或放宽截止；新增两种签名回归。镜像使用实际依赖，不以本机成功替代容器验收。
+- 单文档合成导入、分块和真实 Qdrant 索引完成；API 使用合成管理员正常登录，通过管理 HTTP 保存草稿、验证、发布，无 ONES 来源确认记录。配置 external 内容连接模式和平台 Secret 引用，指向同一临时 PostgreSQL 的管理员账号，当前读取仍只读；不宣称已验证物理异库部署。
+- 生产 Knowledge MCP 使用固定最小权限角色启动，只挂公开 JWKS 与专用 bootstrap，无平台主密钥/私钥。通过真实 MCP initialize/tools/list/目录/检索，经 API 短期服务身份兑换、storage-connection 双身份入口、API 可读性桥、ONES 内部投影和合成 Provider HTTP 返回授权引用；再使用独立 ONES audience 的 Principal 经正式 ONES MCP 详情工具回源。没有 TestClient 或 MockTransport 替代这些运行链路，Job/角色/能力事实仍由合成 fixture 创建，不涉及 Worker/聊天模型。
+- 验证 ONES audience 不能调用知识工具；KB 允许但 Provider 403 时不返回命中，Provider 500 时安全失败而非成功空集合；删除合成 KB grant 后旧 Token 被拒绝，恢复后可查；管理 HTTP 停用后拒绝，启用后恢复。API/ONES MCP/Knowledge MCP/Qdrant 重启后重新签发当前有效 Principal 并成功检索和详情回源。停掉全部知识/ONES组件后，独立数据库和未挂知识凭据的 API 普通登录、身份接口可用，知识内部入口不开放。
+- 容器总场景 **1 passed（56.81 秒）**，其中专用临时数据库上的 I/O/DNS/握手/SQL/事务子回归 **20 passed**（13 个 I/O 与 7 个 PostgreSQL 用例）。本机知识全量 + UoW/测试分类 **725 passed、32 skipped（190.50 秒）**；32 项为未传 opt-in 的容器入口、21 项独立 PostgreSQL 权限、7 项 PostgreSQL 截止和 3 项外部流水线集成，未借正式连接补齐。额外 ONES/身份/审计扩展 **126 passed（8.26 秒）**。容器子回归与本机测试有重叠，不重复累计。
+- 测试夹具的 PostgreSQL 表引用/时间类型、受管文件格式/权限、API 路径/Feature/审计保留配置和客户端生命周期已对齐正式合同后重跑通过；未绕过生产门禁。每次失败均执行隔离清理，不触碰正式容器。Ruff、相关 MyPy、严格 OpenSpec 与 diff 检查通过，最终检查另见本轮交付。
+- 10.4 完成，进度 **49/54**；11.2–11.6 仍未完成。未部署这次兼容修复及前一轮 120 秒代码到正式服务，未读取或修改真实凭据、授权、Publication 或数据。真实 ONES 双用户、新 Job/聊天模型、BGE-M3 及人工效果验收均不能由本次合成容器结果代替；没有提交、推送或归档。

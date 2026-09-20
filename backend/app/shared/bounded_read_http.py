@@ -8,6 +8,8 @@ import httpx
 
 from app.shared.database import assert_external_io_allowed
 from app.shared.ones_io_budget import ones_io_timeout
+from app.shared.bounded_dns import ResolverEventLoop
+from app.shared.io_deadline import POLL_SECONDS, current_io_deadline, io_wait_timeout
 
 _QUIET: ContextVar[bool] = ContextVar("bounded_read_quiet_http", default=False)
 
@@ -39,7 +41,7 @@ def request_bytes(
 ) -> tuple[int, bytes]:
     """同步服务线程入口；超时取消网络协程并关闭连接，不放弃仍在运行的 HTTP 线程。"""
     assert_external_io_allowed("bounded_knowledge_read")
-    seconds = ones_io_timeout(timeout)
+    seconds = io_wait_timeout(ones_io_timeout(timeout))
 
     async def run() -> tuple[int, bytes]:
         async with asyncio.timeout(seconds):
@@ -64,9 +66,34 @@ def request_bytes(
                             raise ValueError("bounded_response_too_large")
                     return response.status_code, bytes(body)
 
+    async def cancellable() -> tuple[int, bytes]:
+        budget = current_io_deadline()
+
+        async def cancelled() -> None:
+            while True:
+                await asyncio.sleep(POLL_SECONDS)
+                if budget is not None:
+                    budget.check()
+
+        request = asyncio.create_task(run())
+        monitor = asyncio.create_task(cancelled())
+        try:
+            done, _ = await asyncio.wait({request, monitor}, return_when=asyncio.FIRST_COMPLETED)
+            if monitor in done:
+                await monitor
+            result = await request
+            if budget is not None:
+                budget.check()
+            return result
+        finally:
+            request.cancel()
+            monitor.cancel()
+            await asyncio.gather(request, monitor, return_exceptions=True)
+
     token = _QUIET.set(True)
     try:
-        return asyncio.run(run())
+        with asyncio.Runner(loop_factory=ResolverEventLoop) as runner:
+            return runner.run(cancellable())
     except TimeoutError:
         raise TimeoutError("bounded_read_timeout") from None
     except httpx.TransportError:

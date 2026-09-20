@@ -1,4 +1,4 @@
-"""固定内部地址的有界客户端，不记录请求正文或远端异常。"""
+"""Embedding 固定内网地址；Qdrant 使用管理员绑定连接，不记录正文或远端异常。"""
 
 import json
 import time
@@ -21,10 +21,30 @@ from app.shared.bounded_read_http import request_bytes
 
 
 class InternalHttp:
-    def __init__(self, endpoint: str, *, transport: httpx.BaseTransport | None = None) -> None:
-        if endpoint not in {"http://knowledge-embedding:8096", "http://knowledge-qdrant:6333"}:
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        managed_qdrant: bool = False,
+        api_key: str = "",
+    ) -> None:
+        if managed_qdrant:
+            from app.modules.knowledge.domain.storage_connection import storage_config
+
+            checked = storage_config(
+                {"postgres": {"mode": "platform"}, "qdrant": {"url": endpoint, "api_key_ref": ""}}
+            )
+            assert checked is not None
+            endpoint = checked["qdrant"]["url"]
+        elif (
+            endpoint not in {"http://knowledge-embedding:8096", "http://knowledge-qdrant:6333"}
+            or api_key
+        ):
             raise VectorError("knowledge_endpoint_invalid")
         self.endpoint, self._transport = endpoint, transport
+        self._managed_qdrant = managed_qdrant
+        self._headers = {"api-key": api_key} if api_key else {}
         self.client = httpx.Client(
             base_url=endpoint,
             transport=transport,
@@ -32,6 +52,7 @@ class InternalHttp:
             follow_redirects=False,
             timeout=httpx.Timeout(180, connect=5),
             limits=httpx.Limits(max_connections=2),
+            headers=self._headers,
         )
 
     def close(self) -> None:
@@ -84,11 +105,11 @@ class InternalHttp:
         raise VectorError("knowledge_vector_unavailable")
 
     def _read(self, method: str, path: str, value: Any) -> tuple[int, bytes]:
-        if current_budget() is not None and self._transport is None:
+        if (current_budget() is not None or self._managed_qdrant) and self._transport is None:
             return request_bytes(
                 method,
                 self.endpoint + path,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", **self._headers},
                 content=json.dumps(value).encode() if value is not None else None,
                 timeout=io_timeout(180),
                 max_bytes=2 * 1024 * 1024,
@@ -153,8 +174,16 @@ class EmbeddingClient:
 
 
 class QdrantClient:
-    def __init__(self, *, transport: httpx.BaseTransport | None = None) -> None:
-        self.http = InternalHttp("http://knowledge-qdrant:6333", transport=transport)
+    def __init__(
+        self,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        endpoint: str = "http://knowledge-qdrant:6333",
+        api_key: str = "",
+    ) -> None:
+        self.http = InternalHttp(
+            endpoint, transport=transport, managed_qdrant=True, api_key=api_key
+        )
 
     @staticmethod
     def path(index: dict[str, Any]) -> str:

@@ -25,6 +25,14 @@ export function KnowledgeError({ error }: { error: unknown }) {
       knowledge_revision_conflict:
         "配置已被其他操作修改。本地输入已保留，请重新载入最新配置后再保存。",
       knowledge_input_invalid: "知识配置参数无效，请检查输入。",
+      knowledge_storage_config_invalid:
+        "知识存储配置无效，请检查地址并选择凭据中心引用，不要填写密码或 DSN。",
+      knowledge_storage_unavailable:
+        "内容存储不可用，请检查连接、knowledge 表结构和读取权限；不会回退原数据库。",
+      knowledge_storage_readonly_unavailable:
+        "内容连接未启用只读事务，请检查数据库连接设置；无需更换管理员账号。",
+      knowledge_storage_credentials_unavailable:
+        "连接凭据缺失或已停用，请检查凭据中心。",
       knowledge_source_unavailable:
         "本地数据来源或文档身份不完整，请检查导入数据。",
       knowledge_source_changed:

@@ -112,10 +112,10 @@ class PlatformOnesReadabilityGateway:
                         **self._deadline_headers(),
                     },
                     content=json.dumps(asdict(request)).encode(),
-                    timeout=ones_io_timeout(60),
+                    timeout=ones_io_timeout(120),
                     max_bytes=64 * 1024,
                 )
-                ones_io_timeout(60)
+                ones_io_timeout(120)
                 if status != 200:
                     raise ValueError
                 return json.loads(body, object_pairs_hook=strict_object)
@@ -124,7 +124,7 @@ class PlatformOnesReadabilityGateway:
                 transport=self._transport,
                 trust_env=False,
                 follow_redirects=False,
-                timeout=httpx.Timeout(ones_io_timeout(60), connect=ones_io_timeout(3)),
+                timeout=httpx.Timeout(ones_io_timeout(120), connect=ones_io_timeout(3)),
             ) as client:
                 with client.stream(
                     "POST",
@@ -136,7 +136,7 @@ class PlatformOnesReadabilityGateway:
                         raise ValueError
                     raw = bytearray()
                     for part in response.iter_bytes():
-                        ones_io_timeout(60)
+                        ones_io_timeout(120)
                         raw.extend(part)
                         if len(raw) > 64 * 1024:
                             raise ValueError

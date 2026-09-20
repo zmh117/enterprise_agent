@@ -6,6 +6,7 @@ from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.knowledge.application.candidates import current_documents
+from app.modules.knowledge.application.content_access import KnowledgeContent
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError, checked_identifier
 from app.modules.knowledge.application.ports import (
     PrincipalAccess,
@@ -15,9 +16,13 @@ from app.modules.knowledge.application.ports import (
 )
 from app.modules.knowledge.application.readability import ReadabilityCandidates, ReadabilityRequest
 from app.modules.knowledge.application.readability import project_readability
-from app.modules.knowledge.domain.models import KnowledgeJobAccess
+from app.modules.knowledge.domain.models import (
+    KnowledgeJobAccess,
+    PinnedKnowledgeResource,
+    OnesKnowledgeIdentity,
+)
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
-from app.modules.knowledge.application.retrieval_budget import RetrievalBudget
+from app.modules.knowledge.application.retrieval_budget import RetrievalBudget, knowledge_entry
 from app.shared.exceptions import AppError
 
 
@@ -70,6 +75,7 @@ class KnowledgeSearch:
         self.readability, self.audit = readability, audit
         self._slots = threading.BoundedSemaphore(4)
 
+    @knowledge_entry
     def search(self, *, token: str, arguments: Any) -> dict[str, Any]:
         access, acquired = None, False
         try:
@@ -115,7 +121,21 @@ class KnowledgeSearch:
     ) -> dict[str, Any]:
         identity = self.access.identity(access.actor_id)
         pin = self.resources.resolve(request.knowledge_base_id)
-        index = self.resources.vectors.get(pin.index_code)
+        with self.resources.content_for(pin) as content:
+            return self._search_content(token, request, access, budget, identity, pin, content)
+
+    def _search_content(
+        self,
+        token: str,
+        request: SearchRequest,
+        access: KnowledgeJobAccess,
+        budget: RetrievalBudget,
+        identity: OnesKnowledgeIdentity,
+        pin: PinnedKnowledgeResource,
+        content: KnowledgeContent,
+    ) -> dict[str, Any]:
+        index = content.vectors.get(pin.index_code)
+        qdrant = content.qdrant or self.qdrant
         if index is None:
             raise KnowledgeGovernanceError("knowledge_index_unavailable")
 
@@ -132,13 +152,13 @@ class KnowledgeSearch:
         recheck()
         self.embedding.check()
         recheck()
-        self.qdrant.check(index)
+        qdrant.check(index)
         recheck()
         vector = self.embedding.call([request.query], encode=True)["vectors"][0]
         recheck()
         # 一次最多读取 200 点，随后在同一候选池内按文档补齐，避免重复扩大请求的累计超限。
-        candidates = self.qdrant.search(index, vector, MAX_POINTS)
-        documents = current_documents(self.resources.vectors, index, candidates)
+        candidates = qdrant.search(index, vector, MAX_POINTS)
+        documents = current_documents(content.vectors, index, candidates)
         results: list[dict[str, Any]] = []
         checked, timed_out = 0, False
         while checked < min(len(documents), MAX_DOCUMENTS) and len(results) < request.top_k:
@@ -174,8 +194,7 @@ class KnowledgeSearch:
             checked += len(batch)
         recheck()
         current = {
-            doc["document_id"]: doc
-            for doc in current_documents(self.resources.vectors, index, candidates)
+            doc["document_id"]: doc for doc in current_documents(content.vectors, index, candidates)
         }
         for result in results:
             before = {

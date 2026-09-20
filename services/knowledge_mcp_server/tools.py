@@ -11,9 +11,11 @@ from app.modules.knowledge.application.directory import KnowledgeDirectory
 from app.modules.knowledge.application.search import KnowledgeSearch
 from app.modules.mcp_audit import McpAuditCoordinator, McpAuditHandle
 from app.shared.knowledge_tool_contracts import KNOWLEDGE_TOOL_CONTRACTS
+from app.shared.io_deadline import io_cleanup
 from services.knowledge_mcp_server.auth import KnowledgeMcpAuth
 from services.knowledge_mcp_server.errors import failure, safe_failure
 from services.knowledge_mcp_server.execution import CallControl
+from services.knowledge_mcp_server.storage_credentials import storage_principal
 
 MAX_RESPONSE_BYTES = 256 * 1024
 
@@ -54,7 +56,7 @@ class KnowledgeMcpTools:
         handle = self.audit.begin(context, business_request={"tool": name})
         started = time.monotonic()
         try:
-            with self.auth.budget(context.job_id, control).activate():
+            with self.auth.budget(context.job_id, control).activate(), storage_principal(token):
                 contract = KNOWLEDGE_TOOL_CONTRACTS[name]
                 if not Draft202012Validator(contract.input_schema).is_valid(arguments):
                     raise failure("knowledge_mcp_input_invalid")
@@ -93,13 +95,14 @@ class KnowledgeMcpTools:
             error = safe_failure(exc)
             setattr(error, "mcp_audit_handle", handle)
             try:
-                self.audit.complete(
-                    handle,
-                    status="FAILED",
-                    business_response={"error_code": error.error_code},
-                    error_code=error.error_code,
-                    duration_ms=int((time.monotonic() - started) * 1000),
-                )
+                with io_cleanup():
+                    self.audit.complete(
+                        handle,
+                        status="FAILED",
+                        business_response={"error_code": error.error_code},
+                        error_code=error.error_code,
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                    )
             except Exception:
                 error = failure("knowledge_mcp_unavailable")
                 setattr(error, "mcp_audit_handle", handle)

@@ -19,6 +19,7 @@ from app.modules.knowledge.application.ports import PrincipalAccess
 from app.modules.knowledge.domain.models import OnesKnowledgeIdentity
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.domain.vector_contract import fingerprint
+from app.modules.knowledge.application.retrieval_budget import knowledge_entry
 
 
 PAGE_SIZE = 50
@@ -119,6 +120,7 @@ class KnowledgeDirectory:
         except (InvalidToken, ValueError, UnicodeError, TypeError, KeyError, RecursionError):
             raise KnowledgeGovernanceError("knowledge_cursor_invalid") from None
 
+    @knowledge_entry
     def list_bases(self, *, token: str, arguments: Any) -> dict[str, Any]:
         if not isinstance(arguments, dict) or not set(arguments) <= {"cursor"}:
             raise KnowledgeGovernanceError("knowledge_input_invalid")

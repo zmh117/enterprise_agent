@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from contextlib import suppress
 from typing import Any, Awaitable, Callable
@@ -24,8 +25,13 @@ from app.modules.mcp_audit import McpAuditHandle
 from app.shared.config import load_settings
 from app.shared.exceptions import AppError
 from app.modules.knowledge.domain.governance import strict_object
+from app.modules.knowledge.api.deadline import bounded_knowledge_request
 from app.modules.knowledge.application.readability import MAX_REQUEST_BYTES as READABILITY_MAX_BYTES
-from app.modules.knowledge.application.retrieval_budget import DEADLINE_HEADER, deadline_from_headers
+from app.modules.knowledge.application.retrieval_budget import (
+    DEADLINE_HEADER,
+    MAX_RETRIEVAL_SECONDS,
+    deadline_from_headers,
+)
 from services.ones_mcp_server.contracts import (
     SERVER_CODE,
     SERVER_VERSION,
@@ -114,9 +120,41 @@ class OnesMcpSecurityMiddleware:
         ]:
             await self._reject(scope, receive, send, status=403, code="ones_mcp_host_forbidden")
             return
+        read_deadline = None
+        if scope.get("path") == READABILITY_PATH:
+            try:
+                incoming = deadline_from_headers(headers.get(DEADLINE_HEADER.lower(), []))
+            except AppError:
+                await self._reject(scope, receive, send, status=400, code="knowledge_input_invalid")
+                return
+            milliseconds = (
+                min(int((time.time() + MAX_RETRIEVAL_SECONDS) * 1000), incoming)
+                if incoming is not None
+                else int((time.time() + MAX_RETRIEVAL_SECONDS) * 1000)
+            )
+            read_deadline = time.monotonic() + milliseconds / 1000 - time.time()
+            # Preserve time already spent reading the body when the header was absent.
+            if incoming is None:
+                scope = {
+                    **scope,
+                    "headers": [
+                        *scope.get("headers", []),
+                        (DEADLINE_HEADER.lower().encode(), str(milliseconds).encode()),
+                    ],
+                }
         body = bytearray()
         while True:
-            message = await receive()
+            try:
+                message = (
+                    await receive()
+                    if read_deadline is None
+                    else await asyncio.wait_for(receive(), max(0, read_deadline - time.monotonic()))
+                )
+            except TimeoutError:
+                await self._reject(
+                    scope, receive, send, status=503, code="knowledge_search_budget_exhausted"
+                )
+                return
             if message.get("type") == "http.disconnect":
                 return
             body.extend(message.get("body") or b"")
@@ -143,6 +181,8 @@ class OnesMcpSecurityMiddleware:
         async def replay() -> Message:
             nonlocal delivered
             if delivered:
+                if scope.get("path") == READABILITY_PATH:
+                    return await receive()
                 return {"type": "http.disconnect"}
             delivered = True
             return {"type": "http.request", "body": bytes(body), "more_body": False}
@@ -388,10 +428,11 @@ def create_app(
                 status_code=503,
             )
 
+    @bounded_knowledge_request
     async def check_readability(request: Request) -> JSONResponse:
         assert knowledge_readability is not None
         try:
-            knowledge_readability.detail.authenticate(_bearer(request))
+            await asyncio.to_thread(knowledge_readability.detail.authenticate, _bearer(request))
         except AppError:
             return JSONResponse(
                 {"error_code": "ones_mcp_authentication_failed", "error": "平台身份凭证无效"},

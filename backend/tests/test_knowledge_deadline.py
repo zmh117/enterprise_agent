@@ -19,6 +19,7 @@ from app.modules.knowledge.application.retrieval_budget import DEADLINE_HEADER
 from app.shared.bounded_read_http import request_bytes
 from app.shared.exceptions import AppError, RetryableExecutionError
 from app.shared.ones_io_budget import ones_io_budget, ones_io_timeout
+from app.shared.database import Database
 from backend.tests.test_knowledge_search import (
     knowledge_contract as knowledge_contract,
     readable_fixture as readable_fixture,
@@ -56,7 +57,9 @@ def local_server():
                         if stopped.wait(0.02):
                             break
                 else:
-                    self.wfile.write(b"{}")
+                    self.wfile.write(
+                        self.headers["Host"].encode() if self.path == "/host" else b"{}"
+                    )
             except (BrokenPipeError, ConnectionResetError):
                 disconnected.set()
 
@@ -234,7 +237,7 @@ def test_invalid_or_expired_deadline_never_reaches_provider(bridge_fixture, dest
 def test_future_deadline_cannot_expand_local_budget(search_fixture):
     f = search_fixture
     budget = job_budget(f["runtime"].database, f["job"].id, deadline_ms=9_999_999_999_999)
-    assert 0 < budget.remaining() <= 60
+    assert 0 < budget.remaining() <= 120
     with pytest.raises(KnowledgeGovernanceError):
         job_budget(f["runtime"].database, f["job"].id, deadline_ms=int(time.time() * 1000) - 1)
 
@@ -267,7 +270,7 @@ def test_production_bridge_clients_keep_fixed_headers_and_deadline(search_fixtur
 
     def bounded(method, url, *, headers, content, timeout, max_bytes):
         assert method == "POST" and DEADLINE_HEADER in headers
-        assert 0 < timeout <= 60 and max_bytes == 64 * 1024
+        assert 0 < timeout <= 120 and max_bytes == 64 * 1024
         urls.append(url)
         if url == "http://api-server:8000" + BRIDGE_PATH:
             response = f["bridge_client"].post(BRIDGE_PATH, content=content, headers=headers)
@@ -299,6 +302,44 @@ def test_online_vector_client_uses_total_http_budget(search_fixture, monkeypatch
         with job_budget(f["runtime"].database, f["job"].id).activate():
             assert client.request("GET", "/collections") == {"result": {}}
         assert len(requests) == 1 and requests[0][1] == "http://knowledge-qdrant:6333/collections"
-        assert requests[0][2]["timeout"] <= 60
+        assert requests[0][2]["timeout"] <= 120
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("destination", ["bridge", "ones"])
+def test_http_entry_budget_precedes_first_authentication(bridge_fixture, monkeypatch, destination):
+    # Import lazily: the blocking helpers themselves reuse local_server from this module.
+    from backend.tests.test_knowledge_io_cancellation import held_connection
+
+    f = bridge_fixture
+    blocked = Database("sqlite:///:memory:", pool_max_size=1, pool_timeout_seconds=3)
+    target = f["bridge"] if destination == "bridge" else f["endpoint"].detail
+    original = target.authenticate
+
+    def authenticate(*args):
+        blocked.execute("select 1")
+        return original(*args)
+
+    monkeypatch.setattr(target, "authenticate", authenticate)
+    path = BRIDGE_PATH if destination == "bridge" else READABILITY_PATH
+    client = f["bridge_client"] if destination == "bridge" else f["client"]
+    headers = {
+        "Authorization": "Bearer " + (f["service_token"] if destination == "bridge" else f["token"])
+    }
+    if destination == "bridge":
+        headers["X-Knowledge-Principal"] = "Bearer " + f["knowledge_token"]
+    try:
+        with held_connection(blocked):
+            started = time.monotonic()
+            response = client.post(
+                path,
+                json=f["body"],
+                headers={**headers, DEADLINE_HEADER: str(int(time.time() * 1000) + 100)},
+            )
+            assert time.monotonic() - started < 0.8
+            assert response.status_code == 503
+            assert not f["calls"]
+        assert client.post(path, json=f["body"], headers=headers).status_code == 200
+    finally:
+        blocked.close()

@@ -76,6 +76,7 @@ KNOWLEDGE_TOOL_CONTRACTS = {
         description=(
             "发现当前用户在当前业务应用获准且已发布可用的知识库。每页最多 50 项，"
             "has_more=true 时传回 next_cursor 续页；游标失效请从首页重查。"
+            "单次总预算最多 120 秒，并受当前任务剩余时间限制。"
             "仅返回知识库身份、管理名称和状态，不返回文档计数或正文。"
             + KNOWLEDGE_USAGE_INSTRUCTIONS
         ),
@@ -104,6 +105,7 @@ KNOWLEDGE_TOOL_CONTRACTS = {
         description=(
             "在一个明确且当前获准的知识库内进行有界语义检索，返回可读工作项引用，"
             "不返回缓存标题、摘要或正文。query 为 1–2000 字符；top_k 默认 10、范围 1–20。"
+            "单次总预算最多 120 秒，并受当前任务剩余时间限制。"
             "不能覆盖身份、Team、filter、collection、向量或服务地址。"
             + KNOWLEDGE_USAGE_INSTRUCTIONS
         ),

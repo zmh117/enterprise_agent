@@ -292,10 +292,13 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
     )
     content = {name: db.execute(f"select * from {table(db, name)}") for name in data_tables}
     result = Migrator(db, default_migrations_dir(), migrator_build="confirmation-after").run()
-    assert result.applied == ("138", "139")
+    assert result.applied == ("138", "139", "140")
     assert db.execute(f"select * from {table(db, 'source_binding')} order by id") == before
     assert {name: db.execute(f"select * from {table(db, name)}") for name in data_tables} == content
-    assert {name: db.execute(f"select * from {table(db, name)}") for name in history} == history
+    migrated_history = {name: db.execute(f"select * from {table(db, name)}") for name in history}
+    for row in migrated_history["retrieval_revision"]:
+        assert row.pop("storage_config_json") is None
+    assert migrated_history == history
     assert db.execute_one("select binding_id from synthetic_source_reference") == {
         "binding_id": "verified"
     }
@@ -349,7 +352,9 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
         actor_id="synthetic_admin", resource_id=current["id"], expected_revision=checked["revision"]
     )
     assert resources.resolve(index["knowledge_base_id"])
-    assert store.get("retrieval_revision", "legacy-revision") == history["retrieval_revision"][0]
+    assert store.get("retrieval_revision", "legacy-revision") == {
+        **history["retrieval_revision"][0], "storage_config_json": None,
+    }
     assert (
         store.get("retrieval_verification", "legacy-verification")
         == history["retrieval_verification"][0]

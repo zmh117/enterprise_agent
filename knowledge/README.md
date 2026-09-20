@@ -70,13 +70,31 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 ## 数据、网络与运维边界
 
-- 共用平台 PostgreSQL 的 `knowledge` schema，不另建 PostgreSQL。数据库迁移仍属于平台统一 catalog：不用知识服务的环境升级后端时也必须满足对应 schema head，但不会自动导入缺陷或生成向量。
+- 默认内容仍使用平台 PostgreSQL 的 `knowledge` schema；Web 也可绑定独立 PostgreSQL 内容库和 Qdrant。平台治理与 RBAC、Job、审计连接始终不变。平台迁移仍属于统一 catalog：不用知识服务的环境升级后端时也须满足对应 schema head，但不会自动导入缺陷或生成向量。
 - 离线扩展为 PostgreSQL 与 API 追加 `knowledge-internal`，保留默认和运行控制网络；API 由此执行资源的本地技术验证，不需要先启用在线 MCP 或新增服务凭据。Embedding、Qdrant、运维 CLI 仅使用 internal 网络，不发布宿主机端口；准备任务只使用下载网络，不获得数据库配置或平台 Secret。
 - 保留 `knowledge-models`、`knowledge-qdrant` 卷键名；同一项目仍使用原有模型和 Qdrant 数据。文件拆分不搬迁或清空任何卷。
 - Qdrant 固定为 `v1.19.1` 和已核验的镜像 digest，不使用浮动 latest。已有卷跨次版本升级必须先备份并逐级演练，不能直接换最新镜像跳级启动；见[升级与恢复记录](../docs/runbooks/knowledge-local-vector-index.md#qdrant-版本升级与恢复)。
 - 已有 PostgreSQL 若尚未接入知识网络，须在批准的维护流程中补充网络及 `postgres` 别名；不能为此直接重建数据库。新部署由叠加配置管理。当前本机已经接入，拆分不要求重启。
 - 部署了知识服务的环境，后续 Compose 运维命令应始终叠加已启用的文件（离线两个，在线三个，即使此次只操作某个业务服务），避免把知识容器误判为 orphan。禁止仅用主文件执行 `--remove-orphans`，不要用全项目 `down -v` 停用知识库。
-- 在线 MCP 使用 `knowledge-internal` 与 `agent-runtime-control` 两个内部网络，无宿主机端口或出网网络；仅连接 PostgreSQL、Embedding/Qdrant 和固定 API 桥，不直接连接 ONES Provider。API 沿用离线扩展的知识网络；主文件和离线扩展不因此增加在线 Secret。
+- 在线 MCP 保留 `knowledge-internal` 与 `agent-runtime-control` 两个内部网络，增加 `knowledge-storage-egress` 以访问管理员绑定的外部 PostgreSQL/Qdrant，不发布宿主机端口、不直接连接 ONES Provider。此网络不赋予任意代理能力；模型不能覆盖地址，建议部署防火墙只放行所需内容端点。Embedding/本地 Qdrant 不加入出网网络。API 沿用离线扩展的知识网络；主文件和离线扩展不因此增加在线 Secret。
 - 若只暂停知识服务，用叠加配置定向 `stop knowledge-embedding knowledge-qdrant`，保留卷和数据库网络；正式卸载/删卷另行审批。
 
 配置与隔离合成测试通过不意味着已正式部署或完成业务召回验收；本地资源验证、双用户 ONES、Agent 新 Job 和人工质量评测仍需单独验收。
+
+## Web 配置独立内容存储
+
+该能力需先按维护流程部署 migration **140** 及配套 API、ONES MCP、Knowledge MCP、Web 代码。2026-09-20 本机已完成 migration 140、现有主服务和 Web 更新，并恢复既有 Embedding/Qdrant；在线 Knowledge MCP 尚未部署，独立账号/连接配置及真实外部内容库、Agent 链路仍待验收。其他环境不能据此视为已升级。
+
+同日后续更新 `knowledge-content-admin-20260920` 已将内容管理员/读写账号支持部署到本机 API、ONES MCP 和 Web，未新增迁移、修改凭据或发布配置；在线 Knowledge MCP 仍需部署匹配代码。页面 TLS 选择必须匹配目标服务器，不因允许管理员账号而自动降级。
+
+1. 准备已经导入、分块并构建 READY 索引的 PostgreSQL 内容库与匹配 Qdrant。首版内容 schema 固定 `knowledge`，不自动建库、搬迁数据或重编码。独立内容库不需要平台 public 中的用户、角色、Job、凭据和审计表，也不要求平台迁移账本；需要与当前内容仓储兼容的表/列。运维迁移内容是另一次显式操作。
+2. 选择具备必要读取权限的内容账号：允许管理员、所有者、读写或只读账号，不因具备写入/管理权限而拒绝。至少需要 `CONNECT`、`knowledge` 的 `USAGE` 和内容表必要的 `SELECT`。所需表为 `source`、`knowledge_base`、`knowledge_base_document`、`document`、`document_chunk_set`、`document_chunk`、`vector_index`、`vector_index_item`。当前目录、验证与检索连接仍固定并校验只读事务，保留 5 秒 SQL/连接及 3 秒锁等待上限，不修改账号权限或开放内容编辑。专用低权限账号仍可减小凭据泄露影响，但不是连接准入条件；Knowledge MCP 的平台治理连接仍必须使用上文固定最小权限账号。这些单阶段上限不等于已完成任务 7.3 的整链路物理取消验收。
+3. 在平台“凭据中心”创建数据库密码、可选 Qdrant API Key；不要把密码写进 URL、资源名称、命令或文档。知识资源页面只选择引用，凭据中心可查看知识资源版本依赖。推荐专用只读 Qdrant Key；服务只走检索/校验所需读操作，但 Key 的实际权限仍由目标 Qdrant 配置。
+4. 在“工具资源 → 知识库 → 新建/详情”选择“为此知识库配置连接”。填写 PostgreSQL 主机、端口、数据库、用户名、密码引用与 TLS；Qdrant 填写 `http(s)://主机:端口` 和可选 Key 引用。地址按服务所在网络解析，容器内 `localhost` 不是宿主机；证书校验模式依赖服务镜像内受信 CA。TLS 必须匹配服务端能力，不自动降级；本机未启用 TLS 的受信内网连接须显式选择“不加密”。只更换 Qdrant 时可保留“当前平台实例的 knowledge schema”。
+5. 点击“读取内容库与索引目录”，选择 KB 与 READY 索引，保存草稿、验证、显式发布。连接变化会使页面旧目录和新草稿验证失效；未发布草稿不影响旧发布。目标索引必须与所选内容库兼容，连接失败不会偷偷使用平台库或旧向量端点。
+
+平台持有逻辑 KB、角色应用授权、资源版本和审计；内容实例不成为授权事实源。新外部 KB 首次注册仅在平台创建相同 KB ID 的逻辑身份，不复制正文。保持 KB/文档/分块/索引/点 ID 稳定；同一逻辑 KB 不应指向不相关的新语料。
+
+Knowledge MCP 的 `DATABASE_DSN` **仍是平台最小权限连接**，不能换成内容库 DSN。内容凭据经固定 `/api/internal/knowledge/storage-connection` 由服务身份＋当前 Knowledge JWT 双重验证获取；仅可读取当前获授权 KB 的已发布连接，不接收任意 Secret 引用。主密钥、签名私钥和 ONES 凭据不进入 Knowledge MCP。API 与 ONES 核验使用同一内容绑定，返回前继续检查 KB＋本人 ONES 权限。
+
+升级 migration 140 后须显式重跑上文最小账号配置入口，增加 `retrieval_revision.storage_config_json` 的读取授权，不能使用宽泛表级授权绕过 readiness。API 与 Knowledge MCP 同步更新后重新兑换短期服务 Token，新 scope 精确包含两个内部操作。旧资源字段为空时继续使用原部署连接与原 hash，不要求重发布；切换内容连接才需创建新草稿。原导入/分块/索引 CLI 仍使用它自身的显式部署连接，不会自动跟随 Web 的读取配置。

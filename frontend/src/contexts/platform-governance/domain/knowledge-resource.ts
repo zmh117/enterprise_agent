@@ -3,6 +3,34 @@ import { z } from "zod"
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/)
 const revision = z.number().int().nonnegative()
 const hash = z.string().regex(/^[0-9a-f]{64}$/)
+const secretRef = z
+  .string()
+  .regex(/^secret:\/\/platform\/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/)
+export const knowledgeStorageSchema = z
+  .object({
+    postgres: z.discriminatedUnion("mode", [
+      z.object({ mode: z.literal("platform") }).strict(),
+      z
+        .object({
+          mode: z.literal("external"),
+          host: z.string().min(1),
+          port: z.number().int().min(1).max(65535),
+          database: z.string().min(1),
+          username: z.string().min(1),
+          password_ref: secretRef,
+          sslmode: z.enum(["disable", "require", "verify-full"]),
+        })
+        .strict(),
+    ]),
+    qdrant: z
+      .object({
+        url: z.string().url(),
+        api_key_ref: z.union([secretRef, z.literal("")]),
+      })
+      .strict(),
+  })
+  .strict()
+export type KnowledgeStorage = z.infer<typeof knowledgeStorageSchema>
 export const knowledgeBindingSchema = z.object({
   id: identifier,
   source_id: identifier,
@@ -50,6 +78,7 @@ const resourceRevision = z.object({
   binding_id: identifier.nullable(),
   index_id: identifier,
   config_hash: hash,
+  storage: knowledgeStorageSchema.nullable().optional(),
 })
 export const knowledgeResourceSchema = z.object({
   id: identifier,
@@ -78,6 +107,8 @@ export const newKnowledgeResourceSchema = z
     knowledge_base_id: identifier,
     code: identifier,
     name: z.string().trim().min(1).max(120),
+    storage: knowledgeStorageSchema.nullable().optional(),
+    index_id: identifier.optional(),
   })
   .strict()
 export type KnowledgeCommand =
@@ -85,7 +116,11 @@ export type KnowledgeCommand =
   | {
       kind: "draft"
       id: string
-      input: { expected_revision: number; index_id: string }
+      input: {
+        expected_revision: number
+        index_id: string
+        storage?: KnowledgeStorage | null
+      }
     }
   | {
       kind: "verify" | "publish"

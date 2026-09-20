@@ -361,7 +361,7 @@ def test_real_postgres_migration_import_constraints_and_lock(tmp_path):
         result = Migrator(
             database, default_migrations_dir(), migrator_build="knowledge-postgres-test"
         ).run()
-        assert result.head == "139"
+        assert result.head == "140"
         assert (
             not Migrator(
                 database, default_migrations_dir(), migrator_build="knowledge-postgres-test"

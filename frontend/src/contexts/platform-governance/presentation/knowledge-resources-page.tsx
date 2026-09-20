@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { KnowledgeStorageFields } from "./knowledge-storage-fields"
+import { useKnowledgeStorage } from "@/contexts/platform-governance/application/knowledge-storage-query"
 import {
   Sheet,
   SheetContent,
@@ -115,9 +117,8 @@ export function KnowledgeResourcesPage() {
             草稿验证后才可发布；角色仍在各业务应用下选择允许使用的知识库。
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            首版支持 ONES
-            工作项；连接由部署固定管理，不配置环境拓扑或数据库密码，不提供上传、OCR
-            和自动采集。
+            首版支持 ONES 工作项；内容 PostgreSQL 与 Qdrant
+            可独立配置，平台授权连接不变。 不提供上传、OCR 和自动采集。
           </p>
         </div>
         <div className="flex gap-2">
@@ -206,19 +207,29 @@ export function KnowledgeResourcesPage() {
                           </p>
                         </td>
                         <td className="p-3">
-                          {base ? knowledgeStatus(base.state) : "未找到知识库"}
+                          {revision?.storage?.postgres.mode === "external"
+                            ? "独立内容库"
+                            : base
+                              ? knowledgeStatus(base.state)
+                              : "未找到知识库"}
                         </td>
                         <td className="p-3">
-                          {base?.source_ids
-                            .map(
-                              (id) =>
-                                data.sources.find((s) => s.id === id)
-                                  ?.display_name ?? id
-                            )
-                            .join("、") || "无已收录数据"}
+                          {revision?.storage?.postgres.mode === "external"
+                            ? "来源记录位于内容库"
+                            : base?.source_ids
+                                .map(
+                                  (id) =>
+                                    data.sources.find((s) => s.id === id)
+                                      ?.display_name ?? id
+                                )
+                                .join("、") || "无已收录数据"}
                         </td>
                         <td className="p-3">
-                          {index ? knowledgeStatus(index.state) : "未选择"}
+                          {revision?.storage
+                            ? `已绑定 ${revision.index_id}`
+                            : index
+                              ? knowledgeStatus(index.state)
+                              : "未选择"}
                         </td>
                         <td className="p-3">
                           {resource.published
@@ -351,12 +362,16 @@ function KnowledgeResourceEditor({
   reload,
 }: EditorProps) {
   const initial = resource.draft ?? resource.published
+  const storage = useKnowledgeStorage(initial?.storage ?? null)
   const sourceIds =
-    data.bases.find((b) => b.id === resource.knowledge_base_id)?.source_ids ??
-    []
+    (storage.storage ? storage.catalog?.bases : data.bases)?.find(
+      (b) => b.id === resource.knowledge_base_id
+    )?.source_ids ?? []
   const [index, setIndex] = useState(initial?.index_id ?? "")
   const writable = canManage && resource.status !== "archived"
-  const indexes = data.indexes.filter(
+  const indexes = (
+    storage.storage ? (storage.catalog?.indexes ?? []) : data.indexes
+  ).filter(
     (i) =>
       i.knowledge_base_id === resource.knowledge_base_id && i.state === "READY"
   )
@@ -402,12 +417,22 @@ function KnowledgeResourceEditor({
             void execute({
               kind: "draft",
               id: resource.id,
-              input: { ...input, index_id: index },
+              input: {
+                ...input,
+                index_id: index,
+                ...(storage.storage || initial?.storage
+                  ? { storage: storage.storage }
+                  : {}),
+              },
             })
         }}
       >
         <h3 className="font-medium">草稿配置</h3>
         <fieldset disabled={!writable || pending} className="grid gap-3">
+          <KnowledgeStorageFields
+            control={storage}
+            disabled={!writable || pending}
+          />
           <div
             className="grid gap-2 text-sm"
             role="group"
@@ -420,7 +445,10 @@ function KnowledgeResourceEditor({
                   (id) =>
                     data.sources.find((s) => s.id === id)?.display_name ?? id
                 )
-                .join("、") || "无已收录数据"}
+                .join("、") ||
+                (storage.storage && !storage.catalog
+                  ? "读取内容目录后显示来源"
+                  : "无已收录数据")}
             </p>
             <p>
               无需确认 ONES 地址或 Team。实际检索仍使用当前用户的 ONES
@@ -446,7 +474,7 @@ function KnowledgeResourceEditor({
             </select>
           </KnowledgeField>
           <p className="text-xs text-muted-foreground">
-            服务端核对本地数据与索引兼容性，验证时检查 Embedding 和 Qdrant
+            服务端核对所选内容库与索引兼容性，验证时检查 Embedding 和 Qdrant
             服务。修改草稿会使旧验证失效，不改变已发布版本。
           </p>
           {writable && (
@@ -534,22 +562,41 @@ function CreateKnowledgeResource({
   execute: EditorProps["execute"]
 }) {
   const [base, setBase] = useState("")
+  const [index, setIndex] = useState("")
+  const storage = useKnowledgeStorage()
+  const available = storage.storage ? storage.catalog : data
   const [code, setCode] = useState("")
   const [name, setName] = useState("")
   const [invalid, setInvalid] = useState(false)
+  const selectionReady =
+    Boolean(
+      available?.bases.some((b) => b.id === base && b.state === "storage_only")
+    ) &&
+    (!storage.storage ||
+      Boolean(
+        available?.indexes.some(
+          (i) =>
+            i.id === index &&
+            i.knowledge_base_id === base &&
+            i.state === "READY"
+        )
+      ))
   function submit(event: FormEvent) {
     event.preventDefault()
     const result = newKnowledgeResourceSchema.safeParse({
       knowledge_base_id: base,
       code,
       name,
+      ...(storage.storage ? { storage: storage.storage, index_id: index } : {}),
     })
-    setInvalid(!result.success)
-    if (result.success) void execute({ kind: "create", input: result.data })
+    setInvalid(!result.success || !selectionReady)
+    if (result.success && selectionReady)
+      void execute({ kind: "create", input: result.data })
   }
   return (
     <form onSubmit={submit} className="grid gap-4">
       <fieldset disabled={pending} className="grid gap-4">
+        <KnowledgeStorageFields control={storage} disabled={pending} />
         <KnowledgeField label="已有知识库">
           <select
             required
@@ -558,7 +605,7 @@ function CreateKnowledgeResource({
             onChange={(e) => setBase(e.target.value)}
           >
             <option value="">请选择已入库知识库</option>
-            {data.bases
+            {(available?.bases ?? [])
               .filter((b) => b.state === "storage_only")
               .map((b) => (
                 <option
@@ -580,6 +627,27 @@ function CreateKnowledgeResource({
               ))}
           </select>
         </KnowledgeField>
+        {storage.storage && (
+          <KnowledgeField label="已有 READY 索引">
+            <select
+              className={knowledgeInputClass}
+              value={index}
+              onChange={(e) => setIndex(e.target.value)}
+              required
+            >
+              <option value="">请选择内容库中的索引</option>
+              {available?.indexes
+                .filter(
+                  (i) => i.knowledge_base_id === base && i.state === "READY"
+                )
+                .map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.code} · {i.id}
+                  </option>
+                ))}
+            </select>
+          </KnowledgeField>
+        )}
         <KnowledgeField label="资源编码">
           <Input
             value={code}
@@ -601,7 +669,9 @@ function CreateKnowledgeResource({
             请填写合法编码、名称并选择知识库。
           </p>
         )}
-        <Button type="submit">创建资源身份</Button>
+        <Button type="submit" disabled={!selectionReady}>
+          创建资源身份
+        </Button>
       </fieldset>
     </form>
   )

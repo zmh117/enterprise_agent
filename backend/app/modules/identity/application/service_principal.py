@@ -51,7 +51,9 @@ MAX_SERVICE_PRINCIPAL_TTL_SECONDS = 5 * 60
 SERVICE_PRINCIPAL_TOKEN_PATH = "/api/internal/service-principal/token"
 KNOWLEDGE_AUTHORIZED_PARTY = "knowledge-mcp"
 KNOWLEDGE_BRIDGE_AUDIENCE = "knowledge-readability-bridge"
-KNOWLEDGE_BRIDGE_SCOPES = frozenset({"internal:knowledge:work-item:readability"})
+KNOWLEDGE_BRIDGE_SCOPES = frozenset(
+    {"internal:knowledge:work-item:readability", "internal:knowledge:storage:connection"}
+)
 
 
 class ServicePrincipalTokenError(NonRetryableExecutionError):
@@ -274,7 +276,7 @@ class ServicePrincipalTokenIssuer:
 
 
 class KnowledgeServicePrincipalVerifier:
-    """仅允许固定知识服务访问可读性桥；不授予任何用户或业务数据权限。"""
+    """仅允许固定知识服务访问可读性/连接入口；不授予用户或业务数据权限。"""
 
     def __init__(self, jwks: PrincipalJwks, *, now: Callable[[], int] | None = None) -> None:
         self.jwks = jwks

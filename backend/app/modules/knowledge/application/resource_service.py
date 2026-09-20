@@ -1,7 +1,12 @@
 """知识资源配置、不可变发布和单调用版本固定；不代替用户业务授权。"""
 
 from typing import Any
+from contextlib import AbstractContextManager, nullcontext
+import json
 import uuid
+
+from app.modules.knowledge.application.content_access import ContentAccess, KnowledgeContent
+from app.modules.knowledge.domain.storage_connection import storage_config, stored_config
 
 from app.modules.knowledge.application.source_service import (
     KnowledgeAdministration,
@@ -26,37 +31,76 @@ from app.modules.knowledge.domain.models import PinnedKnowledgeResource
 
 
 class KnowledgeResourceReader:
-    """消费者只读解析器：固定本地数据/索引，不依赖 ONES 来源确认或外部客户端。"""
+    """只读解析器：平台读取发布状态，通过内容端口读取已绑定的数据与索引。"""
 
     def __init__(
         self,
         store: GovernanceRepository,
         vectors: VectorRepository,
+        *,
+        content_access: ContentAccess | None = None,
     ) -> None:
         self.store = store
         self.vectors = vectors
+        self.content_access = content_access
+
+    def content(
+        self, config: dict[str, Any] | None, *, base_id: str, revision_id: str = ""
+    ) -> AbstractContextManager[KnowledgeContent]:
+        if self.content_access is not None:
+            return self.content_access.open(
+                config, knowledge_base_id=base_id, revision_id=revision_id
+            )
+        if config is not None:
+            raise KnowledgeGovernanceError("knowledge_storage_unavailable")
+        return nullcontext(KnowledgeContent(self.store, self.vectors))
+
+    def content_for(self, pin: PinnedKnowledgeResource) -> AbstractContextManager[KnowledgeContent]:
+        revision = self.store.get("retrieval_revision", pin.revision_id)
+        return self.content(
+            stored_config(revision.get("storage_config_json")),
+            base_id=pin.knowledge_base_id,
+            revision_id=pin.revision_id,
+        )
 
     def _configuration(
-        self, resource: dict[str, Any], index_id: str, *, lock: bool = False
+        self,
+        resource: dict[str, Any],
+        index_id: str,
+        *,
+        storage: dict[str, Any] | None = None,
+        revision_id: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        base = self.store.get("knowledge_base", resource["knowledge_base_id"])
-        raw_index = self.store.get("vector_index", index_id, lock=lock)
-        index = self.vectors.get(raw_index["code"])
+        with self.content(
+            storage, base_id=resource["knowledge_base_id"], revision_id=revision_id
+        ) as content:
+            return self._content_configuration(resource, index_id, content, storage)
+
+    def _content_configuration(
+        self,
+        resource: dict[str, Any],
+        index_id: str,
+        content: KnowledgeContent,
+        storage: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        base = content.records.get("knowledge_base", resource["knowledge_base_id"])
+        raw_index = content.records.get("vector_index", index_id)
+        index = content.vectors.get(raw_index["code"])
         if (
             not index
             or index["state"] != "READY"
             or base["state"] != "storage_only"
             or index["knowledge_base_id"] != resource["knowledge_base_id"]
-            or index["profile"] != self.vectors.profile
-            or index["profile_hash"] != fingerprint(self.vectors.profile)
+            or index["profile"] != content.vectors.profile
+            or index["profile_hash"] != fingerprint(content.vectors.profile)
         ):
             raise KnowledgeGovernanceError("knowledge_index_unavailable")
-        members = self.store.members(base["id"])
+        members = content.records.members(base["id"])
         sources = {row["source_id"] for row in members}
         if len(sources) != 1:
             raise KnowledgeGovernanceError("knowledge_source_unavailable")
-        source = self.store.get("source", sources.pop())
-        source_items = self.store.source_items(source["id"])
+        source = content.records.get("source", sources.pop())
+        source_items = content.records.source_items(source["id"])
         source_ids = {item.document_id for item in source_items}
         if len(members) != index["expected_document_count"] or any(
             row["id"] not in source_ids for row in members
@@ -72,17 +116,22 @@ class KnowledgeResourceReader:
             {
                 "resource_id": resource["id"],
                 "knowledge_base_id": base["id"],
-                "configuration_version": 2,
+                "configuration_version": 3 if storage is not None else 2,
                 "source_id": source["id"],
-                "source_hash": self.store.source_hash(source_items),
+                "source_hash": content.records.source_hash(source_items),
                 "member_ids": sorted(row["id"] for row in members),
                 **values,
                 "chunk_profile_hash": index["chunk_profile_hash"],
                 "collection_name": index["collection_name"],
                 "expected_document_count": index["expected_document_count"],
                 "expected_chunk_count": index["expected_chunk_count"],
+                **({"storage": storage} if storage is not None else {}),
             }
         )
+        if storage is not None:
+            values["storage_config_json"] = json.dumps(
+                storage, sort_keys=True, separators=(",", ":")
+            )
         return values, source, index
 
     def resolve(self, knowledge_base_id: str) -> PinnedKnowledgeResource:
@@ -92,7 +141,12 @@ class KnowledgeResourceReader:
             raise KnowledgeGovernanceError("knowledge_resource_unavailable")
         resource = resources[0]
         revision = self.store.get("retrieval_revision", resource["published_revision_id"])
-        config, source, index = self._configuration(resource, revision["index_id"])
+        config, source, index = self._configuration(
+            resource,
+            revision["index_id"],
+            storage=stored_config(revision.get("storage_config_json")),
+            revision_id=revision["id"],
+        )
         if not revision["published_at"] or any(revision[k] != v for k, v in config.items()):
             raise KnowledgeGovernanceError("knowledge_resource_unavailable")
         digest = fingerprint(
@@ -126,6 +180,7 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         *,
         embedding: EmbeddingPort | None = None,
         qdrant: QdrantPort | None = None,
+        content_access: ContentAccess | None = None,
     ) -> None:
         KnowledgeAdministration.__init__(
             self, administration.store, administration.permissions, administration.audit
@@ -133,9 +188,17 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         self.vectors = vectors
         self.embedding = embedding
         self.qdrant = qdrant
+        self.content_access = content_access
 
     def create(
-        self, *, actor_id: str, knowledge_base_id: str, code: str, name: str
+        self,
+        *,
+        actor_id: str,
+        knowledge_base_id: str,
+        code: str,
+        name: str,
+        storage: dict[str, Any] | None = None,
+        index_id: str | None = None,
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         checked_identifier(knowledge_base_id)
@@ -143,12 +206,42 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         if not isinstance(name, str) or not name.strip() or len(name) > 120:
             raise KnowledgeGovernanceError("knowledge_input_invalid")
         assert_no_secret_payload({"name": name})
+        selected = storage_config(storage)
+        if (selected is None) != (index_id is None):
+            raise KnowledgeGovernanceError("knowledge_input_invalid")
+        initial_config = None
+        if selected is not None:
+            checked_identifier(index_id)
+            with self.content(selected, base_id=knowledge_base_id) as content:
+                remote_base = content.records.get("knowledge_base", knowledge_base_id)
+            if remote_base["state"] != "storage_only":
+                raise KnowledgeGovernanceError("knowledge_resource_unavailable")
+        identifier = str(uuid.uuid4())
+        if index_id is not None:
+            initial_config, _, _ = self._configuration(
+                {"id": identifier, "knowledge_base_id": knowledge_base_id},
+                index_id,
+                storage=selected,
+            )
         with self.store.unit_of_work():
-            base = self.store.get("knowledge_base", knowledge_base_id, lock=True)
+            self.require_admin(actor_id)
+            try:
+                base = self.store.get("knowledge_base", knowledge_base_id, lock=True)
+            except KnowledgeGovernanceError as exc:
+                if selected is None or exc.error_code != "knowledge_resource_unavailable":
+                    raise
+                base = {
+                    "id": knowledge_base_id,
+                    "code": remote_base["code"],
+                    "display_name": name.strip(),
+                    "state": "storage_only",
+                    "description": "外部知识内容的平台注册身份",
+                    "created_at": now(),
+                }
+                self.store.add("knowledge_base", base)
             if base["state"] != "storage_only":
                 raise KnowledgeGovernanceError("knowledge_resource_unavailable")
             self._unique_enabled(knowledge_base_id)
-            identifier = str(uuid.uuid4())
             self.store.add(
                 "retrieval_resource",
                 {
@@ -162,6 +255,20 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
                 },
             )
             self.record("resource.created", actor_id=actor_id, identifier=identifier, revision=1)
+            if initial_config is not None:
+                revision_id = str(uuid.uuid4())
+                self.store.add(
+                    "retrieval_revision",
+                    {
+                        "id": revision_id,
+                        "resource_id": identifier,
+                        "revision": 1,
+                        **initial_config,
+                        "created_by": actor_id,
+                        "created_at": now(),
+                    },
+                )
+                self.store.save_draft(identifier, revision_id)
             return self.view(identifier)
 
     def _unique_enabled(self, base_id: str, *, excluding: str = "") -> None:
@@ -185,12 +292,18 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         resource_id: str,
         expected_revision: int,
         index_id: str,
+        storage: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         checked_identifier(index_id)
+        selected = storage_config(storage)
+        resource = self.store.get("retrieval_resource", resource_id)
+        if resource["revision"] != checked_revision(expected_revision):
+            raise KnowledgeGovernanceError("knowledge_revision_conflict")
+        config, _, _ = self._configuration(resource, index_id, storage=selected)
         with self.store.unit_of_work():
+            self.require_admin(actor_id)
             resource = self._write_resource(resource_id, expected_revision)
-            config, _, _ = self._configuration(resource, index_id, lock=True)
             next_revision = self.store.next_resource_revision(resource_id)
             identifier = str(uuid.uuid4())
             self.store.add(
@@ -227,17 +340,18 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
             draft = self._draft(resource)
         failure: str | None = None
         try:
-            config, _, index = self._configuration(resource, draft["index_id"])
-            if (
-                any(draft[key] != value for key, value in config.items())
-                or self.embedding is None
-                or self.qdrant is None
-            ):
+            selected = stored_config(draft.get("storage_config_json"))
+            config, _, index = self._configuration(resource, draft["index_id"], storage=selected)
+            if any(draft[key] != value for key, value in config.items()) or self.embedding is None:
                 raise KnowledgeGovernanceError("knowledge_verification_failed")
-            self.vectors.assert_current(index)
-            self.embedding.check()
-            self.qdrant.check(index)
-            count = self.qdrant.count(index)
+            with self.content(selected, base_id=resource["knowledge_base_id"]) as content:
+                qdrant = content.qdrant or self.qdrant
+                if qdrant is None:
+                    raise KnowledgeGovernanceError("knowledge_verification_failed")
+                content.vectors.assert_current(index)
+                self.embedding.check()
+                qdrant.check(index)
+                count = qdrant.count(index)
             if type(count) is not int or count != index["expected_chunk_count"]:
                 raise KnowledgeGovernanceError("knowledge_verification_failed")
             evidence = fingerprint(
@@ -249,21 +363,19 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         except Exception:
             failure = "knowledge_verification_failed"
             evidence = fingerprint({"config_hash": draft["config_hash"], "error_code": failure})
+        if not failure:
+            config, _, current_index = self._configuration(
+                resource, draft["index_id"], storage=selected
+            )
+            if any(draft[k] != v for k, v in config.items()) or current_index != index:
+                raise KnowledgeGovernanceError("knowledge_resource_changed")
+            with self.content(selected, base_id=resource["knowledge_base_id"]) as content:
+                content.vectors.assert_current(current_index)
         with self.store.unit_of_work():
             self.require_admin(actor_id)
             current = self._write_resource(resource_id, expected_revision)
             if current != resource:
                 raise KnowledgeGovernanceError("knowledge_revision_conflict")
-            if not failure:
-                config, _, current_index = self._configuration(
-                    current, draft["index_id"], lock=True
-                )
-                if (
-                    any(draft[key] != value for key, value in config.items())
-                    or current_index != index
-                ):
-                    raise KnowledgeGovernanceError("knowledge_resource_changed")
-                self.vectors.assert_current(current_index)
             self.store.add(
                 "retrieval_verification",
                 {
@@ -296,11 +408,19 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
 
     def publish(self, *, actor_id: str, resource_id: str, expected_revision: int) -> dict[str, Any]:
         self.require_admin(actor_id)
+        before = self.store.get("retrieval_resource", resource_id)
+        draft = self._draft(before)
+        selected = stored_config(draft.get("storage_config_json"))
+        config, _, index = self._configuration(before, draft["index_id"], storage=selected)
+        with self.content(selected, base_id=before["knowledge_base_id"]) as content:
+            content.vectors.assert_current(index)
         with self.store.unit_of_work():
             resource = self._write_resource(resource_id, expected_revision)
+            self.require_admin(actor_id)
+            if resource != before:
+                raise KnowledgeGovernanceError("knowledge_revision_conflict")
             draft = self._draft(resource)
             proof = self._verification(draft["id"])
-            config, _, index = self._configuration(resource, draft["index_id"], lock=True)
             if (
                 resource["status"] != "enabled"
                 or not proof
@@ -309,7 +429,6 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
                 or any(draft[k] != v for k, v in config.items())
             ):
                 raise KnowledgeGovernanceError("knowledge_resource_unavailable")
-            self.vectors.assert_current(index)
             self.store.publish(resource_id, draft["id"], actor_id)
             self.record(
                 "resource.published",
@@ -353,13 +472,18 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         )
         return {
             **resource,
-            "draft": draft,
-            "published": published,
+            "draft": {**draft, "storage": stored_config(draft["storage_config_json"])}
+            if draft and draft.get("storage_config_json")
+            else draft,
+            "published": {**published, "storage": stored_config(published["storage_config_json"])}
+            if published and published.get("storage_config_json")
+            else published,
             "verification": self._verification(draft["id"]) if draft else None,
         }
 
     def list_resources(self) -> dict[str, Any]:
         return {"resources": [self.view(identifier) for identifier in self.store.resource_ids()]}
 
-    def catalog(self) -> dict[str, Any]:
-        return self.store.catalog()
+    def catalog(self, *, storage: dict[str, Any] | None = None) -> dict[str, Any]:
+        with self.content(storage_config(storage), base_id="") as content:
+            return content.records.catalog()

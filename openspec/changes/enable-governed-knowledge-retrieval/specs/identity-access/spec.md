@@ -75,7 +75,7 @@
 - **THEN** 返回前复核拒绝本次结果；下次调用不得复用上次允许事实
 
 ### Requirement: ONES 可读性桥必须限定同一 Job 和固定只读用途
-系统 SHALL 提供仅供 knowledge-mcp 使用的固定内部可读性桥。入口 MUST 同时验证代码固定的知识服务身份和有效 Knowledge Principal，重新核对同一 RUNNING Job、用户、Publication、精确 Tool 合同、当前 KB/详情 Tool grant 及候选成员关系。服务身份 MUST 只授权访问该内部入口，不授予业务数据权限。身份服务 MUST 保持现有完整 scope 的 ONES Principal 签发/校验规则，Token 仅在平台桥内存中用于固定 ONES 可读性入口，不返回知识服务或模型。
+系统 SHALL 提供仅供 knowledge-mcp 使用的固定内部可读性桥。入口 MUST 同时验证代码固定的知识服务身份和有效 Knowledge Principal，重新核对同一 RUNNING Job、用户、Publication、精确 Tool 合同、当前 KB/详情 Tool grant 及候选成员关系。服务身份 MUST 只授权固定可读性与知识存储连接内部入口，不授予业务数据权限。身份服务 MUST 保持现有完整 scope 的 ONES Principal 签发/校验规则，Token 仅在平台桥内存中用于固定 ONES 可读性入口，不返回知识服务或模型。
 
 该桥 MUST NOT 接受调用者指定 actor、server、scope、Team、URL、operation、Provider 凭据或任意工作项 UUID，MUST NOT 转为通用 MCP/HTTP 代理。私钥和 ONES 凭据 MUST NOT 分发到知识服务；固定服务凭据 MUST 与其他服务隔离，仅启用知识组件时配置。
 
@@ -90,3 +90,14 @@
 #### Scenario: 内部入口尝试提权
 - **WHEN** 请求试图更换用户、扩大 scope、指定任意 Provider 地址或调用 mutation
 - **THEN** 严格入口合同拒绝且只记录安全失败码，不能取得 ONES Token 或正文
+
+### Requirement: 知识连接凭据必须限定当前授权发布版本
+Knowledge MCP MUST NOT 持有平台主密钥或读取凭据仓储。固定 `/api/internal/knowledge/storage-connection` SHALL 同时验证知识服务身份、当前 Knowledge Principal 和 Job/KB/Tool 授权，只接受 KB ID 与资源修订 ID，从平台唯一启用且当前已发布修订解析连接引用。返回前 MUST 再核对当前授权和发布版本；结果仅在服务调用内存中使用，不缓存或进入模型、日志、审计。浏览器身份、任意地址/Secret 引用、未发布版本及跨 KB 请求 MUST 拒绝。
+
+#### Scenario: 合法知识连接读取
+- **WHEN** 受信知识服务为当前获准 KB 请求其当前发布修订
+- **THEN** 平台只返回该修订引用的内容连接凭据，不返回主密钥、其他 Secret 或 ONES 凭据
+
+#### Scenario: 解析期间撤权或换版
+- **WHEN** 凭据解析期间 KB/Tool grant 被撤销、资源停用或发布版本变化
+- **THEN** 本次连接凭据不返回，后续请求必须重新通过双身份与当前授权检查

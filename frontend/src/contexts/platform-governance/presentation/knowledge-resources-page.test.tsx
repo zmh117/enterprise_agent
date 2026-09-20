@@ -74,6 +74,21 @@ function setup({
           capsStatus
         )
       if (url === "/api/platform/resources") return reply({ resources: [] })
+      if (url === "/api/platform/secrets")
+        return reply({
+          secrets: [
+            {
+              id: "synthetic-secret",
+              code: "content-reader",
+              provider: "platform",
+              secret_ref: "secret://platform/content-reader",
+              status: "enabled",
+              active_version: 1,
+              configured: true,
+              revision: 1,
+            },
+          ],
+        })
       if (method === "GET") {
         if (url === `${prefix}/sources`)
           return reply({
@@ -148,6 +163,28 @@ function setup({
           },
           fail === "forbidden" ? 403 : 400
         )
+      if (url === `${prefix}/content-catalog`)
+        return reply({
+          bases: [
+            {
+              id: "kb",
+              code: "kb",
+              display_name: "合成独立内容库",
+              state: "storage_only",
+              source_ids: ["remote-source"],
+            },
+          ],
+          indexes: [
+            {
+              id: "remote-index",
+              code: "remote-ready",
+              knowledge_base_id: "kb",
+              state: "READY",
+              profile_hash: hash,
+              corpus_hash: hash,
+            },
+          ],
+        })
       if (url === `${prefix}/resources`) {
         const created = { ...resource(), ...body }
         state.resources = [created]
@@ -163,6 +200,7 @@ function setup({
             binding_id: null,
             index_id: body.index_id,
             config_hash: hash,
+            storage: body.storage ?? null,
           }
           r.verification = null
         }
@@ -204,6 +242,143 @@ async function openResource() {
 }
 
 describe("知识资源管理", () => {
+  async function selectExternalStorage() {
+    fireEvent.change(screen.getByLabelText("连接配置方式"), {
+      target: { value: "custom" },
+    })
+    fireEvent.change(screen.getByLabelText("内容 PostgreSQL"), {
+      target: { value: "external" },
+    })
+    for (const [label, value] of [
+      ["PostgreSQL 主机", "synthetic-content"],
+      ["内容数据库名", "synthetic_db"],
+      ["内容数据库用户名", "synthetic_admin"],
+      ["Qdrant 地址", "https://synthetic-qdrant:6333"],
+    ]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } })
+    }
+    await within(screen.getByLabelText("PostgreSQL 密码凭据")).findByRole(
+      "option",
+      { name: "content-reader" }
+    )
+    fireEvent.change(screen.getByLabelText("PostgreSQL 密码凭据"), {
+      target: { value: "secret://platform/content-reader" },
+    })
+    expect(document.querySelector('input[type="password"]')).toBeNull()
+    expect(screen.queryByLabelText("内容只读用户名")).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "支持管理员、读写或只读账号；当前目录读取和检索仍使用只读事务，不修改知识内容。"
+      )
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole("button", { name: "读取内容库与索引目录" })
+    )
+    await screen.findByText("内容目录已读取；保存后仍需验证并发布。")
+  }
+
+  it("独立内容库从所选连接读取目录，创建只提交凭据引用，不发布或授权", async () => {
+    const f = setup({ populated: false })
+    f.render()
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "新建知识资源" })).toBeEnabled()
+    )
+    fireEvent.click(screen.getByRole("button", { name: "新建知识资源" }))
+    await selectExternalStorage()
+    fireEvent.change(screen.getByLabelText("已有知识库"), {
+      target: { value: "kb" },
+    })
+    fireEvent.change(screen.getByLabelText("已有 READY 索引"), {
+      target: { value: "remote-index" },
+    })
+    fireEvent.change(screen.getByLabelText("资源编码"), {
+      target: { value: "external-kb" },
+    })
+    fireEvent.change(screen.getByLabelText("管理名称"), {
+      target: { value: "合成独立库" },
+    })
+    expect(screen.getByRole("button", { name: "创建资源身份" })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText("PostgreSQL 主机"), {
+      target: { value: "changed-content" },
+    })
+    expect(screen.getByRole("button", { name: "创建资源身份" })).toBeDisabled()
+    expect(
+      screen.queryByText("内容目录已读取；保存后仍需验证并发布。")
+    ).not.toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole("button", { name: "读取内容库与索引目录" })
+    )
+    await screen.findByText("内容目录已读取；保存后仍需验证并发布。")
+    fireEvent.change(screen.getByLabelText("已有知识库"), {
+      target: { value: "kb" },
+    })
+    fireEvent.change(screen.getByLabelText("已有 READY 索引"), {
+      target: { value: "remote-index" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "创建资源身份" }))
+    await waitFor(() =>
+      expect(f.calls.some((c) => c.url === `${prefix}/resources`)).toBe(true)
+    )
+    const created = f.calls.find((c) => c.url === `${prefix}/resources`)!.body
+    expect(created).toMatchObject({
+      knowledge_base_id: "kb",
+      index_id: "remote-index",
+      storage: {
+        postgres: {
+          mode: "external",
+          host: "changed-content",
+          username: "synthetic_admin",
+          password_ref: "secret://platform/content-reader",
+        },
+        qdrant: { url: "https://synthetic-qdrant:6333", api_key_ref: "" },
+      },
+    })
+    expect(
+      f.calls.some((c) => /publish|verify|authorization/.test(c.url))
+    ).toBe(false)
+  })
+
+  it("修改连接使目录失效；保存新草稿使旧验证失效但不替换已发布版本", async () => {
+    const f = setup()
+    const published = {
+      id: "published",
+      revision: 1,
+      binding_id: null,
+      index_id: "index",
+      config_hash: hash,
+    }
+    Object.assign(f.state.resources[0], {
+      published,
+      draft: { ...published, id: "draft", revision: 2 },
+      verification: { status: "VERIFIED", config_hash: hash },
+    })
+    f.render()
+    await openResource()
+    await selectExternalStorage()
+    fireEvent.change(screen.getByLabelText("已就绪向量索引"), {
+      target: { value: "remote-index" },
+    })
+    expect(screen.getByRole("button", { name: "保存新草稿" })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText("Qdrant 地址"), {
+      target: { value: "https://changed-qdrant:6333" },
+    })
+    expect(screen.getByRole("button", { name: "保存新草稿" })).toBeDisabled()
+    fireEvent.click(
+      screen.getByRole("button", { name: "读取内容库与索引目录" })
+    )
+    await screen.findByText("内容目录已读取；保存后仍需验证并发布。")
+    fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "发布知识资源" })
+      ).toBeDisabled()
+    )
+    expect(f.state.resources[0].published).toEqual(published)
+    expect(f.calls.find((c) => c.url.endsWith("/draft"))?.body).toMatchObject({
+      storage: { qdrant: { url: "https://changed-qdrant:6333" } },
+    })
+  })
+
   it("从工具资源进入，未选知识库标签时不加载知识 API", async () => {
     const f = setup()
     f.render(true)

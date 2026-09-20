@@ -26,7 +26,7 @@ services:
       - principal_jwks
       - knowledge_bootstrap_token
     expose: ["9108"]
-    networks: [knowledge-internal, agent-runtime-control]
+    networks: [knowledge-internal, agent-runtime-control, knowledge-storage-egress]
     read_only: true
     tmpfs: ["/tmp:size=32m,mode=1777,uid=10008,gid=10008"]
     cap_drop: [ALL]
@@ -52,3 +52,9 @@ services:
 secrets:
   knowledge_bootstrap_token:
     file: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:?在线知识检索需要独立受管 bootstrap 文件}
+
+# Only MCP needs outbound access to administrator-published content endpoints.
+# Embedding/Qdrant remain on their existing internal network; no host ports are added.
+networks:
+  knowledge-storage-egress:
+    driver: bridge

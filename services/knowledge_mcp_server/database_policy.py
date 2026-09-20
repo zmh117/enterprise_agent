@@ -35,7 +35,7 @@ READ_COLUMNS = {
         "public.schema_baseline_adoption": "target_baseline source_generation source_head legacy_catalog_digest schema_fingerprint comment_manifest_digest retained_data_counts_json retained_data_digest baseline_name baseline_checksum migrator_build adopted_at",
         "knowledge.source": "id code created_at display_name identity_metadata origin_state source_system",
         "knowledge.retrieval_resource": "id knowledge_base_id code name status revision state_revision draft_revision_id published_revision_id created_by created_at updated_at",
-        "knowledge.retrieval_revision": "id resource_id revision binding_id index_id profile_hash corpus_hash config_hash created_by created_at published_by published_at",
+        "knowledge.retrieval_revision": "id resource_id revision binding_id index_id profile_hash corpus_hash config_hash created_by created_at published_by published_at storage_config_json",
         "knowledge.knowledge_base": "id code display_name description state created_at",
         "knowledge.document": "id current_revision_id external_id lifecycle_state source_id source_object_type",
         "knowledge.document_revision": "id document_id content_hash source_project_id",

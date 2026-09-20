@@ -125,6 +125,11 @@ from app.modules.mcp_tool_runtime.job_snapshot import (
 )
 from app.modules.knowledge.infrastructure.job_access import KnowledgeJobGate
 from app.modules.knowledge.infrastructure.composition import KnowledgeServices
+from app.modules.knowledge.infrastructure.content_access import (
+    ManagedContentAccess,
+    PlatformStorageCredentials,
+)
+from app.modules.knowledge.application.storage_broker import KnowledgeStorageBroker
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
 from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
 from app.modules.knowledge.application.readability_bridge import KnowledgeReadabilityBridge
@@ -251,6 +256,7 @@ class Container:
     service_principal_token_issuer: ServicePrincipalTokenIssuer | None = None
     knowledge_readability_bridge: KnowledgeReadabilityBridge | None = None
     knowledge_services: KnowledgeServices | None = None
+    knowledge_storage_broker: KnowledgeStorageBroker | None = None
 
 
 ContainerFactory = Callable[[Settings], Container]
@@ -776,6 +782,15 @@ def _build_container(
             ttl_seconds=settings.service_principal.ttl_seconds,
         )
     knowledge_readability_bridge: KnowledgeReadabilityBridge | None = None
+    knowledge_storage_broker: KnowledgeStorageBroker | None = None
+
+    def resolve_knowledge_secret(reference: str) -> str:
+        return EncryptedDbSecretProvider(
+            platform_config_repository, master_key=settings.app_config_master_key
+        ).resolve(reference)
+
+    knowledge_credentials = PlatformStorageCredentials(resolve_knowledge_secret)
+    knowledge_content_access = ManagedContentAccess(database, knowledge_credentials)
     if service_name == "api-server" and settings.service_principal.knowledge_bootstrap_token_file:
         if principal_token_issuer is None or service_principal_token_issuer is None:
             raise ValueError("Knowledge readability requires platform identity issuers")
@@ -783,6 +798,7 @@ def _build_container(
         knowledge_resource_reader = KnowledgeResourceReader(
             GovernanceStore(database),
             VectorRepository(database),
+            content_access=knowledge_content_access,
         )
         knowledge_readability_bridge = KnowledgeReadabilityBridge(
             PlatformOnesReadabilityGateway(
@@ -795,6 +811,12 @@ def _build_container(
                 instance_code=settings.ones_identity.instance_code,
             ),
             knowledge_resource_reader,
+            audit_service,
+        )
+        knowledge_storage_broker = KnowledgeStorageBroker(
+            knowledge_readability_bridge.gateway,
+            GovernanceStore(database),
+            knowledge_credentials,
             audit_service,
         )
     create_job_service = CreateAgentJobService(
@@ -1186,6 +1208,7 @@ def _build_container(
         principal_token_issuer=principal_token_issuer,
         service_principal_token_issuer=service_principal_token_issuer,
         knowledge_readability_bridge=knowledge_readability_bridge,
+        knowledge_storage_broker=knowledge_storage_broker,
         knowledge_services=KnowledgeServices(
             database,
             permission_service,
@@ -1193,6 +1216,7 @@ def _build_container(
             principal_token_issuer,
             instance_code=settings.ones_identity.instance_code,
             provider_origin=settings.ones_mcp.provider_base_url,
+            content_access=knowledge_content_access,
         ),
         identity_discovery_repository=identity_discovery_repository,
         identity_discovery_service=identity_discovery_service,

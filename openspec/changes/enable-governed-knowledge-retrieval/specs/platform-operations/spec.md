@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: 知识资源配置只验证本地数据与索引，不要求 ONES 来源确认
-保存、验证和发布 SHALL 不要求用户填写或确认 ONES 地址、实例或 Team，不要求导入确认 CLI、证明摘要、Job 或 ONES 凭据。系统 SHALL 从已有 KB 成员派生本地来源，核对完整文档身份/修订/项目、READY 索引和 profile/hash；技术验证 SHALL 检查固定内部 Embedding、Qdrant 兼容性与点数。外部 Provider 授权 SHALL 留在运行时逐项检查，不得用配置验证成功替代。
+保存、验证和发布 SHALL 不要求用户填写或确认 ONES 地址、实例或 Team，不要求导入确认 CLI、证明摘要、Job 或 ONES 凭据。系统 SHALL 从所选内容库已有 KB 成员派生导入来源，核对完整文档身份/修订/项目、READY 索引和 profile/hash；技术验证 SHALL 检查固定内部 Embedding、所选 Qdrant 兼容性与点数。外部 Provider 授权 SHALL 留在运行时逐项检查，不得用配置验证成功替代。
 
 新资源修订 MUST NOT 创建虚假 CONFIRMED 来源或沿用历史来源确认门禁。历史绑定及资源/验证/发布证据原样保留；旧版本 MUST 重新保存、验证和发布，不自动改写 hash 或授权。source/KB 离线状态和 document/revision/chunk/point 身份及原 hash MUST 保持不变，不重编码。
 
@@ -50,7 +50,24 @@
 - **THEN** 保留实测基线和失败清单，不标记业务效果验收达标
 
 ### Requirement: 知识服务必须可选部署并保留真实验收缺口
-knowledge-mcp、Qdrant 和本地 Embedding SHALL 继续由可选 knowledge 部署单元管理，固定内部地址和受管凭据；未启用环境 MUST 不依赖这些服务或其新增服务凭据。治理元数据 SHALL 使用同一 PostgreSQL 的现有 knowledge schema 及现有 RBAC 事实源，通过前向 Migrator 和当前 schema catalog 交付，不修改历史迁移或自动迁移/删除已有文本、分块和索引。新治理事实 MUST 默认未核验、未发布、无业务授权。
+knowledge-mcp、本地 Qdrant 和 Embedding SHALL 继续由可选 knowledge 部署单元管理，MCP/Embedding 地址固定，内容 PostgreSQL/Qdrant 可由有权管理员配置；未启用环境 MUST 不依赖这些服务或其新增服务凭据。治理元数据 SHALL 使用平台 PostgreSQL 的现有 knowledge schema 及现有 RBAC 事实源，通过前向 Migrator 和当前 schema catalog 交付，不修改历史迁移或自动搬迁/删除已有文本、分块和索引。新治理事实 MUST 默认未核验、未发布、无业务授权。
+
+#### Scenario: 内容数据库与平台分开
+- **WHEN** 管理员配置独立内容 PostgreSQL
+- **THEN** API 验证、知识 MCP 与 ONES 内部核验使用同一内容绑定，平台库只保留逻辑 KB 及治理事实；目标库只要求兼容内容表和必要读取权限，不执行平台迁移或要求平台身份/Job 表
+
+#### Scenario: 旧资源升级连接能力
+- **WHEN** 执行新增连接配置的前向迁移
+- **THEN** 旧配置字段为空并保留原连接、hash 与发布历史；解除资源修订到平台本地索引的外键，内容索引归属由用例核验，不自动发布新版本
+
+#### Scenario: 管理或读写账号用于内容读取
+- **WHEN** 有权管理员为知识内容配置管理员、所有者或具有写权限的 PostgreSQL 账号
+- **THEN** 系统允许该账号按现有配置流程读取，不修改账号权限；当前目录、验证及检索连接仍使用并校验只读事务，保留固定内容查询与超时，不开放内容编辑或任意 SQL
+- **AND** Knowledge MCP 的平台治理连接仍须使用固定最小权限角色，不因内容账号获准而放宽
+
+#### Scenario: 内容连接故障或无法启用只读事务
+- **WHEN** 内容库不可达、凭据停用或读取连接未处于只读事务模式
+- **THEN** 拒绝访问并返回安全错误，不回退平台内容，不在平台事务中等待外部 I/O；平台资源列表与停用操作仍可使用
 
 上线记录 MUST 分开列出合成/静态、容器/数据库、本地数据/索引验证、真实 ONES 本人权限、本地 Embedding 与现有聊天模型真实新 Job 证据。缺失真实 ONES 可读性、模型链路或人工标签时 MUST 保留未完成任务；健康容器、Mock、索引成功或 OpenSpec 校验不能替代这些门槛。回退 SHALL 停用新增读取入口而保留数据及既有会话访问/保留约束。
 

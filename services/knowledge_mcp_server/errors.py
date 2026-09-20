@@ -1,6 +1,7 @@
 from app.modules.identity.application.principal_jwt import PrincipalTokenError
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.shared.exceptions import AppError, NonRetryableExecutionError
+from app.shared.io_deadline import IODeadlineExceeded
 
 
 def failure(code: str) -> AppError:
@@ -22,6 +23,8 @@ def failure(code: str) -> AppError:
 
 def safe_failure(exc: Exception) -> AppError:
     # 不回显 SDK、数据库、Provider 异常或参数校验 detail。
+    if isinstance(exc, IODeadlineExceeded):
+        return KnowledgeGovernanceError("knowledge_search_budget_exhausted")
     if isinstance(exc, PrincipalTokenError):
         return failure("knowledge_mcp_authentication_failed")
     if isinstance(exc, KnowledgeGovernanceError):

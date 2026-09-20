@@ -28,6 +28,8 @@ from services.knowledge_mcp_server.app import KnowledgeSecurityMiddleware, creat
 from services.knowledge_mcp_server.auth import KnowledgeMcpAuth
 from services.knowledge_mcp_server.tools import KnowledgeMcpTools
 from services.knowledge_mcp_server.database_policy import assert_reader_role
+from services.knowledge_mcp_server.storage_credentials import BrokerStorageCredentials
+from app.modules.knowledge.infrastructure.content_access import ManagedContentAccess
 
 
 def build_tools(
@@ -47,10 +49,6 @@ def build_tools(
         ),
         KnowledgeJobGate(database, JobMcpToolSnapshotService(database), authorization),
     )
-    resources = KnowledgeResourceReader(
-        GovernanceStore(database),
-        VectorRepository(database),
-    )
     embedding = EmbeddingClient()
     cleanup.callback(embedding.http.close)
     qdrant = QdrantClient()
@@ -60,12 +58,16 @@ def build_tools(
         allowed_hosts=("api-server",),
         bootstrap_credential_file=bootstrap_file,
     )
+    bridge = KnowledgeReadabilityClient(identity)
+    resources = KnowledgeResourceReader(
+        GovernanceStore(database),
+        VectorRepository(database),
+        content_access=ManagedContentAccess(database, BrokerStorageCredentials(bridge)),
+    )
     return KnowledgeMcpTools(
         KnowledgeMcpAuth(database, access),
         KnowledgeDirectory(access, resources, audit),
-        KnowledgeSearch(
-            access, resources, embedding, qdrant, KnowledgeReadabilityClient(identity), audit
-        ),
+        KnowledgeSearch(access, resources, embedding, qdrant, bridge, audit),
         McpAuditCoordinator(database, max_payload_bytes=16 * 1024, audit_service=audit),
     )
 

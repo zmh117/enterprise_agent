@@ -5,6 +5,7 @@ from typing import Any
 
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError, checked_identifier
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
+from app.modules.knowledge.application.content_access import KnowledgeContent
 from app.modules.knowledge.domain.models import PinnedKnowledgeResource
 from app.modules.knowledge.domain.models import KnowledgeJobAccess
 
@@ -46,10 +47,10 @@ class ReadabilityRequest:
 
 
 def _documents(
-    resources: KnowledgeResourceReader, source: dict[str, Any], evidence: dict[str, Any]
+    content: KnowledgeContent, source: dict[str, Any], evidence: dict[str, Any]
 ) -> dict[str, Any]:
     ids = tuple(sorted({row["document_id"] for row in evidence.values()}))
-    return resources.store.current_documents(source["id"], ids)
+    return content.records.current_documents(source["id"], ids)
 
 
 @dataclass(frozen=True, repr=False)
@@ -67,22 +68,24 @@ class ReadabilityCandidates:
         pin = resources.resolve(request.knowledge_base_id)
         if pin.revision_id != request.resource_revision_id or pin.index_id != request.index_id:
             raise KnowledgeGovernanceError("knowledge_resource_changed")
-        source = resources.store.get("source", pin.source_id)
-        index = resources.vectors.get(pin.index_code)
-        if index is None:
-            raise KnowledgeGovernanceError("knowledge_index_unavailable")
-        evidence = resources.vectors.evidence_many(index, list(request.chunk_ids))
-        if set(evidence) != set(request.chunk_ids):
-            raise KnowledgeGovernanceError("knowledge_candidate_invalid")
-        return cls(pin, source, index, evidence, _documents(resources, source, evidence))
+        with resources.content_for(pin) as content:
+            source = content.records.get("source", pin.source_id)
+            index = content.vectors.get(pin.index_code)
+            if index is None:
+                raise KnowledgeGovernanceError("knowledge_index_unavailable")
+            evidence = content.vectors.evidence_many(index, list(request.chunk_ids))
+            if set(evidence) != set(request.chunk_ids):
+                raise KnowledgeGovernanceError("knowledge_candidate_invalid")
+            return cls(pin, source, index, evidence, _documents(content, source, evidence))
 
     def recheck(self, resources: KnowledgeResourceReader) -> None:
         resources.recheck(self.pin)
-        if (
-            resources.vectors.evidence_many(self.index, list(self.evidence)) != self.evidence
-            or _documents(resources, self.source, self.evidence) != self.documents
-        ):
-            raise KnowledgeGovernanceError("knowledge_candidate_invalid")
+        with resources.content_for(self.pin) as content:
+            if (
+                content.vectors.evidence_many(self.index, list(self.evidence)) != self.evidence
+                or _documents(content, self.source, self.evidence) != self.documents
+            ):
+                raise KnowledgeGovernanceError("knowledge_candidate_invalid")
 
 
 def project_readability(

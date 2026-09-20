@@ -19,6 +19,9 @@ from services.knowledge_mcp_server.app import KnowledgeSecurityMiddleware
 from services.knowledge_mcp_server.auth import KnowledgeMcpAuth
 from services.knowledge_mcp_server.execution import BoundedCalls, CallControl
 from services.knowledge_mcp_server.tools import KnowledgeMcpTools
+from backend.tests.test_knowledge_io_cancellation import held_connection
+from app.shared.database import Database
+from app.modules.knowledge.application.retrieval_budget import DEADLINE_HEADER
 from backend.tests.test_knowledge_search import (
     knowledge_contract as knowledge_contract_fixture,
     readable_fixture as readable_fixture_impl,
@@ -84,6 +87,33 @@ def rpc(f, method="tools/call", params=None, **kwargs):
         },
         **kwargs,
     )
+
+
+def test_real_mcp_entry_bounds_first_authentication_pool_wait(mcp_fixture, monkeypatch):
+    f = mcp_fixture
+    blocked = Database("sqlite:///:memory:", pool_max_size=1, pool_timeout_seconds=3)
+    original = f["tools"].auth.resolve
+
+    def resolve(*args):
+        blocked.execute("select 1")
+        return original(*args)
+
+    monkeypatch.setattr(f["tools"].auth, "resolve", resolve)
+    try:
+        with held_connection(blocked):
+            started = time.monotonic()
+            response = rpc(
+                f, headers={**headers(f), DEADLINE_HEADER: str(int(time.time() * 1000) + 100)}
+            )
+            assert time.monotonic() - started < 0.8
+            assert response.json()["result"]["isError"]
+            assert (
+                response.json()["result"]["structuredContent"]["error_code"]
+                == "knowledge_search_budget_exhausted"
+            )
+        assert not rpc(f).json()["result"]["isError"]
+    finally:
+        blocked.close()
 
 
 def test_initialize_list_call_and_safe_audit(mcp_fixture, caplog):

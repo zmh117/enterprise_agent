@@ -242,7 +242,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "139"
+        assert result.head == "140"
         assert result.applied == (
             "100",
             "101",
@@ -271,7 +271,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "124",
             "125",
             "126",
-            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139",
+            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139", "140",
         )
         assert database.execute_one(
             """
@@ -283,7 +283,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             """
         ) == {"count": 131}
         assert comments["table_count"] == 146
-        assert comments["column_count"] == 1924
+        assert comments["column_count"] == 1925
     finally:
         database.close()
 
@@ -311,7 +311,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "139"
+        assert result.head == "140"
         assert result.applied == (
             "100",
             "101",
@@ -340,10 +340,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "124",
             "125",
             "126",
-            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139",
+            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139", "140",
         )
         assert comments["table_count"] == 146
-        assert comments["column_count"] == 1924
+        assert comments["column_count"] == 1925
         assert {
             "dingding_conversation_id",
             "dingding_user_id",
@@ -411,6 +411,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "124",
             "125",
             "126",
+            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139", "140",
         ),
     ]
     database = Database(postgres_database_dsn)
@@ -443,6 +444,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "124",
             "125",
             "126",
+            "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139", "140",
         ]
     finally:
         database.close()

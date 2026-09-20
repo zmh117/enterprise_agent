@@ -17,15 +17,37 @@
 
 **非目标：**
 
-在线采集、增量索引、附件/OCR、工单/需求导入、运维内容解析、混合召回与重排、通用向量后端、任意数据连接配置、跨 Team 自动切换、通用服务委派框架。本轮允许管理多个明确知识库身份，但首个可发布的内容类型是 ONES 工作项；不能把尚无正文权限合同的运维知识库标成可用。
+在线采集、增量索引、附件/OCR、工单/需求导入、运维内容解析、混合召回与重排、通用向量后端、模型指定数据连接、自动建库/搬迁、跨 Team 自动切换、通用服务委派框架。本轮允许管理多个明确知识库身份，但首个可发布的内容类型是 ONES 工作项；不能把尚无正文权限合同的运维知识库标成可用。
 
 ## Decisions
+
+### 2026-09-20 修订：120 秒截止与阻塞 I/O 取消
+
+用户确认知识目录/检索与内部桥的总执行预算上限为 120 秒，仍取传入截止、当前 Job attempt 剩余时间和父调用预算的较小值，不因进入下一跳而重新计时。入口先建立不涉及授权的 I/O 截止上下文，再进行首次鉴权和 Job 读取；读到 Job 后进一步收紧。预算不授予权限，业务应用、KB、ONES 和返回前复核保持不变。
+
+共享 I/O 层只提供截止/取消检查，不读取 Job 或依赖知识应用层。仅在知识上下文中限制数据库池、初始化锁、SQLite 事务锁、SQL/fetch 与事务完成。PostgreSQL 通过驱动轮询感知截止，辅以不放宽原值的 statement_timeout/lock_timeout；正常归还恢复设置，超时/异常连接关闭淘汰，不在已关闭连接上再次回滚掩盖原始失败。驱动支持有界取消时最多尝试 1 秒，旧 libpq 不使用无界取消兜底。内容库临时池的新建连接使用独立至多 5 秒（且不超过原池等待上限）的维护预算，关闭池时传递取消；维护连接不绑定已结束请求，等待者自身仍服从更短调用截止。
+
+HTTP 在本次专属事件循环里解析域名，不修改全局 resolver 或代理/重定向/TLS 策略。数字 IP 不启动解析子进程；域名由隔离的标准库子进程使用操作系统 getaddrinfo，仅传域名、端口及解析参数，清空继承环境，不传 URL、JWT、查询、正文或数据库凭据。解析输出限量，超时或断开终止并回收子进程，最多 1 秒收尾；不把整个 MCP 放入子进程。内容库建连也使用这一解析边界。DNS/网络错误继续返回安全依赖错误，而非空检索结果。
+
+120 秒是业务结果截止，不承诺所有操作系统调用在同一瞬间消失；驱动取消、子进程回收、临时池关闭与失败审计各有至多 1 秒有界收尾，不继续检索或返回迟到引用。MCP 仍在工作线程实际结束后才释放槽位。客户端断开传递到阻塞读取；请求体回放不得伪造断开。候选数量或预留返回复核时间不足可在硬截止之前返回 partial；硬截止到达必须失败。上线环境真实网络/Provider/新 Job 及业务延迟验收仍不由故障注入代替。
+
+### 2026-09-20 修订：平台治理与内容连接分离
+
+用户确认知识库可在 Web 配置独立 PostgreSQL 和 Qdrant，并保留 Knowledge MCP 的主密钥隔离。本节取代下文首版固定内容连接及禁止管理端配置连接的限制；模型输入、Embedding 地址、ONES 地址/Team 和 RBAC 规则不变。
+
+平台库保留逻辑 KB 身份、检索资源/草稿/发布/验证、角色应用 KB 允许列表、Job 和审计。内容连接只拥有固定 `knowledge` 内容合同（来源、文档、修订、收录、分块、索引）；同库兼容模式与外部 PostgreSQL 使用相同内容读取端口。资源修订保存规范化连接配置和 `secret://platform/` 引用，不保存密码或 Qdrant Key；索引 ID 为显式内容引用，由验证及每次调用检查，不能继续外键绑定平台库的 vector_index。
+
+管理端沿用平台 Secret 加密能力。知识服务通过原有受管 bootstrap 换取短期服务身份，结合当前 Knowledge Principal、RUNNING Job、工具与 KB 授权，仅请求当前明确 KB 的已发布修订。平台从修订解析所需凭据，返回前再次核对授权/版本；拒绝浏览器、任意 Secret reference、地址、用户、未发布修订和跨 KB 请求。凭据只在服务调用内存存活、不缓存或记录，不把主密钥或通用 Secret 解析能力交给知识服务。
+
+API 技术验证、平台可读性桥及 ONES 内部可读性入口都必须使用同一已发布内容绑定，不接受 MCP 自报 UUID/来源作为事实。外部内容访问不进入平台事务；发布使用乐观修订检查，每次读取继续校验内容及发布一致性，不声称跨数据库事务。新连接失败时不得回退平台内容或旧 Qdrant。平台目录与授权不以内容库可用性作为存活前提。
+
+本轮不实现数据搬迁、远程建库、导入调度或任意 schema/SQL。目标 PostgreSQL 需已具备兼容的 knowledge 内容结构与必要读取权限；按同日用户修订，内容账号允许管理员、所有者、读写或只读账号，不再以账号具备写入/管理权限为由拒绝连接。当前目录、验证与检索的外部内容连接仍固定 default_transaction_read_only=on，建立连接时验证只读事务状态，保留连接/SQL/锁等待上限；账号权限与本次操作用途分别管理，不提前实现内容编辑或放宽 MCP 平台治理账号。新逻辑身份和内容 KB 的绑定必须明确、保持稳定。旧发布继续使用原连接与原摘要，不自动换版或重编码；新配置必须显式保存、验证、发布。
 
 ### 1. 资源配置只依赖本地数据与索引，不要求 ONES 来源确认
 
 2026-09-19 用户再次确认：保存、验证和发布不再要求提供或确认 ONES 地址/实例/Team。来源身份由已入库文档派生，仅代表本地导入记录，不声明外部来源已获确认。配置验证只检查本地数据完整性、KB 成员、READY 索引/profile/hash、内部 Embedding 和 Qdrant 兼容性及点数。
 
-继续使用同一 PostgreSQL 的 knowledge schema。检索资源版本通过配置 hash 固定本地 source ID、文档修订/UUID/项目/内容摘要、索引和 profile；新版本 binding_id 为空，不生成占位或伪造的来源确认。每个资源仍对应一个 KB，首版成员须属于一个明确本地来源；不接收浏览器自报来源 ID 或连接参数。
+内容库使用固定 knowledge schema，可保留同库或明确选择独立 PostgreSQL。检索资源版本通过配置 hash 固定内容 source ID、文档修订/UUID/项目/内容摘要、索引、profile 及显式连接；新版本 binding_id 为空，不生成占位或伪造的来源确认。每个资源仍对应一个 KB，首版成员须属于一个明确导入来源；不接收浏览器自报来源 ID。
 
 新增迁移 139 仅放宽 retrieval_revision.binding_id 的非空约束，保留来源绑定、旧资源/验证/发布和外键。旧配置的 hash 与证据不改写，旧版本需管理员重新保存草稿、验证并发布后才按新规则读取；不自动复用旧验证。source 的 offline_unverified、KB 的 storage_only、document/revision/chunk/point ID 和现有内容/profile/hash 保持原导入重放合同。
 
@@ -37,7 +59,7 @@
 
 角色授予逻辑知识库身份，不授予物理 Resource Revision、Qdrant collection 或 environment/placement。选择“当前全部知识库”在保存时展开明确 ID，不包含未来新增知识库。授权变更进入现有 authorization hash 和实时复核，不另建旁路 ACL。
 
-Web 在“工具资源”增加知识库类型入口，表单选择已存在 KB 及兼容 READY 索引，来源名称仅从已入库数据只读展示，不要求 ONES 地址、Team 或来源确认，统一执行 DRAFT → VERIFIED → PUBLISHED、停用/归档；不要求虚构环境，不接收任意 PostgreSQL/Qdrant/Embedding URL 或凭据。首版复用部署固定连接，页面只显示安全状态和关联 ID。角色页面只在各业务应用下引用明确 KB ID，通过勾选/取消勾选管理允许范围，不创建、复制或编辑知识资源配置。
+Web 在“工具资源”增加知识库类型入口，表单选择所配置内容库中已存在 KB 及兼容 READY 索引，来源从导入记录只读展示，不要求 ONES 地址、Team 或来源确认，统一执行 DRAFT → VERIFIED → PUBLISHED、停用/归档。管理员可选择原部署连接或明确配置内容 PostgreSQL/Qdrant，凭据仅从凭据中心选择引用；不接收明文密码或 Embedding URL。变更连接后必须重新读取目录，不能用旧目录保存。角色页面只在各业务应用下引用明确 KB ID，通过勾选/取消勾选管理允许范围，不创建、复制或编辑知识资源配置。
 
 调用时解析该知识库当前唯一启用的 Published Revision，并在单次调用中固定资源/本地数据/索引版本，审计记录实际版本；返回前重验授权、来源和发布状态。若本次期间版本变化则拒绝并要求重试，不拼接新旧结果。新的调用可采用显式发布的新版本，不冻结全部知识资源到 Agent Publication，也不自动切换到未发布或旧索引作为 fallback。Tool 的精确 Job Snapshot 规则保持不变。
 
@@ -49,9 +71,9 @@ Web 在“工具资源”增加知识库类型入口，表单选择已存在 KB 
 
 按用户要求，服务代码统一位于 `services/knowledge_mcp_server/`，与 ONES、钉钉 MCP 同级，不新增单数 service 目录。该目录仅拥有 MCP/ASGI 传输、身份上下文适配、有界执行、安全 MCP 审计和狭窄依赖装配；目录、召回、权限与引用校验继续复用 knowledge 四层模块。启动不构造平台全量 Container，不加载平台主密钥、签名私钥、模型 Key 或 ONES 凭据仓储。
 
-入口固定 32 KiB 请求与 256 KiB 工具结果；4 个真实在途工作槽位覆盖目录、检索及健康探测，不增加无界排队。ASGI 观察断开并传递取消信号，嵌套预算继承取消与截止，超时线程实际退出前不释放槽位。MCP 根审计只存工具名、安全版本/计数/错误码与既有审计关联 ID，不保存 query、cursor、命中 UUID 或正文。该实现不等于阻塞数据库/DNS 的物理取消已完成；任务 7.3 保留这部分验收。
+入口固定 32 KiB 请求与 256 KiB 工具结果；4 个真实在途工作槽位覆盖目录、检索及健康探测，不增加无界排队。ASGI 观察断开并传递取消信号，嵌套预算继承取消与截止，超时线程实际退出前不释放槽位。MCP 根审计只存工具名、安全版本/计数/错误码与既有审计关联 ID，不保存 query、cursor、命中 UUID 或正文。阻塞数据库/DNS 取消按上方修订实现并单独故障注入验收，不能仅以返回前检查冒充物理取消。
 
-在线部署使用 `backend/Dockerfile` 的独立 knowledge-mcp target 和可选 `knowledge/mcp.compose.yml`，在根文件与离线 `knowledge/compose.yml` 之后叠加。保留原模型/向量卷、项目名和仅离线环境的无新增凭据合同。MCP 不发布宿主机端口，仅接两个内部网络；API 在离线扩展中即追加知识网络，用于发布前的固定依赖验证，无需先配置在线 MCP 凭据。服务仅挂载公开 JWKS 和自己的 bootstrap，不挂载平台主密钥、签名私钥或 ONES 凭据；知识 MCP 不再需要 ONES 实例/地址配置，实际 ONES 目标与本人身份校验归平台桥和 ones-mcp。
+在线部署使用 `backend/Dockerfile` 的独立 knowledge-mcp target 和可选 `knowledge/mcp.compose.yml`，在根文件与离线 `knowledge/compose.yml` 之后叠加。保留原模型/向量卷、项目名和仅离线环境的无新增凭据合同。MCP 不发布宿主机端口，保留两个内部网络并增加专用内容连接出网网络；Embedding/Qdrant 不加入此出网网络。API 在离线扩展中即追加知识网络，用于发布前验证，无需先配置在线 MCP 凭据。服务仅挂载公开 JWKS 和自己的 bootstrap，不挂载平台主密钥、签名私钥或 ONES 凭据；实际 ONES 目标与本人身份校验归平台桥和 ones-mcp。
 
 数据库仍共用原库，单独使用固定角色 `knowledge_mcp_reader`。显式运维 CLI 按当前调用的明确列授予 SELECT，只给 audit_event、agent_tool_call、mcp_operation_audit 必要审计写入，无业务写入/DELETE；启动检查角色、成员关系、schema 与表/列权限，拒绝管理员 DSN 或超额授权。列合同变化必须重审，不借表级 SELECT 自动扩权，不在启动时创建角色或变更平台 PUBLIC 权限。隔离 PostgreSQL 权限验证和镜像 COPY 导入验证不替代任务 10.4 的完整容器运行验收。
 
@@ -68,9 +90,9 @@ Web 在“工具资源”增加知识库类型入口，表单选择已存在 KB 
 
 在线编排固定一次读取最多 200 点，再从同一去重池按每批最多 10 个文档补足可读项，不通过重复扩大 top-N 累计读取超过上限。当前版本/收录、点身份和证据聚合与离线 CLI 共用纯验证函数；离线 CLI 原有查询策略及默认重试保持不变。每个上游阶段及返回前重新核验当前授权、身份、固定资源与运行预算；失败不缓存可读结果，不把 Provider 故障降级为不可读。
 
-单次最多检查 50 个不同 ONES 工作项、并发最多 4；全调用 deadline 不超过 60 秒且服从 Job 剩余预算，单个 Provider 请求沿用较小超时。401 刷新仍遵守既有一次刷新合同，不增加第二条重试循环。限额由代码定义并贯穿服务、schema 描述、测试与安全诊断，不能伪装成全量查询。若只因固定候选/时间预算不足而未补足 top_k，返回已确认可读的命中及 `partial=true`、通用 `bounded_search` 原因；不提供被拒绝的 ID、数量、分数或项目分布。
+单次最多检查 50 个不同 ONES 工作项、并发最多 4；全调用 deadline 不超过 120 秒且服从 Job 剩余预算，单个 Provider 请求沿用较小超时。401 刷新仍遵守既有一次刷新合同，不增加第二条重试循环。限额由代码定义并贯穿服务、schema 描述、测试与安全诊断，不能伪装成全量查询。若只因固定候选/时间预算不足而未补足 top_k，返回已确认可读的命中及 `partial=true`、通用 `bounded_search` 原因；不提供被拒绝的 ID、数量、分数或项目分布。
 
-内部 HTTP 以 `X-Knowledge-Deadline-Ms` 传递 UTC 毫秒截止时间，各跳取传入值、本地 60 秒、当前 Job attempt 剩余预算的最小值，再转成本地单调时钟。该 Header 只能收紧预算，不授予权限，不进入模型 Tool 参数或 JWT scope；重复/非法/过期值拒绝，缺省仍受本地 Job 限制。部署需保持各服务时钟同步；调用方自身仍独立执行剩余预算。身份刷新锁等待、兑换、ONES 登录及 Provider 请求使用同一调用内预算；超时不使正常 ONES 凭据失效。知识调用的生产 HTTP 使用可取消网络协程和整次请求 timeout，禁止代理、重定向及压缩响应，原客户端继续拥有目标校验、认证、业务解析和唯一一次 401 刷新。
+内部 HTTP 以 `X-Knowledge-Deadline-Ms` 传递 UTC 毫秒截止时间，各跳取传入值、本地 120 秒、当前 Job attempt 剩余预算的最小值，再转成本地单调时钟。该 Header 只能收紧预算，不授予权限，不进入模型 Tool 参数或 JWT scope；重复/非法/过期值拒绝，缺省仍受本地 Job 限制。部署需保持各服务时钟同步；调用方自身仍独立执行剩余预算。身份刷新锁等待、兑换、ONES 登录及 Provider 请求使用同一调用内预算；超时不使正常 ONES 凭据失效。知识调用的生产 HTTP 使用可取消网络协程和整次请求 timeout，禁止代理、重定向及压缩响应，原客户端继续拥有目标校验、认证、业务解析和唯一一次 401 刷新。
 
 每个命中只返回已验证的 task UUID、经验证的工作项编号（可用时）、本地 source_id 引用、document/revision/index/块引用、有限分数与证据位置（每文档最多 3 条）。不返回离线标题、摘要、正文、附件地址、查询向量或内部连接信息。公开结果中的引用只证明此次允许定位，不是长期授权票据。
 
@@ -95,7 +117,7 @@ Runtime → ones-mcp：Agent 用现有详情工具读取当前正文，再由 Ag
 
 平台桥仅支持 `knowledge_search` 的候选可读性检查，候选输入为本次 KB/索引内的内部引用；平台重新解析和验证成员关系，不接受任意 URL、actor、Team、server、scope、operation 或 Provider 凭据。它需要固定 `knowledge-mcp` 服务身份及有效 Knowledge Principal 两重证明；服务身份只授权访问此内部操作，不能赋予用户业务权限。服务凭据沿用受管文件/短期 Service Principal 机制，只有启用知识服务才配置，不能让未部署知识组件的环境必须配置新 Secret。
 
-平台固定入口为 `/api/internal/knowledge/work-item-readability`：`Authorization` 承载短期 Service Principal（固定 `sub/azp=knowledge-mcp`、`aud=knowledge-readability-bridge`、唯一 scope `internal:knowledge:work-item:readability`），`X-Knowledge-Principal` 承载原 Knowledge Business Principal。可选 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 只在启用知识组件时配置，沿用现有受管文件约束、凭据隔离和不超过 300 秒 TTL；未配置不装配平台桥。请求两端共用严格候选合同，8 KiB body 足够容纳最多 50 个合法长 ID；平台只接收最多 64 KiB 的固定响应投影，不跟随重定向、不读取代理环境配置、不缓存允许结果。
+平台固定入口为 `/api/internal/knowledge/work-item-readability` 与 `/api/internal/knowledge/storage-connection`：`Authorization` 承载短期 Service Principal（固定 `sub/azp=knowledge-mcp`、`aud=knowledge-readability-bridge`、完整 scope 集合 `internal:knowledge:work-item:readability` 和 `internal:knowledge:storage:connection`），`X-Knowledge-Principal` 承载原 Knowledge Business Principal。可选 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 只在启用知识组件时配置，沿用现有受管文件约束、凭据隔离和不超过 300 秒 TTL；未配置不装配平台桥。两端固定请求合同、8 KiB body、64 KiB 响应上限，不跟随重定向、不读取代理环境配置、不缓存允许结果或连接凭据。升级应同步 API/MCP，旧 scope Token 须重新兑换，不能放宽精确校验兼容旧 Token。
 
 平台仍按既有完整 scope 合同签发 ONES Principal，不放宽现有“scope 恰好等于该 Server 冻结且获授权完整集合”规则；该 Token 不返回 knowledge-mcp、不暴露模型或日志。平台桥只调用固定的内部可读性入口，不能调用 ONES mutation 或成为通用 MCP 代理。ONES 内部入口使用自己的 audience、当前详情 Tool Snapshot 与本人 Credential；只读投影复用既有详情查询/解析/刷新代码，禁止复制另一套登录和 Provider Client。新增内部入口单独纳入认证、中间件、请求大小、限流和审计测试，不假设 `/mcp` 中间件自动保护其他路径。
 
@@ -141,7 +163,7 @@ Runtime → ones-mcp：Agent 用现有详情工具读取当前正文，再由 Ag
 ## Risks / Trade-offs
 
 - [离线批次来源未核实] → 不再索取外部来源确认；发布验证本地批次/索引一致性，运行时逐项 ONES 校验 UUID/项目与可读性且仅返回引用；不更改历史 source 身份来掩盖缺口。
-- [逐工作项 ONES 校验增加延迟和限流风险] → 去重、最多 50 个工作项/4 并发/60 秒总 deadline，真实测量后再提出独立优化；不跨调用缓存允许结果。
+- [逐工作项 ONES 校验增加延迟和限流风险] → 去重、最多 50 个工作项/4 并发/120 秒总 deadline，真实测量后再提出独立优化；不跨调用缓存允许结果。
 - [授权后过滤使 top_k 不满] → 有界扩候选、保留 partial；不宣称全库穷尽，不返回被过滤数量帮助探测。
 - [ONES 项目/字段权限或工作项归属变化] → 当前本人详情可读性和身份核对，首版不返回离线正文；详情读取时再次验证。
 - [误把本地 Embedding 当全文不外发] → 明确聊天阶段可外发授权内容；索引/查询向量化仍仅走内部服务，不增加日志或遥测正文。

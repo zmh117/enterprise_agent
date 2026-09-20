@@ -58,7 +58,8 @@ def test_online_overlay_only_changes_knowledge_mcp_and_bridge():
     overlay = yaml.safe_load((ROOT / "knowledge/mcp.compose.yml").read_text())
     assert set(overlay["services"]) == {"api-server", "knowledge-mcp"}
     assert set(overlay["secrets"]) == {"knowledge_bootstrap_token"}
-    assert not overlay.get("volumes") and not overlay.get("networks")
+    assert not overlay.get("volumes")
+    assert overlay["networks"] == {"knowledge-storage-egress": {"driver": "bridge"}}
     api = overlay["services"]["api-server"]
     assert set(api) == {"environment", "secrets"}
     assert set(api["environment"]) == {"KNOWLEDGE_BOOTSTRAP_TOKEN_FILE"}
@@ -89,8 +90,17 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
         "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE",
     }
     assert service["environment"]["DATABASE_DSN"].startswith("postgresql://knowledge_mcp_reader:")
-    assert set(service["networks"]) == {"knowledge-internal", "agent-runtime-control"}
-    assert all(config["networks"][name]["internal"] for name in service["networks"])
+    assert set(service["networks"]) == {
+        "knowledge-internal",
+        "agent-runtime-control",
+        "knowledge-storage-egress",
+    }
+    assert all(
+        config["networks"][name]["internal"]
+        for name in ("knowledge-internal", "agent-runtime-control")
+    )
+    assert not config["networks"]["knowledge-storage-egress"].get("internal", False)
+    assert "knowledge-storage-egress" not in config["services"]["knowledge-embedding"]["networks"]
     assert "api-server" not in service["depends_on"]  # Avoid API -> Runtime boot cycles.
     assert service["depends_on"]["migrator"]["condition"] == "service_completed_successfully"
     api = config["services"]["api-server"]

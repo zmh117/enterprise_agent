@@ -14,6 +14,10 @@ from app.modules.knowledge.application.readability import (
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.domain.models import KnowledgeJobAccess
+from app.modules.knowledge.application.retrieval_budget import (
+    MAX_RETRIEVAL_SECONDS,
+    knowledge_entry,
+)
 
 
 class KnowledgeReadabilityBridge:
@@ -29,6 +33,7 @@ class KnowledgeReadabilityBridge:
     def authenticate(self, service_token: str, knowledge_token: str) -> KnowledgeJobAccess:
         return self.gateway.authenticate(service_token, knowledge_token)
 
+    @knowledge_entry
     def check(
         self,
         *,
@@ -55,7 +60,7 @@ class KnowledgeReadabilityBridge:
                 candidates.recheck(self.resources)
                 if self.gateway.identity_fingerprint(access.actor_id, candidates) != identity:
                     raise KnowledgeGovernanceError("knowledge_authorization_changed")
-                if time.monotonic() - started >= 60:
+                if time.monotonic() - started >= MAX_RETRIEVAL_SECONDS:
                     raise KnowledgeGovernanceError("knowledge_readability_timeout")
                 self.audit.record(
                     "knowledge.readability.checked",

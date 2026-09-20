@@ -91,7 +91,7 @@ def test_reference_search_through_both_http_hops_no_text_or_token(search_fixture
     assert hit["work_item_uuid"].startswith("MOCK-ONES-TASK-")
     assert 1 <= len(hit["evidence"]) <= 3
     assert f["vector"].qdrant.search_limits == [200]
-    assert f["calls"] == ["POST"] and len(f["hops"]) == 1 and f["hops"][0] <= 60
+    assert f["calls"] == ["POST"] and len(f["hops"]) == 1 and f["hops"][0] <= 120
     safe = json.dumps(result, ensure_ascii=False) + json.dumps(
         f["runtime"].database.execute("select * from audit_event"), ensure_ascii=False, default=str
     )
@@ -278,7 +278,7 @@ def test_failure_after_allowed_results_discards_entire_call(search_fixture):
 def test_job_remaining_budget_and_retry_change(search_fixture):
     f = search_fixture
     budget = job_budget(f["runtime"].database, f["job"].id)
-    assert 0 < budget.remaining() <= 60
+    assert 0 < budget.remaining() <= 120
     f["runtime"].database.execute(
         "update agent_job set retry_count=retry_count+1 where id=?", (f["job"].id,)
     )
@@ -302,7 +302,7 @@ def test_soft_cutoff_partial_and_late_result_discard(search_fixture, monkeypatch
 
     def query(*args):
         result = original(*args)
-        tick[0] += 61 if late else 59.5
+        tick[0] += 121 if late else 119.5
         return result
 
     monkeypatch.setattr(f["vector"].qdrant, "search", query)
@@ -333,7 +333,7 @@ def test_online_http_budget_disables_retry_without_changing_offline_default(
         with job_budget(f["runtime"].database, f["job"].id).activate():
             with pytest.raises(VectorError):
                 http.request("GET", "/collections")
-        assert len(calls) == 1 and calls[0] <= 60 and sleeps == []
+        assert len(calls) == 1 and calls[0] <= 120 and sleeps == []
         calls.clear()
         with pytest.raises(VectorError):
             http.request("GET", "/collections")
@@ -438,7 +438,7 @@ def test_bridge_client_does_not_relabel_exhausted_budget_as_permission_failure(
     monkeypatch.setattr(retrieval_budget, "time", SimpleNamespace(monotonic=lambda: tick[0]))
     with pytest.raises(KnowledgeGovernanceError, match="budget_exhausted"):
         with job_budget(f["runtime"].database, f["job"].id).activate():
-            tick[0] += 61
+            tick[0] += 121
             f["search"].readability.check(token=f["knowledge_token"], request=None)
     assert not f["hops"] and current_budget() is None
 

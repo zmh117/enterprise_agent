@@ -1,0 +1,110 @@
+# Standalone synthetic acceptance only; never overlay a deployment or load its .env.
+x-platform: &platform
+  APP_ENV: test
+  FEATURE_WEB_ADMIN: "true"
+  DATABASE_DSN: postgresql://postgres@postgres:5432/knowledge_acceptance
+  APP_CONFIG_MASTER_KEY_FILE: /fixture/master
+  PRINCIPAL_JWT_PRIVATE_KEY_FILE: /fixture/private.pem
+  PRINCIPAL_JWKS_FILE: /fixture/jwks.json
+  WEB_COOKIE_SECURE: "false"
+  WEB_ALLOWED_ORIGINS: http://api-server:8000
+  MCP_OPERATION_AUDIT_RETENTION_DAYS: "30"
+  ONES_MCP_PROVIDER_BASE_URL: http://ones-mock:8001
+  ONES_MCP_PROVIDER_ALLOWED_HOSTS: ones-mock
+  ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL: "true"
+  ONES_IDENTITY_BASE_URL: http://ones-mock:8001
+  ONES_IDENTITY_ALLOWED_HOSTS: ones-mock
+  ONES_IDENTITY_ALLOW_INSECURE_LOCAL: "true"
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: knowledge_acceptance
+    tmpfs: ["/var/lib/postgresql:rw,size=512m"]
+    mem_limit: 384m
+  knowledge-qdrant:
+    image: qdrant/qdrant:v1.19.1
+    volumes: [synthetic-vectors:/qdrant/storage]
+    mem_limit: 256m
+  api-server:
+    image: enterprise-agent-knowledge-acceptance-api:local
+    build:
+      context: ../../../..
+      dockerfile: backend/Dockerfile
+      target: api-server
+    environment:
+      <<: *platform
+      SERVICE_PRINCIPAL_ENABLED: "true"
+      FILE_WORKER_BOOTSTRAP_TOKEN_FILE: /fixture/file-worker
+      FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE: /fixture/file-processing
+      DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE: /fixture/delivery
+      KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /fixture/knowledge
+    volumes: ["${KNOWLEDGE_ACCEPTANCE_STATE:?temporary synthetic directory required}:/fixture:ro"]
+    mem_limit: 512m
+  api-without-knowledge:
+    image: enterprise-agent-knowledge-acceptance-api:local
+    environment:
+      <<: *platform
+      DATABASE_DSN: postgresql://postgres@postgres:5432/without_knowledge
+      ONES_MCP_PROVIDER_BASE_URL: ""
+      ONES_IDENTITY_BASE_URL: ""
+      PRINCIPAL_JWT_PRIVATE_KEY_FILE: ""
+      PRINCIPAL_JWKS_FILE: ""
+    volumes: ["${KNOWLEDGE_ACCEPTANCE_STATE}/master:/fixture/master:ro"]
+    mem_limit: 384m
+  ones-mcp:
+    image: enterprise-agent-knowledge-acceptance-ones:local
+    build:
+      context: ../../../..
+      dockerfile: backend/Dockerfile
+      target: ones-mcp
+    environment: *platform
+    volumes:
+      - "${KNOWLEDGE_ACCEPTANCE_STATE}/master:/fixture/master:ro"
+      - "${KNOWLEDGE_ACCEPTANCE_STATE}/jwks.json:/fixture/jwks.json:ro"
+    mem_limit: 512m
+  knowledge-mcp:
+    image: enterprise-agent-knowledge-acceptance-mcp:local
+    build:
+      context: ../../../..
+      dockerfile: backend/Dockerfile
+      target: knowledge-mcp
+    environment:
+      DATABASE_DSN: postgresql://knowledge_mcp_reader:synthetic-only-reader-password@postgres:5432/knowledge_acceptance
+      PRINCIPAL_JWKS_FILE: /fixture/jwks.json
+      KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /fixture/knowledge
+    volumes:
+      - "${KNOWLEDGE_ACCEPTANCE_STATE}/jwks.json:/fixture/jwks.json:ro"
+      - "${KNOWLEDGE_ACCEPTANCE_STATE}/knowledge:/fixture/knowledge:ro"
+    read_only: true
+    tmpfs: ["/tmp:rw,size=32m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+  driver:
+    image: enterprise-agent-knowledge-acceptance-driver:local
+    build:
+      context: ../../../..
+      dockerfile: backend/tests/support/knowledge_container/Dockerfile
+    environment: *platform
+    volumes: ["${KNOWLEDGE_ACCEPTANCE_STATE}:/fixture"]
+    entrypoint: [python, -m, backend.tests.support.knowledge_container.driver]
+    mem_limit: 768m
+  ones-mock:
+    image: enterprise-agent-knowledge-acceptance-driver:local
+    entrypoint: [python, -m, uvicorn, backend.tests.support.knowledge_container.dependencies:ones, --host, 0.0.0.0, --port, "8001", --no-access-log]
+    volumes: ["${KNOWLEDGE_ACCEPTANCE_STATE}:/fixture:ro"]
+    mem_limit: 256m
+  knowledge-embedding:
+    image: enterprise-agent-knowledge-acceptance-driver:local
+    entrypoint: [python, -m, uvicorn, backend.tests.support.knowledge_container.dependencies:embedding, --host, 0.0.0.0, --port, "8096", --no-access-log]
+    mem_limit: 256m
+
+networks:
+  default:
+    internal: true
+
+volumes:
+  synthetic-vectors: {}

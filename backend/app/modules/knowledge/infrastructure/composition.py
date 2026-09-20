@@ -17,6 +17,7 @@ from app.modules.knowledge.infrastructure.vector_repository import VectorReposit
 from app.modules.knowledge.infrastructure.vector_clients import EmbeddingClient, QdrantClient
 from app.modules.knowledge.infrastructure.ones_verifier import OnesSourceVerifier
 from app.shared.database import Database
+from app.modules.knowledge.application.content_access import ContentAccess
 
 
 class KnowledgeServices:
@@ -29,8 +30,10 @@ class KnowledgeServices:
         *,
         instance_code: str,
         provider_origin: str,
+        content_access: ContentAccess | None = None,
     ) -> None:
         self.database, self.permissions, self.audit = database, permissions, audit
+        self.content_access = content_access
         self.issuer, self.instance_code, self.provider_origin = (
             issuer,
             instance_code,
@@ -57,6 +60,7 @@ class KnowledgeServices:
         return KnowledgeResourceService(
             KnowledgeAdministration(GovernanceStore(self.database), self.permissions, self.audit),
             VectorRepository(self.database),
+            content_access=self.content_access,
         )
 
     def verify_resource(self, **arguments: Any) -> dict[str, Any]:
@@ -72,5 +76,6 @@ class KnowledgeServices:
                 VectorRepository(self.database),
                 embedding=embedding,
                 qdrant=qdrant,
+                content_access=self.content_access,
             )
             return service.verify_draft(**arguments)
