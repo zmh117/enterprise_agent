@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from app.modules.mcp_audit import McpAuditHandle
-from app.shared.ones_tool_contracts import ONES_COLLECTION_LIMITS, ONES_TESTCASE_LIST_TOOLS
+from app.shared.ones_tool_contracts import ONES_COLLECTION_LIMITS, ONES_EXTENDED_COLLECTION_TOOLS
 from services.ones_mcp_server.auth.principal import ResolvedOnesPrincipal
 from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
 from services.ones_mcp_server.contracts import PROVIDER_HEADERS
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
 from services.ones_mcp_server.provider.graphql.collection import (
+    EXTENDED_MAX_PAGES,
     MAX_PAGES,
-    TESTCASE_MAX_PAGES,
     collect_pages,
 )
 from services.ones_mcp_server.provider.graphql.operations.business_queries import (
@@ -119,7 +119,7 @@ class AutomaticGraphqlQueryService(GraphqlQueryService):
         prepared = dict(arguments)
         collection_limit = ONES_COLLECTION_LIMITS[self.tool_identifier]
         max_pages = (
-            TESTCASE_MAX_PAGES if self.tool_identifier in ONES_TESTCASE_LIST_TOOLS else MAX_PAGES
+            EXTENDED_MAX_PAGES if self.tool_identifier in ONES_EXTENDED_COLLECTION_TOOLS else MAX_PAGES
         )
         requests: list[dict[str, Any]] = []
 

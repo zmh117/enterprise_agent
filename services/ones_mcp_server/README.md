@@ -20,8 +20,9 @@ values or raw error messages, in both Provider and Tool failure audits.
 
 The nine GraphQL list tools (including `ones_work_item_search`) now automatically
 collect until the final page or a fixed server-owned cap: 10000 for
-`ones_list_testcase_libraries`, `ones_list_testcase_modules`, `ones_list_test_plans`
-and `ones_query_test_cases`; 1000 for the other five lists. The MCP input
+`ones_query_work_items`, `ones_list_testcase_libraries`, `ones_list_testcase_modules`,
+`ones_list_test_plans` and `ones_query_test_cases`; 1000 for the other four lists,
+including `ones_work_item_search` and `ones_query_work_items_with_custom_options`. The MCP input
 does not accept `limit`; it cannot be lowered by the model. Bucket requests use at most
 200 records and preserve filters/order while passing `endCursor` to `after` exactly,
 following [ONES pagination](https://docs.ones.cn/project/open-api-doc/graphql/introduction.html#分页).
@@ -31,8 +32,8 @@ test modules) are fetched once and bounded locally; no native cursor is invented
 unstable or malformed pages fail closed; a valid collection hitting its limit
 returns `truncated=true` and `pagination_limit_reached=true`.
 
-The four test-asset lists allow at most 200 bucket requests, supporting 10000
-records even when the Provider returns only 50 per page. Other lists retain a
+`ones_query_work_items` and the four test-asset lists allow at most 200 bucket requests,
+supporting 10000 records even when the Provider returns only 50 per page. Other lists retain a
 50-request budget. All retain the 90-second collection deadline, 8MiB normalized
 result limit, and existing HTTP/Job/Sandbox budgets; reaching a row cap is distinct
 from a budget failure. Direct lists still require only one Provider request.
@@ -46,9 +47,9 @@ retain their existing lifecycle. REST/detail/mutation tools keep their contracts
 
 Failure Tool Call summaries retain safe `error` / `error_code` and the operations
 timeline displays both. Provider bodies, headers, credentials and stack traces are
-not exposed. Changed schemas require rebuilding the related services and explicitly
+not exposed. Changed input schemas require rebuilding the related services and explicitly
 republishing Agent/Application before new Jobs; historical snapshots are not upgraded.
-The test-asset expansion changes output limits and descriptions only, not input
+The work-item query and test-asset expansions change output limits and descriptions only, not input
 schema hashes. Deploy matching ONES and Runtime shared contracts so a 10000-row
 result is not rejected by an older 1000-row Runtime validator. Publications still
 using the older public `limit` input require the prior republication migration.

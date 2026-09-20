@@ -13,7 +13,7 @@ from services.ones_mcp_server.errors import OnesMcpError, invalid_provider_respo
 PAGE_SIZE = 200
 MAX_RESULTS = ONES_DEFAULT_COLLECTION_LIMIT
 MAX_PAGES = 50
-TESTCASE_MAX_PAGES = 200
+EXTENDED_MAX_PAGES = 200
 MAX_SECONDS = 90
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 

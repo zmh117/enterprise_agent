@@ -21,8 +21,9 @@ ONES_COLLECTED_LIST_FIELDS: Final = {
     "ones_query_test_cases": "test_cases",
 }
 ONES_DEFAULT_COLLECTION_LIMIT: Final = 1000
-ONES_TESTCASE_LIST_TOOLS: Final = frozenset(
+ONES_EXTENDED_COLLECTION_TOOLS: Final = frozenset(
     {
+        "ones_query_work_items",
         "ones_list_testcase_libraries",
         "ones_list_testcase_modules",
         "ones_list_test_plans",
@@ -30,7 +31,7 @@ ONES_TESTCASE_LIST_TOOLS: Final = frozenset(
     }
 )
 ONES_COLLECTION_LIMITS: Final = {
-    name: 10_000 if name in ONES_TESTCASE_LIST_TOOLS else ONES_DEFAULT_COLLECTION_LIMIT
+    name: 10_000 if name in ONES_EXTENDED_COLLECTION_TOOLS else ONES_DEFAULT_COLLECTION_LIMIT
     for name in ONES_COLLECTED_LIST_FIELDS
 }
 
@@ -787,9 +788,11 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_query_work_items",
-            "按项目、迭代、类型、状态、处理人、创建时间或关键词分页查询当前默认 Team 的工作项；程序自动翻页，每批最多200条，服务端固定收集到终页或1000条；不接受limit或cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
+            "按项目、迭代、类型、状态、处理人、创建时间或关键词分页查询当前默认 Team 的工作项；程序自动翻页，每批最多200条，服务端固定收集到终页或10000条；不接受limit或cursor。Runtime将结果存入Job只读临时文件，按返回路径使用Read/Grep读取，Job结束清理。truncated=true时不得声称结果完整。",
             _WORK_ITEM_QUERY_INPUT,
-            _paginated_list_output("items", WORK_ITEM_SCHEMA, maximum=1000),
+            _paginated_list_output(
+                "items", WORK_ITEM_SCHEMA, maximum=ONES_COLLECTION_LIMITS["ones_query_work_items"]
+            ),
         ),
         _contract(
             "ones_query_work_items_with_custom_options",

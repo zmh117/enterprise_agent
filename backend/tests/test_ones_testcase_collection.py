@@ -145,12 +145,12 @@ def test_test_asset_collection_boundaries_and_sandbox(
         assert not path.exists()
 
 
-def test_only_four_test_asset_output_limits_are_expanded():
+def test_graphql_collection_output_limits_match_tool_scope():
     expected = {
         "ones_work_item_search": 1000,
         "ones_search_projects": 1000,
         "ones_list_issue_types": 1000,
-        "ones_query_work_items": 1000,
+        "ones_query_work_items": 10000,
         "ones_query_work_items_with_custom_options": 1000,
         "ones_list_testcase_libraries": 10000,
         "ones_list_testcase_modules": 10000,
@@ -187,7 +187,7 @@ def test_test_asset_page_budget_is_still_bounded(service_key, name, arguments, k
     assert len(http.requests) == 200
 
 
-def test_non_test_collection_retains_50_page_budget():
+def test_default_collection_retains_50_page_budget():
     calls = []
 
     def fetch(arguments):

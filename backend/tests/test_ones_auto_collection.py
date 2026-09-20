@@ -35,7 +35,14 @@ from tests.test_ones_mcp_runtime import _fixture, _PagingGraphql, _normalized_pr
 
 @pytest.mark.parametrize("ending", ["success", "failure", "cancel", "timeout"])
 @pytest.mark.parametrize(
-    "name,count", [("ones_search_projects", 1000), ("ones_query_test_cases", 10000), ("query_database", 10000), ("query_loki", 1)]
+    "name,count",
+    [
+        ("ones_search_projects", 1000),
+        ("ones_query_work_items", 10000),
+        ("ones_query_test_cases", 10000),
+        ("query_database", 10000),
+        ("query_loki", 1),
+    ],
 )
 def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, ending, name, count):
     from app.modules.agent.domain.runtime import (
@@ -74,6 +81,8 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
                     "structuredContent": _query_payload(name, count) if resource_query else (
                         _project_result()
                         if name == "ones_search_projects"
+                        else _work_item_result(count)
+                        if name == "ones_query_work_items"
                         else {
                             "test_cases": [{"uuid": f"CASE-{i}"} for i in range(count)],
                             "total": count,
@@ -99,14 +108,20 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
         assert {"Write", "Edit", "Bash"} <= set(options["disallowed_tools"])
         arguments = (
             {"keyword": ""}
-            if name == "ones_search_projects"
+            if name in {"ones_search_projects", "ones_query_work_items"}
             else {"source": "plan", "source_uuid": "PLAN"}
         )
         result = await captured["bridge"].call_tool(name, arguments)
         summary = result.model_dump(by_alias=True)["structuredContent"]
         path = Path(options["cwd"]) / summary["result_file"]
         assert summary["returned"] == count
-        marker = ('"id": 9999' if name == "query_database" else "正文") if resource_query else ("Project 1000" if name == "ones_search_projects" else "CASE-9999")
+        marker = {
+            "query_database": '"id": 9999',
+            "query_loki": "正文",
+            "ones_search_projects": "Project 1000",
+            "ones_query_work_items": "SYNTHETIC-9999",
+            "ones_query_test_cases": "CASE-9999",
+        }[name]
         assert marker in path.read_text()
         allowed = await options["can_use_tool"]("Read", {"file_path": str(path)}, None)
         assert allowed["behavior"] == "allow"
@@ -285,66 +300,117 @@ def test_all_nine_service_validators_reject_model_collection_controls(service_ty
         assert error.value.error_code == "ones_tool_input_invalid"
 
 
-@pytest.mark.parametrize("count", [256, 1000, 1001])
-def test_work_item_service_continues_50_item_provider_pages(count):
+class _WorkItemHttp:
+    """Synthetic transport covering the real GraphQL parser without ONES access."""
+
+    def __init__(self, count, page_size):
+        self.count, self.page_size = count, page_size
+        self.requests = []
+
+    def post_json(self, path, payload, **kwargs):
+        variables = deepcopy(payload["variables"])
+        self.requests.append(variables)
+        pagination = variables["pagination"]
+        start = int(pagination["after"] or 0)
+        end = min(start + self.page_size, start + pagination["limit"], self.count)
+        rows = [
+            {
+                "uuid": f"SYNTHETIC-{i}",
+                "number": i,
+                "name": "Synthetic",
+                "project": {"uuid": "P"},
+                "issueType": {"uuid": "I"},
+                "status": {"uuid": "S", "name": "New", "category": "to_do"},
+                "sprint": {"uuid": "", "name": ""},
+            }
+            for i in range(start, end)
+        ]
+        return {
+            "data": {
+                "buckets": [
+                    {
+                        "tasks": rows,
+                        "pageInfo": {
+                            "count": len(rows),
+                            "totalCount": self.count,
+                            "hasNextPage": end < self.count,
+                            "endCursor": str(end),
+                            "unstable": False,
+                        },
+                    }
+                ]
+            }
+        }
+
+
+@pytest.mark.parametrize("count", [256, 1000, 1001, 4715, 9999, 10000, 10001])
+@pytest.mark.parametrize("page_size", [50, 200])
+@pytest.mark.parametrize("sprint", [False, True])
+def test_work_item_service_continues_provider_pages(count, page_size, sprint, tmp_path):
     fixture = _fixture(capabilities=("ones_query_work_items",))
     service = fixture["work_item_query_service"]
-    requests = []
-
-    class ShortPageHttp:
-        def post_json(self, path, payload, **kwargs):
-            variables = payload["variables"]
-            requests.append(deepcopy(variables))
-            pagination = variables["pagination"]
-            start = int(pagination["after"] or 0)
-            end = min(start + 50, start + pagination["limit"], count)
-            rows = [
-                {
-                    "uuid": f"SYNTHETIC-{i}",
-                    "number": i,
-                    "name": "Synthetic",
-                    "project": {"uuid": "P"},
-                    "issueType": {"uuid": "I"},
-                    "status": {"uuid": "S", "name": "New", "category": "to_do"},
-                    "sprint": {"uuid": "", "name": ""},
-                }
-                for i in range(start, end)
-            ]
-            return {
-                "data": {
-                    "buckets": [
-                        {
-                            "tasks": rows,
-                            "pageInfo": {
-                                "count": len(rows),
-                                "totalCount": count,
-                                "hasNextPage": end < count,
-                                "endCursor": str(end),
-                                "unstable": False,
-                            },
-                        }
-                    ]
-                }
-            }
+    http = _WorkItemHttp(count, page_size)
 
     service.graphql = OnesGraphqlClient(
-        ShortPageHttp(), GraphqlOperationRegistry(BUSINESS_GRAPHQL_OPERATIONS)
+        http, GraphqlOperationRegistry(BUSINESS_GRAPHQL_OPERATIONS)
     )
+    arguments = {"keyword": "synthetic", "status_categories": ["to_do"]}
+    if sprint:
+        arguments.update(project_uuid="PROJECT", sprint_uuid="SPRINT")
     result = service.invoke(
         claims=service.authenticate(fixture["token"]),
-        arguments={"keyword": "synthetic", "status_categories": ["to_do"]},
+        arguments=arguments,
         correlation_id="short-provider-pages",
         invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
     )
-    assert result["returned"] == min(count, 1000)
-    assert result["truncated"] is result["pagination_limit_reached"] is (count > 1000)
-    assert len(requests) == (min(count, 1000) + 49) // 50
+    returned = min(count, 10000)
+    assert result["returned"] == result["cumulative_returned"] == returned
+    assert result["total"] == count
+    assert len(result["items"]) == returned
+    assert result["items"][-1]["uuid"] == f"SYNTHETIC-{returned - 1}"
+    assert result["truncated"] is result["pagination_limit_reached"] is (count > 10000)
+    assert "next_cursor" not in result and "_provider_cursor" not in result
+    requests = http.requests
+    assert len(requests) == (returned + page_size - 1) // page_size
     assert all(1 <= request["pagination"]["limit"] <= 200 for request in requests)
     for index, request in enumerate(requests):
-        assert request["pagination"]["after"] == (str(index * 50) if index else "")
-        assert request["filterGroup"] == requests[0]["filterGroup"]
-        assert request["orderBy"] == requests[0]["orderBy"]
+        assert request["pagination"]["after"] == (str(index * page_size) if index else "")
+        assert {k: v for k, v in request.items() if k != "pagination"} == {
+            k: v for k, v in requests[0].items() if k != "pagination"
+        }
     Draft202012Validator(service.output_schema).validate(result)
+
+    if page_size == 50 and count >= 4715:
+        sandbox = JobSandboxManager(tmp_path).create("job-work-items")
+        summary = materialize_result(sandbox, "ones_query_work_items", result)
+        path = sandbox.path / summary["result_file"]
+        assert summary["returned"] == returned
+        assert summary["complete"] is (count <= 10000)
+        assert "items" not in summary and len(json.dumps(summary)) < 1000
+        assert f"SYNTHETIC-{returned - 1}" in path.read_text()
+        sandbox.authorize_tool("Read", {"file_path": str(path)})
+        with pytest.raises(JobSandboxError):
+            sandbox.authorize_tool("Write", {"file_path": str(path), "content": "overwrite"})
+        sandbox.cleanup()
+        assert not path.exists()
+
+
+def test_work_item_collection_page_budget_is_still_bounded():
+    fixture = _fixture(capabilities=("ones_query_work_items",))
+    service = fixture["work_item_query_service"]
+    http = _WorkItemHttp(10001, 1)
+    service.graphql = OnesGraphqlClient(
+        http, GraphqlOperationRegistry(BUSINESS_GRAPHQL_OPERATIONS)
+    )
+    with pytest.raises(OnesMcpError) as error:
+        service.invoke(
+            claims=service.authenticate(fixture["token"]),
+            arguments={},
+            correlation_id="work-items-page-budget",
+            invocation_id=f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
+        )
+    assert error.value.error_code == "ones_collection_page_limit"
+    assert len(http.requests) == 200
 
 
 def test_internal_legacy_limit_cannot_lower_server_collection_cap():
@@ -437,6 +503,28 @@ def _project_result(count=1000):
         {"limit": 1000},
         field="projects",
     )
+
+
+def _work_item_result(count):
+    return {
+        "items": [
+            {
+                "uuid": f"SYNTHETIC-{i}",
+                "number": i,
+                "name": "Synthetic",
+                "project": {"uuid": "P"},
+                "issue_type": {"uuid": "I"},
+                "status": {"uuid": "S", "name": "New", "category": "to_do"},
+            }
+            for i in range(count)
+        ],
+        "total": count,
+        "returned": count,
+        "cumulative_returned": count,
+        "truncated": False,
+        "pagination_limit_reached": False,
+        "untrusted_data": True,
+    }
 
 
 def test_bridge_materializes_1000_rows_without_model_copy_and_cleans_job(tmp_path):
