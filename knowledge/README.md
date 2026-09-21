@@ -68,6 +68,22 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 停用时先停用知识资源与相关新工具发布，再定向 `stop knowledge-mcp`，保留 PostgreSQL、模型及 Qdrant 卷。API 中的可选凭据移除需受控更新；其他仍使用知识库的应用未退出前不得撤去。不要 `down -v`，不降级 schema，不自动重分块或重编码。
 
+### 当前本机部署记录（2026-09-20）
+
+经用户批准，在线 Knowledge MCP 及配套 API、ONES MCP、Agent Worker、Python Runtime 已部署为 `knowledge-online-20260920`（源码 `5d9ce4b`），包括 120 秒截止与 psycopg 3.3.6 兼容修复。固定最小权限账号和独立受管 bootstrap 已配置，健康、服务身份兑换/验签及无业务身份拒绝检查通过。schema 仍为 140，无需再次迁移；本轮不修改资源/角色/Publication，不调用真实 ONES、聊天模型或创建新 Job。
+
+本机在线连接配置存于宿主受管目录，不在知识目录复制根 `.env`，后续维护须同时提供两份配置并保留三个 Compose 文件：
+
+```sh
+docker compose -p enterprise_agent \
+  --env-file .env \
+  --env-file /Users/mhz/.config/enterprise-agent/knowledge-online.env \
+  -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.compose.yml \
+  --profile knowledge config --quiet
+```
+
+受管文件是 owner-only 配置，不要查看、回显或提交其内容；不要省略在线扩展后重建 API，否则会丢失知识服务桥配置。构建 ONES MCP 时须显式提供 `--build-arg BUILD_SOURCE_REVISION=<revision>` 和 `--build-arg BUILD_ID=<build>`（该主 Compose target 未继承 release args）；其他 target 也应核对实际镜像标识，不能只凭构建命令判定版本。此本机记录不代表其他环境已启用，也不代替真实业务应用与两用户 ONES 验收。
+
 ## 数据、网络与运维边界
 
 - 默认内容仍使用平台 PostgreSQL 的 `knowledge` schema；Web 也可绑定独立 PostgreSQL 内容库和 Qdrant。平台治理与 RBAC、Job、审计连接始终不变。平台迁移仍属于统一 catalog：不用知识服务的环境升级后端时也须满足对应 schema head，但不会自动导入缺陷或生成向量。
@@ -83,9 +99,9 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 ## Web 配置独立内容存储
 
-该能力需先按维护流程部署 migration **140** 及配套 API、ONES MCP、Knowledge MCP、Web 代码。2026-09-20 本机已完成 migration 140、现有主服务和 Web 更新，并恢复既有 Embedding/Qdrant；在线 Knowledge MCP 尚未部署，独立账号/连接配置及真实外部内容库、Agent 链路仍待验收。其他环境不能据此视为已升级。
+该能力需先按维护流程部署 migration **140** 及配套 API、ONES MCP、Knowledge MCP、Web 代码。2026-09-20 本机已完成 migration 140、现有主服务和 Web 更新，并恢复既有 Embedding/Qdrant；同日后续在线部署已配置 Knowledge MCP 及独立账号/服务身份，见上方本机记录。真实外部内容库、Agent 链路仍待验收。其他环境不能据此视为已升级。
 
-同日后续更新 `knowledge-content-admin-20260920` 已将内容管理员/读写账号支持部署到本机 API、ONES MCP 和 Web，未新增迁移、修改凭据或发布配置；在线 Knowledge MCP 仍需部署匹配代码。页面 TLS 选择必须匹配目标服务器，不因允许管理员账号而自动降级。
+此前更新 `knowledge-content-admin-20260920` 已将内容管理员/读写账号支持部署到本机 API、ONES MCP 和 Web，后续 `knowledge-online-20260920` 已补齐在线 MCP 匹配代码；没有替用户保存或发布连接配置。页面 TLS 选择必须匹配目标服务器，不因允许管理员账号而自动降级。
 
 1. 准备已经导入、分块并构建 READY 索引的 PostgreSQL 内容库与匹配 Qdrant。首版内容 schema 固定 `knowledge`，不自动建库、搬迁数据或重编码。独立内容库不需要平台 public 中的用户、角色、Job、凭据和审计表，也不要求平台迁移账本；需要与当前内容仓储兼容的表/列。运维迁移内容是另一次显式操作。
 2. 选择具备必要读取权限的内容账号：允许管理员、所有者、读写或只读账号，不因具备写入/管理权限而拒绝。至少需要 `CONNECT`、`knowledge` 的 `USAGE` 和内容表必要的 `SELECT`。所需表为 `source`、`knowledge_base`、`knowledge_base_document`、`document`、`document_chunk_set`、`document_chunk`、`vector_index`、`vector_index_item`。当前目录、验证与检索连接仍固定并校验只读事务，保留 5 秒 SQL/连接及 3 秒锁等待上限，不修改账号权限或开放内容编辑。专用低权限账号仍可减小凭据泄露影响，但不是连接准入条件；Knowledge MCP 的平台治理连接仍必须使用上文固定最小权限账号。这些单阶段上限不等于已完成任务 7.3 的整链路物理取消验收。
