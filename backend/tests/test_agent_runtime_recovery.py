@@ -149,7 +149,7 @@ def test_job_cancel_and_worker_shutdown_target_the_same_frozen_invocation() -> N
     def execute_first() -> None:
         try:
             runtime.agent_executor.execute(first.id, fail_on_error=False)
-        except BaseException as exc:  # noqa: BLE001 - thread assertion capture
+        except BaseException as exc:
             errors.append(exc)
 
     thread = threading.Thread(target=execute_first)

@@ -106,7 +106,7 @@ def _child_refs(value: object) -> set[str]:
     return refs
 
 
-def _picture_summary(document: dict[str, Any], archive_paths: set[str]) -> dict[str, Any]:
+def _picture_summary(document: dict[str, Any], archive_paths: set[str]) -> dict[str, Any]:  # noqa: C901, PLR0915
     pictures = document.get("pictures")
     if not isinstance(pictures, list):
         raise RuntimeError("bundle_picture_collection_missing")

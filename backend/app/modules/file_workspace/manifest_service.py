@@ -548,7 +548,7 @@ class JobFileManifestService:
                 error_code="job_file_working_set_capacity_exceeded",
             )
 
-    def _manifest_items(
+    def _manifest_items(  # noqa: C901, PLR0915
         self,
         job_id: str,
         request: dict[str, Any],

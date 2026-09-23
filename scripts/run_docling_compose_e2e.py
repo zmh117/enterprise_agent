@@ -1205,7 +1205,7 @@ def _dispatch_delivery() -> None:
         runtime.database.close()
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901, PLR0915
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("prepare")

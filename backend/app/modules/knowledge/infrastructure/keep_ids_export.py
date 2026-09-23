@@ -41,7 +41,7 @@ def read_object(path: Path) -> tuple[dict[str, Any], str]:
     return value, hashlib.sha256(raw).hexdigest()
 
 
-def prepare_keep_ids(root: Path, *, expected: dict[str, int]) -> tuple[PreparedExport, ...]:
+def prepare_keep_ids(root: Path, *, expected: dict[str, int]) -> tuple[PreparedExport, ...]:  # noqa: C901, PLR0915
     if (
         set(expected) != set(LABELS)
         or any(type(n) is not int or not 1 <= n <= 200_000 for n in expected.values())

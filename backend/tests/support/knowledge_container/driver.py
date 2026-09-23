@@ -60,7 +60,7 @@ def wait_http(url):
     raise AssertionError("synthetic service did not become healthy: " + url)
 
 
-def seed():
+def seed():  # noqa: PLR0915
     until = time.monotonic() + 45
     while True:
         try:
@@ -225,7 +225,7 @@ def positive(headers, facts):
     return result["structuredContent"]["documents"][0]
 
 
-def verify(*, after_restart=False):
+def verify(*, after_restart=False):  # noqa: PLR0915
     for url in (
         BASE_URL + "/api/health",
         "http://ones-mcp:9104/health",

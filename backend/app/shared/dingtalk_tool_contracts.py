@@ -1528,7 +1528,7 @@ DINGTALK_TOOL_CONTRACTS: Final[Mapping[str, DingTalkToolContract]] = MappingProx
 )
 
 
-def validate_dingtalk_tool_contracts(
+def validate_dingtalk_tool_contracts(  # noqa: C901
     contracts: Mapping[str, DingTalkToolContract] | None = None,
 ) -> None:
     selected = DINGTALK_TOOL_CONTRACTS if contracts is None else contracts

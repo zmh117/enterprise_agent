@@ -122,7 +122,7 @@ def _create_job(container: object, label: str) -> object:
     )
 
 
-def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(
+def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(  # noqa: PLR0915
     migrated_postgres_dsn: str,
 ) -> None:
     import pika

@@ -35,7 +35,7 @@ def text_body(value: Any, clean: Sanitizer) -> tuple[str, list[dict[str, Any]]]:
     return clean.text(value).strip(), []
 
 
-def normalize_keep_ids(
+def normalize_keep_ids(  # noqa: C901, PLR0915
     row: dict[str, Any],
     listing: dict[str, Any] | None,
     *,

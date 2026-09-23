@@ -360,7 +360,7 @@ class Oracle11gReadonlyAccountProbe:
         self._client_ready = client_ready
         self._allow_privileged_account = allow_privileged_account
 
-    def verify(
+    def verify(  # noqa: PLR0915
         self,
         config: dict[str, Any],
         *,

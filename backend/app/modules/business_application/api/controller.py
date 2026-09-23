@@ -315,7 +315,7 @@ class DeactivateRequest(StrictRequest):
     expected_revision: int = Field(ge=1)
 
 
-def build_business_application_router() -> APIRouter:
+def build_business_application_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(
         prefix="/api/admin/business-applications",
         tags=["business-applications"],

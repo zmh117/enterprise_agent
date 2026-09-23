@@ -668,7 +668,7 @@ class AuthorizationCenterService:
             self._confirmation_required("高风险管理能力需要二次确认并填写变更原因")
         return list(requested.values())
 
-    def _normalize_business_applications(
+    def _normalize_business_applications(  # noqa: C901
         self,
         *,
         actor_id: str,

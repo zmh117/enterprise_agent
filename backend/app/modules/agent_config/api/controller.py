@@ -83,7 +83,7 @@ class RollbackRequest(BaseModel):
     publication_id: str
 
 
-def build_agent_config_router() -> APIRouter:
+def build_agent_config_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/admin/agents", tags=["agent-configuration"])
 
     @router.get("")

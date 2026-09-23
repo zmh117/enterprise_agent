@@ -42,7 +42,7 @@ knowledge_contract = knowledge_contract_fixture
 
 
 @pytest.fixture
-def readable_fixture(knowledge_contract, tmp_path, request):
+def readable_fixture(knowledge_contract, tmp_path, request):  # noqa: PLR0915
     mock = MockOnesSettings()
     options = getattr(request, "param", 1)
     base_count = options.get("bases", 1) if isinstance(options, dict) else options

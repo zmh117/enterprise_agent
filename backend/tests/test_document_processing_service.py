@@ -498,7 +498,7 @@ def test_processing_readiness_fails_closed_for_missing_drifted_or_quarantined_ca
     database.close()
 
 
-def test_ten_files_complete_with_two_workers_two_slots_and_no_duplicate_results() -> None:
+def test_ten_files_complete_with_two_workers_two_slots_and_no_duplicate_results() -> None:  # noqa: PLR0915
     database = _database()
     storage = _Storage()
     service = GovernedDocumentProcessingService(

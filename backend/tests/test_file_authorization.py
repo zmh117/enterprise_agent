@@ -131,7 +131,7 @@ def _create_file(
     )
 
 
-def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_action() -> None:
+def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_action() -> None:  # noqa: PLR0915
     database = _database()
     _insert_user(database, "user-a")
     database.execute(

@@ -34,7 +34,7 @@ class DebugJobCreateRequest(BaseModel):
     continue_session_id: str = Field(default="", max_length=200)
 
 
-def build_agent_job_debug_router() -> Any:
+def build_agent_job_debug_router() -> Any:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/agent/jobs", tags=["agent-jobs"])
 
     @router.post("")

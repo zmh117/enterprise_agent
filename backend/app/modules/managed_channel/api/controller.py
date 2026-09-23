@@ -150,7 +150,7 @@ class RuntimeCardActionRequest(RuntimeLeaseRequest):
     intent_token: str = Field(min_length=1, max_length=256)
 
 
-def build_managed_channel_router() -> APIRouter:
+def build_managed_channel_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/admin/managed-channels", tags=["managed-channels"])
 
     @router.get("")

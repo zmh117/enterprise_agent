@@ -73,7 +73,7 @@ class OfflineEvaluation:
     def __init__(self, service: VectorService) -> None:
         self.service = service
 
-    def run(self, dataset: EvaluationDataset, index_code: str) -> dict[str, Any]:
+    def run(self, dataset: EvaluationDataset, index_code: str) -> dict[str, Any]:  # noqa: PLR0915
         code_hash = self.service.repository.implementation_hash()
         repo = self.service.repository
         index = repo.get(index_code)

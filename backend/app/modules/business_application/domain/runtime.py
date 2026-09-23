@@ -287,7 +287,7 @@ class RuntimeReadinessEvaluator:
             components=components,
         )
 
-    def _components(
+    def _components(  # noqa: C901, PLR0915
         self, snapshot: dict[str, Any]
     ) -> tuple[
         dict[str, RuntimeComponentStatus],

@@ -189,7 +189,7 @@ def _app_container(app: Any) -> Container:
     return container
 
 
-def create_app(
+def create_app(  # noqa: PLR0915
     settings: Settings | None = None,
     container_factory: ContainerFactory | None = None,
 ) -> Any:

@@ -56,7 +56,7 @@ class AttachmentProcessingService:
         self.delivery_service = delivery_service
         self.file_manifest_service = file_manifest_service
 
-    def process(self, attachment_id: str, correlation_id: str) -> str:
+    def process(self, attachment_id: str, correlation_id: str) -> str:  # noqa: PLR0915
         attachment = self.repository.get_attachment(attachment_id)
         if attachment.status in TERMINAL_ATTACHMENT_STATUSES:
             return self._release_attachment_if_ready(attachment_id, correlation_id)

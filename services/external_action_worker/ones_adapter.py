@@ -200,7 +200,7 @@ class OnesExternalActionAdapter:
             card_status_text="ONES 缺陷更新成功",
         )
 
-    def _execute_create(self, intent: dict[str, Any]) -> ExternalActionExecutionOutcome:
+    def _execute_create(self, intent: dict[str, Any]) -> ExternalActionExecutionOutcome:  # noqa: C901
         identity, credential = self._reauthorize(intent)
         precondition, request = self._validated_frozen_create(intent)
         identity_revision = int(identity.get("revision") or 0)

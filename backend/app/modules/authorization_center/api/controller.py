@@ -117,7 +117,7 @@ class ExplanationRequest(StrictRequest):
     stage: Literal["invoke", "worker_start", "tool_call", "delivery"] = "invoke"
 
 
-def build_authorization_center_router() -> APIRouter:
+def build_authorization_center_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(
         prefix="/api/admin/authorization",
         tags=["role-authorization"],

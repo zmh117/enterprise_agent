@@ -1050,7 +1050,7 @@ def _test_case_detail(config: MockOnesConfig) -> dict[str, Any]:
     }
 
 
-def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> FastAPI:
+def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> FastAPI:  # noqa: C901, PLR0915
     if settings is None:
         config = get_default_config()
     elif isinstance(settings, MockOnesSettings):
@@ -1350,7 +1350,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
         return {"users": users}
 
     @app.post("/project/api/project/team/{team_uuid}/items/graphql")
-    async def graphql(
+    async def graphql(  # noqa: C901
         team_uuid: str,
         payload: GraphqlRequest,
         query_type: str = Query(alias="t"),

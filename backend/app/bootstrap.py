@@ -530,7 +530,7 @@ def _acceptance_after_runtime_result_hook(
     return lambda: time.sleep(seconds)
 
 
-def _build_container(
+def _build_container(  # noqa: C901, PLR0915
     *,
     settings: Settings,
     service_name: str,

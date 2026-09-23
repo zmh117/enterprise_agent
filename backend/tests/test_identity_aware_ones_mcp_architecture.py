@@ -361,7 +361,7 @@ def test_provider_target_requires_https_except_explicit_local_mock() -> None:
             )
 
 
-def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated() -> None:
+def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated() -> None:  # noqa: PLR0915
     compose = yaml.safe_load((REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
     ones = services["ones-mcp"]

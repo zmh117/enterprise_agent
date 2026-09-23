@@ -594,7 +594,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                     # Failure closing one transport must not strand the others.
                     pass
 
-    async def _prepare_context(
+    async def _prepare_context(  # noqa: C901, PLR0915
         self,
         context: AgentExecutionContext,
     ) -> AgentExecutionContext:

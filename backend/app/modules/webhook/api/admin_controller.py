@@ -119,7 +119,7 @@ class ServiceAccountStatusRequest(StrictRequest):
     enabled: bool
 
 
-def build_webhook_admin_router() -> APIRouter:
+def build_webhook_admin_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/admin", tags=["webhook-administration"])
 
     @router.get("/webhook-triggers")

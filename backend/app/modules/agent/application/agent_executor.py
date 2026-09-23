@@ -70,7 +70,7 @@ class AgentExecutor:
         self.runtime_client.cancel(request, reason)
         return True
 
-    def execute(
+    def execute(  # noqa: C901, PLR0915
         self,
         job_id: str,
         *,

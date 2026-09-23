@@ -6,6 +6,21 @@ on:
     branches: [mcp_new, master]
 
 jobs:
+  backend-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m venv .venv
+      # Optional drivers and the Runtime SDK are imported by backend/app; without them mypy
+      # silently treats those modules as Any and misses real signature drift.
+      - run: .venv/bin/pip install -e '.[dev,database,python-runtime]'
+      - run: make lint
+      - run: make format-check
+      - run: make typecheck
+
   backend-fast:
     runs-on: ubuntu-latest
     steps:

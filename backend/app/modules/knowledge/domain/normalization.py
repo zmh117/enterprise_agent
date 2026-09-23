@@ -226,7 +226,7 @@ def _timestamp(value: Any) -> str | None:
         raise ExportValidationError("knowledge_timestamp_invalid") from None
 
 
-def _normalize(
+def _normalize(  # noqa: C901, PLR0915
     row: dict[str, Any],
     listing: dict[str, Any],
     clean: Sanitizer,

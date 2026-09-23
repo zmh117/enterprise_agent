@@ -765,7 +765,7 @@ class AgentConfigService:
                 errors.append({"field": f"{field}.{key}", "message": "此字段不可配置"})
         return errors
 
-    def _validate_config(self, config: dict[str, Any]) -> list[dict[str, str]]:
+    def _validate_config(self, config: dict[str, Any]) -> list[dict[str, str]]:  # noqa: C901, PLR0915
         errors: list[dict[str, str]] = []
         serialized = json.dumps(config, ensure_ascii=False).lower()
         for key in FORBIDDEN_CONFIG_KEYS:

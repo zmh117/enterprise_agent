@@ -24,8 +24,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
-  "ruff>=0.6",
-  "mypy>=1.10",
+  # Exact pins: CI gates on these; newer releases may change format style or type findings.
+  "ruff==0.15.20",
+  "mypy==2.1.0",
   "httpx2>=2.0",
   "python-docx>=1.1",
   "openpyxl>=3.1",
@@ -73,6 +74,17 @@ include = ["app*"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+# Existing over-limit functions carry exact `# noqa` baselines; RUF100 forces their removal
+# once a function is refactored under the limit.
+extend-select = ["C901", "PLR0915", "RUF100"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.pylint]
+max-statements = 50
 
 [tool.mypy]
 python_version = "3.12"

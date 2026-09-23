@@ -44,7 +44,7 @@ class KnowledgeJobGate:
     def _invalid() -> KnowledgeGovernanceError:
         return KnowledgeGovernanceError("knowledge_job_denied")
 
-    def resolve(self, *, job_id: str, actor_id: str) -> KnowledgeJobAccess:
+    def resolve(self, *, job_id: str, actor_id: str) -> KnowledgeJobAccess:  # noqa: C901
         # 调用者身份必须已由相应 audience 的 Principal 认证；这里不把 actor 字段当凭证。
         job = self.database.execute_one(
             "select j.id,j.internal_user_id,j.session_id,j.agent_publication_id,j.agent_config_hash,"

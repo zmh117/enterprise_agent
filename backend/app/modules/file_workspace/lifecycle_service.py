@@ -331,7 +331,7 @@ class FileLifecycleService:
                     retried += 1
         return completed, retried, dead
 
-    def _execute_cleanup(self, cleanup: dict[str, Any], timestamp: str) -> str:
+    def _execute_cleanup(self, cleanup: dict[str, Any], timestamp: str) -> str:  # noqa: C901
         resource_type = CleanupResourceType(str(cleanup["resource_type"]))
         resource_id = str(cleanup["resource_id"])
         if resource_type is CleanupResourceType.WORKSPACE:

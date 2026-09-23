@@ -51,7 +51,7 @@ def _handle(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="服务器内部错误")
 
 
-def build_workflow_router() -> APIRouter:
+def build_workflow_router() -> APIRouter:  # noqa: C901
     router = APIRouter(prefix="/api/agent/workflows", tags=["agent-workflows"])
 
     @router.get("")

@@ -51,7 +51,7 @@ class TriggerValidator:
         self.connector_registry = connector_registry
         self.agent_config_service = agent_config_service
 
-    def validate(
+    def validate(  # noqa: C901, PLR0915
         self, *, definition: dict[str, Any], config: dict[str, Any]
     ) -> tuple[list[dict[str, str]], dict[str, Any]]:
         errors: list[dict[str, str]] = []

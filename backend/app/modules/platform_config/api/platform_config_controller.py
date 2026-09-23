@@ -56,7 +56,7 @@ def _handle(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="服务器内部错误")
 
 
-def build_platform_config_router() -> APIRouter:
+def build_platform_config_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/platform", tags=["platform-config"])
 
     @router.get("/environments")

@@ -593,7 +593,7 @@ def test_file_bridge_does_not_derive_scanner_without_materialization_tool(
     assert LOG_EVIDENCE_TOOL not in bridge.local_tool_names
 
 
-def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result(
+def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result(  # noqa: PLR0915
     tmp_path: Path,
 ) -> None:
     captured: dict[str, Any] = {}

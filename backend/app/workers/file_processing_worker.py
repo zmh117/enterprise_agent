@@ -81,7 +81,7 @@ def _readiness_handler(
     snapshot: Callable[[], dict[str, Any]],
 ) -> type[BaseHTTPRequestHandler]:
     class ReadinessHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             if self.path != "/ready":
                 self.send_error(404)
                 return
@@ -99,7 +99,7 @@ def _readiness_handler(
     return ReadinessHandler
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0915
     configure_logging()
     settings = load_settings()
     if not settings.service_principal.enabled:

@@ -165,7 +165,7 @@ class GovernedResourceService:
         return result
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def create_resource(
+    def create_resource(  # noqa: C901, PLR0915
         self,
         payload: dict[str, Any],
         *,

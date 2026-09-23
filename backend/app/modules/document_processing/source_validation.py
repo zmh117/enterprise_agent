@@ -48,7 +48,7 @@ class ValidatedDocumentSource:
     page_count: int | None
 
 
-def normalize_docx_null_image_placeholders(
+def normalize_docx_null_image_placeholders(  # noqa: C901
     source: bytes,
     *,
     format_code: str,
@@ -280,7 +280,7 @@ def _parse_docx_compat_xml(content: bytes) -> minidom.Document:
         ) from exc
 
 
-def _require_safe_docx_null_placeholders(
+def _require_safe_docx_null_placeholders(  # noqa: C901
     document: minidom.Document,
     *,
     relationships: list[minidom.Element],

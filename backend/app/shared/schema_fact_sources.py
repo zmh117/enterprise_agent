@@ -80,7 +80,7 @@ def load_fact_source_manifest(
     return manifest
 
 
-def _validate_semantics(manifest: dict[str, Any]) -> None:
+def _validate_semantics(manifest: dict[str, Any]) -> None:  # noqa: C901
     entries = manifest["entries"]
     identifiers: set[str] = set()
     objects: set[tuple[str, str, str | None]] = set()

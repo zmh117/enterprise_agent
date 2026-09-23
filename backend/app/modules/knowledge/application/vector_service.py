@@ -141,7 +141,7 @@ class VectorService:
                     validate_sparse(found.get("sparse_vector"))
         return missing
 
-    def build(
+    def build(  # noqa: PLR0915
         self,
         code: str,
         snapshot: dict[str, Any],

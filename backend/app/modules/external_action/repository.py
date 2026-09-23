@@ -21,7 +21,7 @@ class ExternalActionRepository:
             (intent_id,),
         )
 
-    def create_or_get(
+    def create_or_get(  # noqa: C901, PLR0915
         self,
         *,
         facts: dict[str, Any],

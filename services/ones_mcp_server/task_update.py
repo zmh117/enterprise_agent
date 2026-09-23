@@ -124,7 +124,7 @@ def _rich_text(plain_text: str) -> str:
     return f"<p>{escaped}</p>"
 
 
-def compile_task_update(
+def compile_task_update(  # noqa: C901
     arguments: dict[str, Any],
     *,
     snapshot: OnesTaskSnapshot,

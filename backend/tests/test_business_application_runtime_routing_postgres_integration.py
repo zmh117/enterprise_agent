@@ -111,7 +111,7 @@ def _group_payload(message_id: str) -> dict[str, Any]:
     )
 
 
-def test_docker_postgres_runtime_takeover_and_provenance_acceptance() -> None:
+def test_docker_postgres_runtime_takeover_and_provenance_acceptance() -> None:  # noqa: PLR0915
     code = "docker-runtime-routing-acceptance"
     disabled = _container(data_plane_enabled=False)
     application = disabled.business_application_service.create(

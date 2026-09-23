@@ -149,7 +149,7 @@ def test_confirmation_replaces_legacy_binding_but_never_upgrades_pending_implici
         sources.assert_current(new)
 
 
-def assert_confirmation_migration_preserves_history(db, tmp_path):
+def assert_confirmation_migration_preserves_history(db, tmp_path):  # noqa: PLR0915
     path = tmp_path / "before-confirmation"
     path.mkdir()
     shutil.copyfile(

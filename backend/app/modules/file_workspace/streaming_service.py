@@ -743,7 +743,7 @@ class GovernedFileStreamingService:
                 )
             raise
 
-    async def import_attachment(
+    async def import_attachment(  # noqa: C901, PLR0915
         self,
         *,
         attachment_id: str,

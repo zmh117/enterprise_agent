@@ -181,7 +181,7 @@ class ClaudeSdkClient:
                 self._sandbox.reset(token)
                 sandbox.cleanup()
 
-    async def _run_in_sandbox_async(
+    async def _run_in_sandbox_async(  # noqa: PLR0915
         self,
         request: AgentRunRequest,
         binding: ModelRuntimeBinding,

@@ -56,7 +56,7 @@ class IdentityStatusRequest(BaseModel):
     status: Status
 
 
-def build_identity_admin_router() -> APIRouter:
+def build_identity_admin_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/admin", tags=["identity-admin"])
 
     @router.get("/users")

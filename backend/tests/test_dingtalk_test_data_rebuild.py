@@ -540,12 +540,7 @@ def test_apply_preserves_history_and_repeat_empty_plan_is_noop() -> None:
         ) == {"id": ids["job_id"]}
         assert _count(runtime, "agent_tool_call") == protected_before["agent_tool_calls"]
         assert _count(runtime, "delivery_attempt") == protected_before["delivery_attempts"]
-        assert (
-            service._historical_references(  # noqa: SLF001
-                target_connector_ids
-            )
-            == historical_before
-        )
+        assert service._historical_references(target_connector_ids) == historical_before
         assert (
             runtime.database.execute_one(
                 """

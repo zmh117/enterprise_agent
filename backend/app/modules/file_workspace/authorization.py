@@ -123,7 +123,7 @@ class FileAuthorizationService:
         }
         return FileAuthorizationContext(dict(claims), row, workspace, manifest)
 
-    def require_manifest_action(
+    def require_manifest_action(  # noqa: C901
         self,
         context: FileAuthorizationContext,
         *,

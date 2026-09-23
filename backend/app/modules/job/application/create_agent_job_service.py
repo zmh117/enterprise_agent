@@ -425,7 +425,7 @@ class CreateAgentJobService:
             attachment_ids=tuple(attachment_ids),
         )
 
-    def execute(self, command: CreateAgentJobCommand) -> AgentJob | SystemNoticeIntake:
+    def execute(self, command: CreateAgentJobCommand) -> AgentJob | SystemNoticeIntake:  # noqa: C901, PLR0915
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
         if existing is not None:
             if self.mcp_tool_snapshot_service is not None:

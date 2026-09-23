@@ -22,7 +22,7 @@ from app.modules.knowledge.domain.vector_contract import (
 from app.modules.knowledge.infrastructure.embedding_profile import profile
 
 
-def create_app(engine: Any = None) -> FastAPI:
+def create_app(engine: Any = None) -> FastAPI:  # noqa: C901
     gate = threading.Lock()
     current: dict[str, Any] = {"engine": engine}
 

@@ -634,7 +634,7 @@ class AgentRuntimeHttpClient:
                 raise
             raise recovery_error
 
-    def _consume_stream(
+    def _consume_stream(  # noqa: C901, PLR0915
         self,
         run_request: AgentRunRequest,
         request: dict[str, Any],

@@ -15,7 +15,7 @@ from .job_sandbox import JobSandbox
 from .result_file_bridge import ResultFileBridge, publish_result_file
 
 
-def materialize_tool_result(
+def materialize_tool_result(  # noqa: C901, PLR0915
     sandbox: JobSandbox, name: str, payload: dict[str, Any]
 ) -> dict[str, Any]:
     if name not in QUERY_RESULT_TOOLS:

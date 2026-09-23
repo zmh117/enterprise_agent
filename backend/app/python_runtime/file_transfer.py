@@ -467,7 +467,7 @@ class FileTransferCoordinator:
             )
         return self._upload(control, context)
 
-    def _materialize(
+    def _materialize(  # noqa: C901, PLR0915
         self,
         control: Mapping[str, object],
         context: FileTransferContext,

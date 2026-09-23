@@ -261,7 +261,7 @@ class ClaudePythonFileBridge:
         }
         self.server = self._build_server(sdk)
 
-    def _build_server(self, sdk: Any) -> Any:
+    def _build_server(self, sdk: Any) -> Any:  # noqa: C901
         def visible_tools() -> list[types.Tool]:
             result = [
                 types.Tool.model_validate(
@@ -645,7 +645,7 @@ class ClaudePythonFileBridge:
         self._stack = stack
         self._session = session
 
-    async def _observe_live_contract(
+    async def _observe_live_contract(  # noqa: PLR0915
         self,
         session: Any,
         *,

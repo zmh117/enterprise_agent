@@ -135,7 +135,7 @@ class KnowledgeSecurityMiddleware:
     def __init__(self, app: ASGIApp, allowed_hosts: tuple[str, ...]) -> None:
         self.app, self.allowed_hosts = app, allowed_hosts
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:  # noqa: C901, PLR0915
         if scope["type"] != "http" or scope["path"] != "/mcp":
             await self.app(scope, receive, send)
             return

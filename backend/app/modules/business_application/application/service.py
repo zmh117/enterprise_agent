@@ -644,7 +644,7 @@ class BusinessApplicationService:
             **mcp_tool_catalog,
         }
 
-    def _validate_revision(
+    def _validate_revision(  # noqa: C901
         self, application: dict[str, Any], revision: dict[str, Any]
     ) -> tuple[list[dict[str, str]], dict[str, Any]]:
         errors: list[dict[str, str]] = []

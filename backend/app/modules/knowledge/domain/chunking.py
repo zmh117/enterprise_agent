@@ -222,7 +222,7 @@ class PreparedChunks:
         return digest(asdict(self))
 
 
-def prepare_chunks(record: dict[str, Any], profile: ChunkProfile | None = None) -> PreparedChunks:
+def prepare_chunks(record: dict[str, Any], profile: ChunkProfile | None = None) -> PreparedChunks:  # noqa: C901, PLR0915
     keep_ids = record.get("normalizer_version") == KEEP_IDS_NORMALIZER
     typed = keep_ids or record.get("normalizer_version") == WORK_ITEM_NORMALIZER_VERSION
     profile = profile or (

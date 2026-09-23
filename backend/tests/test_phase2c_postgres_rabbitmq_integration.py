@@ -139,7 +139,7 @@ def migrated_postgres_dsn() -> str:
             admin.execute(sql.SQL("drop database {}").format(sql.Identifier(database_name)))
 
 
-def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
+def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(  # noqa: PLR0915
     migrated_postgres_dsn: str,
 ) -> None:
     import pika

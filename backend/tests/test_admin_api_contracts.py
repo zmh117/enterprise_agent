@@ -455,7 +455,7 @@ def test_channel_validation_rejects_unavailable_direction_and_plaintext_secret()
     assert "actual-secret" not in plaintext.text
 
 
-def test_operations_browser_is_bounded_read_only_and_secret_safe(
+def test_operations_browser_is_bounded_read_only_and_secret_safe(  # noqa: PLR0915
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = unified_settings()

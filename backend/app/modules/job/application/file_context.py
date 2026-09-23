@@ -490,7 +490,7 @@ def _parse_time_window(text: str, *, now: datetime | None = None) -> TimeWindowP
     return _parse_single_date(text, moment)
 
 
-def _resolve_file_context(
+def _resolve_file_context(  # noqa: C901, PLR0915
     *,
     text: str,
     requests_file_output: bool = False,
@@ -654,7 +654,7 @@ def _resolve_file_context(
     )
 
 
-def _evaluate_file_gate(decision: ResolverDecision) -> GateDecision:
+def _evaluate_file_gate(decision: ResolverDecision) -> GateDecision:  # noqa: C901
     if decision.notice_kind == "invalid_time_window":
         return GateDecision(
             action="system_notice",

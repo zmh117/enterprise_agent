@@ -120,7 +120,7 @@ def evaluate(
         raise ExportValidationError("knowledge_hybrid_evaluation_incomplete")
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
     database = embedding = qdrant = None
     try:
         parser = SafeParser(

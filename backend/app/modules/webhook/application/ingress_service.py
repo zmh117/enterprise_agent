@@ -48,7 +48,7 @@ class WebhookIngressService:
         self.audit_service = audit_service
         self.settings = settings
 
-    def receive(
+    def receive(  # noqa: PLR0915
         self,
         *,
         public_id: str,

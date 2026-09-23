@@ -180,7 +180,7 @@ def _facts() -> dict[str, str]:
     }
 
 
-def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:
+def test_fixed_read_provider_clients_use_the_18_allowlisted_endpoints() -> None:  # noqa: PLR0915
     transport = _Transport()
     token = _TokenClient()
 

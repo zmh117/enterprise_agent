@@ -75,7 +75,7 @@ class OnesMcpSecurityMiddleware:
         self.max_request_bytes = max_request_bytes
         self.internal_allowed_hosts = internal_allowed_hosts
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:  # noqa: C901
         if scope.get("type") != "http" or scope.get("path") not in {
             "/mcp",
             SOURCE_VERIFICATION_PATH,
@@ -285,7 +285,7 @@ def create_ones_server(registry: OnesToolRegistry) -> Server:
     )
 
 
-def create_app(
+def create_app(  # noqa: C901, PLR0915
     service: OnesWorkItemSearchService | OnesToolRegistry,
     *,
     database: Any,

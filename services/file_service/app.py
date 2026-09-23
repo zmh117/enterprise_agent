@@ -380,7 +380,7 @@ def create_file_server(
     )
 
 
-def create_app(
+def create_app(  # noqa: C901, PLR0915
     *,
     principal: FilePrincipalResolver,
     service_principal: FileWorkerPrincipalVerifier,

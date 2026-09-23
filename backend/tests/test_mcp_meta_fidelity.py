@@ -57,7 +57,7 @@ class _QuietHandler(BaseHTTPRequestHandler):
 
 
 class _McpHandler(_QuietHandler):
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+    def do_POST(self) -> None:
         request = self._json_body()
         method = request.get("method")
         request_id = request.get("id")
@@ -112,7 +112,7 @@ class _ModelHandler(_QuietHandler):
     requests: list[dict[str, Any]] = []
     tool_name = "mcp__audit__meta_probe"
 
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+    def do_POST(self) -> None:
         request = self._json_body()
         type(self).requests.append(request)
         messages = request.get("messages") or []

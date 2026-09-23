@@ -88,7 +88,7 @@ class ReadOnlyToolService:
             )["allowed"]
         )
 
-    def call_tool(
+    def call_tool(  # noqa: C901, PLR0915
         self,
         *,
         job_id: str,

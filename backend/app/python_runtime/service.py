@@ -81,7 +81,7 @@ class PythonRuntimeDependencies:
     build_identity: BuildIdentity | None = None
 
 
-def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI:
+def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI:  # noqa: C901, PLR0915
     runtime = dependencies or _default_dependencies()
     runtime_build_identity = runtime.build_identity or build_identity_from_environment(
         "python-runtime"
@@ -545,7 +545,7 @@ def _bearer(authorization: str) -> str:
     return authorization.removeprefix("Bearer ").strip()
 
 
-def _principal_secret_context(
+def _principal_secret_context(  # noqa: C901, PLR0915
     request: Request,
     payload: dict[str, Any],
     *,

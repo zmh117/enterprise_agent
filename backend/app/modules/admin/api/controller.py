@@ -54,7 +54,7 @@ class RevisionStatusRequest(StrictRequest):
     status: Literal["enabled", "disabled"]
 
 
-def build_admin_router() -> APIRouter:
+def build_admin_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/admin", tags=["administration"])
 
     @router.get("/capabilities")

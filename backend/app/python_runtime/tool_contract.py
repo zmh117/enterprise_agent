@@ -29,7 +29,7 @@ _SDK_BUILTIN_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
-def build_tool_contract_observation(
+def build_tool_contract_observation(  # noqa: C901
     context: AgentExecutionContext,
     *,
     file_live: dict[str, Any] | None,

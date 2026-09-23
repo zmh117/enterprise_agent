@@ -39,7 +39,7 @@ def load_master_key_settings(settings: Settings) -> Settings:
     return settings
 
 
-def load_master_key_file(path: str, *, required: bool) -> str:
+def load_master_key_file(path: str, *, required: bool) -> str:  # noqa: C901
     configured = str(path or "").strip()
     if not configured:
         if required:

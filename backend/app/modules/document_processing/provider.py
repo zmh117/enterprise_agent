@@ -716,7 +716,7 @@ def _validated_parent_bbox(value: object, *, page_width: float, page_height: flo
     return normalized
 
 
-def _parse_office_picture_bundle(
+def _parse_office_picture_bundle(  # noqa: C901, PLR0915
     body: bytes,
     *,
     profile: DocumentProcessingProfile,
