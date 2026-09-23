@@ -59,10 +59,17 @@ def test_static_safe_message_literals_include_chinese() -> None:
             for keyword in node.keywords:
                 if keyword.arg not in {"safe_message", "default_safe_message"}:
                     continue
+                subscript_keys = {
+                    id(child.slice)
+                    for child in ast.walk(keyword.value)
+                    if isinstance(child, ast.Subscript)
+                }
                 static_text = "".join(
                     child.value
                     for child in ast.walk(keyword.value)
-                    if isinstance(child, ast.Constant) and isinstance(child.value, str)
+                    if isinstance(child, ast.Constant)
+                    and isinstance(child.value, str)
+                    and id(child) not in subscript_keys
                 )
                 if static_text and not _CJK_PATTERN.search(static_text):
                     violations.append(f"{path.relative_to(app_root)}:{node.lineno}: {static_text}")

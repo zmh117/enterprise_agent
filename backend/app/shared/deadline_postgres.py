@@ -76,10 +76,18 @@ class DeadlineConnection(Connection):
         finally:
             gen.close()
 
-    def wait(self, gen: Generator[Any, Any, Any], interval: float = 0.1) -> Any:
+    def wait(
+        self,
+        gen: Generator[Any, Any, Any],
+        interval: float = 0.1,
+        timeout: float | None = None,
+    ) -> Any:
+        # Psycopg 3.3.6 added timeout to wait(); 3.3.4 accepts neither the keyword nor callers
+        # that pass it, so forward it only when the installed driver supplied one.
+        timeout_argument: dict[str, float] = {} if timeout is None else {"timeout": timeout}
         budget = current_io_deadline()
         if budget is None:
-            return super().wait(gen, interval)
+            return super().wait(gen, interval, **timeout_argument)
 
         def guarded() -> Generator[Any, Any, Any]:
             try:
@@ -96,7 +104,9 @@ class DeadlineConnection(Connection):
                 gen.close()
 
         try:
-            return waiting.wait(guarded(), self.pgconn.socket, interval=POLL_SECONDS)
+            return waiting.wait(
+                guarded(), self.pgconn.socket, interval=POLL_SECONDS, **timeout_argument
+            )
         except IODeadlineExceeded:
             try:
                 # Older libpq falls back to unbounded cancel(); never take that fallback.

@@ -9,7 +9,12 @@ from app.modules.agent.application.runtime_v14_cutover import (
     RuntimeV14CutoverPreflight,
 )
 from app.shared.database import Database, default_migrations_dir
-from app.shared.migrations import Migrator, SchemaHeadError
+from app.shared.migrations import (
+    Migrator,
+    SchemaHeadError,
+    deployable_migration_catalog,
+    load_migration_catalog,
+)
 from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME
 
 
@@ -65,10 +70,13 @@ def test_runtime_v14_cutover_preflight_is_ready_only_for_drained_facts(
     finally:
         database.close()
 
+    current_head = deployable_migration_catalog(
+        load_migration_catalog(default_migrations_dir())
+    )[-1].version
     assert report == {
         "mode": "read-only",
         "target_protocol_version": "1.4",
-        "schema_head": "136",
+        "schema_head": current_head,
         "database": {
             "protocol_v13_nonterminal_jobs": 0,
             "protocol_v13_dispatch_outbox_nonterminal": 0,

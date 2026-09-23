@@ -370,7 +370,7 @@ class SqlServerSchemaInspector:
                 port=str(db.port),
                 user=db.user,
                 password=db.password,
-                database=db.database or None,
+                database=db.database or "",
                 login_timeout=5,
                 timeout=5,
             )

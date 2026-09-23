@@ -297,15 +297,22 @@ def test_python_file_transfer_rejects_capacity_before_download_or_target_creatio
 
     port = CountingPort()
     sandbox = JobSandboxManager(tmp_path / "sandboxes").create("job-1")
-    for index in range(14):
+    limits = sandbox.limits
+    full_inputs, remainder = divmod(
+        limits.capacity_bytes - len(CONTENT) + 1,
+        limits.max_file_bytes,
+    )
+    assert full_inputs < limits.max_input_files
+    for index in range(full_inputs):
         sandbox.reserve_input(
             identity=(f"reserved-file-{index}", f"reserved-version-{index}"),
-            expected_size_bytes=15 * 1024 * 1024,
+            expected_size_bytes=limits.max_file_bytes,
         )
-    sandbox.reserve_work_output(
-        relative_path="outputs/reserved.txt",
-        expected_size_bytes=14 * 1024 * 1024,
-    )
+    if remainder:
+        sandbox.reserve_work_output(
+            relative_path="outputs/reserved.txt",
+            expected_size_bytes=remainder,
+        )
 
     with pytest.raises(FileTransferBoundaryError) as rejected:
         FileTransferCoordinator(port).process_mcp_control_result(

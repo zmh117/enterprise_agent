@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import threading
 import time
+from app.cli.apply_local_seed import local_seed_sql
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.conversation_context import ConversationContextService
 from app.modules.agent.application.agent_executor import AgentExecutor
@@ -545,8 +546,7 @@ def _build_container(
 ) -> Container:
     database = database or Database(settings.database_dsn)
     if seed:
-        seed_path = default_migrations_dir().parent / "seeds" / "local_seed.sql"
-        database.execute_script(seed_path.read_text())
+        database.execute_script(local_seed_sql())
 
     agent_repository = AgentRepository(database)
     audit_repository = AuditRepository(database)

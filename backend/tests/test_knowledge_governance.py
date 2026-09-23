@@ -8,6 +8,7 @@ import uuid
 
 import pytest
 
+from app.cli.apply_local_seed import local_seed_sql
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.infrastructure.repositories import AuditRepository
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
@@ -118,9 +119,7 @@ def test_forward_migration_is_empty_replayable_and_does_not_modify_old_tables(tm
             prepare(tmp_path, [export_row()]),
             source_code="synthetic_source", knowledge_base_code="synthetic_base",
         )
-        db.execute_script(
-            (default_migrations_dir().parent / "seeds" / "local_seed.sql").read_text()
-        )
+        db.execute_script(local_seed_sql())
         publication_tables = (
             "agent_publication_mcp_tool",
             "business_application_revision_mcp_tool",

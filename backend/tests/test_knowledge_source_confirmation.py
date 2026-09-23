@@ -15,7 +15,7 @@ from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import PermissionDenied
 from app.shared.migrations import Migrator, load_migration_catalog
 from backend.tests.test_knowledge_api import managed as managed_fixture
-from backend.tests.test_knowledge_chunks import import_rows, source_fingerprint
+from backend.tests.test_knowledge_chunks import source_fingerprint
 from backend.tests.test_knowledge_governance import (
     create,
     governance as governance_fixture,

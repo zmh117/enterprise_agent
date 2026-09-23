@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.bootstrap import build_test_container
+from app.cli.apply_local_seed import local_seed_sql
 from app.main import create_app
 from app.modules.managed_channel import ChannelOutboxPublisher
 from app.modules.managed_channel.api.controller import _RUNTIME_RATE_WINDOWS
@@ -15,7 +16,6 @@ from app.modules.managed_channel.domain import (
     DingTalkApplicationInput,
     RuntimeConnectorState,
 )
-from app.shared.database import default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.config import ManagedChannelSettings, Settings
 
@@ -446,8 +446,7 @@ def test_reapplying_local_seed_preserves_managed_dingtalk_configuration():
     )
     assert before is not None
 
-    seed_path = default_migrations_dir().parent / "seeds" / "local_seed.sql"
-    container.database.execute_script(seed_path.read_text())
+    container.database.execute_script(local_seed_sql())
 
     after = container.database.execute_one(
         """

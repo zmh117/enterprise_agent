@@ -115,7 +115,7 @@ class SqlServerExecutor:
                 port=str(db.port),
                 user=db.user,
                 password=db.password,
-                database=db.database or None,
+                database=db.database or "",
                 login_timeout=timeout_seconds,
                 timeout=timeout_seconds,
             )
