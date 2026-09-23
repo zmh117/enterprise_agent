@@ -27,6 +27,9 @@ TABLES = frozenset(
         "retrieval_resource",
         "retrieval_revision",
         "retrieval_verification",
+        "sync_binding",
+        "sync_run",
+        "sync_candidate",
     }
 )
 _SQLITE_LOCK = threading.Lock()

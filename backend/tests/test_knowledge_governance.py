@@ -20,7 +20,9 @@ from app.shared.database import Database, assert_external_io_allowed, default_mi
 from app.shared.exceptions import PermissionDenied
 from app.shared.migrations import Migrator, load_migration_catalog
 from backend.tests.test_knowledge_chunks import import_rows, source_fingerprint
-from backend.tests.test_knowledge_import import export_row
+from backend.tests.test_knowledge_import import export_row, prepare
+from app.modules.knowledge.application.import_service import KnowledgeImportService
+from app.modules.knowledge.infrastructure.import_repository import ImportRepository
 from backend.tests.test_knowledge_vectors import prepared as vector_fixture
 
 
@@ -107,7 +109,15 @@ def test_forward_migration_is_empty_replayable_and_does_not_modify_old_tables(tm
             Migrator(db, migrations, migrator_build="knowledge-governance-before").run().head
             == "136"
         )
-        import_rows(db, tmp_path, [export_row()])
+        class PreGovernanceFixtureRepository(ImportRepository):
+            # 仅准备 136 时代的历史数据；当时尚无发布表。生产门禁不能容忍缺表。
+            def _assert_direct_write_allowed(self, source_id, base_id):
+                pass
+
+        KnowledgeImportService(PreGovernanceFixtureRepository(db)).import_export(
+            prepare(tmp_path, [export_row()]),
+            source_code="synthetic_source", knowledge_base_code="synthetic_base",
+        )
         db.execute_script(
             (default_migrations_dir().parent / "seeds" / "local_seed.sql").read_text()
         )
@@ -119,12 +129,12 @@ def test_forward_migration_is_empty_replayable_and_does_not_modify_old_tables(tm
         publications_before = {
             name: db.execute(f"select * from {name} order by 1,2,3") for name in publication_tables
         }
-        before = source_fingerprint(db)
+        before = source_fingerprint(db, include_observation=False)
         result = Migrator(
             db, default_migrations_dir(), migrator_build="knowledge-governance-after"
         ).run()
-        assert result.applied == ("137", "138", "139", "140")
-        assert source_fingerprint(db) == before
+        assert result.applied == ("137", "138", "139", "140", "141", "142", "143", "144")
+        assert source_fingerprint(db, include_observation=False) == before
         assert {
             name: db.execute(f"select * from {name} order by 1,2,3") for name in publication_tables
         } == publications_before

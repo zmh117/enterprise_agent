@@ -10,19 +10,21 @@ from pathlib import Path
 from app.modules.knowledge.application.import_service import KnowledgeImportService
 from app.modules.knowledge.domain.normalization import ExportValidationError
 from app.modules.knowledge.infrastructure.ones_export import prepare_export
+from app.modules.knowledge.domain.work_items import DEFAULT_BASE_CODES, DOCUMENT_KINDS
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="预检或导入 ONES 缺陷离线文本，不调用外部服务")
+    parser = argparse.ArgumentParser(description="预检或导入 ONES 工作项离线文本，不调用外部服务")
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--detail-file", default="缺陷完整_5000.jsonl")
     parser.add_argument("--list-file", default="缺陷list_5000.jsonl")
     parser.add_argument("--expected-count", type=int, default=5000)
     parser.add_argument("--source-code", default="ones-offline-export")
-    parser.add_argument("--knowledge-base-code", default="ones-defects-offline")
+    parser.add_argument("--document-kind", choices=sorted(DOCUMENT_KINDS), default="defect")
+    parser.add_argument("--knowledge-base-code")
     parser.add_argument(
         "--commit", action="store_true", help="显式提交到当前配置数据库；不执行 DDL"
     )
@@ -37,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
             args.input_dir / args.detail_file,
             args.input_dir / args.list_file,
             expected_count=args.expected_count,
+            document_kind=args.document_kind,
         )
         print(
             json.dumps({"event": "preflight_passed", **prepared.statistics}, ensure_ascii=False),
@@ -52,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         result = KnowledgeImportService(ImportRepository(database)).import_export(
             prepared,
             source_code=args.source_code,
-            knowledge_base_code=args.knowledge_base_code,
+            knowledge_base_code=args.knowledge_base_code or DEFAULT_BASE_CODES[args.document_kind],
             progress=lambda counts: print(
                 json.dumps({"event": "import_progress", **counts}), flush=True
             ),

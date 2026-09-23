@@ -18,6 +18,12 @@ from app.modules.knowledge.infrastructure.embedding_profile import profile
 from app.shared.database import assert_external_io_allowed
 from app.modules.knowledge.application.retrieval_budget import current_budget, io_timeout
 from app.shared.bounded_read_http import request_bytes
+from app.modules.knowledge.domain.hybrid import (
+    BM25_OPTIONS,
+    HYBRID_CONTRACT,
+    hybrid_index,
+    validate_sparse,
+)
 
 
 class InternalHttp:
@@ -205,22 +211,44 @@ class QdrantClient:
 
     def check(self, index: dict[str, Any], *, create: bool = False) -> None:
         path = self.path(index)
-        metadata = {
+        metadata: dict[str, Any] = {
             "owner": "enterprise-agent-knowledge/v1",
             "index_id": index["id"],
             "profile_hash": index["profile_hash"],
             "corpus_hash": index["corpus_hash"],
         }
+        if index.get("sync_run_id"):
+            metadata["sync_run_id"] = index["sync_run_id"]
+        hybrid = hybrid_index(index)
+        if hybrid:
+            metadata["retrieval"] = HYBRID_CONTRACT
         response = self.http.request("GET", path, missing_ok=True)
         if response is None and create:
-            self.http.request(
-                "PUT", path, {"vectors": {"size": 1024, "distance": "Cosine"}, "metadata": metadata}
-            )
+            vectors = {"size": 1024, "distance": "Cosine"}
+            config: dict[str, Any] = {
+                "vectors": {"dense": vectors} if hybrid else vectors,
+                "metadata": metadata,
+            }
+            if hybrid:
+                config["sparse_vectors"] = {"bm25": {"modifier": "idf"}}
+            self.http.request("PUT", path, config)
             response = self.http.request("GET", path)
         if not isinstance(response, dict):
             raise VectorError("knowledge_collection_conflict")
         config = response.get("result", {}).get("config", {})
         vector = config.get("params", {}).get("vectors", {})
+        if hybrid:
+            if (
+                set(vector) != {"dense"}
+                or set(config.get("params", {}).get("sparse_vectors", {})) != {"bm25"}
+                or config.get("params", {})
+                .get("sparse_vectors", {})
+                .get("bm25", {})
+                .get("modifier")
+                != "idf"
+            ):
+                raise VectorError("knowledge_collection_conflict")
+            vector = vector["dense"]
         if (
             vector.get("size") != 1024
             or vector.get("distance") != "Cosine"
@@ -243,11 +271,38 @@ class QdrantClient:
         for point in points:
             if not isinstance(point, dict) or point.get("id") not in ids or point["id"] in result:
                 raise VectorError("knowledge_vector_response_invalid")
+            if hybrid_index(index):
+                named = point.get("vector")
+                if not isinstance(named, dict) or set(named) != {"dense", "bm25"}:
+                    raise VectorError("knowledge_sparse_vector_invalid")
+                validate_sparse(named["bm25"])
+                point = {**point, "vector": named["dense"], "sparse_vector": named["bm25"]}
             validate_vector(point.get("vector"))
             result[point["id"]] = point
         return result
 
     def upsert(self, index: dict[str, Any], points: list[dict[str, Any]]) -> None:
+        if hybrid_index(index):
+            converted = []
+            for point in points:
+                text = point.get("lexical_text")
+                if not isinstance(text, str) or not 1 <= len(text) <= 1800:
+                    raise VectorError("knowledge_sparse_input_invalid")
+                converted.append(
+                    {
+                        "id": point["id"],
+                        "payload": point["payload"],
+                        "vector": {
+                            "dense": point["vector"],
+                            "bm25": {
+                                "text": text,
+                                "model": "qdrant/bm25",
+                                "options": BM25_OPTIONS,
+                            },
+                        },
+                    }
+                )
+            points = converted
         value = self.http.request("PUT", self.path(index) + "/points?wait=true", {"points": points})
         if value.get("result", {}).get("status") != "completed":
             raise VectorError("knowledge_vector_write_unconfirmed")
@@ -259,9 +314,26 @@ class QdrantClient:
             raise VectorError("knowledge_vector_response_invalid")
         return count
 
+    def delete_owned(self, index: dict[str, Any]) -> None:
+        import uuid
+
+        try:
+            uuid.UUID(index["sync_run_id"])
+        except (KeyError, ValueError, TypeError, AttributeError):
+            raise VectorError("knowledge_vector_retention_owner_invalid") from None
+        path = self.path(index)
+        if self.http.request("GET", path, missing_ok=True) is None:
+            return  # 上次删除已确认但数据库记账中断，安全重放。
+        self.check(index)
+        response = self.http.request("DELETE", path)
+        if response.get("result") is not True:
+            raise VectorError("knowledge_vector_delete_unconfirmed")
+
     def search(
         self, index: dict[str, Any], vector: list[float], limit: int
     ) -> list[dict[str, Any]]:
+        if hybrid_index(index):
+            return self.hybrid_search(index, vector, "", limit, mode="dense")
         value = self.http.request(
             "POST",
             self.path(index) + "/points/query",
@@ -281,6 +353,61 @@ class QdrantClient:
                 },
             },
         )
+        result = value.get("result", {}).get("points")
+        if not isinstance(result, list) or len(result) > limit:
+            raise VectorError("knowledge_vector_response_invalid")
+        return result
+
+    def hybrid_search(
+        self,
+        index: dict[str, Any],
+        vector: list[float] | None,
+        text: str,
+        limit: int,
+        *,
+        mode: str = "hybrid",
+    ) -> list[dict[str, Any]]:
+        if (
+            not hybrid_index(index)
+            or mode not in {"hybrid", "bm25", "dense"}
+            or type(limit) is not int
+            or not 1 <= limit <= 200
+        ):
+            raise VectorError("knowledge_hybrid_query_invalid")
+        if mode != "bm25":
+            validate_vector(vector)
+        if mode != "dense" and (not isinstance(text, str) or not text.strip() or len(text) > 2000):
+            raise VectorError("knowledge_hybrid_query_invalid")
+        scope = {
+            "must": [
+                {"key": key, "match": {"value": value}}
+                for key, value in (
+                    ("index_id", index["id"]),
+                    ("knowledge_base_id", index["knowledge_base_id"]),
+                )
+            ]
+        }
+        lexical = {"text": text, "model": "qdrant/bm25", "options": BM25_OPTIONS}
+        request: dict[str, Any] = {
+            "limit": limit,
+            "with_payload": True,
+            "with_vector": False,
+            "filter": scope,
+        }
+        if mode == "hybrid":
+            request.update(
+                prefetch=[
+                    {"query": vector, "using": "dense", "limit": 100, "filter": scope},
+                    {"query": lexical, "using": "bm25", "limit": 100, "filter": scope},
+                ],
+                query={"fusion": "rrf"},
+            )
+        else:
+            request.update(
+                query=lexical if mode == "bm25" else vector,
+                using="bm25" if mode == "bm25" else "dense",
+            )
+        value = self.http.request("POST", self.path(index) + "/points/query", request)
         result = value.get("result", {}).get("points")
         if not isinstance(result, list) or len(result) > limit:
             raise VectorError("knowledge_vector_response_invalid")

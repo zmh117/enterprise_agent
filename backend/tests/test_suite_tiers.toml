@@ -32,6 +32,13 @@ unit = [
 ]
 
 contract = [
+  "test_knowledge_generation_retention.py",
+  "test_knowledge_vector_generations.py",
+  "test_knowledge_sync_candidates.py",
+  "test_knowledge_work_item_types.py",
+  "test_knowledge_keep_ids.py",
+  "test_knowledge_replacement.py",
+  "test_knowledge_hybrid.py",
   "test_knowledge_storage_connections.py",
   "test_knowledge_mcp_server.py",
   "test_knowledge_database_policy.py",

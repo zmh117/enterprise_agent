@@ -118,40 +118,44 @@ class ChunkRepository:
                 or base["state"] != "storage_only"
             ):
                 raise ExportValidationError("knowledge_chunk_source_changed")
-            set_id = stable_id("chunk-set", record["revision_id"], self.profile.fingerprint)
-            found = self.database.execute_one(
-                f"select * from {table(self.database, 'document_chunk_set')} where id=?", (set_id,)
+            return self._save_immutable(record, prepared)
+
+    def _save_immutable(self, record: dict[str, Any], prepared: PreparedChunks) -> str:
+        # 调用方已在同一事务内校验当前成员或冻结候选；共享不可变派生保存规则。
+        set_id = stable_id("chunk-set", record["revision_id"], self.profile.fingerprint)
+        found = self.database.execute_one(
+            f"select * from {table(self.database, 'document_chunk_set')} where id=?", (set_id,)
+        )
+        if found:
+            self._validate_existing(found, record, prepared)
+            return "reused"
+        values = {
+            "id": set_id,
+            "document_id": record["document_id"],
+            "document_revision_id": record["revision_id"],
+            "source_content_hash": record["content_hash"],
+            "profile_version": self.profile.version,
+            "profile_hash": self.profile.fingerprint,
+            "profile_config": asdict(self.profile),
+            "normalized_fields": prepared.normalized_fields,
+            "quality": prepared.quality,
+            "chunk_count": len(prepared.chunks),
+            "output_hash": prepared.output_hash,
+            "created_at": now(),
+        }
+        insert(self.database, "document_chunk_set", values)
+        for chunk in prepared.chunks:
+            insert(
+                self.database,
+                "document_chunk",
+                {
+                    "id": stable_id("chunk", set_id, str(chunk["ordinal"])),
+                    "chunk_set_id": set_id,
+                    **chunk,
+                },
             )
-            if found:
-                self._validate_existing(found, record, prepared)
-                return "reused"
-            values = {
-                "id": set_id,
-                "document_id": record["document_id"],
-                "document_revision_id": record["revision_id"],
-                "source_content_hash": record["content_hash"],
-                "profile_version": self.profile.version,
-                "profile_hash": self.profile.fingerprint,
-                "profile_config": asdict(self.profile),
-                "normalized_fields": prepared.normalized_fields,
-                "quality": prepared.quality,
-                "chunk_count": len(prepared.chunks),
-                "output_hash": prepared.output_hash,
-                "created_at": now(),
-            }
-            insert(self.database, "document_chunk_set", values)
-            for chunk in prepared.chunks:
-                insert(
-                    self.database,
-                    "document_chunk",
-                    {
-                        "id": stable_id("chunk", set_id, str(chunk["ordinal"])),
-                        "chunk_set_id": set_id,
-                        **chunk,
-                    },
-                )
-            self._validate_existing(values, record, prepared)
-            return "created"
+        self._validate_existing(values, record, prepared)
+        return "created"
 
     def source_lock(self, source_id: str) -> AbstractContextManager[None]:
         return source_lock(self.database, source_id)

@@ -110,6 +110,60 @@ def test_reference_search_through_both_http_hops_no_text_or_token(search_fixture
     assert current_budget() is None
 
 
+@pytest.mark.parametrize("outcome", ["success", "route_failure", "publication_changed"])
+def test_hybrid_route_keeps_readability_scope_and_fails_without_dense_fallback(
+    search_fixture, monkeypatch, outcome
+):
+    from app.modules.knowledge.application import search as search_module
+
+    f = search_fixture
+    calls = []
+    qdrant = f["vector"].qdrant
+    original = qdrant.search
+    monkeypatch.setattr(search_module, "hybrid_index", lambda index: True)
+
+    def hybrid(index, vector, query, limit):
+        calls.append(limit)
+        assert index["knowledge_base_id"] == f["body"]["knowledge_base_id"]
+        if outcome == "route_failure":
+            raise VectorError("knowledge_vector_response_invalid")
+        if outcome == "publication_changed":
+
+            def changed(pin):
+                raise KnowledgeGovernanceError("knowledge_resource_changed")
+
+            monkeypatch.setattr(f["search"].resources, "recheck", changed)
+        return original(index, vector, limit)
+
+    monkeypatch.setattr(qdrant, "hybrid_search", hybrid, raising=False)
+    monkeypatch.setattr(qdrant, "search", lambda *args: pytest.fail("must not silently fall back"))
+    if outcome == "success":
+        result = search(f)
+        assert len(result["documents"]) == 1
+        assert f["calls"] == ["POST"] and len(f["hops"]) == 1
+    else:
+        with pytest.raises(AppError):
+            search(f)
+        assert not f["calls"]
+    assert calls == [200]
+
+
+@pytest.mark.parametrize("points,partial", [(99, False), (100, True)])
+def test_hybrid_overlapping_routes_report_possible_truncation(
+    search_fixture, monkeypatch, points, partial
+):
+    from app.modules.knowledge.application import search as search_module
+
+    f = search_fixture
+    monkeypatch.setattr(search_module, "hybrid_index", lambda index: True)
+    monkeypatch.setattr(search_module, "current_documents", lambda *args: [])
+    monkeypatch.setattr(
+        f["vector"].qdrant, "hybrid_search", lambda *args: [{}] * points, raising=False
+    )
+    result = search(f)
+    assert result["documents"] == [] and result["partial"] is partial
+
+
 @pytest.mark.parametrize(
     "changes",
     [
@@ -473,7 +527,7 @@ def test_directory_search_share_current_kb_gate_but_directory_is_not_ones_permis
     )
     commands = {
         "kb": "delete from rbac_role_application_knowledge_base",
-        "source": 'update "knowledge.source" set source_system=\'other\'',
+        "source": "update \"knowledge.source\" set source_system='other'",
         "resource": "update \"knowledge.retrieval_resource\" set status='disabled'",
         "index": "update \"knowledge.vector_index\" set state='FAILED'",
         "team": 'update user_external_identity set metadata_json=\'{"team_uuids":["other"],"default_team_id":"other"}\' where provider=\'ones\'',

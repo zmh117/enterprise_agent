@@ -1,4 +1,4 @@
-"""授权后的有界 dense 检索；返回引用，不向调用者返回离线正文。"""
+"""授权后的有界 dense/混合检索；返回引用，不向调用者返回离线正文。"""
 
 from dataclasses import dataclass
 import threading
@@ -24,6 +24,7 @@ from app.modules.knowledge.domain.models import (
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.application.retrieval_budget import RetrievalBudget, knowledge_entry
 from app.shared.exceptions import AppError
+from app.modules.knowledge.domain.hybrid import HYBRID_CONTRACT, hybrid_index
 
 
 MAX_POINTS = 200
@@ -157,7 +158,11 @@ class KnowledgeSearch:
         vector = self.embedding.call([request.query], encode=True)["vectors"][0]
         recheck()
         # 一次最多读取 200 点，随后在同一候选池内按文档补齐，避免重复扩大请求的累计超限。
-        candidates = qdrant.search(index, vector, MAX_POINTS)
+        candidates = (
+            qdrant.hybrid_search(index, vector, request.query, MAX_POINTS)
+            if hybrid_index(index)
+            else qdrant.search(index, vector, MAX_POINTS)
+        )
         documents = current_documents(content.vectors, index, candidates)
         results: list[dict[str, Any]] = []
         checked, timed_out = 0, False
@@ -203,8 +208,9 @@ class KnowledgeSearch:
             if current.get(result["document_id"]) != before:
                 raise KnowledgeGovernanceError("knowledge_candidate_invalid")
         budget.check()
+        route_limit = HYBRID_CONTRACT["per_route_limit"] if hybrid_index(index) else MAX_POINTS
         partial = len(results) < request.top_k and (
-            timed_out or len(candidates) == MAX_POINTS or len(documents) > MAX_DOCUMENTS
+            timed_out or len(candidates) >= route_limit or len(documents) > MAX_DOCUMENTS
         )
         self.audit.record(
             "knowledge.search.completed",

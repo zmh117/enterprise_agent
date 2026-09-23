@@ -70,7 +70,7 @@ class GovernanceStore:
 
     def members(self, base_id: str) -> list[dict[str, Any]]:
         return self.database.execute(
-            f"select d.id,d.source_id from {self.t('knowledge_base_document')} m "
+            f"select d.id,d.source_id,d.document_kind from {self.t('knowledge_base_document')} m "
             f"join {self.t('document')} d on d.id=m.document_id "
             "where m.knowledge_base_id=? and m.state='included' and d.lifecycle_state='active'",
             (base_id,),
@@ -81,6 +81,16 @@ class GovernanceStore:
             f"select * from {self.t('retrieval_resource')} "
             "where knowledge_base_id=? and status='enabled' and id<>?",
             (base_id, excluding),
+        )
+
+    def published_resources_for_source(self, source_id: str) -> list[dict[str, Any]]:
+        return self.database.execute(
+            f"select r.* from {self.t('retrieval_resource')} r where r.published_revision_id is not null and ("
+            f"exists(select 1 from {self.t('knowledge_base_document')} m join {self.t('document')} d on d.id=m.document_id "
+            "where m.knowledge_base_id=r.knowledge_base_id and d.source_id=?) or "
+            f"exists(select 1 from {self.t('retrieval_revision')} v join {self.t('vector_index')} i on i.id=v.index_id "
+            "where v.id=r.published_revision_id and i.source_id=?)) order by r.id",
+            (source_id, source_id),
         )
 
     def next_resource_revision(self, resource_id: str) -> int:
@@ -215,6 +225,35 @@ class GovernanceStore:
                 checked_hash(r["content_hash"]),
             )
             for r in rows
+        )
+
+    def member_source_items(self, base_id: str, source_id: str) -> tuple[SourceItem, ...]:
+        source = self.get("source", source_id)
+        if source["source_system"] != "ones" or source["origin_state"] != "offline_unverified":
+            raise KnowledgeGovernanceError("knowledge_source_unavailable")
+        rows = self.database.execute(
+            f"select d.id,d.current_revision_id,d.external_id,d.source_object_type,d.source_id,r.source_project_id,r.content_hash "
+            f"from {self.t('knowledge_base_document')} m join {self.t('document')} d on d.id=m.document_id "
+            f"left join {self.t('document_revision')} r on r.id=d.current_revision_id and r.document_id=d.id "
+            "where m.knowledge_base_id=? and m.state='included' and d.lifecycle_state='active' order by d.id limit 200001",
+            (base_id,),
+        )
+        if len(rows) > 200_000 or any(
+            row["source_id"] != source_id
+            or row["source_object_type"] != "ones_work_item"
+            or row["content_hash"] is None
+            for row in rows
+        ):
+            raise KnowledgeGovernanceError("knowledge_source_unavailable")
+        return tuple(
+            SourceItem(
+                str(row["id"]),
+                str(row["current_revision_id"]),
+                checked_identifier(row["external_id"]),
+                checked_identifier(row["source_project_id"]),
+                checked_hash(row["content_hash"]),
+            )
+            for row in rows
         )
 
     @staticmethod

@@ -10,12 +10,17 @@ from app.modules.knowledge.domain.normalization import (
     MAX_ROW_BYTES,
     MAX_RECORDS,
     NORMALIZER_VERSION,
+    WORK_ITEM_NORMALIZER_VERSION,
     ExportValidationError,
     PreparedExport,
     Sanitizer,
     _normalize,
     _unique_object,
     identifier,
+)
+from app.modules.knowledge.domain.work_items import (
+    check_offline_type,
+    document_kind as checked_kind,
 )
 
 
@@ -50,7 +55,10 @@ def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], str]:
     return result, hasher.hexdigest()
 
 
-def prepare_export(detail_path: Path, list_path: Path, *, expected_count: int) -> PreparedExport:
+def prepare_export(
+    detail_path: Path, list_path: Path, *, expected_count: int, document_kind: str = "defect"
+) -> PreparedExport:
+    checked_kind(document_kind)
     if not 1 <= expected_count <= MAX_RECORDS:
         raise ExportValidationError("knowledge_expected_count_invalid")
     details, detail_hash = _read_jsonl(detail_path)
@@ -64,17 +72,26 @@ def prepare_export(detail_path: Path, list_path: Path, *, expected_count: int) -
     prepared = []
     for line_no, row in enumerate(details, 1):
         try:
-            prepared.append(_normalize(row, indexed[row["uuid"]], clean))
+            check_offline_type(document_kind, row.get("issue_type_uuid"))
+            prepared.append(
+                _normalize(row, indexed[row["uuid"]], clean, document_kind=document_kind)
+            )
         except ExportValidationError as exc:
             raise ExportValidationError(exc.code, line_no) from None
     manifest = {
         "detail_sha256": detail_hash,
         "list_sha256": list_hash,
         "record_count": expected_count,
-        "normalizer_version": NORMALIZER_VERSION,
-        "document_kind": "defect",
+        "normalizer_version": NORMALIZER_VERSION
+        if document_kind == "defect"
+        else WORK_ITEM_NORMALIZER_VERSION,
+        "document_kind": document_kind,
         "timestamp_contract": "ones-export-epoch-microseconds",
     }
+    if document_kind != "defect":
+        manifest["source_type_mapping"] = {
+            value: document_kind for value in sorted({row["issue_type_uuid"] for row in details})
+        }
     return PreparedExport(
         tuple(prepared),
         manifest,
@@ -86,5 +103,15 @@ def prepare_export(detail_path: Path, list_path: Path, *, expected_count: int) -
                 r.values["completeness"]["inline_image_count"] for r in prepared
             ),
             "redactions": dict(clean.counts),
+            **(
+                {
+                    "description_missing": sum(
+                        record.values["completeness"]["description"] == "missing"
+                        for record in prepared
+                    )
+                }
+                if document_kind != "defect"
+                else {}
+            ),
         },
     )

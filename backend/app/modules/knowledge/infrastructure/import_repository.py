@@ -11,10 +11,11 @@ from app.modules.knowledge.domain.normalization import (
     ExportValidationError,
     PreparedExport,
     PreparedRecord,
-    digest,
 )
 from app.modules.knowledge.infrastructure.storage import insert, source_lock, table
 from app.modules.knowledge.domain.identity import now, stable_id
+from app.modules.knowledge.domain.work_items import KIND_LABELS, compare_version, document_kind
+from app.modules.knowledge.infrastructure.revision_store import save_revision
 from app.shared.database import Database
 
 
@@ -40,7 +41,19 @@ class ImportRepository:
         run_id: str,
         input_hash: str,
     ) -> dict[str, Any]:
+        kind = document_kind(prepared.manifest.get("document_kind"))
+        if any(record.document_kind != kind for record in prepared.records):
+            raise ExportValidationError("knowledge_source_type_mismatch")
         with self.database.unit_of_work():
+            existing = self.database.execute_one(
+                f"select state,processed_count,total_count from {table(self.database, 'import_run')} where id=?",
+                (run_id,),
+            )
+            if existing and existing["state"] == "completed":
+                if existing["total_count"] != len(prepared.records):
+                    raise ExportValidationError("knowledge_import_checkpoint_invalid")
+                return existing
+            self._assert_direct_write_allowed(source_id, base_id)
             self._insert(
                 "source",
                 {
@@ -69,8 +82,8 @@ class ImportRepository:
                 {
                     "id": base_id,
                     "code": base_code,
-                    "display_name": "ONES 缺陷知识库（离线导入）",
-                    "description": "用户指定的缺陷文本与关联引用；未开放 Agent 访问，附件及讨论正文未采集。",
+                    "display_name": f"ONES {KIND_LABELS[kind]}知识库（离线导入）",
+                    "description": f"用户指定的{KIND_LABELS[kind]}文本与关联引用；未开放 Agent 访问，附件及讨论正文未采集。",
                     "state": "storage_only",
                     "created_at": now(),
                 },
@@ -111,28 +124,51 @@ class ImportRepository:
                 )
             return run
 
+    def _assert_direct_write_allowed(self, source_id: str, base_id: str) -> None:
+        active = self.database.execute_one(
+            f"select id from {table(self.database, 'sync_run')} where source_id=? and active=1",
+            (source_id,),
+        )
+        if active:
+            raise ExportValidationError("knowledge_source_import_busy")
+        # 现有发布摘要包含整个 source；即便写另一个 KB 也不能绕过候选流程。
+        published = self.database.execute_one(
+            f"select r.id from {table(self.database, 'retrieval_resource')} r "
+            "where r.published_revision_id is not null and (r.knowledge_base_id=? or exists("
+            f"select 1 from {table(self.database, 'knowledge_base_document')} m "
+            f"join {table(self.database, 'document')} d on d.id=m.document_id "
+            "where m.knowledge_base_id=r.knowledge_base_id and d.source_id=?)) limit 1",
+            (base_id, source_id),
+        )
+        if published:
+            raise ExportValidationError("knowledge_published_source_requires_staging")
+
     def record(self, record: PreparedRecord, source_id: str, base_id: str, run_id: str) -> str:
+        kind = document_kind(record.document_kind)
+        self._assert_direct_write_allowed(source_id, base_id)
         document_id = stable_id("document", source_id, "ones_work_item", record.external_id)
         documents = table(self.database, "document")
         revisions = table(self.database, "document_revision")
         current = self.database.execute_one(
-            f"select d.lifecycle_state,r.id,r.revision_no,r.content_hash,r.source_update_stamp_raw "
+            f"select d.lifecycle_state,d.document_kind,r.id,r.revision_no,r.content_hash,r.source_update_stamp_raw "
             f"from {documents} d join {revisions} r on r.id=d.current_revision_id where d.id=?",
             (document_id,),
         )
         if current and current["lifecycle_state"] != "active":
             raise ExportValidationError("knowledge_document_unavailable")
         outcome = "created" if current is None else "revised"
-        if current and current["content_hash"] == record.content_hash:
-            outcome = "unchanged"
-        elif current:
-            old_stamp = current["source_update_stamp_raw"]
-            new_stamp = record.values["source_update_stamp_raw"]
-            if old_stamp is not None and (new_stamp is None or new_stamp < old_stamp):
-                outcome = "stale"
-            elif old_stamp == new_stamp:
-                # 同一来源时间不同内容可能是输入冲突，不能靠导入先后猜测更新顺序。
-                raise ExportValidationError("knowledge_source_version_conflict")
+        if current:
+            outcome = compare_version(
+                old_stamp=current["source_update_stamp_raw"],
+                new_stamp=record.values["source_update_stamp_raw"],
+                old_hash=current["content_hash"],
+                new_hash=record.content_hash,
+                old_kind=current["document_kind"],
+                new_kind=kind,
+            )
+            if outcome != "stale" and current["document_kind"] != kind:
+                # 跨 KB 迁移由候选激活原子处理，不由单文件导入猜测其他库成员。
+                raise ExportValidationError("knowledge_type_change_requires_staging")
         if current is None:
             self._insert(
                 "document",
@@ -142,7 +178,7 @@ class ImportRepository:
                     "source_object_type": "ones_work_item",
                     "external_id": record.external_id,
                     "external_number": record.external_number,
-                    "document_kind": "defect",
+                    "document_kind": kind,
                     "lifecycle_state": "active",
                     "created_at": now(),
                     "last_seen_at": now(),
@@ -150,52 +186,24 @@ class ImportRepository:
             )
         if outcome in {"created", "revised"}:
             revision_id = str(uuid.uuid4())
-            self._insert(
-                "document_revision",
-                {
-                    "id": revision_id,
-                    "document_id": document_id,
-                    "revision_no": int(current["revision_no"]) + 1 if current else 1,
-                    "import_run_id": run_id,
-                    **record.values,
-                    "content_hash": record.content_hash,
-                    "ingested_at": now(),
-                },
+            save_revision(
+                self.database,
+                record,
+                source_id=source_id,
+                document_id=document_id,
+                revision_id=revision_id,
+                import_run_id=run_id,
+                revision_no=int(current["revision_no"]) + 1 if current else 1,
             )
             self.database.execute(
-                f"update {documents} set current_revision_id=?,document_kind='defect',external_number=? where id=?",
-                (revision_id, record.external_number, document_id),
+                f"update {documents} set current_revision_id=?,document_kind=?,external_number=? where id=?",
+                (revision_id, kind, record.external_number, document_id),
             )
-            for relation in record.relations:
-                key = digest({"owner": record.external_id, **relation})
-                target = self.database.execute_one(
-                    f"select id from {documents} where source_id=? and source_object_type='ones_work_item' and external_id=?",
-                    (source_id, relation["target_external_id"]),
-                )
-                self._insert(
-                    "document_relation",
-                    {
-                        "id": stable_id("relation", revision_id, key),
-                        "evidence_document_id": document_id,
-                        "evidence_revision_id": revision_id,
-                        "relation_key": key,
-                        "from_source_id": source_id,
-                        "from_object_type": "ones_work_item",
-                        "from_external_id": record.external_id,
-                        "from_document_id": document_id,
-                        "to_source_id": source_id,
-                        "to_object_type": "ones_work_item",
-                        "to_external_id": relation["target_external_id"],
-                        "to_document_id": target["id"] if target else None,
-                        "source_relation_type": relation["source_relation_type"],
-                        "source_direction": relation["source_direction"],
-                        "mapping_state": "unmapped",
-                        "observed_at": now(),
-                    },
-                )
         self.database.execute(
             f"update {documents} set last_seen_at=? where id=?", (now(), document_id)
         )
+        if outcome == "stale":
+            return outcome
         self._insert(
             "knowledge_base_document",
             {
@@ -235,6 +243,9 @@ class ImportRepository:
                 actual.get(r.external_id) == r.content_hash for r in prepared.records
             ),
         }
+        kind = prepared.manifest["document_kind"]
+        if kind != "defect":
+            result[f"{kind}_documents"] = sum(r["document_kind"] == kind for r in current)
         queries = {
             "source_revisions": (
                 f"select count(*) as n from {revisions} r join {documents} d on d.id=r.document_id where d.source_id=?",

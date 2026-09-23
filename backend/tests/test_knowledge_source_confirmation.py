@@ -159,7 +159,8 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
         if definition.version <= "137":
             shutil.copyfile(default_migrations_dir() / definition.name, path / definition.name)
     Migrator(db, path, migrator_build="confirmation-before").run()
-    import_rows(db, tmp_path, [export_row()])
+    from backend.tests.test_knowledge_chunks import import_historical_rows
+    import_historical_rows(db, tmp_path, [export_row()])
     source = db.execute_one(f"select id from {table(db, 'source')}")["id"]
     db.execute(
         f"insert into {table(db, 'source_binding')} "
@@ -292,12 +293,20 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
     )
     content = {name: db.execute(f"select * from {table(db, name)}") for name in data_tables}
     result = Migrator(db, default_migrations_dir(), migrator_build="confirmation-after").run()
-    assert result.applied == ("138", "139", "140")
+    assert result.applied == ("138", "139", "140", "141", "142", "143", "144")
     assert db.execute(f"select * from {table(db, 'source_binding')} order by id") == before
-    assert {name: db.execute(f"select * from {table(db, name)}") for name in data_tables} == content
+    after_content = {name: db.execute(f"select * from {table(db, name)}") for name in data_tables}
+    for row in after_content["document"]:
+        assert row.pop("source_observed_stamp_raw") is None
+    for row in after_content["vector_index"]:
+        assert row.pop("sync_run_id") is None
+        assert row.pop("source_id") is None
+        assert row.pop("unreferenced_at") is None
+    assert after_content == content
     migrated_history = {name: db.execute(f"select * from {table(db, name)}") for name in history}
     for row in migrated_history["retrieval_revision"]:
         assert row.pop("storage_config_json") is None
+        assert row.pop("configuration_version") == 0
     assert migrated_history == history
     assert db.execute_one("select binding_id from synthetic_source_reference") == {
         "binding_id": "verified"
@@ -353,7 +362,7 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
     )
     assert resources.resolve(index["knowledge_base_id"])
     assert store.get("retrieval_revision", "legacy-revision") == {
-        **history["retrieval_revision"][0], "storage_config_json": None,
+        **history["retrieval_revision"][0], "storage_config_json": None, "configuration_version": 0,
     }
     assert (
         store.get("retrieval_verification", "legacy-verification")

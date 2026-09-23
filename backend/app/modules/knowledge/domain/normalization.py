@@ -14,6 +14,7 @@ from typing import Any
 
 
 NORMALIZER_VERSION = "ones-offline-text/v1"
+WORK_ITEM_NORMALIZER_VERSION = "ones-work-item-text/v1"
 MAX_FILE_BYTES = 256 * 1024 * 1024
 MAX_ROW_BYTES = 2 * 1024 * 1024
 MAX_RECORDS = 200_000
@@ -190,6 +191,7 @@ class PreparedRecord:
     values: dict[str, Any]
     relations: tuple[dict[str, str], ...]
     content_hash: str
+    document_kind: str = "defect"
 
 
 @dataclass(frozen=True)
@@ -224,7 +226,16 @@ def _timestamp(value: Any) -> str | None:
         raise ExportValidationError("knowledge_timestamp_invalid") from None
 
 
-def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -> PreparedRecord:
+def _normalize(
+    row: dict[str, Any],
+    listing: dict[str, Any],
+    clean: Sanitizer,
+    *,
+    document_kind: str = "defect",
+) -> PreparedRecord:
+    if document_kind not in {"defect", "ticket", "requirement"}:
+        raise ExportValidationError("knowledge_document_kind_invalid")
+    typed = document_kind != "defect"
     external_id = identifier(row["uuid"])
     if row.get("summary") != listing.get("name") or row.get("number") != listing.get("number"):
         raise ExportValidationError("knowledge_list_detail_mismatch")
@@ -232,6 +243,8 @@ def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -
         raise ExportValidationError("knowledge_creation_time_mismatch")
     title = row.get("summary")
     body = row.get("desc")
+    if typed and body is None:
+        body = ""
     rich = row.get("desc_rich") or ""
     if (
         not isinstance(title, str)
@@ -247,9 +260,16 @@ def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -
         raise ExportValidationError("knowledge_list_scope_invalid")
     if sprint is not None and not isinstance(sprint, dict):
         raise ExportValidationError("knowledge_list_scope_invalid")
+    # 当前新类型导出用空对象字段表示未分配迭代；其他非法 UUID 不可吞掉。
+    if typed and sprint and sprint.get("uuid") in (None, "") and sprint.get("name") in (None, ""):
+        sprint = None
     parser = RichText()
     parser.feed(rich)
     safe_rich = clean.text("".join(parser.parts)).strip()
+    if typed and re.match(r"^\s*<(?:p|div|br|ul|ol|pre|h[1-6]|img|span)(?:\s|/?>)", body, re.I):
+        body_parser = RichText()
+        body_parser.feed(body)
+        body = "".join(body_parser.parts)
     fields = row.get("field_values")
     if not isinstance(fields, list):
         raise ExportValidationError("knowledge_fields_invalid")
@@ -277,6 +297,10 @@ def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -
             "export_id_mapping": "detail_display_values_joined_to_list_ids",
         }
     )
+    if typed:
+        attributes["document_kind"] = document_kind
+        attributes["source_issue_type_id"] = None
+        attributes["source_issue_type_identity"] = "display_only_not_collected"
     links = row.get("links") or []
     related = row.get("related_tasks") or []
     if not isinstance(links, list) or not isinstance(related, list):
@@ -340,10 +364,19 @@ def _normalize(row: dict[str, Any], listing: dict[str, Any], clean: Sanitizer) -
             "attachment_count": attachment_count,
             "inline_image_count": len(parser.images),
         },
-        "normalizer_version": NORMALIZER_VERSION,
+        "normalizer_version": WORK_ITEM_NORMALIZER_VERSION if typed else NORMALIZER_VERSION,
     }
-    if not values["title"].strip() or not values["body_text"].strip():
+    if not values["title"].strip() or (not typed and not values["body_text"].strip()):
         raise ExportValidationError("knowledge_text_empty")
+    if typed:
+        missing = not values["body_text"].strip()
+        values["completeness"]["description"] = "missing" if missing else "collected"
+        values["completeness"]["source_issue_type_id"] = "not_collected"
     return PreparedRecord(
-        external_id, str(row["number"]), values, tuple(relations.values()), digest(values)
+        external_id,
+        str(row["number"]),
+        values,
+        tuple(relations.values()),
+        digest(values),
+        document_kind,
     )

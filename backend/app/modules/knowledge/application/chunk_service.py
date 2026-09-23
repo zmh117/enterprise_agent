@@ -7,6 +7,7 @@ from typing import Any
 from app.modules.knowledge.domain.chunking import prepare_chunks
 from app.modules.knowledge.domain.normalization import ExportValidationError, canonical_json
 from app.modules.knowledge.application.ports import ChunkRepository
+from app.modules.knowledge.domain.work_items import DOCUMENT_KINDS
 
 
 class ChunkService:
@@ -60,7 +61,7 @@ class ChunkService:
                 input_digest = hashlib.sha256()
                 output_digest = hashlib.sha256()
                 for record in self.repository.rows(base_id, source_id):
-                    if record["document_kind"] != "defect":
+                    if record["document_kind"] not in DOCUMENT_KINDS:
                         raise ExportValidationError("knowledge_chunk_kind_unsupported")
                     input_digest.update(self._identity(record))
                     prepared = prepare_chunks(record, self.profile)

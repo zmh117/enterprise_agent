@@ -361,7 +361,7 @@ def test_real_postgres_migration_import_constraints_and_lock(tmp_path):
         result = Migrator(
             database, default_migrations_dir(), migrator_build="knowledge-postgres-test"
         ).run()
-        assert result.head == "140"
+        assert result.head == "144"
         assert (
             not Migrator(
                 database, default_migrations_dir(), migrator_build="knowledge-postgres-test"
@@ -372,7 +372,7 @@ def test_real_postgres_migration_import_constraints_and_lock(tmp_path):
         snapshot = schema_snapshot(database)
         assert "knowledge.document" in snapshot["tables"]
         comments = postgres_comment_snapshot(database)
-        assert sum(key.startswith("knowledge.") for key in comments["tables"]) == 15
+        assert sum(key.startswith("knowledge.") for key in comments["tables"]) == 18
         column_count = database.execute_one(
             "select count(*) as n from information_schema.columns where table_schema='knowledge'"
         )["n"]
@@ -381,9 +381,9 @@ def test_real_postgres_migration_import_constraints_and_lock(tmp_path):
         source_id = stable_id("source", source_code)
         base_code = f"synthetic_{uuid.uuid4().hex}"
         service = KnowledgeImportService(ImportRepository(database))
-        with service._source_lock(source_id):
+        with service.repository.source_lock(source_id):
             with pytest.raises(ExportValidationError, match="knowledge_source_import_busy"):
-                with KnowledgeImportService(ImportRepository(contender))._source_lock(source_id):
+                with ImportRepository(contender).source_lock(source_id):
                     pytest.fail("second connection must not acquire the source lock")
         first = prepare(tmp_path, [export_row(target="synthetic_item_2")])
         imported = service.import_export(

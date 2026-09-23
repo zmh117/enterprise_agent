@@ -48,7 +48,8 @@
 
 - [MCP Inspector 开发测试](development/mcp-inspector.md)
 - [Task File Workspace Sandbox 容量基线](verification/task-file-workspace-sandbox-capacity.md)
-- [ChatGPT 项目上下文（单文件）](reference/enterprise-agent-project-context-for-chatgpt.md)
+
+- [ChatGPT 系统设计上下文：架构、表设计与数据流](reference/enterprise-agent-system-design-for-chatgpt.md)
 - [ADR 状态索引](reference/decisions/README.md)
 
 ## 历史归档

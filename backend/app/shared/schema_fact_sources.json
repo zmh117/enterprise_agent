@@ -9,6 +9,93 @@
   },
   "entries": [
     {
+      "id": "knowledge.sync_binding",
+      "object_type": "table",
+      "table": "knowledge.sync_binding",
+      "owner": "knowledge",
+      "semantics": "固定来源、三类知识库和资源引用的同步配置；默认停用，不含认证明文",
+      "classification": "canonical_mutable_fact",
+      "canonical_source": "显式受管同步配置和候选阶段事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/sync_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/sync_repository.py"
+      ],
+      "lifecycle": "运行仅完整验证后激活；失败保留恢复状态，配置变化拒绝旧候选",
+      "retention_policy": "候选与审计事实保留，不自动删除原始修订",
+      "audit_requirement": "仅记录标识、版本、计数和安全失败码；不记录正文或认证值",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代同步事实源须明确迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:142_expand_knowledge_sync_candidates"
+      ]
+    },
+    {
+      "id": "knowledge.sync_run",
+      "object_type": "table",
+      "table": "knowledge.sync_run",
+      "owner": "knowledge",
+      "semantics": "来源排他运行、阶段和检查点；激活前不推进水位",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "显式受管同步配置和候选阶段事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/sync_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/sync_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/candidate_corpus.py",
+        "code:backend/app/modules/knowledge/infrastructure/generation_repository.py"
+      ],
+      "lifecycle": "运行仅完整验证后激活；失败保留恢复状态，配置变化拒绝旧候选",
+      "retention_policy": "候选与审计事实保留，不自动删除原始修订",
+      "audit_requirement": "仅记录标识、版本、计数和安全失败码；不记录正文或认证值",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代同步事实源须明确迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:142_expand_knowledge_sync_candidates"
+      ]
+    },
+    {
+      "id": "knowledge.sync_candidate",
+      "object_type": "table",
+      "table": "knowledge.sync_candidate",
+      "owner": "knowledge",
+      "semantics": "冻结基线与候选修订引用，不复制正文、不提前生效",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "显式受管同步配置和候选阶段事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/sync_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/sync_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/candidate_corpus.py"
+      ],
+      "lifecycle": "运行仅完整验证后激活；失败保留恢复状态，配置变化拒绝旧候选",
+      "retention_policy": "候选与审计事实保留，不自动删除原始修订",
+      "audit_requirement": "仅记录标识、版本、计数和安全失败码；不记录正文或认证值",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代同步事实源须明确迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:142_expand_knowledge_sync_candidates"
+      ]
+    },
+    {
       "id": "rbac_role_application_knowledge_base",
       "object_type": "table",
       "table": "rbac_role_application_knowledge_base",
@@ -88,7 +175,7 @@
       "owner": "knowledge",
       "semantics": "知识检索资源不可变配置版本；编辑创建新版本",
       "classification": "immutable_snapshot",
-      "source_contract": "配置修订固定知识内容连接、凭据引用、来源、成员和索引；平台治理留在平台库，索引引用通过用例校验跨实例归属；NULL 连接配置保留旧发布摘要与原部署连接，不含凭据明文",
+      "source_contract": "配置修订固定知识内容连接、凭据引用、来源、成员和索引；平台治理留在平台库；版本 0 保留历史 2/3 摘要判定，版本 4 仅覆盖所选 KB 的成员及类型；旧发布只能显式核验接续，不含凭据明文",
       "canonical_source": "显式知识资源管理操作及固定来源和索引版本",
       "writers": [
         "code:backend/app/modules/knowledge/infrastructure/governance_repository.py"
@@ -108,7 +195,8 @@
       },
       "evidence_refs": [
         "migration:137_expand_knowledge_retrieval_governance",
-        "migration:140_expand_knowledge_storage_connections"
+        "migration:140_expand_knowledge_storage_connections",
+        "migration:144_expand_knowledge_configuration_version"
       ]
     },
     {
@@ -172,13 +260,17 @@
       "classification": "operational_coordination_fact",
       "canonical_source": "knowledge.document_chunk and versioned local embedding profile",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/candidate_corpus.py",
+        "code:backend/app/modules/knowledge/infrastructure/generation_repository.py"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/vector_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/candidate_corpus.py",
+        "code:backend/app/modules/knowledge/infrastructure/generation_repository.py"
       ],
-      "lifecycle": "显式索引版本；BUILDING 完整核验后 READY，中断可恢复，版本变化不覆盖",
-      "retention_policy": "不自动删除；清理须明确授权并核对依赖",
+      "lifecycle": "显式索引版本；BUILDING 完整核验后 READY，可信空库允许 0 点；同步索引绑定 run 和 source，回收后标记 RETIRED 而不删事实",
+      "retention_policy": "手工索引不自动清理；仅同步归属 collection 可在保护所有发布/草稿、活跃来源及最近两个成功代际后，等待至少 10 分钟并在来源锁内复查引用后回收；保留数据库事实",
       "audit_requirement": "仅计数、标识、摘要、固定错误码；不得输出正文或向量",
       "retirement": {
         "status": "retained",
@@ -189,6 +281,7 @@
       },
       "evidence_refs": [
         "migration:134_expand_knowledge_vector_indexes",
+        "migration:143_expand_knowledge_vector_generations",
         "platform-operations:本机知识向量索引必须绑定固定语料和模型版本"
       ]
     },
@@ -375,14 +468,15 @@
       "semantics": "跨知识库复用的来源文档稳定身份，类型变化不改变身份",
       "classification": "canonical_mutable_fact",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/sync_repository.py"
       ],
       "readers": [
         "code:backend/app/modules/knowledge/infrastructure/import_repository.py",
         "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py",
         "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
-      "lifecycle": "受限离线存储；无 Agent、MCP 或用户读取入口",
+      "lifecycle": "新候选为 pending 且无 current 修订；候选保存不改当前类型、收录或观察水位，正式激活用例尚待实现",
       "retention_policy": "知识存储保留策略；后续删除须独立治理，不跟随临时 Agent Job 清理",
       "audit_requirement": "仅记录批次、计数、哈希、机器错误码；不记录正文、URL 或凭据",
       "retirement": {
@@ -394,6 +488,7 @@
       },
       "evidence_refs": [
         "migration:131_expand_knowledge_text_storage",
+        "migration:142_expand_knowledge_sync_candidates",
         "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
       ]
     },
@@ -404,12 +499,14 @@
       "owner": "knowledge",
       "semantics": "受限来源快照和规范化内容的不可变版本；不含可访问 URL 或认证信息",
       "classification": "immutable_snapshot",
-      "source_contract": "ones-offline-text/v1：安全清洗的离线详情/list 快照，非已授权在线事实",
+      "source_contract": "ones-offline-text/v1 或 ones-work-item-text/v1：安全清洗的离线详情/list 快照，保留真实子类型；候选版本不代表已激活或已授权在线事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/revision_store.py"
       ],
       "readers": [
         "code:backend/app/modules/knowledge/infrastructure/import_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/sync_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/candidate_corpus.py",
         "code:backend/app/modules/knowledge/infrastructure/chunk_repository.py",
         "code:backend/app/modules/knowledge/infrastructure/vector_repository.py"
       ],
@@ -467,7 +564,8 @@
       "classification": "derived_projection",
       "canonical_source": "knowledge.document_revision.source_snapshot",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/import_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/import_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/revision_store.py"
       ],
       "readers": [
         "code:backend/app/modules/knowledge/infrastructure/import_repository.py"

@@ -18,6 +18,187 @@ prepared = prepared_fixture
 ACTOR = "synthetic_admin"
 
 
+def legacy_publication(fixture, *, explicit_storage=False):
+    """合成旧摘要发布，不能用来改写正式发布。"""
+    from backend.tests.test_knowledge_storage_connections import connection, SyntheticContentAccess
+
+    db, vector, service, resource, _, _ = fixture
+    if explicit_storage:
+        service.content_access = SyntheticContentAccess(db, vector)
+        saved = service.save_draft(
+            actor_id=ACTOR,
+            resource_id=resource["id"],
+            expected_revision=service.view(resource["id"])["revision"],
+            index_id=vector.repository.get("synthetic-v1")["id"],
+            storage=connection(),
+        )
+        verified = service.verify_draft(
+            actor_id=ACTOR, resource_id=resource["id"], expected_revision=saved["revision"]
+        )
+        current = service.publish(
+            actor_id=ACTOR, resource_id=resource["id"], expected_revision=verified["revision"]
+        )
+    else:
+        current = publish(fixture)
+    old_config, source, _ = service._configuration(
+        current,
+        current["published"]["index_id"],
+        storage=connection() if explicit_storage else None,
+        version=0,
+    )
+    db.execute(
+        'update "knowledge.retrieval_revision" set config_hash=?,configuration_version=0 where id=?',
+        (old_config["config_hash"], current["published"]["id"]),
+    )
+    db.execute(
+        'update "knowledge.retrieval_verification" set config_hash=? where revision_id=?',
+        (old_config["config_hash"], current["published"]["id"]),
+    )
+    return service.view(resource["id"]), source["id"]
+
+
+@pytest.mark.parametrize("explicit_storage", [False, True])
+def test_explicit_scope_upgrade_preserves_old_revision_index_and_connection(
+    resources, explicit_storage
+):
+    from copy import deepcopy
+    from app.modules.knowledge.application.scope_upgrade import KnowledgeScopeUpgrade
+
+    db, vector, service, resource, _, _ = resources
+    current, source_id = legacy_publication(resources, explicit_storage=explicit_storage)
+    old_revision = deepcopy(current["published"])
+    old_proof = deepcopy(service.store.verification(old_revision["id"]))
+    old_points, encoded = deepcopy(vector.qdrant.points), vector.embedding.encoded
+    result = KnowledgeScopeUpgrade(service).run(
+        actor_id=ACTOR, source_id=source_id, expected_resources={current["id"]: current["revision"]}
+    )
+    assert result == {"checked": 1, "upgraded": 1}
+    after = service.view(resource["id"])
+    assert after["draft"] is None and after["published"]["configuration_version"] == 4
+    assert after["published"]["index_id"] == old_revision["index_id"]
+    assert after["published"]["storage_config_json"] == old_revision["storage_config_json"]
+    stored_old = service.store.get("retrieval_revision", old_revision["id"])
+    old_revision.pop("storage", None)  # view 的非持久投影。
+    assert stored_old == old_revision
+    assert service.store.verification(old_revision["id"]) == old_proof
+    assert service.store.verification(after["published"]["id"])["id"] != old_proof["id"]
+    assert vector.qdrant.points == old_points and vector.embedding.encoded == encoded
+    assert service.resolve(resource["knowledge_base_id"])
+    assert KnowledgeScopeUpgrade(service).run(
+        actor_id=ACTOR, source_id=source_id, expected_resources={after["id"]: after["revision"]}
+    ) == {"checked": 1, "upgraded": 0}
+    assert db.execute("select * from rbac_role_application_knowledge_base") == []
+
+
+@pytest.mark.parametrize("conflict", ["scope", "draft", "disabled", "point", "unknown_hash"])
+def test_scope_upgrade_fails_without_changing_publication(resources, conflict):
+    from app.modules.knowledge.application.scope_upgrade import KnowledgeScopeUpgrade
+
+    db, vector, service, resource, _, _ = resources
+    current, source_id = legacy_publication(resources)
+    expected = {current["id"]: current["revision"]}
+    if conflict == "scope":
+        expected["not_in_scope"] = 1
+    elif conflict == "draft":
+        draft(resources)
+    elif conflict == "disabled":
+        service.set_status(
+            actor_id=ACTOR,
+            resource_id=current["id"],
+            expected_revision=current["revision"],
+            status="disabled",
+        )
+    elif conflict == "point":
+        next(iter(vector.qdrant.points.values()))["payload"]["revision_id"] = (
+            "synthetic_bad_revision"
+        )
+    else:
+        db.execute(
+            'update "knowledge.retrieval_revision" set config_hash=? where id=?',
+            ("f" * 64, current["published"]["id"]),
+        )
+    before = service.view(resource["id"])
+    with pytest.raises(KnowledgeGovernanceError):
+        KnowledgeScopeUpgrade(service).run(
+            actor_id=ACTOR, source_id=source_id, expected_resources=expected
+        )
+    assert service.view(resource["id"]) == before
+
+
+def test_scoped_publication_ignores_other_kb_changes_but_checks_own_kind(resources, tmp_path):
+    from app.modules.knowledge.application.import_service import KnowledgeImportService
+    from app.modules.knowledge.infrastructure.import_repository import ImportRepository
+    from backend.tests.test_knowledge_work_item_types import prepare, typed_row
+
+    db, _, service, resource, _, _ = resources
+    KnowledgeImportService(ImportRepository(db)).import_export(
+        prepare(tmp_path, [typed_row("ticket", index=3)], "ticket"),
+        source_code="synthetic_source",
+        knowledge_base_code="synthetic_tickets",
+    )
+    published = publish(resources)
+    assert published["published"]["configuration_version"] == 4
+    pin = service.resolve(resource["knowledge_base_id"])
+    db.execute(
+        'update "knowledge.document_revision" set content_hash=? where document_id in (select id from "knowledge.document" where external_id=?)',
+        ("b" * 64, "synthetic_item_3"),
+    )
+    service.recheck(pin)
+    db.execute(
+        "update \"knowledge.document\" set document_kind='ticket' where external_id=?",
+        ("synthetic_item_1",),
+    )
+    with pytest.raises(KnowledgeGovernanceError):
+        service.recheck(pin)
+
+
+def test_draft_mutation_obeys_same_source_lock_as_import_and_retention(resources):
+    db, vector, service, resource, _, _ = resources
+    source_id = db.execute_one('select id from "knowledge.source"')["id"]
+    before = service.view(resource["id"])
+    with service.store.source_lock(source_id):
+        with pytest.raises(KnowledgeGovernanceError, match="knowledge_verification_busy"):
+            service.save_draft(
+                actor_id=ACTOR,
+                resource_id=resource["id"],
+                expected_revision=before["revision"],
+                index_id=vector.repository.get("synthetic-v1")["id"],
+            )
+    assert service.view(resource["id"]) == before
+
+
+def test_scope_upgrade_rejects_concurrent_disable_after_independent_verification(
+    resources, monkeypatch
+):
+    from app.modules.knowledge.application.scope_upgrade import KnowledgeScopeUpgrade
+
+    _, vector, service, resource, _, _ = resources
+    before, source_id = legacy_publication(resources)
+    check, interrupted = vector.qdrant.check, False
+
+    def disable_once(index):
+        nonlocal interrupted
+        check(index)
+        if not interrupted:
+            interrupted = True
+            service.set_status(
+                actor_id=ACTOR,
+                resource_id=resource["id"],
+                expected_revision=before["revision"],
+                status="disabled",
+            )
+
+    monkeypatch.setattr(vector.qdrant, "check", disable_once)
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_revision_conflict"):
+        KnowledgeScopeUpgrade(service).run(
+            actor_id=ACTOR,
+            source_id=source_id,
+            expected_resources={before["id"]: before["revision"]},
+        )
+    after = service.view(resource["id"])
+    assert after["status"] == "disabled" and after["published"] == before["published"]
+
+
 @pytest.fixture
 def resources(governance):
     db, vector, snapshot, sources, permission, _, _ = governance

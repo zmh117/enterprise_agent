@@ -7,7 +7,8 @@ from dataclasses import asdict
 import json
 
 from app.modules.knowledge.application.chunk_service import ChunkService
-from app.modules.knowledge.domain.chunking import prepare_chunks
+from app.modules.knowledge.domain.chunking import prepare_chunks, profile_for_kind
+from app.modules.knowledge.domain.work_items import DOCUMENT_KINDS, DEFAULT_BASE_CODES
 from app.modules.knowledge.domain.normalization import NORMALIZER_VERSION, ExportValidationError
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
@@ -16,7 +17,8 @@ from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="清洗分块并保存待向量化文本，不调用模型")
-    parser.add_argument("--knowledge-base-code", default="ones-defects-offline")
+    parser.add_argument("--knowledge-base-code")
+    parser.add_argument("--document-kind", choices=sorted(DOCUMENT_KINDS), default="defect")
     parser.add_argument("--expected-count", type=int, default=5000)
     parser.add_argument("--commit", action="store_true")
     parser.add_argument("--demo", action="store_true", help="仅输出内置合成示例，不访问数据库")
@@ -53,8 +55,10 @@ def main(argv: list[str] | None = None) -> int:
             validator.require_current()
         else:
             validator.require_current_or_previous(allowed_previous_heads=frozenset({"132", "133"}))
-        result = ChunkService(ChunkRepository(database)).run(
-            knowledge_base_code=args.knowledge_base_code,
+        result = ChunkService(
+            ChunkRepository(database, profile=profile_for_kind(args.document_kind))
+        ).run(
+            knowledge_base_code=args.knowledge_base_code or DEFAULT_BASE_CODES[args.document_kind],
             expected_count=args.expected_count,
             commit=args.commit,
             progress=lambda counts: print(

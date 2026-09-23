@@ -9,9 +9,12 @@ from typing import Any
 
 from app.modules.knowledge.domain.normalization import (
     NORMALIZER_VERSION,
+    WORK_ITEM_NORMALIZER_VERSION,
     ExportValidationError,
     digest,
 )
+from app.modules.knowledge.domain.work_items import check_offline_type, document_kind
+from app.modules.knowledge.domain.keep_ids import KEEP_IDS_NORMALIZER
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,18 @@ class ChunkProfile:
 
 
 DEFAULT_PROFILE = ChunkProfile()
+WORK_ITEM_PROFILE = ChunkProfile(
+    version="ones-work-item-chunks/v1", template_version="ones-work-item-context/v1"
+)
+KEEP_IDS_PROFILE = ChunkProfile(
+    version="ones-keep-ids-hybrid-chunks/v1", template_version="ones-keep-ids-context/v1"
+)
+
+
+def profile_for_kind(kind: str) -> ChunkProfile:
+    return DEFAULT_PROFILE if document_kind(kind) == "defect" else WORK_ITEM_PROFILE
+
+
 CHUNK_VALUE_COLUMNS = (
     "ordinal",
     "chunk_kind",
@@ -174,6 +189,8 @@ def _context(
             cropped = True
         pieces.append(f"{label}：{text}")
 
+    if record.get("normalizer_version") in {WORK_ITEM_NORMALIZER_VERSION, KEEP_IDS_NORMALIZER}:
+        add("类型", record["attributes"].get("source_issue_type_display"), 40)
     add("标题", record["title"], 200)
     if kind == "solution":
         add("问题片段", body, 180)
@@ -205,11 +222,18 @@ class PreparedChunks:
         return digest(asdict(self))
 
 
-def prepare_chunks(
-    record: dict[str, Any], profile: ChunkProfile = DEFAULT_PROFILE
-) -> PreparedChunks:
+def prepare_chunks(record: dict[str, Any], profile: ChunkProfile | None = None) -> PreparedChunks:
+    keep_ids = record.get("normalizer_version") == KEEP_IDS_NORMALIZER
+    typed = keep_ids or record.get("normalizer_version") == WORK_ITEM_NORMALIZER_VERSION
+    profile = profile or (
+        KEEP_IDS_PROFILE if keep_ids else WORK_ITEM_PROFILE if typed else DEFAULT_PROFILE
+    )
     profile.validate()
-    if record.get("normalizer_version") != NORMALIZER_VERSION:
+    if record.get("normalizer_version") not in {
+        NORMALIZER_VERSION,
+        WORK_ITEM_NORMALIZER_VERSION,
+        KEEP_IDS_NORMALIZER,
+    }:
         raise ExportValidationError("knowledge_chunk_source_profile_unsupported")
     if (
         not isinstance(record.get("body_text"), str)
@@ -218,10 +242,24 @@ def prepare_chunks(
         or not isinstance(record.get("completeness"), dict)
     ):
         raise ExportValidationError("knowledge_chunk_source_invalid")
+    if typed:
+        kind = record["attributes"].get("document_kind")
+        kinds = {"defect", "ticket", "requirement"} if keep_ids else {"ticket", "requirement"}
+        if kind not in kinds or record.get("document_kind", kind) != kind:
+            raise ExportValidationError("knowledge_chunk_kind_unsupported")
+        check_offline_type(kind, record["attributes"].get("source_issue_type_display"))
+        expected_profile = KEEP_IDS_PROFILE if keep_ids else WORK_ITEM_PROFILE
+        if profile.template_version != expected_profile.template_version:
+            raise ExportValidationError("knowledge_chunk_source_profile_unsupported")
+    elif profile.template_version in {
+        WORK_ITEM_PROFILE.template_version,
+        KEEP_IDS_PROFILE.template_version,
+    }:
+        raise ExportValidationError("knowledge_chunk_source_profile_unsupported")
     if len(record["body_text"]) > 2 * 1024 * 1024:
         raise ExportValidationError("knowledge_chunk_source_limit")
     body = clean_text(record["body_text"])
-    if not body.strip():
+    if not body.strip() and not typed:
         raise ExportValidationError("knowledge_chunk_body_empty")
     raw_solution = record["attributes"].get("solution_text")
     solution = clean_text(raw_solution) if isinstance(raw_solution, str) else ""
@@ -238,6 +276,15 @@ def prepare_chunks(
         solution_state = "duplicates_body"
     fields = {"body_text": body, "attributes.solution_text": solution}
     base_flags: list[str] = []
+    primary = "body_text"
+    if typed and not body.strip():
+        primary = "title"
+        fields["title"] = clean_text(record["title"])
+        if not fields["title"].strip():
+            raise ExportValidationError("knowledge_chunk_source_invalid")
+        base_flags.append("description_missing")
+        if solution_state != "included":
+            base_flags.append("title_only")
     completeness = record["completeness"]
     if completeness.get("inline_image_count", 0) > 0:
         base_flags.append("images_not_collected")
@@ -246,15 +293,16 @@ def prepare_chunks(
     if completeness.get("attachment_count", 0) > 0:
         base_flags.append("attachments_not_collected")
     chunks: list[dict[str, Any]] = []
-    for field, kind in (("body_text", "problem"), ("attributes.solution_text", "solution")):
+    for field, kind in ((primary, "problem"), ("attributes.solution_text", "solution")):
         if kind == "solution" and solution_state != "included":
             continue
         context, cropped = _context(record, body, kind, profile)
         for start, end, flags in _ranges(fields[field], profile):
             evidence = fields[field][start:end]
-            embedding = (
-                f"{context}\n{'问题证据' if kind == 'problem' else '解决方案证据'}：\n{evidence}"
-            )
+            label = "问题证据" if kind == "problem" else "解决方案证据"
+            if typed and kind == "problem":
+                label = "标题证据" if field == "title" else "工作项描述证据"
+            embedding = f"{context}\n{label}：\n{evidence}"
             chunks.append(
                 {
                     "ordinal": len(chunks),
@@ -312,10 +360,14 @@ def validate_chunks(prepared: PreparedChunks, profile: ChunkProfile = DEFAULT_PR
             and chunk["embedding_hash"] == digest(chunk["embedding_text"])
         )
         require(chunk["embedding_text"].endswith(text))
-        require(chunk["chunk_kind"] == ("problem" if field == "body_text" else "solution"))
+        require(
+            chunk["chunk_kind"] == ("problem" if field in {"body_text", "title"} else "solution")
+        )
         cursors[field] = end
     require(bool(prepared.chunks))
     require(not fields["body_text"][cursors["body_text"] :].strip())
+    if "title" in fields:
+        require(not fields["title"][cursors["title"] :].strip())
     if prepared.quality["solution_state"] == "included":
         require(
             not fields["attributes.solution_text"][cursors["attributes.solution_text"] :].strip()

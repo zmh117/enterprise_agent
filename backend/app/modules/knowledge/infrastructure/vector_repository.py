@@ -10,6 +10,7 @@ from app.modules.knowledge.domain.evaluation import EvaluationDataset, Evaluatio
 import uuid
 
 from app.modules.knowledge.domain.normalization import identifier
+from app.modules.knowledge.domain.work_items import DOCUMENT_KINDS
 from app.modules.knowledge.infrastructure.storage import insert, table, source_lock
 from app.modules.knowledge.domain.identity import now, stable_id
 from app.modules.knowledge.domain.vector_contract import VectorError, fingerprint
@@ -69,7 +70,7 @@ class VectorRepository:
                 return
             for row in rows:
                 if (
-                    row["document_kind"] != "defect"
+                    row["document_kind"] not in DOCUMENT_KINDS
                     or row["source_content_hash"] != row["content_hash"]
                     or fingerprint(row["embedding_text"]) != row["embedding_hash"]
                     or fingerprint(row["evidence_text"]) != row["evidence_hash"]
@@ -99,19 +100,30 @@ class VectorRepository:
         self, base_id: str, chunk_profile: str, documents: int, chunks: int
     ) -> dict[str, Any]:
         if (
-            not 1 <= documents <= 200_000
+            type(documents) is not int
+            or type(chunks) is not int
+            or not 0 <= documents <= 200_000
             or not documents <= chunks <= 2_000_000
+            or (documents == 0 and chunks != 0)
             or len(chunk_profile) != 64
         ):
             raise VectorError("knowledge_vector_expected_count_invalid")
+        if self._document_count(base_id) != documents:
+            raise VectorError("knowledge_vector_count_mismatch")
+        return self._snapshot_chunks(base_id, chunk_profile, documents, chunks)
+
+    def _document_count(self, base_id: str) -> int:
         count = self.database.execute_one(
             f"select count(*) as n from {self.t('knowledge_base_document')} m "
             f"join {self.t('document')} d on d.id=m.document_id "
             "where m.knowledge_base_id=? and m.state='included' and d.lifecycle_state='active'",
             (base_id,),
         )
-        if not count or count["n"] != documents:
-            raise VectorError("knowledge_vector_count_mismatch")
+        return int(count["n"]) if count else 0
+
+    def _snapshot_chunks(
+        self, base_id: str, chunk_profile: str, documents: int, chunks: int
+    ) -> dict[str, Any]:
         digest = hashlib.sha256()
         sets: dict[str, tuple[int, int]] = {}
         seen_documents: set[str] = set()
@@ -170,7 +182,7 @@ class VectorRepository:
         with self.database.unit_of_work():
             found = self.get(code)
             if found:
-                if any(found[k] != v for k, v in values.items()):
+                if found["state"] == "RETIRED" or any(found[k] != v for k, v in values.items()):
                     raise VectorError("knowledge_vector_index_conflict")
                 return found
             insert(
@@ -185,6 +197,44 @@ class VectorRepository:
                 },
             )
         return {**values, "state": "BUILDING"}
+
+    def reusable_rows(
+        self, index: dict[str, Any], embedding_hashes: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        if not embedding_hashes:
+            return {}
+        if len(embedding_hashes) > 32:
+            raise VectorError("knowledge_vector_batch_invalid")
+        # 每个文本摘要最多选一个明确旧索引中的已核验点；不扫描其他知识库。
+        rows = self.database.execute(
+            "select * from (select c.*,s.document_id,s.document_revision_id,s.source_content_hash,"
+            "s.profile_hash as chunk_profile_hash,s.profile_config,r.content_hash,i.point_id,"
+            "row_number() over(partition by c.embedding_hash order by c.id) as ordinal_for_hash "
+            f"from {self.t('vector_index_item')} i join {self.t('document_chunk')} c on c.id=i.chunk_id "
+            f"join {self.t('document_chunk_set')} s on s.id=c.chunk_set_id "
+            f"join {self.t('document_revision')} r on r.id=s.document_revision_id and r.document_id=s.document_id "
+            "where i.index_id=? and i.state='INDEXED' and i.embedding_text_hash=c.embedding_hash "
+            f"and c.embedding_hash in ({','.join('?' for _ in embedding_hashes)})) candidates where ordinal_for_hash=1",
+            (index["id"], *embedding_hashes),
+        )
+        result = {}
+        for row in rows:
+            config = (
+                json.loads(row["profile_config"])
+                if isinstance(row["profile_config"], str)
+                else row["profile_config"]
+            )
+            if (
+                row["chunk_profile_hash"] != index["chunk_profile_hash"]
+                or fingerprint(config) != row["chunk_profile_hash"]
+                or row["source_content_hash"] != row["content_hash"]
+                or fingerprint(row["embedding_text"]) != row["embedding_hash"]
+                or fingerprint(row["evidence_text"]) != row["evidence_hash"]
+                or row["point_id"] != point_id(index, row)
+            ):
+                raise VectorError("knowledge_vector_reuse_invalid")
+            result[row["embedding_hash"]] = row
+        return result
 
     def manifest(self, index: dict[str, Any]) -> None:
         # 每页短事务；中断后补齐。全部完成前不接触 Qdrant。

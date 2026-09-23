@@ -6,8 +6,19 @@ from typing import Any
 
 from app.modules.knowledge.domain.vector_points import batches, payload, point_id
 from app.modules.knowledge.application.ports import EmbeddingPort, QdrantPort, VectorRepository
-from app.modules.knowledge.domain.vector_contract import MAX_BATCH_TOKENS, VectorError, fingerprint
+from app.modules.knowledge.domain.vector_contract import (
+    MAX_BATCH_TOKENS,
+    VectorError,
+    fingerprint,
+    validate_vector,
+)
 from app.modules.knowledge.application.candidates import current_documents
+from app.modules.knowledge.domain.hybrid import (
+    HYBRID_CONTRACT,
+    hybrid_index,
+    lexical_input,
+    validate_sparse,
+)
 
 
 class VectorService:
@@ -35,8 +46,29 @@ class VectorService:
                 yield group, tokens
 
     def preflight(self, snapshot: dict[str, Any], *, benchmark: bool = False) -> dict[str, Any]:
-        self.embedding.check()
         repo = self.repository
+        if snapshot["expected_chunk_count"] == 0:
+            repo.assert_current(snapshot)
+            return {
+                "mode": "benchmark" if benchmark else "preflight",
+                **snapshot,
+                "profile_hash": fingerprint(repo.profile),
+                "token_counts": {"total": 0, "min": 0, "max": 0, "p50": 0, "p95": 0},
+                **(
+                    {
+                        "benchmark": {
+                            "chunks": 0,
+                            "seconds": 0,
+                            "chunks_per_second": 0,
+                            "batch_seconds_max": 0,
+                            "estimated_full_seconds": 0,
+                        }
+                    }
+                    if benchmark
+                    else {}
+                ),
+            }
+        self.embedding.check()
         lengths: list[tuple[int, str]] = []
         tokens: list[int] = []
         for rows, counts in self.grouped(
@@ -103,6 +135,10 @@ class VectorService:
                 missing.append(row)
             elif found.get("payload") != payload(index, row):
                 raise VectorError("knowledge_vector_point_conflict")
+            else:
+                validate_vector(found.get("vector"))
+                if hybrid_index(index):
+                    validate_sparse(found.get("sparse_vector"))
         return missing
 
     def build(
@@ -111,9 +147,15 @@ class VectorService:
         snapshot: dict[str, Any],
         *,
         progress: Callable[[dict[str, int]], None] | None = None,
+        reuse_from_code: str | None = None,
+        capacity_check: Callable[[int], None] | None = None,
     ) -> dict[str, Any]:
         repo = self.repository
-        self.embedding.check()
+        if snapshot["expected_chunk_count"]:
+            self.embedding.check()
+        previous = self._reuse_source(snapshot, reuse_from_code)
+        if previous is not None and previous["code"] == code:
+            raise VectorError("knowledge_vector_reuse_invalid")
         with repo.source_lock("vector-index:" + code):
             index = repo.create(code, snapshot)
             repo.state(index, "BUILDING")
@@ -121,12 +163,22 @@ class VectorService:
             started = time.monotonic()
             try:
                 repo.manifest(index)
+                if capacity_check is not None:
+                    capacity_check(0)
                 self.qdrant.ensure(index)
                 for rows in batches(
                     repo.rows(index["knowledge_base_id"], index["chunk_profile_hash"]), 32
                 ):
+                    if capacity_check is not None:
+                        capacity_check(
+                            max(0, index["expected_chunk_count"] - self.qdrant.count(index))
+                        )
                     missing = self._verify_points(index, rows)
                     reused += len(rows) - len(missing)
+                    if previous is not None and missing:
+                        original_missing = len(missing)
+                        missing = self._copy_reusable(previous, index, missing)
+                        reused += original_missing - len(missing)
                     for group, counts in self.grouped(iter(missing)):
                         repo.checkpoint(index, group, "PENDING", attempted=True)
                         try:
@@ -142,6 +194,7 @@ class VectorService:
                                         "id": point_id(index, row),
                                         "payload": payload(index, row),
                                         "vector": vector,
+                                        **lexical_input(index, row),
                                     }
                                     for row, vector in zip(group, result["vectors"], strict=True)
                                 ],
@@ -195,13 +248,100 @@ class VectorService:
                 repo.state(index, "FAILED", code)
                 raise VectorError(code) from None
 
-    def query(self, code: str, base_code: str, query: str, *, top_k: int = 10) -> dict[str, Any]:
+    def _reuse_source(self, snapshot: dict[str, Any], code: str | None) -> dict[str, Any] | None:
+        if code is None:
+            return None
+        previous = self.repository.get(code)
+        if (
+            not previous
+            or previous["state"] != "READY"
+            or previous["knowledge_base_id"] != snapshot["knowledge_base_id"]
+        ):
+            raise VectorError("knowledge_vector_reuse_invalid")
+        if fingerprint(previous["profile"]) != previous["profile_hash"]:
+            raise VectorError("knowledge_vector_reuse_invalid")
+        if (
+            previous["profile"] != self.repository.profile
+            or previous["chunk_profile_hash"] != snapshot["chunk_profile_hash"]
+        ):
+            # 已明确的模型或模板变化只能重新编码，不能跨配置复用数值。
+            return None
+        self.qdrant.check(previous)
+        if self.qdrant.count(previous) != previous["expected_chunk_count"]:
+            raise VectorError("knowledge_vector_reuse_invalid")
+        return previous
+
+    def verify(self, index: dict[str, Any]) -> str:
+        """维护接续用逐点只读验证；不编码，不修改索引状态。"""
+        repo = self.repository
+        if (
+            index["state"] != "READY"
+            or index["profile"] != repo.profile
+            or index["profile_hash"] != fingerprint(repo.profile)
+        ):
+            raise VectorError("knowledge_vector_index_not_ready")
+        repo.assert_current(index)
+        if index["expected_chunk_count"]:
+            self.embedding.check()
+        self.qdrant.check(index)
+        verified = 0
+        for rows in batches(repo.rows(index["knowledge_base_id"], index["chunk_profile_hash"]), 32):
+            if self._verify_points(index, rows):
+                raise VectorError("knowledge_vector_points_missing")
+            verified += len(rows)
+        if verified != index["expected_chunk_count"] or self.qdrant.count(index) != verified:
+            raise VectorError("knowledge_vector_count_mismatch")
+        repo.assert_current(index)
+        return fingerprint(
+            {
+                "index_id": index["id"],
+                "profile_hash": index["profile_hash"],
+                "corpus_hash": index["corpus_hash"],
+                "verified_points": verified,
+            }
+        )
+
+    def _copy_reusable(
+        self, previous: dict[str, Any], index: dict[str, Any], rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        reusable = self.repository.reusable_rows(previous, [row["embedding_hash"] for row in rows])
+        if not reusable:
+            return rows
+        points = self.qdrant.retrieve(
+            previous, [point_id(previous, row) for row in reusable.values()]
+        )
+        vectors = {}
+        for key, row in reusable.items():
+            point = points.get(point_id(previous, row))
+            if not point or point.get("payload") != payload(previous, row):
+                raise VectorError("knowledge_vector_reuse_invalid")
+            vectors[key] = validate_vector(point.get("vector"))
+        copied = [row for row in rows if row["embedding_hash"] in vectors]
+        self.qdrant.upsert(
+            index,
+            [
+                {
+                    "id": point_id(index, row),
+                    "payload": payload(index, row),
+                    "vector": vectors[row["embedding_hash"]],
+                    **lexical_input(index, row),
+                }
+                for row in copied
+            ],
+        )
+        self.repository.checkpoint(index, copied, "INDEXED")
+        return [row for row in rows if row["embedding_hash"] not in vectors]
+
+    def query(
+        self, code: str, base_code: str, query: str, *, top_k: int = 10, mode: str = "auto"
+    ) -> dict[str, Any]:
         if (
             not isinstance(query, str)
             or not query.strip()
             or len(query) > 2000
             or type(top_k) is not int
             or not 1 <= top_k <= 20
+            or mode not in {"auto", "bm25", "dense", "hybrid"}
         ):
             raise VectorError("knowledge_vector_query_invalid")
         repo = self.repository
@@ -214,14 +354,38 @@ class VectorService:
             or index["profile_hash"] != fingerprint(self.repository.profile)
         ):
             raise VectorError("knowledge_vector_index_not_ready")
-        self.embedding.check()
+        if index["expected_document_count"] == 0:
+            repo.assert_current(index)
+            self.qdrant.check(index)
+            if self.qdrant.count(index) != 0:
+                raise VectorError("knowledge_vector_count_mismatch")
+            return {
+                "index_id": index["id"],
+                "documents": [],
+                "partial": False,
+                "candidates": 0,
+                "candidate_limit": 0,
+                "bounded": False,
+            }
+        hybrid = hybrid_index(index)
+        selected = "hybrid" if mode == "auto" and hybrid else "dense" if mode == "auto" else mode
+        if not hybrid and selected != "dense":
+            raise VectorError("knowledge_hybrid_index_required")
+        if selected != "bm25":
+            self.embedding.check()
         self.qdrant.check(index)
-        vector = self.embedding.call([query], encode=True)["vectors"][0]
-        limit = min(200, max(20, top_k * 4))
+        vector = (
+            self.embedding.call([query], encode=True)["vectors"][0] if selected != "bm25" else None
+        )
+        limit = 200 if hybrid else min(200, max(20, top_k * 4))
         docs: list[dict[str, Any]] = []
         candidates = []
         while True:
-            candidates = self.qdrant.search(index, vector, limit)
+            if hybrid:
+                candidates = self.qdrant.hybrid_search(index, vector, query, limit, mode=selected)
+            else:
+                assert vector is not None
+                candidates = self.qdrant.search(index, vector, limit)
             docs = current_documents(repo, index, candidates)
             if len(docs) >= top_k or len(candidates) < limit or limit == 200:
                 break
@@ -236,5 +400,6 @@ class VectorService:
             "partial": len(results) < top_k,
             "candidates": len(candidates),
             "candidate_limit": limit,
-            "bounded": limit == 200 and len(candidates) == 200,
+            "bounded": len(candidates)
+            >= (HYBRID_CONTRACT["per_route_limit"] if selected == "hybrid" else 200),
         }
