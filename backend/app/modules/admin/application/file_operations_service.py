@@ -55,9 +55,7 @@ class FileOperationsStatusService:
         file_service = self.file_service_probe()
         aggregate = file_service.get("document_processing")
         file_processing_worker = (
-            dict(aggregate)
-            if isinstance(aggregate, dict)
-            else self.file_processing_worker_probe()
+            dict(aggregate) if isinstance(aggregate, dict) else self.file_processing_worker_probe()
         )
         queue_result = self.queues.collect()
         attachment_queue = self._find_queue(queue_result, self.attachment_queue)
@@ -274,9 +272,7 @@ class FileOperationsStatusService:
             "status": str(row["status"]),
             "attempt": int(row["attempt"]),
             "error_code": str(row.get("error_code") or "")[:128],
-            "page_count": (
-                int(row["page_count"]) if row.get("page_count") is not None else None
-            ),
+            "page_count": (int(row["page_count"]) if row.get("page_count") is not None else None),
             "processing_time_ms": (
                 int(row["processing_time_ms"])
                 if row.get("processing_time_ms") is not None
@@ -297,9 +293,7 @@ class FileOperationsStatusService:
         )
 
     @staticmethod
-    def _queue_ready(
-        queue: dict[str, Any] | None, *, expected_consumers: int
-    ) -> bool:
+    def _queue_ready(queue: dict[str, Any] | None, *, expected_consumers: int) -> bool:
         return bool(
             queue
             and queue.get("availability") == "available"
@@ -511,9 +505,7 @@ class FileOperationsStatusService:
                         "slots_total": int(processing["slots_total"]),
                         "slots_occupied": int(processing["slots_occupied"]),
                         "slots_quarantined": int(processing["slots_quarantined"]),
-                        "oldest_lease_expires_at": str(
-                            processing["oldest_lease_expires_at"]
-                        )[:64],
+                        "oldest_lease_expires_at": str(processing["oldest_lease_expires_at"])[:64],
                     }
             if include_components:
                 components = value.get("components")

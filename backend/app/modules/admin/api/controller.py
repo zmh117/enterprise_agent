@@ -619,9 +619,9 @@ def _job_cursor(cursor: str) -> tuple[str, str]:
 
 
 def _csv_values(value: str) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(item.strip()[:100] for item in value.split(",") if item.strip())
-    )[:20]
+    return tuple(dict.fromkeys(item.strip()[:100] for item in value.split(",") if item.strip()))[
+        :20
+    ]
 
 
 def _audit_field_offset(cursor: str) -> int:

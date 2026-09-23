@@ -61,7 +61,9 @@ def normalize_resource_scope_bindings(
         seen_targets.add(target_key)
 
         if resource_kind == "database":
-            _reject_unknown(item, {"environment_code", "base_code", "workshop_code", "table_prefix"})
+            _reject_unknown(
+                item, {"environment_code", "base_code", "workshop_code", "table_prefix"}
+            )
             prefix = _exact_prefix(item.get("table_prefix"), field="数据库表前缀")
             if target.get("workshop_code") and not prefix:
                 raise _invalid("Workshop 数据库范围必须配置精确表前缀")

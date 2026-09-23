@@ -21,9 +21,7 @@ class SchemaPaginationCursorStore:
     PREFIX = "pg_"
     TTL = timedelta(hours=24)
 
-    def __init__(
-        self, database: Database, *, clock: Callable[[], datetime] = _utc_now
-    ) -> None:
+    def __init__(self, database: Database, *, clock: Callable[[], datetime] = _utc_now) -> None:
         self.database = database
         self.clock = clock
 
@@ -51,8 +49,14 @@ class SchemaPaginationCursorStore:
                     on conflict (job_id, reference) do nothing
                     returning reference
                     """,
-                    (job_id, reference, original_cursor, now.isoformat(),
-                     (now + self.TTL).isoformat(), job_id),
+                    (
+                        job_id,
+                        reference,
+                        original_cursor,
+                        now.isoformat(),
+                        (now + self.TTL).isoformat(),
+                        job_id,
+                    ),
                 )
                 if row:
                     return str(row["reference"])
@@ -79,7 +83,10 @@ class SchemaPaginationCursorStore:
         if not row:
             raise ToolPaginationCursorCodec._invalid("Pagination reference is unavailable")
         original = row["original_cursor"]
-        if not isinstance(original, str) or not 1 <= len(original) <= ToolPaginationCursorCodec.MAX_CURSOR_CHARS:
+        if (
+            not isinstance(original, str)
+            or not 1 <= len(original) <= ToolPaginationCursorCodec.MAX_CURSOR_CHARS
+        ):
             raise ToolPaginationCursorCodec._invalid("Stored pagination cursor is invalid")
         return original
 

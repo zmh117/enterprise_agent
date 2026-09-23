@@ -166,7 +166,9 @@ def build_tool_contract_observation(
         for name in FILE_TOOL_NAMES if file_job else ("Read", "Glob", "Grep"):
             effective.append(
                 {
-                    "server_code": FILE_MCP_SERVER_CODE if file_job else ("ones-mcp" if ones_result_job else "tool-mcp"),
+                    "server_code": FILE_MCP_SERVER_CODE
+                    if file_job
+                    else ("ones-mcp" if ones_result_job else "tool-mcp"),
                     "tool_name": name,
                     "sdk_tool_name": name,
                     "origin": "sdk_builtin",

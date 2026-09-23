@@ -137,28 +137,41 @@ def cursor_database(tmp_path: Path):
 
 def test_short_schema_cursor_survives_new_store_and_database_connection(cursor_database, tmp_path):
     original = ToolPaginationCursorCodec.encode(
-        context=_context(), purpose="schema-directory", request={"query": ""},
-        state_fingerprint="revision-1", position="orders_049",
+        context=_context(),
+        purpose="schema-directory",
+        request={"query": ""},
+        state_fingerprint="revision-1",
+        position="orders_049",
     )
     reference = SchemaPaginationCursorStore(cursor_database).issue(
-        job_id="job-1", original_cursor=original,
+        job_id="job-1",
+        original_cursor=original,
     )
     assert reference.startswith("pg_") and len(reference) == 19
     other_connection = Database(f"sqlite:///{tmp_path / 'cursors.sqlite'}")
     try:
         restored = SchemaPaginationCursorStore(other_connection).resolve(
-            job_id="job-1", reference=reference,
+            job_id="job-1",
+            reference=reference,
         )
         assert restored == original
-        assert ToolPaginationCursorCodec.decode(
-            restored, context=_context(), purpose="schema-directory", request={"query": ""},
-            state_fingerprint="revision-1",
-        ) == "orders_049"
+        assert (
+            ToolPaginationCursorCodec.decode(
+                restored,
+                context=_context(),
+                purpose="schema-directory",
+                request={"query": ""},
+                state_fingerprint="revision-1",
+            )
+            == "orders_049"
+        )
     finally:
         other_connection.close()
 
 
-@pytest.mark.parametrize("case", ["other_job", "changed_character", "unknown", "uppercase", "expired", "terminal"])
+@pytest.mark.parametrize(
+    "case", ["other_job", "changed_character", "unknown", "uppercase", "expired", "terminal"]
+)
 def test_short_schema_cursor_rejects_invalid_or_expired_reference(cursor_database, case):
     now = datetime(2026, 9, 17, tzinfo=UTC)
     store = SchemaPaginationCursorStore(cursor_database, clock=lambda: now)
@@ -198,7 +211,9 @@ def test_short_schema_cursor_expiry_cleanup_is_bounded_and_job_delete_cascades(c
 
 def test_short_schema_cursor_collision_never_overwrites_existing_state(cursor_database):
     store = SchemaPaginationCursorStore(cursor_database)
-    with patch("app.modules.mcp_tool_runtime.schema_cursor_store.secrets.token_hex", return_value="a" * 16):
+    with patch(
+        "app.modules.mcp_tool_runtime.schema_cursor_store.secrets.token_hex", return_value="a" * 16
+    ):
         reference = store.issue(job_id="job-1", original_cursor="first-original")
         with pytest.raises(NonRetryableExecutionError) as error:
             store.issue(job_id="job-1", original_cursor="second-original")
@@ -206,19 +221,27 @@ def test_short_schema_cursor_collision_never_overwrites_existing_state(cursor_da
     assert store.resolve(job_id="job-1", reference=reference) == "first-original"
 
 
-@pytest.mark.parametrize("binding", ["user_id", "application_id", "snapshot_hash", "authorization_hash"])
+@pytest.mark.parametrize(
+    "binding", ["user_id", "application_id", "snapshot_hash", "authorization_hash"]
+)
 def test_restored_schema_cursor_still_checks_original_context(cursor_database, binding):
     original = ToolPaginationCursorCodec.encode(
-        context=_context(), purpose="schema-directory", request={"query": ""},
-        state_fingerprint="revision-1", position="orders_049",
+        context=_context(),
+        purpose="schema-directory",
+        request={"query": ""},
+        state_fingerprint="revision-1",
+        position="orders_049",
     )
     store = SchemaPaginationCursorStore(cursor_database)
     reference = store.issue(job_id="job-1", original_cursor=original)
     restored = store.resolve(job_id="job-1", reference=reference)
     with pytest.raises(ToolPolicyError) as error:
         ToolPaginationCursorCodec.decode(
-            restored, context=replace(_context(), **{binding: "changed"}),
-            purpose="schema-directory", request={"query": ""}, state_fingerprint="revision-1",
+            restored,
+            context=replace(_context(), **{binding: "changed"}),
+            purpose="schema-directory",
+            request={"query": ""},
+            state_fingerprint="revision-1",
         )
     assert error.value.error_code == "mcp_pagination_cursor_invalid"
 
@@ -234,7 +257,9 @@ def test_short_schema_cursor_enforces_original_cursor_bound(cursor_database, val
 def test_short_schema_cursor_does_not_issue_for_terminal_job(cursor_database):
     cursor_database.execute("update agent_job set status = 'SUCCEEDED' where id = 'job-1'")
     with pytest.raises(NonRetryableExecutionError):
-        SchemaPaginationCursorStore(cursor_database).issue(job_id="job-1", original_cursor="synthetic")
+        SchemaPaginationCursorStore(cursor_database).issue(
+            job_id="job-1", original_cursor="synthetic"
+        )
     assert cursor_database.execute("select reference from mcp_schema_pagination_cursor") == []
 
 

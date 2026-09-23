@@ -281,9 +281,7 @@ class DingTalkPrincipalResolver:
             principal_jti=principal.principal_jti,
             external_identity_id=principal.external_identity_id,
             provider="dingtalk",
-            provider_user_id=(
-                principal.target_union_id or principal.target_external_subject_id
-            ),
+            provider_user_id=(principal.target_union_id or principal.target_external_subject_id),
         )
 
     @staticmethod

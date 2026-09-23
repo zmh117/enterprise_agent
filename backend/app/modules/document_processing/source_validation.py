@@ -162,16 +162,12 @@ def validate_document_source(
         DocumentSourceFormatCode.JPEG,
         DocumentSourceFormatCode.WEBP,
     }
-    if (
-        allow_image_extension_canonicalization
-        and extension_definition.code in image_codes
-    ):
+    if allow_image_extension_canonicalization and extension_definition.code in image_codes:
         media_definition = next(
             (
                 item
                 for item in DOCLING_LAYOUT_OCR_V2.source_formats
-                if item.code in image_codes
-                and normalized_media_type in item.accepted_media_types
+                if item.code in image_codes and normalized_media_type in item.accepted_media_types
             ),
             None,
         )

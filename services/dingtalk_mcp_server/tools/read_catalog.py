@@ -57,12 +57,8 @@ class DingTalkReadExecutorCatalog:
             "dingtalk_get_aitable_supported_search_filters": (
                 self._get_aitable_supported_search_filters
             ),
-            "dingtalk_get_aitable_supported_field_info": (
-                self._get_aitable_supported_field_info
-            ),
-            "dingtalk_get_aitable_record_values_format": (
-                self._get_aitable_record_values_format
-            ),
+            "dingtalk_get_aitable_supported_field_info": (self._get_aitable_supported_field_info),
+            "dingtalk_get_aitable_record_values_format": (self._get_aitable_record_values_format),
             "dingtalk_list_aitable_sheets": self._list_aitable_sheets,
             "dingtalk_get_aitable_sheet": self._get_aitable_sheet,
             "dingtalk_list_aitable_fields": self._list_aitable_fields,

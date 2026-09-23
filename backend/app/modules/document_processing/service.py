@@ -304,8 +304,7 @@ class GovernedDocumentProcessingService:
             item = self.repository.get_picture_item(owner_id)
             run = self.repository.get_run(str(item["processing_run_id"]))
         if (
-            str(run["profile_code"])
-            != DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
+            str(run["profile_code"]) != DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
             or str(run["profile_hash"]) != DOCLING_LAYOUT_OCR_V2.profile_hash
         ):
             self._deny("document_profile_version_unavailable", "文档处理Profile版本不可用")
@@ -318,9 +317,8 @@ class GovernedDocumentProcessingService:
         self._validate_worker_instance_id(worker_instance_id)
 
     def _validate_worker_instance_id(self, value: str) -> None:
-        if (
-            not 16 <= len(value) <= 128
-            or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for character in value)
+        if not 16 <= len(value) <= 128 or any(
+            character not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for character in value
         ):
             self._deny("file_processing_worker_instance_invalid", "文档处理Worker实例身份无效")
 

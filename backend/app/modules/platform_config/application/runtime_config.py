@@ -184,11 +184,17 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         "AGENT_MAX_TOOL_CALLS", "int", 30, service_names=("agent-worker", "api-server")
     ),
     RuntimeConfigDefinitionSpec(
-        "MAX_TOOL_RESPONSE_CHARS", "int", 4000, service_names=("agent-worker",),
+        "MAX_TOOL_RESPONSE_CHARS",
+        "int",
+        4000,
+        service_names=("agent-worker",),
         description="工具审计摘要字符预算；不用于裁剪写入 Job 临时文件的资源查询正文。",
     ),
     RuntimeConfigDefinitionSpec(
-        "MAX_LOKI_MINUTES", "int", 60, service_names=("agent-worker", "tool-mcp"),
+        "MAX_LOKI_MINUTES",
+        "int",
+        60,
+        service_names=("agent-worker", "tool-mcp"),
         description="单次 Loki 时间窗口上限，1–43200 分钟（30 天）；实际取平台与已发布资源较小值。",
     ),
     RuntimeConfigDefinitionSpec(
@@ -212,7 +218,10 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         "LOKI_MAX_LINES", "int", DEFAULT_LOKI_PLATFORM_MAX_LINES, service_names=("tool-mcp",)
     ),
     RuntimeConfigDefinitionSpec(
-        "LOKI_MAX_RESPONSE_CHARS", "int", 4000, service_names=("tool-mcp",),
+        "LOKI_MAX_RESPONSE_CHARS",
+        "int",
+        4000,
+        service_names=("tool-mcp",),
         description="兼容保留；Loki 查询正文改存 Job 临时文件，不再按此字符数裁剪。",
     ),
     RuntimeConfigDefinitionSpec("LOKI_TENANT_ID", "string", "", service_names=("tool-mcp",)),

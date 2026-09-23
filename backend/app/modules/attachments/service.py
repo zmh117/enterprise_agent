@@ -192,9 +192,7 @@ class AttachmentProcessingService:
                 failure_code=error_code,
                 clear_credential=True,
             )
-            self.publisher.publish_attachment_dead_letter(
-                attachment_id, correlation_id, error_code
-            )
+            self.publisher.publish_attachment_dead_letter(attachment_id, correlation_id, error_code)
             self.audit_service.record(
                 "attachment.rejected",
                 status="FAILED",
@@ -222,9 +220,7 @@ class AttachmentProcessingService:
         context = self.repository.attachment_session_context(attachment.id)
         session = self.repository.get_session(str(context["session_id"]))
         definition = FILE_ERROR_CATALOG.get(str(attachment.failure_code or ""))
-        reason = (
-            definition.safe_message if definition else "文件不符合当前任务工作区策略"
-        )
+        reason = definition.safe_message if definition else "文件不符合当前任务工作区策略"
         display_name = " ".join(
             Path(str(attachment.file_name or "该文件")).name.replace("`", "'").split()
         )[:255]
@@ -234,8 +230,7 @@ class AttachmentProcessingService:
             reply_route=session.reply_route or {"type": "none"},
             title="文件未进入工作区",
             markdown=(
-                f"文件 `{display_name or '该文件'}` 未进入工作区：{reason}。"
-                "请修正后重新发送。"
+                f"文件 `{display_name or '该文件'}` 未进入工作区：{reason}。请修正后重新发送。"
             ),
             reason_code=str(attachment.failure_code or "attachment_processing_rejected"),
             correlation_id=correlation_id,
@@ -378,9 +373,7 @@ class AttachmentProcessingService:
             payload={
                 "session_id": job.session_id,
                 "reason_code": gate.reason_code,
-                "version_ids": [
-                    item.version_id for item in gate.dependencies if item.version_id
-                ],
+                "version_ids": [item.version_id for item in gate.dependencies if item.version_id],
             },
         )
         return "system_notice"
@@ -393,9 +386,7 @@ class AttachmentProcessingService:
         for turn in self.repository.list_ready_file_readiness_blocked_turns():
             version_ids = tuple(self.repository.list_blocked_turn_version_ids(str(turn["id"])))
             names = self.repository.display_names_for_versions(version_ids)
-            title, markdown = render_file_admission_notice(
-                notice_kind="ready", display_names=names
-            )
+            title, markdown = render_file_admission_notice(notice_kind="ready", display_names=names)
             session = self.repository.get_session(str(turn["session_id"]))
             self.delivery_service.enqueue_system_notice(
                 idempotency_key=f"file-ready-notice:{turn['id']}",

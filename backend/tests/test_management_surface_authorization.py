@@ -80,10 +80,7 @@ def test_management_surface_distinguishes_unauthenticated_forged_and_authorized(
             "/api/agent/jobs/_debug-options",
         ):
             assert client.get(path).status_code == 401
-            assert (
-                client.get(path, headers={"x-admin-user-id": ADMIN_ID}).status_code
-                == 401
-            )
+            assert client.get(path, headers={"x-admin-user-id": ADMIN_ID}).status_code == 401
 
         csrf = login(client)
         headers = csrf_headers(csrf)

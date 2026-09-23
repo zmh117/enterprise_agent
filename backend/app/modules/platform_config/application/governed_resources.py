@@ -70,7 +70,11 @@ class ResourceTechnicalVerifier(Protocol):
 
 class DelegatedResourceVerifier(Protocol):
     def verify(
-        self, *, resource: dict[str, Any], draft: dict[str, Any], actor_id: str,
+        self,
+        *,
+        resource: dict[str, Any],
+        draft: dict[str, Any],
+        actor_id: str,
     ) -> ResourceVerificationOutcome: ...
 
 
@@ -349,13 +353,11 @@ class GovernedResourceService:
                         safe_message="输入的车间已存在但处于停用状态，请先启用该车间",
                         error_code="resource_workshop_disabled",
                     )
-                workshop, created_workshop = (
-                    self.config_repository.create_workshop_if_missing(
-                        environment_code=environment_code,
-                        base_code=base_code,
-                        code=workshop_code,
-                        display_name=workshop_code,
-                    )
+                workshop, created_workshop = self.config_repository.create_workshop_if_missing(
+                    environment_code=environment_code,
+                    base_code=base_code,
+                    code=workshop_code,
+                    display_name=workshop_code,
                 )
                 if created_workshop:
                     self.config_repository.record_config_audit(
@@ -933,9 +935,7 @@ class GovernedResourceService:
             environment_code = str(binding.get("environment_code") or "")
             base_code = str(binding.get("base_code") or "")
             workshop_code = str(binding.get("workshop_code") or "")
-            environment = self.config_repository.get_environment_by_code(
-                environment_code
-            )
+            environment = self.config_repository.get_environment_by_code(environment_code)
             if not environment or environment.get("status") != "enabled":
                 self._raise_scope_binding_target_unavailable()
             if base_code:

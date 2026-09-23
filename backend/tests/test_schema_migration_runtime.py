@@ -147,16 +147,35 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
 def test_schema_cursor_migration_upgrades_134_without_rewriting_jobs(tmp_path: Path) -> None:
     database = Database("sqlite:///:memory:")
     try:
-        Migrator(database, _migrations_through(tmp_path, "134"), migrator_build="cursor-before").run()
+        Migrator(
+            database, _migrations_through(tmp_path, "134"), migrator_build="cursor-before"
+        ).run()
         before = database.execute("select id, status from agent_job order by id")
         result = Migrator(database, default_migrations_dir(), migrator_build="cursor-after").run()
-        assert result.applied == ("135", "136", "137", "138", "139", "140", "141", "142", "143", "144")
+        assert result.applied == (
+            "135",
+            "136",
+            "137",
+            "138",
+            "139",
+            "140",
+            "141",
+            "142",
+            "143",
+            "144",
+        )
         assert result.head == "144"
         assert database.execute("select id, status from agent_job order by id") == before
         assert database.execute("select * from mcp_schema_pagination_cursor") == []
         foreign_keys = database.execute("pragma foreign_key_list(mcp_schema_pagination_cursor)")
-        assert any(row["table"] == "agent_job" and row["on_delete"] == "CASCADE" for row in foreign_keys)
-        assert not Migrator(database, default_migrations_dir(), migrator_build="cursor-repeat").run().applied
+        assert any(
+            row["table"] == "agent_job" and row["on_delete"] == "CASCADE" for row in foreign_keys
+        )
+        assert (
+            not Migrator(database, default_migrations_dir(), migrator_build="cursor-repeat")
+            .run()
+            .applied
+        )
     finally:
         database.close()
 
@@ -302,7 +321,25 @@ def test_confirmation_card_template_migration_backfills_connector_and_outbox(
         migrator_build="card-binding-after",
     ).run()
 
-    assert result.applied == ("128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139", "140", "141", "142", "143", "144")
+    assert result.applied == (
+        "128",
+        "129",
+        "130",
+        "131",
+        "132",
+        "133",
+        "134",
+        "135",
+        "136",
+        "137",
+        "138",
+        "139",
+        "140",
+        "141",
+        "142",
+        "143",
+        "144",
+    )
     connector = database.execute_one(
         "select metadata, revision from integration_connector where id = ?",
         ("connector-card-history",),
@@ -814,7 +851,27 @@ def test_release_unbound_ones_identity_migration_preserves_history_and_constrain
         migrator_build="ones-release-upgrade",
     ).run()
 
-    assert result.applied == ("126", "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138", "139", "140", "141", "142", "143", "144")
+    assert result.applied == (
+        "126",
+        "127",
+        "128",
+        "129",
+        "130",
+        "131",
+        "132",
+        "133",
+        "134",
+        "135",
+        "136",
+        "137",
+        "138",
+        "139",
+        "140",
+        "141",
+        "142",
+        "143",
+        "144",
+    )
     assert database.execute_one(
         """
         select user_id, status from user_external_identity
@@ -1523,7 +1580,9 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert all(re.search(r"[\u3400-\u9fff]", table_comments[table]) for table in owned_tables)
     assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
     assert len({table for table in owned_tables if not table.startswith("knowledge.")}) == 131
-    assert len({column for column in owned_columns if not column[0].startswith("knowledge.")}) == 1744
+    assert (
+        len({column for column in owned_columns if not column[0].startswith("knowledge.")}) == 1744
+    )
     assert len({table for table in owned_tables if table.startswith("knowledge.")}) == 18
     database.close()
 

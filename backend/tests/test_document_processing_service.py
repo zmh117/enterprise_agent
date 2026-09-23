@@ -681,6 +681,7 @@ def test_ten_files_complete_with_two_workers_two_slots_and_no_duplicate_results(
     ) == {"count": 10}
     database.close()
 
+
 def test_layout_profile_freezes_three_outputs_deadline_and_unique_picture_assembly() -> None:
     database, storage, service, file_id, version_id, _body = _service()
     run = service.request_processing(

@@ -80,9 +80,7 @@ class FileAction(StrEnum):
     DELIVER = "DELIVER"
 
 
-GOVERNED_DOCUMENT_FORMATS = frozenset(
-    {"PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"}
-)
+GOVERNED_DOCUMENT_FORMATS = frozenset({"PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"})
 DOCUMENT_MANIFEST_ACTIONS = frozenset(
     {FileAction.READ_METADATA, FileAction.RETAIN, FileAction.DELIVER}
 )
@@ -189,11 +187,15 @@ class FileOwner:
     conversation_id: str = ""
 
     def __post_init__(self) -> None:
-        private_valid = self.owner_type is WorkspaceOwnerType.PRIVATE_USER and bool(
-            self.user_id
-        ) and not any((self.enterprise_id, self.connector_id, self.conversation_id))
-        group_valid = self.owner_type is WorkspaceOwnerType.GROUP_CONVERSATION and not self.user_id and all(
-            (self.enterprise_id, self.connector_id, self.conversation_id)
+        private_valid = (
+            self.owner_type is WorkspaceOwnerType.PRIVATE_USER
+            and bool(self.user_id)
+            and not any((self.enterprise_id, self.connector_id, self.conversation_id))
+        )
+        group_valid = (
+            self.owner_type is WorkspaceOwnerType.GROUP_CONVERSATION
+            and not self.user_id
+            and all((self.enterprise_id, self.connector_id, self.conversation_id))
         )
         if not (private_valid or group_valid):
             raise NonRetryableExecutionError(

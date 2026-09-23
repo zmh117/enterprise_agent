@@ -183,12 +183,14 @@ def test_repository_maps_all_file_aggregate_records_and_state_transitions() -> N
         expires_at=EXPIRES_AT,
     )
     assert intent["status"] == CommitIntentStatus.INTENT.value
-    assert repository.transition_commit_intent(
-        "intent-a", CommitIntentStatus.UPLOADING
-    )["status"] == CommitIntentStatus.UPLOADING.value
-    assert repository.create_staging(
-        intent_id="intent-a", object_key="opaque/staging-a"
-    )["status"] == "UPLOADING"
+    assert (
+        repository.transition_commit_intent("intent-a", CommitIntentStatus.UPLOADING)["status"]
+        == CommitIntentStatus.UPLOADING.value
+    )
+    assert (
+        repository.create_staging(intent_id="intent-a", object_key="opaque/staging-a")["status"]
+        == "UPLOADING"
+    )
 
     repository.create_version(
         version_id="version-a-conflict",
@@ -206,33 +208,45 @@ def test_repository_maps_all_file_aggregate_records_and_state_transitions() -> N
         parent_version_id="version-a-1",
         base_version_id="version-a-1",
     )
-    assert repository.record_conflict(
-        intent_id="intent-a",
-        file_id="file-a",
-        base_version_id="version-a-1",
-        current_version_id="version-a-1",
-        candidate_version_id="version-a-conflict",
-    )["status"] == "OPEN"
-    assert repository.add_retention(
-        version_id="version-a-1",
-        reason=RetentionReason.USER_SAVED,
-        source_id="job-file",
-        starts_at=TIMESTAMP,
-        expires_at="2027-08-09T00:00:00+00:00",
-    )["retention_days"] == 360
+    assert (
+        repository.record_conflict(
+            intent_id="intent-a",
+            file_id="file-a",
+            base_version_id="version-a-1",
+            current_version_id="version-a-1",
+            candidate_version_id="version-a-conflict",
+        )["status"]
+        == "OPEN"
+    )
+    assert (
+        repository.add_retention(
+            version_id="version-a-1",
+            reason=RetentionReason.USER_SAVED,
+            source_id="job-file",
+            starts_at=TIMESTAMP,
+            expires_at="2027-08-09T00:00:00+00:00",
+        )["retention_days"]
+        == 360
+    )
     cleanup = repository.enqueue_cleanup(
         resource_type=CleanupResourceType.STAGING_OBJECT,
         resource_id="intent-a",
         reason="ORPHANED_STAGING",
         due_at=TIMESTAMP,
     )
-    assert repository.claim_cleanup(
-        str(cleanup["id"]), worker_id="file-worker-a", now=TIMESTAMP
-    )["status"] == "CLAIMED"
+    assert (
+        repository.claim_cleanup(str(cleanup["id"]), worker_id="file-worker-a", now=TIMESTAMP)[
+            "status"
+        ]
+        == "CLAIMED"
+    )
 
-    assert repository.transition_workspace(
-        "workspace-a", WorkspaceStatus.CLOSED, at=TIMESTAMP
-    )["status"] == WorkspaceStatus.CLOSED.value
+    assert (
+        repository.transition_workspace("workspace-a", WorkspaceStatus.CLOSED, at=TIMESTAMP)[
+            "status"
+        ]
+        == WorkspaceStatus.CLOSED.value
+    )
 
 
 def test_repository_rolls_back_version_when_current_pointer_compare_and_set_fails() -> None:
@@ -262,9 +276,10 @@ def test_repository_rolls_back_version_when_current_pointer_compare_and_set_fail
             advance_current_from="missing-version",
         )
     assert error.value.error_code == "file_state_conflict"
-    assert database.execute_one(
-        "select id from managed_file_version where id = 'version-rolled-back'"
-    ) is None
+    assert (
+        database.execute_one("select id from managed_file_version where id = 'version-rolled-back'")
+        is None
+    )
 
 
 def test_file_owner_and_active_workspace_fail_closed() -> None:

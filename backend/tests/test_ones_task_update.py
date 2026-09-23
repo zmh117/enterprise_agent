@@ -1028,11 +1028,13 @@ def _confirmation_resolver(database: _ConfirmationRouteDatabase) -> OnesPrincipa
 @pytest.mark.parametrize("source_channel", ["dingtalk", "dingding", "dingding_stream"])
 @pytest.mark.parametrize("conversation_type", ["direct", "group"])
 def test_confirmation_route_is_always_the_originating_dingtalk_operator(
-    source_channel: str, conversation_type: str,
+    source_channel: str,
+    conversation_type: str,
 ) -> None:
     resolver = _confirmation_resolver(
         _ConfirmationRouteDatabase(
-            source_channel=source_channel, conversation_type=conversation_type,
+            source_channel=source_channel,
+            conversation_type=conversation_type,
         )
     )
     route = resolver.resolve_confirmation_route(
@@ -1074,7 +1076,9 @@ def test_stream_confirmation_route_still_requires_trusted_source_facts(
 
 
 @pytest.mark.parametrize("identity_count", [0, 2])
-def test_stream_confirmation_route_requires_unique_originating_identity(identity_count: int) -> None:
+def test_stream_confirmation_route_requires_unique_originating_identity(
+    identity_count: int,
+) -> None:
     database = _ConfirmationRouteDatabase()
     database.identities *= identity_count
     with pytest.raises(OnesMcpError) as caught:
@@ -1094,11 +1098,16 @@ def test_stream_description_rewrite_prepares_update_using_real_confirmation_reso
     )
     event = stream.to_channel_event(
         message=DingTalkStreamIncomingMessage(
-            conversation_id="conversation-1", user_id="staff-1",
-            message_id="message-1", event_id="event-1",
-            content="帮我改写下这个缺陷描述，描述具体些", conversation_type=conversation_type,
+            conversation_id="conversation-1",
+            user_id="staff-1",
+            message_id="message-1",
+            event_id="event-1",
+            content="帮我改写下这个缺陷描述，描述具体些",
+            conversation_type=conversation_type,
         ),
-        payload={}, source_connector_id="connector-1", correlation_id="correlation-1",
+        payload={},
+        source_connector_id="connector-1",
+        correlation_id="correlation-1",
     )
     database = _ConfirmationRouteDatabase(
         source_channel=event.source.type,
@@ -1118,8 +1127,10 @@ def test_stream_description_rewrite_prepares_update_using_real_confirmation_reso
     description = "操作步骤：在设备列表打印标签。\n实际结果：审计追踪修改后值显示为 /。"
 
     result = service.invoke(
-        claims={"job_id": "job-1"}, arguments={"uuid": "task-1", "description": description},
-        correlation_id="correlation-1", invocation_id="job-1.attempt-0",
+        claims={"job_id": "job-1"},
+        arguments={"uuid": "task-1", "description": description},
+        correlation_id="correlation-1",
+        invocation_id="job-1.attempt-0",
     )
 
     assert result["status"] == "confirmation_required"

@@ -662,9 +662,7 @@ def _document_page_size(document: dict[str, Any], page_no: int) -> tuple[float, 
     return float(width), float(height)
 
 
-def _validated_parent_bbox(
-    value: object, *, page_width: float, page_height: float
-) -> list[int]:
+def _validated_parent_bbox(value: object, *, page_width: float, page_height: float) -> list[int]:
     if not isinstance(value, dict):
         raise DocumentProcessorFailure("docling_picture_bbox_invalid", retryable=False)
     allowed = {"l", "t", "r", "b", "coord_origin"}
@@ -747,7 +745,9 @@ def _parse_office_picture_bundle(
             if stat.S_ISLNK(member.external_attr >> 16) or member.flag_bits & 0x1:
                 raise DocumentProcessorFailure("docling_bundle_entry_unsafe", retryable=False)
             if member.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
-                raise DocumentProcessorFailure("docling_bundle_compression_invalid", retryable=False)
+                raise DocumentProcessorFailure(
+                    "docling_bundle_compression_invalid", retryable=False
+                )
             if member.is_dir():
                 continue
             total_uncompressed += member.file_size
@@ -772,7 +772,9 @@ def _parse_office_picture_bundle(
         try:
             markdown.decode("utf-8", errors="strict")
         except UnicodeDecodeError as exc:
-            raise DocumentProcessorFailure("docling_markdown_encoding_invalid", retryable=False) from exc
+            raise DocumentProcessorFailure(
+                "docling_markdown_encoding_invalid", retryable=False
+            ) from exc
         pictures = document.get("pictures")
         if not isinstance(pictures, list) or len(pictures) > maximum_pictures:
             raise DocumentProcessorFailure("docling_picture_limit_exceeded", retryable=False)
@@ -817,7 +819,9 @@ def _parse_office_picture_bundle(
                 "image/webp": {".webp"},
             }
             if PurePosixPath(image_name).suffix.lower() not in expected_suffixes[media_type]:
-                raise DocumentProcessorFailure("docling_picture_media_type_invalid", retryable=False)
+                raise DocumentProcessorFailure(
+                    "docling_picture_media_type_invalid", retryable=False
+                )
             if image_member.file_size > int(limits["max_picture_compressed_bytes"]):
                 raise DocumentProcessorFailure("docling_picture_size_exceeded", retryable=False)
             slide_no: int | None = None
@@ -825,14 +829,18 @@ def _parse_office_picture_bundle(
             provenance = picture.get("prov")
             if source_format == "PPTX":
                 if not isinstance(provenance, list) or not provenance:
-                    raise DocumentProcessorFailure("docling_picture_anchor_invalid", retryable=False)
+                    raise DocumentProcessorFailure(
+                        "docling_picture_anchor_invalid", retryable=False
+                    )
                 first = provenance[0]
                 if (
                     not isinstance(first, dict)
                     or not isinstance(first.get("page_no"), int)
                     or int(first["page_no"]) < 1
                 ):
-                    raise DocumentProcessorFailure("docling_picture_anchor_invalid", retryable=False)
+                    raise DocumentProcessorFailure(
+                        "docling_picture_anchor_invalid", retryable=False
+                    )
                 slide_no = int(first["page_no"])
                 page_width, page_height = _document_page_size(document, slide_no)
                 parent_bbox = _validated_parent_bbox(

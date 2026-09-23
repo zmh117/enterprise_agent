@@ -50,17 +50,13 @@ def test_model_artifact_catalog_fixes_both_linux_platforms() -> None:
             "image_manifest_digest": (
                 "sha256:0ccbc00b5f8b443334a7c4f36a5c6ff89c684c6fbe18ff7c1bc41e00b8e01657"
             ),
-            "digest": (
-                "sha256:bd9b6624ee97cd02b2506737e6f1646e25c68bf64a1cf4825a2ff69a5992c090"
-            ),
+            "digest": ("sha256:bd9b6624ee97cd02b2506737e6f1646e25c68bf64a1cf4825a2ff69a5992c090"),
         },
         "linux/arm64": {
             "image_manifest_digest": (
                 "sha256:b09477515c6234bb86c8a90c9db3af2b5d6991aeb6b64c3348283be264dba63c"
             ),
-            "digest": (
-                "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
-            ),
+            "digest": ("sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"),
         },
     }
     assert set(MODEL_ARTIFACT_PLATFORMS) == {"linux/amd64", "linux/arm64"}

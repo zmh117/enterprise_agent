@@ -646,10 +646,14 @@ class LokiResourceProbe:
         end_ns = int(datetime.now(UTC).timestamp() * 1_000_000_000)
         for binding in bindings:
             conditions = dict(binding.get("selector_conditions") or {})
-            selector = "{" + ",".join(
-                f"{key}={json.dumps(value, ensure_ascii=False)}"
-                for key, value in sorted(conditions.items())
-            ) + "}"
+            selector = (
+                "{"
+                + ",".join(
+                    f"{key}={json.dumps(value, ensure_ascii=False)}"
+                    for key, value in sorted(conditions.items())
+                )
+                + "}"
+            )
             query = urllib.parse.urlencode(
                 {
                     "match[]": selector,

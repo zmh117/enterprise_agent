@@ -397,9 +397,9 @@ def test_async_message_contracts_do_not_claim_final_delivery() -> None:
 
 
 def test_read_result_contracts_are_bounded_and_require_business_fields() -> None:
-    notice_result = DINGTALK_TOOL_CONTRACTS[
-        "dingtalk_get_work_notification_result"
-    ].output_schema["properties"]["result"]
+    notice_result = DINGTALK_TOOL_CONTRACTS["dingtalk_get_work_notification_result"].output_schema[
+        "properties"
+    ]["result"]
     assert set(notice_result["required"]) == {
         "task_id",
         "invalid_user_ids",
@@ -504,9 +504,7 @@ def test_all_registered_tool_descriptions_keep_official_function_semantics() -> 
 
 def test_descriptions_disclose_governed_subsets_of_broader_official_tools() -> None:
     for identifier, markers in GOVERNANCE_SUBSET_MARKERS.items():
-        governance_part = DINGTALK_TOOL_CONTRACTS[identifier].description.split(
-            "平台治理：", 1
-        )[1]
+        governance_part = DINGTALK_TOOL_CONTRACTS[identifier].description.split("平台治理：", 1)[1]
         normalized = "".join(governance_part.split()).replace("_", "").lower()
         for marker in markers:
             normalized_marker = "".join(marker.split()).replace("_", "").lower()
@@ -700,9 +698,9 @@ def test_user_batch_tool_requires_new_application_publication_and_role_grant() -
 
     assert old_publication["snapshot"]["tools"] == []
     assert ungranted["snapshot"]["tools"] == []
-    assert [
-        value["tool_identifier"] for value in current["snapshot"]["tools"]
-    ] == [DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER]
-    assert {
-        value["tool_identifier"] for value in current_user_flow["snapshot"]["tools"]
-    } == set(user_flow_identifiers)
+    assert [value["tool_identifier"] for value in current["snapshot"]["tools"]] == [
+        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER
+    ]
+    assert {value["tool_identifier"] for value in current_user_flow["snapshot"]["tools"]} == set(
+        user_flow_identifiers
+    )

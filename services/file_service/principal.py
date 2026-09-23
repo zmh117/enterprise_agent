@@ -59,19 +59,15 @@ class FilePrincipalResolver:
             if str(binding.get("schema_hash") or "") != definition.schema_hash:
                 self._deny("file_principal_schema_mismatch")
         claims = self.verifier.verify(token, required_scopes=expected_scopes)
-        if (
-            str(claims["job_id"]) != job_id
-            or str(claims["authorization_hash"])
-            != str(verified.get("authorization_hash") or "")
+        if str(claims["job_id"]) != job_id or str(claims["authorization_hash"]) != str(
+            verified.get("authorization_hash") or ""
         ):
             self._deny("file_principal_snapshot_mismatch")
         context = self.authorization.require_job(
             claims=claims,
             tool_identifier=tool_identifier,
         )
-        return claims, context, tuple(
-            sorted(str(item["tool_identifier"]) for item in bindings)
-        )
+        return claims, context, tuple(sorted(str(item["tool_identifier"]) for item in bindings))
 
     @staticmethod
     def _untrusted_job_id(token: str) -> str:

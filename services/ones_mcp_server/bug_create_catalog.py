@@ -8,7 +8,10 @@ import re
 from pathlib import Path
 from typing import Any, Final
 
-from app.shared.ones_tool_contracts import ONES_CREATE_BUG_TOOL_IDENTIFIER, require_ones_tool_contract
+from app.shared.ones_tool_contracts import (
+    ONES_CREATE_BUG_TOOL_IDENTIFIER,
+    require_ones_tool_contract,
+)
 from services.ones_mcp_server.errors import OnesMcpError
 
 
@@ -111,9 +114,7 @@ class BugCreateFieldCatalog:
             fields = cls._load_fields(raw.get("fields"))
             reference_indexes = cls._load_indexes(raw.get("reference_indexes"))
             expected = set(
-                require_ones_tool_contract(ONES_CREATE_BUG_TOOL_IDENTIFIER).input_schema[
-                    "required"
-                ]
+                require_ones_tool_contract(ONES_CREATE_BUG_TOOL_IDENTIFIER).input_schema["required"]
             ) - {"project_uuid"}
             if {field.semantic_name for field in fields} != expected:
                 raise _invalid_catalog()

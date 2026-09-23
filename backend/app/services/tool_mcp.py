@@ -40,7 +40,9 @@ from app.shared.exceptions import AppError, ToolPolicyError
 from app.shared.secret_redaction import sanitize_for_persistence
 from app.shared.query_result_contract import QUERY_RESULT_MAX_BYTES, QUERY_RESULT_TOOLS
 from app.modules.platform_config.infrastructure.oracle_verification import (
-    MAX_REQUEST_BYTES, ORACLE_VERIFY_PATH, OracleVerificationHandler,
+    MAX_REQUEST_BYTES,
+    ORACLE_VERIFY_PATH,
+    OracleVerificationHandler,
 )
 
 logger = logging.getLogger(__name__)
@@ -191,7 +193,11 @@ class JobToolService:
                     "truncated": result.truncated,
                     "security": {"trust": "untrusted_internal_evidence"},
                 },
-                max_bytes=(QUERY_RESULT_MAX_BYTES if descriptor.name in QUERY_RESULT_TOOLS else MAX_RESPONSE_BYTES),
+                max_bytes=(
+                    QUERY_RESULT_MAX_BYTES
+                    if descriptor.name in QUERY_RESULT_TOOLS
+                    else MAX_RESPONSE_BYTES
+                ),
             )
             self.audit_coordinator.complete(
                 handle,
@@ -435,7 +441,9 @@ def create_app(
                 async for chunk in request.stream():
                     raw.extend(chunk)
                     if len(raw) > MAX_REQUEST_BYTES:
-                        return JSONResponse({"error_code": "oracle_verification_request_too_large"}, status_code=413)
+                        return JSONResponse(
+                            {"error_code": "oracle_verification_request_too_large"}, status_code=413
+                        )
             envelope = json.loads(raw)
             if not isinstance(envelope, dict):
                 raise ValueError("Invalid Oracle verification envelope")
@@ -613,7 +621,9 @@ def _encoded(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _bounded_result(value: dict[str, Any], *, max_bytes: int = MAX_RESPONSE_BYTES) -> dict[str, Any]:
+def _bounded_result(
+    value: dict[str, Any], *, max_bytes: int = MAX_RESPONSE_BYTES
+) -> dict[str, Any]:
     safe = sanitize_for_persistence(value)
     if not isinstance(safe, dict):
         raise TypeError("Sanitized MCP tool result must remain an object")

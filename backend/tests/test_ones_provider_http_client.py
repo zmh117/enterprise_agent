@@ -62,9 +62,7 @@ def test_http_client_sends_exact_get_and_post_json_requests() -> None:
 
     assert client.get_json("/fixed/get", {}, headers=headers) == {"ok": True}
     assert client.get_json("/fixed/get-without-body", None, headers=headers) == {"ok": True}
-    assert client.post_json("/fixed/post", {"uuids": ["U1"]}, headers=headers) == {
-        "ok": True
-    }
+    assert client.post_json("/fixed/post", {"uuids": ["U1"]}, headers=headers) == {"ok": True}
 
     get_request, get_timeout = calls[0]
     bodyless_request, bodyless_timeout = calls[1]
@@ -166,7 +164,7 @@ def test_http_client_rejects_invalid_or_oversized_json() -> None:
         invalid.get_json("/fixed/get", {}, headers={})
     assert malformed.value.error_code == "ones_provider_response_invalid"
 
-    oversized = _client(lambda *_args: _Response(200, b'{' + b"x" * 5000), maximum=1024)
+    oversized = _client(lambda *_args: _Response(200, b"{" + b"x" * 5000), maximum=1024)
     with pytest.raises(AppError) as too_large:
         oversized.get_json("/fixed/get", {}, headers={})
     assert too_large.value.error_code == "ones_provider_response_too_large"

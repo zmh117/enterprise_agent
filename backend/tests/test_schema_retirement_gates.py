@@ -45,9 +45,7 @@ def test_each_outbox_has_one_declared_transaction_boundary_writer() -> None:
         assert entry["classification"] == "operational_coordination_fact"
         assert entry["retirement"]["status"] == "retained"
         declared_paths = {
-            value.removeprefix("code:")
-            for value in entry["writers"]
-            if value.startswith("code:")
+            value.removeprefix("code:") for value in entry["writers"] if value.startswith("code:")
         }
         assert writer_path in declared_paths
         actual_insert_writers = {
@@ -77,9 +75,9 @@ def test_runtime_identity_publication_and_audit_facts_remain_retained() -> None:
         assert by_id[identifier]["retirement"]["status"] == "retained"
         assert by_id[identifier]["retirement"]["earliest_phase"] == "never"
 
-    consolidation_source = (SHARED_ROOT / "schema_consolidation.py").read_text(
-        encoding="utf-8"
-    ).lower()
+    consolidation_source = (
+        (SHARED_ROOT / "schema_consolidation.py").read_text(encoding="utf-8").lower()
+    )
     for sensitive_column in (
         "teams_json",
         "events_json",
@@ -173,9 +171,7 @@ def test_retirement_evidence_requires_all_gates_for_approval() -> None:
 
 
 def test_quarantine_retirement_decision_remains_explicitly_blocked() -> None:
-    decisions = load_retirement_decisions(
-        SHARED_ROOT / "schema_retirement_decisions.json"
-    )
+    decisions = load_retirement_decisions(SHARED_ROOT / "schema_retirement_decisions.json")
 
     assert len(decisions) == 1
     assert decisions[0].candidate == "job_dispatch_cutover_quarantine"
@@ -205,15 +201,16 @@ def test_write_cutover_production_sql_has_no_compatibility_access() -> None:
     assert "graph_json" not in combined
     assert "select * from agent_job" not in combined.lower()
     assert "select * from agent_session" not in combined.lower()
-    assert re.search(
-        r"\b(?:job|j)\.(?:user_id|source|user_message)\b",
-        combined,
-        re.IGNORECASE,
-    ) is None
+    assert (
+        re.search(
+            r"\b(?:job|j)\.(?:user_id|source|user_message)\b",
+            combined,
+            re.IGNORECASE,
+        )
+        is None
+    )
 
-    repository_source = sources[
-        "backend/app/modules/job/infrastructure/repositories.py"
-    ]
+    repository_source = sources["backend/app/modules/job/infrastructure/repositories.py"]
     for table, forbidden in (
         ("agent_session", {"dingding_conversation_id", "dingding_user_id", "source"}),
         ("agent_job", {"user_id", "source", "user_message"}),

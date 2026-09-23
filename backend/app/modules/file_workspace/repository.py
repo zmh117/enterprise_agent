@@ -386,8 +386,7 @@ class FileWorkspaceRepository:
         timestamp = _now()
         materialized_items = list(items)
         identities = {
-            (str(item["file_id"]), str(item["version_id"]))
-            for item in materialized_items
+            (str(item["file_id"]), str(item["version_id"])) for item in materialized_items
         }
         if len(identities) != len(materialized_items):
             raise NonRetryableExecutionError(
@@ -669,8 +668,7 @@ class FileWorkspaceRepository:
             if (
                 snapshot is None
                 or int(snapshot.get("schema_version") or 0) < 5
-                or str(snapshot.get("workspace_catalog_revision_id") or "")
-                != catalog_revision_id
+                or str(snapshot.get("workspace_catalog_revision_id") or "") != catalog_revision_id
             ):
                 raise NonRetryableExecutionError(
                     "Job Manifest is not compatible with catalog promotion",
@@ -883,9 +881,7 @@ class FileWorkspaceRepository:
             if not isinstance(tools, list):
                 tools = []
             identifiers = {
-                str(item.get("tool_identifier") or "")
-                for item in tools
-                if isinstance(item, dict)
+                str(item.get("tool_identifier") or "") for item in tools if isinstance(item, dict)
             }
         except (AttributeError, TypeError, json.JSONDecodeError):
             identifiers = set()
@@ -1473,9 +1469,7 @@ class FileWorkspaceRepository:
             predicates.append("lower(member.logical_name) like lower(?) escape '\\'")
             parameters.append(self._escape_like(name_prefix) + "%")
         if format_codes:
-            predicates.append(
-                f"member.format_code in ({','.join('?' for _ in format_codes)})"
-            )
+            predicates.append(f"member.format_code in ({','.join('?' for _ in format_codes)})")
             parameters.extend(format_codes)
         if source_received_from:
             predicates.append("member.source_received_at >= ?")
@@ -1485,8 +1479,7 @@ class FileWorkspaceRepository:
             parameters.append(source_received_to)
         if readability_statuses:
             predicates.append(
-                "member.readability_status in "
-                f"({','.join('?' for _ in readability_statuses)})"
+                f"member.readability_status in ({','.join('?' for _ in readability_statuses)})"
             )
             parameters.extend(readability_statuses)
         if after_file_id:
@@ -1516,7 +1509,7 @@ class FileWorkspaceRepository:
                    member.readability_status,
                    lower(member.logical_name) as sort_name
               from task_workspace_catalog_member member
-             where {' and '.join(predicates)}
+             where {" and ".join(predicates)}
              order by lower(member.logical_name), member.logical_name, member.file_id
              limit ?
             """,

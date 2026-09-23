@@ -94,16 +94,12 @@ def generate(output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     image = _make_image()
     for suffix, image_format in (("png", "PNG"), ("jpg", "JPEG"), ("webp", "WEBP")):
-        (output_dir / f"synthetic-image.{suffix}").write_bytes(
-            _image_bytes(image, image_format)
-        )
+        (output_dir / f"synthetic-image.{suffix}").write_bytes(_image_bytes(image, image_format))
 
     document = Document()
     document.add_heading("Synthetic Docling benchmark", level=1)
     document.add_paragraph("No customer or production data is present in this file.")
-    document.add_picture(
-        BytesIO(_image_bytes(image, "PNG")), width=DocxInches(5.5)
-    )
+    document.add_picture(BytesIO(_image_bytes(image, "PNG")), width=DocxInches(5.5))
     table = document.add_table(rows=3, cols=2)
     for row_index, row in enumerate(table.rows):
         row.cells[0].text = f"Metric {row_index + 1}"

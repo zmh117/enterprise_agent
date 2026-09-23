@@ -137,9 +137,9 @@ class TaskUpdateFieldCatalog:
                 raise _invalid_catalog()
             fields = cls._load_fields(fields_raw)
             expected_semantics = set(
-                require_ones_tool_contract(
-                    ONES_UPDATE_TASK_TOOL_IDENTIFIER
-                ).input_schema["properties"]
+                require_ones_tool_contract(ONES_UPDATE_TASK_TOOL_IDENTIFIER).input_schema[
+                    "properties"
+                ]
             ) - {"uuid"}
             if {field.semantic_name for field in fields} != expected_semantics:
                 raise _invalid_catalog()
@@ -196,8 +196,14 @@ class TaskUpdateFieldCatalog:
                 or provider_type not in _PROVIDER_TYPES_BY_VALUE_KIND.get(value_kind, set())
                 or type(allow_clear) is not bool
                 or not isinstance(options_raw, list)
-                or (not provider_field_uuid and semantic_name not in {"title", "description", "assignee_uuid"})
-                or (provider_field_uuid and semantic_name in {"title", "description", "assignee_uuid"})
+                or (
+                    not provider_field_uuid
+                    and semantic_name not in {"title", "description", "assignee_uuid"}
+                )
+                or (
+                    provider_field_uuid
+                    and semantic_name in {"title", "description", "assignee_uuid"}
+                )
             ):
                 raise _invalid_catalog()
             options: list[dict[str, str]] = []

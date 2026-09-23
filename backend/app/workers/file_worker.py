@@ -79,9 +79,7 @@ def main() -> None:
                         "document_processing_jobs_released": released,
                         "file_readiness_notices_expired": int(notice.get("expired") or 0),
                         "file_readiness_notices_notified": int(notice.get("notified") or 0),
-                        "document_stage_outbox_published": int(
-                            stage_result.get("published") or 0
-                        ),
+                        "document_stage_outbox_published": int(stage_result.get("published") or 0),
                         "document_stage_outbox_failed": int(stage_result.get("failed") or 0),
                         "status": "RUNNING",
                         "file_service": "ready",

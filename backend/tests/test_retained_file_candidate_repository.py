@@ -88,9 +88,7 @@ def _candidate() -> tuple[AgentRepository, FileWorkspaceRepository]:
 
 
 def _rows(repository: AgentRepository) -> list[dict[str, object]]:
-    return repository.list_session_retained_attachment_rows(
-        session_id="session-file", now=NOW
-    )
+    return repository.list_session_retained_attachment_rows(session_id="session-file", now=NOW)
 
 
 def test_retained_candidate_requires_current_retention_fact() -> None:

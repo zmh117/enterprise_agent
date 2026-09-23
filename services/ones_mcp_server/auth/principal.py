@@ -298,9 +298,7 @@ class OnesPrincipalResolver:
             "ones_mutation_dingtalk_source_required": (
                 "ONES 缺陷更新仅支持从钉钉私聊或群聊会话发起"
             ),
-            "ones_mutation_dingtalk_identity_required": (
-                "当前用户缺少可接收确认卡片的钉钉身份"
-            ),
+            "ones_mutation_dingtalk_identity_required": ("当前用户缺少可接收确认卡片的钉钉身份"),
         }
         return OnesMcpError(
             "ONES Principal could not be resolved from current platform facts",

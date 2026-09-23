@@ -8,7 +8,9 @@ from typing import Any
 
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
-from app.modules.knowledge.infrastructure.ones_verifier import SOURCE_VERIFICATION_PATH as SOURCE_VERIFICATION_PATH
+from app.modules.knowledge.infrastructure.ones_verifier import (
+    SOURCE_VERIFICATION_PATH as SOURCE_VERIFICATION_PATH,
+)
 from app.modules.knowledge.domain.vector_contract import fingerprint
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.database import Database

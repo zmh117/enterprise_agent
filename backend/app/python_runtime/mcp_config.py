@@ -490,10 +490,14 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         return await self._open_tool_result_bridge(request, sdk, servers)
 
     async def _open_tool_result_bridge(
-        self, request: AgentRunRequest, sdk: Any, servers: dict[str, Any],
+        self,
+        request: AgentRunRequest,
+        sdk: Any,
+        servers: dict[str, Any],
     ) -> dict[str, Any]:
         bindings = {
-            item.tool_name: item.tool_schema_hash for item in request.context.mcp_bindings
+            item.tool_name: item.tool_schema_hash
+            for item in request.context.mcp_bindings
             if item.server_code == "tool-mcp"
         }
         if not set(bindings).intersection(QUERY_RESULT_TOOLS):
@@ -501,14 +505,19 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         sandbox = self._sandbox.get()
         if sandbox is None:
             raise NonRetryableExecutionError(
-                "Missing sandbox", safe_message="当前任务沙盒不可用",
+                "Missing sandbox",
+                safe_message="当前任务沙盒不可用",
                 error_code="runtime_sandbox_unavailable",
             )
         alias = mcp_sdk_server_alias("tool-mcp")
         remote = servers[alias]
         bridge = self._tool_result_bridge_factory(
-            sdk=sdk, url=remote["url"], headers=remote["headers"], frozen=bindings,
-            sandbox=sandbox, timeout=float(request.context.timeout_seconds),
+            sdk=sdk,
+            url=remote["url"],
+            headers=remote["headers"],
+            frozen=bindings,
+            sandbox=sandbox,
+            timeout=float(request.context.timeout_seconds),
         )
         self._tool_result_bridge = bridge
         try:

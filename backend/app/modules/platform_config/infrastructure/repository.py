@@ -1048,9 +1048,7 @@ class PlatformConfigRepository:
                 int(bool(existing.get("sensitive"))),
                 int(bool(existing.get("bootstrap_only"))),
                 int(bool(existing.get("tenant_compatible"))),
-                json_text(
-                    _normalize_definition_service_names(existing.get("service_names") or [])
-                ),
+                json_text(_normalize_definition_service_names(existing.get("service_names") or [])),
                 _normalize_definition_description(str(existing.get("description") or "")),
                 str(existing.get("status") or "").strip().lower(),
             )

@@ -236,10 +236,9 @@ class OnesExternalActionAdapter:
                     safe_message="ONES 身份需要本人重新验证，本次创建未执行",
                     error_code="ones_credential_reverification_required",
                 ) from None
-        if (
-            preflight.layout_version != str(precondition.get("layout_version") or "")
-            or preflight.validation_hash != str(precondition.get("validation_hash") or "")
-        ):
+        if preflight.layout_version != str(
+            precondition.get("layout_version") or ""
+        ) or preflight.validation_hash != str(precondition.get("validation_hash") or ""):
             raise NonRetryableExecutionError(
                 "ONES defect-create preflight changed after confirmation",
                 safe_message="ONES 创建权限、布局或引用值已变化，请重新生成提案",

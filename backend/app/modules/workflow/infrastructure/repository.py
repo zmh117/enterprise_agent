@@ -298,8 +298,7 @@ class WorkflowRepository:
     ) -> dict[str, Any]:
         suffix = " for update" if lock and self.database.engine == "postgres" else ""
         row = self.database.execute_one(
-            f"select {_TEMPLATE_COLUMNS} from agent_workflow_template where code = ?"
-            + suffix,
+            f"select {_TEMPLATE_COLUMNS} from agent_workflow_template where code = ?" + suffix,
             (template_code,),
         )
         if row is None:

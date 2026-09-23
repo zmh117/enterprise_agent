@@ -61,9 +61,7 @@ def _render_ones(intent: dict[str, Any], summary: dict[str, Any]) -> dict[str, s
     }
 
 
-def _render_ones_bug_create(
-    intent: dict[str, Any], summary: dict[str, Any]
-) -> dict[str, str]:
+def _render_ones_bug_create(intent: dict[str, Any], summary: dict[str, Any]) -> dict[str, str]:
     if (
         str(intent.get("target_resource_type") or "") != "task"
         or str(summary.get("operation") or "") != "创建缺陷"

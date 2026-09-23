@@ -765,9 +765,7 @@ class CreateAgentJobService:
                     session_policy=command.session_policy,
                 )
             )
-            workspace_feature_enabled = bool(
-                command.task_file_features.get("workspace_enabled")
-            )
+            workspace_feature_enabled = bool(command.task_file_features.get("workspace_enabled"))
             active_workspace = (
                 self.file_manifest_service.active_workspace(session.id)
                 if self.file_manifest_service is not None and workspace_feature_enabled

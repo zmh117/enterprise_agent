@@ -10,9 +10,7 @@ class RetirementEvidenceError(ValueError):
     """Safe retirement rejection without business data or database details."""
 
 
-REQUIRED_APPROVALS = frozenset(
-    {"domain", "runtime", "database", "security_audit", "operations"}
-)
+REQUIRED_APPROVALS = frozenset({"domain", "runtime", "database", "security_audit", "operations"})
 DISALLOWED_SOLE_BASIS = frozenset(
     {"zero_rows", "legacy_name", "cutover_name", "local_static_search"}
 )
@@ -38,11 +36,7 @@ def validate_retirement_evidence(
     environments = evidence.get("environments")
     if not isinstance(environments, list) or not environments:
         raise RetirementEvidenceError("Retirement evidence requires environment observations")
-    by_name = {
-        str(item.get("name") or ""): item
-        for item in environments
-        if isinstance(item, dict)
-    }
+    by_name = {str(item.get("name") or ""): item for item in environments if isinstance(item, dict)}
     observed = frozenset(name for name in by_name if name)
     if required_environments and observed != required_environments:
         raise RetirementEvidenceError(

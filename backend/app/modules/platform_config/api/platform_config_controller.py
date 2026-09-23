@@ -389,10 +389,9 @@ def build_platform_config_router() -> APIRouter:
     ) -> dict[str, Any]:
         _require_management_read(request, resource_type="platform_config")
         try:
-            diagnostics = (
-                _container(request)
-                .platform_config_service.file_workspace_tenant_diagnostics(tenant)
-            )
+            diagnostics = _container(
+                request
+            ).platform_config_service.file_workspace_tenant_diagnostics(tenant)
         except Exception as exc:
             raise _handle(exc) from exc
         return {"diagnostics": diagnostics}

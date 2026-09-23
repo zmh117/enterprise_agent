@@ -4,12 +4,7 @@ from pathlib import Path
 
 
 def test_master_key_runbook_refuses_incomplete_reencryption() -> None:
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "docs"
-        / "operations"
-        / "platform-master-key.md"
-    )
+    path = Path(__file__).resolve().parents[2] / "docs" / "operations" / "platform-master-key.md"
     text = path.read_text(encoding="utf-8")
 
     for required in (

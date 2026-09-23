@@ -69,11 +69,7 @@ def _index(values: dict[str, Any], name: str) -> list[dict[str, str]]:
         candidates.append({"uuid": uuid, "name": display_name})
     # Ambiguous names must never be silently included as a unique document
     # lookup. Every duplicate remains available only through live read tools.
-    return [
-        item
-        for item in candidates
-        if counts["".join(item["name"].casefold().split())] == 1
-    ]
+    return [item for item in candidates if counts["".join(item["name"].casefold().split())] == 1]
 
 
 def build_catalog(source_bytes: bytes) -> dict[str, Any]:
@@ -91,7 +87,12 @@ def build_catalog(source_bytes: bytes) -> dict[str, Any]:
     fields: list[dict[str, Any]] = []
     seen_provider_fields: set[str] = set()
     seen_option_uuids: set[str] = set()
-    for semantic_name, (label, provider_field_uuid, provider_type, value_kind) in FIELD_SPECS.items():
+    for semantic_name, (
+        label,
+        provider_field_uuid,
+        provider_type,
+        value_kind,
+    ) in FIELD_SPECS.items():
         if provider_field_uuid in seen_provider_fields:
             raise ValueError("duplicate Provider field UUID")
         seen_provider_fields.add(provider_field_uuid)
@@ -103,9 +104,7 @@ def build_catalog(source_bytes: bytes) -> dict[str, Any]:
                 if option_uuid in seen_option_uuids:
                     raise ValueError("duplicate option UUID")
                 seen_option_uuids.add(option_uuid)
-                field_options.append(
-                    {"uuid": option_uuid, "name": _name(raw_name, "option name")}
-                )
+                field_options.append({"uuid": option_uuid, "name": _name(raw_name, "option name")})
         fields.append(
             {
                 "semantic_name": semantic_name,

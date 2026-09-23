@@ -554,9 +554,7 @@ def test_staged_noncompliant_attachment_notifies_the_originating_conversation_on
     runtime = multimodal_container(
         task_file_features={"workspace_enabled": True, "file_mcp_enabled": True}
     )
-    application = runtime.business_application_repository.get_by_code(
-        "multimodal-test-application"
-    )
+    application = runtime.business_application_repository.get_by_code("multimodal-test-application")
     command_kwargs = file_workspace_command_kwargs(runtime)
     command_kwargs.update(
         {
@@ -603,21 +601,26 @@ def test_staged_noncompliant_attachment_notifies_the_originating_conversation_on
     adapter = _CaptureDeliveryAdapter()
     runtime.result_delivery_service.adapters["dingtalk_conversation"] = adapter
 
-    assert runtime.attachment_service.process(  # type: ignore[union-attr]
-        intake.attachment_ids[0], "correlation-invalid-encoding"
-    ) == "staged"
+    assert (
+        runtime.attachment_service.process(  # type: ignore[union-attr]
+            intake.attachment_ids[0], "correlation-invalid-encoding"
+        )
+        == "staged"
+    )
     runtime.delivery_dispatcher.dispatch_pending(limit=10)
 
     assert adapter.sent == [
         (
             "文件未进入工作区",
-            "文件 `M102200001(1).txt` 未进入工作区：文件必须使用 UTF-8 编码。"
-            "请修正后重新发送。",
+            "文件 `M102200001(1).txt` 未进入工作区：文件必须使用 UTF-8 编码。请修正后重新发送。",
         )
     ]
 
-    assert runtime.attachment_service.process(  # type: ignore[union-attr]
-        intake.attachment_ids[0], "correlation-invalid-encoding-retry"
-    ) == "staged"
+    assert (
+        runtime.attachment_service.process(  # type: ignore[union-attr]
+            intake.attachment_ids[0], "correlation-invalid-encoding-retry"
+        )
+        == "staged"
+    )
     runtime.delivery_dispatcher.dispatch_pending(limit=10)
     assert len(adapter.sent) == 1

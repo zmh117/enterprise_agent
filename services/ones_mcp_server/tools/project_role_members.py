@@ -209,11 +209,7 @@ class OnesProjectRoleMemberService:
     ) -> dict[str, Any]:
         roles = self._load_roles(handle, principal, project_uuid, attempt=attempt)
         member_uuids = list(
-            dict.fromkeys(
-                member_uuid
-                for role in roles
-                for member_uuid in role["member_uuids"]
-            )
+            dict.fromkeys(member_uuid for role in roles for member_uuid in role["member_uuids"])
         )
         if not member_uuids:
             if attempt == 0:

@@ -35,9 +35,10 @@ def test_rule_has_no_runtime_version_selector() -> None:
 
 
 def test_log_is_read_only_at_policy_boundary() -> None:
-    assert validate_format_action(
-        format_code="LOG", action=FileAction.MATERIALIZE
-    ).code is TextFormatCode.LOG
+    assert (
+        validate_format_action(format_code="LOG", action=FileAction.MATERIALIZE).code
+        is TextFormatCode.LOG
+    )
     with pytest.raises(NonRetryableExecutionError) as caught:
         validate_format_action(format_code="LOG", action=FileAction.COMMIT)
     assert caught.value.error_code == "file_format_read_only"

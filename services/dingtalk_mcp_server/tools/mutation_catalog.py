@@ -185,9 +185,7 @@ class DingTalkMutationPreparationCatalog:
             "operation": "创建钉钉 AI 表格数据表",
             "base_id": str(frozen["base_id"]),
             "name": str(frozen["name"]),
-            "field_names": [
-                str(row.get("name") or "") for row in fields if isinstance(row, dict)
-            ],
+            "field_names": [str(row.get("name") or "") for row in fields if isinstance(row, dict)],
         }
 
     @staticmethod

@@ -110,6 +110,7 @@ def test_forward_migration_is_empty_replayable_and_does_not_modify_old_tables(tm
             Migrator(db, migrations, migrator_build="knowledge-governance-before").run().head
             == "136"
         )
+
         class PreGovernanceFixtureRepository(ImportRepository):
             # 仅准备 136 时代的历史数据；当时尚无发布表。生产门禁不能容忍缺表。
             def _assert_direct_write_allowed(self, source_id, base_id):
@@ -117,7 +118,8 @@ def test_forward_migration_is_empty_replayable_and_does_not_modify_old_tables(tm
 
         KnowledgeImportService(PreGovernanceFixtureRepository(db)).import_export(
             prepare(tmp_path, [export_row()]),
-            source_code="synthetic_source", knowledge_base_code="synthetic_base",
+            source_code="synthetic_source",
+            knowledge_base_code="synthetic_base",
         )
         db.execute_script(local_seed_sql())
         publication_tables = (

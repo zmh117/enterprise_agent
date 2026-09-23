@@ -76,6 +76,8 @@ def assert_loki_bounds(
     # Empty additions are safe only because the executor injects mandatory scope.
     assert_loki_selector(selector, allow_empty=True)
     assert_loki_query_limits(
-        minutes=minutes, limit=limit,
-        max_minutes=settings.max_loki_minutes, max_lines=settings.max_loki_lines,
+        minutes=minutes,
+        limit=limit,
+        max_minutes=settings.max_loki_minutes,
+        max_lines=settings.max_loki_lines,
     )

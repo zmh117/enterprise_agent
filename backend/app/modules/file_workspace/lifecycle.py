@@ -24,9 +24,7 @@ def task_workspace_expires_at(
         expiry_date = local.date() + timedelta(days=7 - local.weekday())
     else:
         if local.month == 12:
-            expiry_date = local.date().replace(
-                year=local.year + 1, month=1, day=1
-            )
+            expiry_date = local.date().replace(year=local.year + 1, month=1, day=1)
         else:
             expiry_date = local.date().replace(month=local.month + 1, day=1)
     return datetime.combine(expiry_date, time.min, tzinfo=WORKSPACE_TIMEZONE)

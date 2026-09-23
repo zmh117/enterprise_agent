@@ -36,10 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"BASELINE_ADOPTION_{operation}_FAILED: {exc}")
         return 1
     except Exception:
-        print(
-            f"BASELINE_ADOPTION_{operation}_FAILED: "
-            "database unavailable or verification failed"
-        )
+        print(f"BASELINE_ADOPTION_{operation}_FAILED: database unavailable or verification failed")
         return 1
     finally:
         database.close()

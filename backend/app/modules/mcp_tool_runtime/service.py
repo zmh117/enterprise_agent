@@ -200,7 +200,8 @@ class ReadOnlyToolService:
                     if self.schema_cursor_store is None:
                         raise SchemaPaginationCursorStore.unavailable()
                     execution_arguments["cursor"] = self.schema_cursor_store.resolve(
-                        job_id=job_id, reference=cursor,
+                        job_id=job_id,
+                        reference=cursor,
                     )
             result = self._execute(
                 tool_name,
@@ -216,7 +217,8 @@ class ReadOnlyToolService:
                 if self.schema_cursor_store is None:
                     raise SchemaPaginationCursorStore.unavailable()
                 result.summary["next_cursor"] = self.schema_cursor_store.issue(
-                    job_id=job_id, original_cursor=str(result.summary["next_cursor"]),
+                    job_id=job_id,
+                    original_cursor=str(result.summary["next_cursor"]),
                 )
             if managed_tool_call_id:
                 self.repository.complete_tool_call(
@@ -568,8 +570,10 @@ def assert_loki_diagnostic_bounds(arguments: dict[str, Any], limits: ExecutionSe
     minutes = int(arguments.get("minutes", 15))
     limit = int(arguments.get("limit", 100))
     assert_loki_query_limits(
-        minutes=minutes, limit=limit,
-        max_minutes=limits.max_loki_minutes, max_lines=limits.max_loki_lines,
+        minutes=minutes,
+        limit=limit,
+        max_minutes=limits.max_loki_minutes,
+        max_lines=limits.max_loki_lines,
     )
 
 

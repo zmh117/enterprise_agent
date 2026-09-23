@@ -46,10 +46,7 @@ class GraphqlOperationRegistry:
                 or "://" in operation.path_template
                 or "?" in operation.path_template
                 or "#" in operation.path_template
-                or (
-                    operation.query_type
-                    and _QUERY_TYPE.fullmatch(operation.query_type) is None
-                )
+                or (operation.query_type and _QUERY_TYPE.fullmatch(operation.query_type) is None)
                 or ("{team_uuid}" in operation.path_template) != bool(operation.query_type)
                 or not operation.document.lstrip().startswith(("query ", "{"))
             ):

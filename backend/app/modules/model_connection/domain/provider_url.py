@@ -79,9 +79,9 @@ def validate_provider_base_url(
 
 
 def _scheme_shape_message(scheme: str, host: str, allowed_hosts: frozenset[str] | set[str]) -> str:
-    allowlisted = {
-        item.strip().lower() for item in allowed_hosts if str(item).strip()
-    } - {OFFICIAL_PROVIDER_HOST}
+    allowlisted = {item.strip().lower() for item in allowed_hosts if str(item).strip()} - {
+        OFFICIAL_PROVIDER_HOST
+    }
     if host and host in allowlisted:
         return "必须是不包含凭据、查询参数或片段的 HTTP 或 HTTPS 地址"
     if scheme == "http":

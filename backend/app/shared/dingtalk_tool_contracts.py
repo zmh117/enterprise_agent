@@ -11,9 +11,7 @@ DINGTALK_CREATE_TODO_TOOL_IDENTIFIER: Final = "dingtalk_create_todo"
 DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER: Final = (
     "dingtalk_batch_send_message_to_users_by_robot"
 )
-DINGTALK_SEND_MESSAGE_TO_GROUP_TOOL_IDENTIFIER: Final = (
-    "dingtalk_send_message_to_group_by_robot"
-)
+DINGTALK_SEND_MESSAGE_TO_GROUP_TOOL_IDENTIFIER: Final = "dingtalk_send_message_to_group_by_robot"
 DINGTALK_CONFIRMATION_POLICY: Final = "external_action_card_v1"
 DINGTALK_NO_CONFIRMATION_POLICY: Final = "none"
 DINGTALK_ID_PATTERN: Final = r"^[A-Za-z0-9._:@-]+$"
@@ -110,9 +108,7 @@ DINGTALK_OFFICIAL_TOOL_NAMES: Final[Mapping[str, str]] = MappingProxyType(
         "dingtalk_insert_aitable_records": "insertNotableRecords",
         "dingtalk_update_aitable_records": "updateNotableRecords",
         DINGTALK_SEND_MESSAGE_TO_GROUP_TOOL_IDENTIFIER: "sendMessageToGroupByRobot",
-        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER: (
-            "batchSendMessageToUsersByRobot"
-        ),
+        DINGTALK_BATCH_SEND_MESSAGE_TO_USERS_TOOL_IDENTIFIER: ("batchSendMessageToUsersByRobot"),
         "dingtalk_send_work_notification": "sendNotice",
         "dingtalk_get_work_notification_progress": "getSendProgress",
         "dingtalk_get_work_notification_result": "getSendResult",

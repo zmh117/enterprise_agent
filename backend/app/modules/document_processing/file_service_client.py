@@ -157,9 +157,10 @@ class DocumentProcessingFileServiceClient:
             worker_instance_id=worker_instance_id,
             reason_code=reason_code,
         )
-        if set(value) != {"quarantined", "slot_no", "state", "reason_code"} or value[
-            "quarantined"
-        ] is not True:
+        if (
+            set(value) != {"quarantined", "slot_no", "state", "reason_code"}
+            or value["quarantined"] is not True
+        ):
             self._invalid_response()
 
     def heartbeat(
@@ -561,10 +562,7 @@ class DocumentProcessingFileServiceClient:
             self._picture_item_path(item.picture_item_id, "asset"),
             maximum_bytes=item.size_bytes,
         )
-        if (
-            len(body) != item.size_bytes
-            or hashlib.sha256(body).hexdigest() != item.content_sha256
-        ):
+        if len(body) != item.size_bytes or hashlib.sha256(body).hexdigest() != item.content_sha256:
             raise RetryableExecutionError(
                 "Picture asset receipt mismatch",
                 safe_message="图片asset读取回执不匹配",
@@ -663,13 +661,18 @@ class DocumentProcessingFileServiceClient:
             self._run_path(run_id, "assembly/claim"),
             json={"claim_token": claim_token},
         )
-        if set(value) != {
-            "run_id",
-            "profile_hash",
-            "assembly_status",
-            "assembly_attempt",
-            "claimed",
-        } or str(value["run_id"]) != run_id or str(value["profile_hash"]) != profile_hash:
+        if (
+            set(value)
+            != {
+                "run_id",
+                "profile_hash",
+                "assembly_status",
+                "assembly_attempt",
+                "claimed",
+            }
+            or str(value["run_id"]) != run_id
+            or str(value["profile_hash"]) != profile_hash
+        ):
             self._invalid_response()
         return value
 

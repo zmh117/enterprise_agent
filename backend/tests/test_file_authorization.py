@@ -208,12 +208,15 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
         ),
         tool_identifier="file_get_metadata",
     )
-    assert authorization.require_manifest_action(
-        context,
-        file_id="file-private",
-        version_id="version-private",
-        action=FileAction.MATERIALIZE,
-    )["version_id"] == "version-private"
+    assert (
+        authorization.require_manifest_action(
+            context,
+            file_id="file-private",
+            version_id="version-private",
+            action=FileAction.MATERIALIZE,
+        )["version_id"]
+        == "version-private"
+    )
     assert access.calls[-1]["stage"] == "file_principal_resolve"
     with pytest.raises(PermissionDenied) as catalog_candidate_error:
         application.invoke(
@@ -352,15 +355,16 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
         )
     assert error.value.error_code == "application_access_denied"
 
-    repository.mark_content_unavailable(
-        version_id="version-private", deleted_at=TIMESTAMP
+    repository.mark_content_unavailable(version_id="version-private", deleted_at=TIMESTAMP)
+    assert (
+        authorization.require_manifest_action(
+            context,
+            file_id="file-private",
+            version_id="version-private",
+            action=FileAction.READ_METADATA,
+        )["version_id"]
+        == "version-private"
     )
-    assert authorization.require_manifest_action(
-        context,
-        file_id="file-private",
-        version_id="version-private",
-        action=FileAction.READ_METADATA,
-    )["version_id"] == "version-private"
     with pytest.raises(PermissionDenied) as error:
         authorization.require_manifest_action(
             context,
@@ -370,9 +374,7 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
         )
     assert error.value.error_code == "file_content_unavailable"
 
-    database.execute(
-        "update task_workspace set status = 'EXPIRED' where id = 'workspace-private'"
-    )
+    database.execute("update task_workspace set status = 'EXPIRED' where id = 'workspace-private'")
     with pytest.raises(PermissionDenied) as error:
         authorization.require_job(
             claims=_claims(
@@ -386,7 +388,9 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
     assert error.value.error_code == "file_job_not_authorized"
 
 
-def test_group_authorization_uses_same_enterprise_connector_conversation_and_actual_sender() -> None:
+def test_group_authorization_uses_same_enterprise_connector_conversation_and_actual_sender() -> (
+    None
+):
     database = _database()
     _insert_user(database, "user-b")
     database.execute(
@@ -464,12 +468,15 @@ def test_group_authorization_uses_same_enterprise_connector_conversation_and_act
         tool_identifier="file_create_commit_intent",
     )
     assert context.workspace["owner_conversation_id"] == "group-a"
-    assert authorization.require_manifest_action(
-        context,
-        file_id="file-group",
-        version_id="version-group",
-        action=FileAction.EDIT,
-    )["file_id"] == "file-group"
+    assert (
+        authorization.require_manifest_action(
+            context,
+            file_id="file-group",
+            version_id="version-group",
+            action=FileAction.EDIT,
+        )["file_id"]
+        == "file-group"
+    )
 
     database.execute(
         "update task_workspace set owner_conversation_id = 'group-other' where id = 'workspace-group'"

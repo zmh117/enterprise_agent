@@ -185,9 +185,7 @@ class FileAuthorizationService:
             if frozen_actions != DOCUMENT_MANIFEST_ACTIONS or action not in frozen_actions:
                 self._deny("file_manifest_action_denied")
         else:
-            definition = get_text_format_policy().by_code(
-                str(item.get("format_code") or "TXT")
-            )
+            definition = get_text_format_policy().by_code(str(item.get("format_code") or "TXT"))
             if not frozen_actions.issubset(definition.actions):
                 self._deny("file_manifest_actions_invalid")
             named = text_format_for_name(
@@ -362,9 +360,7 @@ class FileAuthorizationService:
         ):
             self._deny("file_representation_denied")
         if not has_representation:
-            definition = get_text_format_policy().by_code(
-                str(item.get("format_code") or "TXT")
-            )
+            definition = get_text_format_policy().by_code(str(item.get("format_code") or "TXT"))
             if FileAction.MATERIALIZE not in definition.actions:
                 self._deny("file_working_set_action_denied")
         if str(item.get("owner_type")) != str(context.workspace["owner_type"]):
@@ -391,9 +387,7 @@ class FileAuthorizationService:
         file_id: str,
         version_id: str,
     ) -> bool:
-        catalog_revision_id = str(
-            context.manifest.get("workspace_catalog_revision_id") or ""
-        )
+        catalog_revision_id = str(context.manifest.get("workspace_catalog_revision_id") or "")
         if not catalog_revision_id:
             return False
         return (

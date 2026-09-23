@@ -123,9 +123,7 @@ def _validate_semantics(manifest: dict[str, Any]) -> None:
             )
         if classification == "operational_coordination_fact":
             if retirement["status"] != "retained":
-                raise FactSourceManifestError(
-                    f"Operational fact {identifier} must remain retained"
-                )
+                raise FactSourceManifestError(f"Operational fact {identifier} must remain retained")
         if classification == "one_time_migration_artifact":
             if retirement["status"] != "blocked" or not retirement["gates"]:
                 raise FactSourceManifestError(
@@ -145,9 +143,7 @@ def _validate_semantics(manifest: dict[str, Any]) -> None:
             "Migration plan versions must be unique and monotonically increasing"
         )
     if int(versions[0]) <= int(manifest["baseline_predecessor"]):
-        raise FactSourceManifestError(
-            "Migration plan must start after the baseline predecessor"
-        )
+        raise FactSourceManifestError("Migration plan must start after the baseline predecessor")
 
 
 def schema_catalog_from_sql(sql: str) -> SchemaCatalog:
@@ -187,9 +183,7 @@ def baseline_engine_catalogs(path: Path) -> dict[str, SchemaCatalog]:
     return {
         engine: SchemaCatalog(
             tables=frozenset((*catalog.tables, *later_catalog.tables)),
-            columns=frozenset(
-                (*catalog.columns, *later_catalog.columns, *added_columns)
-            ),
+            columns=frozenset((*catalog.columns, *later_catalog.columns, *added_columns)),
         )
         for engine, catalog in catalogs.items()
     }
@@ -225,7 +219,9 @@ def referenced_code_paths(manifest: dict[str, Any]) -> Iterable[str]:
 
 def validate_declared_code_paths(manifest: dict[str, Any], repository_root: Path) -> None:
     missing = sorted(
-        path for path in set(referenced_code_paths(manifest)) if not (repository_root / path).exists()
+        path
+        for path in set(referenced_code_paths(manifest))
+        if not (repository_root / path).exists()
     )
     if missing:
         raise FactSourceManifestError(

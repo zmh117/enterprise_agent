@@ -224,5 +224,5 @@ def test_compose_admin_web_requires_profile_and_enabled_feature_flag() -> None:
     assert "10-require-web-admin.sh" in dockerfile_text
     assert guard_path.exists()
     guard_text = guard_path.read_text()
-    assert '${FEATURE_WEB_ADMIN:-false}' in guard_text
+    assert "${FEATURE_WEB_ADMIN:-false}" in guard_text
     assert "exit 1" in guard_text

@@ -777,9 +777,7 @@ class BaselineAdoptionInspector:
                     "Legacy 042 PostgreSQL comments do not match the immutable manifest"
                 )
         elif self.database.execute("pragma foreign_key_check"):
-            raise MigrationDefinitionError(
-                "Legacy 042 schema has foreign key integrity errors"
-            )
+            raise MigrationDefinitionError("Legacy 042 schema has foreign key integrity errors")
         return {
             "schema_fingerprint": str(actual_schema["fingerprint"]),
             "comment_manifest_digest": str(expected_comments["digest"]),
@@ -1068,10 +1066,7 @@ class Migrator:
             and "-- migration: sqlite-foreign-keys-off" in artifact.sql
         )
         try:
-            if (
-                SCHEMA_CONSOLIDATION_CONTRACT_MARKER in artifact.sql
-                and not allow_fresh_contract
-            ):
+            if SCHEMA_CONSOLIDATION_CONTRACT_MARKER in artifact.sql and not allow_fresh_contract:
                 self._require_schema_consolidation_contract(artifact)
             if sqlite_foreign_keys_off:
                 self.database.execute("PRAGMA foreign_keys = OFF")
@@ -1155,8 +1150,7 @@ class Migrator:
                 str(approval["target_label"] or ""),
             )
             is None
-            or re.fullmatch(r"[0-9a-f]{64}", str(approval["evidence_digest"] or ""))
-            is None
+            or re.fullmatch(r"[0-9a-f]{64}", str(approval["evidence_digest"] or "")) is None
             or re.fullmatch(
                 r"[0-9a-f]{64}",
                 str(approval["backup_reference_digest"] or ""),
@@ -1165,9 +1159,7 @@ class Migrator:
             or not str(approval["approved_at"] or "").strip()
             or any(int(approval[field]) != 1 for field in gate_fields)
         ):
-            raise MigrationDefinitionError(
-                "Schema contract approval evidence is incomplete"
-            )
+            raise MigrationDefinitionError("Schema contract approval evidence is incomplete")
         try:
             from app.shared.schema_consolidation import SchemaConsolidationPreflight
 
@@ -1188,8 +1180,7 @@ class Migrator:
             "runtime_invocation_claim",
         )
         if preflight["status"] != "ready" or any(
-            int(preflight["operational"][field]) != 0
-            for field in operational_stop_fields
+            int(preflight["operational"][field]) != 0 for field in operational_stop_fields
         ):
             raise MigrationDefinitionError(
                 "Schema contract live parity or pending operational preconditions failed"

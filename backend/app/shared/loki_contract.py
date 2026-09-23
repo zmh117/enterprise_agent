@@ -29,6 +29,7 @@ def assert_loki_query_limits(*, minutes: int, limit: int, max_minutes: int, max_
             error_code="loki_result_limit_exceeded",
         )
 
+
 # The end assertion also rejects a final newline (unlike JSON Schema's `$`).
 LOKI_LABEL_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\s\S])"
 LOKI_EXACT_VALUE_PATTERN = (

@@ -83,6 +83,7 @@ PROVIDER_HEADERS: Final = MappingProxyType(
     }
 )
 
+
 def ones_tool_required_scope(identifier: str) -> str:
     require_ones_tool_contract(identifier)
     return mcp_invoke_scope(SERVER_CODE, identifier)

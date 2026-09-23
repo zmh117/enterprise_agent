@@ -352,8 +352,7 @@ class RuntimeReadinessEvaluator:
             selected_file_tools = {
                 str(tool.get("tool_identifier") or "")
                 for tool in snapshot.get("mcp_tools") or []
-                if isinstance(tool, dict)
-                and str(tool.get("server_code") or "") == "file-service"
+                if isinstance(tool, dict) and str(tool.get("server_code") or "") == "file-service"
             }
             missing_file_tools = sorted(required_file_tools - selected_file_tools)
             if missing_file_tools:

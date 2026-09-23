@@ -70,9 +70,9 @@ def test_runtime_v14_cutover_preflight_is_ready_only_for_drained_facts(
     finally:
         database.close()
 
-    current_head = deployable_migration_catalog(
-        load_migration_catalog(default_migrations_dir())
-    )[-1].version
+    current_head = deployable_migration_catalog(load_migration_catalog(default_migrations_dir()))[
+        -1
+    ].version
     assert report == {
         "mode": "read-only",
         "target_protocol_version": "1.4",

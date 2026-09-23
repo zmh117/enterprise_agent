@@ -158,8 +158,10 @@ def decode_required_representation_kinds(value: object) -> tuple[RepresentationK
             safe_message="文档派生表示集合无效",
             error_code="document_representation_set_invalid",
         ) from exc
-    if not isinstance(decoded, list) or not decoded or any(
-        not isinstance(item, str) for item in decoded
+    if (
+        not isinstance(decoded, list)
+        or not decoded
+        or any(not isinstance(item, str) for item in decoded)
     ):
         raise NonRetryableExecutionError(
             "Invalid frozen document representation set",

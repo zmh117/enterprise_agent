@@ -204,11 +204,14 @@ def test_catalog_is_generated_bounded_and_name_resolution_is_document_first() ->
         return [{"uuid": "module-1", "name": "称量"}]
 
     project = catalog.reference_indexes["projects"][0]
-    assert catalog.resolve_name(
-        "projects",
-        project["name"],
-        live_lookup=no_match,
-    ) == project
+    assert (
+        catalog.resolve_name(
+            "projects",
+            project["name"],
+            live_lookup=no_match,
+        )
+        == project
+    )
     assert calls == []
     assert catalog.resolve_name(
         "product_modules",
@@ -217,11 +220,14 @@ def test_catalog_is_generated_bounded_and_name_resolution_is_document_first() ->
     ) == {"uuid": "module-1", "name": "称量"}
     assert calls == ["称量"]
     affected = catalog.reference_indexes["affected_versions"][0]
-    assert catalog.resolve_name(
-        "affected_versions",
-        affected["name"],
-        live_lookup=no_match,
-    ) == affected
+    assert (
+        catalog.resolve_name(
+            "affected_versions",
+            affected["name"],
+            live_lookup=no_match,
+        )
+        == affected
+    )
     assert calls == ["称量"]
     with pytest.raises(Exception):
         catalog.resolve_name(
@@ -363,9 +369,7 @@ def _preflight_response(catalog: BugCreateFieldCatalog) -> dict[str, Any]:
             {"uuid": "user-extra", "name": "关注者乙"},
         ],
         "products": [{"uuid": "product-1", "name": "MES"}],
-        "product_modules": [
-            {"uuid": "module-1", "name": "称量", "product_uuids": ["product-1"]}
-        ],
+        "product_modules": [{"uuid": "module-1", "name": "称量", "product_uuids": ["product-1"]}],
         "affected_versions": [{"uuid": affected, "name": "V5.0.1", "kind": "affected"}],
     }
 
@@ -408,12 +412,15 @@ def test_provider_uses_only_fixed_paths_headers_and_full_readback() -> None:
             {"found": True, "task": readback},
         ]
     )
-    assert provider.create_bug(
-        team_uuid=catalog.source_team_uuid,
-        provider_user_id="user-current",
-        token="test-only-token",
-        payload=compiled.provider_payload,
-    )["number"] == 42
+    assert (
+        provider.create_bug(
+            team_uuid=catalog.source_team_uuid,
+            provider_user_id="user-current",
+            token="test-only-token",
+            payload=compiled.provider_payload,
+        )["number"]
+        == 42
+    )
     assert compiled_bug_matches_readback(
         compiled,
         provider.read_created_bug(
@@ -435,7 +442,8 @@ def test_provider_preflight_fails_closed_for_catalog_capability_and_layout() -> 
     catalog = BugCreateFieldCatalog.load()
     invalid_option_http = _Http([])
     invalid_option_provider = OnesBugCreateProvider(
-        invalid_option_http, catalog=catalog  # type: ignore[arg-type]
+        invalid_option_http,
+        catalog=catalog,  # type: ignore[arg-type]
     )
     with pytest.raises(OnesMcpError) as invalid_option:
         invalid_option_provider.preflight_create(
@@ -449,7 +457,8 @@ def test_provider_preflight_fails_closed_for_catalog_capability_and_layout() -> 
 
     unavailable_http = _Http([{"ready": False, "can_create": False}])
     unavailable_provider = OnesBugCreateProvider(
-        unavailable_http, catalog=catalog  # type: ignore[arg-type]
+        unavailable_http,
+        catalog=catalog,  # type: ignore[arg-type]
     )
     with pytest.raises(OnesMcpError) as unavailable:
         unavailable_provider.preflight_create(
@@ -463,7 +472,8 @@ def test_provider_preflight_fails_closed_for_catalog_capability_and_layout() -> 
     incompatible = _preflight_response(catalog)
     incompatible["required_field_uuids"] = []
     incompatible_provider = OnesBugCreateProvider(
-        _Http([incompatible]), catalog=catalog  # type: ignore[arg-type]
+        _Http([incompatible]),
+        catalog=catalog,  # type: ignore[arg-type]
     )
     with pytest.raises(OnesMcpError) as layout:
         incompatible_provider.preflight_create(
@@ -606,8 +616,7 @@ def _summary(title: str) -> dict[str, Any]:
         "operation": "创建缺陷",
         "target": title,
         "fields": [
-            {"label": f"字段{index}", "value": f"值{index}", "marker": ""}
-            for index in range(18)
+            {"label": f"字段{index}", "value": f"值{index}", "marker": ""} for index in range(18)
         ],
     }
 
@@ -758,9 +767,7 @@ def test_create_intent_uses_mcp_call_id_and_supersedes_atomically() -> None:
             mcp_call_id="call-create-denied",
         )
     assert denied.value.error_code == "external_action_supersede_denied"
-    current_intents = database.execute_one(
-        "select count(*) as count from external_action_intent"
-    )
+    current_intents = database.execute_one("select count(*) as count from external_action_intent")
     current_outboxes = database.execute_one(
         "select count(*) as count from external_action_card_outbox"
     )
@@ -929,10 +936,10 @@ def test_worker_create_attempt_is_never_replayed_and_result_is_verified(
         precondition={
             "identity_revision": 7,
             "credential_revision": 3,
-                "layout_version": preflight.layout_version,
-                "validation_hash": preflight.validation_hash,
-                "display_values": preflight.display_values,
-                "confirmed_values": compiled.normalized_arguments,
+            "layout_version": preflight.layout_version,
+            "validation_hash": preflight.validation_hash,
+            "display_values": preflight.display_values,
+            "confirmed_values": compiled.normalized_arguments,
         },
     )
     repository = ExternalActionRepository(database)
@@ -1002,9 +1009,7 @@ def test_worker_create_attempt_is_never_replayed_and_result_is_verified(
             _identity: dict[str, Any],
             _credential: Any,
         ) -> Any:
-            return SimpleNamespace(
-                secrets=SimpleNamespace(token="refreshed-provider-token")
-            )
+            return SimpleNamespace(secrets=SimpleNamespace(token="refreshed-provider-token"))
 
     adapter = _Adapter(runtime, create_provider=provider)  # type: ignore[arg-type]
     outcome = adapter.execute(intent)
@@ -1018,8 +1023,7 @@ def test_worker_create_attempt_is_never_replayed_and_result_is_verified(
         "operationName": "创建缺陷",
         "targetName": arguments["title"],
         "detailText": (
-            "缺陷编号：#900001\n标题：称量结果显示错误\n"
-            "所属项目：示例项目\n负责人：负责人甲"
+            "缺陷编号：#900001\n标题：称量结果显示错误\n所属项目：示例项目\n负责人：负责人甲"
         ),
     }
 
@@ -1053,7 +1057,10 @@ def test_worker_create_readback_mismatch_is_uncertain() -> None:
     adapter._create_provider = provider  # type: ignore[assignment]
     with pytest.raises(RetryableExecutionError) as caught:
         adapter._reconcile_create(
-            {"execution_scope_id": catalog.source_team_uuid, "target_resource_id": "MismatchCreate01"},
+            {
+                "execution_scope_id": catalog.source_team_uuid,
+                "target_resource_id": "MismatchCreate01",
+            },
             {"external_subject_id": "user-current"},
             SimpleNamespace(secrets=SimpleNamespace(token="provider-token")),
             compiled,
@@ -1113,19 +1120,15 @@ def test_mock_supports_preflight_add3_readback_conflict_and_mismatch() -> None:
         "project_uuid": {
             str(preflight.json()["project"]["uuid"]): str(preflight.json()["project"]["name"])
         },
-        "user_uuids": {
-            str(item["uuid"]): str(item["name"]) for item in preflight.json()["users"]
-        },
+        "user_uuids": {str(item["uuid"]): str(item["name"]) for item in preflight.json()["users"]},
         "product_uuids": {
             str(item["uuid"]): str(item["name"]) for item in preflight.json()["products"]
         },
         "product_module_uuids": {
-            str(item["uuid"]): str(item["name"])
-            for item in preflight.json()["product_modules"]
+            str(item["uuid"]): str(item["name"]) for item in preflight.json()["product_modules"]
         },
         "affected_version_uuids": {
-            str(item["uuid"]): str(item["name"])
-            for item in preflight.json()["affected_versions"]
+            str(item["uuid"]): str(item["name"]) for item in preflight.json()["affected_versions"]
         },
     }
     compiled = compile_bug_create(
@@ -1163,11 +1166,14 @@ def test_mock_supports_preflight_add3_readback_conflict_and_mismatch() -> None:
         current_user_uuid=settings.user_uuid,
         display_values=displays,
     )
-    assert client.post(
-        f"/project/api/project/team/{settings.team_uuid}/tasks/add3",
-        headers=headers,
-        json=mismatched.provider_payload,
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/project/api/project/team/{settings.team_uuid}/tasks/add3",
+            headers=headers,
+            json=mismatched.provider_payload,
+        ).status_code
+        == 200
+    )
     mismatch_readback = client.get(
         f"/project/api/project/team/{settings.team_uuid}/tasks/MockCreateTask02/create_readback",
         headers=headers,
@@ -1184,11 +1190,14 @@ def test_mock_supports_preflight_add3_readback_conflict_and_mismatch() -> None:
             current_user_uuid=settings.user_uuid,
             display_values=displays,
         )
-        assert client.post(
-            f"/project/api/project/team/{settings.team_uuid}/tasks/add3",
-            headers=headers,
-            json=ambiguous.provider_payload,
-        ).status_code == status_code
+        assert (
+            client.post(
+                f"/project/api/project/team/{settings.team_uuid}/tasks/add3",
+                headers=headers,
+                json=ambiguous.provider_payload,
+            ).status_code
+            == status_code
+        )
         assert client.get(
             f"/project/api/project/team/{settings.team_uuid}/tasks/"
             f"MockCreate{mode.title()}/create_readback",

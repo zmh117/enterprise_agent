@@ -79,17 +79,14 @@ class FileVersionDeliveryService:
                 job_id=job_id,
                 result_artifact_id=artifact_id,
                 application_publication_id=(
-                    job.business_application_publication_id
-                    or job.agent_publication_id
+                    job.business_application_publication_id or job.agent_publication_id
                 ),
                 delivery_binding={
                     "delivery_kind": "file_version",
                     "title": display_name,
                     "route_type": route.type,
                     "connector_id": route.connector_id,
-                    "route_hash": hashlib.sha256(
-                        canonical_route.encode("utf-8")
-                    ).hexdigest(),
+                    "route_hash": hashlib.sha256(canonical_route.encode("utf-8")).hexdigest(),
                     "route_source": "agent_job.reply_route_json",
                 },
                 target_summary={
@@ -98,9 +95,7 @@ class FileVersionDeliveryService:
                     "file_count": 1,
                 },
                 correlation_id=str(
-                    (job.business_application_route_decision or {}).get(
-                        "correlation_id", ""
-                    )
+                    (job.business_application_route_decision or {}).get("correlation_id", "")
                 ),
                 max_attempts=self.settings.outbox_max_attempts,
                 max_replay_count=self.settings.outbox_max_replays,

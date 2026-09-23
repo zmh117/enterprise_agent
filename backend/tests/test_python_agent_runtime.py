@@ -939,11 +939,22 @@ def test_sandbox_v2_environment_uses_expanded_defaults_without_version_bump(monk
     from app.python_runtime.service import _sandbox_limits_from_environment
     from app.shared.sandbox_contract import SANDBOX_LIMIT_VERSION
 
-    for name in ("CAPACITY_BYTES", "MAX_FILES", "MAX_FILE_BYTES", "MAX_INPUT_FILES", "MAX_WORK_OUTPUT_FILES", "MAX_TMP_FILES"):
+    for name in (
+        "CAPACITY_BYTES",
+        "MAX_FILES",
+        "MAX_FILE_BYTES",
+        "MAX_INPUT_FILES",
+        "MAX_WORK_OUTPUT_FILES",
+        "MAX_TMP_FILES",
+    ):
         monkeypatch.delenv(f"PYTHON_AGENT_RUNTIME_SANDBOX_{name}", raising=False)
     limits = _sandbox_limits_from_environment()
     assert limits == JobSandboxLimits()
-    assert (limits.capacity_bytes, limits.max_files, limits.max_work_output_files) == (536870912, 128, 80)
+    assert (limits.capacity_bytes, limits.max_files, limits.max_work_output_files) == (
+        536870912,
+        128,
+        80,
+    )
     assert SANDBOX_LIMIT_VERSION == "sandbox-v2"
     monkeypatch.setenv("PYTHON_AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES", "234881024")
     monkeypatch.setenv("PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILES", "64")
@@ -953,9 +964,13 @@ def test_sandbox_v2_environment_uses_expanded_defaults_without_version_bump(monk
 
 
 @pytest.mark.parametrize("available, status", [(536870911, 503), (536870912, 200)])
-def test_sandbox_v2_readiness_requires_expanded_available_space(tmp_path, monkeypatch, available, status) -> None:
+def test_sandbox_v2_readiness_requires_expanded_available_space(
+    tmp_path, monkeypatch, available, status
+) -> None:
     dependencies, _ = _dependencies(tmp_path, FakePythonExecutor())
-    monkeypatch.setattr("app.python_runtime.service.shutil.disk_usage", lambda _: SimpleNamespace(free=available))
+    monkeypatch.setattr(
+        "app.python_runtime.service.shutil.disk_usage", lambda _: SimpleNamespace(free=available)
+    )
     response = TestClient(create_app(dependencies)).get("/ready")
     assert response.status_code == status
     assert response.json()["sandbox_capacity_bytes"] == 536870912
@@ -1670,7 +1685,12 @@ def test_runtime_tool_registry_rejects_stale_allowed_tool_before_model() -> None
     assert {(row["tool_name"], row["status"]) for row in observation["rows"]} >= {
         ("stale_tool_name", "UNAUTHORIZED_EFFECTIVE")
     }
-    assert set(observation["prompt"]["declared_tools"]) == {"mcp__tool_mcp__query_database", "Read", "Glob", "Grep"}
+    assert set(observation["prompt"]["declared_tools"]) == {
+        "mcp__tool_mcp__query_database",
+        "Read",
+        "Glob",
+        "Grep",
+    }
 
     client = FixedMcpClaudeSdkClient(
         limits=build_settings().execution,
@@ -1884,10 +1904,13 @@ def test_python_runtime_normalizes_tool_budget_exhaustion_across_sdk_paths(
     # lifecycle/contract coverage lives in the result-only Job tests.
     class BudgetBridge:
         server: dict[str, Any] = {}
+
         async def connect(self) -> None:
             pass
+
         async def close(self) -> None:
             pass
+
     async def query(*, options: dict[str, Any], **_kwargs: Any) -> Any:
         yield AssistantMessage(
             content=[

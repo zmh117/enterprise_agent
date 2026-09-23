@@ -28,4 +28,3 @@ class FixedGraphqlOperation:
         variables: dict[str, Any],
     ) -> dict[str, Any]:
         return self.response_parser(payload, variables)
-

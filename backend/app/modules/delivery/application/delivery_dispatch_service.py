@@ -57,9 +57,7 @@ class DeliveryOutboxDispatcher:
 
     def dispatch_pending(self, *, limit: int = 100) -> DeliveryDispatchResult:
         recovered, recovered_dead = self.repository.recover_stale_delivery_claims()
-        failure_notices_enqueued = self._reconcile_file_delivery_failure_notices(
-            limit=limit
-        )
+        failure_notices_enqueued = self._reconcile_file_delivery_failure_notices(limit=limit)
         succeeded = skipped = retrying = failed = dead = 0
         for _ in range(min(max(1, int(limit)), 1000)):
             event = self.repository.claim_delivery_event(
@@ -105,8 +103,7 @@ class DeliveryOutboxDispatcher:
                 )
                 if (
                     state.status in {DeliveryStatus.FAILED, DeliveryStatus.DEAD}
-                    and str(event.delivery_binding.get("delivery_kind") or "")
-                    == "file_version"
+                    and str(event.delivery_binding.get("delivery_kind") or "") == "file_version"
                     and self._enqueue_file_delivery_failure_notice(
                         event=state,
                     )
@@ -129,9 +126,7 @@ class DeliveryOutboxDispatcher:
 
     def _reconcile_file_delivery_failure_notices(self, *, limit: int) -> int:
         try:
-            return self.delivery_service.reconcile_terminal_file_delivery_failures(
-                limit=limit
-            )
+            return self.delivery_service.reconcile_terminal_file_delivery_failures(limit=limit)
         except Exception as exc:
             self.audit_service.record(
                 "delivery.file.failure_notice_reconcile_failed",
@@ -244,8 +239,7 @@ class DeliveryOutboxDispatcher:
             )
         elif file_version_delivery and route.type == "dingtalk_stream_session_webhook":
             connector = (
-                self.delivery_service.connector_registry
-                .require_dingtalk_stream_file_delivery(
+                self.delivery_service.connector_registry.require_dingtalk_stream_file_delivery(
                     str(getattr(job, "source_connector_id", "") or "")
                 )
             )
@@ -422,7 +416,9 @@ class DeliveryOutboxDispatcher:
             )
         title = str(event.delivery_binding.get("title") or "文件尚未可阅读")
         markdown = str(event.delivery_binding.get("markdown") or "")
-        if any(token in markdown.lower() for token in ("agent_runtime_error", "failure_notification")):
+        if any(
+            token in markdown.lower() for token in ("agent_runtime_error", "failure_notification")
+        ):
             raise NonRetryableExecutionError(
                 "System notice payload used a forbidden failure envelope",
                 safe_message="系统说明格式无效",

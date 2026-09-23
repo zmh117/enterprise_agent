@@ -47,9 +47,7 @@ class _Database:
             }
         raise AssertionError(normalized)
 
-    def execute(
-        self, sql: str, params: tuple[object, ...] = ()
-    ) -> list[dict[str, Any]]:
+    def execute(self, sql: str, params: tuple[object, ...] = ()) -> list[dict[str, Any]]:
         normalized = " ".join(sql.split())
         if "group by r.tenant_id" in normalized:
             return [
@@ -215,34 +213,34 @@ def test_file_operations_projection_is_safe_bounded_and_worker_aware() -> None:
     assert status["document_processing"]["ready"] is True
     assert status["document_processing"]["reason_code"] == "ready"
     assert status["document_processing"]["file_processing_worker"] == {
-            "configured": True,
-            "ready": True,
-            "reason_code": "ready",
-            "components": {
-                "rabbitmq": "ready",
-                "file_service": "ready",
-                "docling": "ready",
-            },
-        }
+        "configured": True,
+        "ready": True,
+        "reason_code": "ready",
+        "components": {
+            "rabbitmq": "ready",
+            "file_service": "ready",
+            "docling": "ready",
+        },
+    }
     assert status["document_processing"]["queues"] == {
-            "processing": {
-                "availability": "available",
-                "ready": 2,
-                "unacked": 0,
-                "consumers": 2,
-            },
-            "retry": {
-                "availability": "available",
-                "ready": 1,
-                "unacked": 0,
-                "consumers": 0,
-            },
-            "dead": {
-                "availability": "available",
-                "ready": 3,
-                "unacked": 0,
-                "consumers": 0,
-            },
+        "processing": {
+            "availability": "available",
+            "ready": 2,
+            "unacked": 0,
+            "consumers": 2,
+        },
+        "retry": {
+            "availability": "available",
+            "ready": 1,
+            "unacked": 0,
+            "consumers": 0,
+        },
+        "dead": {
+            "availability": "available",
+            "ready": 3,
+            "unacked": 0,
+            "consumers": 0,
+        },
     }
     operations = status["document_processing"]["operations"]
     assert operations["groups"] == [

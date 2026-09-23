@@ -218,10 +218,7 @@ def test_processing_consumer_validates_message_and_acks_only_after_disposition(
     assert channel.consumer_queue == queue.file_processing_queue
     assert channel.acks == [23]
     assert parameters[0].heartbeat == queue.consumer_heartbeat_seconds
-    assert (
-        parameters[0].blocked_connection_timeout
-        == queue.consumer_heartbeat_seconds + 60
-    )
+    assert parameters[0].blocked_connection_timeout == queue.consumer_heartbeat_seconds + 60
 
 
 def test_processing_consumer_does_not_dead_letter_after_transport_ack_failure(

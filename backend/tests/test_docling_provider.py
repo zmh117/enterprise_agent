@@ -243,11 +243,7 @@ def _office_bundle(*, source_format: str, extra_name: str | None = None) -> byte
             "children": [{"$ref": "#/pictures/0"}],
         },
         "pictures": [picture],
-        "pages": {
-            "4" if source_format == "PPTX" else "1": {
-                "size": {"width": 100, "height": 100}
-            }
-        },
+        "pages": {"4" if source_format == "PPTX" else "1": {"size": {"width": 100, "height": 100}}},
     }
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -310,8 +306,14 @@ def test_layout_provider_uses_fixed_upload_name_and_validates_picture_bundle(
 @pytest.mark.parametrize(
     ("bundle", "error_code"),
     [
-        (_office_bundle(source_format="DOCX", extra_name="../escape.png"), "docling_bundle_path_invalid"),
-        (_office_bundle(source_format="DOCX", extra_name="unknown.bin"), "docling_bundle_entry_unknown"),
+        (
+            _office_bundle(source_format="DOCX", extra_name="../escape.png"),
+            "docling_bundle_path_invalid",
+        ),
+        (
+            _office_bundle(source_format="DOCX", extra_name="unknown.bin"),
+            "docling_bundle_entry_unknown",
+        ),
     ],
 )
 def test_layout_bundle_rejects_path_traversal_and_unknown_entries(

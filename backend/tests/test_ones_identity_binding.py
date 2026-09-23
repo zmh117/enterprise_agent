@@ -275,9 +275,7 @@ def test_unbound_ones_subject_can_move_to_verified_user_without_rewriting_histor
     )
     identity_a = next(
         identity
-        for identity in container.identity_repository.list_external_identities(
-            str(user_a["id"])
-        )
+        for identity in container.identity_repository.list_external_identities(str(user_a["id"]))
         if identity["provider"] == "ones"
     )
     service.self_unbind(actor_id=str(user_a["id"]))
@@ -325,34 +323,41 @@ def test_unbound_ones_subject_can_move_to_verified_user_without_rewriting_histor
     assert rebound["ones"]["user_id"] == verifier.user_uuid
     identity_b = next(
         identity
-        for identity in container.identity_repository.list_external_identities(
-            str(user_b["id"])
-        )
+        for identity in container.identity_repository.list_external_identities(str(user_b["id"]))
         if identity["provider"] == "ones" and identity["status"] == "enabled"
     )
     assert identity_b["id"] != identity_a["id"]
-    assert container.database.execute_one(
-        """
+    assert (
+        container.database.execute_one(
+            """
         select id, user_id, external_subject_id, status, revision
           from user_external_identity where id = ?
         """,
-        (identity_a["id"],),
-    ) == history_before
-    assert container.database.execute_one(
-        """
+            (identity_a["id"],),
+        )
+        == history_before
+    )
+    assert (
+        container.database.execute_one(
+            """
         select id, external_identity_id, status, revision,
                login_material_ciphertext, token_ciphertext
           from external_identity_credential where external_identity_id = ?
         """,
-        (identity_a["id"],),
-    ) == credential_before
-    assert container.database.execute(
-        """
+            (identity_a["id"],),
+        )
+        == credential_before
+    )
+    assert (
+        container.database.execute(
+            """
         select id, actor_id, payload_summary from audit_event
          where actor_id = ? order by created_at, id
         """,
-        (user_a["id"],),
-    ) == audit_before
+            (user_a["id"],),
+        )
+        == audit_before
+    )
     assert container.database.execute_one(
         """
         select count(*) as count from user_external_identity
@@ -396,9 +401,7 @@ def test_disabled_ones_subject_remains_owned_by_original_user() -> None:
     )
     identity_a = next(
         identity
-        for identity in container.identity_repository.list_external_identities(
-            str(user_a["id"])
-        )
+        for identity in container.identity_repository.list_external_identities(str(user_a["id"]))
         if identity["provider"] == "ones"
     )
     container.identity_repository.set_external_identity_status(
@@ -419,9 +422,10 @@ def test_disabled_ones_subject_remains_owned_by_original_user() -> None:
             default_team_id="TEAM-A",
         )
     assert conflict_error.value.error_code == "identity_conflict"
-    assert container.identity_repository.get_external_identity(str(identity_a["id"]))[
-        "status"
-    ] == "disabled"
+    assert (
+        container.identity_repository.get_external_identity(str(identity_a["id"]))["status"]
+        == "disabled"
+    )
     assert service.self_status(actor_id=str(user_b["id"]))["ones"] is None
 
 

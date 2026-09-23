@@ -499,9 +499,7 @@ class JobFileManifestService:
         }
 
     def _preflight_working_set(self, items: list[dict[str, Any]]) -> None:
-        identities = {
-            (str(item["file_id"]), str(item["version_id"])) for item in items
-        }
+        identities = {(str(item["file_id"]), str(item["version_id"])) for item in items}
         if len(identities) != len(items):
             raise NonRetryableExecutionError(
                 "Manifest v5 contains duplicate File/Version identities",
@@ -532,8 +530,7 @@ class JobFileManifestService:
                     row is None
                     or str(row["status"]) != "AVAILABLE"
                     or int(row["size_bytes"]) != size
-                    or str(row["content_sha256"])
-                    != str(item.get("representation_sha256") or "")
+                    or str(row["content_sha256"]) != str(item.get("representation_sha256") or "")
                 ):
                     raise NonRetryableExecutionError(
                         "Planned Markdown representation changed during preflight",
@@ -822,8 +819,7 @@ class JobFileManifestService:
             return isinstance(tools, list) and any(
                 isinstance(item, dict)
                 and str(item.get("server_code") or "") == "file-service"
-                and str(item.get("tool_identifier") or "")
-                == "task_workspace_search_files"
+                and str(item.get("tool_identifier") or "") == "task_workspace_search_files"
                 for item in tools
             )
         except (AttributeError, TypeError, json.JSONDecodeError):
@@ -937,9 +933,7 @@ class JobFileManifestService:
     ) -> dict[str, Any]:
         format_code = str(row.get("file_format_code") or "TXT")
         if format_code in GOVERNED_DOCUMENT_FORMATS:
-            allowed = [
-                action.value for action in FileAction if action in DOCUMENT_MANIFEST_ACTIONS
-            ]
+            allowed = [action.value for action in FileAction if action in DOCUMENT_MANIFEST_ACTIONS]
         else:
             allowed = [FileAction.READ_METADATA.value]
         return {

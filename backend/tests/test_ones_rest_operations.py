@@ -25,9 +25,7 @@ class _RecordingHttp:
         *,
         headers: dict[str, str],
     ) -> dict[str, Any]:
-        self.calls.append(
-            {"method": "GET", "path": path, "payload": payload, "headers": headers}
-        )
+        self.calls.append({"method": "GET", "path": path, "payload": payload, "headers": headers})
         return self.responses.pop(0)
 
     def post_json(
@@ -37,9 +35,7 @@ class _RecordingHttp:
         *,
         headers: dict[str, str],
     ) -> dict[str, Any]:
-        self.calls.append(
-            {"method": "POST", "path": path, "payload": payload, "headers": headers}
-        )
+        self.calls.append({"method": "POST", "path": path, "payload": payload, "headers": headers})
         return self.responses.pop(0)
 
 
@@ -121,11 +117,7 @@ def test_explicit_rest_operations_use_the_supplied_contract_and_drop_extra_field
         {"role_members": "invalid"},
         {"role_members": [{}]},
         {"role_members": [{"role": {"uuid": "R", "name": "N"}, "members": "U"}]},
-        {
-            "role_members": [
-                {"role": {"uuid": "R", "name": "N"}, "members": ["U", "U"]}
-            ]
-        },
+        {"role_members": [{"role": {"uuid": "R", "name": "N"}, "members": ["U", "U"]}]},
     ],
 )
 def test_project_role_members_parser_rejects_contract_drift(payload: dict[str, Any]) -> None:

@@ -189,9 +189,7 @@ def _prepare_runtime_application() -> None:
             (agent.get("definition") or {}).get("current_publication_id") or ""
         )
         if current_publication_id:
-            agent_publication = runtime.agent_config_service.publication(
-                current_publication_id
-            )
+            agent_publication = runtime.agent_config_service.publication(current_publication_id)
         else:
             draft = dict(agent["draft"])
             config = json.loads(json.dumps(draft["config"]))
@@ -252,9 +250,7 @@ def _prepare_runtime_application() -> None:
             json.dumps(
                 {
                     "prepared": True,
-                    "agent_publication_schema_version": int(
-                        agent_publication["schema_version"]
-                    ),
+                    "agent_publication_schema_version": int(agent_publication["schema_version"]),
                     "model_connection_ready": True,
                     "runtime_protocol_1_3": "1.3"
                     in (
@@ -567,12 +563,7 @@ def _submit_text(*, event_id: str, conversation_id: str = DOCLING_CONVERSATION) 
         "chatbotCorpId": CORP_ID,
         "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",
         "sessionWebhookExpiredTime": "2099-01-01T00:00:00+00:00",
-        "text": {
-            "content": (
-                "读取刚才上传的 synthetic-document.docx，"
-                "只用一句话概括文档内容。"
-            )
-        },
+        "text": {"content": ("读取刚才上传的 synthetic-document.docx，只用一句话概括文档内容。")},
     }
     try:
         result = _submit_to_inbox(
@@ -804,16 +795,19 @@ def _wait_for_channel(*, staged: int, rejected: int, timeout: int) -> None:
         deadline = time.monotonic() + timeout
         last = {"staged": 0, "rejected": 0, "total": 0}
         while time.monotonic() < deadline:
-            row = runtime.database.execute_one(
-                """
+            row = (
+                runtime.database.execute_one(
+                    """
                 select count(*) as total,
                        sum(case when status = 'ATTACHMENTS_STAGED' then 1 else 0 end) as staged,
                        sum(case when status = 'REJECTED' then 1 else 0 end) as rejected
                   from channel_ingress_event
                  where external_event_id like ?
                 """,
-                ("synthetic-%",),
-            ) or {}
+                    ("synthetic-%",),
+                )
+                or {}
+            )
             last = {key: int(row.get(key) or 0) for key in last}
             if last["staged"] >= staged and last["rejected"] >= rejected:
                 print(json.dumps(last, sort_keys=True))
@@ -865,9 +859,7 @@ def _verify(*, expect_terminal: bool) -> None:
             json.dumps(
                 {
                     "runs": rows,
-                    "available_representations": int(
-                        (representations or {}).get("value") or 0
-                    ),
+                    "available_representations": int((representations or {}).get("value") or 0),
                     "attachment_content": 0,
                     "invalid_status": str(invalid["status"]),
                     "invalid_failure_code": str(invalid.get("failure_code") or ""),
@@ -885,15 +877,18 @@ def _wait_for_inflight(*, minimum: int, timeout: int) -> None:
         deadline = time.monotonic() + timeout
         last = {"occupied_slots": 0, "quarantined_slots": 0}
         while time.monotonic() < deadline:
-            row = runtime.database.execute_one(
-                """
+            row = (
+                runtime.database.execute_one(
+                    """
                 select
                   sum(case when state = 'OCCUPIED' then 1 else 0 end) as occupied_slots,
                   sum(case when state = 'QUARANTINED' then 1 else 0 end)
                     as quarantined_slots
                   from document_processing_docling_slot
                 """
-            ) or {}
+                )
+                or {}
+            )
             last = {key: int(row.get(key) or 0) for key in last}
             if last["occupied_slots"] > 2:
                 raise AssertionError("Docling occupied slots exceeded two")
@@ -918,14 +913,17 @@ def _wait_for_concurrency_batch(*, prefix: str, expected: int, timeout: int) -> 
         last: dict[str, int] = {}
         pattern = f"synthetic-{prefix}%"
         while time.monotonic() < deadline:
-            slot = runtime.database.execute_one(
-                """
+            slot = (
+                runtime.database.execute_one(
+                    """
                 select
                   sum(case when state = 'OCCUPIED' then 1 else 0 end) as occupied,
                   sum(case when state = 'QUARANTINED' then 1 else 0 end) as quarantined
                   from document_processing_docling_slot
                 """
-            ) or {}
+                )
+                or {}
+            )
             occupied = int(slot.get("occupied") or 0)
             quarantined = int(slot.get("quarantined") or 0)
             maximum_occupied = max(maximum_occupied, occupied)
@@ -933,8 +931,9 @@ def _wait_for_concurrency_batch(*, prefix: str, expected: int, timeout: int) -> 
                 raise AssertionError("Docling occupied slots exceeded two")
             if quarantined:
                 raise AssertionError("Docling slot entered quarantine during acceptance")
-            row = runtime.database.execute_one(
-                """
+            row = (
+                runtime.database.execute_one(
+                    """
                 select count(distinct r.id) as runs,
                        count(distinct r.source_version_id) as source_versions,
                        count(distinct case when r.status = 'SUCCEEDED' then r.id end)
@@ -955,16 +954,21 @@ def _wait_for_concurrency_batch(*, prefix: str, expected: int, timeout: int) -> 
                     on p.processing_run_id = r.id and p.status = 'AVAILABLE'
                  where m.external_message_id like ?
                 """,
-                (pattern,),
-            ) or {}
-            last = {key: int(row.get(key) or 0) for key in (
-                "runs",
-                "source_versions",
-                "succeeded",
-                "other_terminal",
-                "processing_requests",
-                "available_representations",
-            )}
+                    (pattern,),
+                )
+                or {}
+            )
+            last = {
+                key: int(row.get(key) or 0)
+                for key in (
+                    "runs",
+                    "source_versions",
+                    "succeeded",
+                    "other_terminal",
+                    "processing_requests",
+                    "available_representations",
+                )
+            }
             if last["other_terminal"]:
                 raise AssertionError(f"synthetic concurrency batch failed: {last}")
             if (
@@ -975,8 +979,9 @@ def _wait_for_concurrency_batch(*, prefix: str, expected: int, timeout: int) -> 
                 and last["available_representations"] == expected * 3
                 and occupied == 0
             ):
-                duplicate = runtime.database.execute_one(
-                    """
+                duplicate = (
+                    runtime.database.execute_one(
+                        """
                     select count(*) as count from (
                       select p.processing_run_id, p.kind
                         from agent_message m
@@ -991,8 +996,10 @@ def _wait_for_concurrency_batch(*, prefix: str, expected: int, timeout: int) -> 
                       having count(*) > 1
                     ) duplicate
                     """,
-                    (pattern,),
-                ) or {}
+                        (pattern,),
+                    )
+                    or {}
+                )
                 duplicate_representations = int(duplicate.get("count") or 0)
                 if duplicate_representations:
                     raise AssertionError("synthetic batch created duplicate representations")
@@ -1095,26 +1102,35 @@ def _expire_and_cleanup() -> None:
         if importer is None or not hasattr(importer, "run_maintenance"):
             raise RuntimeError("File Service maintenance client is unavailable")
         maintenance = importer.run_maintenance()
-        representation = runtime.database.execute_one(
-            """
+        representation = (
+            runtime.database.execute_one(
+                """
             select
               sum(case when status = 'AVAILABLE' then 1 else 0 end) as available,
               sum(case when status = 'CONTENT_UNAVAILABLE' then 1 else 0 end) as unavailable
               from file_representation
             """
-        ) or {}
-        versions = runtime.database.execute_one(
-            """
+            )
+            or {}
+        )
+        versions = (
+            runtime.database.execute_one(
+                """
             select
               sum(case when status = 'AVAILABLE' then 1 else 0 end) as available,
               sum(case when status = 'CONTENT_UNAVAILABLE' then 1 else 0 end) as unavailable
               from managed_file_version
             """
-        ) or {}
-        workspace = runtime.database.execute_one(
-            "select status from task_workspace where id = ?",
-            (workspace_id,),
-        ) or {}
+            )
+            or {}
+        )
+        workspace = (
+            runtime.database.execute_one(
+                "select status from task_workspace where id = ?",
+                (workspace_id,),
+            )
+            or {}
+        )
         if int(representation.get("available") or 0) != 0:
             raise AssertionError("representation cleanup left readable content")
         if int(versions.get("available") or 0) != 0:
@@ -1154,19 +1170,22 @@ def _dispatch_delivery() -> None:
     runtime = _runtime("delivery-dispatch-worker")
     try:
         transport = _SyntheticDeliveryTransport()
-        runtime.result_delivery_service.adapters[
-            "dingtalk_stream_session_webhook"
-        ] = DingTalkStreamSessionWebhookDeliveryAdapter(
-            transport=transport,
-            timeout_seconds=5,
+        runtime.result_delivery_service.adapters["dingtalk_stream_session_webhook"] = (
+            DingTalkStreamSessionWebhookDeliveryAdapter(
+                transport=transport,
+                timeout_seconds=5,
+            )
         )
         result = runtime.delivery_dispatcher.dispatch_pending(limit=20)
-        terminal = runtime.database.execute_one(
-            """
+        terminal = (
+            runtime.database.execute_one(
+                """
             select count(*) as value from delivery_outbox
              where status = 'SUCCEEDED' and delivery_kind = 'result'
             """
-        ) or {}
+            )
+            or {}
+        )
         if result.succeeded < 1 or transport.calls < 1:
             raise AssertionError("synthetic Delivery did not reach its governed adapter")
         print(

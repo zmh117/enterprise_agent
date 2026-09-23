@@ -160,6 +160,7 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
             shutil.copyfile(default_migrations_dir() / definition.name, path / definition.name)
     Migrator(db, path, migrator_build="confirmation-before").run()
     from backend.tests.test_knowledge_chunks import import_historical_rows
+
     import_historical_rows(db, tmp_path, [export_row()])
     source = db.execute_one(f"select id from {table(db, 'source')}")["id"]
     db.execute(
@@ -362,7 +363,9 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):
     )
     assert resources.resolve(index["knowledge_base_id"])
     assert store.get("retrieval_revision", "legacy-revision") == {
-        **history["retrieval_revision"][0], "storage_config_json": None, "configuration_version": 0,
+        **history["retrieval_revision"][0],
+        "storage_config_json": None,
+        "configuration_version": 0,
     }
     assert (
         store.get("retrieval_verification", "legacy-verification")

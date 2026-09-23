@@ -50,11 +50,7 @@ def _write_utf8(path: Path, size_bytes: int) -> None:
 
 
 def _allocated_bytes(root: Path) -> int:
-    return sum(
-        entry.stat().st_blocks * 512
-        for entry in root.rglob("*")
-        if entry.is_file()
-    )
+    return sum(entry.stat().st_blocks * 512 for entry in root.rglob("*") if entry.is_file())
 
 
 def _run_scenario(root: Path, name: str, file_sizes: tuple[int, ...]) -> BenchmarkResult:

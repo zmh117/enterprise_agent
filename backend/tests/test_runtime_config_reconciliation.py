@@ -417,8 +417,8 @@ def test_definition_reads_report_missing_builtin_without_recreating_it() -> None
         login(client)
         definitions_response = client.get("/api/platform/runtime-config/definitions")
         snapshot_response = client.get("/api/platform/runtime-config/snapshot")
-        stored_after = (
-            runtime.platform_config_service.repository.get_runtime_config_definition(missing_key)
+        stored_after = runtime.platform_config_service.repository.get_runtime_config_definition(
+            missing_key
         )
         revision_after = runtime.platform_config_service.repository.runtime_config_revision()
         audit_after = runtime.platform_config_service.repository.list_config_audit(limit=500)
@@ -491,9 +491,7 @@ def test_explicit_admin_sync_repairs_missing_definition_once() -> None:
             "/api/platform/runtime-config/definitions/sync",
             headers=csrf_headers(csrf),
         )
-        audit_after_second = runtime.platform_config_service.repository.list_config_audit(
-            limit=500
-        )
+        audit_after_second = runtime.platform_config_service.repository.list_config_audit(limit=500)
 
     assert denied.status_code == 403
     assert first.status_code == 200

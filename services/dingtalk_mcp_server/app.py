@@ -206,9 +206,7 @@ def create_app(
             registry.audit.assert_ready()
             return JSONResponse({"status": "ok", "server_code": SERVER_CODE})
         except Exception:
-            return JSONResponse(
-                {"status": "degraded", "server_code": SERVER_CODE}, status_code=503
-            )
+            return JSONResponse({"status": "degraded", "server_code": SERVER_CODE}, status_code=503)
 
     @asynccontextmanager
     async def lifespan(_: Starlette) -> Any:
@@ -229,7 +227,9 @@ def create_default_app() -> DingTalkMcpSecurityMiddleware:
     from services.dingtalk_mcp_server.bootstrap import build_tool_registry
 
     settings = load_settings()
-    runtime = build_worker_container(settings, seed=settings.seed_local_config, service_name=SERVER_CODE)
+    runtime = build_worker_container(
+        settings, seed=settings.seed_local_config, service_name=SERVER_CODE
+    )
     return create_app(build_tool_registry(runtime), database=runtime.database)
 
 
@@ -265,7 +265,9 @@ def _invocation_id(request: Request) -> str:
     return value
 
 
-def _tool_result(payload: dict[str, Any], *, is_error: bool, meta: dict[str, str]) -> types.CallToolResult:
+def _tool_result(
+    payload: dict[str, Any], *, is_error: bool, meta: dict[str, str]
+) -> types.CallToolResult:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if len(encoded.encode()) > MAX_RESPONSE_BYTES:
         payload = {"error": "钉钉操作结果超限", "error_code": "dingtalk_mcp_response_too_large"}

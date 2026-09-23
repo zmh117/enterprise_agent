@@ -40,13 +40,9 @@ MEDIA_TYPES = {
 
 def _run(path: Path, *, poll_seconds: float, timeout_seconds: int) -> dict[str, object]:
     media_type, format_code = MEDIA_TYPES[path.suffix.lower()]
-    api_key_path = Path(
-        os.getenv("DOCLING_SERVE_API_KEY_FILE", "/run/secrets/docling_api_key")
-    )
+    api_key_path = Path(os.getenv("DOCLING_SERVE_API_KEY_FILE", "/run/secrets/docling_api_key"))
     provider = DoclingServeProvider(
-        base_url=os.getenv(
-            "DOCLING_SERVE_INTERNAL_BASE_URL", "http://docling-serve:5001"
-        ),
+        base_url=os.getenv("DOCLING_SERVE_INTERNAL_BASE_URL", "http://docling-serve:5001"),
         allowed_hosts=("docling-serve",),
         api_key=api_key_path.read_text(encoding="utf-8").strip(),
         connect_timeout_seconds=5,

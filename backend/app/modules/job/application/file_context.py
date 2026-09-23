@@ -197,12 +197,10 @@ _TIME_WINDOW_SOURCE_WORDS = (
     *TODAY_TOKENS,
     *YESTERDAY_TOKENS,
 )
-_TIME_WINDOW_SOURCE_PREFIX = "(?:" + "|".join(
-    re.escape(token) for token in _TIME_WINDOW_SOURCE_WORDS
-) + ")"
-_EXPLICIT_DATE_SOURCE_PREFIX = (
-    r"(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|(?:\d{4}年)?\d{1,2}月\d{1,2}[日号])"
+_TIME_WINDOW_SOURCE_PREFIX = (
+    "(?:" + "|".join(re.escape(token) for token in _TIME_WINDOW_SOURCE_WORDS) + ")"
 )
+_EXPLICIT_DATE_SOURCE_PREFIX = r"(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|(?:\d{4}年)?\d{1,2}月\d{1,2}[日号])"
 _TIME_WINDOW_FILE_SOURCE_NOUN = r"(?:文件|附件|图片|文档|材料|表格|图)"
 _TIME_WINDOW_FILE_SOURCE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
@@ -485,9 +483,7 @@ def _parse_time_window(text: str, *, now: datetime | None = None) -> TimeWindowP
     if any(token in text for token in TODAY_TOKENS):
         return TimeWindowParse(window=_day_window(moment.date()), matched=True)
     if any(token in text for token in YESTERDAY_TOKENS):
-        return TimeWindowParse(
-            window=_day_window(moment.date() - timedelta(days=1)), matched=True
-        )
+        return TimeWindowParse(window=_day_window(moment.date() - timedelta(days=1)), matched=True)
     ranged = _parse_date_range(text, moment)
     if ranged.matched:
         return ranged
@@ -523,9 +519,7 @@ def _resolve_file_context(
 
     if explicit_references:
         bound: list[FileDependency] = []
-        by_identity = {
-            (item.file_id, item.version_id): item for item in candidates if item.file_id
-        }
+        by_identity = {(item.file_id, item.version_id): item for item in candidates if item.file_id}
         for file_id, version_id in explicit_references:
             match = by_identity.get((file_id, version_id))
             if match is None:
@@ -544,9 +538,7 @@ def _resolve_file_context(
     skip_deixis = False
     if quoted_external_message_id:
         quoted = tuple(
-            item
-            for item in candidates
-            if item.message_external_id == quoted_external_message_id
+            item for item in candidates if item.message_external_id == quoted_external_message_id
         )
         if quoted:
             return ResolverDecision(
@@ -569,24 +561,15 @@ def _resolve_file_context(
     if filename_hits:
         return ResolverDecision(
             dependencies=tuple(
-                _dependency_from_candidate(item, capability, "FILENAME")
-                for item in filename_hits
+                _dependency_from_candidate(item, capability, "FILENAME") for item in filename_hits
             )
         )
 
     parsed_window = _parse_time_window(text, now=now)
-    if (
-        parsed_window.invalid
-        and has_explicit_time_window_file_source(text)
-        and not skip_deixis
-    ):
+    if parsed_window.invalid and has_explicit_time_window_file_source(text) and not skip_deixis:
         return ResolverDecision(dependencies=(), notice_kind="invalid_time_window")
     window = parsed_window.window
-    if (
-        window is not None
-        and has_explicit_time_window_file_source(text)
-        and not skip_deixis
-    ):
+    if window is not None and has_explicit_time_window_file_source(text) and not skip_deixis:
         return _resolve_time_window(
             text=text,
             capability=capability,
@@ -659,11 +642,7 @@ def _resolve_file_context(
         (item.source_ready_at or "" for item in ready),
         default="",
     )
-    winners = [
-        item
-        for item in ready
-        if (item.source_ready_at or "") == latest and latest
-    ]
+    winners = [item for item in ready if (item.source_ready_at or "") == latest and latest]
     if len(winners) != 1:
         return ResolverDecision(
             dependencies=(),
@@ -788,9 +767,7 @@ def plan_file_admission(
         text=text,
         requests_file_output=effective_output_intent,
         current_attachments=current_attachments,
-        explicit_references=tuple(
-            (item.file_id, item.version_id) for item in explicit_references
-        ),
+        explicit_references=tuple((item.file_id, item.version_id) for item in explicit_references),
         quoted_external_message_id=quoted_external_message_id,
         candidates=candidates,
         retained_candidates=retained_candidates,

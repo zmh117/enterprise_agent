@@ -681,16 +681,24 @@ class DirectReadOnlyToolExecutor:
 
     def _effective_limits(self, address: Any) -> dict[str, int]:
         if address.resource_kind == "database":
-            return {"max_rows": DATABASE_MAX_ROWS, "default_limit": 100,
-                    "max_response_bytes": QUERY_RESULT_MAX_BYTES}
+            return {
+                "max_rows": DATABASE_MAX_ROWS,
+                "default_limit": 100,
+                "max_response_bytes": QUERY_RESULT_MAX_BYTES,
+            }
         if address.resource_kind == "redis":
-            return {"max_scan_keys": self.limits.redis_scan_limit,
-                    "max_response_bytes": QUERY_RESULT_MAX_BYTES}
+            return {
+                "max_scan_keys": self.limits.redis_scan_limit,
+                "max_response_bytes": QUERY_RESULT_MAX_BYTES,
+            }
         configured = address.query_limits
         return {
-            "max_minutes": min(self.limits.max_loki_minutes, configured["max_minutes"], LOKI_MAX_MINUTES),
+            "max_minutes": min(
+                self.limits.max_loki_minutes, configured["max_minutes"], LOKI_MAX_MINUTES
+            ),
             "max_lines": min(self.limits.max_loki_lines, configured["max_lines"]),
-            "default_minutes": 15, "default_limit": 100,
+            "default_minutes": 15,
+            "default_limit": 100,
             "max_response_bytes": QUERY_RESULT_MAX_BYTES,
             "max_result_bytes": QUERY_RESULT_MAX_BYTES,
         }

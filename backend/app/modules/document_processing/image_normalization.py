@@ -68,7 +68,9 @@ def normalize_picture_asset(
                     or pixels > int(limits["max_picture_pixels"])
                     or used_total_pixels + pixels > int(limits["max_total_picture_pixels"])
                 ):
-                    raise DocumentProcessorFailure("docling_picture_pixel_limit_exceeded", retryable=False)
+                    raise DocumentProcessorFailure(
+                        "docling_picture_pixel_limit_exceeded", retryable=False
+                    )
                 orientation = int(image.getexif().get(274, 1) or 1)
                 if orientation not in range(1, 9):
                     raise DocumentProcessorFailure(
@@ -76,16 +78,16 @@ def normalize_picture_asset(
                     )
                 image.load()
                 normalized = ImageOps.exif_transpose(image)
-                normalized = normalized.convert(
-                    "RGBA" if "A" in normalized.getbands() else "RGB"
-                )
+                normalized = normalized.convert("RGBA" if "A" in normalized.getbands() else "RGB")
                 width, height = normalized.size
                 output = io.BytesIO()
                 normalized.save(output, format="PNG", optimize=False, compress_level=6)
     except DocumentProcessorFailure:
         raise
     except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
-        raise DocumentProcessorFailure("docling_picture_pixel_limit_exceeded", retryable=False) from exc
+        raise DocumentProcessorFailure(
+            "docling_picture_pixel_limit_exceeded", retryable=False
+        ) from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise DocumentProcessorFailure("docling_picture_decode_failed", retryable=False) from exc
     normalized_content = output.getvalue()

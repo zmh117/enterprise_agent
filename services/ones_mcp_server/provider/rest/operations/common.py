@@ -26,4 +26,3 @@ def request_headers(
         "Referer": http.target.base_url,
         "cache-control": "no-cache",
     }
-

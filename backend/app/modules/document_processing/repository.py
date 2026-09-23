@@ -368,9 +368,7 @@ class DocumentProcessingRepository:
         profile = require_document_processing_profile(profile_code, profile_hash=profile_hash)
         if tuple(required_output_kinds) != profile.output_kinds:
             self._deny("document_representation_set_invalid", "文档派生表示集合无效")
-        required_output_kinds_json = json.dumps(
-            list(required_output_kinds), separators=(",", ":")
-        )
+        required_output_kinds_json = json.dumps(list(required_output_kinds), separators=(",", ":"))
         run_id = _id("file_processing_run")
         timestamp = _now()
         inserted = self.database.execute(
@@ -398,11 +396,7 @@ class DocumentProcessingRepository:
                 int(source["size_bytes"]),
                 required_output_kinds_json,
                 run_deadline_at,
-                (
-                    "PENDING"
-                    if profile.layout_ocr_options is not None
-                    else "NOT_REQUIRED"
-                ),
+                ("PENDING" if profile.layout_ocr_options is not None else "NOT_REQUIRED"),
                 actor_id,
                 timestamp,
                 timestamp,
@@ -487,9 +481,7 @@ class DocumentProcessingRepository:
         )
         return {
             "job_id": str((attachment or {}).get("job_id") or ""),
-            "business_application_id": str(
-                (attachment or {}).get("business_application_id") or ""
-            ),
+            "business_application_id": str((attachment or {}).get("business_application_id") or ""),
             "business_application_code": str(
                 (attachment or {}).get("business_application_code") or ""
             ),
@@ -1342,12 +1334,16 @@ class DocumentProcessingRepository:
                 timestamp,
             ),
         )
-        item = inserted[0] if inserted else self.database.execute_one(
-            """
+        item = (
+            inserted[0]
+            if inserted
+            else self.database.execute_one(
+                """
             select * from document_picture_processing_item
              where processing_run_id = ? and picture_asset_id = ?
             """,
-            (run_id, picture_asset_id),
+                (run_id, picture_asset_id),
+            )
         )
         if item is None:
             raise RuntimeError("Picture item idempotency lookup failed")
@@ -1543,7 +1539,9 @@ class DocumentProcessingRepository:
                  where picture_item_id = ? and attempt_no = ?
                 """,
                 (
-                    "SUCCEEDED" if status in {PictureItemStatus.AVAILABLE, PictureItemStatus.NO_TEXT} else "FAILED",
+                    "SUCCEEDED"
+                    if status in {PictureItemStatus.AVAILABLE, PictureItemStatus.NO_TEXT}
+                    else "FAILED",
                     str(item["external_task_id"]),
                     error_code[:128],
                     timestamp,
@@ -1615,9 +1613,13 @@ class DocumentProcessingRepository:
                 timestamp,
             ),
         )
-        row = inserted[0] if inserted else self.database.execute_one(
-            "select * from document_processing_stage_outbox where event_key = ?",
-            (event_key,),
+        row = (
+            inserted[0]
+            if inserted
+            else self.database.execute_one(
+                "select * from document_processing_stage_outbox where event_key = ?",
+                (event_key,),
+            )
         )
         if row is None:
             raise RuntimeError("Document stage outbox idempotency lookup failed")
@@ -2053,12 +2055,16 @@ class DocumentProcessingRepository:
                 timestamp,
             ),
         )
-        row = inserted[0] if inserted else self.database.execute_one(
-            """
+        row = (
+            inserted[0]
+            if inserted
+            else self.database.execute_one(
+                """
             select * from document_picture_cleanup_fact
              where object_kind = ? and object_id = ?
             """,
-            (object_kind, object_id),
+                (object_kind, object_id),
+            )
         )
         if row is None:
             raise RuntimeError("Picture cleanup idempotency lookup failed")

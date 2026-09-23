@@ -51,24 +51,29 @@ def test_workspace_is_created_only_for_file_work_reused_and_explicitly_switched(
         "actor_id": "user-a",
         "now": now,
     }
-    assert service.resolve_for_request(
-        **arguments, has_file_input=False, requests_file_output=False
-    ) is None
-    assert database.execute_one("select count(*) as value from task_workspace")[
-        "value"
-    ] == 0
+    assert (
+        service.resolve_for_request(**arguments, has_file_input=False, requests_file_output=False)
+        is None
+    )
+    assert database.execute_one("select count(*) as value from task_workspace")["value"] == 0
 
     first = service.resolve_for_request(
         **arguments, has_file_input=True, requests_file_output=False
     )
     assert first is not None
     assert first["expires_at"] == "2026-08-17T00:00:00+08:00"
-    assert service.resolve_for_request(
-        **arguments, has_file_input=False, requests_file_output=False
-    )["id"] == first["id"]
-    assert service.resolve_for_request(
-        **arguments, has_file_input=True, requests_file_output=False
-    )["id"] == first["id"]
+    assert (
+        service.resolve_for_request(**arguments, has_file_input=False, requests_file_output=False)[
+            "id"
+        ]
+        == first["id"]
+    )
+    assert (
+        service.resolve_for_request(**arguments, has_file_input=True, requests_file_output=False)[
+            "id"
+        ]
+        == first["id"]
+    )
 
     second = service.resolve_for_request(
         **arguments,
@@ -78,18 +83,26 @@ def test_workspace_is_created_only_for_file_work_reused_and_explicitly_switched(
     )
     assert second is not None and second["id"] != first["id"]
     assert repository.get_workspace(str(first["id"]))["status"] == "CLOSED"
-    assert database.execute_one(
-        "select count(*) as value from task_workspace where status = 'ACTIVE'"
-    )["value"] == 1
-    assert service.resolve_for_request(
-        **arguments,
-        has_file_input=False,
-        requests_file_output=False,
-        end_current_task=True,
-    ) is None
+    assert (
+        database.execute_one(
+            "select count(*) as value from task_workspace where status = 'ACTIVE'"
+        )["value"]
+        == 1
+    )
+    assert (
+        service.resolve_for_request(
+            **arguments,
+            has_file_input=False,
+            requests_file_output=False,
+            end_current_task=True,
+        )
+        is None
+    )
 
 
-def test_txt_stream_validation_accepts_input_bom_and_rejects_output_bom_encoding_type_and_limit() -> None:
+def test_txt_stream_validation_accepts_input_bom_and_rejects_output_bom_encoding_type_and_limit() -> (
+    None
+):
     validator = TxtStreamValidator(max_bytes=16)
     destination = io.BytesIO()
     result = validator.validate_and_copy(
@@ -373,14 +386,15 @@ def test_deleted_internal_content_is_terminal_even_when_external_reference_remai
         source_type="DRIVE_FILE",
         source_id="still-exists-online",
     )
-    version = repository.mark_content_unavailable(
-        version_id="version-0", deleted_at=TIMESTAMP
-    )
+    version = repository.mark_content_unavailable(version_id="version-0", deleted_at=TIMESTAMP)
     assert version["status"] == "CONTENT_UNAVAILABLE"
     assert repository.get_file("file-0")["status"] == "CONTENT_UNAVAILABLE"
-    assert database.execute_one(
-        "select source_id from file_external_reference where version_id = 'version-0'"
-    )["source_id"] == "still-exists-online"
+    assert (
+        database.execute_one(
+            "select source_id from file_external_reference where version_id = 'version-0'"
+        )["source_id"]
+        == "still-exists-online"
+    )
     with pytest.raises(NonRetryableExecutionError) as error:
         repository.require_content_available("version-0")
     assert error.value.error_code == "file_content_unavailable"

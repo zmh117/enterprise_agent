@@ -141,7 +141,21 @@ def test_role_migration_preserves_old_selectors_and_published_hashes(tmp_path: P
                 (f"revision-{index}", resource_id, "a" * 64, f"verification-{index}"),
             )
         result = Migrator(database, source, migrator_build="after-role").run()
-        assert result.applied == ("132", "133", "134", "135", "136", "137", "138", "139", "140", "141", "142", "143", "144")
+        assert result.applied == (
+            "132",
+            "133",
+            "134",
+            "135",
+            "136",
+            "137",
+            "138",
+            "139",
+            "140",
+            "141",
+            "142",
+            "143",
+            "144",
+        )
         for table, status in (
             ("platform_resource_draft", "DRAFT"),
             ("platform_resource_revision", "PUBLISHED"),

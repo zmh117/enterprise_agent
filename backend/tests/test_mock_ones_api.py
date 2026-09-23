@@ -261,9 +261,7 @@ class MockOnesApiTests(unittest.TestCase):
             json={
                 "query": "{ buckets { tasks { number name issueType { uuid } } } }",
                 "variables": {
-                    "filterGroup": [
-                        {"name_match": "status", "issueType_in": ["B4TV9bu5"]}
-                    ],
+                    "filterGroup": [{"name_match": "status", "issueType_in": ["B4TV9bu5"]}],
                     "pagination": {"limit": 1, "preciseCount": True},
                 },
             },
@@ -293,9 +291,7 @@ class MockOnesApiTests(unittest.TestCase):
                 json={
                     "query": "{ buckets { tasks { number name issueType { uuid } } } }",
                     "variables": {
-                        "filterGroup": [
-                            {"name_match": keyword, "issueType_in": ["B4TV9bu5"]}
-                        ],
+                        "filterGroup": [{"name_match": keyword, "issueType_in": ["B4TV9bu5"]}],
                         "pagination": {"limit": 1, "preciseCount": True},
                     },
                 },

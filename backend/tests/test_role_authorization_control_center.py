@@ -382,8 +382,7 @@ def test_assignable_catalog_describes_tools_from_legacy_agent_publications() -> 
 def test_business_capability_names_cover_the_current_mcp_tool_manifest() -> None:
     assert set(_BUSINESS_CAPABILITY_NAMES_ZH) == set(MCP_TOOL_MANIFEST)
     assert all(
-        name.strip() and name != "MCP Tool"
-        for name in _BUSINESS_CAPABILITY_NAMES_ZH.values()
+        name.strip() and name != "MCP Tool" for name in _BUSINESS_CAPABILITY_NAMES_ZH.values()
     )
     assert _BUSINESS_CAPABILITY_NAMES_ZH["task_workspace_get"] == "查看任务工作区"
 

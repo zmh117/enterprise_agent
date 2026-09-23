@@ -198,9 +198,7 @@ class RabbitMQFileProcessingConsumer:
             raise RuntimeError("pika is required for RabbitMQ consuming") from exc
         parameters = pika.URLParameters(self.rabbitmq_url)
         parameters.heartbeat = self.queue.consumer_heartbeat_seconds
-        parameters.blocked_connection_timeout = (
-            self.queue.consumer_heartbeat_seconds + 60
-        )
+        parameters.blocked_connection_timeout = self.queue.consumer_heartbeat_seconds + 60
         connection: Any = pika.BlockingConnection(parameters)
         try:
             channel = connection.channel()

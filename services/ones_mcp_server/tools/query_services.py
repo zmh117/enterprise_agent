@@ -119,7 +119,9 @@ class AutomaticGraphqlQueryService(GraphqlQueryService):
         prepared = dict(arguments)
         collection_limit = ONES_COLLECTION_LIMITS[self.tool_identifier]
         max_pages = (
-            EXTENDED_MAX_PAGES if self.tool_identifier in ONES_EXTENDED_COLLECTION_TOOLS else MAX_PAGES
+            EXTENDED_MAX_PAGES
+            if self.tool_identifier in ONES_EXTENDED_COLLECTION_TOOLS
+            else MAX_PAGES
         )
         requests: list[dict[str, Any]] = []
 

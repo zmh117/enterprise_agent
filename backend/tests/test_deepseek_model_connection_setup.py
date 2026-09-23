@@ -373,9 +373,7 @@ def test_discover_and_test_draft_are_non_persistent_and_normalize_inheritance() 
         return {"detail": secret_value("provider-output")}
 
     c.model_connection_service.model_discoverer = discover
-    c.model_connection_service.runtime_probes = {
-        "python-v1": PythonRuntimeProbe(tester)
-    }
+    c.model_connection_service.runtime_probes = {"python-v1": PythonRuntimeProbe(tester)}
     try:
         discovered = c.model_connection_service.discover_models(
             actor_id=ADMIN_ID,
@@ -458,9 +456,7 @@ def test_draft_test_projects_sdk_failures_without_persistence(
             error_code=error_code,
         )
 
-    c.model_connection_service.runtime_probes = {
-        "python-v1": PythonRuntimeProbe(failed_tester)
-    }
+    c.model_connection_service.runtime_probes = {"python-v1": PythonRuntimeProbe(failed_tester)}
     try:
         with pytest.raises(NonRetryableExecutionError) as rejected:
             c.model_connection_service.test_draft(
@@ -679,9 +675,7 @@ def test_configure_rechecks_revision_after_external_test_without_partial_secret(
         )
         return {"detail": "连接成功"}
 
-    c.model_connection_service.runtime_probes = {
-        "python-v1": PythonRuntimeProbe(concurrent_update)
-    }
+    c.model_connection_service.runtime_probes = {"python-v1": PythonRuntimeProbe(concurrent_update)}
     before_secrets = table_counts(c)
     try:
         with pytest.raises(NonRetryableExecutionError) as conflict:

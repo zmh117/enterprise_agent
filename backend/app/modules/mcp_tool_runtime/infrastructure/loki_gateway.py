@@ -280,7 +280,10 @@ class HttpLokiClient:
         )
         max_lines = min(self._max_lines, binding.loki.max_lines)
         assert_loki_query_limits(
-            minutes=minutes, limit=limit, max_minutes=max_minutes, max_lines=max_lines,
+            minutes=minutes,
+            limit=limit,
+            max_minutes=max_minutes,
+            max_lines=max_lines,
         )
 
     @staticmethod

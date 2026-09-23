@@ -135,7 +135,23 @@ def test_130_upgrades_clean_129_database_and_restores_both_indexes(tmp_path: Pat
         ).run()
 
         assert result.head == "144"
-        assert result.applied == ("130", "131", "132", "133", "134", "135", "136", "137", "138", "139", "140", "141", "142", "143", "144")
+        assert result.applied == (
+            "130",
+            "131",
+            "132",
+            "133",
+            "134",
+            "135",
+            "136",
+            "137",
+            "138",
+            "139",
+            "140",
+            "141",
+            "142",
+            "143",
+            "144",
+        )
         assert {
             "idx_dingtalk_identity_enterprise_subject",
             "idx_dingtalk_identity_user_enterprise_current",

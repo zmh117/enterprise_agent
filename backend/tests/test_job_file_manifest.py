@@ -252,6 +252,8 @@ def _enable_catalog_search(repository: FileWorkspaceRepository) -> None:
         """,
         ("8" * 64, TIMESTAMP),
     )
+
+
 def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> None:
     repository, service = _service()
     workspace = service.resolve_workspace(
@@ -325,9 +327,7 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
                 "auto_materialize": True,
                 "conflict_candidate": False,
                 "source_received_at": None,
-                "version_created_at": to_utc_rfc3339(
-                    first["items"][0]["version_created_at"]
-                ),
+                "version_created_at": to_utc_rfc3339(first["items"][0]["version_created_at"]),
                 "materialization_size_bytes": 5,
             }
         ],
@@ -359,11 +359,7 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
         workspace=workspace,
         requester_id="user-a",
         publication_id="app-file-p1",
-        file_references=(
-            ChannelFileReference(
-                file_id="file-notes", version_id="version-2"
-            ),
-        ),
+        file_references=(ChannelFileReference(file_id="file-notes", version_id="version-2"),),
     )
     second = service.finalize("job-2")
     assert second is not None
@@ -404,9 +400,7 @@ def test_job_manifest_freezes_attachment_receipt_time_separately_from_version_ti
         requester_id="user-a",
         publication_id="app-file-p1",
         file_references=(
-            ChannelFileReference(
-                file_id="file-uploaded", version_id="version-uploaded"
-            ),
+            ChannelFileReference(file_id="file-uploaded", version_id="version-uploaded"),
         ),
     )
 
@@ -417,9 +411,7 @@ def test_job_manifest_freezes_attachment_receipt_time_separately_from_version_ti
     assert item["version_created_at"] != item["source_received_at"]
     runtime = service.runtime_manifest("job-uploaded")
     assert runtime["items"][0]["source_received_at"] == TIMESTAMP
-    assert runtime["items"][0]["version_created_at"] == to_utc_rfc3339(
-        item["version_created_at"]
-    )
+    assert runtime["items"][0]["version_created_at"] == to_utc_rfc3339(item["version_created_at"])
     assert runtime["observed_at"].endswith("+00:00")
 
 
@@ -787,9 +779,7 @@ def test_manifest_v5_catalog_search_keeps_frozen_keyset_pages_stable() -> None:
         arguments={"limit": 2, "cursor": first["next_cursor"]},
     )
     assert [item["display_name"] for item in second["items"]] == ["gamma.txt"]
-    assert second["workspace_catalog_revision_id"] == snapshot[
-        "workspace_catalog_revision_id"
-    ]
+    assert second["workspace_catalog_revision_id"] == snapshot["workspace_catalog_revision_id"]
     with pytest.raises(NonRetryableExecutionError) as mismatch:
         application.invoke(
             context=context,
@@ -873,12 +863,8 @@ def test_thousand_file_catalog_keeps_manifest_bounded_to_two_selected_inputs() -
         requester_id="user-a",
         publication_id="app-file-p1",
         file_references=(
-            ChannelFileReference(
-                file_id="scale-file-0000", version_id="scale-version-0000-v1"
-            ),
-            ChannelFileReference(
-                file_id="scale-file-0999", version_id="scale-version-0999-v1"
-            ),
+            ChannelFileReference(file_id="scale-file-0000", version_id="scale-version-0000-v1"),
+            ChannelFileReference(file_id="scale-file-0999", version_id="scale-version-0999-v1"),
         ),
     )
     snapshot = manifest_service.finalize("job-scale-1000")

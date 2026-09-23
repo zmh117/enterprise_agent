@@ -203,9 +203,7 @@ class ChannelIngressService:
             },
             file_references=event.file_references,
             requests_file_output=event.requests_file_output,
-            quoted_external_message_id=str(
-                event.source.metadata.get("original_message_id") or ""
-            ),
+            quoted_external_message_id=str(event.source.metadata.get("original_message_id") or ""),
             resolver_text=str(event.source.metadata.get("current_message_text") or event.message),
         )
         if (

@@ -77,9 +77,11 @@ def test_concurrency_migration_is_additive_and_seeds_exactly_two_slots(tmp_path)
         "select count(*) as count from file_processing_worker_heartbeat"
     ) == {"count": 0}
 
-    migration_sql = (source / "121_expand_docling_processing_concurrency.sql").read_text(
-        encoding="utf-8"
-    ).lower()
+    migration_sql = (
+        (source / "121_expand_docling_processing_concurrency.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     for protected_table in (
         "business_application_revision",
         "business_application_publication",

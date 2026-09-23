@@ -85,9 +85,7 @@ class FileWorkspaceApplicationService:
             if self.streaming is None:
                 self._deny("file_streaming_not_ready", "文件流式操作尚未就绪")
             assert self.streaming is not None
-            return self.streaming.prepare_materialization(
-                context=context, arguments=arguments
-            )
+            return self.streaming.prepare_materialization(context=context, arguments=arguments)
         if tool_identifier == "file_create_commit_intent":
             if self.streaming is None:
                 self._deny("file_streaming_not_ready", "文件流式操作尚未就绪")
@@ -152,9 +150,7 @@ class FileWorkspaceApplicationService:
                 "file_workspace_search_manifest_incompatible",
                 "当前任务不支持冻结目录搜索",
             )
-        catalog_revision_id = str(
-            context.manifest.get("workspace_catalog_revision_id") or ""
-        )
+        catalog_revision_id = str(context.manifest.get("workspace_catalog_revision_id") or "")
         if not catalog_revision_id:
             self._deny("file_manifest_invalid", "任务文件清单无效")
         if arguments.get("exact_name") and arguments.get("name_prefix"):
@@ -328,9 +324,7 @@ class FileWorkspaceApplicationService:
             raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
             envelope = json.loads(raw)
             payload = envelope["payload"]
-            body = json.dumps(
-                payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
-            )
+            body = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
             checksum = hashlib.sha256(
                 (body + "|" + str(context.manifest["manifest_hash"])).encode()
             ).hexdigest()
@@ -339,12 +333,9 @@ class FileWorkspaceApplicationService:
                 or not isinstance(payload, dict)
                 or str(envelope["checksum"]) != checksum
                 or payload.get("v") != 1
-                or str(payload.get("snapshot_id") or "")
-                != str(context.manifest["id"])
-                or str(payload.get("workspace_id") or "")
-                != str(context.workspace["id"])
-                or str(payload.get("catalog_revision_id") or "")
-                != catalog_revision_id
+                or str(payload.get("snapshot_id") or "") != str(context.manifest["id"])
+                or str(payload.get("workspace_id") or "") != str(context.workspace["id"])
+                or str(payload.get("catalog_revision_id") or "") != catalog_revision_id
                 or str(payload.get("filter_hash") or "") != filter_hash
             ):
                 raise ValueError("cursor binding mismatch")
@@ -390,9 +381,7 @@ class FileWorkspaceApplicationService:
             "size_bytes": int(row.get("size_bytes") or 0),
             "content_sha256": str(row.get("content_sha256") or ""),
             "source_received_at": (
-                str(row.get("source_received_at"))
-                if row.get("source_received_at")
-                else None
+                str(row.get("source_received_at")) if row.get("source_received_at") else None
             ),
             "version_created_at": str(row.get("version_created_at") or ""),
             "readability_status": str(row.get("readability_status") or "NOT_REQUIRED"),

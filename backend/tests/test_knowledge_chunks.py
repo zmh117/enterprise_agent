@@ -174,13 +174,16 @@ def import_rows(database, tmp_path, rows, *, source="synthetic_source", base="sy
 
 def import_historical_rows(database, tmp_path, rows):
     """仅准备发布/同步表引入前的迁移夹具；不能放宽生产缺表门禁。"""
+
     class HistoricalFixtureRepository(ImportRepository):
         def _assert_direct_write_allowed(self, source_id, base_id):
             pass
 
     assert database.execute_one("select max(version) as head from schema_migration")["head"] < "142"
     return KnowledgeImportService(HistoricalFixtureRepository(database)).import_export(
-        prepare(tmp_path, rows), source_code="synthetic_source", knowledge_base_code="synthetic_base",
+        prepare(tmp_path, rows),
+        source_code="synthetic_source",
+        knowledge_base_code="synthetic_base",
     )
 
 

@@ -249,14 +249,17 @@ class ExternalActionRepository:
                 str(row.get("name") or "") == "proposal_chain_id"
                 for row in self.database.execute("pragma table_info(external_action_intent)")
             )
-        return self.database.execute_one(
-            """
+        return (
+            self.database.execute_one(
+                """
             select column_name from information_schema.columns
              where table_schema = current_schema()
                and table_name = 'external_action_intent'
                and column_name = 'proposal_chain_id'
             """
-        ) is not None
+            )
+            is not None
+        )
 
     @staticmethod
     def _same_create_call(
@@ -265,11 +268,9 @@ class ExternalActionRepository:
         facts: dict[str, Any],
         arguments: dict[str, Any],
     ) -> bool:
-        return (
-            str(existing.get("arguments_json") or "") == canonical_json(arguments)
-            and str(existing.get("supersedes_intent_id") or "")
-            == str(facts.get("supersedes_intent_id") or "")
-        )
+        return str(existing.get("arguments_json") or "") == canonical_json(arguments) and str(
+            existing.get("supersedes_intent_id") or ""
+        ) == str(facts.get("supersedes_intent_id") or "")
 
     def _require_supersedable(
         self,
@@ -605,9 +606,7 @@ class ExternalActionRepository:
             ):
                 raise ValueError("External action result card fields are invalid")
             safe_card_fields = {
-                key: value
-                for key, value in card_fields.items()
-                if key in allowed and value
+                key: value for key, value in card_fields.items() if key in allowed and value
             }
             if len(safe_card_fields.get("detailText", "")) > 4000:
                 raise ValueError("External action result card detail exceeds its limit")

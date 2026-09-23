@@ -221,6 +221,13 @@ TOOL_DEFINITIONS["query_database"]["description"] += " 默认 100 行，显式�
 TOOL_DEFINITIONS["list_available_tool_resources"]["description"] += (
     " effective_limits 为实际有效查询上限；Loki 的分钟/行数取平台与已发布资源较小值。"
 )
-for _name in ("query_loki", "diagnose_loki_probe", "diagnose_loki_labels", "diagnose_loki_label_values"):
+for _name in (
+    "query_loki",
+    "diagnose_loki_probe",
+    "diagnose_loki_labels",
+    "diagnose_loki_label_values",
+):
     TOOL_DEFINITIONS[_name]["schema"]["properties"]["minutes"]["maximum"] = LOKI_MAX_MINUTES
-    TOOL_DEFINITIONS[_name]["description"] += " 先查看资源目录 effective_limits，不得猜测上限或反复超限试探。"
+    TOOL_DEFINITIONS[_name]["description"] += (
+        " 先查看资源目录 effective_limits，不得猜测上限或反复超限试探。"
+    )

@@ -58,7 +58,11 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
 
     resource_query = name in QUERY_RESULT_TOOLS
     server_code = "tool-mcp" if resource_query else "ones-mcp"
-    contract = SimpleNamespace(input_schema=TOOL_DEFINITIONS[name]["schema"]) if resource_query else ONES_TOOL_CONTRACTS[name]
+    contract = (
+        SimpleNamespace(input_schema=TOOL_DEFINITIONS[name]["schema"])
+        if resource_query
+        else ONES_TOOL_CONTRACTS[name]
+    )
     captured = {}
     cancel = threading.Event()
 
@@ -78,7 +82,9 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
                 {
                     "content": [],
                     "isError": False,
-                    "structuredContent": _query_payload(name, count) if resource_query else (
+                    "structuredContent": _query_payload(name, count)
+                    if resource_query
+                    else (
                         _project_result()
                         if name == "ones_search_projects"
                         else _work_item_result(count)
@@ -98,7 +104,9 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
             )
 
     def factory(**kwargs):
-        bridge = (ToolResultBridge if resource_query else OnesResultBridge)(**kwargs, session=Session())
+        bridge = (ToolResultBridge if resource_query else OnesResultBridge)(
+            **kwargs, session=Session()
+        )
         captured["bridge"] = bridge
         return bridge
 
@@ -351,9 +359,7 @@ def test_work_item_service_continues_provider_pages(count, page_size, sprint, tm
     service = fixture["work_item_query_service"]
     http = _WorkItemHttp(count, page_size)
 
-    service.graphql = OnesGraphqlClient(
-        http, GraphqlOperationRegistry(BUSINESS_GRAPHQL_OPERATIONS)
-    )
+    service.graphql = OnesGraphqlClient(http, GraphqlOperationRegistry(BUSINESS_GRAPHQL_OPERATIONS))
     arguments = {"keyword": "synthetic", "status_categories": ["to_do"]}
     if sprint:
         arguments.update(project_uuid="PROJECT", sprint_uuid="SPRINT")
@@ -399,9 +405,7 @@ def test_work_item_collection_page_budget_is_still_bounded():
     fixture = _fixture(capabilities=("ones_query_work_items",))
     service = fixture["work_item_query_service"]
     http = _WorkItemHttp(10001, 1)
-    service.graphql = OnesGraphqlClient(
-        http, GraphqlOperationRegistry(BUSINESS_GRAPHQL_OPERATIONS)
-    )
+    service.graphql = OnesGraphqlClient(http, GraphqlOperationRegistry(BUSINESS_GRAPHQL_OPERATIONS))
     with pytest.raises(OnesMcpError) as error:
         service.invoke(
             claims=service.authenticate(fixture["token"]),

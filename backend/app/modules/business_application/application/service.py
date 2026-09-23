@@ -463,7 +463,9 @@ class BusinessApplicationService:
                 safe_message="未找到业务应用发布版本",
             )
         self._require_python_application_publication(publication)
-        tool_errors = knowledge_tool_dependency_errors(publication["snapshot"].get("mcp_tools") or [])
+        tool_errors = knowledge_tool_dependency_errors(
+            publication["snapshot"].get("mcp_tools") or []
+        )
         if tool_errors:
             raise NonRetryableExecutionError(
                 "Knowledge application tool dependency is unavailable",

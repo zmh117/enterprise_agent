@@ -131,9 +131,7 @@ def test_publication_uses_only_normalized_graph_and_is_immutable() -> None:
     runtime.database.execute(
         "update agent_workflow_template set graph_json = ? where id = ?",
         (
-            json.dumps(
-                {"nodes": [{"node_key": "legacy", "node_type": "trigger"}], "edges": []}
-            ),
+            json.dumps({"nodes": [{"node_key": "legacy", "node_type": "trigger"}], "edges": []}),
             template["id"],
         ),
     )

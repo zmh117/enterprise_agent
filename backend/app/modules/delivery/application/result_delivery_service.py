@@ -167,10 +167,7 @@ class ResultDeliveryService:
     ) -> str:
         safe_error_code = _safe_error_code(error_code)
         artifact_id = f"artifact_file_delivery_failure_{source_delivery_id}"
-        content = (
-            "文件已保存到工作区，但回发失败。"
-            "你可以稍后要求我重新发送该文件。"
-        )
+        content = "文件已保存到工作区，但回发失败。你可以稍后要求我重新发送该文件。"
         self.repository.ensure_artifact(
             artifact_id=artifact_id,
             job_id=job_id,
@@ -183,9 +180,7 @@ class ResultDeliveryService:
             job_id=job_id,
             artifact_id=artifact_id,
             correlation_id=str(
-                (job.business_application_route_decision or {}).get(
-                    "correlation_id", ""
-                )
+                (job.business_application_route_decision or {}).get("correlation_id", "")
             ),
             delivery_kind="file_delivery_failure",
             title="文件回发失败",

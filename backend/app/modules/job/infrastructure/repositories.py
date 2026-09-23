@@ -198,9 +198,7 @@ def _safe_runtime_event_payload(event_type: str, value: object) -> dict[str, Any
             "sha256": str(payload.get("sha256") or "")[:64],
             "content_status": "OMITTED",
             "encoded_character_count": _optional_nonnegative_integer(
-                encoded_character_count
-                if encoded_character_count is not None
-                else len(content)
+                encoded_character_count if encoded_character_count is not None else len(content)
             ),
         }
     if event_type == "terminal":

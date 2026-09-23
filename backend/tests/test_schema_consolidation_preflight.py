@@ -28,9 +28,7 @@ def database(tmp_path: Path) -> Database:
     migrations = tmp_path / "baseline-migrations"
     migrations.mkdir()
     source = default_migrations_dir()
-    (migrations / "100_baseline_v1.sql").write_bytes(
-        (source / "100_baseline_v1.sql").read_bytes()
-    )
+    (migrations / "100_baseline_v1.sql").write_bytes((source / "100_baseline_v1.sql").read_bytes())
     (migrations / "legacy-v1-manifest.json").write_bytes(
         (source / "legacy-v1-manifest.json").read_bytes()
     )
@@ -539,9 +537,7 @@ def test_workflow_backfill_rolls_back_an_interrupted_batch(
     with pytest.raises(SchemaConsolidationError, match="interrupted"):
         backfill.run(apply=True)
 
-    assert database.execute_one(
-        "select count(*) as count from agent_workflow_node"
-    ) == {"count": 0}
+    assert database.execute_one("select count(*) as count from agent_workflow_node") == {"count": 0}
     assert database.execute_one(
         """
         select count(*) as count

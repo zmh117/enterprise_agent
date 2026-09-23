@@ -184,7 +184,9 @@ def _text_metrics(document: dict[str, Any]) -> tuple[int, int, int, int]:
         provenance = item.get("prov")
         if isinstance(provenance, list):
             bbox_count += sum(
-                1 for entry in provenance if isinstance(entry, dict) and isinstance(entry.get("bbox"), dict)
+                1
+                for entry in provenance
+                if isinstance(entry, dict) and isinstance(entry.get("bbox"), dict)
             )
     return blocks, words, characters, bbox_count
 
@@ -241,7 +243,9 @@ def _ocr_picture(
         "pixels": width * height,
         "compressed_bytes": len(content),
         "markdown_bytes": len((markdown or "").encode("utf-8")),
-        "json_bytes": len(json.dumps(docling_json, ensure_ascii=False, separators=(",", ":")).encode("utf-8")),
+        "json_bytes": len(
+            json.dumps(docling_json, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ),
         "blocks": blocks,
         "tokenized_words": words,
         "characters": characters,
@@ -271,9 +275,7 @@ def _case(
         "characters",
         "bbox_count",
     )
-    aggregate = {
-        key: sum(int(item[key]) for item in picture_results) for key in aggregate_keys
-    }
+    aggregate = {key: sum(int(item[key]) for item in picture_results) for key in aggregate_keys}
     result: dict[str, Any] = dict(parent)
     result.update(
         {

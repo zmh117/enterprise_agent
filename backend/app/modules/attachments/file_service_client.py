@@ -55,10 +55,7 @@ class FileServiceAttachmentImporter:
     ) -> AttachmentImportReceipt:
         token = self._token()
         request = urllib.request.Request(
-            (
-                f"{self.base_url}/internal/v1/attachments/"
-                f"{quote(attachment_id, safe='')}/content"
-            ),
+            (f"{self.base_url}/internal/v1/attachments/{quote(attachment_id, safe='')}/content"),
             data=data,
             method="POST",
             headers={

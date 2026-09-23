@@ -86,9 +86,7 @@ def _stage_ready_files(
             conversation_id=conversation_id,
             message="保存这些文件",
             external_message_id=(
-                f"{stage_key}-source-message"
-                if stage_key
-                else f"{conversation_id}-source-message"
+                f"{stage_key}-source-message" if stage_key else f"{conversation_id}-source-message"
             ),
             attachments=attachments,
         )
@@ -120,10 +118,7 @@ def _stage_ready_files(
             "update managed_file set source_received_at = ? where id = ?",
             (datetime.now(UTC).isoformat(), row["file_id"]),
         )
-    return {
-        str(row["file_name"]): (str(row["file_id"]), str(row["version_id"]))
-        for row in rows
-    }
+    return {str(row["file_name"]): (str(row["file_id"]), str(row["version_id"])) for row in rows}
 
 
 def test_execute_output_request_with_conversation_time_word_has_no_dependency(
@@ -346,15 +341,10 @@ def test_execute_time_window_over_limit_preserves_existing_workspace() -> None:
         _stage_ready_files(
             runtime,
             conversation_id=conversation_id,
-            names=tuple(
-                f"材料-{ordinal:02d}.txt"
-                for ordinal in range(start, min(start + 10, 22))
-            ),
+            names=tuple(f"材料-{ordinal:02d}.txt" for ordinal in range(start, min(start + 10, 22))),
             stage_key=f"{conversation_id}-stage-{batch}",
         )
-    active = runtime.database.execute_one(
-        "select id from task_workspace where status = 'ACTIVE'"
-    )
+    active = runtime.database.execute_one("select id from task_workspace where status = 'ACTIVE'")
     assert active is not None
 
     result = runtime.create_agent_job_service.execute(
@@ -407,9 +397,12 @@ def test_waiting_job_restores_legacy_dependency_payload_on_attachment_completion
         {"download-legacy": b"legacy-content"}
     )
 
-    assert runtime.attachment_service.process(  # type: ignore[union-attr]
-        attachment.id, "admission-legacy-recovery-process"
-    ) == "released"
+    assert (
+        runtime.attachment_service.process(  # type: ignore[union-attr]
+            attachment.id, "admission-legacy-recovery-process"
+        )
+        == "released"
+    )
     assert runtime.agent_repository.get_job(result.id).status == JobStatus.PENDING
 
 
@@ -417,9 +410,7 @@ def test_waiting_job_restores_legacy_dependency_payload_on_attachment_completion
 def test_output_request_workspace_lifecycle_matches_frozen_feature(
     workspace_enabled: bool,
 ) -> None:
-    runtime = multimodal_container(
-        task_file_features={"workspace_enabled": workspace_enabled}
-    )
+    runtime = multimodal_container(task_file_features={"workspace_enabled": workspace_enabled})
     kwargs = file_workspace_command_kwargs(runtime)
     kwargs["task_file_features"] = {"workspace_enabled": workspace_enabled}
 

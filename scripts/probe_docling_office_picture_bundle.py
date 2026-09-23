@@ -300,8 +300,7 @@ def main() -> None:
                 source=args.docx,
                 format_code="docx",
                 media_type=(
-                    "application/vnd.openxmlformats-officedocument."
-                    "wordprocessingml.document"
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 ),
                 include_page_images=args.include_page_images,
             ),
@@ -311,8 +310,7 @@ def main() -> None:
                 source=args.pptx,
                 format_code="pptx",
                 media_type=(
-                    "application/vnd.openxmlformats-officedocument."
-                    "presentationml.presentation"
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
                 ),
                 include_page_images=args.include_page_images,
             ),

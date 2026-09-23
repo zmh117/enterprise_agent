@@ -108,7 +108,8 @@ class DirectResourceResolver:
             placement = normalize_resource_role(placement)
         except ValueError as exc:
             raise ToolPolicyError(
-                "Invalid MCP Resource role", safe_message=RESOURCE_ROLE_MESSAGE,
+                "Invalid MCP Resource role",
+                safe_message=RESOURCE_ROLE_MESSAGE,
                 error_code="mcp_resource_placement_invalid",
             ) from exc
         if kind not in {"database", "redis", "loki"}:
@@ -403,9 +404,7 @@ class DirectResourceResolver:
         scope_binding = scope_binding or {}
         table_prefix = str(scope_binding.get("table_prefix") or "")
         redis_namespace_prefixes = tuple(
-            str(value)
-            for value in scope_binding.get("namespace_prefixes", [])
-            if str(value)
+            str(value) for value in scope_binding.get("namespace_prefixes", []) if str(value)
         )
         selector_value = scope_binding.get("selector_conditions") or {}
         if not isinstance(selector_value, dict):

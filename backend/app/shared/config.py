@@ -401,8 +401,12 @@ def load_settings() -> Settings:
             "",
         ),
         master_key_file_required=environment not in {"test", "testing"},
-        oracle_verification_base_url=os.getenv("ORACLE_VERIFICATION_BASE_URL", "http://tool-mcp:9103"),
-        oracle_verification_allowed_hosts=_csv_tuple(os.getenv("ORACLE_VERIFICATION_ALLOWED_HOSTS", "tool-mcp")),
+        oracle_verification_base_url=os.getenv(
+            "ORACLE_VERIFICATION_BASE_URL", "http://tool-mcp:9103"
+        ),
+        oracle_verification_allowed_hosts=_csv_tuple(
+            os.getenv("ORACLE_VERIFICATION_ALLOWED_HOSTS", "tool-mcp")
+        ),
         claude_model=os.getenv(
             "CLAUDE_MODEL",
             os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),

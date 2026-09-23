@@ -133,7 +133,7 @@ def test_cursor_isolated_and_invalidated(directory_fixture, change, monkeypatch)
         sql = {
             "role": "delete from rbac_role_application_knowledge_base where knowledge_base_id='kb-page-0001'",
             "resource": "update \"knowledge.retrieval_resource\" set status='disabled' where knowledge_base_id='kb-page-0001'",
-            "binding": 'update "knowledge.source" set source_system=\'other\'',
+            "binding": "update \"knowledge.source\" set source_system='other'",
             "identity": 'update user_external_identity set metadata_json=\'{"team_uuids":["other"],"default_team_id":"other"}\' where provider=\'ones\'',
             "name": "update \"knowledge.retrieval_resource\" set name='changed' where knowledge_base_id='kb-page-0001'",
         }[change]

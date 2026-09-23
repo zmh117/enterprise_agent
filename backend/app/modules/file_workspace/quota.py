@@ -258,12 +258,8 @@ class WorkspaceQuotaService:
                     return existing
             limits = self.effective_limits(workspace_id)
             usage = self.usage(workspace_id, now=now)
-            next_count = (
-                usage.active_file_count + usage.reserved_file_slots + logical_file_slots
-            )
-            next_bytes = (
-                usage.billable_bytes + usage.reserved_billable_bytes + billable_bytes
-            )
+            next_count = usage.active_file_count + usage.reserved_file_slots + logical_file_slots
+            next_bytes = usage.billable_bytes + usage.reserved_billable_bytes + billable_bytes
             if next_count > limits.active_file_limit:
                 self._deny(
                     "workspace_file_limit_exceeded",
@@ -328,9 +324,7 @@ class WorkspaceQuotaService:
         )
         if row is None:
             raise NotFound("Quota reservation not found", safe_message="未找到文件配额预留")
-        return self.finalize_reservation(
-            str(row["id"]), committed=committed, now=now
-        )
+        return self.finalize_reservation(str(row["id"]), committed=committed, now=now)
 
     def finalize_reservation(
         self,
@@ -384,20 +378,14 @@ class WorkspaceQuotaService:
             self._deny("file_size_invalid", "文件大小无效")
         limits = self.effective_limits(workspace_id)
         usage = self.usage(workspace_id, now=now)
-        next_count = (
-            usage.active_file_count
-            + usage.reserved_file_slots
-            + int(creates_logical_file)
-        )
+        next_count = usage.active_file_count + usage.reserved_file_slots + int(creates_logical_file)
         if next_count > limits.active_file_limit:
             self._deny(
                 "workspace_file_limit_exceeded",
                 f"工作区ACTIVE文件数量已达到 {limits.active_file_limit} 个上限",
             )
         if (
-            usage.billable_bytes
-            + usage.reserved_billable_bytes
-            + incoming_bytes
+            usage.billable_bytes + usage.reserved_billable_bytes + incoming_bytes
             > limits.billable_bytes_limit
         ):
             self._deny("workspace_quota_exceeded", "工作区计费内容已达到容量上限")

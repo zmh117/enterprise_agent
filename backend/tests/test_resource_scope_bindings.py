@@ -94,9 +94,7 @@ def _database_row(*, scope_bindings: list[dict[str, Any]]) -> dict[str, Any]:
                 "username": "readonly",
             }
         ),
-        "secret_refs_json": json.dumps(
-            {"password_ref": "secret://platform/scope_mysql_password"}
-        ),
+        "secret_refs_json": json.dumps({"password_ref": "secret://platform/scope_mysql_password"}),
         "scope_bindings_json": json.dumps(scope_bindings),
         "content_hash": "a" * 64,
     }
@@ -212,13 +210,16 @@ def test_loki_scope_binding_accepts_arbitrary_discovered_exact_labels() -> None:
             },
         }
     ]
-    assert select_resource_scope_binding(
-        normalized,
-        resource_kind="loki",
-        environment_code="prod",
-        base_code="guanlan",
-        workshop_code="GL001",
-    ) == normalized[0]
+    assert (
+        select_resource_scope_binding(
+            normalized,
+            resource_kind="loki",
+            environment_code="prod",
+            base_code="guanlan",
+            workshop_code="GL001",
+        )
+        == normalized[0]
+    )
 
 
 @pytest.mark.parametrize("base", ["", "guanlan"])
@@ -358,9 +359,7 @@ def test_resource_draft_hash_and_revision_include_scope_bindings() -> None:
     service = runtime.platform_config_service.governed_resources
     actor_id = "user_local_admin"
     try:
-        runtime.platform_config_service.upsert_environment(
-            {"code": "scope_env"}, actor_id=actor_id
-        )
+        runtime.platform_config_service.upsert_environment({"code": "scope_env"}, actor_id=actor_id)
         runtime.platform_config_service.upsert_base(
             {
                 "environment_code": "scope_env",
@@ -397,9 +396,7 @@ def test_resource_draft_hash_and_revision_include_scope_bindings() -> None:
                     "database": "mes",
                     "username": "reader",
                 },
-                "secret_refs": {
-                    "password_ref": "secret://platform/scope_mysql_password"
-                },
+                "secret_refs": {"password_ref": "secret://platform/scope_mysql_password"},
                 "scope_bindings": [
                     {
                         "environment_code": "scope_env",
@@ -431,9 +428,7 @@ def test_resource_draft_hash_and_revision_include_scope_bindings() -> None:
             actor_id=actor_id,
         )
         assert changed["content_hash"] != first_hash
-        service.verify_draft(
-            "scope_mysql", actor_id=actor_id, verifier=_PassingVerifier()
-        )
+        service.verify_draft("scope_mysql", actor_id=actor_id, verifier=_PassingVerifier())
         published = service.publish_draft("scope_mysql", actor_id=actor_id)
         assert published["scope_bindings"][0]["table_prefix"] == "S001_MES_"
         assert published["content_hash"] == changed["content_hash"]

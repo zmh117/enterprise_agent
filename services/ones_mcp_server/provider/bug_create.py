@@ -6,7 +6,10 @@ from typing import Any
 
 from app.modules.external_action.domain import json_hash
 from app.modules.mcp_audit import McpAuditCoordinator
-from app.shared.ones_tool_contracts import ONES_CREATE_BUG_TOOL_IDENTIFIER, require_ones_tool_contract
+from app.shared.ones_tool_contracts import (
+    ONES_CREATE_BUG_TOOL_IDENTIFIER,
+    require_ones_tool_contract,
+)
 from services.ones_mcp_server.bug_create import validate_bug_create_arguments
 from services.ones_mcp_server.bug_create_catalog import BugCreateFieldCatalog
 from services.ones_mcp_server.contracts import PROVIDER_HEADERS
@@ -161,9 +164,7 @@ class OnesBugCreateProvider:
 
         users = _named_list(response.get("users"), "ones_bug_create_preflight_invalid")
         products = _named_list(response.get("products"), "ones_bug_create_preflight_invalid")
-        modules = _named_list(
-            response.get("product_modules"), "ones_bug_create_preflight_invalid"
-        )
+        modules = _named_list(response.get("product_modules"), "ones_bug_create_preflight_invalid")
         versions = _named_list(
             response.get("affected_versions"), "ones_bug_create_preflight_invalid"
         )
@@ -182,10 +183,9 @@ class OnesBugCreateProvider:
         selected_products = set(request["product_uuids"])
         for module in modules:
             parents = module.get("product_uuids")
-            if (
-                not isinstance(parents, list)
-                or not set(str(value) for value in parents).intersection(selected_products)
-            ):
+            if not isinstance(parents, list) or not set(
+                str(value) for value in parents
+            ).intersection(selected_products):
                 raise OnesMcpError(
                     "ONES product module relation is invalid",
                     safe_message="所属功能模块不属于已选产品",
@@ -254,11 +254,7 @@ class OnesBugCreateProvider:
         )
         tasks_response = response.get("tasks")
         bad_tasks = response.get("bad_tasks")
-        if (
-            not isinstance(tasks_response, list)
-            or len(tasks_response) != 1
-            or bad_tasks != []
-        ):
+        if not isinstance(tasks_response, list) or len(tasks_response) != 1 or bad_tasks != []:
             raise invalid_provider_response("ones_bug_create_response_invalid")
         task = _object(tasks_response[0], "ones_bug_create_response_invalid")
         requested = _object(tasks[0], "ones_bug_create_payload_invalid")
@@ -266,8 +262,7 @@ class OnesBugCreateProvider:
         if (
             str(task.get("uuid") or "") != str(requested.get("uuid") or "")
             or str(task.get("project_uuid") or "") != str(requested.get("project_uuid") or "")
-            or str(task.get("issue_type_uuid") or "")
-            != self.catalog.fixed_issue_type_uuid
+            or str(task.get("issue_type_uuid") or "") != self.catalog.fixed_issue_type_uuid
             or str(task.get("summary") or "") != str(requested.get("summary") or "")
             or type(number) is not int
         ):

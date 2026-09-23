@@ -199,7 +199,10 @@ class FileProcessingWorkerService:
                 retryable=True,
             )
             return self._settle_failed_slot(
-                "PARENT_RUN", message.run_id, result=result, task=task,
+                "PARENT_RUN",
+                message.run_id,
+                result=result,
+                task=task,
                 error_code=exc.error_code or "document_processing_dependency_unavailable",
             )
         except NonRetryableExecutionError as exc:
@@ -222,7 +225,10 @@ class FileProcessingWorkerService:
                 retryable=False,
             )
             return self._settle_failed_slot(
-                "PARENT_RUN", message.run_id, result=result, task=task,
+                "PARENT_RUN",
+                message.run_id,
+                result=result,
+                task=task,
                 error_code=exc.error_code or "document_processing_denied",
             )
         except Exception as exc:
@@ -243,7 +249,10 @@ class FileProcessingWorkerService:
                 retryable=True,
             )
             return self._settle_failed_slot(
-                "PARENT_RUN", message.run_id, result=result, task=task,
+                "PARENT_RUN",
+                message.run_id,
+                result=result,
+                task=task,
                 error_code="document_processing_unexpected",
             )
 
@@ -316,9 +325,7 @@ class FileProcessingWorkerService:
         used_derived_bytes = len(parent_markdown) + len(parent_docling_json)
         assets: dict[str, _PictureAssetEntry] = {}
         for artifact in pictures:
-            selected = artifact.occurrence_index <= int(
-                limits["soft_picture_occurrences"]
-            )
+            selected = artifact.occurrence_index <= int(limits["soft_picture_occurrences"])
             normalized = normalize_picture_asset(
                 artifact.content,
                 declared_media_type=artifact.media_type,
@@ -387,9 +394,7 @@ class FileProcessingWorkerService:
             correlation_id=correlation_id,
         )
 
-    def _handle_picture(
-        self, message: PictureProcessingTaskMessage
-    ) -> FileProcessingTaskResult:
+    def _handle_picture(self, message: PictureProcessingTaskMessage) -> FileProcessingTaskResult:
         item: ClaimedPictureItem | None = None
         task: ProcessorTask | None = None
         started = self.monotonic()
@@ -433,9 +438,7 @@ class FileProcessingWorkerService:
             task = self._poll_until_terminal(
                 task,
                 started=started,
-                timeout_seconds=int(
-                    layout_options["limits"]["picture_attempt_deadline_seconds"]
-                ),
+                timeout_seconds=int(layout_options["limits"]["picture_attempt_deadline_seconds"]),
                 owner_kind="PICTURE_ITEM",
                 owner_id=item.picture_item_id,
             )
@@ -489,11 +492,12 @@ class FileProcessingWorkerService:
         except DocumentProcessorFailure as exc:
             if item is None:
                 return self._unclaimed_failure(exc.error_code, retryable=exc.retryable)
-            result = self._picture_failure(
-                item, message, exc.error_code, retryable=exc.retryable
-            )
+            result = self._picture_failure(item, message, exc.error_code, retryable=exc.retryable)
             return self._settle_failed_slot(
-                "PICTURE_ITEM", message.picture_item_id, result=result, task=task,
+                "PICTURE_ITEM",
+                message.picture_item_id,
+                result=result,
+                task=task,
                 error_code=exc.error_code,
             )
         except RetryableExecutionError as exc:
@@ -509,7 +513,10 @@ class FileProcessingWorkerService:
                 retryable=True,
             )
             return self._settle_failed_slot(
-                "PICTURE_ITEM", message.picture_item_id, result=result, task=task,
+                "PICTURE_ITEM",
+                message.picture_item_id,
+                result=result,
+                task=task,
                 error_code=exc.error_code or "document_picture_dependency_unavailable",
             )
         except NonRetryableExecutionError as exc:
@@ -532,7 +539,10 @@ class FileProcessingWorkerService:
                 retryable=False,
             )
             return self._settle_failed_slot(
-                "PICTURE_ITEM", message.picture_item_id, result=result, task=task,
+                "PICTURE_ITEM",
+                message.picture_item_id,
+                result=result,
+                task=task,
                 error_code=exc.error_code or "document_picture_denied",
             )
         except Exception as exc:
@@ -553,7 +563,10 @@ class FileProcessingWorkerService:
                 retryable=True,
             )
             return self._settle_failed_slot(
-                "PICTURE_ITEM", message.picture_item_id, result=result, task=task,
+                "PICTURE_ITEM",
+                message.picture_item_id,
+                result=result,
+                task=task,
                 error_code="document_picture_unexpected",
             )
 
@@ -590,17 +603,11 @@ class FileProcessingWorkerService:
                 profile=profile,
             )
             assembly_timeout = int(
-                profile.layout_ocr_options["limits"][
-                    "assembly_deadline_seconds"
-                ]
+                profile.layout_ocr_options["limits"]["assembly_deadline_seconds"]
             )
             occurrence_values: list[dict[str, object]] = []
             result_cache: dict[str, bytes] = {}
-            maximum_result = int(
-                profile.layout_ocr_options["limits"][
-                    "max_ocr_layout_json_bytes"
-                ]
-            )
+            maximum_result = int(profile.layout_ocr_options["limits"]["max_ocr_layout_json_bytes"])
             for occurrence in context["occurrences"]:
                 if not isinstance(occurrence, dict):
                     raise DocumentProcessorFailure(
@@ -798,16 +805,12 @@ class FileProcessingWorkerService:
             return False
         return True
 
-    def _release_then_ack(
-        self, owner_kind: str, owner_id: str
-    ) -> FileProcessingTaskResult:
+    def _release_then_ack(self, owner_kind: str, owner_id: str) -> FileProcessingTaskResult:
         if self._release_slot(owner_kind, owner_id):
             return FileProcessingTaskResult(FileProcessingDisposition.ACK)
         return self._capacity_retry("document_docling_slot_release_deferred")
 
-    def _unclaimed_failure(
-        self, error_code: str, *, retryable: bool
-    ) -> FileProcessingTaskResult:
+    def _unclaimed_failure(self, error_code: str, *, retryable: bool) -> FileProcessingTaskResult:
         safe_code = _safe_error_code(error_code)
         if retryable:
             return self._capacity_retry(safe_code)

@@ -583,8 +583,7 @@ class PlatformConfigService:
                     for item in incompatible
                 )
                 raise ValueError(
-                    "tenant仍有未冻结task_workspace_search_files的启用Publication: "
-                    + identities
+                    "tenant仍有未冻结task_workspace_search_files的启用Publication: " + identities
                 )
         expected_revision = _optional_expected_revision(payload.get("expected_revision"))
         if before and scope_type.value == "tenant" and expected_revision is None:
@@ -668,8 +667,7 @@ class PlatformConfigService:
 
         quota = WorkspaceQuotaService(self.repository.database)
         usage = [
-            quota.usage(str(row["id"]), now=datetime.now(UTC).isoformat())
-            for row in workspaces
+            quota.usage(str(row["id"]), now=datetime.now(UTC).isoformat()) for row in workspaces
         ]
         candidates = self.repository.database.execute(
             """
@@ -719,9 +717,7 @@ class PlatformConfigService:
                 "active_file_count": sum(item.active_file_count for item in usage),
                 "billable_bytes": sum(item.billable_bytes for item in usage),
                 "reserved_file_slots": sum(item.reserved_file_slots for item in usage),
-                "reserved_billable_bytes": sum(
-                    item.reserved_billable_bytes for item in usage
-                ),
+                "reserved_billable_bytes": sum(item.reserved_billable_bytes for item in usage),
             },
             "incompatible_publications": incompatible,
         }

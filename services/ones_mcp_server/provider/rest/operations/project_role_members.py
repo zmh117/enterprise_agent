@@ -50,9 +50,10 @@ class ProjectRoleMembersOperation:
     @staticmethod
     def parse_response(payload: dict[str, Any]) -> list[dict[str, Any]]:
         role_members = payload.get("role_members") if isinstance(payload, dict) else None
-        if not isinstance(role_members, list) or len(role_members) > PROJECT_ROLE_MEMBER_LIMITS[
-            "roles"
-        ]:
+        if (
+            not isinstance(role_members, list)
+            or len(role_members) > PROJECT_ROLE_MEMBER_LIMITS["roles"]
+        ):
             raise invalid_provider_response("ones_provider_schema_invalid")
         normalized: list[dict[str, Any]] = []
         seen_roles: set[str] = set()
@@ -139,9 +140,7 @@ class TeamUsersOperation:
     @staticmethod
     def parse_response(payload: dict[str, Any]) -> dict[str, str]:
         users = payload.get("users") if isinstance(payload, dict) else None
-        if not isinstance(users, list) or len(users) > PROJECT_ROLE_MEMBER_LIMITS[
-            "unique_members"
-        ]:
+        if not isinstance(users, list) or len(users) > PROJECT_ROLE_MEMBER_LIMITS["unique_members"]:
             raise invalid_provider_response("ones_provider_schema_invalid")
         normalized: dict[str, str] = {}
         for user in users:

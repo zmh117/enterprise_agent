@@ -776,9 +776,7 @@ class BusinessApplicationRepository:
         )
         document_profile = snapshot.get("document_processing_profile")
         document_profile_source = (
-            "publication_snapshot"
-            if isinstance(document_profile, dict)
-            else "legacy_default"
+            "publication_snapshot" if isinstance(document_profile, dict) else "legacy_default"
         )
         if not isinstance(document_profile, dict):
             document_profile = {"code": "NONE", "version": "", "hash": ""}

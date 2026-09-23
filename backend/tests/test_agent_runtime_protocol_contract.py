@@ -37,9 +37,10 @@ def test_current_and_previous_runtime_contracts_are_published_and_hash_matches()
     assert hashlib.sha256((CONTRACT_ROOT / "protocol.schema.json").read_bytes()).hexdigest() == (
         CONTRACT_SCHEMA_SHA256
     )
-    assert hashlib.sha256(
-        (HISTORICAL_CONTRACT_ROOT / "protocol.schema.json").read_bytes()
-    ).hexdigest() == CONTRACT_SCHEMA_SHA256_V14
+    assert (
+        hashlib.sha256((HISTORICAL_CONTRACT_ROOT / "protocol.schema.json").read_bytes()).hexdigest()
+        == CONTRACT_SCHEMA_SHA256_V14
+    )
     assert not any((CONTRACT_ROOT.parent / "v1").rglob("*.*"))
     assert not any((CONTRACT_ROOT.parent / "v1.1").rglob("*.*"))
     assert not any((CONTRACT_ROOT.parent / "v1.2").rglob("*.*"))

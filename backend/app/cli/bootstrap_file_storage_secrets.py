@@ -78,9 +78,7 @@ def bootstrap_secret(
     try:
         resolved = provider.resolve(f"secret://platform/{code}")
     except Exception as exc:
-        raise FileStorageSecretBootstrapError(
-            f"existing {code} secret is not usable"
-        ) from exc
+        raise FileStorageSecretBootstrapError(f"existing {code} secret is not usable") from exc
     if not hmac.compare_digest(resolved.encode("utf-8"), value.encode("utf-8")):
         raise FileStorageSecretBootstrapError(
             f"existing {code} secret differs; explicit rotation is required"

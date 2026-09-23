@@ -9,4 +9,3 @@ class DingTalkMcpError(NonRetryableExecutionError):
 
 def error_code(exc: Exception) -> str:
     return str(getattr(exc, "error_code", "") or "dingtalk_mcp_denied")
-

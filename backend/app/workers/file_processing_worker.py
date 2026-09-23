@@ -56,9 +56,7 @@ def document_processing_readiness(
     )
     components = {
         name: (
-            str(status[name])
-            if status.get(name) in {"ready", "not_required"}
-            else "unavailable"
+            str(status[name]) if status.get(name) in {"ready", "not_required"} else "unavailable"
         )
         for name in component_names
     }

@@ -7,7 +7,10 @@ from typing import Any, Mapping
 
 from jsonschema import Draft202012Validator
 
-from app.shared.ones_tool_contracts import ONES_CREATE_BUG_TOOL_IDENTIFIER, require_ones_tool_contract
+from app.shared.ones_tool_contracts import (
+    ONES_CREATE_BUG_TOOL_IDENTIFIER,
+    require_ones_tool_contract,
+)
 from services.ones_mcp_server.bug_create_catalog import BugCreateFieldCatalog
 from services.ones_mcp_server.errors import OnesMcpError
 
@@ -83,12 +86,8 @@ def validate_bug_create_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
         raise _invalid("ones_bug_create_arguments_invalid", "ONES 缺陷创建参数不完整或无效")
     normalized = dict(arguments)
     normalized["title"] = _plain_text(arguments["title"], label="标题", maximum=500)
-    normalized["description"] = _plain_text(
-        arguments["description"], label="描述", maximum=8000
-    )
-    normalized["environment"] = _plain_text(
-        arguments["environment"], label="环境", maximum=4000
-    )
+    normalized["description"] = _plain_text(arguments["description"], label="描述", maximum=8000)
+    normalized["environment"] = _plain_text(arguments["environment"], label="环境", maximum=4000)
     if "待补充" in normalized["description"]:
         raise _invalid(
             "ones_bug_create_draft_incomplete",
@@ -151,9 +150,9 @@ def compile_bug_create(
         "historical_defect_uuid",
     )
     option_names = {
-        field: catalog.option_name(field, str(normalized[field]))
-        for field in static_option_fields
+        field: catalog.option_name(field, str(normalized[field])) for field in static_option_fields
     }
+
     def names(kind: str, values: list[str]) -> list[str]:
         available = display_values.get(kind, {})
         resolved = [str(available.get(value) or "") for value in values]
@@ -169,9 +168,7 @@ def compile_bug_create(
     user_names = dict(zip(user_uuids, names("user_uuids", user_uuids), strict=True))
     product_names = names("product_uuids", normalized["product_uuids"])
     module_names = names("product_module_uuids", normalized["product_module_uuids"])
-    affected_names = names(
-        "affected_version_uuids", normalized["affected_version_uuids"]
-    )
+    affected_names = names("affected_version_uuids", normalized["affected_version_uuids"])
 
     field_values: list[dict[str, Any]] = []
     for semantic_name in (
@@ -240,9 +237,7 @@ def compile_bug_create(
             marker = "建议值"
         else:
             marker = ""
-        summary_fields.append(
-            {"label": label, "value": display[semantic_name], "marker": marker}
-        )
+        summary_fields.append({"label": label, "value": display[semantic_name], "marker": marker})
     return CompiledBugCreate(
         normalized_arguments=normalized,
         provider_payload={"tasks": [provider_task]},

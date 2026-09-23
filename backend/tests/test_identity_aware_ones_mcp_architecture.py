@@ -49,7 +49,9 @@ def _production_sources_by_path() -> dict[str, str]:
     for root in roots:
         for path in sorted(root.rglob("*")):
             if path.suffix in {".py", ".ts", ".json"} and "__pycache__" not in path.parts:
-                sources[path.relative_to(REPOSITORY_ROOT).as_posix()] = path.read_text(encoding="utf-8")
+                sources[path.relative_to(REPOSITORY_ROOT).as_posix()] = path.read_text(
+                    encoding="utf-8"
+                )
     return sources
 
 
@@ -132,9 +134,11 @@ def test_hs256_guard_exempts_only_the_oracle_ticket_class() -> None:
     private_ticket = 'class OracleVerificationTickets:\n    algorithm = "HS256"\n'
     _assert_hs256_is_confined_to_oracle_tickets({ORACLE_TICKET_MODULE: private_ticket})
     with pytest.raises(AssertionError, match="HS256 outside private Oracle tickets"):
-        _assert_hs256_is_confined_to_oracle_tickets({
-            ORACLE_TICKET_MODULE: private_ticket + '\nalgorithm = "HS256"\n',
-        })
+        _assert_hs256_is_confined_to_oracle_tickets(
+            {
+                ORACLE_TICKET_MODULE: private_ticket + '\nalgorithm = "HS256"\n',
+            }
+        )
 
 
 def test_runtime_protocol_has_no_caller_controlled_mcp_target_or_credential() -> None:

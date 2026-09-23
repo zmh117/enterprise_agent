@@ -632,8 +632,7 @@ def test_admission_plan_keeps_time_window_candidates_metadata_only() -> None:
         ("METADATA", "TIME_WINDOW")
     ]
     assert [
-        (item.file_id, item.version_id, item.auto_materialize)
-        for item in plan.manifest_bindings
+        (item.file_id, item.version_id, item.auto_materialize) for item in plan.manifest_bindings
     ] == [("f-today", "v-today", False)]
 
 
@@ -764,9 +763,7 @@ def test_invalid_file_date_returns_safe_notice_without_job() -> None:
     assert decision.dependencies == ()
     assert gate.action == "system_notice"
     assert gate.reason_code == "invalid_time_window"
-    title, body = system_notice_markdown(
-        notice_kind="invalid_time_window", display_names=()
-    )
+    title, body = system_notice_markdown(notice_kind="invalid_time_window", display_names=())
     assert "有效日期" in title
     assert "今天" not in body
 

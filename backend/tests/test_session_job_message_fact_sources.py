@@ -44,9 +44,7 @@ def test_job_creation_writes_only_canonical_session_job_and_message_facts() -> N
     session_columns = {
         row["name"] for row in runtime.database.execute("pragma table_info(agent_session)")
     }
-    job_columns = {
-        row["name"] for row in runtime.database.execute("pragma table_info(agent_job)")
-    }
+    job_columns = {row["name"] for row in runtime.database.execute("pragma table_info(agent_job)")}
     assert {
         "dingding_conversation_id",
         "dingding_user_id",

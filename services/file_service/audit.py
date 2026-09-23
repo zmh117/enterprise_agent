@@ -40,9 +40,7 @@ class FileMcpAudit:
         if tool_identifier == "task_workspace_search_files":
             filter_shape = {
                 "keys": sorted(
-                    key
-                    for key in arguments
-                    if key not in {"cursor", "file_id", "version_id"}
+                    key for key in arguments if key not in {"cursor", "file_id", "version_id"}
                 ),
                 "has_cursor": bool(arguments.get("cursor")),
             }
@@ -60,9 +58,7 @@ class FileMcpAudit:
                 tool_identifier=tool_identifier,
                 tool_schema_hash=definition.schema_hash,
                 agent_publication_id=str(claims["agent_publication_id"]),
-                application_publication_id=str(
-                    claims["application_publication_id"]
-                ),
+                application_publication_id=str(claims["application_publication_id"]),
                 operation=definition.operation,
                 risk_level="medium" if definition.mutating else "low",
                 principal_jti=str(claims["jti"]),
@@ -107,9 +103,7 @@ class FileMcpAudit:
         response = dict(result)
         if handle.context.tool_identifier == "task_workspace_search_files":
             response = {
-                "workspace_catalog_revision_id": result.get(
-                    "workspace_catalog_revision_id"
-                ),
+                "workspace_catalog_revision_id": result.get("workspace_catalog_revision_id"),
                 "returned_count": len(result.get("items") or []),
                 "error_code": error_code,
             }

@@ -715,7 +715,10 @@ class IdentityRepository:
             "select * from user_external_identity where id = ? and provider = 'dingtalk'",
             (identity_id,),
         )
-        if identity is None or str(identity.get("external_subject_id") or "") != external_subject_id:
+        if (
+            identity is None
+            or str(identity.get("external_subject_id") or "") != external_subject_id
+        ):
             raise NonRetryableExecutionError(
                 "DingTalk identity changed during union ID completion",
                 safe_message="钉钉身份已发生变化，请重试",
