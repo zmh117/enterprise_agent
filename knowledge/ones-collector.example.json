@@ -1,0 +1,21 @@
+{
+  "base_codes": {
+    "defect": "ones-defects-offline",
+    "ticket": "ones-tickets-offline",
+    "requirement": "ones-stories-offline"
+  },
+  "resource_ids": [],
+  "collector": {
+    "provider_origin": "https://ones.example.invalid",
+    "team_id": "team-id",
+    "project_ids": ["project-id"],
+    "issue_types": {
+      "defect": ["defect-type-id"],
+      "ticket": ["ticket-type-id"],
+      "requirement": ["story-type-id"]
+    },
+    "child_type_ids": ["subtask-type-id"],
+    "first_date": "2020-01-01",
+    "credential_ref": "secret://platform/ones-collector"
+  }
+}

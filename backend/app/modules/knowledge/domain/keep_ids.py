@@ -42,10 +42,12 @@ def normalize_keep_ids(  # noqa: C901, PLR0915
     kind: str,
     fields: dict[str, dict[str, Any]],
     clean: Sanitizer,
+    source_type_checked: bool = False,
 ) -> PreparedRecord:
     if row.get("_export_format") != "keep_ids_v1":
         raise ExportValidationError("knowledge_export_format_invalid")
-    check_offline_type(kind, row.get("issue_type_name"))
+    if not source_type_checked:
+        check_offline_type(kind, row.get("issue_type_name"))
     external_id = identifier(row.get("uuid"))
     for key in ("project_uuid", "status_uuid", "issue_type_uuid"):
         identifier(row.get(key))

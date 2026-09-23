@@ -33,6 +33,8 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 人工相关性基线使用[本地评测入口](../docs/runbooks/knowledge-retrieval-evaluation.md)。真实问题/标签留在 Git 排除的受限目录；合成、自查询和人工效果分别报告，不把运维检索成功当成 Agent 读取授权。
 
+ONES 新版导出接口对应的受管全量采集入口见[全量采集手册](../docs/runbooks/knowledge-ones-full-collector.md)。当前入口默认停用、只产生候选；不代表自动分块、建索引或切版已启用。
+
 工具资源 Web 页面和检索资源管理合同见[知识治理管理与排障](../docs/runbooks/knowledge-governance.md)。代码已接线不等于真实资源已发布或 Agent 已通过真实检索验收。
 
 ## 在线 Knowledge MCP（独立可选扩展）

@@ -3,6 +3,7 @@
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
+from datetime import date, datetime
 from typing import Any
 
 from app.modules.knowledge.domain.identity import now, stable_id
@@ -64,6 +65,14 @@ class SyncRepository:
             ) or (not old and expected_revision != 0):
                 raise ExportValidationError("knowledge_sync_configuration_changed")
             if old:
+                previous = checked_configuration(json_value(old["configuration_json"]))
+                if previous.get("collector") and previous["collector"] != config.get("collector"):
+                    prior_run = self.database.execute_one(
+                        f"select id from {self.t('sync_run')} where binding_id=? limit 1",
+                        (binding_id,),
+                    )
+                    if prior_run:
+                        raise ExportValidationError("knowledge_collection_scope_changed")
                 self.database.execute(
                     f"update {self.t('sync_binding')} set configuration_revision=configuration_revision+1,configuration_hash=?,configuration_json=?,enabled=0,updated_at=? where id=?",
                     (digest(config), canonical_json(config), now(), binding_id),
@@ -180,6 +189,83 @@ class SyncRepository:
                     exc.code if isinstance(exc, ExportValidationError) else "knowledge_sync_failed"
                 ) from None
         return self.run(run["id"])
+
+    def begin_collection(self, binding_id: str, scan_at: str) -> dict[str, Any]:
+        """建立在线完整扫描运行；实际总数由逐页提交累加。"""
+        binding = self.binding(binding_id)
+        collector = binding["configuration_json"].get("collector")
+        if not collector or binding["enabled"] != 1:
+            raise ExportValidationError("knowledge_collection_disabled")
+        try:
+            parsed_scan = datetime.fromisoformat(scan_at)
+        except (TypeError, ValueError):
+            raise ExportValidationError("knowledge_collection_scan_invalid") from None
+        if parsed_scan.tzinfo is None or len(scan_at) > 40:
+            raise ExportValidationError("knowledge_collection_scan_invalid")
+        manifests = tuple(
+            PreparedExport(
+                (),
+                {
+                    "document_kind": kind,
+                    "export_format": "ones-online-full/v1",
+                    "record_count": 0,
+                    "scan_at": scan_at,
+                    "scope_hash": digest(collector),
+                },
+                {},
+            )
+            for kind in ("defect", "ticket", "requirement")
+        )
+        return self.begin(binding_id, manifests)
+
+    def active_collection(self, binding_id: str) -> dict[str, Any] | None:
+        binding = self.binding(binding_id)
+        active = self.database.execute_one(
+            f"select id,binding_id from {self.t('sync_run')} where source_id=? and active=1",
+            (binding["source_id"],),
+        )
+        if not active:
+            return None
+        if active["binding_id"] != binding_id:
+            raise ExportValidationError("knowledge_source_import_busy")
+        run = self.run(active["id"])
+        self.assert_configuration(run)
+        if not all(
+            item.get("export_format") == "ones-online-full/v1"
+            for item in run["manifest_json"].values()
+        ):
+            raise ExportValidationError("knowledge_source_import_busy")
+        return run
+
+    def set_collection_enabled(
+        self, binding_id: str, *, enabled: bool, expected_revision: int
+    ) -> dict[str, Any]:
+        """显式双门禁中的绑定开关；更新配置后始终回到关闭。"""
+        if type(enabled) is not bool or type(expected_revision) is not int:
+            raise ExportValidationError("knowledge_sync_configuration_invalid")
+        with self.database.unit_of_work():
+            binding = self.binding(binding_id)
+            if binding["configuration_revision"] != expected_revision:
+                raise ExportValidationError("knowledge_sync_configuration_changed")
+            if enabled and not binding["configuration_json"].get("collector"):
+                raise ExportValidationError("knowledge_collection_configuration_invalid")
+            self.database.execute(
+                f"update {self.t('sync_binding')} set enabled=?,updated_at=? where id=? and configuration_revision=?",
+                (int(enabled), now(), binding_id, expected_revision),
+            )
+        return self.binding(binding_id)
+
+    def cancel_disabled_collection(self, run_id: str) -> None:
+        """运行者持有来源锁时响应停用，不等待整轮结束。"""
+        with self.database.unit_of_work():
+            run = self.run(run_id, lock=True)
+            binding = self.binding(run["binding_id"])
+            if binding["enabled"] == 0 and run["phase"] == "COLLECTING":
+                self.database.execute(
+                    f"update {self.t('sync_run')} set phase='CANCELLED',active=0,"
+                    "error_code='knowledge_collection_disabled',updated_at=? where id=?",
+                    (now(), run_id),
+                )
 
     def _begin(self, binding_id: str, exports: tuple[PreparedExport, ...]) -> dict[str, Any]:
         manifests = {item.manifest["document_kind"]: item.manifest for item in exports}
@@ -359,6 +445,10 @@ class SyncRepository:
             binding = self.assert_configuration(run)
             if run["phase"] != "COLLECTING" or not run["checkpoint_json"].get("baseline_complete"):
                 raise ExportValidationError("knowledge_sync_phase_invalid")
+            online = all(
+                item.get("export_format") == "ones-online-full/v1"
+                for item in run["manifest_json"].values()
+            )
             kind, source_id = record.document_kind, run["source_id"]
             if kind not in run["manifest_json"]:
                 raise ExportValidationError("knowledge_source_type_mismatch")
@@ -483,18 +573,149 @@ class SyncRepository:
                 ),
             )
             self.database.execute(
-                f"update {self.t('import_run')} set processed_count=processed_count+1,{outcome}_count={outcome}_count+1,updated_at=? where id=?",
+                f"update {self.t('import_run')} set processed_count=processed_count+1,"
+                f"total_count=total_count+{1 if online else 0},"
+                f"{outcome}_count={outcome}_count+1,updated_at=? where id=?",
                 (now(), stable_id("sync-import", run_id, kind)),
             )
             checkpoint = {
                 **run["checkpoint_json"],
                 "processed": run["checkpoint_json"]["processed"] + 1,
+                "total": run["checkpoint_json"]["total"] + (1 if online else 0),
             }
             self.database.execute(
                 f"update {self.t('sync_run')} set checkpoint_json=?,error_code=NULL,updated_at=? where id=?",
                 (canonical_json(checkpoint), now(), run_id),
             )
         return outcome
+
+    def commit_collection_page(
+        self,
+        run_id: str,
+        records: tuple[PreparedRecord, ...],
+        checkpoint: dict[str, Any],
+    ) -> None:
+        """本页候选与安全检查点同事务；崩溃后重放原页不重复计数。"""
+        allowed = {
+            "kind",
+            "issue_type_id",
+            "first",
+            "last",
+            "next_cursor",
+            "enumerated",
+            "expected",
+            "children_processed",
+            "children_total",
+        }
+        if (
+            not isinstance(checkpoint, dict)
+            or not set(checkpoint) <= allowed
+            or checkpoint.get("kind") not in {"defect", "ticket", "requirement"}
+            or not records
+            or len(records) > 200
+            or any(record.content_hash != digest(record.values) for record in records)
+        ):
+            raise ExportValidationError("knowledge_collection_checkpoint_invalid")
+        children_page = "children_processed" in checkpoint
+        if children_page:
+            if (
+                set(checkpoint) != {"kind", "children_processed", "children_total"}
+                or checkpoint["kind"] != "requirement"
+                or type(checkpoint["children_processed"]) is not int
+                or type(checkpoint["children_total"]) is not int
+                or not 1
+                <= checkpoint["children_processed"]
+                <= checkpoint["children_total"]
+                <= 200_000
+            ):
+                raise ExportValidationError("knowledge_collection_checkpoint_invalid")
+        else:
+            if set(checkpoint) != {
+                "kind",
+                "issue_type_id",
+                "first",
+                "last",
+                "next_cursor",
+                "enumerated",
+                "expected",
+            }:
+                raise ExportValidationError("knowledge_collection_checkpoint_invalid")
+            try:
+                identifier(checkpoint["issue_type_id"])
+                first, last = (
+                    date.fromisoformat(checkpoint["first"]),
+                    date.fromisoformat(checkpoint["last"]),
+                )
+            except (TypeError, ValueError, ExportValidationError):
+                raise ExportValidationError("knowledge_collection_checkpoint_invalid") from None
+            if (
+                first > last
+                or type(checkpoint["enumerated"]) is not int
+                or type(checkpoint["expected"]) is not int
+                or not 1 <= checkpoint["enumerated"] <= checkpoint["expected"] < 1000
+                or checkpoint["next_cursor"] is not None
+                and (
+                    not isinstance(checkpoint["next_cursor"], str)
+                    or not 1 <= len(checkpoint["next_cursor"]) <= 512
+                )
+            ):
+                raise ExportValidationError("knowledge_collection_checkpoint_invalid")
+        with self.database.unit_of_work():
+            for record in records:
+                if record.document_kind != checkpoint["kind"]:
+                    raise ExportValidationError("knowledge_collection_scope_changed")
+                self.stage(run_id, record)
+            run = self.run(run_id, lock=True)
+            self.assert_configuration(run)
+            if run["phase"] != "COLLECTING":
+                raise ExportValidationError("knowledge_sync_phase_invalid")
+            progress = {**run["checkpoint_json"], "collection_page": checkpoint}
+            self.database.execute(
+                f"update {self.t('sync_run')} set checkpoint_json=?,updated_at=? where id=?",
+                (canonical_json(progress), now(), run_id),
+            )
+
+    def complete_collection(self, run_id: str, counts: dict[str, int]) -> dict[str, Any]:
+        """仅完整枚举且旧项均再次被观察后允许进入分块阶段。"""
+        if (
+            set(counts) != {"defect", "ticket", "requirement"}
+            or any(type(value) is not int or value < 0 for value in counts.values())
+            or sum(counts.values()) > 200_000
+        ):
+            raise ExportValidationError("knowledge_collection_incomplete")
+        with self.database.unit_of_work():
+            run = self.run(run_id, lock=True)
+            binding = self.assert_configuration(run)
+            if run["phase"] != "COLLECTING" or not all(
+                item.get("export_format") == "ones-online-full/v1"
+                for item in run["manifest_json"].values()
+            ):
+                raise ExportValidationError("knowledge_sync_phase_invalid")
+            project_ids = binding["configuration_json"]["collector"]["project_ids"]
+            placeholders = ",".join("?" for _ in project_ids)
+            missing = self.database.execute_one(
+                f"select c.document_id from {self.t('sync_candidate')} c "
+                f"join {self.t('document_revision')} r on r.id=c.baseline_revision_id "
+                f"where c.run_id=? and c.record_hash is null and r.source_project_id in ({placeholders}) limit 1",
+                (run_id, *project_ids),
+            )
+            if missing:
+                raise ExportValidationError("knowledge_collection_visibility_shrank")
+            manifests = dict(run["manifest_json"])
+            for kind, expected in counts.items():
+                imported = self.database.execute_one(
+                    f"select processed_count from {self.t('import_run')} where id=?",
+                    (stable_id("sync-import", run_id, kind),),
+                )
+                if not imported or imported["processed_count"] != expected:
+                    raise ExportValidationError("knowledge_collection_incomplete")
+                manifests[kind] = {**manifests[kind], "record_count": expected}
+            progress = {**run["checkpoint_json"], "collection_complete": True}
+            self.database.execute(
+                f"update {self.t('sync_run')} set manifest_json=?,checkpoint_json=?,updated_at=? where id=?",
+                (canonical_json(manifests), canonical_json(progress), now(), run_id),
+            )
+            return self.finish_staging(run_id)
 
     def finish_staging(self, run_id: str) -> dict[str, Any]:
         with self.database.unit_of_work():
@@ -503,6 +724,13 @@ class SyncRepository:
             if (
                 run["phase"] != "COLLECTING"
                 or run["checkpoint_json"]["processed"] != run["checkpoint_json"]["total"]
+                or (
+                    any(
+                        item.get("export_format") == "ones-online-full/v1"
+                        for item in run["manifest_json"].values()
+                    )
+                    and run["checkpoint_json"].get("collection_complete") is not True
+                )
             ):
                 raise ExportValidationError("knowledge_sync_incomplete")
             for kind in run["manifest_json"]:
