@@ -22,6 +22,7 @@ from backend.tests.test_knowledge_governance import (
     prepared as prepared_fixture,
 )
 from backend.tests.test_knowledge_import import export_row
+from backend.tests.support.migrations import schema_versions_after
 
 managed = managed_fixture
 governance = governance_fixture
@@ -294,7 +295,7 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):  # noqa: PLR0
     )
     content = {name: db.execute(f"select * from {table(db, name)}") for name in data_tables}
     result = Migrator(db, default_migrations_dir(), migrator_build="confirmation-after").run()
-    assert result.applied == ("138", "139", "140", "141", "142", "143", "144")
+    assert result.applied == schema_versions_after("137")
     assert db.execute(f"select * from {table(db, 'source_binding')} order by id") == before
     after_content = {name: db.execute(f"select * from {table(db, name)}") for name in data_tables}
     for row in after_content["document"]:

@@ -1,4 +1,4 @@
--- PostgreSQL-only, post-migration privileges for the TypeScript Agent Runtime.
+-- PostgreSQL-only, post-migration privileges for the Python Agent Runtime.
 -- The Runtime cannot read or write Job, RBAC, audit, Delivery, Publication or
 -- general platform tables. The sole write boundary is its TTL terminal ledger.
 -- In particular it cannot read or mutate server-first agent_tool_call or

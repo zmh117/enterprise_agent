@@ -18,7 +18,7 @@
 
 **Agent Definition / Revision / Publication**
 
-Agent 的稳定身份、追加式草稿和不可变发布。新 Definition 固定 `python-v1`；Publication 冻结模型连接、指令、Skill、执行策略、Runtime kind 和 MCP Tool Envelope。退役前的 `typescript-v1` Definition/Publication 保留原值，只能用于历史查询和审计。
+Agent 的稳定身份、追加式草稿和不可变发布。新 Definition 固定 `python-v1`；Publication 冻结模型连接、指令、Skill、执行策略、Runtime kind 和 MCP Tool Envelope。数据库约束只允许 `python-v1`，不存在其它 Runtime 的 Definition/Publication。
 
 **Business Application Publication**
 
@@ -320,7 +320,7 @@ DingTalk / Webhook / Debug
   -> API Control Plane + PostgreSQL + RabbitMQ
   -> File Worker -> File Service -> MinIO
   -> Agent Worker
-  -> Python Runtime or TypeScript Runtime
+  -> Python Runtime
   -> tool-mcp / File MCP 接口
   -> Published Resource Revision / File Service
   -> Job / Tool Call / Delivery / Audit

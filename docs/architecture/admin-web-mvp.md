@@ -61,7 +61,7 @@ FEATURE_WEB_ADMIN=true docker compose up -d --build \
 ## 当前管理边界
 
 - 可以创建和治理多个 `python-v1` Agent；`default-diagnostic-agent` 只是 bootstrap
-  内置 Agent，不是唯一可管理 Agent。历史 `typescript-v1` 事实只读。
+  内置 Agent，不是唯一可管理 Agent。
 - Agent、Workflow、Business Application、Resource 和 Webhook 使用追加式 Revision 与
   不可变 Publication；前端必须携带 expected revision，不能覆盖历史快照。
 - 工具目录来自代码 MCP Manifest，只读展示；不提供动态 Handler、Release、任意 MCP

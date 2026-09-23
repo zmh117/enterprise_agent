@@ -287,7 +287,7 @@ describe("Agent Profile management", () => {
     })
   })
 
-  it("fixes new Agents to Python Runtime without a TypeScript selector", async () => {
+  it("fixes new Agents to Python Runtime without a Runtime selector", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((input, init) => {
@@ -329,7 +329,7 @@ describe("Agent Profile management", () => {
       "Python Runtime"
     )
     expect(
-      screen.queryByRole("option", { name: /TypeScript Runtime/ })
+      screen.queryByRole("combobox", { name: "Runtime" })
     ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "创建 Agent" }))
 

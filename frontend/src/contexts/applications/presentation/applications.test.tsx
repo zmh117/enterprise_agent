@@ -518,7 +518,6 @@ describe("Business Application workbench", () => {
                 resource_kind: "file",
               })),
             ],
-            agent_publication_typescript_v1: [],
           },
         })
       }
@@ -597,11 +596,6 @@ describe("Business Application workbench", () => {
         name: "default-diagnostic-agent · r29 · Python Runtime",
       })
     ).toBeInTheDocument()
-    expect(
-      within(agentSelector).queryByRole("option", {
-        name: /typescript-diagnostic-agent/,
-      })
-    ).not.toBeInTheDocument()
     expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
     const continuousConversation = screen.getByLabelText("连续会话")
     expect(continuousConversation).toBeChecked()

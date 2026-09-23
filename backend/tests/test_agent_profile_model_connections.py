@@ -1093,7 +1093,7 @@ def test_saved_python_probe_rejects_revision_host_or_model_drift(
     assert rejected.value.error_code == "model_connection_test_invalid_response"
 
 
-def test_admin_api_returns_stable_error_for_retired_typescript_probe() -> None:
+def test_admin_api_rejects_unsupported_probe_runtime_kind() -> None:
     settings, c = web_container()
     revision = ready_connection(c)
 

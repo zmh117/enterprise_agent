@@ -1083,7 +1083,7 @@
       "retention_policy": "runtime-operational-history",
       "audit_requirement": "exclude prompts, raw model responses, credentials, and private reasoning",
       "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["runtime protocol replacement with equivalent audit"]},
-      "evidence_refs": ["execution-delivery:Claude 错误诊断元数据必须有界、脱敏且可关联", "change:add-agent-job-context-audit", "schema:125_expand_runtime_audit_chunk_event_projection"]
+      "evidence_refs": ["execution-delivery:Claude 错误诊断元数据必须有界、脱敏且可关联", "change:add-agent-job-context-audit", "schema:125_expand_runtime_audit_chunk_event_projection", "schema:145_contract_python_runtime_invocation_claim"]
     },
     {
       "id": "runtime.terminal_ledger",
@@ -1098,7 +1098,7 @@
       "retention_policy": "runtime-retry-window",
       "audit_requirement": "store bounded terminal events without credentials",
       "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["all Runtime implementations replace terminal replay semantics"]},
-      "evidence_refs": ["runtime:python-v1-invocation-protocol"]
+      "evidence_refs": ["runtime:python-v1-invocation-protocol", "schema:145_contract_python_runtime_invocation_claim"]
     },
     {
       "id": "runtime.invocation_claim",
@@ -1113,7 +1113,7 @@
       "retention_policy": "runtime-claim-window",
       "audit_requirement": "retain invocation identifiers and lease facts only",
       "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["all Runtime implementations replace claim ownership semantics"]},
-      "evidence_refs": ["runtime:python-v1-invocation-protocol"]
+      "evidence_refs": ["runtime:python-v1-invocation-protocol", "schema:145_contract_python_runtime_invocation_claim"]
     },
     {
       "id": "runtime.invocation_event",

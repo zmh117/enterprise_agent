@@ -138,7 +138,7 @@ class _TimeRejectingUploadPort:
         )
 
 
-def test_python_file_transfer_matches_typescript_control_and_safe_result(
+def test_python_file_transfer_returns_control_and_safe_result(
     tmp_path: Path,
 ) -> None:
     port = _Port()

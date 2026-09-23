@@ -11,6 +11,7 @@ from app.modules.job.domain.job_dispatch import (
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator, load_migration_catalog
 from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME, load_legacy_manifest
+from backend.tests.support.migrations import current_schema_head
 
 
 def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None:
@@ -22,7 +23,7 @@ def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None
             migrator_build="job-dispatch-schema-test",
         ).run()
 
-        assert result.head == "144"
+        assert result.head == current_schema_head()
         columns = {
             str(row["name"]): row
             for row in database.execute("pragma table_info(job_dispatch_outbox)")
@@ -175,5 +176,5 @@ def test_job_dispatch_legacy_evidence_is_frozen_but_active_catalog_is_current() 
         artifact for artifact in manifest["catalog"] if artifact["version"] == "019"
     )
 
-    assert catalog[-1].version == "144"
+    assert catalog[-1].version == current_schema_head()
     assert job_dispatch["name"] == "019_job_dispatch_outbox.sql"

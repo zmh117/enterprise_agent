@@ -58,9 +58,9 @@ def test_guard_delegates_only_current_python_runtime() -> None:
     assert client.run(request("python-v1")).final_answer == "python"
     assert len(python.requests) == 1
     for _attempt in range(2):
-        with pytest.raises(NonRetryableExecutionError) as retired:
-            client.run(request("typescript-v1"))
-        assert retired.value.error_code == "agent_runtime_kind_unsupported"
+        with pytest.raises(NonRetryableExecutionError) as unsupported:
+            client.run(request("legacy-v1"))
+        assert unsupported.value.error_code == "agent_runtime_kind_unsupported"
     assert len(python.requests) == 1
 
 
@@ -69,7 +69,6 @@ def test_guard_rejects_unknown_unconfigured_and_protocol_conflicts() -> None:
 
     expected = [
         (request("ruby-v1"), "agent_runtime_kind_unsupported"),
-        (request("typescript-v1"), "agent_runtime_kind_unsupported"),
         (request("python-v1", "2.0"), "agent_runtime_protocol_unsupported"),
     ]
     for value, code in expected:

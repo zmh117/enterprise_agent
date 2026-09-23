@@ -58,6 +58,9 @@ RETIRED_ACTIVE_MARKERS = (
     "app.modules.internal_api_platform",
     "/platform/api-capabilities",
     "/platform/builtin-tools",
+    "typescript-agent-runtime",
+    "TYPESCRIPT_AGENT_RUNTIME",
+    "typescript-v1",
 )
 RETIRED_CANONICAL_POSITIVE_MARKERS = (
     "Capability Gateway、API Platform",
@@ -76,10 +79,14 @@ RETIRED_CANONICAL_POSITIVE_MARKERS = (
     "Internal API Platform 仍执行",
     "Internal API Platform 在创建",
     "调用来自 `internal-api-platform`",
+    "typescript-v1",
+    "TypeScript Agent",
+    "历史TypeScript",
 )
 CANONICAL_SPEC_PATHS = (
     "openspec/specs/agent-model/spec.md",
     "openspec/specs/builtin-tool-resource/spec.md",
+    "openspec/specs/business-application/spec.md",
     "openspec/specs/execution-delivery/spec.md",
     "openspec/specs/identity-access/spec.md",
     "openspec/specs/platform-operations/spec.md",
@@ -145,6 +152,7 @@ def test_retired_source_paths_and_active_configuration_markers_are_absent() -> N
 
     candidates = [REPOSITORY_ROOT / ".env.example", REPOSITORY_ROOT / "docker-compose.yml"]
     candidates.extend(REPOSITORY_ROOT.glob("docker-compose.*.yml"))
+    candidates.extend(REPOSITORY_ROOT.glob(".github/workflows/*.yml"))
     for relative in ("backend/app", "frontend/src", "scripts"):
         candidates.extend(
             path

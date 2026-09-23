@@ -105,4 +105,4 @@ Outbox、Route、Job、Runtime、MCP 和 Delivery 的同一 correlation 证据�
 | 同群两个机器人使用不同 Connector | 支持 |
 | 同一 Connector + 同一路由归属两个活动应用 | 拒绝 |
 | 一个 Worker 同时执行多个 Job | 默认不支持，`prefetch_count=1` |
-| 历史 TypeScript Agent Publication 创建新 Job | 拒绝 |
+| 非 `python-v1` Agent Publication 创建新 Job | 拒绝 |

@@ -35,6 +35,7 @@ from backend.tests.test_knowledge_import import (
     run,
 )
 from backend.tests.test_knowledge_work_item_types import prepare, typed_row
+from backend.tests.support.migrations import schema_versions_after
 
 database = database_fixture
 postgres_database_dsn = postgres_fixture
@@ -454,7 +455,7 @@ def assert_upgrade_preserves_content_and_vector_references(database, tmp_path):
         for name in names
     }
     migrated = Migrator(database, default_migrations_dir(), migrator_build="sync-after").run()
-    assert migrated.applied == ("141", "142", "143", "144")
+    assert migrated.applied == schema_versions_after("140")
     after = {
         name: database.execute(f"select * from {table(database, name)} order by 1")
         for name in names

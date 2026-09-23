@@ -9,6 +9,7 @@ import pytest
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
 from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME
+from backend.tests.support.migrations import current_schema_head
 
 
 TIMESTAMP = "2026-08-18T00:00:00+00:00"
@@ -74,7 +75,7 @@ def test_file_turn_admission_expand_schema() -> None:
         default_migrations_dir(),
         migrator_build="file-turn-admission-schema-test",
     ).run()
-    assert result.head == "144"
+    assert result.head == current_schema_head()
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")

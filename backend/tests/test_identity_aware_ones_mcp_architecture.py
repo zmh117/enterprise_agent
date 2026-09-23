@@ -389,7 +389,6 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
         "PRINCIPAL_JWT_PRIVATE_KEY_FILE",
         "DINGTALK_RUNTIME_AUTH_TOKEN_FILE",
         "PYTHON_AGENT_RUNTIME_URL",
-        "TYPESCRIPT_AGENT_RUNTIME_URL",
         "MINIO_ROOT_USER",
         "MINIO_ROOT_PASSWORD",
     }.intersection(ones["environment"])
@@ -431,7 +430,6 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
         if service_name not in {"agent-worker", "api-server"}:
             assert "principal_jwt_private_key" not in service.get("secrets", [])
 
-    assert "typescript-agent-runtime" not in services
     runtime = services["python-agent-runtime"]
     assert runtime["environment"]["ONES_MCP_SERVER_URL"] == ("http://ones-mcp:9104/mcp")
     assert runtime["environment"]["DINGTALK_MCP_SERVER_URL"] == ("http://dingtalk-mcp:9107/mcp")

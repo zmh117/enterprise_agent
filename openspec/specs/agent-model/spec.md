@@ -320,22 +320,21 @@
 - **AND** 日志、审计和前端状态不包含敏感原文
 
 ### Requirement: Agent 定义按多 Agent 模型持久化
-系统 SHALL 持久化多个 Agent 定义，每个定义具有稳定 code、名称、说明、项目范围、状态、当前发布指针和创建后不可变的 `runtime_kind`。系统 MUST 在 deployment bootstrap 中仅幂等初始化固定 `python-v1` 的默认诊断 Agent，并 SHALL 只允许受权管理员创建 `python-v1` 业务 Agent。退役前已经持久化的 `typescript-v1` Definition、Publication、终态 Job 和审计事实 MUST 保留原始 runtime kind 并保留为历史事实；系统不得新建、编辑、发布、回滚或执行 TypeScript Agent，也不得通过修改同一 Agent 的 runtime kind 完成 Runtime 切换。
+系统 SHALL 持久化多个 Agent 定义，每个定义具有稳定 code、名称、说明、项目范围、状态、当前发布指针和创建后不可变的 `runtime_kind`。系统 MUST 在 deployment bootstrap 中仅幂等初始化固定 `python-v1` 的默认诊断 Agent，并 SHALL 只允许受权管理员创建 `python-v1` 业务 Agent。Definition、Publication 与 Job 的 runtime kind MUST 由数据库约束限定为 `python-v1`；系统不得新建、编辑、发布、回滚或执行其它 runtime kind 的 Agent，也不得通过修改同一 Agent 的 runtime kind 完成 Runtime 切换。
 
 #### Scenario: 默认Python Agent初始化
 - **WHEN** 系统完成 migration 和 Agent bootstrap
 - **THEN** 系统存在稳定 code 为 `default-diagnostic-agent` 且 runtime kind 为 `python-v1` 的 Agent
-- **AND** 系统不创建 `typescript-diagnostic-agent` 或其它 `typescript-v1` Agent
+- **AND** 系统不创建任何其它 runtime kind 的 Agent
 
 #### Scenario: 创建Python Agent
 - **WHEN** 具备权限的管理员提交唯一合法 code、名称、项目编码和 `python-v1`
 - **THEN** 系统创建 classification 为 `business`、status 为 `enabled` 的 Agent Definition
 - **AND** Definition 的 runtime kind 固定为 `python-v1`
 
-#### Scenario: 旧客户端创建TypeScript Agent
-- **WHEN** 旧客户端提交 `typescript-v1` 或其它非 `python-v1` runtime kind
+#### Scenario: 客户端创建非Python Agent
+- **WHEN** 客户端提交任何非 `python-v1` runtime kind
 - **THEN** 系统拒绝请求且不创建 Definition 或 Draft
-
 
 #### Scenario: 重复运行Agent bootstrap
 - **WHEN** 已存在固定 Agent、用户 Draft 或 Publication 后再次运行 Agent bootstrap
@@ -343,7 +342,7 @@
 - **AND** 固定 code 对应的 runtime kind 不一致时 bootstrap 失败关闭
 
 ### Requirement: Agent 草稿与发布快照分离
-系统 SHALL 为 Python Agent 保存可编辑草稿 revision，并 MUST 在发布时创建包含完整有效配置、不可变 `python-v1` runtime kind、schema version 和 config hash 的不可变 publication snapshot。草稿不得覆盖 Definition 的 runtime kind；历史 TypeScript snapshot 只可读取，不得作为新草稿或 Publication 的种子。
+系统 SHALL 为 Python Agent 保存可编辑草稿 revision，并 MUST 在发布时创建包含完整有效配置、不可变 `python-v1` runtime kind、schema version 和 config hash 的不可变 publication snapshot。草稿不得覆盖 Definition 的 runtime kind。
 
 #### Scenario: 编辑已发布Python Agent草稿
 - **WHEN** 管理员修改已发布 Python Agent 的业务指令或工具分配
@@ -356,10 +355,6 @@
 #### Scenario: 草稿伪造Runtime
 - **WHEN** 草稿 payload 的 runtime kind 不是 `python-v1` 或与 Agent Definition 不一致
 - **THEN** 系统拒绝校验和发布且不创建 publication
-
-#### Scenario: 历史TypeScript Publication生成草稿
-- **WHEN** 管理员尝试从历史 `typescript-v1` Publication 创建、发布或回滚草稿
-- **THEN** 系统拒绝变更并提示先创建或选择 Python Agent Publication
 
 ### Requirement: Agent 发布配置区分可编辑业务层和强制安全层
 Agent 草稿 SHALL 只接受代码定义的 business role/instructions、模型策略、执行上限、Skill、项目、渠道绑定和 MCP Tool identifier。系统 MUST 拒绝平台安全字段、凭据、任意执行入口和未注册 Tool；已注册的受治理 mutation 可进入 Tool Envelope，并冻结 effect 与逐次确认策略。沙盒内 Write/Edit 由文件能力和 Runtime 决定，不是 Agent 草稿可自行开启的任意写权限。
@@ -451,7 +446,7 @@ Agent 草稿 SHALL 只接受代码定义的 business role/instructions、模型�
 - **THEN** API 拒绝请求且不写入任何 Agent 记录
 
 #### Scenario: 创建请求使用非法Runtime
-- **WHEN** 客户端提交 `typescript-v1` 或其它非 `python-v1` runtime kind
+- **WHEN** 客户端提交任何非 `python-v1` runtime kind
 - **THEN** API 返回字段级校验错误且不创建 Definition 或 Draft
 
 ### Requirement: Workflow 管理必须使用 Agent 权限矩阵
@@ -549,13 +544,13 @@ Agent 草稿 SHALL 只接受代码定义的 business role/instructions、模型�
 - **WHEN** 用户只有一个 Agent 的编辑权限并尝试创建另一 Agent
 - **THEN** 服务拒绝且不创建 Definition 或 Draft。
 
-### Requirement: Agent管理界面只管理Python Runtime并保留原始Runtime身份
-当前 Agent 创建、草稿、发布、回滚与执行 SHALL 只支持 `python-v1`。系统 MUST 保持历史 Definition/Publication 的原始 runtime kind，不把 TypeScript 事实伪装成 Python；合法 Python 历史协议或工具策略版本可由管理读取标记为只读。当前 Publication 完整性校验拒绝不受支持的 runtime kind，因此本规格不承诺 TypeScript Publication 可通过全部详情与历史列表接口读取。
+### Requirement: Agent管理界面只管理Python Runtime
+当前 Agent 创建、草稿、发布、回滚与执行 SHALL 只支持 `python-v1`，管理界面 MUST NOT 提供 Runtime 选择项。合法 Python 历史协议或工具策略版本可由管理读取标记为只读。当前 Publication 完整性校验 MUST 拒绝不受支持或与 Definition 不一致的 runtime kind，且不得通过改写标签进入当前执行链。
 
 #### Scenario: 创建Python Agent
 - **WHEN** 管理员具备权限并提交合法创建请求
-- **THEN** Definition 和初始 Draft 使用 python-v1；页面不提供新建 TypeScript 的选项。
+- **THEN** Definition 和初始 Draft 使用 python-v1；页面不提供 Runtime 选择项。
 
-#### Scenario: 历史Runtime不受支持
+#### Scenario: Runtime不受支持
 - **WHEN** Publication 的 runtime kind 非 python-v1 或与 Definition 不一致
 - **THEN** 完整性校验失败关闭，不能通过改标签进入当前执行链。

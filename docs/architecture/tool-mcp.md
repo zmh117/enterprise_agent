@@ -1,7 +1,6 @@
 # 标准 MCP 工具服务
 
-`tool-mcp` 是当前唯一 Python Agent Runtime 使用的固定标准 MCP Server。历史
-`typescript-v1` Publication 不再执行，也不会连接该服务。
+`tool-mcp` 是当前唯一 Python Agent Runtime 使用的固定标准 MCP Server。
 
 ```text
 Python Agent Runtime

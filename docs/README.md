@@ -23,7 +23,7 @@
 - [统一身份、RBAC 与管理端](architecture/unified-identity-rbac-admin.md)
 - [Webhook Agent Trigger](architecture/webhook-agent-triggers.md)
 
-当前执行链是 `Channel -> Control Plane -> Worker -> Python Runtime -> MCP`。历史TypeScript事实不再可执行。DB/Redis/Loki进入`tool-mcp -> Published Resource Revision`；ONES和钉钉分别通过业务MCP复核当前身份；mutation进入`Action Intent -> 用户确认 -> external-action-worker`；任务文件进入File Service的版本、表示与对象存储边界。旧动态API Capability、Handler、API Connection、Resource Mapping和Internal API Platform已退役。
+当前执行链是 `Channel -> Control Plane -> Worker -> Python Runtime -> MCP`，数据库只允许 `python-v1` Runtime。DB/Redis/Loki进入`tool-mcp -> Published Resource Revision`；ONES和钉钉分别通过业务MCP复核当前身份；mutation进入`Action Intent -> 用户确认 -> external-action-worker`；任务文件进入File Service的版本、表示与对象存储边界。旧动态API Capability、Handler、API Connection、Resource Mapping和Internal API Platform已退役。
 
 ## 指南
 

@@ -25,6 +25,7 @@ from backend.tests.test_knowledge_import import export_row, prepare
 from app.modules.knowledge.application.import_service import KnowledgeImportService
 from app.modules.knowledge.infrastructure.import_repository import ImportRepository
 from backend.tests.test_knowledge_vectors import prepared as vector_fixture
+from backend.tests.support.migrations import schema_versions_after
 
 
 prepared = vector_fixture
@@ -134,7 +135,7 @@ def test_forward_migration_is_empty_replayable_and_does_not_modify_old_tables(tm
         result = Migrator(
             db, default_migrations_dir(), migrator_build="knowledge-governance-after"
         ).run()
-        assert result.applied == ("137", "138", "139", "140", "141", "142", "143", "144")
+        assert result.applied == schema_versions_after("136")
         assert source_fingerprint(db, include_observation=False) == before
         assert {
             name: db.execute(f"select * from {name} order by 1,2,3") for name in publication_tables

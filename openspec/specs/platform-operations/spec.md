@@ -1151,26 +1151,6 @@ Python Runtime临时文件系统配置 MUST对每个Job实施64个常规文件�
 - **THEN** Runtime清理部分文件并释放相同预留
 - **AND** 后续重试仍从真实Sandbox使用量重新校验
 
-### Requirement: 当前运行态只支持Python并保留历史TypeScript事实
-当前源码、API、Agent bootstrap、Worker 和 Compose MUST 只支持新建、发布与执行 `python-v1` Agent，并 MUST 拒绝新的 `typescript-v1` Agent、Publication、Application 激活或 Job 执行。数据库中退役前形成的 TypeScript Definition、Publication、终态 Job 和审计事实 MAY 保留并 MUST 保留原始 runtime kind，不承诺所有旧Publication可通过当前详情校验；系统不得声称当前存在源码中没有的退役预检 CLI、自动排空或跨 Runtime 迁移命令。
-
-#### Scenario: 创建或发布TypeScript Agent
-- **WHEN** 当前 API 收到 `typescript-v1` Agent 创建、草稿、发布、回滚或新应用激活请求
-- **THEN** 系统失败关闭且不静默改写为 Python
-
-#### Scenario: 执行TypeScript Job
-- **WHEN** Worker 或 Runtime 收到非 `python-v1` 的新执行请求
-- **THEN** 系统拒绝执行且不跨 Runtime fallback
-
-#### Scenario: 只剩历史TypeScript事实
-- **WHEN** 管理查询读取退役前的 TypeScript Definition、Publication、终态 Job 或审计
-- **THEN** 系统保留原始 `typescript-v1` 元信息，不改写为Python；详情完整性校验不支持的记录失败关闭
-- **AND** 不允许这些事实恢复为当前可执行配置
-
-#### Scenario: 运维查找退役命令
-- **WHEN** 操作者检查当前源码运维入口
-- **THEN** 文档不得指示调用不存在的 TypeScript 退役预检或迁移 CLI
-
 ### Requirement: 文件schema变更只由Migrator执行且不在迁移中删除对象
 文件工作区表、约束、索引、Publication字段、Job File Manifest、提交暂存、版本、保留与清理事实 MUST 通过新的前向migration由一次性Migrator应用。历史附件到期时间 SHALL 从原始创建时间与有效策略回填；migration事务 MUST NOT访问或删除MinIO对象，实际删除只能由File Worker经File Service在迁移完成后可重试执行。
 
@@ -1972,3 +1952,23 @@ knowledge DDL MUST 仅通过一次性 Migrator 的版本化事务执行。结构
 #### Scenario: Dashboard显示无积压
 - **WHEN** 管理页面显示Job和队列计数正常
 - **THEN** 该观测不产生Tool调用证据，也不改变发布或Provider权限事实。
+
+### Requirement: 当前运行态只支持Python Runtime
+当前源码、API、Agent bootstrap、Worker、Compose 与数据库约束 MUST 只支持新建、发布与执行 `python-v1` Agent。`agent_definition`、`agent_publication`、`agent_job` 与 `agent_runtime_invocation_claim` 的 runtime kind MUST 由数据库约束限定为 `python-v1`；任何非 `python-v1` 的 Agent、Publication、Application 激活、Job 执行或 Runtime 调用请求 MUST 失败关闭且不静默改写为 Python。系统不得保留其它 Runtime 实现的服务、配置或兼容分支，也不得声称当前存在源码中没有的退役预检 CLI、自动排空或跨 Runtime 迁移命令。
+
+#### Scenario: 创建或发布非Python Agent
+- **WHEN** 当前 API 收到非 `python-v1` 的 Agent 创建、草稿、发布、回滚或新应用激活请求
+- **THEN** 系统失败关闭且不静默改写为 Python
+
+#### Scenario: 执行非Python Job
+- **WHEN** Worker 或 Runtime 收到非 `python-v1` 的新执行请求
+- **THEN** 系统拒绝执行且不跨 Runtime fallback
+
+#### Scenario: 升级时存在非Python调用占用
+- **WHEN** 迁移前 `agent_runtime_invocation_claim` 存在非 `python-v1` 占用
+- **THEN** 迁移删除这些无主占用并把约束收紧为只允许 `python-v1`
+- **AND** 不改写或删除 Definition、Publication、Job 与审计事实
+
+#### Scenario: 运维查找退役命令
+- **WHEN** 操作者检查当前源码运维入口
+- **THEN** 文档不得指示调用不存在的 Runtime 退役预检或迁移 CLI

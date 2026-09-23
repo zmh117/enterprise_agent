@@ -6,6 +6,7 @@ import pytest
 
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
+from backend.tests.support.migrations import current_schema_head
 
 
 TIMESTAMP = "2026-08-17T00:00:00+00:00"
@@ -18,7 +19,7 @@ def _migrated_database() -> Database:
         default_migrations_dir(),
         migrator_build="document-file-processing-schema-test",
     ).run()
-    assert result.head == "144"
+    assert result.head == current_schema_head()
     return database
 
 

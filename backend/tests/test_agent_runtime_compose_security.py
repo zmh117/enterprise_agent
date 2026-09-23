@@ -50,7 +50,6 @@ def test_python_runtime_and_standard_mcp_are_hardened_and_secret_scoped() -> Non
 
     python_runtime = services["python-agent-runtime"]
     tool_mcp = services["tool-mcp"]
-    assert "typescript-agent-runtime" not in services
     for service in (python_runtime, tool_mcp):
         assert service["read_only"] is True
         assert service["cap_drop"] == ["ALL"]
@@ -197,7 +196,6 @@ def test_ci_builds_python_single_runtime_deployment_images() -> None:
         "docker compose build api-server file-service agent-worker python-agent-runtime dingtalk-runtime"
         in workflow
     )
-    assert "typescript-agent-runtime" not in workflow
 
 
 def test_dependabot_tracks_only_claude_agent_sdk_daily() -> None:
@@ -263,7 +261,6 @@ def test_async_job_creation_workers_can_reach_only_python_agent_runtime() -> Non
         service = services[service_name]
         assert set(service["networks"]) == {"default", "agent-runtime-control"}
         assert service["depends_on"]["python-agent-runtime"] == {"condition": "service_healthy"}
-        assert "typescript-agent-runtime" not in service["depends_on"]
 
 
 def test_python_runtime_acceptance_overlay_is_isolated_and_test_only() -> None:
@@ -273,7 +270,6 @@ def test_python_runtime_acceptance_overlay_is_isolated_and_test_only() -> None:
     )
     services = overlay["services"]
 
-    assert "typescript-agent-runtime" not in services
     assert services["python-agent-runtime"]["environment"] == {
         "APP_ENV": "testing",
         "AGENT_RUNTIME_TEST_PROVIDER_MODE": "deterministic",

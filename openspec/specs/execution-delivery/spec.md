@@ -173,7 +173,7 @@ Agent Job RabbitMQ consumer SHALL 在调用 Worker handler 前校验 UTF-8、JSO
 
 #### Scenario: 默认部署
 - **WHEN** 当前 Compose 装配 Agent 执行链
-- **THEN** Worker 通过同一 PostgreSQL 的 Job 和真实 RabbitMQ 调用固定 Python Runtime，不提供 TypeScript 或跨实现 fallback
+- **THEN** Worker 通过同一 PostgreSQL 的 Job 和真实 RabbitMQ 调用固定 Python Runtime，不提供其它 Runtime 实现或跨实现 fallback
 
 ### Requirement: Python Runtime必须实现版本化执行协议
 当前 Runtime SHALL 为独立 `python-v1` 服务，新执行使用 protocol `1.5`；Worker 与 Runtime 同时接受代码已实现的 `1.4`、`1.5`，不得协商或投影 `1.0` 至 `1.3`。请求 MUST 固定 invocation、attempt、request digest、Job/Publication/model revision 与 hash、执行限制、MCP bindings、correlation 和 schema v5 文件上下文。协议 schema、limits、errors 与 fixtures MUST 位于仓库级 `contracts/agent-runtime/`，Runtime URL 只能来自平台静态装配。

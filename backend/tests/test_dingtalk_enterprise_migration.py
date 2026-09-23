@@ -9,6 +9,7 @@ import pytest
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import MigrationExecutionError, Migrator
 from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME
+from backend.tests.support.migrations import current_schema_head, schema_versions_after
 
 
 TIMESTAMP = "2026-08-03T00:00:00+00:00"
@@ -55,7 +56,7 @@ def test_027_fresh_schema_enforces_enterprise_and_identity_invariants() -> None:
             default_migrations_dir(),
             migrator_build="dingtalk-enterprise-test",
         ).run()
-        assert result.head == "144"
+        assert result.head == current_schema_head()
         _seed_enterprise_and_users(database)
         with pytest.raises(sqlite3.IntegrityError):
             database.execute(
@@ -134,24 +135,8 @@ def test_130_upgrades_clean_129_database_and_restores_both_indexes(tmp_path: Pat
             migrator_build="dingtalk-index-after",
         ).run()
 
-        assert result.head == "144"
-        assert result.applied == (
-            "130",
-            "131",
-            "132",
-            "133",
-            "134",
-            "135",
-            "136",
-            "137",
-            "138",
-            "139",
-            "140",
-            "141",
-            "142",
-            "143",
-            "144",
-        )
+        assert result.head == current_schema_head()
+        assert result.applied == schema_versions_after("129")
         assert {
             "idx_dingtalk_identity_enterprise_subject",
             "idx_dingtalk_identity_user_enterprise_current",

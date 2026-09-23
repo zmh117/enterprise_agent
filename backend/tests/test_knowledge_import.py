@@ -19,6 +19,7 @@ from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator, load_migration_catalog, schema_expectations
 from app.shared.schema_fact_sources import baseline_engine_catalogs
 from app.shared.schema_baseline import postgres_comment_snapshot, schema_snapshot
+from backend.tests.support.migrations import current_schema_head
 
 
 STAMP = 1_750_000_000_000_000
@@ -361,7 +362,7 @@ def test_real_postgres_migration_import_constraints_and_lock(tmp_path):
         result = Migrator(
             database, default_migrations_dir(), migrator_build="knowledge-postgres-test"
         ).run()
-        assert result.head == "144"
+        assert result.head == current_schema_head()
         assert (
             not Migrator(
                 database, default_migrations_dir(), migrator_build="knowledge-postgres-test"

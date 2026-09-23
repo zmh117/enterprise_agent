@@ -25,7 +25,7 @@
 
 ### 0.3 与已有文档的关系
 
-- [项目上下文（2026-09-16）](enterprise-agent-project-context-for-chatgpt.md) 是较短的概要，其中“迁移 100..132 共 33 项”已过时：已提交的 head 是 **140**，工作区 head 是 **144**。
+- 本文替代已删除的 `enterprise-agent-project-context-for-chatgpt.md`（2026-09-16 概要，其迁移范围停留在 100..132）。
 - `CONTEXT.md` 记录的是领域语言；其中“每个工作区最多 20 个文件、100 MiB”与当前代码不符（见第 8 节）。
 
 ## 1. 项目定位与领域划分
@@ -49,7 +49,7 @@
 
 - 不提供任意 URL、任意 HTTP 方法、Shell、脚本或动态 Tool Handler；工具目录由代码 Manifest 固定。
 - DB/Redis/Loki 资源工具只读；文件写入只能通过 File MCP 的提交意图；ONES/钉钉写操作只能先生成 Action Intent，经原用户确认后由独立 worker 执行。
-- 已永久退役：API Capability、API Connection、Handler、Application Resource Mapping、Internal API Platform、TypeScript Agent Runtime（历史 `typescript-v1` 数据仅供只读审计）。
+- 已永久退役：API Capability、API Connection、Handler、Application Resource Mapping、Internal API Platform、TypeScript Agent Runtime（迁移 119/145 起数据库所有 runtime kind 列只允许 `python-v1`）。
 
 ## 2. 系统架构
 
@@ -723,7 +723,6 @@ erDiagram
 | PostgreSQL 资源 | 合同登记但不可用 | “tool-mcp 支持查询 PostgreSQL 业务库” |
 | 平台范围授权 | `AuthorizationEvaluator.decide_platform_scope` 恒失败，以 `BusinessAuthorizationService` 为准 | 旧的平台范围授权接口仍可用 |
 | MQ 拓扑 | 默认交换机直投；投递不走 MQ | 存在业务交换机或投递队列 |
-| 表注释 | `agent_runtime_event`、`agent_runtime_terminal_ledger` 的注释仍写“TypeScript Runtime” | TypeScript Runtime 仍在运行 |
 | 知识库前端 | 在“工具资源”页的“知识库”Tab 中，没有独立路由 | 知识库没有管理界面 |
 | 迁移范围 | 已提交 head 140，工作区 head 144 | 旧文档中的“当前迁移 132” |
 
@@ -1079,7 +1078,7 @@ erDiagram
   - FK：`job_id→agent_job`
   - 唯一：`(job_id,invocation_id)`
   - 字段：id, job_id, invocation_id, request_digest, attempt_no, status, audit_sha256, context_manifest_json, system_prompt, user_prompt, tool_definitions_json, permission_snapshot_json, init_snapshot_json, sdk_messages_json, api_requests_json, api_responses_json, tool_executions_json, model_requests_json, usage_json, summary_json, raw_api_capture_status, provider_thinking_disclosure, error_json, started_at, finished_at, created_at
-- **`agent_runtime_event`**（8列）：Python Worker按sequence持久化的TypeScript Runtime安全归一化事件，不保存原始SDK消息、Token或私有推理
+- **`agent_runtime_event`**（8列）：Python Worker按sequence持久化的Python Runtime安全归一化事件，不保存原始SDK消息、Token或私有推理
   - PK：`id`
   - FK：`job_id→agent_job`
   - 唯一：`(job_id,invocation_id,sequence)`
@@ -1090,7 +1089,7 @@ erDiagram
 - **`agent_runtime_invocation_event`**（6列）：Agent Runtime追加式脱敏事件前缀；重启后只用于续接orphan终态，不恢复或重放模型SDK流
   - PK：`invocation_id+sequence`
   - 字段：invocation_id, request_digest, sequence, event_json, created_at, expires_at
-- **`agent_runtime_terminal_ledger`**（5列）：TypeScript Runtime有界终态恢复账本；只保存规范事件并按TTL清理，不保存原始SDK消息或Secret
+- **`agent_runtime_terminal_ledger`**（5列）：Python Runtime有界终态恢复账本；只保存规范事件并按TTL清理，不保存原始SDK消息或Secret
   - PK：`invocation_id`
   - 字段：invocation_id, request_digest, events_json, terminal_at, expires_at
 - **`agent_step`**（6列）：Agent 执行步骤表，记录诊断过程中的阶段性说明和推理摘要

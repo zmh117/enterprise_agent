@@ -23,7 +23,7 @@ ONES 本人身份绑定属于统一身份体系，独立于旧 API Platform。�
 
 ## 当前边界
 
-- 唯一 Agent Runtime：`python-v1`；历史 `typescript-v1` 事实仅供只读审计。
+- 唯一 Agent Runtime：`python-v1`；数据库所有 runtime kind 列只允许该值。
 - 当前Runtime协议为1.5，代码仍支持1.4；Job、重试与Publication保持各自冻结事实。
 - 标准MCP：`tool-mcp`复核私有Job上下文；`ones-mcp`与`dingtalk-mcp`验证各自audience的短期Principal JWT，按固定目录提供查询和受确认mutation。完整工具合同见相关canonical领域与代码Manifest。
 - 任务文件：File Service内置File MCP与内部流式API，是唯一业务对象存储入口；TXT/Markdown可读写，LOG只读。PDF、DOCX、PPTX、XLSX、PNG、JPEG、WebP使用固定Docling/OCR Profile派生Markdown，原件不进入Job Sandbox。

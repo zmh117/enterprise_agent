@@ -9,6 +9,7 @@ import pytest
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
 from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME
+from backend.tests.support.migrations import current_schema_head, schema_versions_after
 
 
 def _insert_topology(database: Database) -> None:
@@ -57,7 +58,7 @@ def test_governed_resource_schema_has_stable_revision_records_without_legacy_map
         migrator_build="resource-schema-test",
     ).run()
 
-    assert result.head == "144"
+    assert result.head == current_schema_head()
     tables = {
         row["name"]
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -141,21 +142,7 @@ def test_role_migration_preserves_old_selectors_and_published_hashes(tmp_path: P
                 (f"revision-{index}", resource_id, "a" * 64, f"verification-{index}"),
             )
         result = Migrator(database, source, migrator_build="after-role").run()
-        assert result.applied == (
-            "132",
-            "133",
-            "134",
-            "135",
-            "136",
-            "137",
-            "138",
-            "139",
-            "140",
-            "141",
-            "142",
-            "143",
-            "144",
-        )
+        assert result.applied == schema_versions_after("131")
         for table, status in (
             ("platform_resource_draft", "DRAFT"),
             ("platform_resource_revision", "PUBLISHED"),

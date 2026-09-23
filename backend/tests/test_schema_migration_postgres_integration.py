@@ -54,6 +54,7 @@ from app.shared.schema_baseline import (
     postgres_comment_snapshot,
 )
 from backend.tests.helpers import test_settings as make_test_settings
+from backend.tests.support.migrations import current_schema_head, deployable_schema_versions
 
 
 POSTGRES_DSN = os.getenv("MIGRATION_POSTGRES_DSN", "")
@@ -242,54 +243,8 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "144"
-        assert result.applied == (
-            "100",
-            "101",
-            "102",
-            "103",
-            "104",
-            "105",
-            "106",
-            "107",
-            "108",
-            "109",
-            "110",
-            "111",
-            "112",
-            "113",
-            "114",
-            "115",
-            "116",
-            "117",
-            "118",
-            "119",
-            "120",
-            "121",
-            "122",
-            "123",
-            "124",
-            "125",
-            "126",
-            "127",
-            "128",
-            "129",
-            "130",
-            "131",
-            "132",
-            "133",
-            "134",
-            "135",
-            "136",
-            "137",
-            "138",
-            "139",
-            "140",
-            "141",
-            "142",
-            "143",
-            "144",
-        )
+        assert result.head == current_schema_head()
+        assert result.applied == deployable_schema_versions()
         assert database.execute_one(
             """
             select count(*)::int as count
@@ -301,6 +256,26 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ) == {"count": 131}
         assert comments["table_count"] == 149
         assert comments["column_count"] == 1970
+        assert not [
+            name
+            for name, comment in {**comments["tables"], **comments["columns"]}.items()
+            if "typescript" in comment.lower()
+        ]
+        assert database.execute(
+            """
+            select pg_get_constraintdef(oid) as definition
+              from pg_constraint
+             where conrelid = 'agent_runtime_invocation_claim'::regclass
+               and conname = 'agent_runtime_invocation_claim_runtime_kind_check'
+            """
+        ) == [{"definition": "CHECK ((runtime_kind = 'python-v1'::text))"}]
+        assert not database.execute(
+            """
+            select conrelid::regclass::text as relation, conname
+              from pg_constraint
+             where position('typescript' in pg_get_constraintdef(oid)) > 0
+            """
+        )
     finally:
         database.close()
 
@@ -330,54 +305,8 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "144"
-        assert result.applied == (
-            "100",
-            "101",
-            "102",
-            "103",
-            "104",
-            "105",
-            "106",
-            "107",
-            "108",
-            "109",
-            "110",
-            "111",
-            "112",
-            "113",
-            "114",
-            "115",
-            "116",
-            "117",
-            "118",
-            "119",
-            "120",
-            "121",
-            "122",
-            "123",
-            "124",
-            "125",
-            "126",
-            "127",
-            "128",
-            "129",
-            "130",
-            "131",
-            "132",
-            "133",
-            "134",
-            "135",
-            "136",
-            "137",
-            "138",
-            "139",
-            "140",
-            "141",
-            "142",
-            "143",
-            "144",
-        )
+        assert result.head == current_schema_head()
+        assert result.applied == deployable_schema_versions()
         assert comments["table_count"] == 149
         assert comments["column_count"] == 1970
         assert {
@@ -419,103 +348,13 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
 
     assert sorted(result.applied for result in results) == [
         (),
-        (
-            "100",
-            "101",
-            "102",
-            "103",
-            "104",
-            "105",
-            "106",
-            "107",
-            "108",
-            "109",
-            "110",
-            "111",
-            "112",
-            "113",
-            "114",
-            "115",
-            "116",
-            "117",
-            "118",
-            "119",
-            "120",
-            "121",
-            "122",
-            "123",
-            "124",
-            "125",
-            "126",
-            "127",
-            "128",
-            "129",
-            "130",
-            "131",
-            "132",
-            "133",
-            "134",
-            "135",
-            "136",
-            "137",
-            "138",
-            "139",
-            "140",
-            "141",
-            "142",
-            "143",
-            "144",
-        ),
+        deployable_schema_versions(),
     ]
     database = Database(postgres_database_dsn)
     try:
-        assert [row["version"] for row in SchemaMigrationLedger(database).read_records()] == [
-            "100",
-            "101",
-            "102",
-            "103",
-            "104",
-            "105",
-            "106",
-            "107",
-            "108",
-            "109",
-            "110",
-            "111",
-            "112",
-            "113",
-            "114",
-            "115",
-            "116",
-            "117",
-            "118",
-            "119",
-            "120",
-            "121",
-            "122",
-            "123",
-            "124",
-            "125",
-            "126",
-            "127",
-            "128",
-            "129",
-            "130",
-            "131",
-            "132",
-            "133",
-            "134",
-            "135",
-            "136",
-            "137",
-            "138",
-            "139",
-            "140",
-            "141",
-            "142",
-            "143",
-            "144",
-        ]
+        assert [row["version"] for row in SchemaMigrationLedger(database).read_records()] == list(
+            deployable_schema_versions()
+        )
     finally:
         database.close()
 
