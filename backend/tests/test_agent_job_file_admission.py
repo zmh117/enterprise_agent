@@ -98,7 +98,7 @@ def _stage_ready_files(
             for ordinal in range(1, len(names) + 1)
         }
     )
-    source_attachments = runtime.agent_repository.list_attachments(source_job.id)
+    source_attachments = runtime.attachment_repository.list_attachments(source_job.id)
     for ordinal, attachment in enumerate(source_attachments, start=1):
         assert runtime.attachment_service.process(  # type: ignore[union-attr]
             attachment.id,
@@ -392,7 +392,7 @@ def test_waiting_job_restores_legacy_dependency_payload_on_attachment_completion
         "update agent_job set business_application_route_decision_json = ? where id = ?",
         (json.dumps(route_decision, ensure_ascii=False), result.id),
     )
-    attachment = runtime.agent_repository.list_attachments(result.id)[0]
+    attachment = runtime.attachment_repository.list_attachments(result.id)[0]
     runtime.attachment_service.downloader = FakeDownloader(  # type: ignore[union-attr]
         {"download-legacy": b"legacy-content"}
     )

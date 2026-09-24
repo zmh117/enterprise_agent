@@ -22,6 +22,7 @@ from app.modules.job.application.file_context import (
 )
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.attachment_repository import AttachmentRepository
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
@@ -39,6 +40,7 @@ class AttachmentProcessingService:
         *,
         repository: AgentRepository,
         dispatch_repository: JobDispatchRepository,
+        attachment_repository: AttachmentRepository,
         publisher: MessagePublisher,
         audit_service: AuditService,
         credential_cipher: AttachmentCredentialCipher,
@@ -48,9 +50,10 @@ class AttachmentProcessingService:
         delivery_service: ResultDeliveryService | None = None,
         file_manifest_service: JobFileManifestService | None = None,
     ) -> None:
-        require_shared_database(repository, dispatch_repository)
+        require_shared_database(repository, dispatch_repository, attachment_repository)
         self.repository = repository
         self.dispatch_repository = dispatch_repository
+        self.attachment_repository = attachment_repository
         self.publisher = publisher
         self.audit_service = audit_service
         self.credential_cipher = credential_cipher
@@ -61,13 +64,13 @@ class AttachmentProcessingService:
         self.file_manifest_service = file_manifest_service
 
     def process(self, attachment_id: str, correlation_id: str) -> str:  # noqa: PLR0915
-        attachment = self.repository.get_attachment(attachment_id)
+        attachment = self.attachment_repository.get_attachment(attachment_id)
         if attachment.status in TERMINAL_ATTACHMENT_STATUSES:
             return self._release_attachment_if_ready(attachment_id, correlation_id)
-        context = self.repository.attachment_session_context(attachment_id)
-        secret = self.repository.get_attachment_secret(attachment_id)
+        context = self.attachment_repository.attachment_session_context(attachment_id)
+        secret = self.attachment_repository.get_attachment_secret(attachment_id)
         if _expired(secret.get("source_credential_expires_at")):
-            self.repository.update_attachment(
+            self.attachment_repository.update_attachment(
                 attachment_id,
                 status="FAILED",
                 failure_code="source_credential_expired",
@@ -78,7 +81,7 @@ class AttachmentProcessingService:
             credential = self.credential_cipher.decrypt(
                 str(secret.get("source_credential_ciphertext") or "")
             )
-            self.repository.update_attachment(attachment_id, status="DOWNLOADING")
+            self.attachment_repository.update_attachment(attachment_id, status="DOWNLOADING")
             data = self.downloader.download(
                 download_code=credential,
                 max_bytes=self.settings.max_file_bytes,
@@ -149,7 +152,7 @@ class AttachmentProcessingService:
                     safe_message="附件导入回执不匹配",
                     error_code="file_service_receipt_mismatch",
                 )
-            self.repository.update_attachment(
+            self.attachment_repository.update_attachment(
                 attachment_id,
                 status="READY",
                 detected_mime=detected_mime,
@@ -164,16 +167,16 @@ class AttachmentProcessingService:
                 job_id=attachment.job_id or None,
                 payload={
                     "attachment_id": attachment_id,
-                    "status": self.repository.get_attachment(attachment_id).status,
+                    "status": self.attachment_repository.get_attachment(attachment_id).status,
                 },
             )
         except RetryableExecutionError:
-            retries = self.repository.increment_attachment_retry(attachment_id)
+            retries = self.attachment_repository.increment_attachment_retry(attachment_id)
             if retries <= 3:
-                self.repository.update_attachment(attachment_id, status="PENDING")
+                self.attachment_repository.update_attachment(attachment_id, status="PENDING")
                 self.publisher.publish_attachment_retry(attachment_id, correlation_id, 30)
                 return "retry"
-            self.repository.update_attachment(
+            self.attachment_repository.update_attachment(
                 attachment_id,
                 status="FAILED",
                 failure_code="attachment_retry_exhausted",
@@ -190,7 +193,7 @@ class AttachmentProcessingService:
                     if isinstance(exc, NonRetryableExecutionError)
                     else "attachment_processing_failed"
                 )
-            self.repository.update_attachment(
+            self.attachment_repository.update_attachment(
                 attachment_id,
                 status="REJECTED" if isinstance(exc, NonRetryableExecutionError) else "FAILED",
                 failure_code=error_code,
@@ -207,7 +210,7 @@ class AttachmentProcessingService:
         return self._release_attachment_if_ready(attachment_id, correlation_id)
 
     def _release_attachment_if_ready(self, attachment_id: str, correlation_id: str) -> str:
-        attachment = self.repository.get_attachment(attachment_id)
+        attachment = self.attachment_repository.get_attachment(attachment_id)
         if not attachment.job_id:
             if attachment.status == "REJECTED":
                 self._notify_staged_attachment_rejection(attachment, correlation_id)
@@ -221,7 +224,7 @@ class AttachmentProcessingService:
     ) -> None:
         if self.delivery_service is None:
             return
-        context = self.repository.attachment_session_context(attachment.id)
+        context = self.attachment_repository.attachment_session_context(attachment.id)
         session = self.repository.get_session(str(context["session_id"]))
         definition = FILE_ERROR_CATALOG.get(str(attachment.failure_code or ""))
         reason = definition.safe_message if definition else "文件不符合当前任务工作区策略"
@@ -246,7 +249,7 @@ class AttachmentProcessingService:
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def _release_if_ready(self, job_id: str, correlation_id: str) -> str:
-        attachments = self.repository.list_attachments(job_id)
+        attachments = self.attachment_repository.list_attachments(job_id)
         if not attachments or any(
             item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments
         ):
@@ -306,7 +309,7 @@ class AttachmentProcessingService:
         return restore_file_admission_gate(
             stored_payloads=stored,
             current_attachment_ids={item.ordinal: item.id for item in attachments},
-            refresh_dependency=self.repository.refresh_file_turn_dependency_row,
+            refresh_dependency=self.attachment_repository.refresh_file_turn_dependency_row,
         )
 
     def _end_waiting_job_with_notice(
@@ -361,7 +364,7 @@ class AttachmentProcessingService:
             and gate.reason_code == "file_readable_content_not_ready"
             and version_ids
         ):
-            self.repository.record_file_readiness_blocked_turn(
+            self.attachment_repository.record_file_readiness_blocked_turn(
                 session_id=job.session_id,
                 workspace_id=job.task_workspace_id,
                 user_message_id=job.input_message_id,
@@ -383,13 +386,15 @@ class AttachmentProcessingService:
         return "system_notice"
 
     def reconcile_file_readiness_notices(self) -> dict[str, int]:
-        expired = self.repository.expire_file_readiness_blocked_turns()
+        expired = self.attachment_repository.expire_file_readiness_blocked_turns()
         notified = 0
         if self.delivery_service is None:
             return {"expired": expired, "notified": 0}
-        for turn in self.repository.list_ready_file_readiness_blocked_turns():
-            version_ids = tuple(self.repository.list_blocked_turn_version_ids(str(turn["id"])))
-            names = self.repository.display_names_for_versions(version_ids)
+        for turn in self.attachment_repository.list_ready_file_readiness_blocked_turns():
+            version_ids = tuple(
+                self.attachment_repository.list_blocked_turn_version_ids(str(turn["id"]))
+            )
+            names = self.attachment_repository.display_names_for_versions(version_ids)
             title, markdown = render_file_admission_notice(notice_kind="ready", display_names=names)
             session = self.repository.get_session(str(turn["session_id"]))
             self.delivery_service.enqueue_system_notice(
@@ -404,7 +409,7 @@ class AttachmentProcessingService:
                 user_message_id=str(turn["user_message_id"]),
                 task_workspace_id=str(turn["workspace_id"]),
             )
-            self.repository.mark_file_readiness_blocked_turn_notified(str(turn["id"]))
+            self.attachment_repository.mark_file_readiness_blocked_turn_notified(str(turn["id"]))
             notified += 1
         return {"expired": expired, "notified": notified}
 

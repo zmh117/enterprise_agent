@@ -271,8 +271,8 @@ def test_attachment_source_idempotency_and_all_terminal_release_boundary() -> No
     tasks = list(runtime.message_bus.attachments)
     assert len(tasks) == 2
 
-    original_attachment = runtime.agent_repository.get_attachment(tasks[0].attachment_id)
-    duplicate = runtime.agent_repository.add_attachment(
+    original_attachment = runtime.attachment_repository.get_attachment(tasks[0].attachment_id)
+    duplicate = runtime.attachment_repository.add_attachment(
         message_id=original_attachment.message_id,
         job_id=job.id,
         ordinal=original_attachment.ordinal,

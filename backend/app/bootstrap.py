@@ -141,6 +141,7 @@ from app.modules.identity.application.service_principal import KnowledgeServiceP
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
+from app.modules.job.infrastructure.attachment_repository import AttachmentRepository
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
 from app.modules.job.infrastructure.repositories import (
@@ -207,6 +208,7 @@ class Container:
     job_dispatch_repository: JobDispatchRepository
     delivery_repository: DeliveryRepository
     run_audit_repository: RunAuditRepository
+    attachment_repository: AttachmentRepository
     identity_repository: IdentityRepository
     identity_service: IdentityService
     ones_identity_binding_service: OnesIdentityBindingService
@@ -558,6 +560,7 @@ def _build_container(  # noqa: C901, PLR0915
     job_dispatch_repository = JobDispatchRepository(database)
     delivery_repository = DeliveryRepository(database)
     run_audit_repository = RunAuditRepository(database)
+    attachment_repository = AttachmentRepository(database)
     audit_repository = AuditRepository(database)
     config_repository = ConfigurationRepository(database)
     identity_repository = IdentityRepository(database)
@@ -832,6 +835,7 @@ def _build_container(  # noqa: C901, PLR0915
         repository=agent_repository,
         dispatch_repository=job_dispatch_repository,
         delivery_repository=delivery_repository,
+        attachment_repository=attachment_repository,
         permission_service=permission_service,
         audit_service=audit_service,
         publisher=publisher,
@@ -1169,6 +1173,7 @@ def _build_container(  # noqa: C901, PLR0915
         attachment_service = AttachmentProcessingService(
             repository=agent_repository,
             dispatch_repository=job_dispatch_repository,
+            attachment_repository=attachment_repository,
             publisher=publisher,
             audit_service=audit_service,
             credential_cipher=credential_cipher,
@@ -1222,6 +1227,7 @@ def _build_container(  # noqa: C901, PLR0915
         job_dispatch_repository=job_dispatch_repository,
         delivery_repository=delivery_repository,
         run_audit_repository=run_audit_repository,
+        attachment_repository=attachment_repository,
         identity_repository=identity_repository,
         identity_service=identity_service,
         ones_identity_binding_service=ones_identity_binding_service,

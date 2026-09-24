@@ -40,6 +40,7 @@ from app.modules.mcp_tool_runtime.job_snapshot import (
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.attachment_repository import AttachmentRepository
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
@@ -186,6 +187,7 @@ class CreateAgentJobService:
         repository: AgentRepository,
         dispatch_repository: JobDispatchRepository,
         delivery_repository: DeliveryRepository,
+        attachment_repository: AttachmentRepository,
         permission_service: PermissionService,
         audit_service: AuditService,
         publisher: MessagePublisher,
@@ -205,10 +207,13 @@ class CreateAgentJobService:
         file_manifest_service: JobFileManifestService | None = None,
         delivery_service: Any = None,
     ) -> None:
-        require_shared_database(repository, dispatch_repository, delivery_repository)
+        require_shared_database(
+            repository, dispatch_repository, delivery_repository, attachment_repository
+        )
         self.repository = repository
         self.dispatch_repository = dispatch_repository
         self.delivery_repository = delivery_repository
+        self.attachment_repository = attachment_repository
         self.permission_service = permission_service
         self.audit_service = audit_service
         self.publisher = publisher
@@ -392,20 +397,22 @@ class CreateAgentJobService:
                 safe_metadata={"attachment_intake": True},
             )
             for ordinal, attachment in enumerate(command.attachments, start=1):
-                attachment_row, attachment_created = self.repository.add_or_get_attachment(
-                    message_id=message_id,
-                    job_id=None,
-                    task_workspace_id=str(workspace["id"]),
-                    ordinal=ordinal,
-                    media_type=attachment.media_type,
-                    file_name=attachment.file_name,
-                    declared_mime=attachment.declared_mime,
-                    declared_size=attachment.declared_size,
-                    credential_ciphertext=self.credential_cipher.encrypt(
-                        attachment.source_credential
-                    ),
-                    credential_type=attachment.source_credential_type,
-                    credential_expires_at=attachment.source_credential_expires_at,
+                attachment_row, attachment_created = (
+                    self.attachment_repository.add_or_get_attachment(
+                        message_id=message_id,
+                        job_id=None,
+                        task_workspace_id=str(workspace["id"]),
+                        ordinal=ordinal,
+                        media_type=attachment.media_type,
+                        file_name=attachment.file_name,
+                        declared_mime=attachment.declared_mime,
+                        declared_size=attachment.declared_size,
+                        credential_ciphertext=self.credential_cipher.encrypt(
+                            attachment.source_credential
+                        ),
+                        credential_type=attachment.source_credential_type,
+                        credential_expires_at=attachment.source_credential_expires_at,
+                    )
                 )
                 attachment_ids.append(attachment_row.id)
                 if attachment_created:
@@ -916,7 +923,7 @@ class CreateAgentJobService:
                 )
             for ordinal, attachment in enumerate(command.attachments, start=1):
                 assert self.credential_cipher is not None
-                created = self.repository.add_attachment(
+                created = self.attachment_repository.add_attachment(
                     message_id=job.input_message_id,
                     job_id=job.id,
                     task_workspace_id=(str(file_workspace["id"]) if file_workspace else ""),
@@ -933,7 +940,7 @@ class CreateAgentJobService:
                 )
                 attachment_ids.append(created.id)
             if bound_attachment_ids and file_workspace is not None:
-                claimed = self.repository.claim_staged_attachments(
+                claimed = self.attachment_repository.claim_staged_attachments(
                     session_id=session.id,
                     task_workspace_id=str(file_workspace["id"]),
                     job_id=job.id,
@@ -970,7 +977,7 @@ class CreateAgentJobService:
                 )
                 if not self.file_manifest_service.has_pending_text_attachments(job.id):
                     file_manifest = self.file_manifest_service.finalize(job.id) or {}
-            job_attachments = self.repository.list_attachments(job.id)
+            job_attachments = self.attachment_repository.list_attachments(job.id)
             if job.status == JobStatus.WAITING_INPUT and all(
                 item.status in TERMINAL_ATTACHMENT_STATUSES for item in job_attachments
             ):
@@ -1057,11 +1064,11 @@ class CreateAgentJobService:
         workspace_feature_enabled: bool,
     ) -> FileAdmissionPlan:
         observed_at = datetime.now(UTC)
-        rows = self.repository.list_file_turn_candidate_rows(
+        rows = self.attachment_repository.list_file_turn_candidate_rows(
             session_id=session_id,
             workspace_id=active_workspace_id,
         )
-        retained_rows = self.repository.list_session_retained_attachment_rows(
+        retained_rows = self.attachment_repository.list_session_retained_attachment_rows(
             session_id=session_id,
             now=observed_at.isoformat(),
         )
@@ -1167,7 +1174,7 @@ class CreateAgentJobService:
             )
         version_ids = tuple(item.version_id for item in gate.dependencies if item.version_id)
         if workspace_id and gate.reason_code == "file_readable_content_not_ready" and version_ids:
-            self.repository.record_file_readiness_blocked_turn(
+            self.attachment_repository.record_file_readiness_blocked_turn(
                 session_id=session.id,
                 workspace_id=workspace_id,
                 user_message_id=message_id,

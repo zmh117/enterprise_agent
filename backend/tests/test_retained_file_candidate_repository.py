@@ -9,7 +9,7 @@ from app.modules.file_workspace.domain import (
     WorkspaceOwnerType,
 )
 from app.modules.file_workspace.repository import FileWorkspaceRepository
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.attachment_repository import AttachmentRepository
 from backend.tests.test_file_workspace_repository import TIMESTAMP, _database
 
 
@@ -18,7 +18,7 @@ PAST = "2026-08-19T23:59:59+00:00"
 FUTURE = "2027-08-20T00:00:00+00:00"
 
 
-def _candidate() -> tuple[AgentRepository, FileWorkspaceRepository]:
+def _candidate() -> tuple[AttachmentRepository, FileWorkspaceRepository]:
     database = _database()
     files = FileWorkspaceRepository(database)
     owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
@@ -84,10 +84,10 @@ def _candidate() -> tuple[AgentRepository, FileWorkspaceRepository]:
         """,
         (FUTURE, TIMESTAMP),
     )
-    return AgentRepository(database), files
+    return AttachmentRepository(database), files
 
 
-def _rows(repository: AgentRepository) -> list[dict[str, object]]:
+def _rows(repository: AttachmentRepository) -> list[dict[str, object]]:
     return repository.list_session_retained_attachment_rows(session_id="session-file", now=NOW)
 
 

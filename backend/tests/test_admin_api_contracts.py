@@ -589,7 +589,7 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(  # noqa: PLR09
     )
     assert job.input_message_id is not None
     message_id = job.input_message_id
-    attachment = container.agent_repository.add_attachment(
+    attachment = container.attachment_repository.add_attachment(
         message_id=message_id,
         job_id=job.id,
         ordinal=0,

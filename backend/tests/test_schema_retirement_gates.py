@@ -184,6 +184,7 @@ def test_quarantine_retirement_decision_remains_explicitly_blocked() -> None:
 def test_write_cutover_production_sql_has_no_compatibility_access() -> None:
     production_paths = (
         REPOSITORY_ROOT / "backend/app/modules/job/infrastructure/repositories.py",
+        REPOSITORY_ROOT / "backend/app/modules/job/infrastructure/attachment_repository.py",
         REPOSITORY_ROOT / "backend/app/modules/job/infrastructure/dispatch_repository.py",
         REPOSITORY_ROOT / "backend/app/modules/job/infrastructure/run_audit_repository.py",
         REPOSITORY_ROOT / "backend/app/modules/delivery/infrastructure/repository.py",
