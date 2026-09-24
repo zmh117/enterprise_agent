@@ -479,9 +479,16 @@ class _Streaming:
 
 
 class _DocumentProcessing:
-    def __init__(self, calls: list[tuple[str, dict[str, Any]]], *, deny: bool) -> None:
+    def __init__(
+        self,
+        calls: list[tuple[str, dict[str, Any]]],
+        *,
+        deny: bool,
+        opened: list[io.BytesIO],
+    ) -> None:
         self.calls = calls
         self.deny = deny
+        self.opened = opened
 
     def __getattr__(self, name: str) -> Any:
         def operation(**values: Any) -> Any:
@@ -489,7 +496,8 @@ class _DocumentProcessing:
             if self.deny:
                 raise _backend_denial()
             if name.startswith("open_"):
-                return io.BytesIO(b"content")
+                self.opened.append(io.BytesIO(b"content"))
+                return self.opened[-1]
             if name in {"claim_picture_item", "claim_assembly"}:
                 return dict(ROW), True
             if name == "finalize":
@@ -500,16 +508,17 @@ class _DocumentProcessing:
 
 
 def _client(
-    *, deny: bool = False
+    *, deny: bool = False, opened: list[io.BytesIO] | None = None
 ) -> tuple[TestClient, _Principal, list[tuple[str, dict[str, Any]]]]:
     principal = _Principal()
     calls: list[tuple[str, dict[str, Any]]] = []
+    processing = _DocumentProcessing(calls, deny=deny, opened=[] if opened is None else opened)
     app = create_app(
         principal=_Unused(),  # type: ignore[arg-type]
         service_principal=principal,  # type: ignore[arg-type]
         application=_Unused(),  # type: ignore[arg-type]
         streaming=_Streaming(calls, deny=deny),
-        document_processing=_DocumentProcessing(calls, deny=deny),  # type: ignore[arg-type]
+        document_processing=processing,  # type: ignore[arg-type]
         database=_Database(),
         storage=_Ready(),
         jwks=_Ready(),  # type: ignore[arg-type]
@@ -550,6 +559,27 @@ def test_internal_route_binds_scope_and_backend_operation(case: RouteCase) -> No
     assert [name for name, _values in calls] == list(case.operations)
     if case.forwards_path_ids:
         assert set(case.path_values) <= _scalar_values(calls[0][1])
+
+
+@pytest.mark.parametrize(
+    "case",
+    [case for case in ROUTE_CASES if case.operations[0].startswith("open_")],
+    ids=lambda case: f"{case.method} {case.path}",
+)
+def test_document_content_stream_is_closed_after_response(case: RouteCase) -> None:
+    opened: list[io.BytesIO] = []
+    client, _principal, _calls = _client(opened=opened)
+
+    response = client.request(
+        case.method,
+        case.path,
+        headers={"authorization": "Bearer internal-token", **case.headers},
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"content"
+    assert len(opened) == 1
+    assert opened[0].closed
 
 
 @pytest.mark.parametrize("case", ROUTE_CASES, ids=lambda case: f"{case.method} {case.path}")
