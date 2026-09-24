@@ -728,24 +728,6 @@ class AgentRepository:  # noqa: PLR0904
             raise NotFound(f"Message attachment not found: {attachment_id}")
         return row
 
-    def list_staged_attachments(
-        self,
-        *,
-        session_id: str,
-        task_workspace_id: str,
-    ) -> list[MessageAttachment]:
-        rows = self.database.execute(
-            """
-            select a.*
-              from message_attachment a
-              join agent_message m on m.id = a.message_id
-             where m.session_id = ? and a.task_workspace_id = ? and a.job_id is null
-             order by m.sequence_no, a.ordinal, a.id
-            """,
-            (session_id, task_workspace_id),
-        )
-        return [self._attachment_from_row(row) for row in rows]
-
     def claim_staged_attachments(
         self,
         *,
@@ -1185,29 +1167,6 @@ class AgentRepository:  # noqa: PLR0904
             {**row, "safe_metadata": json_from_text(row.get("safe_metadata_json") or "{}")}
             for row in reversed(rows)
         ]
-
-    def list_expired_attachments(self, now: str) -> list[MessageAttachment]:
-        rows = self.database.execute(
-            """
-            select * from message_attachment
-            where expires_at is not null and expires_at <= ? and object_key <> ''
-              and status <> 'DELETED'
-            order by expires_at, id
-            """,
-            (now,),
-        )
-        return [self._attachment_from_row(row) for row in rows]
-
-    def mark_attachment_deleted(self, attachment_id: str) -> None:
-        self.database.execute(
-            """
-            update message_attachment
-            set status = 'DELETED', object_bucket = '', object_key = '', updated_at = ?,
-                finished_at = coalesce(finished_at, ?)
-            where id = ?
-            """,
-            (now_iso(), now_iso(), attachment_id),
-        )
 
     def update_session_summary(
         self,
