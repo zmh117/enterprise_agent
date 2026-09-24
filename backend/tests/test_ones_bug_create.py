@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from pathlib import Path
+import json
 from threading import Barrier
 from types import SimpleNamespace
 from typing import Any
@@ -21,14 +22,27 @@ from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
 from app.shared.ones_tool_contracts import ONES_CREATE_BUG_TOOL_IDENTIFIER, ONES_TOOL_CONTRACTS
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from backend.tests.support.ones_dictionary import (
+    MAINTENANCE_DICTIONARY,
+    SYNTHETIC_ONES_DICTIONARY,
+    requires_maintenance_dictionary,
+)
 from backend.tests.support.ones_provider import MockOnesSettings, create_app
-from scripts.sync_ones_bug_create_field_catalog import build_catalog, render_catalog
+from scripts.sync_ones_bug_create_field_catalog import (
+    FIELD_SPECS,
+    FIXED_ISSUE_TYPE_UUID,
+    build_catalog,
+    render_catalog,
+)
 from services.ones_mcp_server.bug_create import (
     compile_bug_create,
     compiled_bug_matches_readback,
     validate_bug_create_arguments,
 )
-from services.ones_mcp_server.bug_create_catalog import BugCreateFieldCatalog
+from services.ones_mcp_server.bug_create_catalog import (
+    DEFAULT_BUG_CREATE_CATALOG_PATH,
+    BugCreateFieldCatalog,
+)
 from services.ones_mcp_server.provider.bug_create import (
     BugCreatePreflight,
     OnesBugCreateProvider,
@@ -38,7 +52,6 @@ from services.ones_mcp_server.tools.bug_create import OnesBugCreateService
 from services.external_action_worker.ones_adapter import OnesExternalActionAdapter
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TOOL = ONES_CREATE_BUG_TOOL_IDENTIFIER
 
 
@@ -185,10 +198,74 @@ def test_create_bug_contract_is_strict_complete_and_governed() -> None:
             Draft202012Validator(contract.input_schema).validate(invalid)
 
 
-def test_catalog_is_generated_bounded_and_name_resolution_is_document_first() -> None:
-    source = (PROJECT_ROOT / "ones_mock/ones/查询条件字典.yaml").read_bytes()
-    generated = PROJECT_ROOT / "services/ones_mcp_server/resources/bug_create_field_catalog.json"
-    assert render_catalog(build_catalog(source)) == generated.read_bytes()
+def test_catalog_generator_is_deterministic_bounded_and_drops_ambiguous_names() -> None:
+    source = SYNTHETIC_ONES_DICTIONARY.encode("utf-8")
+    catalog = build_catalog(source)
+
+    assert render_catalog(build_catalog(source)) == render_catalog(catalog)
+    assert catalog["source_team_uuid"] == "MOCK-ONES-TEAM-001"
+    assert [field["semantic_name"] for field in catalog["fields"]] == list(FIELD_SPECS)
+    severity = next(
+        field for field in catalog["fields"] if field["provider_field_uuid"] == "field038"
+    )
+    assert severity["options"] == [
+        {"uuid": "MOCK-SEVERITY-BLOCKING", "name": "阻塞"},
+        {"uuid": "MOCK-SEVERITY-MINOR", "name": "非阻塞"},
+    ]
+    indexes = catalog["reference_indexes"]
+    assert indexes["users"] == [{"uuid": "MOCK-USER-A", "name": "合成人员甲"}]
+    assert [project["uuid"] for project in indexes["projects"]] == [
+        "MOCK-PROJECT-A",
+        "MOCK-PROJECT-B",
+    ]
+    assert [version["uuid"] for version in indexes["affected_versions"]] == [
+        "MOCK-AFFECTED-V1",
+        "MOCK-AFFECTED-V2",
+    ]
+    assert indexes["product_modules"] == []
+    rendered = render_catalog(catalog).decode("utf-8")
+    for forbidden in ("MOCK-STATUS-DONE", "MOCK-SPRINT", "MOCK-FIELD-UNLISTED", "sprint_in"):
+        assert forbidden not in rendered
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.replace("    MOCK-URGENCY-HIGH: 紧急", "    MOCK-SEVERITY-MINOR: 紧急"),
+        lambda value: value.replace("数据来源：ONES 团队", "来源：", 1),
+    ],
+    ids=["duplicate-option-uuid", "missing-team-metadata"],
+)
+def test_catalog_generator_rejects_invalid_source(mutation: Callable[[str], str]) -> None:
+    mutated = mutation(SYNTHETIC_ONES_DICTIONARY)
+    assert mutated != SYNTHETIC_ONES_DICTIONARY
+    with pytest.raises(ValueError):
+        build_catalog(mutated.encode("utf-8"))
+
+
+def test_committed_catalog_matches_generator_field_specs() -> None:
+    payload = json.loads(DEFAULT_BUG_CREATE_CATALOG_PATH.read_text(encoding="utf-8"))
+
+    assert [
+        (
+            field["semantic_name"],
+            field["label"],
+            field["provider_field_uuid"],
+            field["provider_type"],
+            field["value_kind"],
+        )
+        for field in payload["fields"]
+    ] == [(semantic_name, *spec) for semantic_name, spec in FIELD_SPECS.items()]
+    assert payload["fixed_issue_type"]["uuid"] == FIXED_ISSUE_TYPE_UUID
+
+
+@requires_maintenance_dictionary
+def test_committed_catalog_matches_maintenance_dictionary() -> None:
+    source = MAINTENANCE_DICTIONARY.read_bytes()
+    assert render_catalog(build_catalog(source)) == DEFAULT_BUG_CREATE_CATALOG_PATH.read_bytes()
+
+
+def test_committed_catalog_is_bounded_and_name_resolution_is_document_first() -> None:
     catalog = BugCreateFieldCatalog.load()
     assert catalog.fixed_issue_type_uuid == "B4TV9bu5"
     assert len(catalog.fields) == 15

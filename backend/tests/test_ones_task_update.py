@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+import json
 from jsonschema import Draft202012Validator
-from pathlib import Path
 import pytest
 from types import SimpleNamespace
 
@@ -29,18 +29,29 @@ from app.shared.exceptions import (
     RetryableExecutionError,
 )
 from app.shared.ones_tool_contracts import ONES_TOOL_CONTRACTS
-from services.ones_mcp_server.task_update_catalog import TaskUpdateFieldCatalog
+from backend.tests.support.ones_dictionary import (
+    MAINTENANCE_DICTIONARY,
+    SYNTHETIC_ONES_DICTIONARY,
+    requires_maintenance_dictionary,
+)
+from services.ones_mcp_server.task_update_catalog import (
+    DEFAULT_TASK_UPDATE_CATALOG_PATH,
+    TaskUpdateFieldCatalog,
+)
 from services.ones_mcp_server.task_update import OnesTaskSnapshot, compile_task_update
 from services.ones_mcp_server.provider.task_update import OnesTaskUpdateProvider
 from services.ones_mcp_server.tools.task_update import OnesTaskUpdateService
 from services.external_action_worker.ones_adapter import OnesExternalActionAdapter
 from services.ones_mcp_server.errors import OnesMcpError, OnesProviderUnauthorized
 from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
-from scripts.sync_ones_task_update_field_catalog import build_catalog, render_catalog
+from scripts.sync_ones_task_update_field_catalog import (
+    FIELD_SPECS,
+    build_catalog,
+    render_catalog,
+)
 
 
 TOOL_IDENTIFIER = "ones_update_task"
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class _Audit:
@@ -196,18 +207,61 @@ def test_task_update_catalog_is_bounded_team_scoped_and_excludes_status() -> Non
     assert getattr(caught.value, "error_code", "") == "ones_task_update_catalog_scope_mismatch"
 
 
-def test_generated_task_update_catalog_matches_dictionary_and_excludes_dynamic_data() -> None:
-    source = (PROJECT_ROOT / "ones_mock/ones/查询条件字典.yaml").read_bytes()
-    generated = PROJECT_ROOT / "services/ones_mcp_server/resources/task_update_field_catalog.json"
+def test_task_update_catalog_generator_is_deterministic_and_excludes_dynamic_data() -> None:
+    source = SYNTHETIC_ONES_DICTIONARY.encode("utf-8")
+    catalog = build_catalog(source)
 
-    assert render_catalog(build_catalog(source)) == generated.read_bytes()
-    rendered = generated.read_text()
+    assert render_catalog(build_catalog(source)) == render_catalog(catalog)
+    assert catalog["source_team_uuid"] == "MOCK-ONES-TEAM-001"
+    assert [field["semantic_name"] for field in catalog["fields"]] == list(FIELD_SPECS)
+    severity = next(
+        field for field in catalog["fields"] if field["provider_field_uuid"] == "field038"
+    )
+    assert severity["options"] == [
+        {"uuid": "MOCK-SEVERITY-BLOCKING", "name": "阻塞"},
+        {"uuid": "MOCK-SEVERITY-MINOR", "name": "非阻塞"},
+    ]
+    rendered = render_catalog(catalog).decode("utf-8")
+    for forbidden in (
+        "MOCK-USER",
+        "MOCK-PROJECT",
+        "MOCK-STATUS-DONE",
+        "MOCK-SPRINT",
+        "MOCK-FIELD-UNLISTED",
+        "sprint_in",
+        "status_uuid",
+    ):
+        assert forbidden not in rendered
+
+
+def test_committed_task_update_catalog_matches_field_specs_and_excludes_dynamic_data() -> None:
+    rendered = DEFAULT_TASK_UPDATE_CATALOG_PATH.read_text(encoding="utf-8")
+    payload = json.loads(rendered)
+
+    assert [
+        (
+            field["semantic_name"],
+            field["label"],
+            field["provider_field_uuid"],
+            field["provider_type"],
+            field["value_kind"],
+            field["allow_clear"],
+            field["source_key"],
+        )
+        for field in payload["fields"]
+    ] == [(semantic_name, *spec) for semantic_name, spec in FIELD_SPECS.items()]
     assert '"provider_field_uuid": "field041"' in rendered
     assert '"provider_field_uuid": "field012"' in rendered
     assert "4QhXszHZ" not in rendered
     assert "NsNWZEpn" not in rendered
     assert "sprint_in" not in rendered
     assert "status_uuid" not in rendered
+
+
+@requires_maintenance_dictionary
+def test_committed_task_update_catalog_matches_maintenance_dictionary() -> None:
+    source = MAINTENANCE_DICTIONARY.read_bytes()
+    assert render_catalog(build_catalog(source)) == DEFAULT_TASK_UPDATE_CATALOG_PATH.read_bytes()
 
 
 @pytest.mark.parametrize(
@@ -219,8 +273,8 @@ def test_generated_task_update_catalog_matches_dictionary_and_excludes_dynamic_d
             1,
         ),
         lambda value: value.replace(
-            "    5iKtZTwj: 非阻塞",
-            "    3YsgbD57: 非阻塞",
+            "    MOCK-URGENCY-HIGH: 紧急",
+            "    MOCK-SEVERITY-MINOR: 紧急",
         ),
     ],
     ids=["unknown-provider-type", "duplicate-option-uuid"],
@@ -228,9 +282,10 @@ def test_generated_task_update_catalog_matches_dictionary_and_excludes_dynamic_d
 def test_task_update_catalog_generator_rejects_ambiguous_provider_data(
     mutation: Callable[[str], str],
 ) -> None:
-    source = (PROJECT_ROOT / "ones_mock/ones/查询条件字典.yaml").read_text()
+    mutated = mutation(SYNTHETIC_ONES_DICTIONARY)
+    assert mutated != SYNTHETIC_ONES_DICTIONARY
     with pytest.raises(ValueError):
-        build_catalog(mutation(source).encode("utf-8"))
+        build_catalog(mutated.encode("utf-8"))
 
 
 def _snapshot_for_field(semantic_name: str) -> OnesTaskSnapshot:

@@ -177,6 +177,16 @@ fields, fixed top-level values, and reference-validation rules:
   services/ones_mcp_server/resources/bug_create_field_catalog.json
 ```
 
+Generator tests use a synthetic dictionary. The byte comparison between the
+checked-in catalogs and the maintenance input is skipped wherever the ignored
+dictionary is absent, including CI, so run it locally after regenerating either
+field catalog:
+
+```bash
+.venv/bin/pytest -q -rs backend/tests/test_ones_bug_create.py \
+  backend/tests/test_ones_task_update.py -k maintenance_dictionary
+```
+
 ## Adding a GraphQL-backed Tool
 
 1. Add a fixed query operation under `provider/graphql/operations/`. The operation
