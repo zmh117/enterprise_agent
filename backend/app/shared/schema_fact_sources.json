@@ -758,7 +758,7 @@
       "semantics": "Canonical immutable execution provenance plus controlled status, retry, and result facts.",
       "classification": "canonical_mutable_fact",
       "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/agent/application/agent_context_builder.py"],
+      "readers": ["code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/agent/application/agent_context_builder.py", "code:backend/app/modules/job/infrastructure/dispatch_repository.py", "code:backend/app/modules/job/infrastructure/job_status_lookup.py", "code:backend/app/modules/delivery/infrastructure/repository.py"],
       "lifecycle": "active state machine followed by retained terminal history",
       "retention_policy": "job-history-policy",
       "audit_requirement": "retain bounded execution provenance and safe failure metadata",
