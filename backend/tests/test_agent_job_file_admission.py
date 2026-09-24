@@ -19,6 +19,7 @@ from backend.tests.support.file_workspace import (
     file_workspace_command_kwargs,
     multimodal_container,
 )
+from backend.tests.support.runtime import audit_trail
 
 
 FILE_FEATURES = {"workspace_enabled": True, "file_mcp_enabled": True}
@@ -431,3 +432,141 @@ def test_output_request_workspace_lifecycle_matches_frozen_feature(
 
     assert isinstance(result, AgentJob)
     assert bool(result.task_workspace_id) is workspace_enabled
+
+
+def _write_counts(runtime: Any) -> dict[str, int]:
+    return {
+        table: runtime.agent_repository.count_rows(table)
+        for table in (
+            "agent_session",
+            "agent_message",
+            "agent_job",
+            "delivery_outbox",
+            "file_readiness_blocked_turn",
+            "audit_event",
+        )
+    }
+
+
+def test_unready_readable_content_records_blocked_turn_and_retry_replays_notice() -> None:
+    runtime = multimodal_container(task_file_features=FILE_FEATURES)
+    conversation_id = "admission-unready"
+    identities = _stage_ready_files(
+        runtime,
+        conversation_id=conversation_id,
+        names=("待解析.txt",),
+    )
+    runtime.database.execute(
+        "update message_attachment set readability_status = 'PENDING' where file_name = ?",
+        ("待解析.txt",),
+    )
+    command = _command(
+        runtime,
+        key="admission-unready-read",
+        conversation_id=conversation_id,
+        message="分析这个文件",
+    )
+
+    notice, events = audit_trail(
+        runtime,
+        lambda: runtime.create_agent_job_service.execute(command),
+    )
+
+    assert isinstance(notice, SystemNoticeIntake)
+    assert notice.reason_code == "file_readable_content_not_ready"
+    assert notice.task_workspace_id
+    assert notice.message_id
+    assert notice.delivery_id
+    assert events == [
+        "permission.connector_ingress",
+        "permission.connector_delivery",
+        "permission.job_create.start",
+        "delivery.outbox.created",
+        "file.turn.admission.blocked",
+    ]
+    blocked = runtime.database.execute(
+        """
+        select t.session_id, t.workspace_id, t.user_message_id, t.reason_code, t.status,
+               v.file_version_id
+          from file_readiness_blocked_turn t
+          join file_readiness_blocked_turn_version v on v.turn_id = t.id
+        """
+    )
+    assert blocked == [
+        {
+            "session_id": notice.session_id,
+            "workspace_id": notice.task_workspace_id,
+            "user_message_id": notice.message_id,
+            "reason_code": "file_readable_content_not_ready",
+            "status": "OPEN",
+            "file_version_id": identities["待解析.txt"][1],
+        }
+    ]
+
+    writes_before_retry = _write_counts(runtime)
+    assert runtime.create_agent_job_service.execute(command) == notice
+    assert _write_counts(runtime) == writes_before_retry
+
+    runtime.database.execute(
+        "update delivery_outbox set delivery_binding_json = '[]' where id = ?",
+        (notice.delivery_id,),
+    )
+    assert runtime.create_agent_job_service.execute(command) == SystemNoticeIntake(
+        session_id=notice.session_id,
+        message_id="",
+        delivery_id=notice.delivery_id,
+        reason_code="file_readable_content_not_ready",
+        task_workspace_id="",
+    )
+    assert _write_counts(runtime) == writes_before_retry
+
+
+def test_text_turn_bound_to_another_messages_pending_file_is_released_at_creation() -> None:
+    runtime = multimodal_container(task_file_features=FILE_FEATURES)
+    conversation_id = "admission-pending-source"
+    source_job = runtime.create_agent_job_service.execute(
+        _command(
+            runtime,
+            key="admission-pending-source-upload",
+            conversation_id=conversation_id,
+            message="保存这个文件",
+            attachments=(
+                ChannelAttachment(
+                    media_type="document",
+                    file_name="下载中.txt",
+                    source_credential="download-pending",
+                ),
+            ),
+        )
+    )
+    assert isinstance(source_job, AgentJob)
+    [pending_attachment] = runtime.attachment_repository.list_attachments(source_job.id)
+    assert pending_attachment.status == "PENDING"
+
+    result, events = audit_trail(
+        runtime,
+        lambda: runtime.create_agent_job_service.execute(
+            _command(
+                runtime,
+                key="admission-pending-source-read",
+                conversation_id=conversation_id,
+                message="分析这个文件",
+            )
+        ),
+    )
+
+    assert isinstance(result, AgentJob)
+    assert [
+        (item["attachment_id"], item["source_status"], item["reason"])
+        for item in result.business_application_route_decision["file_turn_dependencies"]
+    ] == [(pending_attachment.id, "PENDING", "DEIXIS")]
+    assert runtime.attachment_repository.list_attachments(result.id) == []
+    assert result.status == JobStatus.PENDING
+    assert events == [
+        "permission.connector_ingress",
+        "permission.connector_delivery",
+        "permission.job_create.start",
+        "attachment.intake.claimed",
+        "job.created",
+        "job.dispatch.enqueued",
+    ]

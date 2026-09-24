@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TypeVar
+
 from app.bootstrap import Container, build_test_container
 from app.modules.identity.application import AuthorizationEvaluator
 from app.modules.job.infrastructure.repositories import ConfigurationRepository
@@ -89,3 +92,21 @@ def container(
         ),
     )
     return runtime
+
+
+_Result = TypeVar("_Result")
+
+
+def audit_trail(runtime: Container, action: Callable[[], _Result]) -> tuple[_Result, list[str]]:
+    """Run ``action`` and return the audit event types it recorded, in write order."""
+
+    start = runtime.database.execute_one(
+        "select coalesce(max(rowid), 0) as last_row from audit_event"
+    )
+    assert start is not None
+    result = action()
+    rows = runtime.database.execute(
+        "select event_type from audit_event where rowid > ? order by rowid",
+        (start["last_row"],),
+    )
+    return result, [str(row["event_type"]) for row in rows]

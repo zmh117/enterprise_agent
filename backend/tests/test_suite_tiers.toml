@@ -69,6 +69,7 @@ contract = [
   "test_admin_api_contracts.py",
   "test_admin_web_proxy.py",
   "test_agent_context_audit_repository.py",
+  "test_agent_job_creation_contract.py",
   "test_agent_job_debug_authorization.py",
   "test_agent_job_debug_queries.py",
   "test_agent_job_file_admission.py",
