@@ -6,7 +6,6 @@ from typing import Any
 import hashlib
 import json
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from app.modules.agent.infrastructure.runtime_readiness import AgentRuntimeReadinessGuard
 from app.modules.agent_config.application import AgentConfigService
@@ -25,6 +24,7 @@ from app.modules.file_workspace.manifest_service import (
     JobFileManifestService,
     is_task_text_name,
 )
+from app.modules.job.application.agent_binding import AgentBinding, bind_agent_publication
 from app.modules.job.application.file_context import (
     AdmissionFileReference,
     CurrentMessageAttachment,
@@ -38,7 +38,10 @@ from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
-from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
+from app.modules.job.domain.execution_policy import (
+    EffectiveExecutionPolicyResolver,
+    JobExecutionPolicySnapshot,
+)
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.attachment_repository import AttachmentRepository
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
@@ -215,6 +218,18 @@ class _ChannelRouting:
             project_code=str(project_code or command.project_code),
             reply_route=command.effective_reply_route,
         )
+
+
+@dataclass(frozen=True)
+class _BusinessAuthorization:
+    authorized: bool
+    snapshot: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _SessionIsolation:
+    execution_scope_hash: str
+    session_key: str
 
 
 class CreateAgentJobService:
@@ -428,26 +443,10 @@ class CreateAgentJobService:
             attachment_ids=tuple(attachment_ids),
         )
 
-    def execute(self, command: CreateAgentJobCommand) -> AgentJob | SystemNoticeIntake:  # noqa: C901, PLR0915
-        existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
-        if existing is not None:
-            if self.mcp_tool_snapshot_service is not None:
-                self.mcp_tool_snapshot_service.verify(existing.id)
-            return existing
-        existing_notice = self.delivery_repository.get_system_notice_by_idempotency_key(
-            command.idempotency_key
-        )
-        if existing_notice is not None:
-            binding = json.loads(str(existing_notice.get("delivery_binding_json") or "{}"))
-            if not isinstance(binding, dict):
-                binding = {}
-            return SystemNoticeIntake(
-                session_id=str(existing_notice.get("session_id") or ""),
-                message_id=str(binding.get("user_message_id") or ""),
-                delivery_id=str(existing_notice.get("id") or ""),
-                reason_code=str(binding.get("reason_code") or "file_readable_content_not_ready"),
-                task_workspace_id=str(binding.get("task_workspace_id") or ""),
-            )
+    def execute(self, command: CreateAgentJobCommand) -> AgentJob | SystemNoticeIntake:  # noqa: PLR0915
+        replayed = self._replay(command)
+        if replayed is not None:
+            return replayed
         if command.conversation_mode in {"application", "actor"}:
             raise NonRetryableExecutionError(
                 "Legacy shared session mode cannot create new Jobs",
@@ -457,234 +456,13 @@ class CreateAgentJobService:
         self._validate_attachments(command)
         routing = _ChannelRouting.from_command(command, isolate_conversation=True)
         self._assert_connectors_allowed(command, routing.reply_route)
-        business_application_authorized = False
-        business_authorization_snapshot: dict[str, Any] = {}
-        if command.business_application_id:
-            if routing.source_channel in {"dingding", "dingding_stream"}:
-                business_application_authorized = True
-                business_authorization_snapshot = {
-                    "allowed": True,
-                    "stage": "job_create",
-                    "reason": "dingtalk_active_application_route",
-                    "application_id": command.business_application_id,
-                    "application_publication_id": (command.business_application_publication_id),
-                    "source_connector_id": (command.source_connector_id),
-                }
-            elif self.business_authorization_service is None:
-                raise NonRetryableExecutionError(
-                    "Business authorization service is unavailable",
-                    safe_message="业务应用授权服务暂时不可用",
-                    error_code="business_authorization_unavailable",
-                )
-            else:
-                business_decision = self.business_authorization_service.require(
-                    user_id=routing.requester_id,
-                    application_id=command.business_application_id,
-                    stage="job_create",
-                )
-                business_application_authorized = True
-                business_authorization_snapshot = dict(business_decision)
-            self.audit_service.record(
-                "authorization.business.job_create",
-                status="SUCCEEDED",
-                summary="Business authorization allowed Agent job creation",
-                actor_id=routing.requester_id,
-                payload=business_authorization_snapshot,
-            )
-        self.audit_service.record(
-            "permission.job_create.start",
-            status="STARTED",
-            summary="Checking user permission for Agent job creation",
-            actor_id=routing.requester_id,
-            payload={
-                "project_code": routing.project_code,
-                "source_channel": routing.source_channel,
-                "source_connector_id": command.source_connector_id,
-                "delivery_type": routing.reply_route.get("type"),
-                "delivery_connector_id": routing.reply_route.get("connector_id"),
-            },
-        )
-        if not business_application_authorized:
-            self.permission_service.assert_user_can_create_job(
-                user_id=routing.requester_id,
-                project_code=routing.project_code,
-            )
-        agent_definition_id = ""
-        agent_publication_id = ""
-        agent_revision = 0
-        agent_config_hash = ""
-        agent_runtime_kind = "python-v1"
-        agent_runtime_protocol_version = "1.5"
-        agent_snapshot: dict[str, Any] = {}
-        model_runtime_provenance: dict[str, Any] = {
-            "legacy": True,
-            "runtime": "claude_agent_sdk",
-        }
-        if self.published_agent_runtime_enabled or command.fixed_agent_publication_id:
-            if self.agent_config_service is None:
-                raise NonRetryableExecutionError(
-                    "Published Agent runtime service is unavailable",
-                    safe_message="Agent 配置不可用",
-                )
-            agent_code = command.agent_code or self.default_agent_code
-            if not business_application_authorized:
-                self.permission_service.require_action(
-                    user_id=routing.requester_id,
-                    resource_type="agent",
-                    resource_code=agent_code,
-                    action="use",
-                )
-            definition = self.agent_config_service.repository.get_definition(agent_code)
-            publication = (
-                self.agent_config_service.publication(command.fixed_agent_publication_id)
-                if command.fixed_agent_publication_id
-                else self.agent_config_service.current_publication(agent_code)
-            )
-            if str(publication["agent_id"]) != str(definition["id"]):
-                raise NonRetryableExecutionError(
-                    "Pinned Agent publication belongs to another Agent",
-                    safe_message="固定的 Agent 配置无效",
-                )
-            if command.fixed_agent_revision is not None and int(publication["revision"]) != int(
-                command.fixed_agent_revision
-            ):
-                raise NonRetryableExecutionError(
-                    "Pinned Agent revision mismatch",
-                    safe_message="固定的 Agent 配置完整性校验失败",
-                )
-            if (
-                command.fixed_agent_config_hash
-                and str(publication["config_hash"]) != command.fixed_agent_config_hash
-            ):
-                raise NonRetryableExecutionError(
-                    "Pinned Agent hash mismatch",
-                    safe_message="固定的 Agent 配置完整性校验失败",
-                )
-            agent_definition_id = str(definition["id"])
-            agent_publication_id = str(publication["id"])
-            if not command.business_application_id and self.repository.database.execute_one(
-                "select tool_identifier from agent_publication_mcp_tool "
-                "where agent_publication_id=? and "
-                "(server_code='knowledge-mcp' or tool_identifier in "
-                "('knowledge_list_bases','knowledge_search')) limit 1",
-                (agent_publication_id,),
-            ):
-                raise PermissionDenied(
-                    "Knowledge tools require a Business Application Job",
-                    safe_message="知识库工具仅允许通过已授权的业务应用使用",
-                    error_code="knowledge_business_application_required",
-                )
-            agent_revision = int(publication["revision"])
-            agent_config_hash = str(publication["config_hash"])
-            agent_runtime_kind = str(publication.get("runtime_kind") or "")
-            if agent_runtime_kind != "python-v1":
-                raise NonRetryableExecutionError(
-                    "Pinned Agent publication runtime is unsupported",
-                    safe_message="固定的 Agent Runtime 配置无效",
-                    error_code="agent_runtime_kind_unsupported",
-                )
-            agent_runtime_protocol_version = "1.5"
-            agent_snapshot = dict(publication.get("snapshot") or {})
-            supported_protocols = tuple(
-                str(item) for item in agent_snapshot.get("supported_runtime_protocol_versions", [])
-            )
-            if supported_protocols != ("1.5",):
-                raise NonRetryableExecutionError(
-                    "Pinned Agent publication does not support the required Runtime protocol",
-                    safe_message="固定的 Agent 发布版本不支持文件策略所需 Runtime 协议",
-                    error_code="agent_runtime_protocol_unsupported",
-                )
-            if self.runtime_readiness_guard is not None:
-                self.runtime_readiness_guard.require_ready(agent_runtime_kind)
-            model_connection = agent_snapshot.get("model_connection") or {}
-            model_config = model_connection.get("config") or {}
-            model_runtime_provenance = (
-                {
-                    "legacy": False,
-                    "runtime": "claude_agent_sdk",
-                    "connection_id": str(model_connection.get("id") or ""),
-                    "connection_code": str(model_connection.get("code") or ""),
-                    "connection_revision_id": str(model_connection.get("revision_id") or ""),
-                    "connection_revision": int(model_connection.get("revision") or 0),
-                    "config_hash": str(model_connection.get("config_hash") or ""),
-                    "provider_host": _provider_host(str(model_config.get("base_url") or "")),
-                    "model": str(model_config.get("model") or ""),
-                    "effort_level": str(model_config.get("effort_level") or ""),
-                }
-                if model_connection
-                else {
-                    "legacy": True,
-                    "runtime": "claude_agent_sdk",
-                    "model": str((agent_snapshot.get("model_policy") or {}).get("model") or ""),
-                }
-            )
-            if (
-                routing.source_channel != "debug_api"
-                and command.source_connector_id
-                and not self.agent_config_service.connector_allowed(
-                    publication_id=agent_publication_id,
-                    direction="ingress",
-                    connector_id=command.source_connector_id,
-                )
-            ):
-                raise NonRetryableExecutionError(
-                    "Source connector is not assigned to the Agent publication",
-                    safe_message="此渠道无法使用该 Agent",
-                )
-            delivery_connector_id = str(routing.reply_route.get("connector_id") or "")
-            if (
-                routing.reply_route.get("type") != "none"
-                and delivery_connector_id
-                and not self.agent_config_service.connector_allowed(
-                    publication_id=agent_publication_id,
-                    direction="delivery",
-                    connector_id=delivery_connector_id,
-                )
-            ):
-                raise NonRetryableExecutionError(
-                    "Delivery connector is not assigned to the Agent publication",
-                    safe_message="此渠道尚未配置 Agent 结果投递",
-                )
+        authorization = self._authorize_job_creation(command, routing)
+        agent = self._bind_agent(command, routing, authorization)
         correlation_id = command.correlation_id or new_correlation_id()
-        execution_policy = self.execution_policy_resolver.resolve(
-            application_policy=command.application_execution_policy or None,
-            agent_snapshot=agent_snapshot,
-            sources={
-                "business_application_id": command.business_application_id,
-                "business_application_publication_id": (
-                    command.business_application_publication_id
-                ),
-                "business_application_config_hash": (command.business_application_config_hash),
-                "agent_publication_id": agent_publication_id,
-                "agent_revision": agent_revision,
-                "agent_config_hash": agent_config_hash,
-            },
-        )
+        execution_policy = self._resolve_execution_policy(command, agent)
         if command.attachments:
             self._require_credential_cipher()
-        continuous_enabled = self._continuous_conversation_enabled(command)
-        if routing.source_channel in ISOLATED_SESSION_SOURCE_CHANNELS:
-            continuous_enabled = False
-        execution_scope_hash = (
-            _execution_scope_hash(command.effective_routing_context)
-            if command.business_application_id
-            else ""
-        )
-        if command.business_application_id and (
-            not command.business_application_publication_id
-            or not execution_scope_hash
-            or (continuous_enabled and command.conversation_mode != "channel")
-        ):
-            raise NonRetryableExecutionError(
-                "Business Application session isolation facts are incomplete",
-                safe_message="业务应用会话隔离配置不完整，请重新发布应用",
-                error_code="session_isolation_incomplete",
-            )
-        session_key = (
-            _channel_session_key(command, routing, execution_scope_hash)
-            if continuous_enabled
-            else ""
-        )
+        isolation = self._session_isolation(command, routing)
         attachment_ids: list[str] = []
         with self.repository.database.unit_of_work():
             runtime_authorization_snapshot: dict[str, Any] = {}
@@ -702,14 +480,14 @@ class CreateAgentJobService:
                 self._require_continuable_session(
                     command=command,
                     requester_id=routing.requester_id,
-                    execution_scope_hash=execution_scope_hash,
+                    execution_scope_hash=isolation.execution_scope_hash,
                 )
                 if command.continue_session_id
                 else self._create_session(
                     command,
                     routing,
-                    session_key=session_key,
-                    execution_scope_hash=execution_scope_hash,
+                    session_key=isolation.session_key,
+                    execution_scope_hash=isolation.execution_scope_hash,
                 )
             )
             workspace_feature_enabled = bool(command.task_file_features.get("workspace_enabled"))
@@ -787,10 +565,10 @@ class CreateAgentJobService:
                 ),
                 internal_user_id=routing.requester_id,
                 external_identity_id=command.external_identity_id,
-                agent_definition_id=agent_definition_id,
-                agent_publication_id=agent_publication_id,
-                agent_revision=agent_revision,
-                agent_config_hash=agent_config_hash,
+                agent_definition_id=agent.definition_id,
+                agent_publication_id=agent.publication_id,
+                agent_revision=agent.revision,
+                agent_config_hash=agent.config_hash,
                 webhook_event_id=command.webhook_event_id,
                 webhook_trigger_id=command.webhook_trigger_id,
                 webhook_trigger_publication_id=command.webhook_trigger_publication_id,
@@ -808,14 +586,14 @@ class CreateAgentJobService:
                         if command.task_file_features
                         else {}
                     ),
-                    "authorization_snapshot": business_authorization_snapshot,
+                    "authorization_snapshot": authorization.snapshot,
                     "runtime_authorization": runtime_authorization_snapshot,
                     "file_turn_dependencies": file_turn_payload,
                 },
                 execution_policy=execution_policy.to_dict(),
-                model_runtime_provenance=model_runtime_provenance,
-                agent_runtime_kind=agent_runtime_kind,
-                agent_runtime_protocol_version=agent_runtime_protocol_version,
+                model_runtime_provenance=agent.model_runtime_provenance,
+                agent_runtime_kind=agent.runtime_kind,
+                agent_runtime_protocol_version=agent.runtime_protocol_version,
                 task_workspace_id=(str(file_workspace["id"]) if file_workspace else ""),
                 quoted_external_message_id=command.quoted_external_message_id,
             )
@@ -830,9 +608,9 @@ class CreateAgentJobService:
                     application_id=command.business_application_id,
                     application_publication_id=(command.business_application_publication_id),
                     application_config_hash=(command.business_application_config_hash),
-                    agent_publication_id=agent_publication_id,
+                    agent_publication_id=agent.publication_id,
                     routing_context=command.effective_routing_context,
-                    business_authorization=business_authorization_snapshot,
+                    business_authorization=authorization.snapshot,
                     runtime_authorization=runtime_authorization_snapshot,
                     allowed_server_codes=(
                         None
@@ -844,13 +622,13 @@ class CreateAgentJobService:
                         )
                     ),
                 )
-            elif agent_publication_id and self.mcp_tool_snapshot_service is not None:
+            elif agent.publication_id and self.mcp_tool_snapshot_service is not None:
                 mcp_tool_snapshot = self.mcp_tool_snapshot_service.freeze_agent_only(
                     job_id=job.id,
                     requester_id=routing.requester_id,
-                    agent_publication_id=agent_publication_id,
+                    agent_publication_id=agent.publication_id,
                     routing_context=command.effective_routing_context,
-                    business_authorization=business_authorization_snapshot,
+                    business_authorization=authorization.snapshot,
                     runtime_authorization=runtime_authorization_snapshot,
                 )
             for ordinal, attachment in enumerate(command.attachments, start=1):
@@ -941,10 +719,10 @@ class CreateAgentJobService:
                     "source_channel": routing.source_channel,
                     "source_connector_id": command.source_connector_id,
                     "external_event_id": command.external_event_id,
-                    "agent_publication_id": agent_publication_id,
-                    "agent_revision": agent_revision,
-                    "agent_config_hash": agent_config_hash,
-                    "model_runtime_provenance": model_runtime_provenance,
+                    "agent_publication_id": agent.publication_id,
+                    "agent_revision": agent.revision,
+                    "agent_config_hash": agent.config_hash,
+                    "model_runtime_provenance": agent.model_runtime_provenance,
                     "agent_runtime_kind": job.agent_runtime_kind,
                     "agent_runtime_protocol_version": (job.agent_runtime_protocol_version),
                     "webhook_event_id": command.webhook_event_id,
@@ -986,6 +764,162 @@ class CreateAgentJobService:
         for attachment_id in attachment_ids:
             self.publisher.publish_attachment(attachment_id, correlation_id)
         return job
+
+    def _replay(self, command: CreateAgentJobCommand) -> AgentJob | SystemNoticeIntake | None:
+        existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
+        if existing is not None:
+            if self.mcp_tool_snapshot_service is not None:
+                self.mcp_tool_snapshot_service.verify(existing.id)
+            return existing
+        existing_notice = self.delivery_repository.get_system_notice_by_idempotency_key(
+            command.idempotency_key
+        )
+        if existing_notice is None:
+            return None
+        binding = json.loads(str(existing_notice.get("delivery_binding_json") or "{}"))
+        if not isinstance(binding, dict):
+            binding = {}
+        return SystemNoticeIntake(
+            session_id=str(existing_notice.get("session_id") or ""),
+            message_id=str(binding.get("user_message_id") or ""),
+            delivery_id=str(existing_notice.get("id") or ""),
+            reason_code=str(binding.get("reason_code") or "file_readable_content_not_ready"),
+            task_workspace_id=str(binding.get("task_workspace_id") or ""),
+        )
+
+    def _authorize_job_creation(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+    ) -> _BusinessAuthorization:
+        authorization = _BusinessAuthorization(authorized=False, snapshot={})
+        if command.business_application_id:
+            if routing.source_channel in {"dingding", "dingding_stream"}:
+                snapshot: dict[str, Any] = {
+                    "allowed": True,
+                    "stage": "job_create",
+                    "reason": "dingtalk_active_application_route",
+                    "application_id": command.business_application_id,
+                    "application_publication_id": (command.business_application_publication_id),
+                    "source_connector_id": (command.source_connector_id),
+                }
+            elif self.business_authorization_service is None:
+                raise NonRetryableExecutionError(
+                    "Business authorization service is unavailable",
+                    safe_message="业务应用授权服务暂时不可用",
+                    error_code="business_authorization_unavailable",
+                )
+            else:
+                business_decision = self.business_authorization_service.require(
+                    user_id=routing.requester_id,
+                    application_id=command.business_application_id,
+                    stage="job_create",
+                )
+                snapshot = dict(business_decision)
+            authorization = _BusinessAuthorization(authorized=True, snapshot=snapshot)
+            self.audit_service.record(
+                "authorization.business.job_create",
+                status="SUCCEEDED",
+                summary="Business authorization allowed Agent job creation",
+                actor_id=routing.requester_id,
+                payload=authorization.snapshot,
+            )
+        self.audit_service.record(
+            "permission.job_create.start",
+            status="STARTED",
+            summary="Checking user permission for Agent job creation",
+            actor_id=routing.requester_id,
+            payload={
+                "project_code": routing.project_code,
+                "source_channel": routing.source_channel,
+                "source_connector_id": command.source_connector_id,
+                "delivery_type": routing.reply_route.get("type"),
+                "delivery_connector_id": routing.reply_route.get("connector_id"),
+            },
+        )
+        if not authorization.authorized:
+            self.permission_service.assert_user_can_create_job(
+                user_id=routing.requester_id,
+                project_code=routing.project_code,
+            )
+        return authorization
+
+    def _bind_agent(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+        authorization: _BusinessAuthorization,
+    ) -> AgentBinding:
+        if not (self.published_agent_runtime_enabled or command.fixed_agent_publication_id):
+            return AgentBinding()
+        return bind_agent_publication(
+            agent_config_service=self.agent_config_service,
+            permission_service=self.permission_service,
+            database=self.repository.database,
+            runtime_readiness_guard=self.runtime_readiness_guard,
+            agent_code=command.agent_code or self.default_agent_code,
+            requester_id=routing.requester_id,
+            agent_permission_required=not authorization.authorized,
+            fixed_publication_id=command.fixed_agent_publication_id,
+            fixed_revision=command.fixed_agent_revision,
+            fixed_config_hash=command.fixed_agent_config_hash,
+            business_application_job=bool(command.business_application_id),
+            source_channel=routing.source_channel,
+            source_connector_id=command.source_connector_id,
+            reply_route=routing.reply_route,
+        )
+
+    def _resolve_execution_policy(
+        self,
+        command: CreateAgentJobCommand,
+        agent: AgentBinding,
+    ) -> JobExecutionPolicySnapshot:
+        return self.execution_policy_resolver.resolve(
+            application_policy=command.application_execution_policy or None,
+            agent_snapshot=agent.snapshot,
+            sources={
+                "business_application_id": command.business_application_id,
+                "business_application_publication_id": (
+                    command.business_application_publication_id
+                ),
+                "business_application_config_hash": (command.business_application_config_hash),
+                "agent_publication_id": agent.publication_id,
+                "agent_revision": agent.revision,
+                "agent_config_hash": agent.config_hash,
+            },
+        )
+
+    def _session_isolation(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+    ) -> _SessionIsolation:
+        continuous_enabled = self._continuous_conversation_enabled(command)
+        if routing.source_channel in ISOLATED_SESSION_SOURCE_CHANNELS:
+            continuous_enabled = False
+        execution_scope_hash = (
+            _execution_scope_hash(command.effective_routing_context)
+            if command.business_application_id
+            else ""
+        )
+        if command.business_application_id and (
+            not command.business_application_publication_id
+            or not execution_scope_hash
+            or (continuous_enabled and command.conversation_mode != "channel")
+        ):
+            raise NonRetryableExecutionError(
+                "Business Application session isolation facts are incomplete",
+                safe_message="业务应用会话隔离配置不完整，请重新发布应用",
+                error_code="session_isolation_incomplete",
+            )
+        return _SessionIsolation(
+            execution_scope_hash=execution_scope_hash,
+            session_key=(
+                _channel_session_key(command, routing, execution_scope_hash)
+                if continuous_enabled
+                else ""
+            ),
+        )
 
     def _plan_file_admission(
         self,
@@ -1413,10 +1347,3 @@ def _execution_scope_hash(routing_context: dict[str, Any]) -> str:
 def _isolated_conversation_id(*, source_channel: str, idempotency_key: str) -> str:
     digest = hashlib.sha256(f"{source_channel}:{idempotency_key}".encode("utf-8")).hexdigest()
     return f"isolated:{source_channel}:{digest}"
-
-
-def _provider_host(base_url: str) -> str:
-    try:
-        return (urlsplit(base_url).hostname or "invalid").lower()[:255]
-    except ValueError:
-        return "invalid"

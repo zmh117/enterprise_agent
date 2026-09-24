@@ -191,6 +191,7 @@ def test_write_cutover_production_sql_has_no_compatibility_access() -> None:
         REPOSITORY_ROOT / "backend/app/modules/delivery/infrastructure/repository.py",
         REPOSITORY_ROOT / "backend/app/modules/admin/infrastructure/read_repository.py",
         REPOSITORY_ROOT / "backend/app/modules/job/application/create_agent_job_service.py",
+        REPOSITORY_ROOT / "backend/app/modules/job/application/agent_binding.py",
         REPOSITORY_ROOT / "backend/app/modules/agent/application/agent_context_builder.py",
         REPOSITORY_ROOT / "backend/app/modules/workflow/infrastructure/repository.py",
         REPOSITORY_ROOT / "backend/app/modules/workflow/application/service.py",
