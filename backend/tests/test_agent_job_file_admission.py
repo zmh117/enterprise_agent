@@ -521,7 +521,7 @@ def test_unready_readable_content_records_blocked_turn_and_retry_replays_notice(
     assert _write_counts(runtime) == writes_before_retry
 
 
-def test_text_turn_bound_to_another_messages_pending_file_is_released_at_creation() -> None:
+def test_text_turn_bound_to_another_messages_pending_file_stays_waiting() -> None:
     runtime = multimodal_container(task_file_features=FILE_FEATURES)
     conversation_id = "admission-pending-source"
     source_job = runtime.create_agent_job_service.execute(
@@ -561,7 +561,14 @@ def test_text_turn_bound_to_another_messages_pending_file_is_released_at_creatio
         for item in result.business_application_route_decision["file_turn_dependencies"]
     ] == [(pending_attachment.id, "PENDING", "DEIXIS")]
     assert runtime.attachment_repository.list_attachments(result.id) == []
-    assert result.status == JobStatus.PENDING
+    [still_pending] = runtime.attachment_repository.list_attachments(source_job.id)
+    assert still_pending.id == pending_attachment.id
+    assert still_pending.status == "PENDING"
+    assert result.status == JobStatus.WAITING_INPUT
+    runtime.attachment_service.downloader = FakeDownloader({"download-pending": b"file body"})
+    assert runtime.attachment_service.process(pending_attachment.id, "source-ready") == "released"
+    assert runtime.agent_repository.get_job(source_job.id).status == JobStatus.PENDING
+    assert runtime.agent_repository.get_job(result.id).status == JobStatus.PENDING
     assert events == [
         "permission.connector_ingress",
         "permission.connector_delivery",

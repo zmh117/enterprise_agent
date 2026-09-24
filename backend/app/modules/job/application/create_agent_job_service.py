@@ -961,8 +961,10 @@ class CreateAgentJobService:
 
     def _release_if_sources_ready(self, job: AgentJob) -> AgentJob:
         job_attachments = self.attachment_repository.list_attachments(job.id)
-        if job.status == JobStatus.WAITING_INPUT and all(
-            item.status in TERMINAL_ATTACHMENT_STATUSES for item in job_attachments
+        if (
+            job.status == JobStatus.WAITING_INPUT
+            and job_attachments
+            and all(item.status in TERMINAL_ATTACHMENT_STATUSES for item in job_attachments)
         ):
             return self.repository.transition_job(
                 job_id=job.id,

@@ -219,8 +219,14 @@ class AttachmentProcessingService:
         if not attachment.job_id:
             if attachment.status == "REJECTED":
                 self._notify_staged_attachment_rejection(attachment, correlation_id)
-            return "staged"
-        return self._release_if_ready(attachment.job_id, correlation_id)
+            owner_result = "staged"
+        else:
+            owner_result = self._release_if_ready(attachment.job_id, correlation_id)
+        for job_id in self.attachment_repository.list_waiting_job_ids_for_attachment(attachment.id):
+            if job_id == attachment.job_id:
+                continue
+            self._release_if_ready(job_id, correlation_id)
+        return owner_result
 
     def _notify_staged_attachment_rejection(
         self,
@@ -255,14 +261,14 @@ class AttachmentProcessingService:
     @operation_unit_of_work(lambda service: service.repository.database)
     def _release_if_ready(self, job_id: str, correlation_id: str) -> str:
         attachments = self.attachment_repository.list_attachments(job_id)
-        if not attachments or any(
-            item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments
-        ):
+        if any(item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments):
             return "waiting"
         job = self.repository.get_job(job_id)
         if job.status != JobStatus.WAITING_INPUT:
             return job.status.value.lower()
         gate = self._evaluate_stored_file_gate(job, attachments)
+        if not attachments and gate is None:
+            return "waiting"
         if gate is not None and gate.action == "wait_source":
             return "waiting"
         if gate is not None and gate.action == "system_notice":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.modules.job.domain.agent_job import MessageAttachment
@@ -145,6 +146,36 @@ class AttachmentRepository:
             (job_id,),
         )
         return [self._attachment_from_row(row) for row in rows]
+
+    def list_waiting_job_ids_for_attachment(self, attachment_id: str) -> list[str]:
+        """Waiting jobs whose frozen file dependencies name this attachment."""
+
+        if not attachment_id:
+            return []
+        rows = self.database.execute(
+            """
+            select id, business_application_route_decision_json
+              from agent_job
+             where status = 'WAITING_INPUT'
+             order by id
+            """
+        )
+        matched: list[str] = []
+        for row in rows:
+            raw = row.get("business_application_route_decision_json") or "{}"
+            try:
+                decision = json.loads(str(raw))
+            except json.JSONDecodeError:
+                continue
+            dependencies = decision.get("file_turn_dependencies") if isinstance(decision, dict) else None
+            if not isinstance(dependencies, list):
+                continue
+            if any(
+                isinstance(item, dict) and str(item.get("attachment_id") or "") == attachment_id
+                for item in dependencies
+            ):
+                matched.append(str(row["id"]))
+        return matched
 
     def attachment_session_context(self, attachment_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
