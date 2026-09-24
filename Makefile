@@ -10,7 +10,7 @@ lint:
 	.venv/bin/ruff check .
 
 typecheck:
-	.venv/bin/mypy backend/app
+	.venv/bin/mypy backend/app services
 
 test:
 	$(MAKE) test-full

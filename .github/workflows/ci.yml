@@ -14,8 +14,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m venv .venv
-      # Optional drivers and the Runtime SDK are imported by backend/app; without them mypy
-      # silently treats those modules as Any and misses real signature drift.
+      # Optional drivers, the Runtime SDK and mcp are imported by backend/app and services;
+      # without them mypy silently treats those modules as Any and misses real signature drift.
       - run: .venv/bin/pip install -e '.[dev,database,python-runtime]'
       - run: make lint
       - run: make format-check

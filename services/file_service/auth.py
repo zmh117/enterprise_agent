@@ -8,10 +8,7 @@ from typing import Any, Never
 
 import jwt
 
-from app.modules.identity.application.principal_jwt import (
-    MAX_PRINCIPAL_TOKEN_BYTES,
-    PrincipalJwks,
-)
+from app.modules.identity.application.principal_jwt import PrincipalJwks
 from app.modules.identity.application.service_principal import (
     DELIVERY_WORKER_AUTHORIZED_PARTY,
     DELIVERY_WORKER_SCOPES,
@@ -23,6 +20,7 @@ from app.modules.identity.application.service_principal import (
     SERVICE_PRINCIPAL_ISSUER,
 )
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.principal_token_contract import MAX_PRINCIPAL_TOKEN_BYTES
 
 
 FILE_PRINCIPAL_AUDIENCE = "file-service"

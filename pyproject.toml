@@ -95,6 +95,8 @@ max-statements = 50
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
+# services/ imports `app.*` from backend/; without this path those imports silently become Any.
+mypy_path = "backend"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
