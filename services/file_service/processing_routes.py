@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 
-from app.shared.exceptions import AppError
 from services.file_service.auth import FilePrincipalError, FileWorkerPrincipalVerifier
 from services.file_service.internal_http import (
     bearer_token,
+    denial_on_app_error,
+    iter_blocking_stream,
     optional_int,
     request_json_exact,
-    safe_error,
     safe_processing_run,
     safe_result,
 )
@@ -157,227 +156,189 @@ class DocumentProcessingRunRoutes:
     def __init__(self, access: ProcessingAccess) -> None:
         self._access = access
 
+    @denial_on_app_error
     async def admission(self, request: Request) -> JSONResponse:
-        try:
-            claims = self._access.claims(
-                request, "internal:file-service:document-processing:admission"
+        claims = self._access.claims(request, "internal:file-service:document-processing:admission")
+        action = str(request.path_params["action"])
+        fields = {"owner_kind", "owner_id", "worker_instance_id"}
+        if action == "quarantine":
+            fields.add("reason_code")
+        if action not in {"acquire", "renew", "release", "quarantine"}:
+            raise FilePrincipalError(
+                "Document processing admission action is invalid",
+                safe_message="文档处理并发槽位操作无效",
+                error_code="docling_slot_action_invalid",
             )
-            action = str(request.path_params["action"])
-            fields = {"owner_kind", "owner_id", "worker_instance_id"}
-            if action == "quarantine":
-                fields.add("reason_code")
-            if action not in {"acquire", "renew", "release", "quarantine"}:
-                raise FilePrincipalError(
-                    "Document processing admission action is invalid",
-                    safe_message="文档处理并发槽位操作无效",
-                    error_code="docling_slot_action_invalid",
-                )
-            payload = await request_json_exact(request, fields)
-            values = {
-                "owner_kind": str(payload["owner_kind"]),
-                "owner_id": str(payload["owner_id"]),
-                "worker_instance_id": str(payload["worker_instance_id"]),
-                "service_principal_id": str(claims["sub"]),
-            }
-            if action == "quarantine":
-                values["reason_code"] = str(payload["reason_code"])
-            operation = getattr(self._access.service(), f"{action}_docling_slot")
-            result = await asyncio.to_thread(operation, **values)
-            return JSONResponse(safe_result(result))
-        except AppError as exc:
-            return safe_error(exc)
+        payload = await request_json_exact(request, fields)
+        values = {
+            "owner_kind": str(payload["owner_kind"]),
+            "owner_id": str(payload["owner_id"]),
+            "worker_instance_id": str(payload["worker_instance_id"]),
+            "service_principal_id": str(claims["sub"]),
+        }
+        if action == "quarantine":
+            values["reason_code"] = str(payload["reason_code"])
+        operation = getattr(self._access.service(), f"{action}_docling_slot")
+        result = await asyncio.to_thread(operation, **values)
+        return JSONResponse(safe_result(result))
 
+    @denial_on_app_error
     async def heartbeat(self, request: Request) -> JSONResponse:
-        try:
-            claims = self._access.claims(
-                request, "internal:file-service:document-processing:heartbeat"
-            )
-            payload = await request_json_exact(
-                request,
-                {
-                    "instance_id",
-                    "profile_hash",
-                    "queue_contract",
-                    "docling_local_workers",
-                    "status",
-                    "reason_code",
-                },
-            )
-            result = await asyncio.to_thread(
-                self._access.service().record_processing_worker_heartbeat,
-                instance_id=str(payload["instance_id"]),
-                profile_hash=str(payload["profile_hash"]),
-                queue_contract=str(payload["queue_contract"]),
-                docling_local_workers=int(payload["docling_local_workers"]),
-                status=str(payload["status"]),
-                reason_code=str(payload["reason_code"]),
-                service_principal_id=str(claims["sub"]),
-            )
-            return JSONResponse(safe_result(result))
-        except AppError as exc:
-            return safe_error(exc)
+        claims = self._access.claims(request, "internal:file-service:document-processing:heartbeat")
+        payload = await request_json_exact(
+            request,
+            {
+                "instance_id",
+                "profile_hash",
+                "queue_contract",
+                "docling_local_workers",
+                "status",
+                "reason_code",
+            },
+        )
+        result = await asyncio.to_thread(
+            self._access.service().record_processing_worker_heartbeat,
+            instance_id=str(payload["instance_id"]),
+            profile_hash=str(payload["profile_hash"]),
+            queue_contract=str(payload["queue_contract"]),
+            docling_local_workers=int(payload["docling_local_workers"]),
+            status=str(payload["status"]),
+            reason_code=str(payload["reason_code"]),
+            service_principal_id=str(claims["sub"]),
+        )
+        return JSONResponse(safe_result(result))
 
+    @denial_on_app_error
     async def claim(self, request: Request) -> JSONResponse:
-        try:
-            claims = self._access.claims(request, "internal:file-service:document-processing:claim")
-            payload = await request_json_exact(
-                request,
-                {
-                    "contract_version",
-                    "run_id",
-                    "source_version_id",
-                    "profile_hash",
-                    "attempt",
-                    "correlation_id",
-                },
+        claims = self._access.claims(request, "internal:file-service:document-processing:claim")
+        payload = await request_json_exact(
+            request,
+            {
+                "contract_version",
+                "run_id",
+                "source_version_id",
+                "profile_hash",
+                "attempt",
+                "correlation_id",
+            },
+        )
+        if str(payload["run_id"]) != str(request.path_params["run_id"]):
+            raise FilePrincipalError(
+                "Document processing path and message identity differ",
+                safe_message="文档处理消息身份不匹配",
+                error_code="document_processing_message_mismatch",
             )
-            if str(payload["run_id"]) != str(request.path_params["run_id"]):
-                raise FilePrincipalError(
-                    "Document processing path and message identity differ",
-                    safe_message="文档处理消息身份不匹配",
-                    error_code="document_processing_message_mismatch",
-                )
-            result = await asyncio.to_thread(
-                self._access.service().claim,
-                message=payload,
-                service_principal_id=str(claims["sub"]),
-            )
-            return JSONResponse(safe_result(result))
-        except AppError as exc:
-            return safe_error(exc)
+        result = await asyncio.to_thread(
+            self._access.service().claim,
+            message=payload,
+            service_principal_id=str(claims["sub"]),
+        )
+        return JSONResponse(safe_result(result))
 
+    @denial_on_app_error
     async def source_grant(self, request: Request) -> JSONResponse:
-        try:
-            claims = self._access.claims(
-                request, "internal:file-service:document-processing:source:read"
-            )
-            payload = await request_json_exact(request, {"tenant_id"})
-            result = await asyncio.to_thread(
-                self._access.service().prepare_source_stream,
-                run_id=str(request.path_params["run_id"]),
-                tenant_id=str(payload["tenant_id"]),
-                service_principal_id=str(claims["sub"]),
-            )
-            return JSONResponse(safe_result(result))
-        except AppError as exc:
-            return safe_error(exc)
+        claims = self._access.claims(
+            request, "internal:file-service:document-processing:source:read"
+        )
+        payload = await request_json_exact(request, {"tenant_id"})
+        result = await asyncio.to_thread(
+            self._access.service().prepare_source_stream,
+            run_id=str(request.path_params["run_id"]),
+            tenant_id=str(payload["tenant_id"]),
+            service_principal_id=str(claims["sub"]),
+        )
+        return JSONResponse(safe_result(result))
 
-    async def source_content(
-        self,
-        request: Request,
-    ) -> StreamingResponse | JSONResponse:
-        try:
-            claims = self._access.claims(
-                request, "internal:file-service:document-processing:source:read"
+    @denial_on_app_error
+    async def source_content(self, request: Request) -> StreamingResponse:
+        claims = self._access.claims(
+            request, "internal:file-service:document-processing:source:read"
+        )
+        grant = str(request.headers.get("x-document-source-grant") or "")
+        if not grant or len(grant) > 4096:
+            raise FilePrincipalError(
+                "Document source grant is missing",
+                safe_message="文档原件读取授权缺失",
+                error_code="document_source_grant_missing",
             )
-            grant = str(request.headers.get("x-document-source-grant") or "")
-            if not grant or len(grant) > 4096:
-                raise FilePrincipalError(
-                    "Document source grant is missing",
-                    safe_message="文档原件读取授权缺失",
-                    error_code="document_source_grant_missing",
-                )
-            stream = await asyncio.to_thread(
-                self._access.service().open_source_stream,
-                grant=grant,
-                service_principal_id=str(claims["sub"]),
-            )
+        stream = await asyncio.to_thread(
+            self._access.service().open_source_stream,
+            grant=grant,
+            service_principal_id=str(claims["sub"]),
+        )
+        return StreamingResponse(
+            iter_blocking_stream(stream), media_type="application/octet-stream"
+        )
 
-            async def content() -> AsyncIterator[bytes]:
-                try:
-                    while True:
-                        chunk = await asyncio.to_thread(stream.read, 64 * 1024)
-                        if not chunk:
-                            break
-                        yield chunk
-                finally:
-                    await asyncio.to_thread(stream.close)
-
-            return StreamingResponse(content(), media_type="application/octet-stream")
-        except AppError as exc:
-            return safe_error(exc)
-
+    @denial_on_app_error
     async def submitted(self, request: Request) -> JSONResponse:
-        try:
-            self._access.claims(request, "internal:file-service:document-processing:claim")
-            payload = await request_json_exact(request, {"external_task_id"})
-            result = await asyncio.to_thread(
-                self._access.service().mark_submitted,
-                run_id=str(request.path_params["run_id"]),
-                external_task_id=str(payload["external_task_id"]),
-            )
-            return JSONResponse(safe_processing_run(result))
-        except AppError as exc:
-            return safe_error(exc)
+        self._access.claims(request, "internal:file-service:document-processing:claim")
+        payload = await request_json_exact(request, {"external_task_id"})
+        result = await asyncio.to_thread(
+            self._access.service().mark_submitted,
+            run_id=str(request.path_params["run_id"]),
+            external_task_id=str(payload["external_task_id"]),
+        )
+        return JSONResponse(safe_processing_run(result))
 
+    @denial_on_app_error
     async def finalize(self, request: Request) -> JSONResponse:
-        try:
-            self._access.claims(request, "internal:file-service:document-processing:complete")
-            payload = await request_json_exact(
-                request, {"partial", "page_count", "processing_time_ms"}
-            )
-            representations = await asyncio.to_thread(
-                self._access.service().finalize,
-                run_id=str(request.path_params["run_id"]),
-                partial=bool(payload["partial"]),
-                page_count=optional_int(payload["page_count"]),
-                processing_time_ms=optional_int(payload["processing_time_ms"]),
-            )
-            return JSONResponse(
-                {
-                    "representations": [
-                        {
-                            "id": str(item["id"]),
-                            "kind": str(item["kind"]),
-                            "status": str(item["status"]),
-                            "size_bytes": int(item["size_bytes"]),
-                            "content_sha256": str(item["content_sha256"]),
-                        }
-                        for item in representations
-                    ]
-                }
-            )
-        except AppError as exc:
-            return safe_error(exc)
+        self._access.claims(request, "internal:file-service:document-processing:complete")
+        payload = await request_json_exact(request, {"partial", "page_count", "processing_time_ms"})
+        representations = await asyncio.to_thread(
+            self._access.service().finalize,
+            run_id=str(request.path_params["run_id"]),
+            partial=bool(payload["partial"]),
+            page_count=optional_int(payload["page_count"]),
+            processing_time_ms=optional_int(payload["processing_time_ms"]),
+        )
+        return JSONResponse(
+            {
+                "representations": [
+                    {
+                        "id": str(item["id"]),
+                        "kind": str(item["kind"]),
+                        "status": str(item["status"]),
+                        "size_bytes": int(item["size_bytes"]),
+                        "content_sha256": str(item["content_sha256"]),
+                    }
+                    for item in representations
+                ]
+            }
+        )
 
+    @denial_on_app_error
     async def no_text(self, request: Request) -> JSONResponse:
-        try:
-            self._access.claims(request, "internal:file-service:document-processing:complete")
-            payload = await request_json_exact(request, {"page_count", "processing_time_ms"})
-            result = await asyncio.to_thread(
-                self._access.service().complete_without_text,
-                run_id=str(request.path_params["run_id"]),
-                page_count=optional_int(payload["page_count"]),
-                processing_time_ms=optional_int(payload["processing_time_ms"]),
-            )
-            return JSONResponse(safe_processing_run(result))
-        except AppError as exc:
-            return safe_error(exc)
+        self._access.claims(request, "internal:file-service:document-processing:complete")
+        payload = await request_json_exact(request, {"page_count", "processing_time_ms"})
+        result = await asyncio.to_thread(
+            self._access.service().complete_without_text,
+            run_id=str(request.path_params["run_id"]),
+            page_count=optional_int(payload["page_count"]),
+            processing_time_ms=optional_int(payload["processing_time_ms"]),
+        )
+        return JSONResponse(safe_processing_run(result))
 
+    @denial_on_app_error
     async def retry(self, request: Request) -> JSONResponse:
-        try:
-            self._access.claims(request, "internal:file-service:document-processing:complete")
-            payload = await request_json_exact(request, {"error_code", "delay_seconds"})
-            result = await asyncio.to_thread(
-                self._access.service().schedule_retry,
-                run_id=str(request.path_params["run_id"]),
-                error_code=str(payload["error_code"]),
-                delay_seconds=int(payload["delay_seconds"]),
-            )
-            return JSONResponse(safe_processing_run(result))
-        except AppError as exc:
-            return safe_error(exc)
+        self._access.claims(request, "internal:file-service:document-processing:complete")
+        payload = await request_json_exact(request, {"error_code", "delay_seconds"})
+        result = await asyncio.to_thread(
+            self._access.service().schedule_retry,
+            run_id=str(request.path_params["run_id"]),
+            error_code=str(payload["error_code"]),
+            delay_seconds=int(payload["delay_seconds"]),
+        )
+        return JSONResponse(safe_processing_run(result))
 
+    @denial_on_app_error
     async def fail(self, request: Request) -> JSONResponse:
-        try:
-            self._access.claims(request, "internal:file-service:document-processing:complete")
-            payload = await request_json_exact(request, {"error_code", "processing_time_ms"})
-            result = await asyncio.to_thread(
-                self._access.service().fail,
-                run_id=str(request.path_params["run_id"]),
-                error_code=str(payload["error_code"]),
-                processing_time_ms=optional_int(payload["processing_time_ms"]),
-            )
-            return JSONResponse(safe_processing_run(result))
-        except AppError as exc:
-            return safe_error(exc)
+        self._access.claims(request, "internal:file-service:document-processing:complete")
+        payload = await request_json_exact(request, {"error_code", "processing_time_ms"})
+        result = await asyncio.to_thread(
+            self._access.service().fail,
+            run_id=str(request.path_params["run_id"]),
+            error_code=str(payload["error_code"]),
+            processing_time_ms=optional_int(payload["processing_time_ms"]),
+        )
+        return JSONResponse(safe_processing_run(result))

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import functools
 import json
-from typing import Any
+import tempfile
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from typing import IO, Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -114,3 +119,37 @@ def safe_error(exc: AppError) -> JSONResponse:
         {"error": exc.safe_message, "error_code": exc.error_code or "file_service_denied"},
         status_code=403,
     )
+
+
+def denial_on_app_error[Routes, R](
+    handler: Callable[[Routes, Request], Awaitable[R]],
+) -> Callable[[Routes, Request], Awaitable[R | JSONResponse]]:
+    # Streaming bodies run after the handler returns, so their errors are not mapped here.
+    @functools.wraps(handler)
+    async def guarded(self: Routes, request: Request) -> R | JSONResponse:
+        try:
+            return await handler(self, request)
+        except AppError as exc:
+            return safe_error(exc)
+
+    return guarded
+
+
+async def iter_blocking_stream(stream: IO[bytes]) -> AsyncIterator[bytes]:
+    try:
+        while chunk := await asyncio.to_thread(stream.read, 64 * 1024):
+            yield chunk
+    finally:
+        await asyncio.to_thread(stream.close)
+
+
+@asynccontextmanager
+async def staged_request_body(request: Request) -> AsyncIterator[IO[bytes]]:
+    staged = tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
+    try:
+        async for chunk in request.stream():
+            staged.write(chunk)
+        staged.seek(0)
+        yield staged
+    finally:
+        staged.close()
