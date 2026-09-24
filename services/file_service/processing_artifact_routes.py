@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
@@ -17,6 +16,10 @@ from services.file_service.internal_http import (
     staged_request_body,
 )
 from services.file_service.processing_routes import ProcessingAccess
+
+
+REPRESENTATION_MAX_BYTES = DOCLING_LAYOUT_OCR_V2.max_docling_json_bytes
+PARENT_ARTIFACT_MAX_BYTES = DOCLING_LAYOUT_OCR_V2.max_markdown_bytes
 
 
 class DocumentArtifactRoutes:
@@ -52,19 +55,12 @@ class DocumentArtifactRoutes:
                 safe_message="派生表示上传授权缺失",
                 error_code="document_representation_upload_token_missing",
             )
-        staged = tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
-        size = 0
-        try:
-            async for chunk in request.stream():
-                size += len(chunk)
-                if size > DOCLING_LAYOUT_OCR_V2.max_docling_json_bytes:
-                    raise FilePrincipalError(
-                        "Representation request exceeds the size bound",
-                        safe_message="派生表示超过大小上限",
-                        error_code="document_representation_size_exceeded",
-                    )
-                staged.write(chunk)
-            staged.seek(0)
+        async with staged_request_body(
+            request,
+            max_bytes=REPRESENTATION_MAX_BYTES,
+            size_error_code="document_representation_size_exceeded",
+            size_safe_message="派生表示超过大小上限",
+        ) as staged:
             result = await asyncio.to_thread(
                 self._access.service().upload_representation,
                 transfer_id=str(request.path_params["transfer_id"]),
@@ -72,8 +68,6 @@ class DocumentArtifactRoutes:
                 stream=staged,
                 media_type=str(request.headers.get("content-type") or "application/octet-stream"),
             )
-        finally:
-            staged.close()
         return JSONResponse(
             safe_result(
                 {
@@ -110,7 +104,12 @@ class DocumentArtifactRoutes:
                 safe_message="父Markdown上传授权缺失",
                 error_code="document_parent_artifact_upload_token_missing",
             )
-        async with staged_request_body(request) as staged:
+        async with staged_request_body(
+            request,
+            max_bytes=PARENT_ARTIFACT_MAX_BYTES,
+            size_error_code="document_parent_artifact_size_exceeded",
+            size_safe_message="上传内容超过大小上限",
+        ) as staged:
             result = await asyncio.to_thread(
                 self._access.service().upload_parent_artifact,
                 transfer_id=str(request.path_params["transfer_id"]),

@@ -9,6 +9,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.modules.document_processing.profile import PROFILE_REGISTRY
+from services.file_service import processing_artifact_routes, processing_picture_routes
 from services.file_service.app import create_app
 from services.file_service.auth import FilePrincipalError
 
@@ -580,6 +582,83 @@ def test_document_content_stream_is_closed_after_response(case: RouteCase) -> No
     assert response.content == b"content"
     assert len(opened) == 1
     assert opened[0].closed
+
+
+STAGED_UPLOAD_BOUNDS: dict[str, tuple[Any, str, dict[str, str]]] = {
+    "upload_representation": (
+        processing_artifact_routes,
+        "REPRESENTATION_MAX_BYTES",
+        {"error": "派生表示超过大小上限", "error_code": "document_representation_size_exceeded"},
+    ),
+    "upload_parent_artifact": (
+        processing_artifact_routes,
+        "PARENT_ARTIFACT_MAX_BYTES",
+        {"error": "上传内容超过大小上限", "error_code": "document_parent_artifact_size_exceeded"},
+    ),
+    "upload_picture_asset": (
+        processing_picture_routes,
+        "PICTURE_ASSET_MAX_BYTES",
+        {"error": "上传内容超过大小上限", "error_code": "document_picture_size_exceeded"},
+    ),
+    "upload_picture_result": (
+        processing_picture_routes,
+        "PICTURE_RESULT_MAX_BYTES",
+        {"error": "上传内容超过大小上限", "error_code": "document_picture_result_size_exceeded"},
+    ),
+}
+STAGED_UPLOAD_CASES = [case for case in ROUTE_CASES if case.operations[0] in STAGED_UPLOAD_BOUNDS]
+
+
+@pytest.mark.parametrize("case", STAGED_UPLOAD_CASES, ids=lambda case: case.operations[0])
+@pytest.mark.parametrize("excess", [0, 1], ids=["at_bound", "over_bound"])
+def test_staged_upload_body_is_bounded_before_backend(
+    case: RouteCase, excess: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module, bound_name, denial = STAGED_UPLOAD_BOUNDS[case.operations[0]]
+    assert case.content is not None
+    monkeypatch.setattr(module, bound_name, len(case.content) - excess)
+    client, principal, calls = _client()
+
+    response = client.request(
+        case.method,
+        case.path,
+        headers={"authorization": "Bearer internal-token", **case.headers},
+        content=case.content,
+    )
+
+    assert principal.calls == [case.verifier]
+    if excess:
+        assert response.status_code == 403
+        assert response.json() == denial
+        assert calls == []
+    else:
+        assert response.status_code == 200, response.text
+        assert [name for name, _values in calls] == list(case.operations)
+
+
+def test_staged_upload_bounds_match_the_registered_profile_limits() -> None:
+    profiles = list(PROFILE_REGISTRY.values())
+    layout_limits = [
+        profile.layout_ocr_options["limits"]
+        for profile in profiles
+        if profile.layout_ocr_options is not None
+    ]
+
+    assert len(STAGED_UPLOAD_CASES) == len(STAGED_UPLOAD_BOUNDS)
+    assert processing_artifact_routes.REPRESENTATION_MAX_BYTES == max(
+        [profile.max_markdown_bytes for profile in profiles]
+        + [profile.max_docling_json_bytes for profile in profiles]
+        + [int(limits["max_ocr_layout_json_bytes"]) for limits in layout_limits]
+    )
+    assert processing_artifact_routes.PARENT_ARTIFACT_MAX_BYTES == max(
+        profile.max_markdown_bytes for profile in profiles
+    )
+    assert processing_picture_routes.PICTURE_ASSET_MAX_BYTES == max(
+        int(limits["max_picture_compressed_bytes"]) for limits in layout_limits
+    )
+    assert processing_picture_routes.PICTURE_RESULT_MAX_BYTES == max(
+        int(limits["max_ocr_layout_json_bytes"]) for limits in layout_limits
+    )
 
 
 @pytest.mark.parametrize("case", ROUTE_CASES, ids=lambda case: f"{case.method} {case.path}")

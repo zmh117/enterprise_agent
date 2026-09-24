@@ -144,10 +144,24 @@ async def iter_blocking_stream(stream: IO[bytes]) -> AsyncIterator[bytes]:
 
 
 @asynccontextmanager
-async def staged_request_body(request: Request) -> AsyncIterator[IO[bytes]]:
+async def staged_request_body(
+    request: Request,
+    *,
+    max_bytes: int,
+    size_error_code: str,
+    size_safe_message: str,
+) -> AsyncIterator[IO[bytes]]:
     staged = tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
+    size = 0
     try:
         async for chunk in request.stream():
+            size += len(chunk)
+            if size > max_bytes:
+                raise FilePrincipalError(
+                    "Staged upload exceeds its size bound",
+                    safe_message=size_safe_message,
+                    error_code=size_error_code,
+                )
             staged.write(chunk)
         staged.seek(0)
         yield staged

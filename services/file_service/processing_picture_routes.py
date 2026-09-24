@@ -5,6 +5,7 @@ import asyncio
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 
+from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V2
 from services.file_service.auth import FilePrincipalError
 from services.file_service.internal_http import (
     denial_on_app_error,
@@ -15,6 +16,13 @@ from services.file_service.internal_http import (
     staged_request_body,
 )
 from services.file_service.processing_routes import ProcessingAccess
+
+
+_LAYOUT_OCR_OPTIONS = DOCLING_LAYOUT_OCR_V2.layout_ocr_options
+if _LAYOUT_OCR_OPTIONS is None:
+    raise RuntimeError("File Service picture upload bounds require layout OCR profile limits")
+PICTURE_ASSET_MAX_BYTES = int(_LAYOUT_OCR_OPTIONS["limits"]["max_picture_compressed_bytes"])
+PICTURE_RESULT_MAX_BYTES = int(_LAYOUT_OCR_OPTIONS["limits"]["max_ocr_layout_json_bytes"])
 
 
 class DocumentPictureRoutes:
@@ -65,7 +73,12 @@ class DocumentPictureRoutes:
                 safe_message="图片asset上传授权缺失",
                 error_code="document_picture_asset_upload_token_missing",
             )
-        async with staged_request_body(request) as staged:
+        async with staged_request_body(
+            request,
+            max_bytes=PICTURE_ASSET_MAX_BYTES,
+            size_error_code="document_picture_size_exceeded",
+            size_safe_message="上传内容超过大小上限",
+        ) as staged:
             result = await asyncio.to_thread(
                 self._access.service().upload_picture_asset,
                 transfer_id=str(request.path_params["transfer_id"]),
@@ -223,7 +236,12 @@ class DocumentPictureRoutes:
                 safe_message="图片OCR结果上传授权缺失",
                 error_code="document_picture_result_upload_token_missing",
             )
-        async with staged_request_body(request) as staged:
+        async with staged_request_body(
+            request,
+            max_bytes=PICTURE_RESULT_MAX_BYTES,
+            size_error_code="document_picture_result_size_exceeded",
+            size_safe_message="上传内容超过大小上限",
+        ) as staged:
             result = await asyncio.to_thread(
                 self._access.service().upload_picture_result,
                 transfer_id=str(request.path_params["transfer_id"]),
