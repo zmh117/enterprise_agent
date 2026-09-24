@@ -19,6 +19,8 @@ from app.modules.mcp_tool_runtime.contracts import (
     ToolResult,
 )
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
+from app.shared.database import require_shared_database
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
@@ -40,6 +42,7 @@ class ReadOnlyToolService:
         permission_service: PermissionService,
         audit_service: AuditService,
         repository: AgentRepository,
+        run_audit_repository: RunAuditRepository,
         limits: ExecutionSettings,
         business_authorization_service: BusinessAuthorizationService | None = None,
         mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
@@ -48,7 +51,9 @@ class ReadOnlyToolService:
         self.tool_executor = tool_executor
         self.permission_service = permission_service
         self.audit_service = audit_service
+        require_shared_database(repository, run_audit_repository)
         self.repository = repository
+        self.run_audit_repository = run_audit_repository
         self.limits = limits
         self.business_authorization_service = business_authorization_service
         self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
@@ -179,7 +184,7 @@ class ReadOnlyToolService:
                 payload={"tool": tool_name, "arguments": arguments},
             )
             if record_tool_call:
-                managed_tool_call_id = self.repository.add_tool_call(
+                managed_tool_call_id = self.run_audit_repository.add_tool_call(
                     job_id=job_id,
                     tool_name=tool_name,
                     request_payload=bounded_summary(
@@ -221,7 +226,7 @@ class ReadOnlyToolService:
                     original_cursor=str(result.summary["next_cursor"]),
                 )
             if managed_tool_call_id:
-                self.repository.complete_tool_call(
+                self.run_audit_repository.complete_tool_call(
                     managed_tool_call_id,
                     response_summary=bounded_summary(
                         _storage_summary(result),
@@ -248,7 +253,7 @@ class ReadOnlyToolService:
             )
             setattr(exc, "tool_authorization_reached", authorization_reached)
             if managed_tool_call_id:
-                self.repository.complete_tool_call(
+                self.run_audit_repository.complete_tool_call(
                     managed_tool_call_id,
                     response_summary={
                         "error": getattr(
@@ -266,7 +271,7 @@ class ReadOnlyToolService:
                     managed_tool_call_id,
                 )
             elif record_tool_call:
-                self.repository.add_tool_call(
+                self.run_audit_repository.add_tool_call(
                     job_id=job_id,
                     tool_name=tool_name,
                     request_payload=bounded_summary(arguments, self.limits.max_tool_response_chars),

@@ -277,7 +277,7 @@ def _runtime_with_targets() -> tuple[Container, dict[str, str]]:
             "sources": {"source_kind": "runtime_default"},
         },
     )
-    runtime.agent_repository.add_tool_call(
+    runtime.run_audit_repository.add_tool_call(
         job_id=job.id,
         tool_name="query_database",
         request_payload={"query": "safe"},

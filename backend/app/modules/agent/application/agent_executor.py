@@ -20,10 +20,11 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
 from app.modules.job.infrastructure.execution_audit_repository import (
     ExecutionAuditRepository,
 )
-from app.shared.database import operation_unit_of_work
+from app.shared.database import operation_unit_of_work, require_shared_database
 from app.shared.exceptions import PermissionDenied
 from app.shared.tool_contract import canonical_json_sha256
 
@@ -33,6 +34,7 @@ class AgentExecutor:
         self,
         *,
         repository: AgentRepository,
+        run_audit_repository: RunAuditRepository,
         audit_service: AuditService,
         status_service: JobStatusService,
         context_builder: AgentContextBuilder,
@@ -45,7 +47,9 @@ class AgentExecutor:
         after_runtime_result_hook: Callable[[], None] | None = None,
         execution_audit_repository: ExecutionAuditRepository | None = None,
     ) -> None:
+        require_shared_database(repository, run_audit_repository)
         self.repository = repository
+        self.run_audit_repository = run_audit_repository
         self.audit_service = audit_service
         self.status_service = status_service
         self.context_builder = context_builder
@@ -307,7 +311,7 @@ class AgentExecutor:
         request_digest = str(identity.get("request_digest") or "")
         if len(request_digest) != 64:
             request_digest = canonical_json_sha256(audit)
-        self.repository.record_run_audit(
+        self.run_audit_repository.record_run_audit(
             job_id=job.id,
             invocation_id=persisted_invocation_id,
             request_digest=request_digest,
@@ -324,7 +328,7 @@ class AgentExecutor:
         tool_events: list[dict[str, object]],
         exhausted: bool,
     ) -> None:
-        persisted_count = self.repository.count_tool_calls_for_invocation(
+        persisted_count = self.run_audit_repository.count_tool_calls_for_invocation(
             job_id,
             invocation_id,
         )
@@ -400,7 +404,7 @@ class AgentExecutor:
             failure = event.get("failure")
             if isinstance(failure, dict):
                 response = {**response, "failure": failure}
-            self.repository.upsert_runtime_tool_call(
+            self.run_audit_repository.upsert_runtime_tool_call(
                 job_id=job_id,
                 invocation_id=invocation_id,
                 runtime_tool_call_id=runtime_tool_call_id,

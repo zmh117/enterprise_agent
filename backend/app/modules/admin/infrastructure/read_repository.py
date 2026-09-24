@@ -8,8 +8,8 @@ from typing import Any
 
 from app.modules.admin.application.scope import AdminScope
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
+from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
 from app.modules.job.infrastructure.repositories import (
-    AgentRepository,
     source_connector_projection,
 )
 from app.shared.database import Database
@@ -603,7 +603,7 @@ class AdminReadRepository:
 
     def job_run_audit_summaries(self, job_id: str) -> list[dict[str, Any]]:
         """Load invocation metadata without selecting complete audit bodies."""
-        return AgentRepository(self.database).list_run_audit_summaries(job_id)
+        return RunAuditRepository(self.database).list_run_audit_summaries(job_id)
 
     def job_scope_subject(self, job_id: str) -> dict[str, Any] | None:
         """Load only the ownership and routing facts required by AdminScope."""
@@ -630,7 +630,7 @@ class AdminReadRepository:
         offset: int,
     ) -> dict[str, Any] | None:
         """Load one server-bounded field page after the API has passed Job scope."""
-        return AgentRepository(self.database).read_run_audit_field(
+        return RunAuditRepository(self.database).read_run_audit_field(
             job_id=job_id,
             audit_id=audit_id,
             field=field,

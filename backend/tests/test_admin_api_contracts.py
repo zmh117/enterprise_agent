@@ -13,7 +13,7 @@ from app.modules.admin.application.scope import AdminScope
 from app.modules.admin.infrastructure import AdminJobQuery, AdminReadRepository
 from app.modules.job.application.create_agent_job_service import _execution_scope_hash
 from app.modules.job.domain.job_status import JobStatus
-from app.modules.job.infrastructure.repositories import RUN_AUDIT_FIELD_PAGE_CHARS
+from app.modules.job.infrastructure.run_audit_repository import RUN_AUDIT_FIELD_PAGE_CHARS
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.test_unified_identity_rbac import csrf_headers, login, unified_settings
 
@@ -532,7 +532,7 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(  # noqa: PLR09
     )
     context_marker = "完整 Prompt 与模型响应审计正文"
     large_system_prompt = f"system::{context_marker}" + "长" * RUN_AUDIT_FIELD_PAGE_CHARS
-    run_audit_id = container.agent_repository.record_run_audit(
+    run_audit_id = container.run_audit_repository.record_run_audit(
         job_id=job.id,
         invocation_id=f"{job.id}.attempt-0",
         request_digest="a" * 64,
@@ -562,7 +562,7 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(  # noqa: PLR09
             "error": {"message": "model failed"},
         },
     )
-    container.agent_repository.add_tool_call(
+    container.run_audit_repository.add_tool_call(
         job_id=job.id,
         tool_name="ones_work_item_search",
         request_payload={},
@@ -627,7 +627,7 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(  # noqa: PLR09
         summary = client.get("/api/admin/jobs/summary")
         delivery_metrics = client.get("/api/admin/deliveries/metrics")
         detail = client.get(f"/api/admin/jobs/{job.id}")
-        debug_tool_calls = container.agent_repository.list_tool_calls(job.id)
+        debug_tool_calls = container.run_audit_repository.list_tool_calls(job.id)
         system_prompt_page = client.get(
             f"/api/admin/jobs/{job.id}/run-audits/{run_audit_id}/fields/system_prompt"
         )

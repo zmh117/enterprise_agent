@@ -85,7 +85,7 @@ def test_phase3a_secret_material_is_confined_to_encrypted_store_and_runtime_memo
                 requester_id="user_local_admin",
             )
         )
-        runtime.agent_repository.add_tool_call(
+        runtime.run_audit_repository.add_tool_call(
             job_id=job.id,
             tool_name="phase3a_secret_probe",
             request_payload={
@@ -147,7 +147,7 @@ def test_phase3a_secret_material_is_confined_to_encrypted_store_and_runtime_memo
                 headers=headers,
             ),
         ]
-        tool_calls = runtime.agent_repository.list_tool_calls(job.id)
+        tool_calls = runtime.run_audit_repository.list_tool_calls(job.id)
         audit_rows = runtime.audit_repository.list_for_job(job.id)
         table_rows = {
             str(table["name"]): runtime.database.execute(f'select * from "{table["name"]}"')

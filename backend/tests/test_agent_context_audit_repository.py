@@ -4,16 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.job.infrastructure.repositories import (
+from app.modules.job.infrastructure.run_audit_repository import (
     RUN_AUDIT_FIELD_PAGE_CHARS,
-    AgentRepository,
+    RunAuditRepository,
 )
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.migrations import Migrator
 
 
-def _repository(tmp_path: Path) -> tuple[AgentRepository, str]:
+def _repository(tmp_path: Path) -> tuple[RunAuditRepository, str]:
     database = Database(f"sqlite:///{tmp_path / 'context-audit.db'}")
     Migrator(database, default_migrations_dir(), migrator_build="context-audit-test").run()
     timestamp = "2026-09-01T00:00:00+00:00"
@@ -38,7 +38,7 @@ def _repository(tmp_path: Path) -> tuple[AgentRepository, str]:
         """,
         (timestamp,),
     )
-    return AgentRepository(database), "job-audit"
+    return RunAuditRepository(database), "job-audit"
 
 
 def _audit(marker: str = "完整未脱敏正文") -> dict[str, object]:

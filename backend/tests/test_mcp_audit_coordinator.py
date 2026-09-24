@@ -65,7 +65,7 @@ def test_root_summary_projects_metadata_before_audit_payload_truncation(body_len
         "select response_summary from agent_tool_call where id = ?", (handle.agent_tool_call_id,)
     )
     assert json.loads(root["response_summary"]) == metadata
-    assert runtime.agent_repository.list_tool_calls(job.id)[0]["response_summary"] == metadata
+    assert runtime.run_audit_repository.list_tool_calls(job.id)[0]["response_summary"] == metadata
     audit = runtime.database.execute_one(
         "select business_response_json, response_truncated from mcp_operation_audit where id = ?",
         (handle.root_audit_id,),
@@ -102,7 +102,7 @@ def test_root_failure_retains_safe_reason_and_separate_error_code() -> None:
         error_code="ones_provider_schema_invalid",
         duration_ms=1,
     )
-    assert runtime.agent_repository.list_tool_calls(job.id)[0]["response_summary"] == {
+    assert runtime.run_audit_repository.list_tool_calls(job.id)[0]["response_summary"] == {
         "error": "ONES 响应字段无效",
         "error_code": "ones_provider_schema_invalid",
     }
@@ -244,13 +244,13 @@ def test_worker_upserts_sdk_started_and_terminal_by_runtime_identity() -> None:
         "risk_level": "low",
     }
 
-    started_id = runtime.agent_repository.upsert_runtime_tool_call(
+    started_id = runtime.run_audit_repository.upsert_runtime_tool_call(
         **values,
         response_summary={},
         status="STARTED",
         duration_ms=0,
     )
-    terminal_id = runtime.agent_repository.upsert_runtime_tool_call(
+    terminal_id = runtime.run_audit_repository.upsert_runtime_tool_call(
         **values,
         response_summary={"count": 1},
         status="SUCCEEDED",
@@ -291,7 +291,7 @@ def test_worker_updates_only_the_exact_server_first_mcp_row() -> None:
         duration_ms=1,
     )
 
-    linked = runtime.agent_repository.upsert_runtime_tool_call(
+    linked = runtime.run_audit_repository.upsert_runtime_tool_call(
         job_id=job.id,
         invocation_id=context.invocation_id,
         runtime_tool_call_id="sdk-mcp-use-2",
@@ -320,7 +320,7 @@ def test_worker_updates_only_the_exact_server_first_mcp_row() -> None:
     assert second_row == {"runtime_tool_call_id": "sdk-mcp-use-2"}
 
     with pytest.raises(NonRetryableExecutionError):
-        runtime.agent_repository.upsert_runtime_tool_call(
+        runtime.run_audit_repository.upsert_runtime_tool_call(
             job_id=job.id,
             invocation_id=context.invocation_id,
             runtime_tool_call_id="sdk-mcp-use-wrong",

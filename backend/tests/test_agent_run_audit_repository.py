@@ -10,9 +10,9 @@ from app.modules.job.infrastructure.execution_audit_repository import (
     _classify_failure,
 )
 from app.modules.job.domain.execution_audit import ExecutionFailureStage
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
 from app.shared.database import Database, default_migrations_dir
-from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.exceptions import NonRetryableExecutionError, NotFound
 from app.shared.migrations import Migrator
 from app.shared.tool_contract import canonical_json_sha256
 
@@ -110,7 +110,7 @@ def test_runtime_events_are_idempotently_projected_and_summary_is_rebuilt(
     assert model_calls["items"][0]["duration_source"] == "SDK_OBSERVED"
     assert model_calls["items"][0]["duration_ms"] == 1000
     assert model_calls["next_cursor"] is None
-    assert len(AgentRepository(database).list_runtime_events(job_id)) == 5
+    assert len(RunAuditRepository(database).list_runtime_events(job_id)) == 5
 
 
 def test_worker_protocol_rejection_is_visible_without_a_runtime_terminal(tmp_path: Path) -> None:
@@ -162,7 +162,7 @@ def test_repeated_model_message_identity_projects_once_without_data_migration(
 
     summary = repository.rebuild_summary(job_id)
 
-    assert len(AgentRepository(database).list_runtime_events(job_id)) == 5
+    assert len(RunAuditRepository(database).list_runtime_events(job_id)) == 5
     assert len(repository.list_model_calls(job_id)["items"]) == 1
     assert summary["accounting_status"] == "PARTIAL"
     assert summary["observed_model_turn_count"] == 1
@@ -185,7 +185,7 @@ def test_repeated_model_message_identity_rejects_conflicting_measurements(
     with pytest.raises(NonRetryableExecutionError, match="conflicts"):
         repository.record_runtime_event(job_id, conflict)
 
-    assert len(AgentRepository(database).list_runtime_events(job_id)) == 3
+    assert len(RunAuditRepository(database).list_runtime_events(job_id)) == 3
     assert len(repository.list_model_calls(job_id)["items"]) == 1
 
 
@@ -410,7 +410,7 @@ def test_tool_contract_event_replay_rejects_changed_observation(tmp_path: Path) 
     with pytest.raises(NonRetryableExecutionError, match="conflicts"):
         repository.record_runtime_event(job_id, conflict)
 
-    assert len(AgentRepository(database).list_runtime_events(job_id)) == 2
+    assert len(RunAuditRepository(database).list_runtime_events(job_id)) == 2
 
 
 def test_historical_protocol_v13_without_observation_stays_not_observed(
@@ -468,6 +468,15 @@ def test_job_delete_cascades_execution_audit_projections(tmp_path: Path) -> None
     assert database.execute("select * from agent_model_call") == []
 
 
+def test_tool_call_listing_requires_an_existing_job(tmp_path: Path) -> None:
+    database, job_id = _database(tmp_path)
+    repository = RunAuditRepository(database)
+
+    assert repository.list_tool_calls(job_id) == []
+    with pytest.raises(NotFound, match="Agent job not found: missing-job"):
+        repository.list_tool_calls("missing-job")
+
+
 def fixture_model_usage() -> list[dict[str, object]]:
     return [
         {
@@ -496,7 +505,7 @@ def test_runtime_event_projection_omits_execution_content_and_secret_material(
     for event in events:
         repository.record_runtime_event(job_id, event)
 
-    serialized = json.dumps(AgentRepository(database).list_runtime_events(job_id))
+    serialized = json.dumps(RunAuditRepository(database).list_runtime_events(job_id))
 
     assert "full-answer-must-not-persist" not in serialized
     assert "secret-must-not-persist" not in serialized

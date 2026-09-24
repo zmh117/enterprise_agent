@@ -1250,7 +1250,7 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
         c.agent_executor.execute(job.id)
     failed = c.agent_repository.get_job(job.id)
     assert failed.status == JobStatus.FAILED
-    assert c.agent_repository.list_tool_calls(job.id) == []
+    assert c.run_audit_repository.list_tool_calls(job.id) == []
 
     with pytest.raises(ToolPolicyError):
         c.tool_service.call_tool(

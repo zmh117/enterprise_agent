@@ -180,7 +180,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertEqual(JobStatus.SUCCEEDED, stored.status)
         self.assertEqual(0, c.agent_repository.count_rows("agent_tool_call"))
         self.assertEqual(1, c.agent_repository.count_rows("agent_artifact"))
-        run_audits = c.agent_repository.list_run_audits(job.id)
+        run_audits = c.run_audit_repository.list_run_audits(job.id)
         self.assertEqual(1, len(run_audits))
         self.assertEqual("SUCCEEDED", run_audits[0]["status"])
         self.assertEqual(
@@ -246,7 +246,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
 
         self.assertEqual("retry", action)
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
-        tool_calls = c.agent_repository.list_tool_calls(job.id)
+        tool_calls = c.run_audit_repository.list_tool_calls(job.id)
         self.assertIn("query_database", [call["tool_name"] for call in tool_calls])
 
     def test_retryable_failure_persists_complete_invocation_audit(self) -> None:
@@ -265,7 +265,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         with self.assertRaises(RetryableExecutionError):
             c.agent_executor.execute(job.id, fail_on_error=False)
 
-        run_audits = c.agent_repository.list_run_audits(job.id)
+        run_audits = c.run_audit_repository.list_run_audits(job.id)
         self.assertEqual(1, len(run_audits))
         self.assertEqual("FAILED", run_audits[0]["status"])
         self.assertEqual("system::失败模型调用原文", run_audits[0]["system_prompt"])
@@ -297,7 +297,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertEqual(JobStatus.FAILED, c.agent_repository.get_job(job.id).status)
         self.assertIn(
             "query_database",
-            [call["tool_name"] for call in c.agent_repository.list_tool_calls(job.id)],
+            [call["tool_name"] for call in c.run_audit_repository.list_tool_calls(job.id)],
         )
 
     def test_agent_executor_persists_real_runtime_tool_events(self) -> None:
@@ -314,7 +314,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         c.agent_executor.runtime_client = ToolEventClaudeClient()  # type: ignore[assignment]
 
         c.agent_executor.execute(job.id)
-        tool_calls = c.agent_repository.list_tool_calls(job.id)
+        tool_calls = c.run_audit_repository.list_tool_calls(job.id)
         tool_names = [call["tool_name"] for call in tool_calls]
 
         self.assertIn("query_loki", tool_names)

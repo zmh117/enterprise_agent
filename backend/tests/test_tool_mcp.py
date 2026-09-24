@@ -59,7 +59,7 @@ def test_standard_tool_mcp_invokes_current_python_job() -> None:
     )
 
     assert result.payload["security"]["trust"] == "untrusted_internal_evidence"
-    assert [item["tool_name"] for item in runtime.agent_repository.list_tool_calls(job.id)] == [
+    assert [item["tool_name"] for item in runtime.run_audit_repository.list_tool_calls(job.id)] == [
         TOOL_NAME
     ]
 
@@ -184,7 +184,7 @@ def test_schema_mcp_cannot_report_pagination_success_when_state_cannot_be_saved(
     with pytest.raises(NonRetryableExecutionError) as error:
         _schema_page(job, service)
     assert error.value.error_code == "mcp_pagination_store_unavailable"
-    assert runtime.agent_repository.list_tool_calls(job.id)[-1]["status"] == "FAILED"
+    assert runtime.run_audit_repository.list_tool_calls(job.id)[-1]["status"] == "FAILED"
 
 
 def test_standard_mcp_http_has_no_auth_protocol_and_rejects_credentials() -> None:

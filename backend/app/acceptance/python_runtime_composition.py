@@ -317,7 +317,7 @@ def _assert_chain_evidence(runtime: Container, job_id: str) -> None:
     dispatch = runtime.job_dispatch_repository.get_dispatch_event_for_job(job_id)
     if dispatch is None or dispatch.status.value != "PUBLISHED":
         raise RuntimeError(f"Job {job_id} dispatch outbox was not published")
-    events = runtime.agent_repository.list_runtime_events(job_id)
+    events = runtime.run_audit_repository.list_runtime_events(job_id)
     terminals = [item for item in events if item["event_type"] == "terminal"]
     if len(terminals) != job.retry_count + 1:
         raise RuntimeError(f"Job {job_id} has {len(terminals)} Runtime terminals")
@@ -354,7 +354,7 @@ def _assert_mcp_evidence(
 ) -> None:
     calls = [
         item
-        for item in runtime.agent_repository.list_tool_calls(job_id)
+        for item in runtime.run_audit_repository.list_tool_calls(job_id)
         if item["tool_name"] == tool_name
     ]
     if len(calls) != expected_calls:

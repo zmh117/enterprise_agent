@@ -126,7 +126,7 @@ def build_agent_job_debug_router() -> Any:  # noqa: C901, PLR0915
             )
             return {
                 "job_id": job_id,
-                "tool_calls": container.agent_repository.list_tool_calls(job_id),
+                "tool_calls": container.run_audit_repository.list_tool_calls(job_id),
             }
         except NotFound as exc:
             raise HTTPException(status_code=404, detail=exc.safe_message) from exc
@@ -214,7 +214,7 @@ def build_agent_job_debug_router() -> Any:  # noqa: C901, PLR0915
                 else execution_summary["execution_failure_stage"]
             )
             model_calls = execution_audit.list_model_calls(job_id, limit=50)
-            tool_calls = container.agent_repository.list_tool_calls(job_id)
+            tool_calls = container.run_audit_repository.list_tool_calls(job_id)
             return {
                 "job": {
                     **job,

@@ -89,19 +89,19 @@ def test_runtime_event_repository_is_idempotent_and_rejects_gap_or_conflict() ->
         "payload": {"runtime_kind": "python-v1"},
     }
 
-    runtime.agent_repository.record_runtime_event(job.id, event)
-    runtime.agent_repository.record_runtime_event(job.id, event)
-    assert len(runtime.agent_repository.list_runtime_events(job.id)) == 1
+    runtime.run_audit_repository.record_runtime_event(job.id, event)
+    runtime.run_audit_repository.record_runtime_event(job.id, event)
+    assert len(runtime.run_audit_repository.list_runtime_events(job.id)) == 1
 
     with pytest.raises(Exception) as gap:
-        runtime.agent_repository.record_runtime_event(
+        runtime.run_audit_repository.record_runtime_event(
             job.id,
             {**event, "sequence": 3, "event_type": "terminal"},
         )
     assert getattr(gap.value, "error_code", "") == "runtime_event_sequence_gap"
 
     with pytest.raises(Exception) as conflict:
-        runtime.agent_repository.record_runtime_event(
+        runtime.run_audit_repository.record_runtime_event(
             job.id,
             {**event, "payload": {"runtime_kind": "old-runtime"}},
         )

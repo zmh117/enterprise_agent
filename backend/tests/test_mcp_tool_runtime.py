@@ -98,6 +98,7 @@ class _PassingMysqlVerifier:
 
 class _ServiceRepository:
     def __init__(self) -> None:
+        self.database = object()
         self.job = SimpleNamespace(
             id="job-dynamic-target",
             user_id="user-1",
@@ -427,11 +428,13 @@ def test_direct_mcp_sql_policy_rejects_mutation() -> None:
 def test_tool_call_uses_agent_target_even_for_an_old_empty_target_snapshot() -> None:
     executor = FakeReadOnlyToolExecutor()
     authorization = _BusinessAuthorization()
+    repository = _ServiceRepository()
     service = ReadOnlyToolService(
         tool_executor=executor,
         permission_service=_PermissionService(),  # type: ignore[arg-type]
         audit_service=_AuditService(),  # type: ignore[arg-type]
-        repository=_ServiceRepository(),  # type: ignore[arg-type]
+        repository=repository,  # type: ignore[arg-type]
+        run_audit_repository=repository,  # type: ignore[arg-type]
         limits=ExecutionSettings(),
         business_authorization_service=authorization,  # type: ignore[arg-type]
         mcp_tool_snapshot_service=_OldTargetSnapshot(),  # type: ignore[arg-type]

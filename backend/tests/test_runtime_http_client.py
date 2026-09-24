@@ -646,7 +646,7 @@ def test_v15_audit_chunk_metadata_keeps_real_runtime_event_repository_contiguous
 
     result = client.run(request)
 
-    persisted_events = runtime.agent_repository.list_runtime_events(job.id)
+    persisted_events = runtime.run_audit_repository.list_runtime_events(job.id)
     assert result.run_audit == run_audit
     assert [event["sequence"] for event in persisted_events] == list(
         range(1, len(persisted_events) + 1)
@@ -1207,9 +1207,9 @@ def test_protocol_difference_reaches_job_error_step_and_execution_summary(
     assert summary["failure_code"] == "runtime_protocol_error"
     assert summary["execution_failure_stage"] == "RUNTIME_PROTOCOL"
     assert f"期望 {PROMPT_TEMPLATE_VERSION}，实际 agent-system-prompt-v5" in error.safe_message
-    assert runtime.agent_repository.list_tool_calls(job.id) == []
+    assert runtime.run_audit_repository.list_tool_calls(job.id) == []
     assert [
-        event["event_type"] for event in runtime.agent_repository.list_runtime_events(job.id)
+        event["event_type"] for event in runtime.run_audit_repository.list_runtime_events(job.id)
     ] == ["execution_started"]
 
 

@@ -144,7 +144,7 @@ def test_repeated_calls(inspector, target):
     ]
     assert len({item["_meta"]["enterprise-agent/mcp-call-id"] for item in results}) == 2
     assert len({item["_meta"]["enterprise-agent/agent-tool-call-id"] for item in results}) == 2
-    assert len(target[0].agent_repository.list_tool_calls(target[1].id)) == 2
+    assert len(target[0].run_audit_repository.list_tool_calls(target[1].id)) == 2
     assert len(target[2].calls) == 2
     assert [call["query"] for call in target[2].calls] == ["001", "order"]
     for result in results:
@@ -160,7 +160,7 @@ def test_invalid_arguments(inspector, target):
     assert result.result["isError"] is True
     assert result.result["structuredContent"]["error_code"] == "mcp_schema_directory_input_invalid"
     assert target[2].calls == []
-    rows = target[0].agent_repository.list_tool_calls(target[1].id)
+    rows = target[0].run_audit_repository.list_tool_calls(target[1].id)
     assert len(rows) == 1 and rows[0]["status"] == "DENIED"
 
 
@@ -173,7 +173,7 @@ def test_excluded_tool(inspector, target):
     assert "not found" in result.error["message"]
     assert result.result is None  # Inspector refuses a tool absent from tools/list.
     assert target[2].calls == []
-    assert target[0].agent_repository.list_tool_calls(target[1].id) == []
+    assert target[0].run_audit_repository.list_tool_calls(target[1].id) == []
 
 
 def test_missing_execution_header(inspector, target):
@@ -185,7 +185,7 @@ def test_missing_execution_header(inspector, target):
     assert result.result["isError"] is True
     assert result.result["structuredContent"]["error_code"] == "tool_mcp_context_missing"
     assert target[2].calls == []
-    assert target[0].agent_repository.list_tool_calls(target[1].id) == []
+    assert target[0].run_audit_repository.list_tool_calls(target[1].id) == []
 
 
 def test_forbidden_authorization(inspector, target):
@@ -203,7 +203,7 @@ def test_forbidden_authorization(inspector, target):
     assert "tool_mcp_credentials_forbidden" in result.error["message"]
     assert result.result is None
     assert target[2].calls == []
-    assert target[0].agent_repository.list_tool_calls(target[1].id) == []
+    assert target[0].run_audit_repository.list_tool_calls(target[1].id) == []
 
 
 def test_connection_failure_is_not_denial(inspector):

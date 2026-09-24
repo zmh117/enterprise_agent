@@ -443,7 +443,7 @@ def _event_evidence(c: Any, event: dict[str, Any]) -> dict[str, Any]:
             "risk_level": item["risk_level"],
             "created_at": item["created_at"],
         }
-        for item in c.agent_repository.list_tool_calls(job_id)
+        for item in c.run_audit_repository.list_tool_calls(job_id)
     ]
     audit = c.database.execute(
         """

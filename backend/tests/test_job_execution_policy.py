@@ -212,7 +212,7 @@ def test_worker_rejects_missing_policy_before_context_tools_or_model() -> None:
 
     assert raised.value.error_code == "execution_policy_integrity_error"
     assert client.calls == 0
-    assert c.agent_repository.list_tool_calls(job.id) == []
+    assert c.run_audit_repository.list_tool_calls(job.id) == []
 
 
 def test_tool_budget_counts_rejected_attempt() -> None:
@@ -239,7 +239,7 @@ def test_executor_counts_server_persisted_mcp_call_without_runtime_tool_event() 
     class PersistingMcpClient:
         def run(self, request: object) -> AgentRunResult:
             invocation_id = str(getattr(request, "invocation_id"))
-            c.agent_repository.add_tool_call(
+            c.run_audit_repository.add_tool_call(
                 job_id=job.id,
                 tool_name="ones_work_item_search",
                 request_payload={},
@@ -261,7 +261,7 @@ def test_executor_counts_server_persisted_mcp_call_without_runtime_tool_event() 
 
     persisted = c.agent_repository.get_job(job.id)
     assert persisted.execution_policy_tool_call_count == 1
-    assert len(c.agent_repository.list_tool_calls(job.id)) == 1
+    assert len(c.run_audit_repository.list_tool_calls(job.id)) == 1
 
 
 def test_executor_counts_runtime_tool_lifecycle_as_one_attempt() -> None:
@@ -304,7 +304,7 @@ def test_executor_counts_runtime_tool_lifecycle_as_one_attempt() -> None:
 
     persisted = c.agent_repository.get_job(job.id)
     assert persisted.execution_policy_tool_call_count == 1
-    assert len(c.agent_repository.list_tool_calls(job.id)) == 1
+    assert len(c.run_audit_repository.list_tool_calls(job.id)) == 1
 
 
 def test_executor_persists_attempt_usage_and_exhaustion_separately_from_context_tools() -> None:

@@ -16,8 +16,8 @@ from app.modules.job.domain.execution_audit import (
     TokenUsage,
     bounded_text,
 )
-from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.job.infrastructure.persistence_values import now_iso
+from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError
 
@@ -27,7 +27,7 @@ class ExecutionAuditRepository:
 
     def __init__(self, database: Database) -> None:
         self.database = database
-        self._runtime_events = AgentRepository(database)
+        self._runtime_events = RunAuditRepository(database)
 
     def record_runtime_event(self, job_id: str, event: dict[str, Any]) -> None:
         with self.database.unit_of_work():

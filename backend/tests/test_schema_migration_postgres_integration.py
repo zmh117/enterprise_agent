@@ -23,6 +23,7 @@ from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDispatcher
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
+from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
 from app.modules.job.infrastructure.execution_audit_repository import (
     ExecutionAuditRepository,
@@ -483,8 +484,8 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
         repository.record_runtime_event("postgres-audit-job", second_model_event)
         repository.record_runtime_event("postgres-audit-job", terminal)
         summary = repository.rebuild_summary("postgres-audit-job")
-        agent_repository = AgentRepository(database)
-        agent_repository.record_run_audit(
+        run_audit_repository = RunAuditRepository(database)
+        run_audit_repository.record_run_audit(
             job_id="postgres-audit-job",
             invocation_id="postgres-invocation",
             request_digest=digest,
@@ -523,10 +524,10 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
         assert second_page["has_more"] is False
         assert second_page["items"][0]["runtime_sequence"] == 2
         assert (
-            agent_repository.list_run_audits("postgres-audit-job")[0]["system_prompt"]
+            run_audit_repository.list_run_audits("postgres-audit-job")[0]["system_prompt"]
             == "完整System Prompt"
         )
-        serialized = str(agent_repository.list_runtime_events("postgres-audit-job"))
+        serialized = str(run_audit_repository.list_runtime_events("postgres-audit-job"))
         assert "must-not-enter-audit-event" not in serialized
 
         database.execute("delete from agent_runtime_event where job_id = 'postgres-audit-job'")

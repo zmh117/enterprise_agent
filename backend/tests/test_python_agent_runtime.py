@@ -1537,7 +1537,7 @@ def test_scanner_failure_reaches_persisted_tool_summary_without_failing_complete
         )
         runtime.agent_executor.execute(job.id)
         assert runtime.agent_repository.get_job(job.id).status.value == "SUCCEEDED"
-        calls = runtime.agent_repository.list_tool_calls(job.id)
+        calls = runtime.run_audit_repository.list_tool_calls(job.id)
         assert len(calls) == 1
         assert calls[0]["status"] == "FAILED"
         assert calls[0]["tool_name"] == "scan_log_evidence"

@@ -299,7 +299,7 @@ def test_job_tool_call_api_projects_exact_runtime_and_mcp_identity() -> None:
         creator_user_id=str(creator["id"]),
         idempotency_key="tool-call-projection",
     )
-    tool_call_id = runtime.agent_repository.add_tool_call(
+    tool_call_id = runtime.run_audit_repository.add_tool_call(
         job_id=job_id,
         tool_name="query_database",
         request_payload={"sql": "select 1"},

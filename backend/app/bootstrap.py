@@ -142,6 +142,7 @@ from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
+from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
 from app.modules.job.infrastructure.repositories import (
     AgentRepository,
     AuditRepository,
@@ -205,6 +206,7 @@ class Container:
     agent_repository: AgentRepository
     job_dispatch_repository: JobDispatchRepository
     delivery_repository: DeliveryRepository
+    run_audit_repository: RunAuditRepository
     identity_repository: IdentityRepository
     identity_service: IdentityService
     ones_identity_binding_service: OnesIdentityBindingService
@@ -555,6 +557,7 @@ def _build_container(  # noqa: C901, PLR0915
     agent_repository = AgentRepository(database)
     job_dispatch_repository = JobDispatchRepository(database)
     delivery_repository = DeliveryRepository(database)
+    run_audit_repository = RunAuditRepository(database)
     audit_repository = AuditRepository(database)
     config_repository = ConfigurationRepository(database)
     identity_repository = IdentityRepository(database)
@@ -1030,6 +1033,7 @@ def _build_container(  # noqa: C901, PLR0915
         permission_service=permission_service,
         audit_service=audit_service,
         repository=agent_repository,
+        run_audit_repository=run_audit_repository,
         limits=settings.execution,
         business_authorization_service=business_authorization_service,
         mcp_tool_snapshot_service=mcp_tool_snapshot_service,
@@ -1180,6 +1184,7 @@ def _build_container(  # noqa: C901, PLR0915
         )
     agent_executor = AgentExecutor(
         repository=agent_repository,
+        run_audit_repository=run_audit_repository,
         audit_service=audit_service,
         status_service=JobStatusService(agent_repository),
         context_builder=AgentContextBuilder(
@@ -1216,6 +1221,7 @@ def _build_container(  # noqa: C901, PLR0915
         agent_repository=agent_repository,
         job_dispatch_repository=job_dispatch_repository,
         delivery_repository=delivery_repository,
+        run_audit_repository=run_audit_repository,
         identity_repository=identity_repository,
         identity_service=identity_service,
         ones_identity_binding_service=ones_identity_binding_service,
