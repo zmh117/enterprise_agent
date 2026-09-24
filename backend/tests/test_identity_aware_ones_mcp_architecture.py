@@ -326,7 +326,7 @@ def test_ones_query_dictionary_is_a_minimal_scoped_runtime_asset() -> None:
     assert "COPY .claude/skills /app/.claude/skills" in dockerfile
 
 
-def test_provider_target_requires_https_except_explicit_local_mock() -> None:
+def test_provider_target_requires_allowlist_and_explicit_http_opt_in_in_every_environment() -> None:
     production = validate_provider_target(
         "https://ones.example.test",
         allowed_hosts=("ones.example.test",),
@@ -345,9 +345,19 @@ def test_provider_target_requires_https_except_explicit_local_mock() -> None:
     assert local.host == "ones-mock"
     assert local.allow_insecure_local is True
 
+    production_http = validate_provider_target(
+        "http://10.10.191.213/",
+        allowed_hosts=("10.10.191.213",),
+        app_env="production",
+        allow_insecure_local=True,
+    )
+    assert production_http.base_url == "http://10.10.191.213"
+    assert production_http.allow_insecure_local is True
+
     for candidate, environment, allow_insecure in (
-        ("http://ones.example.test", "production", True),
+        ("http://ones.example.test", "production", False),
         ("http://ones-mock", "test", False),
+        ("http://other.example.test", "production", True),
         ("https://other.example.test", "production", False),
         ("https://user@ones.example.test", "production", False),
         ("https://ones.example.test/custom/path", "production", False),

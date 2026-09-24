@@ -644,6 +644,17 @@ def test_managed_factory_enforces_allowlist_and_credential_reference_only():
     )
     provider = factory(config)
     assert provider.http.target.host == "ones.example.test"
+    production_http = ManagedOnesCollectionProviderFactory(
+        lambda ref: json.dumps({"token": "synthetic", "user_id": "collector"}),
+        allowed_hosts=("ones.example.test",),
+        app_env="production",
+        allow_insecure_local=True,
+    )
+    assert production_http(
+        {**config, "provider_origin": "http://ones.example.test"}
+    ).http.target.base_url == ("http://ones.example.test")
+    with pytest.raises(ExportValidationError, match="knowledge_collection_target_invalid"):
+        factory({**config, "provider_origin": "http://ones.example.test"})
     with pytest.raises(ExportValidationError, match="knowledge_collection_target_invalid"):
         factory({**config, "provider_origin": "https://not-allowed.example.test"})
     bad_secret = ManagedOnesCollectionProviderFactory(

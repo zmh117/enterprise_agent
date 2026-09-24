@@ -34,11 +34,8 @@ def validate_provider_target(
         raise ProviderContractError("ONES Provider URL must not include an API path")
     if parsed.scheme == "https":
         return ProviderTarget(candidate.rstrip("/"), host, False)
-    local_http = (
-        parsed.scheme == "http"
-        and allow_insecure_local
-        and app_env.strip().lower() in {"local", "test"}
-    )
-    if not local_http:
-        raise ProviderContractError("ONES Provider must use HTTPS")
+    # The deployment may use an allowlisted HTTP ONES instance in any environment.
+    # Keep the existing explicit opt-in; app_env is retained for caller compatibility.
+    if parsed.scheme != "http" or not allow_insecure_local:
+        raise ProviderContractError("ONES Provider HTTP requires explicit allowance")
     return ProviderTarget(candidate.rstrip("/"), host, True)

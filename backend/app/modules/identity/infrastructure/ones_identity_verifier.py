@@ -26,7 +26,6 @@ from app.shared.ones_io_budget import has_ones_io_budget, ones_io_timeout
 from app.shared.bounded_read_http import request_bytes
 
 ONES_LOGIN_PATH = "/project/api/project/auth/login"
-PRODUCTION_ENVIRONMENTS = {"prod", "production"}
 
 
 class NoRedirectHandler(HTTPRedirectHandler):
@@ -160,12 +159,10 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
                 safe_message="不允许使用此 ONES 身份提供方主机",
                 error_code="ones_configuration_invalid",
             )
-        if scheme != "https" and (
-            self.environment in PRODUCTION_ENVIRONMENTS or not self.settings.allow_insecure_local
-        ):
+        if scheme == "http" and not self.settings.allow_insecure_local:
             raise NonRetryableExecutionError(
-                "ONES identity provider requires HTTPS",
-                safe_message="ONES 身份提供方必须使用 HTTPS",
+                "ONES identity provider HTTP requires explicit allowance",
+                safe_message="ONES 身份提供方 HTTP 连接未启用",
                 error_code="ones_configuration_invalid",
             )
         return urlunparse(

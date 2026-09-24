@@ -7,7 +7,8 @@
 - 仅在能访问真实 ONES 的目标环境运行；本机合成 Provider 测试不是正式 ONES 验收。
 - PostgreSQL 必须处于当前 schema head。配置只保存来源范围与 `secret://platform/<code>` 凭据引用；不在 JSON、环境变量或日志里填写 Token。
 - 凭据中心该引用解密后的内容是受管采集身份的 JSON 对象，仅有 `token` 与 `user_id` 两项。采集身份与 Knowledge MCP 的当前用户只读身份分离，采集权限不传递给检索用户。
-- 来源主机必须属于 `ONES_MCP_PROVIDER_ALLOWED_HOSTS`。生产环境仅 HTTPS；本地不安全 HTTP 仍须显式配置且只允许 local/test。单次 HTTP 请求最长 30 秒、响应最多 1 MiB，禁用代理与重定向。
+- 来源主机必须属于 `ONES_MCP_PROVIDER_ALLOWED_HOSTS`。HTTPS 始终可用；HTTP（包括生产环境）须显式设置 `ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL=true`，并把目标主机加入允许列表。HTTP 会明文传输采集 Token 与业务数据，只能在可信网络边界内使用。单次 HTTP 请求最长 30 秒、响应最多 1 MiB，禁用代理与重定向。
+- 本仓库的 [`ones-collector.example.json`](../../knowledge/ones-collector.example.json) 已填入本次指定的 ONES 地址、Team、37 个项目与类型 UUID；目标环境仍需提供对应允许列表和凭据中心引用。`resource_ids` 留空，不会自动首次发布知识资源或授予角色权限。
 - 配置中的 `first_date` 必须覆盖全部需要收录工作项的创建日期；项目和类型 UUID 必须完整。Story 子任务通过 Story 详情列出的 UUID 单独取 `/info`，不是从父类型的列表推断。
 
 ## 明确操作

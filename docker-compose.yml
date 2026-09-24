@@ -49,7 +49,7 @@ x-api-env: &api-env
   ONES_IDENTITY_INSTANCE_CODE: ${ONES_IDENTITY_INSTANCE_CODE:-default}
   ONES_IDENTITY_DISPLAY_NAME: ${ONES_IDENTITY_DISPLAY_NAME:-ONES}
   # 本地 Mock 作为独立 Compose 服务发布到宿主机 19121 端口；主 Compose
-  # 通过 host.docker.internal 访问。生产仍必须覆盖为受信 HTTPS Provider。
+  # 通过 host.docker.internal 访问。生产须覆盖为受信 ONES 实例和精确允许列表。
   ONES_IDENTITY_BASE_URL: ${ONES_IDENTITY_BASE_URL:-http://host.docker.internal:19121}
   ONES_IDENTITY_ALLOWED_HOSTS: ${ONES_IDENTITY_ALLOWED_HOSTS:-host.docker.internal}
   ONES_IDENTITY_TIMEOUT_SECONDS: ${ONES_IDENTITY_TIMEOUT_SECONDS:-5}

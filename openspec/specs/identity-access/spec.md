@@ -273,8 +273,12 @@ ONES 绑定 SHALL 仅由已认证启用自然人本人发起，调用服务端�
 - **THEN** 拒绝身份和 Credential 写入，并清理可清理的 Challenge 密文
 
 #### Scenario: Provider 网络配置不合规
-- **WHEN** 基址不在显式 host allowlist、包含 URL 凭据、query/fragment、试图重定向或生产使用非 HTTPS
-- **THEN** 验证失败关闭；固定客户端禁用代理继承、限制超时和响应大小，local 非 HTTPS 仅在显式允许时使用
+- **WHEN** 基址不在显式 host allowlist、包含 URL 凭据或 query/fragment、试图重定向，或使用 HTTP 但未显式允许
+- **THEN** 验证失败关闭；固定客户端禁用代理继承、限制超时和响应大小
+
+#### Scenario: 受信网络中的生产 ONES 仅提供 HTTP
+- **WHEN** 生产配置固定 ONES HTTP 基址、精确 host allowlist 且显式允许 HTTP
+- **THEN** 本人验证和 ONES MCP 的受控凭据刷新可访问该基址，不因生产环境强制 HTTPS 而拒绝；部署方承担 HTTP 明文传输风险
 
 ### Requirement: ONES 身份和个人 Credential 原子绑定且分别治理
 系统 SHALL 分表保存 ONES 身份及用途绑定认证加密的个人 Credential。确认 Challenge 时 MUST 原子保存唯一当前账号、最新完整 Team 候选、单一默认 Team 与 active Credential，清除被消费 Challenge；切换默认 Team 必须重新验证，不能选择已撤销历史 Team。Credential 保留独立状态、revision 和安全时间元数据。

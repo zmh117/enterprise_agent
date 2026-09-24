@@ -16,7 +16,7 @@ from app.modules.identity.infrastructure.external_identity_credentials import (
     CredentialSecretBundle,
 )
 from app.shared.exceptions import NonRetryableExecutionError
-from app.shared.config import IdentitySettings, Settings
+from app.shared.config import IdentitySettings, OnesIdentitySettings, Settings
 from backend.tests.helpers import test_settings as base_test_settings
 
 
@@ -30,6 +30,29 @@ def test_ones_identity_verifier_can_be_imported_without_bootstrap_ordering() -> 
     )
 
     assert UrllibOnesIdentityVerifier.__name__ == "UrllibOnesIdentityVerifier"
+
+
+def test_ones_identity_http_requires_allowlist_and_opt_in_even_in_production() -> None:
+    from app.modules.identity.infrastructure.ones_identity_verifier import (
+        UrllibOnesIdentityVerifier,
+    )
+
+    allowed = OnesIdentitySettings(
+        base_url="http://10.10.191.213",
+        allowed_hosts=("10.10.191.213",),
+        allow_insecure_local=True,
+    )
+    verifier = UrllibOnesIdentityVerifier(allowed, environment="production")
+    assert verifier.available is True
+    assert verifier._url == "http://10.10.191.213/project/api/project/auth/login"
+
+    for rejected in (
+        replace(allowed, allow_insecure_local=False),
+        replace(allowed, allowed_hosts=("other.example.test",)),
+    ):
+        with pytest.raises(NonRetryableExecutionError) as error:
+            UrllibOnesIdentityVerifier(rejected, environment="production")
+        assert error.value.error_code == "ones_configuration_invalid"
 
 
 class FakeOnesVerifier:
