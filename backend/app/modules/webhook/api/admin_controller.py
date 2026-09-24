@@ -457,8 +457,8 @@ def _event_evidence(c: Any, event: dict[str, Any]) -> dict[str, Any]:
         "tool_calls": tool_calls,
         "audit": audit,
         "deliveries": {
-            "events": c.agent_repository.list_delivery_events(job_id),
-            "attempts": c.agent_repository.list_delivery_attempts(job_id),
-            "chunks": c.agent_repository.list_delivery_chunks(job_id),
+            "events": c.delivery_repository.list_delivery_events(job_id),
+            "attempts": c.delivery_repository.list_delivery_attempts(job_id),
+            "chunks": c.delivery_repository.list_delivery_chunks(job_id),
         },
     }

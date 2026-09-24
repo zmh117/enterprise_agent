@@ -215,7 +215,8 @@ def test_docker_postgres_runtime_takeover_and_provenance_acceptance() -> None:  
     assert answer
     assert delivery_adapter.routes
     assert (
-        enabled.agent_repository.list_delivery_attempts(private.job_id)[0]["status"] == "SUCCEEDED"
+        enabled.delivery_repository.list_delivery_attempts(private.job_id)[0]["status"]
+        == "SUCCEEDED"
     )
 
     latest = enabled.business_application_repository.get_by_code(code)

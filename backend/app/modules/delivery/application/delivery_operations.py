@@ -5,7 +5,7 @@ from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.delivery.domain.delivery_outbox import DeliveryEvent
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -15,7 +15,7 @@ class DeliveryOperationsService:
     def __init__(
         self,
         *,
-        repository: AgentRepository,
+        repository: DeliveryRepository,
         audit_service: AuditService,
     ) -> None:
         self.repository = repository

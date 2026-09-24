@@ -200,6 +200,7 @@ def create_default_app() -> Any:
                 repository,
                 runtime.agent_repository,
                 settings.delivery,
+                delivery_repository=runtime.delivery_repository,
             ),
             document_processing=document_processing,
         )

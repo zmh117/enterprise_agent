@@ -140,6 +140,7 @@ from app.modules.identity.application.principal_jwt import PrincipalJwks, Princi
 from app.modules.identity.application.service_principal import KnowledgeServicePrincipalVerifier
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import (
     AgentRepository,
@@ -203,6 +204,7 @@ class Container:
     database: Database
     agent_repository: AgentRepository
     job_dispatch_repository: JobDispatchRepository
+    delivery_repository: DeliveryRepository
     identity_repository: IdentityRepository
     identity_service: IdentityService
     ones_identity_binding_service: OnesIdentityBindingService
@@ -552,6 +554,7 @@ def _build_container(  # noqa: C901, PLR0915
 
     agent_repository = AgentRepository(database)
     job_dispatch_repository = JobDispatchRepository(database)
+    delivery_repository = DeliveryRepository(database)
     audit_repository = AuditRepository(database)
     config_repository = ConfigurationRepository(database)
     identity_repository = IdentityRepository(database)
@@ -825,6 +828,7 @@ def _build_container(  # noqa: C901, PLR0915
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
         dispatch_repository=job_dispatch_repository,
+        delivery_repository=delivery_repository,
         permission_service=permission_service,
         audit_service=audit_service,
         publisher=publisher,
@@ -1069,6 +1073,7 @@ def _build_container(  # noqa: C901, PLR0915
     http_adapter = HttpDeliveryAdapter(timeout_seconds=settings.delivery.timeout_seconds)
     result_delivery_service = ResultDeliveryService(
         repository=agent_repository,
+        delivery_repository=delivery_repository,
         audit_service=audit_service,
         connector_registry=connector_registry,
         adapters={
@@ -1089,6 +1094,7 @@ def _build_container(  # noqa: C901, PLR0915
         file_workspace_repository,
         agent_repository,
         settings.delivery,
+        delivery_repository=delivery_repository,
     )
     file_delivery_sender = None
     if service_name == "delivery-dispatch-worker":
@@ -1115,6 +1121,7 @@ def _build_container(  # noqa: C901, PLR0915
         )
     delivery_dispatcher = DeliveryOutboxDispatcher(
         repository=agent_repository,
+        delivery_repository=delivery_repository,
         delivery_service=result_delivery_service,
         audit_service=audit_service,
         settings=settings.delivery,
@@ -1208,6 +1215,7 @@ def _build_container(  # noqa: C901, PLR0915
         database=database,
         agent_repository=agent_repository,
         job_dispatch_repository=job_dispatch_repository,
+        delivery_repository=delivery_repository,
         identity_repository=identity_repository,
         identity_service=identity_service,
         ones_identity_binding_service=ones_identity_binding_service,

@@ -102,14 +102,14 @@ def test_chunk_retry_skips_recorded_success_and_duplicate_event_is_idempotent() 
             worker_id="chunk-test-agent",
             correlation_id="delivery-chunk-correlation",
         )
-        event = runtime.agent_repository.get_delivery_event_for_job(job.id)
+        event = runtime.delivery_repository.get_delivery_event_for_job(job.id)
         assert event is not None
 
         first = runtime.delivery_dispatcher.dispatch_pending(limit=1)
-        waiting = runtime.agent_repository.get_delivery_event(event.id)
+        waiting = runtime.delivery_repository.get_delivery_event(event.id)
         assert first.retrying == 1
         assert waiting.status.value == "RETRY_WAIT"
-        chunks_after_first = runtime.agent_repository.list_delivery_chunks(job.id)
+        chunks_after_first = runtime.delivery_repository.list_delivery_chunks(job.id)
         assert [row["status"] for row in chunks_after_first] == [
             "SUCCEEDED",
             "FAILED",
@@ -127,7 +127,7 @@ def test_chunk_retry_skips_recorded_success_and_duplicate_event_is_idempotent() 
             ),
         )
         second = runtime.delivery_dispatcher.dispatch_pending(limit=1)
-        completed = runtime.agent_repository.get_delivery_event(event.id)
+        completed = runtime.delivery_repository.get_delivery_event(event.id)
         assert second.succeeded == 1
         assert completed.status.value == "SUCCEEDED"
         assert adapter.calls.count("Agent 诊断报告 part 1/3") == 1

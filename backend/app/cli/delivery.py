@@ -9,7 +9,8 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.delivery.application.delivery_operations import (
     DeliveryOperationsService,
 )
-from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
+from app.modules.job.infrastructure.repositories import AuditRepository
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import AppError
@@ -49,7 +50,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         SchemaHeadValidator(database, default_migrations_dir()).require_current()
         service = DeliveryOperationsService(
-            repository=AgentRepository(database),
+            repository=DeliveryRepository(database),
             audit_service=AuditService(AuditRepository(database)),
         )
         if args.command == "metrics":

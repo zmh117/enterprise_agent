@@ -305,7 +305,7 @@ def _wait_for_job(
 def _wait_for_delivery(runtime: Container, job_id: str, timeout_seconds: int = 60) -> Any:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        event = runtime.agent_repository.get_delivery_event_for_job(job_id)
+        event = runtime.delivery_repository.get_delivery_event_for_job(job_id)
         if event and event.status.value in TERMINAL_DELIVERY_STATUSES:
             return event
         time.sleep(0.25)

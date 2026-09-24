@@ -45,6 +45,7 @@ from app.modules.file_workspace.streaming_service import (
 )
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
 from app.shared.config import DeliverySettings
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
@@ -1674,6 +1675,7 @@ def test_unreadable_document_rejects_materialization_but_allows_original_deliver
         repository,
         AgentRepository(repository.database),
         DeliverySettings(),
+        delivery_repository=DeliveryRepository(repository.database),
     )
     delivered = service.deliver_version(
         context=refreshed,

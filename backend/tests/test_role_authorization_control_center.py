@@ -1273,7 +1273,7 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
     c.result_delivery_service.adapters["dingtalk_conversation"] = adapter
     enqueue_job_result_for_delivery(c, job.id)
     c.delivery_dispatcher.dispatch_pending(limit=1)
-    attempts = c.agent_repository.list_delivery_attempts(job.id)
+    attempts = c.delivery_repository.list_delivery_attempts(job.id)
     assert attempts[0]["status"] == "FAILED"
     assert attempts[0]["error_code"] == "delivery_authorization_denied"
     assert adapter.messages == []

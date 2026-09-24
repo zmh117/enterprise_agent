@@ -211,7 +211,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(  # no
         failed_publish = unavailable.publish_pending(limit=1)
         assert failed_publish.failed == 1
         assert failed_publish.dead == 0
-        assert runtime.agent_repository.get_delivery_event_for_job(job.id) is None
+        assert runtime.delivery_repository.get_delivery_event_for_job(job.id) is None
         runtime.database.execute(
             """
             update job_dispatch_outbox
@@ -239,7 +239,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(  # no
         assert client.calls == 1
         assert runtime.agent_repository.get_job(job.id).status == JobStatus.SUCCEEDED
 
-        event = runtime.agent_repository.get_delivery_event_for_job(job.id)
+        event = runtime.delivery_repository.get_delivery_event_for_job(job.id)
         assert event is not None
         artifact_before = runtime.agent_repository.get_artifact(event.result_artifact_id)
         duplicate_id = runtime.result_delivery_service.enqueue_job_result(
@@ -251,7 +251,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(  # no
 
         failed_delivery = runtime.delivery_dispatcher.dispatch_pending(limit=1)
         assert failed_delivery.dead == 1
-        assert runtime.agent_repository.get_delivery_event(event.id).status.value == "DEAD"
+        assert runtime.delivery_repository.get_delivery_event(event.id).status.value == "DEAD"
         assert runtime.agent_repository.get_job(job.id).status == JobStatus.SUCCEEDED
         assert adapter.calls == [
             "Agent 诊断报告 part 1/3",
@@ -259,7 +259,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(  # no
         ]
 
         operations = DeliveryOperationsService(
-            repository=runtime.agent_repository,
+            repository=runtime.delivery_repository,
             audit_service=runtime.audit_service,
         )
         replayed = operations.replay(
@@ -272,7 +272,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(  # no
         completed_delivery = runtime.delivery_dispatcher.dispatch_pending(limit=1)
 
         assert completed_delivery.succeeded == 1
-        assert runtime.agent_repository.get_delivery_event(event.id).status.value == "SUCCEEDED"
+        assert runtime.delivery_repository.get_delivery_event(event.id).status.value == "SUCCEEDED"
         assert runtime.agent_repository.get_job(job.id).status == JobStatus.SUCCEEDED
         assert client.calls == 1
         assert runtime.agent_repository.get_artifact(event.result_artifact_id) == artifact_before

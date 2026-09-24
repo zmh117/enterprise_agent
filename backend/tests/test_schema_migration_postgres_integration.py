@@ -1283,6 +1283,7 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
         dispatchers = [
             DeliveryOutboxDispatcher(
                 repository=runtime.agent_repository,
+                delivery_repository=runtime.delivery_repository,
                 delivery_service=runtime.result_delivery_service,
                 audit_service=runtime.audit_service,
                 settings=runtime.settings.delivery,

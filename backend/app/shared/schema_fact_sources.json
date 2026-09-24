@@ -1063,7 +1063,7 @@
       "owner": "delivery",
       "semantics": "Independent reliable result-delivery state after Agent execution.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/delivery/application/delivery_operations.py"],
+      "writers": ["code:backend/app/modules/delivery/infrastructure/repository.py", "code:backend/app/modules/delivery/application/delivery_operations.py"],
       "readers": ["code:backend/app/modules/delivery/application/delivery_operations.py"],
       "lifecycle": "pending through delivery terminal state independently of Job execution",
       "retention_policy": "delivery-operational-history",

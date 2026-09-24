@@ -121,7 +121,7 @@ class DingTalkDeliveryTests(unittest.TestCase):
             dispatch_pending_deliveries(c)
 
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
-        attempts = c.agent_repository.list_delivery_attempts(job.id)
+        attempts = c.delivery_repository.list_delivery_attempts(job.id)
         self.assertEqual("SUCCEEDED", attempts[0]["status"])
         self.assertEqual(2, len(transport.calls))
         self.assertEqual(
@@ -176,7 +176,7 @@ class DingTalkDeliveryTests(unittest.TestCase):
         self.assertIn("timestamp=", transport.calls[0]["url"])
         self.assertIn("sign=", transport.calls[0]["url"])
         self.assertEqual("markdown", transport.calls[0]["payload"]["msgtype"])
-        attempts = c.agent_repository.list_delivery_attempts(job.id)
+        attempts = c.delivery_repository.list_delivery_attempts(job.id)
         self.assertEqual("SUCCEEDED", attempts[0]["status"])
         summary = str(attempts[0]["target_summary"])
         self.assertNotIn("robot-token", summary)
@@ -221,7 +221,7 @@ class DingTalkDeliveryTests(unittest.TestCase):
             c.delivery_dispatcher.dispatch_pending(limit=1)
 
         self.assertEqual([], transport.calls)
-        attempts = c.agent_repository.list_delivery_attempts(job.id)
+        attempts = c.delivery_repository.list_delivery_attempts(job.id)
         self.assertEqual("FAILED", attempts[0]["status"])
         self.assertEqual("不允许使用此投递主机", attempts[0]["error_message"])
 

@@ -7,9 +7,11 @@ from typing import Any
 
 from app.modules.channel.domain.channel_event import ReplyRoute
 from app.modules.file_workspace.domain import RetentionReason
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import DeliverySettings
+from app.shared.database import require_shared_database
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -21,9 +23,13 @@ class FileVersionDeliveryService:
         repository: FileWorkspaceRepository,
         agent_repository: AgentRepository,
         settings: DeliverySettings,
+        *,
+        delivery_repository: DeliveryRepository,
     ) -> None:
+        require_shared_database(repository, agent_repository, delivery_repository)
         self.repository = repository
         self.agent_repository = agent_repository
+        self.delivery_repository = delivery_repository
         self.settings = settings
 
     def enqueue(
@@ -75,7 +81,7 @@ class FileVersionDeliveryService:
                 )
             else:
                 artifact_id = str(artifact["id"])
-            event = self.agent_repository.create_delivery_event(
+            event = self.delivery_repository.create_delivery_event(
                 job_id=job_id,
                 result_artifact_id=artifact_id,
                 application_publication_id=(

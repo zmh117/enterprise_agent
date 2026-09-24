@@ -41,6 +41,7 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
@@ -184,6 +185,7 @@ class CreateAgentJobService:
         *,
         repository: AgentRepository,
         dispatch_repository: JobDispatchRepository,
+        delivery_repository: DeliveryRepository,
         permission_service: PermissionService,
         audit_service: AuditService,
         publisher: MessagePublisher,
@@ -203,9 +205,10 @@ class CreateAgentJobService:
         file_manifest_service: JobFileManifestService | None = None,
         delivery_service: Any = None,
     ) -> None:
-        require_shared_database(repository, dispatch_repository)
+        require_shared_database(repository, dispatch_repository, delivery_repository)
         self.repository = repository
         self.dispatch_repository = dispatch_repository
+        self.delivery_repository = delivery_repository
         self.permission_service = permission_service
         self.audit_service = audit_service
         self.publisher = publisher
@@ -436,7 +439,7 @@ class CreateAgentJobService:
             if self.mcp_tool_snapshot_service is not None:
                 self.mcp_tool_snapshot_service.verify(existing.id)
             return existing
-        existing_notice = self.repository.get_system_notice_by_idempotency_key(
+        existing_notice = self.delivery_repository.get_system_notice_by_idempotency_key(
             command.idempotency_key
         )
         if existing_notice is not None:

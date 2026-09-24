@@ -104,14 +104,14 @@ def test_none_route_is_persisted_then_atomically_skipped() -> None:
             "delivery-none-route",
             route_type="none",
         )
-        pending = runtime.agent_repository.get_delivery_event_for_job(job.id)
+        pending = runtime.delivery_repository.get_delivery_event_for_job(job.id)
         assert pending is not None
         assert pending.status.value == "PENDING"
 
         result = runtime.delivery_dispatcher.dispatch_pending(limit=1)
 
-        skipped = runtime.agent_repository.get_delivery_event(pending.id)
-        attempts = runtime.agent_repository.list_delivery_attempts(job.id)
+        skipped = runtime.delivery_repository.get_delivery_event(pending.id)
+        attempts = runtime.delivery_repository.list_delivery_attempts(job.id)
         assert result.skipped == 1
         assert skipped.status.value == "SKIPPED"
         assert attempts[0]["status"] == "SKIPPED"
@@ -130,7 +130,7 @@ def test_retryable_delivery_exhausts_finite_attempts_into_dead() -> None:
             "delivery-finite-dead",
             route_type="test_retry",
         )
-        event = runtime.agent_repository.get_delivery_event_for_job(job.id)
+        event = runtime.delivery_repository.get_delivery_event_for_job(job.id)
         assert event is not None
         runtime.database.execute(
             "update delivery_outbox set max_attempts = 2 where id = ?",
@@ -138,7 +138,7 @@ def test_retryable_delivery_exhausts_finite_attempts_into_dead() -> None:
         )
 
         first = runtime.delivery_dispatcher.dispatch_pending(limit=1)
-        waiting = runtime.agent_repository.get_delivery_event(event.id)
+        waiting = runtime.delivery_repository.get_delivery_event(event.id)
         assert first.retrying == 1
         assert waiting.status.value == "RETRY_WAIT"
         assert waiting.attempt_count == 1
@@ -156,7 +156,7 @@ def test_retryable_delivery_exhausts_finite_attempts_into_dead() -> None:
             ),
         )
         second = runtime.delivery_dispatcher.dispatch_pending(limit=1)
-        dead = runtime.agent_repository.get_delivery_event(event.id)
+        dead = runtime.delivery_repository.get_delivery_event(event.id)
         assert second.dead == 1
         assert dead.status.value == "DEAD"
         assert dead.attempt_count == 2
@@ -176,12 +176,12 @@ def test_non_retryable_delivery_failure_is_terminal_failed() -> None:
             "delivery-terminal-failed",
             route_type="test_terminal",
         )
-        event = runtime.agent_repository.get_delivery_event_for_job(job.id)
+        event = runtime.delivery_repository.get_delivery_event_for_job(job.id)
         assert event is not None
 
         result = runtime.delivery_dispatcher.dispatch_pending(limit=1)
 
-        failed = runtime.agent_repository.get_delivery_event(event.id)
+        failed = runtime.delivery_repository.get_delivery_event(event.id)
         assert result.failed == 1
         assert failed.status.value == "FAILED"
         assert failed.last_error_code == "delivery_config_invalid"
@@ -206,6 +206,7 @@ def test_two_dispatchers_do_not_own_or_send_the_same_delivery() -> None:
         dispatchers = [
             DeliveryOutboxDispatcher(
                 repository=runtime.agent_repository,
+                delivery_repository=runtime.delivery_repository,
                 delivery_service=runtime.result_delivery_service,
                 audit_service=runtime.audit_service,
                 settings=runtime.settings.delivery,

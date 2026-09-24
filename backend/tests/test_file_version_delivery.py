@@ -29,6 +29,7 @@ from app.modules.file_workspace.domain import (
     WorkspaceFileRole,
 )
 from app.modules.file_workspace.lifecycle_service import FileLifecycleService
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import DeliverySettings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
@@ -173,7 +174,10 @@ def test_exact_file_delivery_retries_without_agent_rerun_or_duplicate_file() -> 
     repository, streaming, context, _storage = _fixture()
     _enable_file_delivery(repository)
     agent_repository = AgentRepository(repository.database)
-    delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
+    delivery_repository = DeliveryRepository(repository.database)
+    delivery = FileVersionDeliveryService(
+        repository, agent_repository, DeliverySettings(), delivery_repository=delivery_repository
+    )
     streaming.delivery_intents = delivery
     commit_id = _new_intent(streaming, context, handle="delivered-output")
     committed = asyncio.run(
@@ -238,6 +242,7 @@ def test_exact_file_delivery_retries_without_agent_rerun_or_duplicate_file() -> 
     )
     dispatcher = DeliveryOutboxDispatcher(
         repository=agent_repository,
+        delivery_repository=delivery_repository,
         delivery_service=delivery_runtime,  # type: ignore[arg-type]
         audit_service=_Audit(),  # type: ignore[arg-type]
         settings=DeliverySettings(),
@@ -286,7 +291,10 @@ def test_explicit_delivery_accepts_exact_version_committed_by_current_job() -> N
     repository, streaming, context, _storage = _fixture()
     _enable_file_delivery(repository)
     delivery = FileVersionDeliveryService(
-        repository, AgentRepository(repository.database), DeliverySettings()
+        repository,
+        AgentRepository(repository.database),
+        DeliverySettings(),
+        delivery_repository=DeliveryRepository(repository.database),
     )
     committed = asyncio.run(
         streaming.upload_commit(
@@ -399,6 +407,7 @@ def test_text_v2_log_delivery_uses_existing_exact_version_without_commit() -> No
         repository,
         AgentRepository(repository.database),
         DeliverySettings(),
+        delivery_repository=DeliveryRepository(repository.database),
     )
     streaming.delivery_intents = delivery
     before_versions = repository.database.execute_one(
@@ -432,6 +441,7 @@ def test_text_v2_markdown_default_delivery_and_workspace_only_remain_distinct() 
         repository,
         AgentRepository(repository.database),
         DeliverySettings(),
+        delivery_repository=DeliveryRepository(repository.database),
     )
     delivered = asyncio.run(
         streaming.upload_commit(
@@ -506,7 +516,10 @@ def test_stream_session_file_delivery_uses_originating_stream_connector() -> Non
         ),
     )
     agent_repository = AgentRepository(repository.database)
-    delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
+    delivery_repository = DeliveryRepository(repository.database)
+    delivery = FileVersionDeliveryService(
+        repository, agent_repository, DeliverySettings(), delivery_repository=delivery_repository
+    )
     streaming.delivery_intents = delivery
     asyncio.run(
         streaming.upload_commit(
@@ -520,6 +533,7 @@ def test_stream_session_file_delivery_uses_originating_stream_connector() -> Non
     sender = _CaptureFileSender()
     dispatcher = DeliveryOutboxDispatcher(
         repository=agent_repository,
+        delivery_repository=delivery_repository,
         delivery_service=SimpleNamespace(
             connector_registry=connector_registry,
             business_authorization_service=_Authorization(),
@@ -541,7 +555,10 @@ def test_delivery_provenance_rejects_cross_session_mutation() -> None:
     repository, streaming, context, _storage = _fixture()
     _enable_file_delivery(repository)
     delivery = FileVersionDeliveryService(
-        repository, AgentRepository(repository.database), DeliverySettings()
+        repository,
+        AgentRepository(repository.database),
+        DeliverySettings(),
+        delivery_repository=DeliveryRepository(repository.database),
     )
     streaming.delivery_intents = delivery
     committed = asyncio.run(
@@ -574,7 +591,10 @@ def test_workspace_expiry_waits_for_file_delivery_then_cleans_after_terminal_fai
     repository, streaming, context, storage = _fixture()
     _enable_file_delivery(repository)
     agent_repository = AgentRepository(repository.database)
-    delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
+    delivery_repository = DeliveryRepository(repository.database)
+    delivery = FileVersionDeliveryService(
+        repository, agent_repository, DeliverySettings(), delivery_repository=delivery_repository
+    )
     streaming.delivery_intents = delivery
     asyncio.run(
         streaming.upload_commit(
@@ -601,6 +621,7 @@ def test_workspace_expiry_waits_for_file_delivery_then_cleans_after_terminal_fai
     )
     dispatcher = DeliveryOutboxDispatcher(
         repository=agent_repository,
+        delivery_repository=delivery_repository,
         delivery_service=SimpleNamespace(
             connector_registry=_ConnectorRegistry(),
             business_authorization_service=_Authorization(),
@@ -636,7 +657,10 @@ def test_terminal_file_delivery_failure_enqueues_one_non_recursive_notice(
         (json.dumps({"type": "test_text", "target": {}}),),
     )
     agent_repository = AgentRepository(repository.database)
-    file_delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
+    delivery_repository = DeliveryRepository(repository.database)
+    file_delivery = FileVersionDeliveryService(
+        repository, agent_repository, DeliverySettings(), delivery_repository=delivery_repository
+    )
     streaming.delivery_intents = file_delivery
     committed = asyncio.run(
         streaming.upload_commit(
@@ -655,6 +679,7 @@ def test_terminal_file_delivery_failure_enqueues_one_non_recursive_notice(
     text_adapter = _CaptureTextAdapter()
     delivery_runtime = ResultDeliveryService(
         repository=agent_repository,
+        delivery_repository=delivery_repository,
         audit_service=_Audit(),  # type: ignore[arg-type]
         connector_registry=_ConnectorRegistry(),  # type: ignore[arg-type]
         adapters={"test_text": text_adapter},  # type: ignore[dict-item]
@@ -664,6 +689,7 @@ def test_terminal_file_delivery_failure_enqueues_one_non_recursive_notice(
     )
     dispatcher = DeliveryOutboxDispatcher(
         repository=agent_repository,
+        delivery_repository=delivery_repository,
         delivery_service=delivery_runtime,
         audit_service=_Audit(),  # type: ignore[arg-type]
         settings=DeliverySettings(),
@@ -674,7 +700,7 @@ def test_terminal_file_delivery_failure_enqueues_one_non_recursive_notice(
 
     failed = dispatcher.dispatch_pending(limit=1)
     assert getattr(failed, "failed" if expected_status == "FAILED" else "dead") == 1
-    assert agent_repository.get_delivery_event(original_id).status.value == expected_status
+    assert delivery_repository.get_delivery_event(original_id).status.value == expected_status
     notices = repository.database.execute(
         """
         select d.id, d.status, a.content
@@ -710,7 +736,10 @@ def test_dispatcher_reconciles_crash_gap_for_terminal_file_delivery_notice() -> 
         (json.dumps({"type": "test_text", "target": {}}),),
     )
     agent_repository = AgentRepository(repository.database)
-    file_delivery = FileVersionDeliveryService(repository, agent_repository, DeliverySettings())
+    delivery_repository = DeliveryRepository(repository.database)
+    file_delivery = FileVersionDeliveryService(
+        repository, agent_repository, DeliverySettings(), delivery_repository=delivery_repository
+    )
     streaming.delivery_intents = file_delivery
     committed = asyncio.run(
         streaming.upload_commit(
@@ -740,6 +769,7 @@ def test_dispatcher_reconciles_crash_gap_for_terminal_file_delivery_notice() -> 
     text_adapter = _CaptureTextAdapter()
     delivery_runtime = ResultDeliveryService(
         repository=agent_repository,
+        delivery_repository=delivery_repository,
         audit_service=_Audit(),  # type: ignore[arg-type]
         connector_registry=_ConnectorRegistry(),  # type: ignore[arg-type]
         adapters={"test_text": text_adapter},  # type: ignore[dict-item]
@@ -749,6 +779,7 @@ def test_dispatcher_reconciles_crash_gap_for_terminal_file_delivery_notice() -> 
     )
     dispatcher = DeliveryOutboxDispatcher(
         repository=agent_repository,
+        delivery_repository=delivery_repository,
         delivery_service=delivery_runtime,
         audit_service=_Audit(),  # type: ignore[arg-type]
         settings=DeliverySettings(),

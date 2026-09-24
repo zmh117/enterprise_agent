@@ -143,9 +143,9 @@ def build_agent_job_debug_router() -> Any:  # noqa: C901, PLR0915
             return {
                 "job_id": job_id,
                 "deliveries": {
-                    "events": container.agent_repository.list_delivery_events(job_id),
-                    "attempts": container.agent_repository.list_delivery_attempts(job_id),
-                    "chunks": container.agent_repository.list_delivery_chunks(job_id),
+                    "events": container.delivery_repository.list_delivery_events(job_id),
+                    "attempts": container.delivery_repository.list_delivery_attempts(job_id),
+                    "chunks": container.delivery_repository.list_delivery_chunks(job_id),
                 },
             }
         except NotFound as exc:
@@ -200,7 +200,7 @@ def build_agent_job_debug_router() -> Any:  # noqa: C901, PLR0915
             dispatch = container.job_dispatch_repository.get_dispatch_event_for_job(job_id)
             execution_audit = ExecutionAuditRepository(container.database)
             execution_summary = execution_audit.get_summary(job_id)
-            delivery_events = container.agent_repository.list_delivery_events(job_id)
+            delivery_events = container.delivery_repository.list_delivery_events(job_id)
             delivery_status = (
                 str(delivery_events[-1].get("status") or "NOT_REQUESTED")
                 if delivery_events
@@ -249,8 +249,8 @@ def build_agent_job_debug_router() -> Any:  # noqa: C901, PLR0915
                 ),
                 "deliveries": {
                     "events": delivery_events,
-                    "attempts": container.agent_repository.list_delivery_attempts(job_id),
-                    "chunks": container.agent_repository.list_delivery_chunks(job_id),
+                    "attempts": container.delivery_repository.list_delivery_attempts(job_id),
+                    "chunks": container.delivery_repository.list_delivery_chunks(job_id),
                 },
                 "webhook_events": [],
             }

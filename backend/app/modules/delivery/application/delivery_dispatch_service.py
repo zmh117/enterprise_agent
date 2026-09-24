@@ -16,7 +16,9 @@ from app.modules.delivery.application.result_delivery_service import (
 from app.modules.delivery.domain import DeliveryEvent, DeliveryStatus
 from app.modules.delivery.infrastructure.file_delivery_sender import FileDeliverySender
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.shared.database import require_shared_database
 from app.shared.config import DeliverySettings
 from app.shared.exceptions import (
     NonRetryableExecutionError,
@@ -40,6 +42,7 @@ class DeliveryOutboxDispatcher:
         self,
         *,
         repository: AgentRepository,
+        delivery_repository: DeliveryRepository,
         delivery_service: ResultDeliveryService,
         audit_service: AuditService,
         settings: DeliverySettings,
@@ -47,7 +50,9 @@ class DeliveryOutboxDispatcher:
         file_delivery_sender: FileDeliverySender | None = None,
         file_delivery_service: FileVersionDeliveryService | None = None,
     ) -> None:
+        require_shared_database(repository, delivery_repository)
         self.repository = repository
+        self.delivery_repository = delivery_repository
         self.delivery_service = delivery_service
         self.audit_service = audit_service
         self.settings = settings
@@ -56,17 +61,17 @@ class DeliveryOutboxDispatcher:
         self.file_delivery_service = file_delivery_service
 
     def dispatch_pending(self, *, limit: int = 100) -> DeliveryDispatchResult:
-        recovered, recovered_dead = self.repository.recover_stale_delivery_claims()
+        recovered, recovered_dead = self.delivery_repository.recover_stale_delivery_claims()
         failure_notices_enqueued = self._reconcile_file_delivery_failure_notices(limit=limit)
         succeeded = skipped = retrying = failed = dead = 0
         for _ in range(min(max(1, int(limit)), 1000)):
-            event = self.repository.claim_delivery_event(
+            event = self.delivery_repository.claim_delivery_event(
                 worker_id=self.worker_id,
                 claim_timeout_seconds=(self.settings.outbox_claim_timeout_seconds),
             )
             if event is None:
                 break
-            attempt = self.repository.create_delivery_attempt(event=event)
+            attempt = self.delivery_repository.create_delivery_attempt(event=event)
             attempt_id = str(attempt["id"])
             try:
                 outcome = self._dispatch_claimed(
@@ -74,7 +79,7 @@ class DeliveryOutboxDispatcher:
                     attempt_id=attempt_id,
                 )
             except Exception as exc:
-                state = self.repository.mark_delivery_failed(
+                state = self.delivery_repository.mark_delivery_failed(
                     event=event,
                     attempt_id=attempt_id,
                     retryable=_is_retryable(exc),
@@ -194,7 +199,7 @@ class DeliveryOutboxDispatcher:
             },
         )
         if route.type == "none":
-            self.repository.mark_delivery_skipped(
+            self.delivery_repository.mark_delivery_skipped(
                 event=event,
                 attempt_id=attempt_id,
             )
@@ -279,7 +284,7 @@ class DeliveryOutboxDispatcher:
         )
         for index, (chunk_title, chunk_text) in enumerate(chunks, start=1):
             payload_hash = _chunk_payload_hash(chunk_title, chunk_text)
-            if self.repository.has_successful_delivery_chunk(
+            if self.delivery_repository.has_successful_delivery_chunk(
                 delivery_id=event.id,
                 chunk_index=index,
                 payload_hash=payload_hash,
@@ -351,7 +356,7 @@ class DeliveryOutboxDispatcher:
                     "chunk_count": len(chunks),
                 },
             )
-        self.repository.mark_delivery_succeeded(
+        self.delivery_repository.mark_delivery_succeeded(
             event=event,
             attempt_id=attempt_id,
         )
@@ -398,7 +403,7 @@ class DeliveryOutboxDispatcher:
             },
         )
         if route.type == "none":
-            self.repository.mark_delivery_skipped(event=event, attempt_id=attempt_id)
+            self.delivery_repository.mark_delivery_skipped(event=event, attempt_id=attempt_id)
             return DeliveryStatus.SKIPPED
         connector = None
         if route.connector_id:
@@ -427,7 +432,7 @@ class DeliveryOutboxDispatcher:
         chunks = self.delivery_service.chunker.titled_chunks(title=title, text=markdown)
         for index, (chunk_title, chunk_text) in enumerate(chunks, start=1):
             payload_hash = _chunk_payload_hash(chunk_title, chunk_text)
-            if self.repository.has_successful_delivery_chunk(
+            if self.delivery_repository.has_successful_delivery_chunk(
                 delivery_id=event.id,
                 chunk_index=index,
                 payload_hash=payload_hash,
@@ -455,7 +460,7 @@ class DeliveryOutboxDispatcher:
                 payload_summary={"title": chunk_title, "chars": len(chunk_text)},
                 status="SUCCEEDED",
             )
-        self.repository.mark_delivery_succeeded(event=event, attempt_id=attempt_id)
+        self.delivery_repository.mark_delivery_succeeded(event=event, attempt_id=attempt_id)
         self.audit_service.record(
             "delivery.completed",
             status="SUCCEEDED",
@@ -502,7 +507,7 @@ class DeliveryOutboxDispatcher:
                 separators=(",", ":"),
             ).encode()
         ).hexdigest()
-        if not self.repository.has_successful_delivery_chunk(
+        if not self.delivery_repository.has_successful_delivery_chunk(
             delivery_id=event.id,
             chunk_index=1,
             payload_hash=payload_hash,
@@ -525,7 +530,7 @@ class DeliveryOutboxDispatcher:
                 },
                 status="SUCCEEDED",
             )
-        self.repository.mark_delivery_succeeded(event=event, attempt_id=attempt_id)
+        self.delivery_repository.mark_delivery_succeeded(event=event, attempt_id=attempt_id)
         self.file_delivery_service.retain_delivered_version(delivery_id=event.id)
         self.audit_service.record(
             "delivery.file.completed",
@@ -562,7 +567,7 @@ class DeliveryOutboxDispatcher:
         """
         for attempt in range(50):
             try:
-                return self.repository.record_delivery_chunk(
+                return self.delivery_repository.record_delivery_chunk(
                     event=event,
                     attempt_id=attempt_id,
                     chunk_index=chunk_index,

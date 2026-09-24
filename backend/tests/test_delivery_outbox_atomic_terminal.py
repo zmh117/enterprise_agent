@@ -45,7 +45,7 @@ def test_success_persists_artifact_job_and_delivery_without_adapter_call() -> No
         )
 
         persisted = runtime.agent_repository.get_job(job.id)
-        delivery = runtime.agent_repository.get_delivery_event_for_job(job.id)
+        delivery = runtime.delivery_repository.get_delivery_event_for_job(job.id)
         assert result
         assert persisted.status == JobStatus.SUCCEEDED
         assert delivery is not None
@@ -54,7 +54,7 @@ def test_success_persists_artifact_job_and_delivery_without_adapter_call() -> No
         assert (
             runtime.agent_repository.get_artifact(delivery.result_artifact_id)["content"] == result
         )
-        assert runtime.agent_repository.list_delivery_attempts(job.id) == []
+        assert runtime.delivery_repository.list_delivery_attempts(job.id) == []
         assert runtime.result_delivery_service.sent_messages == []
     finally:
         runtime.database.close()
@@ -64,13 +64,13 @@ def test_success_delivery_outbox_failure_rolls_back_result_and_job_terminal() ->
     runtime = container()
     try:
         job = _create_job(runtime, "delivery-success-rollback")
-        original = runtime.agent_repository.create_delivery_event
+        original = runtime.delivery_repository.create_delivery_event
 
         def fail_after_insert(**kwargs: object) -> object:
             original(**kwargs)  # type: ignore[arg-type]
             raise RuntimeError("synthetic delivery outbox persistence failure")
 
-        runtime.agent_repository.create_delivery_event = fail_after_insert  # type: ignore[method-assign]
+        runtime.delivery_repository.create_delivery_event = fail_after_insert  # type: ignore[method-assign]
 
         with pytest.raises(
             RuntimeError,
@@ -126,7 +126,7 @@ def test_terminal_failure_persists_safe_artifact_and_delivery_in_same_uow() -> N
         )
 
         persisted = runtime.agent_repository.get_job(job.id)
-        delivery = runtime.agent_repository.get_delivery_event_for_job(job.id)
+        delivery = runtime.delivery_repository.get_delivery_event_for_job(job.id)
         assert action == "dead"
         assert persisted.status == JobStatus.FAILED
         assert delivery is not None
@@ -153,13 +153,13 @@ def test_terminal_failure_outbox_failure_rolls_back_job_and_artifact() -> None:
         job = _create_job(runtime, "delivery-failure-rollback")
         claimed = runtime.agent_repository.claim_job(job.id, "failure-worker")
         assert claimed is not None
-        original = runtime.agent_repository.create_delivery_event
+        original = runtime.delivery_repository.create_delivery_event
 
         def fail_after_insert(**kwargs: object) -> object:
             original(**kwargs)  # type: ignore[arg-type]
             raise RuntimeError("synthetic terminal delivery outbox failure")
 
-        runtime.agent_repository.create_delivery_event = fail_after_insert  # type: ignore[method-assign]
+        runtime.delivery_repository.create_delivery_event = fail_after_insert  # type: ignore[method-assign]
 
         with pytest.raises(
             RuntimeError,

@@ -16,6 +16,7 @@ from app.modules.job.application.create_agent_job_service import (
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.exceptions import (
     NonRetryableExecutionError,
+    NotFound,
     RetryableExecutionError,
 )
 from backend.tests.helpers import container
@@ -74,7 +75,7 @@ def _completed_job(runtime: object, key: str) -> object:
 
 def _operations(runtime: object) -> DeliveryOperationsService:
     return DeliveryOperationsService(
-        repository=runtime.agent_repository,
+        repository=runtime.delivery_repository,
         audit_service=runtime.audit_service,
     )
 
@@ -83,7 +84,7 @@ def _make_dead(runtime: object, key: str) -> tuple[object, object, _Controllable
     adapter = _ControllableAdapter(failing=True)
     runtime.result_delivery_service.adapters["test_replay"] = adapter
     job = _completed_job(runtime, key)
-    event = runtime.agent_repository.get_delivery_event_for_job(job.id)
+    event = runtime.delivery_repository.get_delivery_event_for_job(job.id)
     assert event is not None
     runtime.database.execute(
         """
@@ -94,7 +95,7 @@ def _make_dead(runtime: object, key: str) -> tuple[object, object, _Controllable
         (event.id,),
     )
     assert runtime.delivery_dispatcher.dispatch_pending(limit=1).dead == 1
-    return job, runtime.agent_repository.get_delivery_event(event.id), adapter
+    return job, runtime.delivery_repository.get_delivery_event(event.id), adapter
 
 
 def test_delivery_status_and_metrics_are_read_only_and_safe() -> None:
@@ -163,7 +164,7 @@ def test_dead_replay_reuses_frozen_intent_and_does_not_rerun_agent() -> None:
 
         adapter.failing = False
         assert runtime.delivery_dispatcher.dispatch_pending(limit=1).succeeded == 1
-        completed = runtime.agent_repository.get_delivery_event(event.id)
+        completed = runtime.delivery_repository.get_delivery_event(event.id)
         assert completed.status.value == "SUCCEEDED"
         assert runtime.agent_repository.get_job(job.id).status == JobStatus.SUCCEEDED
         assert (
@@ -177,7 +178,7 @@ def test_dead_replay_reuses_frozen_intent_and_does_not_rerun_agent() -> None:
             == before_steps
         )
         assert len(adapter.sent) == 1
-        attempts = runtime.agent_repository.list_delivery_attempts(job.id)
+        attempts = runtime.delivery_repository.list_delivery_attempts(job.id)
         assert [(item["replay_no"], item["attempt_no"]) for item in attempts] == [(0, 1), (1, 1)]
 
         runtime.database.execute(
@@ -201,6 +202,64 @@ def test_dead_replay_reuses_frozen_intent_and_does_not_rerun_agent() -> None:
         runtime.database.close()
 
 
+def test_delivery_reads_and_writes_reject_unknown_job_or_foreign_artifact() -> None:
+    runtime = container()
+    try:
+        job, event, _adapter = _make_dead(runtime, "delivery-operation-lookups")
+        repository = runtime.delivery_repository
+        for read in (
+            repository.list_delivery_events,
+            repository.list_delivery_attempts,
+            repository.list_delivery_chunks,
+        ):
+            with pytest.raises(NotFound) as missing_job:
+                read("job-missing")
+            assert str(missing_job.value) == "Agent job not found: job-missing"
+
+        intent = {
+            "application_publication_id": "",
+            "delivery_binding": {},
+            "target_summary": {},
+            "correlation_id": "correlation-lookups",
+            "max_attempts": 1,
+            "max_replay_count": 0,
+        }
+        with pytest.raises(NotFound) as missing_artifact:
+            repository.create_delivery_event(
+                job_id=job.id, result_artifact_id="artifact-missing", **intent
+            )
+        assert str(missing_artifact.value) == "Agent artifact not found: artifact-missing"
+        with pytest.raises(NonRetryableExecutionError) as foreign_artifact:
+            repository.create_delivery_event(
+                job_id="job-other", result_artifact_id=event.result_artifact_id, **intent
+            )
+        assert foreign_artifact.value.error_code == "delivery_artifact_job_mismatch"
+    finally:
+        runtime.database.close()
+
+
+def test_dead_replay_reports_the_job_status_when_job_is_not_terminal() -> None:
+    runtime = container()
+    try:
+        job, event, _adapter = _make_dead(runtime, "delivery-operation-not-terminal")
+        runtime.database.execute(
+            "update agent_job set status = 'RUNNING' where id = ?",
+            (job.id,),
+        )
+
+        with pytest.raises(NonRetryableExecutionError) as raised:
+            _operations(runtime).replay(
+                delivery_id=event.id,
+                actor_id="operator-1",
+                reason="job is running again",
+            )
+
+        assert raised.value.error_code == "delivery_replay_job_not_terminal"
+        assert str(raised.value) == "Job is not terminal in status RUNNING"
+    finally:
+        runtime.database.close()
+
+
 def test_replay_override_is_rejected_audited_and_not_persisted() -> None:
     runtime = container()
     try:
@@ -219,7 +278,7 @@ def test_replay_override_is_rejected_audited_and_not_persisted() -> None:
                 payload="override-payload-secret",
             )
 
-        unchanged = runtime.agent_repository.get_delivery_event(event.id)
+        unchanged = runtime.delivery_repository.get_delivery_event(event.id)
         assert unchanged.status.value == "DEAD"
         assert unchanged.replay_count == 0
         audit = json.dumps(runtime.audit_repository.list_for_job(job.id))

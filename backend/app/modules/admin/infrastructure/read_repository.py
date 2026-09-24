@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from app.modules.admin.application.scope import AdminScope
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import (
     AgentRepository,
     source_connector_projection,
@@ -558,10 +559,10 @@ class AdminReadRepository:
 
         execution_audit = ExecutionAuditRepository(self.database)
         model_calls = execution_audit.list_model_calls(job_id, limit=50)
-        agent_repository = AgentRepository(self.database)
-        delivery_events = agent_repository.list_delivery_events(job_id)
-        delivery_attempts = agent_repository.list_delivery_attempts(job_id)
-        delivery_chunks = agent_repository.list_delivery_chunks(job_id)
+        delivery_repository = DeliveryRepository(self.database)
+        delivery_events = delivery_repository.list_delivery_events(job_id)
+        delivery_attempts = delivery_repository.list_delivery_attempts(job_id)
+        delivery_chunks = delivery_repository.list_delivery_chunks(job_id)
         webhooks = self.database.execute(
             """
             select id, external_event_id, correlation_id, status, error_code,

@@ -220,7 +220,7 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
 
         enqueue_job_result_for_delivery(c, job.id)
         dispatch_pending_deliveries(c)
-        chunks = c.agent_repository.list_delivery_chunks(job.id)
+        chunks = c.delivery_repository.list_delivery_chunks(job.id)
 
         self.assertGreater(len(chunks), 1)
         self.assertTrue(all(chunk["status"] == "SUCCEEDED" for chunk in chunks))
@@ -241,7 +241,7 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         status_service.succeed(none_job.id, "done")
         enqueue_job_result_for_delivery(c, none_job.id)
         dispatch_pending_deliveries(c)
-        attempts = c.agent_repository.list_delivery_attempts(none_job.id)
+        attempts = c.delivery_repository.list_delivery_attempts(none_job.id)
         self.assertEqual("SKIPPED", attempts[0]["status"])
 
     def test_delivery_failure_does_not_fail_succeeded_agent_job(self) -> None:
@@ -271,7 +271,7 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         c.delivery_dispatcher.dispatch_pending(limit=1)
 
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
-        attempts = c.agent_repository.list_delivery_attempts(job.id)
+        attempts = c.delivery_repository.list_delivery_attempts(job.id)
         self.assertEqual("FAILED", attempts[0]["status"])
         self.assertEqual("投递安全失败", attempts[0]["error_message"])
 

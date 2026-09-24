@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.modules.job.domain.job_dispatch import JobDispatchEvent, JobDispatchStatus
-from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.job_status_lookup import require_job_status
 from app.modules.job.infrastructure.persistence_values import new_id, now_iso
 from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
@@ -425,18 +425,12 @@ class JobDispatchRepository:
                 safe_message="任务调度事件已达到允许的重放次数上限",
                 error_code="job_dispatch_replay_limit_exhausted",
             )
-        job_status = self._job_status(current.job_id)
+        job_status = require_job_status(self.database, current.job_id)
         raise NonRetryableExecutionError(
             f"Job is not dispatchable in status {job_status.value}",
             safe_message="任务当前状态不允许重新调度",
             error_code="job_dispatch_replay_job_not_pending",
         )
-
-    def _job_status(self, job_id: str) -> JobStatus:
-        row = self.database.execute_one("select status from agent_job where id = ?", (job_id,))
-        if not row:
-            raise NotFound(f"Agent job not found: {job_id}")
-        return JobStatus(str(row["status"]))
 
     def dispatch_metrics(self) -> dict[str, Any]:
         counts = {status.value: 0 for status in JobDispatchStatus}

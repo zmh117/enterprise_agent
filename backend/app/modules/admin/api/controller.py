@@ -381,7 +381,7 @@ def build_admin_router() -> APIRouter:  # noqa: C901, PLR0915
             resource_code="*",
             action="read",
         )
-        return {"delivery": container(request).agent_repository.delivery_metrics()}
+        return {"delivery": container(request).delivery_repository.delivery_metrics()}
 
     @router.get("/jobs/{job_id}")
     def job_detail(request: Request, job_id: str) -> dict[str, Any]:

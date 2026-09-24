@@ -368,7 +368,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual(1, len(adapter.calls))
         self.assertEqual("dingtalk_stream_session_webhook", adapter.calls[0]["route_type"])
         self.assertEqual("", adapter.calls[0]["connector_id"])
-        attempts = c.agent_repository.list_delivery_attempts(result.job_id)
+        attempts = c.delivery_repository.list_delivery_attempts(result.job_id)
         self.assertEqual("SUCCEEDED", attempts[0]["status"])
 
     def test_revoked_application_access_returns_safe_prompt_to_stream_user(self) -> None:
@@ -412,7 +412,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
             adapter.calls[0]["route_type"],
         )
         self.assertIn("当前用户未获得该业务应用权限", adapter.calls[0]["text"])
-        attempts = c.agent_repository.list_delivery_attempts(result.job_id)
+        attempts = c.delivery_repository.list_delivery_attempts(result.job_id)
         self.assertEqual(1, len(attempts))
         self.assertEqual("SUCCEEDED", attempts[0]["status"])
         event_types = {row["event_type"] for row in c.audit_repository.list_for_job(result.job_id)}
@@ -444,7 +444,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         )
         c.delivery_dispatcher.dispatch_pending(limit=1)
 
-        attempts = c.agent_repository.list_delivery_attempts(result.job_id)
+        attempts = c.delivery_repository.list_delivery_attempts(result.job_id)
         self.assertEqual(1, len(attempts))
         self.assertEqual("FAILED", attempts[0]["status"])
         self.assertEqual("dingtalk_stream_session_webhook", attempts[0]["route_type"])

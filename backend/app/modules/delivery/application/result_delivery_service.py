@@ -10,9 +10,10 @@ from app.modules.channel.domain.channel_event import ReplyRoute, safe_payload_su
 from app.modules.channel.infrastructure.connector_registry import Connector, ConnectorRegistry
 from app.modules.delivery.application.report_chunker import ReportChunker
 from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
+from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import DeliverySettings
-from app.shared.database import operation_unit_of_work
+from app.shared.database import operation_unit_of_work, require_shared_database
 
 
 class ResultDeliveryService:
@@ -20,6 +21,7 @@ class ResultDeliveryService:
         self,
         *,
         repository: AgentRepository,
+        delivery_repository: DeliveryRepository,
         audit_service: AuditService,
         connector_registry: ConnectorRegistry,
         adapters: dict[str, DeliveryAdapter],
@@ -27,7 +29,9 @@ class ResultDeliveryService:
         settings: DeliverySettings,
         business_authorization_service: BusinessAuthorizationService | None = None,
     ) -> None:
+        require_shared_database(repository, delivery_repository)
         self.repository = repository
+        self.delivery_repository = delivery_repository
         self.audit_service = audit_service
         self.connector_registry = connector_registry
         self.adapters = adapters
@@ -75,7 +79,7 @@ class ResultDeliveryService:
             sort_keys=True,
             separators=(",", ":"),
         )
-        event = self.repository.create_system_notice_event(
+        event = self.delivery_repository.create_system_notice_event(
             idempotency_key=idempotency_key,
             session_id=session_id,
             application_publication_id=application_publication_id,
@@ -233,7 +237,7 @@ class ResultDeliveryService:
             sort_keys=True,
             separators=(",", ":"),
         )
-        event = self.repository.create_delivery_event(
+        event = self.delivery_repository.create_delivery_event(
             job_id=job.id,
             result_artifact_id=artifact_id,
             application_publication_id=(
