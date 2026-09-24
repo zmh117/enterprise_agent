@@ -243,7 +243,6 @@ class CreateAgentJobService:
     def stage_attachments(self, command: CreateAgentJobCommand) -> StagedAttachmentIntake:
         """Persist a file-only channel event without manufacturing an Agent Job."""
 
-        self._assert_application_runtime_available(command)
         if command.user_message.strip() or not command.attachments:
             raise NonRetryableExecutionError(
                 "Attachment staging requires a file-only message",
@@ -467,7 +466,6 @@ class CreateAgentJobService:
                 reason_code=str(binding.get("reason_code") or "file_readable_content_not_ready"),
                 task_workspace_id=str(binding.get("task_workspace_id") or ""),
             )
-        self._assert_application_runtime_available(command)
         if command.conversation_mode in {"application", "actor"}:
             raise NonRetryableExecutionError(
                 "Legacy shared session mode cannot create new Jobs",
@@ -1208,12 +1206,6 @@ class CreateAgentJobService:
             reason_code=gate.reason_code,
             task_workspace_id=workspace_id,
         )
-
-    def _assert_application_runtime_available(
-        self,
-        command: CreateAgentJobCommand,
-    ) -> None:
-        del command
 
     def _validate_attachments(
         self,
