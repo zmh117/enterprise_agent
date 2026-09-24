@@ -33,6 +33,7 @@ from app.shared.mcp_server_policy import (
     MAX_BUSINESS_PRINCIPAL_SERVERS,
     MAX_MCP_PRINCIPAL_TOKEN_BYTES,
     MCP_SERVER_POLICIES,
+    KNOWLEDGE_MCP_SERVER_CODE,
     ONES_MCP_SERVER_CODE,
     TOOL_MCP_SERVER_CODE,
     McpServerAuthMode,
@@ -401,6 +402,7 @@ class RuntimeClientSettings:
         STANDARD_TOOL_MCP_CODE,
         ONES_MCP_SERVER_CODE,
         DINGTALK_MCP_SERVER_CODE,
+        KNOWLEDGE_MCP_SERVER_CODE,
         FILE_MCP_CODE,
     )
     allow_insecure_internal_http: bool = False

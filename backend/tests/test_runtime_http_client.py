@@ -32,6 +32,7 @@ from app.modules.job.infrastructure.execution_audit_repository import (
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.mcp_server_policy import (
     DINGTALK_MCP_SERVER_CODE,
+    KNOWLEDGE_MCP_SERVER_CODE,
     ONES_MCP_SERVER_CODE,
 )
 from app.modules.model_connection.domain import (
@@ -543,13 +544,14 @@ def _client(
     )
 
 
-def test_runtime_client_default_allowlist_includes_governed_dingtalk_mcp() -> None:
+def test_runtime_client_default_allowlist_includes_governed_business_mcp() -> None:
     settings = RuntimeClientSettings(
         base_url="http://agent-runtime:8090",
         allowed_runtime_hosts=("agent-runtime",),
     )
 
     assert DINGTALK_MCP_SERVER_CODE in settings.allowed_mcp_server_codes
+    assert KNOWLEDGE_MCP_SERVER_CODE in settings.allowed_mcp_server_codes
 
 
 def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
@@ -830,6 +832,43 @@ def test_worker_projects_principal_only_to_runtime_header_for_ones_mcp() -> None
     assert transport.request["mcp_servers"][0]["server_code"] == "ones-mcp"
     persisted = json.dumps([transport.request, captured_events])
     assert "test-only-principal-token" not in persisted
+
+
+def test_worker_accepts_frozen_knowledge_tools_and_routes_principal() -> None:
+    token = "test-only-knowledge-principal-token"
+    issuer = _PrincipalTokenIssuer(business_tokens={KNOWLEDGE_MCP_SERVER_CODE: token})
+    transport = GoldenTransport()
+    client, _ = _client(transport, principal_token_issuer=issuer)
+    tool_names = ("knowledge_list_bases", "knowledge_search")
+    request = replace(
+        _request(),
+        context=replace(
+            _request().context,
+            allowed_tools=list(tool_names),
+            mcp_bindings=tuple(
+                McpRuntimeBinding(
+                    server_code=KNOWLEDGE_MCP_SERVER_CODE,
+                    tool_name=tool_name,
+                    required_scope=f"mcp:knowledge-mcp:{tool_name}:invoke",
+                    tool_schema_hash=MCP_TOOL_MANIFEST[tool_name].schema_hash,
+                )
+                for tool_name in tool_names
+            ),
+        ),
+    )
+
+    result = client.run(request)
+
+    assert result.final_answer == "final answer"
+    assert issuer.business_calls == [("job-1", KNOWLEDGE_MCP_SERVER_CODE)]
+    assert [server["server_code"] for server in transport.request["mcp_servers"]] == [
+        KNOWLEDGE_MCP_SERVER_CODE
+    ]
+    assert [tool["tool_name"] for tool in transport.request["mcp_servers"][0]["tools"]] == list(
+        tool_names
+    )
+    assert transport.headers["X-MCP-Principal-Token-Knowledge-Mcp"] == token
+    assert token not in json.dumps(transport.request)
 
 
 def test_worker_fails_closed_when_ones_mcp_has_no_principal_issuer() -> None:
