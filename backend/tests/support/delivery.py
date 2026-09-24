@@ -52,7 +52,7 @@ def persisted_agent_job_message(
     runtime: Container,
     job_id: str,
 ) -> AgentJobMessage:
-    event = runtime.agent_repository.get_dispatch_event_for_job(job_id)
+    event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job_id)
     assert event is not None
     return AgentJobMessage(
         event_id=event.id,

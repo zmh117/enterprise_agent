@@ -9,9 +9,10 @@ from typing import Any
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.domain.job_dispatch import JobDispatchStatus
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import QueueSettings
-from app.shared.database import operation_unit_of_work
+from app.shared.database import operation_unit_of_work, require_shared_database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
 
@@ -45,10 +46,13 @@ class JobDispatchCutoverService:
         self,
         *,
         repository: AgentRepository,
+        dispatch_repository: JobDispatchRepository,
         audit_service: AuditService,
         queue_settings: QueueSettings,
     ) -> None:
+        require_shared_database(repository, dispatch_repository)
         self.repository = repository
+        self.dispatch_repository = dispatch_repository
         self.audit_service = audit_service
         self.queue_settings = queue_settings
         self.allowed_source_queues = {
@@ -163,7 +167,7 @@ class JobDispatchCutoverService:
                 actor_id=actor_id,
                 job_id=job.id,
             )
-        existing = self.repository.get_dispatch_event_for_job(job.id)
+        existing = self.dispatch_repository.get_dispatch_event_for_job(job.id)
         if existing is not None and existing.status == JobDispatchStatus.DEAD:
             return self._quarantine(
                 source_queue=source_queue,
@@ -182,7 +186,7 @@ class JobDispatchCutoverService:
                 job_id=job.id,
                 event_id=existing.id if existing else "",
             )
-        event = existing or self.repository.create_dispatch_event(
+        event = existing or self.dispatch_repository.create_dispatch_event(
             job_id=job.id,
             job_idempotency_key=job.idempotency_key,
             correlation_id=_cutover_correlation(job.id),
@@ -199,7 +203,7 @@ class JobDispatchCutoverService:
             if job.status == JobStatus.RETRY_WAIT and job.next_retry_at
             else datetime.now(UTC).isoformat()
         )
-        event = self.repository.rearm_dispatch_for_cutover(
+        event = self.dispatch_repository.rearm_dispatch_for_cutover(
             job_id=job.id,
             target_status=target,
             next_attempt_at=next_attempt_at,
@@ -238,7 +242,7 @@ class JobDispatchCutoverService:
         actor_id: str,
     ) -> CutoverMessageResult:
         try:
-            event = self.repository.get_dispatch_event(event_id)
+            event = self.dispatch_repository.get_dispatch_event(event_id)
         except NotFound:
             return self._quarantine(
                 source_queue=source_queue,
@@ -287,7 +291,7 @@ class JobDispatchCutoverService:
                     job_id=job.id,
                     event_id=event.id,
                 )
-            rearmed = self.repository.rearm_dispatch_for_cutover(
+            rearmed = self.dispatch_repository.rearm_dispatch_for_cutover(
                 job_id=job.id,
                 target_status=JobDispatchStatus.RETRY_WAIT,
                 next_attempt_at=job.next_retry_at or datetime.now(UTC).isoformat(),
@@ -320,7 +324,7 @@ class JobDispatchCutoverService:
         job_id: str = "",
     ) -> CutoverMessageResult:
         if apply:
-            self.repository.record_dispatch_cutover_quarantine(
+            self.dispatch_repository.record_dispatch_cutover_quarantine(
                 source_queue=source_queue,
                 message_digest=digest,
                 reason_code=reason_code,

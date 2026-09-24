@@ -34,6 +34,7 @@ def _create_job(runtime: Container, key: str):
 def _service(runtime: Container) -> JobDispatchCutoverService:
     return JobDispatchCutoverService(
         repository=runtime.agent_repository,
+        dispatch_repository=runtime.job_dispatch_repository,
         audit_service=runtime.audit_service,
         queue_settings=runtime.settings.queue,
     )
@@ -59,7 +60,7 @@ def test_cutover_dry_run_then_backfills_one_legacy_message_idempotently() -> Non
 
         assert preview.classification == "legacy_convertible"
         assert preview.disposition == "would_ack_after_outbox"
-        assert runtime.agent_repository.get_dispatch_event_for_job(job.id) is None
+        assert runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id) is None
 
         applied = service.process_message(
             source_queue=runtime.settings.queue.job_queue,
@@ -73,7 +74,7 @@ def test_cutover_dry_run_then_backfills_one_legacy_message_idempotently() -> Non
             apply=True,
             actor_id="cutover-test",
         )
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
 
         assert applied.classification == "legacy_converted"
         assert applied.disposition == "ack"
@@ -120,7 +121,7 @@ def test_current_main_message_is_left_for_worker_but_old_retry_is_rearmed() -> N
     runtime = container()
     try:
         job = _create_job(runtime, "current-cutover")
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert event is not None
         body = json.dumps(
             {
@@ -159,7 +160,7 @@ def test_current_main_message_is_left_for_worker_but_old_retry_is_rearmed() -> N
             apply=True,
             actor_id="cutover-test",
         )
-        rearmed = runtime.agent_repository.get_dispatch_event(event.id)
+        rearmed = runtime.job_dispatch_repository.get_dispatch_event(event.id)
 
         assert retry.classification == "current_retry_converted"
         assert retry.disposition == "ack"

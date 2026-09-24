@@ -25,6 +25,7 @@ def main() -> None:
     try:
         report = RetryRecoveryService(
             repository=container.agent_repository,
+            dispatch_repository=container.job_dispatch_repository,
             audit_service=container.audit_service,
             queue_settings=container.settings.queue,
             mcp_tool_snapshot_service=(container.mcp_tool_snapshot_service),

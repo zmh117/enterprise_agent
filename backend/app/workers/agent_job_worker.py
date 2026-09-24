@@ -42,7 +42,9 @@ class AgentJobWorker:
 
     def handle(self, message: AgentJobMessage) -> None:
         try:
-            dispatch_event = self.container.agent_repository.get_dispatch_event(message.event_id)
+            dispatch_event = self.container.job_dispatch_repository.get_dispatch_event(
+                message.event_id
+            )
         except NotFound:
             self.container.audit_service.record(
                 "job.dispatch.message_rejected",

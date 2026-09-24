@@ -40,11 +40,13 @@ from app.modules.mcp_tool_runtime.job_snapshot import (
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import AttachmentSettings, ExecutionSettings, QueueSettings
+from app.shared.database import require_shared_database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound, PermissionDenied
 from app.shared.logging import new_correlation_id
 
@@ -181,6 +183,7 @@ class CreateAgentJobService:
         self,
         *,
         repository: AgentRepository,
+        dispatch_repository: JobDispatchRepository,
         permission_service: PermissionService,
         audit_service: AuditService,
         publisher: MessagePublisher,
@@ -200,7 +203,9 @@ class CreateAgentJobService:
         file_manifest_service: JobFileManifestService | None = None,
         delivery_service: Any = None,
     ) -> None:
+        require_shared_database(repository, dispatch_repository)
         self.repository = repository
+        self.dispatch_repository = dispatch_repository
         self.permission_service = permission_service
         self.audit_service = audit_service
         self.publisher = publisher
@@ -970,7 +975,7 @@ class CreateAgentJobService:
                     job_id=job.id,
                     target=JobStatus.PENDING,
                 )
-            dispatch_event = self.repository.create_dispatch_event(
+            dispatch_event = self.dispatch_repository.create_dispatch_event(
                 job_id=job.id,
                 job_idempotency_key=job.idempotency_key,
                 correlation_id=correlation_id,

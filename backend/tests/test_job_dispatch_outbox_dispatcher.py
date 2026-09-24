@@ -39,7 +39,7 @@ def test_dispatcher_publishes_only_before_recording_confirmed_state() -> None:
 
         result = runtime.job_dispatcher.publish_pending(limit=10)
 
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert event is not None
         assert result.published == 1
         assert result.failed == 0
@@ -160,14 +160,14 @@ def test_dispatcher_uses_finite_backoff_and_safe_dead_state() -> None:
     runtime = container()
     try:
         job = _create_job(runtime, "dispatch-dead")
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert event is not None
         runtime.database.execute(
             "update job_dispatch_outbox set max_attempts = 2 where id = ?",
             (event.id,),
         )
         dispatcher = JobDispatchOutboxDispatcher(
-            repository=runtime.agent_repository,
+            repository=runtime.job_dispatch_repository,
             publisher=_SecretLeakingFailurePublisher(),
             audit_service=runtime.audit_service,
             settings=runtime.settings.queue,
@@ -175,7 +175,7 @@ def test_dispatcher_uses_finite_backoff_and_safe_dead_state() -> None:
         )
 
         first = dispatcher.publish_pending(limit=1)
-        retrying = runtime.agent_repository.get_dispatch_event(event.id)
+        retrying = runtime.job_dispatch_repository.get_dispatch_event(event.id)
         assert first.failed == 1
         assert first.dead == 0
         assert retrying.status == JobDispatchStatus.RETRY_WAIT
@@ -188,7 +188,7 @@ def test_dispatcher_uses_finite_backoff_and_safe_dead_state() -> None:
             ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), event.id),
         )
         second = dispatcher.publish_pending(limit=1)
-        dead = runtime.agent_repository.get_dispatch_event(event.id)
+        dead = runtime.job_dispatch_repository.get_dispatch_event(event.id)
 
         assert second.failed == 1
         assert second.dead == 1
@@ -213,18 +213,18 @@ def test_dispatch_claim_has_single_owner_and_recovers_stale_owner() -> None:
     runtime = container()
     try:
         job = _create_job(runtime, "dispatch-owner")
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert event is not None
 
-        claimed = runtime.agent_repository.claim_dispatch_event(worker_id="worker-a")
-        duplicate = runtime.agent_repository.claim_dispatch_event(worker_id="worker-b")
+        claimed = runtime.job_dispatch_repository.claim_dispatch_event(worker_id="worker-a")
+        duplicate = runtime.job_dispatch_repository.claim_dispatch_event(worker_id="worker-b")
 
         assert claimed is not None
         assert claimed.id == event.id
         assert claimed.status == JobDispatchStatus.RUNNING
         assert claimed.attempt_count == 1
         assert duplicate is None
-        assert not runtime.agent_repository.mark_dispatch_published(
+        assert not runtime.job_dispatch_repository.mark_dispatch_published(
             event_id=event.id,
             worker_id="worker-b",
         )
@@ -234,10 +234,10 @@ def test_dispatch_claim_has_single_owner_and_recovers_stale_owner() -> None:
             "update job_dispatch_outbox set claimed_at = ? where id = ?",
             (stale_at, event.id),
         )
-        recovered, dead = runtime.agent_repository.recover_stale_dispatch_claims(
+        recovered, dead = runtime.job_dispatch_repository.recover_stale_dispatch_claims(
             stale_before=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
         )
-        state = runtime.agent_repository.get_dispatch_event(event.id)
+        state = runtime.job_dispatch_repository.get_dispatch_event(event.id)
 
         assert (recovered, dead) == (1, 0)
         assert state.status == JobDispatchStatus.RETRY_WAIT

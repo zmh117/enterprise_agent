@@ -6,7 +6,7 @@ import time
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.domain.job_dispatch import JobDispatchStatus
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
@@ -27,7 +27,7 @@ class JobDispatchOutboxDispatcher:
     def __init__(
         self,
         *,
-        repository: AgentRepository,
+        repository: JobDispatchRepository,
         publisher: MessagePublisher,
         audit_service: AuditService,
         settings: QueueSettings,

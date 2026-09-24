@@ -732,5 +732,16 @@ def operation_unit_of_work(
     return decorate
 
 
+class DatabaseOwner(Protocol):
+    @property
+    def database(self) -> Database: ...
+
+
+def require_shared_database(*owners: DatabaseOwner) -> None:
+    """Writes through several repositories join one UoW only when they share one Database."""
+    if len({id(owner.database) for owner in owners}) > 1:
+        raise ValueError("Repositories written in one unit of work must share one Database")
+
+
 def default_migrations_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "migrations"

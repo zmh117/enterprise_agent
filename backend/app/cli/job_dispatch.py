@@ -12,7 +12,8 @@ from app.modules.job.application.job_dispatch_operations import (
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
-from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
+from app.modules.job.infrastructure.repositories import AuditRepository
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import AppError
@@ -47,7 +48,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         SchemaHeadValidator(database, default_migrations_dir()).require_current()
         service = JobDispatchOperationsService(
-            repository=AgentRepository(database),
+            repository=JobDispatchRepository(database),
             audit_service=AuditService(AuditRepository(database)),
             mcp_tool_snapshot_service=(JobMcpToolSnapshotService(database)),
         )

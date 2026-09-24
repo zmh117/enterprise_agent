@@ -22,10 +22,11 @@ from app.modules.job.application.file_context import (
 )
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.shared.config import AttachmentSettings
-from app.shared.database import operation_unit_of_work
+from app.shared.database import operation_unit_of_work, require_shared_database
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
 
@@ -37,6 +38,7 @@ class AttachmentProcessingService:
         self,
         *,
         repository: AgentRepository,
+        dispatch_repository: JobDispatchRepository,
         publisher: MessagePublisher,
         audit_service: AuditService,
         credential_cipher: AttachmentCredentialCipher,
@@ -46,7 +48,9 @@ class AttachmentProcessingService:
         delivery_service: ResultDeliveryService | None = None,
         file_manifest_service: JobFileManifestService | None = None,
     ) -> None:
+        require_shared_database(repository, dispatch_repository)
         self.repository = repository
+        self.dispatch_repository = dispatch_repository
         self.publisher = publisher
         self.audit_service = audit_service
         self.credential_cipher = credential_cipher
@@ -334,7 +338,7 @@ class AttachmentProcessingService:
             target=JobStatus.FAILED,
             error_message=title,
         )
-        self.repository.abandon_pending_dispatch(job.id, reason_code=gate.reason_code)
+        self.dispatch_repository.abandon_pending_dispatch(job.id, reason_code=gate.reason_code)
         if self.delivery_service is not None:
             self.delivery_service.enqueue_system_notice(
                 idempotency_key=f"file-release-notice:{job.id}",

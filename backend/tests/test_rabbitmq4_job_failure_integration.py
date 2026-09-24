@@ -132,7 +132,9 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         )
         worker.handle(retry_message)
         retry_job = self.container.agent_repository.get_job(retry_message.job_id)
-        retry_event = self.container.agent_repository.get_dispatch_event(retry_message.event_id)
+        retry_event = self.container.job_dispatch_repository.get_dispatch_event(
+            retry_message.event_id
+        )
         retry_audit = self.container.database.execute(
             "select event_type, status from audit_event where job_id = ? order by created_at",
             (retry_message.job_id,),

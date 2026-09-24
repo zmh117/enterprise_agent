@@ -114,13 +114,13 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         c = container()
         job = self._create_job(c, "publish-failure")
         claimed = c.agent_repository.claim_job(job.id, "worker")
-        original = c.agent_repository.rearm_dispatch_for_retry
+        original = c.job_dispatch_repository.rearm_dispatch_for_retry
 
         def fail_rearm(**kwargs: object) -> object:
             original(**kwargs)  # type: ignore[arg-type]
             raise RuntimeError("synthetic outbox write failure")
 
-        c.agent_repository.rearm_dispatch_for_retry = fail_rearm  # type: ignore[method-assign]
+        c.job_dispatch_repository.rearm_dispatch_for_retry = fail_rearm  # type: ignore[method-assign]
 
         with self.assertRaisesRegex(RuntimeError, "outbox write failure"):
             c.retry_service.handle_failure(
@@ -133,7 +133,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
                 "corr-publish-failure",
             )
         persisted = c.agent_repository.get_job(job.id)
-        dispatch = c.agent_repository.get_dispatch_event_for_job(job.id)
+        dispatch = c.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         self.assertEqual(JobStatus.RUNNING, persisted.status)
         self.assertEqual(0, persisted.retry_count)
         self.assertIsNotNone(dispatch)
@@ -148,10 +148,10 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
             RetryableExecutionError("temporary", error_code="temporary"),
             "corr-early",
         )
-        before = c.agent_repository.get_dispatch_event_for_job(job.id)
+        before = c.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         worker = AgentJobWorker(c.settings, container=c)
         worker.handle(persisted_agent_job_message(c, job.id))
-        after = c.agent_repository.get_dispatch_event_for_job(job.id)
+        after = c.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         self.assertEqual(before, after)
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
 
@@ -193,6 +193,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         )
         service = RetryRecoveryService(
             repository=c.agent_repository,
+            dispatch_repository=c.job_dispatch_repository,
             audit_service=c.audit_service,
             queue_settings=c.settings.queue,
         )
@@ -226,18 +227,19 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         )
         service = RetryRecoveryService(
             repository=c.agent_repository,
+            dispatch_repository=c.job_dispatch_repository,
             audit_service=c.audit_service,
             queue_settings=c.settings.queue,
         )
         dry_run = service.reconcile(job_ids=[job.id])
         self.assertNotIn("secret.invalid", json.dumps(dry_run))
-        original = c.agent_repository.rearm_dispatch_for_retry
+        original = c.job_dispatch_repository.rearm_dispatch_for_retry
 
         def fail_rearm(**kwargs: object) -> object:
             original(**kwargs)  # type: ignore[arg-type]
             raise RuntimeError("synthetic recovery outbox failure")
 
-        c.agent_repository.rearm_dispatch_for_retry = fail_rearm  # type: ignore[method-assign]
+        c.job_dispatch_repository.rearm_dispatch_for_retry = fail_rearm  # type: ignore[method-assign]
         with self.assertRaisesRegex(RuntimeError, "recovery outbox failure"):
             service.reconcile(apply=True, job_ids=[job.id])
         self.assertEqual(JobStatus.PENDING, c.agent_repository.get_job(job.id).status)
@@ -266,6 +268,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         )
         service = RetryRecoveryService(
             repository=c.agent_repository,
+            dispatch_repository=c.job_dispatch_repository,
             audit_service=c.audit_service,
             queue_settings=c.settings.queue,
         )

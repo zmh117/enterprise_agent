@@ -22,6 +22,7 @@ from app.modules.delivery.application.delivery_dispatch_service import (
 from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDispatcher
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
 from app.modules.job.infrastructure.execution_audit_repository import (
     ExecutionAuditRepository,
@@ -1108,7 +1109,7 @@ def test_postgres_job_dispatchers_use_skip_locked_without_duplicate_claims(
             default_migrations_dir(),
             migrator_build="postgres-job-dispatch-test",
         ).run()
-        repository = AgentRepository(database)
+        repository = JobDispatchRepository(database)
         audit = AuditService(AuditRepository(database))
         timestamp = "2026-07-28T00:00:00+00:00"
         database.execute(

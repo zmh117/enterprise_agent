@@ -5,11 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
+from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.database import (
     Database,
     ExternalIOInUnitOfWorkError,
     assert_external_io_allowed,
     operation_unit_of_work,
+    require_shared_database,
 )
 
 
@@ -173,3 +176,15 @@ def test_pool_leases_distinct_connections_to_concurrent_operations(
         first.join(timeout=5)
         second.join(timeout=5)
         database.close()
+
+
+def test_repositories_in_one_unit_of_work_must_share_one_database() -> None:
+    first = Database("sqlite:///:memory:")
+    second = Database("sqlite:///:memory:")
+    try:
+        require_shared_database(AgentRepository(first), JobDispatchRepository(first))
+        with pytest.raises(ValueError, match="must share one Database"):
+            require_shared_database(AgentRepository(first), JobDispatchRepository(second))
+    finally:
+        first.close()
+        second.close()

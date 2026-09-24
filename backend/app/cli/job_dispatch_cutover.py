@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.application.job_dispatch_cutover import JobDispatchCutoverService
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
 from app.modules.message_bus.infrastructure.rabbitmq_cutover import (
     RabbitMQExactQueueScanner,
@@ -33,9 +34,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     database = Database(settings.database_dsn)
     try:
         SchemaHeadValidator(database, default_migrations_dir()).require_current()
-        repository = AgentRepository(database)
+        dispatch_repository = JobDispatchRepository(database)
         service = JobDispatchCutoverService(
-            repository=repository,
+            repository=AgentRepository(database),
+            dispatch_repository=dispatch_repository,
             audit_service=AuditService(AuditRepository(database)),
             queue_settings=settings.queue,
         )
@@ -88,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         after = scanner.inspect_exact(queue_names)
         deleted: list[str] = []
-        quarantine_count = repository.dispatch_cutover_quarantine_count()
+        quarantine_count = dispatch_repository.dispatch_cutover_quarantine_count()
         if args.delete_empty_old_queues:
             if not args.apply:
                 raise SystemExit("--delete-empty-old-queues requires --apply")

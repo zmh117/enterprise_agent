@@ -5,12 +5,13 @@ from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.domain.agent_job import AgentJob
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
 from app.shared.config import QueueSettings
-from app.shared.database import operation_unit_of_work
+from app.shared.database import operation_unit_of_work, require_shared_database
 
 
 class RetryRecoveryService:
@@ -18,11 +19,14 @@ class RetryRecoveryService:
         self,
         *,
         repository: AgentRepository,
+        dispatch_repository: JobDispatchRepository,
         audit_service: AuditService,
         queue_settings: QueueSettings,
         mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
     ) -> None:
+        require_shared_database(repository, dispatch_repository)
         self.repository = repository
+        self.dispatch_repository = dispatch_repository
         self.audit_service = audit_service
         self.queue_settings = queue_settings
         self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
@@ -97,16 +101,16 @@ class RetryRecoveryService:
             if updated is None:
                 return {"apply_status": "skipped_state_changed"}
             recovered = updated
-        dispatch_event = self.repository.get_dispatch_event_for_job(job.id)
+        dispatch_event = self.dispatch_repository.get_dispatch_event_for_job(job.id)
         if dispatch_event is None:
-            dispatch_event = self.repository.create_dispatch_event(
+            dispatch_event = self.dispatch_repository.create_dispatch_event(
                 job_id=job.id,
                 job_idempotency_key=job.idempotency_key,
                 correlation_id=f"retry-recovery:{job.id}",
                 max_attempts=self.queue_settings.dispatch_outbox_max_attempts,
                 max_replay_count=self.queue_settings.dispatch_outbox_max_replays,
             )
-        dispatch_event = self.repository.rearm_dispatch_for_retry(
+        dispatch_event = self.dispatch_repository.rearm_dispatch_for_retry(
             job_id=job.id,
             next_attempt_at=next_retry_at,
         )

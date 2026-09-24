@@ -44,7 +44,7 @@ class _UnavailablePublisher:
 
 def _operations(runtime: object) -> JobDispatchOperationsService:
     return JobDispatchOperationsService(
-        repository=runtime.agent_repository,  # type: ignore[attr-defined]
+        repository=runtime.job_dispatch_repository,  # type: ignore[attr-defined]
         audit_service=runtime.audit_service,  # type: ignore[attr-defined]
     )
 
@@ -53,7 +53,7 @@ def test_exact_status_and_aggregate_metrics_are_read_only_and_safe() -> None:
     runtime = container()
     try:
         job = _create_job(runtime, "dispatch-status")
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert event is not None
         operations = _operations(runtime)
 
@@ -85,7 +85,7 @@ def test_dead_replay_is_bounded_rearms_same_event_and_digests_reason() -> None:
     runtime = container()
     try:
         job = _create_job(runtime, "dispatch-bounded-replay")
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert event is not None
         runtime.database.execute(
             """
@@ -96,7 +96,7 @@ def test_dead_replay_is_bounded_rearms_same_event_and_digests_reason() -> None:
             (event.id,),
         )
         failing = JobDispatchOutboxDispatcher(
-            repository=runtime.agent_repository,
+            repository=runtime.job_dispatch_repository,
             publisher=_UnavailablePublisher(),
             audit_service=runtime.audit_service,
             settings=runtime.settings.queue,
@@ -133,11 +133,47 @@ def test_dead_replay_is_bounded_rearms_same_event_and_digests_reason() -> None:
         runtime.database.close()
 
 
+def test_dead_replay_reports_the_job_status_when_job_is_no_longer_pending() -> None:
+    runtime = container()
+    try:
+        job = _create_job(runtime, "dispatch-replay-job-not-pending")
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
+        assert event is not None
+        runtime.database.execute(
+            "update job_dispatch_outbox set max_attempts = 1 where id = ?",
+            (event.id,),
+        )
+        failing = JobDispatchOutboxDispatcher(
+            repository=runtime.job_dispatch_repository,
+            publisher=_UnavailablePublisher(),
+            audit_service=runtime.audit_service,
+            settings=runtime.settings.queue,
+            worker_id="replay-job-not-pending-test",
+        )
+        assert failing.publish_pending(limit=1).dead == 1
+        runtime.database.execute(
+            "update agent_job set status = 'FAILED' where id = ?",
+            (job.id,),
+        )
+
+        with pytest.raises(NonRetryableExecutionError) as raised:
+            _operations(runtime).replay(
+                event_id=event.id,
+                actor_id="operator-1",
+                reason="job already failed",
+            )
+
+        assert raised.value.error_code == "job_dispatch_replay_job_not_pending"
+        assert str(raised.value) == "Job is not dispatchable in status FAILED"
+    finally:
+        runtime.database.close()
+
+
 def test_replay_rejects_non_dead_event_and_cli_has_no_payload_override() -> None:
     runtime = container()
     try:
         job = _create_job(runtime, "dispatch-replay-state")
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert event is not None
         with pytest.raises(
             NonRetryableExecutionError,

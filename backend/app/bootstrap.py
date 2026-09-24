@@ -140,6 +140,7 @@ from app.modules.identity.application.principal_jwt import PrincipalJwks, Princi
 from app.modules.identity.application.service_principal import KnowledgeServicePrincipalVerifier
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import (
     AgentRepository,
     AuditRepository,
@@ -201,6 +202,7 @@ class Container:
     settings: Settings
     database: Database
     agent_repository: AgentRepository
+    job_dispatch_repository: JobDispatchRepository
     identity_repository: IdentityRepository
     identity_service: IdentityService
     ones_identity_binding_service: OnesIdentityBindingService
@@ -549,6 +551,7 @@ def _build_container(  # noqa: C901, PLR0915
         database.execute_script(local_seed_sql())
 
     agent_repository = AgentRepository(database)
+    job_dispatch_repository = JobDispatchRepository(database)
     audit_repository = AuditRepository(database)
     config_repository = ConfigurationRepository(database)
     identity_repository = IdentityRepository(database)
@@ -821,6 +824,7 @@ def _build_container(  # noqa: C901, PLR0915
         )
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
+        dispatch_repository=job_dispatch_repository,
         permission_service=permission_service,
         audit_service=audit_service,
         publisher=publisher,
@@ -842,7 +846,7 @@ def _build_container(  # noqa: C901, PLR0915
         file_manifest_service=file_manifest_service,
     )
     job_dispatcher = JobDispatchOutboxDispatcher(
-        repository=agent_repository,
+        repository=job_dispatch_repository,
         publisher=publisher,
         audit_service=audit_service,
         settings=settings.queue,
@@ -1153,6 +1157,7 @@ def _build_container(  # noqa: C901, PLR0915
 
         attachment_service = AttachmentProcessingService(
             repository=agent_repository,
+            dispatch_repository=job_dispatch_repository,
             publisher=publisher,
             audit_service=audit_service,
             credential_cipher=credential_cipher,
@@ -1192,6 +1197,7 @@ def _build_container(  # noqa: C901, PLR0915
     )
     retry_service = JobRetryService(
         repository=agent_repository,
+        dispatch_repository=job_dispatch_repository,
         queue_settings=settings.queue,
         audit_service=audit_service,
         delivery_service=result_delivery_service,
@@ -1201,6 +1207,7 @@ def _build_container(  # noqa: C901, PLR0915
         settings=settings,
         database=database,
         agent_repository=agent_repository,
+        job_dispatch_repository=job_dispatch_repository,
         identity_repository=identity_repository,
         identity_service=identity_service,
         ones_identity_binding_service=ones_identity_binding_service,

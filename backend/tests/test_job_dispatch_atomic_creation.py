@@ -30,7 +30,7 @@ def test_job_message_authorization_snapshot_and_dispatch_event_commit_together()
 
         detail = runtime.agent_repository.get_job_detail(job.id)
         messages = runtime.agent_repository.list_messages(job.session_id)
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         audit_types = {row["event_type"] for row in runtime.audit_repository.list_for_job(job.id)}
 
         assert detail["id"] == job.id
@@ -56,7 +56,7 @@ def test_dispatch_event_failure_rolls_back_job_message_and_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = container()
-    original = runtime.agent_repository.create_dispatch_event
+    original = runtime.job_dispatch_repository.create_dispatch_event
     before_messages = runtime.agent_repository.count_rows("agent_message")
     before_outbox = runtime.agent_repository.count_rows("job_dispatch_outbox")
 
@@ -65,7 +65,7 @@ def test_dispatch_event_failure_rolls_back_job_message_and_event(
         raise RuntimeError("fail after dispatch insert")
 
     monkeypatch.setattr(
-        runtime.agent_repository,
+        runtime.job_dispatch_repository,
         "create_dispatch_event",
         fail_after_insert,
     )

@@ -36,7 +36,7 @@ def test_database_commit_failure_rolls_back_job_message_and_outbox(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = container()
-    original = runtime.agent_repository.create_dispatch_event
+    original = runtime.job_dispatch_repository.create_dispatch_event
 
     def defer_invalid_foreign_key(**kwargs: object) -> object:
         event = original(**kwargs)  # type: ignore[arg-type]
@@ -59,7 +59,7 @@ def test_database_commit_failure_rolls_back_job_message_and_outbox(
         return event
 
     monkeypatch.setattr(
-        runtime.agent_repository,
+        runtime.job_dispatch_repository,
         "create_dispatch_event",
         defer_invalid_foreign_key,
     )
@@ -92,7 +92,7 @@ def test_broker_interruption_before_confirm_remains_finitely_retryable() -> None
     try:
         job = _create_job(runtime, "confirm-interrupted")
         dispatcher = JobDispatchOutboxDispatcher(
-            repository=runtime.agent_repository,
+            repository=runtime.job_dispatch_repository,
             publisher=_BrokerInterruptedBeforeConfirm(),
             audit_service=runtime.audit_service,
             settings=runtime.settings.queue,
@@ -100,7 +100,7 @@ def test_broker_interruption_before_confirm_remains_finitely_retryable() -> None
         )
 
         result = dispatcher.publish_pending(limit=1)
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
 
         assert event is not None
         assert result.failed == 1
@@ -131,28 +131,28 @@ def test_confirm_then_crash_before_outbox_commit_republishes_but_executes_once(
     runtime = container()
     try:
         job = _create_job(runtime, "confirm-before-state")
-        original_mark = runtime.agent_repository.mark_dispatch_published
+        original_mark = runtime.job_dispatch_repository.mark_dispatch_published
 
         def crash_before_state_commit(**kwargs: object) -> bool:
             del kwargs
             raise RuntimeError("dispatcher crashed before published state commit")
 
         monkeypatch.setattr(
-            runtime.agent_repository,
+            runtime.job_dispatch_repository,
             "mark_dispatch_published",
             crash_before_state_commit,
         )
         with pytest.raises(RuntimeError, match="before published state"):
             runtime.job_dispatcher.publish_pending(limit=1)
 
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert event is not None
         assert event.status == JobDispatchStatus.RUNNING
         assert runtime.message_bus is not None
         assert len(runtime.message_bus.jobs) == 1
 
         monkeypatch.setattr(
-            runtime.agent_repository,
+            runtime.job_dispatch_repository,
             "mark_dispatch_published",
             original_mark,
         )
@@ -182,7 +182,7 @@ def test_sqlite_lock_after_broker_confirm_retries_state_only(
     runtime = container()
     try:
         job = _create_job(runtime, "confirm-state-lock")
-        original_mark = runtime.agent_repository.mark_dispatch_published
+        original_mark = runtime.job_dispatch_repository.mark_dispatch_published
         attempts = 0
 
         def transient_lock(**kwargs: object) -> bool:
@@ -193,13 +193,13 @@ def test_sqlite_lock_after_broker_confirm_retries_state_only(
             return original_mark(**kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(
-            runtime.agent_repository,
+            runtime.job_dispatch_repository,
             "mark_dispatch_published",
             transient_lock,
         )
         result = runtime.job_dispatcher.publish_pending(limit=1)
 
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert result.published == 1
         assert attempts == 2
         assert event is not None
@@ -221,7 +221,7 @@ def test_crash_after_published_state_does_not_republish() -> None:
     try:
         job = _create_job(runtime, "state-before-crash")
         crashing = JobDispatchOutboxDispatcher(
-            repository=runtime.agent_repository,
+            repository=runtime.job_dispatch_repository,
             publisher=runtime.publisher,
             audit_service=_CrashAfterPublishedAudit(),  # type: ignore[arg-type]
             settings=runtime.settings.queue,
@@ -230,7 +230,7 @@ def test_crash_after_published_state_does_not_republish() -> None:
         with pytest.raises(RuntimeError, match="after published state"):
             crashing.publish_pending(limit=1)
 
-        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert event is not None
         assert event.status == JobDispatchStatus.PUBLISHED
         assert runtime.message_bus is not None
@@ -247,14 +247,14 @@ def test_multiple_dispatchers_claim_each_event_once() -> None:
     try:
         jobs = [_create_job(runtime, f"multi-dispatch-{index}") for index in range(20)]
         first = JobDispatchOutboxDispatcher(
-            repository=runtime.agent_repository,
+            repository=runtime.job_dispatch_repository,
             publisher=runtime.publisher,
             audit_service=runtime.audit_service,
             settings=runtime.settings.queue,
             worker_id="dispatcher-a",
         )
         second = JobDispatchOutboxDispatcher(
-            repository=runtime.agent_repository,
+            repository=runtime.job_dispatch_repository,
             publisher=runtime.publisher,
             audit_service=runtime.audit_service,
             settings=runtime.settings.queue,
@@ -286,7 +286,7 @@ def test_multiple_dispatchers_claim_each_event_once() -> None:
         assert len(runtime.message_bus.jobs) == len(jobs)
         assert len({message.event_id for message in runtime.message_bus.jobs}) == len(jobs)
         assert all(
-            runtime.agent_repository.get_dispatch_event_for_job(job.id).status
+            runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id).status
             == JobDispatchStatus.PUBLISHED
             for job in jobs
         )

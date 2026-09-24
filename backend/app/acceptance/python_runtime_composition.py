@@ -314,7 +314,7 @@ def _wait_for_delivery(runtime: Container, job_id: str, timeout_seconds: int = 6
 
 def _assert_chain_evidence(runtime: Container, job_id: str) -> None:
     job = runtime.agent_repository.get_job(job_id)
-    dispatch = runtime.agent_repository.get_dispatch_event_for_job(job_id)
+    dispatch = runtime.job_dispatch_repository.get_dispatch_event_for_job(job_id)
     if dispatch is None or dispatch.status.value != "PUBLISHED":
         raise RuntimeError(f"Job {job_id} dispatch outbox was not published")
     events = runtime.agent_repository.list_runtime_events(job_id)

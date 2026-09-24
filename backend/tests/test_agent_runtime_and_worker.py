@@ -216,7 +216,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
             action = "none"
 
         self.assertEqual("retry", action)
-        dispatch = c.agent_repository.get_dispatch_event_for_job(job.id)
+        dispatch = c.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         self.assertIsNotNone(dispatch)
         self.assertEqual("RETRY_WAIT", dispatch.status.value)
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)

@@ -8,12 +8,13 @@ from app.modules.delivery.application.result_delivery_service import (
 )
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
 from app.shared.config import QueueSettings
-from app.shared.database import operation_unit_of_work
+from app.shared.database import operation_unit_of_work, require_shared_database
 from app.shared.exceptions import (
     ExecutionTimeout,
     DiagnosticLoopExhausted,
@@ -29,12 +30,15 @@ class JobRetryService:
         self,
         *,
         repository: AgentRepository,
+        dispatch_repository: JobDispatchRepository,
         queue_settings: QueueSettings,
         audit_service: AuditService,
         delivery_service: ResultDeliveryService,
         mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
     ) -> None:
+        require_shared_database(repository, dispatch_repository)
         self.repository = repository
+        self.dispatch_repository = dispatch_repository
         self.queue_settings = queue_settings
         self.audit_service = audit_service
         self.delivery_service = delivery_service
@@ -75,7 +79,7 @@ class JobRetryService:
                 error_code=error_code,
                 next_retry_at=next_retry_at,
             )
-            dispatch_event = self.repository.rearm_dispatch_for_retry(
+            dispatch_event = self.dispatch_repository.rearm_dispatch_for_retry(
                 job_id=job.id,
                 next_attempt_at=next_retry_at,
             )

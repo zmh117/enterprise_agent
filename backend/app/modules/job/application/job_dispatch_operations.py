@@ -4,7 +4,7 @@ import hashlib
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.domain.job_dispatch import JobDispatchEvent
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
@@ -16,7 +16,7 @@ class JobDispatchOperationsService:
     def __init__(
         self,
         *,
-        repository: AgentRepository,
+        repository: JobDispatchRepository,
         audit_service: AuditService,
         mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
     ) -> None:

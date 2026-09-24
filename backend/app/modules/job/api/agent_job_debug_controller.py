@@ -197,7 +197,7 @@ def build_agent_job_debug_router() -> Any:  # noqa: C901, PLR0915
                 """,
                 (job_id,),
             )
-            dispatch = container.agent_repository.get_dispatch_event_for_job(job_id)
+            dispatch = container.job_dispatch_repository.get_dispatch_event_for_job(job_id)
             execution_audit = ExecutionAuditRepository(container.database)
             execution_summary = execution_audit.get_summary(job_id)
             delivery_events = container.agent_repository.list_delivery_events(job_id)

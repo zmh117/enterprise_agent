@@ -156,7 +156,9 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(  # n
         assert str(version).startswith("4."), f"RabbitMQ 4 required, got {version}"
 
         committed_job = _create_job(container, "success")
-        committed_event = container.agent_repository.get_dispatch_event_for_job(committed_job.id)
+        committed_event = container.job_dispatch_repository.get_dispatch_event_for_job(
+            committed_job.id
+        )
         assert committed_job.status == JobStatus.PENDING
         assert committed_event is not None
         assert committed_event.status.value == "PENDING"
@@ -196,10 +198,10 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(  # n
         ) == {"count": 1}
 
         failed_job = _create_job(container, "broker-dead")
-        failed_event = container.agent_repository.get_dispatch_event_for_job(failed_job.id)
+        failed_event = container.job_dispatch_repository.get_dispatch_event_for_job(failed_job.id)
         assert failed_event is not None
         unavailable_dispatcher = JobDispatchOutboxDispatcher(
-            repository=container.agent_repository,
+            repository=container.job_dispatch_repository,
             publisher=_UnavailablePublisher(),
             audit_service=container.audit_service,
             settings=queue,
@@ -217,7 +219,7 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(  # n
             (failed_event.id,),
         )
         second_failure = unavailable_dispatcher.publish_pending(limit=1)
-        terminal_event = container.agent_repository.get_dispatch_event(failed_event.id)
+        terminal_event = container.job_dispatch_repository.get_dispatch_event(failed_event.id)
         assert second_failure.failed == 1
         assert second_failure.dead == 1
         assert terminal_event.status.value == "DEAD"

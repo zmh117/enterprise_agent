@@ -32,7 +32,7 @@ def test_each_outbox_has_one_declared_transaction_boundary_writer() -> None:
         ),
         "outbox.job_dispatch": (
             "job_dispatch_outbox",
-            "backend/app/modules/job/infrastructure/repositories.py",
+            "backend/app/modules/job/infrastructure/dispatch_repository.py",
         ),
         "outbox.delivery": (
             "delivery_outbox",

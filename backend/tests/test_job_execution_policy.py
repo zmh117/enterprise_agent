@@ -411,7 +411,7 @@ def test_worker_delivers_safe_non_retryable_tool_budget_failure_once() -> None:
     assert persisted.last_error_code == "execution_policy_max_tool_calls_exhausted"
     assert persisted.execution_policy_tool_call_count == 2
     assert persisted.execution_policy_exhausted is True
-    assert c.agent_repository.get_dispatch_event_for_job(job.id) is not None
+    assert c.job_dispatch_repository.get_dispatch_event_for_job(job.id) is not None
     assert "job.dead.persisted" in {
         row["event_type"] for row in c.audit_repository.list_for_job(job.id)
     }

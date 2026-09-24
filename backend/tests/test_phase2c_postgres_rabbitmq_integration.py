@@ -198,11 +198,11 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(  # no
                 reply_route={"type": "phase2c_delivery", "target": {}},
             )
         )
-        dispatch_event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
+        dispatch_event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         assert dispatch_event is not None
 
         unavailable = JobDispatchOutboxDispatcher(
-            repository=runtime.agent_repository,
+            repository=runtime.job_dispatch_repository,
             publisher=_UnavailablePublisher(),
             audit_service=runtime.audit_service,
             settings=queue,
