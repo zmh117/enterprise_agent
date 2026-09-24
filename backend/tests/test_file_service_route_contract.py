@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.file_service.app import create_app
+from services.file_service.auth import FilePrincipalError
 
 
 PATH_IDS = {
@@ -36,6 +37,15 @@ ROW = {
     "size_bytes": 1,
     "content_sha256": "c",
 }
+BACKEND_DENIAL = {"error": "后端拒绝", "error_code": "contract_backend_denied"}
+
+
+def _backend_denial() -> FilePrincipalError:
+    return FilePrincipalError(
+        "Contract backend denial",
+        safe_message=BACKEND_DENIAL["error"],
+        error_code=BACKEND_DENIAL["error_code"],
+    )
 
 
 @dataclass(frozen=True)
@@ -428,31 +438,37 @@ async def _chunks() -> AsyncIterator[bytes]:
 
 
 class _Streaming:
-    def __init__(self, calls: list[tuple[str, dict[str, Any]]]) -> None:
+    def __init__(self, calls: list[tuple[str, dict[str, Any]]], *, deny: bool) -> None:
         self.calls = calls
+        self.deny = deny
+
+    def _record(self, name: str, values: dict[str, Any]) -> None:
+        self.calls.append((name, values))
+        if self.deny:
+            raise _backend_denial()
 
     async def download_transfer(self, **values: Any) -> tuple[AsyncIterator[bytes], str]:
-        self.calls.append(("download_transfer", values))
+        self._record("download_transfer", values)
         return _chunks(), "application/octet-stream"
 
     async def upload_commit(self, **values: Any) -> dict[str, Any]:
-        self.calls.append(("upload_commit", values))
+        self._record("upload_commit", values)
         return {"status": "COMMITTED"}
 
     async def import_attachment(self, **values: Any) -> dict[str, Any]:
-        self.calls.append(("import_attachment", values))
+        self._record("import_attachment", values)
         return {"status": "READY"}
 
     async def run_maintenance(self, **values: Any) -> dict[str, Any]:
-        self.calls.append(("run_maintenance", values))
+        self._record("run_maintenance", values)
         return {"deleted": 0}
 
     async def maintenance_metrics(self, **values: Any) -> dict[str, Any]:
-        self.calls.append(("maintenance_metrics", values))
+        self._record("maintenance_metrics", values)
         return {"pending": 0}
 
     async def download_delivery(self, **values: Any) -> tuple[AsyncIterator[bytes], dict[str, Any]]:
-        self.calls.append(("download_delivery", values))
+        self._record("download_delivery", values)
         return _chunks(), {
             "media_type": "text/plain",
             "display_name": "报告.txt",
@@ -463,12 +479,15 @@ class _Streaming:
 
 
 class _DocumentProcessing:
-    def __init__(self, calls: list[tuple[str, dict[str, Any]]]) -> None:
+    def __init__(self, calls: list[tuple[str, dict[str, Any]]], *, deny: bool) -> None:
         self.calls = calls
+        self.deny = deny
 
     def __getattr__(self, name: str) -> Any:
         def operation(**values: Any) -> Any:
             self.calls.append((name, values))
+            if self.deny:
+                raise _backend_denial()
             if name.startswith("open_"):
                 return io.BytesIO(b"content")
             if name in {"claim_picture_item", "claim_assembly"}:
@@ -480,15 +499,17 @@ class _DocumentProcessing:
         return operation
 
 
-def _client() -> tuple[TestClient, _Principal, list[tuple[str, dict[str, Any]]]]:
+def _client(
+    *, deny: bool = False
+) -> tuple[TestClient, _Principal, list[tuple[str, dict[str, Any]]]]:
     principal = _Principal()
     calls: list[tuple[str, dict[str, Any]]] = []
     app = create_app(
         principal=_Unused(),  # type: ignore[arg-type]
         service_principal=principal,  # type: ignore[arg-type]
         application=_Unused(),  # type: ignore[arg-type]
-        streaming=_Streaming(calls),
-        document_processing=_DocumentProcessing(calls),  # type: ignore[arg-type]
+        streaming=_Streaming(calls, deny=deny),
+        document_processing=_DocumentProcessing(calls, deny=deny),  # type: ignore[arg-type]
         database=_Database(),
         storage=_Ready(),
         jwks=_Ready(),  # type: ignore[arg-type]
@@ -529,6 +550,40 @@ def test_internal_route_binds_scope_and_backend_operation(case: RouteCase) -> No
     assert [name for name, _values in calls] == list(case.operations)
     if case.forwards_path_ids:
         assert set(case.path_values) <= _scalar_values(calls[0][1])
+
+
+@pytest.mark.parametrize("case", ROUTE_CASES, ids=lambda case: f"{case.method} {case.path}")
+def test_internal_route_without_bearer_is_denied_before_backend(case: RouteCase) -> None:
+    client, principal, calls = _client()
+
+    response = client.request(
+        case.method, case.path, headers=case.headers, json=case.json, content=case.content
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": "平台文件身份凭证缺失",
+        "error_code": "file_principal_token_missing",
+    }
+    assert principal.calls == []
+    assert calls == []
+
+
+@pytest.mark.parametrize("case", ROUTE_CASES, ids=lambda case: f"{case.method} {case.path}")
+def test_internal_route_maps_backend_app_error_to_safe_denial(case: RouteCase) -> None:
+    client, _principal, calls = _client(deny=True)
+
+    response = client.request(
+        case.method,
+        case.path,
+        headers={"authorization": "Bearer internal-token", **case.headers},
+        json=case.json,
+        content=case.content,
+    )
+
+    assert response.status_code == 403
+    assert response.json() == BACKEND_DENIAL
+    assert [name for name, _values in calls] == [case.operations[0]]
 
 
 def _scalar_values(value: Any) -> set[str]:
