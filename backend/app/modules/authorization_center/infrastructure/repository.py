@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.modules.job.infrastructure.repositories import new_id, now_iso
+from app.modules.job.infrastructure.persistence_values import new_id, now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.knowledge.infrastructure.storage import table as knowledge_table
 from app.shared.database import Database

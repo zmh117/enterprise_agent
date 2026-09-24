@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from app.modules.job.infrastructure.repositories import new_id, now_iso
+from app.modules.job.infrastructure.persistence_values import new_id, now_iso
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 from app.shared.secret_crypto import (

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from app.modules.job.infrastructure.repositories import now_iso
+from app.modules.job.infrastructure.persistence_values import now_iso
 from app.modules.webhook.application.dispatch_service import WebhookOutboxPublisher
 from app.modules.webhook.domain.models import WebhookEventStatus
 from app.modules.webhook.infrastructure import WebhookEventRepository

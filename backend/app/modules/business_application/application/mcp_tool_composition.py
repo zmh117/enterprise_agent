@@ -6,7 +6,7 @@ from typing import Any
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.knowledge.domain.tool_policy import knowledge_tool_dependency_errors
 from app.modules.business_application.domain.policies import required_file_mcp_tools
-from app.modules.job.infrastructure.repositories import now_iso
+from app.modules.job.infrastructure.persistence_values import now_iso
 from app.shared.database import Database
 from app.shared.dingtalk_card_templates import external_action_confirmation_card_binding
 from app.shared.exceptions import NonRetryableExecutionError

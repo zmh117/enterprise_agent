@@ -10,7 +10,7 @@ from app.modules.identity.infrastructure.external_identity_credentials import (
     EncryptedCredentialValue,
     ExternalIdentityCredentialCipher,
 )
-from app.modules.job.infrastructure.repositories import new_id, now_iso
+from app.modules.job.infrastructure.persistence_values import new_id, now_iso
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 

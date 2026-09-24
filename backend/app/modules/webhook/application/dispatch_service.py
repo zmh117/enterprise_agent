@@ -52,7 +52,7 @@ class WebhookOutboxPublisher:
         published = 0
         failed = 0
         for _ in range(min(max(limit, 1), 1000)):
-            from app.modules.job.infrastructure.repositories import now_iso
+            from app.modules.job.infrastructure.persistence_values import now_iso
 
             outbox = self.repository.claim_outbox(worker_id=self.worker_id, now=now_iso())
             if not outbox:

@@ -8,7 +8,7 @@ from app.modules.admin.application.scope import (
 )
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.modules.identity.infrastructure import IdentityRepository
-from app.modules.job.infrastructure.repositories import now_iso
+from app.modules.job.infrastructure.persistence_values import now_iso
 
 
 class AdminCapabilityService:

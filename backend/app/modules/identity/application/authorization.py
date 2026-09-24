@@ -4,7 +4,7 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.admin.domain import ADMIN_CAPABILITIES
 from app.modules.identity.domain import AuthorizationDecision
 from app.modules.identity.infrastructure import IdentityRepository
-from app.modules.job.infrastructure.repositories import now_iso
+from app.modules.job.infrastructure.persistence_values import now_iso
 from app.shared.exceptions import PermissionDenied
 
 

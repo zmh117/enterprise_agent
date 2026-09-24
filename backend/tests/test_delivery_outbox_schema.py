@@ -7,7 +7,7 @@ import pytest
 from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,
 )
-from app.modules.job.infrastructure.repositories import now_iso
+from app.modules.job.infrastructure.persistence_values import now_iso
 from backend.tests.helpers import container
 
 

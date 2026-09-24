@@ -16,7 +16,8 @@ from app.modules.job.domain.execution_audit import (
     TokenUsage,
     bounded_text,
 )
-from app.modules.job.infrastructure.repositories import AgentRepository, now_iso
+from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.persistence_values import now_iso
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError
 

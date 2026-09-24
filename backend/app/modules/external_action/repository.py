@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.modules.external_action.domain import ExternalActionStatus, canonical_json
-from app.modules.job.infrastructure.repositories import new_id, now_iso
+from app.modules.job.infrastructure.persistence_values import new_id, now_iso
 from app.shared.database import Database, operation_unit_of_work
 from app.shared.dingtalk_card_templates import external_action_confirmation_card_binding
 from app.shared.exceptions import NonRetryableExecutionError

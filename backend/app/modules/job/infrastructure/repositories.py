@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -9,6 +8,7 @@ from app.modules.delivery.domain import DeliveryEvent, DeliveryStatus
 from app.modules.job.domain.agent_job import AgentJob, AgentSession, MessageAttachment
 from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 from app.modules.job.domain.job_status import JobStatus, can_transition
+from app.modules.job.infrastructure.persistence_values import json_from_text, new_id, now_iso
 from app.shared.build_identity import build_identity_from_environment
 from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
@@ -132,14 +132,6 @@ _JOB_COLUMN_NAMES = (
 _SESSION_COLUMNS_SQL = ", ".join(_SESSION_COLUMN_NAMES)
 _JOB_COLUMNS_SQL = ", ".join(_JOB_COLUMN_NAMES)
 _QUALIFIED_JOB_COLUMNS_SQL = ", ".join(f"j.{column}" for column in _JOB_COLUMN_NAMES)
-
-
-def now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def new_id(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex}"
 
 
 def _safe_runtime_event_payload(event_type: str, value: object) -> dict[str, Any]:
@@ -927,7 +919,7 @@ class AgentRepository:  # noqa: PLR0904
             {
                 **row,
                 "sequence": int(row["sequence"]),
-                "payload": self._json_from_text(str(row["payload_json"])),
+                "payload": json_from_text(str(row["payload_json"])),
             }
             for row in rows
         ]
@@ -1061,7 +1053,7 @@ class AgentRepository:  # noqa: PLR0904
         for row in rows:
             item = dict(row)
             for field, fallback in json_fields.items():
-                value = self._json_from_text(str(item.pop(field, "") or ""))
+                value = json_from_text(str(item.pop(field, "") or ""))
                 item[field.removesuffix("_json")] = (
                     value if isinstance(value, type(fallback)) else fallback
                 )
@@ -1084,7 +1076,7 @@ class AgentRepository:  # noqa: PLR0904
         result: list[dict[str, Any]] = []
         for row in rows:
             item = dict(row)
-            summary = self._json_from_text(str(item.pop("summary_json", "") or ""))
+            summary = json_from_text(str(item.pop("summary_json", "") or ""))
             item["summary"] = summary if isinstance(summary, dict) else {}
             item["attempt_no"] = int(item.get("attempt_no") or 0)
             result.append(item)
@@ -1913,7 +1905,7 @@ class AgentRepository:  # noqa: PLR0904
             (session_id, limit),
         )
         return [
-            {**row, "safe_metadata": self._json_from_text(row.get("safe_metadata_json") or "{}")}
+            {**row, "safe_metadata": json_from_text(row.get("safe_metadata_json") or "{}")}
             for row in reversed(rows)
         ]
 
@@ -2163,10 +2155,10 @@ class AgentRepository:  # noqa: PLR0904
         )
         events: list[dict[str, Any]] = []
         for row in rows:
-            binding = self._json_from_text(str(row.pop("delivery_binding_json", "{}") or "{}"))
+            binding = json_from_text(str(row.pop("delivery_binding_json", "{}") or "{}"))
             if not isinstance(binding, dict):
                 binding = {}
-            target_summary = self._json_from_text(str(row.get("target_summary") or "{}"))
+            target_summary = json_from_text(str(row.get("target_summary") or "{}"))
             events.append(
                 {
                     **row,
@@ -3023,8 +3015,8 @@ class AgentRepository:  # noqa: PLR0904
             external_conversation_id=row.get("external_conversation_id") or "",
             requester_id=row.get("requester_id") or "",
             requester_display_name=row.get("requester_display_name") or "",
-            routing_context=self._json_from_text(row.get("routing_context_json") or "{}"),
-            reply_route=self._json_from_text(row.get("reply_route_json") or "{}"),
+            routing_context=json_from_text(row.get("routing_context_json") or "{}"),
+            reply_route=json_from_text(row.get("reply_route_json") or "{}"),
             session_key=row.get("session_key") or f"legacy:{row['id']}",
             conversation_type=row.get("conversation_type") or "direct",
             bot_identity=row.get("bot_identity") or "",
@@ -3044,7 +3036,7 @@ class AgentRepository:  # noqa: PLR0904
                 if row.get("recent_message_limit") is not None
                 else None
             ),
-            session_policy=self._json_from_text(row.get("session_policy_json") or "{}"),
+            session_policy=json_from_text(row.get("session_policy_json") or "{}"),
         )
 
     def get_job_by_idempotency_key(self, idempotency_key: str) -> AgentJob | None:
@@ -3111,19 +3103,19 @@ class AgentRepository:  # noqa: PLR0904
             "business_application_runtime_status": (
                 row.get("business_application_runtime_status") or "legacy_unattributed"
             ),
-            "business_application_route_decision": self._json_from_text(
+            "business_application_route_decision": json_from_text(
                 row.get("business_application_route_decision_json") or "{}"
             ),
-            "execution_policy": self._json_from_text(row.get("execution_policy_json") or "{}"),
-            "model_runtime_provenance": self._json_from_text(
+            "execution_policy": json_from_text(row.get("execution_policy_json") or "{}"),
+            "model_runtime_provenance": json_from_text(
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             "agent_runtime_kind": row.get("agent_runtime_kind") or "python-v1",
             "agent_runtime_protocol_version": (row.get("agent_runtime_protocol_version") or "1.5"),
             "tool_call_count": int(row.get("execution_policy_tool_call_count") or 0),
             "execution_policy_exhausted": bool(row.get("execution_policy_exhausted") or False),
-            "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
-            "reply_route": self._json_from_text(row.get("reply_route_json") or "{}"),
+            "routing_context": json_from_text(row.get("routing_context_json") or "{}"),
+            "reply_route": json_from_text(row.get("reply_route_json") or "{}"),
             "user_message": row.get("input_message_content"),
             "input_message_id": row.get("input_message_id") or "",
             "input_message_state": (
@@ -3277,7 +3269,7 @@ class AgentRepository:  # noqa: PLR0904
         return [
             {
                 **row,
-                "target_summary": self._json_from_text(row.get("target_summary") or "{}"),
+                "target_summary": json_from_text(row.get("target_summary") or "{}"),
             }
             for row in rows
         ]
@@ -3300,7 +3292,7 @@ class AgentRepository:  # noqa: PLR0904
         return [
             {
                 **row,
-                "payload_summary": self._json_from_text(row.get("payload_summary") or "{}"),
+                "payload_summary": json_from_text(row.get("payload_summary") or "{}"),
             }
             for row in rows
         ]
@@ -3549,8 +3541,8 @@ class AgentRepository:  # noqa: PLR0904
             job_id=str(row["job_id"] or ""),
             result_artifact_id=str(row["result_artifact_id"] or ""),
             application_publication_id=str(row.get("application_publication_id") or ""),
-            delivery_binding=self._json_from_text(row.get("delivery_binding_json") or "{}"),
-            target_summary=self._json_from_text(row.get("target_summary") or "{}"),
+            delivery_binding=json_from_text(row.get("delivery_binding_json") or "{}"),
+            target_summary=json_from_text(row.get("target_summary") or "{}"),
             correlation_id=str(row.get("correlation_id") or ""),
             status=DeliveryStatus(str(row["status"])),
             attempt_count=int(row.get("attempt_count") or 0),
@@ -3613,8 +3605,8 @@ class AgentRepository:  # noqa: PLR0904
             last_error_at=row.get("last_error_at"),
             next_retry_at=row.get("next_retry_at"),
             external_event_id=row.get("external_event_id") or "",
-            routing_context=self._json_from_text(row.get("routing_context_json") or "{}"),
-            reply_route=self._json_from_text(row.get("reply_route_json") or "{}"),
+            routing_context=json_from_text(row.get("routing_context_json") or "{}"),
+            reply_route=json_from_text(row.get("reply_route_json") or "{}"),
             internal_user_id=row.get("internal_user_id") or "",
             external_identity_id=row.get("external_identity_id") or "",
             agent_definition_id=row.get("agent_definition_id") or "",
@@ -3639,19 +3631,19 @@ class AgentRepository:  # noqa: PLR0904
             business_application_runtime_status=(
                 row.get("business_application_runtime_status") or "legacy_unattributed"
             ),
-            business_application_route_decision=self._json_from_text(
+            business_application_route_decision=json_from_text(
                 row.get("business_application_route_decision_json") or "{}"
             ),
-            execution_policy=self._json_from_text(row.get("execution_policy_json") or "{}"),
+            execution_policy=json_from_text(row.get("execution_policy_json") or "{}"),
             execution_policy_tool_call_count=int(row.get("execution_policy_tool_call_count") or 0),
             execution_policy_exhausted=bool(row.get("execution_policy_exhausted") or False),
-            model_runtime_provenance=self._json_from_text(
+            model_runtime_provenance=json_from_text(
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             agent_runtime_kind=row.get("agent_runtime_kind") or "python-v1",
             agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.5"),
             task_workspace_id=str(row.get("task_workspace_id") or ""),
-            control_plane_build_identity=self._json_from_text(
+            control_plane_build_identity=json_from_text(
                 row.get("control_plane_build_identity_json") or "{}"
             ),
             tool_contract_status=str(row.get("tool_contract_status") or "NOT_OBSERVED"),
@@ -3666,9 +3658,7 @@ class AgentRepository:  # noqa: PLR0904
             "id": row["id"],
             "job_id": row["job_id"],
             "tool_name": row["tool_name"],
-            "request_payload": sanitize_for_persistence(
-                self._json_from_text(row["request_payload"])
-            ),
+            "request_payload": sanitize_for_persistence(json_from_text(row["request_payload"])),
             "response_summary": tool_response_summary(row["response_summary"]),
             "status": row["status"],
             "duration_ms": int(row["duration_ms"]),
@@ -3682,12 +3672,6 @@ class AgentRepository:  # noqa: PLR0904
             "persisted_by": row.get("persisted_by") or "worker",
             "created_at": row["created_at"],
         }
-
-    def _json_from_text(self, value: str) -> Any:
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value
 
 
 class AuditRepository:
@@ -3770,11 +3754,5 @@ class ConfigurationRepository:
         )
         if not row:
             return None
-        row["metadata"] = self._json_from_text(str(row.get("metadata") or "{}"))
+        row["metadata"] = json_from_text(str(row.get("metadata") or "{}"))
         return row
-
-    def _json_from_text(self, value: str) -> Any:
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value

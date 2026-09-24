@@ -8,7 +8,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from app.modules.audit.application.audit_service import AuditService
-from app.modules.job.infrastructure.repositories import new_id, now_iso
+from app.modules.job.infrastructure.persistence_values import new_id, now_iso
 from app.shared.database import Database, operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.tool_response_summary import tool_response_summary
