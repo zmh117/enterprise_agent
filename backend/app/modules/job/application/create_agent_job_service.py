@@ -181,6 +181,42 @@ class SystemNoticeIntake:
     task_workspace_id: str = ""
 
 
+@dataclass(frozen=True)
+class _ChannelRouting:
+    requester_id: str
+    source_channel: str
+    external_conversation_id: str
+    project_code: str
+    reply_route: dict[str, Any]
+
+    @classmethod
+    def from_command(
+        cls,
+        command: CreateAgentJobCommand,
+        *,
+        isolate_conversation: bool,
+    ) -> _ChannelRouting:
+        source_channel = command.effective_source_channel
+        external_conversation_id = command.effective_conversation_id
+        if (
+            isolate_conversation
+            and not external_conversation_id
+            and source_channel in ISOLATED_SESSION_SOURCE_CHANNELS
+        ):
+            external_conversation_id = _isolated_conversation_id(
+                source_channel=source_channel,
+                idempotency_key=command.idempotency_key,
+            )
+        project_code = command.effective_routing_context.get("project_code", command.project_code)
+        return cls(
+            requester_id=command.effective_requester_id,
+            source_channel=source_channel,
+            external_conversation_id=external_conversation_id,
+            project_code=str(project_code or command.project_code),
+            reply_route=command.effective_reply_route,
+        )
+
+
 class CreateAgentJobService:
     def __init__(
         self,
@@ -282,86 +318,32 @@ class CreateAgentJobService:
                 safe_message="当前任务工作区不支持此文本格式",
                 error_code="file_workspace_type_unsupported",
             )
-        attachments_enabled = (
-            self.attachment_settings.enabled
-            if command.attachments_enabled is None
-            else command.attachments_enabled
-        )
-        self._validate_attachments(
-            command.attachments,
-            enabled=attachments_enabled,
-            document_processing_profile_code=command.document_processing_profile_code,
-        )
-        if self.credential_cipher is None:
-            raise NonRetryableExecutionError(
-                "Attachment credential encryption is unavailable",
-                safe_message="尚未配置附件处理能力",
-            )
-        continuous_enabled = (
-            self.continuous_enabled
-            if command.continuous_conversation_enabled is None
-            else command.continuous_conversation_enabled
-        )
-        if not continuous_enabled:
+        self._validate_attachments(command)
+        credential_cipher = self._require_credential_cipher()
+        if not self._continuous_conversation_enabled(command):
             raise NonRetryableExecutionError(
                 "Attachment staging requires continuous channel conversation",
                 safe_message="请先启用连续会话再使用任务文件工作区",
                 error_code="attachment_stage_continuous_session_required",
             )
-        requester_id = command.effective_requester_id
-        source_channel = command.effective_source_channel
-        external_conversation_id = command.effective_conversation_id
-        project_code = str(
-            command.effective_routing_context.get("project_code", command.project_code)
-            or command.project_code
-        )
-        reply_route = command.effective_reply_route
-        self._assert_connectors_allowed(command, reply_route)
+        routing = _ChannelRouting.from_command(command, isolate_conversation=False)
+        self._assert_connectors_allowed(command, routing.reply_route)
         execution_scope_hash = _execution_scope_hash(command.effective_routing_context)
-        if not execution_scope_hash or not external_conversation_id:
+        if not execution_scope_hash or not routing.external_conversation_id:
             raise NonRetryableExecutionError(
                 "Attachment staging session isolation facts are incomplete",
                 safe_message="会话隔离上下文不完整",
                 error_code="session_isolation_incomplete",
             )
-        session_key = _session_key(
-            source_channel=source_channel,
-            connector_id=command.source_connector_id,
-            project_code=project_code,
-            conversation_type=command.conversation_type,
-            conversation_id=external_conversation_id,
-            requester_id=requester_id,
-            bot_identity=command.bot_identity,
-            external_identity_id=command.external_identity_id,
-            business_application_id=command.business_application_id,
-            business_application_publication_id=command.business_application_publication_id,
-            execution_scope_hash=execution_scope_hash,
-            conversation_mode=command.conversation_mode,
-        )
+        session_key = _channel_session_key(command, routing, execution_scope_hash)
         attachment_ids: list[str] = []
         new_attachment_ids: list[str] = []
         with self.repository.database.unit_of_work():
-            session = self.session_repository.create_session(
-                project_code=project_code,
-                source_channel=source_channel,
-                source_connector_id=command.source_connector_id,
-                external_conversation_id=external_conversation_id,
-                requester_id=requester_id,
-                requester_display_name=command.requester_display_name,
-                routing_context=command.effective_routing_context,
-                reply_route=reply_route,
+            session = self._create_session(
+                command,
+                routing,
                 session_key=session_key,
-                conversation_type=command.conversation_type,
-                bot_identity=command.bot_identity,
-                external_identity_id=command.external_identity_id,
-                business_application_id=command.business_application_id,
-                business_application_code=command.business_application_code,
-                application_publication_id=command.business_application_publication_id,
                 execution_scope_hash=execution_scope_hash,
-                isolation_key_version=2,
-                conversation_mode=command.conversation_mode,
-                recent_message_limit=command.recent_message_limit,
-                session_policy=command.session_policy,
             )
             if self.file_manifest_service is None:
                 raise NonRetryableExecutionError(
@@ -372,11 +354,11 @@ class CreateAgentJobService:
             workspace = self.file_manifest_service.resolve_workspace(
                 tenant_id=command.tenant_id,
                 session_id=session.id,
-                requester_id=requester_id,
+                requester_id=routing.requester_id,
                 conversation_type=command.conversation_type,
                 enterprise_id=command.enterprise_id,
                 connector_id=command.source_connector_id,
-                conversation_id=external_conversation_id,
+                conversation_id=routing.external_conversation_id,
                 sender_staff_id=command.sender_staff_id,
                 publication_id=command.business_application_publication_id,
                 retention_period=command.task_workspace_retention_period,
@@ -396,7 +378,7 @@ class CreateAgentJobService:
                 role="user",
                 content="",
                 external_message_id=(command.external_message_id or command.external_event_id),
-                sender_id=requester_id,
+                sender_id=routing.requester_id,
                 sender_display_name=command.requester_display_name,
                 message_type="attachment_intake",
                 content_status="PENDING",
@@ -413,7 +395,7 @@ class CreateAgentJobService:
                         file_name=attachment.file_name,
                         declared_mime=attachment.declared_mime,
                         declared_size=attachment.declared_size,
-                        credential_ciphertext=self.credential_cipher.encrypt(
+                        credential_ciphertext=credential_cipher.encrypt(
                             attachment.source_credential
                         ),
                         credential_type=attachment.source_credential_type,
@@ -427,7 +409,7 @@ class CreateAgentJobService:
                 "attachment.intake.staged",
                 status="SUCCEEDED",
                 summary="File-only channel message staged without an Agent job",
-                actor_id=requester_id,
+                actor_id=routing.requester_id,
                 payload={
                     "session_id": session.id,
                     "task_workspace_id": str(workspace["id"]),
@@ -472,32 +454,13 @@ class CreateAgentJobService:
                 safe_message="旧共享会话模式已停用，请将应用重新发布为按渠道会话",
                 error_code="session_mode_unsupported",
             )
-        attachments_enabled = (
-            self.attachment_settings.enabled
-            if command.attachments_enabled is None
-            else command.attachments_enabled
-        )
-        self._validate_attachments(
-            command.attachments,
-            enabled=attachments_enabled,
-            document_processing_profile_code=command.document_processing_profile_code,
-        )
-        requester_id = command.effective_requester_id
-        source_channel = command.effective_source_channel
-        external_conversation_id = command.effective_conversation_id
-        if not external_conversation_id and source_channel in ISOLATED_SESSION_SOURCE_CHANNELS:
-            external_conversation_id = _isolated_conversation_id(
-                source_channel=source_channel,
-                idempotency_key=command.idempotency_key,
-            )
-        project_code = command.effective_routing_context.get("project_code", command.project_code)
-        project_code = str(project_code or command.project_code)
-        reply_route = command.effective_reply_route
-        self._assert_connectors_allowed(command, reply_route)
+        self._validate_attachments(command)
+        routing = _ChannelRouting.from_command(command, isolate_conversation=True)
+        self._assert_connectors_allowed(command, routing.reply_route)
         business_application_authorized = False
         business_authorization_snapshot: dict[str, Any] = {}
         if command.business_application_id:
-            if source_channel in {"dingding", "dingding_stream"}:
+            if routing.source_channel in {"dingding", "dingding_stream"}:
                 business_application_authorized = True
                 business_authorization_snapshot = {
                     "allowed": True,
@@ -515,7 +478,7 @@ class CreateAgentJobService:
                 )
             else:
                 business_decision = self.business_authorization_service.require(
-                    user_id=requester_id,
+                    user_id=routing.requester_id,
                     application_id=command.business_application_id,
                     stage="job_create",
                 )
@@ -525,26 +488,26 @@ class CreateAgentJobService:
                 "authorization.business.job_create",
                 status="SUCCEEDED",
                 summary="Business authorization allowed Agent job creation",
-                actor_id=requester_id,
+                actor_id=routing.requester_id,
                 payload=business_authorization_snapshot,
             )
         self.audit_service.record(
             "permission.job_create.start",
             status="STARTED",
             summary="Checking user permission for Agent job creation",
-            actor_id=requester_id,
+            actor_id=routing.requester_id,
             payload={
-                "project_code": project_code,
-                "source_channel": source_channel,
+                "project_code": routing.project_code,
+                "source_channel": routing.source_channel,
                 "source_connector_id": command.source_connector_id,
-                "delivery_type": reply_route.get("type"),
-                "delivery_connector_id": reply_route.get("connector_id"),
+                "delivery_type": routing.reply_route.get("type"),
+                "delivery_connector_id": routing.reply_route.get("connector_id"),
             },
         )
         if not business_application_authorized:
             self.permission_service.assert_user_can_create_job(
-                user_id=requester_id,
-                project_code=project_code,
+                user_id=routing.requester_id,
+                project_code=routing.project_code,
             )
         agent_definition_id = ""
         agent_publication_id = ""
@@ -566,7 +529,7 @@ class CreateAgentJobService:
             agent_code = command.agent_code or self.default_agent_code
             if not business_application_authorized:
                 self.permission_service.require_action(
-                    user_id=requester_id,
+                    user_id=routing.requester_id,
                     resource_type="agent",
                     resource_code=agent_code,
                     action="use",
@@ -656,7 +619,7 @@ class CreateAgentJobService:
                 }
             )
             if (
-                source_channel != "debug_api"
+                routing.source_channel != "debug_api"
                 and command.source_connector_id
                 and not self.agent_config_service.connector_allowed(
                     publication_id=agent_publication_id,
@@ -668,9 +631,9 @@ class CreateAgentJobService:
                     "Source connector is not assigned to the Agent publication",
                     safe_message="此渠道无法使用该 Agent",
                 )
-            delivery_connector_id = str(reply_route.get("connector_id") or "")
+            delivery_connector_id = str(routing.reply_route.get("connector_id") or "")
             if (
-                reply_route.get("type") != "none"
+                routing.reply_route.get("type") != "none"
                 and delivery_connector_id
                 and not self.agent_config_service.connector_allowed(
                     publication_id=agent_publication_id,
@@ -697,17 +660,10 @@ class CreateAgentJobService:
                 "agent_config_hash": agent_config_hash,
             },
         )
-        if command.attachments and self.credential_cipher is None:
-            raise NonRetryableExecutionError(
-                "Attachment credential encryption is unavailable",
-                safe_message="尚未配置附件处理能力",
-            )
-        continuous_enabled = (
-            self.continuous_enabled
-            if command.continuous_conversation_enabled is None
-            else command.continuous_conversation_enabled
-        )
-        if source_channel in ISOLATED_SESSION_SOURCE_CHANNELS:
+        if command.attachments:
+            self._require_credential_cipher()
+        continuous_enabled = self._continuous_conversation_enabled(command)
+        if routing.source_channel in ISOLATED_SESSION_SOURCE_CHANNELS:
             continuous_enabled = False
         execution_scope_hash = (
             _execution_scope_hash(command.effective_routing_context)
@@ -725,20 +681,7 @@ class CreateAgentJobService:
                 error_code="session_isolation_incomplete",
             )
         session_key = (
-            _session_key(
-                source_channel=source_channel,
-                connector_id=command.source_connector_id,
-                project_code=project_code,
-                conversation_type=command.conversation_type,
-                conversation_id=external_conversation_id,
-                requester_id=requester_id,
-                bot_identity=command.bot_identity,
-                external_identity_id=command.external_identity_id,
-                business_application_id=command.business_application_id,
-                business_application_publication_id=(command.business_application_publication_id),
-                execution_scope_hash=execution_scope_hash,
-                conversation_mode=command.conversation_mode,
-            )
+            _channel_session_key(command, routing, execution_scope_hash)
             if continuous_enabled
             else ""
         )
@@ -749,7 +692,7 @@ class CreateAgentJobService:
                 assert self.business_authorization_service is not None
                 runtime_authorization_snapshot = (
                     self.business_authorization_service.capture_runtime_facts(
-                        user_id=requester_id,
+                        user_id=routing.requester_id,
                         application_id=command.business_application_id,
                         publication_id=command.business_application_publication_id,
                         publication_config_hash=command.business_application_config_hash,
@@ -758,31 +701,15 @@ class CreateAgentJobService:
             session = (
                 self._require_continuable_session(
                     command=command,
-                    requester_id=requester_id,
+                    requester_id=routing.requester_id,
                     execution_scope_hash=execution_scope_hash,
                 )
                 if command.continue_session_id
-                else self.session_repository.create_session(
-                    project_code=project_code,
-                    source_channel=source_channel,
-                    source_connector_id=command.source_connector_id,
-                    external_conversation_id=external_conversation_id,
-                    requester_id=requester_id,
-                    requester_display_name=command.requester_display_name,
-                    routing_context=command.effective_routing_context,
-                    reply_route=reply_route,
+                else self._create_session(
+                    command,
+                    routing,
                     session_key=session_key,
-                    conversation_type=command.conversation_type,
-                    bot_identity=command.bot_identity,
-                    external_identity_id=command.external_identity_id,
-                    business_application_id=command.business_application_id,
-                    business_application_code=command.business_application_code,
-                    application_publication_id=(command.business_application_publication_id),
                     execution_scope_hash=execution_scope_hash,
-                    isolation_key_version=2,
-                    conversation_mode=command.conversation_mode,
-                    recent_message_limit=command.recent_message_limit,
-                    session_policy=command.session_policy,
                 )
             )
             workspace_feature_enabled = bool(command.task_file_features.get("workspace_enabled"))
@@ -803,11 +730,11 @@ class CreateAgentJobService:
                 self.file_manifest_service.resolve_workspace(
                     tenant_id=command.tenant_id,
                     session_id=session.id,
-                    requester_id=requester_id,
+                    requester_id=routing.requester_id,
                     conversation_type=command.conversation_type,
                     enterprise_id=command.enterprise_id,
                     connector_id=command.source_connector_id,
-                    conversation_id=external_conversation_id,
+                    conversation_id=routing.external_conversation_id,
                     sender_staff_id=command.sender_staff_id,
                     publication_id=command.business_application_publication_id,
                     retention_period=command.task_workspace_retention_period,
@@ -826,10 +753,10 @@ class CreateAgentJobService:
                     command=command,
                     session=session,
                     workspace_id=str(file_workspace["id"]) if file_workspace else "",
-                    reply_route=reply_route,
+                    reply_route=routing.reply_route,
                     file_plan=file_plan,
                     correlation_id=correlation_id,
-                    requester_id=requester_id,
+                    requester_id=routing.requester_id,
                 )
             bound_attachment_ids = tuple(
                 item.attachment_id
@@ -840,10 +767,10 @@ class CreateAgentJobService:
             job = self.repository.create_job(
                 session_id=session.id,
                 idempotency_key=command.idempotency_key,
-                project_code=project_code,
-                source_channel=source_channel,
+                project_code=routing.project_code,
+                source_channel=routing.source_channel,
                 source_connector_id=command.source_connector_id,
-                requester_id=requester_id,
+                requester_id=routing.requester_id,
                 input_message=command.user_message,
                 max_retry_count=self.queue_settings.max_retry_count,
                 external_event_id=command.external_event_id,
@@ -852,13 +779,13 @@ class CreateAgentJobService:
                 message_type="multimodal" if command.attachments else "text",
                 message_content_status="PENDING" if command.attachments else "READY",
                 routing_context=command.effective_routing_context,
-                reply_route=reply_route,
+                reply_route=routing.reply_route,
                 initial_status=(
                     JobStatus.WAITING_INPUT
                     if gate.action == "wait_source" or command.attachments
                     else JobStatus.PENDING
                 ),
-                internal_user_id=requester_id,
+                internal_user_id=routing.requester_id,
                 external_identity_id=command.external_identity_id,
                 agent_definition_id=agent_definition_id,
                 agent_publication_id=agent_publication_id,
@@ -899,7 +826,7 @@ class CreateAgentJobService:
                 )
                 mcp_tool_snapshot = self.mcp_tool_snapshot_service.freeze(
                     job_id=job.id,
-                    requester_id=requester_id,
+                    requester_id=routing.requester_id,
                     application_id=command.business_application_id,
                     application_publication_id=(command.business_application_publication_id),
                     application_config_hash=(command.business_application_config_hash),
@@ -920,7 +847,7 @@ class CreateAgentJobService:
             elif agent_publication_id and self.mcp_tool_snapshot_service is not None:
                 mcp_tool_snapshot = self.mcp_tool_snapshot_service.freeze_agent_only(
                     job_id=job.id,
-                    requester_id=requester_id,
+                    requester_id=routing.requester_id,
                     agent_publication_id=agent_publication_id,
                     routing_context=command.effective_routing_context,
                     business_authorization=business_authorization_snapshot,
@@ -956,7 +883,7 @@ class CreateAgentJobService:
                     status="SUCCEEDED",
                     summary="A text-triggered Agent job claimed bound staged attachments",
                     job_id=job.id,
-                    actor_id=requester_id,
+                    actor_id=routing.requester_id,
                     payload={
                         "attachment_count": len(claimed),
                         "task_workspace_id": str(file_workspace["id"]),
@@ -976,7 +903,7 @@ class CreateAgentJobService:
                 self.file_manifest_service.register_request(
                     job_id=job.id,
                     workspace=file_workspace,
-                    requester_id=requester_id,
+                    requester_id=routing.requester_id,
                     publication_id=command.business_application_publication_id,
                     file_references=manifest_references,
                 )
@@ -1008,10 +935,10 @@ class CreateAgentJobService:
                 status="SUCCEEDED",
                 summary="Agent job created",
                 job_id=job.id,
-                actor_id=requester_id,
+                actor_id=routing.requester_id,
                 payload={
                     "idempotency_key": command.idempotency_key,
-                    "source_channel": source_channel,
+                    "source_channel": routing.source_channel,
                     "source_connector_id": command.source_connector_id,
                     "external_event_id": command.external_event_id,
                     "agent_publication_id": agent_publication_id,
@@ -1049,7 +976,7 @@ class CreateAgentJobService:
                 status="PENDING",
                 summary="Agent job dispatch event persisted",
                 job_id=job.id,
-                actor_id=requester_id,
+                actor_id=routing.requester_id,
                 payload={
                     "event_id": dispatch_event.id,
                     "event_key": dispatch_event.event_key,
@@ -1207,13 +1134,13 @@ class CreateAgentJobService:
             task_workspace_id=workspace_id,
         )
 
-    def _validate_attachments(
-        self,
-        attachments: tuple[ChannelAttachment, ...],
-        *,
-        enabled: bool,
-        document_processing_profile_code: object = "NONE",
-    ) -> None:
+    def _validate_attachments(self, command: CreateAgentJobCommand) -> None:
+        attachments = command.attachments
+        enabled = (
+            self.attachment_settings.enabled
+            if command.attachments_enabled is None
+            else command.attachments_enabled
+        )
         if attachments and not enabled:
             raise NonRetryableExecutionError(
                 "message_attachments_disabled",
@@ -1223,7 +1150,7 @@ class CreateAgentJobService:
             raise NonRetryableExecutionError(
                 "attachment_count_exceeded", safe_message="附件数量过多"
             )
-        profile = resolve_document_processing_profile(document_processing_profile_code)
+        profile = resolve_document_processing_profile(command.document_processing_profile_code)
         document_extensions = frozenset(
             extension
             for definition in (profile.source_formats if profile is not None else ())
@@ -1258,6 +1185,52 @@ class CreateAgentJobService:
                 "attachment_message_size_exceeded",
                 safe_message="附件消息过大",
             )
+
+    def _continuous_conversation_enabled(self, command: CreateAgentJobCommand) -> bool:
+        return (
+            self.continuous_enabled
+            if command.continuous_conversation_enabled is None
+            else command.continuous_conversation_enabled
+        )
+
+    def _require_credential_cipher(self) -> AttachmentCredentialCipher:
+        if self.credential_cipher is None:
+            raise NonRetryableExecutionError(
+                "Attachment credential encryption is unavailable",
+                safe_message="尚未配置附件处理能力",
+            )
+        return self.credential_cipher
+
+    def _create_session(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+        *,
+        session_key: str,
+        execution_scope_hash: str,
+    ) -> AgentSession:
+        return self.session_repository.create_session(
+            project_code=routing.project_code,
+            source_channel=routing.source_channel,
+            source_connector_id=command.source_connector_id,
+            external_conversation_id=routing.external_conversation_id,
+            requester_id=routing.requester_id,
+            requester_display_name=command.requester_display_name,
+            routing_context=command.effective_routing_context,
+            reply_route=routing.reply_route,
+            session_key=session_key,
+            conversation_type=command.conversation_type,
+            bot_identity=command.bot_identity,
+            external_identity_id=command.external_identity_id,
+            business_application_id=command.business_application_id,
+            business_application_code=command.business_application_code,
+            application_publication_id=command.business_application_publication_id,
+            execution_scope_hash=execution_scope_hash,
+            isolation_key_version=2,
+            conversation_mode=command.conversation_mode,
+            recent_message_limit=command.recent_message_limit,
+            session_policy=command.session_policy,
+        )
 
     def _assert_connectors_allowed(
         self, command: CreateAgentJobCommand, reply_route: dict[str, Any]
@@ -1391,6 +1364,27 @@ def _session_key(
         ]
     )
     return "session-key:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _channel_session_key(
+    command: CreateAgentJobCommand,
+    routing: _ChannelRouting,
+    execution_scope_hash: str,
+) -> str:
+    return _session_key(
+        source_channel=routing.source_channel,
+        connector_id=command.source_connector_id,
+        project_code=routing.project_code,
+        conversation_type=command.conversation_type,
+        conversation_id=routing.external_conversation_id,
+        requester_id=routing.requester_id,
+        bot_identity=command.bot_identity,
+        external_identity_id=command.external_identity_id,
+        business_application_id=command.business_application_id,
+        business_application_publication_id=command.business_application_publication_id,
+        execution_scope_hash=execution_scope_hash,
+        conversation_mode=command.conversation_mode,
+    )
 
 
 def _execution_scope_hash(routing_context: dict[str, Any]) -> str:
