@@ -31,6 +31,7 @@ from app.modules.file_workspace.domain import (
 from app.modules.file_workspace.lifecycle_service import FileLifecycleService
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.session_repository import SessionRepository
 from app.shared.config import DeliverySettings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 from backend.tests.test_file_commit_streaming import NOW, _body, _fixture, _new_intent
@@ -269,7 +270,7 @@ def test_exact_file_delivery_retries_without_agent_rerun_or_duplicate_file() -> 
         (committed["version_id"],),
     ) == {"value": 1}
     assert agent_repository.get_job("job-file").status.value == "SUCCEEDED"
-    AgentResultService(agent_repository).save_result(
+    AgentResultService(agent_repository, SessionRepository(agent_repository.database)).save_result(
         agent_repository.get_job("job-file"), "normal Runtime reply"
     )
     file_results = agent_repository.get_artifact_for_job(

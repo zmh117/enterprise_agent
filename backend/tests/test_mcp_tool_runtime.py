@@ -744,7 +744,7 @@ def test_context_filters_stale_file_tools_when_job_has_no_workspace() -> None:
 def test_job_snapshot_does_not_freeze_routing_target_or_resolve_a_resource() -> None:
     runtime = container()
     try:
-        session = runtime.agent_repository.create_session(
+        session = runtime.session_repository.create_session(
             project_code="default",
             source_channel="debug_api",
             source_connector_id="connector-debug-api",
@@ -805,7 +805,7 @@ def test_job_snapshot_does_not_freeze_routing_target_or_resolve_a_resource() -> 
 def test_job_snapshot_fails_closed_on_schema_drift() -> None:
     runtime = container()
     try:
-        session = runtime.agent_repository.create_session(
+        session = runtime.session_repository.create_session(
             project_code="default",
             source_channel="debug_api",
             source_connector_id="connector-debug-api",
@@ -859,7 +859,7 @@ def test_job_snapshot_fails_closed_on_schema_drift() -> None:
 def test_job_snapshot_fails_closed_on_duplicate_tool_binding() -> None:
     runtime = container()
     try:
-        session = runtime.agent_repository.create_session(
+        session = runtime.session_repository.create_session(
             project_code="default",
             source_channel="debug_api",
             source_connector_id="connector-debug-api",

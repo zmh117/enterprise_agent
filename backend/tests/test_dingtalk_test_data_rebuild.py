@@ -228,7 +228,7 @@ def _runtime_with_targets() -> tuple[Container, dict[str, str]]:
         """,
         (NOW,),
     )
-    session = runtime.agent_repository.create_session(
+    session = runtime.session_repository.create_session(
         project_code="default",
         source_channel="dingtalk",
         source_connector_id=str(connector["id"]),

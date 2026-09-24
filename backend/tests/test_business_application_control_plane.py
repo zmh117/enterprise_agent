@@ -1521,7 +1521,7 @@ def test_ones_mutation_preserves_contract_through_application_and_job_snapshot()
     )
     assert publication_fact == revision_fact
 
-    session = container.agent_repository.create_session(
+    session = container.session_repository.create_session(
         project_code="default",
         source_channel="debug_api",
         source_connector_id="connector-debug-api",

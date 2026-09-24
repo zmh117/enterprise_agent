@@ -162,7 +162,7 @@ def test_invalid_policy_snapshots_fail_closed(value: object) -> None:
 
 def test_repository_rejects_job_without_execution_policy() -> None:
     c = container()
-    session = c.agent_repository.create_session(
+    session = c.session_repository.create_session(
         project_code="default",
         source_channel="debug_api",
         source_connector_id="connector-debug-api",

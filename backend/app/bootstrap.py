@@ -144,6 +144,7 @@ from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.attachment_repository import AttachmentRepository
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
+from app.modules.job.infrastructure.session_repository import SessionRepository
 from app.modules.job.infrastructure.repositories import (
     AgentRepository,
     AuditRepository,
@@ -209,6 +210,7 @@ class Container:
     delivery_repository: DeliveryRepository
     run_audit_repository: RunAuditRepository
     attachment_repository: AttachmentRepository
+    session_repository: SessionRepository
     identity_repository: IdentityRepository
     identity_service: IdentityService
     ones_identity_binding_service: OnesIdentityBindingService
@@ -561,6 +563,7 @@ def _build_container(  # noqa: C901, PLR0915
     delivery_repository = DeliveryRepository(database)
     run_audit_repository = RunAuditRepository(database)
     attachment_repository = AttachmentRepository(database)
+    session_repository = SessionRepository(database)
     audit_repository = AuditRepository(database)
     config_repository = ConfigurationRepository(database)
     identity_repository = IdentityRepository(database)
@@ -836,6 +839,7 @@ def _build_container(  # noqa: C901, PLR0915
         dispatch_repository=job_dispatch_repository,
         delivery_repository=delivery_repository,
         attachment_repository=attachment_repository,
+        session_repository=session_repository,
         permission_service=permission_service,
         audit_service=audit_service,
         publisher=publisher,
@@ -1174,6 +1178,7 @@ def _build_container(  # noqa: C901, PLR0915
             repository=agent_repository,
             dispatch_repository=job_dispatch_repository,
             attachment_repository=attachment_repository,
+            session_repository=session_repository,
             publisher=publisher,
             audit_service=audit_service,
             credential_cipher=credential_cipher,
@@ -1196,7 +1201,7 @@ def _build_container(  # noqa: C901, PLR0915
             tool_registry=tool_registry,
             skill_loader=SkillLoader(),
             conversation_service=ConversationContextService(
-                agent_repository, settings.conversation
+                session_repository, settings.conversation
             ),
             agent_config_service=agent_config_service,
             file_manifest_service=file_manifest_service,
@@ -1206,7 +1211,7 @@ def _build_container(  # noqa: C901, PLR0915
         ),
         runtime_client=runtime_client,
         tool_registry=tool_registry,
-        result_service=AgentResultService(agent_repository),
+        result_service=AgentResultService(agent_repository, session_repository),
         delivery_service=result_delivery_service,
         business_authorization_service=business_authorization_service,
         mcp_tool_snapshot_service=mcp_tool_snapshot_service,
@@ -1228,6 +1233,7 @@ def _build_container(  # noqa: C901, PLR0915
         delivery_repository=delivery_repository,
         run_audit_repository=run_audit_repository,
         attachment_repository=attachment_repository,
+        session_repository=session_repository,
         identity_repository=identity_repository,
         identity_service=identity_service,
         ones_identity_binding_service=ones_identity_binding_service,

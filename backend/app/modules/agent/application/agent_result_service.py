@@ -4,14 +4,18 @@ import json
 
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.session_repository import SessionRepository
+from app.shared.database import require_shared_database
 
 
 class AgentResultService:
-    def __init__(self, repository: AgentRepository) -> None:
+    def __init__(self, repository: AgentRepository, session_repository: SessionRepository) -> None:
+        require_shared_database(repository, session_repository)
         self.repository = repository
+        self.session_repository = session_repository
 
     def save_result(self, job: AgentJob, final_answer: str) -> str:
-        self.repository.add_message(
+        self.session_repository.add_message(
             session_id=job.session_id,
             job_id=job.id,
             role="assistant",

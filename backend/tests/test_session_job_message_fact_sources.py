@@ -77,7 +77,7 @@ def test_database_rejects_multiple_user_messages_for_one_job() -> None:
     job = runtime.create_agent_job_service.execute(_command(key="single-user-message"))
 
     with pytest.raises(sqlite3.IntegrityError):
-        runtime.agent_repository.add_message(
+        runtime.session_repository.add_message(
             session_id=job.session_id,
             job_id=job.id,
             role="user",
@@ -87,7 +87,7 @@ def test_database_rejects_multiple_user_messages_for_one_job() -> None:
 
 def test_legacy_job_without_explicit_message_link_is_read_only_and_not_executable() -> None:
     runtime = container()
-    session = runtime.agent_repository.create_session(
+    session = runtime.session_repository.create_session(
         project_code="default",
         source_channel="debug_api",
         source_connector_id="connector-debug-api",

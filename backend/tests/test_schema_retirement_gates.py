@@ -187,6 +187,7 @@ def test_write_cutover_production_sql_has_no_compatibility_access() -> None:
         REPOSITORY_ROOT / "backend/app/modules/job/infrastructure/attachment_repository.py",
         REPOSITORY_ROOT / "backend/app/modules/job/infrastructure/dispatch_repository.py",
         REPOSITORY_ROOT / "backend/app/modules/job/infrastructure/run_audit_repository.py",
+        REPOSITORY_ROOT / "backend/app/modules/job/infrastructure/session_repository.py",
         REPOSITORY_ROOT / "backend/app/modules/delivery/infrastructure/repository.py",
         REPOSITORY_ROOT / "backend/app/modules/admin/infrastructure/read_repository.py",
         REPOSITORY_ROOT / "backend/app/modules/job/application/create_agent_job_service.py",
@@ -214,14 +215,21 @@ def test_write_cutover_production_sql_has_no_compatibility_access() -> None:
         is None
     )
 
-    repository_source = sources["backend/app/modules/job/infrastructure/repositories.py"]
-    for table, forbidden in (
-        ("agent_session", {"dingding_conversation_id", "dingding_user_id", "source"}),
-        ("agent_job", {"user_id", "source", "user_message"}),
+    for writer, table, forbidden in (
+        (
+            "backend/app/modules/job/infrastructure/session_repository.py",
+            "agent_session",
+            {"dingding_conversation_id", "dingding_user_id", "source"},
+        ),
+        (
+            "backend/app/modules/job/infrastructure/repositories.py",
+            "agent_job",
+            {"user_id", "source", "user_message"},
+        ),
     ):
         insert_columns = re.findall(
             rf"insert\s+into\s+{table}\s*\((.*?)\)\s*values",
-            repository_source,
+            sources[writer],
             flags=re.IGNORECASE | re.DOTALL,
         )
         assert insert_columns

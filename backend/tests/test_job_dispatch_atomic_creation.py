@@ -29,7 +29,7 @@ def test_job_message_authorization_snapshot_and_dispatch_event_commit_together()
         job = runtime.create_agent_job_service.execute(_command("atomic-dispatch"))
 
         detail = runtime.agent_repository.get_job_detail(job.id)
-        messages = runtime.agent_repository.list_messages(job.session_id)
+        messages = runtime.session_repository.list_messages(job.session_id)
         event = runtime.job_dispatch_repository.get_dispatch_event_for_job(job.id)
         audit_types = {row["event_type"] for row in runtime.audit_repository.list_for_job(job.id)}
 

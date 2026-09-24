@@ -256,7 +256,7 @@ def test_dashboard_is_scope_filtered_and_queue_failure_is_region_local() -> None
         email="",
         password="dashboard-limited-password",
     )
-    own_session = container.agent_repository.create_session(
+    own_session = container.session_repository.create_session(
         project_code="default",
         source_channel="dingding",
         source_connector_id="connector-dingtalk-enterprise-default",
@@ -265,7 +265,7 @@ def test_dashboard_is_scope_filtered_and_queue_failure_is_region_local() -> None
         routing_context={"project_code": "default", "environment": "prod", "base": "guanlan"},
         session_key="dashboard-own",
     )
-    other_session = container.agent_repository.create_session(
+    other_session = container.session_repository.create_session(
         project_code="default",
         source_channel="dingding",
         source_connector_id="connector-dingtalk-enterprise-default",
@@ -476,7 +476,7 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(  # noqa: PLR09
             "2026-07-20T00:00:00+00:00",
         ),
     )
-    session = container.agent_repository.create_session(
+    session = container.session_repository.create_session(
         project_code="default",
         source_channel="dingding",
         source_connector_id="connector-dingtalk-enterprise-default",
@@ -743,7 +743,7 @@ def test_job_detail_checks_scope_before_loading_large_run_audit(
 ) -> None:
     settings = unified_settings()
     container = build_test_container(settings, migrate=True, seed=True)
-    session = container.agent_repository.create_session(
+    session = container.session_repository.create_session(
         project_code="default",
         source_channel="debug_api",
         source_connector_id="connector-debug-api",
@@ -804,7 +804,7 @@ def test_job_query_filters_before_limit_and_uses_stable_keyset_pages() -> None:
         username="job-query-target",
         display_name="Job Query Target",
     )
-    session = runtime.agent_repository.create_session(
+    session = runtime.session_repository.create_session(
         project_code="default",
         source_channel="debug_api",
         source_connector_id="connector-debug-api",
@@ -888,7 +888,7 @@ def test_job_repository_applies_scope_and_execution_filters_in_sqlite() -> None:
         username="job-sql-viewer",
         display_name="Job SQL Viewer",
     )
-    session = runtime.agent_repository.create_session(
+    session = runtime.session_repository.create_session(
         project_code="project-sql",
         source_channel="debug_api",
         source_connector_id="connector-debug-api",

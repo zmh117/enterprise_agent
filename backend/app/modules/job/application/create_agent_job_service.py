@@ -44,6 +44,7 @@ from app.modules.job.infrastructure.attachment_repository import AttachmentRepos
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.session_repository import SessionRepository
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.modules.permission.application.permission_service import PermissionService
@@ -188,6 +189,7 @@ class CreateAgentJobService:
         dispatch_repository: JobDispatchRepository,
         delivery_repository: DeliveryRepository,
         attachment_repository: AttachmentRepository,
+        session_repository: SessionRepository,
         permission_service: PermissionService,
         audit_service: AuditService,
         publisher: MessagePublisher,
@@ -208,12 +210,17 @@ class CreateAgentJobService:
         delivery_service: Any = None,
     ) -> None:
         require_shared_database(
-            repository, dispatch_repository, delivery_repository, attachment_repository
+            repository,
+            dispatch_repository,
+            delivery_repository,
+            attachment_repository,
+            session_repository,
         )
         self.repository = repository
         self.dispatch_repository = dispatch_repository
         self.delivery_repository = delivery_repository
         self.attachment_repository = attachment_repository
+        self.session_repository = session_repository
         self.permission_service = permission_service
         self.audit_service = audit_service
         self.publisher = publisher
@@ -335,7 +342,7 @@ class CreateAgentJobService:
         attachment_ids: list[str] = []
         new_attachment_ids: list[str] = []
         with self.repository.database.unit_of_work():
-            session = self.repository.create_session(
+            session = self.session_repository.create_session(
                 project_code=project_code,
                 source_channel=source_channel,
                 source_connector_id=command.source_connector_id,
@@ -384,7 +391,7 @@ class CreateAgentJobService:
                     safe_message="无法创建任务文件工作区",
                     error_code="file_workspace_unavailable",
                 )
-            message_id = self.repository.add_message(
+            message_id = self.session_repository.add_message(
                 session_id=session.id,
                 job_id=None,
                 role="user",
@@ -757,7 +764,7 @@ class CreateAgentJobService:
                     execution_scope_hash=execution_scope_hash,
                 )
                 if command.continue_session_id
-                else self.repository.create_session(
+                else self.session_repository.create_session(
                     project_code=project_code,
                     source_channel=source_channel,
                     source_connector_id=command.source_connector_id,
@@ -1142,7 +1149,7 @@ class CreateAgentJobService:
             notice_kind=gate.notice_kind or "pending",
             display_names=names,
         )
-        message_id = self.repository.add_message(
+        message_id = self.session_repository.add_message(
             session_id=session.id,
             job_id=None,
             role="user",
@@ -1294,7 +1301,7 @@ class CreateAgentJobService:
         execution_scope_hash: str,
     ) -> AgentSession:
         try:
-            session = self.repository.get_session(command.continue_session_id)
+            session = self.session_repository.get_session(command.continue_session_id)
         except NotFound as exc:
             raise PermissionDenied(
                 "Debug session cannot be continued",

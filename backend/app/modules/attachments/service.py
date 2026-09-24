@@ -25,6 +25,7 @@ from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.attachment_repository import AttachmentRepository
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.session_repository import SessionRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.shared.config import AttachmentSettings
 from app.shared.database import operation_unit_of_work, require_shared_database
@@ -41,6 +42,7 @@ class AttachmentProcessingService:
         repository: AgentRepository,
         dispatch_repository: JobDispatchRepository,
         attachment_repository: AttachmentRepository,
+        session_repository: SessionRepository,
         publisher: MessagePublisher,
         audit_service: AuditService,
         credential_cipher: AttachmentCredentialCipher,
@@ -50,10 +52,13 @@ class AttachmentProcessingService:
         delivery_service: ResultDeliveryService | None = None,
         file_manifest_service: JobFileManifestService | None = None,
     ) -> None:
-        require_shared_database(repository, dispatch_repository, attachment_repository)
+        require_shared_database(
+            repository, dispatch_repository, attachment_repository, session_repository
+        )
         self.repository = repository
         self.dispatch_repository = dispatch_repository
         self.attachment_repository = attachment_repository
+        self.session_repository = session_repository
         self.publisher = publisher
         self.audit_service = audit_service
         self.credential_cipher = credential_cipher
@@ -225,7 +230,7 @@ class AttachmentProcessingService:
         if self.delivery_service is None:
             return
         context = self.attachment_repository.attachment_session_context(attachment.id)
-        session = self.repository.get_session(str(context["session_id"]))
+        session = self.session_repository.get_session(str(context["session_id"]))
         definition = FILE_ERROR_CATALOG.get(str(attachment.failure_code or ""))
         reason = definition.safe_message if definition else "文件不符合当前任务工作区策略"
         display_name = " ".join(
@@ -396,7 +401,7 @@ class AttachmentProcessingService:
             )
             names = self.attachment_repository.display_names_for_versions(version_ids)
             title, markdown = render_file_admission_notice(notice_kind="ready", display_names=names)
-            session = self.repository.get_session(str(turn["session_id"]))
+            session = self.session_repository.get_session(str(turn["session_id"]))
             self.delivery_service.enqueue_system_notice(
                 idempotency_key=f"file-ready-notice:{turn['id']}",
                 session_id=str(turn["session_id"]),

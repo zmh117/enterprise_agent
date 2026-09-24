@@ -596,8 +596,8 @@ def test_session_policy_is_publication_scoped_and_publication_upgrade_splits_ses
     assert first_job.session_id != second_job.session_id
     assert first_job.business_application_publication_id == publication_v1["id"]
     assert second_job.business_application_publication_id == publication_v2["id"]
-    first_session = container.agent_repository.get_session(first_job.session_id)
-    second_session = container.agent_repository.get_session(second_job.session_id)
+    first_session = container.session_repository.get_session(first_job.session_id)
+    second_session = container.session_repository.get_session(second_job.session_id)
     assert second_session.business_application_id == application["id"]
     assert first_session.application_publication_id == publication_v1["id"]
     assert second_session.application_publication_id == publication_v2["id"]
@@ -1041,7 +1041,7 @@ def test_application_recent_message_limit_and_attachment_policy_are_enforced() -
     assert first.accepted is second.accepted is True
     second_job = container.agent_repository.get_job(second.job_id)
     context = ConversationContextService(
-        container.agent_repository,
+        container.session_repository,
         container.settings.conversation,
     ).build(second_job)
     assert len(context.recent_messages) == 1

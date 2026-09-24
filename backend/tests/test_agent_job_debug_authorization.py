@@ -129,7 +129,7 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
             job.business_application_route_decision["authorization_snapshot"]["reason"]
             == "application_role_allow"
         )
-        session = runtime.agent_repository.get_session(job.session_id)
+        session = runtime.session_repository.get_session(job.session_id)
         assert session.session_policy["continuous_conversation_enabled"] is False
         assert session.application_publication_id == selection["publication_id"]
         assert len(session.execution_scope_hash) == 64

@@ -25,6 +25,7 @@ from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.dispatch_repository import JobDispatchRepository
 from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
+from app.modules.job.infrastructure.session_repository import SessionRepository
 from app.modules.job.infrastructure.execution_audit_repository import (
     ExecutionAuditRepository,
 )
@@ -85,7 +86,7 @@ def test_postgres_admin_job_query_uses_json_filters_and_keyset_limit(
     settings = replace(make_test_settings(), database_dsn=postgres_database_dsn)
     runtime = build_test_container(settings, migrate=True, seed=True)
     try:
-        session = runtime.agent_repository.create_session(
+        session = runtime.session_repository.create_session(
             project_code="postgres-query",
             source_channel="debug_api",
             source_connector_id="connector-debug-api",
@@ -1002,7 +1003,7 @@ def test_postgres_concurrent_same_name_mcp_calls_keep_exact_links(
             (timestamp, timestamp),
         )
         repository = AgentRepository(database)
-        session = repository.create_session(
+        session = SessionRepository(database).create_session(
             project_code="default",
             source_channel="test",
             source_connector_id="connector-test",
@@ -1231,7 +1232,7 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
 
     try:
         runtime.result_delivery_service.adapters["postgres_capture"] = CaptureAdapter()
-        session = runtime.agent_repository.create_session(
+        session = runtime.session_repository.create_session(
             project_code="default",
             source_channel="test",
             source_connector_id="connector-test",

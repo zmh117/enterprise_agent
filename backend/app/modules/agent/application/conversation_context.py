@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from app.modules.job.domain.agent_job import AgentJob
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.session_repository import SessionRepository
 from app.shared.config import ConversationSettings
 from app.shared.exceptions import PermissionDenied
 
@@ -46,7 +46,7 @@ class ConversationContext:
 class ConversationContextService:
     def __init__(
         self,
-        repository: AgentRepository,
+        repository: SessionRepository,
         settings: ConversationSettings,
         summarizer: ConversationSummarizer | None = None,
     ) -> None:
