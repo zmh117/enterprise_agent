@@ -286,12 +286,22 @@ def _runtime_with_targets() -> tuple[Container, dict[str, str]]:
         duration_ms=1,
         risk_level="low",
     )
-    runtime.agent_repository.add_delivery_attempt(
-        job_id=job.id,
-        route_type="dingtalk_stream_session_webhook",
-        connector_id=str(connector["id"]),
-        target_summary={"conversation": "historical"},
-        status="SUCCEEDED",
+    runtime.database.execute(
+        """
+        insert into delivery_attempt
+          (id, job_id, route_type, connector_id, target_summary, status,
+           error_message, created_at, finished_at)
+        values (?, ?, ?, ?, ?, 'SUCCEEDED', null, ?, ?)
+        """,
+        (
+            "delivery_historical_attempt",
+            job.id,
+            "dingtalk_stream_session_webhook",
+            str(connector["id"]),
+            json.dumps({"conversation": "historical"}, ensure_ascii=False),
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00+00:00",
+        ),
     )
     connector_storage = runtime.database.execute_one(
         "select secret_ref from integration_connector where id = ?",
