@@ -76,9 +76,14 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-# Existing over-limit functions carry exact `# noqa` baselines; RUF100 forces their removal
-# once a function is refactored under the limit.
-extend-select = ["C901", "PLR0915", "RUF100"]
+# PLR0904 is a preview rule. Preview mode also widens ruff's default rule set, so `select`
+# pins the stable defaults and explicit-preview-rules admits only preview codes named here.
+preview = true
+explicit-preview-rules = true
+select = ["E4", "E7", "E9", "F"]
+# Existing over-limit functions and classes carry exact `# noqa` baselines; RUF100 forces
+# their removal once the code is refactored under the limit.
+extend-select = ["C901", "PLR0904", "PLR0915", "RUF100"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15

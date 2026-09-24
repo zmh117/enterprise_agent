@@ -10,7 +10,7 @@ from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 
-class ManagedChannelRepository:
+class ManagedChannelRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 

@@ -28,7 +28,7 @@ def json_value(value: object, fallback: Any) -> Any:
         return fallback
 
 
-class BusinessApplicationRepository:
+class BusinessApplicationRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 

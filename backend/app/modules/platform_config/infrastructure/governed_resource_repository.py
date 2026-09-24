@@ -9,7 +9,7 @@ from app.shared.exceptions import NonRetryableExecutionError, NotFound
 from .repository import json_text, new_id, now_iso
 
 
-class GovernedResourceRepository:
+class GovernedResourceRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 

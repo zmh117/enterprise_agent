@@ -34,7 +34,7 @@ def _safe_metric_error_code(value: object) -> str:
     return code if code.replace("_", "").isalnum() else "unknown_error"
 
 
-class DocumentProcessingRepository:
+class DocumentProcessingRepository:  # noqa: PLR0904
     """Durable File Service mapping for processing runs and representations."""
 
     def __init__(self, database: Database) -> None:

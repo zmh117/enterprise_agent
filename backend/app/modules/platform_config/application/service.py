@@ -72,7 +72,7 @@ def _optional_expected_revision(value: object) -> int | None:
     return revision
 
 
-class PlatformConfigService:
+class PlatformConfigService:  # noqa: PLR0904
     def __init__(
         self,
         repository: PlatformConfigRepository,

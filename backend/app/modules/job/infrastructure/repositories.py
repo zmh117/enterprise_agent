@@ -441,7 +441,7 @@ def source_connector_projection(row: dict[str, Any]) -> dict[str, str]:
     }
 
 
-class AgentRepository:
+class AgentRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 

@@ -18,7 +18,7 @@ from app.modules.knowledge.domain.identity import now
 from app.shared.database import Database
 
 
-class GovernanceStore:
+class GovernanceStore:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 

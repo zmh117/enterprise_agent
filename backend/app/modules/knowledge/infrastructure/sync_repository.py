@@ -33,7 +33,7 @@ from app.modules.knowledge.infrastructure.storage import insert, source_lock, ta
 from app.shared.database import Database
 
 
-class SyncRepository:
+class SyncRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 

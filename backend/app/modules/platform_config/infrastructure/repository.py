@@ -44,7 +44,7 @@ def _normalize_definition_description(description: str) -> str:
     return str(description).replace("\r\n", "\n").replace("\r", "\n")
 
 
-class PlatformConfigRepository:
+class PlatformConfigRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 

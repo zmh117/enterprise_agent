@@ -9,7 +9,7 @@ from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
 
-class AgentConfigRepository:
+class AgentConfigRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 

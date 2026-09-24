@@ -51,7 +51,7 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-class FileWorkspaceRepository:
+class FileWorkspaceRepository:  # noqa: PLR0904
     """Single transactional mapping for the governed task-file aggregate."""
 
     def __init__(self, database: Database) -> None:

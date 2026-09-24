@@ -87,7 +87,7 @@ _BUSINESS_CAPABILITY_NAMES_ZH = {
 }
 
 
-class AuthorizationCenterRepository:
+class AuthorizationCenterRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 

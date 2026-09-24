@@ -126,7 +126,7 @@ class SourceStreamGrantSigner:
         return payload
 
 
-class GovernedDocumentProcessingService:
+class GovernedDocumentProcessingService:  # noqa: PLR0904
     def __init__(
         self,
         repository: DocumentProcessingRepository,

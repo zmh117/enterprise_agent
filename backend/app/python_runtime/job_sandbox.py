@@ -137,7 +137,7 @@ class _RuntimeArtifact:
     public_payload: Mapping[str, object]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: PLR0904
 class JobSandbox:
     job_id: str
     path: Path

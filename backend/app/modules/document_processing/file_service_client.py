@@ -77,7 +77,7 @@ class ClaimedPictureItem:
         return self.status in {"AVAILABLE", "NO_TEXT", "SKIPPED_LIMIT", "FAILED"}
 
 
-class DocumentProcessingFileServiceClient:
+class DocumentProcessingFileServiceClient:  # noqa: PLR0904
     def __init__(
         self,
         *,
