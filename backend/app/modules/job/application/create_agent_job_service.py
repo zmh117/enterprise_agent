@@ -232,6 +232,16 @@ class _SessionIsolation:
     session_key: str
 
 
+@dataclass(frozen=True)
+class _FileAdmission:
+    plan: FileAdmissionPlan
+    workspace: dict[str, Any] | None
+
+    @property
+    def workspace_id(self) -> str:
+        return str(self.workspace["id"]) if self.workspace else ""
+
+
 class CreateAgentJobService:
     def __init__(
         self,
@@ -443,7 +453,7 @@ class CreateAgentJobService:
             attachment_ids=tuple(attachment_ids),
         )
 
-    def execute(self, command: CreateAgentJobCommand) -> AgentJob | SystemNoticeIntake:  # noqa: PLR0915
+    def execute(self, command: CreateAgentJobCommand) -> AgentJob | SystemNoticeIntake:
         replayed = self._replay(command)
         if replayed is not None:
             return replayed
@@ -463,303 +473,52 @@ class CreateAgentJobService:
         if command.attachments:
             self._require_credential_cipher()
         isolation = self._session_isolation(command, routing)
-        attachment_ids: list[str] = []
         with self.repository.database.unit_of_work():
-            runtime_authorization_snapshot: dict[str, Any] = {}
-            if command.business_application_id:
-                assert self.business_authorization_service is not None
-                runtime_authorization_snapshot = (
-                    self.business_authorization_service.capture_runtime_facts(
-                        user_id=routing.requester_id,
-                        application_id=command.business_application_id,
-                        publication_id=command.business_application_publication_id,
-                        publication_config_hash=command.business_application_config_hash,
-                    )
-                )
-            session = (
-                self._require_continuable_session(
-                    command=command,
-                    requester_id=routing.requester_id,
-                    execution_scope_hash=isolation.execution_scope_hash,
-                )
-                if command.continue_session_id
-                else self._create_session(
-                    command,
-                    routing,
-                    session_key=isolation.session_key,
-                    execution_scope_hash=isolation.execution_scope_hash,
-                )
-            )
-            workspace_feature_enabled = bool(command.task_file_features.get("workspace_enabled"))
-            active_workspace = (
-                self.file_manifest_service.active_workspace(session.id)
-                if self.file_manifest_service is not None and workspace_feature_enabled
-                else None
-            )
-            file_plan = self._plan_file_admission(
-                command=command,
-                session_id=session.id,
-                active_workspace_id=(
-                    str(active_workspace.get("id") or "") if active_workspace else ""
-                ),
-                workspace_feature_enabled=workspace_feature_enabled,
-            )
-            file_workspace = (
-                self.file_manifest_service.resolve_workspace(
-                    tenant_id=command.tenant_id,
-                    session_id=session.id,
-                    requester_id=routing.requester_id,
-                    conversation_type=command.conversation_type,
-                    enterprise_id=command.enterprise_id,
-                    connector_id=command.source_connector_id,
-                    conversation_id=routing.external_conversation_id,
-                    sender_staff_id=command.sender_staff_id,
-                    publication_id=command.business_application_publication_id,
-                    retention_period=command.task_workspace_retention_period,
-                    attachments=command.attachments,
-                    file_references=command.file_references,
-                    requests_file_output=file_plan.effective_output_intent,
-                    force_create=file_plan.workspace_requirement == "force_create",
-                )
-                if self.file_manifest_service is not None
-                and file_plan.workspace_requirement != "none"
-                else None
-            )
-            gate = file_plan.gate
-            if gate.action == "system_notice":
+            runtime_authorization = self._capture_runtime_authorization(command, routing)
+            session = self._open_session(command, routing, isolation)
+            admission = self._admit_files(command, routing, session)
+            if admission.plan.gate.action == "system_notice":
                 return self._persist_system_notice(
                     command=command,
                     session=session,
-                    workspace_id=str(file_workspace["id"]) if file_workspace else "",
+                    workspace_id=admission.workspace_id,
                     reply_route=routing.reply_route,
-                    file_plan=file_plan,
+                    file_plan=admission.plan,
                     correlation_id=correlation_id,
                     requester_id=routing.requester_id,
                 )
-            bound_attachment_ids = tuple(
-                item.attachment_id
-                for item in gate.dependencies
-                if item.attachment_id and not item.attachment_id.startswith("current:")
+            job = self._create_job(
+                command,
+                routing,
+                session=session,
+                admission=admission,
+                authorization=authorization,
+                runtime_authorization=runtime_authorization,
+                agent=agent,
+                execution_policy=execution_policy,
             )
-            file_turn_payload = file_plan.dependency_payloads()
-            job = self.repository.create_job(
-                session_id=session.id,
-                idempotency_key=command.idempotency_key,
-                project_code=routing.project_code,
-                source_channel=routing.source_channel,
-                source_connector_id=command.source_connector_id,
-                requester_id=routing.requester_id,
-                input_message=command.user_message,
-                max_retry_count=self.queue_settings.max_retry_count,
-                external_event_id=command.external_event_id,
-                external_message_id=(command.external_message_id or command.external_event_id),
-                requester_display_name=command.requester_display_name,
-                message_type="multimodal" if command.attachments else "text",
-                message_content_status="PENDING" if command.attachments else "READY",
-                routing_context=command.effective_routing_context,
-                reply_route=routing.reply_route,
-                initial_status=(
-                    JobStatus.WAITING_INPUT
-                    if gate.action == "wait_source" or command.attachments
-                    else JobStatus.PENDING
-                ),
-                internal_user_id=routing.requester_id,
-                external_identity_id=command.external_identity_id,
-                agent_definition_id=agent.definition_id,
-                agent_publication_id=agent.publication_id,
-                agent_revision=agent.revision,
-                agent_config_hash=agent.config_hash,
-                webhook_event_id=command.webhook_event_id,
-                webhook_trigger_id=command.webhook_trigger_id,
-                webhook_trigger_publication_id=command.webhook_trigger_publication_id,
-                business_application_id=command.business_application_id,
-                business_application_code=command.business_application_code,
-                business_application_publication_id=(command.business_application_publication_id),
-                business_application_deployment_id=(command.business_application_deployment_id),
-                business_application_route_id=command.business_application_route_id,
-                business_application_config_hash=(command.business_application_config_hash),
-                business_application_runtime_status=(command.business_application_runtime_status),
-                business_application_route_decision={
-                    **command.business_application_route_decision,
-                    **(
-                        {"task_file_features": dict(command.task_file_features)}
-                        if command.task_file_features
-                        else {}
-                    ),
-                    "authorization_snapshot": authorization.snapshot,
-                    "runtime_authorization": runtime_authorization_snapshot,
-                    "file_turn_dependencies": file_turn_payload,
-                },
-                execution_policy=execution_policy.to_dict(),
-                model_runtime_provenance=agent.model_runtime_provenance,
-                agent_runtime_kind=agent.runtime_kind,
-                agent_runtime_protocol_version=agent.runtime_protocol_version,
-                task_workspace_id=(str(file_workspace["id"]) if file_workspace else ""),
-                quoted_external_message_id=command.quoted_external_message_id,
+            mcp_tool_snapshot = self._freeze_mcp_tools(
+                command,
+                routing,
+                job=job,
+                admission=admission,
+                authorization=authorization,
+                runtime_authorization=runtime_authorization,
+                agent=agent,
             )
-            mcp_tool_snapshot: dict[str, Any] = {}
-            if command.business_application_id and self.mcp_tool_snapshot_service is not None:
-                file_server_enabled_for_job = bool(
-                    file_workspace is not None and file_plan.file_mcp_enabled
-                )
-                mcp_tool_snapshot = self.mcp_tool_snapshot_service.freeze(
-                    job_id=job.id,
-                    requester_id=routing.requester_id,
-                    application_id=command.business_application_id,
-                    application_publication_id=(command.business_application_publication_id),
-                    application_config_hash=(command.business_application_config_hash),
-                    agent_publication_id=agent.publication_id,
-                    routing_context=command.effective_routing_context,
-                    business_authorization=authorization.snapshot,
-                    runtime_authorization=runtime_authorization_snapshot,
-                    allowed_server_codes=(
-                        None
-                        if file_server_enabled_for_job
-                        else frozenset(
-                            definition.server_code
-                            for definition in MCP_TOOL_MANIFEST.values()
-                            if definition.server_code != "file-service"
-                        )
-                    ),
-                )
-            elif agent.publication_id and self.mcp_tool_snapshot_service is not None:
-                mcp_tool_snapshot = self.mcp_tool_snapshot_service.freeze_agent_only(
-                    job_id=job.id,
-                    requester_id=routing.requester_id,
-                    agent_publication_id=agent.publication_id,
-                    routing_context=command.effective_routing_context,
-                    business_authorization=authorization.snapshot,
-                    runtime_authorization=runtime_authorization_snapshot,
-                )
-            for ordinal, attachment in enumerate(command.attachments, start=1):
-                assert self.credential_cipher is not None
-                created = self.attachment_repository.add_attachment(
-                    message_id=job.input_message_id,
-                    job_id=job.id,
-                    task_workspace_id=(str(file_workspace["id"]) if file_workspace else ""),
-                    ordinal=ordinal,
-                    media_type=attachment.media_type,
-                    file_name=attachment.file_name,
-                    declared_mime=attachment.declared_mime,
-                    declared_size=attachment.declared_size,
-                    credential_ciphertext=self.credential_cipher.encrypt(
-                        attachment.source_credential
-                    ),
-                    credential_type=attachment.source_credential_type,
-                    credential_expires_at=attachment.source_credential_expires_at,
-                )
-                attachment_ids.append(created.id)
-            if bound_attachment_ids and file_workspace is not None:
-                claimed = self.attachment_repository.claim_staged_attachments(
-                    session_id=session.id,
-                    task_workspace_id=str(file_workspace["id"]),
-                    job_id=job.id,
-                    attachment_ids=bound_attachment_ids,
-                )
-                self.audit_service.record(
-                    "attachment.intake.claimed",
-                    status="SUCCEEDED",
-                    summary="A text-triggered Agent job claimed bound staged attachments",
-                    job_id=job.id,
-                    actor_id=routing.requester_id,
-                    payload={
-                        "attachment_count": len(claimed),
-                        "task_workspace_id": str(file_workspace["id"]),
-                    },
-                )
-            file_manifest: dict[str, Any] = {}
-            if file_workspace is not None and file_plan.file_mcp_enabled:
-                assert self.file_manifest_service is not None
-                manifest_references = tuple(
-                    ChannelFileReference(
-                        file_id=item.file_id,
-                        version_id=item.version_id,
-                        auto_materialize=item.auto_materialize,
-                    )
-                    for item in file_plan.manifest_bindings
-                )
-                self.file_manifest_service.register_request(
-                    job_id=job.id,
-                    workspace=file_workspace,
-                    requester_id=routing.requester_id,
-                    publication_id=command.business_application_publication_id,
-                    file_references=manifest_references,
-                )
-                if not self.file_manifest_service.has_pending_text_attachments(job.id):
-                    file_manifest = self.file_manifest_service.finalize(job.id) or {}
-            job_attachments = self.attachment_repository.list_attachments(job.id)
-            if job.status == JobStatus.WAITING_INPUT and all(
-                item.status in TERMINAL_ATTACHMENT_STATUSES for item in job_attachments
-            ):
-                job = self.repository.transition_job(
-                    job_id=job.id,
-                    target=JobStatus.PENDING,
-                )
-            dispatch_event = self.dispatch_repository.create_dispatch_event(
-                job_id=job.id,
-                job_idempotency_key=job.idempotency_key,
+            attachment_ids = self._add_message_attachments(command, job, admission)
+            self._claim_bound_attachments(routing, session=session, job=job, admission=admission)
+            file_manifest = self._register_file_manifest(command, routing, job, admission)
+            job = self._release_if_sources_ready(job)
+            self._enqueue_dispatch(
+                command,
+                routing,
+                job=job,
+                admission=admission,
+                agent=agent,
                 correlation_id=correlation_id,
-                max_attempts=max(
-                    1,
-                    self.queue_settings.dispatch_outbox_max_attempts,
-                ),
-                max_replay_count=max(
-                    0,
-                    self.queue_settings.dispatch_outbox_max_replays,
-                ),
-            )
-            self.audit_service.record(
-                "job.created",
-                status="SUCCEEDED",
-                summary="Agent job created",
-                job_id=job.id,
-                actor_id=routing.requester_id,
-                payload={
-                    "idempotency_key": command.idempotency_key,
-                    "source_channel": routing.source_channel,
-                    "source_connector_id": command.source_connector_id,
-                    "external_event_id": command.external_event_id,
-                    "agent_publication_id": agent.publication_id,
-                    "agent_revision": agent.revision,
-                    "agent_config_hash": agent.config_hash,
-                    "model_runtime_provenance": agent.model_runtime_provenance,
-                    "agent_runtime_kind": job.agent_runtime_kind,
-                    "agent_runtime_protocol_version": (job.agent_runtime_protocol_version),
-                    "webhook_event_id": command.webhook_event_id,
-                    "webhook_trigger_id": command.webhook_trigger_id,
-                    "webhook_trigger_publication_id": command.webhook_trigger_publication_id,
-                    "business_application_code": command.business_application_code,
-                    "business_application_publication_id": (
-                        command.business_application_publication_id
-                    ),
-                    "business_application_deployment_id": (
-                        command.business_application_deployment_id
-                    ),
-                    "business_application_route_id": (command.business_application_route_id),
-                    "business_application_runtime_status": (
-                        command.business_application_runtime_status
-                    ),
-                    "mcp_tool_snapshot_id": str(mcp_tool_snapshot.get("id") or ""),
-                    "mcp_tool_snapshot_hash": str(mcp_tool_snapshot.get("snapshot_hash") or ""),
-                    "task_workspace_id": str(file_workspace.get("id") or "")
-                    if file_workspace
-                    else "",
-                    "file_manifest_id": str(file_manifest.get("id") or ""),
-                    "file_manifest_hash": str(file_manifest.get("manifest_hash") or ""),
-                    "sender_staff_id": command.sender_staff_id,
-                },
-            )
-            self.audit_service.record(
-                "job.dispatch.enqueued",
-                status="PENDING",
-                summary="Agent job dispatch event persisted",
-                job_id=job.id,
-                actor_id=routing.requester_id,
-                payload={
-                    "event_id": dispatch_event.id,
-                    "event_key": dispatch_event.event_key,
-                    "correlation_id": dispatch_event.correlation_id,
-                },
+                mcp_tool_snapshot=mcp_tool_snapshot,
+                file_manifest=file_manifest,
             )
         for attachment_id in attachment_ids:
             self.publisher.publish_attachment(attachment_id, correlation_id)
@@ -919,6 +678,372 @@ class CreateAgentJobService:
                 if continuous_enabled
                 else ""
             ),
+        )
+
+    def _capture_runtime_authorization(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+    ) -> dict[str, Any]:
+        if not command.business_application_id:
+            return {}
+        assert self.business_authorization_service is not None
+        return self.business_authorization_service.capture_runtime_facts(
+            user_id=routing.requester_id,
+            application_id=command.business_application_id,
+            publication_id=command.business_application_publication_id,
+            publication_config_hash=command.business_application_config_hash,
+        )
+
+    def _open_session(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+        isolation: _SessionIsolation,
+    ) -> AgentSession:
+        if command.continue_session_id:
+            return self._require_continuable_session(
+                command=command,
+                requester_id=routing.requester_id,
+                execution_scope_hash=isolation.execution_scope_hash,
+            )
+        return self._create_session(
+            command,
+            routing,
+            session_key=isolation.session_key,
+            execution_scope_hash=isolation.execution_scope_hash,
+        )
+
+    def _admit_files(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+        session: AgentSession,
+    ) -> _FileAdmission:
+        workspace_feature_enabled = bool(command.task_file_features.get("workspace_enabled"))
+        active_workspace = (
+            self.file_manifest_service.active_workspace(session.id)
+            if self.file_manifest_service is not None and workspace_feature_enabled
+            else None
+        )
+        file_plan = self._plan_file_admission(
+            command=command,
+            session_id=session.id,
+            active_workspace_id=(str(active_workspace.get("id") or "") if active_workspace else ""),
+            workspace_feature_enabled=workspace_feature_enabled,
+        )
+        file_workspace = (
+            self.file_manifest_service.resolve_workspace(
+                tenant_id=command.tenant_id,
+                session_id=session.id,
+                requester_id=routing.requester_id,
+                conversation_type=command.conversation_type,
+                enterprise_id=command.enterprise_id,
+                connector_id=command.source_connector_id,
+                conversation_id=routing.external_conversation_id,
+                sender_staff_id=command.sender_staff_id,
+                publication_id=command.business_application_publication_id,
+                retention_period=command.task_workspace_retention_period,
+                attachments=command.attachments,
+                file_references=command.file_references,
+                requests_file_output=file_plan.effective_output_intent,
+                force_create=file_plan.workspace_requirement == "force_create",
+            )
+            if self.file_manifest_service is not None and file_plan.workspace_requirement != "none"
+            else None
+        )
+        return _FileAdmission(plan=file_plan, workspace=file_workspace)
+
+    def _create_job(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+        *,
+        session: AgentSession,
+        admission: _FileAdmission,
+        authorization: _BusinessAuthorization,
+        runtime_authorization: dict[str, Any],
+        agent: AgentBinding,
+        execution_policy: JobExecutionPolicySnapshot,
+    ) -> AgentJob:
+        return self.repository.create_job(
+            session_id=session.id,
+            idempotency_key=command.idempotency_key,
+            project_code=routing.project_code,
+            source_channel=routing.source_channel,
+            source_connector_id=command.source_connector_id,
+            requester_id=routing.requester_id,
+            input_message=command.user_message,
+            max_retry_count=self.queue_settings.max_retry_count,
+            external_event_id=command.external_event_id,
+            external_message_id=(command.external_message_id or command.external_event_id),
+            requester_display_name=command.requester_display_name,
+            message_type="multimodal" if command.attachments else "text",
+            message_content_status="PENDING" if command.attachments else "READY",
+            routing_context=command.effective_routing_context,
+            reply_route=routing.reply_route,
+            initial_status=(
+                JobStatus.WAITING_INPUT
+                if admission.plan.gate.action == "wait_source" or command.attachments
+                else JobStatus.PENDING
+            ),
+            internal_user_id=routing.requester_id,
+            external_identity_id=command.external_identity_id,
+            agent_definition_id=agent.definition_id,
+            agent_publication_id=agent.publication_id,
+            agent_revision=agent.revision,
+            agent_config_hash=agent.config_hash,
+            webhook_event_id=command.webhook_event_id,
+            webhook_trigger_id=command.webhook_trigger_id,
+            webhook_trigger_publication_id=command.webhook_trigger_publication_id,
+            business_application_id=command.business_application_id,
+            business_application_code=command.business_application_code,
+            business_application_publication_id=(command.business_application_publication_id),
+            business_application_deployment_id=(command.business_application_deployment_id),
+            business_application_route_id=command.business_application_route_id,
+            business_application_config_hash=(command.business_application_config_hash),
+            business_application_runtime_status=(command.business_application_runtime_status),
+            business_application_route_decision={
+                **command.business_application_route_decision,
+                **(
+                    {"task_file_features": dict(command.task_file_features)}
+                    if command.task_file_features
+                    else {}
+                ),
+                "authorization_snapshot": authorization.snapshot,
+                "runtime_authorization": runtime_authorization,
+                "file_turn_dependencies": admission.plan.dependency_payloads(),
+            },
+            execution_policy=execution_policy.to_dict(),
+            model_runtime_provenance=agent.model_runtime_provenance,
+            agent_runtime_kind=agent.runtime_kind,
+            agent_runtime_protocol_version=agent.runtime_protocol_version,
+            task_workspace_id=admission.workspace_id,
+            quoted_external_message_id=command.quoted_external_message_id,
+        )
+
+    def _freeze_mcp_tools(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+        *,
+        job: AgentJob,
+        admission: _FileAdmission,
+        authorization: _BusinessAuthorization,
+        runtime_authorization: dict[str, Any],
+        agent: AgentBinding,
+    ) -> dict[str, Any]:
+        if self.mcp_tool_snapshot_service is None:
+            return {}
+        if command.business_application_id:
+            file_server_enabled_for_job = bool(
+                admission.workspace is not None and admission.plan.file_mcp_enabled
+            )
+            return self.mcp_tool_snapshot_service.freeze(
+                job_id=job.id,
+                requester_id=routing.requester_id,
+                application_id=command.business_application_id,
+                application_publication_id=(command.business_application_publication_id),
+                application_config_hash=(command.business_application_config_hash),
+                agent_publication_id=agent.publication_id,
+                routing_context=command.effective_routing_context,
+                business_authorization=authorization.snapshot,
+                runtime_authorization=runtime_authorization,
+                allowed_server_codes=(
+                    None
+                    if file_server_enabled_for_job
+                    else frozenset(
+                        definition.server_code
+                        for definition in MCP_TOOL_MANIFEST.values()
+                        if definition.server_code != "file-service"
+                    )
+                ),
+            )
+        if agent.publication_id:
+            return self.mcp_tool_snapshot_service.freeze_agent_only(
+                job_id=job.id,
+                requester_id=routing.requester_id,
+                agent_publication_id=agent.publication_id,
+                routing_context=command.effective_routing_context,
+                business_authorization=authorization.snapshot,
+                runtime_authorization=runtime_authorization,
+            )
+        return {}
+
+    def _add_message_attachments(
+        self,
+        command: CreateAgentJobCommand,
+        job: AgentJob,
+        admission: _FileAdmission,
+    ) -> list[str]:
+        attachment_ids: list[str] = []
+        for ordinal, attachment in enumerate(command.attachments, start=1):
+            assert self.credential_cipher is not None
+            created = self.attachment_repository.add_attachment(
+                message_id=job.input_message_id,
+                job_id=job.id,
+                task_workspace_id=admission.workspace_id,
+                ordinal=ordinal,
+                media_type=attachment.media_type,
+                file_name=attachment.file_name,
+                declared_mime=attachment.declared_mime,
+                declared_size=attachment.declared_size,
+                credential_ciphertext=self.credential_cipher.encrypt(attachment.source_credential),
+                credential_type=attachment.source_credential_type,
+                credential_expires_at=attachment.source_credential_expires_at,
+            )
+            attachment_ids.append(created.id)
+        return attachment_ids
+
+    def _claim_bound_attachments(
+        self,
+        routing: _ChannelRouting,
+        *,
+        session: AgentSession,
+        job: AgentJob,
+        admission: _FileAdmission,
+    ) -> None:
+        bound_attachment_ids = tuple(
+            item.attachment_id
+            for item in admission.plan.gate.dependencies
+            if item.attachment_id and not item.attachment_id.startswith("current:")
+        )
+        workspace = admission.workspace
+        if not bound_attachment_ids or workspace is None:
+            return
+        claimed = self.attachment_repository.claim_staged_attachments(
+            session_id=session.id,
+            task_workspace_id=str(workspace["id"]),
+            job_id=job.id,
+            attachment_ids=bound_attachment_ids,
+        )
+        self.audit_service.record(
+            "attachment.intake.claimed",
+            status="SUCCEEDED",
+            summary="A text-triggered Agent job claimed bound staged attachments",
+            job_id=job.id,
+            actor_id=routing.requester_id,
+            payload={
+                "attachment_count": len(claimed),
+                "task_workspace_id": str(workspace["id"]),
+            },
+        )
+
+    def _register_file_manifest(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+        job: AgentJob,
+        admission: _FileAdmission,
+    ) -> dict[str, Any]:
+        workspace = admission.workspace
+        if workspace is None or not admission.plan.file_mcp_enabled:
+            return {}
+        assert self.file_manifest_service is not None
+        manifest_references = tuple(
+            ChannelFileReference(
+                file_id=item.file_id,
+                version_id=item.version_id,
+                auto_materialize=item.auto_materialize,
+            )
+            for item in admission.plan.manifest_bindings
+        )
+        self.file_manifest_service.register_request(
+            job_id=job.id,
+            workspace=workspace,
+            requester_id=routing.requester_id,
+            publication_id=command.business_application_publication_id,
+            file_references=manifest_references,
+        )
+        if self.file_manifest_service.has_pending_text_attachments(job.id):
+            return {}
+        return self.file_manifest_service.finalize(job.id) or {}
+
+    def _release_if_sources_ready(self, job: AgentJob) -> AgentJob:
+        job_attachments = self.attachment_repository.list_attachments(job.id)
+        if job.status == JobStatus.WAITING_INPUT and all(
+            item.status in TERMINAL_ATTACHMENT_STATUSES for item in job_attachments
+        ):
+            return self.repository.transition_job(
+                job_id=job.id,
+                target=JobStatus.PENDING,
+            )
+        return job
+
+    def _enqueue_dispatch(
+        self,
+        command: CreateAgentJobCommand,
+        routing: _ChannelRouting,
+        *,
+        job: AgentJob,
+        admission: _FileAdmission,
+        agent: AgentBinding,
+        correlation_id: str,
+        mcp_tool_snapshot: dict[str, Any],
+        file_manifest: dict[str, Any],
+    ) -> None:
+        file_workspace = admission.workspace
+        dispatch_event = self.dispatch_repository.create_dispatch_event(
+            job_id=job.id,
+            job_idempotency_key=job.idempotency_key,
+            correlation_id=correlation_id,
+            max_attempts=max(
+                1,
+                self.queue_settings.dispatch_outbox_max_attempts,
+            ),
+            max_replay_count=max(
+                0,
+                self.queue_settings.dispatch_outbox_max_replays,
+            ),
+        )
+        self.audit_service.record(
+            "job.created",
+            status="SUCCEEDED",
+            summary="Agent job created",
+            job_id=job.id,
+            actor_id=routing.requester_id,
+            payload={
+                "idempotency_key": command.idempotency_key,
+                "source_channel": routing.source_channel,
+                "source_connector_id": command.source_connector_id,
+                "external_event_id": command.external_event_id,
+                "agent_publication_id": agent.publication_id,
+                "agent_revision": agent.revision,
+                "agent_config_hash": agent.config_hash,
+                "model_runtime_provenance": agent.model_runtime_provenance,
+                "agent_runtime_kind": job.agent_runtime_kind,
+                "agent_runtime_protocol_version": (job.agent_runtime_protocol_version),
+                "webhook_event_id": command.webhook_event_id,
+                "webhook_trigger_id": command.webhook_trigger_id,
+                "webhook_trigger_publication_id": command.webhook_trigger_publication_id,
+                "business_application_code": command.business_application_code,
+                "business_application_publication_id": (
+                    command.business_application_publication_id
+                ),
+                "business_application_deployment_id": (command.business_application_deployment_id),
+                "business_application_route_id": (command.business_application_route_id),
+                "business_application_runtime_status": (
+                    command.business_application_runtime_status
+                ),
+                "mcp_tool_snapshot_id": str(mcp_tool_snapshot.get("id") or ""),
+                "mcp_tool_snapshot_hash": str(mcp_tool_snapshot.get("snapshot_hash") or ""),
+                "task_workspace_id": str(file_workspace.get("id") or "") if file_workspace else "",
+                "file_manifest_id": str(file_manifest.get("id") or ""),
+                "file_manifest_hash": str(file_manifest.get("manifest_hash") or ""),
+                "sender_staff_id": command.sender_staff_id,
+            },
+        )
+        self.audit_service.record(
+            "job.dispatch.enqueued",
+            status="PENDING",
+            summary="Agent job dispatch event persisted",
+            job_id=job.id,
+            actor_id=routing.requester_id,
+            payload={
+                "event_id": dispatch_event.id,
+                "event_key": dispatch_event.event_key,
+                "correlation_id": dispatch_event.correlation_id,
+            },
         )
 
     def _plan_file_admission(
