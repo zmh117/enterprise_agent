@@ -1,0 +1,55 @@
+# 可选小时同步；必须同时加载根文件和 knowledge/compose.yml。
+# 单独指定 --profile knowledge-sync 及 KNOWLEDGE_SYNC_ENABLED=true 才运行。
+services:
+  knowledge-sync:
+    profiles: [knowledge-sync]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: ones-mcp
+      args:
+        BUILD_SOURCE_REVISION: ${BUILD_SOURCE_REVISION:-local-dev}
+        BUILD_ID: ${BUILD_ID:-local-dev}
+        BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
+    command:
+      - python
+      - -m
+      - app.cli.sync_ones_knowledge
+      - --mode
+      - daemon
+      - --binding-code
+      - ${KNOWLEDGE_SYNC_BINDING_CODE:-disabled}
+      - --capacity-path
+      - /qdrant/storage
+      - --commit
+    environment:
+      DATABASE_DSN: ${KNOWLEDGE_SYNC_DATABASE_DSN:-}
+      APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
+      APP_ENV: ${APP_ENV:-local}
+      ONES_MCP_PROVIDER_ALLOWED_HOSTS: ${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-host.docker.internal}
+      ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL: ${ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL:-false}
+      KNOWLEDGE_SYNC_ENABLED: ${KNOWLEDGE_SYNC_ENABLED:-false}
+    secrets:
+      - app_config_master_key
+    volumes:
+      - knowledge-qdrant:/qdrant/storage:ro
+    networks: [knowledge-internal, provider-egress]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs: ["/tmp:size=128m,mode=1777,uid=10003,gid=10003"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 2g
+    stop_grace_period: 240s
+    restart: "on-failure:3"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      knowledge-embedding:
+        condition: service_healthy
+      knowledge-qdrant:
+        condition: service_started

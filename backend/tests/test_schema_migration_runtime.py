@@ -93,6 +93,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("143", "143_expand_knowledge_vector_generations.sql"),
         ("144", "144_expand_knowledge_configuration_version.sql"),
         ("145", "145_contract_python_runtime_invocation_claim.sql"),
+        ("146", "146_expand_knowledge_sync_resource_pins.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -142,6 +143,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "143",
         "144",
         "145",
+        "146",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)

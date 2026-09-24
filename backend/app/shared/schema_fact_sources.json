@@ -33,7 +33,8 @@
         ]
       },
       "evidence_refs": [
-        "migration:142_expand_knowledge_sync_candidates"
+        "migration:142_expand_knowledge_sync_candidates",
+        "migration:146_expand_knowledge_sync_resource_pins"
       ]
     },
     {

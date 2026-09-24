@@ -4,18 +4,22 @@ from typing import Any
 
 from app.modules.knowledge.application.content_access import ContentRepository
 from app.modules.knowledge.domain.chunking import KEEP_IDS_PROFILE
-from app.modules.knowledge.domain.identity import now, stable_id
+from app.modules.knowledge.domain.identity import stable_id
 from app.modules.knowledge.domain.normalization import ExportValidationError
 from app.modules.knowledge.domain.sync import replacement_manifest
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
-from app.modules.knowledge.infrastructure.import_repository import ImportRepository
-from app.modules.knowledge.infrastructure.storage import insert
 from app.modules.knowledge.infrastructure.sync_repository import SyncRepository
 from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
-from app.modules.knowledge.infrastructure.chunk_repository import json_value
 
 
 class ReplacementRepository(SyncRepository):
+    def assert_same_content(self, records: ContentRepository) -> None:
+        try:
+            super().assert_same_content(records)
+        except ExportValidationError as exc:
+            suffix = exc.code.removeprefix("knowledge_sync_content_")
+            raise ExportValidationError("knowledge_replacement_content_" + suffix) from None
+
     def indexes(self, run_id: str) -> dict[str, dict[str, Any]]:
         run = self.run(run_id)
         binding = self.assert_configuration(run)
@@ -69,69 +73,3 @@ class ReplacementRepository(SyncRepository):
                 raise ExportValidationError("knowledge_replacement_resource_changed")
             result.append(resource)
         return result
-
-    def assert_same_content(self, records: ContentRepository) -> None:
-        if not isinstance(records, GovernanceStore):
-            raise ExportValidationError("knowledge_replacement_content_location_mismatch")
-        other = records.database
-        if other is self.database:
-            return
-        if self.database.engine != "postgres" or other.engine != "postgres":
-            raise ExportValidationError("knowledge_replacement_content_location_mismatch")
-        # 连接配置可以使用别名；比较集群身份和数据库 OID，不能只比较主机名或库名。
-        query = (
-            "select (pg_control_system()).system_identifier::text as cluster_id, "
-            "(select oid::text from pg_database where datname=current_database()) as database_id"
-        )
-        try:
-            left, right = self.database.execute_one(query), other.execute_one(query)
-        except Exception:
-            raise ExportValidationError(
-                "knowledge_replacement_content_location_unverified"
-            ) from None
-        if not left or left != right:
-            raise ExportValidationError("knowledge_replacement_content_location_mismatch")
-
-    def apply_content(self, run_id: str) -> None:
-        # 必须由调用方在包含发布和 finish 的同一事务内调用。
-        run = self.run(run_id, lock=True)
-        if run["phase"] != "VERIFIED":
-            raise ExportValidationError("knowledge_sync_phase_invalid")
-        self.assert_baseline(run_id)
-        for candidate in self.candidates(run_id):
-            document_id = candidate["document_id"]
-            if candidate["outcome"] != "baseline":
-                revision = self.revision(candidate["candidate_revision_id"])
-                number = json_value(revision["source_snapshot"])["detail"]["number"]
-                self.database.execute(
-                    f"update {self.t('document')} set current_revision_id=?,document_kind=?,"
-                    "lifecycle_state='active',source_observed_stamp_raw=?,external_number=?,last_seen_at=? where id=?",
-                    (
-                        candidate["candidate_revision_id"],
-                        candidate["candidate_kind"],
-                        candidate["observed_stamp"],
-                        str(number),
-                        now(),
-                        document_id,
-                    ),
-                )
-            for base_id, state in candidate["candidate_members_json"].items():
-                insert(
-                    self.database,
-                    "knowledge_base_document",
-                    {
-                        "knowledge_base_id": base_id,
-                        "document_id": document_id,
-                        "state": state,
-                        "created_at": now(),
-                    },
-                    conflict="on conflict(knowledge_base_id,document_id) do update set state=excluded.state",
-                )
-        ImportRepository(self.database).resolve_targets(run["source_id"])
-
-    def finish(self, run_id: str) -> None:
-        self.database.execute(
-            f"update {self.t('sync_run')} set phase='ACTIVATED',active=0,activated_watermark=?,"
-            "error_code=NULL,updated_at=? where id=? and phase='VERIFIED'",
-            (now(), now(), run_id),
-        )

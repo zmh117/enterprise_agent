@@ -3,7 +3,7 @@
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.modules.knowledge.domain.identity import now, stable_id
@@ -22,7 +22,12 @@ from app.modules.knowledge.domain.sync import (
     replacement_manifest,
 )
 from app.modules.knowledge.domain.work_items import KIND_LABELS, compare_version
+from app.modules.knowledge.domain.storage_connection import stored_config
+from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
+from app.modules.knowledge.application.content_access import ContentRepository
 from app.modules.knowledge.infrastructure.chunk_repository import json_value
+from app.modules.knowledge.infrastructure.import_repository import ImportRepository
+from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
 from app.modules.knowledge.infrastructure.revision_store import save_revision
 from app.modules.knowledge.infrastructure.storage import insert, source_lock, table
 from app.shared.database import Database
@@ -74,7 +79,7 @@ class SyncRepository:
                     if prior_run:
                         raise ExportValidationError("knowledge_collection_scope_changed")
                 self.database.execute(
-                    f"update {self.t('sync_binding')} set configuration_revision=configuration_revision+1,configuration_hash=?,configuration_json=?,enabled=0,updated_at=? where id=?",
+                    f"update {self.t('sync_binding')} set configuration_revision=configuration_revision+1,configuration_hash=?,configuration_json=?,resource_pins_json='{{}}',enabled=0,next_run_at=NULL,updated_at=? where id=?",
                     (digest(config), canonical_json(config), now(), binding_id),
                 )
             else:
@@ -107,6 +112,7 @@ class SyncRepository:
                         "configuration_revision": 1,
                         "configuration_hash": digest(config),
                         "configuration_json": config,
+                        "resource_pins_json": {},
                         "enabled": 0,
                         "interval_seconds": 3600,
                         "next_run_at": None,
@@ -136,13 +142,15 @@ class SyncRepository:
                     raise ExportValidationError("knowledge_base_binding_conflict")
         return self.binding(binding_id)
 
-    def binding(self, binding_id: str) -> dict[str, Any]:
+    def binding(self, binding_id: str, *, lock: bool = False) -> dict[str, Any]:
+        suffix = " for update" if lock and self.database.engine == "postgres" else ""
         row = self.database.execute_one(
-            f"select * from {self.t('sync_binding')} where id=?", (binding_id,)
+            f"select * from {self.t('sync_binding')} where id=?{suffix}", (binding_id,)
         )
         if not row:
             raise ExportValidationError("knowledge_sync_binding_unavailable")
         row["configuration_json"] = checked_configuration(json_value(row["configuration_json"]))
+        row["resource_pins_json"] = json_value(row["resource_pins_json"])
         if digest(row["configuration_json"]) != row["configuration_hash"]:
             raise ExportValidationError("knowledge_sync_configuration_changed")
         return row
@@ -158,14 +166,107 @@ class SyncRepository:
             row[key] = json_value(row[key])
         return row
 
-    def assert_configuration(self, run: dict[str, Any]) -> dict[str, Any]:
-        binding = self.binding(run["binding_id"])
+    def assert_configuration(self, run: dict[str, Any], *, lock: bool = False) -> dict[str, Any]:
+        binding = self.binding(run["binding_id"], lock=lock)
         if (
             binding["configuration_revision"] != run["binding_revision"]
             or binding["configuration_hash"] != run["configuration_hash"]
         ):
             raise ExportValidationError("knowledge_sync_configuration_changed")
+        if (
+            all(
+                item.get("export_format") == "ones-online-full/v1"
+                for item in run["manifest_json"].values()
+            )
+            and binding["enabled"] != 1
+        ):
+            raise ExportValidationError("knowledge_collection_disabled")
         return binding
+
+    def scoped_resources(
+        self, binding: dict[str, Any], *, lock: bool = False
+    ) -> list[dict[str, Any]]:
+        base_ids = tuple(
+            stable_id("base", code) for code in binding["configuration_json"]["base_codes"].values()
+        )
+        suffix = " for update" if lock and self.database.engine == "postgres" else ""
+        return self.database.execute(
+            f"select * from {self.t('retrieval_resource')} where knowledge_base_id in "
+            f"({','.join('?' for _ in base_ids)}) order by id{suffix}",
+            base_ids,
+        )
+
+    def resource_pin(self, resource: dict[str, Any], *, source_id: str) -> dict[str, Any]:
+        if (
+            resource["status"] != "enabled"
+            or resource["draft_revision_id"] is not None
+            or not resource["published_revision_id"]
+        ):
+            raise ExportValidationError("knowledge_sync_resource_changed")
+        revision = self.database.execute_one(
+            f"select * from {self.t('retrieval_revision')} where id=? and resource_id=?",
+            (resource["published_revision_id"], resource["id"]),
+        )
+        if not revision or revision["configuration_version"] != 4 or not revision["published_at"]:
+            raise ExportValidationError("knowledge_sync_resource_changed")
+        try:
+            selected = stored_config(revision.get("storage_config_json"))
+        except KnowledgeGovernanceError:
+            raise ExportValidationError("knowledge_sync_resource_changed") from None
+        if selected is not None and selected["postgres"]["mode"] != "platform":
+            raise ExportValidationError("knowledge_sync_external_content_unsupported")
+        index = self.database.execute_one(
+            f"select id,knowledge_base_id,source_id,state,profile_hash,chunk_profile_hash,expected_document_count "
+            f"from {self.t('vector_index')} where id=?",
+            (revision["index_id"],),
+        )
+        if (
+            not index
+            or index["state"] != "READY"
+            or index["knowledge_base_id"] != resource["knowledge_base_id"]
+            or index["source_id"] not in {None, source_id}
+            or index["profile_hash"] != revision["profile_hash"]
+        ):
+            raise ExportValidationError("knowledge_sync_resource_changed")
+        sources = self.database.execute(
+            f"select distinct d.source_id from {self.t('knowledge_base_document')} m "
+            f"join {self.t('document')} d on d.id=m.document_id "
+            "where m.knowledge_base_id=? and m.state='included' and d.lifecycle_state='active' limit 2",
+            (resource["knowledge_base_id"],),
+        )
+        if (
+            sources
+            and (len(sources) != 1 or sources[0]["source_id"] != source_id)
+            or (
+                not sources
+                and (index["source_id"] != source_id or index["expected_document_count"] != 0)
+            )
+        ):
+            raise ExportValidationError("knowledge_sync_resource_scope_changed")
+        return {
+            "knowledge_base_id": resource["knowledge_base_id"],
+            "revision": resource["revision"],
+            "state_revision": resource["state_revision"],
+            "published_revision_id": revision["id"],
+            "config_hash": revision["config_hash"],
+            "profile_hash": index["profile_hash"],
+            "chunk_profile_hash": index["chunk_profile_hash"],
+        }
+
+    def current_resource_pins(
+        self, binding: dict[str, Any], *, lock: bool = False
+    ) -> dict[str, Any]:
+        configured = set(binding["configuration_json"]["resource_ids"])
+        rows = self.scoped_resources(binding, lock=lock)
+        if any(row["published_revision_id"] and row["id"] not in configured for row in rows):
+            raise ExportValidationError("knowledge_sync_resource_scope_changed")
+        selected = {row["id"]: row for row in rows if row["id"] in configured}
+        if set(selected) != configured:
+            raise ExportValidationError("knowledge_sync_resource_scope_changed")
+        return {
+            resource_id: self.resource_pin(row, source_id=binding["source_id"])
+            for resource_id, row in selected.items()
+        }
 
     def _members(self, document_id: str) -> dict[str, str]:
         rows = self.database.execute(
@@ -244,16 +345,87 @@ class SyncRepository:
         if type(enabled) is not bool or type(expected_revision) is not int:
             raise ExportValidationError("knowledge_sync_configuration_invalid")
         with self.database.unit_of_work():
-            binding = self.binding(binding_id)
+            binding = self.binding(binding_id, lock=True)
             if binding["configuration_revision"] != expected_revision:
                 raise ExportValidationError("knowledge_sync_configuration_changed")
             if enabled and not binding["configuration_json"].get("collector"):
                 raise ExportValidationError("knowledge_collection_configuration_invalid")
+            if enabled:
+                active = self.database.execute_one(
+                    f"select id from {self.t('sync_run')} where source_id=? and active=1",
+                    (binding["source_id"],),
+                )
+                if active:
+                    raise ExportValidationError("knowledge_source_import_busy")
+                pins = self.current_resource_pins(binding, lock=True)
+            else:
+                pins = binding["resource_pins_json"]
             self.database.execute(
-                f"update {self.t('sync_binding')} set enabled=?,updated_at=? where id=? and configuration_revision=?",
-                (int(enabled), now(), binding_id, expected_revision),
+                f"update {self.t('sync_binding')} set enabled=?,resource_pins_json=?,next_run_at=?,updated_at=? where id=? and configuration_revision=?",
+                (
+                    int(enabled),
+                    canonical_json(pins),
+                    (datetime.fromisoformat(now()) + timedelta(seconds=3600)).isoformat()
+                    if enabled
+                    else None,
+                    now(),
+                    binding_id,
+                    expected_revision,
+                ),
             )
         return self.binding(binding_id)
+
+    def active_run(self, binding_id: str) -> dict[str, Any] | None:
+        binding = self.binding(binding_id)
+        active = self.database.execute_one(
+            f"select id,binding_id from {self.t('sync_run')} where source_id=? and active=1",
+            (binding["source_id"],),
+        )
+        if not active:
+            return None
+        if active["binding_id"] != binding_id:
+            raise ExportValidationError("knowledge_source_import_busy")
+        return self.run(active["id"])
+
+    def scheduled_due(self, binding_id: str, at: datetime) -> bool:
+        if at.tzinfo is None:
+            raise ExportValidationError("knowledge_sync_clock_invalid")
+        binding = self.binding(binding_id)
+        if binding["enabled"] != 1:
+            return False
+        if self.active_run(binding_id) is not None:
+            return True
+        due = binding["next_run_at"]
+        if due is None:
+            raise ExportValidationError("knowledge_sync_schedule_invalid")
+        if isinstance(due, str):
+            due = datetime.fromisoformat(due)
+        if not isinstance(due, datetime) or due.tzinfo is None:
+            raise ExportValidationError("knowledge_sync_schedule_invalid")
+        return at >= due
+
+    def scheduled_started(self, binding_id: str, run_id: str, at: datetime) -> None:
+        if at.tzinfo is None:
+            raise ExportValidationError("knowledge_sync_clock_invalid")
+        with self.database.unit_of_work():
+            binding = self.binding(binding_id, lock=True)
+            run = self.run(run_id, lock=True)
+            if (
+                binding["enabled"] != 1
+                or run["binding_id"] != binding_id
+                or run["phase"] != "COLLECTING"
+            ):
+                raise ExportValidationError("knowledge_collection_disabled")
+            due = binding["next_run_at"]
+            if isinstance(due, str):
+                due = datetime.fromisoformat(due)
+            if due is None or due.tzinfo is None:
+                raise ExportValidationError("knowledge_sync_schedule_invalid")
+            if at >= due:
+                self.database.execute(
+                    f"update {self.t('sync_binding')} set next_run_at=?,updated_at=? where id=?",
+                    ((at + timedelta(seconds=3600)).isoformat(), now(), binding_id),
+                )
 
     def cancel_disabled_collection(self, run_id: str) -> None:
         """运行者持有来源锁时响应停用，不等待整轮结束。"""
@@ -291,12 +463,29 @@ class SyncRepository:
             )
             if busy:
                 raise ExportValidationError("knowledge_source_import_busy")
-            resources = self.database.execute(
-                f"select r.id,r.status,r.revision,r.state_revision,r.draft_revision_id,r.published_revision_id "
-                f"from {self.t('retrieval_resource')} r where exists(select 1 from {self.t('knowledge_base_document')} m "
-                f"join {self.t('document')} d on d.id=m.document_id where m.knowledge_base_id=r.knowledge_base_id and d.source_id=?) order by r.id",
-                (binding["source_id"],),
-            )
+            resources = [
+                {
+                    key: row[key]
+                    for key in (
+                        "id",
+                        "knowledge_base_id",
+                        "status",
+                        "revision",
+                        "state_revision",
+                        "draft_revision_id",
+                        "published_revision_id",
+                    )
+                }
+                for row in self.scoped_resources(binding)
+            ]
+            if (
+                all(
+                    item.get("export_format") == "ones-online-full/v1"
+                    for item in manifests.values()
+                )
+                and self.current_resource_pins(binding) != binding["resource_pins_json"]
+            ):
+                raise ExportValidationError("knowledge_sync_resource_changed")
             insert(
                 self.database,
                 "sync_run",
@@ -836,6 +1025,79 @@ class SyncRepository:
                 ):
                     changed.add(base_id)
         return changed
+
+    def apply_content(self, run_id: str) -> None:
+        """仅供激活事务调用；候选之外的当前事实不提前变更。"""
+        run = self.run(run_id, lock=True)
+        if run["phase"] != "VERIFIED":
+            raise ExportValidationError("knowledge_sync_phase_invalid")
+        self.assert_baseline(run_id)
+        content_changed = False
+        for candidate in self.candidates(run_id):
+            document_id = candidate["document_id"]
+            if candidate["outcome"] in {"created", "revised"}:
+                content_changed = True
+                revision = self.revision(candidate["candidate_revision_id"])
+                number = json_value(revision["source_snapshot"])["detail"]["number"]
+                self.database.execute(
+                    f"update {self.t('document')} set current_revision_id=?,document_kind=?,"
+                    "lifecycle_state='active',source_observed_stamp_raw=?,external_number=?,last_seen_at=? where id=?",
+                    (
+                        candidate["candidate_revision_id"],
+                        candidate["candidate_kind"],
+                        candidate["observed_stamp"],
+                        str(number),
+                        now(),
+                        document_id,
+                    ),
+                )
+            elif candidate["outcome"] == "unchanged":
+                self.database.execute(
+                    f"update {self.t('document')} set source_observed_stamp_raw=?,last_seen_at=? where id=?",
+                    (candidate["observed_stamp"], now(), document_id),
+                )
+            for base_id, state in candidate["candidate_members_json"].items():
+                if candidate["baseline_members_json"].get(base_id) == state:
+                    continue
+                insert(
+                    self.database,
+                    "knowledge_base_document",
+                    {
+                        "knowledge_base_id": base_id,
+                        "document_id": document_id,
+                        "state": state,
+                        "created_at": now(),
+                    },
+                    conflict="on conflict(knowledge_base_id,document_id) do update set state=excluded.state",
+                )
+        if content_changed:
+            ImportRepository(self.database).resolve_targets(run["source_id"])
+
+    def finish(self, run_id: str) -> None:
+        self.database.execute(
+            f"update {self.t('sync_run')} set phase='ACTIVATED',active=0,activated_watermark=?,"
+            "error_code=NULL,updated_at=? where id=? and phase='VERIFIED'",
+            (now(), now(), run_id),
+        )
+
+    def assert_same_content(self, records: ContentRepository) -> None:
+        if not isinstance(records, GovernanceStore):
+            raise ExportValidationError("knowledge_sync_content_location_mismatch")
+        other = records.database
+        if other is self.database:
+            return
+        if self.database.engine != "postgres" or other.engine != "postgres":
+            raise ExportValidationError("knowledge_sync_content_location_mismatch")
+        query = (
+            "select (pg_control_system()).system_identifier::text as cluster_id, "
+            "(select oid::text from pg_database where datname=current_database()) as database_id"
+        )
+        try:
+            left, right = self.database.execute_one(query), other.execute_one(query)
+        except Exception:
+            raise ExportValidationError("knowledge_sync_content_location_unverified") from None
+        if not left or left != right:
+            raise ExportValidationError("knowledge_sync_content_location_mismatch")
 
     def summary(self, run_id: str) -> dict[str, Any]:
         run = self.run(run_id)

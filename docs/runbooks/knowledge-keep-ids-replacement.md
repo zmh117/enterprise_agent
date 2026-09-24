@@ -4,7 +4,7 @@
 
 ## 内容与索引
 
-- 缺陷 → `ones-defects-offline`；工单 → `ones-tickets-offline`；Story 与子任务 → `ones-requirements-offline`。复用 `knowledge` 表，以 KB 成员、来源和文档类型隔离。
+- 缺陷 → `ones-defects-offline`；工单 → `ones-tickets-offline`；Story 与子任务 → `ones-stories-offline`。复用 `knowledge` 表，以 KB 成员、来源和文档类型隔离。
 - ID 用于关联和权限核验，名字进入文本上下文。字段 ID、原始枚举值及名称映射保留在规范化属性中；未映射人员保留 ID，不伪造名字。
 - 父子关系保存实际 `parent_uuid` 证据。正文缺失时使用标题块，标记 `title_only`；不补造正文。
 - 评论本轮 `not_indexed`，附件/图片不下载，不执行 OCR。

@@ -271,7 +271,9 @@ class VectorService:
             raise VectorError("knowledge_vector_reuse_invalid")
         return previous
 
-    def verify(self, index: dict[str, Any]) -> str:
+    def verify(
+        self, index: dict[str, Any], *, check_active: Callable[[], None] | None = None
+    ) -> str:
         """维护接续用逐点只读验证；不编码，不修改索引状态。"""
         repo = self.repository
         if (
@@ -286,12 +288,16 @@ class VectorService:
         self.qdrant.check(index)
         verified = 0
         for rows in batches(repo.rows(index["knowledge_base_id"], index["chunk_profile_hash"]), 32):
+            if check_active is not None:
+                check_active()
             if self._verify_points(index, rows):
                 raise VectorError("knowledge_vector_points_missing")
             verified += len(rows)
         if verified != index["expected_chunk_count"] or self.qdrant.count(index) != verified:
             raise VectorError("knowledge_vector_count_mismatch")
         repo.assert_current(index)
+        if check_active is not None:
+            check_active()
         return fingerprint(
             {
                 "index_id": index["id"],

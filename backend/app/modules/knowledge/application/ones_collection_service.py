@@ -27,12 +27,20 @@ class KnowledgeOnesCollectionService:
         self,
         repository: SyncRepository,
         provider_factory: Callable[[dict[str, Any]], OnesCollectionProvider],
+        *,
+        cancelled: Callable[[], bool] = lambda: False,
     ) -> None:
         self.repository = repository
         self.provider_factory = provider_factory
+        self.cancelled = cancelled
 
     def collect_once(
-        self, binding_id: str, *, scan_at: str | None = None, through: date | None = None
+        self,
+        binding_id: str,
+        *,
+        scan_at: str | None = None,
+        through: date | None = None,
+        on_run_started: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         repo = self.repository
         binding = repo.binding(binding_id)
@@ -41,6 +49,7 @@ class KnowledgeOnesCollectionService:
             raise ExportValidationError("knowledge_collection_disabled")
         with repo.source_lock(binding["source_id"]):
             active = repo.active_collection(binding_id)
+            new_run = active is None
             if active is None:
                 started = scan_at or datetime.now(timezone.utc).isoformat()
                 run = repo.begin_collection(binding_id, started)
@@ -50,6 +59,8 @@ class KnowledgeOnesCollectionService:
                 summary: dict[str, Any] = repo.summary(run["id"])
                 return summary
             try:
+                if new_run and on_run_started is not None:
+                    on_run_started(run["id"])
                 provider = self.provider_factory(collector)
                 issue_types = {
                     kind: tuple(values) for kind, values in collector["issue_types"].items()
@@ -62,6 +73,8 @@ class KnowledgeOnesCollectionService:
                 )
 
                 def check_active() -> None:
+                    if self.cancelled():
+                        raise ExportValidationError("knowledge_sync_cancelled")
                     if repo.binding(binding_id)["enabled"] != 1:
                         repo.cancel_disabled_collection(run["id"])
                         raise ExportValidationError("knowledge_collection_disabled")

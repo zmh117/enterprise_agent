@@ -1,6 +1,6 @@
 # 可选知识库部署
 
-知识服务的离线索引组件集中在 `compose.yml`；在线 Knowledge MCP 另加 `mcp.compose.yml`。两者都是根 Compose 的**可选扩展文件**，不是独立项目。暂时不需要知识库的环境只使用根 `docker-compose.yml`，无需构建或下载 Embedding/Qdrant，也无需知识服务凭据。
+知识服务的离线索引组件集中在 `compose.yml`；在线 Knowledge MCP 另加 `mcp.compose.yml`；已验收真实 ONES 后的受管小时同步另加 `sync.compose.yml`。三者都是根 Compose 的**可选扩展文件**，不是独立项目。暂时不需要知识库的环境只使用根 `docker-compose.yml`，无需构建或下载 Embedding/Qdrant，也无需知识服务凭据。
 
 ## 启用方式
 
@@ -33,7 +33,7 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 人工相关性基线使用[本地评测入口](../docs/runbooks/knowledge-retrieval-evaluation.md)。真实问题/标签留在 Git 排除的受限目录；合成、自查询和人工效果分别报告，不把运维检索成功当成 Agent 读取授权。
 
-ONES 新版导出接口对应的受管全量采集入口见[全量采集手册](../docs/runbooks/knowledge-ones-full-collector.md)。当前入口默认停用、只产生候选；不代表自动分块、建索引或切版已启用。
+ONES 新版导出接口对应的受管全量采集入口见[全量采集手册](../docs/runbooks/knowledge-ones-full-collector.md)。其 `collect_ones_knowledge --mode once` 仍只产生候选；完整分块、建索引与切版需使用[受管同步入口](../docs/runbooks/knowledge-ones-hourly-sync.md)。小时同步 Compose 默认不加载，本机不连接真实 ONES、不启动它。
 
 工具资源 Web 页面和检索资源管理合同见[知识治理管理与排障](../docs/runbooks/knowledge-governance.md)。代码已接线不等于真实资源已发布或 Agent 已通过真实检索验收。
 
