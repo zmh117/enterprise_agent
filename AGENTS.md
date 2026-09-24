@@ -24,7 +24,7 @@
 - `openspec/changes/<name>/` 仅在用户明确指定该 active change，或正在执行 propose、apply、sync、archive 工作流时读取；其 delta 必须相对于 canonical baseline 解释。
 - `openspec/changes/archive/` 仅在用户明确要求历史、审计或追溯时读取。Archive、proposal、design、tasks、evidence 和迁移快照都是非规范历史证据，不得覆盖 canonical Requirement。
 - `openspec list --json` 可用于发现 active change，但不得因此读取无关 change 内容。
-- ADR、运行手册和 `docs/reference/enterprise-agent-project-context-for-chatgpt.md` 是辅助说明，不是当前规范的替代来源；与 canonical spec 冲突时，应提出明确 change，不得静默选用辅助文档。
+- ADR、运行手册和 `docs/reference/enterprise-agent-system-design-for-chatgpt.md` 是辅助说明，不是当前规范的替代来源；与 canonical spec 冲突时，应提出明确 change，不得静默选用辅助文档。
 - Canonical spec 表达已接受规范，不自动证明运行能力已经实现。需要判断当前实现状态时，仍须核对代码、migration、测试和必要的运行证据，并区分 `Confirmed-current` 与 `Documented-intent`。
 - 2026-09-16 已按当前代码重建基线并关闭此前全部 active change。关闭和归档不代表未勾选任务已完成；真实环境验收欠账单独记录，历史任务状态不得补勾。
 - 同步或归档旧 capability delta 时，先按领域导航映射到上述 10 个领域并核对代码；不得按旧目录名重新创建零散主规格。未能确认的旧提案只保留为历史，不自动成为当前能力。
