@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+import platform
 from typing import Any
 from app.modules.knowledge.domain.vector_contract import (
     DIMENSION,
@@ -16,15 +17,22 @@ PACKAGE = Path(__file__).parents[1]
 MODEL = json.loads((PACKAGE / "embedding_model.json").read_text())
 
 
+def runtime_lock_path() -> Path:
+    architecture = platform.machine().strip().lower()
+    if architecture in {"arm64", "aarch64"}:
+        return PACKAGE / "embedding_runtime.lock"
+    if architecture in {"amd64", "x86_64"}:
+        return PACKAGE / "embedding_runtime_amd64.lock"
+    raise ValueError("Knowledge Embedding runtime architecture is not supported")
+
+
 def profile() -> dict[str, Any]:
     return {
         "contract": "knowledge-dense/v1",
         "model_id": MODEL["model_id"],
         "revision": MODEL["revision"],
         "artifact_hash": fingerprint(MODEL),
-        "runtime_hash": hashlib.sha256(
-            (PACKAGE / "embedding_runtime.lock").read_bytes()
-        ).hexdigest(),
+        "runtime_hash": hashlib.sha256(runtime_lock_path().read_bytes()).hexdigest(),
         "dimension": DIMENSION,
         "dtype": "float32",
         "normalize": True,

@@ -6,7 +6,7 @@
 
 - PostgreSQL 原九表保留；前向 migration 134 只新增 `knowledge.vector_index` 和 `knowledge.vector_index_item`。
 - 模型固定 revision `5617a9f61b028005a4858fdac845db406aefb181`，使用官方 `pytorch_model.bin`，不做 safetensors 转换或 ONNX 导出。加载显式 `weights_only=True`、`trust_remote_code=False`；不增加任意类 allowlist。
-- 模型完整清单见 `backend/app/modules/knowledge/embedding_model.json`；独立依赖锁包含 CPU 专用 wheel、精确版本及分发哈希。现有锁仅用于 Linux ARM64，其他架构必须重新验收，不能直接替换 wheel。
+- 模型完整清单见 `backend/app/modules/knowledge/embedding_model.json`；CPU 依赖锁按架构分别固定为 `embedding_runtime.lock`（Linux ARM64）和 `embedding_runtime_amd64.lock`（Linux AMD64），PyTorch wheel 各有独立 SHA-256，其余依赖版本与哈希相同。构建时按 `TARGETARCH` 选择并验证 CPU PyTorch；未知架构失败关闭。运行时 Embedding profile 也按架构选择锁的摘要，跨架构迁移不能默用旧索引，须在目标架构重建并核验向量索引。
 - 准备容器只下载固定公开模型、校验大小/摘要，无数据库或业务卷/凭据。失败的 `.partial` 不被运行时接纳，重跑不会跳过完整校验。
 - Embedding 只读挂载模型卷，关闭 Hub 在线访问、遥测、远程代码；与 Qdrant/CLI 仅接入 internal 网络，无宿主机发布端口。不得通过开放端口把本机方案变为多租户服务。
 - 模型服务请求上限 8 条、每条 4096 tokens、合计 8192 tokens，256 KiB 请求体、单并发；只计数端点允许批量总数超过 8192，以便客户端重新组批。所有计数包含特殊 token。服务不静默截断。

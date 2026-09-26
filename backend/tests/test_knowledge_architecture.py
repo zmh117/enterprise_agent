@@ -1,6 +1,7 @@
 """知识四层依赖、稳定索引身份与最小镜像接线；仅使用合成数据。"""
 
 import ast
+import hashlib
 from pathlib import Path
 import shlex
 import shutil
@@ -12,11 +13,50 @@ import pytest
 from app.modules.knowledge.domain.identity import stable_id
 from app.modules.knowledge.domain.vector_contract import fingerprint
 from app.modules.knowledge.domain.vector_points import payload, point_id
+from app.modules.knowledge.infrastructure import embedding_profile
 from app.modules.knowledge.infrastructure.embedding_profile import profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "backend/app/modules/knowledge"
+
+
+def test_embedding_runtime_lock_is_cpu_only_and_selected_per_architecture(monkeypatch):
+    arm_lock = (PACKAGE / "embedding_runtime.lock").read_text()
+    amd_lock = (PACKAGE / "embedding_runtime_amd64.lock").read_text()
+    arm_hash = "da8140c3d4a41500d29710e35bf8e66a4295ec31026487c69f54a3f583310f8d"
+    amd_hash = "a09987c95ec4cffdb6df798d3d641558110a334cfccce22f2f046d83142bc260"
+    assert amd_lock == (
+        arm_lock.replace("Linux ARM64", "Linux AMD64")
+        .replace("manylinux_2_28_aarch64.whl", "manylinux_2_28_x86_64.whl")
+        .replace(arm_hash, amd_hash)
+    )
+    assert (ROOT / "services/knowledge_embedding/requirements_amd64.in").read_text() == (
+        (ROOT / "services/knowledge_embedding/requirements.in")
+        .read_text()
+        .replace("manylinux_2_28_aarch64.whl", "manylinux_2_28_x86_64.whl")
+        .replace(arm_hash, amd_hash)
+    )
+
+    for machine, selected in (
+        ("aarch64", "embedding_runtime.lock"),
+        ("arm64", "embedding_runtime.lock"),
+        ("x86_64", "embedding_runtime_amd64.lock"),
+        ("amd64", "embedding_runtime_amd64.lock"),
+    ):
+        monkeypatch.setattr(embedding_profile.platform, "machine", lambda value=machine: value)
+        assert embedding_profile.runtime_lock_path().name == selected
+        assert (
+            profile()["runtime_hash"]
+            == hashlib.sha256((PACKAGE / selected).read_bytes()).hexdigest()
+        )
+    monkeypatch.setattr(embedding_profile.platform, "machine", lambda: "aarch64")
+    arm_profile = fingerprint(profile())
+    monkeypatch.setattr(embedding_profile.platform, "machine", lambda: "x86_64")
+    assert fingerprint(profile()) != arm_profile
+    monkeypatch.setattr(embedding_profile.platform, "machine", lambda: "riscv64")
+    with pytest.raises(ValueError, match="not supported"):
+        embedding_profile.runtime_lock_path()
 
 
 def imports(tree):
@@ -80,8 +120,9 @@ def test_no_flat_compatibility_modules_or_api_client_construction():
                 }
 
 
-def test_existing_profile_and_stable_storage_identities_are_unchanged():
+def test_existing_profile_and_stable_storage_identities_are_unchanged(monkeypatch):
     # Golden values from the pre-refactor contract, not recalculated expected values.
+    monkeypatch.setattr(embedding_profile.platform, "machine", lambda: "aarch64")
     assert (
         fingerprint(profile()) == "595254deaeae70c19815d4b42847cc468790a2742bbdf4b5bd6703cfefcf22f3"
     )

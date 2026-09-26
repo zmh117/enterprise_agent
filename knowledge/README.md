@@ -4,6 +4,8 @@
 
 ## 启用方式
 
+Linux x86_64 纯 CPU 部署使用同一组 Compose 文件，不需要为 Qdrant 指定 `platform`：固定的 Qdrant image index 含 `linux/amd64`。Embedding 镜像则必须在目标架构重新构建，使用独立的 AMD64 CPU 依赖锁；模型文件清单与版本不变，但运行时 profile 摘要不同，不能把 ARM 上的 READY 索引直接标记为 x86 可用。Docling 的固定镜像和模型摘要也已有 `linux/amd64` 条目，启动时仍需实际校验。完整验收必须在目标机器执行，不能以本机跨架构构建替代。
+
 所有命令在仓库根目录执行，始终将根 Compose 放在第一个 `-f` 参数。保留原 Compose 项目名（当前本机为 `enterprise_agent`），不要在此目录单独 `docker compose up`，也不要另取 `-p` 名称，否则会切换到另一组模型/向量卷。
 
 启用环境必须在既有部署配置（根 `.env` 或进程环境）中提供 `DATABASE_DSN`，指向主栈同一数据库的容器内地址 `postgres:5432`，不能使用宿主机 `localhost` 或映射端口。不在本目录复制 `.env` 或填写明文凭据；缺失/空值时叠加配置会直接报错。未加载扩展的环境没有此新增配置要求。

@@ -1,0 +1,7 @@
+torch @ https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=a09987c95ec4cffdb6df798d3d641558110a334cfccce22f2f046d83142bc260
+sentence-transformers==6.0.1
+transformers==5.17.0
+fastapi==0.141.1
+uvicorn==0.53.0
+sentencepiece==0.2.2
+safetensors==0.8.0
