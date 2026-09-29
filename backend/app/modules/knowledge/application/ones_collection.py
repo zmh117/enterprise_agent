@@ -1,14 +1,13 @@
-"""完整 ONES 枚举合同；Provider 和持久化均由基础设施注入。
-
-这里不执行导出脚本，不使用历史 done UUID 缓存，也不把缺页解释为删除。
-"""
+"""按创建日完整枚举 ONES；完成的日期才可推进持久水位。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, Iterator, Protocol
+from time import sleep
+from typing import Any, Protocol, TypeVar
 
 from app.modules.knowledge.domain.normalization import ExportValidationError, identifier
 
@@ -16,6 +15,9 @@ from app.modules.knowledge.domain.normalization import ExportValidationError, id
 PAGE_SIZE = 200
 WINDOW_LIMIT = 1000
 MAX_DOCUMENTS = 200_000
+DETAIL_WORKERS = 16
+RETRY_DELAYS = (0.5, 1.5)
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,40 +72,60 @@ def _validate_scope(
             typed_ids.add(issue_type_id)
 
 
-def _windows(
+def _request_with_retry(request: Callable[[], T]) -> T:
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return request()
+        except Exception as exc:
+            if delay is None or getattr(exc, "error_code", "") not in {
+                "ones_provider_unavailable",
+                "ones_provider_rate_limited",
+            }:
+                raise
+            sleep(delay)
+    raise AssertionError("unreachable")
+
+
+def _detail_with_retry(provider: OnesCollectionProvider, work_item_id: str) -> dict[str, Any]:
+    return _request_with_retry(lambda: provider.detail(work_item_id))
+
+
+def _details(
     provider: OnesCollectionProvider,
-    issue_type_id: str,
-    first: date,
-    last: date,
+    ids: tuple[str, ...],
     check_active: Callable[[], None],
-) -> Iterator[tuple[date, date, int]]:
-    pending = [(first, last)]
-    while pending:
-        window_first, window_last = pending.pop(0)
+) -> tuple[dict[str, Any], ...]:
+    """只并发无状态 HTTP；数据库写入、取消和进度均留在调用线程。"""
+    if not ids:
+        return ()
+    with ThreadPoolExecutor(max_workers=DETAIL_WORKERS) as executor:
+        results: list[dict[str, Any] | None] = [None] * len(ids)
+        for offset in range(0, len(ids), DETAIL_WORKERS):
+            check_active()
+            futures = {
+                executor.submit(_detail_with_retry, provider, value): index
+                for index, value in enumerate(ids[offset : offset + DETAIL_WORKERS], offset)
+            }
+            failure: Exception | None = None
+            for future in as_completed(futures):
+                try:
+                    results[futures[future]] = future.result()
+                except Exception as exc:
+                    failure = failure or exc
+            if failure is not None:
+                raise failure
         check_active()
-        total = provider.count(issue_type_id, window_first, window_last)
-        if type(total) is not int or total < 0:
-            raise ExportValidationError("knowledge_collection_count_invalid")
-        if total >= WINDOW_LIMIT:
-            if window_first == window_last:
-                raise ExportValidationError("knowledge_collection_window_limit")
-            midpoint = window_first + timedelta(days=(window_last - window_first).days // 2)
-            pending[:0] = [
-                (window_first, midpoint),
-                (midpoint + timedelta(days=1), window_last),
-            ]
-        elif total:
-            yield window_first, window_last, total
+    if any(value is None for value in results):
+        raise ExportValidationError("knowledge_collection_detail_mismatch")
+    return tuple(value for value in results if value is not None)
 
 
-def _item_detail(
-    provider: OnesCollectionProvider,
+def _listed_id(
     item: dict[str, Any],
     issue_type_id: str,
     project_ids: frozenset[str],
     seen: set[str],
-    check_active: Callable[[], None],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> str:
     if not isinstance(item, dict):
         raise ExportValidationError("knowledge_collection_page_invalid")
     work_item_id = identifier(item.get("uuid"))
@@ -123,8 +145,17 @@ def _item_detail(
         or work_item_id in seen
     ):
         raise ExportValidationError("knowledge_collection_scope_changed")
-    check_active()
-    detail = provider.detail(work_item_id)
+    return work_item_id
+
+
+def _item_detail(
+    item: dict[str, Any],
+    detail: dict[str, Any],
+    issue_type_id: str,
+    seen: set[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    work_item_id = item["uuid"]
+    listed_project = item["project"]
     if (
         not isinstance(detail, dict)
         or detail.get("uuid") != work_item_id
@@ -151,13 +182,14 @@ def _collect_window(
     children: dict[str, str],
     commit_page: PageCommit,
     check_active: Callable[[], None],
+    staged_ids: frozenset[str],
 ) -> int:
     cursors: set[str] = set()
     after: str | None = None
     enumerated = 0
     while True:
         check_active()
-        page = provider.page(issue_type_id, first, last, after=after)
+        page = _request_with_retry(lambda: provider.page(issue_type_id, first, last, after=after))
         if (
             type(page.total) is not int
             or page.total != total
@@ -169,10 +201,24 @@ def _collect_window(
             or enumerated + len(page.items) > total
         ):
             raise ExportValidationError("knowledge_collection_page_invalid")
-        batch = tuple(
-            _item_detail(provider, item, issue_type_id, project_ids, seen, check_active)
-            for item in page.items
+        # Validate page identities before issuing concurrent detail requests.
+        listed_ids = tuple(
+            _listed_id(item, issue_type_id, project_ids, seen) for item in page.items
         )
+        if len(set(listed_ids)) != len(listed_ids):
+            raise ExportValidationError("knowledge_collection_scope_changed")
+        # Story details must be read even on replay: their live subtask list is not
+        # stored in the normalized parent revision.
+        pending = tuple(
+            value for value in listed_ids if kind == "requirement" or value not in staged_ids
+        )
+        details = dict(zip(pending, _details(provider, pending, check_active), strict=True))
+        batch = tuple(
+            _item_detail(item, details[value], issue_type_id, seen)
+            for item, value in zip(page.items, listed_ids, strict=True)
+            if value in details
+        )
+        seen.update(value for value in listed_ids if value not in details)
         if kind == "requirement":
             for item, detail in batch:
                 subtasks = detail.get("subtasks") or []
@@ -191,7 +237,7 @@ def _collect_window(
                     children[child_id] = item["uuid"]
                     if len(seen) + len(children) > MAX_DOCUMENTS:
                         raise ExportValidationError("knowledge_sync_source_limit")
-        enumerated += len(batch)
+        enumerated += len(page.items)
         next_cursor = page.end_cursor
         if page.has_next and (
             not isinstance(next_cursor, str)
@@ -203,19 +249,21 @@ def _collect_window(
             raise ExportValidationError("knowledge_collection_cursor_invalid")
         if not page.has_next and enumerated != total:
             raise ExportValidationError("knowledge_collection_incomplete")
-        commit_page(
-            kind,
-            batch,
-            {
-                "kind": kind,
-                "issue_type_id": issue_type_id,
-                "first": first.isoformat(),
-                "last": last.isoformat(),
-                "next_cursor": next_cursor if page.has_next else None,
-                "enumerated": enumerated,
-                "expected": total,
-            },
-        )
+        to_commit = tuple(pair for pair in batch if pair[0]["uuid"] not in staged_ids)
+        if to_commit:
+            commit_page(
+                kind,
+                to_commit,
+                {
+                    "kind": kind,
+                    "issue_type_id": issue_type_id,
+                    "first": first.isoformat(),
+                    "last": last.isoformat(),
+                    "next_cursor": next_cursor if page.has_next else None,
+                    "enumerated": enumerated,
+                    "expected": total,
+                },
+            )
         if not page.has_next:
             return enumerated
         assert next_cursor is not None
@@ -231,33 +279,37 @@ def _collect_children(
     seen: set[str],
     commit_page: PageCommit,
     check_active: Callable[[], None],
+    staged_ids: frozenset[str],
 ) -> int:
     parents: dict[str, str] = {}
     batch: list[tuple[dict[str, Any] | None, dict[str, Any]]] = []
-    for index, child_id in enumerate(children, 1):
+    child_ids = tuple(children)
+    for offset in range(0, len(child_ids), PAGE_SIZE):
         check_active()
-        if child_id in seen:
-            raise ExportValidationError("knowledge_collection_child_invalid")
-        detail = provider.detail(child_id)
-        if not isinstance(detail, dict) or detail.get("uuid") != child_id:
-            raise ExportValidationError("knowledge_collection_detail_mismatch")
-        if (
-            detail.get("project_uuid") not in project_ids
-            or detail.get("issue_type_uuid") not in child_type_ids
-            or detail.get("sub_issue_type_uuid") not in child_type_ids
-        ):
-            raise ExportValidationError("knowledge_collection_scope_changed")
-        parent = identifier(detail.get("parent_uuid"))
-        parents[child_id] = parent
-        seen.add(child_id)
-        batch.append((None, detail))
-        if len(batch) == PAGE_SIZE or index == len(children):
+        ids = child_ids[offset : offset + PAGE_SIZE]
+        details = _details(provider, ids, check_active)
+        for child_id, detail in zip(ids, details, strict=True):
+            if child_id in seen:
+                raise ExportValidationError("knowledge_collection_child_invalid")
+            if not isinstance(detail, dict) or detail.get("uuid") != child_id:
+                raise ExportValidationError("knowledge_collection_detail_mismatch")
+            if (
+                detail.get("project_uuid") not in project_ids
+                or detail.get("issue_type_uuid") not in child_type_ids
+                or detail.get("sub_issue_type_uuid") not in child_type_ids
+            ):
+                raise ExportValidationError("knowledge_collection_scope_changed")
+            parents[child_id] = identifier(detail.get("parent_uuid"))
+            seen.add(child_id)
+            if child_id not in staged_ids:
+                batch.append((None, detail))
+        if batch:
             commit_page(
                 "requirement",
                 tuple(batch),
                 {
                     "kind": "requirement",
-                    "children_processed": index,
+                    "children_processed": offset + len(ids),
                     "children_total": len(children),
                 },
             )
@@ -285,21 +337,31 @@ def collect_all(
     child_type_ids: frozenset[str],
     commit_page: PageCommit,
     check_active: Callable[[], None] = lambda: None,
+    on_day_complete: Callable[[date, dict[str, int]], None] = lambda _day, _counts: None,
+    initial_counts: Mapping[str, int] | None = None,
+    staged_ids: frozenset[str] = frozenset(),
 ) -> dict[str, int]:
-    """完整枚举并重取每条详情；日期分片不是更新时间过滤。"""
+    """按创建日枚举根工作项；日期分片不是更新时间过滤。"""
     _validate_scope(issue_types, project_ids, first, last)
     if not child_type_ids:
         raise ExportValidationError("knowledge_collection_scope_invalid")
     for value in child_type_ids:
         identifier(value)
     seen: set[str] = set()
-    children: dict[str, str] = {}
-    counts = {kind: 0 for kind in issue_types}
-    for kind, ids in issue_types.items():
-        for issue_type_id in ids:
-            for window_first, window_last, total in _windows(
-                provider, issue_type_id, first, last, check_active
-            ):
+    counts = {kind: (initial_counts or {}).get(kind, 0) for kind in issue_types}
+    day = first
+    while day <= last:
+        children: dict[str, str] = {}
+        for kind, ids in issue_types.items():
+            for issue_type_id in ids:
+                check_active()
+                total = _request_with_retry(lambda: provider.count(issue_type_id, day, day))
+                if type(total) is not int or total < 0:
+                    raise ExportValidationError("knowledge_collection_count_invalid")
+                if total >= WINDOW_LIMIT:
+                    raise ExportValidationError("knowledge_collection_window_limit")
+                if not total:
+                    continue
                 if sum(counts.values()) + total + len(children) > MAX_DOCUMENTS:
                     raise ExportValidationError("knowledge_sync_source_limit")
                 counts[kind] += _collect_window(
@@ -307,19 +369,30 @@ def collect_all(
                     kind,
                     issue_type_id,
                     project_ids,
-                    window_first,
-                    window_last,
+                    day,
+                    day,
                     total,
                     seen,
                     children,
                     commit_page,
                     check_active,
+                    staged_ids,
                 )
                 if sum(counts.values()) > MAX_DOCUMENTS:
                     raise ExportValidationError("knowledge_sync_source_limit")
-    counts["requirement"] += _collect_children(
-        provider, children, project_ids, child_type_ids, seen, commit_page, check_active
-    )
-    if sum(counts.values()) > MAX_DOCUMENTS:
-        raise ExportValidationError("knowledge_sync_source_limit")
+        counts["requirement"] += _collect_children(
+            provider,
+            children,
+            project_ids,
+            child_type_ids,
+            seen,
+            commit_page,
+            check_active,
+            staged_ids,
+        )
+        if sum(counts.values()) > MAX_DOCUMENTS:
+            raise ExportValidationError("knowledge_sync_source_limit")
+        check_active()
+        on_day_complete(day, dict(counts))
+        day += timedelta(days=1)
     return counts

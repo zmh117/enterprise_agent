@@ -3,8 +3,9 @@
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.modules.knowledge.domain.identity import now, stable_id
 from app.modules.knowledge.domain.normalization import (
@@ -291,8 +292,10 @@ class SyncRepository:  # noqa: PLR0904
                 ) from None
         return self.run(run["id"])
 
-    def begin_collection(self, binding_id: str, scan_at: str) -> dict[str, Any]:
-        """建立在线完整扫描运行；实际总数由逐页提交累加。"""
+    def begin_collection(
+        self, binding_id: str, scan_at: str, *, through: date | None = None
+    ) -> dict[str, Any]:
+        """首次全历史，已激活后的轮次仅扫描北京时间最近七个创建日。"""
         binding = self.binding(binding_id)
         collector = binding["configuration_json"].get("collector")
         if not collector or binding["enabled"] != 1:
@@ -303,6 +306,27 @@ class SyncRepository:  # noqa: PLR0904
             raise ExportValidationError("knowledge_collection_scan_invalid") from None
         if parsed_scan.tzinfo is None or len(scan_at) > 40:
             raise ExportValidationError("knowledge_collection_scan_invalid")
+        scan_last = through or parsed_scan.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        configured_first = date.fromisoformat(collector["first_date"])
+        if scan_last < configured_first:
+            raise ExportValidationError("knowledge_collection_scan_invalid")
+        previous = self.database.execute(
+            f"select manifest_json from {self.t('sync_run')} "
+            "where binding_id=? and phase='ACTIVATED' order by created_at desc",
+            (binding_id,),
+        )
+        prior_online = any(
+            all(
+                item.get("export_format") == "ones-online-full/v1"
+                for item in json_value(row["manifest_json"]).values()
+            )
+            for row in previous
+        )
+        scan_first = (
+            max(configured_first, scan_last - timedelta(days=6))
+            if prior_online
+            else configured_first
+        )
         manifests = tuple(
             PreparedExport(
                 (),
@@ -311,6 +335,9 @@ class SyncRepository:  # noqa: PLR0904
                     "export_format": "ones-online-full/v1",
                     "record_count": 0,
                     "scan_at": scan_at,
+                    "scan_first": scan_first.isoformat(),
+                    "scan_last": scan_last.isoformat(),
+                    "scan_mode": "recent_seven_days" if prior_online else "initial_full",
                     "scope_hash": digest(collector),
                 },
                 {},
@@ -502,6 +529,17 @@ class SyncRepository:  # noqa: PLR0904
                     "checkpoint_json": {
                         "processed": 0,
                         "total": sum(len(item.records) for item in exports),
+                        **(
+                            {
+                                "collection_next_day": next(iter(manifests.values()))["scan_first"],
+                                "collection_counts": {kind: 0 for kind in manifests},
+                            }
+                            if all(
+                                item.get("export_format") == "ones-online-full/v1"
+                                for item in manifests.values()
+                            )
+                            else {}
+                        ),
                     },
                     "resource_baseline_json": resources,
                     "activated_watermark": None,
@@ -864,8 +902,44 @@ class SyncRepository:  # noqa: PLR0904
                 (canonical_json(progress), now(), run_id),
             )
 
+    def staged_collection_ids(self, run_id: str) -> frozenset[str]:
+        rows = self.database.execute(
+            f"select external_id from {self.t('sync_candidate')} "
+            "where run_id=? and record_hash is not null",
+            (run_id,),
+        )
+        return frozenset(row["external_id"] for row in rows)
+
+    def complete_collection_day(self, run_id: str, day: date, counts: dict[str, int]) -> None:
+        if (
+            set(counts) != {"defect", "ticket", "requirement"}
+            or any(type(value) is not int or value < 0 for value in counts.values())
+            or sum(counts.values()) > 200_000
+        ):
+            raise ExportValidationError("knowledge_collection_incomplete")
+        with self.database.unit_of_work():
+            run = self.run(run_id, lock=True)
+            self.assert_configuration(run)
+            checkpoint = run["checkpoint_json"]
+            if (
+                run["phase"] != "COLLECTING"
+                or checkpoint.get("collection_next_day") != day.isoformat()
+            ):
+                raise ExportValidationError("knowledge_collection_checkpoint_invalid")
+            if any(counts[kind] < checkpoint["collection_counts"][kind] for kind in counts):
+                raise ExportValidationError("knowledge_collection_incomplete")
+            progress = {
+                **checkpoint,
+                "collection_next_day": (day + timedelta(days=1)).isoformat(),
+                "collection_counts": counts,
+            }
+            self.database.execute(
+                f"update {self.t('sync_run')} set checkpoint_json=?,error_code=NULL,updated_at=? where id=?",
+                (canonical_json(progress), now(), run_id),
+            )
+
     def complete_collection(self, run_id: str, counts: dict[str, int]) -> dict[str, Any]:
-        """仅完整枚举且旧项均再次被观察后允许进入分块阶段。"""
+        """仅日期水位完整且本轮范围内原有根项均再次可见时进入分块。"""
         if (
             set(counts) != {"defect", "ticket", "requirement"}
             or any(type(value) is not int or value < 0 for value in counts.values())
@@ -882,14 +956,45 @@ class SyncRepository:  # noqa: PLR0904
                 raise ExportValidationError("knowledge_sync_phase_invalid")
             project_ids = binding["configuration_json"]["collector"]["project_ids"]
             placeholders = ",".join("?" for _ in project_ids)
-            missing = self.database.execute_one(
-                f"select c.document_id from {self.t('sync_candidate')} c "
-                f"join {self.t('document_revision')} r on r.id=c.baseline_revision_id "
-                f"where c.run_id=? and c.record_hash is null and r.source_project_id in ({placeholders}) limit 1",
-                (run_id, *project_ids),
-            )
-            if missing:
-                raise ExportValidationError("knowledge_collection_visibility_shrank")
+            manifest = run["manifest_json"]["defect"]
+            if manifest.get("scan_mode") == "initial_full":
+                missing = self.database.execute_one(
+                    f"select c.document_id from {self.t('sync_candidate')} c "
+                    f"join {self.t('document_revision')} r on r.id=c.baseline_revision_id "
+                    f"where c.run_id=? and c.record_hash is null and r.source_project_id in ({placeholders}) limit 1",
+                    (run_id, *project_ids),
+                )
+                if missing:
+                    raise ExportValidationError("knowledge_collection_visibility_shrank")
+            else:
+                zone = ZoneInfo("Asia/Shanghai")
+                start = datetime.combine(date.fromisoformat(manifest["scan_first"]), time.min, zone)
+                end = datetime.combine(
+                    date.fromisoformat(manifest["scan_last"]) + timedelta(days=1), time.min, zone
+                )
+                missing_rows = self.database.execute(
+                    f"select r.source_snapshot from {self.t('sync_candidate')} c "
+                    f"join {self.t('document_revision')} r on r.id=c.baseline_revision_id "
+                    f"where c.run_id=? and c.record_hash is null and r.source_project_id in ({placeholders}) "
+                    "and r.source_created_at>=? and r.source_created_at<?",
+                    (
+                        run_id,
+                        *project_ids,
+                        start.astimezone(timezone.utc).isoformat(),
+                        end.astimezone(timezone.utc).isoformat(),
+                    ),
+                )
+                if any(
+                    not (json_value(row["source_snapshot"]).get("detail") or {}).get("parent_uuid")
+                    for row in missing_rows
+                ):
+                    raise ExportValidationError("knowledge_collection_visibility_shrank")
+            if (
+                run["checkpoint_json"].get("collection_next_day")
+                != (date.fromisoformat(manifest["scan_last"]) + timedelta(days=1)).isoformat()
+                or run["checkpoint_json"].get("collection_counts") != counts
+            ):
+                raise ExportValidationError("knowledge_collection_incomplete")
             manifests = dict(run["manifest_json"])
             for kind, expected in counts.items():
                 imported = self.database.execute_one(
@@ -1105,13 +1210,23 @@ class SyncRepository:  # noqa: PLR0904
             f"select outcome,count(*) as n from {self.t('sync_candidate')} where run_id=? group by outcome",
             (run_id,),
         )
-        return {
+        result = {
             "run_id": run_id,
             "phase": run["phase"],
             "checkpoint": {key: run["checkpoint_json"][key] for key in ("processed", "total")},
             "counts": dict(Counter({row["outcome"]: row["n"] for row in counts})),
             "error_code": run["error_code"],
         }
+        manifest = run["manifest_json"].get("defect", {})
+        if manifest.get("export_format") == "ones-online-full/v1":
+            result["collection"] = {
+                "mode": manifest.get("scan_mode"),
+                "first_day": manifest.get("scan_first"),
+                "last_day": manifest.get("scan_last"),
+                "next_day": run["checkpoint_json"].get("collection_next_day"),
+                "completed_counts": run["checkpoint_json"].get("collection_counts"),
+            }
+        return result
 
     def candidates(self, run_id: str) -> Iterator[dict[str, Any]]:
         cursor = ""

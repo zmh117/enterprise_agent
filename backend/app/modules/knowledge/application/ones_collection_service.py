@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from app.modules.knowledge.application.ones_collection import OnesCollectionProvider, collect_all
@@ -52,7 +52,7 @@ class KnowledgeOnesCollectionService:
             new_run = active is None
             if active is None:
                 started = scan_at or datetime.now(timezone.utc).isoformat()
-                run = repo.begin_collection(binding_id, started)
+                run = repo.begin_collection(binding_id, started, through=through)
             else:
                 run = active
             if run["phase"] != "COLLECTING":
@@ -95,24 +95,35 @@ class KnowledgeOnesCollectionService:
                     )
                     repo.commit_collection_page(run["id"], records, checkpoint)
 
-                counts = collect_all(
-                    provider,
-                    issue_types=issue_types,
-                    project_ids=frozenset(collector["project_ids"]),
-                    first=date.fromisoformat(collector["first_date"]),
-                    last=through
-                    or (
-                        datetime.fromisoformat(run["manifest_json"]["defect"]["scan_at"])
-                        .astimezone(timezone.utc)
-                        .date()
-                        + timedelta(days=1)
-                    ),
-                    child_type_ids=frozenset(collector["child_type_ids"]),
-                    commit_page=commit_page,
-                    check_active=check_active,
+                manifest = run["manifest_json"]["defect"]
+                checkpoint = run["checkpoint_json"]
+                if not checkpoint.get("collection_next_day") or not isinstance(
+                    checkpoint.get("collection_counts"), dict
+                ):
+                    raise ExportValidationError("knowledge_collection_checkpoint_invalid")
+                next_day = date.fromisoformat(checkpoint["collection_next_day"])
+                last_day = date.fromisoformat(manifest["scan_last"])
+                counts = (
+                    collect_all(
+                        provider,
+                        issue_types=issue_types,
+                        project_ids=frozenset(collector["project_ids"]),
+                        first=next_day,
+                        last=last_day,
+                        child_type_ids=frozenset(collector["child_type_ids"]),
+                        commit_page=commit_page,
+                        check_active=check_active,
+                        on_day_complete=lambda day, progress: repo.complete_collection_day(
+                            run["id"], day, progress
+                        ),
+                        initial_counts=checkpoint["collection_counts"],
+                        staged_ids=repo.staged_collection_ids(run["id"]),
+                    )
+                    if next_day <= last_day
+                    else checkpoint["collection_counts"]
                 )
                 check_active()
-                if not any(counts.values()):
+                if manifest["scan_mode"] == "initial_full" and not any(counts.values()):
                     raise ExportValidationError("knowledge_collection_empty_scope")
                 completed: dict[str, Any] = repo.complete_collection(run["id"], counts)
                 return completed

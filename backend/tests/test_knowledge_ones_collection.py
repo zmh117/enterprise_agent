@@ -1,7 +1,8 @@
 """受管 ONES 全量枚举：全部使用合成 Provider，不访问真实 ONES。"""
 
-from datetime import date
+from datetime import date, timedelta
 import json
+from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
@@ -101,6 +102,114 @@ def test_rechecks_every_uuid_on_every_full_scan_and_commits_page_checkpoint():
     assert first_counts == second_counts == {"defect": 2, "ticket": 0, "requirement": 0}
     assert p.fetched == ["a", "b", "a", "b"]
     assert [row[2]["next_cursor"] for row in committed] == ["c1", None]
+
+
+def test_detail_requests_are_bounded_and_concurrent():
+    barrier = Barrier(2, timeout=3)
+
+    class ConcurrentProvider(Provider):
+        def detail(self, uuid):
+            barrier.wait()
+            return super().detail(uuid)
+
+    p = ConcurrentProvider()
+    p.counts["defect-type", FIRST, FIRST] = 2
+    p.pages["defect-type", FIRST, FIRST, None] = CollectionPage(
+        (item("a"), item("b")), 2, False, None
+    )
+    p.details = {"a": detail("a"), "b": detail("b")}
+    assert scan(p)[0]["defect"] == 2
+
+
+def test_completed_day_resume_skips_prior_day_and_retains_cumulative_count():
+    class FailsSecondDayOnce(Provider):
+        failed = False
+
+        def count(self, issue_type_id, first, last):
+            if first == SECOND and not self.failed:
+                self.failed = True
+                raise ExportValidationError("knowledge_collection_provider_error")
+            return super().count(issue_type_id, first, last)
+
+    p = FailsSecondDayOnce()
+    p.counts["defect-type", FIRST, FIRST] = 1
+    p.pages["defect-type", FIRST, FIRST, None] = CollectionPage((item("a"),), 1, False, None)
+    p.details["a"] = detail("a")
+    completed = []
+    with pytest.raises(ExportValidationError, match="knowledge_collection_provider_error"):
+        collect_all(
+            p,
+            issue_types=TYPES,
+            project_ids=frozenset({"project-1"}),
+            first=FIRST,
+            last=SECOND,
+            child_type_ids=frozenset({"subtask-type"}),
+            commit_page=lambda *_args: None,
+            on_day_complete=lambda day, counts: completed.append((day, counts)),
+        )
+    assert completed == [(FIRST, {"defect": 1, "ticket": 0, "requirement": 0})]
+    assert (
+        collect_all(
+            p,
+            issue_types=TYPES,
+            project_ids=frozenset({"project-1"}),
+            first=SECOND,
+            last=SECOND,
+            child_type_ids=frozenset({"subtask-type"}),
+            commit_page=lambda *_args: None,
+            initial_counts=completed[0][1],
+        )
+        == completed[0][1]
+    )
+    assert p.fetched == ["a"]
+
+
+def test_incomplete_day_reuses_committed_page_without_refetching_its_details():
+    class FailsLastDetailOnce(Provider):
+        failed = False
+
+        def detail(self, uuid):
+            if uuid == "b" and not self.failed:
+                self.failed = True
+                raise ExportValidationError("knowledge_collection_provider_error")
+            return super().detail(uuid)
+
+    p = FailsLastDetailOnce()
+    p.counts["defect-type", FIRST, FIRST] = 2
+    p.pages["defect-type", FIRST, FIRST, None] = CollectionPage((item("a"),), 2, True, "next")
+    p.pages["defect-type", FIRST, FIRST, "next"] = CollectionPage((item("b"),), 2, False, None)
+    p.details = {"a": detail("a"), "b": detail("b")}
+    staged = []
+
+    def commit(_kind, pairs, _checkpoint):
+        staged.extend(listing["uuid"] for listing, _detail in pairs)
+
+    with pytest.raises(ExportValidationError, match="knowledge_collection_provider_error"):
+        collect_all(
+            p,
+            issue_types=TYPES,
+            project_ids=frozenset({"project-1"}),
+            first=FIRST,
+            last=FIRST,
+            child_type_ids=frozenset({"subtask-type"}),
+            commit_page=commit,
+        )
+    assert staged == ["a"]
+    assert (
+        collect_all(
+            p,
+            issue_types=TYPES,
+            project_ids=frozenset({"project-1"}),
+            first=FIRST,
+            last=FIRST,
+            child_type_ids=frozenset({"subtask-type"}),
+            commit_page=commit,
+            staged_ids=frozenset(staged),
+        )["defect"]
+        == 2
+    )
+    assert staged == ["a", "b"]
+    assert p.fetched.count("a") == 1
 
 
 def test_splits_capped_window_and_does_not_accept_partial_day():
@@ -391,7 +500,7 @@ def test_online_normalization_projects_only_needed_text_and_ids(tmp_path):
     assert "discard" not in json.dumps(record.values)
 
 
-def test_managed_collection_default_off_then_stages_full_three_type_scan(database, tmp_path):
+def test_managed_collection_default_off_then_resumes_completed_day(database, tmp_path):
     rows = dataset(tmp_path)
     collector = {
         "provider_origin": "https://ones.example.test",
@@ -421,7 +530,21 @@ def test_managed_collection_default_off_then_stages_full_three_type_scan(databas
         },
         expected_revision=0,
     )
-    p = Provider()
+
+    class FailsSecondDayOnce(Provider):
+        attempts = 0
+
+        def count(self, issue_type_id, first, last):
+            if first == SECOND and self.attempts < 3:
+                self.attempts += 1
+                raise RetryableExecutionError(
+                    "synthetic timeout",
+                    safe_message="synthetic",
+                    error_code="ones_provider_unavailable",
+                )
+            return super().count(issue_type_id, first, last)
+
+    p = FailsSecondDayOnce()
     for kind, label, issue_type in (
         ("defect", "缺陷", "type_1"),
         ("ticket", "工单", "type_2"),
@@ -446,10 +569,21 @@ def test_managed_collection_default_off_then_stages_full_three_type_scan(databas
     p.catalog = lambda _ids, check_active: (fields, {"type_4": "Sub-task"})
     service = KnowledgeOnesCollectionService(repo, lambda _collector: p)
     with pytest.raises(ExportValidationError, match="knowledge_collection_disabled"):
-        service.collect_once(binding["id"], through=FIRST)
+        service.collect_once(binding["id"], through=SECOND)
     assert database.execute('select id from "knowledge.sync_run"') == []
     repo.set_collection_enabled(binding["id"], enabled=True, expected_revision=1)
-    result = service.collect_once(binding["id"], scan_at="2026-09-23T00:00:00+00:00", through=FIRST)
+    with pytest.raises(ExportValidationError, match="knowledge_collection_provider_unavailable"):
+        service.collect_once(binding["id"], scan_at="2026-09-23T00:00:00+00:00", through=SECOND)
+    active = repo.active_collection(binding["id"])
+    assert active["checkpoint_json"]["collection_next_day"] == SECOND.isoformat()
+    assert repo.summary(active["id"])["collection"]["next_day"] == SECOND.isoformat()
+    assert active["checkpoint_json"]["collection_counts"] == {
+        "defect": 1,
+        "ticket": 1,
+        "requirement": 2,
+    }
+    assert len(p.fetched) == 4
+    result = service.collect_once(binding["id"])
     assert result["phase"] == "STAGED"
     assert result["counts"] == {"created": 4}
     assert len(p.fetched) == 4
@@ -507,6 +641,39 @@ def test_online_page_replay_keeps_one_candidate_and_count(database, tmp_path):
     assert database.execute_one('select count(*) as n from "knowledge.document_revision"')["n"] == 1
 
 
+def test_online_run_requires_completed_day_and_then_uses_recent_seven_beijing_days(database):
+    repo, binding = _enabled_binding(database)
+    first_run = repo.begin_collection(binding["id"], "2024-01-01T16:30:00+00:00", through=SECOND)
+    manifest = first_run["manifest_json"]["defect"]
+    assert (manifest["scan_first"], manifest["scan_last"], manifest["scan_mode"]) == (
+        "2024-01-01",
+        "2024-01-02",
+        "initial_full",
+    )
+    empty = {"defect": 0, "ticket": 0, "requirement": 0}
+    with pytest.raises(ExportValidationError, match="knowledge_collection_incomplete"):
+        repo.complete_collection(first_run["id"], empty)
+    repo.complete_collection_day(first_run["id"], FIRST, empty)
+    assert repo.run(first_run["id"])["checkpoint_json"]["collection_next_day"] == "2024-01-02"
+    with pytest.raises(ExportValidationError, match="knowledge_collection_incomplete"):
+        repo.complete_collection(first_run["id"], empty)
+    repo.complete_collection_day(first_run["id"], SECOND, empty)
+    assert repo.complete_collection(first_run["id"], empty)["phase"] == "STAGED"
+    # Simulate a previously verified, atomically activated run; this test targets
+    # collection-window selection, not the separate activation workflow.
+    database.execute(
+        'update "knowledge.sync_run" set phase=?,active=? where id=?',
+        ("ACTIVATED", 0, first_run["id"]),
+    )
+    recent = repo.begin_collection(binding["id"], "2024-01-15T16:01:00+00:00")
+    manifest = recent["manifest_json"]["defect"]
+    assert (manifest["scan_first"], manifest["scan_last"], manifest["scan_mode"]) == (
+        "2024-01-10",
+        "2024-01-16",
+        "recent_seven_days",
+    )
+
+
 def test_online_scan_rejects_disappearing_existing_uuid(database, tmp_path):
     import_legacy(database, prepare_legacy(tmp_path, [export_row()]))
     repo = SyncRepository(database)
@@ -541,6 +708,26 @@ def test_online_scan_rejects_disappearing_existing_uuid(database, tmp_path):
     with pytest.raises(ExportValidationError, match="knowledge_collection_visibility_shrank"):
         repo.complete_collection(active["id"], {"defect": 0, "ticket": 0, "requirement": 0})
     assert repo.run(active["id"])["phase"] == "COLLECTING"
+    # Model a prior successful online activation to isolate the following
+    # recent-window visibility rule; the activation transaction has its own tests.
+    database.execute(
+        'update "knowledge.sync_run" set phase=?,active=? where id=?',
+        ("ACTIVATED", 0, active["id"]),
+    )
+    due = repo.begin_collection(binding["id"], "2025-06-16T02:00:00+00:00")
+    counts = {"defect": 0, "ticket": 0, "requirement": 0}
+    for offset in range(7):
+        repo.complete_collection_day(due["id"], date(2025, 6, 10) + timedelta(days=offset), counts)
+    with pytest.raises(ExportValidationError, match="knowledge_collection_visibility_shrank"):
+        repo.complete_collection(due["id"], counts)
+    repo.cancel(due["id"])
+    recent = repo.begin_collection(binding["id"], "2026-09-23T02:00:00+00:00")
+    for ordinal in range(17, 24):
+        repo.complete_collection_day(recent["id"], date(2026, 9, ordinal), counts)
+    assert repo.complete_collection(recent["id"], counts)["phase"] == "STAGED"
+    # The June 2025 baseline item is retained, not marked deleted, despite not
+    # being requested again in September 2026.
+    assert repo.summary(recent["id"])["counts"] == {"baseline": 1}
 
 
 def _enabled_binding(database):

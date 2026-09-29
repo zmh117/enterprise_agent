@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import date
 import json
 
 import pytest
@@ -108,7 +109,9 @@ def _prepare_run(db, tmp_path, *, change: bool, move_to_ticket: bool = False):
     binding = repo.set_collection_enabled(
         binding["id"], enabled=True, expected_revision=binding["configuration_revision"]
     )
-    run = repo.begin_collection(binding["id"], "2026-09-24T00:00:00+00:00")
+    run = repo.begin_collection(
+        binding["id"], "2026-09-24T00:00:00+00:00", through=date(2024, 1, 1)
+    )
     row = prepared.records[0]
     if change or move_to_ticket:
         values = deepcopy(row.values)
@@ -125,6 +128,15 @@ def _prepare_run(db, tmp_path, *, change: bool, move_to_ticket: bool = False):
             content_hash=digest(values),
         )
     repo.stage(run["id"], row)
+    repo.complete_collection_day(
+        run["id"],
+        date(2024, 1, 1),
+        {
+            "defect": 0 if move_to_ticket else 1,
+            "ticket": 1 if move_to_ticket else 0,
+            "requirement": 0,
+        },
+    )
     repo.complete_collection(
         run["id"],
         {
