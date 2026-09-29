@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from app.modules.knowledge.application.managed_sync_pipeline import ManagedSyncPipeline
+from app.modules.knowledge.domain.chunking import KEEP_IDS_PROFILE, WORK_ITEM_PROFILE
 from app.modules.knowledge.domain.identity import stable_id
 from app.modules.knowledge.domain.normalization import ExportValidationError
 from app.modules.knowledge.infrastructure.sync_repository import SyncRepository
@@ -90,6 +91,49 @@ def test_pipeline_runs_each_stage_once_and_skips_unchanged_bases():
         ("index", "fake-defects", "ones-work-item-chunks/v1"),
         "activate",
     ]
+
+
+def test_pipeline_uses_keep_ids_profile_for_unpinned_online_collection():
+    defect = stable_id("base", "fake-defects")
+    store = FakeStore("STAGED", {defect})
+    store.config["configuration_json"]["collector"] = {"provider_origin": "synthetic"}
+    calls = []
+    pipeline = ManagedSyncPipeline(
+        store,
+        collect_once=lambda _: pytest.fail("already staged"),
+        chunk_base=lambda _, code, profile: calls.append(("chunk", code, profile.version)),
+        index_base=lambda _, code, profile: calls.append(("index", code, profile.version)),
+        activate=lambda _: {"run_id": "run", "phase": "ACTIVATED"},
+    )
+
+    assert pipeline.run_once("binding")["phase"] == "ACTIVATED"
+    assert calls == [
+        ("chunk", "fake-defects", KEEP_IDS_PROFILE.version),
+        ("index", "fake-defects", KEEP_IDS_PROFILE.version),
+    ]
+
+
+def test_pipeline_resource_pin_overrides_online_collector_profile():
+    defect = stable_id("base", "fake-defects")
+    store = FakeStore("STAGED", {defect})
+    store.config["configuration_json"]["collector"] = {"provider_origin": "synthetic"}
+    store.config["resource_pins_json"] = {
+        "resource": {
+            "knowledge_base_id": defect,
+            "chunk_profile_hash": WORK_ITEM_PROFILE.fingerprint,
+        }
+    }
+    versions = []
+    pipeline = ManagedSyncPipeline(
+        store,
+        collect_once=lambda _: pytest.fail("already staged"),
+        chunk_base=lambda _, __, profile: versions.append(profile.version),
+        index_base=lambda _, __, profile: versions.append(profile.version),
+        activate=lambda _: {"run_id": "run", "phase": "ACTIVATED"},
+    )
+
+    assert pipeline.run_once("binding")["phase"] == "ACTIVATED"
+    assert versions == [WORK_ITEM_PROFILE.version, WORK_ITEM_PROFILE.version]
 
 
 @pytest.mark.parametrize("phase", ["CHUNKING", "INDEXING", "VERIFIED"])

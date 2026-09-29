@@ -34,7 +34,11 @@ def _profile(binding: dict[str, Any], base_id: str) -> ChunkProfile:
         if item["knowledge_base_id"] == base_id
     ]
     if not pins:
-        return WORK_ITEM_PROFILE
+        return (
+            KEEP_IDS_PROFILE
+            if binding["configuration_json"].get("collector")
+            else WORK_ITEM_PROFILE
+        )
     known = {
         profile.fingerprint: profile
         for profile in (DEFAULT_PROFILE, WORK_ITEM_PROFILE, KEEP_IDS_PROFILE)
