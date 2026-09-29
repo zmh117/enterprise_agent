@@ -2,6 +2,7 @@ from app.modules.knowledge.infrastructure.chunk_repository import ChunkRepositor
 from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
 from copy import deepcopy
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -30,6 +31,7 @@ from app.shared.migrations import Migrator, deployable_migration_catalog, load_m
 from backend.tests.test_knowledge_chunks import import_rows, source_fingerprint
 from backend.tests.test_knowledge_import import export_row
 from services.knowledge_embedding.api import create_app
+from services.knowledge_embedding import model_files
 from services.knowledge_embedding.model_files import verify_file, verify_model
 
 
@@ -477,6 +479,65 @@ def test_model_file_hash_symlink_missing_and_engine_unavailable(tmp_path, monkey
         assert client.post("/embed", json={}).status_code == 503
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "expected_base"),
+    [
+        (None, "https://huggingface.co"),
+        ("https://hf-mirror.com/", "https://hf-mirror.com"),
+        ("https://mirror.example/hf/", "https://mirror.example/hf"),
+    ],
+)
+def test_model_prepare_uses_configured_endpoint_and_keeps_hash_verification(
+    tmp_path, monkeypatch, endpoint, expected_base
+):
+    content = b"synthetic-model-file"
+    manifest = {
+        "model_id": "BAAI/synthetic",
+        "revision": "fixed-revision",
+        "files": {
+            "weights.bin": {"size": len(content), "sha256": hashlib.sha256(content).hexdigest()}
+        },
+    }
+    monkeypatch.setattr(model_files, "MODEL", manifest)
+    if endpoint is None:
+        monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    else:
+        monkeypatch.setenv("HF_ENDPOINT", endpoint)
+    calls = []
+
+    def urlopen(url, *, timeout):
+        calls.append((url, timeout))
+        return io.BytesIO(content)
+
+    monkeypatch.setattr(model_files.urllib.request, "urlopen", urlopen)
+    root = tmp_path / "models"
+    model_files.prepare_model(root)
+    assert calls == [(f"{expected_base}/BAAI/synthetic/resolve/fixed-revision/weights.bin", 60)]
+    assert (root / "weights.bin").read_bytes() == content
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://hf-mirror.com",
+        "https://user:password@hf-mirror.com",
+        "https://hf-mirror.com?revision=other",
+        "https://hf-mirror.com#fragment",
+        "https://hf-mirror.com:invalid",
+        "file:///tmp/models",
+    ],
+)
+def test_model_prepare_rejects_unsafe_endpoint_before_download(tmp_path, monkeypatch, endpoint):
+    monkeypatch.setenv("HF_ENDPOINT", endpoint)
+    monkeypatch.setattr(
+        model_files.urllib.request, "urlopen", lambda *_a, **_k: pytest.fail("network used")
+    )
+    root = tmp_path / "models"
+    with pytest.raises(VectorError, match="knowledge_model_endpoint_invalid"):
+        model_files.prepare_model(root)
+    assert not root.exists()
+
+
 def test_compose_runtime_isolation_and_valid_tmpfs():
     config = yaml.load(
         (Path(__file__).resolve().parents[2] / "knowledge/compose.yml").read_text(),
@@ -492,7 +553,9 @@ def test_compose_runtime_isolation_and_valid_tmpfs():
         assert services[name]["tmpfs"][0].startswith("/tmp:")
     assert services["knowledge-model-prepare"]["networks"] == ["provider-egress"]
     assert not services["knowledge-model-prepare"].get("secrets")
-    assert not services["knowledge-model-prepare"].get("environment")
+    assert services["knowledge-model-prepare"]["environment"] == {
+        "HF_ENDPOINT": "${HF_ENDPOINT:-https://huggingface.co}"
+    }
     assert services["knowledge-embedding"]["volumes"] == ["knowledge-models:/models:ro"]
     assert not services["knowledge-ops"].get("secrets")
 

@@ -2,8 +2,10 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import time
+from urllib.parse import urlsplit
 import urllib.request
 from typing import Any
 
@@ -11,6 +13,29 @@ from app.modules.knowledge.infrastructure.embedding_profile import MODEL
 from app.modules.knowledge.domain.vector_contract import VectorError
 
 MODEL_DIR = Path("/models") / MODEL["revision"]
+DEFAULT_HF_ENDPOINT = "https://huggingface.co"
+
+
+def model_endpoint() -> str:
+    endpoint = (os.getenv("HF_ENDPOINT") or DEFAULT_HF_ENDPOINT).strip().rstrip("/")
+    try:
+        parsed = urlsplit(endpoint)
+        valid_port = parsed.port is None or parsed.port > 0
+        valid_host = bool(parsed.hostname)
+    except ValueError:
+        raise VectorError("knowledge_model_endpoint_invalid") from None
+    if (
+        parsed.scheme != "https"
+        or not valid_host
+        or not valid_port
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or any(char.isspace() for char in endpoint)
+    ):
+        raise VectorError("knowledge_model_endpoint_invalid")
+    return endpoint
 
 
 def verify_file(path: Path, expected: dict[str, Any]) -> None:
@@ -37,6 +62,7 @@ def verify_model(root: Path = MODEL_DIR) -> None:
 
 
 def prepare_model(root: Path = MODEL_DIR) -> None:
+    endpoint = model_endpoint()
     if root.is_symlink():
         raise VectorError("knowledge_model_file_invalid")
     root.mkdir(parents=True, exist_ok=True)
@@ -53,9 +79,7 @@ def prepare_model(root: Path = MODEL_DIR) -> None:
             raise VectorError("knowledge_model_file_invalid")
         for attempt in range(3):
             try:
-                url = (
-                    f"https://huggingface.co/{MODEL['model_id']}/resolve/{MODEL['revision']}/{name}"
-                )
+                url = f"{endpoint}/{MODEL['model_id']}/resolve/{MODEL['revision']}/{name}"
                 with (
                     urllib.request.urlopen(url, timeout=60) as response,
                     partial.open("wb") as output,

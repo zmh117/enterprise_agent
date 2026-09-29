@@ -29,7 +29,9 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
   --profile knowledge up -d --no-deps knowledge-embedding knowledge-qdrant
 ```
 
-`knowledge-model-prepare` 和 `knowledge-ops` 都是一次性任务。不要用不指定服务的 `--profile knowledge up` 代替以上命令。基准、迁移门禁、显式提交、断点恢复及查询见[完整运行手册](../docs/runbooks/knowledge-local-vector-index.md)。当前模型锁针对 Linux ARM64，其他架构不能直接照搬。
+`knowledge-model-prepare` 和 `knowledge-ops` 都是一次性任务。不要用不指定服务的 `--profile knowledge up` 代替以上命令。基准、迁移门禁、显式提交、断点恢复及查询见[完整运行手册](../docs/runbooks/knowledge-local-vector-index.md)。运行时依赖分别锁定 Linux ARM64 与 AMD64；在目标架构构建对应镜像。
+
+模型准备任务默认从 `https://huggingface.co` 下载。目标环境不能访问时，可在既有部署环境中设置 `HF_ENDPOINT=https://hf-mirror.com`（或受信 HTTPS 镜像源）后重跑同一准备命令；仅一次性准备任务接收此变量，常驻 Embedding 服务继续离线运行。镜像源须提供相同模型 ID、固定 revision 和文件路径；下载后仍逐文件核对固定大小与摘要，不通过时不会接纳模型，也不会自动回退到官方源。不要在 endpoint URL 中放用户名、密码、查询参数或片段。
 
 平台新增迁移后，已存在的 `knowledge-ops` 镜像不会自动更新。运行知识 CLI 前应定向重建该镜像并核验 schema 门禁；不需要重新下载模型或重建索引。更新与知识服务定向重启见[运维镜像更新](../docs/runbooks/knowledge-local-vector-index.md#运维镜像更新与定向重启)。
 

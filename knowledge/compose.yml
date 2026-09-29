@@ -43,6 +43,8 @@ services:
       context: .
       dockerfile: services/knowledge_embedding/Dockerfile
     command: [python, -m, services.knowledge_embedding.model_files]
+    environment:
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
     volumes:
       - knowledge-models:/models
     networks: [provider-egress]

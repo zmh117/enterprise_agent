@@ -84,11 +84,13 @@ def compose_cli():
     return executable
 
 
-def render(compose_cli, *, overlay=False, profiles=(), dsn=SYNTHETIC_DSN):
+def render(compose_cli, *, overlay=False, profiles=(), dsn=SYNTHETIC_DSN, hf_endpoint=None):
     # Never load the developer's .env or inherit credentials / COMPOSE_FILE.
     env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
     if dsn is not None:
         env["DATABASE_DSN"] = dsn
+    if hf_endpoint is not None:
+        env["HF_ENDPOINT"] = hf_endpoint
     command = [
         compose_cli,
         "compose",
@@ -168,6 +170,20 @@ def test_overlay_profiles_and_base_services_are_preserved(compose_cli, profiles,
             combined["volumes"]["knowledge-qdrant"]["name"]
             == "knowledge-compose-contract_knowledge-qdrant"
         )
+
+
+def test_model_endpoint_only_reaches_prepare_job(compose_cli):
+    default = parsed(render(compose_cli, overlay=True, profiles=("*",)))
+    mirror = parsed(
+        render(compose_cli, overlay=True, profiles=("*",), hf_endpoint="https://hf-mirror.com")
+    )
+    assert default["services"]["knowledge-model-prepare"]["environment"]["HF_ENDPOINT"] == (
+        "https://huggingface.co"
+    )
+    assert mirror["services"]["knowledge-model-prepare"]["environment"]["HF_ENDPOINT"] == (
+        "https://hf-mirror.com"
+    )
+    assert "HF_ENDPOINT" not in mirror["services"]["knowledge-embedding"].get("environment", {})
 
 
 @pytest.mark.parametrize("dsn", [None, ""])
