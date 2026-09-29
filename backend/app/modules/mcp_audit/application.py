@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -97,6 +98,7 @@ _FORBIDDEN_AUTH_KEYS = frozenset(
         "credential_value",
     }
 )
+_URL_WITH_AUTHORITY = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 
 
 class McpAuditError(NonRetryableExecutionError):
@@ -767,8 +769,22 @@ class McpAuditCoordinator:
             for child in value:
                 cls._reject_auth_material(child)
         elif isinstance(value, str):
-            parsed = urlsplit(value)
-            if parsed.scheme and (parsed.username is not None or parsed.password is not None):
+            candidate = value.lstrip()
+            prefix = _URL_WITH_AUTHORITY.match(candidate)
+            if prefix is None:
+                return
+            authority = re.split(r"[/?#]", candidate[prefix.end() :], maxsplit=1)[0]
+            if "@" not in authority:
+                return
+            try:
+                parsed = urlsplit(candidate)
+            except ValueError:
+                raise McpAuditError(
+                    "Malformed credential-bearing URL appeared in MCP business evidence",
+                    safe_message="MCP 业务数据包含带认证信息的 URL",
+                    error_code="mcp_audit_auth_material_forbidden",
+                ) from None
+            if parsed.username is not None or parsed.password is not None:
                 raise McpAuditError(
                     "A credential-bearing URL appeared in MCP business evidence",
                     safe_message="MCP 业务数据包含带认证信息的 URL",

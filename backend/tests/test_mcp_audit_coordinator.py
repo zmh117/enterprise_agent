@@ -192,6 +192,22 @@ def test_coordinator_rejects_auth_material_before_writing() -> None:
         assert header_denied.value.error_code == "mcp_audit_auth_material_forbidden"
 
 
+def test_auth_material_scan_accepts_non_url_notes_but_rejects_url_userinfo() -> None:
+    McpAuditCoordinator.reject_auth_material(
+        {
+            "desc": "//字段映射配置结构：合成说明",
+            "field_values": [{"value": "//字体映射：合成配置"}],
+        }
+    )
+    for value in (
+        "https://user:synthetic@host.invalid/path",
+        "https://user:synthetic@host.invalid：bad",
+    ):
+        with pytest.raises(McpAuditError) as denied:
+            McpAuditCoordinator.reject_auth_material({"desc": value})
+        assert denied.value.error_code == "mcp_audit_auth_material_forbidden"
+
+
 def test_coordinator_bounds_payload_and_retention_preserves_agent_tool_fact() -> None:
     runtime, job, coordinator, context = _coordinator_fixture()
     coordinator = McpAuditCoordinator(

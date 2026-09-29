@@ -168,3 +168,16 @@ def test_http_client_rejects_invalid_or_oversized_json() -> None:
     with pytest.raises(AppError) as too_large:
         oversized.get_json("/fixed/get", {}, headers={})
     assert too_large.value.error_code == "ones_provider_response_too_large"
+
+
+def test_http_client_accepts_non_url_double_slash_text_in_business_fields() -> None:
+    payload = {
+        "task": {
+            "desc": "//字段映射配置结构：合成说明",
+            "field_values": [{"value": "//字体映射：合成配置"}],
+        }
+    }
+    encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    client = _client(lambda *_args: _Response(200, encoded))
+
+    assert client.get_json("/fixed/get", None, headers={}) == payload
