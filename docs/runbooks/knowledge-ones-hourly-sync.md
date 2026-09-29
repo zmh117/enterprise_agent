@@ -7,6 +7,7 @@
 1. 在目标环境按平台维护流程升级到当前 schema head（包含迁移 146）及匹配的 API、ONES/同步镜像。当前本机没有真实 ONES，本手册不是启用授权。
 2. 按[全量采集手册](knowledge-ones-full-collector.md)准备固定 Provider、Team、项目/类型 UUID 与受管只读采集身份。`knowledge/ones-collector.example.json` 中 `resource_ids` 列出允许自动换版的**现有已发布**知识资源 ID；未发布的工单/需求 KB 不填资源 ID。重新 `configure` 会停用绑定并清除旧资源钉住值，需重新显式启用。
 3. 确认这些资源采用同平台 `knowledge` 内容库，已发布配置为 KB 范围摘要版本，且没有管理员草稿。外部内容 PostgreSQL 仍可用于在线只读知识资源，但不能被此同步入口自动写入。Qdrant、Embedding、容量路径必须可达；容量不足只暂停候选，不删除旧索引/卷。
+   单轮 `once` 和每小时 `daemon` 都必须从 `APP_CONFIG_MASTER_KEY_FILE` 读取与平台相同的只读 Master Key；缺失或无效时返回 `knowledge_sync_master_key_unavailable`，不会开始同步。仅查看 `status` 不要求加载 Key。
 4. 先在真实 ONES 目标环境完成一次明确单轮采集与分页/版本/权限验收，再决定是否启用每小时入口。合成 Provider、本地 Embedding/Qdrant 和容器健康均不替代真实验收。
 
 ## 单次执行与恢复

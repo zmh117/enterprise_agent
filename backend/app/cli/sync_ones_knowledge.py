@@ -31,6 +31,7 @@ from app.modules.platform_config.application.secrets import EncryptedDbSecretPro
 from app.modules.platform_config.infrastructure.repository import PlatformConfigRepository
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.master_key import MasterKeyConfigurationError, load_master_key_settings
 from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
 from app.modules.knowledge.infrastructure.vector_clients import EmbeddingClient, QdrantClient
 
@@ -72,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
         if args.mode == "daemon" and os.environ.get("KNOWLEDGE_SYNC_ENABLED") != "true":
             raise ExportValidationError("knowledge_sync_worker_disabled")
         settings = load_settings()
+        if args.mode != "status":
+            settings = load_master_key_settings(settings)
         database = Database(settings.database_dsn)
         if database.engine != "postgres":
             raise ExportValidationError("knowledge_sync_postgres_required")
@@ -194,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
                     continue
             time.sleep(30)
         return 0
+    except MasterKeyConfigurationError:
+        code = "knowledge_sync_master_key_unavailable"
     except SchemaHeadError:
         code = "knowledge_schema_head_mismatch"
     except (ExportValidationError, VectorError) as exc:

@@ -18,6 +18,7 @@ from app.modules.platform_config.application.secrets import EncryptedDbSecretPro
 from app.modules.platform_config.infrastructure.repository import PlatformConfigRepository
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.master_key import MasterKeyConfigurationError, load_master_key_settings
 from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
 
 
@@ -49,6 +50,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
         if args.mode != "status" and not args.commit:
             raise ExportValidationError("knowledge_collection_commit_required")
         settings = load_settings()
+        if args.mode == "once":
+            settings = load_master_key_settings(settings)
         database = Database(settings.database_dsn)
         if database.engine != "postgres":
             raise ExportValidationError("knowledge_collection_postgres_required")
@@ -124,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
             },
         )
         return 0
+    except MasterKeyConfigurationError:
+        code = "knowledge_collection_master_key_unavailable"
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         code = "knowledge_collection_configuration_invalid"
     except SchemaHeadError:
