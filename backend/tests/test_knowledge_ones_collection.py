@@ -87,6 +87,7 @@ def scan(provider: Provider, *, first: date = FIRST, last: date = FIRST):
         last=last,
         child_type_ids=frozenset({"subtask-type"}),
         commit_page=lambda kind, rows, checkpoint: committed.append((kind, len(rows), checkpoint)),
+        observe_listing=lambda _item: None,
     )
     return counts, committed
 
@@ -145,6 +146,7 @@ def test_completed_day_resume_skips_prior_day_and_retains_cumulative_count():
             last=SECOND,
             child_type_ids=frozenset({"subtask-type"}),
             commit_page=lambda *_args: None,
+            observe_listing=lambda _item: None,
             on_day_complete=lambda day, counts: completed.append((day, counts)),
         )
     assert completed == [(FIRST, {"defect": 1, "ticket": 0, "requirement": 0})]
@@ -157,6 +159,7 @@ def test_completed_day_resume_skips_prior_day_and_retains_cumulative_count():
             last=SECOND,
             child_type_ids=frozenset({"subtask-type"}),
             commit_page=lambda *_args: None,
+            observe_listing=lambda _item: None,
             initial_counts=completed[0][1],
         )
         == completed[0][1]
@@ -193,6 +196,7 @@ def test_incomplete_day_reuses_committed_page_without_refetching_its_details():
             last=FIRST,
             child_type_ids=frozenset({"subtask-type"}),
             commit_page=commit,
+            observe_listing=lambda _item: None,
         )
     assert staged == ["a"]
     assert (
@@ -204,6 +208,7 @@ def test_incomplete_day_reuses_committed_page_without_refetching_its_details():
             last=FIRST,
             child_type_ids=frozenset({"subtask-type"}),
             commit_page=commit,
+            observe_listing=lambda _item: None,
             staged_ids=frozenset(staged),
         )["defect"]
         == 2
@@ -378,6 +383,17 @@ def test_http_catalog_uses_only_fields_members_and_scopes():
                 }
             if query["t"] == "team_member":
                 return {"team_member": {"members": [{"uuid": "user-1", "name": "合成人员"}]}}
+            if query["t"] == "task_status":
+                return {"task_status": {"task_statuses": [{"uuid": "status-1", "name": "进行中"}]}}
+            if query["t"] == "project":
+                return {
+                    "project": {
+                        "projects": [
+                            {"uuid": "project-1", "name": "合成项目"},
+                            {"uuid": "project-2", "name": "范围外项目"},
+                        ]
+                    }
+                }
             return {
                 "data": {
                     "issueTypeScopes": [
@@ -402,8 +418,11 @@ def test_http_catalog_uses_only_fields_members_and_scopes():
     fields, names = provider.catalog(("defect-type",), check_active=lambda: None)
     assert fields["field-1"]["options"][0]["value"] == "模块甲"
     assert names["user-1"] == "合成人员"
+    assert names["status-1"] == "进行中"
+    assert names["project-1"] == "合成项目"
+    assert "project-2" not in names
     assert names["defect-type"] == "缺陷"
-    assert http.tags == ["field", "team_member", "issueTypeScopes"]
+    assert http.tags == ["field", "team_member", "task_status", "project", "issueTypeScopes"]
 
 
 def test_story_children_are_fetched_and_counted_without_a_comment_request():
@@ -422,6 +441,60 @@ def test_story_children_are_fetched_and_counted_without_a_comment_request():
     assert counts["requirement"] == 2
     assert p.fetched == ["story", "child"]
     assert pages[-1][2]["children_processed"] == 1
+
+
+@pytest.mark.parametrize("names_in_catalog", [False, True])
+def test_staged_story_child_resolves_names_from_listing_or_catalog(tmp_path, names_in_catalog):
+    rows = dataset(tmp_path)
+    listing = json.loads((tmp_path / "Story_list.jsonl").read_text())
+    expected_project_name = listing["project"]["name"]
+    if names_in_catalog:
+        listing["project"].pop("name")
+        listing["status"].pop("name")
+    p = Provider()
+    p.counts["type_3", FIRST, FIRST] = 1
+    p.pages["type_3", FIRST, FIRST, None] = CollectionPage((listing,), 1, False, None)
+    p.details[rows["Story"]["uuid"]] = rows["Story"]
+    p.details[rows["子任务"]["uuid"]] = {**rows["子任务"], "sub_issue_type_uuid": "type_4"}
+    normalizer = OnesCollectionNormalizer(
+        fields={
+            "field_module": {
+                "uuid": "field_module",
+                "name": "所属功能模块",
+                "type": 1,
+                "options": [{"uuid": "module_report", "value": "报工管理"}],
+            }
+        },
+        names={
+            "type_4": "Sub-task",
+            **(
+                {"project_id": expected_project_name, "status_id": "处理中"}
+                if names_in_catalog
+                else {}
+            ),
+        },
+    )
+    committed = []
+
+    def commit(kind, pairs, _checkpoint):
+        committed.extend(normalizer.normalize(item, value, kind=kind) for item, value in pairs)
+
+    counts = collect_all(
+        p,
+        issue_types={"defect": ("type_1",), "ticket": ("type_2",), "requirement": ("type_3",)},
+        project_ids=frozenset({"project_id"}),
+        first=FIRST,
+        last=FIRST,
+        child_type_ids=frozenset({"type_4"}),
+        commit_page=commit,
+        staged_ids=frozenset({rows["Story"]["uuid"]}),
+        observe_listing=normalizer.absorb_listing,
+    )
+    assert counts["requirement"] == 2
+    assert len(committed) == 1
+    assert committed[0].external_id == rows["子任务"]["uuid"]
+    assert committed[0].values["source_project_name"] == expected_project_name
+    assert committed[0].values["source_status_name"] == "处理中"
 
 
 def test_story_child_with_missing_parent_fails_closed():

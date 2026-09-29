@@ -118,6 +118,7 @@ class KnowledgeOnesCollectionService:
                         ),
                         initial_counts=checkpoint["collection_counts"],
                         staged_ids=repo.staged_collection_ids(run["id"]),
+                        observe_listing=normalizer.absorb_listing,
                     )
                     if next_day <= last_day
                     else checkpoint["collection_counts"]

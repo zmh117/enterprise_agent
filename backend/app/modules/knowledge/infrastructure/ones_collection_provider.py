@@ -207,6 +207,29 @@ class HttpOnesCollectionProvider:
             uid, name = member.get("uuid"), member.get("name")
             if uid and isinstance(name, str) and name:
                 names[identifier(uid)] = name
+        for stamp, collection in (
+            ("task_status", "task_statuses"),
+            ("project", "projects"),
+        ):
+            check_active()
+            response = self.http.post_json(
+                path, {stamp: 0}, headers=self._headers, query={"t": stamp}
+            )
+            node = response.get(stamp)
+            entries = node.get(collection) if isinstance(node, dict) else None
+            if not isinstance(entries, list):
+                raise ExportValidationError("knowledge_collection_catalog_invalid")
+            for entry in entries:
+                if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+                    raise ExportValidationError("knowledge_collection_catalog_invalid")
+                uid, name = identifier(entry.get("uuid")), entry["name"]
+                if not name.strip():
+                    raise ExportValidationError("knowledge_collection_catalog_invalid")
+                if stamp == "project" and uid not in self.project_ids:
+                    continue
+                if uid in names and names[uid] != name:
+                    raise ExportValidationError("knowledge_display_name_conflict")
+                names[uid] = name
         for issue_type_id in issue_type_ids:
             check_active()
             response = self.http.post_json(

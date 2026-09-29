@@ -183,6 +183,7 @@ def _collect_window(
     commit_page: PageCommit,
     check_active: Callable[[], None],
     staged_ids: frozenset[str],
+    observe_listing: Callable[[dict[str, Any]], None],
 ) -> int:
     cursors: set[str] = set()
     after: str | None = None
@@ -207,6 +208,10 @@ def _collect_window(
         )
         if len(set(listed_ids)) != len(listed_ids):
             raise ExportValidationError("knowledge_collection_scope_changed")
+        # Display names from the list are also needed by child details. A staged
+        # Story is still enumerated, but will not pass through commit_page again.
+        for item in page.items:
+            observe_listing(item)
         # Story details must be read even on replay: their live subtask list is not
         # stored in the normalized parent revision.
         pending = tuple(
@@ -336,6 +341,7 @@ def collect_all(
     last: date,
     child_type_ids: frozenset[str],
     commit_page: PageCommit,
+    observe_listing: Callable[[dict[str, Any]], None],
     check_active: Callable[[], None] = lambda: None,
     on_day_complete: Callable[[date, dict[str, int]], None] = lambda _day, _counts: None,
     initial_counts: Mapping[str, int] | None = None,
@@ -377,6 +383,7 @@ def collect_all(
                     commit_page,
                     check_active,
                     staged_ids,
+                    observe_listing,
                 )
                 if sum(counts.values()) > MAX_DOCUMENTS:
                     raise ExportValidationError("knowledge_sync_source_limit")
