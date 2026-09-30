@@ -170,6 +170,46 @@ def test_http_client_rejects_invalid_or_oversized_json() -> None:
     assert too_large.value.error_code == "ones_provider_response_too_large"
 
 
+def test_collector_sized_response_keeps_a_two_mib_hard_limit() -> None:
+    payload = {"task": {"uuid": "synthetic", "desc": "x" * 1_310_000}}
+    encoded = json.dumps(payload).encode("utf-8")
+    assert 1024 * 1024 < len(encoded) < 2 * 1024 * 1024
+
+    def response(*_args: Any) -> _Response:
+        return _Response(200, encoded)
+
+    with pytest.raises(AppError) as ordinary:
+        _client(response, maximum=1024 * 1024).get_json("/fixed/get", None, headers={})
+    assert ordinary.value.error_code == "ones_provider_response_too_large"
+    assert (
+        _client(response, maximum=2 * 1024 * 1024).get_json("/fixed/get", None, headers={})
+        == payload
+    )
+
+    with pytest.raises(AppError) as oversized:
+        _client(
+            lambda *_args: _Response(200, b"x" * (2 * 1024 * 1024 + 1)),
+            maximum=2 * 1024 * 1024,
+        ).get_json("/fixed/get", None, headers={})
+    assert oversized.value.error_code == "ones_provider_response_too_large"
+    with pytest.raises(ValueError, match="ONES Provider bounds are invalid"):
+        _client(response, maximum=2 * 1024 * 1024 + 1)
+
+
+def test_bounded_http_oversize_preserves_safe_error_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "services.ones_mcp_server.provider.http_client.has_ones_io_budget", lambda: True
+    )
+
+    def oversized(*_args: Any, **_kwargs: Any) -> bytes:
+        raise ValueError("bounded_response_too_large")
+
+    monkeypatch.setattr("services.ones_mcp_server.provider.http_client.request_bytes", oversized)
+    with pytest.raises(AppError) as raised:
+        _client(None, maximum=2 * 1024 * 1024).get_json("/fixed/get", None, headers={})
+    assert raised.value.error_code == "ones_provider_response_too_large"
+
+
 def test_http_client_accepts_non_url_double_slash_text_in_business_fields() -> None:
     payload = {
         "task": {

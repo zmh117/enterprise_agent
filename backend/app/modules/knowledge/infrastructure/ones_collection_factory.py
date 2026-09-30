@@ -54,7 +54,7 @@ class ManagedOnesCollectionProviderFactory:
         http = OnesProviderHttpClient(
             target,
             timeout_seconds=30,
-            max_response_bytes=1024 * 1024,
+            max_response_bytes=2 * 1024 * 1024,
         )
         return HttpOnesCollectionProvider(
             http,

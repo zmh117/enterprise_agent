@@ -31,6 +31,12 @@ class _NoRedirectHandler(HTTPRedirectHandler):
 _QUERY_PART = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
 
+def _bounded_response_error(exc: ValueError) -> str:
+    if str(exc) == "bounded_response_too_large":
+        return "ones_provider_response_too_large"
+    return "ones_provider_response_invalid"
+
+
 class OnesProviderHttpClient:
     """Bounded JSON transport for the single configured ONES Provider origin.
 
@@ -46,7 +52,7 @@ class OnesProviderHttpClient:
         max_response_bytes: int,
         open_response: Any | None = None,
     ) -> None:
-        if not 1 <= timeout_seconds <= 30 or not 1024 <= max_response_bytes <= 1024 * 1024:
+        if not 1 <= timeout_seconds <= 30 or not 1024 <= max_response_bytes <= 2 * 1024 * 1024:
             raise ValueError("ONES Provider bounds are invalid")
         self.target = target
         self.timeout_seconds = timeout_seconds
@@ -141,8 +147,8 @@ class OnesProviderHttpClient:
                 safe_message="ONES 查询暂时不可用",
                 error_code="ones_provider_unavailable",
             ) from None
-        except ValueError:
-            raise invalid_provider_response("ones_provider_response_invalid") from None
+        except ValueError as exc:
+            raise invalid_provider_response(_bounded_response_error(exc)) from None
         if len(raw) > self.max_response_bytes:
             raise invalid_provider_response("ones_provider_response_too_large")
         try:

@@ -904,6 +904,7 @@ def test_managed_factory_enforces_allowlist_and_credential_reference_only():
     )
     provider = factory(config)
     assert provider.http.target.host == "ones.example.test"
+    assert provider.http.max_response_bytes == 2 * 1024 * 1024
     production_http = ManagedOnesCollectionProviderFactory(
         lambda ref: json.dumps({"token": "synthetic", "user_id": "collector"}),
         allowed_hosts=("ones.example.test",),
