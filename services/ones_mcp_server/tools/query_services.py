@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.modules.mcp_audit import McpAuditHandle
+from app.shared.exceptions import AppError
 from app.shared.ones_tool_contracts import ONES_COLLECTION_LIMITS, ONES_EXTENDED_COLLECTION_TOOLS
 from services.ones_mcp_server.auth.principal import ResolvedOnesPrincipal
 from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
@@ -33,6 +34,7 @@ from services.ones_mcp_server.provider.rest.operations.basic_queries import (
     PROJECT_SPRINTS_OPERATION,
     TEAM_USER_SEARCH_OPERATION,
     WORK_ITEM_MESSAGES_OPERATION,
+    enrich_timeline_user_names,
 )
 from services.ones_mcp_server.provider.rest.operations.project_role_members import (
     TEAM_USERS_OPERATION,
@@ -440,10 +442,41 @@ class OnesWorkItemMessageListService(RestQueryService):
             token=principal.credential.secrets.token,
             user_id=principal.provider_user_id,
         )
+        output = execution.output
+        user_uuids = list(
+            dict.fromkeys(
+                message[key]
+                for message in output["messages"]
+                for key in ("actor_uuid", "worklog_owner_uuid")
+                if key in message
+            )
+        )
+        names_by_uuid: dict[str, str] = {}
+        for start in range(0, len(user_uuids), 100):
+            batch = user_uuids[start : start + 100]
+            try:
+                users = TEAM_USERS_OPERATION.execute(
+                    self.http,
+                    team_uuid=principal.team_id,
+                    member_uuids=batch,
+                    token=principal.credential.secrets.token,
+                    user_id=principal.provider_user_id,
+                )
+            except AppError:
+                # User-name lookup must not discard an otherwise valid timeline.
+                break
+            names_by_uuid.update(
+                (uuid, users.output[uuid]) for uuid in batch if uuid in users.output
+            )
+        enrich_timeline_user_names(output, names_by_uuid)
         return ProviderCall(
-            execution.output,
-            execution.request,
-            self.response_summary(execution.output),
+            output,
+            {
+                **execution.request,
+                "user_lookup_requested": len(user_uuids),
+                "user_lookup_resolved": len(names_by_uuid),
+            },
+            self.response_summary(output),
         )
 
 

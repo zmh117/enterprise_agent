@@ -44,6 +44,7 @@ from services.ones_mcp_server.tools.query_services import (
     OnesQueryConditionResolverService,
     OnesTestCaseQueryService,
     OnesUsersByUuidService,
+    OnesWorkItemMessageListService,
     OnesWorkItemQueryService,
 )
 
@@ -619,3 +620,79 @@ def test_work_item_timeline_restores_bounded_system_events() -> None:
     assert "private-hash" not in str(output)
     assert "private.test" not in str(output)
     _assert_contract("ones_list_work_item_messages", output)
+
+
+def test_work_item_timeline_resolves_actor_and_worklog_owner_names() -> None:
+    class TimelineHttp:
+        target = SimpleNamespace(base_url="https://ones.example.test")
+
+        def __init__(self) -> None:
+            self.user_requests: list[list[str]] = []
+
+        def get_json(self, _path: str, _body: object, *, headers: object) -> dict[str, object]:
+            del headers
+            return {
+                "messages": [
+                    {
+                        "uuid": "M-HOURS",
+                        "type": "system",
+                        "send_time": 1_767_225_600_123_456,
+                        "subject_type": "user",
+                        "subject_id": "USER-1",
+                        "action": "update",
+                        "object_attr": "manhours",
+                        "ext": {
+                            "owner": "USER-1",
+                            "owner_old_total": 30_000,
+                            "owner_new_total": 40_000,
+                            "total": 140_000,
+                        },
+                    }
+                ],
+                "count": 1,
+            }
+
+        def post_json(
+            self, _path: str, body: dict[str, object], *, headers: object
+        ) -> dict[str, object]:
+            del headers
+            self.user_requests.append(body["uuids"])
+            return {"users": [{"uuid": "USER-1", "name": "示例用户"}]}
+
+    http = TimelineHttp()
+    service = object.__new__(OnesWorkItemMessageListService)
+    service.http = http  # type: ignore[attr-defined]
+    principal = SimpleNamespace(
+        team_id="TEAM-1",
+        provider_user_id="USER-1",
+        credential=SimpleNamespace(secrets=SimpleNamespace(token="synthetic-token")),
+    )
+    result = service.call_provider(
+        principal,  # type: ignore[arg-type]
+        {"work_item_uuid": "TASK-1", "limit": 100},
+    )
+    message = result.output["messages"][0]
+    assert http.user_requests == [["USER-1"]]
+    assert message["actor"] == {"uuid": "USER-1", "name": "示例用户"}
+    assert message["worklog_owner"] == {"uuid": "USER-1", "name": "示例用户"}
+    assert "登记人 示例用户（USER-1）" in message["text"]
+    assert result.request_summary["user_lookup_resolved"] == 1
+    _assert_contract("ones_list_work_item_messages", result.output)
+
+    class UnavailableUserHttp(TimelineHttp):
+        def post_json(
+            self, _path: str, body: dict[str, object], *, headers: object
+        ) -> dict[str, object]:
+            del body, headers
+            raise AppError("synthetic lookup failure", safe_message="人员查询暂不可用")
+
+    unavailable = object.__new__(OnesWorkItemMessageListService)
+    unavailable.http = UnavailableUserHttp()  # type: ignore[attr-defined]
+    fallback = unavailable.call_provider(
+        principal,  # type: ignore[arg-type]
+        {"work_item_uuid": "TASK-1", "limit": 100},
+    )
+    assert fallback.output["messages"][0]["actor_uuid"] == "USER-1"
+    assert "actor" not in fallback.output["messages"][0]
+    assert fallback.request_summary["user_lookup_resolved"] == 0
+    _assert_contract("ones_list_work_item_messages", fallback.output)

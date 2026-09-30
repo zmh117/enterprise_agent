@@ -175,6 +175,30 @@ def _timeline_message_text(raw: dict[str, Any], *, path: str) -> str:
     return ""
 
 
+def enrich_timeline_user_names(output: dict[str, Any], names_by_uuid: dict[str, str]) -> None:
+    """Add resolved Team user names without changing the underlying event evidence."""
+    names = {
+        uuid: safe_name
+        for uuid, name in names_by_uuid.items()
+        if _safe_timeline_id(uuid) and (safe_name := _safe_timeline_text(name, maximum=200))
+    }
+    for message in output["messages"]:
+        actor_uuid = message.get("actor_uuid")
+        actor_name = names.get(actor_uuid)
+        if actor_name:
+            message["actor"] = {"uuid": actor_uuid, "name": actor_name}
+        owner_uuid = message.get("worklog_owner_uuid")
+        owner_name = names.get(owner_uuid)
+        if owner_name:
+            message["worklog_owner"] = {"uuid": owner_uuid, "name": owner_name}
+            message["text"] = _safe_timeline_text(
+                message["text"].replace(
+                    f"登记人 UUID {owner_uuid}", f"登记人 {owner_name}（{owner_uuid}）"
+                ),
+                maximum=2000,
+            )
+
+
 class ProjectSprintsOperation:
     code = "project_sprints"
     method = "POST"
