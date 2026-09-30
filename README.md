@@ -120,3 +120,62 @@ docker compose config --quiet
 - [统一身份 ONES MCP](docs/architecture/identity-aware-ones-mcp.md)
 - [受治理任务文件工作区](docs/architecture/task-file-workspaces.md)
 - [数据库备份与恢复](docs/operations/compose-postgres18-rabbitmq4-upgrade.md)
+
+运维相关
+在**仓库根目录**执行。下面包含主服务、Knowledge MCP、Embedding、Qdrant 和后台同步。
+
+### 1. 全量构建
+
+```sh
+docker compose \
+  -f docker-compose.yml \
+  -f knowledge/compose.yml \
+  -f knowledge/mcp.compose.yml \
+  -f knowledge/sync.compose.yml \
+  --profile knowledge --profile knowledge-sync \
+  build
+```
+
+### 2. 首次部署：准备 Embedding 模型
+
+模型已经准备过可跳过；重复执行会验证已有文件。
+
+```sh
+docker compose \
+  -f docker-compose.yml \
+  -f knowledge/compose.yml \
+  --profile knowledge-prepare \
+  run --rm --no-deps knowledge-model-prepare
+```
+
+### 3. 全量启动
+
+明确列出服务，避免误启动一次性的 `knowledge-ops` 索引任务：
+
+```sh
+docker compose \
+  -f docker-compose.yml \
+  -f knowledge/compose.yml \
+  -f knowledge/mcp.compose.yml \
+  -f knowledge/sync.compose.yml \
+  --profile knowledge --profile knowledge-sync \
+  up -d \
+  postgres migrator rabbitmq minio minio-init \
+  api-server admin-web python-agent-runtime agent-worker \
+  job-dispatch-worker delivery-dispatch-worker channel-dispatch-worker webhook-worker \
+  file-service file-worker file-processing-worker file-processing-worker-2 docling-serve \
+  tool-mcp ones-mcp dingtalk-mcp dingtalk-runtime external-action-worker \
+  knowledge-embedding knowledge-qdrant knowledge-mcp knowledge-sync
+```
+
+后台采集需要 `.env` 配置以下项，并且数据库中的采集绑定已配置、启用：
+
+```dotenv
+KNOWLEDGE_SYNC_ENABLED=true
+KNOWLEDGE_SYNC_BINDING_CODE=你的采集绑定代码
+KNOWLEDGE_SYNC_DATABASE_DSN=${DATABASE_DSN}
+```
+
+暂时不启用采集，就从启动命令末尾去掉 `knowledge-sync`。
+
+执行前还需完成凭据初始化。全量启动会运行正常迁移，并可能重建已有服务，建议在维护窗口执行；**不要执行 `down -v`**。
