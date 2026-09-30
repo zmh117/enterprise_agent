@@ -475,16 +475,24 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     file_worker_bootstrap = tmp_path / "file-worker-bootstrap-token"
     processing_worker_bootstrap = tmp_path / "file-processing-worker-bootstrap-token"
     delivery_worker_bootstrap = tmp_path / "delivery-worker-bootstrap-token"
+    knowledge_bootstrap = tmp_path / "knowledge-bootstrap-token"
     docling_api_key = tmp_path / "docling-api-key"
     assert not (tmp_path / "service-principal-private.pem").exists()
     assert not (tmp_path / "service-principal-jwks.json").exists()
     assert stat.S_IMODE(file_worker_bootstrap.stat().st_mode) == 0o400
     assert stat.S_IMODE(processing_worker_bootstrap.stat().st_mode) == 0o400
     assert stat.S_IMODE(delivery_worker_bootstrap.stat().st_mode) == 0o400
+    assert stat.S_IMODE(knowledge_bootstrap.stat().st_mode) == 0o400
     assert stat.S_IMODE(docling_api_key.stat().st_mode) == 0o400
     assert file_worker_bootstrap.read_bytes() != delivery_worker_bootstrap.read_bytes()
     assert processing_worker_bootstrap.read_bytes() not in {
         file_worker_bootstrap.read_bytes(),
+        delivery_worker_bootstrap.read_bytes(),
+        docling_api_key.read_bytes(),
+    }
+    assert knowledge_bootstrap.read_bytes() not in {
+        file_worker_bootstrap.read_bytes(),
+        processing_worker_bootstrap.read_bytes(),
         delivery_worker_bootstrap.read_bytes(),
         docling_api_key.read_bytes(),
     }
@@ -494,13 +502,38 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     delivery_worker_loaded = delivery_worker_bootstrap.read_bytes()
     processing_worker_loaded = processing_worker_bootstrap.read_bytes()
     docling_api_key_loaded = docling_api_key.read_bytes()
+    knowledge_loaded = knowledge_bootstrap.read_bytes()
     subprocess.run([str(script), str(tmp_path)], check=True, capture_output=True, text=True)
     assert principal_private_key.read_bytes() == loaded
     assert file_worker_bootstrap.read_bytes() == file_worker_loaded
     assert delivery_worker_bootstrap.read_bytes() == delivery_worker_loaded
     assert processing_worker_bootstrap.read_bytes() == processing_worker_loaded
     assert docling_api_key.read_bytes() == docling_api_key_loaded
+    assert knowledge_bootstrap.read_bytes() == knowledge_loaded
     assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
+
+
+@pytest.mark.parametrize("invalid", ["empty", "symlink", "directory"])
+def test_secret_bootstrap_refuses_invalid_knowledge_credential(tmp_path: Path, invalid: str):
+    secret = tmp_path / "knowledge-bootstrap-token"
+    if invalid == "symlink":
+        target = tmp_path / "synthetic-target"
+        target.write_text("synthetic credential", encoding="utf-8")
+        secret.symlink_to(target)
+    elif invalid == "directory":
+        secret.mkdir()
+    else:
+        secret.touch()
+    result = subprocess.run(
+        [str(REPOSITORY_ROOT / "scripts/bootstrap_agent_runtime_secrets.sh"), str(tmp_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "knowledge bootstrap credential must be a nonempty regular file" in result.stderr
+    assert not (tmp_path / "principal-jwt-private.pem").exists()
+    if invalid == "symlink":
+        assert target.read_text(encoding="utf-8") == "synthetic credential"
 
 
 def test_local_ones_mcp_runs_without_deployable_mock() -> None:

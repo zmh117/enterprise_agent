@@ -19,7 +19,13 @@ principal_jwks="$target_dir/principal-jwks.json"
 file_worker_bootstrap_token="$target_dir/file-worker-bootstrap-token"
 file_processing_worker_bootstrap_token="$target_dir/file-processing-worker-bootstrap-token"
 delivery_worker_bootstrap_token="$target_dir/delivery-worker-bootstrap-token"
+knowledge_bootstrap_token="$target_dir/knowledge-bootstrap-token"
 docling_api_key="$target_dir/docling-api-key"
+
+if [ -L "$knowledge_bootstrap_token" ] || { [ -e "$knowledge_bootstrap_token" ] && { [ ! -f "$knowledge_bootstrap_token" ] || [ ! -s "$knowledge_bootstrap_token" ]; }; }; then
+  echo "knowledge bootstrap credential must be a nonempty regular file" >&2
+  exit 1
+fi
 
 for temporary_key in "$principal_public_der"; do
   if [ -e "$temporary_key" ]; then
@@ -87,6 +93,10 @@ if [ ! -e "$file_processing_worker_bootstrap_token" ]; then
   openssl rand -base64 48 | tr -d '\n' > "$file_processing_worker_bootstrap_token"
 fi
 
+if [ ! -e "$knowledge_bootstrap_token" ]; then
+  openssl rand -base64 48 | tr -d '\n' > "$knowledge_bootstrap_token"
+fi
+
 if [ ! -e "$docling_api_key" ]; then
   openssl rand -base64 48 | tr -d '\n' > "$docling_api_key"
 fi
@@ -97,6 +107,7 @@ chmod 0400 \
   "$file_worker_bootstrap_token" \
   "$file_processing_worker_bootstrap_token" \
   "$delivery_worker_bootstrap_token" \
+  "$knowledge_bootstrap_token" \
   "$docling_api_key"
 chmod 0644 "$principal_jwks"
 

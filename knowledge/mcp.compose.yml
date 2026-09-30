@@ -19,7 +19,7 @@ services:
         BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
     restart: unless-stopped
     environment:
-      DATABASE_DSN: ${KNOWLEDGE_DATABASE_DSN:?在线知识检索需要独立 knowledge_mcp_reader 数据库账号}
+      DATABASE_DSN: ${DATABASE_DSN:?在线知识检索需要平台 DATABASE_DSN}
       PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
       KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /run/secrets/knowledge_bootstrap_token
     secrets:
@@ -51,7 +51,7 @@ services:
 
 secrets:
   knowledge_bootstrap_token:
-    file: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:?在线知识检索需要独立受管 bootstrap 文件}
+    file: ${HOME}/.config/enterprise-agent/knowledge-bootstrap-token
 
 # Only MCP needs outbound access to administrator-published content endpoints.
 # Embedding/Qdrant remain on their existing internal network; no host ports are added.

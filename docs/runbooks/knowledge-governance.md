@@ -64,7 +64,7 @@ Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页�
 `POST /api/internal/knowledge/work-item-readability` 只接受固定 API 内部 Host，无浏览器 Origin、Cookie 或 URL 参数。`Authorization: Bearer` 使用独立知识服务短期身份，`X-Knowledge-Principal: Bearer` 使用原用户的 Knowledge Principal；两者必须同时有效。请求仍只包含上述 KB/资源版本/索引/块引用字段，8 KiB 上限，两端共用候选成员校验。
 
 - 服务身份固定 `sub/azp=knowledge-mcp`、`aud=knowledge-readability-bridge`，完整 scope 集合为 `internal:knowledge:work-item:readability` 与 `internal:knowledge:storage:connection`，只对应两个固定内部操作。它不授予业务权限，不与文件 Worker 或其他 Business Principal 互通。
-- 可选 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 供现有身份签发器按独立受管文件读取；仅启用知识组件时配置，并要求原 `SERVICE_PRINCIPAL_ENABLED` 开启。文件权限沿用现有 Secret 合同，内容不得与其他服务相同。知识服务按现有短期兑换机制获取不超过 300 秒的服务 Token，不持有签名私钥。
+- 可选知识 Compose 固定读取 `$HOME/.config/enterprise-agent/knowledge-bootstrap-token`，由现有密钥初始化脚本幂等生成；宿主机无需配置 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE`。容器内仍由该变量指向受管挂载文件供身份签发器读取，并要求原 `SERVICE_PRINCIPAL_ENABLED` 开启。文件权限沿用现有 Secret 合同，内容不得与其他服务相同。知识服务按现有短期兑换机制获取不超过 300 秒的服务 Token，不持有签名私钥。
 - API 在签发前复核完整 Knowledge scope、RUNNING Job、角色应用/KB/详情权限、当前发布资源、来源和候选成员，再按原完整 scope 签发 ONES Principal，仅调用固定 `http://ones-mcp:9104/internal/knowledge/work-item-readability`。无环境代理、重定向、通用 HTTP/MCP 代调用或 Token 交换响应。
 - 平台按持久化文档 ID/版本/UUID 严格校验最多 64 KiB 的引用响应，重验两种 Principal、当前授权、身份/默认 Team/凭据 ACTIVE 状态以及资源/候选；查询中撤权、身份解绑或候选变化均丢弃结果。仅检查凭据状态，不读取或解密 ONES 凭据。401 刷新仍由原 ONES 链路负责。
 - 审计仅记录安全状态、Job/用户/KB/资源版本，不记录请求头、业务正文、被拒绝数量、Provider 原响应或任何 Token；响应禁止缓存。Bridge 不可用/依赖故障不能解释为没有相关缺陷。
@@ -113,8 +113,8 @@ Runtime 的部署默认地址为 `http://knowledge-mcp:9108/mcp`，可选 `KNOWL
 - `auth.py` 复用独立 Knowledge audience、完整 scope 和当前 Job 关卡，核对持久化 Job/用户/应用发布/Agent 发布及 attempt、correlation；不读取 ONES 凭据或签发 Token。
 - `tools.py` 调用既有 `KnowledgeDirectory` / `KnowledgeSearch`，不复制向量检索、角色权限或 ONES 可读性规则。MCP 根审计请求只存工具名，响应仅存安全版本/计数；返回既有审计关联 ID，不存 query、cursor、库名、命中 UUID 或正文。
 - `execution.py` 固定 4 个真实在途线程槽位，调用等待有截止时间。客户端断开/超时后设置取消信号，嵌套检索预算继续检查；未退出的线程不释放槽位，无额外无界工作队列。
-- `bootstrap.py` 狭窄装配，只接公开 JWKS、平台最小权限数据库、固定 Embedding、受管内容连接、独立服务短期身份和固定平台桥。不调用平台全量 Container/load_settings，不加载主密钥、签名私钥、模型 Key 或 ONES 凭据仓储。所需配置为 `DATABASE_DSN`（Compose 从独立 `KNOWLEDGE_DATABASE_DSN` 注入，始终是平台连接）、`PRINCIPAL_JWKS_FILE`、`KNOWLEDGE_BOOTSTRAP_TOKEN_FILE`。内容凭据由固定内部连接入口经过双身份与当前 KB/发布核验后仅在调用内存提供，不能传入任意 Secret 引用；ONES 目标仍归现有 ONES 服务。
-- `database_policy.py` 按当前查询授予固定角色 `knowledge_mcp_reader` 明确列的 SELECT；新合同不再读取 source_binding，已配置该角色的部署必须在维护窗口显式重新执行账号权限配置以收紧旧列授权，只允许三张审计表必要写入；原始 Job/会话正文、完整 ONES 凭据、原始文档修订和业务写入均拒绝。独立 CLI 由运维显式配置角色，启动只校验，不自动提权。审计 readiness 使用无清理模式，仅要求关联字段读取及 INSERT/UPDATE，保留/清理由平台承担。
+- `bootstrap.py` 狭窄装配，只接公开 JWKS、平台数据库、固定 Embedding、受管内容连接、独立服务短期身份和固定平台桥。不调用平台全量 Container/load_settings，不加载主密钥、签名私钥、模型 Key 或 ONES 凭据仓储。Compose 直接复用既有 `DATABASE_DSN`，公开 JWKS 与知识 bootstrap 文件沿用受管挂载。内容凭据由固定内部连接入口经过双身份与当前 KB/发布核验后仅在调用内存提供，不能传入任意 Secret 引用；ONES 目标仍归现有 ONES 服务。
+- 启动不再要求固定数据库角色，也不拒绝平台管理员账号；服务具有所选账号的数据库权限。`database_policy.py` 和独立账号配置 CLI 保留为运维可选工具，不自动创建账号或修改权限。实际工具查询和审计写入范围仍由应用实现限定，用户、Job、KB、发布和 ONES 权限校验继续执行。审计 readiness 使用无清理模式，保留/清理由平台承担；PostgreSQL/schema 就绪校验仍须通过。
 
 `/health` 只检查数据库 schema 与审计依赖，不证明 Qdrant/Embedding/ONES 或业务资源可用。服务未启用时主部署没有新增必需配置。独立 PostgreSQL tmpfs 容器验证了账号最小权限及拒绝矩阵；镜像 COPY 白名单测试只是独立导入，尚不能代替实际完整服务构建/启动、容器重启或真实 ONES 验收。
 

@@ -27,7 +27,6 @@ from app.shared.mcp_server_policy import KNOWLEDGE_MCP_SERVER_CODE
 from services.knowledge_mcp_server.app import KnowledgeSecurityMiddleware, create_app
 from services.knowledge_mcp_server.auth import KnowledgeMcpAuth
 from services.knowledge_mcp_server.tools import KnowledgeMcpTools
-from services.knowledge_mcp_server.database_policy import assert_reader_role
 from services.knowledge_mcp_server.storage_credentials import BrokerStorageCredentials
 from app.modules.knowledge.infrastructure.content_access import ManagedContentAccess
 
@@ -87,7 +86,8 @@ def build_app() -> KnowledgeSecurityMiddleware:
             os.environ["DATABASE_DSN"], pool_min_size=0, pool_max_size=4, pool_timeout_seconds=3
         )
         cleanup.callback(database.close)
-        assert_reader_role(database)
+        if database.engine != "postgres":
+            raise ValueError("知识 MCP 平台连接要求 PostgreSQL")
         tools = build_tools(
             database,
             PrincipalJwks.from_file(os.environ["PRINCIPAL_JWKS_FILE"]),

@@ -71,26 +71,23 @@ ONES 新版导出接口对应的受管全量采集入口见[全量采集手册](
 在线扩展新增 `knowledge-mcp`（9108，仅容器网络）及 API 的知识服务身份桥配置。它不会自动配置来源、角色或应用，也不会代替正式迁移。以下是经批准部署时的步骤；代码验收尚不表示已执行这些生产操作。
 
 1. 核对非终态任务、平台镜像与当前 schema，按平台流程运行正式 Migrator。不要回退/删表。Embedding 固定模型准备和已有索引仍沿用离线流程。
-2. 在受管部署配置中提供 `KNOWLEDGE_DATABASE_DSN`：指向同一数据库、同一 `knowledge` schema，用户名必须为 `knowledge_mcp_reader`，**不能复用平台管理 DSN**。角色由下一步显式创建，不在 MCP 启动时自动建表或授权。
-3. 创建独立高熵服务凭据的受管文件，以 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 提供绝对路径。不要复用其他 Worker 凭据、提交到 Git、回显文件内容或粘贴到 Web。API 与 MCP 挂载同一文件，入口按既有流程规范化为进程可读的只读副本；服务身份签发必须启用。现有公开 JWKS 也须可供 MCP 读取，不挂载签名私钥。
-4. 构建 `knowledge-mcp` 后，由具备 DDL/授权权限的运维身份显式执行独立账号配置。下例的两个 `-e` 只从受限执行环境取值，不在命令行写口令：`DATABASE_DSN` 此次是运维账号，`KNOWLEDGE_DATABASE_PASSWORD` 是独立角色的至少 24 字符高熵口令，必须与在线 DSN 对应。执行完撤去临时运维环境，不把运维账号用于常驻服务。
+2. 直接复用根 `.env` 或既有受管部署环境中的 `DATABASE_DSN`，指向平台 PostgreSQL；不再配置 `KNOWLEDGE_DATABASE_DSN`，也不要求创建 `knowledge_mcp_reader`。该连接用于平台授权、Job、发布和审计，Web 中的知识内容库连接仍独立配置。复用账号后 Knowledge MCP 持有该账号的数据库权限，数据库层不再强制专用角色隔离；工具调用仍执行用户、Job、KB 和 ONES 权限校验。
+3. 在当前部署用户的 `$HOME/.config/enterprise-agent` 目录运行既有密钥初始化脚本。脚本生成独立高熵 `knowledge-bootstrap-token`，重复执行保留已有值；Compose 固定读取此文件，无需填写宿主机 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE`。API 与 MCP 挂载同一文件，入口将其规范化为进程可读的只读副本；服务身份签发必须启用，MCP 仍只挂载公开 JWKS。
+4. 检查配置并构建 `knowledge-mcp`，不需要提前连接数据库或配置专用账号。
 
 ```sh
+# 幂等初始化固定目录中的服务凭据，不回显内容。
+scripts/bootstrap_agent_runtime_secrets.sh "$HOME/.config/enterprise-agent"
+
 # 只校验；禁止输出完整解析配置。
 docker compose -f docker-compose.yml -f knowledge/compose.yml \
   -f knowledge/mcp.compose.yml --profile knowledge config --quiet
 
 docker compose -f docker-compose.yml -f knowledge/compose.yml \
   -f knowledge/mcp.compose.yml --progress quiet build knowledge-mcp
-
-# 明确维护操作：会创建/收紧固定数据库角色，不修改业务数据。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml --profile knowledge run --rm --no-deps \
-  -e DATABASE_DSN -e KNOWLEDGE_DATABASE_PASSWORD knowledge-mcp \
-  python -m services.knowledge_mcp_server.provision_database
 ```
 
-配置入口将角色限制为无角色继承、无超级用户/建库/建角色/复制/RLS 绕过权限；按当前实际查询逐列授予元数据及知识证据读取，只给三张审计表必要的 INSERT/UPDATE，不给业务写入或 DELETE。既有列级授权会收紧，PUBLIC 或其他途径的超额权限导致检查失败，不会自动修改全平台 PUBLIC 权限。本次取消来源确认后读取合同不再包含 source_binding，已部署角色需要显式重跑配置入口收紧旧授权。后续 schema 变更需要重新核对列合同和授予；启动也会检查角色，误配平台账号会拒绝启动。
+已有部署若曾使用自定义知识服务凭据路径，需在受管维护流程中将原凭据保留到上述固定位置，再同时更新 API 和 MCP；初始化脚本只生成缺失文件，不自动迁移或轮换凭据。服务仍检查 PostgreSQL/schema 与审计就绪，不在启动时建表、授权或执行保留清理。
 
 5. 依平台维护流程更新 API（新凭据桥）、ONES、Runtime/Worker 和 Web 的对应代码版本。确认内部 Embedding/Qdrant、PostgreSQL/schema 已就绪后，使用三个文件定向启动 `knowledge-mcp`；不要用无服务名的 `up` 启动一次性运维任务。API 与 MCP 不互相声明启动依赖，桥未可用时检索明确失败关闭。
 6. `/health` 仅验证 schema/审计依赖，不能代替向量、ONES、权限和真实 Job 验收。先完成任务 7.3 的阻塞依赖预算与隔离完整链路测试，再按批准流程在 Web 配置资源、角色应用 KB 范围和新的 Agent/Application Publication。配置流程见[管理手册](../docs/runbooks/knowledge-governance.md#管理流程)，不要求 ONES 地址/Team 来源确认、证明摘要或运行中 Job ID。不得把旧 Job 当成新增知识工具的验收。
@@ -101,12 +98,11 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 经用户批准，在线 Knowledge MCP 及配套 API、ONES MCP、Agent Worker、Python Runtime 已部署为 `knowledge-online-20260920`（源码 `5d9ce4b`），包括 120 秒截止与 psycopg 3.3.6 兼容修复。固定最小权限账号和独立受管 bootstrap 已配置，健康、服务身份兑换/验签及无业务身份拒绝检查通过。schema 仍为 140，无需再次迁移；本轮不修改资源/角色/Publication，不调用真实 ONES、聊天模型或创建新 Job。
 
-本机在线连接配置存于宿主受管目录，不在知识目录复制根 `.env`，后续维护须同时提供两份配置并保留三个 Compose 文件：
+上述为 2026-09-20 历史部署快照。当前配置复用根 `.env` 中的 `DATABASE_DSN` 和固定知识服务凭据路径，不再要求单独的 `knowledge-online.env`；后续维护仍保留三个 Compose 文件：
 
 ```sh
 docker compose -p enterprise_agent \
   --env-file .env \
-  --env-file /Users/mhz/.config/enterprise-agent/knowledge-online.env \
   -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.compose.yml \
   --profile knowledge config --quiet
 ```
@@ -140,6 +136,6 @@ docker compose -p enterprise_agent \
 
 平台持有逻辑 KB、角色应用授权、资源版本和审计；内容实例不成为授权事实源。新外部 KB 首次注册仅在平台创建相同 KB ID 的逻辑身份，不复制正文。保持 KB/文档/分块/索引/点 ID 稳定；同一逻辑 KB 不应指向不相关的新语料。
 
-Knowledge MCP 的 `DATABASE_DSN` **仍是平台最小权限连接**，不能换成内容库 DSN。内容凭据经固定 `/api/internal/knowledge/storage-connection` 由服务身份＋当前 Knowledge JWT 双重验证获取；仅可读取当前获授权 KB 的已发布连接，不接收任意 Secret 引用。主密钥、签名私钥和 ONES 凭据不进入 Knowledge MCP。API 与 ONES 核验使用同一内容绑定，返回前继续检查 KB＋本人 ONES 权限。
+Knowledge MCP 的 `DATABASE_DSN` **复用部署环境中的平台连接**，不能换成 Web 配置的内容库 DSN。内容凭据经固定 `/api/internal/knowledge/storage-connection` 由服务身份＋当前 Knowledge JWT 双重验证获取；仅可读取当前获授权 KB 的已发布连接，不接收任意 Secret 引用。主密钥、签名私钥和 ONES 凭据不进入 Knowledge MCP。API 与 ONES 核验使用同一内容绑定，返回前继续检查 KB＋本人 ONES 权限。
 
-升级 migration 140 后须显式重跑上文最小账号配置入口，增加 `retrieval_revision.storage_config_json` 的读取授权，不能使用宽泛表级授权绕过 readiness。API 与 Knowledge MCP 同步更新后重新兑换短期服务 Token，新 scope 精确包含两个内部操作。旧资源字段为空时继续使用原部署连接与原 hash，不要求重发布；切换内容连接才需创建新草稿。原导入/分块/索引 CLI 仍使用它自身的显式部署连接，不会自动跟随 Web 的读取配置。
+升级 schema 后，部署账号需具备当前平台授权、知识元数据和审计查询所需权限。默认复用平台连接，无需额外创建知识账号；保留的独立账号配置 CLI 仅供自行选择角色隔离的运维使用。API 与 Knowledge MCP 同步更新后重新兑换短期服务 Token，新 scope 精确包含两个内部操作。旧资源字段为空时继续使用原部署连接与原 hash，不要求重发布；切换内容连接才需创建新草稿。原导入/分块/索引 CLI 仍使用它自身的显式部署连接，不会自动跟随 Web 的读取配置。

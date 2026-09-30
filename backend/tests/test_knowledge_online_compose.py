@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -21,8 +22,6 @@ def online_config(compose_cli, *, missing=None):
     env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
     env.update(
         DATABASE_DSN="postgresql://synthetic:synthetic@postgres:5432/synthetic",
-        KNOWLEDGE_DATABASE_DSN="postgresql://knowledge_mcp_reader:synthetic@postgres:5432/synthetic",
-        KNOWLEDGE_BOOTSTRAP_TOKEN_FILE="/synthetic/not-read-knowledge-bootstrap",
     )
     if missing:
         env.pop(missing)
@@ -89,7 +88,12 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
         "PRINCIPAL_JWKS_FILE",
         "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE",
     }
-    assert service["environment"]["DATABASE_DSN"].startswith("postgresql://knowledge_mcp_reader:")
+    assert service["environment"]["DATABASE_DSN"] == (
+        "postgresql://synthetic:synthetic@postgres:5432/synthetic"
+    )
+    assert config["secrets"]["knowledge_bootstrap_token"]["file"] == str(
+        Path(os.environ["HOME"]) / ".config/enterprise-agent/knowledge-bootstrap-token"
+    )
     assert set(service["networks"]) == {
         "knowledge-internal",
         "agent-runtime-control",
@@ -112,10 +116,77 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
         }
 
 
-@pytest.mark.parametrize("missing", ["KNOWLEDGE_DATABASE_DSN", "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE"])
-def test_online_requires_explicit_service_identity_and_reader_dsn(compose_cli, missing):
-    result = online_config(compose_cli, missing=missing)
-    assert result.returncode != 0 and "在线知识检索需要独立" in result.stderr
+def test_online_requires_existing_platform_database_dsn(compose_cli):
+    result = online_config(compose_cli, missing="DATABASE_DSN")
+    assert result.returncode != 0 and "DATABASE_DSN" in result.stderr
+
+
+def test_shared_platform_dsn_starts_without_provisioning_reader_role(monkeypatch):
+    from services.knowledge_mcp_server import bootstrap
+
+    events = []
+    database = SimpleNamespace(engine="postgres", close=lambda: events.append("closed"))
+    tools = SimpleNamespace(
+        audit=SimpleNamespace(assert_ready=lambda **kwargs: events.append(("audit_ready", kwargs)))
+    )
+    public_keys, app = object(), object()
+    captured = {}
+    dsn = "postgresql://platform:synthetic@postgres:5432/synthetic"
+    monkeypatch.setenv("DATABASE_DSN", dsn)
+    monkeypatch.setenv("PRINCIPAL_JWKS_FILE", "/synthetic/jwks.json")
+    monkeypatch.setenv("KNOWLEDGE_BOOTSTRAP_TOKEN_FILE", "/synthetic/bootstrap")
+
+    def connect(value, **kwargs):
+        captured["dsn"] = value
+        return database
+
+    def assemble(value, keys, *, bootstrap_file, cleanup):
+        assert value is database and keys is public_keys
+        assert bootstrap_file == "/synthetic/bootstrap"
+        return tools
+
+    def create(value, *, ready, close):
+        assert value is tools
+        captured.update(ready=ready, close=close)
+        return app
+
+    monkeypatch.setattr(bootstrap, "Database", connect)
+    monkeypatch.setattr(
+        bootstrap, "PrincipalJwks", SimpleNamespace(from_file=lambda path: public_keys)
+    )
+    monkeypatch.setattr(bootstrap, "build_tools", assemble)
+    monkeypatch.setattr(
+        bootstrap,
+        "SchemaHeadValidator",
+        lambda value, migrations: SimpleNamespace(
+            require_current=lambda: events.append("schema_ready")
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "create_app", create)
+
+    assert bootstrap.build_app() is app
+    assert captured["dsn"] == dsn
+    captured["ready"]()
+    assert events == ["schema_ready", ("audit_ready", {"retention_cleanup": False})]
+    captured["close"]()
+    assert events[-1] == "closed"
+
+
+def test_shared_platform_connection_still_rejects_non_postgres(monkeypatch):
+    from services.knowledge_mcp_server import bootstrap
+
+    closed = []
+    monkeypatch.setenv("DATABASE_DSN", "sqlite:///:memory:")
+    monkeypatch.setenv("PRINCIPAL_JWKS_FILE", "/synthetic/jwks.json")
+    monkeypatch.setenv("KNOWLEDGE_BOOTSTRAP_TOKEN_FILE", "/synthetic/bootstrap")
+    monkeypatch.setattr(
+        bootstrap,
+        "Database",
+        lambda *args, **kwargs: SimpleNamespace(engine="sqlite", close=lambda: closed.append(True)),
+    )
+    with pytest.raises(ValueError, match="知识 MCP 启动配置无效"):
+        bootstrap.build_app()
+    assert closed == [True]
 
 
 def test_mcp_image_copy_whitelist_imports_without_platform_bootstrap(tmp_path):
@@ -160,7 +231,6 @@ def test_bootstrap_secret_is_normalized_without_private_platform_credentials():
     entrypoint = (ROOT / "backend/docker/normalize_secrets_entrypoint.sh").read_text()
     assert "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE" in entrypoint
     bootstrap = (ROOT / "services/knowledge_mcp_server/bootstrap.py").read_text()
-    assert "assert_reader_role(database)" in bootstrap
     assert "retention_cleanup=False" in bootstrap
     assert "APP_CONFIG_MASTER_KEY" not in bootstrap
     assert "PRINCIPAL_PRIVATE_KEY_FILE" not in bootstrap
