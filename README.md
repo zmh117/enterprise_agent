@@ -120,4 +120,3 @@ docker compose config --quiet
 - [统一身份 ONES MCP](docs/architecture/identity-aware-ones-mcp.md)
 - [受治理任务文件工作区](docs/architecture/task-file-workspaces.md)
 - [数据库备份与恢复](docs/operations/compose-postgres18-rabbitmq4-upgrade.md)
-  1

@@ -8,6 +8,29 @@ Linux x86_64 纯 CPU 部署使用同一组 Compose 文件，不需要为 Qdrant 
 
 所有命令在仓库根目录执行，始终将根 Compose 放在第一个 `-f` 参数。保留原 Compose 项目名（当前本机为 `enterprise_agent`），不要在此目录单独 `docker compose up`，也不要另取 `-p` 名称，否则会切换到另一组模型/向量卷。
 
+单独执行 `docker compose up -d` 只加载根 `docker-compose.yml`，**不会启动** Embedding、Qdrant、Knowledge MCP 或每小时同步容器。要启用已经完成模型准备、迁移、在线 MCP 配置及真实 ONES 单轮验收的部署，可从仓库根目录按以下顺序启动。以下示例适用于同时使用在线知识检索和小时同步的环境；若不使用在线 Knowledge MCP，去掉所有命令中的 `-f knowledge/mcp.compose.yml`，并从第一个 `up` 命令去掉 `knowledge-mcp`。不要使用无服务名的 `--profile knowledge up -d`，它还会启动一次性运维任务。
+
+在既有受管部署环境中先提供 `KNOWLEDGE_SYNC_ENABLED=true`、固定的 `KNOWLEDGE_SYNC_BINDING_CODE`、`KNOWLEDGE_SYNC_DATABASE_DSN`，并显式启用数据库中的同步绑定；在线 MCP 的连接与受管文件仍按下文准备。命令中不填写或输出凭据。叠加配置可能使已运行的 PostgreSQL/API 容器为接入知识网络而重建，应在维护窗口执行；不要使用 `down -v` 或 `--remove-orphans`。
+
+```sh
+# 先检查完整叠加配置，不打印解析后的连接信息。
+docker compose -f docker-compose.yml -f knowledge/compose.yml \
+  -f knowledge/mcp.compose.yml -f knowledge/sync.compose.yml \
+  --profile knowledge --profile knowledge-sync config --quiet
+
+# 根栈已按原流程启动后，使数据库/API 接入知识网络并启动常驻依赖。
+docker compose -f docker-compose.yml -f knowledge/compose.yml \
+  -f knowledge/mcp.compose.yml -f knowledge/sync.compose.yml \
+  --profile knowledge up -d postgres api-server knowledge-embedding knowledge-qdrant knowledge-mcp
+
+# 依赖就绪、绑定已启用后，单独启动后台小时同步；以后维护仍叠加同一组文件。
+docker compose -f docker-compose.yml -f knowledge/compose.yml \
+  -f knowledge/mcp.compose.yml -f knowledge/sync.compose.yml \
+  --profile knowledge --profile knowledge-sync up -d --no-deps knowledge-sync
+```
+
+首次采集从配置的最早创建日期开始全量扫描；首次成功激活后，每小时复查北京时间**最近 7 个创建日**的缺陷、工单和需求。复查会重新获取命中项详情，因此既覆盖这 7 天内新建的记录，也覆盖这些记录在创建后又发生的更新；内容有变化时再进入分块、Embedding、索引和受管切版。创建于更早日期的工作项，即使最近更新，也不在这 7 天的复查范围内。
+
 启用环境必须在既有部署配置（根 `.env` 或进程环境）中提供 `DATABASE_DSN`，指向主栈同一数据库的容器内地址 `postgres:5432`，不能使用宿主机 `localhost` 或映射端口。不在本目录复制 `.env` 或填写明文凭据；缺失/空值时叠加配置会直接报错。未加载扩展的环境没有此新增配置要求。
 
 ```sh
