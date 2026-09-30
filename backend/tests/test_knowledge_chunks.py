@@ -13,10 +13,12 @@ from app.cli.prepare_knowledge_chunks import main
 from app.modules.knowledge.application.chunk_service import ChunkService
 from app.modules.knowledge.domain.chunking import (
     DEFAULT_PROFILE,
+    KEEP_IDS_PROFILE,
     clean_text,
     prepare_chunks,
     validate_chunks,
 )
+from app.modules.knowledge.domain.keep_ids import KEEP_IDS_NORMALIZER
 from app.modules.knowledge.application.import_service import KnowledgeImportService
 from app.modules.knowledge.domain.normalization import (
     ExportValidationError,
@@ -93,6 +95,39 @@ def test_small_fenced_block_remains_whole():
     body = "前置" * 440 + "\n" + fenced + "\n" + "后置" * 600
     result = prepare_chunks(record(body, None))
     assert any(fenced in chunk["evidence_text"] for chunk in result.chunks)
+
+
+@pytest.mark.parametrize("source_type", ["LIMS工单", "WMS工单", "合成新工单类型"])
+def test_keep_ids_chunking_accepts_collected_ticket_display_names(source_type):
+    value = record("合成工单描述", None)
+    value["normalizer_version"] = KEEP_IDS_NORMALIZER
+    value["attributes"].update(
+        document_kind="ticket",
+        source_issue_type_display=source_type,
+    )
+
+    chunks = prepare_chunks(value, KEEP_IDS_PROFILE).chunks
+    assert chunks
+    assert f"类型：{source_type}" in chunks[0]["embedding_text"]
+
+
+def test_code_fence_overlap_never_emits_a_nonadvancing_chunk():
+    body = (
+        "A" * 495
+        + "\n\n```python\n"
+        + ("x" * 100 + "\n") * 22
+        + "```\n"
+        + "C" * 315
+        + "。 ```python\n"
+        + ("x" * 25 + "\n") * 13
+        + "```\n"
+        + "B" * 1105
+        + "\n"
+    )
+    result = prepare_chunks(record(body, None))
+    ends = [chunk["source_end"] for chunk in result.chunks]
+    assert ends == sorted(set(ends))
+    assert ends[-1] == len(result.normalized_fields["body_text"])
 
 
 def test_cleaning_preserves_code_and_does_not_decode_or_fold():

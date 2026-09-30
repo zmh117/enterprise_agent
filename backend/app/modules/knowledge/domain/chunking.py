@@ -131,6 +131,7 @@ def _ranges(text: str, profile: ChunkProfile) -> list[tuple[int, int, list[str]]
 
     result: list[tuple[int, int, list[str]]] = []
     start = 0
+    covered = 0
     while start < len(text):
         limit = min(start + profile.max_chars, len(text))
         end = limit
@@ -154,8 +155,13 @@ def _ranges(text: str, profile: ChunkProfile) -> list[tuple[int, int, list[str]]
                     flags.append("hard_split")
         if any(a < end < b or a < start < b for a, b in fences):
             flags.append("code_continuation")
+        if end <= covered:
+            # Overlap may put the soft split back at an already emitted fence edge.
+            start = covered
+            continue
         if text[start:end].strip():
             result.append((start, end, flags))
+            covered = end
         if end == len(text):
             break
         next_start = max(start + 1, end - profile.overlap_chars)
@@ -247,7 +253,8 @@ def prepare_chunks(record: dict[str, Any], profile: ChunkProfile | None = None) 
         kinds = {"defect", "ticket", "requirement"} if keep_ids else {"ticket", "requirement"}
         if kind not in kinds or record.get("document_kind", kind) != kind:
             raise ExportValidationError("knowledge_chunk_kind_unsupported")
-        check_offline_type(kind, record["attributes"].get("source_issue_type_display"))
+        if not keep_ids:
+            check_offline_type(kind, record["attributes"].get("source_issue_type_display"))
         expected_profile = KEEP_IDS_PROFILE if keep_ids else WORK_ITEM_PROFILE
         if profile.template_version != expected_profile.template_version:
             raise ExportValidationError("knowledge_chunk_source_profile_unsupported")
