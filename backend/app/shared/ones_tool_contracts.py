@@ -839,7 +839,7 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
         ),
         _contract(
             "ones_list_work_item_messages",
-            "查询一个明确 ONES 工作项的有界时间线消息（最多 100 条），可核对其中的工时登记或变更记录。用户询问本人或指定人员在某时间段的实际投入工时时，应先找出相关工作项，再逐项调用本工具检查消息；只有消息明确给出登记人、投入日期和工时数时，才能据此列出或汇总工时。不得用工作项创建/更新时间或普通消息时间代替投入日期、工时数；消息缺失或结果截断时，不得声称工时已查全。只返回安全纯文本和必要参与者信息。",
+            "查询明确 ONES 工作项的有界时间线消息（最多 100 条）。系统事件会还原为安全纯文本，包括状态/属性变更、工时登记人及累计工时前后值、附件文件名；actor_uuid 是操作者，worklog_owner_uuid 是工时登记人，可用人员详情工具解析姓名。工时消息的 sent_at 是变更发生时间，不一定是实际投入日期；同一人的多次累计值不可直接相加，须按净变化理解。消息缺失或结果截断时不得声称工时已查全。不返回附件内容、认证链接或原始 Provider 消息。",
             _object_schema(
                 {
                     "work_item_uuid": _identifier(),
@@ -854,6 +854,8 @@ ONES_TOOL_CONTRACTS: Final[dict[str, OnesToolContract]] = {
                         "uuid": {"type": "string", "maxLength": 128},
                         "type": {"type": "string", "maxLength": 80},
                         "sent_at": {"type": "string", "maxLength": 64},
+                        "actor_uuid": _identifier(),
+                        "worklog_owner_uuid": _identifier(),
                         "from": _person(),
                         "to": _person(),
                         "text": {"type": "string", "maxLength": 2000},

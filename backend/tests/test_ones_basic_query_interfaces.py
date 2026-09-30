@@ -542,3 +542,80 @@ def test_new_tool_validation_and_timeline_projection_fail_closed() -> None:
         }
     ]
     _assert_contract("ones_list_work_item_messages", timeline)
+
+
+def test_work_item_timeline_restores_bounded_system_events() -> None:
+    base = {"send_time": 1_767_225_600_123_456, "type": "system", "subject_type": "user"}
+    output = WORK_ITEM_MESSAGES_OPERATION.parse_response(
+        {
+            "messages": [
+                {
+                    **base,
+                    "uuid": "M-STATUS",
+                    "subject_id": "USER-1",
+                    "action": "update",
+                    "object_attr": "field",
+                    "ext": {
+                        "field_name": "状态",
+                        "field_type": 12,
+                        "old_option": {"uuid": "OLD", "name": "New"},
+                        "new_option": {"uuid": "NEW", "name": "Fixed"},
+                    },
+                },
+                {
+                    **base,
+                    "uuid": "M-HOURS",
+                    "subject_id": "USER-1",
+                    "action": "update",
+                    "object_attr": "manhours",
+                    "ext": {
+                        "owner": "USER-1",
+                        "owner_old_total": 30_000,
+                        "owner_new_total": 40_000,
+                        "total": 140_000,
+                    },
+                },
+                {
+                    **base,
+                    "uuid": "M-FILE",
+                    "subject_id": "USER-1",
+                    "action": "delete",
+                    "object_attr": "attachments",
+                    "ext": {
+                        "attachments": [{"name": "evidence.png", "url": "https://private.test/key"}]
+                    },
+                },
+                {
+                    "uuid": "M-UPLOAD",
+                    "type": "discussion",
+                    "send_time": base["send_time"],
+                    "from": "USER-1",
+                    "text": None,
+                    "resource": {"name": "upload.png", "hash": "private-hash"},
+                },
+                {
+                    "uuid": "M-COMMENT",
+                    "type": "discussion",
+                    "send_time": base["send_time"],
+                    "from": "USER-1",
+                    "text": "<b>已修复</b><script>hidden</script> token=private-value https://private.test/key",
+                },
+            ],
+            "count": 5,
+            "has_next": False,
+        },
+        limit=100,
+    )
+    messages = output["messages"]
+    assert messages[0]["text"] == "修改工作项属性「状态」：New → Fixed"
+    assert messages[0]["actor_uuid"] == "USER-1"
+    assert messages[1]["worklog_owner_uuid"] == "USER-1"
+    assert "0.3 → 0.4 小时" in messages[1]["text"]
+    assert "净变化 +0.1 小时" in messages[1]["text"]
+    assert "工作项累计 1.4 小时" in messages[1]["text"]
+    assert messages[2]["text"] == "删除附件「evidence.png」"
+    assert messages[3]["text"] == "上传附件「upload.png」"
+    assert messages[4]["text"] == "已修复 token=[REDACTED] [link omitted]"
+    assert "private-hash" not in str(output)
+    assert "private.test" not in str(output)
+    _assert_contract("ones_list_work_item_messages", output)
