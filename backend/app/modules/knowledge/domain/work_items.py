@@ -9,6 +9,8 @@ DOCUMENT_KINDS = frozenset({"defect", "ticket", "requirement"})
 OFFLINE_SOURCE_TYPES = {
     "缺陷": "defect",
     "MES工单": "ticket",
+    "LIMS工单": "ticket",
+    "WMS工单": "ticket",
     "Story": "requirement",
     "Sub-task": "requirement",
     "演示子任务": "requirement",

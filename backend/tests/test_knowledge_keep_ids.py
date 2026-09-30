@@ -121,6 +121,17 @@ def test_keep_ids_names_embedding_parent_and_three_batches(tmp_path):
     assert child.values["completeness"]["discussion"] == "not_indexed"
 
 
+@pytest.mark.parametrize("source_type", ["LIMS工单", "WMS工单"])
+def test_keep_ids_ticket_chunk_accepts_work_order_display_names(tmp_path, source_type):
+    dataset(tmp_path)
+    ticket = deepcopy(prepare(tmp_path)[1].records[0].values)
+    ticket["attributes"]["source_issue_type_display"] = source_type
+
+    chunks = prepare_chunks(ticket, KEEP_IDS_PROFILE).chunks
+    assert chunks
+    assert f"类型：{source_type}" in chunks[0]["embedding_text"]
+
+
 @pytest.mark.parametrize(
     "mutation,code",
     [

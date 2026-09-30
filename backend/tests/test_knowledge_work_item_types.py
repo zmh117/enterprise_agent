@@ -30,6 +30,11 @@ def test_approved_requirement_subtypes(source_type):
     check_offline_type("requirement", source_type)
 
 
+@pytest.mark.parametrize("source_type", ["MES工单", "LIMS工单", "WMS工单"])
+def test_approved_ticket_types(source_type):
+    check_offline_type("ticket", source_type)
+
+
 @pytest.mark.parametrize(
     "kind,source_type",
     [
