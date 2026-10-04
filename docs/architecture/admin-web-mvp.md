@@ -60,6 +60,8 @@ FEATURE_WEB_ADMIN=true docker compose up -d --build \
 
 ## 当前管理边界
 
+管理页面按路由延迟加载；平台壳、认证、权限校验与错误恢复保持同步可用。受保护页面只有 capability 校验通过后才加载模块，加载期间显示“正在加载管理页面…”，模块加载失败沿用刷新和返回工作台入口。该加载方式不改变路由地址、页面数据合同或授权规则。
+
 - 可以创建和治理多个 `python-v1` Agent；`default-diagnostic-agent` 只是 bootstrap
   内置 Agent，不是唯一可管理 Agent。
 - Agent、Workflow、Business Application、Resource 和 Webhook 使用追加式 Revision 与

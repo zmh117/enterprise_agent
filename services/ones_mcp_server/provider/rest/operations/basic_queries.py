@@ -108,11 +108,13 @@ def _field_value(ext: dict[str, Any], prefix: str) -> str:
 
 
 def _system_timeline_text(raw: dict[str, Any]) -> str:
-    action = raw.get("action")
+    raw_action = raw.get("action")
+    action = raw_action if isinstance(raw_action, str) else ""
     verb = {"add": "新增", "update": "修改", "delete": "删除", "move": "移动", "copy": "复制"}.get(
         action, "操作"
     )
-    ext = raw.get("ext") if isinstance(raw.get("ext"), dict) else {}
+    raw_ext = raw.get("ext")
+    ext = raw_ext if isinstance(raw_ext, dict) else {}
     attribute = raw.get("object_attr")
     if attribute == "manhours":
         owner = _safe_timeline_id(ext.get("owner"))

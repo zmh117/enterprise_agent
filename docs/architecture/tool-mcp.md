@@ -1,6 +1,6 @@
 # 标准 MCP 工具服务
 
-`tool-mcp` 是当前唯一 Python Agent Runtime 使用的固定标准 MCP Server。
+`tool-mcp` 是 Python Agent Runtime 使用的固定数据库、Redis 和 Loki 只读资源工具服务。Runtime 还可使用 File Service 内置 File MCP、ONES/钉钉业务 MCP 及可选 Knowledge MCP，各自保持代码固定的服务地址、工具目录与鉴权合同。
 
 ```text
 Python Agent Runtime

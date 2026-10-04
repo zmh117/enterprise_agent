@@ -23,7 +23,7 @@
 - [统一身份、RBAC 与管理端](architecture/unified-identity-rbac-admin.md)
 - [Webhook Agent Trigger](architecture/webhook-agent-triggers.md)
 
-当前执行链是 `Channel -> Control Plane -> Worker -> Python Runtime -> MCP`，数据库只允许 `python-v1` Runtime。DB/Redis/Loki进入`tool-mcp -> Published Resource Revision`；ONES和钉钉分别通过业务MCP复核当前身份；mutation进入`Action Intent -> 用户确认 -> external-action-worker`；任务文件进入File Service的版本、表示与对象存储边界。旧动态API Capability、Handler、API Connection、Resource Mapping和Internal API Platform已退役。
+当前执行链是 `Channel -> Control Plane -> Worker -> Python Runtime -> MCP`，数据库只允许 `python-v1` Runtime。DB/Redis/Loki进入`tool-mcp -> Published Resource Revision`；ONES和钉钉分别通过业务MCP复核当前身份；可选 Knowledge MCP 按当前 KB 授权与个人 ONES 可读性返回工作项引用；mutation进入`Action Intent -> 用户确认 -> external-action-worker`；任务文件进入File Service的版本、表示与对象存储边界。旧动态API Capability、Handler、API Connection、Resource Mapping和Internal API Platform已退役。
 
 ## 指南
 
@@ -36,8 +36,8 @@
 
 ## 运维
 
-- [空库 Baseline 100、当前迁移 132 与初始管理员](operations/schema-baseline-bootstrap.md)
-- [Legacy 042 → Baseline 100 → 当前迁移 132](operations/schema-baseline-upgrade.md)
+- [空库 Baseline 100、当前迁移目录与初始管理员](operations/schema-baseline-bootstrap.md)
+- [Legacy 042 → Baseline 100 → 当前迁移目录](operations/schema-baseline-upgrade.md)
 - [Compose PostgreSQL 18 / RabbitMQ 4 升级与恢复](operations/compose-postgres18-rabbitmq4-upgrade.md)
 - [Agent 重试与失败投递](operations/agent-retry-failure-delivery.md)
 - [平台 Master Key](operations/platform-master-key.md)
@@ -45,6 +45,11 @@
 - [受治理文档处理](operations/governed-document-processing.md)
 
 ## 验证与参考
+
+- [知识扩展部署与内容存储](../knowledge/README.md)
+- [知识资源、授权与检索治理](runbooks/knowledge-governance.md)
+- [知识本地模型与向量索引](runbooks/knowledge-local-vector-index.md)
+- [ONES 知识受管同步与恢复](runbooks/knowledge-ones-hourly-sync.md)
 
 - [MCP Inspector 开发测试](development/mcp-inspector.md)
 - [Task File Workspace Sandbox 容量基线](verification/task-file-workspace-sandbox-capacity.md)

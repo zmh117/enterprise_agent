@@ -2,6 +2,8 @@
 
 本阶段处理已导入 `knowledge` 的离线缺陷文本，生成可追溯的事实片段和待向量化文本。仍使用现有 PostgreSQL 数据库的 `knowledge` schema，不另建数据库、不覆盖来源版本。
 
+本页保留离线缺陷 v1 分块 CLI 的操作边界。当前项目另有固定模型向量索引、在线 Knowledge MCP 和受管同步，分别见[向量索引手册](../runbooks/knowledge-local-vector-index.md)、[知识治理手册](../runbooks/knowledge-governance.md)和[受管同步手册](../runbooks/knowledge-ones-hourly-sync.md)；不能把本页的阶段限制解释为整个知识模块仍未实现这些能力。
+
 不执行在线采集、图片/附件下载、OCR、模型调用、Qdrant 写入、MCP 发布或授权变更。`storage_only` 和 `offline_unverified` 状态不因分块完成而改变。规则分块通过不等于召回效果验收通过。
 
 ## 存储与引用
@@ -37,7 +39,7 @@
 # 合成示例：不访问数据库、不载入真实配置
 docker compose run --rm --no-deps migrator python -m app.cli.prepare_knowledge_chunks --demo
 
-# 默认只读预检；允许 head 132 或当前 head 133
+# 默认只读预检；允许历史 head 132/133 或镜像内当前 catalog head
 docker compose run --rm --no-deps migrator python -m app.cli.prepare_knowledge_chunks
 
 # 正式迁移（仅在已批准迁移窗口执行）
@@ -66,4 +68,4 @@ docker compose run --rm --no-deps migrator python -m app.cli.prepare_knowledge_c
 
 执行本阶段时原应用栈已停止，仅恢复原 PostgreSQL 数据卷。更新 schema 后须使用包含相同迁移 head 的新后端镜像；只构建镜像不代表服务已部署或 API 已通过验收。不为完成离线分块擅自启动整个应用栈。
 
-后续依次是选定 Embedding 模型及数据出境边界、验证 token 预算、向量化与 Qdrant、召回评测和知识库 MCP/授权。当前结果不能直接视为 Agent 可检索资源。
+分块后按当前向量索引和知识治理手册继续显式准备、验证及发布。当前分块结果本身不能直接视为 Agent 已获准读取的知识资源，也不能代替召回效果或真实 ONES/模型验收。

@@ -10,9 +10,9 @@
 | [channel-conversation](channel-conversation/spec.md) | Connector、钉钉与Webhook入口、会话、消息与附件接收 |
 | [document-file-processing](document-file-processing/spec.md) | Docling Profile、OCR、处理运行、并发槽位与派生表示 |
 | [execution-delivery](execution-delivery/spec.md) | Job、Runtime、工具事件、审计、重试、Delivery与外部操作确认执行 |
-| [builtin-tool-resource](builtin-tool-resource/spec.md) | Resource、DB/Redis/Loki只读工具、技术验证、资源目录与目标解析 |
+| [builtin-tool-resource](builtin-tool-resource/spec.md) | Resource、DB/Redis/Loki只读工具、技术验证、资源目录、目标解析与Knowledge MCP目录/检索 |
 | [governed-api-capability](governed-api-capability/spec.md) | ONES和钉钉业务MCP、查询分页、受治理外部写操作与Provider合同 |
-| [platform-operations](platform-operations/spec.md) | Compose、Schema、Secret、运行配置、就绪、测试、离线知识存储与规范治理 |
+| [platform-operations](platform-operations/spec.md) | Compose、Schema、Secret、运行配置、就绪、质量门禁、知识内容/索引/受管同步与规范治理 |
 | [task-file-workspace](task-file-workspace/spec.md) | Workspace、File/Version、Manifest、文件准入、工作集、Sandbox、提交与生命周期 |
 
 普通任务先按上表读取相关领域，只有跨越责任边界时才补读邻接领域。不要默认递归读取整个目录或 `openspec/changes/`。

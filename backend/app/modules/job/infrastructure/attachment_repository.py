@@ -167,7 +167,9 @@ class AttachmentRepository:
                 decision = json.loads(str(raw))
             except json.JSONDecodeError:
                 continue
-            dependencies = decision.get("file_turn_dependencies") if isinstance(decision, dict) else None
+            dependencies = (
+                decision.get("file_turn_dependencies") if isinstance(decision, dict) else None
+            )
             if not isinstance(dependencies, list):
                 continue
             if any(

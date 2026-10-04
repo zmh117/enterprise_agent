@@ -11,7 +11,7 @@
   -> file-worker -> file-service -> MinIO
   -> agent-worker
   -> Python Runtime
-  -> tool-mcp、ones-mcp、dingtalk-mcp 或 File MCP 接口
+  -> tool-mcp、ones-mcp、dingtalk-mcp、可选 knowledge-mcp 或 File MCP 接口
   -> 已发布工具资源 / 当前用户业务身份 / 受治理文件版本
   -> 外部mutation: Action Intent -> 用户确认 -> external-action-worker
   -> Job / Tool Call / Delivery / Audit
@@ -28,7 +28,8 @@ ONES 本人身份绑定属于统一身份体系，独立于旧 API Platform。�
 - 标准MCP：`tool-mcp`复核私有Job上下文；`ones-mcp`与`dingtalk-mcp`验证各自audience的短期Principal JWT，按固定目录提供查询和受确认mutation。完整工具合同见相关canonical领域与代码Manifest。
 - 任务文件：File Service内置File MCP与内部流式API，是唯一业务对象存储入口；TXT/Markdown可读写，LOG只读。PDF、DOCX、PPTX、XLSX、PNG、JPEG、WebP使用固定Docling/OCR Profile派生Markdown，原件不进入Job Sandbox。
 - 文档处理：两个Processing Worker各单并发，一个Docling容器含两个执行器；全局两个槽位由PostgreSQL经File Service协调。
-- 只读工具：ER、业务流、数据库 schema/query、Redis、Loki。
+- 只读资源工具：资源目录、数据库 schema/query、Redis、Loki 查询与标签诊断。
+- 知识能力：受限离线导入、固定模型的本地 Embedding/Qdrant 索引、可选 Knowledge MCP 目录与检索，以及显式启用的 ONES 受管同步。检索只返回当前用户可读的工作项引用和证据位置，最新正文通过 ONES 详情工具读取；导入、索引和服务启动不会自动授权或发布资源。
 - 工具资源：Draft、技术验证、Publish、Disable、Archive；运行时只解析已发布 Revision。
 - 工具目标由 Agent 根据用户输入和发布 Skill 在每次 Tool Call 中显式提供，服务端实时复核角色、应用、数据范围和唯一资源。
 - Runtime Grant、Model Probe Token 和配置 Master Key 是其它边界，不属于已退役的 MCP/平台签名密钥。

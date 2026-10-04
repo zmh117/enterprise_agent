@@ -1,12 +1,14 @@
-# Legacy 042 → Baseline 100 → 当前迁移 132
+# Legacy 042 → Baseline 100 → 当前迁移目录
 
-当前迁移代际以 `100_baseline_v1.sql` 为起点，当前 checkout head 为 `132`。全新空库直接
-执行 `100..132`；旧数据库只有在账本精确到 `042` 且结构、约束、索引和 PostgreSQL
+版本核对日期：2026-10-04，当前仓库 catalog 为 `100..146`。实际升级与验收以目标 Migrator 镜像所含 catalog 的最大版本、checksum 和门禁为准；不能仅凭本文版本号判断目标数据库已就绪。
+
+当前迁移代际以 `100_baseline_v1.sql` 为起点，当前 checkout head 为 `146`。全新空库直接
+执行 `100..146`；旧数据库只有在账本精确到 `042` 且结构、约束、索引和 PostgreSQL
 注释与不可变 manifest 一致时，才能先登记等价的 baseline `100` marker。
 
 **重要：当前代码明确拒绝使用包含 `101+` 的 catalog 直接 adoption `042`。** Adoption
 必须在只包含 migration `100` 的、单独授权的 baseline-only build 中完成并验证；之后
-再切换到当前 build 推进 `101..132`。若没有这份精确 artifact、checksum 和恢复演练，
+再切换到当前 build 推进 `101..146`。若没有这份精确 artifact、checksum 和恢复演练，
 当前 checkout 不能完成 legacy adoption，必须停止。
 
 ## 固定升级顺序
@@ -58,7 +60,7 @@ scripts/compose_infra_upgrade.sh backup-postgres
 
 build 身份只能使用 release/commit 等非敏感标识。以下命令必须在“catalog 只有
 `100_baseline_v1.sql`”的 baseline-only checkout/image 中执行，不能直接在当前
-`100..132` checkout 中执行：
+`100..146` checkout 中执行：
 
 ```bash
 export MIGRATOR_BUILD="<baseline-only-build-id>"
@@ -91,12 +93,12 @@ docker compose run --rm --no-deps migrator \
 
 成功输出必须包含 `status=adoption-verified`、`schema_head=100`、唯一 marker、唯一 metadata、与 adoption 时一致的关键表计数、runtime config revision 摘要，以及 `business_start_gate=schema-verified`。preflight 与 verify 之间只有 marker/metadata 可以变化；关键业务计数、schema/comment fingerprint 和 runtime config 摘要必须一致。
 
-Baseline-only verify 通过后，保留维护窗口并切换到当前 `100..132` build。对于 adopted
+Baseline-only verify 通过后，保留维护窗口并切换到当前 `100..146` build。对于 adopted
 legacy 数据库，migration `103` 仍要求外部受控流程写入内容安全的 contract approval；
 当前仓库没有“自我批准”命令。批准、备份或 parity gate 缺失时，当前 migrator 必须
 停止在 DDL 前，不得伪造记录或跳过 `103`。
 
-完成 gate 后运行当前 migrator，并要求最终 head 为 `132`：
+完成 gate 后运行当前 migrator，并要求最终 head 为 `146`：
 
 ```bash
 docker compose up --force-recreate migrator
@@ -114,7 +116,7 @@ docker compose up -d \
 curl --noproxy '*' -fsS http://127.0.0.1:8000/api/ready
 ```
 
-`/api/ready` 必须报告 schema current/head `132`，runtime config 不得因缺失 definition
+`/api/ready` 必须报告 schema current/head `146`，runtime config 不得因缺失 definition
 处于 degraded。若受控初始化确实创建了缺失 definition，记录初始化前后的不透明
 revision/hash；随后连续两次读取 snapshot/ready 时 revision/hash 必须稳定且不得新增
 配置审计。

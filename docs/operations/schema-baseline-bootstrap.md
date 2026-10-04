@@ -1,4 +1,6 @@
-# 空库 Baseline 100、当前迁移 132 与初始管理员
+# 空库 Baseline 100、当前迁移 146 与初始管理员
+
+版本核对日期：2026-10-04，当前仓库 catalog 为 `100..146`。实际升级与验收以目标 Migrator 镜像所含 catalog 的最大版本、checksum 和门禁为准；不能仅凭本文版本号判断目标数据库已就绪。
 
 本文适用于全新空数据库。Schema、初始管理员和本地业务样例是三个独立步骤，禁止把用户或 fixture 写入 baseline SQL。
 
@@ -23,8 +25,8 @@ docker compose ps
 docker compose logs migrator
 ```
 
-空库先执行 `100_baseline_v1.sql`，再顺序执行当前 forward migration `101..132`；当前
-checkout 的账本 head 必须为 `132`。Baseline `100` 是建库起点，不是当前 deployable
+空库先执行 `100_baseline_v1.sql`，再顺序执行当前 forward migration `101..146`；当前
+checkout 的账本 head 必须为 `146`。Baseline `100` 是建库起点，不是当前 deployable
 head。如果不存在任何启用的平台管理员，bootstrap 创建：
 
 - 用户名：`admin`
@@ -59,6 +61,6 @@ join rbac_role r on r.id = ur.role_id and r.status = 'enabled'
 where r.code = 'platform-admin';
 ```
 
-当前 checkout 的新库应看到连续 `100..132`，最终行为 `132`；缺号、重复、未知版本或
+当前 checkout 的新库应看到连续 `100..146`，最终行为 `146`；缺号、重复、未知版本或
 checksum 不一致都必须失败关闭。管理员结果必须至少一行。不要查询或输出
 `user_password_credential.password_hash` 作为常规验收证据。

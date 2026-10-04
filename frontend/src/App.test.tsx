@@ -68,7 +68,7 @@ describe("Agent 应用平台 MVP 首页", () => {
     expect(screen.getAllByText("Agent 应用平台").length).toBeGreaterThan(0)
     expect((await screen.findAllByText("业务应用")).length).toBeGreaterThan(0)
     expect(screen.getAllByText("用户与外部身份").length).toBeGreaterThan(0)
-    expect(screen.getByText("统一身份边界")).toBeInTheDocument()
+    expect(await screen.findByText("统一身份边界")).toBeInTheDocument()
     expect(screen.getByText("钉钉身份")).toBeInTheDocument()
     expect(screen.getByText("ONES 身份")).toBeInTheDocument()
   })

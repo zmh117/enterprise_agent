@@ -43,7 +43,7 @@ import {
 } from "@/components/ui/sidebar"
 import { navigationGroups } from "@/mocks/dashboard"
 import { resolveActiveNavigationHref } from "@/app/navigation/navigation-match"
-import { useDingTalkIdentityCandidateCount } from "@/contexts/dingtalk-identity-discovery"
+import { useDingTalkIdentityCandidateCount } from "@/contexts/dingtalk-identity-discovery/application/dingtalk-identity-candidate-queries"
 import { useAdminCapabilitySummary } from "@/contexts/auth/application/admin-capability-query"
 import {
   useAuthenticatedUser,

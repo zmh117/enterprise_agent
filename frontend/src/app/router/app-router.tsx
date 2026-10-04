@@ -1,33 +1,61 @@
 import { createBrowserRouter } from "react-router-dom"
-import type { ReactNode } from "react"
+import { Suspense, type ReactNode } from "react"
+import { LoaderCircleIcon } from "lucide-react"
 
 import { AppErrorFallback } from "@/app/errors/app-error-boundary"
 import { PlatformShell } from "@/app/shell/platform-shell"
-import { ApplicationDetailPage } from "@/contexts/applications/presentation/application-detail-page"
-import { ApplicationsPage } from "@/contexts/applications/presentation/applications-page"
-import { ManagedChannelsPage } from "@/contexts/applications/presentation/managed-channels-page"
+import { CapabilityGate } from "@/contexts/auth/presentation/capability-gate"
+
 import {
+  ApplicationDetailPage,
+  ApplicationsPage,
+  ManagedChannelsPage,
   AgentProfilePage,
   AgentProfilesPage,
-} from "@/contexts/agent-profiles/presentation/agent-profile-page"
-import { DashboardPage } from "@/contexts/overview/presentation/dashboard-page"
-import {
+  DashboardPage,
   ConversationDetailPage,
   RuntimeJobDetailPage,
   RuntimeRecordsPage,
-} from "@/contexts/operations/presentation/runtime-records-page"
-import { DebugJobPage } from "@/contexts/operations/presentation/debug-job-page"
-import { CredentialCenterPage } from "@/contexts/platform-governance/presentation/credential-center-page"
-import { ToolResourcesPage } from "@/contexts/platform-governance/presentation/tool-resources-page"
-import { RuntimeConfigPage } from "@/contexts/platform-governance/presentation/runtime-config-page"
-import { UserDetailPage, UsersPage } from "@/contexts/users"
-import { DingTalkIdentityDiscoveryPage } from "@/contexts/dingtalk-identity-discovery"
-import { RoleAuthorizationPage, RoleDetailPage } from "@/contexts/authorization"
-import { CapabilityGate } from "@/contexts/auth/presentation/capability-gate"
-import { MyExternalIdentitiesPage } from "@/contexts/external-identities"
+  DebugJobPage,
+  CredentialCenterPage,
+  ToolResourcesPage,
+  RuntimeConfigPage,
+  UserDetailPage,
+  UsersPage,
+  DingTalkIdentityDiscoveryPage,
+  RoleAuthorizationPage,
+  RoleDetailPage,
+  MyExternalIdentitiesPage,
+} from "@/app/router/lazy-route-pages"
+
+function pageWithLoadingState(page: ReactNode) {
+  return (
+    <Suspense
+      fallback={
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground"
+        >
+          <LoaderCircleIcon
+            className="size-4 animate-spin"
+            aria-hidden="true"
+          />
+          正在加载管理页面…
+        </div>
+      }
+    >
+      {page}
+    </Suspense>
+  )
+}
 
 function protectedPage(capability: string, page: ReactNode) {
-  return <CapabilityGate capability={capability}>{page}</CapabilityGate>
+  return (
+    <CapabilityGate capability={capability}>
+      {pageWithLoadingState(page)}
+    </CapabilityGate>
+  )
 }
 
 export const appRouter = createBrowserRouter([
@@ -103,7 +131,7 @@ export const appRouter = createBrowserRouter([
       },
       {
         path: "/me/external-identities",
-        element: <MyExternalIdentitiesPage />,
+        element: pageWithLoadingState(<MyExternalIdentitiesPage />),
       },
       {
         path: "/platform/secrets",

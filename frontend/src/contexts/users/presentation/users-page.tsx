@@ -34,7 +34,7 @@ import {
   useCreateUser,
   useUsers,
 } from "@/contexts/users/application/user-queries"
-import { useDingTalkIdentityCandidate } from "@/contexts/dingtalk-identity-discovery"
+import { useDingTalkIdentityCandidate } from "@/contexts/dingtalk-identity-discovery/application/dingtalk-identity-candidate-queries"
 import {
   Field,
   RequestError,

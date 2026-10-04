@@ -1,11 +1,11 @@
 # builtin-tool-resource Specification
 
 ## Purpose
-定义代码注册的 MCP 工具、受治理 Database/Redis/Loki 资源、授权资源发现和只读诊断合同。身份与角色授权见 `identity-access`，业务 Provider 工具见 `governed-api-capability`，文件工具见 `task-file-workspace`，通用运行审计与外部操作确认见 `execution-delivery`。
+定义代码注册的 MCP 工具、受治理 Database/Redis/Loki/Knowledge 资源、授权资源发现和只读诊断合同。身份与角色授权见 `identity-access`，业务 Provider 工具见 `governed-api-capability`，文件工具见 `task-file-workspace`，通用运行审计与外部操作确认见 `execution-delivery`。
 
 ## 实现依据与验证边界
 
-当前合同以 `backend/app/modules/mcp_tool_runtime/`、`backend/app/modules/agent/infrastructure/tool_manifest.py`、`backend/app/modules/platform_config/application/governed_resources.py`、`resource_scope_bindings.py`、`database_resource_verifier.py`、`backend/app/shared/resource_role.py`、`loki_contract.py`、`backend/docker/setup_oracle_client.sh` 和 `verify_oracle_client.py` 的实现为依据。回归依据包括 `backend/tests/test_tool_pagination.py`、`test_resource_scope_bindings.py`、`test_governed_tool_resource_lifecycle.py`、`test_loki_resource_scoped_labels.py`、`test_loki_line_limits.py`、`test_oracle_resource_verification.py`、`test_oracle_image_contract.py` 与 `test_redis_scan_pagination_integration.py`。
+当前合同以 `backend/app/modules/mcp_tool_runtime/`、`backend/app/modules/agent/infrastructure/tool_manifest.py`、`backend/app/modules/platform_config/application/governed_resources.py`、`resource_scope_bindings.py`、`database_resource_verifier.py`、`backend/app/shared/resource_role.py`、`loki_contract.py`、`backend/docker/setup_oracle_client.sh`、`verify_oracle_client.py`、`backend/app/shared/knowledge_tool_contracts.py`、`backend/app/modules/knowledge/` 和 `services/knowledge_mcp_server/` 的实现为依据。回归依据包括 `backend/tests/test_tool_pagination.py`、`test_resource_scope_bindings.py`、`test_governed_tool_resource_lifecycle.py`、`test_loki_resource_scoped_labels.py`、`test_loki_line_limits.py`、`test_oracle_resource_verification.py`、`test_oracle_image_contract.py` 与 `test_redis_scan_pagination_integration.py`、`test_knowledge_mcp_contract.py`、`test_knowledge_search.py` 与 `test_knowledge_authorization.py`。
 
 这些代码和测试定义可核对的当前实现，规范重建与离线测试不证明部署、真实数据库或 Loki 已验收。Oracle 真实服务端连接、权限、字符集和新 Job 工具链必须另有运行证据；未取得证据时不得记作通过。ONES 与钉钉的真实验收边界见 `governed-api-capability`。
 
@@ -28,7 +28,7 @@
 - **THEN** 管理 API 或发布校验拒绝，不生成可执行实现
 
 ### Requirement: MCP Server 与鉴权模式必须固定
-Python Runtime SHALL 只连接部署固定的 `tool-mcp`、`file-mcp`、`ones-mcp`、`dingtalk-mcp`，使用标准 Streamable HTTP。每个 Server MUST 在代码策略中声明唯一鉴权模式；`tool-mcp` 使用受信 Job context，文件和业务 MCP 使用各自 Principal 合同。Runtime MUST NOT 直连业务数据库、Redis 或 Loki，也不得接受 payload 或 Tool 参数覆盖 Server URL、鉴权模式或 audience。
+Python Runtime SHALL 只连接部署固定的 `tool-mcp`、`file-mcp`、`ones-mcp`、`dingtalk-mcp`、`knowledge-mcp`，使用标准 Streamable HTTP。每个 Server MUST 在代码策略中声明唯一鉴权模式；`tool-mcp` 使用受信 Job context，文件、业务和知识 MCP 使用各自 Principal 合同。Runtime MUST NOT 直连业务数据库、Redis、Loki 或知识存储，也不得接受 payload 或 Tool 参数覆盖 Server URL、鉴权模式或 audience。
 
 #### Scenario: 查询资源证据
 - **WHEN** Runtime 调用 `query_database`
@@ -442,3 +442,29 @@ tool-mcp MUST 通过通用 MCP Operation Audit 记录 server/tool/schema、Job/S
 #### Scenario: 精确清单获确认
 - **WHEN** 用户确认匹配的维护 operation、备份与资源清单
 - **THEN** 受控事务只清理指定资源领域，verify 核对保留对象与清理结果
+
+### Requirement: 知识资源与固定目录检索必须执行当前双重授权
+系统 SHALL 通过已验证、已发布且当前启用的知识资源和代码固定 `knowledge_list_bases`、`knowledge_search` 提供读取。Knowledge MCP MUST 验证自身 audience/scope、RUNNING Job、冻结工具合同、当前用户/应用/角色 KB 范围及资源发布事实；目录可见 MUST NOT 被解释为所有文档可读，检索命中 MUST 再校验当前用户 ONES 可读权限。新工具、收录、索引和目录变化 MUST NOT 自动扩大旧 Publication 或 Job 权限。
+
+#### Scenario: 发现当前知识库
+- **WHEN** 当前 Job 获准调用知识目录
+- **THEN** 每页最多返回 50 个当前可用知识库的安全身份、名称和状态，提供有界续页，不返回正文或文档计数
+
+#### Scenario: 授权或发布事实变化
+- **WHEN** 用户/应用/角色 KB 权限撤销、资源停用或当前发布版本变化
+- **THEN** 目录或检索失败关闭，不回退旧版本继续返回结果
+
+#### Scenario: 来源事项不可读
+- **WHEN** 向量候选对应事项未通过当前用户 ONES 可读性校验
+- **THEN** 不返回该事项引用，也不以服务账号或知识库授权代替个人权限
+
+### Requirement: 知识检索必须有界且只返回可读引用
+`knowledge_search` SHALL 接受明确 `knowledge_base_id`、1–2000 字符非空查询和默认 10、范围 1–20 的 `top_k`，不得允许覆盖身份、Team、filter、collection、向量或服务地址。目录和检索 SHALL 受最多 120 秒及当前 Job 剩余预算共同约束。检索 SHALL 只返回文档/修订/索引/来源/工作项引用、编号、分数和每项最多三条证据位置/hash，不返回缓存标题、摘要或正文；获取最新正文 SHALL 使用已有 ONES 详情工具。零命中、受限部分结果和依赖失败 MUST 分别表达，认证材料、查询原文和业务正文不得复制到普通安全摘要或日志。
+
+#### Scenario: 合法检索
+- **WHEN** 合同、索引与当前权限均有效且存在可读命中
+- **THEN** 返回当前版本的有界引用与证据位置，正文仍通过受治理 ONES 详情工具取得
+
+#### Scenario: 预算或依赖失败
+- **WHEN** 总预算耗尽、依赖异常或读取投影不完整
+- **THEN** 返回稳定失败；正常有界搜索产生部分结果时明确 `partial`，不能将依赖失败报告为空库

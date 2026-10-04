@@ -42,7 +42,7 @@ test-migration:
 	.venv/bin/pytest -q --durations=20 -m migration backend/tests
 
 frontend-check:
-	cd frontend && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+	cd frontend && npm ci --no-audit --no-fund && npm run lint && npm run typecheck && npm test && npm run build
 
 unittest:
 	PYTHONPATH=backend .venv/bin/python -m unittest discover -s backend/tests -t .

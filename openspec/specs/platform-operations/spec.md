@@ -6,15 +6,15 @@
 
 ## 领域边界
 
-资源选择/技术验证语义见 builtin-tool-resource，Provider操作见 governed-api-capability，Job与外部操作执行见 execution-delivery，文件内容和处理状态分别见两个文件领域。本领域保留基础设施、部署和验收职责；knowledge目前仅是平台存储和受限离线导入。
+资源选择/技术验证语义见 builtin-tool-resource，Provider操作见 governed-api-capability，Job与外部操作执行见 execution-delivery，文件内容和处理状态分别见两个文件领域。本领域保留基础设施、部署和验收职责，以及知识内容存储、离线与受管采集、固定模型和向量索引的运行边界；知识资源、目录及检索授权见 builtin-tool-resource。
 
 ## 实现依据与验证边界
 
-代码：`docker-compose.yml`、`backend/docker/docling-serve/Dockerfile`、`backend/app/shared/migrations.py`、`backend/app/shared/schema_baseline.py`、`backend/app/shared/feature_configuration.py`、`backend/app/modules/platform_config/application/runtime_config.py`、`backend/app/modules/knowledge/`、`backend/app/cli/import_ones_knowledge.py`、`backend/migrations/`。
+代码：`docker-compose.yml`、`backend/docker/docling-serve/Dockerfile`、`backend/app/shared/migrations.py`、`backend/app/shared/schema_baseline.py`、`backend/app/shared/feature_configuration.py`、`backend/app/modules/platform_config/application/runtime_config.py`、`backend/app/modules/knowledge/`、`backend/app/cli/import_ones_knowledge.py`、`collect_ones_knowledge.py`、`sync_ones_knowledge.py`、`knowledge/*.compose.yml`、`knowledge/compose.yml`、`services/knowledge_embedding/`、`backend/migrations/`。
 
 检查入口：`Makefile`、`scripts/check_markdown_links.py`、`backend/tests/test_runtime_config_reconciliation.py`、`backend/tests/test_schema_migration_runtime.py`、`backend/tests/test_knowledge_import.py`。
 
-本规格于 2026-09-16 按当前代码重建。代码与测试定义可定位实现和覆盖范围；本次文档重建不代表执行了真实模型、Provider、数据库升级或部署验收。
+本规格于 2026-09-16 按代码重建，2026-10-04 按已确认实现补齐知识能力、构建门禁与路由加载。代码与测试定义可定位实现和覆盖范围；文档同步不代表执行了真实模型、Provider、数据库升级或部署验收。
 
 ## Requirements
 
@@ -1782,7 +1782,7 @@ File Service SHALL 接收每个Processing Worker使用不透明实例ID提交的
 - **THEN** 跨 Publication 完整性测试在所有依赖 fixture 同步前失败，并且 Dispatcher 继续拒绝不一致快照
 
 ### Requirement: 知识存储通过统一来源身份和独立收录关系管理
-系统 SHALL 在同一平台 PostgreSQL 的 knowledge schema 中保存 source、document、document_revision、knowledge_base、knowledge_base_document、import_run 和 document_relation。来源工作项身份 MUST 独立于知识库和可变工作项类型，内容版本 MUST 可追溯，收录 MUST NOT 自动产生 Agent 或用户读取授权。
+系统 SHALL 以稳定来源、document、内容 revision 和独立知识库收录关系管理知识。平台 SHALL 保留逻辑知识库、身份/授权、资源发布、Job 与审计；内容 PostgreSQL 的 knowledge schema 和 Qdrant SHALL 支持当前平台本地存储或明确配置的独立内容连接。来源工作项身份 MUST 独立于知识库和可变类型，内容版本 MUST 可追溯；收录、离线导入或建立索引 MUST NOT 自动产生 Agent 或用户读取授权，不得自动建立、搬迁或写入外部内容库。
 
 #### Scenario: 同一来源内容被多个知识库收录
 - **WHEN** 相同来源工作项进入两个知识库
@@ -1793,8 +1793,8 @@ File Service SHALL 接收每个Processing Worker使用不透明实例ID提交的
 - **THEN** 系统仅记录来源未确认的离线命名空间，不猜测或接续现有 ONES 身份
 
 #### Scenario: 判断知识导入是否已提供检索能力
-- **WHEN** 当前代码完成knowledge表和离线导入
-- **THEN** 该事实不代表已有Agent知识查询、Embedding、OCR或Qdrant索引；不自动增加读取授权。
+- **WHEN** 当前代码完成内容导入或向量索引
+- **THEN** 该事实不代表对应资源、角色、应用或工具已经发布和获准；在线 MCP 目录与检索仍须执行独立授权及当前 ONES 可读性检查
 
 ### Requirement: ONES 离线文本导入必须预检并可恢复且幂等
 导入 CLI MUST 校验详情/list 完整关联、重复身份、数据形状及显式输入数量；MUST 分开 ID 和显示名称，保留受限安全快照、正文、业务属性、采集完整性及版本。批次 MUST 具有输入摘要、明确进度和安全失败事实；相同输入重放 MUST NOT 增加重复文档或版本，旧来源版本 MUST NOT 覆盖新版本。导入 MUST NOT 下载附件、调用 ONES/Embedding/OCR、写 Qdrant 或发布资源。
@@ -1823,11 +1823,15 @@ File Service SHALL 接收每个Processing Worker使用不透明实例ID提交的
 - **THEN** 系统幂等保存，不把旧观察伪装成当前完整关系集合
 
 ### Requirement: 知识 schema 必须纳入现有迁移与事实源治理
-knowledge DDL MUST 仅通过一次性 Migrator 的版本化事务执行。结构、约束、索引、注释和事实源清单 MUST 覆盖 public 与 knowledge；SQLite 测试 SHALL 保持等价领域对象且不得影响现有表。导入器 MUST 只检查 schema head，不执行迁移。
+平台本地 knowledge DDL MUST 仅通过一次性 Migrator 的版本化事务执行。结构、约束、索引、注释和事实源清单 MUST 覆盖当前 public 与 knowledge 对象；SQLite 测试 SHALL 保持等价领域对象且不得影响现有表。导入器 MUST 只检查 schema head，不执行迁移；独立内容连接 MUST 按当前内容合同校验，不要求外部库拥有平台身份、Job 或平台 migration ledger，也不得由在线读取服务自动建库或搬迁。
 
 #### Scenario: 新 schema 建表后验收
 - **WHEN** 新迁移执行完成
-- **THEN** PostgreSQL 真实存在七张 knowledge 表且结构检查、中文注释覆盖和事实源清单能够识别全部对象
+- **THEN** 校验以当前 migration catalog 和事实源清单为准，覆盖来源、版本、收录及后续分块、索引、同步等已纳入 catalog 的对象，不沿用初始七张表的数量作为当前完成标准
+
+#### Scenario: 独立内容库尚未准备
+- **WHEN** 管理员配置的内容连接不满足当前读取合同
+- **THEN** 验证或读取失败关闭，不在服务启动和查询中执行外部 DDL
 
 ### Requirement: 管理端资源角色可创建并复用
 数据库和 Redis 资源新建及编辑页面 SHALL 提供“资源角色”输入选择，初始为空，不预置角色；用户可保存新值并选择历史保存值，历史候选来自资源元数据，不读取连接凭据。角色 SHALL 与 RBAC 用户角色区分；Loki 不显示该输入且服务端拒绝非空值。
@@ -1841,15 +1845,15 @@ knowledge DDL MUST 仅通过一次性 Migrator 的版本化事务执行。结构
 - **THEN** 系统保存未指定状态；若发布后产生同目标多候选，仍按歧义规则拒绝，不隐式选择数据库
 
 ### Requirement: JavaScript构建入口必须区分实际依赖锁与执行命令
-当前 Makefile 的 frontend-check SHALL 按其 pnpm frozen-lockfile 入口运行，GitHub CI 中的 npm ci SHALL 使用所在工作目录的 npm lockfile。维护者 MUST 核对具体包、锁文件与容器构建入口，不得声称仓库已经统一单一包管理器，也不得在文档整理时自动更新依赖或锁文件。
+系统 SHALL 将管理 Web 的 Makefile、GitHub CI 和容器构建统一到所在包的 `package-lock.json` 与 `npm ci`。维护者 MUST 核对具体工作目录、锁文件和命令；文档同步不得自动更新依赖或锁文件，钉钉 Runtime 与 Inspector 继续使用各自包的 npm 锁文件。
 
 #### Scenario: 复现前端检查
-- **WHEN** 维护者执行 make frontend-check
-- **THEN** 按Makefile的pnpm流程安装与校验，和CI结果分别记录。
+- **WHEN** 维护者执行 `make frontend-check`
+- **THEN** 按 `frontend/package-lock.json` 执行 npm 安装、lint、类型检查、测试与构建，与 CI 和容器使用同一依赖事实
 
 #### Scenario: 判断CI通过范围
-- **WHEN** 维护者查看某个GitHub job结果
-- **THEN** 以job实际工作目录、锁文件和命令为准，不把一次入口成功当成所有入口通过。
+- **WHEN** 维护者查看某个 GitHub job 结果
+- **THEN** 以 job 实际工作目录、锁文件和命令为准，不把一次入口成功当成所有入口通过
 
 ### Requirement: 当前Schema目录与已有数据库升级必须分开判断
 活动 migration catalog SHALL 从 `100_baseline_v1.sql` 开始，并按当前代码目录解析 forward head；本次基线重建时目录为 `100..132`。空库可按当前 deployable catalog 建库，既有数据库 MUST 先通过版本、checksum、前置状态与 contract 门禁。精确 legacy 042 的 adoption 必须使用仅含100的独立artifact，当前包含101及以后版本的checkout不能直接完成adoption。业务服务与导入器只校验schema，不执行DDL。
@@ -1972,3 +1976,55 @@ knowledge DDL MUST 仅通过一次性 Migrator 的版本化事务执行。结构
 #### Scenario: 运维查找退役命令
 - **WHEN** 操作者检查当前源码运维入口
 - **THEN** 文档不得指示调用不存在的 Runtime 退役预检或迁移 CLI
+
+### Requirement: 镜像构建必须依赖静态与管理Web质量门禁
+CI 的运行镜像构建 SHALL 仅在后端 lint、格式和类型检查、管理 Web lint/类型检查/测试/构建及既有运行合同门禁成功后执行。PR MAY 按既有规则跳过完整后端回归，但 MUST NOT 将静态或前端失败/跳过解释为通过。
+
+#### Scenario: 静态或管理Web检查失败
+- **WHEN** 后端静态检查或管理 Web job 失败
+- **THEN** 运行镜像构建不执行
+
+#### Scenario: PR仅跳过完整后端回归
+- **WHEN** PR 的完整后端回归按规则跳过且其它必需 job 成功
+- **THEN** 运行镜像构建仍可执行，不降低其它门禁
+
+### Requirement: 管理页面必须按路由加载并保留权限与恢复边界
+管理 Web SHALL 延迟加载目标路由页面，受保护页面 MUST 在现有 capability 校验通过后才开始页面加载。加载期间 SHALL 显示中文状态，页面模块加载失败 SHALL 进入现有错误恢复界面；认证、权限拒绝、路由地址及页面数据合同 MUST 保持原有行为。
+
+#### Scenario: 无页面权限
+- **WHEN** 当前用户缺少目标页面的 capability
+- **THEN** 展示现有无权限状态且不开始加载该页面模块
+
+#### Scenario: 首次进入合法页面
+- **WHEN** 权限校验通过但页面模块尚未完成加载
+- **THEN** 平台壳保留并显示中文加载状态，加载完成后显示目标页面
+
+#### Scenario: 页面模块加载失败
+- **WHEN** 页面块下载或导入失败
+- **THEN** 展示现有可刷新、返回工作台的错误恢复界面，不伪装为无权限或空数据
+
+### Requirement: 知识分块与本地向量索引必须保持固定身份及显式激活
+系统 SHALL 提供受限文本分块、固定 BGE-M3 模型的本地 CPU Embedding 与独立 Qdrant 索引流程。模型 revision、文件摘要、架构依赖锁与 profile SHALL 可校验，分块/索引代际 SHALL 可追溯；建立候选或 READY 索引 MUST NOT 自动切换既有发布资源或扩大读取权限。模型准备、运维索引和常驻在线服务 SHALL 通过可选 Compose 扩展明确区分。
+
+#### Scenario: 准备与重建索引
+- **WHEN** 操作者显式准备固定模型并对指定候选建立索引
+- **THEN** 系统校验固定 profile、容量及代际完整性，保留既有可用索引与资源直到明确激活
+
+#### Scenario: 仅启动基础平台
+- **WHEN** 部署未加载知识 Compose 扩展
+- **THEN** 不隐式启动 Embedding、Qdrant、Knowledge MCP 或后台采集
+
+### Requirement: ONES受管同步必须保持当前创建日窗口及原子切版
+系统 SHALL 通过显式配置和启用的绑定执行首次历史全量和后续每 3600 秒最近七个北京时间创建日的采集、候选、分块、索引及受管激活。同步 MUST 只对同平台内容库和绑定明确钉住的合法已发布资源自动换版；管理员草稿、停用、连接、模型或发布修订变化 MUST 阻止激活。单来源活动 run SHALL 可恢复且互斥，内容、发布指针和水位 SHALL 在同平台短事务内原子切换；失败保留旧可用版本，不从缺项推断来源删除。
+
+#### Scenario: 较早创建的事项最近更新
+- **WHEN** 工作项创建日在最近七日之外但最近发生更新
+- **THEN** 当前后续同步不声称覆盖该更新；扩大补扫范围须另行确定规格和 Provider 合同
+
+#### Scenario: 激活前发布事实变化
+- **WHEN** 已钉住资源存在管理员草稿、被停用或发布配置已改变
+- **THEN** 同步拒绝激活并保留旧可用内容和资源版本
+
+#### Scenario: 外部内容连接
+- **WHEN** 在线知识资源使用独立内容 PostgreSQL
+- **THEN** 其读取可按当前合同验证，受管同步不得自动向该外部库写入或切版
