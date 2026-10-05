@@ -173,10 +173,20 @@ docker compose \
 
 ```dotenv
 KNOWLEDGE_SYNC_ENABLED=true
-KNOWLEDGE_SYNC_BINDING_CODE=你的采集绑定代码
+KNOWLEDGE_SYNC_BINDING_CODE=你的采集绑定代码(初次可以自定义，后面要固定)
 KNOWLEDGE_SYNC_DATABASE_DSN=${DATABASE_DSN}
 ```
 
 暂时不启用采集，就从启动命令末尾去掉 `knowledge-sync`。
+
+```sh
+docker compose --env-file .env \
+  -f docker-compose.yml \
+  -f knowledge/compose.yml \
+  -f knowledge/mcp.compose.yml \
+  -f knowledge/sync.compose.yml \
+  --profile knowledge --profile knowledge-sync \
+  up -d --no-deps knowledge-sync
+```
 
 执行前还需完成凭据初始化。全量启动会运行正常迁移，并可能重建已有服务，建议在维护窗口执行；**不要执行 `down -v`**。
