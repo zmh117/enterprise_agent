@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from app.shared.secret_redaction import redact_sensitive_text
+from app.shared.query_result_contract import FIELD_DECODING_POLICY
 
 
 MAX_TOOL_SUMMARY_SOURCE_CHARS = 1_048_576
@@ -24,6 +25,8 @@ _COUNTS = (
     "candidate_count",
     "retained_count",
     "omitted_count",
+    "decoded_count",
+    "failed_count",
 )
 _FLAGS = (
     "truncated",
@@ -54,6 +57,16 @@ def tool_response_summary(value: object) -> dict[str, Any]:
             result[field] = source[field]
     if source.get("file_tool_result") == "omitted":
         result["content_omitted"] = True
+    decoding = source.get("field_decoding")
+    if isinstance(decoding, dict) and decoding.get("policy_version") == FIELD_DECODING_POLICY:
+        counts = tool_response_summary(
+            {
+                key: decoding.get(key)
+                for key in ("candidate_count", "decoded_count", "failed_count", "complete")
+            }
+        )
+        if "available" not in counts:
+            result["field_decoding"] = {"policy_version": FIELD_DECODING_POLICY, **counts}
     error = source.get("error")
     if isinstance(error, str) and error:
         result["error"] = redact_sensitive_text(error, parse_json=False)[:500]
@@ -98,4 +111,6 @@ def _source(value: object, depth: int = 0) -> dict[str, Any] | None:
         return _source(value["payload"], depth + 1)
     if "content" in value and isinstance(value["content"], list):
         return _source(value["content"], depth + 1)
+    if isinstance(value.get("data"), dict) and type(value.get("truncated")) is bool:
+        return _source({**value["data"], "truncated": value["truncated"]}, depth + 1)
     return value

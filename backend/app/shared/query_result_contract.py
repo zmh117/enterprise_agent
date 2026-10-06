@@ -11,3 +11,16 @@ QUERY_RESULT_TOOLS = frozenset(
 )
 QUERY_RESULT_MAX_BYTES = 8 * 1024 * 1024
 DATABASE_MAX_ROWS = 10000
+
+FIELD_DECODING_POLICY = "db-zlib-utf8-v1"
+FIELD_DECODING_STATUSES = frozenset(
+    {
+        "decoded",
+        "invalid_zlib",
+        "unsupported_dictionary",
+        "unsupported_text_encoding",
+        "decode_limit_exceeded",
+        "binary_uninterpreted",
+    }
+)
+FIELD_DECODING_FORMATS = frozenset({"raw_zlib", "base64_zlib", "hex_zlib", "binary"})

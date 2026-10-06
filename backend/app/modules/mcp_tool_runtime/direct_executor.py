@@ -391,6 +391,7 @@ class DirectReadOnlyToolExecutor:
                 "returned": len(executed.rows),
                 "complete": not truncated,
                 "truncation_reasons": reasons,
+                **({"field_decoding": executed.field_decoding} if executed.field_decoding else {}),
             },
             raw={"row_count": len(executed.rows)},
             truncated=truncated,

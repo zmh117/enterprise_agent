@@ -4,6 +4,7 @@ unit = [
   "test_build_identity.py",
   "test_business_mcp_principal_policy.py",
   "test_database_driver_boundaries.py",
+  "test_database_field_decoding.py",
   "test_database_unit_of_work.py",
   "test_document_model_artifact.py",
   "test_document_picture_normalization.py",

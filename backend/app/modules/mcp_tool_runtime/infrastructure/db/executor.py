@@ -12,6 +12,7 @@ class ExecutedRows:
     rows: list[dict[str, Any]] = field(default_factory=list)
     truncated: bool = False
     response_bytes: int = 0
+    field_decoding: dict[str, Any] | None = None
 
 
 class QueryExecutor(Protocol):

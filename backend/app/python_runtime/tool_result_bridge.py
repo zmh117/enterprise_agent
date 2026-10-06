@@ -2,17 +2,139 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from types import SimpleNamespace
 from typing import Any
 import uuid
 
 from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
-from app.shared.query_result_contract import QUERY_RESULT_MAX_BYTES, QUERY_RESULT_TOOLS
+from app.shared.query_result_contract import (
+    FIELD_DECODING_FORMATS,
+    FIELD_DECODING_POLICY,
+    FIELD_DECODING_STATUSES,
+    QUERY_RESULT_MAX_BYTES,
+    QUERY_RESULT_TOOLS,
+)
 from app.shared.secret_redaction import sanitize_for_persistence
 
 from .job_sandbox import JobSandbox
 from .result_file_bridge import ResultFileBridge, publish_result_file
+
+
+def _bounded_integer(value: Any, maximum: int = QUERY_RESULT_MAX_BYTES) -> bool:
+    return type(value) is int and 0 <= value <= maximum
+
+
+def _binary_fallback(value: dict[str, Any], input_size: int) -> None:
+    if (
+        set(value) != {"type", "encoding", "data", "size_bytes"}
+        or value["type"] != "binary"
+        or value["encoding"] != "base64"
+        or not isinstance(value["data"], str)
+        or not _bounded_integer(value["size_bytes"])
+        or value["size_bytes"] != input_size
+    ):
+        raise ValueError("Invalid database binary fallback")
+    try:
+        raw = base64.b64decode(value["data"], validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError("Invalid database binary encoding") from None
+    if len(raw) != input_size or base64.b64encode(raw).decode("ascii") != value["data"]:
+        raise ValueError("Inconsistent database binary fallback")
+
+
+def _decoding_cell(
+    cell: Any, rows: list[dict[str, Any]], columns: list[str]
+) -> tuple[int, str, str]:
+    required = {"row_index", "column", "status", "input_format", "input_size_bytes"}
+    if not isinstance(cell, dict) or set(cell) not in (required, required | {"decoded_size_bytes"}):
+        raise ValueError("Invalid database decoding cell")
+    index, column, status = cell["row_index"], cell["column"], cell["status"]
+    input_format = cell["input_format"]
+    if (
+        not _bounded_integer(index, len(rows) - 1)
+        or not isinstance(column, str)
+        or column not in columns
+        or column not in rows[index]
+        or not isinstance(status, str)
+        or status not in FIELD_DECODING_STATUSES
+        or not isinstance(input_format, str)
+        or input_format not in FIELD_DECODING_FORMATS
+        or not _bounded_integer(cell["input_size_bytes"])
+        or (status == "binary_uninterpreted") != (input_format == "binary")
+    ):
+        raise ValueError("Invalid database decoding reference")
+    value = rows[index][column]
+    if status == "decoded":
+        if not isinstance(value, str) or not _bounded_integer(cell.get("decoded_size_bytes")):
+            raise ValueError("Invalid database decoded value")
+    elif "decoded_size_bytes" in cell:
+        raise ValueError("Invalid database fallback size")
+    elif isinstance(value, dict):
+        _binary_fallback(value, cell["input_size_bytes"])
+    elif isinstance(value, str) and input_format in {"base64_zlib", "hex_zlib"}:
+        if len(value.encode("utf-8")) != cell["input_size_bytes"]:
+            raise ValueError("Inconsistent database text fallback")
+    else:
+        raise ValueError("Invalid database fallback value")
+    return index, column, status
+
+
+def _decoding_summary(
+    metadata: Any, rows: list[dict[str, Any]], columns: list[str]
+) -> dict[str, Any]:
+    fields = {
+        "policy_version",
+        "candidate_count",
+        "decoded_count",
+        "failed_count",
+        "complete",
+        "cells",
+    }
+    if (
+        not isinstance(metadata, dict)
+        or set(metadata) != fields
+        or metadata["policy_version"] != FIELD_DECODING_POLICY
+        or type(metadata["complete"]) is not bool
+        or not isinstance(metadata["cells"], list)
+    ):
+        raise ValueError("Invalid database field decoding metadata")
+    cells = metadata["cells"]
+    maximum = sum(len(row) for row in rows)
+    if (
+        not cells
+        or len(cells) > maximum
+        or any(
+            not _bounded_integer(metadata[key], maximum)
+            for key in ("candidate_count", "decoded_count", "failed_count")
+        )
+    ):
+        raise ValueError("Invalid database decoding counts")
+    references: set[tuple[int, str]] = set()
+    candidates = decoded = 0
+    input_bytes = decoded_bytes = 0
+    for cell in cells:
+        index, column, status = _decoding_cell(cell, rows, columns)
+        reference = (index, column)
+        if reference in references:
+            raise ValueError("Duplicate database decoding reference")
+        references.add(reference)
+        candidates += status != "binary_uninterpreted"
+        decoded += status == "decoded"
+        input_bytes += cell["input_size_bytes"]
+        decoded_bytes += cell.get("decoded_size_bytes", 0)
+    if (
+        metadata["candidate_count"] != candidates
+        or metadata["decoded_count"] != decoded
+        or metadata["failed_count"] != candidates - decoded
+        or metadata["complete"] != (candidates == decoded)
+        or input_bytes > QUERY_RESULT_MAX_BYTES
+        or decoded_bytes > QUERY_RESULT_MAX_BYTES
+    ):
+        raise ValueError("Inconsistent database decoding counts")
+    return {key: value for key, value in metadata.items() if key != "cells"}
 
 
 def materialize_tool_result(  # noqa: C901, PLR0915
@@ -29,6 +151,7 @@ def materialize_tool_result(  # noqa: C901, PLR0915
         raise ValueError("Invalid query result envelope")
     if "truncated" in data and data["truncated"] != truncated:
         raise ValueError("Inconsistent query coverage")
+    decoding: dict[str, Any] | None = None
     if name == "query_database":
         rows, columns = data.get("rows"), data.get("columns")
         if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
@@ -38,6 +161,8 @@ def materialize_tool_result(  # noqa: C901, PLR0915
         returned = len(rows)
         if type(data.get("row_count")) is not int or data["row_count"] != returned:
             raise ValueError("Database result count mismatch")
+        if "field_decoding" in data:
+            decoding = _decoding_summary(data["field_decoding"], rows, columns)
     elif name in {"query_loki", "diagnose_loki_probe"}:
         lines = data.get("highlights")
         if not isinstance(lines, list) or any(not isinstance(line, str) for line in lines):
@@ -74,7 +199,7 @@ def materialize_tool_result(  # noqa: C901, PLR0915
         raise ValueError("Invalid truncation reasons")
     if truncated and not reasons:
         reasons = ["more_pages" if data.get("has_more") else "provider_result_truncated"]
-    summary = {
+    summary: dict[str, Any] = {
         "tool": name,
         "returned": returned,
         "truncated": truncated,
@@ -86,6 +211,14 @@ def materialize_tool_result(  # noqa: C901, PLR0915
     }
     if name == "query_redis_scan":
         summary.update(has_more=data["has_more"], next_cursor=data["next_cursor"])
+    elif name == "query_database":
+        if decoding is not None:
+            summary["field_decoding"] = decoding
+            summary["read_hint"] += (
+                " 字段解码 complete 仅指已返回行中识别到的候选；存在失败候选时不得声称已读取压缩正文。"
+            )
+        else:
+            summary["read_hint"] += " 未提供字段解码诊断，不能推断压缩字段已解码。"
     relative = f"work/query-{uuid.uuid4().hex}.md"
     safe = sanitize_for_persistence(payload)
     body = (

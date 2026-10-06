@@ -9,6 +9,16 @@
 - `file_complete=true` 仅表示本次返回内容完整保存；`complete=false` 表示查询覆盖可能不足。Loki 返回数达到 `limit` 时为 `line_limit_reached`，不能据此判断真实总匹配数。
 - 资源目录、数据库结构目录、Loki 标签元数据保持有界内联返回。
 
+## 数据库压缩字段
+
+MySQL、SQL Server 和 Oracle 的 `query_database` 在取值层自动检测原始二进制、严格标准 Base64 或 Hex 包装的单个 zlib 流。字段名和 SQL 别名不影响检测，无需新增 Resource、Agent、应用或角色配置。第一版只接受完整严格 UTF-8；普通值保留既有语义，不猜 GBK 等字符集，不递归解压或把明文 JSON 转成对象。
+
+成功值是明文字符串。已识别候选损坏、需要字典、不是 UTF-8 或展开超限时保留完整原值并标注状态。未解码的二进制改为 `{"type":"binary","encoding":"base64","data":"…","size_bytes":N}`，这是原始字节的可逆包装；依赖旧 `str(bytes)` / `str(LOB)` 表示的消费端必须适配。Oracle BLOB 在连接内检查大小并分块读取；其他 LOB 类型安全拒绝，不读取 BFILE。
+
+`field_decoding` 使用固定策略 `db-zlib-utf8-v1`。内联仅返回候选、成功、失败计数和候选 `complete`，逐字段诊断保存在同一只读结果文件中。`binary_uninterpreted` 不证明该值是压缩内容。诊断缺失只能说明未提供解码事实。查询 `complete`、`file_complete` 与字段解码 `complete` 分别判断：文件完整保存或已返回候选成功，不代表查询已穷尽；候选失败也不代表查询行覆盖不足。
+
+单字段及查询累计字符串/二进制输入、所有解压尝试累计展开各受 8 MiB 限制，失败不恢复预算。行、二进制包装与诊断共同计入实际响应容量；不能完整容纳时丢弃整条尚未接纳行并报告 `provider_result_truncated`，不返回部分明文。读取失败或墙钟耗尽安全失败。敏感列先遮蔽，解码明文继续脱敏，不进入普通日志或 Tool timeline。
+
 ## 配置
 
 | 项目 | 默认 | 可配置/有效边界 |

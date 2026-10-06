@@ -32,6 +32,7 @@ from app.shared.exceptions import PermissionDenied, ToolPolicyError
 from app.shared.logging import correlation_id_var
 from app.shared.loki_contract import assert_loki_selector, assert_loki_query_limits
 from app.shared.resource_role import normalize_resource_role, RESOURCE_ROLE_MESSAGE
+from app.shared.tool_response_summary import tool_response_summary
 
 
 class ReadOnlyToolService:
@@ -229,7 +230,7 @@ class ReadOnlyToolService:
                 self.run_audit_repository.complete_tool_call(
                     managed_tool_call_id,
                     response_summary=bounded_summary(
-                        _storage_summary(result),
+                        _storage_summary(result, tool_name=tool_name),
                         self.limits.max_tool_response_chars,
                     ),
                     status="SUCCEEDED",
@@ -527,7 +528,9 @@ class ReadOnlyToolService:
         return tuple(grants)
 
 
-def _storage_summary(result: ToolResult) -> dict[str, Any]:
+def _storage_summary(result: ToolResult, *, tool_name: str = "") -> dict[str, Any]:
+    if tool_name == "query_database":
+        return tool_response_summary({**result.summary, "truncated": result.truncated})
     if not result.metadata and not result.truncated:
         return result.summary
     return {

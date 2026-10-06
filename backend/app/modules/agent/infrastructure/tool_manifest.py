@@ -163,6 +163,9 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "description": (
             "对唯一解析的 MCP Resource 执行策略允许的只读 SQL。"
             "当 Job 目标包含基地或车间时，应提供结构化定位信息。"
+            "自动检测原始二进制或严格 Base64/Hex 包装的 zlib，仅解码完整 UTF-8；"
+            "失败保留原值，未解码二进制用明确的 Base64 对象表示。"
+            "field_decoding 摘要与查询/文件完整性分别判断，正文按需读取只读结果文件。"
         ),
         "schema": {
             "type": "object",

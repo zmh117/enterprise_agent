@@ -8,21 +8,26 @@ from app.modules.mcp_tool_runtime.infrastructure.db.drivers import (
 class Cursor:
     description = [("id",), ("text",)]
 
-    def fetchmany(self, _count: int) -> list[tuple[object, ...]]:
-        return [
+    def __init__(self) -> None:
+        self.rows = [
             (1, "ok"),
             (2, "过大" * 100),
             (3, "not-reached"),
         ]
+
+    def fetchmany(self, count: int) -> list[tuple[object, ...]]:
+        assert count == 1
+        rows, self.rows = self.rows[:count], self.rows[count:]
+        return rows
 
 
 def test_cursor_rows_are_bounded_by_rows_and_utf8_bytes() -> None:
     result = _rows_from_cursor(
         Cursor(),
         3,
-        max_response_bytes=30,
+        max_response_bytes=100,
     )
 
     assert result.rows == [{"id": 1, "text": "ok"}]
     assert result.truncated is True
-    assert 0 < result.response_bytes <= 30
+    assert 0 < result.response_bytes <= 100
