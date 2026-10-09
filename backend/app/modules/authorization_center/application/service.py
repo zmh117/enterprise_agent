@@ -282,13 +282,14 @@ class AuthorizationCenterService:
     ) -> dict[str, Any]:
         self._require_catalog(actor_id, "authorization.manage", resource_code=role_id)
         with self.repository.database.unit_of_work():
+            before = self.repository.list_business_access(role_id)
             normalized = self._normalize_business_applications(
                 actor_id=actor_id,
                 applications=applications,
                 confirmed=confirmed,
                 reason=reason,
+                existing_applications=before,
             )
-            before = self.repository.list_business_access(role_id)
             result = self.repository.replace_business_access(
                 role_id,
                 expected_revision=expected_revision,
@@ -565,6 +566,7 @@ class AuthorizationCenterService:
         platform_admin: bool,
         tools: list[str],
         field: str,
+        existing_ids: list[str] | None = None,
     ) -> list[str]:
         allowed_fields = {
             "application_id",
@@ -592,18 +594,23 @@ class AuthorizationCenterService:
             self._field_error(field + ".knowledge_base_ids", "知识库范围必须是唯一的明确标识集合")
         known = {str(base["id"]) for base in self.repository.knowledge_base_catalog()}
         grantable = known
+        # Inactive resources cannot receive new grants. Preserve only this role/application's
+        # explicit existing IDs so an unrelated edit does not silently revoke historical grants.
+        retained = set(existing_ids or []) - known
         if not platform_admin:
             required_tools = _KNOWLEDGE_TOOLS.intersection(tools)
-            grantable = {
+            actor_ids = {
                 str(base_id)
                 for access in self.repository.business_access_for_user(
                     user_id=actor_id, application_id=str(item["application_id"])
                 )
                 if required_tools.issubset(access["tool_identifiers"])
                 for base_id in access["knowledge_base_ids"]
-            } & known
+            }
+            grantable = actor_ids & known
+            retained &= actor_ids
         selected = set(ids) | (grantable if current_all else set())
-        if not selected <= grantable or len(selected) > 1000:
+        if not selected <= grantable | retained or len(selected) > 1000:
             self._field_error(
                 field + ".knowledge_base_ids", "知识库不可授权或超出你在此应用的可授权范围"
             )
@@ -675,11 +682,16 @@ class AuthorizationCenterService:
         applications: list[dict[str, Any]],
         confirmed: bool,
         reason: str,
+        existing_applications: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         actor_is_platform_admin = "platform-admin" in self.identity_repository.role_codes_for_user(
             actor_id
         )
         catalog = {str(item["id"]): item for item in self.repository.application_catalog()}
+        existing_ids_by_app = {
+            str(item["application_id"]): item["knowledge_base_ids"]
+            for item in existing_applications or []
+        }
         result: list[dict[str, Any]] = []
         seen_apps: set[str] = set()
         for index, item in enumerate(applications):
@@ -773,6 +785,7 @@ class AuthorizationCenterService:
                 platform_admin=actor_is_platform_admin,
                 tools=tool_identifiers,
                 field=f"applications.{index}",
+                existing_ids=existing_ids_by_app.get(application_id),
             )
             result.append(
                 {

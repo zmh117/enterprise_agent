@@ -955,6 +955,11 @@ function BusinessApplicationCard({
         (identifier) => !currentToolIdentifiers.has(identifier)
       )
     : []
+  const unavailableKnowledgeBaseIds = selected
+    ? [...selected.knowledgeBaseIds].filter(
+        (id) => !application.knowledge_bases.some((base) => base.id === id)
+      )
+    : []
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -1059,7 +1064,7 @@ function BusinessApplicationCard({
           <div>
             <h3 className="text-sm font-medium">知识库使用范围</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              仅引用“工具资源”中的知识库，不重复配置资源。勾选只对当前应用生效；实际检索还需本应用的工具授权、有效发布资源和本人
+              仅列出“工具资源”中启用的知识资源，名称与工具资源一致；已归档、停用或尚未配置资源的知识库不能新增授权。勾选只对当前应用生效；实际检索还需本应用的工具授权、有效发布资源和本人
               ONES 可读权限。
             </p>
             {application.knowledge_bases.length > 0 ? (
@@ -1107,12 +1112,16 @@ function BusinessApplicationCard({
                   </span>
                 </label>
               ))}
-              {[...selected.knowledgeBaseIds]
-                .filter(
-                  (id) =>
-                    !application.knowledge_bases.some((base) => base.id === id)
-                )
-                .map((id) => (
+            </div>
+            {unavailableKnowledgeBaseIds.length > 0 ? (
+              <div
+                className="mt-3 space-y-2 rounded-md border border-destructive/50 p-3"
+                aria-label={`${application.name} 历史知识库授权`}
+              >
+                <p className="text-xs text-muted-foreground">
+                  以下为已有但当前不可新增的授权记录，不属于可选目录。保存其他配置会保留这些记录；可取消勾选并保存以撤销。
+                </p>
+                {unavailableKnowledgeBaseIds.map((id) => (
                   <label
                     key={id}
                     className="flex items-start gap-3 rounded-md border border-destructive/50 p-3 text-sm"
@@ -1127,11 +1136,12 @@ function BusinessApplicationCard({
                       }}
                     />
                     <span className="break-all">
-                      {id}：当前不可授权，取消选择后保存以撤销。
+                      {id}：历史授权，资源已归档、停用或当前不在可授权范围。
                     </span>
                   </label>
                 ))}
-            </div>
+              </div>
+            ) : null}
             <p
               className="mt-3 text-xs break-all text-muted-foreground"
               aria-label={`${application.name} 知识库授权预览`}

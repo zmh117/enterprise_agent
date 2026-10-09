@@ -44,6 +44,24 @@ def add_base(c, key):
     )
 
 
+def add_resource(c, base_id, *, key=None, name=None, status="enabled"):
+    key = key or f"resource-{base_id}"
+    insert(
+        c.database,
+        "retrieval_resource",
+        {
+            "id": key,
+            "knowledge_base_id": base_id,
+            "code": key,
+            "name": name or f"合成知识资源 {base_id}",
+            "status": status,
+            "created_by": ADMIN_ID,
+            "created_at": now(),
+            "updated_at": now(),
+        },
+    )
+
+
 def access(app, ids=(), *, tools=(TOOL,), **extra):
     return {
         "application_id": app["id"],
@@ -69,6 +87,8 @@ def fixture(request, tmp_path):
     )
     add_base(c, "kb-ones")
     add_base(c, "kb-ops")
+    add_resource(c, "kb-ones")
+    add_resource(c, "kb-ops")
     apps = [_active_application(c, code, capabilities=(TOOL,)) for code in ("app-one", "app-two")]
     user = c.identity_repository.create_user(username="kb-reader", display_name="合成知识用户")
     role = _business_role(
@@ -205,6 +225,7 @@ def test_current_all_is_explicit_and_copy_preserves_app_partition(fixture):
     result = save(c, role, [access(apps[0], knowledge_current_all=True), access(apps[1])])
     assert result["applications"][0]["knowledge_base_ids"] == ["kb-ones", "kb-ops"]
     add_base(c, "kb-future")
+    add_resource(c, "kb-future")
     assert not decide(c, apps[0], user, "kb-future")["allowed"]
     copied = c.authorization_center_service.create_role(
         actor_id=ADMIN_ID,
@@ -219,6 +240,103 @@ def test_current_all_is_explicit_and_copy_preserves_app_partition(fixture):
         [],
     ]
     save(c, role, [], revision=3)
+
+
+@pytest.mark.parametrize("status", ["archived", "disabled"])
+def test_catalog_and_current_all_exclude_inactive_or_unconfigured_resources(fixture, status):
+    c, apps, _, role = fixture
+    c.database.execute(
+        'update "knowledge.retrieval_resource" set status=? where knowledge_base_id=?',
+        (status, "kb-ones"),
+    )
+    add_base(c, "kb-storage-only")
+    catalog = c.authorization_center_service.assignable_catalog(actor_id=ADMIN_ID)
+    for app in catalog["applications"]:
+        assert app["knowledge_bases"] == [
+            {
+                "id": "kb-ops",
+                "code": "resource-kb-ops",
+                "display_name": "合成知识资源 kb-ops",
+            }
+        ]
+    result = save(c, role, [access(apps[1], knowledge_current_all=True)])
+    assert result["applications"][0]["knowledge_base_ids"] == ["kb-ops"]
+    with pytest.raises(NonRetryableExecutionError):
+        save(c, role, [access(apps[1], ["kb-ones"])], revision=3)
+
+
+def test_enabled_replacement_resource_uses_current_name_without_changing_base_identity(fixture):
+    c, _, _, _ = fixture
+    c.database.execute(
+        "update \"knowledge.retrieval_resource\" set status='archived' where knowledge_base_id=?",
+        ("kb-ones",),
+    )
+    add_resource(c, "kb-ones", key="new-bug", name="新缺陷资源")
+    catalog = c.authorization_center_service.assignable_catalog(actor_id=ADMIN_ID)
+    for app in catalog["applications"]:
+        assert app["knowledge_bases"][0] == {
+            "id": "kb-ones",
+            "code": "new-bug",
+            "display_name": "新缺陷资源",
+        }
+
+
+def test_api_rejects_archived_resource_grant_without_modifying_existing_access(fixture):
+    c, apps, _, role = fixture
+    c.database.execute(
+        'update "knowledge.retrieval_resource" set status=? where knowledge_base_id=?',
+        ("archived", "kb-ones"),
+    )
+    before = c.authorization_center_repository.list_business_access(role["id"])
+    app = create_app(c.settings, container_factory=lambda _: c)
+    app.state.container = c
+    client = TestClient(app)
+    catalog = client.get("/api/admin/authorization/assignable-catalog", headers=_admin_headers())
+    assert catalog.status_code == 200
+    assert all(
+        [base["id"] for base in application["knowledge_bases"]] == ["kb-ops"]
+        for application in catalog.json()["applications"]
+    )
+    response = client.put(
+        f"/api/admin/authorization/roles/{role['id']}/business-access",
+        headers=_admin_headers(),
+        json={
+            "expected_revision": 2,
+            "applications": [access(apps[1], ["kb-ones"])],
+            "confirmed": True,
+            "reason": "不得通过直接请求新增归档知识库授权",
+        },
+    )
+    assert response.status_code == 400
+    assert c.authorization_center_repository.list_business_access(role["id"]) == before
+
+
+@pytest.mark.parametrize("status", ["archived", "disabled"])
+def test_inactive_grant_can_be_retained_or_revoked_but_not_extended_or_copied(fixture, status):
+    c, apps, _, role = fixture
+    c.database.execute(
+        'update "knowledge.retrieval_resource" set status=? where knowledge_base_id=?',
+        (status, "kb-ones"),
+    )
+    result = save(c, role, [access(apps[0], ["kb-ones", "kb-ops"])])
+    assert result["applications"][0]["knowledge_base_ids"] == ["kb-ones", "kb-ops"]
+    before = c.authorization_center_repository.list_business_access(role["id"])
+    with pytest.raises(NonRetryableExecutionError):
+        save(c, role, [access(apps[0], ["kb-ones"]), access(apps[1], ["kb-ones"])], revision=3)
+    assert c.authorization_center_repository.list_business_access(role["id"]) == before
+    with pytest.raises(NonRetryableExecutionError):
+        c.authorization_center_service.create_role(
+            actor_id=ADMIN_ID,
+            code="copy-inactive-kb",
+            name="不能复制失效知识授权",
+            description="",
+            purpose_tags=[],
+            copy_from_role_id=role["id"],
+        )
+    result = save(c, role, [access(apps[0], ["kb-ops"])], revision=3)
+    assert result["applications"][0]["knowledge_base_ids"] == ["kb-ops"]
+    with pytest.raises(NonRetryableExecutionError):
+        save(c, role, [access(apps[0], ["kb-ones", "kb-ops"])], revision=4)
 
 
 @pytest.mark.parametrize(
@@ -424,6 +542,36 @@ def test_delegation_and_catalog_are_application_bounded(fixture):
         c, target, [access(apps[0], knowledge_current_all=True)], revision=1, actor=user["id"]
     )
     assert result["applications"][0]["knowledge_base_ids"] == ["kb-ones"]
+
+
+def test_retaining_inactive_grants_does_not_bypass_application_delegation(fixture):
+    c, apps, user, role = fixture
+    c.authorization_center_service.replace_admin_capabilities(
+        actor_id=ADMIN_ID,
+        role_id=role["id"],
+        expected_revision=1,
+        bindings=[{"capability_code": "authorization.manage", "resource_code": role["id"]}],
+        confirmed=True,
+        reason="合成自角色委派",
+    )
+    c.database.execute(
+        'update "knowledge.retrieval_resource" set status=? where knowledge_base_id=?',
+        ("archived", "kb-ones"),
+    )
+    catalog = c.authorization_center_service.assignable_catalog(actor_id=user["id"])
+    assert all(app["knowledge_bases"] == [] for app in catalog["applications"])
+    result = save(c, role, [access(apps[0], ["kb-ones"]), access(apps[1])], actor=user["id"])
+    assert result["applications"][0]["knowledge_base_ids"] == ["kb-ones"]
+    before = c.authorization_center_repository.list_business_access(role["id"])
+    with pytest.raises(NonRetryableExecutionError):
+        save(
+            c,
+            role,
+            [access(apps[0], ["kb-ones"]), access(apps[1], ["kb-ones"])],
+            revision=3,
+            actor=user["id"],
+        )
+    assert c.authorization_center_repository.list_business_access(role["id"]) == before
 
 
 def test_knowledge_tool_delegation_cannot_join_separate_actor_roles(fixture):

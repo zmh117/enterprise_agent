@@ -258,6 +258,121 @@ describe("角色授权中心", () => {
     }
   )
 
+  it.each([false, true])(
+    "不可新增的知识库单独展示历史记录，全选不误删，显式撤销=%s",
+    async (revoke) => {
+      let submitted: Record<string, unknown> | undefined
+      const app = {
+        id: "app1",
+        code: "app1",
+        name: "app1",
+        description: "",
+        project_code: "default",
+        status: "enabled",
+        knowledge_bases: [
+          { id: "kb-current", code: "current", display_name: "启用的知识资源" },
+        ],
+        mcp_tools: [],
+      }
+      vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+        const url = String(input)
+        if (url.endsWith("/api/admin/capabilities"))
+          return response({
+            capabilities: ["authorization.read", "authorization.manage"],
+            modules: {},
+          })
+        if (
+          url.endsWith(
+            "/authorization/roles/role-diagnostic/business-access"
+          ) &&
+          init?.method === "PUT"
+        ) {
+          submitted = JSON.parse(String(init.body))
+          return response({ revision: 2, applications: [] })
+        }
+        if (url.endsWith("/authorization/roles/role-diagnostic"))
+          return response({
+            ...detail(),
+            business: {
+              revision: 1,
+              applications: [
+                {
+                  id: "access-app1",
+                  application_id: "app1",
+                  application_code: "app1",
+                  application_name: "app1",
+                  status: "enabled",
+                  tool_identifiers: [],
+                  scopes: [],
+                  knowledge_base_ids: ["kb-archived"],
+                },
+              ],
+            },
+          })
+        if (url.endsWith("/authorization/assignable-catalog"))
+          return response({
+            applications: [app],
+            topology: [],
+            scope_mode: "explicit_current_set",
+            scope_notice: "当前全部保存明确集合",
+          })
+        throw new Error(`Unexpected request: ${url}`)
+      })
+      renderDetail()
+      await screen.findByText("诊断操作员")
+      fireEvent.click(screen.getByRole("tab", { name: "业务应用与数据范围" }))
+      expect(
+        await screen.findByRole("checkbox", {
+          name: /^app1 知识库 启用的知识资源 kb-current/,
+        })
+      ).not.toHaveAttribute("data-checked")
+      expect(screen.getByLabelText("app1 历史知识库授权")).toHaveTextContent(
+        "资源已归档、停用或当前不在可授权范围"
+      )
+      expect(
+        screen.queryByRole("checkbox", { name: /^app1 知识库 .*kb-archived/ })
+      ).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole("checkbox", { name: /^当前全部知识库/ }))
+      expect(screen.getByLabelText("app1 知识库授权预览")).toHaveTextContent(
+        "kb-archived、kb-current"
+      )
+      fireEvent.click(screen.getByRole("checkbox", { name: /^当前全部知识库/ }))
+      expect(screen.getByLabelText("app1 知识库授权预览")).toHaveTextContent(
+        "kb-archived"
+      )
+      fireEvent.click(screen.getByRole("checkbox", { name: /^当前全部知识库/ }))
+      if (revoke) {
+        fireEvent.click(
+          screen.getByRole("checkbox", {
+            name: /^app1 移除不可授权知识库 kb-archived/,
+          })
+        )
+        expect(
+          screen.queryByLabelText("app1 历史知识库授权")
+        ).not.toBeInTheDocument()
+      }
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: /我已确认本次高风险授权变更/ })
+      )
+      fireEvent.change(screen.getByLabelText("授权变更原因"), {
+        target: { value: "核对启用目录与历史授权" },
+      })
+      fireEvent.click(screen.getByRole("button", { name: "原子保存业务授权" }))
+      await waitFor(() =>
+        expect(submitted?.applications).toEqual([
+          {
+            application_id: "app1",
+            tool_identifiers: [],
+            knowledge_base_ids: revoke
+              ? ["kb-current"]
+              : ["kb-archived", "kb-current"],
+            scopes: [],
+          },
+        ])
+      )
+    }
+  )
+
   it("从安全模板创建角色时只预填用途和说明", async () => {
     let submitted: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {

@@ -533,8 +533,10 @@ class AuthorizationCenterRepository:  # noqa: PLR0904
 
     def knowledge_base_catalog(self) -> list[dict[str, Any]]:
         return self.database.execute(
-            f"select id,code,display_name from {knowledge_table(self.database, 'knowledge_base')} "
-            "where state='storage_only' order by id"
+            "select k.id,r.code,r.name as display_name "
+            f"from {knowledge_table(self.database, 'knowledge_base')} k "
+            f"join {knowledge_table(self.database, 'retrieval_resource')} r on r.knowledge_base_id=k.id "
+            "where k.state='storage_only' and r.status='enabled' order by k.id"
         )
 
     def application_catalog(self) -> list[dict[str, Any]]:
