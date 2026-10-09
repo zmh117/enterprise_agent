@@ -72,7 +72,7 @@ ONES 新版导出接口对应的受管全量采集入口见[全量采集手册](
 
 1. 核对非终态任务、平台镜像与当前 schema，按平台流程运行正式 Migrator。不要回退/删表。Embedding 固定模型准备和已有索引仍沿用离线流程。
 2. 直接复用根 `.env` 或既有受管部署环境中的 `DATABASE_DSN`，指向平台 PostgreSQL；不再配置 `KNOWLEDGE_DATABASE_DSN`，也不要求创建 `knowledge_mcp_reader`。该连接用于平台授权、Job、发布和审计，Web 中的知识内容库连接仍独立配置。复用账号后 Knowledge MCP 持有该账号的数据库权限，数据库层不再强制专用角色隔离；工具调用仍执行用户、Job、KB 和 ONES 权限校验。
-3. 在当前部署用户的 `$HOME/.config/enterprise-agent` 目录运行既有密钥初始化脚本。脚本生成独立高熵 `knowledge-bootstrap-token`，重复执行保留已有值；Compose 固定读取此文件，无需填写宿主机 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE`。API 与 MCP 挂载同一文件，入口将其规范化为进程可读的只读副本；服务身份签发必须启用，MCP 仍只挂载公开 JWKS。
+3. 在当前部署用户的 `$HOME/.config/enterprise-agent` 目录运行既有密钥初始化脚本。脚本生成独立高熵 `knowledge-bootstrap-token`，重复执行保留已有值；Compose 默认读取此文件，也支持在根 `.env` 或部署环境中设置 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 覆盖宿主机文件路径。API 与 MCP 挂载同一文件，容器内路径固定为 `/run/secrets/knowledge_bootstrap_token`，入口将其规范化为进程可读的只读副本；服务身份签发必须启用，MCP 仍只挂载公开 JWKS。
 4. 检查配置并构建 `knowledge-mcp`，不需要提前连接数据库或配置专用账号。
 
 ```sh
@@ -87,7 +87,15 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
   -f knowledge/mcp.compose.yml --progress quiet build knowledge-mcp knowledge-embedding-online
 ```
 
-已有部署若曾使用自定义知识服务凭据路径，需在受管维护流程中将原凭据保留到上述固定位置，再同时更新 API 和 MCP；初始化脚本只生成缺失文件，不自动迁移或轮换凭据。服务仍检查 PostgreSQL/schema 与审计就绪，不在启动时建表、授权或执行保留清理。
+如需使用项目根目录下的文件，在根 `.env` 中配置（仅文件路径，不填 Token 内容）：
+
+```dotenv
+KNOWLEDGE_BOOTSTRAP_TOKEN_FILE=./knowledge-bootstrap-token
+```
+
+相对路径以第一个 Compose 文件 `docker-compose.yml` 所在的项目根目录为基准，不是 `knowledge/` 或任意执行命令的当前目录；也可填写绝对文件路径。未配置或留空时保留上述 HOME 默认路径。必须指定预先存在、非空、仅部署用户可读的普通凭据文件（沿用初始化脚本的 `0400` 权限），不能只填写 `.` 或目录，也不能复用其他服务的凭据。根目录的 `knowledge-bootstrap-token` 已加入 Git 忽略，现有 Docker 构建白名单也不包含它；自定义其他位置时须自行排除 Git 与镜像构建上下文。
+
+已有部署可通过此变量保留原 Knowledge 专用凭据路径，无需迁移或重新生成凭据。变量只选择挂载来源，不创建、复制或轮换文件；初始化脚本仍仅操作其显式目录参数，不读取此变量。实际更换挂载路径后需在批准的维护流程中同时更新 API 与 MCP，不能只重启一端。服务仍检查 PostgreSQL/schema 与审计就绪，不在启动时建表、授权或执行保留清理。
 
 5. 依平台维护流程更新 API（新凭据桥）、ONES、Runtime/Worker 和 Web 的对应代码版本。确认内部 Embedding/Qdrant、PostgreSQL/schema 已就绪后，使用三个文件定向启动 `knowledge-mcp`；不要用无服务名的 `up` 启动一次性运维任务。API 与 MCP 不互相声明启动依赖，桥未可用时检索明确失败关闭。
 6. `/health` 仅验证 schema/审计依赖，不能代替向量、ONES、权限和真实 Job 验收。先完成任务 7.3 的阻塞依赖预算与隔离完整链路测试，再按批准流程在 Web 配置资源、角色应用 KB 范围和新的 Agent/Application Publication。配置流程见[管理手册](../docs/runbooks/knowledge-governance.md#管理流程)，不要求 ONES 地址/Team 来源确认、证明摘要或运行中 Job ID。不得把旧 Job 当成新增知识工具的验收。
@@ -163,3 +171,6 @@ docker compose -p enterprise_agent \
 Knowledge MCP 的 `DATABASE_DSN` **复用部署环境中的平台连接**，不能换成 Web 配置的内容库 DSN。内容凭据经固定 `/api/internal/knowledge/storage-connection` 由服务身份＋当前 Knowledge JWT 双重验证获取；仅可读取当前获授权 KB 的已发布连接，不接收任意 Secret 引用。主密钥、签名私钥和 ONES 凭据不进入 Knowledge MCP。API 与 ONES 核验使用同一内容绑定，返回前继续检查 KB＋本人 ONES 权限。
 
 升级 schema 后，部署账号需具备当前平台授权、知识元数据和审计查询所需权限。默认复用平台连接，无需额外创建知识账号；保留的独立账号配置 CLI 仅供自行选择角色隔离的运维使用。API 与 Knowledge MCP 同步更新后重新兑换短期服务 Token，新 scope 精确包含两个内部操作。旧资源字段为空时继续使用原部署连接与原 hash，不要求重发布；切换内容连接才需创建新草稿。原导入/分块/索引 CLI 仍使用它自身的显式部署连接，不会自动跟随 Web 的读取配置。
+
+启动知识库
+docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.compose.yml --profile knowledge up -d postgres api-server knowledge-embedding knowledge-embedding-online knowledge-qdrant knowledge-mcp

@@ -18,11 +18,13 @@ compose_cli = compose_cli_fixture
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def online_config(compose_cli, *, missing=None):
+def online_config(compose_cli, *, missing=None, bootstrap_path=None, env_file=None, cwd=ROOT):
     env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
     env.update(
         DATABASE_DSN="postgresql://synthetic:synthetic@postgres:5432/synthetic",
     )
+    if bootstrap_path is not None:
+        env["KNOWLEDGE_BOOTSTRAP_TOKEN_FILE"] = bootstrap_path
     if missing:
         env.pop(missing)
     return subprocess.run(
@@ -30,22 +32,22 @@ def online_config(compose_cli, *, missing=None):
             compose_cli,
             "compose",
             "--env-file",
-            os.devnull,
+            str(env_file) if env_file is not None else os.devnull,
             "-p",
             "knowledge-online-contract",
             "-f",
-            "docker-compose.yml",
+            str(ROOT / "docker-compose.yml"),
             "-f",
-            "knowledge/compose.yml",
+            str(ROOT / "knowledge/compose.yml"),
             "-f",
-            "knowledge/mcp.compose.yml",
+            str(ROOT / "knowledge/mcp.compose.yml"),
             "--profile",
             "knowledge",
             "config",
             "--format",
             "json",
         ],
-        cwd=ROOT,
+        cwd=cwd,
         env=env,
         capture_output=True,
         text=True,
@@ -133,6 +135,62 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
 def test_online_requires_existing_platform_database_dsn(compose_cli):
     result = online_config(compose_cli, missing="DATABASE_DSN")
     assert result.returncode != 0 and "DATABASE_DSN" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "bootstrap_path",
+    [
+        "",
+        "./knowledge-bootstrap-token",
+        "./local secrets/knowledge-bootstrap-token",
+        "/synthetic/knowledge-bootstrap-token",
+    ],
+)
+def test_online_bootstrap_host_path_override_preserves_container_mount(compose_cli, bootstrap_path):
+    result = online_config(compose_cli, bootstrap_path=bootstrap_path)
+    assert result.returncode == 0, "synthetic Compose rendering failed (details withheld)"
+    config = json.loads(result.stdout)
+    expected = (
+        (ROOT / bootstrap_path).resolve()
+        if bootstrap_path
+        else Path(os.environ["HOME"]) / ".config/enterprise-agent/knowledge-bootstrap-token"
+    )
+    assert config["secrets"]["knowledge_bootstrap_token"]["file"] == str(expected)
+    for name in ("api-server", "knowledge-mcp"):
+        service = config["services"][name]
+        assert service["environment"]["KNOWLEDGE_BOOTSTRAP_TOKEN_FILE"] == (
+            "/run/secrets/knowledge_bootstrap_token"
+        )
+        assert "knowledge_bootstrap_token" in {item["source"] for item in service["secrets"]}
+    for name in ("agent-worker", "python-agent-runtime", "ones-mcp", "knowledge-embedding-online"):
+        assert "knowledge_bootstrap_token" not in {
+            item["source"] for item in config["services"][name].get("secrets", [])
+        }
+
+
+def test_online_bootstrap_dotenv_path_is_relative_to_root_compose_not_shell_cwd(
+    compose_cli, tmp_path
+):
+    env_file = tmp_path / "synthetic.env"
+    env_file.write_text("KNOWLEDGE_BOOTSTRAP_TOKEN_FILE=./knowledge-bootstrap-token\n")
+    result = online_config(compose_cli, env_file=env_file, cwd=tmp_path)
+    assert result.returncode == 0, "synthetic Compose rendering failed (details withheld)"
+    config = json.loads(result.stdout)
+    assert config["secrets"]["knowledge_bootstrap_token"]["file"] == str(
+        ROOT / "knowledge-bootstrap-token"
+    )
+
+
+def test_project_root_bootstrap_credential_is_git_ignored():
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--stdin"],
+        input="knowledge-bootstrap-token\n",
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0 and result.stdout.strip() == "knowledge-bootstrap-token"
 
 
 def test_shared_platform_dsn_starts_without_provisioning_reader_role(monkeypatch):

@@ -67,6 +67,11 @@
 ### Requirement: 知识服务必须可选部署并保留真实验收缺口
 knowledge-mcp、本地 Qdrant 和 Embedding SHALL 继续由可选 knowledge 部署单元管理，MCP/Embedding 地址固定，内容 PostgreSQL/Qdrant 可由有权管理员配置；未启用环境 MUST 不依赖这些服务或其新增服务凭据。治理元数据 SHALL 使用平台 PostgreSQL 的现有 knowledge schema 及现有 RBAC 事实源，通过前向 Migrator 和当前 schema catalog 交付，不修改历史迁移或自动搬迁/删除已有文本、分块和索引。新治理事实 MUST 默认未核验、未发布、无业务授权。
 
+#### Scenario: 覆盖宿主机知识服务凭据文件路径
+- **WHEN** 部署环境或根 `.env` 设置 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 为绝对或项目根 Compose 相对文件路径
+- **THEN** 在线扩展使用该文件作为 API/MCP 的同一 Secret 来源，容器内路径仍固定为 `/run/secrets/knowledge_bootstrap_token`；未设置或为空沿用原 HOME 默认路径，不自动生成、迁移或轮换凭据，不复用其他服务凭据
+- **AND** 根目录示例凭据文件由 Git 忽略且不进入现有镜像构建上下文，现有凭据文件与权限校验保持生效
+
 #### Scenario: 内容数据库与平台分开
 - **WHEN** 管理员配置独立内容 PostgreSQL
 - **THEN** API 验证、知识 MCP 与 ONES 内部核验使用同一内容绑定，平台库只保留逻辑 KB 及治理事实；目标库只要求兼容内容表和必要读取权限，不执行平台迁移或要求平台身份/Job 表

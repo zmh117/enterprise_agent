@@ -1,5 +1,17 @@
 # 受治理知识检索实施证据
 
+## 宿主机知识服务凭据路径可配置（2026-10-09，任务 19）
+
+用户确认在根 `.env` 使用 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE=./knowledge-bootstrap-token`。在线 Compose 支持该环境变量覆盖 Secret 宿主机来源，未配置或为空继续使用原 HOME 默认；相对路径按第一个根 Compose 文件所在目录解析，支持绝对路径与带空格路径。API/MCP 的容器内挂载仍固定 `/run/secrets/knowledge_bootstrap_token`，不向其他服务分发、不自动生成或轮换凭据。根目录凭据文件已 Git 忽略，现有 `.dockerignore` 白名单不包含它；环境模板及两份部署说明已更新。
+
+工程验证：
+
+- 新增路径覆盖与忽略保护用例先在旧实现上验证 **5 failed、1 passed**，失败均为预期的不支持覆盖/未忽略；实现后在线/离线 Compose 回归 **25 passed（4.81 秒）**，覆盖环境变量和合成环境文件、其他 shell 工作目录、空值默认、两端同挂载和其他服务无新增凭据。
+- 既有凭据初始化权限/幂等及空文件、符号链接、目录拒绝专项 **4 passed（1.00 秒）**；环境模板、文件处理/任务工作区 Compose 和旧合同检查 **31 passed（2.99 秒）**。本轮合计 **60 passed**，仅使用合成测试环境，不读取真实 `.env` 或凭据，不用正式服务执行探针。
+- Ruff 检查/格式、严格 OpenSpec、Markdown 链接和 diff 检查通过。新增用例扩展已有已分类测试文件，无业务代码、迁移、权限或模型/索引改动。
+
+任务 **19.1–19.2 完成，总进度 57/62**；11.2–11.6 保持未完成。没有创建、复制或更换现有凭据，没有修改真实 `.env`，没有重启服务、部署、提交、推送、同步 canonical 或归档。实际更换凭据来源路径须在受管维护中同时更新 API/MCP。
+
 ## 在线／后台 Embedding 隔离（2026-10-09，任务 18）
 
 用户确认采用进程隔离。在线可选 `knowledge/mcp.compose.yml` 新增 `knowledge-embedding-online`，Knowledge MCP 固定调用该实例；原离线 Compose、同步/分块/索引和运维 CLI 保留 `knowledge-embedding`，管理连接验证继续读取原无锁 `/profile`。共享同一固定模型镜像和只读模型卷、相同架构 profile，不接受任意 Embedding 地址、不跨用途回退。在线仅 internal 网络，无端口/Secret/出网，2 CPU/6 GiB；后台原 4 CPU/8 GiB 不变。此隔离不是物理宿主机 CPU/总内存或 PostgreSQL/Qdrant 隔离，需预留额外模型运行内存。

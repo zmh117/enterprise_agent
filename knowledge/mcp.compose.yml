@@ -78,7 +78,8 @@ services:
 
 secrets:
   knowledge_bootstrap_token:
-    file: ${HOME}/.config/enterprise-agent/knowledge-bootstrap-token
+    # Host source only; API/MCP retain the fixed /run/secrets mount above.
+    file: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}
 
 # Only MCP needs outbound access to administrator-published content endpoints.
 # Embedding/Qdrant remain on their existing internal network; no host ports are added.

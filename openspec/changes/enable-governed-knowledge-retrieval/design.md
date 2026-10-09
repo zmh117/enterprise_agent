@@ -23,6 +23,10 @@
 
 ## Decisions
 
+### 2026-10-09 修订：宿主机知识服务凭据路径可覆盖
+
+在线 Compose 的 Secret 文件来源允许由根 `.env` 或部署环境的 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 覆盖；未设置或为空仍使用 `${HOME}/.config/enterprise-agent/knowledge-bootstrap-token`。支持绝对文件路径及以第一个根 Compose 文件所在目录为基准的相对路径（如 `./knowledge-bootstrap-token`），不是目录或 Token 值。API/MCP 仍同时挂载同一 Secret，容器内变量固定为 `/run/secrets/knowledge_bootstrap_token`，不把宿主机路径透传进程，不复用其他服务凭据。根目录凭据文件 Git 忽略且不进入现有镜像构建白名单；其他自定义位置由部署流程保护。保留现有文件与权限校验，不自动生成、搬迁、复制或轮换凭据，不更改主部署必需配置或业务授权。本轮只修改配置支持与文档、合成回归，不修改真实 `.env`、凭据或重启服务。
+
 ### 2026-10-09 修订：在线检索与后台索引 Embedding 隔离
 
 保留离线 `knowledge/compose.yml` 的 `knowledge-embedding:8096` 给分块、索引、同步及运维 CLI；只在在线 `knowledge/mcp.compose.yml` 增加 `knowledge-embedding-online:8096`，Knowledge MCP 狭窄装配固定选择在线地址，不接收环境/模型指定 URL，也不向后台实例或外部服务 fallback。管理连接验证继续读取原服务的无锁 `/profile`，保持仅离线部署兼容。两个实例使用同一个镜像和只读 `knowledge-models` 卷，同架构固定模型、profile、依赖和向量身份不变；不需要迁移、重分块、重编码或重新发布资源。在线实例仅 internal 网络、无端口/Secret/出网，限制 2 CPU/6 GiB；后台原 4 CPU/8 GiB 不变。隔离模型进程和 busy 锁不等于隔离宿主机总内存、CPU 或 PostgreSQL/Qdrant，须预留第二份模型运行内存；不承诺资源耗尽时仍不超时。
