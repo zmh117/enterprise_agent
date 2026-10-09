@@ -34,6 +34,24 @@ class KnowledgeOnesCollectionService:
         self.provider_factory = provider_factory
         self.cancelled = cancelled
 
+    def _resume_run(self, binding_id: str, resume_run_id: str | None) -> dict[str, Any] | None:
+        repo = self.repository
+        active = repo.run(resume_run_id) if resume_run_id else repo.active_collection(binding_id)
+        if active is not None:
+            if active["binding_id"] != binding_id:
+                raise ExportValidationError("knowledge_collection_scope_changed")
+            repo.assert_configuration(active)
+            if active["phase"] == "CANCELLED":
+                raise ExportValidationError("knowledge_sync_cancelled")
+        return active
+
+    def _record_failure(self, run_id: str, code: str) -> None:
+        try:
+            self.repository.fail(run_id, code)
+        except Exception:
+            # 断连时状态记录也可能失败，保留最初故障供 CLI 分类。
+            pass
+
     def collect_once(
         self,
         binding_id: str,
@@ -41,6 +59,8 @@ class KnowledgeOnesCollectionService:
         scan_at: str | None = None,
         through: date | None = None,
         on_run_started: Callable[[str], None] | None = None,
+        resume_run_id: str | None = None,
+        on_run_selected: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         repo = self.repository
         binding = repo.binding(binding_id)
@@ -48,18 +68,19 @@ class KnowledgeOnesCollectionService:
         if not collector or binding["enabled"] != 1:
             raise ExportValidationError("knowledge_collection_disabled")
         with repo.source_lock(binding["source_id"]):
-            active = repo.active_collection(binding_id)
-            new_run = active is None
+            active = self._resume_run(binding_id, resume_run_id)
             if active is None:
                 started = scan_at or datetime.now(timezone.utc).isoformat()
                 run = repo.begin_collection(binding_id, started, through=through)
             else:
                 run = active
+            if on_run_selected is not None:
+                on_run_selected(run["id"])
             if run["phase"] != "COLLECTING":
-                summary: dict[str, Any] = repo.summary(run["id"])
-                return summary
+                return repo.summary(run["id"])
             try:
-                if new_run and on_run_started is not None:
+                # 恢复 COLLECTING 时也补记调度 tick；仓储会合并尚未到期的 tick。
+                if on_run_started is not None:
                     on_run_started(run["id"])
                 provider = self.provider_factory(collector)
                 issue_types = {
@@ -136,5 +157,5 @@ class KnowledgeOnesCollectionService:
                         getattr(exc, "error_code", ""), "knowledge_collection_failed"
                     )
                 )
-                repo.fail(run["id"], code)
-                raise ExportValidationError(code) from None
+                self._record_failure(run["id"], code)
+                raise ExportValidationError(code) from exc

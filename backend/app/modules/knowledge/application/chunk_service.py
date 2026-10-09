@@ -126,5 +126,5 @@ class ChunkService:
                 }
         except ExportValidationError:
             raise
-        except Exception:
-            raise ExportValidationError("knowledge_chunk_processing_failed") from None
+        except Exception as exc:
+            raise ExportValidationError("knowledge_chunk_processing_failed") from exc

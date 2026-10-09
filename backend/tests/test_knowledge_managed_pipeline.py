@@ -38,7 +38,7 @@ class FakeStore:
         return self.config
 
     def active_collection(self, binding_id):
-        return {"id": "run", "phase": self.phase} if self.phase else None
+        return self.run("run") if self.phase else None
 
     def run(self, run_id, *, lock=False):
         return {"id": run_id, "phase": self.phase, "binding_id": "binding"}

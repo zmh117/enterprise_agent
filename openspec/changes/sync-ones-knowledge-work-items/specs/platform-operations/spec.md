@@ -34,6 +34,21 @@
 
 ## ADDED Requirements
 
+### Requirement: 知识采集与同步必须自动恢复 PostgreSQL 瞬时断连
+单次采集、单次同步和常驻同步 SHALL 在启动及执行期间的 PostgreSQL 瞬时断连后重建连接、校验 schema 与绑定身份、重新获取排他锁并恢复同一 run。重试 SHALL 采用 5/10/20/40/60 秒封顶退避且无总次数上限，等待 MUST 可由 SIGINT/SIGTERM 中断。系统 MUST NOT 将密码、权限、schema、绑定/资源变更或业务校验错误当作数据库瞬时断连重试；MUST NOT 输出底层异常、凭据或正文。停用和取消仍有效，恢复 MUST NOT 绕过已有容量、版本和权限门禁。
+
+#### Scenario: 日采集中数据库重启
+- **WHEN** 页事务已提交而当天尚未完成时 PostgreSQL 重启
+- **THEN** 运行等待恢复后重新取得来源锁，从原日断点枚举并复用已 staged UUID，不重复候选、不前移未完成日
+
+#### Scenario: 激活提交后响应丢失
+- **WHEN** PostgreSQL 实际已提交激活但调用方因断连未收到成功结果
+- **THEN** 恢复读取原 run 的 ACTIVATED 成功事实，不重复发布、不启动新候选轮次
+
+#### Scenario: 永久错误或人工中止
+- **WHEN** 恢复时认证、权限、schema 或配置不符合，或用户发出停止信号
+- **THEN** 停止重试，保留已提交断点及原可用发布，不创建新绑定或绕过校验
+
 ### Requirement: 显式测试快照替换必须保留名称并限定三个知识库
 用户明确授权测试内容替换时，系统 SHALL 接受 keep_ids_v1 的缺陷、工单、Story 和子任务输入并以三个 KB 的完整替换集合建立候选；MUST 分开真实 ID、显示名称与来源字段字典，Story/子任务 MUST 合并 requirement，父子和跨类型关系 MUST 保留来源证据。该维护行为不要求迁移旧格式正文或保留旧分块 hash，但 MUST 保留 KB/资源/连接引用与角色授权身份，不清空整个 schema，不因普通增量输入缺项推断删除。评论及附件 MUST NOT 隐式进入本批索引。
 

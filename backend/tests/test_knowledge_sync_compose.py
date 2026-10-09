@@ -192,8 +192,8 @@ def test_collection_once_loads_file_key_before_resolving_platform_secret(
     monkeypatch.setattr(
         collect_ones_knowledge,
         "KnowledgeOnesCollectionService",
-        lambda _repo, _factory: SimpleNamespace(
-            collect_once=lambda _binding_id: {"run_id": "synthetic-run"}
+        lambda _repo, _factory, **_kw: SimpleNamespace(
+            collect_once=lambda _binding_id, **_kwargs: {"run_id": "synthetic-run"}
         ),
     )
 

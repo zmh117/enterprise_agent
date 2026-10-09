@@ -60,7 +60,14 @@ def source_lock(database: Database, source_id: str) -> Iterator[None]:
                 raise ExportValidationError("knowledge_source_import_busy")
             try:
                 yield
-            finally:
+            except BaseException:
+                try:
+                    database.execute("select pg_advisory_unlock(?)", (key,))
+                except Exception:
+                    # 会话销毁会释放锁，清理不能替换原始业务/数据库故障。
+                    pass
+                raise
+            else:
                 database.execute("select pg_advisory_unlock(?)", (key,))
         else:
             if not _SQLITE_LOCK.acquire(blocking=False):

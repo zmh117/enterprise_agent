@@ -33,6 +33,7 @@ unit = [
 ]
 
 contract = [
+  "test_knowledge_database_recovery.py",
   "test_knowledge_sync_compose.py",
   "test_knowledge_managed_pipeline.py",
   "test_knowledge_managed_activation.py",
@@ -199,6 +200,7 @@ contract = [
 ]
 
 integration = [
+  "test_knowledge_database_recovery_postgres.py",
   "test_knowledge_container_acceptance.py",
   "test_knowledge_database_policy_postgres.py",
   "test_knowledge_deadline_postgres.py",

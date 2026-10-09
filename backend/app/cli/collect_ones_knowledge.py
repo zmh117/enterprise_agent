@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import suppress
 import json
 from pathlib import Path
+from threading import Event
 from typing import Any, NoReturn
 
+from app.cli.knowledge_database_recovery import (
+    RecoveryCheckpoint,
+    recover_database,
+    stop_signals,
+)
 from app.modules.knowledge.application.ones_collection_service import KnowledgeOnesCollectionService
 from app.modules.knowledge.domain.identity import stable_id
 from app.modules.knowledge.domain.normalization import ExportValidationError
@@ -16,7 +23,7 @@ from app.modules.knowledge.infrastructure.ones_collection_factory import (
 from app.modules.knowledge.infrastructure.sync_repository import SyncRepository
 from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
 from app.modules.platform_config.infrastructure.repository import PlatformConfigRepository
-from app.shared.config import load_settings
+from app.shared.config import Settings, load_settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.master_key import MasterKeyConfigurationError, load_master_key_settings
 from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
@@ -29,6 +36,36 @@ class SafeParser(argparse.ArgumentParser):
 
 def emit(event: str, result: dict[str, Any]) -> None:
     print(json.dumps({"event": event, **result}, ensure_ascii=False), flush=True)
+
+
+def _collect_once(
+    settings: Settings, binding_id: str, stop: Event, checkpoint: RecoveryCheckpoint
+) -> dict[str, Any]:
+    database = Database(settings.database_dsn)
+    try:
+        if database.engine != "postgres":
+            raise ExportValidationError("knowledge_collection_postgres_required")
+        SchemaHeadValidator(database, default_migrations_dir()).require_current()
+        checkpoint.database_verified = True
+        repo = SyncRepository(database)
+        checkpoint.check_binding(repo.binding(binding_id))
+        secret_provider = EncryptedDbSecretProvider(
+            PlatformConfigRepository(database), master_key=settings.app_config_master_key
+        )
+        factory = ManagedOnesCollectionProviderFactory(
+            secret_provider.resolve,
+            allowed_hosts=settings.ones_mcp.provider_allowed_hosts,
+            app_env=settings.environment,
+            allow_insecure_local=settings.ones_mcp.allow_insecure_local,
+        )
+        return KnowledgeOnesCollectionService(repo, factory, cancelled=stop.is_set).collect_once(
+            binding_id,
+            resume_run_id=checkpoint.run_id,
+            on_run_selected=checkpoint.select_run,
+        )
+    finally:
+        with suppress(Exception):
+            database.close()
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
@@ -52,6 +89,20 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
         settings = load_settings()
         if args.mode == "once":
             settings = load_master_key_settings(settings)
+            stop, checkpoint = Event(), RecoveryCheckpoint()
+            with stop_signals(stop):
+                result = recover_database(
+                    lambda: _collect_once(
+                        settings, stable_id("sync-binding", args.binding_code), stop, checkpoint
+                    ),
+                    dsn=settings.database_dsn,
+                    stop=stop,
+                    emit=emit,
+                    prefix="knowledge_collection",
+                    previously_connected=lambda: checkpoint.database_verified,
+                )
+            emit("knowledge_collection_staged", result)
+            return 0
         database = Database(settings.database_dsn)
         if database.engine != "postgres":
             raise ExportValidationError("knowledge_collection_postgres_required")
@@ -95,19 +146,6 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
                 enabled=args.mode == "enable",
                 expected_revision=args.expected_revision,
             )
-        if args.mode == "once":
-            secret_provider = EncryptedDbSecretProvider(
-                PlatformConfigRepository(database), master_key=settings.app_config_master_key
-            )
-            factory = ManagedOnesCollectionProviderFactory(
-                secret_provider.resolve,
-                allowed_hosts=settings.ones_mcp.provider_allowed_hosts,
-                app_env=settings.environment,
-                allow_insecure_local=settings.ones_mcp.allow_insecure_local,
-            )
-            result = KnowledgeOnesCollectionService(repo, factory).collect_once(binding_id)
-            emit("knowledge_collection_staged", result)
-            return 0
         if args.mode == "cancel":
             if not args.run_id:
                 raise ExportValidationError("knowledge_collection_arguments_invalid")
@@ -134,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
     except SchemaHeadError:
         code = "knowledge_schema_head_mismatch"
     except ExportValidationError as exc:
+        if exc.code == "knowledge_sync_cancelled":
+            emit("knowledge_collection_stopped", {"error_code": exc.code})
+            return 0
         code = exc.code
     except Exception:
         code = "knowledge_collection_failed"

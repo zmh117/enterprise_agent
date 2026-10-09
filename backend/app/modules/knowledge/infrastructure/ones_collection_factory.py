@@ -49,8 +49,8 @@ class ManagedOnesCollectionProviderFactory:
                 or any(ord(char) < 32 or ord(char) == 127 for char in token)
             ):
                 raise ValueError
-        except Exception:
-            raise ExportValidationError("knowledge_collection_identity_missing") from None
+        except Exception as exc:
+            raise ExportValidationError("knowledge_collection_identity_missing") from exc
         http = OnesProviderHttpClient(
             target,
             timeout_seconds=30,

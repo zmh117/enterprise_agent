@@ -25,6 +25,24 @@ python -m app.cli.sync_ones_knowledge --mode once --binding-code <binding-code> 
 
 无变化轮次只更新来源观察和激活水位，不重新分块、编码或发布；经完整来源确认的类型迁移可以产生空知识库 READY 代际。激活在同平台 PostgreSQL 短事务内一起切换受影响内容、资源发布指针及水位。提交后调用方失联可从 `ACTIVATED` 恢复成功事实；事务前失败继续保留上一可用版本。Knowledge MCP 仍按应用角色知识库授权和当前用户 ONES 可读权限双重检查，单次检索在版本切换时失败并要求重试，最多 120 秒。
 
+### 采集或同步期间重启 PostgreSQL
+
+`collect_ones_knowledge --mode once`、`sync_ones_knowledge --mode once` 和后台 `--mode daemon` 均自动恢复数据库瞬时断连，启动时数据库尚未就绪也会等待。检测失败后按 **5 → 10 → 20 → 40 → 60 秒**退避，随后每次最多等待 60 秒，无总次数上限；数据库连接检测本身有独立超时，不包含在这些等待秒数中。不需要反复手工启动采集或重新配置 binding。
+
+- 每次重试关闭旧连接并重新装配，严格校验 schema、绑定配置和启用状态，重新取得 worker/source 排他锁，恢复原 run 和持久阶段。
+- 未完成的创建日会重新枚举，已 staged UUID 不重复拉详情或生成重复候选；仅完整一天才推进日游标。分块/索引继续原候选代际，激活已提交但响应丢失时读取原成功状态，不重复发布。
+- 密码/身份、数据库名、权限、TLS 配置、schema 不匹配、配置/资源变化及业务数据校验错误不作为数据库断连循环重试。应处理错误原因后显式重跑；不会回退其他库、绕过校验或删除旧数据。
+- 等待期间可用 Ctrl+C 或容器 SIGTERM 停止；恢复后若发现 binding 已停用或原 run 已取消，不继续采集。数据库不可用期间无法读取库内开关，需要立即停止时使用进程/容器停止信号；在途请求仍受现有超时约束。已提交断点保留。
+
+重试日志只输出固定 `knowledge_collection_database_retry_pending` / `knowledge_sync_database_retry_pending` 事件、`knowledge_database_temporarily_unavailable` 错误码、次数和下次等待秒数，不输出底层异常、连接串或业务正文。本能力不改变默认停用和每小时触发设置；更新代码后需重建并重新创建同步容器，单纯 restart 不会装入新代码：
+
+```sh
+docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/sync.compose.yml --profile knowledge --profile knowledge-sync build knowledge-sync
+docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/sync.compose.yml --profile knowledge --profile knowledge-sync up -d --no-deps --force-recreate knowledge-sync
+```
+
+以上仅用于已启用采集的目标环境，本轮不自动启用本机采集或重启业务数据库。
+
 ## 可选每小时容器
 
 只在真实环境单次验收和独立启用授权后加载 `knowledge/sync.compose.yml`。必须同时设置 `KNOWLEDGE_SYNC_ENABLED=true`、固定 `KNOWLEDGE_SYNC_BINDING_CODE`、平台写入用 `KNOWLEDGE_SYNC_DATABASE_DSN`，并保持数据库绑定 `enabled=1`。受管主密钥由现有 Compose Secret 挂载，不在本文件或命令中填明文。同步容器需要访问固定 ONES 目标、PostgreSQL、内网 Embedding/Qdrant，以及只读挂载的 Qdrant 数据卷用于容量门禁。

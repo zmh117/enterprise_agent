@@ -38,8 +38,8 @@ class PlatformStorageCredentials:
             if any(not isinstance(v, str) or not 1 <= len(v) <= 8192 for v in result.values()):
                 raise ValueError
             return result
-        except Exception:
-            raise KnowledgeGovernanceError("knowledge_storage_credentials_unavailable") from None
+        except Exception as exc:
+            raise KnowledgeGovernanceError("knowledge_storage_credentials_unavailable") from exc
 
 
 class ManagedContentAccess:
@@ -68,8 +68,8 @@ class ManagedContentAccess:
                         GovernanceStore(self.platform_database),
                         VectorRepository(self.platform_database),
                     )
-                except (sqlite3.DatabaseError, PostgresError):
-                    raise KnowledgeGovernanceError("knowledge_storage_unavailable") from None
+                except (sqlite3.DatabaseError, PostgresError) as exc:
+                    raise KnowledgeGovernanceError("knowledge_storage_unavailable") from exc
                 return
             try:
                 assert_external_io_allowed("knowledge_content_connection")
@@ -111,10 +111,10 @@ class ManagedContentAccess:
                 )
             except (KnowledgeGovernanceError, IODeadlineExceeded):
                 raise
-            except Exception:
-                raise KnowledgeGovernanceError("knowledge_storage_unavailable") from None
+            except Exception as exc:
+                raise KnowledgeGovernanceError("knowledge_storage_unavailable") from exc
             try:
                 yield handle
             # yield 内含 Embedding/Qdrant/权限编排，不能把调用方的异常误报为数据库故障。
-            except (sqlite3.DatabaseError, PostgresError):
-                raise KnowledgeGovernanceError("knowledge_storage_unavailable") from None
+            except (sqlite3.DatabaseError, PostgresError) as exc:
+                raise KnowledgeGovernanceError("knowledge_storage_unavailable") from exc

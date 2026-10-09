@@ -1,6 +1,7 @@
 """显式本机索引和查询编排；外部 IO 始终在数据库事务之外。"""
 
 from collections.abc import Callable, Iterator
+from contextlib import suppress
 import time
 from typing import Any
 
@@ -202,9 +203,11 @@ class VectorService:
                             repo.checkpoint(index, group, "INDEXED")
                             encoded += len(group)
                         except Exception:
-                            repo.checkpoint(
-                                index, group, "FAILED", error="knowledge_vector_batch_failed"
-                            )
+                            # 数据库断连时不得让故障记账遮蔽原始错误。
+                            with suppress(Exception):
+                                repo.checkpoint(
+                                    index, group, "FAILED", error="knowledge_vector_batch_failed"
+                                )
                             raise
                     repo.checkpoint(index, rows, "INDEXED")
                     processed += len(rows)
@@ -245,8 +248,10 @@ class VectorService:
                 }
             except Exception as exc:
                 code = exc.code if isinstance(exc, VectorError) else "knowledge_vector_build_failed"
-                repo.state(index, "FAILED", code)
-                raise VectorError(code) from None
+                # 重连后由原索引 manifest/逐点检查恢复，保留原始 cause。
+                with suppress(Exception):
+                    repo.state(index, "FAILED", code)
+                raise VectorError(code) from exc
 
     def _reuse_source(self, snapshot: dict[str, Any], code: str | None) -> dict[str, Any] | None:
         if code is None:

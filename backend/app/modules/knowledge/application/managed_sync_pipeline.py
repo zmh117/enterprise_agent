@@ -65,12 +65,39 @@ class ManagedSyncPipeline:
         self.index_base = index_base
         self.activate = activate
 
-    def run_once(self, binding_id: str) -> dict[str, Any]:
+    def _resume_run(
+        self,
+        binding_id: str,
+        resume_run_id: str | None,
+        on_run_selected: Callable[[str], None] | None,
+    ) -> dict[str, Any] | None:
+        repo = self.repository
+        active = repo.run(resume_run_id) if resume_run_id else repo.active_collection(binding_id)
+        if active is not None:
+            if active["binding_id"] != binding_id:
+                raise ExportValidationError("knowledge_collection_scope_changed")
+            repo.assert_configuration(active)
+            if active["phase"] == "CANCELLED":
+                raise ExportValidationError("knowledge_sync_cancelled")
+            if on_run_selected is not None:
+                on_run_selected(active["id"])
+        return active
+
+    def run_once(
+        self,
+        binding_id: str,
+        *,
+        resume_run_id: str | None = None,
+        on_run_selected: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
         repo = self.repository
         binding = repo.binding(binding_id)
         if binding["enabled"] != 1:
             raise ExportValidationError("knowledge_collection_disabled")
-        active = repo.active_collection(binding_id)
+        active = self._resume_run(binding_id, resume_run_id, on_run_selected)
+        if active is not None:
+            if active["phase"] == "ACTIVATED":
+                return repo.summary(active["id"])
         run_id: str | None = active["id"] if active else None
         try:
             if active is None or active["phase"] == "COLLECTING":
@@ -106,10 +133,14 @@ class ManagedSyncPipeline:
             return self.activate(run_id)
         except Exception as exc:
             if run_id is not None:
-                repo.fail(
-                    run_id,
-                    exc.code
-                    if isinstance(exc, (ExportValidationError, VectorError))
-                    else "knowledge_sync_failed",
-                )
+                try:
+                    repo.fail(
+                        run_id,
+                        exc.code
+                        if isinstance(exc, (ExportValidationError, VectorError))
+                        else "knowledge_sync_failed",
+                    )
+                except Exception:
+                    # 标记失败是尽力而为，不能遮蔽需要恢复的数据库异常。
+                    pass
             raise

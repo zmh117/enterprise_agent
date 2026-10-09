@@ -62,6 +62,8 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 ONES 新版导出接口对应的受管全量采集入口见[全量采集手册](../docs/runbooks/knowledge-ones-full-collector.md)。其 `collect_ones_knowledge --mode once` 仍只产生候选；完整分块、建索引与切版需使用[受管同步入口](../docs/runbooks/knowledge-ones-hourly-sync.md)。小时同步 Compose 默认不加载，本机不连接真实 ONES、不启动它。
 
+单次采集、单次同步和后台同步均支持 PostgreSQL 重启后自动重连：断连后按 5/10/20/40/60 秒封顶退避等待，恢复原 run、日断点和索引阶段；密码、权限、schema 或配置错误不循环重试，等待可通过 Ctrl+C/SIGTERM 停止。部署更新与恢复边界见[数据库重启恢复说明](../docs/runbooks/knowledge-ones-hourly-sync.md#采集或同步期间重启-postgresql)。
+
 工具资源 Web 页面和检索资源管理合同见[知识治理管理与排障](../docs/runbooks/knowledge-governance.md)。代码已接线不等于真实资源已发布或 Agent 已通过真实检索验收。
 
 ## 在线 Knowledge MCP（独立可选扩展）
