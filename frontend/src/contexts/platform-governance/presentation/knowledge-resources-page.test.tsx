@@ -172,13 +172,22 @@ function setup({
         )
       if (url === `${prefix}/content-catalog`)
         return reply({
+          sources: [
+            {
+              id: "source",
+              code: "remote-source",
+              display_name: "合成远端来源",
+              source_system: "ones",
+              origin_state: "offline_unverified",
+            },
+          ],
           bases: [
             {
               id: "kb",
               code: "kb",
               display_name: "合成独立内容库",
               state: "storage_only",
-              source_ids: ["remote-source"],
+              source_ids: ["source"],
             },
           ],
           indexes: [
@@ -213,8 +222,15 @@ function setup({
             r.draft = { ...(r.draft as object), id: "other-admin-draft" }
           }
           return reply(
-            { detail: { error_code: "knowledge_verification_failed" } },
-            400
+            {
+              detail: {
+                error_code:
+                  verifyFailure === "timeout"
+                    ? "knowledge_verification_timeout"
+                    : "knowledge_verification_failed",
+              },
+            },
+            verifyFailure === "timeout" ? 503 : 400
           )
         }
         if (action === "draft") {
@@ -288,6 +304,96 @@ describe("知识资源管理", () => {
       storage,
     }
   }
+  it("存储列只展示连接方式，不把仅存储状态当成连接或发布状态", async () => {
+    const f = setup()
+    f.state.resources[0].published = draft("index", {
+      postgres: { mode: "platform" },
+      qdrant: externalStorage.qdrant,
+    })
+    f.render()
+    const row = (await screen.findByText("合成缺陷库")).closest("tr")!
+    expect(within(row).getByText("平台内容库")).toBeInTheDocument()
+    expect(within(row).getByText("合成离线批次")).toBeInTheDocument()
+    expect(within(row).getByText("已发布 v1")).toBeInTheDocument()
+    expect(screen.queryByText("仅存储")).not.toBeInTheDocument()
+    expect(f.calls).toHaveLength(0)
+  })
+  it("自定义连接只读加载目标来源，不使用同 ID 的平台名称；相同连接复用请求", async () => {
+    const f = setup()
+    f.state.resources[0].published = draft("remote-index", externalStorage)
+    f.state.resources.push({
+      ...resource(),
+      id: "res2",
+      code: "second",
+      name: "第二资源",
+      published: draft("remote-index", externalStorage),
+    })
+    const before = JSON.stringify(f.state)
+    f.render()
+    await waitFor(() =>
+      expect(screen.getAllByText("合成远端来源")).toHaveLength(2)
+    )
+    expect(screen.getAllByText("自定义内容连接")).toHaveLength(2)
+    expect(screen.queryByText("合成离线批次")).not.toBeInTheDocument()
+    expect(f.calls).toHaveLength(1)
+    expect(f.calls[0]).toEqual({
+      url: `${prefix}/content-catalog`,
+      method: "POST",
+      body: { storage: externalStorage },
+    })
+    expect(JSON.stringify(f.state)).toBe(before)
+    fireEvent.click(screen.getByRole("button", { name: "刷新知识资源" }))
+    await waitFor(() => expect(f.calls).toHaveLength(2))
+    expect(f.calls.every((c) => c.url.endsWith("/content-catalog"))).toBe(true)
+  })
+  it("自定义来源读取失败不回退平台名称，可显式重试且不改发布配置", async () => {
+    const f = setup({ fail: "knowledge_storage_unavailable" })
+    f.state.resources[0].published = draft("remote-index", externalStorage)
+    f.render()
+    expect(await screen.findByText("来源读取失败")).toBeInTheDocument()
+    expect(screen.queryByText("合成离线批次")).not.toBeInTheDocument()
+    expect(screen.getByText("已发布 v1")).toBeInTheDocument()
+    expect(f.calls).toHaveLength(1)
+    fireEvent.click(
+      screen.getByRole("button", { name: "重试 合成缺陷库 来源" })
+    )
+    await waitFor(() => expect(f.calls).toHaveLength(2))
+    expect(f.calls.every((c) => c.url.endsWith("/content-catalog"))).toBe(true)
+  })
+  it("只读管理者不调用需要管理权限的自定义目录接口", async () => {
+    const f = setup({ manage: false })
+    f.state.resources[0].published = draft("remote-index", externalStorage)
+    f.render()
+    expect(await screen.findByText("需管理权限读取来源")).toBeInTheDocument()
+    expect(screen.getByText("自定义内容连接")).toBeInTheDocument()
+    expect(f.calls).toHaveLength(0)
+  })
+  it("归档资源默认折叠，展开后可看历史但不视为当前发布", async () => {
+    const f = setup()
+    f.state.resources.push({
+      ...resource(),
+      id: "archived",
+      code: "old",
+      name: "合成归档库",
+      status: "archived",
+      published: draft("remote-index", externalStorage),
+    })
+    f.render()
+    const archiveButton = await screen.findByRole("button", {
+      name: "已归档资源（1）",
+    })
+    expect(archiveButton).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByText("合成归档库")).not.toBeInTheDocument()
+    expect(f.calls).toHaveLength(0)
+    fireEvent.click(archiveButton)
+    const row = (await screen.findByText("合成归档库")).closest("tr")!
+    expect(within(row).getByText("历史发布 v1")).toBeInTheDocument()
+    expect(within(row).queryByText("已发布 v1")).not.toBeInTheDocument()
+    expect(await within(row).findByText("合成远端来源")).toBeInTheDocument()
+    fireEvent.click(archiveButton)
+    expect(screen.queryByText("合成归档库")).not.toBeInTheDocument()
+    expect(f.calls).toHaveLength(1)
+  })
   async function selectExternalStorage() {
     fireEvent.change(screen.getByLabelText("连接配置方式"), {
       target: { value: "custom" },
@@ -433,7 +539,7 @@ describe("知识资源管理", () => {
     ).toBe(false)
     fireEvent.click(screen.getByRole("tab", { name: "知识库" }))
     expect(await screen.findByText("合成缺陷库")).toBeInTheDocument()
-    expect(screen.getByText("仅存储")).toBeInTheDocument()
+    expect(screen.getByText("平台内容库")).toBeInTheDocument()
     expect(screen.getByText("未发布")).toBeInTheDocument()
     expect(screen.queryByLabelText("数据库密码")).not.toBeInTheDocument()
   })
@@ -532,42 +638,55 @@ describe("知识资源管理", () => {
     expect(document.body).not.toHaveTextContent("synthetic-private")
     expect(screen.getByRole("button", { name: "发布知识资源" })).toBeDisabled()
   })
-  it("失败验证同步自身增加的修订，保留未保存连接、索引与目录，不重试验证或保存", async () => {
-    const f = setup({ verifyFailure: "failed" })
-    f.state.resources[0].draft = draft()
-    f.render()
-    await openResource()
-    await selectExternalStorage()
-    fireEvent.change(screen.getByLabelText("已就绪向量索引"), {
-      target: { value: "remote-index" },
-    })
-    fireEvent.click(screen.getByRole("button", { name: "验证草稿" }))
-    await waitFor(() =>
-      expect(screen.getByText("2 / 启用")).toBeInTheDocument()
-    )
-    expect(screen.getByRole("alert")).toHaveTextContent("Embedding/Qdrant")
-    expect(screen.getByLabelText("PostgreSQL 主机")).toHaveValue(
-      "synthetic-content"
-    )
-    expect(screen.getByLabelText("已就绪向量索引")).toHaveValue("remote-index")
-    expect(
-      screen.getByText("内容目录已读取；保存后仍需验证并发布。")
-    ).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "发布知识资源" })).toBeDisabled()
-    expect(f.calls.filter((c) => c.url.endsWith("/verify"))).toHaveLength(1)
-    expect(f.calls.some((c) => c.url.endsWith("/draft"))).toBe(false)
-    fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
-    await waitFor(() =>
-      expect(f.calls.some((c) => c.url.endsWith("/draft"))).toBe(true)
-    )
-    expect(f.calls.find((c) => c.url.endsWith("/draft"))?.body).toMatchObject({
-      expected_revision: 2,
-      index_id: "remote-index",
-      storage: externalStorage,
-    })
-    expect(f.state.resources[0].revision).toBe(3)
-    expect(f.calls.some((c) => c.url.endsWith("/publish"))).toBe(false)
-  })
+  it.each(["failed", "timeout"])(
+    "%s 验证同步自身增加的修订，保留未保存连接、索引与目录，不重试验证或保存",
+    async (verifyFailure) => {
+      const f = setup({ verifyFailure })
+      f.state.resources[0].draft = draft()
+      f.render()
+      await openResource()
+      await selectExternalStorage()
+      fireEvent.change(screen.getByLabelText("已就绪向量索引"), {
+        target: { value: "remote-index" },
+      })
+      fireEvent.click(screen.getByRole("button", { name: "验证草稿" }))
+      await waitFor(() =>
+        expect(screen.getByText("2 / 启用")).toBeInTheDocument()
+      )
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        verifyFailure === "timeout"
+          ? "连接检查超时（最多 30 秒）"
+          : "Embedding/Qdrant"
+      )
+      expect(screen.getByLabelText("PostgreSQL 主机")).toHaveValue(
+        "synthetic-content"
+      )
+      expect(screen.getByLabelText("已就绪向量索引")).toHaveValue(
+        "remote-index"
+      )
+      expect(
+        screen.getByText("内容目录已读取；保存后仍需验证并发布。")
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole("button", { name: "发布知识资源" })
+      ).toBeDisabled()
+      expect(f.calls.filter((c) => c.url.endsWith("/verify"))).toHaveLength(1)
+      expect(f.calls.some((c) => c.url.endsWith("/draft"))).toBe(false)
+      fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+      await waitFor(() =>
+        expect(f.calls.some((c) => c.url.endsWith("/draft"))).toBe(true)
+      )
+      expect(f.calls.find((c) => c.url.endsWith("/draft"))?.body).toMatchObject(
+        {
+          expected_revision: 2,
+          index_id: "remote-index",
+          storage: externalStorage,
+        }
+      )
+      expect(f.state.resources[0].revision).toBe(3)
+      expect(f.calls.some((c) => c.url.endsWith("/publish"))).toBe(false)
+    }
+  )
   it.each(["concurrent", "refresh-failed"])(
     "失败验证遇到 %s 时不盲目采用新修订，也不覆盖本地选择",
     async (verifyFailure) => {

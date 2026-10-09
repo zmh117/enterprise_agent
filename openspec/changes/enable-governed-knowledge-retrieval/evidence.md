@@ -1,5 +1,27 @@
 # 受治理知识检索实施证据
 
+## 管理连接验证简化（2026-10-09，任务 17）
+
+用户明确动态知识库不应在管理验证中复算全库，只要求连接正常。验证/发布现只读取 KB、READY 索引及已有草稿摘要，检查归属、profile 与兼容配置；验证探测内容 PostgreSQL、Embedding `/profile` 和 Qdrant 所选集合。不调用 `_configuration`、`members`、`source_items`、`member_source_items`、`source_hash`、`assert_current`、`snapshot`、`rows` 或 Qdrant exact count。已有索引/草稿 hash 只比较引用，不重新计算语料；固定 profile 摘要检查不是全库计算。
+
+复用现有 I/O deadline：管理验证/发布最长 30 秒，探针一次尝试，不重试；数据库等待和可取消 HTTP/DNS 共享截止。失败证据允许至多 1 秒独立收尾，迟到成功不能 VERIFIED。超时响应为 HTTP 503、固定 `knowledge_verification_timeout` 及中文信息。保持管理授权、草稿配置 hash、资源修订 CAS；显式连接缺失不回退默认 Qdrant。没有新增迁移、内容版本或证据封印，后台构建、保存草稿及运行时数据/双权限检查未改。
+
+工程验证：
+
+- `pytest -q -rs backend/tests/test_knowledge_*.py`：940 passed、35 skipped（306.52 秒）；跳过项要求显式隔离 PostgreSQL/Qdrant 或容器验收开关，非已完成真实环境验收。
+- 后续新增显式 Qdrant 不回退用例后，连接专项重跑：8 passed、33 deselected；全量统计不冒充包含此后新增用例。
+- Web 全量：17 文件、198 tests passed；覆盖超时失败修订恢复、未保存输入保留、禁止自动重试或发布。
+- Ruff 检查/格式、MyPy（74 源文件）、Web lint/typecheck/build、可选 Compose config、严格 change 校验、Markdown 链接及 diff 检查通过。Web 构建仍有既有大 bundle 警告，不是构建失败。
+- 合成故障覆盖无全量扫描、动态内容/计数变化、错误 KB/索引/profile/配置版本、依赖失败、撤权/草稿/状态竞争和迟到结果；临时本机 HTTP 滴流/不响应请求受截止取消，离线原有重试合同测试保留。
+
+本机部署与只读观察：
+
+- 仅定向构建/更新 `api-server`、`admin-web`，使用主 Compose＋knowledge 两个叠加文件及 `--no-deps --no-build`。没有重跑 Migrator、重启采集/索引/Embedding/Qdrant、清理孤立容器或修改凭据。
+- API healthy，`http://localhost:8080/api/health` 返回 200；部署 Web bundle `index-eI0QR-nO.js`，工具资源 chunk 含新连接验证说明。
+- 在 API 容器内通过现有受管连接适配器进行只读探针，进程内禁用全量成员/分块扫描方法。`mes_story` 与 `bug` 的 PostgreSQL＋Embedding＋Qdrant 配置连接均通过，分别 0.108 秒、0.051 秒。这是只读连接探针耗时，不是登录浏览器完整 verify/publish 请求的端到端耗时。
+- 维护前后角色 KB 关系均为 2 行、摘要 `948e37bd5fb32a55fbc2783d522674b3`；3 条资源修订/状态/草稿/发布指针摘要均为 `7459104c7bf2565b2d82812cdcbf7435`。未保存/验证/发布真实资源或修改授权；用户此前自己调整的现场状态原样保留。
+- 未访问用户报告超时的另一环境，也未执行真实 ONES/模型新 Job、浏览器点击发布或生产故障验收；任务 11.2–11.6 继续未完成。不提交或推送代码。
+
 ## 实施前核对（2026-09-18）
 
 - 实施起点 commit：`898a853`；开始时工作区干净。未执行 Docker 清理、真实部署、数据发布、授权配置或归档。

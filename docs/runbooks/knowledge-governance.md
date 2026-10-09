@@ -23,12 +23,14 @@ API/Worker/ONES 镜像更新须满足正式 Migrator 和平台 schema readiness 
 1. `GET /sources`、`GET /catalog` 查看已入库数据集和索引。来源只代表本地导入记录，不要求确认 ONES 地址、实例或 Team，不需要 ONES 密码/Token、证明摘要、Job 或导入确认 CLI。
 2. 默认 `POST /resources` 提交 `knowledge_base_id`、`code`、`name`；自定义连接先通过 `POST /content-catalog` 读取目录，创建时同时提交 `storage` 和 `index_id` 形成初始草稿。一个 KB 最多一个启用资源，创建不等于发布。
 3. `PUT /resources/{id}/draft` 提交 `expected_revision`、`index_id` 及可选 `storage`（空值/省略表示原部署连接）。服务端从所选内容库 KB 成员派生 source ID，核对文档身份和单一来源，固定成员/修订/项目/内容、连接与索引摘要；不接收来源绑定，不自动创建来源确认记录。
-4. `POST /resources/{id}/verify` 检查当前本地数据、READY 索引/profile、Embedding、Qdrant 配置与点数；服务停止时验证仍失败。数据库里的 READY 只表示索引构建状态，不证明服务在线。
-5. 验证通过后 `POST /resources/{id}/publish`，均携带最新 revision。发布不自动赋予角色权限；实际检索依旧需要 KB＋当前用户 ONES 逐项可读权限。
+4. `POST /resources/{id}/verify` 只检查内容 PostgreSQL 必要元数据可读、所选 KB/READY 索引归属和 profile、Embedding `/profile` 与 Qdrant 所选集合配置兼容连接；不扫描文档/成员/分块、不重算全库 hash、不统计向量点数。读取已有草稿/索引配置摘要只是核对引用，不重新计算语料。服务停止时验证仍失败；连接成功不代表本轮数据已同步完成。
+5. 验证通过后 `POST /resources/{id}/publish`，均携带最新 revision。发布仅复核索引配置、管理权限、验证所属草稿及并发修订，不再全量扫描。验证/发布总 I/O 最长 30 秒，探针不自动重试；超时返回 HTTP 503 和 `knowledge_verification_timeout` 中文 JSON，不等待网关 504。仅失败证据收尾至多另用 1 秒，不接受迟到成功。发布不自动赋予角色权限；实际检索依旧需要 KB＋当前用户 ONES 逐项可读权限。
+
+此简化仅针对管理验证/发布；保存草稿的现有来源摘要、后台分块/索引构建的全量完整性检查及运行时的数据一致性、双重授权不变，不新增内容版本或迁移。同步 INDEXING 仍可与连接检查竞争 I/O，但管理请求的工作量不再随文档/分块数量增加。
 
 历史来源确认 CLI/API 只为兼容留存，不再是新资源保存/发布或运行读取的前提。不得为解决按钮不可用而自动确认真实批次或绑定 Mock Team；撤销历史来源确认不影响新规则资源，应通过停用资源或撤销角色 KB 授权停止检索。
 
-管理 API 投影来源/资源/索引 ID、状态、版本、摘要和受管连接配置，不返回业务正文或凭据明文。外部 I/O 不占用平台事务，结束后复核管理授权、配置和来源；并发修改不能覆盖旧结果。连接变更需要新草稿/验证/发布，旧发布不受未发布编辑影响。
+管理 API 投影来源/资源/索引 ID、状态、版本、摘要和受管连接配置，不返回业务正文或凭据明文。外部 I/O 不占用平台事务，结束后复核管理授权、配置与索引引用；并发修改不能覆盖旧结果。连接变更需要新草稿/验证/发布，旧发布不受未发布编辑影响。
 
 Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页签并列，选择该页签后才加载知识目录。它复用上述 API：
 

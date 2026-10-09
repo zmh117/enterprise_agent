@@ -59,6 +59,27 @@ def managed(tmp_path, monkeypatch):
         yield runtime, client, vectors, sources, resources
 
 
+def test_management_timeout_returns_safe_json_not_gateway_timeout(managed, monkeypatch):
+    from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
+
+    runtime, client, *_ = managed
+
+    def timeout(**kwargs):
+        raise KnowledgeGovernanceError("knowledge_verification_timeout")
+
+    monkeypatch.setattr(runtime.knowledge_services, "verify_resource", timeout)
+    response = client.post(
+        ROOT + "/resources/synthetic/verify",
+        headers=csrf_headers(login(client)),
+        json={"expected_revision": 1},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "error_code": "knowledge_verification_timeout",
+        "message": "知识资源连接检查超时（最多 30 秒），请检查数据库与服务连接后重试",
+    }
+
+
 def create_binding(f, headers):
     runtime, client, *_ = f
     source = runtime.database.execute_one('select id from "knowledge.source"')
@@ -206,6 +227,14 @@ def test_content_catalog_and_resource_configuration_share_managed_connection(man
     assert response.status_code == 200
     assert access.calls[-1][0] == connection()
     catalog = response.json()
+    assert catalog["sources"]
+    assert set(catalog["sources"][0]) == {
+        "id",
+        "code",
+        "display_name",
+        "source_system",
+        "origin_state",
+    }
     assert "embedding_text" not in response.text and "password_ref" not in response.text
     body = {
         "knowledge_base_id": catalog["bases"][0]["id"],

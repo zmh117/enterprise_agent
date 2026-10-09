@@ -26,10 +26,14 @@ from app.modules.knowledge.application.ports import (
 )
 from app.modules.knowledge.domain.vector_contract import fingerprint
 from app.modules.platform_config.application.validation import assert_no_secret_payload
+from app.shared.io_deadline import IODeadline, IODeadlineExceeded, io_cleanup, io_deadline
 
 
 from app.modules.knowledge.domain.models import PinnedKnowledgeResource
 from app.modules.knowledge.domain.resource_configuration import configuration_values
+
+
+ADMINISTRATION_SECONDS = 30
 
 
 class KnowledgeResourceReader:
@@ -374,8 +378,41 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
             raise KnowledgeGovernanceError("knowledge_resource_unavailable")
         return self.store.get("retrieval_revision", resource["draft_revision_id"])
 
+    @staticmethod
+    def _draft_index(
+        resource: dict[str, Any], draft: dict[str, Any], content: KnowledgeContent
+    ) -> dict[str, Any]:
+        """管理连接检查只读固定元数据；不把动态语料扫描放入交互请求。"""
+        if draft["configuration_version"] not in {0, 2, 3, 4} or draft["binding_id"]:
+            raise KnowledgeGovernanceError("knowledge_resource_config_unsupported")
+        base = content.records.get("knowledge_base", resource["knowledge_base_id"])
+        raw_index = content.records.get("vector_index", draft["index_id"])
+        index = content.vectors.get(raw_index["code"])
+        if (
+            not index
+            or base["state"] != "storage_only"
+            or index["state"] != "READY"
+            or index["id"] != draft["index_id"]
+            or index["knowledge_base_id"] != base["id"]
+            or index["profile"] != content.vectors.profile
+            or index["profile_hash"] != fingerprint(content.vectors.profile)
+            or index["profile_hash"] != draft["profile_hash"]
+            or index["corpus_hash"] != draft["corpus_hash"]
+        ):
+            raise KnowledgeGovernanceError("knowledge_index_unavailable")
+        return index
+
     def verify_draft(
         self, *, actor_id: str, resource_id: str, expected_revision: int
+    ) -> dict[str, Any]:
+        try:
+            with io_deadline(ADMINISTRATION_SECONDS) as deadline:
+                return self._verify_draft(actor_id, resource_id, expected_revision, deadline)
+        except IODeadlineExceeded:
+            raise KnowledgeGovernanceError("knowledge_verification_timeout") from None
+
+    def _verify_draft(
+        self, actor_id: str, resource_id: str, expected_revision: int, deadline: IODeadline
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         with self.store.unit_of_work():
@@ -384,45 +421,52 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         failure: str | None = None
         try:
             selected = stored_config(draft.get("storage_config_json"))
-            config, _, index = self._configuration(
-                resource,
-                draft["index_id"],
-                storage=selected,
-                version=draft["configuration_version"],
-            )
-            if any(draft[key] != value for key, value in config.items()) or self.embedding is None:
-                raise KnowledgeGovernanceError("knowledge_verification_failed")
             with self.content(selected, base_id=resource["knowledge_base_id"]) as content:
-                qdrant = content.qdrant or self.qdrant
-                if qdrant is None:
+                index = self._draft_index(resource, draft, content)
+                qdrant = content.qdrant if selected is not None else content.qdrant or self.qdrant
+                if qdrant is None or self.embedding is None:
                     raise KnowledgeGovernanceError("knowledge_verification_failed")
-                content.vectors.assert_current(index)
+                deadline.check()
                 self.embedding.check()
+                deadline.check()
                 qdrant.check(index)
-                count = qdrant.count(index)
-            if type(count) is not int or count != index["expected_chunk_count"]:
-                raise KnowledgeGovernanceError("knowledge_verification_failed")
+                deadline.check()
+            with self.content(selected, base_id=resource["knowledge_base_id"]) as content:
+                current_index = self._draft_index(resource, draft, content)
+            # 只比较索引配置身份，不把不断增长的内容/计数当作连接验证结果。
+            keys = (
+                "id",
+                "code",
+                "knowledge_base_id",
+                "state",
+                "profile_hash",
+                "corpus_hash",
+                "chunk_profile_hash",
+                "collection_name",
+                "source_id",
+                "sync_run_id",
+            )
+            if any(current_index.get(key) != index.get(key) for key in keys):
+                raise KnowledgeGovernanceError("knowledge_resource_changed")
+            deadline.check()
             evidence = fingerprint(
                 {
-                    "config_hash": config["config_hash"],
-                    "points": count,
+                    "config_hash": draft["config_hash"],
+                    "checks": "postgres_embedding_qdrant_connections",
                 }
             )
         except Exception:
-            failure = "knowledge_verification_failed"
-            evidence = fingerprint({"config_hash": draft["config_hash"], "error_code": failure})
-        if not failure:
-            config, _, current_index = self._configuration(
-                resource,
-                draft["index_id"],
-                storage=selected,
-                version=draft["configuration_version"],
+            failure = (
+                "knowledge_verification_timeout"
+                if deadline.expired()
+                else "knowledge_verification_failed"
             )
-            if any(draft[k] != v for k, v in config.items()) or current_index != index:
-                raise KnowledgeGovernanceError("knowledge_resource_changed")
-            with self.content(selected, base_id=resource["knowledge_base_id"]) as content:
-                content.vectors.assert_current(current_index)
-        with self.store.unit_of_work():
+            evidence = fingerprint({"config_hash": draft["config_hash"], "error_code": failure})
+        # 仅失败证据可使用独立收尾预算，不能用它完成迟到的成功验证。
+        with (
+            io_cleanup() if failure else nullcontext(),
+            self.store.unit_of_work(),
+        ):
             self.require_admin(actor_id)
             current = self._write_resource(resource_id, expected_revision)
             if current != resource:
@@ -458,38 +502,41 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         return self.store.verification(revision_id)
 
     def publish(self, *, actor_id: str, resource_id: str, expected_revision: int) -> dict[str, Any]:
+        try:
+            with io_deadline(ADMINISTRATION_SECONDS):
+                return self._publish(actor_id, resource_id, expected_revision)
+        except IODeadlineExceeded:
+            raise KnowledgeGovernanceError("knowledge_verification_timeout") from None
+
+    def _publish(self, actor_id: str, resource_id: str, expected_revision: int) -> dict[str, Any]:
         self.require_admin(actor_id)
         before = self.store.get("retrieval_resource", resource_id)
         draft = self._draft(before)
         selected = stored_config(draft.get("storage_config_json"))
-        with self._mutation_scope(
-            before, draft["index_id"], storage=selected, version=draft["configuration_version"]
-        ) as (config, _, index):
-            with self.content(selected, base_id=before["knowledge_base_id"]) as content:
-                content.vectors.assert_current(index)
-            with self.store.unit_of_work():
-                resource = self._write_resource(resource_id, expected_revision)
-                self.require_admin(actor_id)
-                if resource != before:
-                    raise KnowledgeGovernanceError("knowledge_revision_conflict")
-                draft = self._draft(resource)
-                proof = self._verification(draft["id"])
-                if (
-                    resource["status"] != "enabled"
-                    or not proof
-                    or proof["status"] != "VERIFIED"
-                    or proof["config_hash"] != draft["config_hash"]
-                    or any(draft[k] != v for k, v in config.items())
-                ):
-                    raise KnowledgeGovernanceError("knowledge_resource_unavailable")
-                self.store.publish(resource_id, draft["id"], actor_id)
-                self.record(
-                    "resource.published",
-                    actor_id=actor_id,
-                    identifier=resource_id,
-                    revision=expected_revision + 1,
-                )
-                return self.view(resource_id)
+        with self.content(selected, base_id=before["knowledge_base_id"]) as content:
+            self._draft_index(before, draft, content)
+        with self.store.unit_of_work():
+            resource = self._write_resource(resource_id, expected_revision)
+            self.require_admin(actor_id)
+            if resource != before:
+                raise KnowledgeGovernanceError("knowledge_revision_conflict")
+            draft = self._draft(resource)
+            proof = self._verification(draft["id"])
+            if (
+                resource["status"] != "enabled"
+                or not proof
+                or proof["status"] != "VERIFIED"
+                or proof["config_hash"] != draft["config_hash"]
+            ):
+                raise KnowledgeGovernanceError("knowledge_resource_unavailable")
+            self.store.publish(resource_id, draft["id"], actor_id)
+            self.record(
+                "resource.published",
+                actor_id=actor_id,
+                identifier=resource_id,
+                revision=expected_revision + 1,
+            )
+            return self.view(resource_id)
 
     def set_status(
         self, *, actor_id: str, resource_id: str, expected_revision: int, status: str

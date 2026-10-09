@@ -39,7 +39,9 @@ export function KnowledgeError({ error }: { error: unknown }) {
         "本地数据已变化，请检查数据并重新保存、验证和发布。",
       knowledge_verifier_unavailable: "受信 ONES 核验服务尚未配置。",
       knowledge_verification_failed:
-        "技术验证失败，请检查本地数据、索引，以及 Embedding/Qdrant 服务。无需核验 ONES 地址或 Team。",
+        "连接验证失败，请检查 PostgreSQL、索引配置及 Embedding/Qdrant 服务。无需核验 ONES 地址或 Team。",
+      knowledge_verification_timeout:
+        "连接检查超时（最多 30 秒），请检查 PostgreSQL、Embedding 和 Qdrant 连接后重试。原发布不变。",
       knowledge_resource_unavailable:
         "资源状态不允许此操作，请检查来源、草稿验证和启停状态。",
       knowledge_resource_conflict: "该知识库已有启用资源，或资源编码已存在。",

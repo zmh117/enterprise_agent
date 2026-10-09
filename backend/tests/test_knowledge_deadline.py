@@ -90,6 +90,27 @@ def test_total_http_timeout_cancels_slow_stream_not_only_idle_read(path):
             assert disconnected.wait(0.5)
 
 
+@pytest.mark.parametrize("path", ["/drip", "/stall"])
+def test_admin_vector_probe_uses_cancellable_http_without_job_budget(path):
+    from app.modules.knowledge.infrastructure.vector_clients import InternalHttp
+    from app.shared.io_deadline import io_deadline
+
+    with local_server() as (url, paths, disconnected):
+        client = InternalHttp("http://knowledge-embedding:8096")
+        # 只替换合成本机服务地址；生产仍由固定服务/受管连接策略构造。
+        client.endpoint = url
+        started = time.monotonic()
+        try:
+            with pytest.raises(TimeoutError), io_deadline(0.25):
+                client.request("GET", path)
+            assert time.monotonic() - started < 0.8
+            assert paths == [path]
+            if path == "/drip":
+                assert disconnected.wait(0.5)
+        finally:
+            client.close()
+
+
 @pytest.mark.parametrize("path,maximum", [("/encoding", 1024), ("/ok", 1)])
 def test_http_encoding_and_size_fail_closed(path, maximum):
     with local_server() as (url, _, _):

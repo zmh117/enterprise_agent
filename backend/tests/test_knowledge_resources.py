@@ -389,7 +389,7 @@ def test_stale_revision_and_edit_after_verify_require_fresh_verification(resourc
         )
 
 
-@pytest.mark.parametrize("change", ["draft", "source", "status", "index", "permission"])
+@pytest.mark.parametrize("change", ["draft", "status", "index", "permission"])
 def test_validation_external_io_has_no_transaction_and_changes_are_rechecked(resources, change):
     db, vector, service, resource, binding, permission = resources
     saved = draft(resources)
@@ -399,8 +399,6 @@ def test_validation_external_io_has_no_transaction_and_changes_are_rechecked(res
         original()
         if change == "draft":
             draft(resources)
-        elif change == "source":
-            db.execute('update "knowledge.document_revision" set source_project_id=?', ("changed",))
         elif change == "status":
             service.set_status(
                 actor_id=ACTOR,
@@ -420,7 +418,9 @@ def test_validation_external_io_has_no_transaction_and_changes_are_rechecked(res
         service.verify_draft(
             actor_id=ACTOR, resource_id=resource["id"], expected_revision=saved["revision"]
         )
-    assert not db.execute('select * from "knowledge.retrieval_verification"')
+    assert not db.execute(
+        "select * from \"knowledge.retrieval_verification\" where status='VERIFIED'"
+    )
 
 
 def test_later_failed_verification_cannot_reuse_earlier_success_even_when_clock_moves_back(
@@ -469,7 +469,7 @@ def test_no_ones_binding_required_and_no_source_or_vector_rewrites(resources):
     assert source_fingerprint(db) == before and vector.qdrant.points == points
 
 
-@pytest.mark.parametrize("dependency", ["embedding", "qdrant", "point_count"])
+@pytest.mark.parametrize("dependency", ["embedding", "qdrant"])
 def test_no_binding_does_not_bypass_technical_validation(resources, dependency, monkeypatch):
     _, vector, service, resource, _, _ = resources
     saved = draft(resources)
@@ -477,10 +477,7 @@ def test_no_binding_does_not_bypass_technical_validation(resources, dependency, 
     def unavailable(*args):
         raise RuntimeError("synthetic private dependency detail")
 
-    if dependency == "point_count":
-        monkeypatch.setattr(vector.qdrant, "count", lambda _: 0)
-    else:
-        monkeypatch.setattr(getattr(vector, dependency), "check", unavailable)
+    monkeypatch.setattr(getattr(vector, dependency), "check", unavailable)
     with pytest.raises(KnowledgeGovernanceError, match="knowledge_verification_failed"):
         service.verify_draft(
             actor_id=ACTOR, resource_id=resource["id"], expected_revision=saved["revision"]
@@ -491,6 +488,132 @@ def test_no_binding_does_not_bypass_technical_validation(resources, dependency, 
         service.publish(
             actor_id=ACTOR, resource_id=resource["id"], expected_revision=current["revision"]
         )
+
+
+def test_connection_verification_and_publication_never_scan_dynamic_content(resources, monkeypatch):
+    db, vector, service, resource, _, _ = resources
+    saved = draft(resources)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("interactive verification must not scan content or count points")
+
+    for name in ("members", "source_items", "member_source_items", "source_hash"):
+        monkeypatch.setattr(service.store, name, forbidden)
+    for name in ("assert_current", "snapshot", "rows"):
+        monkeypatch.setattr(service.vectors, name, forbidden)
+    monkeypatch.setattr(service, "_configuration", forbidden)
+    monkeypatch.setattr(vector.qdrant, "count", forbidden)
+    original = vector.embedding.check
+
+    def dynamic_update():
+        original()
+        db.execute('update "knowledge.document_revision" set source_project_id=?', ("changed",))
+        db.execute(
+            'update "knowledge.vector_index" set expected_document_count=99999,expected_chunk_count=199998'
+        )
+
+    monkeypatch.setattr(vector.embedding, "check", dynamic_update)
+    verified = service.verify_draft(
+        actor_id=ACTOR, resource_id=resource["id"], expected_revision=saved["revision"]
+    )
+    assert verified["verification"]["status"] == "VERIFIED"
+    published = service.publish(
+        actor_id=ACTOR, resource_id=resource["id"], expected_revision=verified["revision"]
+    )
+    assert published["published"]["id"] == saved["draft"]["id"]
+
+
+@pytest.mark.parametrize("change", ["owner", "state", "profile", "corpus", "version"])
+def test_connection_verification_still_checks_index_reference(resources, change, monkeypatch):
+    db, _, service, resource, _, _ = resources
+    saved = draft(resources)
+    if change == "version":
+        original_draft = service._draft
+        monkeypatch.setattr(
+            service, "_draft", lambda row: {**original_draft(row), "configuration_version": 999}
+        )
+    else:
+        key, value = {
+            "owner": ("knowledge_base_id", "other-base"),
+            "state": ("state", "BUILDING"),
+            "profile": ("profile_hash", "f" * 64),
+            "corpus": ("corpus_hash", "f" * 64),
+        }[change]
+        original = service.vectors.get
+        monkeypatch.setattr(service.vectors, "get", lambda code: {**original(code), key: value})
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_verification_failed"):
+        service.verify_draft(
+            actor_id=ACTOR, resource_id=resource["id"], expected_revision=saved["revision"]
+        )
+    assert service.view(resource["id"])["verification"]["status"] == "FAILED"
+
+
+def test_connection_deadline_rejects_late_success_and_preserves_old_publication(
+    resources, monkeypatch
+):
+    from app.shared.io_deadline import current_io_deadline
+
+    db, vector, service, resource, _, _ = resources
+    old = publish(resources)
+    saved = draft(resources)
+    called = []
+
+    def expire():
+        deadline = current_io_deadline()
+        assert deadline is not None and deadline.timeout(180) <= 30
+        object.__setattr__(deadline, "expires", 0)
+        # 即使依赖不合作并返回成功，也不能留下 VERIFIED。
+
+    monkeypatch.setattr(vector.embedding, "check", expire)
+    monkeypatch.setattr(vector.qdrant, "check", lambda _: called.append("qdrant"))
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_verification_timeout"):
+        service.verify_draft(
+            actor_id=ACTOR, resource_id=resource["id"], expected_revision=saved["revision"]
+        )
+    current = service.view(resource["id"])
+    assert current["verification"]["status"] == "FAILED"
+    assert current["verification"]["error_code"] == "knowledge_verification_timeout"
+    assert current["published"]["id"] == old["published"]["id"]
+    assert not called  # 截止后不发起下一依赖请求。
+    with pytest.raises(KnowledgeGovernanceError):
+        service.publish(
+            actor_id=ACTOR, resource_id=resource["id"], expected_revision=current["revision"]
+        )
+    assert service.view(resource["id"])["published"] == old["published"]
+    assert "private" not in json.dumps(
+        db.execute('select * from "knowledge.retrieval_verification"'), default=str
+    )
+
+
+def test_configured_qdrant_connection_never_falls_back_to_default(resources, monkeypatch):
+    from contextlib import contextmanager
+    from app.modules.knowledge.application.content_access import KnowledgeContent
+    from backend.tests.test_knowledge_storage_connections import connection, SyntheticContentAccess
+
+    db, vector, service, resource, _, _ = resources
+    service.content_access = SyntheticContentAccess(db, vector)
+    saved = service.save_draft(
+        actor_id=ACTOR,
+        resource_id=resource["id"],
+        expected_revision=resource["revision"],
+        index_id=vector.repository.get("synthetic-v1")["id"],
+        storage=connection(),
+    )
+
+    @contextmanager
+    def missing_qdrant(*args, **kwargs):
+        yield KnowledgeContent(service.store, service.vectors)
+
+    def forbidden(*args):
+        pytest.fail("configured connection must not fall back to default Qdrant")
+
+    monkeypatch.setattr(service.content_access, "open", missing_qdrant)
+    monkeypatch.setattr(vector.qdrant, "check", forbidden)
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_verification_failed"):
+        service.verify_draft(
+            actor_id=ACTOR, resource_id=resource["id"], expected_revision=saved["revision"]
+        )
+    assert service.view(resource["id"])["verification"]["status"] == "FAILED"
 
 
 def test_legacy_binding_publication_requires_explicit_resave_without_rewriting_history(

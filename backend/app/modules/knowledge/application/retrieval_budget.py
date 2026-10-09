@@ -13,7 +13,7 @@ from typing import ParamSpec, TypeVar
 from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError, strict_object
 from app.shared.ones_io_budget import ones_io_budget
-from app.shared.io_deadline import IODeadlineExceeded, io_deadline
+from app.shared.io_deadline import IODeadlineExceeded, io_deadline, io_wait_timeout
 
 DEADLINE_HEADER = "X-Knowledge-Deadline-Ms"
 MAX_RETRIEVAL_SECONDS = 120
@@ -147,6 +147,7 @@ def current_budget() -> RetrievalBudget | None:
 
 
 def io_timeout(configured: float) -> float:
+    configured = io_wait_timeout(configured)
     budget = current_budget()
     if budget is None:
         return configured

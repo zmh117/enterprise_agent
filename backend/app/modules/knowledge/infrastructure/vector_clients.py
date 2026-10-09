@@ -18,6 +18,7 @@ from app.modules.knowledge.infrastructure.embedding_profile import profile
 from app.shared.database import assert_external_io_allowed
 from app.modules.knowledge.application.retrieval_budget import current_budget, io_timeout
 from app.shared.bounded_read_http import request_bytes
+from app.shared.io_deadline import current_io_deadline
 from app.modules.knowledge.domain.hybrid import (
     BM25_OPTIONS,
     HYBRID_CONTRACT,
@@ -68,7 +69,7 @@ class InternalHttp:
         self, method: str, path: str, value: Any = None, *, missing_ok: bool = False
     ) -> Any:
         assert_external_io_allowed("knowledge_vector_http")
-        attempts = 1 if current_budget() is not None else 3
+        attempts = 1 if current_io_deadline() is not None or current_budget() is not None else 3
         for attempt in range(attempts):
             try:
                 status, data = self._read(method, path, value)
@@ -111,7 +112,11 @@ class InternalHttp:
         raise VectorError("knowledge_vector_unavailable")
 
     def _read(self, method: str, path: str, value: Any) -> tuple[int, bytes]:
-        if (current_budget() is not None or self._managed_qdrant) and self._transport is None:
+        if (
+            current_io_deadline() is not None
+            or current_budget() is not None
+            or self._managed_qdrant
+        ) and self._transport is None:
             return request_bytes(
                 method,
                 self.endpoint + path,

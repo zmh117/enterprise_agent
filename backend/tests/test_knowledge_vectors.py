@@ -303,6 +303,29 @@ def test_client_profile_order_retry_redirect_and_transaction_boundary(monkeypatc
         InternalHttp("https://example.invalid")
 
 
+def test_administration_deadline_limits_http_and_disables_retry(monkeypatch):
+    from app.shared.io_deadline import io_deadline
+
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert 0 < request.extensions["timeout"]["read"] <= 0.5
+        return httpx.Response(503)
+
+    def forbidden(_):
+        pytest.fail("connection probes must not retry or sleep")
+
+    monkeypatch.setattr("app.modules.knowledge.infrastructure.vector_clients.time.sleep", forbidden)
+    client = InternalHttp("http://knowledge-embedding:8096", transport=httpx.MockTransport(handler))
+    try:
+        with io_deadline(0.5), pytest.raises(VectorError, match="knowledge_vector_unavailable"):
+            client.request("GET", "/profile")
+        assert len(calls) == 1
+    finally:
+        client.close()
+
+
 def test_network_io_is_rejected_inside_transaction(prepared):
     db, service, snapshot = prepared
     calls = []

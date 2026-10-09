@@ -151,13 +151,16 @@ class GovernanceStore:  # noqa: PLR0904
 
     def source_catalog(self) -> dict[str, Any]:
         return {
-            "sources": self.database.execute(
-                f"select id,code,display_name,source_system,origin_state from {self.t('source')} order by id"
-            ),
+            "sources": self.sources(),
             "bindings": self.database.execute(
                 f"select * from {self.t('source_binding')} order by source_id,revision"
             ),
         }
+
+    def sources(self) -> list[dict[str, Any]]:
+        return self.database.execute(
+            f"select id,code,display_name,source_system,origin_state from {self.t('source')} order by id"
+        )
 
     def catalog(self) -> dict[str, Any]:
         bases = self.database.execute(
@@ -173,6 +176,7 @@ class GovernanceStore:  # noqa: PLR0904
                 row["source_id"] for row in memberships if row["knowledge_base_id"] == base["id"]
             )
         return {
+            "sources": self.sources(),
             "bases": bases,
             "indexes": self.database.execute(
                 f"select id,code,knowledge_base_id,state,profile_hash,corpus_hash from {self.t('vector_index')} order by id"

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
-### Requirement: 知识资源配置只验证本地数据与索引，不要求 ONES 来源确认
-保存、验证和发布 SHALL 不要求用户填写或确认 ONES 地址、实例或 Team，不要求导入确认 CLI、证明摘要、Job 或 ONES 凭据。系统 SHALL 从所选内容库已有 KB 成员派生导入来源，核对完整文档身份/修订/项目、READY 索引和 profile/hash；技术验证 SHALL 检查固定内部 Embedding、所选 Qdrant 兼容性与点数。外部 Provider 授权 SHALL 留在运行时逐项检查，不得用配置验证成功替代。
+### Requirement: 知识资源配置只验证连接与索引配置，不要求 ONES 来源确认
+保存、验证和发布 SHALL 不要求用户填写或确认 ONES 地址、实例或 Team，不要求导入确认 CLI、证明摘要、Job 或 ONES 凭据。保存草稿 SHALL 沿用现有来源与配置摘要规则。技术验证 SHALL 仅检查内容 PostgreSQL 必要元数据可读、KB/READY 索引归属与 profile、固定内部 Embedding 和所选 Qdrant 集合配置兼容连接。管理验证及发布 MUST NOT 遍历成员、正文或分块、重新计算全库内容 hash 或统计 Qdrant 点数，MUST 受最长 30 秒总 I/O 截止约束且不重试探针；截止后只允许至多 1 秒失败证据收尾，不得标记验证成功。配置变更仍须重新验证，发布仍须核对管理权限、所验证草稿摘要及并发修订。后台索引完整性与运行时数据/双权限校验不因连接验证成功而跳过。
 
 新资源修订 MUST NOT 创建虚假 CONFIRMED 来源或沿用历史来源确认门禁。历史绑定及资源/验证/发布证据原样保留；旧版本 MUST 重新保存、验证和发布，不自动改写 hash 或授权。source/KB 离线状态和 document/revision/chunk/point 身份及原 hash MUST 保持不变，不重编码。
 
@@ -10,8 +10,12 @@
 - **THEN** 有管理权限的用户可以保存草稿并完成本地技术验证及发布，不发出 ONES 请求、不要求地址/Team 或凭据
 
 #### Scenario: 技术依赖不具备条件
-- **WHEN** 数据成员/修订变化，索引不兼容，或 Embedding/Qdrant 不可用
-- **THEN** 系统拒绝验证或发布，不能以移除来源确认为由跳过技术验证
+- **WHEN** 内容库不可读、索引未就绪或不兼容、Embedding/Qdrant 不可用或总截止到达
+- **THEN** 验证安全失败，不改变已有发布，不把原始远端异常或凭据写入响应和审计
+
+#### Scenario: 动态内容不触发管理全量复算
+- **WHEN** 知识库持续增加或更新文档且所选索引配置仍兼容
+- **THEN** 管理验证及发布只读取固定数量的配置元数据，不计算成员/分块 hash 或点数；后台构建和运行时一致性检查仍独立执行，连接成功不代表语料已同步完成
 
 #### Scenario: 历史配置升级
 - **WHEN** 系统应用前向迁移

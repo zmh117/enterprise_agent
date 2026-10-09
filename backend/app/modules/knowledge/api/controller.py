@@ -66,7 +66,11 @@ async def invoke(operation: Any, **arguments: Any) -> Any:
         return await run_in_threadpool(operation, **arguments)
     except AppError as exc:
         raise HTTPException(
-            403 if isinstance(exc, PermissionDenied) else 400,
+            403
+            if isinstance(exc, PermissionDenied)
+            else 503
+            if exc.error_code == "knowledge_verification_timeout"
+            else 400,
             detail={
                 "error_code": exc.error_code or "knowledge_access_denied",
                 "message": exc.safe_message,

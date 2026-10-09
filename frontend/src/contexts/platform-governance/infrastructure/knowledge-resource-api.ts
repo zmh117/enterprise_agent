@@ -28,8 +28,8 @@ export async function getKnowledgeInventory(): Promise<KnowledgeInventory> {
     apiRequest(`${base}/resources`),
   ])
   return {
-    ...knowledgeSourcesSchema.parse(sources),
     ...knowledgeCatalogSchema.parse(catalog),
+    ...knowledgeSourcesSchema.parse(sources),
     ...knowledgeResourcesSchema.parse(resources),
   }
 }

@@ -133,6 +133,14 @@ def test_two_databases_publish_and_read_without_platform_content_or_rewrites(gov
         content_access=access,
     )
     try:
+        catalog = resources.catalog(storage=connection())
+        assert catalog["sources"] == GovernanceStore(content_db).source_catalog()["sources"]
+        assert catalog["sources"]
+        assert GovernanceStore(platform).catalog()["sources"] == []
+        assert all(
+            set(source) == {"id", "code", "display_name", "source_system", "origin_state"}
+            for source in catalog["sources"]
+        )
         resource = resources.create(
             actor_id="synthetic_admin",
             knowledge_base_id=snapshot["knowledge_base_id"],

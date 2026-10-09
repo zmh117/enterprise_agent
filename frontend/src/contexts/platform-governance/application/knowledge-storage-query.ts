@@ -1,7 +1,26 @@
 import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import type { KnowledgeStorage } from "@/contexts/platform-governance/domain/knowledge-resource"
 import { getKnowledgeContentCatalog } from "@/contexts/platform-governance/infrastructure/knowledge-resource-api"
+
+export const knowledgeContentCatalogKey = [
+  "platform-governance",
+  "knowledge-content",
+] as const
+
+export function useKnowledgeContentCatalog(
+  storage: KnowledgeStorage | null,
+  enabled: boolean
+) {
+  return useQuery({
+    queryKey: [...knowledgeContentCatalogKey, storage],
+    queryFn: () => getKnowledgeContentCatalog(storage!),
+    enabled: enabled && storage !== null,
+    retry: false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
 
 export function useKnowledgeStorage(initial: KnowledgeStorage | null = null) {
   const [storage, updateStorage] = useState<KnowledgeStorage | null>(initial)

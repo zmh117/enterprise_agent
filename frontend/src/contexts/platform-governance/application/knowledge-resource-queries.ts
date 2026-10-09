@@ -3,15 +3,25 @@ import {
   changeKnowledgeResource,
   getKnowledgeInventory,
 } from "@/contexts/platform-governance/infrastructure/knowledge-resource-api"
+import { knowledgeContentCatalogKey } from "./knowledge-storage-query"
 
 const key = ["platform-governance", "knowledge"] as const
 export function useKnowledgeInventory(enabled: boolean) {
-  return useQuery({
+  const client = useQueryClient()
+  const query = useQuery({
     queryKey: key,
     queryFn: getKnowledgeInventory,
     enabled,
     retry: false,
   })
+  return {
+    ...query,
+    refresh: () =>
+      Promise.all([
+        query.refetch(),
+        client.invalidateQueries({ queryKey: knowledgeContentCatalogKey }),
+      ]),
+  }
 }
 export function useKnowledgeCommand() {
   const client = useQueryClient()

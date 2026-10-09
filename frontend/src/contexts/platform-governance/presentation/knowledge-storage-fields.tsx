@@ -109,7 +109,7 @@ export function KnowledgeStorageFields({
             >
               <option value="platform">当前平台实例的 knowledge schema</option>
               <option value="external">
-                独立 PostgreSQL 实例的 knowledge schema
+                自定义 PostgreSQL 连接的 knowledge schema
               </option>
             </select>
           </KnowledgeField>

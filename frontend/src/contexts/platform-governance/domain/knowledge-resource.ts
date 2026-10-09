@@ -39,19 +39,19 @@ export const knowledgeBindingSchema = z.object({
   team_id: identifier,
   state: z.enum(["PENDING", "CONFIRMED", "VERIFIED", "REVOKED"]),
 })
+const knowledgeSourceSchema = z.object({
+  id: identifier,
+  code: z.string(),
+  display_name: z.string(),
+  source_system: z.string(),
+  origin_state: z.string(),
+})
 export const knowledgeSourcesSchema = z.object({
-  sources: z.array(
-    z.object({
-      id: identifier,
-      code: z.string(),
-      display_name: z.string(),
-      source_system: z.string(),
-      origin_state: z.string(),
-    })
-  ),
+  sources: z.array(knowledgeSourceSchema),
   bindings: z.array(knowledgeBindingSchema),
 })
 export const knowledgeCatalogSchema = z.object({
+  sources: z.array(knowledgeSourceSchema).default([]),
   bases: z.array(
     z.object({
       id: identifier,

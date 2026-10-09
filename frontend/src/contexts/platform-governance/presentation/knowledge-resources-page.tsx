@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ApiError } from "@/shared/api/api-client"
 import { KnowledgeStorageFields } from "./knowledge-storage-fields"
+import { KnowledgeResourceTable } from "./knowledge-resource-table"
 import { useKnowledgeStorage } from "@/contexts/platform-governance/application/knowledge-storage-query"
 import {
   Sheet,
@@ -59,6 +60,7 @@ export function KnowledgeResourcesPage() {
   } | null>(null)
   const [notice, setNotice] = useState("")
   const [search, setSearch] = useState("")
+  const [showArchived, setShowArchived] = useState(false)
   function confirm(command: KnowledgeCommand, message: string) {
     mutation.reset()
     setNotice("")
@@ -80,7 +82,10 @@ export function KnowledgeResourcesPage() {
       if (
         command.kind === "verify" &&
         error instanceof ApiError &&
-        error.code === "knowledge_verification_failed"
+        [
+          "knowledge_verification_failed",
+          "knowledge_verification_timeout",
+        ].includes(error.code)
       ) {
         setRecoveringRevision(true)
         try {
@@ -145,6 +150,24 @@ export function KnowledgeResourcesPage() {
       </p>
     )
   const data = inventory.data
+  const filteredResources =
+    data?.resources.filter((r) =>
+      `${r.name} ${r.code}`.toLowerCase().includes(search.toLowerCase())
+    ) ?? []
+  const currentResources = filteredResources.filter(
+    (r) => r.status !== "archived"
+  )
+  const archivedResources = filteredResources.filter(
+    (r) => r.status === "archived"
+  )
+  const tableProps = {
+    canManage,
+    pending,
+    onOpen: (resource: KnowledgeResource) => {
+      mutation.reset()
+      setEditing(resource)
+    },
+  }
   return (
     <div className="mx-auto grid w-full max-w-[1500px] gap-5 px-4 py-5 sm:px-6 lg:px-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -163,7 +186,7 @@ export function KnowledgeResourcesPage() {
           <Button
             variant="outline"
             disabled={inventory.isFetching || pending}
-            onClick={() => void inventory.refetch()}
+            onClick={() => void inventory.refresh()}
           >
             刷新知识资源
           </Button>
@@ -204,108 +227,42 @@ export function KnowledgeResourcesPage() {
               placeholder="名称或编码"
             />
           </KnowledgeField>
-          <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full text-left text-sm">
-              <caption className="p-3 text-left text-muted-foreground">
-                入库、索引和发布是不同状态；发布也不能替代 KB＋本人 ONES
-                双重授权。
-              </caption>
-              <thead className="border-b bg-muted/40">
-                <tr>
-                  {["知识资源", "存储", "来源", "索引", "检索发布", "操作"].map(
-                    (x) => (
-                      <th key={x} className="p-3 font-medium">
-                        {x}
-                      </th>
-                    )
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {data.resources
-                  .filter((r) =>
-                    `${r.name} ${r.code}`
-                      .toLowerCase()
-                      .includes(search.toLowerCase())
-                  )
-                  .map((resource) => {
-                    const base = data.bases.find(
-                      (b) => b.id === resource.knowledge_base_id
-                    )
-                    const revision = resource.published ?? resource.draft
-                    const index = data.indexes.find(
-                      (i) => i.id === revision?.index_id
-                    )
-                    return (
-                      <tr key={resource.id} className="border-b last:border-0">
-                        <td className="p-3">
-                          <p>{resource.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {resource.code} · {knowledgeStatus(resource.status)}
-                          </p>
-                        </td>
-                        <td className="p-3">
-                          {revision?.storage?.postgres.mode === "external"
-                            ? "独立内容库"
-                            : base
-                              ? knowledgeStatus(base.state)
-                              : "未找到知识库"}
-                        </td>
-                        <td className="p-3">
-                          {revision?.storage?.postgres.mode === "external"
-                            ? "来源记录位于内容库"
-                            : base?.source_ids
-                                .map(
-                                  (id) =>
-                                    data.sources.find((s) => s.id === id)
-                                      ?.display_name ?? id
-                                )
-                                .join("、") || "无已收录数据"}
-                        </td>
-                        <td className="p-3">
-                          {revision?.storage
-                            ? `已绑定 ${revision.index_id}`
-                            : index
-                              ? knowledgeStatus(index.state)
-                              : "未选择"}
-                        </td>
-                        <td className="p-3">
-                          {resource.published
-                            ? `已发布 v${resource.published.revision}`
-                            : "未发布"}
-                          {resource.draft && (
-                            <p className="text-xs">
-                              草稿 v{resource.draft.revision} ·{" "}
-                              {canPublishKnowledge(resource)
-                                ? "验证通过"
-                                : "待验证"}
-                            </p>
-                          )}
-                        </td>
-                        <td className="p-3">
-                          <Button
-                            variant="outline"
-                            disabled={pending}
-                            onClick={() => {
-                              mutation.reset()
-                              setEditing(resource)
-                            }}
-                            aria-label={`查看 ${resource.name}`}
-                          >
-                            详情与配置
-                          </Button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-              </tbody>
-            </table>
-            {data.resources.length === 0 && (
-              <p className="p-5 text-sm">
-                尚无知识检索资源。已有入库数据不会自动发布。
-              </p>
+          <section
+            className="grid gap-3"
+            aria-labelledby="current-knowledge-resources"
+          >
+            <h2 id="current-knowledge-resources" className="font-medium">
+              当前资源
+            </h2>
+            <KnowledgeResourceTable
+              {...tableProps}
+              data={data}
+              resources={currentResources}
+            />
+          </section>
+          <section className="grid gap-3" aria-label="已归档知识资源">
+            <Button
+              variant="outline"
+              className="justify-self-start"
+              aria-expanded={showArchived}
+              aria-controls="archived-knowledge-resources"
+              onClick={() => setShowArchived((value) => !value)}
+            >
+              已归档资源（{archivedResources.length}）
+            </Button>
+            {showArchived && (
+              <div id="archived-knowledge-resources" className="grid gap-3">
+                <p className="text-sm text-muted-foreground">
+                  已归档资源不参与检索；发布版本仅作为历史记录保留。
+                </p>
+                <KnowledgeResourceTable
+                  {...tableProps}
+                  data={data}
+                  resources={archivedResources}
+                />
+              </div>
             )}
-          </div>
+          </section>
           <Sheet
             open={editing !== undefined}
             onOpenChange={(open) => {
@@ -487,7 +444,10 @@ function KnowledgeResourceEditor({
               {sourceIds
                 .map(
                   (id) =>
-                    data.sources.find((s) => s.id === id)?.display_name ?? id
+                    (storage.storage
+                      ? storage.catalog?.sources
+                      : data.sources
+                    )?.find((s) => s.id === id)?.display_name ?? id
                 )
                 .join("、") ||
                 (storage.storage && !storage.catalog
@@ -520,8 +480,9 @@ function KnowledgeResourceEditor({
             </select>
           </KnowledgeField>
           <p className="text-xs text-muted-foreground">
-            服务端核对所选内容库与索引兼容性，验证时检查 Embedding 和 Qdrant
-            服务。修改草稿会使旧验证失效，不改变已发布版本。
+            验证只检查 PostgreSQL、Embedding 和 Qdrant 连接及索引配置，最多 30
+            秒；不扫描文档、分块或统计向量点数。连接通过不代表数据已全部同步。
+            修改草稿会使旧验证失效，不改变已发布版本。
           </p>
           {writable && (
             <Button type="submit" disabled={!selectedReady}>
