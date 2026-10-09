@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { ApiError } from "@/shared/api/api-client"
 import { KnowledgeStorageFields } from "./knowledge-storage-fields"
 import { useKnowledgeStorage } from "@/contexts/platform-governance/application/knowledge-storage-query"
 import {
@@ -48,6 +49,8 @@ export function KnowledgeResourcesPage() {
   )
   const inventory = useKnowledgeInventory(canRead)
   const mutation = useKnowledgeCommand()
+  const [recoveringRevision, setRecoveringRevision] = useState(false)
+  const pending = mutation.isPending || recoveringRevision
   const [editing, setEditing] = useState<KnowledgeResource | null | undefined>()
   const [editorGeneration, setEditorGeneration] = useState(0)
   const [confirmation, setConfirmation] = useState<{
@@ -62,15 +65,50 @@ export function KnowledgeResourcesPage() {
     setConfirmation({ command, message })
   }
   async function execute(command: KnowledgeCommand) {
-    if (!canManage || mutation.isPending) return false
+    if (!canManage || pending) return false
     setNotice("")
     try {
       const result = await mutation.mutateAsync(command)
-      if (result && "knowledge_base_id" in result) setEditing(result)
+      if (result && "knowledge_base_id" in result) {
+        setEditing(result)
+        setEditorGeneration((value) => value + 1)
+      }
       setConfirmation(null)
       setNotice("操作完成。配置发布不等于用户已获业务授权。")
       return true
-    } catch {
+    } catch (error) {
+      if (
+        command.kind === "verify" &&
+        error instanceof ApiError &&
+        error.code === "knowledge_verification_failed"
+      ) {
+        setRecoveringRevision(true)
+        try {
+          const refreshed = await inventory.refetch()
+          const latest = refreshed.isSuccess
+            ? refreshed.data.resources.find((r) => r.id === command.id)
+            : undefined
+          // 只接纳本次失败验证自身产生的修订；其它并发改动仍需显式重新载入。
+          // 保持编辑器实例，避免同步元数据时丢失未保存的连接、索引和目录。
+          setEditing((current) =>
+            current &&
+            latest &&
+            current.id === command.id &&
+            current.revision === command.input.expected_revision &&
+            latest.revision === current.revision + 1 &&
+            latest.status === current.status &&
+            current.draft &&
+            latest.draft?.id === current.draft.id &&
+            latest.published?.id === current.published?.id &&
+            latest.verification?.status === "FAILED" &&
+            latest.verification.config_hash === current.draft.config_hash
+              ? latest
+              : current
+          )
+        } finally {
+          setRecoveringRevision(false)
+        }
+      }
       return false
     }
   }
@@ -124,14 +162,14 @@ export function KnowledgeResourcesPage() {
         <div className="flex gap-2">
           <Button
             variant="outline"
-            disabled={inventory.isFetching || mutation.isPending}
+            disabled={inventory.isFetching || pending}
             onClick={() => void inventory.refetch()}
           >
             刷新知识资源
           </Button>
           {canManage && (
             <Button
-              disabled={!data || inventory.isError || mutation.isPending}
+              disabled={!data || inventory.isError || pending}
               onClick={() => {
                 mutation.reset()
                 setEditing(null)
@@ -247,7 +285,7 @@ export function KnowledgeResourcesPage() {
                         <td className="p-3">
                           <Button
                             variant="outline"
-                            disabled={mutation.isPending}
+                            disabled={pending}
                             onClick={() => {
                               mutation.reset()
                               setEditing(resource)
@@ -271,7 +309,7 @@ export function KnowledgeResourcesPage() {
           <Sheet
             open={editing !== undefined}
             onOpenChange={(open) => {
-              if (!open && !mutation.isPending) setEditing(undefined)
+              if (!open && !pending) setEditing(undefined)
             }}
           >
             <SheetContent className="overflow-y-auto sm:max-w-xl">
@@ -287,11 +325,11 @@ export function KnowledgeResourcesPage() {
                 <KnowledgeError error={mutation.error} />
                 {editing ? (
                   <KnowledgeResourceEditor
-                    key={`${editing.id}:${editing.revision}:${editorGeneration}`}
+                    key={`${editing.id}:${editorGeneration}`}
                     resource={editing}
                     data={data}
                     canManage={canManage}
-                    pending={mutation.isPending}
+                    pending={pending}
                     execute={execute}
                     confirm={confirm}
                     reload={reloadEditor}
@@ -300,7 +338,7 @@ export function KnowledgeResourcesPage() {
                   canManage && (
                     <CreateKnowledgeResource
                       data={data}
-                      pending={mutation.isPending}
+                      pending={pending}
                       execute={execute}
                     />
                   )
@@ -313,7 +351,7 @@ export function KnowledgeResourcesPage() {
       <AlertDialog
         open={confirmation !== null}
         onOpenChange={(open) => {
-          if (!open && !mutation.isPending) setConfirmation(null)
+          if (!open && !pending) setConfirmation(null)
         }}
       >
         <AlertDialogContent>
@@ -325,11 +363,9 @@ export function KnowledgeResourcesPage() {
           </AlertDialogHeader>
           <KnowledgeError error={mutation.error} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={mutation.isPending}>
-              取消
-            </AlertDialogCancel>
+            <AlertDialogCancel disabled={pending}>取消</AlertDialogCancel>
             <Button
-              disabled={mutation.isPending}
+              disabled={pending}
               onClick={() => {
                 if (confirmation) void execute(confirmation.command)
               }}
@@ -376,6 +412,14 @@ function KnowledgeResourceEditor({
       i.knowledge_base_id === resource.knowledge_base_id && i.state === "READY"
   )
   const selectedReady = indexes.some((i) => i.id === index)
+  const missingIndexLabel =
+    storage.storage && !storage.catalog
+      ? storage.probe.isPending
+        ? "正在读取索引目录"
+        : storage.probe.isError
+          ? "索引目录读取失败"
+          : "待加载索引目录"
+      : "当前索引不可用"
   const input = { expected_revision: resource.revision }
   return (
     <>
@@ -464,7 +508,9 @@ function KnowledgeResourceEditor({
             >
               <option value="">请选择 READY 索引</option>
               {index && !indexes.some((i) => i.id === index) && (
-                <option value={index}>当前索引不可用 · {index}</option>
+                <option value={index}>
+                  {missingIndexLabel} · {index}
+                </option>
               )}
               {indexes.map((i) => (
                 <option key={i.id} value={i.id}>

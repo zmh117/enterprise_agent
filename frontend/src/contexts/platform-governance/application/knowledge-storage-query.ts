@@ -4,7 +4,7 @@ import type { KnowledgeStorage } from "@/contexts/platform-governance/domain/kno
 import { getKnowledgeContentCatalog } from "@/contexts/platform-governance/infrastructure/knowledge-resource-api"
 
 export function useKnowledgeStorage(initial: KnowledgeStorage | null = null) {
-  const [storage, setStorage] = useState<KnowledgeStorage | null>(initial)
+  const [storage, updateStorage] = useState<KnowledgeStorage | null>(initial)
   const probe = useMutation({
     mutationFn: async (value: KnowledgeStorage) => ({
       key: JSON.stringify(value),
@@ -16,5 +16,9 @@ export function useKnowledgeStorage(initial: KnowledgeStorage | null = null) {
     storage && probe.data?.key === JSON.stringify(storage)
       ? probe.data.catalog
       : undefined
+  function setStorage(value: KnowledgeStorage | null) {
+    updateStorage(value)
+    probe.reset()
+  }
   return { storage, setStorage, probe, catalog }
 }

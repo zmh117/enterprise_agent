@@ -30,6 +30,7 @@ function setup({
   capsStatus = 200,
   populated = true,
   fail = "",
+  verifyFailure = "",
 } = {}) {
   const calls: {
     url: string
@@ -149,8 +150,14 @@ function setup({
               },
             ],
           })
-        if (url === `${prefix}/resources`)
+        if (url === `${prefix}/resources`) {
+          if (
+            verifyFailure === "refresh-failed" &&
+            Number(state.resources[0]?.revision) > 1
+          )
+            return reply({ detail: { error_code: "service_unavailable" } }, 503)
           return reply({ resources: state.resources })
+        }
       }
       calls.push({ url, method, body })
       if (fail)
@@ -193,6 +200,23 @@ function setup({
       if (url.startsWith(`${prefix}/resources/res/`)) {
         const r = state.resources[0]
         const action = url.split("/").at(-1)
+        if (body.expected_revision !== r.revision)
+          return reply(
+            { detail: { error_code: "knowledge_revision_conflict" } },
+            400
+          )
+        if (action === "verify" && verifyFailure) {
+          r.revision = Number(r.revision) + 1
+          r.verification = { status: "FAILED", config_hash: hash }
+          if (verifyFailure === "concurrent") {
+            r.revision = Number(r.revision) + 1
+            r.draft = { ...(r.draft as object), id: "other-admin-draft" }
+          }
+          return reply(
+            { detail: { error_code: "knowledge_verification_failed" } },
+            400
+          )
+        }
         if (action === "draft") {
           r.draft = {
             id: "draft",
@@ -242,6 +266,28 @@ async function openResource() {
 }
 
 describe("知识资源管理", () => {
+  const externalStorage = {
+    postgres: {
+      mode: "external",
+      host: "synthetic-content",
+      port: 5432,
+      database: "synthetic_db",
+      username: "synthetic_admin",
+      password_ref: "secret://platform/content-reader",
+      sslmode: "require",
+    },
+    qdrant: { url: "https://synthetic-qdrant:6333", api_key_ref: "" },
+  }
+  function draft(indexId = "index", storage: unknown = null) {
+    return {
+      id: "draft",
+      revision: 1,
+      binding_id: null,
+      index_id: indexId,
+      config_hash: hash,
+      storage,
+    }
+  }
   async function selectExternalStorage() {
     fireEvent.change(screen.getByLabelText("连接配置方式"), {
       target: { value: "custom" },
@@ -485,6 +531,148 @@ describe("知识资源管理", () => {
     expect(error).not.toHaveTextContent("本人 ONES 权限")
     expect(document.body).not.toHaveTextContent("synthetic-private")
     expect(screen.getByRole("button", { name: "发布知识资源" })).toBeDisabled()
+  })
+  it("失败验证同步自身增加的修订，保留未保存连接、索引与目录，不重试验证或保存", async () => {
+    const f = setup({ verifyFailure: "failed" })
+    f.state.resources[0].draft = draft()
+    f.render()
+    await openResource()
+    await selectExternalStorage()
+    fireEvent.change(screen.getByLabelText("已就绪向量索引"), {
+      target: { value: "remote-index" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "验证草稿" }))
+    await waitFor(() =>
+      expect(screen.getByText("2 / 启用")).toBeInTheDocument()
+    )
+    expect(screen.getByRole("alert")).toHaveTextContent("Embedding/Qdrant")
+    expect(screen.getByLabelText("PostgreSQL 主机")).toHaveValue(
+      "synthetic-content"
+    )
+    expect(screen.getByLabelText("已就绪向量索引")).toHaveValue("remote-index")
+    expect(
+      screen.getByText("内容目录已读取；保存后仍需验证并发布。")
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "发布知识资源" })).toBeDisabled()
+    expect(f.calls.filter((c) => c.url.endsWith("/verify"))).toHaveLength(1)
+    expect(f.calls.some((c) => c.url.endsWith("/draft"))).toBe(false)
+    fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+    await waitFor(() =>
+      expect(f.calls.some((c) => c.url.endsWith("/draft"))).toBe(true)
+    )
+    expect(f.calls.find((c) => c.url.endsWith("/draft"))?.body).toMatchObject({
+      expected_revision: 2,
+      index_id: "remote-index",
+      storage: externalStorage,
+    })
+    expect(f.state.resources[0].revision).toBe(3)
+    expect(f.calls.some((c) => c.url.endsWith("/publish"))).toBe(false)
+  })
+  it.each(["concurrent", "refresh-failed"])(
+    "失败验证遇到 %s 时不盲目采用新修订，也不覆盖本地选择",
+    async (verifyFailure) => {
+      const f = setup({ verifyFailure })
+      f.state.resources[0].draft = draft()
+      f.render()
+      const dialog = await openResource()
+      fireEvent.change(screen.getByLabelText("已就绪向量索引"), {
+        target: { value: "index2" },
+      })
+      fireEvent.click(screen.getByRole("button", { name: "验证草稿" }))
+      await waitFor(() =>
+        expect(within(dialog).getByRole("alert")).toHaveTextContent(
+          "Embedding/Qdrant"
+        )
+      )
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "验证草稿" })).toBeEnabled()
+      )
+      expect(screen.getByText("1 / 启用")).toBeInTheDocument()
+      expect(screen.getByLabelText("已就绪向量索引")).toHaveValue("index2")
+      expect(f.calls).toHaveLength(1)
+      expect(
+        screen.getByRole("button", { name: "发布知识资源" })
+      ).toBeDisabled()
+    }
+  )
+  it("内容目录未加载与正在读取不是索引不可用，修改连接后需重新读取", async () => {
+    const f = setup()
+    f.state.resources[0].draft = draft("remote-index", externalStorage)
+    f.render()
+    await openResource()
+    expect(
+      screen.getByRole("option", { name: /待加载索引目录/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("option", { name: /当前索引不可用/ })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "保存新草稿" })).toBeDisabled()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const original = f.fetchMock.getMockImplementation()!
+    f.fetchMock.mockImplementation(async (input, options) => {
+      if (String(input) === `${prefix}/content-catalog`) await gate
+      return original(input, options)
+    })
+    fireEvent.click(
+      screen.getByRole("button", { name: "读取内容库与索引目录" })
+    )
+    expect(
+      await screen.findByRole("option", { name: /正在读取索引目录/ })
+    ).toBeInTheDocument()
+    release()
+    await screen.findByText("内容目录已读取；保存后仍需验证并发布。")
+    expect(
+      screen.getByRole("option", { name: /remote-ready/ })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "保存新草稿" })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText("PostgreSQL 主机"), {
+      target: { value: "changed-content" },
+    })
+    expect(
+      screen.getByRole("option", { name: /待加载索引目录/ })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "保存新草稿" })).toBeDisabled()
+  })
+  it("目录读取失败显示读取失败，修改连接后清除旧错误但不允许保存", async () => {
+    const f = setup({ fail: "knowledge_storage_unavailable" })
+    f.state.resources[0].draft = draft("remote-index", externalStorage)
+    f.render()
+    await openResource()
+    fireEvent.click(
+      screen.getByRole("button", { name: "读取内容库与索引目录" })
+    )
+    expect(
+      await screen.findByRole("option", { name: /索引目录读取失败/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("option", { name: /当前索引不可用/ })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole("alert")).toHaveTextContent("内容存储不可用")
+    fireEvent.change(screen.getByLabelText("PostgreSQL 主机"), {
+      target: { value: "changed-content" },
+    })
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+    expect(
+      screen.getByRole("option", { name: /待加载索引目录/ })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "保存新草稿" })).toBeDisabled()
+  })
+  it("目录已读取但不包含当前索引时，仍报告不可用并禁止保存", async () => {
+    const f = setup()
+    f.state.resources[0].draft = draft("missing-index", externalStorage)
+    f.render()
+    await openResource()
+    fireEvent.click(
+      screen.getByRole("button", { name: "读取内容库与索引目录" })
+    )
+    await screen.findByText("内容目录已读取；保存后仍需验证并发布。")
+    expect(
+      screen.getByRole("option", { name: /当前索引不可用/ })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "保存新草稿" })).toBeDisabled()
   })
   it("停用需确认；归档资源只读，不可恢复", async () => {
     const f = setup()
