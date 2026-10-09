@@ -23,6 +23,12 @@
 
 ## Decisions
 
+### 2026-10-09 修订：在线检索与后台索引 Embedding 隔离
+
+保留离线 `knowledge/compose.yml` 的 `knowledge-embedding:8096` 给分块、索引、同步及运维 CLI；只在在线 `knowledge/mcp.compose.yml` 增加 `knowledge-embedding-online:8096`，Knowledge MCP 狭窄装配固定选择在线地址，不接收环境/模型指定 URL，也不向后台实例或外部服务 fallback。管理连接验证继续读取原服务的无锁 `/profile`，保持仅离线部署兼容。两个实例使用同一个镜像和只读 `knowledge-models` 卷，同架构固定模型、profile、依赖和向量身份不变；不需要迁移、重分块、重编码或重新发布资源。在线实例仅 internal 网络、无端口/Secret/出网，限制 2 CPU/6 GiB；后台原 4 CPU/8 GiB 不变。隔离模型进程和 busy 锁不等于隔离宿主机总内存、CPU 或 PostgreSQL/Qdrant，须预留第二份模型运行内存；不承诺资源耗尽时仍不超时。
+
+内容连接建立失败继续脱敏；yield 后只将明确数据库驱动异常翻译为 `knowledge_storage_unavailable`，不能吞掉 Embedding、Qdrant、权限或总截止异常。Embedding 客户端把传输错误转成固定模型服务分类；在线编排输出 `knowledge_embedding_busy`、`knowledge_embedding_read_timeout` 或 `knowledge_embedding_unavailable` 的固定中文错误，其他依赖仍走通用安全分类。保持一次在线尝试、120 秒及 Job 剩余预算，故障不返回空集合/partial 或原始异常。通过双实例门闩故障注入、固定路由/无回退、显式/默认内容连接、截止与审计脱敏测试验证；真实 ONES/新 Job 验收仍未完成。
+
 ### 2026-09-20 修订：120 秒截止与阻塞 I/O 取消
 
 用户确认知识目录/检索与内部桥的总执行预算上限为 120 秒，仍取传入截止、当前 Job attempt 剩余时间和父调用预算的较小值，不因进入下一跳而重新计时。入口先建立不涉及授权的 I/O 截止上下文，再进行首次鉴权和 Job 读取；读到 Job 后进一步收紧。预算不授予权限，业务应用、KB、ONES 和返回前复核保持不变。

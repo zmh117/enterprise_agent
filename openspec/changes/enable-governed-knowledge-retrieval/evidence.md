@@ -1,5 +1,25 @@
 # 受治理知识检索实施证据
 
+## 在线／后台 Embedding 隔离（2026-10-09，任务 18）
+
+用户确认采用进程隔离。在线可选 `knowledge/mcp.compose.yml` 新增 `knowledge-embedding-online`，Knowledge MCP 固定调用该实例；原离线 Compose、同步/分块/索引和运维 CLI 保留 `knowledge-embedding`，管理连接验证继续读取原无锁 `/profile`。共享同一固定模型镜像和只读模型卷、相同架构 profile，不接受任意 Embedding 地址、不跨用途回退。在线仅 internal 网络，无端口/Secret/出网，2 CPU/6 GiB；后台原 4 CPU/8 GiB 不变。此隔离不是物理宿主机 CPU/总内存或 PostgreSQL/Qdrant 隔离，需预留额外模型运行内存。
+
+修复 `ManagedContentAccess.open` 的 yield 异常边界：只将明确 SQLite/PostgreSQL 驱动故障改写为 `knowledge_storage_unavailable`，保留模型、Qdrant、权限和总截止异常；建连阶段也保留 IODeadlineExceeded。Embedding 客户端脱敏区分繁忙、传输超时和不可用，在线搜索/MCP 返回固定中文错误及 `knowledge_embedding_busy`、`knowledge_embedding_read_timeout`、`knowledge_embedding_unavailable`。无额外在线重试、预算延长、空结果兜底或候选泄露；原 120 秒/Job 预算和双权限复核不变。
+
+工程验证：
+
+- 知识全量 `pytest -q -rs backend/tests/test_knowledge_*.py --tb=short`：**971 passed、35 skipped（308.62 秒）**。覆盖默认/显式内容连接的 profile/embed 繁忙、超时、5xx 分类；异常和查询不进入响应/审计；双 ASGI 实例推理门闩独立、同 profile/向量结果、固定路由与无回退；真实 MCP 错误码；可选 Compose/镜像白名单、截止/取消和已有同步回归。
+- 随后创建独立 tmpfs PostgreSQL 18 容器（仅回环随机端口、无业务卷），运行 PostgreSQL 权限/只读账号/取消及测试分类专项：**35 passed（12.27 秒）**，包含上一步跳过的 28 条 PostgreSQL 测试和 7 条测试分类检查；其余显式外部导入/分块/向量/完整隔离容器测试仍未在本轮执行，不补勾真实验收。临时容器已停止并自动移除，仅丢弃可重建合成测试数据库。
+- Ruff 检查及改动 Python 格式、MyPy（84 源文件）、主/可选 Compose 合成与实际 quiet 配置、严格 OpenSpec、Markdown 链接和 diff 检查通过。所有新增用例扩展已有已分类文件，不新增未登记测试文件。Web 无改动。
+
+本机部署与只读证据：
+
+- 维护前无 PENDING/RUNNING/RETRY_WAIT Agent Job。定向新增在线 Embedding 并更新 Knowledge MCP，均 healthy；原后台 Embedding、PostgreSQL、Qdrant 的容器 ID、启动时间和镜像未变，未启用/重启同步或历史索引写者。Compose 提示旧索引容器 orphan，按约束保留，未使用 remove-orphans/down/删卷。
+- 首次 MCP 构建成功，镜像 `sha256:79a49cda15bb40c88ed2ac3888ab617b4ee35c29381cce4a37445407b5a2df4a`，与旧 MCP 的 **69 个 Python 包版本完全一致**。额外 build_id 构建触发依赖重装并遇到 PyPI TLS 失败，未部署该失败构建，也未为绕过 TLS 更改源/证书。采用首次成功镜像；其四个关键部署文件 SHA-256 与工作区一致，不以 local-dev 镜像标签冒充 Git 已提交版本。
+- 实际固定 BGE-M3 双实例仅使用合成文本探针：后台批次占用推理门闩时观察到后台 HTTP 429，同期在线 `/embed` HTTP 200、1024 维、约 **0.590 秒**；后台最终也 HTTP 200，两个实例 profile 完全一致。新 MCP 内通过正式 `EmbeddingClient(online=True)` 的 profile/编码探针成功；未输出查询向量或正文、未写 Qdrant。这是推理/路由探针，不是真实 ONES 检索质量或 Agent 端到端验收。
+- 部署前后资源 3 条、修订/状态/草稿/发布指针摘要均 `7459104c7bf2565b2d82812cdcbf7435`；角色 KB 关系 2 条、摘要均 `948e37bd5fb32a55fbc2783d522674b3`。未修改资源、凭据、角色、Publication、内容或索引，未运行正式迁移、重新下载模型、重分块或重编码。API/ONES/其他业务服务本轮未重启。
+- 未访问报告故障的其他环境、真实 ONES 或聊天模型，未创建真实 Job。任务 **18.1–18.3 完成，总进度 55/60**，11.2–11.6 保留未完成；未提交、推送、同步 canonical 或归档。其他环境须按 README 配套部署新在线实例与新 MCP，不能只更新 MCP。
+
 ## 管理连接验证简化（2026-10-09，任务 17）
 
 用户明确动态知识库不应在管理验证中复算全库，只要求连接正常。验证/发布现只读取 KB、READY 索引及已有草稿摘要，检查归属、profile 与兼容配置；验证探测内容 PostgreSQL、Embedding `/profile` 和 Qdrant 所选集合。不调用 `_configuration`、`members`、`source_items`、`member_source_items`、`source_hash`、`assert_current`、`snapshot`、`rows` 或 Qdrant exact count。已有索引/草稿 hash 只比较引用，不重新计算语料；固定 profile 摘要检查不是全库计算。

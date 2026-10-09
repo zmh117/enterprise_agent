@@ -351,6 +351,41 @@ def test_content_adapter_sanitizes_connection_errors_and_does_not_use_platform()
     assert "synthetic-private" not in str(captured.value)
 
 
+@pytest.mark.parametrize("configured", [False, True])
+@pytest.mark.parametrize(
+    "kind", ["embedding", "qdrant", "deadline", "unexpected", "sqlite", "postgres"]
+)
+def test_content_adapter_only_translates_database_body_errors(configured, kind):
+    import sqlite3
+    from psycopg import OperationalError
+    from app.modules.knowledge.domain.vector_contract import VectorError
+    from app.shared.io_deadline import IODeadlineExceeded
+
+    errors = {
+        "embedding": VectorError("knowledge_embedding_busy"),
+        "qdrant": VectorError("knowledge_vector_unavailable"),
+        "deadline": IODeadlineExceeded(),
+        "unexpected": RuntimeError("synthetic-private"),
+        "sqlite": sqlite3.OperationalError("synthetic-private"),
+        "postgres": OperationalError("synthetic-private"),
+    }
+    access = ManagedContentAccess(None, lambda *args: {})
+    config = {
+        "postgres": {"mode": "platform"},
+        "qdrant": {"url": "http://knowledge-qdrant:6333", "api_key_ref": ""},
+    }
+    error = errors[kind]
+    with pytest.raises(Exception) as captured:
+        with access.open(config if configured else None, knowledge_base_id="kb", revision_id="rev"):
+            raise error
+    if kind in {"sqlite", "postgres"}:
+        assert isinstance(captured.value, KnowledgeGovernanceError)
+        assert captured.value.error_code == "knowledge_storage_unavailable"
+        assert "synthetic-private" not in str(captured.value)
+    else:
+        assert captured.value is error
+
+
 @pytest.mark.parametrize("read_only", ["on", "off", None])
 def test_content_adapter_checks_session_not_account_privileges_and_closes(read_only):
     from urllib.parse import parse_qs, urlsplit

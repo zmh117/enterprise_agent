@@ -40,6 +40,9 @@ class KnowledgeGovernanceError(NonRetryableExecutionError):
                 "knowledge_cursor_stale": "知识库授权或资源已变化，请从第一页重新查询",
                 "knowledge_search_budget_exhausted": "知识检索或当前任务预算已耗尽，请重试",
                 "knowledge_search_dependency_failed": "知识检索依赖服务异常，请稍后重试",
+                "knowledge_embedding_busy": "知识检索向量化服务繁忙，请稍后重试；不是内容数据库故障",
+                "knowledge_embedding_read_timeout": "知识检索向量化服务超时，请检查模型服务负载后重试",
+                "knowledge_embedding_unavailable": "知识检索向量化服务不可用或模型配置不匹配，请检查 Embedding 服务",
                 "knowledge_search_busy": "知识检索繁忙，请稍后重试",
             }.get(code, "知识资源操作失败"),
         )

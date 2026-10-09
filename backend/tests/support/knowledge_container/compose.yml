@@ -101,6 +101,10 @@ services:
     image: enterprise-agent-knowledge-acceptance-driver:local
     entrypoint: [python, -m, uvicorn, backend.tests.support.knowledge_container.dependencies:embedding, --host, 0.0.0.0, --port, "8096", --no-access-log]
     mem_limit: 256m
+  knowledge-embedding-online:
+    image: enterprise-agent-knowledge-acceptance-driver:local
+    entrypoint: [python, -m, uvicorn, backend.tests.support.knowledge_container.dependencies:embedding, --host, 0.0.0.0, --port, "8096", --no-access-log]
+    mem_limit: 256m
 
 networks:
   default:

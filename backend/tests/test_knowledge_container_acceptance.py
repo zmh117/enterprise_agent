@@ -73,6 +73,7 @@ def test_isolated_knowledge_container_chain(tmp_path):
             "knowledge-qdrant",
             "ones-mock",
             "knowledge-embedding",
+            "knowledge-embedding-online",
         )
         compose("run", "--rm", "--no-deps", "driver", "seed", timeout=240)
         compose(
@@ -105,6 +106,7 @@ def test_isolated_knowledge_container_chain(tmp_path):
             "knowledge-qdrant",
             "ones-mock",
             "knowledge-embedding",
+            "knowledge-embedding-online",
         )
         compose("up", "-d", "--no-build", "--pull", "never", "api-without-knowledge")
         compose("run", "--rm", "--no-deps", "driver", "without", timeout=180)

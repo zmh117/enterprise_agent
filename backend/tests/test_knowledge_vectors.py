@@ -480,6 +480,59 @@ def test_embedding_api_busy_and_engine_error_do_not_echo():
         assert responses[0].status_code == 500 and "hidden" not in responses[0].text
 
 
+def test_online_and_batch_embedding_have_identical_profile_but_independent_busy_gates():
+    entered, release = threading.Event(), threading.Event()
+
+    class Batch(SyntheticEngine):
+        def encode(self, texts):
+            entered.set()
+            assert release.wait(5)
+            return super().encode(texts)
+
+    with (
+        TestClient(create_app(Batch())) as batch,
+        TestClient(create_app(SyntheticEngine())) as online,
+    ):
+        request = {"texts": ["synthetic"], "profile_hash": fingerprint(profile())}
+        responses = []
+        thread = threading.Thread(
+            target=lambda: responses.append(batch.post("/embed", json=request))
+        )
+        thread.start()
+        try:
+            assert entered.wait(3)
+            assert batch.post("/embed", json=request).status_code == 429
+            assert online.get("/profile").json() == batch.get("/profile").json()
+            result = online.post("/embed", json=request)
+            assert result.status_code == 200 and result.json()["vectors"] == [VECTOR]
+        finally:
+            release.set()
+            thread.join(5)
+        assert not thread.is_alive() and responses[0].json() == result.json()
+        assert batch.post("/embed", json=request).status_code == 200
+
+
+@pytest.mark.parametrize("online", [False, True])
+def test_embedding_workload_has_fixed_route_and_no_cross_workload_fallback(online):
+    from app.shared.io_deadline import io_deadline
+
+    calls = []
+
+    def unavailable(request):
+        calls.append(request)
+        raise httpx.ConnectError("synthetic-private")
+
+    client = EmbeddingClient(online=online, transport=httpx.MockTransport(unavailable))
+    try:
+        with io_deadline(1), pytest.raises(VectorError, match="knowledge_embedding_unavailable"):
+            client.check()
+        expected = "knowledge-embedding-online" if online else "knowledge-embedding"
+        assert len(calls) == 1 and calls[0].url.host == expected
+        assert client.profile_hash == fingerprint(profile())
+    finally:
+        client.http.close()
+
+
 def test_model_file_hash_symlink_missing_and_engine_unavailable(tmp_path, monkeypatch):
     file = tmp_path / "synthetic.bin"
     file.write_bytes(b"synthetic")

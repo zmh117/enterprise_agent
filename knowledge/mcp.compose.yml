@@ -7,6 +7,33 @@ services:
     secrets:
       - knowledge_bootstrap_token
 
+  # 独立在线推理进程；与后台 knowledge-embedding 共享只读固定模型，不共享 busy 锁。
+  knowledge-embedding-online:
+    profiles: [knowledge]
+    image: enterprise-agent/knowledge-embedding:bge-m3-v1
+    build:
+      context: .
+      dockerfile: services/knowledge_embedding/Dockerfile
+    restart: unless-stopped
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - knowledge-models:/models:ro
+    networks: [knowledge-internal]
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 6g
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8096/ready',timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+
   knowledge-mcp:
     profiles: [knowledge]
     build:
@@ -38,7 +65,7 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
-      knowledge-embedding:
+      knowledge-embedding-online:
         condition: service_healthy
       knowledge-qdrant:
         condition: service_started

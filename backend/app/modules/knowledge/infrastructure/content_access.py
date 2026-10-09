@@ -2,8 +2,11 @@
 
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
+import sqlite3
 from typing import Any
 from urllib.parse import quote, urlencode
+
+from psycopg import Error as PostgresError
 
 from app.modules.knowledge.application.content_access import KnowledgeContent
 from app.modules.knowledge.application.retrieval_budget import io_timeout
@@ -13,6 +16,7 @@ from app.modules.knowledge.infrastructure.governance_repository import Governanc
 from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
 from app.modules.knowledge.infrastructure.vector_clients import QdrantClient
 from app.shared.database import Database, assert_external_io_allowed
+from app.shared.io_deadline import IODeadlineExceeded
 
 
 class PlatformStorageCredentials:
@@ -59,10 +63,13 @@ class ManagedContentAccess:
         checked = storage_config(config)
         with ExitStack() as cleanup:
             if checked is None:
-                yield KnowledgeContent(
-                    GovernanceStore(self.platform_database),
-                    VectorRepository(self.platform_database),
-                )
+                try:
+                    yield KnowledgeContent(
+                        GovernanceStore(self.platform_database),
+                        VectorRepository(self.platform_database),
+                    )
+                except (sqlite3.DatabaseError, PostgresError):
+                    raise KnowledgeGovernanceError("knowledge_storage_unavailable") from None
                 return
             try:
                 assert_external_io_allowed("knowledge_content_connection")
@@ -102,13 +109,12 @@ class ManagedContentAccess:
                 handle = KnowledgeContent(
                     GovernanceStore(database), VectorRepository(database), qdrant
                 )
-            except KnowledgeGovernanceError:
+            except (KnowledgeGovernanceError, IODeadlineExceeded):
                 raise
             except Exception:
                 raise KnowledgeGovernanceError("knowledge_storage_unavailable") from None
             try:
                 yield handle
-            except KnowledgeGovernanceError:
-                raise
-            except Exception:
+            # yield 内含 Embedding/Qdrant/权限编排，不能把调用方的异常误报为数据库故障。
+            except (sqlite3.DatabaseError, PostgresError):
                 raise KnowledgeGovernanceError("knowledge_storage_unavailable") from None

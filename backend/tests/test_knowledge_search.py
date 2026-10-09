@@ -110,6 +110,77 @@ def test_reference_search_through_both_http_hops_no_text_or_token(search_fixture
     assert current_budget() is None
 
 
+@pytest.mark.parametrize("configured", [False, True])
+@pytest.mark.parametrize(
+    "stage,outcome,expected",
+    [
+        ("profile", 503, "knowledge_embedding_unavailable"),
+        ("profile", "timeout", "knowledge_embedding_read_timeout"),
+        ("embed", 429, "knowledge_embedding_busy"),
+        ("embed", 408, "knowledge_embedding_read_timeout"),
+        ("embed", 503, "knowledge_embedding_unavailable"),
+        ("embed", "timeout", "knowledge_embedding_read_timeout"),
+    ],
+)
+def test_embedding_failure_keeps_classification_through_content_connection(
+    search_fixture, monkeypatch, configured, stage, outcome, expected
+):
+    from app.modules.knowledge.infrastructure.content_access import ManagedContentAccess
+    from app.modules.knowledge.infrastructure.vector_clients import EmbeddingClient
+    from app.modules.knowledge.infrastructure.embedding_profile import profile
+    from app.modules.knowledge.domain.vector_contract import fingerprint
+
+    f, calls = search_fixture, []
+
+    def respond(request):
+        calls.append(request.url.path)
+        assert request.url.host == "knowledge-embedding-online"
+        if request.url.path == "/profile" and stage == "embed":
+            return httpx.Response(
+                200, json={"profile": profile(), "profile_hash": fingerprint(profile())}
+            )
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("synthetic-private")
+        code = "knowledge_embedding_busy" if outcome == 429 else "knowledge_embedding_read_timeout"
+        return httpx.Response(outcome, json={"error_code": code, "detail": "synthetic-private"})
+
+    embedding = EmbeddingClient(online=True, transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(f["search"], "embedding", embedding)
+    qdrant = f["vector"].qdrant
+    monkeypatch.setattr(qdrant, "http", SimpleNamespace(close=lambda: None), raising=False)
+    adapter = ManagedContentAccess(
+        f["runtime"].database, lambda *args: {}, qdrant_factory=lambda **kwargs: qdrant
+    )
+    config = {
+        "postgres": {"mode": "platform"},
+        "qdrant": {"url": "http://knowledge-qdrant:6333", "api_key_ref": ""},
+    }
+    monkeypatch.setattr(
+        f["search"].resources,
+        "content_for",
+        lambda pin: adapter.open(
+            config if configured else None,
+            knowledge_base_id=pin.knowledge_base_id,
+            revision_id=pin.revision_id,
+        ),
+    )
+    try:
+        with pytest.raises(KnowledgeGovernanceError) as captured:
+            search(f)
+        assert captured.value.error_code == expected
+        assert calls == (["/profile"] if stage == "profile" else ["/profile", "/embed"])
+        assert not qdrant.search_limits and not f["hops"]
+        audits = f["runtime"].database.execute(
+            "select * from audit_event where event_type='knowledge.search.denied'"
+        )
+        safe = json.dumps(audits, ensure_ascii=False, default=str) + captured.value.safe_message
+        assert len(audits) == 1 and expected in safe
+        assert "synthetic-private" not in safe and "合成查询-不要记录" not in safe
+        assert current_budget() is None
+    finally:
+        embedding.http.close()
+
+
 @pytest.mark.parametrize("outcome", ["success", "route_failure", "publication_changed"])
 def test_hybrid_route_keeps_readability_scope_and_fails_without_dense_fallback(
     search_fixture, monkeypatch, outcome

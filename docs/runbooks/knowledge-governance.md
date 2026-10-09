@@ -89,6 +89,8 @@ Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页�
 
 ## 模型边界：本地 Embedding，沿用已配置聊天模型
 
+在线 MCP 向量化使用独立 `knowledge-embedding-online`，后台分块/索引/小时同步使用原 `knowledge-embedding`，共享只读固定模型而不共享推理锁。部署/升级和额外内存预算见[Embedding 隔离](../../knowledge/README.md#在线后台-embedding-隔离与升级)。模型繁忙、超时和不可用分别返回 `knowledge_embedding_busy`、`knowledge_embedding_read_timeout`、`knowledge_embedding_unavailable`，不是 PostgreSQL 故障；原始异常不进入响应/审计，不回退后台实例，总预算仍最多 120 秒。
+
 用户已接受授权后的检索结果、ONES 正文和历史上下文进入 Agent 既有聊天模型（包括外部模型）。本地 Embedding 只保证向量化不外发，不表示聊天分析阶段也不外发。检索、索引仍使用部署固定的内部 Embedding，失败不回退外部向量服务。
 
 不再配置 INTERNAL_MODEL_POLICY_FILE，不再输出 internal_model_deployment 或新增 model_data_boundary；旧的强制内网认可与执行拒绝已撤去。不为此增加 Runtime 协议字段或 Session/摘要/产物继承。保留模型连接白名单、Publication 固定 revision/config hash、既有别名映射和 Runtime 签名；Runtime 仍无权读取 Job、Session、Publication、RBAC 等业务表。历史 Publication 不自动改写。

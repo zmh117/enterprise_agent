@@ -25,6 +25,7 @@ from app.modules.knowledge.application.resource_service import KnowledgeResource
 from app.modules.knowledge.application.retrieval_budget import RetrievalBudget, knowledge_entry
 from app.shared.exceptions import AppError
 from app.modules.knowledge.domain.hybrid import HYBRID_CONTRACT, hybrid_index
+from app.modules.knowledge.domain.vector_contract import VectorError
 
 
 MAX_POINTS = 200
@@ -92,6 +93,15 @@ class KnowledgeSearch:
                 return self._search(token, request, access, budget)
         except KnowledgeGovernanceError as exc:
             failure = exc
+        except VectorError as exc:
+            code = "knowledge_search_dependency_failed"
+            if exc.code.startswith("knowledge_embedding_"):
+                code = (
+                    exc.code
+                    if exc.code in {"knowledge_embedding_busy", "knowledge_embedding_read_timeout"}
+                    else "knowledge_embedding_unavailable"
+                )
+            failure = KnowledgeGovernanceError(code)
         except AppError:
             failure = KnowledgeGovernanceError("knowledge_job_denied")
         except Exception:

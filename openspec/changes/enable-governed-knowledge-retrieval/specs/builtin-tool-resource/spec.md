@@ -64,6 +64,12 @@ Python Runtime SHALL 只连接部署固定的 `tool-mcp`、`file-mcp`、`ones-mc
 
 输出 MUST 仅包含已验证可读的工作项引用、文档/修订/索引引用、有限分数及每文档最多 3 条证据位置，不返回缓存标题、摘要、正文、附件 URL、向量或内部连接。候选或时间预算不足时 SHALL 明确 partial 和通用有界原因；MUST NOT 暴露被拒绝工作项的身份、分数、数量或分布，也不得把有界零命中宣称为全库不存在。
 
+Embedding 繁忙、超时和不可用 SHALL 分别返回固定 `knowledge_embedding_busy`、`knowledge_embedding_read_timeout`、`knowledge_embedding_unavailable` 及中文安全信息；内容连接 MUST NOT 将调用方的模型、Qdrant、权限或总截止错误统一改写成 `knowledge_storage_unavailable`。数据库驱动故障仍 SHALL 脱敏，无额外在线重试或跨实例回退。
+
+#### Scenario: 内容连接正常但模型繁忙
+- **WHEN** 内容连接已经打开，在线 Embedding 返回 429 或发生传输超时
+- **THEN** 显式和默认内容连接均返回对应模型服务错误，不误报数据库故障、不返回候选或原始响应，审计仅保存安全错误码
+
 #### Scenario: 多块命中同一缺陷
 - **WHEN** 多个候选块对应同一当前文档且该用户可读
 - **THEN** 结果只出现一个工作项，保留最多 3 条证据引用，并用文档数计算 top_k

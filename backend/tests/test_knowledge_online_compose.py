@@ -55,7 +55,7 @@ def online_config(compose_cli, *, missing=None):
 
 def test_online_overlay_only_changes_knowledge_mcp_and_bridge():
     overlay = yaml.safe_load((ROOT / "knowledge/mcp.compose.yml").read_text())
-    assert set(overlay["services"]) == {"api-server", "knowledge-mcp"}
+    assert set(overlay["services"]) == {"api-server", "knowledge-mcp", "knowledge-embedding-online"}
     assert set(overlay["secrets"]) == {"knowledge_bootstrap_token"}
     assert not overlay.get("volumes")
     assert overlay["networks"] == {"knowledge-storage-egress": {"driver": "bridge"}}
@@ -105,6 +105,20 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
     )
     assert not config["networks"]["knowledge-storage-egress"].get("internal", False)
     assert "knowledge-storage-egress" not in config["services"]["knowledge-embedding"]["networks"]
+    batch = config["services"]["knowledge-embedding"]
+    online = config["services"]["knowledge-embedding-online"]
+    assert online["image"] == batch["image"]
+    assert online["build"] == batch["build"]
+    assert online["environment"] == batch["environment"]
+    assert online["volumes"] == batch["volumes"]
+    assert online["volumes"][0]["read_only"]
+    assert set(online["networks"]) == {"knowledge-internal"}
+    assert not online.get("ports") and not online.get("secrets")
+    assert online["read_only"] and online["cap_drop"] == ["ALL"]
+    assert online["security_opt"] == ["no-new-privileges:true"]
+    assert online["cpus"] == 2 and int(online["mem_limit"]) == 6 * 1024**3
+    assert service["depends_on"]["knowledge-embedding-online"]["condition"] == "service_healthy"
+    assert "knowledge-embedding" not in service["depends_on"]
     assert "api-server" not in service["depends_on"]  # Avoid API -> Runtime boot cycles.
     assert service["depends_on"]["migrator"]["condition"] == "service_completed_successfully"
     api = config["services"]["api-server"]

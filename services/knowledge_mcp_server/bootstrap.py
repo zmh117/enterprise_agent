@@ -48,7 +48,7 @@ def build_tools(
         ),
         KnowledgeJobGate(database, JobMcpToolSnapshotService(database), authorization),
     )
-    embedding = EmbeddingClient()
+    embedding = EmbeddingClient(online=True)
     cleanup.callback(embedding.http.close)
     qdrant = QdrantClient()
     cleanup.callback(qdrant.http.close)

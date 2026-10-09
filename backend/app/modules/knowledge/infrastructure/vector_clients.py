@@ -26,6 +26,9 @@ from app.modules.knowledge.domain.hybrid import (
     validate_sparse,
 )
 
+INDEXING_EMBEDDING_ENDPOINT = "http://knowledge-embedding:8096"
+RETRIEVAL_EMBEDDING_ENDPOINT = "http://knowledge-embedding-online:8096"
+
 
 class InternalHttp:
     def __init__(
@@ -45,7 +48,12 @@ class InternalHttp:
             assert checked is not None
             endpoint = checked["qdrant"]["url"]
         elif (
-            endpoint not in {"http://knowledge-embedding:8096", "http://knowledge-qdrant:6333"}
+            endpoint
+            not in {
+                INDEXING_EMBEDDING_ENDPOINT,
+                RETRIEVAL_EMBEDDING_ENDPOINT,
+                "http://knowledge-qdrant:6333",
+            }
             or api_key
         ):
             raise VectorError("knowledge_endpoint_invalid")
@@ -100,6 +108,11 @@ class InternalHttp:
                         else "knowledge_vector_request_rejected"
                     )
                 return value
+            except (httpx.TimeoutException, TimeoutError):
+                io_timeout(180)
+                if attempt == attempts - 1:
+                    raise VectorError("knowledge_vector_timeout") from None
+                time.sleep(2**attempt)
             except (httpx.TransportError, OSError):
                 io_timeout(180)
                 if attempt == attempts - 1:
@@ -140,20 +153,39 @@ class InternalHttp:
 
 
 class EmbeddingClient:
-    def __init__(self, *, transport: httpx.BaseTransport | None = None) -> None:
-        self.http = InternalHttp("http://knowledge-embedding:8096", transport=transport)
+    def __init__(
+        self, *, online: bool = False, transport: httpx.BaseTransport | None = None
+    ) -> None:
+        # 在线与索引使用独立进程；不接受任意地址，也不跨用途回退。
+        self.http = InternalHttp(
+            RETRIEVAL_EMBEDDING_ENDPOINT if online else INDEXING_EMBEDDING_ENDPOINT,
+            transport=transport,
+        )
         self.profile = profile()
         self.profile_hash = fingerprint(self.profile)
 
+    def _request(self, method: str, path: str, value: Any = None) -> Any:
+        try:
+            return self.http.request(method, path, value)
+        except VectorError as exc:
+            if exc.code.startswith("knowledge_embedding_"):
+                raise
+            code = (
+                "knowledge_embedding_read_timeout"
+                if exc.code == "knowledge_vector_timeout"
+                else "knowledge_embedding_unavailable"
+            )
+            raise VectorError(code) from None
+
     def check(self) -> None:
-        value = self.http.request("GET", "/profile")
+        value = self._request("GET", "/profile")
         if value != {"profile": self.profile, "profile_hash": self.profile_hash}:
             raise VectorError("knowledge_embedding_profile_mismatch")
 
     def call(self, texts: list[str], *, encode: bool = False) -> dict[str, Any]:
         if not 1 <= len(texts) <= MAX_ITEMS:
             raise VectorError("knowledge_embedding_input_invalid")
-        value = self.http.request(
+        value = self._request(
             "POST",
             "/embed" if encode else "/tokenize",
             {"texts": texts, "profile_hash": self.profile_hash},

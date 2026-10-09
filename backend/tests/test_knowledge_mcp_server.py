@@ -89,6 +89,32 @@ def rpc(f, method="tools/call", params=None, **kwargs):
     )
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "knowledge_embedding_busy",
+        "knowledge_embedding_read_timeout",
+        "knowledge_embedding_unavailable",
+    ],
+)
+def test_mcp_keeps_safe_embedding_error_classification(mcp_fixture, monkeypatch, code):
+    from app.modules.knowledge.domain.vector_contract import VectorError
+
+    f = mcp_fixture
+
+    def fail():
+        raise VectorError(code)
+
+    monkeypatch.setattr(f["search"].embedding, "check", fail)
+    response = rpc(f)
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["isError"] and result["structuredContent"]["error_code"] == code
+    assert "knowledge_storage_unavailable" not in response.text
+    assert "合成查询绝不记录" not in response.text and f["knowledge_token"] not in response.text
+    assert not f["hops"] and not f["vector"].qdrant.search_limits
+
+
 def test_real_mcp_entry_bounds_first_authentication_pool_wait(mcp_fixture, monkeypatch):
     f = mcp_fixture
     blocked = Database("sqlite:///:memory:", pool_max_size=1, pool_timeout_seconds=3)
@@ -458,6 +484,7 @@ def test_bootstrap_has_no_platform_container_or_credential_loading(search_fixtur
             cleanup=cleanup,
         )
         assert service.auth.access.verifier.expected_audience == "knowledge-mcp"
+        assert service.search.embedding.http.endpoint == "http://knowledge-embedding-online:8096"
     source = Path("services/knowledge_mcp_server/bootstrap.py").read_text()
     for forbidden in (
         "from app.bootstrap",
