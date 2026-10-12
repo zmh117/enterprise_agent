@@ -14,6 +14,8 @@ services:
     build:
       context: .
       dockerfile: services/knowledge_embedding/Dockerfile
+    # 单进程在线队列固定为 1 个执行 + 3 个等待；后台实例仍使用默认 factory。
+    command: [uvicorn, services.knowledge_embedding.api:create_online_app, --factory, --host, "0.0.0.0", --port, "8096", --no-access-log, --log-level, critical]
     restart: unless-stopped
     environment:
       HF_HUB_OFFLINE: "1"

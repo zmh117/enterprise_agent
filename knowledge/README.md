@@ -124,7 +124,11 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
   -f knowledge/mcp.compose.yml --profile knowledge up -d --no-deps --no-build knowledge-mcp
 ```
 
-`knowledge_embedding_busy` 表示在线推理繁忙，`knowledge_embedding_read_timeout` 表示模型服务超时，`knowledge_embedding_unavailable` 表示连接/模型合同不可用；不会再把这些错误包装为“内容存储不可用”。总调用仍最多 120 秒且服从 Job 剩余预算，不自动额外重试，不把故障当作空库。回退需配套恢复旧 MCP 镜像和在线 Compose 配置，保留所有模型/向量卷，不能让新 MCP 静默使用后台实例。
+在线检索仍最多 4 个并发；在线 Embedding 使用固定 `create_online_app` 单进程入口，保持 1 个实际推理槽位、最多 3 个 FIFO 等待位置。`knowledge_embedding_busy` 现在表示这 4 个位置已满，而不是只要模型正在推理就拒绝。不要添加多个 Uvicorn workers，否则会重复加载模型并扩大推理容量。无需 RabbitMQ 或新环境变量，后台实例继续使用原入口和策略。
+
+客户端携带原调用绝对截止，服务端只会收紧：请求读取（最多 15 秒）、排队和推理共同消耗最长 120 秒及 Job 剩余预算，不是等待后再给 120 秒。等待超时、取消或断连会移除等待项；执行中 CPU 推理不能强杀，结果会丢弃，线程实际退出前不放开推理槽位。因此有界排队吸收短时并发，不保证慢 CPU 下四个请求都能在预算内完成。升级需要按上面的命令同时重建镜像并重新创建 `knowledge-embedding-online` 与 `knowledge-mcp` 容器，不需要重新索引或发布。
+
+`knowledge_embedding_read_timeout` 表示模型服务的读取/等待/推理截止到达，`knowledge_embedding_unavailable` 表示连接/模型合同不可用；整次检索截止耗尽仍使用 `knowledge_search_budget_exhausted`。不会把这些错误包装为“内容存储不可用”，不自动额外重试，不把故障当作空库。回退需配套恢复旧 MCP 镜像和在线 Compose 配置，保留所有模型/向量卷，不能让新 MCP 静默使用后台实例。
 
 ### 当前本机部署记录（2026-09-20）
 

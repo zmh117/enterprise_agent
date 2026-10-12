@@ -12,11 +12,13 @@ from typing import ParamSpec, TypeVar
 
 from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError, strict_object
+from app.modules.knowledge.domain.vector_contract import (
+    DEADLINE_HEADER as DEADLINE_HEADER,
+    MAX_RETRIEVAL_SECONDS as MAX_RETRIEVAL_SECONDS,
+)
 from app.shared.ones_io_budget import ones_io_budget
 from app.shared.io_deadline import IODeadlineExceeded, io_deadline, io_wait_timeout
 
-DEADLINE_HEADER = "X-Knowledge-Deadline-Ms"
-MAX_RETRIEVAL_SECONDS = 120
 P = ParamSpec("P")
 R = TypeVar("R")
 

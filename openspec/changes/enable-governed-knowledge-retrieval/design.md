@@ -23,6 +23,14 @@
 
 ## Decisions
 
+### 2026-10-12 修订：在线 Embedding 服务内有界排队
+
+保留 Knowledge MCP/检索的 4 个在途槽位。在线实例固定单进程 factory `create_online_app`，单工作线程执行 tokenizer 与 encode，最多接纳 1 个执行和 3 个 FIFO 等待请求；队满立即返回 `knowledge_embedding_busy`。只在在线 factory 启用队列，后台 factory、profile、模型、向量数据和离线重试行为不变，不新增消息中间件、持久队列、动态推理并发或部署可调队列容量。
+
+在线客户端向固定实例传递既有 `X-Knowledge-Deadline-Ms`，取当前 I/O/Job 剩余预算和 120 秒的较小值，不重试。服务入口将其转换为单调时钟截止且再与本地 120 秒取小，缺省仍有限时，非法/重复头拒绝，远未来头不能延长本地预算。请求读取保留最多 15 秒子预算；读取、等待、tokenizer、encode 均消耗同一次截止，排队结束不重新计时。
+
+等待超时、ASGI 取消或客户端断连时移除该项，后续不会执行其模型工作。执行中 CPU 线程不能强行终止，因此 HTTP 及时结束并丢弃迟到结果，线程实际退出前执行槽位仍由队列持有；线程退出后才开始下一项。tokenizer/encode 前后复核取消/截止，已取消的 tokenizer 不再进入 encode。无锁健康、就绪和 profile 不进入推理队列。返回候选前既有 Job、资源及双重授权复核不变。只做本机合成并发/超时/释放验收，x86/Windows 的真实 CPU 延迟与业务验收仍独立完成。
+
 ### 2026-10-09 修订：宿主机知识服务凭据路径可覆盖
 
 在线 Compose 的 Secret 文件来源允许由根 `.env` 或部署环境的 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 覆盖；未设置或为空仍使用 `${HOME}/.config/enterprise-agent/knowledge-bootstrap-token`。支持绝对文件路径及以第一个根 Compose 文件所在目录为基准的相对路径（如 `./knowledge-bootstrap-token`），不是目录或 Token 值。API/MCP 仍同时挂载同一 Secret，容器内变量固定为 `/run/secrets/knowledge_bootstrap_token`，不把宿主机路径透传进程，不复用其他服务凭据。根目录凭据文件 Git 忽略且不进入现有镜像构建白名单；其他自定义位置由部署流程保护。保留现有文件与权限校验，不自动生成、搬迁、复制或轮换凭据，不更改主部署必需配置或业务授权。本轮只修改配置支持与文档、合成回归，不修改真实 `.env`、凭据或重启服务。

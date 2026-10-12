@@ -119,6 +119,19 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
     assert online["read_only"] and online["cap_drop"] == ["ALL"]
     assert online["security_opt"] == ["no-new-privileges:true"]
     assert online["cpus"] == 2 and int(online["mem_limit"]) == 6 * 1024**3
+    assert online["command"] == [
+        "uvicorn",
+        "services.knowledge_embedding.api:create_online_app",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8096",
+        "--no-access-log",
+        "--log-level",
+        "critical",
+    ]
+    assert not batch.get("command")
     assert service["depends_on"]["knowledge-embedding-online"]["condition"] == "service_healthy"
     assert "knowledge-embedding" not in service["depends_on"]
     assert "api-server" not in service["depends_on"]  # Avoid API -> Runtime boot cycles.

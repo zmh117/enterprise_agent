@@ -10,6 +10,8 @@ from app.modules.knowledge.domain.vector_contract import (
     MAX_BATCH_TOKENS,
     MAX_ITEMS,
     MAX_TOKENS,
+    DEADLINE_HEADER,
+    MAX_RETRIEVAL_SECONDS,
     VectorError,
     fingerprint,
     validate_vector,
@@ -77,7 +79,13 @@ class InternalHttp:
         self, method: str, path: str, value: Any = None, *, missing_ok: bool = False
     ) -> Any:
         assert_external_io_allowed("knowledge_vector_http")
-        attempts = 1 if current_io_deadline() is not None or current_budget() is not None else 3
+        attempts = (
+            1
+            if self.endpoint == RETRIEVAL_EMBEDDING_ENDPOINT
+            or current_io_deadline() is not None
+            or current_budget() is not None
+            else 3
+        )
         for attempt in range(attempts):
             try:
                 status, data = self._read(method, path, value)
@@ -125,6 +133,17 @@ class InternalHttp:
         raise VectorError("knowledge_vector_unavailable")
 
     def _read(self, method: str, path: str, value: Any) -> tuple[int, bytes]:
+        headers = {"Content-Type": "application/json", **self._headers}
+        timeout = io_timeout(180)
+        if self.endpoint == RETRIEVAL_EMBEDDING_ENDPOINT:
+            # 由调用方现有剩余预算推导绝对截止；排队不能重置 120 秒或 Job 截止。
+            seconds = io_timeout(MAX_RETRIEVAL_SECONDS)
+            timeout = seconds
+            deadline_ms = int((time.time() + seconds) * 1000)
+            budget = current_budget()
+            if budget is not None:
+                deadline_ms = min(deadline_ms, budget.deadline_ms)
+            headers[DEADLINE_HEADER] = str(deadline_ms)
         if (
             current_io_deadline() is not None
             or current_budget() is not None
@@ -133,13 +152,17 @@ class InternalHttp:
             return request_bytes(
                 method,
                 self.endpoint + path,
-                headers={"Content-Type": "application/json", **self._headers},
+                headers=headers,
                 content=json.dumps(value).encode() if value is not None else None,
-                timeout=io_timeout(180),
+                timeout=timeout,
                 max_bytes=2 * 1024 * 1024,
             )
         with self.client.stream(
-            method, path, json=value, timeout=httpx.Timeout(io_timeout(180), connect=io_timeout(5))
+            method,
+            path,
+            json=value,
+            headers=headers,
+            timeout=httpx.Timeout(timeout, connect=io_timeout(5)),
         ) as response:
             if response.status_code >= 500 or 300 <= response.status_code < 400:
                 return response.status_code, b""

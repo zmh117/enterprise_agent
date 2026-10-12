@@ -66,6 +66,16 @@ Python Runtime SHALL 只连接部署固定的 `tool-mcp`、`file-mcp`、`ones-mc
 
 Embedding 繁忙、超时和不可用 SHALL 分别返回固定 `knowledge_embedding_busy`、`knowledge_embedding_read_timeout`、`knowledge_embedding_unavailable` 及中文安全信息；内容连接 MUST NOT 将调用方的模型、Qdrant、权限或总截止错误统一改写成 `knowledge_storage_unavailable`。数据库驱动故障仍 SHALL 脱敏，无额外在线重试或跨实例回退。
 
+在线检索 SHALL 保留最多 4 个在途调用；在线 Embedding SHALL 固定 1 个实际推理槽位、最多 3 个服务内 FIFO 等待位置，队满才返回 busy。请求读取、排队和推理 MUST 消费原调用最长 120 秒及 Job 剩余预算，内部截止只可收紧，不新增重试或消息中间件。等待超时/取消/断连 SHALL 移除等待项且不执行模型；执行中请求结束后 MUST 丢弃结果，实际线程退出前 MUST NOT 释放推理槽位。健康/profile 不排队，后台索引实例策略不变。
+
+#### Scenario: 四个检索同时请求在线推理
+- **WHEN** 单个在线推理正在执行且另有三个请求等待
+- **THEN** 三个请求在原预算内按 FIFO 串行执行，实际 tokenizer/encode 并发最多 1，第五个请求立即返回安全 busy
+
+#### Scenario: 等待或执行期间请求结束
+- **WHEN** 原截止耗尽、请求取消或客户端断连
+- **THEN** 等待项移除且不进入模型，执行项不返回迟到结果、实际线程退出前仍持有推理槽位，后续有效调用可继续使用释放后的容量
+
 #### Scenario: 内容连接正常但模型繁忙
 - **WHEN** 内容连接已经打开，在线 Embedding 返回 429 或发生传输超时
 - **THEN** 显式和默认内容连接均返回对应模型服务错误，不误报数据库故障、不返回候选或原始响应，审计仅保存安全错误码

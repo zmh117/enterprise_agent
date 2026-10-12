@@ -68,6 +68,7 @@ contract = [
   "test_knowledge_compose.py",
   "test_knowledge_online_compose.py",
   "test_knowledge_vectors.py",
+  "test_knowledge_embedding_queue.py",
   "test_admin_api_contracts.py",
   "test_admin_web_proxy.py",
   "test_agent_context_audit_repository.py",

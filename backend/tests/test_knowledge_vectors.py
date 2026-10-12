@@ -30,7 +30,7 @@ from app.shared.database import Database, assert_external_io_allowed, default_mi
 from app.shared.migrations import Migrator, deployable_migration_catalog, load_migration_catalog
 from backend.tests.test_knowledge_chunks import import_rows, source_fingerprint
 from backend.tests.test_knowledge_import import export_row
-from services.knowledge_embedding.api import create_app
+from services.knowledge_embedding.api import create_app, create_online_app
 from services.knowledge_embedding import model_files
 from services.knowledge_embedding.model_files import verify_file, verify_model
 
@@ -491,7 +491,7 @@ def test_online_and_batch_embedding_have_identical_profile_but_independent_busy_
 
     with (
         TestClient(create_app(Batch())) as batch,
-        TestClient(create_app(SyntheticEngine())) as online,
+        TestClient(create_online_app(SyntheticEngine())) as online,
     ):
         request = {"texts": ["synthetic"], "profile_hash": fingerprint(profile())}
         responses = []

@@ -1,5 +1,18 @@
 # 受治理知识检索实施证据
 
+## 在线 Embedding 有界排队（2026-10-12，任务 20）
+
+用户明确确认保留 4 个检索并发、1 个推理槽位，增加服务内有界排队并保持 120 秒总预算。本轮只修改本机代码、合成测试、在线 Compose 入口与说明，不部署、提交、推送、执行迁移或改动真实凭据/资源/授权/数据。
+
+- 在线 factory `create_online_app` 固定单工作线程，接纳一个执行项及最多三个 FIFO 等待项；满载返回安全 `knowledge_embedding_busy`。等待超时/取消/断连立即移除且不进入模型；执行项的 HTTP 已结束也不释放实际线程槽位，线程返回后才执行下一项，迟到结果丢弃。tokenizer 前后和 encode 后复核截止/取消，健康/就绪/profile 不占队列。
+- 固定在线客户端传递既有 `X-Knowledge-Deadline-Ms`，与当前 I/O/Job 剩余时间取小且不重试。服务入口收紧到本地最长 120 秒，读取请求保留最多 15 秒子上限；读取、排队、tokenizer 与 encode 共用同一截止，缺省/远未来头不能延长本地预算，非法/重复/过期头不进入模型。原检索返回前的 Job、资源和双权限检查未改动。
+- 后台 factory 仍立即检查原推理锁，固定在线/后台路由无回退，模型/profile/hash、CPU/内存限制、数据、授权及同步启用状态不变。无新依赖、环境变量、RabbitMQ、数据库结构或持久队列。精简 Embedding 镜像 COPY 清单可导入在线 factory，且未引入平台数据库/bootstrap 依赖。
+- 新增 `test_knowledge_embedding_queue.py`，已登记 contract 层：**25 passed**。覆盖四路并发/FIFO/第五路拒绝、无锁健康探针、等待/执行超时与取消、断连、tokenizer 超时不继续 encode、异常及输入限制后槽位复用、关闭时等待实际线程退出、截止缺省/未来/重复/过期/非法边界、I/O 与 Job 截止传播、无在线重试/跨实例回退、后台/Qdrant 不接收新头及镜像导入。
+- 其中一次验收使用合成引擎、临时本机 loopback TCP 端口和真实 Uvicorn/有界 HTTP 客户端，证明等待期间截止及时结束、超时查询不进入模型、随后请求仍能执行；服务与线程正常关闭，未读取部署配置或业务数据。此证据不是实际 BGE-M3 的 CPU 性能、x86/Windows 部署或真实 ONES 端到端验收。
+- 知识域扩展回归 `pytest -q backend/tests/test_knowledge*.py backend/tests/test_test_suite_governance.py`：**1059 passed / 37 skipped（301.54 秒）**。跳过未配置的可选隔离集成等环境测试，不代表真实环境验收。最后追加输入限制复用测试后，队列/在线 Compose/测试分类专项复测 **45 passed（4.41 秒）**，其中队列为上述 25 项；这些重叠覆盖不重复累计。扩展运行最初的临时 Uvicorn WebSocket 弃用警告已通过测试配置 `ws=none` 消除，最后专项无警告。
+- Ruff 格式/静态检查、4 个实现文件严格 MyPy、OpenSpec strict、差异空白检查通过。在线 Compose 合成渲染断言固定 factory、资源/网络/挂载边界与后台入口不变。部署命令见 `knowledge/README.md`：需同时重建并重新创建 `knowledge-embedding-online` 与 `knowledge-mcp`，不重编码或重新发布。
+- 本次 20.1–20.3 完成，整体 **60/65**；11.2–11.6 五项真实环境任务保持未完成，不同步 canonical、不归档，不把本机合成工程证据当作生产效果验收。
+
 ## 宿主机知识服务凭据路径可配置（2026-10-09，任务 19）
 
 用户确认在根 `.env` 使用 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE=./knowledge-bootstrap-token`。在线 Compose 支持该环境变量覆盖 Secret 宿主机来源，未配置或为空继续使用原 HOME 默认；相对路径按第一个根 Compose 文件所在目录解析，支持绝对路径与带空格路径。API/MCP 的容器内挂载仍固定 `/run/secrets/knowledge_bootstrap_token`，不向其他服务分发、不自动生成或轮换凭据。根目录凭据文件已 Git 忽略，现有 `.dockerignore` 白名单不包含它；环境模板及两份部署说明已更新。
