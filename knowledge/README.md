@@ -148,15 +148,30 @@ docker compose -p enterprise_agent \
 ## 数据、网络与运维边界
 
 - 默认内容仍使用平台 PostgreSQL 的 `knowledge` schema；Web 也可绑定独立 PostgreSQL 内容库和 Qdrant。平台治理与 RBAC、Job、审计连接始终不变。平台迁移仍属于统一 catalog：不用知识服务的环境升级后端时也须满足对应 schema head，但不会自动导入缺陷或生成向量。
-- 离线扩展为 PostgreSQL 与 API 追加 `knowledge-internal`，保留默认和运行控制网络；API 由此执行资源的本地技术验证，不需要先启用在线 MCP 或新增服务凭据。Embedding、Qdrant、运维 CLI 仅使用 internal 网络，不发布宿主机端口；准备任务只使用下载网络，不获得数据库配置或平台 Secret。
+- 离线扩展为 PostgreSQL 与 API 追加 `knowledge-internal`，保留默认和运行控制网络；API 由此执行资源的本地技术验证，不需要先启用在线 MCP 或新增服务凭据。Embedding、Qdrant、运维 CLI 仍连接 internal 网络；仅 Qdrant 另接 `knowledge-qdrant-access` bridge 并按用户确认映射宿主机 HTTP `0.0.0.0:6333:6333`，Embedding 和运维 CLI 不发布端口。准备任务只使用下载网络，不获得数据库配置或平台 Secret。
 - 保留 `knowledge-models`、`knowledge-qdrant` 卷键名；同一项目仍使用原有模型和 Qdrant 数据。文件拆分不搬迁或清空任何卷。
 - Qdrant 固定为 `v1.19.1` 和已核验的镜像 digest，不使用浮动 latest。已有卷跨次版本升级必须先备份并逐级演练，不能直接换最新镜像跳级启动；见[升级与恢复记录](../docs/runbooks/knowledge-local-vector-index.md#qdrant-版本升级与恢复)。
 - 已有 PostgreSQL 若尚未接入知识网络，须在批准的维护流程中补充网络及 `postgres` 别名；不能为此直接重建数据库。新部署由叠加配置管理。当前本机已经接入，拆分不要求重启。
 - 部署了知识服务的环境，后续 Compose 运维命令应始终叠加已启用的文件（离线两个，在线三个，即使此次只操作某个业务服务），避免把知识容器误判为 orphan。禁止仅用主文件执行 `--remove-orphans`，不要用全项目 `down -v` 停用知识库。
-- 在线 MCP 保留 `knowledge-internal` 与 `agent-runtime-control` 两个内部网络，增加 `knowledge-storage-egress` 以访问管理员绑定的外部 PostgreSQL/Qdrant，不发布宿主机端口、不直接连接 ONES Provider。此网络不赋予任意代理能力；模型不能覆盖地址，建议部署防火墙只放行所需内容端点。Embedding/本地 Qdrant 不加入出网网络。API 沿用离线扩展的知识网络；主文件和离线扩展不因此增加在线 Secret。
+- 在线 MCP 保留 `knowledge-internal` 与 `agent-runtime-control` 两个内部网络，增加 `knowledge-storage-egress` 以访问管理员绑定的外部 PostgreSQL/Qdrant，不发布宿主机端口、不直接连接 ONES Provider。此网络不赋予任意代理能力；模型不能覆盖地址，建议部署防火墙只放行所需内容端点。Embedding 不加入出网网络；本地 Qdrant 仅为宿主机端口发布另接专用 bridge，不复用 MCP 的出网网络。API 沿用离线扩展的知识网络；主文件和离线扩展不因此增加在线 Secret。
 - 若只暂停全部知识服务，先停用相应检索入口与同步，再用叠加配置定向停止常驻服务；在线部署包含 `knowledge-mcp knowledge-embedding-online`，后台包含 `knowledge-embedding knowledge-qdrant`。保留卷和数据库网络，正式卸载/删卷另行审批。
 
 配置与隔离合成测试通过不意味着已正式部署或完成业务召回验收；本地资源验证、双用户 ONES、Agent 新 Job 和人工质量评测仍需单独验收。
+
+### 局域网访问 Qdrant
+
+加载知识扩展后，Qdrant HTTP 可通过 `http://服务器IP:6333` 访问。`0.0.0.0:6333:6333` 显式绑定宿主机所有 IPv4 接口，不是仅本机地址；当前 Compose 未配置 Qdrant API Key，直接访问者不受平台角色与 ONES 双重授权保护，可能直接读写向量集合。仅用于受信局域网，由宿主机防火墙或安全组限制来源网段，不向公网开放。其他知识服务不因此开放端口；内部客户端仍使用原 `http://knowledge-qdrant:6333` 地址。
+
+纯 `internal: true` 网络不提供正常的宿主机端口发布，因此只给 Qdrant 额外连接一个标准 `knowledge-qdrant-access` bridge，保留原内部网络及别名。标准 bridge 也具备普通出站能力，不是只入不出的防火墙；不为解决端口问题取消整个知识内部网络的隔离。端口映射说明见 [Docker 官方文档](https://docs.docker.com/engine/network/port-publishing/)。
+
+已有容器需重新创建才能加载映射，不需要重新构建镜像。保留原项目名和数据卷，在仓库根目录执行（按环境追加已启用的 `mcp.compose.yml`、`sync.compose.yml`）：
+
+```sh
+docker compose -f docker-compose.yml -f knowledge/compose.yml \
+  --profile knowledge up -d --no-deps --no-build knowledge-qdrant
+```
+
+只重新创建 Qdrant，会短暂影响检索及索引；不迁移或清空数据卷，不执行全项目 `down`。无法从其他机器连接时，检查宿主机 6333 端口冲突、主机防火墙和网络路由。
 
 ## Web 配置独立内容存储
 

@@ -32,7 +32,10 @@ def test_knowledge_definitions_are_exclusively_opt_in():
     assert overlay["services"]["postgres"] == {"networks": ["knowledge-internal"]}
     assert overlay["services"]["api-server"] == {"networks": ["knowledge-internal"]}
     assert set(overlay["volumes"]) == {"knowledge-models", "knowledge-qdrant"}
-    assert overlay["networks"] == {"knowledge-internal": {"internal": True}}
+    assert overlay["networks"] == {
+        "knowledge-internal": {"internal": True},
+        "knowledge-qdrant-access": {"driver": "bridge"},
+    }
     assert not overlay.get("name")
     assert all(not service.get("container_name") for service in overlay["services"].values())
 
@@ -57,7 +60,7 @@ def test_knowledge_build_and_database_configuration_are_explicit():
             assert (ROOT / service["build"]["dockerfile"]).is_file()
 
 
-def test_qdrant_release_is_pinned_without_changing_storage_or_network_boundaries():
+def test_qdrant_release_is_pinned_with_only_confirmed_http_port_published():
     service = yaml.safe_load((ROOT / "knowledge/compose.yml").read_text())["services"][
         "knowledge-qdrant"
     ]
@@ -66,10 +69,10 @@ def test_qdrant_release_is_pinned_without_changing_storage_or_network_boundaries
         "12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10"
     )
     assert not service.get("build")
-    assert not service.get("ports")
+    assert service["ports"] == ["0.0.0.0:6333:6333"]
     assert service["profiles"] == ["knowledge"]
     assert service["volumes"] == ["knowledge-qdrant:/qdrant/storage"]
-    assert service["networks"] == ["knowledge-internal"]
+    assert service["networks"] == ["knowledge-internal", "knowledge-qdrant-access"]
     assert service["environment"]["QDRANT__TELEMETRY_DISABLED"] == "true"
 
 
@@ -120,6 +123,7 @@ def test_base_compose_never_requires_knowledge(compose_cli, profiles):
     config = parsed(render(compose_cli, profiles=profiles, dsn=None))
     assert not KNOWLEDGE_SERVICES.intersection(config["services"])
     assert "knowledge-internal" not in config["networks"]
+    assert "knowledge-qdrant-access" not in config["networks"]
     assert not {"knowledge-models", "knowledge-qdrant"}.intersection(config["volumes"])
 
 
@@ -149,11 +153,25 @@ def test_overlay_profiles_and_base_services_are_preserved(compose_cli, profiles,
     assert combined["name"] == base["name"] == "knowledge-compose-contract"
     for name in expected:
         service = combined["services"][name]
-        assert not service.get("ports")
+        if name == "knowledge-qdrant":
+            assert service["ports"] == [
+                {
+                    "mode": "ingress",
+                    "host_ip": "0.0.0.0",
+                    "target": 6333,
+                    "published": "6333",
+                    "protocol": "tcp",
+                }
+            ]
+        else:
+            assert not service.get("ports")
         assert not service.get("secrets")
-        assert set(service["networks"]) == (
-            {"provider-egress"} if name == "knowledge-model-prepare" else {"knowledge-internal"}
-        )
+        expected_networks = {"knowledge-internal"}
+        if name == "knowledge-model-prepare":
+            expected_networks = {"provider-egress"}
+        elif name == "knowledge-qdrant":
+            expected_networks.add("knowledge-qdrant-access")
+        assert set(service["networks"]) == expected_networks
         if "build" in service:
             assert Path(service["build"]["context"]) == ROOT
     if "knowledge-ops" in expected:
@@ -166,6 +184,13 @@ def test_overlay_profiles_and_base_services_are_preserved(compose_cli, profiles,
             == "knowledge-compose-contract_knowledge-models"
         )
     if "knowledge-qdrant" in expected:
+        assert combined["networks"]["knowledge-qdrant-access"]["driver"] == "bridge"
+        assert not combined["networks"]["knowledge-qdrant-access"].get("internal", False)
+        assert {
+            name
+            for name, service in combined["services"].items()
+            if "knowledge-qdrant-access" in service.get("networks", {})
+        } == {"knowledge-qdrant"}
         assert (
             combined["volumes"]["knowledge-qdrant"]["name"]
             == "knowledge-compose-contract_knowledge-qdrant"

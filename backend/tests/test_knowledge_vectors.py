@@ -622,8 +622,12 @@ def test_compose_runtime_isolation_and_valid_tmpfs():
     services = config["services"]
     assert config["networks"]["knowledge-internal"]["internal"] == "true"
     for name in ("knowledge-embedding", "knowledge-qdrant", "knowledge-ops"):
-        assert services[name]["networks"] == ["knowledge-internal"]
-        assert not services[name].get("ports")
+        if name == "knowledge-qdrant":
+            assert services[name]["networks"] == ["knowledge-internal", "knowledge-qdrant-access"]
+            assert services[name]["ports"] == ["0.0.0.0:6333:6333"]
+        else:
+            assert services[name]["networks"] == ["knowledge-internal"]
+            assert not services[name].get("ports")
     for name in ("knowledge-embedding", "knowledge-model-prepare", "knowledge-ops"):
         assert len(services[name]["tmpfs"]) == 1
         assert services[name]["tmpfs"][0].startswith("/tmp:")

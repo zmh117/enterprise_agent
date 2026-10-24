@@ -58,12 +58,15 @@ services:
   knowledge-qdrant:
     profiles: [knowledge]
     image: qdrant/qdrant:v1.19.1@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10
+    # 经确认开放 HTTP 给受信局域网；宿主机防火墙应限制来源，不对公网开放。
+    ports:
+      - "0.0.0.0:6333:6333"
     environment:
       QDRANT__TELEMETRY_DISABLED: "true"
       QDRANT__LOG_LEVEL: ERROR
     volumes:
       - knowledge-qdrant:/qdrant/storage
-    networks: [knowledge-internal]
+    networks: [knowledge-internal, knowledge-qdrant-access]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     cpus: 2
@@ -100,3 +103,6 @@ volumes:
 networks:
   knowledge-internal:
     internal: true
+  # 纯 internal 网络不会发布宿主机端口；仅 Qdrant 连接此标准 bridge。
+  knowledge-qdrant-access:
+    driver: bridge
