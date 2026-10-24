@@ -1,0 +1,10 @@
+*
+!Dockerfile
+!requirements.txt
+!analyzer.py
+!worker.py
+!web.py
+!ui.html
+!test_demo.py
+!fixtures/
+!fixtures/**

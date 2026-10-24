@@ -1,0 +1,48 @@
+name: code-knowledge-demo
+services:
+  worker:
+    build:
+      context: .
+      target: worker
+    volumes:
+      - source:/private
+      - knowledge:/knowledge
+    networks: [demo]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 384m
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=3)"]
+      interval: 3s
+      timeout: 4s
+      retries: 20
+  web:
+    build:
+      context: .
+      target: web
+    ports: ["127.0.0.1:8766:8080"]
+    volumes:
+      - knowledge:/knowledge:ro
+    networks: [demo, browser]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 192m
+    depends_on:
+      worker:
+        condition: service_healthy
+volumes:
+  source:
+  knowledge:
+networks:
+  demo:
+    internal: true
+  browser:
+    ipam:
+      config:
+        - subnet: ${CODE_KNOWLEDGE_DEMO_SUBNET:-172.16.240.0/28}
