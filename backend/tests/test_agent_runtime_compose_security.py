@@ -31,13 +31,13 @@ def test_agent_runtime_grants_are_narrow_and_isolate_business_tables() -> None:
     assert "grant select (id, protocol, status) on model_connection" in normalized
     assert "ciphertext" in normalized
     assert (
-        "grant select, insert, delete on agent_runtime_terminal_ledger to agent_runtime_reader"
+        "grant select, insert on agent_runtime_terminal_ledger to agent_runtime_reader"
     ) in normalized
     assert (
-        "grant select, insert, delete on agent_runtime_invocation_claim to agent_runtime_reader"
+        "grant select on agent_runtime_invocation, agent_runtime_request_snapshot to agent_runtime_reader"
     ) in normalized
     assert (
-        "grant select, insert, delete on agent_runtime_invocation_event to agent_runtime_reader"
+        "grant select, insert on agent_runtime_invocation_event to agent_runtime_reader"
     ) in normalized
     assert "update on agent_runtime_terminal_ledger" not in normalized
     assert "update on agent_runtime_invocation_claim" not in normalized
@@ -48,7 +48,7 @@ def test_python_runtime_and_standard_mcp_are_hardened_and_secret_scoped() -> Non
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
 
-    python_runtime = services["python-agent-runtime"]
+    python_runtime = services["python-agent-runtime-a"]
     tool_mcp = services["tool-mcp"]
     for service in (python_runtime, tool_mcp):
         assert service["read_only"] is True
@@ -232,7 +232,7 @@ def test_release_build_identity_is_injected_into_all_observed_components() -> No
         "api-server",
         "file-service",
         "agent-worker",
-        "python-agent-runtime",
+        "python-agent-runtime-a",
     ):
         assert compose["services"][service_name]["build"]["args"] == expected_args
 
@@ -260,7 +260,8 @@ def test_async_job_creation_workers_can_reach_only_python_agent_runtime() -> Non
     for service_name in ("channel-dispatch-worker", "webhook-worker"):
         service = services[service_name]
         assert set(service["networks"]) == {"default", "agent-runtime-control"}
-        assert service["depends_on"]["python-agent-runtime"] == {"condition": "service_healthy"}
+        assert service["depends_on"]["python-agent-runtime-a"] == {"condition": "service_started"}
+        assert service["depends_on"]["python-agent-runtime-b"] == {"condition": "service_started"}
 
 
 def test_python_runtime_acceptance_overlay_is_isolated_and_test_only() -> None:
@@ -270,7 +271,7 @@ def test_python_runtime_acceptance_overlay_is_isolated_and_test_only() -> None:
     )
     services = overlay["services"]
 
-    assert services["python-agent-runtime"]["environment"] == {
+    assert services["python-agent-runtime-a"]["environment"] == {
         "APP_ENV": "testing",
         "AGENT_RUNTIME_TEST_PROVIDER_MODE": "deterministic",
     }

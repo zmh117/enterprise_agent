@@ -50,6 +50,7 @@ def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None
             "last_error_summary",
             "created_at",
             "updated_at",
+            "wait_reason",
         } == set(columns)
         assert columns["status"]["dflt_value"] == "'PENDING'"
         assert columns["attempt_count"]["dflt_value"] == "0"

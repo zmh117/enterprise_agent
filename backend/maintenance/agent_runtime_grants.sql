@@ -1,6 +1,6 @@
 -- PostgreSQL-only, post-migration privileges for the Python Agent Runtime.
 -- The Runtime cannot read or write Job, RBAC, audit, Delivery, Publication or
--- general platform tables. The sole write boundary is its TTL terminal ledger.
+-- general platform tables. Writes are limited to owned invocation lifecycle fields and its event ledger.
 -- In particular it cannot read or mutate server-first agent_tool_call or
 -- mcp_operation_audit correlation facts, which stay inside the MCP/Worker DB boundary.
 
@@ -19,9 +19,10 @@ GRANT SELECT (id, provider, status, active_version)
 GRANT SELECT (secret_id, version, ciphertext, nonce, key_id, algorithm, status)
   ON platform_secret_version TO agent_runtime_reader;
 
-GRANT SELECT, INSERT, DELETE ON agent_runtime_terminal_ledger
+GRANT SELECT, INSERT ON agent_runtime_terminal_ledger
   TO agent_runtime_reader;
-GRANT SELECT, INSERT, DELETE ON agent_runtime_invocation_claim
-  TO agent_runtime_reader;
-GRANT SELECT, INSERT, DELETE ON agent_runtime_invocation_event
+GRANT SELECT ON agent_runtime_invocation, agent_runtime_request_snapshot TO agent_runtime_reader;
+GRANT UPDATE (state, node_id, instance_id, accepted_at, execution_deadline_at, lease_until,
+  terminal_code, terminal_at, execution_quiesced_at) ON agent_runtime_invocation TO agent_runtime_reader;
+GRANT SELECT, INSERT ON agent_runtime_invocation_event
   TO agent_runtime_reader;

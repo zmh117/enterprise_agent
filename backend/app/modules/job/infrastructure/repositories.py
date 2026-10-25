@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
+from app.modules.job.infrastructure.execution_control import JobExecutionControl
+from app.modules.agent.infrastructure.runtime_pool_store import (
+    ADMISSION_SECONDS,
+    database_now,
+    timestamp as pool_timestamp,
+)
+
 import json
 from typing import Any
 
@@ -16,7 +25,7 @@ from app.shared.secret_redaction import (
     sanitize_for_persistence,
 )
 
-_JOB_COLUMN_NAMES = (
+_JOB_COLUMN_NAMES: tuple[str, ...] = (
     "id",
     "session_id",
     "idempotency_key",
@@ -72,6 +81,12 @@ _JOB_COLUMN_NAMES = (
     "tool_contract_observation_hash",
     "prompt_template_version",
     "prompt_contract_hash",
+)
+_JOB_COLUMN_NAMES += (
+    "worker_claim_version",
+    "worker_lease_until",
+    "admission_deadline_at",
+    "cancel_requested_at",
 )
 _JOB_COLUMNS_SQL = ", ".join(_JOB_COLUMN_NAMES)
 _QUALIFIED_JOB_COLUMNS_SQL = ", ".join(f"j.{column}" for column in _JOB_COLUMN_NAMES)
@@ -275,6 +290,16 @@ class AgentRepository:
                         error_code="job_idempotency_resolution_failed",
                     )
                 return concurrent
+            if initial_status == JobStatus.PENDING:
+                self.database.execute(
+                    "update agent_job set admission_deadline_at = ? where id = ?",
+                    (
+                        pool_timestamp(
+                            database_now(self.database) + timedelta(seconds=ADMISSION_SECONDS)
+                        ),
+                        job_id,
+                    ),
+                )
             message_id = self._sessions.add_message(
                 session_id=session_id,
                 job_id=job_id,
@@ -553,6 +578,10 @@ class AgentRepository:
                 else "legacy_message_unavailable"
             ),
             "status": row["status"],
+            "runtime_execution": self._runtime_execution_status(str(row["id"])),
+            "worker_claim_version": int(row.get("worker_claim_version") or 0),
+            "worker_lease_until": row.get("worker_lease_until"),
+            "cancel_requested_at": row.get("cancel_requested_at"),
             "priority": int(row["priority"]),
             "retry_count": int(row["retry_count"]),
             "max_retry_count": int(row["max_retry_count"]),
@@ -564,6 +593,26 @@ class AgentRepository:
             "created_at": row["created_at"],
             "started_at": row.get("started_at"),
             "finished_at": row.get("finished_at"),
+        }
+
+    def _runtime_execution_status(self, job_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            """
+            select invocation_id, attempt, request_digest, state, node_id, instance_id,
+                   created_at, accepted_at, execution_deadline_at, lease_until,
+                   cancel_requested_at, terminal_code, terminal_at, execution_quiesced_at
+              from agent_runtime_invocation where job_id = ? order by attempt desc limit 1
+            """,
+            (job_id,),
+        )
+        wait = self.database.execute_one(
+            "select wait_reason, next_attempt_at from job_dispatch_outbox where job_id = ?",
+            (job_id,),
+        )
+        return {
+            **(row or {}),
+            "wait_reason": (wait or {}).get("wait_reason"),
+            "next_observation_at": (wait or {}).get("next_attempt_at"),
         }
 
     def list_steps(self, job_id: str) -> list[dict[str, Any]]:
@@ -585,34 +634,11 @@ class AgentRepository:
         *,
         recover_runtime_running: bool = False,
     ) -> AgentJob | None:
-        timestamp = now_iso()
-        row = self.database.execute_one(
-            f"""
-            update agent_job
-            set status = ?, started_at = coalesce(started_at, ?), locked_at = ?, locked_by = ?,
-                next_retry_at = null
-            where id = ?
-              and (
-                status = ?
-                or (status = ? and next_retry_at is not null and next_retry_at <= ?)
-                or (? = 1 and status = ? and agent_runtime_kind = 'python-v1')
-              )
-            returning {_JOB_COLUMNS_SQL}
-            """,
-            (
-                JobStatus.RUNNING.value,
-                timestamp,
-                timestamp,
-                worker_id,
-                job_id,
-                JobStatus.PENDING.value,
-                JobStatus.RETRY_WAIT.value,
-                timestamp,
-                int(recover_runtime_running),
-                JobStatus.RUNNING.value,
-            ),
-        )
-        return self._job_from_row(row) if row else None
+        del recover_runtime_running  # Redelivery alone never grants ownership.
+        with self.database.unit_of_work():
+            if not JobExecutionControl(self.database).claim(job_id, worker_id):
+                return None
+            return self.get_job(job_id)
 
     def transition_job(
         self,
@@ -663,6 +689,16 @@ class AgentRepository:
                 safe_message="任务状态已被其他操作修改，请刷新后重试",
                 error_code="job_transition_conflict",
             )
+        if job.status == JobStatus.WAITING_INPUT and target == JobStatus.PENDING:
+            self.database.execute(
+                "update agent_job set admission_deadline_at = ? where id = ?",
+                (
+                    pool_timestamp(
+                        database_now(self.database) + timedelta(seconds=ADMISSION_SECONDS)
+                    ),
+                    job_id,
+                ),
+            )
         return self._job_from_row(row)
 
     def schedule_retry(
@@ -676,12 +712,15 @@ class AgentRepository:
         row = self.database.execute_one(
             f"""
             update agent_job
-            set retry_count = retry_count + 1, error_message = ?, last_error_code = ?,
+            set retry_count = retry_count + 1, admission_deadline_at = ?, worker_lease_until = null, error_message = ?, last_error_code = ?,
                 last_error_at = ?, next_retry_at = ?, status = ?, locked_at = null, locked_by = null
             where id = ? and status = ? and retry_count < max_retry_count
             returning {_JOB_COLUMNS_SQL}
             """,
             (
+                pool_timestamp(
+                    datetime.fromisoformat(next_retry_at) + timedelta(seconds=ADMISSION_SECONDS)
+                ),
                 error_message,
                 error_code,
                 now_iso(),
@@ -816,6 +855,11 @@ class AgentRepository:
             status=JobStatus(row["status"]),
             retry_count=int(row["retry_count"]),
             max_retry_count=int(row["max_retry_count"]),
+            locked_by=str(row.get("locked_by") or ""),
+            worker_claim_version=int(row.get("worker_claim_version") or 0),
+            worker_lease_until=row.get("worker_lease_until"),
+            admission_deadline_at=row.get("admission_deadline_at"),
+            cancel_requested_at=row.get("cancel_requested_at"),
             result=row.get("result"),
             error_message=row.get("error_message"),
             last_error_code=row.get("last_error_code") or "",

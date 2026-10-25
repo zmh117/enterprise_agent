@@ -23,7 +23,12 @@ services:
       AGENT_MAX_RETRY_COUNT: "1"
       AGENT_RETRY_DELAY_SECONDS: "1"
 
-  python-agent-runtime:
+  python-agent-runtime-a:
+    environment:
+      APP_ENV: testing
+      AGENT_RUNTIME_TEST_PROVIDER_MODE: deterministic
+
+  python-agent-runtime-b:
     environment:
       APP_ENV: testing
       AGENT_RUNTIME_TEST_PROVIDER_MODE: deterministic
@@ -43,8 +48,8 @@ services:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
-      PYTHON_AGENT_RUNTIME_URL: http://python-agent-runtime:8091
-      PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS: python-agent-runtime
+      PYTHON_AGENT_RUNTIME_URL: http://python-agent-runtime-a:8091
+      PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS: python-agent-runtime-a,python-agent-runtime-b
       AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP: "true"
       MODEL_PROVIDER_HOST_ALLOWLIST: api.deepseek.com
       APP_ENV: testing

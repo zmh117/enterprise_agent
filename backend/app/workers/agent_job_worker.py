@@ -9,6 +9,7 @@ from app.bootstrap import Container, build_worker_container
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.shared.config import Settings, load_settings
 from app.shared.exceptions import NotFound
+from app.modules.job.infrastructure.execution_control import JobExecutionControl, WorkerLeaseLost
 from app.shared.logging import configure_logging, with_correlation
 
 logger = logging.getLogger(__name__)
@@ -25,20 +26,9 @@ class AgentJobWorker:
         self.active_job_id = ""
 
     def request_shutdown(self) -> bool:
-        if not self.active_job_id:
-            return False
-        try:
-            return self.container.agent_executor.cancel_active(
-                self.active_job_id,
-                "WORKER_SHUTDOWN",
-            )
-        except Exception:
-            logger.warning(
-                "Failed to cancel active Runtime invocation during Worker shutdown job_id=%s",
-                self.active_job_id,
-                exc_info=True,
-            )
-            return False
+        # Disconnecting an observer does not cancel its model execution. The
+        # persisted lease is reconciled independently of broker redelivery.
+        return bool(self.active_job_id)
 
     def handle(self, message: AgentJobMessage) -> None:
         try:
@@ -89,8 +79,22 @@ class AgentJobWorker:
                     fail_on_error=False,
                     recover_runtime_running=message.redelivered,
                 )
+            except WorkerLeaseLost:
+                return
             except Exception as exc:
-                job = self.container.agent_repository.get_job(message.job_id)
+                job = getattr(exc, "worker_claim", None)
+                if job is None:
+                    raise
+                if getattr(exc, "error_code", "") == "runtime_observer_deferred":
+                    JobExecutionControl(self.container.database).defer(
+                        job.id,
+                        self.worker_id,
+                        job.worker_claim_version,
+                        reason=getattr(exc, "diagnostics", {}).get(
+                            "wait_reason", "runtime_recovery"
+                        ),
+                    )
+                    return
                 safe_message = getattr(exc, "safe_message", str(exc))
                 action = self.container.retry_service.handle_failure(
                     job,

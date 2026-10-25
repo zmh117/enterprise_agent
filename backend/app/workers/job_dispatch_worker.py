@@ -7,6 +7,7 @@ from pathlib import Path
 from app.bootstrap import build_worker_container
 from app.shared.config import load_settings
 from app.shared.logging import configure_logging
+from app.modules.agent.infrastructure.runtime_pool_recovery import reconcile_runtime_nodes
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ def main() -> None:
     while True:
         try:
             HEARTBEAT_PATH.touch()
+            reconcile_runtime_nodes(settings.agent_runtime, container.database)
             result = container.job_dispatcher.publish_pending(limit=100)
             if (
                 result.published

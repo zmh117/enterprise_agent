@@ -4,7 +4,7 @@ import json
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -19,6 +19,11 @@ from app.modules.model_connection.domain import ModelRuntimeBinding
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.model_probe_envelope import ModelProbeEnvelopeCipher
+from app.modules.agent.infrastructure.runtime_http_client import (
+    RuntimeClientSettings,
+    probe_runtime_readiness,
+    runtime_urlopen,
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,7 @@ class RuntimeModelProbeSettings:
     master_key: str = ""
     allow_insecure_internal_http: bool = False
     runtime_kind: str = "python-v1"
+    nodes: tuple[tuple[str, str], ...] = ()
 
     def endpoint(self) -> str:
         normalized = self.base_url.strip().rstrip("/")
@@ -57,6 +63,7 @@ class RuntimeModelProbeSettings:
 
 class RuntimeModelProbeClient:
     def __init__(self, settings: RuntimeModelProbeSettings) -> None:
+        self.settings = settings
         self.endpoint = settings.endpoint()
         self.draft_endpoint = f"{self.endpoint}/draft"
         if settings.runtime_kind != "python-v1":
@@ -152,6 +159,41 @@ class RuntimeModelProbeClient:
             timeout=timeout,
         )
 
+    def _open_probe(self, request: urllib.request.Request, timeout: int) -> Any:
+        if not self.settings.nodes:
+            return runtime_urlopen(request, timeout=timeout)
+        for node, base_url in self.settings.nodes:
+            status = probe_runtime_readiness(
+                RuntimeClientSettings(
+                    base_url=base_url,
+                    allowed_runtime_hosts=self.settings.allowed_hosts,
+                    allow_insecure_internal_http=self.settings.allow_insecure_internal_http,
+                )
+            )
+            if (
+                not status.get("ready")
+                or not status.get("pool_enabled")
+                or status.get("node_id") != node
+                or status.get("draining")
+            ):
+                continue
+            url = replace(self.settings, base_url=base_url, nodes=()).endpoint()
+            if request.full_url.endswith("/draft"):
+                url += "/draft"
+            candidate = urllib.request.Request(
+                url, data=request.data, headers=dict(request.headers), method="POST"
+            )
+            try:
+                return runtime_urlopen(candidate, timeout=timeout)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 429:
+                    raise
+        raise NonRetryableExecutionError(
+            "Runtime pool has no probe slot",
+            safe_message="Runtime 池暂无空闲探针槽位",
+            error_code="runtime_pool_busy",
+        )
+
     def _send_probe(
         self,
         *,
@@ -175,7 +217,7 @@ class RuntimeModelProbeClient:
         )
         assert_external_io_allowed("model.runtime_probe")
         try:
-            with urllib.request.urlopen(request, timeout=timeout + 5) as response:
+            with self._open_probe(request, timeout + 5) as response:
                 raw = response.read(65_537)
                 if response.status != 200 or len(raw) > 65_536:
                     raise ValueError("invalid model probe response")

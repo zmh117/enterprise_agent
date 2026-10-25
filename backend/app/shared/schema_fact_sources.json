@@ -1106,11 +1106,11 @@
       "object_type": "table",
       "table": "agent_runtime_invocation_claim",
       "owner": "agent-runtime",
-      "semantics": "Invocation ownership and lease fact preventing concurrent duplicate execution.",
+      "semantics": "Legacy pre-pool claim retained for inspection; no active Runtime reads or writes.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/python_runtime/invocations.py"],
-      "readers": ["code:backend/app/python_runtime/invocations.py"],
-      "lifecycle": "short-lived claim with expiration",
+      "writers": ["schema:145_contract_python_runtime_invocation_claim; retired by 147"],
+      "readers": ["maintenance:read-only historical inspection"],
+      "lifecycle": "retired from execution ownership; agent_runtime_invocation is authoritative",
       "retention_policy": "runtime-claim-window",
       "audit_requirement": "retain invocation identifiers and lease facts only",
       "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["all Runtime implementations replace claim ownership semantics"]},
@@ -1364,6 +1364,63 @@
       "audit_requirement": "stores complete unredacted model-visible business content by explicit policy; Runtime credentials and authentication headers must not be proactively copied into the snapshot",
       "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves invocation identity, complete content, integrity digest, authorization, and historical readability"]},
       "evidence_refs": ["change:add-agent-job-context-audit", "schema:124_expand_agent_job_context_audit"]
+    },
+    {
+      "id": "agent_runtime_invocation",
+      "object_type": "table",
+      "table": "agent_runtime_invocation",
+      "owner": "execution-delivery",
+      "semantics": "唯一 Job attempt 的执行归属、控制期限和停止证据",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "Worker 准备事务和 Runtime 归属条件更新",
+      "writers": [
+        "code:backend/app/modules/agent/infrastructure/runtime_pool_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/agent/infrastructure/runtime_pool_store.py"
+      ],
+      "lifecycle": "PREPARED -> RUNNING -> TERMINAL，执行归属不可转移",
+      "retention_policy": "身份和不可再次执行标记至少随 Job 保留",
+      "audit_requirement": "普通接口和日志仅标识、摘要和安全状态",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "不得删除活动执行或未提交结果所需的正文"
+        ]
+      },
+      "evidence_refs": [
+        "migration:147_expand_runtime_replica_pool"
+      ]
+    },
+    {
+      "id": "agent_runtime_request_snapshot",
+      "object_type": "table",
+      "table": "agent_runtime_request_snapshot",
+      "owner": "execution-delivery",
+      "semantics": "受保护的不可变执行正文，不含认证 Header 和凭据",
+      "classification": "immutable_snapshot",
+      "source_contract": "contracts/agent-runtime/v1.4 and v1.5 ExecutionRequest",
+      "canonical_source": "Worker 准备事务和 Runtime 归属条件更新",
+      "writers": [
+        "code:backend/app/modules/agent/infrastructure/runtime_pool_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/agent/infrastructure/runtime_pool_store.py"
+      ],
+      "lifecycle": "PREPARED -> RUNNING -> TERMINAL，执行归属不可转移",
+      "retention_policy": "仅在 Job 终态且已停止后由受权清理操作移除正文",
+      "audit_requirement": "普通接口和日志仅标识、摘要和安全状态",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "不得删除活动执行或未提交结果所需的正文"
+        ]
+      },
+      "evidence_refs": [
+        "migration:147_expand_runtime_replica_pool"
+      ]
     }
   ]
 }

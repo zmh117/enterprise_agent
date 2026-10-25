@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.modules.job.infrastructure.execution_control import JobExecutionControl
+from app.modules.agent.infrastructure.runtime_pool_store import RuntimePoolStore
+
 from datetime import UTC, datetime, timedelta
 
 from app.modules.audit.application.audit_service import AuditService
@@ -45,7 +48,13 @@ class JobRetryService:
         self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
 
     def is_retryable(self, exc: Exception) -> bool:
-        if getattr(exc, "error_code", "") == "runtime_timeout":
+        if getattr(exc, "error_code", "") in {
+            "runtime_timeout",
+            "runtime_admission_timeout",
+            "runtime_cancelled",
+            "runtime_invocation_outcome_unknown",
+            "runtime_recovery_expired",
+        }:
             return False
         if isinstance(
             exc,
@@ -62,6 +71,12 @@ class JobRetryService:
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def handle_failure(self, job: AgentJob, exc: Exception, correlation_id: str) -> str:
+        if job.worker_claim_version:
+            JobExecutionControl(self.repository.database).require(
+                job.id,
+                job.locked_by,
+                job.worker_claim_version,
+            )
         if self.mcp_tool_snapshot_service is not None:
             try:
                 self.mcp_tool_snapshot_service.verify(job.id)
@@ -70,7 +85,23 @@ class JobRetryService:
         safe_message = getattr(exc, "safe_message", str(exc))
         error_code = getattr(exc, "error_code", "") or "agent_runtime_error"
         diagnostics = getattr(exc, "diagnostics", {})
-        if self.is_retryable(exc) and job.retry_count < job.max_retry_count:
+        invocation = RuntimePoolStore(self.repository.database).get(
+            f"{job.id}.attempt-{job.retry_count}", lock=True
+        )
+        retryable = self.is_retryable(exc) and job.retry_count < job.max_retry_count
+        if (
+            retryable
+            and invocation is not None
+            and (invocation["state"] != "TERMINAL" or invocation["execution_quiesced_at"] is None)
+        ):
+            JobExecutionControl(self.repository.database).defer(
+                job.id,
+                job.locked_by,
+                job.worker_claim_version,
+                reason="runtime_recovery",
+            )
+            return "deferred"
+        if retryable:
             delay_seconds = max(self.queue_settings.retry_delay_seconds, 1)
             next_retry_at = (datetime.now(UTC) + timedelta(seconds=delay_seconds)).isoformat()
             scheduled = self.repository.schedule_retry(
@@ -128,6 +159,7 @@ class JobRetryService:
                 **_business_application_context(job),
             },
         )
+        JobExecutionControl(self.repository.database).wake_session(job.session_id)
         return "timeout" if terminal.status == JobStatus.TIMEOUT else "dead"
 
     def reschedule_if_early(self, job: AgentJob, correlation_id: str) -> bool:

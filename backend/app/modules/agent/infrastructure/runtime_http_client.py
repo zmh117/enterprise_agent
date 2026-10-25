@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import re
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol, cast
@@ -23,6 +24,7 @@ from app.modules.agent.domain.runtime import (
 from app.modules.agent.infrastructure.runtime_protocol import (
     canonical_request_digest,
     validate_execution_request,
+    validate_pool_contract,
     validate_runtime_contract,
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
@@ -42,7 +44,9 @@ from app.shared.mcp_server_policy import (
     require_mcp_server_policy,
     validate_mcp_server_policies,
 )
-from app.shared.database import assert_external_io_allowed
+from app.shared.database import Database, assert_external_io_allowed
+from app.modules.agent.infrastructure.runtime_pool_store import RuntimePoolStore
+from app.modules.job.infrastructure.execution_control import JobExecutionControl
 from app.shared.build_identity import (
     BuildIdentity,
     BuildIdentityError,
@@ -258,6 +262,17 @@ class RuntimePrincipalTokens:
         return "RuntimePrincipalTokens(business=<hidden>, files=<hidden>)"
 
 
+class RejectRuntimeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> None:
+        return None
+
+
+def runtime_urlopen(request: urllib.request.Request, *, timeout: int) -> Any:
+    return urllib.request.build_opener(RejectRuntimeRedirect()).open(request, timeout=timeout)
+
+
 class UrlLibRuntimeTransport:
     def stream(
         self,
@@ -269,7 +284,7 @@ class UrlLibRuntimeTransport:
     ) -> Iterator[bytes]:
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            with runtime_urlopen(request, timeout=timeout_seconds) as response:
                 content_type = str(response.headers.get("content-type") or "").lower()
                 if response.status != 200 or "application/x-ndjson" not in content_type:
                     raise RetryableExecutionError(
@@ -279,6 +294,35 @@ class UrlLibRuntimeTransport:
                     )
                 yield from response
         except urllib.error.HTTPError as exc:
+            try:
+                payload = json.loads(exc.read(4096))
+                detail = payload.get("detail", payload)
+                code = detail.get("code", "")
+            except (ValueError, AttributeError):
+                code = ""
+            if code == "runtime_admission_timeout":
+                raise ExecutionTimeout(
+                    "Runtime admission timed out",
+                    safe_message="Runtime 排队等待超时",
+                    error_code=code,
+                ) from exc
+            if code == "runtime_recovery_expired":
+                raise NonRetryableExecutionError(
+                    "Runtime recovery body expired",
+                    safe_message="执行恢复正文已过期",
+                    error_code=code,
+                ) from exc
+            if code in {
+                "runtime_pool_busy",
+                "runtime_pool_unavailable",
+                "runtime_instance_mismatch",
+                "runtime_invocation_owner_mismatch",
+            }:
+                raise RetryableExecutionError(
+                    "Runtime pool control response",
+                    safe_message="Runtime 等待恢复",
+                    error_code=code,
+                ) from exc
             if exc.code in {400, 401, 403, 404, 409, 413, 422}:
                 raise NonRetryableExecutionError(
                     "Agent Runtime rejected the execution request",
@@ -297,7 +341,7 @@ class UrlLibRuntimeTransport:
                 error_code="runtime_transport_error",
                 diagnostics={"cancel_reason": "WORKER_TIMEOUT"},
             ) from exc
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             cancel_reason = (
                 "WORKER_TIMEOUT"
                 if isinstance(getattr(exc, "reason", None), TimeoutError)
@@ -320,7 +364,7 @@ class UrlLibRuntimeTransport:
     ) -> dict[str, Any]:
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            with runtime_urlopen(request, timeout=timeout_seconds) as response:
                 if response.status != 200:
                     raise RetryableExecutionError(
                         "Agent Runtime cancel returned an invalid status",
@@ -398,6 +442,7 @@ class RuntimeClientSettings:
     base_url: str
     allowed_runtime_hosts: tuple[str, ...]
     runtime_kind: str = "python-v1"
+    nodes: tuple[tuple[str, str], ...] = ()
     allowed_mcp_server_codes: tuple[str, ...] = (
         STANDARD_TOOL_MCP_CODE,
         ONES_MCP_SERVER_CODE,
@@ -407,7 +452,17 @@ class RuntimeClientSettings:
     )
     allow_insecure_internal_http: bool = False
 
+    def __post_init__(self) -> None:
+        if len(self.nodes) > 16 or len({node for node, _url in self.nodes}) != len(self.nodes):
+            raise ValueError("Runtime node identities must be unique and bounded")
+        if len({url for _node, url in self.nodes}) != len(self.nodes):
+            raise ValueError("Runtime node addresses must be unique")
+        if any(not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", node) for node, _url in self.nodes):
+            raise ValueError("Runtime node identity is invalid")
+
     def execution_url(self) -> str:
+        for _node, url in self.nodes:
+            replace(self, base_url=url, nodes=()).execution_url()
         normalized = self.base_url.strip().rstrip("/")
         parsed = urlsplit(normalized)
         host = (parsed.hostname or "").lower()
@@ -435,6 +490,32 @@ class RuntimeClientSettings:
 
 def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
     """Passive service-identity/readiness probe; never invokes a model or MCP Tool."""
+    if settings.nodes:
+        members = {
+            node: probe_runtime_readiness(replace(settings, base_url=url, nodes=()))
+            for node, url in settings.nodes
+        }
+        ready = sum(
+            bool(
+                item.get("ready")
+                and item.get("pool_enabled")
+                and item.get("node_id") == node
+                and not item.get("draining")
+            )
+            for node, item in members.items()
+        )
+        return {
+            "configured": True,
+            "ready": ready > 0,
+            "members": members,
+            "pool_status": "READY"
+            if ready == len(members)
+            else "DEGRADED"
+            if ready
+            else "UNAVAILABLE",
+            "model_invoked": False,
+            "mcp_invoked": False,
+        }
 
     def get(base_url: str, path: str, *, accepted_statuses: set[int]) -> dict[str, Any]:
         request = urllib.request.Request(
@@ -444,7 +525,7 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         )
         assert_external_io_allowed("agent_runtime.passive_readiness")
         try:
-            response = urllib.request.urlopen(request, timeout=2)
+            response = runtime_urlopen(request, timeout=2)
         except urllib.error.HTTPError as exc:
             if exc.code not in accepted_statuses:
                 raise
@@ -497,6 +578,19 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
             and isinstance(version.get("runtime_version"), str)
             and build_identity_ready
         )
+        pool_ready = False
+        if version.get("pool_enabled") is True:
+            try:
+                validate_pool_contract(
+                    "PoolNodeState",
+                    {
+                        key: version.get(key)
+                        for key in ("node_id", "instance_id", "pool_enabled", "busy", "draining")
+                    },
+                )
+                pool_ready = True
+            except ValueError:
+                pass
         dependency_ready = (
             readiness.get("ready") is True
             and readiness.get("database") == "ready"
@@ -504,7 +598,7 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         )
         return {
             "configured": True,
-            "ready": bool(identity_ready and dependency_ready),
+            "ready": bool(identity_ready and dependency_ready and pool_ready),
             "identity": "verified" if identity_ready else "invalid",
             "database": readiness.get("database", "unavailable"),
             "master_key": readiness.get("master_key", "unavailable"),
@@ -515,6 +609,11 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
             "build_identity": (
                 runtime_identity.to_dict() if runtime_identity is not None else None
             ),
+            "pool_enabled": pool_ready,
+            "node_id": version.get("node_id", ""),
+            "instance_id": version.get("instance_id", ""),
+            "draining": version.get("draining", True),
+            "busy": version.get("busy", True),
             "model_invoked": False,
             "mcp_invoked": False,
         }
@@ -546,7 +645,12 @@ class AgentRuntimeHttpClient:
         principal_token_issuer: PrincipalTokenIssuerPort | None = None,
         server_policies: Mapping[str, McpServerPolicy] | None = None,
         worker_build_identity: BuildIdentity | None = None,
+        database: Database | None = None,
     ) -> None:
+        if database is None and transport is None:
+            raise ValueError("Production Runtime transport requires the durable pool database")
+        self.pool = RuntimePoolStore(database) if database is not None else None
+        self._next_node = 0
         self.settings = settings
         self.execution_url = settings.execution_url()
         self.grant_issuer = grant_issuer
@@ -562,6 +666,8 @@ class AgentRuntimeHttpClient:
         validate_mcp_server_policies(self._server_policies)
 
     def run(self, run_request: AgentRunRequest) -> AgentRunResult:
+        if self.pool is not None:
+            return self._run_pool(run_request)
         request = self._execution_request(run_request)
         grant = self.grant_issuer.issue(request)
         principal_tokens = self._principal_tokens(run_request, request)
@@ -636,12 +742,129 @@ class AgentRuntimeHttpClient:
                 raise
             raise recovery_error
 
+    def _frozen_request(self, run_request: AgentRunRequest) -> dict[str, Any]:
+        assert self.pool is not None
+        invocation_id = run_request.invocation_id
+        row = self.pool.get(invocation_id)
+        if row is None:
+            request = self._execution_request(run_request)
+            with self.pool.database.unit_of_work():
+                control = JobExecutionControl(self.pool.database)
+                job = control.lock_job(run_request.job_id)
+                control.require(
+                    run_request.job_id, run_request.worker_id, run_request.worker_claim_version
+                )
+                if job["cancel_requested_at"] is not None:
+                    raise NonRetryableExecutionError(
+                        "Cancelled before preparation",
+                        safe_message="任务已取消",
+                        error_code="runtime_cancelled",
+                    )
+                self.pool.prepare(
+                    request,
+                    attempt=job["retry_count"],
+                    admission_deadline_at=job["admission_deadline_at"],
+                )
+        else:
+            request = self.pool.request(invocation_id)
+        return request
+
+    def _run_pool(self, run_request: AgentRunRequest) -> AgentRunResult:
+        assert self.pool is not None
+        invocation_id = run_request.invocation_id
+        request = self._frozen_request(run_request)
+        nodes = self.settings.nodes or (("runtime-local", self.settings.base_url),)
+        start = self._next_node % len(nodes)
+        self._next_node += 1
+        nodes = nodes[start:] + nodes[:start]
+        wait_reason = "runtime_unavailable"
+        for node_id, base_url in nodes:
+            row = self.pool.require(invocation_id, request["request_digest"])
+            if row["state"] == "TERMINAL" and row["terminal_code"] == "runtime_admission_timeout":
+                raise ExecutionTimeout(
+                    "Runtime admission expired",
+                    safe_message="Runtime 排队等待超时",
+                    error_code="runtime_admission_timeout",
+                )
+            if row["state"] == "TERMINAL" and row["terminal_code"] in {
+                "runtime_cancelled",
+                "runtime_invocation_outcome_unknown",
+            }:
+                raise NonRetryableExecutionError(
+                    "Runtime lifecycle ended",
+                    safe_message="Runtime 执行已结束",
+                    error_code=row["terminal_code"],
+                )
+            if row["state"] == "RUNNING" and row["node_id"] != node_id:
+                continue
+            settings = replace(self.settings, base_url=base_url, nodes=())
+            readiness = probe_runtime_readiness(settings)
+            if (
+                not readiness["ready"]
+                or not readiness.get("pool_enabled")
+                or readiness.get("node_id") != node_id
+            ):
+                continue
+            instance_id = str(readiness.get("instance_id") or "")
+            self.pool.record_replacement(node_id, instance_id)
+            if row["state"] == "RUNNING" and row["instance_id"] != instance_id:
+                continue
+            recovery = row["state"] != "PREPARED"
+            if recovery:
+                wait_reason = "runtime_recovery"
+            if not recovery and readiness.get("draining"):
+                continue
+            principals = (
+                RuntimePrincipalTokens()
+                if recovery
+                else self._principal_tokens(run_request, request)
+            )
+            url = settings.execution_url()
+            if recovery:
+                url += f"/{quote(invocation_id, safe='')}/recover"
+            try:
+                return self._consume_stream(
+                    run_request,
+                    request,
+                    self.grant_issuer.issue(request),
+                    principals,
+                    url=url,
+                    instance=(node_id, instance_id),
+                    recovery=recovery,
+                )
+            except RetryableExecutionError as exc:
+                if exc.error_code not in {
+                    "runtime_pool_busy",
+                    "runtime_pool_unavailable",
+                    "runtime_instance_mismatch",
+                    "runtime_invocation_owner_mismatch",
+                    "runtime_transport_error",
+                    "runtime_terminal_missing",
+                    "runtime_transport_invalid_response",
+                }:
+                    raise
+                if exc.error_code == "runtime_pool_busy":
+                    wait_reason = "runtime_capacity"
+                # A transport timeout says nothing about whether admission
+                # committed. The next iteration reads the durable owner again.
+                continue
+        raise RetryableExecutionError(
+            "Runtime observation must be durably rescheduled",
+            safe_message="等待 Runtime 容量或恢复连接",
+            error_code="runtime_observer_deferred",
+            diagnostics={"wait_reason": wait_reason},
+        )
+
     def _consume_stream(  # noqa: C901, PLR0915
         self,
         run_request: AgentRunRequest,
         request: dict[str, Any],
         grant: str,
         principal_tokens: RuntimePrincipalTokens,
+        *,
+        url: str | None = None,
+        instance: tuple[str, str] | None = None,
+        recovery: bool = False,
     ) -> AgentRunResult:
         body = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         headers = {
@@ -659,6 +882,12 @@ class AgentRuntimeHttpClient:
             ] = token
         if principal_tokens.files:
             headers["X-File-Principal-Token"] = principal_tokens.files
+        if instance is not None:
+            headers["X-Runtime-Node-Id"], headers["X-Runtime-Instance-Id"] = instance
+        if recovery:
+            body = json.dumps(
+                {key: request[key] for key in ("invocation_id", "request_digest")}
+            ).encode()
         events: list[dict[str, Any]] = []
         audit_chunks: list[dict[str, Any]] = []
         tool_events: list[dict[str, Any]] = []
@@ -669,7 +898,7 @@ class AgentRuntimeHttpClient:
         expected_sequence = 1
         stream = iter(
             self.transport.stream(
-                url=self.execution_url,
+                url=url or self.execution_url,
                 body=body,
                 headers=headers,
                 timeout_seconds=run_request.context.timeout_seconds + 10,
@@ -797,7 +1026,13 @@ class AgentRuntimeHttpClient:
                     if event_type == "audit_chunk"
                     else event
                 )
-                self.event_sink(run_request.job_id, persisted_event)
+                if self.pool is not None:
+                    with JobExecutionControl(self.pool.database).transaction(
+                        run_request.job_id, run_request.worker_id, run_request.worker_claim_version
+                    ):
+                        self.event_sink(run_request.job_id, persisted_event)
+                else:
+                    self.event_sink(run_request.job_id, persisted_event)
             if event["event_type"] == "tool_event":
                 tool_events.append(
                     {
@@ -898,8 +1133,56 @@ class AgentRuntimeHttpClient:
         raise error
 
     def cancel(self, run_request: AgentRunRequest, reason: str) -> dict[str, Any]:
+        if self.pool is not None:
+            return self._cancel_pool(run_request, reason)
         request = self._execution_request(run_request)
         return self._cancel_prepared(run_request, request, reason)
+
+    def _cancel_pool(self, run_request: AgentRunRequest, reason: str) -> dict[str, Any]:
+        assert self.pool is not None
+        if reason != "JOB_CANCELLED":
+            return {"status": "observer_detached"}
+        row = self.pool.get(run_request.invocation_id)
+        if row is None:
+            return {"status": "cancel_requested"}
+        if row["state"] == "TERMINAL":
+            return {
+                "status": "outcome_unknown"
+                if row["terminal_code"] == "runtime_invocation_outcome_unknown"
+                else "already_terminal"
+            }
+        if row["cancel_requested_at"] is None:
+            raise NonRetryableExecutionError(
+                "Durable cancellation intent required",
+                safe_message="取消意图尚未保存",
+                error_code="runtime_cancel_intent_missing",
+            )
+        nodes = dict(self.settings.nodes or (("runtime-local", self.settings.base_url),))
+        base_url = nodes.get(str(row["node_id"]))
+        if base_url is None:
+            return {"status": "cancel_requested"}
+        status = probe_runtime_readiness(replace(self.settings, base_url=base_url, nodes=()))
+        if not status.get("ready") or status.get("instance_id") != row["instance_id"]:
+            return {"status": "cancel_requested"}
+        binding = self.pool.grant_binding(row)
+        payload = {
+            key: binding[key] for key in ("protocol_version", "invocation_id", "request_digest")
+        }
+        payload["reason"] = reason
+        return self.transport.post(
+            url=base_url.rstrip("/")
+            + "/internal/v1/executions/"
+            + quote(run_request.invocation_id, safe="")
+            + "/cancel",
+            body=json.dumps(payload).encode(),
+            timeout_seconds=5,
+            headers={
+                "Authorization": "Bearer " + self.grant_issuer.issue(binding),
+                "Content-Type": "application/json",
+                "X-Runtime-Node-Id": row["node_id"],
+                "X-Runtime-Instance-Id": row["instance_id"],
+            },
+        )
 
     def _cancel_prepared(
         self,

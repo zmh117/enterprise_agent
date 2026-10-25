@@ -512,6 +512,7 @@ def _runtime_model_probes_for_service(
             RuntimeModelProbeSettings(
                 base_url=base_url,
                 allowed_hosts=allowed_hosts,
+                nodes=settings.agent_runtime.python_nodes,
                 auth_token_file=token_file,
                 master_key=settings.app_config_master_key,
                 allow_insecure_internal_http=(settings.agent_runtime.allow_insecure_internal_http),
@@ -860,14 +861,6 @@ def _build_container(  # noqa: C901, PLR0915
         runtime_readiness_guard=agent_runtime_readiness_guard,
         file_manifest_service=file_manifest_service,
     )
-    job_dispatcher = JobDispatchOutboxDispatcher(
-        repository=job_dispatch_repository,
-        publisher=publisher,
-        audit_service=audit_service,
-        settings=settings.queue,
-        worker_id=f"{service_name}-job-dispatch-outbox",
-        mcp_tool_snapshot_service=mcp_tool_snapshot_service,
-    )
     debug_job_access_service = DebugJobAccessService(
         database=database,
         agent_repository=agent_repository,
@@ -1058,11 +1051,13 @@ def _build_container(  # noqa: C901, PLR0915
                 settings=RuntimeClientSettings(
                     base_url=settings.agent_runtime.python_base_url,
                     allowed_runtime_hosts=settings.agent_runtime.python_allowed_hosts,
+                    nodes=settings.agent_runtime.python_nodes,
                     runtime_kind="python-v1",
                     allow_insecure_internal_http=(
                         settings.agent_runtime.allow_insecure_internal_http
                     ),
                 ),
+                database=database,
                 grant_issuer=grant_issuer,
                 event_sink=ExecutionAuditRepository(database).record_runtime_event,
                 principal_token_issuer=principal_token_issuer,
@@ -1216,6 +1211,15 @@ def _build_container(  # noqa: C901, PLR0915
         business_authorization_service=business_authorization_service,
         mcp_tool_snapshot_service=mcp_tool_snapshot_service,
         after_runtime_result_hook=_acceptance_after_runtime_result_hook(settings.environment),
+    )
+    job_dispatcher = JobDispatchOutboxDispatcher(
+        repository=job_dispatch_repository,
+        publisher=publisher,
+        audit_service=audit_service,
+        settings=settings.queue,
+        worker_id=f"{service_name}-job-dispatch-outbox",
+        mcp_tool_snapshot_service=mcp_tool_snapshot_service,
+        delivery_service=result_delivery_service,
     )
     retry_service = JobRetryService(
         repository=agent_repository,

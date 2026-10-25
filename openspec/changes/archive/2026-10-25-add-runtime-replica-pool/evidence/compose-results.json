@@ -1,0 +1,1553 @@
+{
+  "collected_at": "2026-10-24T22:13:16.928622+00:00",
+  "host_architecture": "arm64",
+  "base_revision": "e2aaaab3c7088195e43518b8ac689d60497350e7",
+  "uncommitted_worktree": true,
+  "topology": {
+    "runtime_nodes": 3,
+    "workers": 3,
+    "postgres": 18,
+    "rabbitmq": 4,
+    "execution_slots_per_node": 1
+  },
+  "provider": "deterministic test adapter; no real SDK/Provider invocation",
+  "build_identity": {
+    "source_revision": "local-dev",
+    "build_id": "local-dev",
+    "platform": "linux/arm64"
+  },
+  "cutover_preflight": {
+    "with_consumers": {
+      "mode": "read-only",
+      "nonterminal_jobs": 0,
+      "queues": {
+        "job": {
+          "consumers": 3,
+          "messages": 0
+        },
+        "legacy_retry": {
+          "consumers": 0,
+          "messages": 0
+        },
+        "retry": {
+          "consumers": 0,
+          "messages": 0
+        }
+      },
+      "schema_head": "147",
+      "scope": "Database and broker only; operators must also verify old containers have stopped",
+      "status": "blocked"
+    },
+    "after_worker_drain": {
+      "mode": "read-only",
+      "nonterminal_jobs": 0,
+      "queues": {
+        "job": {
+          "consumers": 0,
+          "messages": 0
+        },
+        "legacy_retry": {
+          "consumers": 0,
+          "messages": 0
+        },
+        "retry": {
+          "consumers": 0,
+          "messages": 0
+        }
+      },
+      "schema_head": "147",
+      "scope": "Database and broker only; operators must also verify old containers have stopped",
+      "status": "ready"
+    }
+  },
+  "fixture_sha256": {
+    "backend/tests/support/runtime_pool/collect.py": "ca0a979455b23a24aeaa17f4de2f6762300493237386c39c5ca31e15f3900f4e",
+    "backend/tests/support/runtime_pool/run.py": "b9919aff4b8d368b6660e9713488386f599891320e8021f36301b33b3549687b",
+    "backend/tests/support/runtime_pool/node.py": "6c5c1cc50ef419a4b452ddd698c8a680d220bd288de5d0d5aceb72621d2a3400",
+    "backend/tests/support/runtime_pool/compose.yml": "adbe4f7c7b9f4a3195b1a43f76722c05849ad3cf66ed3fef5c0177edc25577f1"
+  },
+  "final_image_ids": {
+    "ea-runtime-pool-test:local": "sha256:a4cbc25856c5d823f704ce4c67683945835e31f35cf2c43785d24b1432a0c2db",
+    "ea-runtime-pool-worker-test:local": "sha256:1c4cb13f20e4b95370239a0f7a661ff4378bafbd9af97d8549f85c95d7ed0ad3"
+  },
+  "source_sha256": {
+    "backend/Dockerfile": "a749885a8051b5a8df1299f5f66951bb6bf85784a8d1806c5d7cd16decc29368",
+    "backend/app/bootstrap.py": "cf1700c4cfd6229736ac2e9e7fe531f018ff67b2efa520677136e5f074d52763",
+    "backend/app/cli/apply_agent_runtime_grants.py": "50ad55ef966bc915bfc69262d45c01310fb0b0aafd4003b9657cba2e709a3b04",
+    "backend/app/cli/runtime_pool_preflight.py": "b16523f97a96b0a788d6006c466d7c7ee600d735c2636f437f29f2ae5d2c3635",
+    "backend/app/main.py": "65d31d8c09a4ad01ae4bf2d744bbe509c909f80e144061e67346b498ff61ac74",
+    "backend/app/modules/agent/application/agent_executor.py": "df1593bbb2e9bb1462ea8cc312ca69e6744e56a13412350e899ea8509ef4fbef",
+    "backend/app/modules/agent/application/conversation_context.py": "6f9354e597b0f19baab8acba77f2b3de56940ccaec52175a1b0c741f13dfdaf1",
+    "backend/app/modules/agent/domain/runtime.py": "caf3e675399ebb8034122437d22fcb293c5ce6ab897d7df7b2a3a08585eaba8f",
+    "backend/app/modules/agent/infrastructure/runtime_http_client.py": "44a3c438633e7945e520d39af536bbdd08641c135cb96e3986485144719ad632",
+    "backend/app/modules/agent/infrastructure/runtime_pool_recovery.py": "a881eb1960ce4f5c3d00fa1af0ac2a2679c3358243c2bb48b177e80d76cc82dd",
+    "backend/app/modules/agent/infrastructure/runtime_pool_store.py": "1e159b4558a7fe42d2ef4fd64313e3a30c317ba6d1a93df2f8c0c3985b227d3f",
+    "backend/app/modules/agent/infrastructure/runtime_protocol.py": "3760ab818edd7c08da130eb29a2d81fcac1f616959f4eb50e4ce9c4a41e5bbe2",
+    "backend/app/modules/agent/infrastructure/runtime_readiness.py": "1952453aaca60cda7fc383fc0ae54672f4f4755eeb4b370ba6c34674df1ad635",
+    "backend/app/modules/agent/infrastructure/runtime_request.py": "bcb433bd10c6689b45724937a5e10d0188be713e0918ecc0ce18a0f3aa6ae439",
+    "backend/app/modules/job/api/agent_job_debug_controller.py": "8233ef2027b32bba6f13afd3e4d09f29f95440dce8986ba3db869a5c0293fe2e",
+    "backend/app/modules/job/application/cancel_agent_job.py": "bcd80a6336b222836b317bf2361d85bc0df5670321050b873f759cea0acb7755",
+    "backend/app/modules/job/application/job_dispatch_service.py": "03621cf544155204070c422798bb90f4fa377c0720ae4a3768437ccf50cf4432",
+    "backend/app/modules/job/application/job_retry_service.py": "52b09a78059c1fa6ba97a0667abf6e80597c3d167e18c098444ee622ce8c3019",
+    "backend/app/modules/job/domain/agent_job.py": "bb887d4b12429c044a5ca438da3b9a6f293c18f6584302e31bff78bacf8150ad",
+    "backend/app/modules/job/infrastructure/dispatch_repository.py": "224281516dc26b70a6179d6e88f1ccb7bb687580dc4abc51de7b7e2df924c8ff",
+    "backend/app/modules/job/infrastructure/execution_control.py": "3baffc8b026d1c294b57b61a72205480b7ee3d4be244f18fb9e7c86afbda60d1",
+    "backend/app/modules/job/infrastructure/repositories.py": "915ba88f5afa84f97540c4d980fac5007d7a4f3b2853d2a08681db4813e6f71b",
+    "backend/app/modules/job/infrastructure/session_repository.py": "4ef3b31801970a0d86e9a5f4b218e3cd93e9851e926dc5d4581c0243d000685a",
+    "backend/app/modules/message_bus/infrastructure/rabbitmq_consumer.py": "af4769ddd7a97ee3dd800be16ac60f95133b09cf7f246316a4ace8384b3194b7",
+    "backend/app/modules/model_connection/infrastructure/runtime_probe.py": "45172b3ea2185c57664a59c951aeba741ade7cc543bd3ea7b15563631539e935",
+    "backend/app/python_runtime/execution_slot.py": "a154e5fde633bd6f5ed0a8aa9a8e427bdcfd876b2e7e65b635d001faff090f6d",
+    "backend/app/python_runtime/executor.py": "80678efd3e82e463f5cf6c37b6f74afaae9b4fb48a8bf3d1438eb3ab2229d603",
+    "backend/app/python_runtime/invocations.py": "73ba38696b3e59f7fe5f4395dfca13d67822a8763d42945cffd5bdb52b8f54c9",
+    "backend/app/python_runtime/service.py": "705563d4503b978c41c339e3b470dc98d878166c602ac2daf26dbd665409f585",
+    "backend/app/shared/config.py": "f0428b9c4d4aa15c48249d98b2d0b90352c58754980c1159913ddc6ddbe7c66e",
+    "backend/app/shared/schema_fact_sources.json": "67728f8fc8a05e9b5835e4c19be47d52ae310dfc9027360090ce7b8ae69f4135",
+    "backend/app/workers/agent_job_worker.py": "2717174f3075cb5d24cc605d199babc0208bb2051545efae0414b65ea0eca1e4",
+    "backend/app/workers/job_dispatch_worker.py": "57510e28a47b623b50faccda2aef822fcdc89a71522b33286ebd022dd726655d",
+    "backend/migrations/147_expand_runtime_replica_pool.sql": "dfff7ce6433791f67eb45fd0e93909abb9de24ded8eb3ff026b1592a65e8271c",
+    "contracts/agent-runtime/v1.4/errors.json": "0b315332c262cf5906deec88432c6f023bcd928a2b8f1ed55b293b74b6c3c61e",
+    "contracts/agent-runtime/v1.4/golden/pool-control.json": "815e77f54db679d37b9480e11cf134e19f7b5017e55803bafa94209158c9436e",
+    "contracts/agent-runtime/v1.4/pool-control.schema.json": "23d9ad192cb6f05e4ba55b37544fd56418bf9530ece15e7e86654efd522619a7",
+    "contracts/agent-runtime/v1.5/errors.json": "f4e1d30ca7d6a5647006d28239815ef5e11f4a734e89c782af59ea83ab002e6c",
+    "contracts/agent-runtime/v1.5/golden/pool-control.json": "815e77f54db679d37b9480e11cf134e19f7b5017e55803bafa94209158c9436e",
+    "contracts/agent-runtime/v1.5/pool-control.schema.json": "23d9ad192cb6f05e4ba55b37544fd56418bf9530ece15e7e86654efd522619a7",
+    "docker-compose.yml": "2943851c668bb9074601a3ca647bb875e3f846e0c968df43b35a4ffb2ec53b08"
+  },
+  "build_scope": "Fault cases ran during incremental builds. Final product code rechecked parallelism, concurrent admission, cross-node terminal recovery and cancellation. The final images including timeout contract alignment additionally rechecked concurrent admission, cross-node recovery and full/minimal HTTP replay after body pruning. Actual PostgreSQL grants were reverified after permission tightening.",
+  "cases": [
+    {
+      "case": "RPOOL-01",
+      "status": "PASS",
+      "job_id": "job_f391469eea274b108ec17cfdbadb9ad4",
+      "concurrent_http_results": [
+        {
+          "node": "a",
+          "status": 200,
+          "sequence": 1
+        },
+        {
+          "node": "b",
+          "status": 409,
+          "code": "runtime_invocation_owner_mismatch"
+        }
+      ],
+      "provider_starts": 1,
+      "owner": "a"
+    },
+    {
+      "case": "RPOOL-03",
+      "status": "PASS",
+      "job_ids": [
+        "job_9b994328398d41109c4c9aea4719596a",
+        "job_cd0bea0f15cc4ead997611e6a14113cd",
+        "job_d2905d0b13bf49d18c15daadba620018"
+      ],
+      "serialized": true,
+      "late_reply_included": true,
+      "future_input_excluded": true
+    },
+    {
+      "case": "RPOOL-04",
+      "status": "PASS",
+      "job_id": "job_a977ff836a904269a22e8881b72025d7",
+      "provider_starts": 1,
+      "recovered": true
+    },
+    {
+      "case": "RPOOL-05",
+      "status": "PASS",
+      "job_id": "job_54f62eadafdc4f23977d971aed45f44f",
+      "provider_starts": 0,
+      "terminal_code": "runtime_invocation_outcome_unknown",
+      "stopped": true
+    },
+    {
+      "case": "RPOOL-06",
+      "status": "PASS",
+      "job_id": "job_5519af7749b34a5283ebca0bb1ca41fe",
+      "provider_starts": 1,
+      "recovered": true
+    },
+    {
+      "case": "RPOOL-07",
+      "status": "PASS",
+      "job_id": "job_6c7536e065a4417c802c61518c9054d6",
+      "provider_starts": 1,
+      "original_version": 1,
+      "final_version": 2,
+      "owner_unchanged": true
+    },
+    {
+      "case": "RPOOL-08",
+      "status": "PASS",
+      "job_id": "job_62191dce00d44f40b9a5461d2a32ebc3",
+      "provider_starts": 1,
+      "terminal_code": "runtime_invocation_outcome_unknown",
+      "stopped": true
+    },
+    {
+      "case": "RPOOL-09-cross-node",
+      "status": "PASS",
+      "job_id": "job_f391469eea274b108ec17cfdbadb9ad4",
+      "original_node": "a",
+      "replay_node": "b",
+      "provider_starts": 1,
+      "minimal_recovery_without_principal": true
+    },
+    {
+      "case": "RPOOL-09",
+      "status": "PASS",
+      "job_id": "job_e2f59834e22743dd8b15c5610df9ae67",
+      "invocation_id": "job_e2f59834e22743dd8b15c5610df9ae67.attempt-0",
+      "provider_starts": 1,
+      "assistant_messages": 1,
+      "deliveries": 1
+    },
+    {
+      "case": "RPOOL-11-delayed-stop",
+      "status": "PASS",
+      "job_id": "job_d8fb6de0b98d4a698644867d364ceaae",
+      "successor_id": "job_94d07d0d3e64462fb87344f5de0dfae4",
+      "elapsed_seconds": 35.09776037499978,
+      "provider_starts": 1,
+      "no_early_session_release": true,
+      "outcome": "runtime_invocation_outcome_unknown",
+      "original_instance": "37f3d4ee-f52e-44bc-a556-e5aea736a116"
+    },
+    {
+      "case": "RPOOL-11",
+      "status": "PASS",
+      "job_id": "job_362cf80f8bac4c73ade1959108bd9639",
+      "notification_sent": false,
+      "cancellation_seconds": 4.646533750001254,
+      "provider_starts": 1,
+      "stopped": true
+    },
+    {
+      "case": "RPOOL-12",
+      "status": "PASS",
+      "job_id": "job_6de4d65c3a6d4d7da12842dc0296182c",
+      "database_pause_seconds": 39,
+      "provider_starts": 1,
+      "outcome": "runtime_invocation_outcome_unknown",
+      "stopped": true,
+      "original_instance": "06611bc0-37d6-47bb-9a48-e630188cfd30"
+    },
+    {
+      "case": "RPOOL-13",
+      "status": "PASS",
+      "job_id": "job_947b77e52c9c4ea1a6749a03eeb0f6b9",
+      "probe_busy_rejected": true,
+      "idle_node_probe_succeeded": true,
+      "control_during_execution": true
+    },
+    {
+      "case": "RPOOL-14",
+      "status": "PASS",
+      "job_id": "job_947b77e52c9c4ea1a6749a03eeb0f6b9",
+      "drained_node": "b",
+      "new_job_id": "job_8d51576afd0e4c88a94fdeaf47bd2e76",
+      "existing_execution_completed": true,
+      "pool_degraded": true
+    },
+    {
+      "case": "RPOOL-16",
+      "status": "PASS",
+      "job_id": "job_f391469eea274b108ec17cfdbadb9ad4",
+      "provider_starts": 1,
+      "identity_retained": true,
+      "full_request_replay_after_prune": 410,
+      "minimal_recovery_after_prune": 410
+    },
+    {
+      "case": "RPOOL-17-broker",
+      "status": "PASS",
+      "job_id": "job_e556865b3c0d444b87dfbe9d9cee3144",
+      "heartbeat_seconds": 5,
+      "broker_pause_seconds": 16,
+      "provider_starts": 1,
+      "duplicate_redelivery_safe": true
+    },
+    {
+      "case": "RPOOL-17-unavailable",
+      "status": "PASS",
+      "job_id": "job_2ee8f2ae49cc4b6496cf17feead0865a",
+      "provider_starts": 0,
+      "outcome": "runtime_admission_timeout",
+      "bounded_deferral": true
+    },
+    {
+      "case": "RPOOL-18",
+      "status": "PASS",
+      "job_ids": [
+        "job_c97747d9bf274615a1287fc598dc098d",
+        "job_dca923ce778246e8b98c9145e67e6924"
+      ],
+      "business_retry_count": 1,
+      "provider_starts": 2,
+      "no_session_overtake": true
+    },
+    {
+      "case": "RPOOL-02",
+      "status": "PASS",
+      "job_ids": [
+        "job_7c20091dc44e461cb006571d67e744b9",
+        "job_23b3b183b38140c3b8d43bb9ce98e3e2",
+        "job_bca0de1df36c4015bc8e3caf525ea18a",
+        "job_c1223035bb2347d089b77b04917f0a21"
+      ],
+      "overlap_seconds": 6.077737092971802,
+      "provider_starts": 4,
+      "nodes": [
+        "a",
+        "b",
+        "c"
+      ],
+      "events": [
+        {
+          "kind": "provider_start",
+          "invocation_id": "job_23b3b183b38140c3b8d43bb9ce98e3e2.attempt-0",
+          "node_id": "b",
+          "time": 1792879848.171804,
+          "pid": 1
+        },
+        {
+          "kind": "provider_end",
+          "invocation_id": "job_23b3b183b38140c3b8d43bb9ce98e3e2.attempt-0",
+          "node_id": "b",
+          "time": 1792879855.3386307,
+          "pid": 1
+        },
+        {
+          "kind": "provider_start",
+          "invocation_id": "job_c1223035bb2347d089b77b04917f0a21.attempt-0",
+          "node_id": "b",
+          "time": 1792879855.5002954,
+          "pid": 1
+        },
+        {
+          "kind": "provider_end",
+          "invocation_id": "job_c1223035bb2347d089b77b04917f0a21.attempt-0",
+          "node_id": "b",
+          "time": 1792879855.551764,
+          "pid": 1
+        },
+        {
+          "kind": "provider_start",
+          "invocation_id": "job_bca0de1df36c4015bc8e3caf525ea18a.attempt-0",
+          "node_id": "c",
+          "time": 1792879849.2372336,
+          "pid": 1
+        },
+        {
+          "kind": "provider_end",
+          "invocation_id": "job_bca0de1df36c4015bc8e3caf525ea18a.attempt-0",
+          "node_id": "c",
+          "time": 1792879855.3324828,
+          "pid": 1
+        },
+        {
+          "kind": "provider_start",
+          "invocation_id": "job_7c20091dc44e461cb006571d67e744b9.attempt-0",
+          "node_id": "a",
+          "time": 1792879848.1416223,
+          "pid": 1
+        },
+        {
+          "kind": "provider_end",
+          "invocation_id": "job_7c20091dc44e461cb006571d67e744b9.attempt-0",
+          "node_id": "a",
+          "time": 1792879855.3149707,
+          "pid": 1
+        }
+      ]
+    }
+  ],
+  "lifecycle_facts": [
+    {
+      "job": {
+        "id": "job_23b3b183b38140c3b8d43bb9ce98e3e2",
+        "session_id": "session_111bf93b3b364ae39f80d8ac280873a5",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T23:10:47.998806+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T22:10:47.997665+00:00",
+        "finished_at": "2026-10-24T22:10:55.393044+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_23b3b183b38140c3b8d43bb9ce98e3e2.attempt-0",
+          "attempt": 0,
+          "request_digest": "3cb3b837ef88a5d9f16aa43fe4f4c689b07753255d5121807ad22f7afd7245e9",
+          "node_id": "b",
+          "instance_id": "8a1293b4-2e77-4c38-961a-dc878c01f7b8",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T22:10:48.159598+00:00",
+          "execution_deadline_at": "2026-10-24T22:11:48.159598+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T22:10:55.360379+00:00",
+          "execution_quiesced_at": "2026-10-24T22:10:55.340201+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_2ee8f2ae49cc4b6496cf17feead0865a",
+        "session_id": "session_00fca294ebb7464db15ba9c3ccec5e8d",
+        "status": "TIMEOUT",
+        "retry_count": 0,
+        "worker_claim_version": 2,
+        "admission_deadline_at": "2000-01-01T00:00:00+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "runtime_admission_timeout",
+        "created_at": "2026-10-24T21:55:46.255498+00:00",
+        "finished_at": "2026-10-24T21:56:06.401242+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_2ee8f2ae49cc4b6496cf17feead0865a.attempt-0",
+          "attempt": 0,
+          "request_digest": "c7d6102b49823002f2bf240512586bd1e9ab69fdc527ce2752a22b7de9792036",
+          "node_id": null,
+          "instance_id": null,
+          "state": "TERMINAL",
+          "accepted_at": null,
+          "execution_deadline_at": null,
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_admission_timeout",
+          "terminal_at": "2026-10-24T21:56:05.846370+00:00",
+          "execution_quiesced_at": "2026-10-24T21:56:05.846370+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_362cf80f8bac4c73ade1959108bd9639",
+        "session_id": "session_9e8351165d60418394b2de18f5c79d02",
+        "status": "FAILED",
+        "retry_count": 0,
+        "worker_claim_version": 2,
+        "admission_deadline_at": "2026-10-24T23:11:02.130870+00:00",
+        "cancel_requested_at": "2026-10-24T22:11:03.805576+00:00",
+        "last_error_code": "runtime_cancelled",
+        "created_at": "2026-10-24T22:11:02.129350+00:00",
+        "finished_at": "2026-10-24T22:11:37.098938+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_362cf80f8bac4c73ade1959108bd9639.attempt-0",
+          "attempt": 0,
+          "request_digest": "0eddafe2d2093e3f58a45079713d3eba4a40d9a1fe1c3a820d916bb8544159c6",
+          "node_id": "a",
+          "instance_id": "8356c28a-a8b1-403a-946a-8d84e34f2c0c",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T22:11:03.268709+00:00",
+          "execution_deadline_at": "2026-10-24T22:12:03.268709+00:00",
+          "cancel_requested_at": "2026-10-24T22:11:03.807222+00:00",
+          "terminal_code": "runtime_cancelled",
+          "terminal_at": "2026-10-24T22:11:08.296972+00:00",
+          "execution_quiesced_at": "2026-10-24T22:11:08.283882+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_54f62eadafdc4f23977d971aed45f44f",
+        "session_id": "session_4cdf5af19c944ecd967f0166b28026fc",
+        "status": "FAILED",
+        "retry_count": 0,
+        "worker_claim_version": 9,
+        "admission_deadline_at": "2026-10-24T22:45:04.895033+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "runtime_invocation_outcome_unknown",
+        "created_at": "2026-10-24T21:45:04.892889+00:00",
+        "finished_at": "2026-10-24T21:45:39.862729+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_54f62eadafdc4f23977d971aed45f44f.attempt-0",
+          "attempt": 0,
+          "request_digest": "504d9dbd7163e67a79b8c8b9551ef12b6552056358bbdcea2a4510675ad5e3db",
+          "node_id": "c",
+          "instance_id": "3b41dfc9-06a8-485b-818f-d19213dcbbc5",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:45:05.721355+00:00",
+          "execution_deadline_at": "2026-10-24T21:46:05.721355+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_invocation_outcome_unknown",
+          "terminal_at": "2026-10-24T21:45:36.578277+00:00",
+          "execution_quiesced_at": "2026-10-24T21:45:36.648023+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_5519af7749b34a5283ebca0bb1ca41fe",
+        "session_id": "session_4799e92c39f74c3f9a65490bb0ab851f",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 2,
+        "admission_deadline_at": "2026-10-24T22:48:31.107548+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:48:31.106743+00:00",
+        "finished_at": "2026-10-24T21:48:35.665001+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_5519af7749b34a5283ebca0bb1ca41fe.attempt-0",
+          "attempt": 0,
+          "request_digest": "ab2b77355f837a41f9c2968df6e6ad5a89bf7c9b0f7e2c73be86718987b3cd0e",
+          "node_id": "a",
+          "instance_id": "37f3d4ee-f52e-44bc-a556-e5aea736a116",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:48:31.266606+00:00",
+          "execution_deadline_at": "2026-10-24T21:49:31.266606+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:48:35.645168+00:00",
+          "execution_quiesced_at": "2026-10-24T21:48:35.632433+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_62191dce00d44f40b9a5461d2a32ebc3",
+        "session_id": "session_ce8f302fbdaf474d99b9da7fde33305b",
+        "status": "FAILED",
+        "retry_count": 0,
+        "worker_claim_version": 15,
+        "admission_deadline_at": "2026-10-24T22:44:17.868596+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "runtime_invocation_outcome_unknown",
+        "created_at": "2026-10-24T21:44:17.866936+00:00",
+        "finished_at": "2026-10-24T21:44:48.631589+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_62191dce00d44f40b9a5461d2a32ebc3.attempt-0",
+          "attempt": 0,
+          "request_digest": "a378f904d420c1603310a66cbe418248fe3afc5255a9f84bd8ed1dfcf7f8149a",
+          "node_id": "a",
+          "instance_id": "3bd2ff63-15cb-42d0-b385-150108043bc3",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:44:18.421088+00:00",
+          "execution_deadline_at": "2026-10-24T21:45:18.421088+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_invocation_outcome_unknown",
+          "terminal_at": "2026-10-24T21:44:48.537930+00:00",
+          "execution_quiesced_at": "2026-10-24T21:44:48.568774+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_6c7536e065a4417c802c61518c9054d6",
+        "session_id": "session_81acdc16042b4fc6a079d3d25bf7473d",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 2,
+        "admission_deadline_at": "2026-10-24T22:43:04.433668+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:43:04.432939+00:00",
+        "finished_at": "2026-10-24T21:43:40.205931+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_6c7536e065a4417c802c61518c9054d6.attempt-0",
+          "attempt": 0,
+          "request_digest": "ad756a601e827edf299def08d53d03fc2d6fc7f572e900ff6c20d834cb590611",
+          "node_id": "a",
+          "instance_id": "3bd2ff63-15cb-42d0-b385-150108043bc3",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:43:05.031634+00:00",
+          "execution_deadline_at": "2026-10-24T21:44:05.031634+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:43:40.188744+00:00",
+          "execution_quiesced_at": "2026-10-24T21:43:40.180079+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_6de4d65c3a6d4d7da12842dc0296182c",
+        "session_id": "session_54e1122c60b3478db6be275628d62cad",
+        "status": "FAILED",
+        "retry_count": 0,
+        "worker_claim_version": 2,
+        "admission_deadline_at": "2026-10-24T22:52:20.216430+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "runtime_invocation_outcome_unknown",
+        "created_at": "2026-10-24T21:52:20.214336+00:00",
+        "finished_at": "2026-10-24T21:53:04.007842+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_6de4d65c3a6d4d7da12842dc0296182c.attempt-0",
+          "attempt": 0,
+          "request_digest": "a7c77fcee6b906fcd2d2bc32a78ccc2b287b97556f5c34d0132b8b3054349454",
+          "node_id": "a",
+          "instance_id": "06611bc0-37d6-47bb-9a48-e630188cfd30",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:52:20.392512+00:00",
+          "execution_deadline_at": "2026-10-24T21:53:20.392512+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_invocation_outcome_unknown",
+          "terminal_at": "2026-10-24T21:52:59.689347+00:00",
+          "execution_quiesced_at": "2026-10-24T21:52:59.763884+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_7c20091dc44e461cb006571d67e744b9",
+        "session_id": "session_2edcae4285914f659e7be84de98e5ca0",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T23:10:47.887611+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T22:10:47.887058+00:00",
+        "finished_at": "2026-10-24T22:10:55.382482+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_7c20091dc44e461cb006571d67e744b9.attempt-0",
+          "attempt": 0,
+          "request_digest": "2fef736ae3c88d1fc708ef357ed916f1b7065c55314b1a9ba259c504ecc8c49a",
+          "node_id": "a",
+          "instance_id": "8356c28a-a8b1-403a-946a-8d84e34f2c0c",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T22:10:48.124954+00:00",
+          "execution_deadline_at": "2026-10-24T22:11:48.124954+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T22:10:55.336294+00:00",
+          "execution_quiesced_at": "2026-10-24T22:10:55.315547+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_8d51576afd0e4c88a94fdeaf47bd2e76",
+        "session_id": "session_7b589f904c034efe89425680a8d7293c",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T22:53:38.502872+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:53:38.501822+00:00",
+        "finished_at": "2026-10-24T21:53:39.191000+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_8d51576afd0e4c88a94fdeaf47bd2e76.attempt-0",
+          "attempt": 0,
+          "request_digest": "ead81ad6f60b5d75f267d5abe62e09663e9102d4ec060a30856dd0882b0382aa",
+          "node_id": "c",
+          "instance_id": "0b38237c-87b7-4b40-a56d-454362ef1dd1",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:53:39.159714+00:00",
+          "execution_deadline_at": "2026-10-24T21:54:39.159714+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:53:39.176221+00:00",
+          "execution_quiesced_at": "2026-10-24T21:53:39.170028+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_947b77e52c9c4ea1a6749a03eeb0f6b9",
+        "session_id": "session_60a231d823a844edb6bd6cc1bcd069e5",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T22:53:37.101478+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:53:37.097593+00:00",
+        "finished_at": "2026-10-24T21:53:39.374821+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_947b77e52c9c4ea1a6749a03eeb0f6b9.attempt-0",
+          "attempt": 0,
+          "request_digest": "ad0d0f819005dc36bd0b024d4423930dec30c6aae69955e1ccb8f82cbc010617",
+          "node_id": "b",
+          "instance_id": "4db648ef-40c6-44da-a6eb-23ce2015d1a1",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:53:38.083909+00:00",
+          "execution_deadline_at": "2026-10-24T21:54:38.083909+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:53:39.357025+00:00",
+          "execution_quiesced_at": "2026-10-24T21:53:39.345472+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_94d07d0d3e64462fb87344f5de0dfae4",
+        "session_id": "session_0e588f9d93a745fa9a22fdd882682115",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T22:49:48.221589+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:49:48.223674+00:00",
+        "finished_at": "2026-10-24T21:50:23.174341+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_94d07d0d3e64462fb87344f5de0dfae4.attempt-0",
+          "attempt": 0,
+          "request_digest": "1f6d61e4d9ffae62c04b283edb0031da1bb54e178c002b96a4888a8df109fe1a",
+          "node_id": "c",
+          "instance_id": "0b38237c-87b7-4b40-a56d-454362ef1dd1",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:50:23.141141+00:00",
+          "execution_deadline_at": "2026-10-24T21:51:23.141141+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:50:23.159958+00:00",
+          "execution_quiesced_at": "2026-10-24T21:50:23.153137+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_9b994328398d41109c4c9aea4719596a",
+        "session_id": "session_82a4420d547e4377885ba62a9786fd3b",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T22:42:27.996317+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:42:27.994750+00:00",
+        "finished_at": "2026-10-24T21:42:33.364114+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_9b994328398d41109c4c9aea4719596a.attempt-0",
+          "attempt": 0,
+          "request_digest": "d4fb96306dc9e58db542c19a7cd87f63121043bbe16f4b61175c3edab9ae885a",
+          "node_id": "c",
+          "instance_id": "3b41dfc9-06a8-485b-818f-d19213dcbbc5",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:42:28.866986+00:00",
+          "execution_deadline_at": "2026-10-24T21:43:28.866986+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:42:33.343096+00:00",
+          "execution_quiesced_at": "2026-10-24T21:42:33.324972+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_a977ff836a904269a22e8881b72025d7",
+        "session_id": "session_25218f9360b04eee9d1af27d5c6b9415",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 2,
+        "admission_deadline_at": "2026-10-24T22:47:37.221623+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:47:37.220862+00:00",
+        "finished_at": "2026-10-24T21:47:42.522252+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_a977ff836a904269a22e8881b72025d7.attempt-0",
+          "attempt": 0,
+          "request_digest": "49f621b14b45cb16b5fab08d5c2a387b1da20eacce38549055930791aa0f35ee",
+          "node_id": "a",
+          "instance_id": "37f3d4ee-f52e-44bc-a556-e5aea736a116",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:47:38.302916+00:00",
+          "execution_deadline_at": "2026-10-24T21:48:38.302916+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:47:42.506746+00:00",
+          "execution_quiesced_at": "2026-10-24T21:47:42.498924+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_bca0de1df36c4015bc8e3caf525ea18a",
+        "session_id": "session_ee2cdee951994467b1132a7f620217fc",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T23:10:48.109547+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T22:10:48.109041+00:00",
+        "finished_at": "2026-10-24T22:10:55.388100+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_bca0de1df36c4015bc8e3caf525ea18a.attempt-0",
+          "attempt": 0,
+          "request_digest": "0effff6dd8ef18cea18882ffc400ac74e97abfd42ecc9dfb1f269e9bfae0d6d7",
+          "node_id": "c",
+          "instance_id": "c2126c41-c02b-4ca2-a76e-e78f47b603da",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T22:10:49.224788+00:00",
+          "execution_deadline_at": "2026-10-24T22:11:49.224788+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T22:10:55.350313+00:00",
+          "execution_quiesced_at": "2026-10-24T22:10:55.333472+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_c1223035bb2347d089b77b04917f0a21",
+        "session_id": "session_61fc54006b444840ac9b48e8ed1159f9",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T23:10:48.220715+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T22:10:48.220595+00:00",
+        "finished_at": "2026-10-24T22:10:55.572394+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_c1223035bb2347d089b77b04917f0a21.attempt-0",
+          "attempt": 0,
+          "request_digest": "4353c895f3444e40696f4090d49a6afe4563dcb86c1be01f1d6995a45bde9ddf",
+          "node_id": "b",
+          "instance_id": "8a1293b4-2e77-4c38-961a-dc878c01f7b8",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T22:10:55.490808+00:00",
+          "execution_deadline_at": "2026-10-24T22:11:55.490808+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T22:10:55.558686+00:00",
+          "execution_quiesced_at": "2026-10-24T22:10:55.552154+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_c97747d9bf274615a1287fc598dc098d",
+        "session_id": "session_eb68cd1fa7434b7abcdce645df3f62e0",
+        "status": "SUCCEEDED",
+        "retry_count": 1,
+        "worker_claim_version": 2,
+        "admission_deadline_at": "2026-10-24T22:54:21.969380+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "runtime_fake_transient",
+        "created_at": "2026-10-24T21:53:51.502986+00:00",
+        "finished_at": "2026-10-24T21:54:22.866648+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_c97747d9bf274615a1287fc598dc098d.attempt-0",
+          "attempt": 0,
+          "request_digest": "00d4cd7edbd56351c7dfe6ab9ae202cb02740d74956b464b281aa3f24731de58",
+          "node_id": "b",
+          "instance_id": "4db648ef-40c6-44da-a6eb-23ce2015d1a1",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:53:51.936774+00:00",
+          "execution_deadline_at": "2026-10-24T21:54:51.936774+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_fake_transient",
+          "terminal_at": "2026-10-24T21:53:51.953330+00:00",
+          "execution_quiesced_at": "2026-10-24T21:53:51.947169+00:00"
+        },
+        {
+          "invocation_id": "job_c97747d9bf274615a1287fc598dc098d.attempt-1",
+          "attempt": 1,
+          "request_digest": "2f68e5b37c1cddac824a5cd152e3fab88569642542f44e5d92ac4f3bbc5f0ec8",
+          "node_id": "c",
+          "instance_id": "0b38237c-87b7-4b40-a56d-454362ef1dd1",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:54:22.834782+00:00",
+          "execution_deadline_at": "2026-10-24T21:55:22.834782+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:54:22.852675+00:00",
+          "execution_quiesced_at": "2026-10-24T21:54:22.846303+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_cd0bea0f15cc4ead997611e6a14113cd",
+        "session_id": "session_82a4420d547e4377885ba62a9786fd3b",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T22:42:29.138608+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:42:29.136401+00:00",
+        "finished_at": "2026-10-24T21:42:38.482039+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_cd0bea0f15cc4ead997611e6a14113cd.attempt-0",
+          "attempt": 0,
+          "request_digest": "33adbb60b99fd3b0859e1f146ba13d7d2fcb8928d7c4d3a4d6c7967b3b44cdbc",
+          "node_id": "b",
+          "instance_id": "63033d3b-c055-46a5-99e6-50f62578e89f",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:42:38.452261+00:00",
+          "execution_deadline_at": "2026-10-24T21:43:38.452261+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:42:38.469023+00:00",
+          "execution_quiesced_at": "2026-10-24T21:42:38.462858+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_d2905d0b13bf49d18c15daadba620018",
+        "session_id": "session_82a4420d547e4377885ba62a9786fd3b",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T22:42:29.265493+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:42:29.264577+00:00",
+        "finished_at": "2026-10-24T21:42:43.802080+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_d2905d0b13bf49d18c15daadba620018.attempt-0",
+          "attempt": 0,
+          "request_digest": "27fe5e523aa75519e1115428f65131fe9ba8659b0ebc65e03fc19d8b61d36c47",
+          "node_id": "b",
+          "instance_id": "63033d3b-c055-46a5-99e6-50f62578e89f",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:42:43.768658+00:00",
+          "execution_deadline_at": "2026-10-24T21:43:43.768658+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:42:43.787127+00:00",
+          "execution_quiesced_at": "2026-10-24T21:42:43.780220+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_d8fb6de0b98d4a698644867d364ceaae",
+        "session_id": "session_0e588f9d93a745fa9a22fdd882682115",
+        "status": "FAILED",
+        "retry_count": 0,
+        "worker_claim_version": 6,
+        "admission_deadline_at": "2026-10-24T22:49:47.833804+00:00",
+        "cancel_requested_at": "2026-10-24T21:49:48.239831+00:00",
+        "last_error_code": "runtime_invocation_outcome_unknown",
+        "created_at": "2026-10-24T21:49:47.835784+00:00",
+        "finished_at": "2026-10-24T21:50:19.865938+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_d8fb6de0b98d4a698644867d364ceaae.attempt-0",
+          "attempt": 0,
+          "request_digest": "09501830501e4aaefa05c6c95686ae4ef029c80e90c003c871620d5d53661c8a",
+          "node_id": "a",
+          "instance_id": "37f3d4ee-f52e-44bc-a556-e5aea736a116",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:49:48.028825+00:00",
+          "execution_deadline_at": "2026-10-24T21:50:48.028825+00:00",
+          "cancel_requested_at": "2026-10-24T21:49:48.241730+00:00",
+          "terminal_code": "runtime_invocation_outcome_unknown",
+          "terminal_at": "2026-10-24T21:50:18.713065+00:00",
+          "execution_quiesced_at": "2026-10-24T21:50:18.732982+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_dca923ce778246e8b98c9145e67e6924",
+        "session_id": "session_eb68cd1fa7434b7abcdce645df3f62e0",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T22:53:51.610232+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:53:51.609178+00:00",
+        "finished_at": "2026-10-24T21:54:27.122831+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_dca923ce778246e8b98c9145e67e6924.attempt-0",
+          "attempt": 0,
+          "request_digest": "85cf136bce267d4fe7125e1c798692cb297695c4d07aa60d38869120cbbf0879",
+          "node_id": "c",
+          "instance_id": "0b38237c-87b7-4b40-a56d-454362ef1dd1",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:54:27.092992+00:00",
+          "execution_deadline_at": "2026-10-24T21:55:27.092992+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:54:27.109260+00:00",
+          "execution_quiesced_at": "2026-10-24T21:54:27.103185+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_e2f59834e22743dd8b15c5610df9ae67",
+        "session_id": "session_dab2018398614379ae84db97789d8f3e",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 2,
+        "admission_deadline_at": "2026-10-24T22:51:21.262037+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:51:21.259834+00:00",
+        "finished_at": "2026-10-24T21:51:56.944612+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_e2f59834e22743dd8b15c5610df9ae67.attempt-0",
+          "attempt": 0,
+          "request_digest": "08ca409c1f54cf13cadadb68e2430c5889f8bf81ed7a4c490900e54200039c3b",
+          "node_id": "a",
+          "instance_id": "06611bc0-37d6-47bb-9a48-e630188cfd30",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:51:21.814064+00:00",
+          "execution_deadline_at": "2026-10-24T21:52:21.814064+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:51:21.835234+00:00",
+          "execution_quiesced_at": "2026-10-24T21:51:21.827940+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_e556865b3c0d444b87dfbe9d9cee3144",
+        "session_id": "session_f727379f69874e738b0a7ed241924a74",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "admission_deadline_at": "2026-10-24T22:55:05.845987+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T21:55:05.844919+00:00",
+        "finished_at": "2026-10-24T21:55:22.903525+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_e556865b3c0d444b87dfbe9d9cee3144.attempt-0",
+          "attempt": 0,
+          "request_digest": "0b1ffe5e32c4bf6c1bae12c60ea7b1b778994e452a1ea4083c3e14d5eeecc14d",
+          "node_id": "c",
+          "instance_id": "0b38237c-87b7-4b40-a56d-454362ef1dd1",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T21:55:06.519649+00:00",
+          "execution_deadline_at": "2026-10-24T21:56:06.519649+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T21:55:22.884274+00:00",
+          "execution_quiesced_at": "2026-10-24T21:55:22.873247+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "PUBLISHED",
+        "attempt_count": 1,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    },
+    {
+      "job": {
+        "id": "job_f391469eea274b108ec17cfdbadb9ad4",
+        "session_id": "session_8ebad47413bc44f1a3eba5254e091fc9",
+        "status": "SUCCEEDED",
+        "retry_count": 0,
+        "worker_claim_version": 2,
+        "admission_deadline_at": "2026-10-24T23:12:34.504938+00:00",
+        "cancel_requested_at": null,
+        "last_error_code": "",
+        "created_at": "2026-10-24T22:12:34.502986+00:00",
+        "finished_at": "2026-10-24T22:12:35.335374+00:00"
+      },
+      "invocations": [
+        {
+          "invocation_id": "job_f391469eea274b108ec17cfdbadb9ad4.attempt-0",
+          "attempt": 0,
+          "request_digest": "2b8a4bf90e3151b16dbcc47b86cbdaec626d209219f349325fa0feaa85b69604",
+          "node_id": "a",
+          "instance_id": "f1b2039f-40bf-4998-b468-420431e4d450",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-24T22:12:34.717809+00:00",
+          "execution_deadline_at": "2026-10-24T22:13:34.717809+00:00",
+          "cancel_requested_at": null,
+          "terminal_code": "runtime_succeeded",
+          "terminal_at": "2026-10-24T22:12:35.012218+00:00",
+          "execution_quiesced_at": "2026-10-24T22:12:35.003575+00:00"
+        }
+      ],
+      "dispatch": {
+        "status": "DEAD",
+        "attempt_count": 0,
+        "wait_reason": null
+      },
+      "delivery_count": 1
+    }
+  ],
+  "provider_events": [
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_cd0bea0f15cc4ead997611e6a14113cd.attempt-0",
+      "node_id": "b",
+      "time": 1792878158.4619257,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_cd0bea0f15cc4ead997611e6a14113cd.attempt-0",
+      "node_id": "b",
+      "time": 1792878158.4623086,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_d2905d0b13bf49d18c15daadba620018.attempt-0",
+      "node_id": "b",
+      "time": 1792878163.7792048,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_d2905d0b13bf49d18c15daadba620018.attempt-0",
+      "node_id": "b",
+      "time": 1792878163.779771,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_947b77e52c9c4ea1a6749a03eeb0f6b9.attempt-0",
+      "node_id": "b",
+      "time": 1792878818.0956373,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_947b77e52c9c4ea1a6749a03eeb0f6b9.attempt-0",
+      "node_id": "b",
+      "time": 1792878819.3447778,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_c97747d9bf274615a1287fc598dc098d.attempt-0",
+      "node_id": "b",
+      "time": 1792878831.9462805,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_c97747d9bf274615a1287fc598dc098d.attempt-0",
+      "node_id": "b",
+      "time": 1792878831.9466536,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_23b3b183b38140c3b8d43bb9ce98e3e2.attempt-0",
+      "node_id": "b",
+      "time": 1792879848.171804,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_23b3b183b38140c3b8d43bb9ce98e3e2.attempt-0",
+      "node_id": "b",
+      "time": 1792879855.3386307,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_c1223035bb2347d089b77b04917f0a21.attempt-0",
+      "node_id": "b",
+      "time": 1792879855.5002954,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_c1223035bb2347d089b77b04917f0a21.attempt-0",
+      "node_id": "b",
+      "time": 1792879855.551764,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_9b994328398d41109c4c9aea4719596a.attempt-0",
+      "node_id": "c",
+      "time": 1792878148.8773618,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_9b994328398d41109c4c9aea4719596a.attempt-0",
+      "node_id": "c",
+      "time": 1792878153.323703,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_94d07d0d3e64462fb87344f5de0dfae4.attempt-0",
+      "node_id": "c",
+      "time": 1792878623.1521926,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_94d07d0d3e64462fb87344f5de0dfae4.attempt-0",
+      "node_id": "c",
+      "time": 1792878623.1526036,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_8d51576afd0e4c88a94fdeaf47bd2e76.attempt-0",
+      "node_id": "c",
+      "time": 1792878819.169144,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_8d51576afd0e4c88a94fdeaf47bd2e76.attempt-0",
+      "node_id": "c",
+      "time": 1792878819.1695168,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_c97747d9bf274615a1287fc598dc098d.attempt-1",
+      "node_id": "c",
+      "time": 1792878862.8452837,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_c97747d9bf274615a1287fc598dc098d.attempt-1",
+      "node_id": "c",
+      "time": 1792878862.845757,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_dca923ce778246e8b98c9145e67e6924.attempt-0",
+      "node_id": "c",
+      "time": 1792878867.1022522,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_dca923ce778246e8b98c9145e67e6924.attempt-0",
+      "node_id": "c",
+      "time": 1792878867.1026158,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_e556865b3c0d444b87dfbe9d9cee3144.attempt-0",
+      "node_id": "c",
+      "time": 1792878906.528928,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_e556865b3c0d444b87dfbe9d9cee3144.attempt-0",
+      "node_id": "c",
+      "time": 1792878922.8727133,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_bca0de1df36c4015bc8e3caf525ea18a.attempt-0",
+      "node_id": "c",
+      "time": 1792879849.2372336,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_bca0de1df36c4015bc8e3caf525ea18a.attempt-0",
+      "node_id": "c",
+      "time": 1792879855.3324828,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_6c7536e065a4417c802c61518c9054d6.attempt-0",
+      "node_id": "a",
+      "time": 1792878185.0426805,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_6c7536e065a4417c802c61518c9054d6.attempt-0",
+      "node_id": "a",
+      "time": 1792878220.179721,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_62191dce00d44f40b9a5461d2a32ebc3.attempt-0",
+      "node_id": "a",
+      "time": 1792878258.4327893,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_a977ff836a904269a22e8881b72025d7.attempt-0",
+      "node_id": "a",
+      "time": 1792878458.3150074,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_a977ff836a904269a22e8881b72025d7.attempt-0",
+      "node_id": "a",
+      "time": 1792878462.4985514,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_5519af7749b34a5283ebca0bb1ca41fe.attempt-0",
+      "node_id": "a",
+      "time": 1792878511.2768667,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_5519af7749b34a5283ebca0bb1ca41fe.attempt-0",
+      "node_id": "a",
+      "time": 1792878515.6316977,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_d8fb6de0b98d4a698644867d364ceaae.attempt-0",
+      "node_id": "a",
+      "time": 1792878588.0382233,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_e2f59834e22743dd8b15c5610df9ae67.attempt-0",
+      "node_id": "a",
+      "time": 1792878681.8269668,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_e2f59834e22743dd8b15c5610df9ae67.attempt-0",
+      "node_id": "a",
+      "time": 1792878681.8273427,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_6de4d65c3a6d4d7da12842dc0296182c.attempt-0",
+      "node_id": "a",
+      "time": 1792878740.4019303,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_7c20091dc44e461cb006571d67e744b9.attempt-0",
+      "node_id": "a",
+      "time": 1792879848.1416223,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_7c20091dc44e461cb006571d67e744b9.attempt-0",
+      "node_id": "a",
+      "time": 1792879855.3149707,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_362cf80f8bac4c73ade1959108bd9639.attempt-0",
+      "node_id": "a",
+      "time": 1792879863.279169,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_362cf80f8bac4c73ade1959108bd9639.attempt-0",
+      "node_id": "a",
+      "time": 1792879868.2831047,
+      "pid": 1
+    },
+    {
+      "kind": "provider_start",
+      "invocation_id": "job_f391469eea274b108ec17cfdbadb9ad4.attempt-0",
+      "node_id": "a",
+      "time": 1792879954.730387,
+      "pid": 1
+    },
+    {
+      "kind": "provider_end",
+      "invocation_id": "job_f391469eea274b108ec17cfdbadb9ad4.attempt-0",
+      "node_id": "a",
+      "time": 1792879955.0019383,
+      "pid": 1
+    }
+  ],
+  "not_run": [
+    "RPOOL-19",
+    "RPOOL-20"
+  ]
+}

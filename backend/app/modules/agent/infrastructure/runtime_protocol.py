@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, cast
+from functools import lru_cache
+
+from jsonschema import Draft202012Validator
 
 from app.modules.agent.infrastructure.generated_runtime_contracts_v1_4 import (
     AgentExecutionRequestV14,
@@ -222,3 +225,19 @@ def _validate_file_context(payload: dict[str, Any]) -> None:
                 "runtime_file_representation_invalid",
                 "text manifest item must not carry a document representation",
             )
+
+
+@lru_cache(maxsize=8)
+def _pool_validator(version: str, definition: str) -> Draft202012Validator:
+    if version not in SUPPORTED_RUNTIME_PROTOCOL_VERSIONS:
+        raise ValueError("Unsupported pool protocol")
+    root = CONTRACT_SCHEMA_PATH_V15 if version == "1.5" else CONTRACT_SCHEMA_PATH_V14
+    schema = json.loads(root.with_name("pool-control.schema.json").read_text())
+    return Draft202012Validator({"$ref": f"#/$defs/{definition}", **schema})
+
+
+def validate_pool_contract(definition: str, payload: object, *, version: str = "1.5") -> None:
+    if not _pool_validator(version, definition).is_valid(payload):
+        raise RuntimeProtocolError(
+            "runtime_request_invalid", "Invalid Runtime pool control contract"
+        )

@@ -7,7 +7,23 @@ from app.modules.job.domain.job_dispatch import JobDispatchEvent, JobDispatchSta
 from app.modules.job.infrastructure.job_status_lookup import require_job_status
 from app.modules.job.infrastructure.persistence_values import new_id, now_iso
 from app.shared.database import Database
+from app.modules.job.infrastructure.execution_control import JobExecutionControl
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
+
+
+_SESSION_HEAD = """
+not exists (
+  select 1 from agent_job prior
+  join agent_message prior_input on prior_input.id = prior.input_message_id
+  join agent_message current_input on current_input.id = job.input_message_id
+  where prior.session_id = job.session_id and prior.id <> job.id
+    and (prior_input.sequence_no < current_input.sequence_no
+      or (prior_input.sequence_no = current_input.sequence_no and prior.id < job.id))
+    and (prior.status in ('WAITING_INPUT','PENDING','RUNNING','RETRY_WAIT') or exists (
+      select 1 from agent_runtime_invocation i where i.job_id = prior.id
+        and i.accepted_at is not null and i.execution_quiesced_at is null))
+)
+"""
 
 
 class JobDispatchRepository:
@@ -48,6 +64,12 @@ class JobDispatchRepository:
                 timestamp,
             ),
         )
+        job = self.database.execute_one("select * from agent_job where id = ?", (job_id,))
+        if job is not None and not JobExecutionControl(self.database).is_head(job):
+            self.database.execute(
+                "update job_dispatch_outbox set wait_reason = 'session_wait' where job_id = ? and status = 'PENDING'",
+                (job_id,),
+            )
         row = self.database.execute_one(
             "select * from job_dispatch_outbox where job_id = ?",
             (job_id,),
@@ -104,7 +126,7 @@ class JobDispatchRepository:
         with self.database.unit_of_work():
             if self.database.engine == "postgres":
                 rows = self.database.execute(
-                    """
+                    f"""
                     with candidate as (
                       select outbox.id
                         from job_dispatch_outbox outbox
@@ -112,13 +134,14 @@ class JobDispatchRepository:
                        where outbox.status in ('PENDING', 'RETRY_WAIT')
                          and outbox.next_attempt_at <= ?
                          and outbox.attempt_count < outbox.max_attempts
-                         and job.status in ('PENDING', 'RETRY_WAIT')
+                         and (job.status in ('PENDING', 'RETRY_WAIT') or (job.status = 'RUNNING' and job.worker_lease_until <= outbox.updated_at))
+                         and {_SESSION_HEAD}
                        order by outbox.next_attempt_at, outbox.created_at, outbox.id
                        for update of outbox skip locked
                        limit 1
                     )
                     update job_dispatch_outbox
-                       set status = 'RUNNING', claimed_by = ?, claimed_at = ?,
+                       set status = 'RUNNING', claimed_by = ?, claimed_at = ?, wait_reason = null,
                            attempt_count = attempt_count + 1, updated_at = ?
                      where id = (select id from candidate)
                     returning *
@@ -127,9 +150,9 @@ class JobDispatchRepository:
                 )
             else:
                 rows = self.database.execute(
-                    """
+                    f"""
                     update job_dispatch_outbox
-                       set status = 'RUNNING', claimed_by = ?, claimed_at = ?,
+                       set status = 'RUNNING', claimed_by = ?, claimed_at = ?, wait_reason = null,
                            attempt_count = attempt_count + 1, updated_at = ?
                      where id = (
                        select outbox.id
@@ -138,7 +161,8 @@ class JobDispatchRepository:
                         where outbox.status in ('PENDING', 'RETRY_WAIT')
                           and outbox.next_attempt_at <= ?
                           and outbox.attempt_count < outbox.max_attempts
-                          and job.status in ('PENDING', 'RETRY_WAIT')
+                          and (job.status in ('PENDING', 'RETRY_WAIT') or (job.status = 'RUNNING' and job.worker_lease_until <= outbox.updated_at))
+                         and {_SESSION_HEAD}
                         order by outbox.next_attempt_at, outbox.created_at, outbox.id
                         limit 1
                      )
@@ -457,6 +481,29 @@ class JobDispatchRepository:
             "counts": counts,
             "oldest_due_at": oldest.get("oldest_due_at"),
             "max_attempt_count": int(oldest.get("max_attempt_count") or 0),
+            "runtime_pool": self._runtime_pool_metrics(),
+        }
+
+    def _runtime_pool_metrics(self) -> dict[str, Any]:
+        states = self.database.execute(
+            "select state, count(*) as count from agent_runtime_invocation group by state",
+        )
+        waits = self.database.execute(
+            "select o.wait_reason, count(*) as count from job_dispatch_outbox o "
+            "join agent_job j on j.id = o.job_id where o.wait_reason is not null "
+            "and j.status in ('PENDING','RETRY_WAIT','RUNNING') group by o.wait_reason",
+        )
+        pending = (
+            self.database.execute_one(
+                "select count(*) as unquiesced_count, min(cancel_requested_at) as oldest_cancel_at "
+                "from agent_runtime_invocation where accepted_at is not null and execution_quiesced_at is null",
+            )
+            or {}
+        )
+        return {
+            "invocations_by_state": {row["state"]: row["count"] for row in states},
+            "waiting_by_reason": {row["wait_reason"]: row["count"] for row in waits},
+            **pending,
         }
 
     def _dispatch_event_from_row(self, row: dict[str, Any]) -> JobDispatchEvent:

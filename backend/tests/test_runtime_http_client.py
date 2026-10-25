@@ -87,6 +87,11 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
+                    "pool_enabled": True,
+                    "node_id": "runtime-local",
+                    "instance_id": "11111111-1111-4111-8111-111111111111",
+                    "busy": False,
+                    "draining": False,
                     "protocol_version": "1.5",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
@@ -114,7 +119,9 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
             }
         )
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "app.modules.agent.infrastructure.runtime_http_client.runtime_urlopen", fake_urlopen
+    )
     result = probe_runtime_readiness(
         RuntimeClientSettings(
             base_url="http://agent-runtime:9102",
@@ -143,6 +150,11 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
+                    "pool_enabled": True,
+                    "node_id": "runtime-local",
+                    "instance_id": "11111111-1111-4111-8111-111111111111",
+                    "busy": False,
+                    "draining": False,
                     "protocol_version": "1.5",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
@@ -175,7 +187,9 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
             io.BytesIO(body),
         )
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "app.modules.agent.infrastructure.runtime_http_client.runtime_urlopen", fake_urlopen
+    )
     result = probe_runtime_readiness(
         RuntimeClientSettings(
             base_url="http://agent-runtime:9102",
@@ -202,6 +216,11 @@ def test_passive_runtime_readiness_fails_closed_without_build_identity(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
+                    "pool_enabled": True,
+                    "node_id": "runtime-local",
+                    "instance_id": "11111111-1111-4111-8111-111111111111",
+                    "busy": False,
+                    "draining": False,
                     "protocol_version": "1.5",
                     "sdk_version": "0.3.226",
                     "cli_version": "2.1.226",
@@ -209,7 +228,9 @@ def test_passive_runtime_readiness_fails_closed_without_build_identity(
             )
         return _PassiveResponse({"ready": True, "database": "ready", "master_key": "ready"})
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "app.modules.agent.infrastructure.runtime_http_client.runtime_urlopen", fake_urlopen
+    )
 
     result = probe_runtime_readiness(
         RuntimeClientSettings(

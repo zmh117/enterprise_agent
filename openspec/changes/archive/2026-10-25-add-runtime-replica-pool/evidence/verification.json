@@ -1,0 +1,435 @@
+{
+  "local_regressions": {
+    "status": "PASS",
+    "suite_passed": 370,
+    "unique_tests_passed": 370,
+    "test_files": [
+      "backend/tests/test_agent_job_debug_authorization.py",
+      "backend/tests/test_agent_retry_and_failure_delivery.py",
+      "backend/tests/test_agent_runtime_and_worker.py",
+      "backend/tests/test_agent_runtime_compose_security.py",
+      "backend/tests/test_agent_runtime_database_grants.py",
+      "backend/tests/test_agent_runtime_protocol_contract.py",
+      "backend/tests/test_agent_runtime_recovery.py",
+      "backend/tests/test_job_dispatch_atomic_creation.py",
+      "backend/tests/test_job_dispatch_cutover.py",
+      "backend/tests/test_job_dispatch_fault_integration.py",
+      "backend/tests/test_job_dispatch_operations.py",
+      "backend/tests/test_job_dispatch_outbox_dispatcher.py",
+      "backend/tests/test_job_dispatch_outbox_schema.py",
+      "backend/tests/test_python_agent_runtime.py",
+      "backend/tests/test_rabbitmq_consumer_poison_boundary.py",
+      "backend/tests/test_runtime_http_client.py",
+      "backend/tests/test_runtime_model_probe.py",
+      "backend/tests/test_runtime_readiness.py",
+      "backend/tests/test_runtime_replica_pool.py",
+      "backend/tests/test_schema_fact_source_manifest.py",
+      "backend/tests/test_schema_migration_runtime.py",
+      "backend/tests/test_session_job_message_fact_sources.py"
+    ],
+    "duration_seconds": 58.31
+  },
+  "postgres": {
+    "status": "PASS",
+    "tests_passed": 8,
+    "test_file": "backend/tests/test_runtime_replica_pool_postgres.py",
+    "independent_connections": true,
+    "database": "isolated PostgreSQL 18"
+  },
+  "static": {
+    "ruff": "PASS",
+    "mypy_changed_source_files": 31,
+    "compileall": "PASS",
+    "compose_topologies": 3,
+    "markdown_links": "PASS",
+    "openspec_strict": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "cases": [
+    {
+      "case_id": "RPOOL-01",
+      "domain": "execution-delivery",
+      "tasks": [
+        "3.2",
+        "9.1"
+      ],
+      "assertion": "并发准入唯一 owner 和执行启动",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-02",
+      "domain": "execution-delivery",
+      "tasks": [
+        "3.1",
+        "7.1",
+        "10.1"
+      ],
+      "assertion": "三节点重叠执行及第四任务等待",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-03",
+      "domain": "channel-conversation",
+      "tasks": [
+        "6.1",
+        "6.3",
+        "9.3",
+        "10.1"
+      ],
+      "assertion": "会话顺序和晚到助手回复",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-04",
+      "domain": "execution-delivery",
+      "tasks": [
+        "4.2",
+        "10.2"
+      ],
+      "assertion": "接受后响应丢失恢复同一执行",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-05",
+      "domain": "execution-delivery",
+      "tasks": [
+        "3.6",
+        "10.2"
+      ],
+      "assertion": "接受后 SDK 前崩溃保守收敛",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-06",
+      "domain": "execution-delivery",
+      "tasks": [
+        "4.3",
+        "10.2"
+      ],
+      "assertion": "流中断与原序号重放",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-07",
+      "domain": "execution-delivery",
+      "tasks": [
+        "2.1",
+        "2.3",
+        "9.2",
+        "10.2"
+      ],
+      "assertion": "Worker 接管与旧写入栅栏",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-08",
+      "domain": "execution-delivery",
+      "tasks": [
+        "3.5",
+        "3.6",
+        "10.2"
+      ],
+      "assertion": "Runtime 崩溃与停止证明",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-09",
+      "domain": "execution-delivery",
+      "tasks": [
+        "2.3",
+        "9.2",
+        "10.2"
+      ],
+      "assertion": "终态后事务回滚与唯一投递",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-10",
+      "domain": "execution-delivery",
+      "tasks": [
+        "5.2",
+        "9.1"
+      ],
+      "assertion": "取消与准入的事务顺序",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-11",
+      "domain": "execution-delivery",
+      "tasks": [
+        "5.3",
+        "9.1",
+        "10.3"
+      ],
+      "assertion": "取消通知丢失及停止延迟",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-12",
+      "domain": "execution-delivery",
+      "tasks": [
+        "3.3",
+        "9.1",
+        "10.3"
+      ],
+      "assertion": "数据库暂停与旧租约不可复活",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-13",
+      "domain": "execution-delivery",
+      "tasks": [
+        "3.1",
+        "7.2",
+        "10.3"
+      ],
+      "assertion": "控制请求独立于槽及 probe 共用槽",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-14",
+      "domain": "platform-operations",
+      "tasks": [
+        "5.4",
+        "7.4",
+        "10.4"
+      ],
+      "assertion": "排空、实例变化和发布门禁",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-15",
+      "domain": "platform-operations",
+      "tasks": [
+        "1.5",
+        "5.1",
+        "8.1",
+        "9.3"
+      ],
+      "assertion": "授权、地址、实例及实际最小数据库角色",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-16",
+      "domain": "execution-delivery",
+      "tasks": [
+        "1.3",
+        "4.4",
+        "9.3"
+      ],
+      "assertion": "不可变快照、正文清理和不可再执行标记",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-17",
+      "domain": "platform-operations",
+      "tasks": [
+        "2.4",
+        "2.5",
+        "2.6",
+        "10.4"
+      ],
+      "assertion": "Broker 心跳恢复、全池不可用、延期和超时",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-18",
+      "domain": "channel-conversation",
+      "tasks": [
+        "6.2",
+        "9.3",
+        "10.4"
+      ],
+      "assertion": "业务重试保留会话顺序",
+      "status": "PASS",
+      "evidence": [
+        "compose-results.json",
+        "../../../../../backend/tests/test_runtime_replica_pool.py",
+        "../../../../../backend/tests/test_runtime_replica_pool_postgres.py",
+        "../../../../../backend/tests/test_python_agent_runtime.py"
+      ]
+    },
+    {
+      "case_id": "RPOOL-19",
+      "domain": "platform-operations",
+      "tasks": [
+        "11.1"
+      ],
+      "assertion": "真实 SDK 和 Provider 并行",
+      "status": "PASS",
+      "evidence": [
+        "real-provider.json",
+        "real-acceptance.md",
+        "real-cleanup.json"
+      ]
+    },
+    {
+      "case_id": "RPOOL-20",
+      "domain": "platform-operations",
+      "tasks": [
+        "11.2"
+      ],
+      "assertion": "真实 Provider 有界容量测量",
+      "status": "PASS",
+      "evidence": [
+        "real-provider.json",
+        "real-acceptance.md",
+        "real-cleanup.json"
+      ]
+    }
+  ],
+  "compose": {
+    "status": "PASS",
+    "scenario_records": 19,
+    "recorded_jobs": 24,
+    "provider": "deterministic test adapter; no real SDK/Provider invocation"
+  },
+  "resolved_regression_failures": [
+    "Two 1.4/1.5 digest-conflict assertions expected the former generic code; aligned with the proposed runtime_request_digest_mismatch contract and reran all 370 tests successfully.",
+    "Completed full-request replays retained bodies in memory; removed terminal replay caching and verified both full and minimal HTTP recovery return 410 after pruning without another Provider start."
+  ],
+  "cleanup": {
+    "status": "PASS",
+    "owned_containers_removed": 10,
+    "generated_keys_removed": true,
+    "remaining_owned_containers": 0,
+    "unrelated_running_container_unchanged": true
+  },
+  "real_provider": {
+    "status": "PASS",
+    "jobs": 18,
+    "sdk_starts": 18,
+    "expected_cancellations": 1,
+    "unexpected_job_failures": 0,
+    "source_configuration_unchanged": true,
+    "report": "real-acceptance.md",
+    "cleanup": "PASS"
+  },
+  "spec_sync": {
+    "status": "PASS",
+    "domains": {
+      "execution-delivery": {
+        "modified": 8,
+        "added": 5
+      },
+      "channel-conversation": {
+        "modified": 1,
+        "added": 1
+      },
+      "platform-operations": {
+        "modified": 1,
+        "added": 5
+      }
+    },
+    "unrelated_requirements_preserved": true
+  },
+  "archive": {
+    "status": "COMPLETE",
+    "date": "2026-10-25",
+    "path": "openspec/changes/archive/2026-10-25-add-runtime-replica-pool",
+    "tasks_complete": 48,
+    "tasks_total": 48
+  }
+}

@@ -124,6 +124,13 @@ def test_redelivered_running_job_reuses_same_runtime_and_invocation() -> None:
     message = replace(persisted_agent_job_message(runtime, job.id), redelivered=True)
 
     AgentJobWorker(runtime.settings, container=runtime).handle(message)
+    assert runtime.agent_repository.get_job(job.id).status == JobStatus.RUNNING
+    assert client.requests == []
+    runtime.database.execute(
+        "update agent_job set worker_lease_until = '2000-01-01T00:00:00+00:00' where id = ?",
+        (job.id,),
+    )
+    AgentJobWorker(runtime.settings, container=runtime).handle(message)
 
     persisted = runtime.agent_repository.get_job(job.id)
     assert persisted.status == JobStatus.SUCCEEDED
@@ -179,6 +186,9 @@ def test_job_cancel_and_worker_shutdown_target_the_same_frozen_invocation() -> N
     worker_thread.start()
     assert shutdown_client.started.wait(timeout=1)
     assert worker.request_shutdown() is True
-    worker_thread.join(timeout=2)
+    assert shutdown_client.cancelled == []
+    assert worker_thread.is_alive()
+    shutdown_client.released.set()
+    worker_thread.join(timeout=3)
     assert not worker_thread.is_alive()
-    assert shutdown_client.cancelled == [(f"{second.id}.attempt-0", "WORKER_SHUTDOWN")]
+    assert shutdown_client.cancelled == []

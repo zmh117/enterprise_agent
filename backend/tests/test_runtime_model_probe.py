@@ -92,7 +92,9 @@ def test_runtime_probe_sends_only_fixed_binding_and_accepts_safe_contract(
             }
         )
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "app.modules.model_connection.infrastructure.runtime_probe.runtime_urlopen", fake_urlopen
+    )
     result = client.probe(
         revision_id="revision-1",
         config_hash="a" * 64,
@@ -143,7 +145,9 @@ def test_draft_runtime_probe_uses_short_lived_encrypted_one_use_envelope(
             }
         )
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        "app.modules.model_connection.infrastructure.runtime_probe.runtime_urlopen", fake_urlopen
+    )
     config = {
         "schema_version": 1,
         "protocol": "anthropic_compatible",
@@ -240,7 +244,9 @@ def test_runtime_probe_maps_http_failure_without_exposing_response(
             None,
         )
 
-    monkeypatch.setattr("urllib.request.urlopen", rejected)
+    monkeypatch.setattr(
+        "app.modules.model_connection.infrastructure.runtime_probe.runtime_urlopen", rejected
+    )
     with pytest.raises(NonRetryableExecutionError) as failure:
         client.probe(
             revision_id="revision-1",

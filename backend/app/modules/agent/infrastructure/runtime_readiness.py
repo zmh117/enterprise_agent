@@ -24,6 +24,7 @@ class AgentRuntimeReadinessGuard:
             configured["python-v1"] = RuntimeClientSettings(
                 base_url=base_url,
                 allowed_runtime_hosts=settings.agent_runtime.python_allowed_hosts,
+                nodes=settings.agent_runtime.python_nodes,
                 runtime_kind="python-v1",
                 allow_insecure_internal_http=(settings.agent_runtime.allow_insecure_internal_http),
             )

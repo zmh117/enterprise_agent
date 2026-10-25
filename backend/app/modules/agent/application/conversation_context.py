@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+from app.modules.job.infrastructure.execution_control import JobExecutionControl, WorkerLeaseLost
+
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -67,8 +70,8 @@ class ConversationContextService:
                 safe_message="会话请求人与当前任务不匹配",
             )
         recent_message_limit = session.recent_message_limit or self.settings.recent_message_limit
-        messages = self.repository.list_messages(
-            job.session_id,
+        messages = self.repository.list_messages_before_job(
+            job,
             limit=recent_message_limit + self.settings.summary_trigger_messages + 1,
         )
         messages = [
@@ -90,14 +93,24 @@ class ConversationContextService:
                 through = (
                     int(older[-1]["sequence_no"]) if older else session.summary_through_sequence
                 )
-                if self.repository.update_session_summary(
-                    session.id,
-                    expected_version=session.summary_version,
-                    summary_text=candidate,
-                    through_sequence=through,
-                ):
-                    summary = candidate
+                guard = (
+                    JobExecutionControl(self.repository.database).transaction(
+                        job.id, job.locked_by, job.worker_claim_version
+                    )
+                    if job.worker_claim_version
+                    else nullcontext()
+                )
+                with guard:
+                    if self.repository.update_session_summary(
+                        session.id,
+                        expected_version=session.summary_version,
+                        summary_text=candidate,
+                        through_sequence=through,
+                    ):
+                        summary = candidate
                 messages = messages[cutoff:]
+            except WorkerLeaseLost:
+                raise
             except Exception:
                 messages = messages[-recent_message_limit:]
         else:

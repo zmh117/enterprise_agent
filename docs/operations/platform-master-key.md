@@ -51,7 +51,7 @@ Windows 文件共享可能把宿主 Secret 在 Linux 容器内呈现为 `0777`�
 - 将同一个环境变量改指向临时副本后，以 `exec` 启动原容器命令；
 - 不输出路径、文件内容、摘要或其它 Secret 派生值。
 
-`python-agent-runtime` 的 `TMPDIR` 已固定为 tmpfs
+`python-agent-runtime-a`、`python-agent-runtime-b` 各自的 `TMPDIR` 已固定为 tmpfs
 `/tmp/python-agent-runtime`，因此副本位于
 `/tmp/python-agent-runtime/ea-secrets`。其它只读后端服务使用各自挂载的 `/tmp`
 tmpfs。脚本不会搜索 HOME、`/dev/shm` 或其它候选目录；目标目录不可写时容器失败关闭。

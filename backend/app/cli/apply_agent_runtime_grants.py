@@ -89,6 +89,9 @@ def verify_agent_runtime_grants(database: Database) -> None:
         "agent_publication",
         "business_application_publication",
         "delivery_outbox",
+        "agent_session",
+        "rbac_role",
+        "agent_runtime_invocation_claim",
     )
     for table in forbidden_tables:
         for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
@@ -101,22 +104,57 @@ def verify_agent_runtime_grants(database: Database) -> None:
 
     for table in (
         "agent_runtime_terminal_ledger",
-        "agent_runtime_invocation_claim",
         "agent_runtime_invocation_event",
     ):
-        for privilege in ("SELECT", "INSERT", "DELETE"):
+        for privilege in ("SELECT", "INSERT"):
             row = database.execute_one(
                 "select has_table_privilege(?, ?, ?) as allowed",
                 (ROLE, f"public.{table}", privilege),
             )
             if not row or not bool(row["allowed"]):
                 raise RuntimeError(f"missing Agent Runtime ledger privilege: {table}.{privilege}")
+        for privilege in ("UPDATE", "DELETE"):
+            row = database.execute_one(
+                "select has_table_privilege(?, ?, ?) as allowed",
+                (ROLE, f"public.{table}", privilege),
+            )
+            if row and bool(row["allowed"]):
+                raise RuntimeError(f"Agent Runtime ledger mutation privilege is forbidden: {table}")
+    _verify_pool_grants(database)
+
+
+def _verify_pool_grants(database: Database) -> None:
+    for table in ("agent_runtime_invocation", "agent_runtime_request_snapshot"):
+        for privilege in ("SELECT", "INSERT", "DELETE", "UPDATE"):
+            row = database.execute_one(
+                "select has_table_privilege(?, ?, ?) as allowed",
+                (ROLE, f"public.{table}", privilege),
+            )
+            if not row or bool(row["allowed"]) != (privilege == "SELECT"):
+                raise RuntimeError(
+                    f"Agent Runtime pool table privilege invalid: {table}.{privilege}"
+                )
+    mutable = {
+        "state",
+        "node_id",
+        "instance_id",
+        "accepted_at",
+        "execution_deadline_at",
+        "lease_until",
+        "terminal_code",
+        "terminal_at",
+        "execution_quiesced_at",
+    }
+    for column in database.execute(
+        "select column_name from information_schema.columns where table_schema = 'public' and table_name = 'agent_runtime_invocation'"
+    ):
+        name = column["column_name"]
         row = database.execute_one(
-            "select has_table_privilege(?, ?, 'UPDATE') as allowed",
-            (ROLE, f"public.{table}"),
+            "select has_column_privilege(?, 'public.agent_runtime_invocation', ?, 'UPDATE') as allowed",
+            (ROLE, name),
         )
-        if row and bool(row["allowed"]):
-            raise RuntimeError(f"Agent Runtime ledger UPDATE privilege is forbidden: {table}")
+        if not row or bool(row["allowed"]) != (name in mutable):
+            raise RuntimeError("Agent Runtime lifecycle column privilege invalid")
 
 
 def main() -> int:

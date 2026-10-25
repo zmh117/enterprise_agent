@@ -22,8 +22,9 @@ x-runtime-env: &runtime-env
   # 模型连接由管理端配置，部署环境只负责限制允许访问的主机。
   # 内部网关示例：api.deepseek.com,aikeyhub.gateway.mdzy
   MODEL_PROVIDER_HOST_ALLOWLIST: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
-  PYTHON_AGENT_RUNTIME_URL: http://python-agent-runtime:8091
-  PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS: python-agent-runtime
+  PYTHON_AGENT_RUNTIME_URL: http://python-agent-runtime-a:8091
+  PYTHON_AGENT_RUNTIME_NODES: a=http://python-agent-runtime-a:8091,b=http://python-agent-runtime-b:8091
+  PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS: python-agent-runtime-a,python-agent-runtime-b
   AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP: "true"
 
 x-worker-env: &worker-env
@@ -112,6 +113,8 @@ services:
 
   rabbitmq:
     image: ${RABBITMQ_IMAGE:-rabbitmq:4-management}
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit consumer_timeout 4200000"
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -440,7 +443,9 @@ services:
       - default
       - agent-runtime-control
 
-  python-agent-runtime:
+  python-agent-runtime-a: &python-runtime-node
+    container_name: ${COMPOSE_PROJECT_NAME:-enterprise-agent}-runtime-a
+    stop_grace_period: 70m
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -452,8 +457,9 @@ services:
       - /tmp/python-agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-1g},mode=0700,uid=10002,gid=10002
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    environment:
+    environment: &python-runtime-node-env
       <<: *runtime-env
+      PYTHON_AGENT_RUNTIME_NODE_ID: a
       HOME: /tmp/python-agent-runtime
       TMPDIR: /tmp/python-agent-runtime
       CLAUDE_CONFIG_DIR: /tmp/python-agent-runtime/.claude
@@ -516,6 +522,13 @@ services:
       - agent-runtime-control
       - provider-egress
 
+  python-agent-runtime-b:
+    <<: *python-runtime-node
+    container_name: ${COMPOSE_PROJECT_NAME:-enterprise-agent}-runtime-b
+    environment:
+      <<: *python-runtime-node-env
+      PYTHON_AGENT_RUNTIME_NODE_ID: b
+
   api-server:
     build:
       context: .
@@ -543,8 +556,10 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
-      python-agent-runtime:
-        condition: service_healthy
+      python-agent-runtime-a:
+        condition: service_started
+      python-agent-runtime-b:
+        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -606,6 +621,9 @@ services:
       start_period: 15s
 
   agent-worker:
+    deploy:
+      replicas: 2
+    stop_grace_period: 70m
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -633,8 +651,10 @@ services:
         condition: service_healthy
       dingtalk-mcp:
         condition: service_healthy
-      python-agent-runtime:
-        condition: service_healthy
+      python-agent-runtime-a:
+        condition: service_started
+      python-agent-runtime-b:
+        condition: service_started
       file-service:
         condition: service_healthy
     networks:
@@ -725,8 +745,10 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
-      python-agent-runtime:
-        condition: service_healthy
+      python-agent-runtime-a:
+        condition: service_started
+      python-agent-runtime-b:
+        condition: service_started
     healthcheck:
       test:
         - CMD
@@ -758,8 +780,10 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
-      python-agent-runtime:
-        condition: service_healthy
+      python-agent-runtime-a:
+        condition: service_started
+      python-agent-runtime-b:
+        condition: service_started
     healthcheck:
       test:
         - CMD

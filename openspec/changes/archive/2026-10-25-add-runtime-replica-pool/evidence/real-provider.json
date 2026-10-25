@@ -1,0 +1,3547 @@
+{
+  "collected_at": "2026-10-25T00:52:02.601772+00:00",
+  "status": "PASS",
+  "case_ids": [
+    "RPOOL-19",
+    "RPOOL-20"
+  ],
+  "task_ids": [
+    "11.1",
+    "11.2"
+  ],
+  "domains": [
+    "execution-delivery",
+    "channel-conversation",
+    "platform-operations"
+  ],
+  "provider": "real Claude Agent SDK and managed Anthropic-compatible Provider; no fake responses",
+  "managed_model": {
+    "connection_id": "model_connection_29022e24d5204bf39a0a5fc521ae7aff",
+    "revision_id": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+    "config_hash": "f4d92ebc4061557509a03cb6ffb26d56377618e5523f8747b51dc2497c48f99e",
+    "model": "deepseek-v4-flash",
+    "active_version": 1
+  },
+  "source_configuration_unchanged": true,
+  "encrypted_credential_record_unchanged": true,
+  "credential_scope": "One existing managed credential version shared by three isolated processes. No rotation or new credential. Real multi-credential switching was not exercised; credential isolation evidence is exact binding, read-only mount and environment restoration.",
+  "hardware": {
+    "host": {
+      "machine": "arm64",
+      "system": "Darwin",
+      "cpu_count": 10,
+      "memory_bytes": null,
+      "memory_measurement": "host sysctl unavailable in sandbox; Docker VM limits measured below"
+    },
+    "docker": {
+      "cpus": 10,
+      "memory_bytes": 16748032000,
+      "server_version": "29.4.1",
+      "architecture": "aarch64"
+    }
+  },
+  "runtime_topology": {
+    "a": {
+      "uid": 10002,
+      "remaining_job_sandboxes": 0,
+      "real_provider_disabled_fake": true
+    },
+    "b": {
+      "uid": 10002,
+      "remaining_job_sandboxes": 0,
+      "real_provider_disabled_fake": true
+    },
+    "c": {
+      "uid": 10002,
+      "remaining_job_sandboxes": 0,
+      "real_provider_disabled_fake": true
+    }
+  },
+  "build_identity": {
+    "source_revision": "local-dev",
+    "build_id": "local-dev",
+    "platform": "linux/arm64"
+  },
+  "base_revision": "e2aaaab3c7088195e43518b8ac689d60497350e7",
+  "image_ids": {
+    "ea-runtime-pool-test:local": "sha256:a4cbc25856c5d823f704ce4c67683945835e31f35cf2c43785d24b1432a0c2db",
+    "ea-runtime-pool-worker-test:local": "sha256:1c4cb13f20e4b95370239a0f7a661ff4378bafbd9af97d8549f85c95d7ed0ad3"
+  },
+  "source_sha256": {
+    "backend/Dockerfile": "a749885a8051b5a8df1299f5f66951bb6bf85784a8d1806c5d7cd16decc29368",
+    "backend/app/bootstrap.py": "cf1700c4cfd6229736ac2e9e7fe531f018ff67b2efa520677136e5f074d52763",
+    "backend/app/cli/apply_agent_runtime_grants.py": "50ad55ef966bc915bfc69262d45c01310fb0b0aafd4003b9657cba2e709a3b04",
+    "backend/app/cli/runtime_pool_preflight.py": "b16523f97a96b0a788d6006c466d7c7ee600d735c2636f437f29f2ae5d2c3635",
+    "backend/app/main.py": "65d31d8c09a4ad01ae4bf2d744bbe509c909f80e144061e67346b498ff61ac74",
+    "backend/app/modules/agent/application/agent_executor.py": "df1593bbb2e9bb1462ea8cc312ca69e6744e56a13412350e899ea8509ef4fbef",
+    "backend/app/modules/agent/application/conversation_context.py": "6f9354e597b0f19baab8acba77f2b3de56940ccaec52175a1b0c741f13dfdaf1",
+    "backend/app/modules/agent/domain/runtime.py": "caf3e675399ebb8034122437d22fcb293c5ce6ab897d7df7b2a3a08585eaba8f",
+    "backend/app/modules/agent/infrastructure/runtime_http_client.py": "44a3c438633e7945e520d39af536bbdd08641c135cb96e3986485144719ad632",
+    "backend/app/modules/agent/infrastructure/runtime_pool_recovery.py": "a881eb1960ce4f5c3d00fa1af0ac2a2679c3358243c2bb48b177e80d76cc82dd",
+    "backend/app/modules/agent/infrastructure/runtime_pool_store.py": "1e159b4558a7fe42d2ef4fd64313e3a30c317ba6d1a93df2f8c0c3985b227d3f",
+    "backend/app/modules/agent/infrastructure/runtime_protocol.py": "3760ab818edd7c08da130eb29a2d81fcac1f616959f4eb50e4ce9c4a41e5bbe2",
+    "backend/app/modules/agent/infrastructure/runtime_readiness.py": "1952453aaca60cda7fc383fc0ae54672f4f4755eeb4b370ba6c34674df1ad635",
+    "backend/app/modules/agent/infrastructure/runtime_request.py": "bcb433bd10c6689b45724937a5e10d0188be713e0918ecc0ce18a0f3aa6ae439",
+    "backend/app/modules/job/api/agent_job_debug_controller.py": "8233ef2027b32bba6f13afd3e4d09f29f95440dce8986ba3db869a5c0293fe2e",
+    "backend/app/modules/job/application/cancel_agent_job.py": "bcd80a6336b222836b317bf2361d85bc0df5670321050b873f759cea0acb7755",
+    "backend/app/modules/job/application/job_dispatch_service.py": "03621cf544155204070c422798bb90f4fa377c0720ae4a3768437ccf50cf4432",
+    "backend/app/modules/job/application/job_retry_service.py": "52b09a78059c1fa6ba97a0667abf6e80597c3d167e18c098444ee622ce8c3019",
+    "backend/app/modules/job/domain/agent_job.py": "bb887d4b12429c044a5ca438da3b9a6f293c18f6584302e31bff78bacf8150ad",
+    "backend/app/modules/job/infrastructure/dispatch_repository.py": "224281516dc26b70a6179d6e88f1ccb7bb687580dc4abc51de7b7e2df924c8ff",
+    "backend/app/modules/job/infrastructure/execution_control.py": "3baffc8b026d1c294b57b61a72205480b7ee3d4be244f18fb9e7c86afbda60d1",
+    "backend/app/modules/job/infrastructure/repositories.py": "915ba88f5afa84f97540c4d980fac5007d7a4f3b2853d2a08681db4813e6f71b",
+    "backend/app/modules/job/infrastructure/session_repository.py": "4ef3b31801970a0d86e9a5f4b218e3cd93e9851e926dc5d4581c0243d000685a",
+    "backend/app/modules/message_bus/infrastructure/rabbitmq_consumer.py": "af4769ddd7a97ee3dd800be16ac60f95133b09cf7f246316a4ace8384b3194b7",
+    "backend/app/modules/model_connection/infrastructure/runtime_probe.py": "45172b3ea2185c57664a59c951aeba741ade7cc543bd3ea7b15563631539e935",
+    "backend/app/python_runtime/execution_slot.py": "a154e5fde633bd6f5ed0a8aa9a8e427bdcfd876b2e7e65b635d001faff090f6d",
+    "backend/app/python_runtime/executor.py": "80678efd3e82e463f5cf6c37b6f74afaae9b4fb48a8bf3d1438eb3ab2229d603",
+    "backend/app/python_runtime/invocations.py": "73ba38696b3e59f7fe5f4395dfca13d67822a8763d42945cffd5bdb52b8f54c9",
+    "backend/app/python_runtime/service.py": "705563d4503b978c41c339e3b470dc98d878166c602ac2daf26dbd665409f585",
+    "backend/app/shared/config.py": "f0428b9c4d4aa15c48249d98b2d0b90352c58754980c1159913ddc6ddbe7c66e",
+    "backend/app/shared/schema_fact_sources.json": "67728f8fc8a05e9b5835e4c19be47d52ae310dfc9027360090ce7b8ae69f4135",
+    "backend/app/workers/agent_job_worker.py": "2717174f3075cb5d24cc605d199babc0208bb2051545efae0414b65ea0eca1e4",
+    "backend/app/workers/job_dispatch_worker.py": "57510e28a47b623b50faccda2aef822fcdc89a71522b33286ebd022dd726655d",
+    "backend/tests/support/runtime_pool/collect.py": "ca0a979455b23a24aeaa17f4de2f6762300493237386c39c5ca31e15f3900f4e",
+    "backend/tests/support/runtime_pool/collect_real.py": "cfff67d54ab8608053ce3bea20b7bdcf2eda8de09a6d910afce6c27cdb27f22d",
+    "backend/tests/support/runtime_pool/compose.yml": "adbe4f7c7b9f4a3195b1a43f76722c05849ad3cf66ed3fef5c0177edc25577f1",
+    "backend/tests/support/runtime_pool/node.py": "6c5c1cc50ef419a4b452ddd698c8a680d220bd288de5d0d5aceb72621d2a3400",
+    "backend/tests/support/runtime_pool/real.py": "5fe85e01234e80be57cfbcfc0a8d83dc1f22c86d857cfe06ca47cce5673bda93",
+    "backend/tests/support/runtime_pool/real_node.py": "af9669371bafa305e121279ffd0561f01772c90d159c2309190874ca4f753977",
+    "backend/tests/support/runtime_pool/run.py": "eac3aa8f845cf9d8fdf324f931cdcae50db4be1a6395c7838f15f12f2d705884",
+    "contracts/agent-runtime/v1.4/errors.json": "0b315332c262cf5906deec88432c6f023bcd928a2b8f1ed55b293b74b6c3c61e",
+    "contracts/agent-runtime/v1.4/golden/pool-control.json": "815e77f54db679d37b9480e11cf134e19f7b5017e55803bafa94209158c9436e",
+    "contracts/agent-runtime/v1.4/pool-control.schema.json": "23d9ad192cb6f05e4ba55b37544fd56418bf9530ece15e7e86654efd522619a7",
+    "contracts/agent-runtime/v1.5/errors.json": "f4e1d30ca7d6a5647006d28239815ef5e11f4a734e89c782af59ea83ab002e6c",
+    "contracts/agent-runtime/v1.5/golden/pool-control.json": "815e77f54db679d37b9480e11cf134e19f7b5017e55803bafa94209158c9436e",
+    "contracts/agent-runtime/v1.5/pool-control.schema.json": "23d9ad192cb6f05e4ba55b37544fd56418bf9530ece15e7e86654efd522619a7"
+  },
+  "schema": {
+    "head": "147"
+  },
+  "bounds": {
+    "job_limit": 18,
+    "jobs_submitted": 18,
+    "business_retry_limit": 0,
+    "max_model_turns": 4,
+    "configured_timeout_ceiling_seconds": 120,
+    "observed_application_timeout_seconds": 60
+  },
+  "parallel": {
+    "sdk_overlap_seconds": 6.151510715484619,
+    "distinct_nodes": 3,
+    "distinct_sandboxes": 3,
+    "sandbox_canary_preserved": true,
+    "sdk_cwd_matches": true,
+    "frozen_context_isolated": true,
+    "credential_environment_restored": true,
+    "passed": true
+  },
+  "max_sdk_concurrency_per_node": {
+    "a": 1,
+    "b": 1,
+    "c": 1
+  },
+  "sandbox_cleanup": {
+    "a": true,
+    "b": true,
+    "c": true
+  },
+  "capacity_phases": {
+    "serial": {
+      "workers": 1,
+      "jobs": 3,
+      "duration_seconds": 26.770169019699097,
+      "observed_jobs_per_second": 0.11206503768401388,
+      "queue_seconds": {
+        "n": 3,
+        "p50": 7.5972,
+        "p95": 14.9406,
+        "p99": 15.5933,
+        "max": 15.7565
+      },
+      "sdk_seconds": {
+        "n": 3,
+        "p50": 7.9941,
+        "p95": 10.5792,
+        "p99": 10.809,
+        "max": 10.8664
+      },
+      "max_pending": 3,
+      "final_pending": 0,
+      "unexpected_errors": 0
+    },
+    "burst": {
+      "workers": 3,
+      "jobs": 6,
+      "duration_seconds": 17.291101932525635,
+      "observed_jobs_per_second": 0.3469992845692285,
+      "queue_seconds": {
+        "n": 6,
+        "p50": 4.441,
+        "p95": 8.4769,
+        "p99": 8.4881,
+        "max": 8.4909
+      },
+      "sdk_seconds": {
+        "n": 6,
+        "p50": 7.8734,
+        "p95": 8.4385,
+        "p99": 8.45,
+        "max": 8.4529
+      },
+      "max_pending": 6,
+      "final_pending": 0,
+      "unexpected_errors": 0
+    }
+  },
+  "percentile_method": "Linear interpolation; 3 and 6 samples. Descriptive observations, not a capacity guarantee or tail-latency SLO.",
+  "controls": {
+    "cancel": {
+      "case": "RPOOL-20-cancel",
+      "status": "PASS",
+      "fault_at": 1792889465.142899,
+      "job_terminal_seconds": 8.602166891098022,
+      "stop_seconds": 8.313906908035278,
+      "same_invocation": true,
+      "same_digest": true,
+      "same_deadline": true,
+      "job": {
+        "job_id": "job_4e6efc5775784f6385d17fa30d79f625",
+        "session_id": "session_8b91c11cec6b4836a720a2f63df11f71",
+        "status": "FAILED",
+        "error_code": "runtime_cancelled",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "expected_marker_present": false,
+        "foreign_marker_present": false,
+        "frozen_context_isolated": true,
+        "result_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sdk_starts": 1,
+        "sdk_start": 1792889462.9187176,
+        "sdk_end": 1792889473.4553702,
+        "runtime": {
+          "invocation_id": "job_4e6efc5775784f6385d17fa30d79f625.attempt-0",
+          "request_digest": "5f483088f6e39a398abe6ef539bdfb7aa9108629d87dfe93b8682276234889f4",
+          "node_id": "c",
+          "instance_id": "4bf21e0b-7ea7-4b73-ba5c-428c29d96295",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-25T00:51:02.906608+00:00",
+          "terminal_at": "2026-10-25T00:51:13.485804+00:00",
+          "terminal_code": "runtime_cancelled",
+          "execution_quiesced_at": "2026-10-25T00:51:13.456806+00:00",
+          "execution_deadline_at": "2026-10-25T00:52:02.906608+00:00"
+        },
+        "sdk_result": {
+          "kind": "sdk_finished",
+          "invocation_id": "job_4e6efc5775784f6385d17fa30d79f625.attempt-0",
+          "node_id": "c",
+          "time": 1792889473.4558148,
+          "pid": 1,
+          "status": "FAILED",
+          "error_code": "runtime_cancelled",
+          "sandbox": "job-82b26b0178526d8a927cb11e-796aa57305a44b43a2d8c1689fe656b4",
+          "sandbox_file_matches": true,
+          "credential_env_clean_after": true,
+          "duration_ms": null,
+          "duration_api_ms": null,
+          "num_turns": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "model_request_count": 0
+        },
+        "sdk_boundary": {
+          "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+          "credential_env_clean_before": true,
+          "sdk_cwd_matches_sandbox": true,
+          "sdk_version": "0.2.144"
+        },
+        "queue_seconds": 0.8328545093536377,
+        "sdk_seconds": 10.536652565002441
+      }
+    },
+    "takeover": {
+      "case": "RPOOL-20-takeover",
+      "status": "PASS",
+      "fault_at": 1792889476.6524858,
+      "job_terminal_seconds": 34.07282114028931,
+      "stop_seconds": 13.829674243927002,
+      "same_invocation": true,
+      "same_digest": true,
+      "same_deadline": true,
+      "job": {
+        "job_id": "job_b41119005a0847f0a30c8c5885ae72cd",
+        "session_id": "session_7a1e7b1e3be34eb8bca5220b2f0754ec",
+        "status": "SUCCEEDED",
+        "error_code": "",
+        "retry_count": 0,
+        "worker_claim_version": 2,
+        "expected_marker_present": true,
+        "foreign_marker_present": false,
+        "frozen_context_isolated": true,
+        "result_sha256": "7dde8e7d042613ff9fbf50c5848474300c6b06f5475954d5897d9fb853244e6b",
+        "sdk_starts": 1,
+        "sdk_start": 1792889474.547582,
+        "sdk_end": 1792889490.4799821,
+        "runtime": {
+          "invocation_id": "job_b41119005a0847f0a30c8c5885ae72cd.attempt-0",
+          "request_digest": "7b0d2189cf353fab2cac531e619af4cd89dfe0c59bb7f8726a93f1bb094190bd",
+          "node_id": "c",
+          "instance_id": "4bf21e0b-7ea7-4b73-ba5c-428c29d96295",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-25T00:51:14.536144+00:00",
+          "terminal_at": "2026-10-25T00:51:30.536620+00:00",
+          "terminal_code": "runtime_succeeded",
+          "execution_quiesced_at": "2026-10-25T00:51:30.482160+00:00",
+          "execution_deadline_at": "2026-10-25T00:52:14.536144+00:00"
+        },
+        "sdk_result": {
+          "kind": "sdk_finished",
+          "invocation_id": "job_b41119005a0847f0a30c8c5885ae72cd.attempt-0",
+          "node_id": "c",
+          "time": 1792889490.4809883,
+          "pid": 1,
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "sandbox": "job-0bf49b1851b7af8576be28f8-ec64455ec446453eaf2ef69da4226f08",
+          "sandbox_file_matches": true,
+          "credential_env_clean_after": true,
+          "duration_ms": 14982,
+          "duration_api_ms": 15109,
+          "num_turns": 1,
+          "input_tokens": 872,
+          "output_tokens": 2153,
+          "model_request_count": 1
+        },
+        "sdk_boundary": {
+          "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+          "credential_env_clean_before": true,
+          "sdk_cwd_matches_sandbox": true,
+          "sdk_version": "0.2.144"
+        },
+        "queue_seconds": 0.443389892578125,
+        "sdk_seconds": 15.932400226593018
+      }
+    }
+  },
+  "surface_model_rate_limit_errors": 0,
+  "model_rate_limit_observation": "No surfaced rate-limit error. Provider quotas and hidden SDK HTTP retries were not measured.",
+  "resources": {
+    "sample_count": 144,
+    "approximately_seconds_between_samples": 2,
+    "containers": {
+      "ea-rpool-a3183f0a-worker-1": {
+        "peak_cpu_percent": 8.3,
+        "peak_memory_bytes": 89128960,
+        "peak_pids": 7
+      },
+      "ea-rpool-a3183f0a-dispatcher-1": {
+        "peak_cpu_percent": 6.97,
+        "peak_memory_bytes": 111253913,
+        "peak_pids": 5
+      },
+      "ea-rpool-a3183f0a-runtime-a": {
+        "peak_cpu_percent": 58.52,
+        "peak_memory_bytes": 561302732,
+        "peak_pids": 33
+      },
+      "ea-rpool-a3183f0a-runtime-c": {
+        "peak_cpu_percent": 49.1,
+        "peak_memory_bytes": 275251200,
+        "peak_pids": 33
+      },
+      "ea-rpool-a3183f0a-runtime-b": {
+        "peak_cpu_percent": 47.96,
+        "peak_memory_bytes": 263507148,
+        "peak_pids": 33
+      },
+      "ea-rpool-a3183f0a-rabbitmq-1": {
+        "peak_cpu_percent": 71.96,
+        "peak_memory_bytes": 244003635,
+        "peak_pids": 80
+      },
+      "ea-rpool-a3183f0a-postgres-1": {
+        "peak_cpu_percent": 18.0,
+        "peak_memory_bytes": 177838489,
+        "peak_pids": 20
+      },
+      "ea-rpool-a3183f0a-worker-2": {
+        "peak_cpu_percent": 9.1,
+        "peak_memory_bytes": 86947921,
+        "peak_pids": 7
+      },
+      "ea-rpool-a3183f0a-worker-3": {
+        "peak_cpu_percent": 9.81,
+        "peak_memory_bytes": 92002058,
+        "peak_pids": 7
+      }
+    }
+  },
+  "jobs": [
+    {
+      "id": "job_618f1d99c97449a39d76b0ed5b2b9f9d",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_d756c971c337470a967f0fe5178356cb",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_4a07a0a0fe2141da82bf46ea704aa282",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_7393aff44b944b3eb312c4c4d6d1a4b3",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_9bb703f715344c06b4bb5a22c92e0dc6",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_2eedceb8142a4fa2991898debb63b050",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_fa823288d3044797b3733a1739efbbcf",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_07a9b0ec85c0478bb906afd41df1c27c",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_e20b123461f64f21a53af8776a4447e5",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_fb41efac1b00442fa31a96cefc7212fc",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_b36436c406764bafab7b8097a401f747",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_f0baa19f2fc64f9ea44606c42f96cb7d",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_338d3bb5cc384ca6bdc620d660a13cc8",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_ad0b474eb1df48a4ae09f59f7d88d781",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_8876465e868741cfb386eb0851f6cc6a",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_d0d32dba0fab404f8c911b023196abb5",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_4e6efc5775784f6385d17fa30d79f625",
+      "status": "FAILED",
+      "last_error_code": "runtime_cancelled",
+      "retry_count": 0,
+      "worker_claim_version": 1
+    },
+    {
+      "id": "job_b41119005a0847f0a30c8c5885ae72cd",
+      "status": "SUCCEEDED",
+      "last_error_code": "",
+      "retry_count": 0,
+      "worker_claim_version": 2
+    }
+  ],
+  "sdk_events": [
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_d756c971c337470a967f0fe5178356cb.attempt-0",
+      "node_id": "b",
+      "time": 1792889106.6583672,
+      "pid": 1,
+      "sandbox": "job-bd2427f10e880b96e895b588-03e3c2facfae4e1a87d8573308083036",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_d756c971c337470a967f0fe5178356cb.attempt-0",
+      "node_id": "b",
+      "time": 1792889110.0087552,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_d756c971c337470a967f0fe5178356cb.attempt-0",
+      "node_id": "b",
+      "time": 1792889113.0213838,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_d756c971c337470a967f0fe5178356cb.attempt-0",
+      "node_id": "b",
+      "time": 1792889113.0221143,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-bd2427f10e880b96e895b588-03e3c2facfae4e1a87d8573308083036",
+      "sandbox_file_matches": false,
+      "credential_env_clean_after": true,
+      "duration_ms": 3341,
+      "duration_api_ms": 4980,
+      "num_turns": 1,
+      "input_tokens": 875,
+      "output_tokens": 412,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_2eedceb8142a4fa2991898debb63b050.attempt-0",
+      "node_id": "b",
+      "time": 1792889261.1069183,
+      "pid": 1,
+      "sandbox": "job-f0a7f92616376d3d0a18870f-d582501b37a2446686c1e058c0f812d4",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_2eedceb8142a4fa2991898debb63b050.attempt-0",
+      "node_id": "b",
+      "time": 1792889264.150042,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_2eedceb8142a4fa2991898debb63b050.attempt-0",
+      "node_id": "b",
+      "time": 1792889267.5017924,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_2eedceb8142a4fa2991898debb63b050.attempt-0",
+      "node_id": "b",
+      "time": 1792889267.5024793,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-f0a7f92616376d3d0a18870f-d582501b37a2446686c1e058c0f812d4",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 3399,
+      "duration_api_ms": 5113,
+      "num_turns": 1,
+      "input_tokens": 870,
+      "output_tokens": 367,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_e20b123461f64f21a53af8776a4447e5.attempt-0",
+      "node_id": "b",
+      "time": 1792889321.0670588,
+      "pid": 1,
+      "sandbox": "job-c6e32319123053afe04d8237-5c3a0ed35e7340409424c06388c09d3a",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_e20b123461f64f21a53af8776a4447e5.attempt-0",
+      "node_id": "b",
+      "time": 1792889327.3275468,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_e20b123461f64f21a53af8776a4447e5.attempt-0",
+      "node_id": "b",
+      "time": 1792889329.0611408,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_e20b123461f64f21a53af8776a4447e5.attempt-0",
+      "node_id": "b",
+      "time": 1792889329.0618536,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-c6e32319123053afe04d8237-5c3a0ed35e7340409424c06388c09d3a",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 7056,
+      "duration_api_ms": 6954,
+      "num_turns": 1,
+      "input_tokens": 875,
+      "output_tokens": 928,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_f0baa19f2fc64f9ea44606c42f96cb7d.attempt-0",
+      "node_id": "b",
+      "time": 1792889368.434745,
+      "pid": 1,
+      "sandbox": "job-17c4e8818631f48ff81721a6-533430af89494c768822b8a6b40022a9",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_f0baa19f2fc64f9ea44606c42f96cb7d.attempt-0",
+      "node_id": "b",
+      "time": 1792889374.2449055,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_f0baa19f2fc64f9ea44606c42f96cb7d.attempt-0",
+      "node_id": "b",
+      "time": 1792889376.2474792,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_f0baa19f2fc64f9ea44606c42f96cb7d.attempt-0",
+      "node_id": "b",
+      "time": 1792889376.2480786,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-17c4e8818631f48ff81721a6-533430af89494c768822b8a6b40022a9",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 6868,
+      "duration_api_ms": 6522,
+      "num_turns": 1,
+      "input_tokens": 871,
+      "output_tokens": 964,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_8876465e868741cfb386eb0851f6cc6a.attempt-0",
+      "node_id": "b",
+      "time": 1792889376.5301633,
+      "pid": 1,
+      "sandbox": "job-ebe829ad50e596181fcb2196-ca20b4595a2949339e73bed546f70a8c",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_8876465e868741cfb386eb0851f6cc6a.attempt-0",
+      "node_id": "b",
+      "time": 1792889382.443737,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_8876465e868741cfb386eb0851f6cc6a.attempt-0",
+      "node_id": "b",
+      "time": 1792889384.9255495,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_8876465e868741cfb386eb0851f6cc6a.attempt-0",
+      "node_id": "b",
+      "time": 1792889384.9263105,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-ebe829ad50e596181fcb2196-ca20b4595a2949339e73bed546f70a8c",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 7458,
+      "duration_api_ms": 7865,
+      "num_turns": 1,
+      "input_tokens": 871,
+      "output_tokens": 1044,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_618f1d99c97449a39d76b0ed5b2b9f9d.attempt-0",
+      "node_id": "a",
+      "time": 1792889055.7122493,
+      "pid": 1,
+      "sandbox": "job-4605079c8afd27d309988dc6-5cad097fdedc4f1bb6e3b48be7672f6b",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_618f1d99c97449a39d76b0ed5b2b9f9d.attempt-0",
+      "node_id": "a",
+      "time": 1792889066.6851213,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_618f1d99c97449a39d76b0ed5b2b9f9d.attempt-0",
+      "node_id": "a",
+      "time": 1792889070.0608735,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_618f1d99c97449a39d76b0ed5b2b9f9d.attempt-0",
+      "node_id": "a",
+      "time": 1792889070.0615067,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-4605079c8afd27d309988dc6-5cad097fdedc4f1bb6e3b48be7672f6b",
+      "sandbox_file_matches": false,
+      "credential_env_clean_after": true,
+      "duration_ms": 11041,
+      "duration_api_ms": 13021,
+      "num_turns": 1,
+      "input_tokens": 872,
+      "output_tokens": 2208,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_4a07a0a0fe2141da82bf46ea704aa282.attempt-0",
+      "node_id": "a",
+      "time": 1792889106.6727157,
+      "pid": 1,
+      "sandbox": "job-7a94d2092efc3b87abbb9603-88dd69e3559a41feaf7262d49763739e",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_4a07a0a0fe2141da82bf46ea704aa282.attempt-0",
+      "node_id": "a",
+      "time": 1792889111.6075792,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_4a07a0a0fe2141da82bf46ea704aa282.attempt-0",
+      "node_id": "a",
+      "time": 1792889112.6594741,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_4a07a0a0fe2141da82bf46ea704aa282.attempt-0",
+      "node_id": "a",
+      "time": 1792889112.660179,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-7a94d2092efc3b87abbb9603-88dd69e3559a41feaf7262d49763739e",
+      "sandbox_file_matches": false,
+      "credential_env_clean_after": true,
+      "duration_ms": 5011,
+      "duration_api_ms": 5821,
+      "num_turns": 1,
+      "input_tokens": 874,
+      "output_tokens": 549,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_fa823288d3044797b3733a1739efbbcf.attempt-0",
+      "node_id": "a",
+      "time": 1792889261.1889894,
+      "pid": 1,
+      "sandbox": "job-7f46c6663c6f83d1821e29ad-1b49de467614446dbb7151b43cbacc4b",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_fa823288d3044797b3733a1739efbbcf.attempt-0",
+      "node_id": "a",
+      "time": 1792889264.1175957,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_fa823288d3044797b3733a1739efbbcf.attempt-0",
+      "node_id": "a",
+      "time": 1792889267.3907087,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_fa823288d3044797b3733a1739efbbcf.attempt-0",
+      "node_id": "a",
+      "time": 1792889267.3913038,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-7f46c6663c6f83d1821e29ad-1b49de467614446dbb7151b43cbacc4b",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 2834,
+      "duration_api_ms": 4591,
+      "num_turns": 1,
+      "input_tokens": 869,
+      "output_tokens": 299,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_07a9b0ec85c0478bb906afd41df1c27c.attempt-0",
+      "node_id": "a",
+      "time": 1792889314.2462082,
+      "pid": 1,
+      "sandbox": "job-0e12fb41ef3ca170a62cc480-b269445387884a049874b4caf05626e0",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_07a9b0ec85c0478bb906afd41df1c27c.attempt-0",
+      "node_id": "a",
+      "time": 1792889317.2895696,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_07a9b0ec85c0478bb906afd41df1c27c.attempt-0",
+      "node_id": "a",
+      "time": 1792889320.8112957,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_07a9b0ec85c0478bb906afd41df1c27c.attempt-0",
+      "node_id": "a",
+      "time": 1792889320.8121173,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-0e12fb41ef3ca170a62cc480-b269445387884a049874b4caf05626e0",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 5652,
+      "duration_api_ms": 6536,
+      "num_turns": 1,
+      "input_tokens": 872,
+      "output_tokens": 553,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_b36436c406764bafab7b8097a401f747.attempt-0",
+      "node_id": "a",
+      "time": 1792889368.395797,
+      "pid": 1,
+      "sandbox": "job-f5331c868ac0b93f81be76a0-b959420e7896431eb88fe98ff8b08c8f",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_b36436c406764bafab7b8097a401f747.attempt-0",
+      "node_id": "a",
+      "time": 1792889374.1384344,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_b36436c406764bafab7b8097a401f747.attempt-0",
+      "node_id": "a",
+      "time": 1792889375.9041,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_b36436c406764bafab7b8097a401f747.attempt-0",
+      "node_id": "a",
+      "time": 1792889375.9060946,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-f5331c868ac0b93f81be76a0-b959420e7896431eb88fe98ff8b08c8f",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 6566,
+      "duration_api_ms": 7173,
+      "num_turns": 1,
+      "input_tokens": 871,
+      "output_tokens": 983,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_ad0b474eb1df48a4ae09f59f7d88d781.attempt-0",
+      "node_id": "a",
+      "time": 1792889376.1799943,
+      "pid": 1,
+      "sandbox": "job-973ec26a53a4eff9e8bb9b70-7800eb591ded468ebefdef9fa3513cc6",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_ad0b474eb1df48a4ae09f59f7d88d781.attempt-0",
+      "node_id": "a",
+      "time": 1792889381.73441,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_ad0b474eb1df48a4ae09f59f7d88d781.attempt-0",
+      "node_id": "a",
+      "time": 1792889383.86128,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_ad0b474eb1df48a4ae09f59f7d88d781.attempt-0",
+      "node_id": "a",
+      "time": 1792889383.8624294,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-973ec26a53a4eff9e8bb9b70-7800eb591ded468ebefdef9fa3513cc6",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 6726,
+      "duration_api_ms": 6883,
+      "num_turns": 1,
+      "input_tokens": 873,
+      "output_tokens": 996,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_7393aff44b944b3eb312c4c4d6d1a4b3.attempt-0",
+      "node_id": "c",
+      "time": 1792889106.7329288,
+      "pid": 1,
+      "sandbox": "job-3827176dbd92cea8b8699594-f365a81c0eee473c9ec707d8465d4d21",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_7393aff44b944b3eb312c4c4d6d1a4b3.attempt-0",
+      "node_id": "c",
+      "time": 1792889109.987385,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_7393aff44b944b3eb312c4c4d6d1a4b3.attempt-0",
+      "node_id": "c",
+      "time": 1792889113.0052614,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_7393aff44b944b3eb312c4c4d6d1a4b3.attempt-0",
+      "node_id": "c",
+      "time": 1792889113.0059602,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-3827176dbd92cea8b8699594-f365a81c0eee473c9ec707d8465d4d21",
+      "sandbox_file_matches": false,
+      "credential_env_clean_after": true,
+      "duration_ms": 3314,
+      "duration_api_ms": 4914,
+      "num_turns": 1,
+      "input_tokens": 874,
+      "output_tokens": 431,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_9bb703f715344c06b4bb5a22c92e0dc6.attempt-0",
+      "node_id": "c",
+      "time": 1792889261.0975351,
+      "pid": 1,
+      "sandbox": "job-d3f81b2834685dc036f6cbfa-bd6c1c882a3c4142b25cf7bb32095181",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_9bb703f715344c06b4bb5a22c92e0dc6.attempt-0",
+      "node_id": "c",
+      "time": 1792889264.3946702,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_9bb703f715344c06b4bb5a22c92e0dc6.attempt-0",
+      "node_id": "c",
+      "time": 1792889267.3405,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_9bb703f715344c06b4bb5a22c92e0dc6.attempt-0",
+      "node_id": "c",
+      "time": 1792889267.341545,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-d3f81b2834685dc036f6cbfa-bd6c1c882a3c4142b25cf7bb32095181",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 3078,
+      "duration_api_ms": 4285,
+      "num_turns": 1,
+      "input_tokens": 869,
+      "output_tokens": 327,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_fb41efac1b00442fa31a96cefc7212fc.attempt-0",
+      "node_id": "c",
+      "time": 1792889329.3240297,
+      "pid": 1,
+      "sandbox": "job-861e64d0aeb1a03fa397c1da-5cf9be4afc0b4c7694641435c59c20c2",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_fb41efac1b00442fa31a96cefc7212fc.attempt-0",
+      "node_id": "c",
+      "time": 1792889338.026455,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_fb41efac1b00442fa31a96cefc7212fc.attempt-0",
+      "node_id": "c",
+      "time": 1792889340.1904693,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_fb41efac1b00442fa31a96cefc7212fc.attempt-0",
+      "node_id": "c",
+      "time": 1792889340.1916268,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-861e64d0aeb1a03fa397c1da-5cf9be4afc0b4c7694641435c59c20c2",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 9929,
+      "duration_api_ms": 9830,
+      "num_turns": 1,
+      "input_tokens": 871,
+      "output_tokens": 1766,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_338d3bb5cc384ca6bdc620d660a13cc8.attempt-0",
+      "node_id": "c",
+      "time": 1792889368.474271,
+      "pid": 1,
+      "sandbox": "job-ffe5ba45d04455b57a13a132-9b56054e6f264fbcb6912ce1e672bb25",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_338d3bb5cc384ca6bdc620d660a13cc8.attempt-0",
+      "node_id": "c",
+      "time": 1792889373.9169915,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_338d3bb5cc384ca6bdc620d660a13cc8.attempt-0",
+      "node_id": "c",
+      "time": 1792889376.4084346,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_338d3bb5cc384ca6bdc620d660a13cc8.attempt-0",
+      "node_id": "c",
+      "time": 1792889376.4090571,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-ffe5ba45d04455b57a13a132-9b56054e6f264fbcb6912ce1e672bb25",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 6988,
+      "duration_api_ms": 7880,
+      "num_turns": 1,
+      "input_tokens": 873,
+      "output_tokens": 946,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_d0d32dba0fab404f8c911b023196abb5.attempt-0",
+      "node_id": "c",
+      "time": 1792889376.6996045,
+      "pid": 1,
+      "sandbox": "job-4c60c5132f832877198cef05-560fdddacbd8437bbb534b8069e45861",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_d0d32dba0fab404f8c911b023196abb5.attempt-0",
+      "node_id": "c",
+      "time": 1792889383.1978729,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_d0d32dba0fab404f8c911b023196abb5.attempt-0",
+      "node_id": "c",
+      "time": 1792889385.1524825,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_d0d32dba0fab404f8c911b023196abb5.attempt-0",
+      "node_id": "c",
+      "time": 1792889385.1530583,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-4c60c5132f832877198cef05-560fdddacbd8437bbb534b8069e45861",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 7534,
+      "duration_api_ms": 8402,
+      "num_turns": 1,
+      "input_tokens": 873,
+      "output_tokens": 952,
+      "model_request_count": 1
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_4e6efc5775784f6385d17fa30d79f625.attempt-0",
+      "node_id": "c",
+      "time": 1792889462.9187176,
+      "pid": 1,
+      "sandbox": "job-82b26b0178526d8a927cb11e-796aa57305a44b43a2d8c1689fe656b4",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_4e6efc5775784f6385d17fa30d79f625.attempt-0",
+      "node_id": "c",
+      "time": 1792889473.4553702,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_4e6efc5775784f6385d17fa30d79f625.attempt-0",
+      "node_id": "c",
+      "time": 1792889473.4558148,
+      "pid": 1,
+      "status": "FAILED",
+      "error_code": "runtime_cancelled",
+      "sandbox": "job-82b26b0178526d8a927cb11e-796aa57305a44b43a2d8c1689fe656b4",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": null,
+      "duration_api_ms": null,
+      "num_turns": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "model_request_count": 0
+    },
+    {
+      "kind": "sdk_query_start",
+      "invocation_id": "job_b41119005a0847f0a30c8c5885ae72cd.attempt-0",
+      "node_id": "c",
+      "time": 1792889474.547582,
+      "pid": 1,
+      "sandbox": "job-0bf49b1851b7af8576be28f8-ec64455ec446453eaf2ef69da4226f08",
+      "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+      "credential_env_clean_before": true,
+      "sdk_cwd_matches_sandbox": true,
+      "sdk_version": "0.2.144"
+    },
+    {
+      "kind": "first_assistant",
+      "invocation_id": "job_b41119005a0847f0a30c8c5885ae72cd.attempt-0",
+      "node_id": "c",
+      "time": 1792889485.7823243,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_query_end",
+      "invocation_id": "job_b41119005a0847f0a30c8c5885ae72cd.attempt-0",
+      "node_id": "c",
+      "time": 1792889490.4799821,
+      "pid": 1
+    },
+    {
+      "kind": "sdk_finished",
+      "invocation_id": "job_b41119005a0847f0a30c8c5885ae72cd.attempt-0",
+      "node_id": "c",
+      "time": 1792889490.4809883,
+      "pid": 1,
+      "status": "SUCCEEDED",
+      "error_code": "",
+      "sandbox": "job-0bf49b1851b7af8576be28f8-ec64455ec446453eaf2ef69da4226f08",
+      "sandbox_file_matches": true,
+      "credential_env_clean_after": true,
+      "duration_ms": 14982,
+      "duration_api_ms": 15109,
+      "num_turns": 1,
+      "input_tokens": 872,
+      "output_tokens": 2153,
+      "model_request_count": 1
+    }
+  ],
+  "waves": {
+    "warmup": {
+      "case": "RPOOL-real-warmup",
+      "status": "PASS",
+      "workload": "capacity",
+      "workers": 1,
+      "submitted_jobs": 1,
+      "jobs": [
+        {
+          "job_id": "job_618f1d99c97449a39d76b0ed5b2b9f9d",
+          "session_id": "session_b5c07d6e82704e4d9f7d0b056b378988",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "071a09afed611f2a9ebdd8b518096a7a41be8522337d80dbe0bba79cd9fd81f3",
+          "sdk_starts": 1,
+          "sdk_start": 1792889055.7122493,
+          "sdk_end": 1792889070.0608735,
+          "runtime": {
+            "invocation_id": "job_618f1d99c97449a39d76b0ed5b2b9f9d.attempt-0",
+            "request_digest": "120a5e7b5458a4291c384c84906924d5592e5048da44f985f3f7655b1c90e21a",
+            "node_id": "a",
+            "instance_id": "f4140b17-aa1f-4252-85c1-29fb7ffbfa49",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:44:15.700104+00:00",
+            "terminal_at": "2026-10-25T00:44:30.137778+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:44:30.062108+00:00",
+            "execution_deadline_at": "2026-10-25T00:45:15.700104+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_618f1d99c97449a39d76b0ed5b2b9f9d.attempt-0",
+            "node_id": "a",
+            "time": 1792889070.0615067,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-4605079c8afd27d309988dc6-5cad097fdedc4f1bb6e3b48be7672f6b",
+            "sandbox_file_matches": false,
+            "credential_env_clean_after": true,
+            "duration_ms": 11041,
+            "duration_api_ms": 13021,
+            "num_turns": 1,
+            "input_tokens": 872,
+            "output_tokens": 2208,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": null,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 1.0096943378448486,
+          "sdk_seconds": 14.348624229431152
+        }
+      ],
+      "queue_samples": [],
+      "note": "Job completed once; evidence collector repaired created_at lookup and reread persisted facts without another invocation."
+    },
+    "parallel": {
+      "case": "RPOOL-real-parallel",
+      "workload": "isolation",
+      "workers": 3,
+      "submitted_jobs": 3,
+      "started_at": 1792889260.779535,
+      "finished_at": 1792889267.694539,
+      "jobs": [
+        {
+          "job_id": "job_9bb703f715344c06b4bb5a22c92e0dc6",
+          "session_id": "session_743361f3a2aa4ec483542f407faa6e51",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "47d7d4ec2c2d2a0d2b01577b55e8981b215aedd6e29b28bab800891557fffa15",
+          "sdk_starts": 1,
+          "sdk_start": 1792889261.0975351,
+          "sdk_end": 1792889267.3405,
+          "runtime": {
+            "invocation_id": "job_9bb703f715344c06b4bb5a22c92e0dc6.attempt-0",
+            "request_digest": "3ceb405397a5e258de8e1559e6a838d9997c97f3f0a3dd4be0ebee79cc916e8c",
+            "node_id": "c",
+            "instance_id": "4bf21e0b-7ea7-4b73-ba5c-428c29d96295",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:47:41.083481+00:00",
+            "terminal_at": "2026-10-25T00:47:47.369486+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:47:47.342606+00:00",
+            "execution_deadline_at": "2026-10-25T00:48:41.083481+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_9bb703f715344c06b4bb5a22c92e0dc6.attempt-0",
+            "node_id": "c",
+            "time": 1792889267.341545,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-d3f81b2834685dc036f6cbfa-bd6c1c882a3c4142b25cf7bb32095181",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 3078,
+            "duration_api_ms": 4285,
+            "num_turns": 1,
+            "input_tokens": 869,
+            "output_tokens": 327,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 0.5274271965026855,
+          "sdk_seconds": 6.24296498298645
+        },
+        {
+          "job_id": "job_2eedceb8142a4fa2991898debb63b050",
+          "session_id": "session_64dff4b6697a45b8bdaf0767d0ce3a53",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "45d64444726bc753e6a4e89a281869c65959f9b1392c68240f4af0eee07bdb97",
+          "sdk_starts": 1,
+          "sdk_start": 1792889261.1069183,
+          "sdk_end": 1792889267.5017924,
+          "runtime": {
+            "invocation_id": "job_2eedceb8142a4fa2991898debb63b050.attempt-0",
+            "request_digest": "35dcbc18f03e920040b4e9450acdf4f8f5bb81e49fc3342019612b3944616c14",
+            "node_id": "b",
+            "instance_id": "b31b35f4-03cf-424c-8098-b33e9875cb2a",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:47:41.091682+00:00",
+            "terminal_at": "2026-10-25T00:47:47.523561+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:47:47.503213+00:00",
+            "execution_deadline_at": "2026-10-25T00:48:41.091682+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_2eedceb8142a4fa2991898debb63b050.attempt-0",
+            "node_id": "b",
+            "time": 1792889267.5024793,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-f0a7f92616376d3d0a18870f-d582501b37a2446686c1e058c0f812d4",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 3399,
+            "duration_api_ms": 5113,
+            "num_turns": 1,
+            "input_tokens": 870,
+            "output_tokens": 367,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 0.4342772960662842,
+          "sdk_seconds": 6.394874095916748
+        },
+        {
+          "job_id": "job_fa823288d3044797b3733a1739efbbcf",
+          "session_id": "session_9bf5fc347b2f44e5bc5fffcbd771d757",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "b099cb458e2b954209659d7e4441af63a2492e11f71a92f8279755dec832ab8f",
+          "sdk_starts": 1,
+          "sdk_start": 1792889261.1889894,
+          "sdk_end": 1792889267.3907087,
+          "runtime": {
+            "invocation_id": "job_fa823288d3044797b3733a1739efbbcf.attempt-0",
+            "request_digest": "85097683576e90499adc90990bff5efb830d97b39e53f0fa89e2aad97973ccf5",
+            "node_id": "a",
+            "instance_id": "ecbcb79f-a91f-4581-83c7-f5ac1797a9f9",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:47:41.173894+00:00",
+            "terminal_at": "2026-10-25T00:47:47.412521+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:47:47.392011+00:00",
+            "execution_deadline_at": "2026-10-25T00:48:41.173894+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_fa823288d3044797b3733a1739efbbcf.attempt-0",
+            "node_id": "a",
+            "time": 1792889267.3913038,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-7f46c6663c6f83d1821e29ad-1b49de467614446dbb7151b43cbacc4b",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 2834,
+            "duration_api_ms": 4591,
+            "num_turns": 1,
+            "input_tokens": 869,
+            "output_tokens": 299,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 0.4232063293457031,
+          "sdk_seconds": 6.201719284057617
+        }
+      ],
+      "queue_samples": [
+        {
+          "time": 1792889260.783954,
+          "pending": 3,
+          "running": 0,
+          "terminal": 0
+        },
+        {
+          "time": 1792889261.0511281,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889261.318859,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889261.6032069,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889261.8757288,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889262.1344588,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889262.4039,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889262.6673,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889262.92561,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889263.187479,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889263.447548,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889263.711401,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889263.9687412,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889264.2327209,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889264.49738,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889264.767533,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889265.038944,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889265.296017,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889265.5542002,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889265.8228312,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889266.0810921,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889266.338172,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889266.6012428,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889266.8726242,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889267.144798,
+          "pending": 0,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889267.411146,
+          "pending": 0,
+          "running": 2,
+          "terminal": 1
+        },
+        {
+          "time": 1792889267.6801789,
+          "pending": 0,
+          "running": 0,
+          "terminal": 3
+        }
+      ],
+      "status": "PASS",
+      "isolation_assertions": {
+        "sdk_overlap_seconds": 6.151510715484619,
+        "distinct_nodes": 3,
+        "distinct_sandboxes": 3,
+        "sandbox_canary_preserved": true,
+        "sdk_cwd_matches": true,
+        "frozen_context_isolated": true,
+        "credential_environment_restored": true,
+        "passed": true
+      }
+    },
+    "serial": {
+      "case": "RPOOL-real-serial",
+      "workload": "capacity",
+      "workers": 1,
+      "submitted_jobs": 3,
+      "started_at": 1792889313.581179,
+      "finished_at": 1792889340.351348,
+      "jobs": [
+        {
+          "job_id": "job_07a9b0ec85c0478bb906afd41df1c27c",
+          "session_id": "session_c521515a07594224bfa866c3daadc51f",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "dd3977009a0ec7e3c3732025fd5fa8bbfb7aa963b224a2b28edbf675731d8f7a",
+          "sdk_starts": 1,
+          "sdk_start": 1792889314.2462082,
+          "sdk_end": 1792889320.8112957,
+          "runtime": {
+            "invocation_id": "job_07a9b0ec85c0478bb906afd41df1c27c.attempt-0",
+            "request_digest": "c44deda83a502d2f35ead6dd041c7e67ba6af182dbcf1722099149110a89017f",
+            "node_id": "a",
+            "instance_id": "ecbcb79f-a91f-4581-83c7-f5ac1797a9f9",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:48:34.235636+00:00",
+            "terminal_at": "2026-10-25T00:48:40.837815+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:48:40.812815+00:00",
+            "execution_deadline_at": "2026-10-25T00:49:34.235636+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_07a9b0ec85c0478bb906afd41df1c27c.attempt-0",
+            "node_id": "a",
+            "time": 1792889320.8121173,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-0e12fb41ef3ca170a62cc480-b269445387884a049874b4caf05626e0",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 5652,
+            "duration_api_ms": 6536,
+            "num_turns": 1,
+            "input_tokens": 872,
+            "output_tokens": 553,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 0.8832492828369141,
+          "sdk_seconds": 6.565087556838989
+        },
+        {
+          "job_id": "job_e20b123461f64f21a53af8776a4447e5",
+          "session_id": "session_4b934b7f502545998ab4da1a1bec0ab5",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "bc6f29343084e5b14130336a5e65aefe09924cefc3c54b2c5b6b20c13b1a347a",
+          "sdk_starts": 1,
+          "sdk_start": 1792889321.0670588,
+          "sdk_end": 1792889329.0611408,
+          "runtime": {
+            "invocation_id": "job_e20b123461f64f21a53af8776a4447e5.attempt-0",
+            "request_digest": "b3b57bdbea0eb3a163297e23e17a11d86edf06fc4d43ee67a1b6c35f0aa9c628",
+            "node_id": "b",
+            "instance_id": "b31b35f4-03cf-424c-8098-b33e9875cb2a",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:48:41.056047+00:00",
+            "terminal_at": "2026-10-25T00:48:49.100511+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:48:49.062534+00:00",
+            "execution_deadline_at": "2026-10-25T00:49:41.056047+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_e20b123461f64f21a53af8776a4447e5.attempt-0",
+            "node_id": "b",
+            "time": 1792889329.0618536,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-c6e32319123053afe04d8237-5c3a0ed35e7340409424c06388c09d3a",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 7056,
+            "duration_api_ms": 6954,
+            "num_turns": 1,
+            "input_tokens": 875,
+            "output_tokens": 928,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 7.597195863723755,
+          "sdk_seconds": 7.994081974029541
+        },
+        {
+          "job_id": "job_fb41efac1b00442fa31a96cefc7212fc",
+          "session_id": "session_2b6337aeb1b845109e082e0b5fceb61c",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "6a31c1cd51dd4cc06ce1ad738351602a84dd68f53a4965c69a52d6c11248cbf2",
+          "sdk_starts": 1,
+          "sdk_start": 1792889329.3240297,
+          "sdk_end": 1792889340.1904693,
+          "runtime": {
+            "invocation_id": "job_fb41efac1b00442fa31a96cefc7212fc.attempt-0",
+            "request_digest": "aaa2bf06284dce2027cf00e94d3bff5cf437498bf72335d7f5bdba9f5d6acb77",
+            "node_id": "c",
+            "instance_id": "4bf21e0b-7ea7-4b73-ba5c-428c29d96295",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:48:49.313301+00:00",
+            "terminal_at": "2026-10-25T00:49:00.262665+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:49:00.192739+00:00",
+            "execution_deadline_at": "2026-10-25T00:49:49.313301+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_fb41efac1b00442fa31a96cefc7212fc.attempt-0",
+            "node_id": "c",
+            "time": 1792889340.1916268,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-861e64d0aeb1a03fa397c1da-5cf9be4afc0b4c7694641435c59c20c2",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 9929,
+            "duration_api_ms": 9830,
+            "num_turns": 1,
+            "input_tokens": 871,
+            "output_tokens": 1766,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 15.756535768508911,
+          "sdk_seconds": 10.866439580917358
+        }
+      ],
+      "queue_samples": [
+        {
+          "time": 1792889313.5850089,
+          "pending": 3,
+          "running": 0,
+          "terminal": 0
+        },
+        {
+          "time": 1792889313.858828,
+          "pending": 3,
+          "running": 0,
+          "terminal": 0
+        },
+        {
+          "time": 1792889314.115865,
+          "pending": 3,
+          "running": 0,
+          "terminal": 0
+        },
+        {
+          "time": 1792889314.382259,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889314.6464388,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889314.911978,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889315.1757529,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889315.4348009,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889315.6907032,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889315.9574661,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889316.219209,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889316.480406,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889316.745419,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889317.0019891,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889317.264137,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889317.524431,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889317.7965178,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889318.059703,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889318.3238971,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889318.588581,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889318.857422,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889319.1311848,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889319.400393,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889319.661726,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889319.933728,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889320.198842,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889320.463985,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889320.726173,
+          "pending": 2,
+          "running": 1,
+          "terminal": 0
+        },
+        {
+          "time": 1792889320.993491,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889321.259439,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889321.516244,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889321.784071,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889322.049748,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889322.320113,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889322.582797,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889322.845821,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889323.1026611,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889323.3600671,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889323.628587,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889323.898686,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889324.165874,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889324.433598,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889324.698304,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889324.9684322,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889325.240065,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889325.4973052,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889325.753527,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889326.017365,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889326.279068,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889326.539996,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889326.8046699,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889327.063251,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889327.333643,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889327.59604,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889327.858144,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889328.117486,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889328.385448,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889328.6513438,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889328.9244318,
+          "pending": 1,
+          "running": 1,
+          "terminal": 1
+        },
+        {
+          "time": 1792889329.188437,
+          "pending": 1,
+          "running": 0,
+          "terminal": 2
+        },
+        {
+          "time": 1792889329.4473379,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889329.709483,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889329.976674,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889330.236632,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889330.5027032,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889330.766887,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889331.036308,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889331.298614,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889331.55901,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889331.8246331,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889332.08301,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889332.3531158,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889332.6261818,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889332.883297,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889333.141133,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889333.410959,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889333.670196,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889333.941511,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889334.206867,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889334.470113,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889334.7377121,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889335.00454,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889335.27324,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889335.5361888,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889335.791925,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889336.068703,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889336.33598,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889336.604508,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889336.871663,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889337.1362,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889337.404233,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889337.664734,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889337.9208572,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889338.182137,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889338.450269,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889338.7185879,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889338.991165,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889339.262783,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889339.528304,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889339.79552,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889340.068725,
+          "pending": 0,
+          "running": 1,
+          "terminal": 2
+        },
+        {
+          "time": 1792889340.336252,
+          "pending": 0,
+          "running": 0,
+          "terminal": 3
+        }
+      ],
+      "status": "PASS"
+    },
+    "burst": {
+      "case": "RPOOL-real-burst",
+      "workload": "capacity",
+      "workers": 3,
+      "submitted_jobs": 6,
+      "started_at": 1792889368.231214,
+      "finished_at": 1792889385.522316,
+      "jobs": [
+        {
+          "job_id": "job_b36436c406764bafab7b8097a401f747",
+          "session_id": "session_90e82577ec18447ca52be5fff251523c",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "016d90b26277b476d2c29a0b59ccc23a39d48182569126889e2d1e759f5bcdcf",
+          "sdk_starts": 1,
+          "sdk_start": 1792889368.395797,
+          "sdk_end": 1792889375.9041,
+          "runtime": {
+            "invocation_id": "job_b36436c406764bafab7b8097a401f747.attempt-0",
+            "request_digest": "0ecb033b7ec34586d3fb1f965211195aa001fd2ca67e1e29716c169b92fb1297",
+            "node_id": "a",
+            "instance_id": "ecbcb79f-a91f-4581-83c7-f5ac1797a9f9",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:49:28.380236+00:00",
+            "terminal_at": "2026-10-25T00:49:35.945429+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:49:35.906784+00:00",
+            "execution_deadline_at": "2026-10-25T00:50:28.380236+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_b36436c406764bafab7b8097a401f747.attempt-0",
+            "node_id": "a",
+            "time": 1792889375.9060946,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-f5331c868ac0b93f81be76a0-b959420e7896431eb88fe98ff8b08c8f",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 6566,
+            "duration_api_ms": 7173,
+            "num_turns": 1,
+            "input_tokens": 871,
+            "output_tokens": 983,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 0.7058849334716797,
+          "sdk_seconds": 7.508302927017212
+        },
+        {
+          "job_id": "job_f0baa19f2fc64f9ea44606c42f96cb7d",
+          "session_id": "session_9e6a8f3f0d0f480ebe8d2ddc8d3d59c9",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "d14881b05d55a3665e637ca0b62fc68074e91ed2d98f487d7fb6749436799ac8",
+          "sdk_starts": 1,
+          "sdk_start": 1792889368.434745,
+          "sdk_end": 1792889376.2474792,
+          "runtime": {
+            "invocation_id": "job_f0baa19f2fc64f9ea44606c42f96cb7d.attempt-0",
+            "request_digest": "e2d6d8e870dccf96522303fbaa626bcb8a0f7b56fb6be05c72f6e8b019eac6d0",
+            "node_id": "b",
+            "instance_id": "b31b35f4-03cf-424c-8098-b33e9875cb2a",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:49:28.421768+00:00",
+            "terminal_at": "2026-10-25T00:49:36.289955+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:49:36.248623+00:00",
+            "execution_deadline_at": "2026-10-25T00:50:28.421768+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_f0baa19f2fc64f9ea44606c42f96cb7d.attempt-0",
+            "node_id": "b",
+            "time": 1792889376.2480786,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-17c4e8818631f48ff81721a6-533430af89494c768822b8a6b40022a9",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 6868,
+            "duration_api_ms": 6522,
+            "num_turns": 1,
+            "input_tokens": 871,
+            "output_tokens": 964,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 0.634209156036377,
+          "sdk_seconds": 7.812734127044678
+        },
+        {
+          "job_id": "job_338d3bb5cc384ca6bdc620d660a13cc8",
+          "session_id": "session_5b5e93303b8541f68412c79065bd3f53",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "a6e1b42396c9df1f59c55154d5f0718fe13901fc09c6aedcfb45a63ed0d54353",
+          "sdk_starts": 1,
+          "sdk_start": 1792889368.474271,
+          "sdk_end": 1792889376.4084346,
+          "runtime": {
+            "invocation_id": "job_338d3bb5cc384ca6bdc620d660a13cc8.attempt-0",
+            "request_digest": "f568f2037ec02e0a6aed3e9abf76dfe7310787ca979070e95a975c4774e986ba",
+            "node_id": "c",
+            "instance_id": "4bf21e0b-7ea7-4b73-ba5c-428c29d96295",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:49:28.462384+00:00",
+            "terminal_at": "2026-10-25T00:49:36.444840+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:49:36.409669+00:00",
+            "execution_deadline_at": "2026-10-25T00:50:28.462384+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_338d3bb5cc384ca6bdc620d660a13cc8.attempt-0",
+            "node_id": "c",
+            "time": 1792889376.4090571,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-ffe5ba45d04455b57a13a132-9b56054e6f264fbcb6912ce1e672bb25",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 6988,
+            "duration_api_ms": 7880,
+            "num_turns": 1,
+            "input_tokens": 873,
+            "output_tokens": 946,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 0.5760011672973633,
+          "sdk_seconds": 7.934163570404053
+        },
+        {
+          "job_id": "job_ad0b474eb1df48a4ae09f59f7d88d781",
+          "session_id": "session_91c816252b824240b7358334b24353f2",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "fb3bc78e69dc01c23422b5a8b43a63cd996100bc94092695189b8ab7481a4140",
+          "sdk_starts": 1,
+          "sdk_start": 1792889376.1799943,
+          "sdk_end": 1792889383.86128,
+          "runtime": {
+            "invocation_id": "job_ad0b474eb1df48a4ae09f59f7d88d781.attempt-0",
+            "request_digest": "6e1708c9adbc0a4ff46e094842cf9d77af9d24eb3b8f789ff1755f76a0f52371",
+            "node_id": "a",
+            "instance_id": "ecbcb79f-a91f-4581-83c7-f5ac1797a9f9",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:49:36.168652+00:00",
+            "terminal_at": "2026-10-25T00:49:43.906063+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:49:43.864023+00:00",
+            "execution_deadline_at": "2026-10-25T00:50:36.168652+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_ad0b474eb1df48a4ae09f59f7d88d781.attempt-0",
+            "node_id": "a",
+            "time": 1792889383.8624294,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-973ec26a53a4eff9e8bb9b70-7800eb591ded468ebefdef9fa3513cc6",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 6726,
+            "duration_api_ms": 6883,
+            "num_turns": 1,
+            "input_tokens": 873,
+            "output_tokens": 996,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 8.17613434791565,
+          "sdk_seconds": 7.681285619735718
+        },
+        {
+          "job_id": "job_8876465e868741cfb386eb0851f6cc6a",
+          "session_id": "session_5f539517ebdf4782b733377b68f908ff",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "6cb968c7e5797d5956b8259232e7a4b031dc35f750ba1ff9d1215e28d5719d86",
+          "sdk_starts": 1,
+          "sdk_start": 1792889376.5301633,
+          "sdk_end": 1792889384.9255495,
+          "runtime": {
+            "invocation_id": "job_8876465e868741cfb386eb0851f6cc6a.attempt-0",
+            "request_digest": "e8b31faa8a1d9ec9ff2b09b4210e9d7fcb451a3937a3bf368dbffcf8fd9c507c",
+            "node_id": "b",
+            "instance_id": "b31b35f4-03cf-424c-8098-b33e9875cb2a",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:49:36.518302+00:00",
+            "terminal_at": "2026-10-25T00:49:44.963561+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:49:44.927065+00:00",
+            "execution_deadline_at": "2026-10-25T00:50:36.518302+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_8876465e868741cfb386eb0851f6cc6a.attempt-0",
+            "node_id": "b",
+            "time": 1792889384.9263105,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-ebe829ad50e596181fcb2196-ca20b4595a2949339e73bed546f70a8c",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 7458,
+            "duration_api_ms": 7865,
+            "num_turns": 1,
+            "input_tokens": 871,
+            "output_tokens": 1044,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 8.434999227523804,
+          "sdk_seconds": 8.395386219024658
+        },
+        {
+          "job_id": "job_d0d32dba0fab404f8c911b023196abb5",
+          "session_id": "session_48607fea9f52406f997c511d2e249041",
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "retry_count": 0,
+          "worker_claim_version": 1,
+          "expected_marker_present": true,
+          "foreign_marker_present": false,
+          "frozen_context_isolated": true,
+          "result_sha256": "8c524f3fc854955f248015c26512fce53cc3ba878dee1f6790dcc7d08be911d9",
+          "sdk_starts": 1,
+          "sdk_start": 1792889376.6996045,
+          "sdk_end": 1792889385.1524825,
+          "runtime": {
+            "invocation_id": "job_d0d32dba0fab404f8c911b023196abb5.attempt-0",
+            "request_digest": "3f90a97adc3475bb792c3444c74b2dde841394159d5057a19bda0bef10d3e891",
+            "node_id": "c",
+            "instance_id": "4bf21e0b-7ea7-4b73-ba5c-428c29d96295",
+            "state": "TERMINAL",
+            "accepted_at": "2026-10-25T00:49:36.688042+00:00",
+            "terminal_at": "2026-10-25T00:49:45.214422+00:00",
+            "terminal_code": "runtime_succeeded",
+            "execution_quiesced_at": "2026-10-25T00:49:45.153583+00:00",
+            "execution_deadline_at": "2026-10-25T00:50:36.688042+00:00"
+          },
+          "sdk_result": {
+            "kind": "sdk_finished",
+            "invocation_id": "job_d0d32dba0fab404f8c911b023196abb5.attempt-0",
+            "node_id": "c",
+            "time": 1792889385.1530583,
+            "pid": 1,
+            "status": "SUCCEEDED",
+            "error_code": "",
+            "sandbox": "job-4c60c5132f832877198cef05-560fdddacbd8437bbb534b8069e45861",
+            "sandbox_file_matches": true,
+            "credential_env_clean_after": true,
+            "duration_ms": 7534,
+            "duration_api_ms": 8402,
+            "num_turns": 1,
+            "input_tokens": 873,
+            "output_tokens": 952,
+            "model_request_count": 1
+          },
+          "sdk_boundary": {
+            "credential_revision": "model_connection_revision_4d32b7e84f7e4ec59add34a621c1ef23",
+            "credential_env_clean_before": true,
+            "sdk_cwd_matches_sandbox": true,
+            "sdk_version": "0.2.144"
+          },
+          "queue_seconds": 8.490904569625854,
+          "sdk_seconds": 8.45287799835205
+        }
+      ],
+      "queue_samples": [
+        {
+          "time": 1792889368.2383401,
+          "pending": 6,
+          "running": 0,
+          "terminal": 0
+        },
+        {
+          "time": 1792889368.507065,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889368.77444,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889369.043555,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889369.321335,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889369.5895948,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889369.856089,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889370.131723,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889370.398666,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889370.671526,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889370.936231,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889371.207637,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889371.476259,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889371.7422059,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889372.015386,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889372.284609,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889372.5465999,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889372.816284,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889373.086784,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889373.365689,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889373.631808,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889373.908919,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889374.177869,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889374.4504142,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889374.7174232,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889374.9896278,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889375.252226,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889375.5239959,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889375.7953768,
+          "pending": 3,
+          "running": 3,
+          "terminal": 0
+        },
+        {
+          "time": 1792889376.060822,
+          "pending": 2,
+          "running": 3,
+          "terminal": 1
+        },
+        {
+          "time": 1792889376.328254,
+          "pending": 2,
+          "running": 3,
+          "terminal": 1
+        },
+        {
+          "time": 1792889376.600811,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889376.864722,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889377.1303198,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889377.389662,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889377.6528919,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889377.92719,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889378.200385,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889378.472353,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889378.744668,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889379.009454,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889379.279522,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889379.546432,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889379.811278,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889380.070736,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889380.3349051,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889380.607564,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889380.884812,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889381.158258,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889381.435764,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889381.707925,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889381.969496,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889382.2380748,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889382.5014331,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889382.772514,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889383.033441,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889383.3031218,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889383.5846348,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889383.857871,
+          "pending": 0,
+          "running": 3,
+          "terminal": 3
+        },
+        {
+          "time": 1792889384.12485,
+          "pending": 0,
+          "running": 2,
+          "terminal": 4
+        },
+        {
+          "time": 1792889384.395226,
+          "pending": 0,
+          "running": 2,
+          "terminal": 4
+        },
+        {
+          "time": 1792889384.6641011,
+          "pending": 0,
+          "running": 2,
+          "terminal": 4
+        },
+        {
+          "time": 1792889384.9275148,
+          "pending": 0,
+          "running": 2,
+          "terminal": 4
+        },
+        {
+          "time": 1792889385.1910012,
+          "pending": 0,
+          "running": 1,
+          "terminal": 5
+        },
+        {
+          "time": 1792889385.47214,
+          "pending": 0,
+          "running": 0,
+          "terminal": 6
+        }
+      ],
+      "status": "PASS"
+    }
+  },
+  "fixture_corrections": [
+    "Initial explicit fake-provider setting corrected to disabled before any Provider call.",
+    "Warmup result collection fixed to read created_at from persistence; existing successful invocation reused.",
+    "First parallel fixture did not expose file tools; retained as failed isolation evidence. Rerun verified actual SDK cwd and transparent canaries without changing tool permissions."
+  ],
+  "superseded_isolation_attempt": {
+    "case": "RPOOL-real-parallel",
+    "workload": "isolation",
+    "workers": 3,
+    "submitted_jobs": 3,
+    "started_at": 1792889106.190351,
+    "finished_at": 1792889113.306062,
+    "jobs": [
+      {
+        "job_id": "job_d756c971c337470a967f0fe5178356cb",
+        "session_id": "session_076164be293042529fdf426190550b6c",
+        "status": "SUCCEEDED",
+        "error_code": "",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "expected_marker_present": true,
+        "foreign_marker_present": false,
+        "result_sha256": "df8151e845010df56b6dae46a3a3ee10da0a0dbf28df71b637ce286ffc66e067",
+        "sdk_starts": 1,
+        "sdk_start": 1792889106.6583672,
+        "sdk_end": 1792889113.0213838,
+        "runtime": {
+          "invocation_id": "job_d756c971c337470a967f0fe5178356cb.attempt-0",
+          "request_digest": "cf48fd990cf7f259aabf82fb2a81fbf63f6e22ef8ea4d2d3ac1353cbb578d026",
+          "node_id": "b",
+          "instance_id": "82cdaeb0-017a-4876-b546-bf6d23d99975",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-25T00:45:06.643826+00:00",
+          "terminal_at": "2026-10-25T00:45:13.056657+00:00",
+          "terminal_code": "runtime_succeeded",
+          "execution_quiesced_at": "2026-10-25T00:45:13.023039+00:00",
+          "execution_deadline_at": "2026-10-25T00:46:06.643826+00:00"
+        },
+        "sdk_result": {
+          "kind": "sdk_finished",
+          "invocation_id": "job_d756c971c337470a967f0fe5178356cb.attempt-0",
+          "node_id": "b",
+          "time": 1792889113.0221143,
+          "pid": 1,
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "sandbox": "job-bd2427f10e880b96e895b588-03e3c2facfae4e1a87d8573308083036",
+          "sandbox_file_matches": false,
+          "credential_env_clean_after": true,
+          "duration_ms": 3341,
+          "duration_api_ms": 4980,
+          "num_turns": 1,
+          "input_tokens": 875,
+          "output_tokens": 412,
+          "model_request_count": 1
+        },
+        "queue_seconds": 0.684758186340332,
+        "sdk_seconds": 6.363016605377197
+      },
+      {
+        "job_id": "job_4a07a0a0fe2141da82bf46ea704aa282",
+        "session_id": "session_c91f0eb87f01450087771566ec4b5b1d",
+        "status": "SUCCEEDED",
+        "error_code": "",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "expected_marker_present": true,
+        "foreign_marker_present": false,
+        "result_sha256": "c46f89d309ca967515e828814dac213daf08e010f0144516f8ab6cfade192d61",
+        "sdk_starts": 1,
+        "sdk_start": 1792889106.6727157,
+        "sdk_end": 1792889112.6594741,
+        "runtime": {
+          "invocation_id": "job_4a07a0a0fe2141da82bf46ea704aa282.attempt-0",
+          "request_digest": "146573159c364a787ede296fb1bf4fbe02d311dd4963023c66e6846abe347205",
+          "node_id": "a",
+          "instance_id": "f4140b17-aa1f-4252-85c1-29fb7ffbfa49",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-25T00:45:06.656977+00:00",
+          "terminal_at": "2026-10-25T00:45:12.692906+00:00",
+          "terminal_code": "runtime_succeeded",
+          "execution_quiesced_at": "2026-10-25T00:45:12.660814+00:00",
+          "execution_deadline_at": "2026-10-25T00:46:06.656977+00:00"
+        },
+        "sdk_result": {
+          "kind": "sdk_finished",
+          "invocation_id": "job_4a07a0a0fe2141da82bf46ea704aa282.attempt-0",
+          "node_id": "a",
+          "time": 1792889112.660179,
+          "pid": 1,
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "sandbox": "job-7a94d2092efc3b87abbb9603-88dd69e3559a41feaf7262d49763739e",
+          "sandbox_file_matches": false,
+          "credential_env_clean_after": true,
+          "duration_ms": 5011,
+          "duration_api_ms": 5821,
+          "num_turns": 1,
+          "input_tokens": 874,
+          "output_tokens": 549,
+          "model_request_count": 1
+        },
+        "queue_seconds": 0.5961096286773682,
+        "sdk_seconds": 5.986758470535278
+      },
+      {
+        "job_id": "job_7393aff44b944b3eb312c4c4d6d1a4b3",
+        "session_id": "session_27479c1262b746b8a202b90cb3b20d36",
+        "status": "SUCCEEDED",
+        "error_code": "",
+        "retry_count": 0,
+        "worker_claim_version": 1,
+        "expected_marker_present": true,
+        "foreign_marker_present": false,
+        "result_sha256": "083964c8540aa9fa26270f8338509cc3eaa1b0a6cc196c2cec8b67e7bf49c3f3",
+        "sdk_starts": 1,
+        "sdk_start": 1792889106.7329288,
+        "sdk_end": 1792889113.0052614,
+        "runtime": {
+          "invocation_id": "job_7393aff44b944b3eb312c4c4d6d1a4b3.attempt-0",
+          "request_digest": "73f5f62b14c8a991bec8f10e9a123a13d94dd7c6a3f1207679250bc58102dcf7",
+          "node_id": "c",
+          "instance_id": "76108698-8e2b-4f2c-92da-f17c8b2cd820",
+          "state": "TERMINAL",
+          "accepted_at": "2026-10-25T00:45:06.718573+00:00",
+          "terminal_at": "2026-10-25T00:45:13.038680+00:00",
+          "terminal_code": "runtime_succeeded",
+          "execution_quiesced_at": "2026-10-25T00:45:13.006684+00:00",
+          "execution_deadline_at": "2026-10-25T00:46:06.718573+00:00"
+        },
+        "sdk_result": {
+          "kind": "sdk_finished",
+          "invocation_id": "job_7393aff44b944b3eb312c4c4d6d1a4b3.attempt-0",
+          "node_id": "c",
+          "time": 1792889113.0059602,
+          "pid": 1,
+          "status": "SUCCEEDED",
+          "error_code": "",
+          "sandbox": "job-3827176dbd92cea8b8699594-f365a81c0eee473c9ec707d8465d4d21",
+          "sandbox_file_matches": false,
+          "credential_env_clean_after": true,
+          "duration_ms": 3314,
+          "duration_api_ms": 4914,
+          "num_turns": 1,
+          "input_tokens": 874,
+          "output_tokens": 431,
+          "model_request_count": 1
+        },
+        "queue_seconds": 0.5577287673950195,
+        "sdk_seconds": 6.272332668304443
+      }
+    ],
+    "queue_samples": [
+      {
+        "time": 1792889106.194512,
+        "pending": 3,
+        "running": 0,
+        "terminal": 0
+      },
+      {
+        "time": 1792889106.4595861,
+        "pending": 3,
+        "running": 0,
+        "terminal": 0
+      },
+      {
+        "time": 1792889106.7152681,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889106.9710221,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889107.238643,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889107.496269,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889107.7626612,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889108.027927,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889108.286602,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889108.547662,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889108.816969,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889109.081472,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889109.348114,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889109.611564,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889109.867824,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889110.129965,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889110.3999119,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889110.667557,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889110.927336,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889111.191585,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889111.453303,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889111.7128582,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889111.9740071,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889112.23231,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889112.495765,
+        "pending": 0,
+        "running": 3,
+        "terminal": 0
+      },
+      {
+        "time": 1792889112.753589,
+        "pending": 0,
+        "running": 2,
+        "terminal": 1
+      },
+      {
+        "time": 1792889113.017309,
+        "pending": 0,
+        "running": 2,
+        "terminal": 1
+      },
+      {
+        "time": 1792889113.2858481,
+        "pending": 0,
+        "running": 0,
+        "terminal": 3
+      }
+    ],
+    "status": "FAIL",
+    "failure_reason": "Fixture requested native file tools absent from the synthetic Agent policy. Marker echo did not prove filesystem isolation. Replaced with transparent canaries, actual SDK cwd verification and cleanup checks; no product permissions changed."
+  },
+  "limitations": [
+    "Synthetic short text on one host and one model only.",
+    "Sandbox isolation uses actual per-job SDK cwd, transparent canary files and cleanup; file tool integration is outside this load test.",
+    "Only SDK query spans are used for overlap; Provider-reported API duration is corroborating data, not a trace of remote server scheduling.",
+    "Cancelled execution stops local SDK; upstream processing or billing after cancellation cannot be observed."
+  ],
+  "handoff_fixture_sha256": {
+    "backend/tests/support/runtime_pool/collect.py": "ca0a979455b23a24aeaa17f4de2f6762300493237386c39c5ca31e15f3900f4e",
+    "backend/tests/support/runtime_pool/run.py": "eac3aa8f845cf9d8fdf324f931cdcae50db4be1a6395c7838f15f12f2d705884",
+    "backend/tests/support/runtime_pool/sample_resources.py": "786e7ff7ea357bc42ab2256abe4d2ce53ff12344be14342a95f207fb07f349a8",
+    "backend/tests/support/runtime_pool/collect_real.py": "6eeee260127b834110ea988e5a31fb690359f41c4cdea29da01835b3f9c49a27",
+    "backend/tests/support/runtime_pool/real.py": "5fe85e01234e80be57cfbcfc0a8d83dc1f22c86d857cfe06ca47cce5673bda93",
+    "backend/tests/support/runtime_pool/real_node.py": "af9669371bafa305e121279ffd0561f01772c90d159c2309190874ca4f753977",
+    "backend/tests/support/runtime_pool/node.py": "6c5c1cc50ef419a4b452ddd698c8a680d220bd288de5d0d5aceb72621d2a3400",
+    "backend/tests/support/runtime_pool/compose.yml": "adbe4f7c7b9f4a3195b1a43f76722c05849ad3cf66ed3fef5c0177edc25577f1"
+  },
+  "post_run_fixture_maintenance": "Added reusable bounded resource sampler and made historical fixture-correction evidence optional for clean future runs. Product code, real SDK observer and measured results unchanged; Ruff and compile checks passed."
+}

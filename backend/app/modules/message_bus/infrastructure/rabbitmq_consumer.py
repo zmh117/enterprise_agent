@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from app.modules.message_bus.application.message_publisher import (
@@ -220,7 +221,12 @@ class RabbitMQConsumer:
         except ModuleNotFoundError as exc:
             raise RuntimeError("pika is required for RabbitMQ consuming") from exc
 
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-job")
+        inflight: Future[None] | None = None
         while True:
+            if inflight is not None and not inflight.done():
+                time.sleep(0.1)
+                continue
             connection: Any | None = None
             try:
                 parameters = pika.URLParameters(self.rabbitmq_url)
@@ -232,13 +238,21 @@ class RabbitMQConsumer:
                 channel.confirm_delivery()
                 channel.basic_qos(prefetch_count=1)
 
+                def handle_with_heartbeats(message: AgentJobMessage) -> None:
+                    nonlocal inflight
+                    future = executor.submit(handler, message)
+                    inflight = future
+                    while not future.done():
+                        connection.sleep(0.1)
+                    future.result()
+
                 def on_message(ch: Any, method: Any, properties: Any, body: bytes) -> None:
                     process_agent_job_delivery(
                         ch,
                         method,
                         properties,
                         body,
-                        handler,
+                        handle_with_heartbeats,
                         dead_queue=self.queue.dead_queue,
                     )
 

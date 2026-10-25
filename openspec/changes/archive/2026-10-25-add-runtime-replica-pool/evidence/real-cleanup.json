@@ -1,0 +1,68 @@
+{
+  "status": "PASS",
+  "checked_at": "2026-10-25T00:56:22.472970+00:00",
+  "compose_project": "ea-rpool-a3183f0a",
+  "owned_test_containers_removed": [
+    {
+      "id": "2de477af1f87",
+      "name": "ea-rpool-a3183f0a-worker-2"
+    },
+    {
+      "id": "7bfb8994f84d",
+      "name": "ea-rpool-a3183f0a-worker-3"
+    },
+    {
+      "id": "9fbe4081a0b6",
+      "name": "ea-rpool-a3183f0a-worker-1"
+    },
+    {
+      "id": "8e48070b08d9",
+      "name": "ea-rpool-a3183f0a-dispatcher-1"
+    },
+    {
+      "id": "1e1a4510f128",
+      "name": "ea-rpool-a3183f0a-runtime-a"
+    },
+    {
+      "id": "33e74e304c08",
+      "name": "ea-rpool-a3183f0a-runtime-c"
+    },
+    {
+      "id": "dc00f8bfba22",
+      "name": "ea-rpool-a3183f0a-runtime-b"
+    },
+    {
+      "id": "74d67b25ad3a",
+      "name": "ea-rpool-a3183f0a-rabbitmq-1"
+    },
+    {
+      "id": "5acf0a412e8d",
+      "name": "ea-rpool-a3183f0a-postgres-1"
+    }
+  ],
+  "remaining_owned_containers": 0,
+  "generated_test_keys_removed": true,
+  "temporary_encrypted_credential_copy_destroyed_with_tmpfs_database": true,
+  "source_configuration_and_credential_unchanged": true,
+  "original_master_file_unchanged": true,
+  "source_database": {
+    "schema_head": "146",
+    "nonterminal_jobs": 0
+  },
+  "source_postgres_container_started_for_readonly_configuration_and_removed": {
+    "id": "9589823774e4abbc941678b5d3d90fd18e02324e79af8c0a70d5550f23c33ef3",
+    "created_at": "2026-10-25T00:37:26.856191347Z"
+  },
+  "source_database_volume_retained": "enterprise_agent_postgres18_data",
+  "temporary_source_networks_removed": [
+    "enterprise_agent_default",
+    "enterprise_agent_agent-runtime-control"
+  ],
+  "unrelated_running_container_unchanged": {
+    "id": "4a287ba5a48dad9600513ae07e6090ae87844e6ab4d9bf0b2a0d8c30550f8544",
+    "running": true,
+    "started_at": "2026-10-24T14:06:00.708134967Z"
+  },
+  "local_test_images_retained": true,
+  "no_global_prune": true
+}

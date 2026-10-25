@@ -35,7 +35,7 @@
     },
     {
       "code": "runtime_timeout",
-      "retry_class": "TRANSIENT"
+      "retry_class": "NEVER"
     },
     {
       "code": "runtime_max_turns",

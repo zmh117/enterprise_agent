@@ -1,0 +1,64 @@
+{
+  "checked_at": "2026-10-24T22:13:34.271752+00:00",
+  "status": "PASS",
+  "compose_project": "ea-rpool-f1372e88",
+  "nonterminal_jobs_before_cleanup": 0,
+  "owned_compose_containers_removed": [
+    {
+      "id": "794b47d73b7d",
+      "name": "ea-rpool-f1372e88-runtime-c"
+    },
+    {
+      "id": "e5d0f4ca2894",
+      "name": "ea-rpool-f1372e88-runtime-b"
+    },
+    {
+      "id": "6124bf7d1e27",
+      "name": "ea-rpool-f1372e88-runtime-a"
+    },
+    {
+      "id": "6fed6a836d18",
+      "name": "ea-rpool-f1372e88-worker-1"
+    },
+    {
+      "id": "0d5d3bbd807f",
+      "name": "ea-rpool-f1372e88-worker-2"
+    },
+    {
+      "id": "caf63da99902",
+      "name": "ea-rpool-f1372e88-worker-3"
+    },
+    {
+      "id": "71a5e165c762",
+      "name": "ea-rpool-f1372e88-dispatcher-1"
+    },
+    {
+      "id": "b57c0fe2040f",
+      "name": "ea-rpool-f1372e88-rabbitmq-1"
+    },
+    {
+      "id": "8515ba69851c",
+      "name": "ea-rpool-f1372e88-postgres-1"
+    }
+  ],
+  "isolated_postgres_removed": {
+    "id": "313aa70ee3a20a3f618ab58a16169f2add3aa3061617c471b02c6d3e2c0d268e",
+    "name": "ea-runtime-pool-pg-check"
+  },
+  "remaining_owned_containers": 0,
+  "remaining_project_networks": 0,
+  "remaining_project_volumes": 0,
+  "generated_key_directories_removed": true,
+  "unrelated_running_container_preserved": {
+    "name": "mes-ui-language-20261015-pg",
+    "id": "4a287ba5a48dad9600513ae07e6090ae87844e6ab4d9bf0b2a0d8c30550f8544",
+    "running": true,
+    "started_at": "2026-10-24T14:06:00.708134967Z"
+  },
+  "local_test_image_tags_retained": [
+    "ea-runtime-pool-test:local",
+    "ea-runtime-pool-worker-test:local"
+  ],
+  "synthetic_evidence_retained": true,
+  "no_global_prune": true
+}

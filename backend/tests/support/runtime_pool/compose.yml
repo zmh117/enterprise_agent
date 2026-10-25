@@ -1,0 +1,108 @@
+name: runtime-pool-acceptance
+
+x-env: &env
+  APP_ENV: testing
+  DATABASE_DSN: postgresql://postgres@postgres:5432/runtime_pool_test
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  APP_CONFIG_MASTER_KEY_FILE: /run/secrets/master
+  RUNTIME_GRANT_PRIVATE_KEY_FILE: /run/secrets/grant-private
+  RUNTIME_GRANT_PUBLIC_KEY_FILE: /run/secrets/grant-public
+  PRINCIPAL_JWT_PRIVATE_KEY_FILE: /run/secrets/principal-private
+  MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/probe
+  PYTHON_AGENT_RUNTIME_URL: http://runtime-a:8091
+  PYTHON_AGENT_RUNTIME_NODES: a=http://runtime-a:8091,b=http://runtime-b:8091,c=http://runtime-c:8091
+  PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS: runtime-a,runtime-b,runtime-c
+  AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP: "true"
+  AGENT_RUNTIME_TEST_PROVIDER_MODE: deterministic
+  MODEL_PROVIDER_HOST_ALLOWLIST: api.deepseek.com
+  PYTHON_AGENT_RUNTIME_SANDBOX_ROOT: /tmp/python-agent-runtime/sandboxes
+  PYTHONPATH: /app/backend:/acceptance
+  HOME: /tmp/python-agent-runtime
+  TMPDIR: /tmp/python-agent-runtime
+  CLAUDE_CONFIG_DIR: /tmp/python-agent-runtime/.claude
+  SEED_LOCAL_CONFIG: "false"
+
+x-runtime: &runtime
+  image: ea-runtime-pool-test:local
+  command: [python, -m, uvicorn, node:create_app, --factory, --host, 0.0.0.0, --port, "8091"]
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp/python-agent-runtime:size=1g,mode=0700,uid=10002,gid=10002"]
+  secrets: [master, grant-public, probe]
+  volumes:
+    - ./node.py:/acceptance/node.py:ro
+    - ${RPOOL_FIXTURE_DIR:?}/evidence:/evidence
+  environment: &runtime-env
+    <<: *env
+    DATABASE_DSN: postgresql://agent_runtime_reader@postgres:5432/runtime_pool_test
+  depends_on:
+    postgres: {condition: service_healthy}
+
+services:
+  postgres:
+    image: postgres:18
+    environment: {POSTGRES_HOST_AUTH_METHOD: trust, POSTGRES_DB: runtime_pool_test}
+    ports: ["127.0.0.1::5432"]
+    tmpfs: [/var/lib/postgresql]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d runtime_pool_test"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:4-management
+    ports: ["127.0.0.1::5672"]
+    tmpfs: [/var/lib/rabbitmq]
+    environment: {RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit consumer_timeout 4200000"}
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  runtime-a:
+    <<: *runtime
+    container_name: ${COMPOSE_PROJECT_NAME}-runtime-a
+    environment: {<<: *runtime-env, PYTHON_AGENT_RUNTIME_NODE_ID: a}
+    ports: ["127.0.0.1::8091"]
+  runtime-b:
+    <<: *runtime
+    container_name: ${COMPOSE_PROJECT_NAME}-runtime-b
+    environment: {<<: *runtime-env, PYTHON_AGENT_RUNTIME_NODE_ID: b}
+    ports: ["127.0.0.1::8091"]
+  runtime-c:
+    <<: *runtime
+    container_name: ${COMPOSE_PROJECT_NAME}-runtime-c
+    environment: {<<: *runtime-env, PYTHON_AGENT_RUNTIME_NODE_ID: c}
+    ports: ["127.0.0.1::8091"]
+  worker:
+    image: ea-runtime-pool-worker-test:local
+    command: [python, -m, app.workers.agent_job_worker]
+    deploy: {replicas: 3}
+    environment:
+      <<: *env
+      AGENT_RUNTIME_ACCEPTANCE_AFTER_RESULT_PAUSE_SECONDS: ${RPOOL_AFTER_RESULT_PAUSE_SECONDS:-0}
+      RABBITMQ_CONSUMER_HEARTBEAT_SECONDS: "5"
+    tmpfs: ["/tmp/python-agent-runtime:mode=0700,uid=10001,gid=10001"]
+    secrets: [master, grant-private, principal-private]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+  dispatcher:
+    image: ea-runtime-pool-worker-test:local
+    command: [python, -m, app.workers.job_dispatch_worker]
+    environment:
+      <<: *env
+      AGENT_RUNTIME_ACCEPTANCE_AFTER_RESULT_PAUSE_SECONDS: ${RPOOL_AFTER_RESULT_PAUSE_SECONDS:-0}
+      RABBITMQ_CONSUMER_HEARTBEAT_SECONDS: "5"
+    tmpfs: ["/tmp/python-agent-runtime:mode=0700,uid=10001,gid=10001"]
+    secrets: [master]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+
+secrets:
+  master: {file: "${RPOOL_FIXTURE_DIR:?}/secrets/master"}
+  grant-private: {file: "${RPOOL_FIXTURE_DIR:?}/secrets/grant-private"}
+  grant-public: {file: "${RPOOL_FIXTURE_DIR:?}/secrets/grant-public"}
+  principal-private: {file: "${RPOOL_FIXTURE_DIR:?}/secrets/principal-private"}
+  probe: {file: "${RPOOL_FIXTURE_DIR:?}/secrets/probe"}

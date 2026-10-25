@@ -68,8 +68,8 @@ Compose 的核心执行服务为：
 
 - `api-server`、`admin-web`
 - `postgres`、`rabbitmq`
-- `agent-worker`
-- `python-agent-runtime`
+- `agent-worker`（默认两个副本）
+- `python-agent-runtime-a`、`python-agent-runtime-b`（固定节点，每个节点一个执行槽）
 - `tool-mcp`、`ones-mcp`、`dingtalk-mcp`、`external-action-worker`（无可部署ONES Mock）
 - `file-service` 和替代旧附件消费者的 `file-worker`；无独立 `file-mcp`
 - `file-processing-worker`、`file-processing-worker-2` 和内部 `docling-serve`
@@ -86,9 +86,11 @@ Compose 的核心执行服务为：
 - `RUNTIME_GRANT_*`
 - `PRINCIPAL_JWT_PRIVATE_KEY_FILE`、`PRINCIPAL_JWKS_FILE`
 - `MODEL_PROBE_AUTH_TOKEN_FILE`
-- Python Runtime 的固定服务 URL
+- `PYTHON_AGENT_RUNTIME_NODES` 固定节点映射及 URL 主机白名单
 
 仓库不再接受 `INTERNAL_API_*`、`RUNTIME_TOOL_MCP_*` 或旧 HS256 MCP signing key 配置。
+
+Runtime 池的升级、排空和故障处理见 [Runtime 多副本池运维](docs/operations/runtime-replica-pool.md)。
 
 ## 测试数据与验证
 
@@ -162,7 +164,7 @@ docker compose \
   --profile knowledge --profile knowledge-sync \
   up -d \
   postgres migrator rabbitmq minio minio-init \
-  api-server admin-web python-agent-runtime agent-worker \
+  api-server admin-web python-agent-runtime-a python-agent-runtime-b agent-worker \
   job-dispatch-worker delivery-dispatch-worker channel-dispatch-worker webhook-worker \
   file-service file-worker file-processing-worker file-processing-worker-2 docling-serve \
   tool-mcp ones-mcp dingtalk-mcp dingtalk-runtime external-action-worker \

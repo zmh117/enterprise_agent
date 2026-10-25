@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.modules.job.domain.agent_job import AgentSession
+from app.modules.job.domain.agent_job import AgentJob, AgentSession
 from app.modules.job.infrastructure.persistence_values import json_from_text, new_id, now_iso
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
@@ -226,6 +226,25 @@ class SessionRepository:
             ),
         )
         return message_id
+
+    def list_messages_before_job(self, job: AgentJob, *, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select m.* from agent_message m
+            join agent_job prior on prior.id = m.job_id
+            join agent_message prior_input on prior_input.id = prior.input_message_id
+            join agent_message current_input on current_input.id = ?
+            where m.session_id = ? and prior.id <> ?
+              and (prior_input.sequence_no < current_input.sequence_no
+                or (prior_input.sequence_no = current_input.sequence_no and prior.id < ?))
+            order by prior_input.sequence_no desc, prior.id desc, m.sequence_no desc limit ?
+            """,
+            (job.input_message_id, job.session_id, job.id, job.id, limit),
+        )
+        return [
+            {**row, "safe_metadata": json_from_text(row.get("safe_metadata_json") or "{}")}
+            for row in reversed(rows)
+        ]
 
     def list_messages(self, session_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
         rows = self.database.execute(

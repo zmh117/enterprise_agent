@@ -9,6 +9,8 @@ from app.modules.agent.application.agent_result_service import AgentResultServic
 from app.modules.agent.application.runtime_client import AgentRuntimeClient
 from app.modules.agent.domain.runtime import AgentRunRequest
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
+from app.modules.agent.infrastructure.runtime_pool_store import RuntimePoolStore
+from app.modules.agent.infrastructure.runtime_request import agent_request_from_runtime_request
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
@@ -25,7 +27,9 @@ from app.modules.job.infrastructure.execution_audit_repository import (
     ExecutionAuditRepository,
 )
 from app.shared.database import operation_unit_of_work, require_shared_database
-from app.shared.exceptions import PermissionDenied
+from app.modules.job.infrastructure.execution_control import JobExecutionControl, WorkerLeaseLost
+from app.modules.agent.infrastructure.runtime_pool_store import RENEW_SECONDS
+from app.shared.exceptions import PermissionDenied, RetryableExecutionError
 from app.shared.tool_contract import canonical_json_sha256
 
 
@@ -74,7 +78,7 @@ class AgentExecutor:
         self.runtime_client.cancel(request, reason)
         return True
 
-    def execute(  # noqa: C901, PLR0915
+    def execute(
         self,
         job_id: str,
         *,
@@ -93,68 +97,112 @@ class AgentExecutor:
             if persisted.status == JobStatus.SUCCEEDED and persisted.result:
                 return persisted.result
             return ""
-        job = claimed
-        mcp_tool_snapshot: dict[str, object] | None = None
-        if self.mcp_tool_snapshot_service is not None:
-            try:
-                mcp_tool_snapshot = self.mcp_tool_snapshot_service.verify(job.id)
-            except Exception as exc:
-                if fail_on_error:
-                    self.status_service.fail(
-                        job.id,
-                        getattr(exc, "safe_message", str(exc)),
-                    )
-                raise
-        if job.business_application_id:
-            if self.business_authorization_service is None:
-                if fail_on_error:
-                    self.status_service.fail(job_id, "业务应用授权服务暂时不可用")
-                raise PermissionDenied(
-                    "Business authorization service is unavailable",
-                    safe_message="业务应用授权服务暂时不可用",
-                    error_code="business_authorization_unavailable",
+        control = JobExecutionControl(self.repository.database)
+        stopped = threading.Event()
+
+        def renew() -> None:
+            while not stopped.wait(RENEW_SECONDS):
+                try:
+                    control.renew(job_id, worker_id, claimed.worker_claim_version)
+                except Exception:
+                    return
+                cancellation = self.repository.database.execute_one(
+                    "select cancel_requested_at from agent_job where id = ?", (job_id,)
                 )
-            try:
-                decision = self.business_authorization_service.require(
-                    user_id=job.internal_user_id or job.requester_id,
-                    application_id=job.business_application_id,
-                    stage="worker_start",
-                )
-            except PermissionDenied as exc:
-                self.repository.add_step(
-                    job_id=job_id,
-                    step_type="authorization_denied",
-                    title="业务应用授权已失效",
-                    content=exc.safe_message,
-                )
-                if fail_on_error:
-                    self.status_service.fail(job_id, exc.safe_message)
-                raise
-            self.audit_service.record(
-                "authorization.business.worker_start",
-                status="SUCCEEDED",
-                summary="Business authorization allowed worker start",
-                job_id=job_id,
-                actor_id=job.internal_user_id or job.requester_id,
-                payload=decision,
+                if cancellation and cancellation["cancel_requested_at"]:
+                    try:
+                        self.cancel_active(job_id, "JOB_CANCELLED")
+                    except Exception:
+                        pass  # Runtime independently polls the durable intent.
+
+        keeper = threading.Thread(target=renew, name="worker-lease", daemon=True)
+        keeper.start()
+        try:
+            return self._execute_claimed(
+                claimed,
+                worker_id=worker_id,
+                correlation_id=correlation_id,
+                fail_on_error=fail_on_error,
             )
-        self.audit_service.record(
-            "worker.claimed",
-            status="SUCCEEDED",
-            summary="Worker claimed Agent job",
-            job_id=job.id,
-            actor_id=worker_id,
-            payload={
-                "correlation_id": correlation_id,
-                "retry_count": job.retry_count,
-                **_business_application_context(job),
-            },
-        )
-        if job.retry_count > 0:
+        except Exception as exc:
+            setattr(exc, "worker_claim", claimed)
+            if (
+                fail_on_error
+                and not isinstance(exc, WorkerLeaseLost)
+                and getattr(exc, "error_code", "") != "runtime_observer_deferred"
+            ):
+                current = self.repository.get_job(job_id)
+                if current.status == JobStatus.RUNNING:
+                    with control.transaction(job_id, worker_id, claimed.worker_claim_version):
+                        self.status_service.fail(job_id, getattr(exc, "safe_message", str(exc)))
+            raise
+        finally:
+            stopped.set()
+
+    def _execute_claimed(  # noqa: C901, PLR0915
+        self,
+        job: AgentJob,
+        *,
+        worker_id: str,
+        correlation_id: str,
+        fail_on_error: bool,
+    ) -> str:
+        job_id = job.id
+        pool = RuntimePoolStore(self.repository.database)
+        frozen = pool.get(f"{job.id}.attempt-{job.retry_count}")
+        with JobExecutionControl(self.repository.database).transaction(
+            job.id,
+            worker_id,
+            job.worker_claim_version,
+        ):
+            mcp_tool_snapshot: dict[str, object] | None = None
+            if self.mcp_tool_snapshot_service is not None:
+                try:
+                    mcp_tool_snapshot = self.mcp_tool_snapshot_service.verify(job.id)
+                except Exception as exc:
+                    if fail_on_error:
+                        self.status_service.fail(
+                            job.id,
+                            getattr(exc, "safe_message", str(exc)),
+                        )
+                    raise
+            if job.business_application_id and frozen is None:
+                if self.business_authorization_service is None:
+                    if fail_on_error:
+                        self.status_service.fail(job_id, "业务应用授权服务暂时不可用")
+                    raise PermissionDenied(
+                        "Business authorization service is unavailable",
+                        safe_message="业务应用授权服务暂时不可用",
+                        error_code="business_authorization_unavailable",
+                    )
+                try:
+                    decision = self.business_authorization_service.require(
+                        user_id=job.internal_user_id or job.requester_id,
+                        application_id=job.business_application_id,
+                        stage="worker_start",
+                    )
+                except PermissionDenied as exc:
+                    self.repository.add_step(
+                        job_id=job_id,
+                        step_type="authorization_denied",
+                        title="业务应用授权已失效",
+                        content=exc.safe_message,
+                    )
+                    if fail_on_error:
+                        self.status_service.fail(job_id, exc.safe_message)
+                    raise
+                self.audit_service.record(
+                    "authorization.business.worker_start",
+                    status="SUCCEEDED",
+                    summary="Business authorization allowed worker start",
+                    job_id=job_id,
+                    actor_id=job.internal_user_id or job.requester_id,
+                    payload=decision,
+                )
             self.audit_service.record(
-                "job.retry.released",
+                "worker.claimed",
                 status="SUCCEEDED",
-                summary="Due Agent job retry returned to a worker",
+                summary="Worker claimed Agent job",
                 job_id=job.id,
                 actor_id=worker_id,
                 payload={
@@ -163,20 +211,40 @@ class AgentExecutor:
                     **_business_application_context(job),
                 },
             )
-        self.repository.add_step(
-            job_id=job.id,
-            step_type="started",
-            title="Agent execution started",
-            content="Read-only diagnostic runtime started.",
-        )
-        attempt_invocation_id = f"{job.id}.attempt-{job.retry_count}"
-        self.repository.record_execution_policy_usage(
-            job.id,
-            tool_call_count=0,
-            exhausted=False,
-        )
+            if job.retry_count > 0:
+                self.audit_service.record(
+                    "job.retry.released",
+                    status="SUCCEEDED",
+                    summary="Due Agent job retry returned to a worker",
+                    job_id=job.id,
+                    actor_id=worker_id,
+                    payload={
+                        "correlation_id": correlation_id,
+                        "retry_count": job.retry_count,
+                        **_business_application_context(job),
+                    },
+                )
+            self.repository.add_step(
+                job_id=job.id,
+                step_type="started",
+                title="Agent execution started",
+                content="Read-only diagnostic runtime started.",
+            )
+            attempt_invocation_id = f"{job.id}.attempt-{job.retry_count}"
+            self.repository.record_execution_policy_usage(
+                job.id,
+                tool_call_count=0,
+                exhausted=False,
+            )
+        result_received = False
         try:
-            context = self.context_builder.build(job)
+            context = (
+                agent_request_from_runtime_request(
+                    pool.request(attempt_invocation_id), None
+                ).context
+                if frozen is not None
+                else self.context_builder.build(job)
+            )
             if mcp_tool_snapshot is None:
                 raise PermissionDenied(
                     "Job MCP Tool Snapshot is unavailable",
@@ -187,112 +255,143 @@ class AgentExecutor:
                 context,
                 job_tool_snapshot_hash=str(mcp_tool_snapshot["snapshot_hash"]),
             )
-            self.repository.add_step(
-                job_id=job.id,
-                step_type="tool_call",
-                title="Context search completed",
-                content="Relevant ER and business-flow context retrieved.",
-            )
+            with JobExecutionControl(self.repository.database).transaction(
+                job.id,
+                worker_id,
+                job.worker_claim_version,
+            ):
+                self.repository.add_step(
+                    job_id=job.id,
+                    step_type="tool_call",
+                    title="Context search completed",
+                    content="Relevant ER and business-flow context retrieved.",
+                )
             run_request = AgentRunRequest(
                 job_id=job.id,
                 user_id=job.internal_user_id or job.requester_id,
                 project_code=job.project_code,
                 context=context,
                 invocation_id=attempt_invocation_id,
+                worker_id=worker_id,
+                worker_claim_version=job.worker_claim_version,
             )
             with self._active_lock:
                 self._active_requests[job.id] = run_request
             try:
                 result = self.runtime_client.run(run_request)
+                result_received = True
             finally:
                 with self._active_lock:
                     if self._active_requests.get(job.id) is run_request:
                         self._active_requests.pop(job.id, None)
-            if self.after_runtime_result_hook is not None:
-                self.after_runtime_result_hook()
-            if result.runtime_provenance:
-                self.repository.record_runtime_provenance(
+            with JobExecutionControl(self.repository.database).transaction(
+                job.id,
+                worker_id,
+                job.worker_claim_version,
+            ):
+                if self.after_runtime_result_hook is not None:
+                    self.after_runtime_result_hook()
+                if result.runtime_provenance:
+                    self.repository.record_runtime_provenance(
+                        job.id,
+                        result.runtime_provenance,
+                    )
+                self._persist_run_audit(
+                    job=job,
+                    invocation_id=attempt_invocation_id,
+                    status="SUCCEEDED",
+                    audit=result.run_audit,
+                )
+                self._persist_tool_events(job.id, result.tool_events)
+                self._record_execution_policy_usage(
                     job.id,
-                    result.runtime_provenance,
+                    invocation_id=attempt_invocation_id,
+                    tool_events=result.tool_events,
+                    exhausted=False,
                 )
-            self._persist_run_audit(
-                job=job,
-                invocation_id=attempt_invocation_id,
-                status="SUCCEEDED",
-                audit=result.run_audit,
-            )
-            self._persist_tool_events(job.id, result.tool_events)
-            self._record_execution_policy_usage(
-                job.id,
-                invocation_id=attempt_invocation_id,
-                tool_events=result.tool_events,
-                exhausted=False,
-            )
-            final_answer, rejected_confirmation_claim = _guard_confirmation_claim(
-                final_answer=result.final_answer,
-                allowed_tools=context.allowed_tools,
-                tool_events=result.tool_events,
-            )
-            if rejected_confirmation_claim:
-                self.audit_service.record(
-                    "agent.external_action_confirmation_claim.rejected",
-                    status="DENIED",
-                    summary="Unverified external action confirmation claim was replaced",
+                final_answer, rejected_confirmation_claim = _guard_confirmation_claim(
+                    final_answer=result.final_answer,
+                    allowed_tools=context.allowed_tools,
+                    tool_events=result.tool_events,
+                )
+                if rejected_confirmation_claim:
+                    self.audit_service.record(
+                        "agent.external_action_confirmation_claim.rejected",
+                        status="DENIED",
+                        summary="Unverified external action confirmation claim was replaced",
+                        job_id=job.id,
+                        actor_id=job.internal_user_id or job.requester_id,
+                        payload={"invocation_id": attempt_invocation_id},
+                    )
+                self.repository.add_step(
                     job_id=job.id,
-                    actor_id=job.internal_user_id or job.requester_id,
-                    payload={"invocation_id": attempt_invocation_id},
+                    step_type="model_completed",
+                    title="Model execution completed",
+                    content="Claude runtime returned a final diagnostic report.",
                 )
-            self.repository.add_step(
-                job_id=job.id,
-                step_type="model_completed",
-                title="Model execution completed",
-                content="Claude runtime returned a final diagnostic report.",
-            )
-            self._persist_success(
-                job=job,
-                final_answer=final_answer,
-                worker_id=worker_id,
-                correlation_id=correlation_id,
-            )
-            self.execution_audit_repository.rebuild_summary(job.id)
-            return final_answer
+                self._persist_success(
+                    job=job,
+                    final_answer=final_answer,
+                    worker_id=worker_id,
+                    correlation_id=correlation_id,
+                )
+                self.execution_audit_repository.rebuild_summary(job.id)
+                return final_answer
+        except WorkerLeaseLost:
+            raise
         except Exception as exc:
-            safe_message = getattr(exc, "safe_message", str(exc))
-            tool_events = getattr(exc, "tool_events", [])
-            self._persist_run_audit(
-                job=job,
-                invocation_id=attempt_invocation_id,
-                status=(
-                    "CANCELLED"
-                    if getattr(exc, "error_code", "") == "runtime_cancelled"
-                    else "FAILED"
-                ),
-                audit=getattr(exc, "run_audit", {}),
-            )
-            self._persist_tool_events(job.id, tool_events)
-            self._record_execution_policy_usage(
+            if (result_received or not hasattr(exc, "error_code")) and pool.get(
+                attempt_invocation_id
+            ) is not None:
+                raise RetryableExecutionError(
+                    "Result commit requires recovery",
+                    safe_message="等待执行结果恢复提交",
+                    error_code="runtime_observer_deferred",
+                ) from exc
+            if getattr(exc, "error_code", "") == "runtime_observer_deferred":
+                raise
+            with JobExecutionControl(self.repository.database).transaction(
                 job.id,
-                invocation_id=attempt_invocation_id,
-                tool_events=tool_events,
-                exhausted=(
-                    getattr(exc, "error_code", "") == "execution_policy_max_tool_calls_exhausted"
-                ),
-            )
-            self.repository.add_step(
-                job_id=job.id,
-                step_type="error",
-                title="Agent execution failed",
-                content=safe_message,
-            )
-            if fail_on_error:
-                self.status_service.fail(job.id, safe_message)
-            self.execution_audit_repository.rebuild_summary(job.id)
-            diagnostics = getattr(exc, "diagnostics", {})
-            runtime_provenance = (
-                diagnostics.get("runtime_provenance") if isinstance(diagnostics, dict) else None
-            )
-            if isinstance(runtime_provenance, dict):
-                self.repository.record_runtime_provenance(job.id, runtime_provenance)
+                worker_id,
+                job.worker_claim_version,
+            ):
+                safe_message = getattr(exc, "safe_message", str(exc))
+                tool_events = getattr(exc, "tool_events", [])
+                self._persist_run_audit(
+                    job=job,
+                    invocation_id=attempt_invocation_id,
+                    status=(
+                        "CANCELLED"
+                        if getattr(exc, "error_code", "") == "runtime_cancelled"
+                        else "FAILED"
+                    ),
+                    audit=getattr(exc, "run_audit", {}),
+                )
+                self._persist_tool_events(job.id, tool_events)
+                self._record_execution_policy_usage(
+                    job.id,
+                    invocation_id=attempt_invocation_id,
+                    tool_events=tool_events,
+                    exhausted=(
+                        getattr(exc, "error_code", "")
+                        == "execution_policy_max_tool_calls_exhausted"
+                    ),
+                )
+                self.repository.add_step(
+                    job_id=job.id,
+                    step_type="error",
+                    title="Agent execution failed",
+                    content=safe_message,
+                )
+                if fail_on_error:
+                    self.status_service.fail(job.id, safe_message)
+                self.execution_audit_repository.rebuild_summary(job.id)
+                diagnostics = getattr(exc, "diagnostics", {})
+                runtime_provenance = (
+                    diagnostics.get("runtime_provenance") if isinstance(diagnostics, dict) else None
+                )
+                if isinstance(runtime_provenance, dict):
+                    self.repository.record_runtime_provenance(job.id, runtime_provenance)
             raise
 
     def _persist_run_audit(
@@ -352,6 +451,7 @@ class AgentExecutor:
     ) -> None:
         artifact_id = self.result_service.save_result(job, final_answer)
         self.status_service.succeed(job.id, final_answer)
+        JobExecutionControl(self.repository.database).wake_session(job.session_id)
         delivery_id = self.delivery_service.enqueue_job_result(
             job_id=job.id,
             artifact_id=artifact_id,

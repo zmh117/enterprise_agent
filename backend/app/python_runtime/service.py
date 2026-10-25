@@ -15,12 +15,14 @@ from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.modules.agent.infrastructure.runtime_protocol import (
     CURRENT_RUNTIME_PROTOCOL_VERSION,
     RuntimeProtocolError,
     SUPPORTED_RUNTIME_PROTOCOL_VERSIONS,
     validate_execution_request,
+    validate_pool_contract,
     validate_runtime_contract,
 )
 from app.shared.mcp_server_policy import (
@@ -47,6 +49,8 @@ from app.shared.build_identity import (
     BuildIdentityError,
     build_identity_from_environment,
 )
+
+from app.modules.agent.infrastructure.runtime_pool_store import RuntimePoolError
 
 from .grant import RuntimeGrantError, RuntimeGrantVerifier
 from .invocations import (
@@ -95,10 +99,11 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
 
         def is_running(job_id: str) -> bool:
             row = runtime.database.execute_one(
-                "select status from agent_job where id = ?",
+                "select invocation_id from agent_runtime_invocation where job_id = ? "
+                "and accepted_at is not null and execution_quiesced_at is null limit 1",
                 (job_id,),
             )
-            return row is not None and str(row.get("status") or "") == "RUNNING"
+            return row is not None
 
         try:
             runtime.sandbox_manager.cleanup_residuals(is_running)
@@ -142,6 +147,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         try:
             yield
         finally:
+            runtime.registry.slot.draining = True
             stop_sandbox_cleanup()
 
     app = FastAPI(
@@ -149,6 +155,35 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         version=PYTHON_RUNTIME_VERSION,
         lifespan=lifespan,
     )
+
+    @app.exception_handler(RuntimePoolError)
+    async def pool_error(_request: Request, exc: RuntimePoolError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status, content={"code": exc.code})
+
+    def require_instance(request: Request) -> None:
+        if (
+            len(request.headers.getlist("X-Runtime-Node-Id")) != 1
+            or len(request.headers.getlist("X-Runtime-Instance-Id")) != 1
+            or request.headers.get("X-Runtime-Node-Id") != runtime.registry.node_id
+            or request.headers.get("X-Runtime-Instance-Id") != runtime.registry.instance_id
+        ):
+            raise RuntimePoolError("runtime_instance_mismatch")
+
+    def stream_response(invocation: Any) -> StreamingResponse:
+        def stream() -> Any:
+            for event in invocation.stream():
+                yield json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+        return StreamingResponse(
+            stream(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+                "X-Runtime-Node-Id": runtime.registry.node_id,
+                "X-Runtime-Instance-Id": runtime.registry.instance_id,
+            },
+        )
 
     @app.exception_handler(RuntimeGrantError)
     async def runtime_grant_error(
@@ -188,6 +223,11 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             "runtime": PYTHON_RUNTIME_KIND,
             "runtime_version": PYTHON_RUNTIME_VERSION,
             "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
+            "pool_enabled": True,
+            "node_id": runtime.registry.node_id,
+            "instance_id": runtime.registry.instance_id,
+            "busy": runtime.registry.slot.busy,
+            "draining": runtime.registry.slot.draining,
             "supported_protocol_versions": ",".join(SUPPORTED_RUNTIME_PROTOCOL_VERSIONS),
             "sdk_version": runtime.executor.sdk_version,
             "cli_version": runtime.executor.cli_version,
@@ -255,6 +295,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         request: Request,
         authorization: str = Header(default=""),
     ) -> StreamingResponse:
+        require_instance(request)
         raw = await request.body()
         try:
             payload = json.loads(raw)
@@ -309,15 +350,27 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             ),
         )
 
-        def stream() -> Any:
-            for event in invocation.stream():
-                yield json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
+        return stream_response(invocation)
 
-        return StreamingResponse(
-            stream(),
-            media_type="application/x-ndjson",
-            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    @app.post("/internal/v1/executions/{invocation_id}/recover")
+    async def recover(
+        invocation_id: str,
+        request: Request,
+        authorization: str = Header(default=""),
+    ) -> StreamingResponse:
+        require_instance(request)
+        payload = await request.json()
+        try:
+            validate_pool_contract("RecoverRequest", payload)
+        except ValueError as exc:
+            raise RuntimePoolError("runtime_request_invalid", status=400) from exc
+        if payload["invocation_id"] != invocation_id:
+            raise RuntimePoolError("runtime_request_invalid", status=400)
+        row = runtime.registry.pool.require(invocation_id, payload["request_digest"])
+        runtime.grant_verifier.verify(
+            _bearer(authorization), runtime.registry.pool.grant_binding(row)
         )
+        return stream_response(runtime.registry.recover(invocation_id, payload["request_digest"]))
 
     @app.post("/internal/v1/executions/{invocation_id}/cancel")
     async def cancel(
@@ -325,38 +378,48 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         request: Request,
         authorization: str = Header(default=""),
     ) -> dict[str, str]:
-        invocation = runtime.registry.get(invocation_id)
-        if invocation is None:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "runtime_invocation_not_found", "message": "未找到执行"},
-            )
+        require_instance(request)
         payload = await request.json()
         try:
             validate_runtime_contract("CancelRequest", payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Runtime 取消请求无效") from exc
-        if (
-            payload["invocation_id"] != invocation.request["invocation_id"]
-            or payload["request_digest"] != invocation.request["request_digest"]
+        if payload["invocation_id"] != invocation_id:
+            raise RuntimePoolError("runtime_request_digest_mismatch")
+        row = runtime.registry.pool.require(invocation_id, payload["request_digest"])
+        runtime.grant_verifier.verify(
+            _bearer(authorization), runtime.registry.pool.grant_binding(row)
+        )
+        if row["state"] == "TERMINAL":
+            return {
+                "status": "outcome_unknown"
+                if row["terminal_code"] == "runtime_invocation_outcome_unknown"
+                else "already_terminal"
+            }
+        if (row["node_id"], row["instance_id"]) != (
+            runtime.registry.node_id,
+            runtime.registry.instance_id,
         ):
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "runtime_request_digest_mismatch", "message": "取消请求冲突"},
-            )
-        runtime.grant_verifier.verify(_bearer(authorization), invocation.request)
-        cancelled = invocation.cancel()
-        return {"status": "cancelled" if cancelled else "already_terminal"}
+            raise RuntimePoolError("runtime_invocation_owner_mismatch")
+        if row["cancel_requested_at"] is None:
+            raise RuntimePoolError("runtime_cancel_intent_missing")
+        invocation = runtime.registry.get(invocation_id)
+        if invocation is not None:
+            invocation.cancel()
+        return {"status": "cancel_requested"}
 
     @app.get("/internal/v1/executions/{invocation_id}/terminal")
     def terminal(
         invocation_id: str,
         authorization: str = Header(default=""),
     ) -> dict[str, Any]:
-        invocation = runtime.registry.get(invocation_id)
-        if invocation is None:
+        row = runtime.registry.pool.get(invocation_id)
+        if row is None:
             raise HTTPException(status_code=404, detail="未找到执行")
-        runtime.grant_verifier.verify(_bearer(authorization), invocation.request)
+        runtime.grant_verifier.verify(
+            _bearer(authorization), runtime.registry.pool.grant_binding(row)
+        )
+        invocation = runtime.registry.recover(invocation_id, row["request_digest"])
         result = invocation.terminal()
         if result is None:
             raise HTTPException(status_code=409, detail="执行尚未结束")
@@ -378,7 +441,10 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             raise HTTPException(status_code=400, detail="Runtime 请求目标不匹配")
         started = time.monotonic()
         try:
-            response = runtime.executor.probe(dict(payload))
+            with runtime.registry.slot.probe():
+                response = await run_in_threadpool(runtime.executor.probe, dict(payload))
+        except RuntimePoolError:
+            raise
         except Exception as exc:
             response = {
                 "protocol_version": PROTOCOL_VERSION,
@@ -415,7 +481,10 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             raise HTTPException(status_code=400, detail="Runtime 请求目标不匹配")
         started = time.monotonic()
         try:
-            response = runtime.executor.probe_draft(dict(payload))
+            with runtime.registry.slot.probe():
+                response = await run_in_threadpool(runtime.executor.probe_draft, dict(payload))
+        except RuntimePoolError:
+            raise
         except Exception as exc:
             response = {
                 "protocol_version": PROTOCOL_VERSION,
@@ -523,11 +592,18 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         database,
         ttl_seconds=int(os.getenv("PYTHON_AGENT_RUNTIME_LEDGER_TTL_SECONDS", "3600")),
     )
+    registry = PythonInvocationRegistry(
+        executor, ledger, node_id=os.environ["PYTHON_AGENT_RUNTIME_NODE_ID"]
+    )
+    validate_pool_contract(
+        "InstanceHeaders", {"node_id": registry.node_id, "instance_id": registry.instance_id}
+    )
+    registry.slot.drain_file = Path("/tmp/python-agent-runtime/draining")
     probe_token_path = Path(settings.agent_runtime.model_probe_auth_token_file)
     model_probe_token = probe_token_path.read_text(encoding="utf-8").strip()
     return PythonRuntimeDependencies(
         database=database,
-        registry=PythonInvocationRegistry(executor, ledger),
+        registry=registry,
         grant_verifier=RuntimeGrantVerifier.from_file(
             os.getenv("RUNTIME_GRANT_PUBLIC_KEY_FILE", "")
         ),

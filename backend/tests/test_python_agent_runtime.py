@@ -7,6 +7,7 @@ import inspect
 import json
 import threading
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -80,6 +81,12 @@ from app.python_runtime.service import (
     create_app,
 )
 from app.shared.database import Database, default_migrations_dir
+from app.modules.agent.infrastructure.runtime_pool_store import (
+    RuntimePoolStore,
+    RuntimePoolError,
+    database_now,
+    timestamp,
+)
 from app.shared.exceptions import (
     ExecutionPolicyExceeded,
     ExecutionTimeout,
@@ -324,6 +331,33 @@ def _database(tmp_path: Path) -> Database:
     return database
 
 
+def _prepare(database: Database, request: dict[str, Any]) -> None:
+    now = timestamp(database_now(database))
+    database.execute(
+        "insert into agent_session (id, created_at, updated_at) values ('pool-session', ?, ?) on conflict(id) do nothing",
+        (now, now),
+    )
+    database.execute(
+        "insert into agent_job (id, session_id, idempotency_key, status, created_at) values (?, 'pool-session', ?, 'RUNNING', ?) on conflict(id) do nothing",
+        (request["job_id"], request["job_id"], now),
+    )
+    RuntimePoolStore(database).prepare(
+        request,
+        attempt=0,
+        admission_deadline_at=timestamp(database_now(database) + timedelta(seconds=3600)),
+    )
+
+
+def _client(dependencies: PythonRuntimeDependencies) -> TestClient:
+    return TestClient(
+        create_app(dependencies),
+        headers={
+            "X-Runtime-Node-Id": dependencies.registry.node_id,
+            "X-Runtime-Instance-Id": dependencies.registry.instance_id,
+        },
+    )
+
+
 def _keys() -> tuple[bytes, bytes]:
     private = Ed25519PrivateKey.generate()
     return (
@@ -412,7 +446,7 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
 ) -> None:
     executor = FakePythonExecutor()
     dependencies, private_key = _dependencies(tmp_path, executor)
-    client = TestClient(create_app(dependencies))
+    client = _client(dependencies)
     request = _request()
     principal = "test-only-python-principal-token"
     headers = {
@@ -420,6 +454,7 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
         "X-MCP-Principal-Token-Ones-Mcp": principal,
     }
 
+    _prepare(dependencies.database, request)
     first = client.post("/internal/v1/executions", json=request, headers=headers)
     second = client.post("/internal/v1/executions", json=request, headers=headers)
 
@@ -464,10 +499,11 @@ def test_python_runtime_accepts_replays_and_rejects_digest_conflict_for_current_
 ) -> None:
     executor = FakePythonExecutor()
     dependencies, private_key = _dependencies(tmp_path, executor)
-    client = TestClient(create_app(dependencies))
+    client = _client(dependencies)
     request = _request_for_version(protocol_version)
     headers = {"Authorization": f"Bearer {_token(private_key, request)}"}
 
+    _prepare(dependencies.database, request)
     first = client.post("/internal/v1/executions", json=request, headers=headers)
     replay = client.post("/internal/v1/executions", json=request, headers=headers)
 
@@ -496,7 +532,7 @@ def test_python_runtime_accepts_replays_and_rejects_digest_conflict_for_current_
         headers={"Authorization": f"Bearer {_token(private_key, conflicting)}"},
     )
     assert conflict.status_code == 409
-    assert conflict.json()["code"] == "runtime_invocation_conflict"
+    assert conflict.json()["code"] == "runtime_request_digest_mismatch"
 
 
 def test_python_runtime_rejects_invalid_or_cross_release_component_identity(
@@ -504,7 +540,7 @@ def test_python_runtime_rejects_invalid_or_cross_release_component_identity(
 ) -> None:
     executor = FakePythonExecutor()
     dependencies, private_key = _dependencies(tmp_path, executor)
-    client = TestClient(create_app(dependencies))
+    client = _client(dependencies)
 
     cross_release = _current_request()
     cross_release["worker_build_identity"]["build_id"] = "different-build"
@@ -536,9 +572,10 @@ def test_python_runtime_streams_observability_before_accounting_terminal(
 ) -> None:
     executor = FakePythonExecutor()
     dependencies, private_key = _dependencies(tmp_path, executor)
-    client = TestClient(create_app(dependencies))
+    client = _client(dependencies)
     request = _current_request()
 
+    _prepare(dependencies.database, request)
     response = client.post(
         "/internal/v1/executions",
         json=request,
@@ -576,7 +613,7 @@ def test_python_runtime_rejects_missing_ones_principal_before_execution(
 ) -> None:
     executor = FakePythonExecutor()
     dependencies, private_key = _dependencies(tmp_path, executor)
-    client = TestClient(create_app(dependencies))
+    client = _client(dependencies)
     request = _request()
 
     response = client.post(
@@ -656,7 +693,8 @@ def test_python_runtime_http_keeps_dual_business_tokens_out_of_request_and_ledge
     ones_token = "ones-runtime-only-token"
     second_token = "second-runtime-only-token"
 
-    response = TestClient(create_app(dependencies)).post(
+    _prepare(dependencies.database, request)
+    response = _client(dependencies).post(
         "/internal/v1/executions",
         json=request,
         headers={
@@ -774,6 +812,7 @@ def test_python_runtime_cancel_wins_once_and_ledger_recovers_after_restart(
     registry = PythonInvocationRegistry(executor, PythonTerminalLedger(database))
     request = _request()
 
+    _prepare(database, request)
     invocation = registry.acquire(request)
     assert executor.started.wait(timeout=1)
     assert invocation.cancel() is True
@@ -798,6 +837,7 @@ def test_python_runtime_streams_tool_contract_before_executor_continues(
     database = _database(tmp_path)
     executor = FakePythonExecutor(block_until_cancelled=True)
     registry = PythonInvocationRegistry(executor, PythonTerminalLedger(database))
+    _prepare(database, _request())
     invocation = registry.acquire(_request())
 
     assert executor.started.wait(timeout=1)
@@ -813,66 +853,27 @@ def test_python_runtime_streams_tool_contract_before_executor_continues(
     assert events[-1]["payload"]["status"] == "CANCELLED"
 
 
-def test_python_runtime_restart_fails_orphan_without_replaying_model(
-    tmp_path: Path,
-) -> None:
+def test_python_runtime_other_owner_is_not_an_orphan(tmp_path: Path) -> None:
     database = _database(tmp_path)
     request = _request()
-    ledger = PythonTerminalLedger(database)
-    assert ledger.claim(request, "runtime-before-restart").status == "CLAIMED"
-    started = {
-        "protocol_version": request["protocol_version"],
-        "invocation_id": request["invocation_id"],
-        "request_digest": request["request_digest"],
-        "sequence": 1,
-        "event_type": "execution_started",
-        "timestamp": "2026-08-11T00:00:00Z",
-        "payload": _provenance(request),
-    }
-    ledger.append(request, started)
+    _prepare(database, request)
+    pool = RuntimePoolStore(database)
+    assert pool.admit(request["invocation_id"], request["request_digest"], "a", "original-boot")
     replacement = FakePythonExecutor()
-
-    recovered = PythonInvocationRegistry(
-        replacement,
-        ledger,
-        owner_instance_id="runtime-after-restart",
-    ).acquire(request)
-    events = recovered.events()
-
-    assert replacement.requests == []
-    assert len(events) == 3
-    assert events[0] == started
-    assert events[1]["event_type"] == "tool_contract_observed"
-    assert events[1]["payload"]["status"] == "MATCH"
-    assert events[2]["event_type"] == "terminal"
-    assert events[2]["payload"]["status"] == "FAILED"
-    assert events[2]["payload"]["failure"] == {
-        "code": "runtime_orphaned_invocation",
-        "retry_class": "NEVER",
-        "safe_message": "Agent Runtime 在执行中重启；为避免重复模型调用，本次执行已失败",
-    }
-    replayed = PythonInvocationRegistry(
-        replacement,
-        ledger,
-        owner_instance_id="runtime-later-restart",
-    ).acquire(request)
-    assert replayed.events() == events
+    registry = PythonInvocationRegistry(replacement, PythonTerminalLedger(database), node_id="b")
+    with pytest.raises(RuntimePoolError, match="owner_mismatch"):
+        registry.acquire(request)
     assert replacement.requests == []
     assert database.execute_one("select count(*) as count from agent_runtime_terminal_ledger") == {
-        "count": 1
-    }
-    assert database.execute_one("select count(*) as count from agent_runtime_invocation_claim") == {
         "count": 0
     }
-    assert database.execute_one("select count(*) as count from agent_runtime_invocation_event") == {
-        "count": 0
-    }
+    database.close()
 
 
 def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -> None:
     executor = FakePythonExecutor()
     dependencies, _private_key = _dependencies(tmp_path, executor)
-    client = TestClient(create_app(dependencies))
+    client = _client(dependencies)
     probe = {
         "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
         "runtime_kind": "python-v1",
@@ -983,7 +984,7 @@ def test_python_runtime_model_probe_accepts_only_current_request(
 ) -> None:
     executor = FakePythonExecutor()
     dependencies, _private_key = _dependencies(tmp_path, executor)
-    client = TestClient(create_app(dependencies))
+    client = _client(dependencies)
     probe = {
         "protocol_version": "1.5",
         "runtime_kind": "python-v1",
@@ -3712,3 +3713,62 @@ def test_python_runtime_draft_probe_accepts_allowlisted_internal_http_gateway(
 
     assert resolved.binding.base_url == "http://aikeyhub.gateway.mdzy/api"
     assert resolved.api_key == "fixture-python-draft-gateway-key"
+
+
+def test_pool_http_rejects_stale_instance_and_nonminimal_recovery(tmp_path: Path) -> None:
+    executor = FakePythonExecutor()
+    dependencies, private_key = _dependencies(tmp_path, executor)
+    client = _client(dependencies)
+    request = _request()
+    _prepare(dependencies.database, request)
+    headers = {
+        "Authorization": f"Bearer {_token(private_key, request)}",
+        "X-MCP-Principal-Token-Ones-Mcp": "synthetic-principal",
+    }
+    for override in (
+        {"X-Runtime-Node-Id": "wrong-node"},
+        {"X-Runtime-Instance-Id": "00000000-0000-4000-8000-000000000000"},
+    ):
+        response = client.post(
+            "/internal/v1/executions", json=request, headers={**headers, **override}
+        )
+        assert (
+            response.status_code == 409 and response.json()["code"] == "runtime_instance_mismatch"
+        )
+    body = {key: request[key] for key in ("invocation_id", "request_digest")}
+    response = client.post(
+        f"/internal/v1/executions/{request['invocation_id']}/recover",
+        json={**body, "url": "http://untrusted.invalid"},
+        headers=headers,
+    )
+    assert response.status_code == 400 and response.json()["code"] == "runtime_request_invalid"
+    assert executor.requests == []
+
+
+def test_pool_http_recovery_after_body_cleanup_never_reexecutes(tmp_path: Path) -> None:
+    executor = FakePythonExecutor()
+    dependencies, private_key = _dependencies(tmp_path, executor)
+    client = _client(dependencies)
+    request = _request()
+    _prepare(dependencies.database, request)
+    headers = {
+        "Authorization": f"Bearer {_token(private_key, request)}",
+        "X-MCP-Principal-Token-Ones-Mcp": "synthetic-principal",
+    }
+    assert client.post("/internal/v1/executions", json=request, headers=headers).status_code == 200
+    # A full-request replay must not retain a completed invocation in memory.
+    assert client.post("/internal/v1/executions", json=request, headers=headers).status_code == 200
+    dependencies.database.execute(
+        "update agent_job set status = 'SUCCEEDED' where id = ?", (request["job_id"],)
+    )
+    assert dependencies.registry.pool.prune_body(request["invocation_id"])
+    body = {key: request[key] for key in ("invocation_id", "request_digest")}
+    response = client.post(
+        f"/internal/v1/executions/{request['invocation_id']}/recover",
+        json=body,
+        headers={"Authorization": headers["Authorization"]},
+    )
+    assert response.status_code == 410 and response.json()["code"] == "runtime_recovery_expired"
+    replay = client.post("/internal/v1/executions", json=request, headers=headers)
+    assert replay.status_code == 410 and replay.json()["code"] == "runtime_recovery_expired"
+    assert len(executor.requests) == 1

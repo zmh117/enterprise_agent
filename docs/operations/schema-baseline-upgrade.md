@@ -37,7 +37,7 @@ docker compose stop api-server dingtalk-runtime admin-web \
 docker compose stop \
   agent-worker job-dispatch-worker delivery-dispatch-worker webhook-worker \
   channel-dispatch-worker file-worker file-processing-worker file-processing-worker-2 external-action-worker \
-  python-agent-runtime tool-mcp ones-mcp dingtalk-mcp file-service docling-serve
+  python-agent-runtime-a python-agent-runtime-b tool-mcp ones-mcp dingtalk-mcp file-service docling-serve
 ```
 
 保持 PostgreSQL 运行，使用基础设施脚本创建逻辑备份：
@@ -109,7 +109,7 @@ docker compose logs migrator
 
 ```bash
 docker compose up -d \
-  tool-mcp ones-mcp file-service python-agent-runtime \
+  tool-mcp ones-mcp file-service python-agent-runtime-a python-agent-runtime-b \
   api-server agent-worker job-dispatch-worker delivery-dispatch-worker \
   webhook-worker channel-dispatch-worker file-worker \
   docling-serve file-processing-worker dingtalk-runtime admin-web

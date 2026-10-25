@@ -483,3 +483,44 @@ def test_debug_create_requires_current_business_application_access() -> None:
 
     assert response.status_code == 403
     assert job_count == 0
+
+
+def test_cancel_requires_manage_and_records_durable_idempotent_intent() -> None:
+    runtime = _container()
+    selection = prepare_debug_application_access(
+        runtime, application_code="cancel-application", role_code="cancel-role"
+    )
+    runtime.identity_repository.create_user(
+        username="cancel-no-capability", display_name="无管理能力"
+    )
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
+        created = client.post(
+            "/api/agent/jobs",
+            headers=_admin_headers(),
+            json={"message": "合成取消测试", **_selection_payload(selection)},
+        )
+        assert created.status_code == 200
+        job_id = created.json()["job_id"]
+        path = f"/api/agent/jobs/{job_id}/cancel"
+        assert client.post(path).status_code == 401
+        assert (
+            client.post(path, headers={"x-admin-user-id": "cancel-no-capability"}).status_code
+            == 403
+        )
+        assert runtime.agent_repository.get_job(job_id).cancel_requested_at is None
+        first = client.post(path, headers=_admin_headers())
+        assert first.status_code == 200 and first.json()["status"] == "cancelled"
+        assert client.post(path, headers=_admin_headers()).json()["status"] == "already_terminal"
+        assert (
+            client.post("/api/agent/jobs/unknown-job/cancel", headers=_admin_headers()).status_code
+            == 404
+        )
+        row = runtime.database.execute_one(
+            "select status,last_error_code,cancel_requested_by from agent_job where id = ?",
+            (job_id,),
+        )
+        assert row == {
+            "status": "FAILED",
+            "last_error_code": "runtime_cancelled",
+            "cancel_requested_by": ADMIN_ID,
+        }

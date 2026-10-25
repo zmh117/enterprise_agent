@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import logging
 from dataclasses import dataclass, field, replace
 
@@ -138,6 +139,7 @@ class OnesIdentitySettings:
 @dataclass(frozen=True)
 class AgentRuntimeSettings:
     python_base_url: str = ""
+    python_nodes: tuple[tuple[str, str], ...] = ()
     python_allowed_hosts: tuple[str, ...] = ()
     grant_private_key_file: str = ""
     model_probe_auth_token_file: str = ""
@@ -426,6 +428,7 @@ def load_settings() -> Settings:
         debug_agent_user_id=os.getenv("DEBUG_AGENT_USER_ID", "local-user"),
         agent_runtime=AgentRuntimeSettings(
             python_base_url=os.getenv("PYTHON_AGENT_RUNTIME_URL", ""),
+            python_nodes=_runtime_nodes(os.getenv("PYTHON_AGENT_RUNTIME_NODES", "")),
             python_allowed_hosts=_csv_tuple(os.getenv("PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS", "")),
             grant_private_key_file=os.getenv("RUNTIME_GRANT_PRIVATE_KEY_FILE", ""),
             model_probe_auth_token_file=os.getenv("MODEL_PROBE_AUTH_TOKEN_FILE", ""),
@@ -778,3 +781,17 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         source="programmatic-settings",
     )
     return replace(settings, feature_configuration=synchronized)
+
+
+def _runtime_nodes(value: str) -> tuple[tuple[str, str], ...]:
+    if not value.strip():
+        return ()
+    members = []
+    for item in value.split(","):
+        node, separator, url = item.strip().partition("=")
+        if not separator or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", node):
+            raise ValueError("Runtime member mapping is invalid")
+        members.append((node, url))
+    if not 1 <= len(members) <= 16 or len({node for node, _url in members}) != len(members):
+        raise ValueError("Runtime member count or identity is invalid")
+    return tuple(members)

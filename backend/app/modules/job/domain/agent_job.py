@@ -50,6 +50,11 @@ class AgentJob:
     status: JobStatus
     retry_count: int
     max_retry_count: int
+    locked_by: str = ""
+    worker_claim_version: int = 0
+    worker_lease_until: str | None = None
+    admission_deadline_at: str | None = None
+    cancel_requested_at: str | None = None
     result: str | None = None
     error_message: str | None = None
     last_error_code: str = ""

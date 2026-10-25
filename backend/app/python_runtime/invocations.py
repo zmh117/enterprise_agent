@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import threading
 import uuid
 from collections.abc import Iterator, Mapping
@@ -13,6 +14,14 @@ from app.modules.agent.infrastructure.runtime_protocol import validate_runtime_c
 from app.shared.build_identity import BuildIdentity, build_identity_from_environment
 from app.shared.database import Database
 
+from app.modules.agent.infrastructure.runtime_pool_store import (
+    RuntimePoolStore,
+    RuntimePoolError,
+    database_now,
+    timestamp,
+)
+
+from .execution_slot import ExecutionSlot, ExecutionWatchdog
 from .claude_client import claude_cli_version, claude_sdk_version
 from .executor import PythonExecutionOutcome, agent_request_from_runtime_request
 from .run_audit import encode_audit_chunks
@@ -82,20 +91,15 @@ class PythonTerminalLedger:
     ) -> None:
         self.database = database
         self.ttl_seconds = ttl_seconds
+        self.pool = RuntimePoolStore(database)
+        self.node_id = ""
+        self.instance_id = ""
 
     def load(self, invocation_id: str) -> PersistedTerminal | None:
-        now = datetime.now(UTC).isoformat()
-        self.database.execute(
-            "delete from agent_runtime_terminal_ledger where expires_at < ?",
-            (now,),
-        )
         row = self.database.execute_one(
-            """
-            select request_digest, events_json
-              from agent_runtime_terminal_ledger
-             where invocation_id = ? and expires_at >= ?
-            """,
-            (invocation_id, now),
+            "select request_digest, events_json from agent_runtime_terminal_ledger "
+            "where invocation_id = ?",
+            (invocation_id,),
         )
         if not row:
             return None
@@ -115,79 +119,17 @@ class PythonTerminalLedger:
             events=events,
         )
 
-    def claim(self, request: dict[str, Any], owner_instance_id: str) -> PersistedClaim:
-        now = datetime.now(UTC)
-        self.database.execute(
-            "delete from agent_runtime_invocation_claim where expires_at < ?",
-            (now.isoformat(),),
-        )
-        self.database.execute(
-            """
-            insert into agent_runtime_invocation_claim
-              (invocation_id, request_digest, runtime_kind, owner_instance_id,
-               claimed_at, expires_at)
-            values (?, ?, ?, ?, ?, ?)
-            on conflict(invocation_id) do nothing
-            """,
-            (
+    def append(self, request: dict[str, Any], event: dict[str, Any]) -> None:
+        with self.database.unit_of_work():
+            self.pool.require_owner(
                 request["invocation_id"],
                 request["request_digest"],
-                request["runtime_kind"],
-                owner_instance_id,
-                now.isoformat(),
-                (now + timedelta(seconds=self.ttl_seconds)).isoformat(),
-            ),
-        )
-        persisted = self.database.execute_one(
-            """
-            select request_digest, runtime_kind, owner_instance_id
-              from agent_runtime_invocation_claim
-             where invocation_id = ?
-            """,
-            (request["invocation_id"],),
-        )
-        if (
-            not persisted
-            or persisted["request_digest"] != request["request_digest"]
-            or persisted["runtime_kind"] != request["runtime_kind"]
-        ):
-            raise TerminalLedgerConflictError("Persisted invocation claim conflicts")
-        rows = self.database.execute(
-            """
-            select request_digest, sequence, event_json
-              from agent_runtime_invocation_event
-             where invocation_id = ?
-             order by sequence
-            """,
-            (request["invocation_id"],),
-        )
-        events: list[dict[str, Any]] = []
-        try:
-            for index, row in enumerate(rows, start=1):
-                event = json.loads(str(row["event_json"]))
-                validate_runtime_contract("RuntimeEvent", event)
-                if (
-                    row["request_digest"] != request["request_digest"]
-                    or int(row["sequence"]) != index
-                    or event["event_type"] == "terminal"
-                    or event["invocation_id"] != request["invocation_id"]
-                    or event["request_digest"] != request["request_digest"]
-                    or int(event["sequence"]) != index
-                ):
-                    raise ValueError("Invocation event prefix conflicts")
-                events.append(dict(event))
-        except (TypeError, ValueError) as exc:
-            raise TerminalLedgerConflictError(
-                "Persisted invocation event prefix conflicts"
-            ) from exc
-        return PersistedClaim(
-            status=(
-                "CLAIMED" if persisted["owner_instance_id"] == owner_instance_id else "ORPHANED"
-            ),
-            events=tuple(events),
-        )
+                self.node_id,
+                self.instance_id,
+            )
+            self._append(request, event)
 
-    def append(self, request: dict[str, Any], event: dict[str, Any]) -> None:
+    def _append(self, request: dict[str, Any], event: dict[str, Any]) -> None:
         validate_runtime_contract("RuntimeEvent", event)
         if (
             event["event_type"] == "terminal"
@@ -230,6 +172,19 @@ class PythonTerminalLedger:
             raise TerminalLedgerConflictError("Persisted invocation event conflicts")
 
     def save(self, request: dict[str, Any], events: tuple[dict[str, Any], ...]) -> None:
+        with self.database.unit_of_work():
+            terminal = events[-1]["payload"]
+            code = str(terminal.get("failure", {}).get("code") or "runtime_succeeded")
+            self.pool.finish(
+                request["invocation_id"],
+                request["request_digest"],
+                self.node_id,
+                self.instance_id,
+                code,
+            )
+            self._save(request, events)
+
+    def _save(self, request: dict[str, Any], events: tuple[dict[str, Any], ...]) -> None:
         if not events or events[-1]["event_type"] != "terminal":
             raise TerminalLedgerConflictError("Terminal event missing")
         for event in events:
@@ -265,20 +220,6 @@ class PythonTerminalLedger:
             or persisted["events_json"] != encoded
         ):
             raise TerminalLedgerConflictError("Persisted terminal conflicts")
-        self.database.execute(
-            """
-            delete from agent_runtime_invocation_claim
-             where invocation_id = ? and request_digest = ?
-            """,
-            (request["invocation_id"], request["request_digest"]),
-        )
-        self.database.execute(
-            """
-            delete from agent_runtime_invocation_event
-             where invocation_id = ? and request_digest = ?
-            """,
-            (request["invocation_id"], request["request_digest"]),
-        )
 
 
 class RuntimeInvocation:
@@ -297,6 +238,7 @@ class RuntimeInvocation:
             persisted_events and persisted_events[-1].get("event_type") == "terminal"
         )
         self._persisted = self._terminal
+        self._stream_failed = False
         self._condition = threading.Condition()
 
     @property
@@ -342,6 +284,11 @@ class RuntimeInvocation:
             self._persisted = True
             self._condition.notify_all()
 
+    def fail_stream(self) -> None:
+        with self._condition:
+            self._stream_failed = True
+            self._condition.notify_all()
+
     def events(self) -> tuple[dict[str, Any], ...]:
         with self._condition:
             return tuple(self._events)
@@ -356,8 +303,12 @@ class RuntimeInvocation:
         offset = 0
         while True:
             with self._condition:
-                while offset >= len(self._events) and not self._terminal:
+                while (
+                    offset >= len(self._events) and not self._terminal and not self._stream_failed
+                ):
                     self._condition.wait(timeout=1.0)
+                if self._stream_failed:
+                    raise RuntimePoolError("runtime_pool_unavailable", status=503)
                 while self._terminal and not self._persisted:
                     self._condition.wait(timeout=1.0)
                 pending = self._events[offset:]
@@ -376,10 +327,17 @@ class PythonInvocationRegistry:
         ledger: PythonTerminalLedger,
         *,
         owner_instance_id: str | None = None,
+        node_id: str = "runtime-local",
     ) -> None:
         self._executor = executor
         self._ledger = ledger
         self._owner_instance_id = owner_instance_id or str(uuid.uuid4())
+        self.node_id = node_id
+        self.instance_id = self._owner_instance_id
+        self.slot = ExecutionSlot()
+        self._ledger.node_id = node_id
+        self._ledger.instance_id = self.instance_id
+        self.pool = ledger.pool
         self._invocations: dict[str, RuntimeInvocation] = {}
         self._lock = threading.Lock()
 
@@ -390,8 +348,9 @@ class PythonInvocationRegistry:
     ) -> RuntimeInvocation:
         invocation_id = str(request["invocation_id"])
         with self._lock:
+            row = self.pool.require(invocation_id, request["request_digest"])
             existing = self._invocations.get(invocation_id)
-            if existing:
+            if existing and row["state"] == "RUNNING":
                 if existing.request["request_digest"] != request["request_digest"]:
                     raise InvocationConflictError("Invocation digest conflict")
                 return existing
@@ -404,59 +363,89 @@ class PythonInvocationRegistry:
                     secret_context=secret_context,
                     persisted_events=persisted.events,
                 )
-                self._invocations[invocation_id] = invocation
                 return invocation
-            claim = self._ledger.claim(request, self._owner_instance_id)
-            if claim.status == "ORPHANED":
-                invocation = RuntimeInvocation(
-                    request,
-                    secret_context=secret_context,
-                    persisted_events=claim.events,
-                )
+            if row["state"] == "TERMINAL":
+                if row["terminal_code"] in {
+                    "runtime_cancelled",
+                    "runtime_admission_timeout",
+                    "runtime_invocation_outcome_unknown",
+                }:
+                    raise RuntimePoolError(str(row["terminal_code"]))
+                raise RuntimePoolError("runtime_recovery_expired", status=410)
+            if row["state"] == "RUNNING":
+                raise RuntimePoolError("runtime_invocation_owner_mismatch")
+            self.slot.acquire()
+            try:
+                if not self.pool.admit(
+                    invocation_id, request["request_digest"], self.node_id, self.instance_id
+                ):
+                    raise RuntimePoolError("runtime_invocation_owner_mismatch")
+                invocation = RuntimeInvocation(request, secret_context=secret_context)
                 self._invocations[invocation_id] = invocation
-                self._fail_orphaned(invocation)
-                return invocation
-            invocation = RuntimeInvocation(request, secret_context=secret_context)
-            self._invocations[invocation_id] = invocation
-            threading.Thread(
-                target=self._run,
-                args=(invocation,),
-                name=f"python-runtime-{invocation_id[:48]}",
-                daemon=True,
-            ).start()
+                threading.Thread(
+                    target=self._run_owned,
+                    args=(invocation,),
+                    name=f"python-runtime-{invocation_id[:48]}",
+                    daemon=True,
+                ).start()
+            except BaseException:
+                self.slot.release()
+                raise
             return invocation
 
-    def _fail_orphaned(self, invocation: RuntimeInvocation) -> None:
-        request = invocation.request
-        if not any(
-            event.get("event_type") == "tool_contract_observed" for event in invocation.events()
-        ):
-            self._persist_and_emit(
-                invocation,
-                "tool_contract_observed",
-                self._fallback_tool_contract_observation(request),
+    def recover(self, invocation_id: str, digest: str) -> RuntimeInvocation:
+        row = self.pool.require(invocation_id, digest)
+        existing = self.get(invocation_id)
+        if existing and row["state"] == "RUNNING":
+            return existing
+        persisted = self._ledger.load(invocation_id)
+        if persisted:
+            # Only binding metadata is needed for replay; no credentials or
+            # current business context are reconstructed.
+            return RuntimeInvocation(
+                self.pool.grant_binding(row), persisted_events=persisted.events
             )
-        terminal = {
-            "protocol_version": request["protocol_version"],
-            "invocation_id": request["invocation_id"],
-            "request_digest": request["request_digest"],
-            "last_sequence": len(invocation.events()) + 1,
-            "status": "FAILED",
-            "failure": {
-                "code": "runtime_orphaned_invocation",
-                "retry_class": "NEVER",
-                "safe_message": ("Agent Runtime 在执行中重启；为避免重复模型调用，本次执行已失败"),
-            },
-            "usage": _usage_for_protocol(request, {"input_tokens": 0, "output_tokens": 0}),
-            "accounting": _unavailable_accounting(),
-            "runtime_provenance": _fallback_provenance(
-                request,
-                self._runtime_build_identity(),
+        if row["state"] == "TERMINAL":
+            raise RuntimePoolError("runtime_recovery_expired", status=410)
+        raise RuntimePoolError("runtime_invocation_owner_mismatch")
+
+    def _run_owned(self, invocation: RuntimeInvocation) -> None:
+        request = invocation.request
+        watchdog = ExecutionWatchdog(
+            invocation.cancel_event,
+            lambda: self.pool.renew(
+                request["invocation_id"], request["request_digest"], self.node_id, self.instance_id
             ),
-        }
-        invocation.commit_event(invocation.prepare_event("terminal", terminal))
-        self._ledger.save(request, invocation.events())
-        invocation.mark_persisted()
+            remaining_seconds=float(request["limits"]["timeout_seconds"]),
+        )
+        watchdog.start()
+        try:
+            row = self.pool.require(request["invocation_id"], request["request_digest"])
+            remaining = (
+                datetime.fromisoformat(row["execution_deadline_at"])
+                - database_now(self.pool.database)
+            ).total_seconds()
+            watchdog.deadline = min(watchdog.deadline, time.monotonic() + max(0.0, remaining))
+            self._run(invocation)
+        except Exception:
+            invocation.fail_stream()
+        finally:
+            watchdog.stopped.set()
+            # _run returns only after the synchronous SDK wrapper and its
+            # subprocess cleanup returned. An unresponsive SDK is contained by
+            # the independent watchdog, never by releasing this semaphore.
+            try:
+                self.pool.quiesce(request["invocation_id"], self.node_id, self.instance_id)
+            except Exception:
+                # SDK cleanup finished but stop evidence cannot commit. Fail
+                # closed; a fresh fixed-node instance will prove containment.
+                self.slot.draining = True
+                invocation.fail_stream()
+                watchdog.terminate(70)
+                return
+            self.slot.release()
+            with self._lock:
+                self._invocations.pop(request["invocation_id"], None)
 
     def get(self, invocation_id: str) -> RuntimeInvocation | None:
         with self._lock:
@@ -503,6 +492,7 @@ class PythonInvocationRegistry:
                     "safe_message": "Python Agent Runtime 暂时不可用",
                 },
             )
+        self.pool.quiesce(request["invocation_id"], self.node_id, self.instance_id)
         if observed_tool_contract is None:
             observation = (
                 dict(outcome.tool_contract_observation)
@@ -571,8 +561,31 @@ class PythonInvocationRegistry:
                 "retry_class": "TRANSIENT",
                 "safe_message": "Python Agent Runtime 暂时不可用",
             }
-        invocation.commit_event(invocation.prepare_event("terminal", terminal))
-        self._ledger.save(request, invocation.events())
+        self._commit_terminal(invocation, terminal)
+
+    def _commit_terminal(self, invocation: RuntimeInvocation, terminal: dict[str, Any]) -> None:
+        request = invocation.request
+        with self.pool.database.unit_of_work():
+            row = self.pool.require(request["invocation_id"], request["request_digest"], lock=True)
+            if row["cancel_requested_at"] is not None:
+                terminal.pop("final_answer", None)
+                terminal["status"] = "FAILED"
+                terminal["failure"] = {
+                    "code": "runtime_cancelled",
+                    "retry_class": "NEVER",
+                    "safe_message": "Agent 执行已取消",
+                }
+            elif row["execution_deadline_at"] <= timestamp(database_now(self.pool.database)):
+                terminal.pop("final_answer", None)
+                terminal["status"] = "TIMEOUT"
+                terminal["failure"] = {
+                    "code": "runtime_timeout",
+                    "retry_class": "NEVER",
+                    "safe_message": "Agent 执行超时",
+                }
+            event = invocation.prepare_event("terminal", terminal)
+            self._ledger.save(request, (*invocation.events(), event))
+        invocation.commit_event(event)
         invocation.mark_persisted()
 
     def _runtime_build_identity(self) -> BuildIdentity:

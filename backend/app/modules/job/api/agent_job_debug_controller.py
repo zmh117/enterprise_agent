@@ -16,6 +16,7 @@ from app.modules.identity.api.dependencies import (
 )
 from app.shared.exceptions import AppError, NotFound
 from app.shared.logging import new_correlation_id
+from app.modules.job.application.cancel_agent_job import cancel_agent_job
 from app.modules.job.infrastructure.execution_audit_repository import (
     ExecutionAuditRepository,
 )
@@ -36,6 +37,35 @@ class DebugJobCreateRequest(BaseModel):
 
 def build_agent_job_debug_router() -> Any:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/agent/jobs", tags=["agent-jobs"])
+
+    @router.post("/{job_id}/cancel")
+    def cancel_job(request: Request, job_id: str) -> dict[str, str]:
+        container = _container(request)
+        principal = require_action(
+            request,
+            resource_type="agent_job",
+            resource_code="*",
+            action="manage",
+            csrf=True,
+        )
+        try:
+            container.debug_job_access_service.require_job_read(
+                user_id=principal.user_id, job_id=job_id
+            )
+            status = cancel_agent_job(container.database, job_id, principal.user_id)
+            container.audit_service.record(
+                "job.cancel.requested",
+                status="SUCCEEDED",
+                summary="Job cancellation requested",
+                job_id=job_id,
+                actor_id=principal.user_id,
+                payload={"status": status},
+            )
+            return {"job_id": job_id, "status": status}
+        except NotFound as exc:
+            raise HTTPException(status_code=404, detail="未找到任务") from exc
+        except AppError as exc:
+            raise handle_exception(exc) from exc
 
     @router.post("")
     async def create_job(

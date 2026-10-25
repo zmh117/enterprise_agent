@@ -165,6 +165,7 @@ contract = [
   "test_platform_config.py",
   "test_platform_secret_security.py",
   "test_python_agent_runtime.py",
+  "test_runtime_replica_pool.py",
   "test_python_file_transfer.py",
   "test_python_file_transfer_http.py",
   "test_python_job_sandbox.py",
@@ -201,6 +202,7 @@ contract = [
 ]
 
 integration = [
+  "test_runtime_replica_pool_postgres.py",
   "test_knowledge_database_recovery_postgres.py",
   "test_knowledge_container_acceptance.py",
   "test_knowledge_database_policy_postgres.py",

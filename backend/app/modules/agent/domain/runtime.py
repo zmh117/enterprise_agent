@@ -74,6 +74,8 @@ class AgentRunRequest:
     project_code: str
     context: AgentExecutionContext
     invocation_id: str = ""
+    worker_id: str = ""
+    worker_claim_version: int = 0
 
 
 @dataclass(frozen=True)
