@@ -11,6 +11,7 @@ from app.modules.knowledge.domain.chunking import (
     DEFAULT_PROFILE,
     ChunkProfile,
     PreparedChunks,
+    validate_chunks,
 )
 from app.modules.knowledge.domain.normalization import ExportValidationError, identifier
 from app.modules.knowledge.infrastructure.storage import insert, source_lock, table
@@ -57,9 +58,9 @@ class ChunkRepository:
         self, base_id: str, source_id: str, *, metadata_only: bool = False
     ) -> Iterator[dict[str, Any]]:
         cursor = ""
-        columns = "d.id as document_id,r.id as revision_id,r.content_hash"
+        columns = "d.id as document_id,r.id as revision_id,r.content_hash,d.document_kind"
         if not metadata_only:
-            columns += ",d.document_kind,r.title,r.body_text,r.source_project_name,r.normalizer_version,r.attributes,r.completeness"
+            columns += ",r.title,r.body_text,r.source_project_name,r.normalizer_version,r.attributes,r.completeness"
         while True:
             rows = self.database.execute(
                 f"select {columns} {self._query()} and d.id>? order by d.id limit 100",
@@ -73,6 +74,18 @@ class ChunkRepository:
                     row["completeness"] = json_value(row["completeness"])
                 yield row
             cursor = rows[-1]["document_id"]
+
+    def load_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        row = self.database.execute_one(
+            "select title,body_text,source_project_name,normalizer_version,attributes,completeness "
+            f"from {table(self.database, 'document_revision')} where id=? and document_id=? and content_hash=?",
+            (record["revision_id"], record["document_id"], record["content_hash"]),
+        )
+        if row is None:
+            raise ExportValidationError("knowledge_chunk_source_changed")
+        for field in ("attributes", "completeness"):
+            row[field] = json_value(row[field])
+        return {**record, **row}
 
     def _validate_existing(
         self, found: dict[str, Any], record: dict[str, Any], prepared: PreparedChunks
@@ -97,6 +110,41 @@ class ChunkRepository:
             or chunks != list(prepared.chunks)
         ):
             raise ExportValidationError("knowledge_chunk_stored_result_conflict")
+
+    def reuse(self, record: dict[str, Any]) -> PreparedChunks | None:
+        set_id = stable_id("chunk-set", record["revision_id"], self.profile.fingerprint)
+        found = self.database.execute_one(
+            f"select * from {table(self.database, 'document_chunk_set')} where id=?", (set_id,)
+        )
+        if found is None:
+            return None
+        rows = self.database.execute(
+            f"select id,{','.join(CHUNK_VALUE_COLUMNS)} from {table(self.database, 'document_chunk')} "
+            "where chunk_set_id=? order by ordinal",
+            (set_id,),
+        )
+        chunks = []
+        for ordinal, row in enumerate(rows):
+            if row.pop("id") != stable_id("chunk", set_id, str(ordinal)):
+                raise ExportValidationError("knowledge_chunk_stored_result_conflict")
+            row["quality_flags"] = json_value(row["quality_flags"])
+            chunks.append(row)
+        prepared = PreparedChunks(
+            json_value(found["normalized_fields"]), json_value(found["quality"]), tuple(chunks)
+        )
+        if (
+            found["document_id"] != record["document_id"]
+            or found["document_revision_id"] != record["revision_id"]
+            or found["source_content_hash"] != record["content_hash"]
+            or found["profile_version"] != self.profile.version
+            or found["profile_hash"] != self.profile.fingerprint
+            or json_value(found["profile_config"]) != asdict(self.profile)
+            or found["output_hash"] != prepared.output_hash
+            or found["chunk_count"] != len(chunks)
+        ):
+            raise ExportValidationError("knowledge_chunk_stored_result_conflict")
+        validate_chunks(prepared, self.profile)
+        return prepared
 
     def save(
         self, record: dict[str, Any], prepared: PreparedChunks, base_id: str, source_id: str

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 import json
 import os
 from pathlib import Path
@@ -18,18 +18,14 @@ from app.cli.knowledge_database_recovery import (
     stop_signals,
 )
 from app.bootstrap import build_api_container
-from app.modules.knowledge.application.managed_sync_activation import ManagedSyncActivation
-from app.modules.knowledge.application.managed_sync_pipeline import ManagedSyncPipeline
+from app.modules.knowledge.application.incremental_sync import IncrementalSyncPipeline
 from app.modules.knowledge.application.ones_collection_service import KnowledgeOnesCollectionService
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.domain.identity import stable_id
 from app.modules.knowledge.domain.normalization import ExportValidationError
 from app.modules.knowledge.domain.vector_contract import VectorError
-from app.modules.knowledge.infrastructure.candidate_corpus import CandidateVectorRepository
-from app.modules.knowledge.infrastructure.managed_activation_repository import (
-    ManagedActivationRepository,
-)
-from app.modules.knowledge.infrastructure.managed_sync_steps import ManagedSyncSteps
+from app.modules.knowledge.infrastructure.incremental_repository import IncrementalSyncRepository
+from app.modules.knowledge.infrastructure.incremental_steps import IncrementalSyncSteps
 from app.modules.knowledge.infrastructure.ones_collection_factory import (
     ManagedOnesCollectionProviderFactory,
 )
@@ -52,12 +48,13 @@ def emit(event: str, value: dict[str, Any]) -> None:
 
 
 def execute_pipeline(
-    repository: ManagedActivationRepository,
+    repository: IncrementalSyncRepository,
     binding_id: str,
-    pipeline: ManagedSyncPipeline,
+    pipeline: IncrementalSyncPipeline,
     *,
     scheduled: bool,
     checkpoint: RecoveryCheckpoint | None = None,
+    backfill: tuple[date, date] | None = None,
 ) -> dict[str, Any] | None:
     """整轮只允许一个写者；拿到锁后重查时钟，合并同一到期 tick。"""
     with repository.source_lock(stable_id("sync-worker", binding_id)):
@@ -68,11 +65,14 @@ def execute_pipeline(
         ):
             return None
         if checkpoint is None:
+            if backfill:
+                return pipeline.run_once(binding_id, backfill=backfill)
             return pipeline.run_once(binding_id)
         return pipeline.run_once(
             binding_id,
             resume_run_id=checkpoint.run_id,
             on_run_selected=checkpoint.select_run,
+            **({"backfill": backfill} if backfill else {}),
         )
 
 
@@ -87,10 +87,11 @@ def _execute(  # noqa: C901, PLR0915
         SchemaHeadValidator(database, default_migrations_dir()).require_current()
         checkpoint.database_verified = True
         binding_id = stable_id("sync-binding", args.binding_code)
-        repo = ManagedActivationRepository(database)
-        if args.mode == "status":
+        repo = IncrementalSyncRepository(database)
+        if args.mode in {"status", "health"}:
             binding = repo.binding(binding_id)
             active = repo.active_run(binding_id)
+            health = repo.health(binding_id, datetime.now(UTC))
             emit(
                 "knowledge_sync_status",
                 {
@@ -100,27 +101,18 @@ def _execute(  # noqa: C901, PLR0915
                     "interval_seconds": binding["interval_seconds"],
                     "next_run_at": binding["next_run_at"],
                     "active": repo.summary(active["id"]) if active else None,
+                    "health": health,
                 },
             )
-            return 0
+            return int(args.mode == "health" and not health["healthy"])
         database.close()
         runtime = build_api_container(settings, seed=False)
         database = runtime.database
         if runtime.knowledge_services is None:
             raise ExportValidationError("knowledge_sync_verifier_unavailable")
-        repo = ManagedActivationRepository(database)
+        repo = IncrementalSyncRepository(database)
         checkpoint.check_binding(repo.binding(binding_id))
         embedding, qdrant = EmbeddingClient(), QdrantClient()
-        resources = runtime.knowledge_services.resources()
-        resources.embedding, resources.qdrant = embedding, qdrant
-        steps = ManagedSyncSteps(
-            database,
-            embedding,
-            qdrant,
-            args.capacity_path,
-        )
-        steps.capacity.check(0)
-        steps.cancelled = stop.is_set
         secret_provider = EncryptedDbSecretProvider(
             PlatformConfigRepository(database), master_key=settings.app_config_master_key
         )
@@ -130,7 +122,9 @@ def _execute(  # noqa: C901, PLR0915
             app_env=settings.environment,
             allow_insecure_local=settings.ones_mcp.allow_insecure_local,
         )
-        collector = KnowledgeOnesCollectionService(repo, provider_factory, cancelled=stop.is_set)
+        collector = KnowledgeOnesCollectionService(
+            repo, provider_factory, cancelled=stop.is_set, emit=emit
+        )
 
         def check_active() -> None:
             if stop.is_set():
@@ -143,6 +137,11 @@ def _execute(  # noqa: C901, PLR0915
                 code,
                 resume_run_id=checkpoint.run_id,
                 on_run_selected=checkpoint.select_run,
+                **(
+                    {"first": args.from_date, "through": args.through_date}
+                    if args.from_date
+                    else {}
+                ),
                 on_run_started=(
                     lambda run_id: (
                         repo.scheduled_started(code, run_id, datetime.now(UTC))
@@ -152,32 +151,39 @@ def _execute(  # noqa: C901, PLR0915
                 ),
             )
 
-        pipeline = ManagedSyncPipeline(
-            repo,
-            collect_once=collect,
-            chunk_base=steps.chunk,
-            index_base=steps.index,
-            activate=lambda run_id: ManagedSyncActivation(
-                repo,
-                resources,
-                CandidateVectorRepository(database, run_id),
-                check_active=check_active,
-            ).run(run_id),
+        steps = IncrementalSyncSteps(
+            database,
+            embedding,
+            qdrant,
+            args.capacity_path,
+            check_active,
+            progress=lambda value: emit("knowledge_sync_progress", value),
+            emit=emit,
         )
+        steps.capacity.check(0)
+        pipeline = IncrementalSyncPipeline(repo, collect, steps.process, check_active)
         if args.mode == "once":
             completed = execute_pipeline(
-                repo, binding_id, pipeline, scheduled=False, checkpoint=checkpoint
+                repo,
+                binding_id,
+                pipeline,
+                scheduled=False,
+                checkpoint=checkpoint,
+                backfill=(args.from_date, args.through_date) if args.from_date else None,
             )
             assert completed is not None
             emit("knowledge_sync_completed", completed)
-            return 0
+            return int(completed.get("content_status") == "PARTIAL")
+        last_health: tuple[str, ...] | None = None
         while not stop.is_set():
             binding = repo.binding(binding_id)
             if binding["enabled"] != 1:
-                active = repo.active_run(binding_id)
-                if active is not None:
-                    repo.cancel(active["id"])
                 return 0
+            health = repo.health(binding_id, datetime.now(UTC))
+            reasons = tuple(health["reasons"])
+            if reasons and reasons != last_health:
+                emit("knowledge_sync_alert", health)
+            last_health = reasons
             if checkpoint.run_id is not None or repo.scheduled_due(binding_id, datetime.now(UTC)):
                 try:
                     completed = execute_pipeline(
@@ -185,7 +191,13 @@ def _execute(  # noqa: C901, PLR0915
                     )
                     if completed is not None:
                         emit("knowledge_sync_completed", completed)
-                        checkpoint.run_id = None
+                        if completed.get("content_status") == "PARTIAL":
+                            for _ in range(10):
+                                if stop.is_set() or repo.binding(binding_id)["enabled"] != 1:
+                                    break
+                                stop.wait(30)
+                        else:
+                            checkpoint.run_id = None
                 except (ExportValidationError, VectorError, KnowledgeGovernanceError) as exc:
                     if database_error(exc) is not None:
                         raise
@@ -230,18 +242,28 @@ def _execute(  # noqa: C901, PLR0915
 def main(argv: list[str] | None = None) -> int:
     try:
         parser = SafeParser(description="受管 ONES 知识同步；默认停用且不首次发布或授权")
-        parser.add_argument("--mode", choices=("status", "once", "daemon"), default="status")
+        parser.add_argument(
+            "--mode", choices=("status", "health", "once", "daemon"), default="status"
+        )
+        parser.add_argument("--from-date", type=date.fromisoformat)
+        parser.add_argument("--through-date", type=date.fromisoformat)
         parser.add_argument("--binding-code", required=True)
         parser.add_argument("--capacity-path", type=Path)
         parser.add_argument("--commit", action="store_true")
         args = parser.parse_args(argv)
-        if args.mode != "status" and (not args.commit or args.capacity_path is None):
+        if bool(args.from_date) != bool(args.through_date) or (
+            args.from_date and (args.mode != "once" or args.from_date > args.through_date)
+        ):
+            raise ExportValidationError("knowledge_collection_range_invalid")
+        if args.mode not in {"status", "health"} and (
+            not args.commit or args.capacity_path is None
+        ):
             raise ExportValidationError("knowledge_sync_commit_required")
         if args.mode == "daemon" and os.environ.get("KNOWLEDGE_SYNC_ENABLED") != "true":
             raise ExportValidationError("knowledge_sync_worker_disabled")
         settings = load_settings()
         stop, checkpoint = Event(), RecoveryCheckpoint()
-        if args.mode == "status":
+        if args.mode in {"status", "health"}:
             return _execute(args, settings, stop, checkpoint)
         settings = load_master_key_settings(settings)
         with stop_signals(stop):

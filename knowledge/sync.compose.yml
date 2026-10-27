@@ -44,6 +44,12 @@ services:
     mem_limit: 2g
     stop_grace_period: 240s
     restart: "on-failure:3"
+    healthcheck:
+      test: [CMD, python, -m, app.cli.sync_ones_knowledge, --mode, health, --binding-code, "${KNOWLEDGE_SYNC_BINDING_CODE:-disabled}"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
     depends_on:
       postgres:
         condition: service_healthy

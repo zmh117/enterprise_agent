@@ -40,9 +40,11 @@ class ManagedSyncActivation:
         candidates: VectorRepository,
         *,
         check_active: Callable[[], None] | None = None,
+        progress: Callable[[dict[str, int]], None] | None = None,
     ) -> None:
         self.repository, self.resources, self.candidates = repository, resources, candidates
         self.check_active = check_active
+        self.progress = progress
 
     def run(self, run_id: str) -> dict[str, Any]:
         repo, store = self.repository, self.resources.store
@@ -58,7 +60,7 @@ class ManagedSyncActivation:
             affected = set(indexes)
             resources = repo.resources(run_id, changed_bases=affected)
             proofs = self._verify_indexes(indexes)
-            selections = self._verify_resources(run, indexes, resources)
+            selections = self._verify_resources(run, indexes, resources, proofs)
             if run["phase"] == "INDEXING":
                 repo.advance(run_id, expected_phase="INDEXING", phase="VERIFIED")
             if self.check_active is not None:
@@ -75,7 +77,9 @@ class ManagedSyncActivation:
         for base, index in indexes.items():
             assert service.embedding is not None and service.qdrant is not None
             proofs[base] = VectorService(self.candidates, service.embedding, service.qdrant).verify(
-                index, check_active=self.check_active
+                index,
+                check_active=self.check_active,
+                progress=self.progress,
             )
         return proofs
 
@@ -84,12 +88,15 @@ class ManagedSyncActivation:
         run: dict[str, Any],
         indexes: dict[str, dict[str, Any]],
         resources: list[dict[str, Any]],
+        proofs: dict[str, str],
     ) -> dict[str, dict[str, Any] | None]:
         repo, service, store = self.repository, self.resources, self.resources.store
         pins = repo.assert_configuration(run)["resource_pins_json"]
         if resources and (service.embedding is None or service.qdrant is None):
             raise ExportValidationError("knowledge_sync_verifier_unavailable")
         selections: dict[str, dict[str, Any] | None] = {}
+        default_target = fingerprint({"url": "http://knowledge-qdrant:6333", "api_key_ref": ""})
+        checked = {(index["id"], default_target) for index in indexes.values()}
         for resource in resources:
             assert service.embedding is not None and service.qdrant is not None
             base_id = resource["knowledge_base_id"]
@@ -109,9 +116,16 @@ class ManagedSyncActivation:
             selected = stored_config(previous.get("storage_config_json"))
             with service.content(selected, base_id=base_id, revision_id=previous["id"]) as content:
                 repo.assert_same_content(content.records)
-                VectorService(
-                    self.candidates, service.embedding, content.qdrant or service.qdrant
-                ).verify(indexes[base_id], check_active=self.check_active)
+                target = fingerprint(selected["qdrant"]) if selected is not None else default_target
+                key = (indexes[base_id]["id"], target)
+                if key not in checked:
+                    proof = VectorService(
+                        self.candidates, service.embedding, content.qdrant or service.qdrant
+                    ).verify(
+                        indexes[base_id], check_active=self.check_active, progress=self.progress
+                    )
+                    proofs[base_id] = fingerprint([proofs[base_id], proof])
+                    checked.add(key)
             selections[resource["id"]] = selected
         return selections
 

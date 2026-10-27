@@ -10,6 +10,7 @@ from app.modules.knowledge.application.ones_collection import OnesCollectionProv
 from app.modules.knowledge.application.ones_collection_normalizer import OnesCollectionNormalizer
 from app.modules.knowledge.application.ports import SyncRepository
 from app.modules.knowledge.domain.normalization import ExportValidationError
+from app.modules.knowledge.domain.collection_window import check_resumed_range
 
 
 _PROVIDER_FAILURES = {
@@ -29,10 +30,12 @@ class KnowledgeOnesCollectionService:
         provider_factory: Callable[[dict[str, Any]], OnesCollectionProvider],
         *,
         cancelled: Callable[[], bool] = lambda: False,
+        emit: Callable[[str, dict[str, Any]], None] = lambda _event, _value: None,
     ) -> None:
         self.repository = repository
         self.provider_factory = provider_factory
         self.cancelled = cancelled
+        self.emit = emit
 
     def _resume_run(self, binding_id: str, resume_run_id: str | None) -> dict[str, Any] | None:
         repo = self.repository
@@ -52,12 +55,23 @@ class KnowledgeOnesCollectionService:
             # 断连时状态记录也可能失败，保留最初故障供 CLI 分类。
             pass
 
+    def _start_collection(
+        self, binding_id: str, scan_at: str | None, first: date | None, through: date | None
+    ) -> dict[str, Any]:
+        options: dict[str, Any] = {"through": through}
+        if first is not None:
+            options["first"] = first
+        return self.repository.begin_collection(
+            binding_id, scan_at or datetime.now(timezone.utc).isoformat(), **options
+        )
+
     def collect_once(
         self,
         binding_id: str,
         *,
         scan_at: str | None = None,
         through: date | None = None,
+        first: date | None = None,
         on_run_started: Callable[[str], None] | None = None,
         resume_run_id: str | None = None,
         on_run_selected: Callable[[str], None] | None = None,
@@ -70,10 +84,10 @@ class KnowledgeOnesCollectionService:
         with repo.source_lock(binding["source_id"]):
             active = self._resume_run(binding_id, resume_run_id)
             if active is None:
-                started = scan_at or datetime.now(timezone.utc).isoformat()
-                run = repo.begin_collection(binding_id, started, through=through)
+                run = self._start_collection(binding_id, scan_at, first, through)
             else:
                 run = active
+                check_resumed_range(run, (first, through) if first and through else None)
             if on_run_selected is not None:
                 on_run_selected(run["id"])
             if run["phase"] != "COLLECTING":
@@ -114,7 +128,9 @@ class KnowledgeOnesCollectionService:
                         normalizer.normalize(listing, detail, kind=kind)
                         for listing, detail in pairs
                     )
-                    repo.commit_collection_page(run["id"], records, checkpoint)
+                    events = repo.commit_collection_page(run["id"], records, checkpoint)
+                    for event in events:
+                        self.emit("knowledge_source_same_stamp_revised", event)
 
                 manifest = run["manifest_json"]["defect"]
                 checkpoint = run["checkpoint_json"]

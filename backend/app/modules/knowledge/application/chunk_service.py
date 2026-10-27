@@ -60,14 +60,21 @@ class ChunkService:
                 minimum, maximum, embedding_max, total_chars = self.profile.max_chars, 0, 0, 0
                 input_digest = hashlib.sha256()
                 output_digest = hashlib.sha256()
-                for record in self.repository.rows(base_id, source_id):
+                for record in self.repository.rows(base_id, source_id, metadata_only=commit):
                     if record["document_kind"] not in DOCUMENT_KINDS:
                         raise ExportValidationError("knowledge_chunk_kind_unsupported")
                     input_digest.update(self._identity(record))
-                    prepared = prepare_chunks(record, self.profile)
+                    existing = self.repository.reuse(record) if commit else None
+                    if commit and existing is None:
+                        record = self.repository.load_record(record)
+                    prepared = (
+                        existing if existing is not None else prepare_chunks(record, self.profile)
+                    )
                     output_digest.update(prepared.output_hash.encode())
                     outcome = (
-                        self.repository.save(record, prepared, base_id, source_id)
+                        "reused"
+                        if existing is not None
+                        else self.repository.save(record, prepared, base_id, source_id)
                         if commit
                         else "previewed"
                     )

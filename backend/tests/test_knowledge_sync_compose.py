@@ -176,7 +176,7 @@ def test_collection_once_loads_file_key_before_resolving_platform_secret(
     _stub_schema(monkeypatch, collect_ones_knowledge)
     monkeypatch.setattr(
         collect_ones_knowledge,
-        "SyncRepository",
+        "IncrementalSyncRepository",
         lambda _database: SimpleNamespace(binding=lambda _binding_id: {"enabled": 1}),
     )
     monkeypatch.setattr(collect_ones_knowledge, "PlatformConfigRepository", lambda _db: object())
@@ -219,7 +219,7 @@ def test_full_sync_writer_passes_file_key_into_runtime(
     monkeypatch.setenv("KNOWLEDGE_SYNC_ENABLED", "true")
     monkeypatch.setattr(sync_ones_knowledge, "load_settings", lambda: settings)
     _stub_schema(monkeypatch, sync_ones_knowledge)
-    monkeypatch.setattr(sync_ones_knowledge, "ManagedActivationRepository", lambda _db: object())
+    monkeypatch.setattr(sync_ones_knowledge, "IncrementalSyncRepository", lambda _db: object())
 
     def build_runtime(runtime_settings: Settings, *, seed: bool) -> SimpleNamespace:
         assert seed is False
@@ -271,19 +271,20 @@ def test_knowledge_status_does_not_require_master_key_file(
     if module_name == "collect_ones_knowledge":
         monkeypatch.setattr(
             module,
-            "SyncRepository",
+            "IncrementalSyncRepository",
             lambda _database: SimpleNamespace(
                 binding=lambda _binding_id: binding,
-                active_collection=lambda _binding_id: None,
+                active_run=lambda _binding_id: None,
             ),
         )
     else:
         monkeypatch.setattr(
             module,
-            "ManagedActivationRepository",
+            "IncrementalSyncRepository",
             lambda _database: SimpleNamespace(
                 binding=lambda _binding_id: {**binding, "next_run_at": None},
                 active_run=lambda _binding_id: None,
+                health=lambda *_: {"healthy": True},
             ),
         )
 

@@ -139,7 +139,7 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
     api = config["services"]["api-server"]
     assert "knowledge-internal" in api["networks"] and "agent-runtime-control" in api["networks"]
     assert "knowledge_bootstrap_token" in {item["source"] for item in api["secrets"]}
-    for name in ("agent-worker", "python-agent-runtime", "ones-mcp"):
+    for name in ("agent-worker", "python-agent-runtime-a", "python-agent-runtime-b", "ones-mcp"):
         assert "knowledge_bootstrap_token" not in {
             item["source"] for item in config["services"][name].get("secrets", [])
         }
@@ -175,7 +175,13 @@ def test_online_bootstrap_host_path_override_preserves_container_mount(compose_c
             "/run/secrets/knowledge_bootstrap_token"
         )
         assert "knowledge_bootstrap_token" in {item["source"] for item in service["secrets"]}
-    for name in ("agent-worker", "python-agent-runtime", "ones-mcp", "knowledge-embedding-online"):
+    for name in (
+        "agent-worker",
+        "python-agent-runtime-a",
+        "python-agent-runtime-b",
+        "ones-mcp",
+        "knowledge-embedding-online",
+    ):
         assert "knowledge_bootstrap_token" not in {
             item["source"] for item in config["services"][name].get("secrets", [])
         }

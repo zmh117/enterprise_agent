@@ -36,6 +36,8 @@ class GenerationRepository:
             cursor = rows[-1]["id"]
 
     def _protected(self, index: dict[str, Any]) -> bool:
+        if index.get("incremental") == 1:
+            return True
         if self.database.execute_one(
             f"select 1 as n from {self.t('retrieval_resource')} resource "
             f"join {self.t('retrieval_revision')} revision on revision.id=resource.published_revision_id or revision.id=resource.draft_revision_id "

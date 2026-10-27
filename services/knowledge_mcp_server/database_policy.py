@@ -40,7 +40,7 @@ READ_COLUMNS = {
         "knowledge.document": "id current_revision_id external_id lifecycle_state source_id source_object_type document_kind",
         "knowledge.document_revision": "id document_id content_hash source_project_id",
         "knowledge.knowledge_base_document": "document_id knowledge_base_id state",
-        "knowledge.vector_index": "id code knowledge_base_id state profile profile_hash chunk_profile_hash collection_name corpus_hash expected_document_count expected_chunk_count error_code created_at updated_at sync_run_id source_id unreferenced_at",
+        "knowledge.vector_index": "id code knowledge_base_id state profile profile_hash chunk_profile_hash collection_name corpus_hash expected_document_count expected_chunk_count error_code created_at updated_at sync_run_id source_id unreferenced_at incremental",
         "knowledge.document_chunk": "id chunk_set_id ordinal chunk_kind source_field source_start source_end evidence_text evidence_hash embedding_text embedding_hash char_count embedding_char_count quality_flags",
         "knowledge.document_chunk_set": "id document_id document_revision_id profile_hash source_content_hash",
         "knowledge.vector_index_item": "chunk_id embedding_text_hash index_id point_id state",

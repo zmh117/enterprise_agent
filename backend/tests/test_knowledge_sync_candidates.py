@@ -463,6 +463,7 @@ def assert_upgrade_preserves_content_and_vector_references(database, tmp_path):
     for row in after["document"]:
         assert row.pop("source_observed_stamp_raw") is None
     for row in after["vector_index"]:
+        assert row.pop("incremental") == 0
         assert row.pop("sync_run_id") is None
         assert row.pop("source_id") is None
         assert row.pop("unreferenced_at") is None

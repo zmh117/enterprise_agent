@@ -20,7 +20,7 @@ from app.modules.knowledge.domain.normalization import ExportValidationError
 from app.modules.knowledge.infrastructure.ones_collection_factory import (
     ManagedOnesCollectionProviderFactory,
 )
-from app.modules.knowledge.infrastructure.sync_repository import SyncRepository
+from app.modules.knowledge.infrastructure.incremental_repository import IncrementalSyncRepository
 from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
 from app.modules.platform_config.infrastructure.repository import PlatformConfigRepository
 from app.shared.config import Settings, load_settings
@@ -47,7 +47,7 @@ def _collect_once(
             raise ExportValidationError("knowledge_collection_postgres_required")
         SchemaHeadValidator(database, default_migrations_dir()).require_current()
         checkpoint.database_verified = True
-        repo = SyncRepository(database)
+        repo = IncrementalSyncRepository(database)
         checkpoint.check_binding(repo.binding(binding_id))
         secret_provider = EncryptedDbSecretProvider(
             PlatformConfigRepository(database), master_key=settings.app_config_master_key
@@ -58,7 +58,9 @@ def _collect_once(
             app_env=settings.environment,
             allow_insecure_local=settings.ones_mcp.allow_insecure_local,
         )
-        return KnowledgeOnesCollectionService(repo, factory, cancelled=stop.is_set).collect_once(
+        return KnowledgeOnesCollectionService(
+            repo, factory, cancelled=stop.is_set, emit=emit
+        ).collect_once(
             binding_id,
             resume_run_id=checkpoint.run_id,
             on_run_selected=checkpoint.select_run,
@@ -107,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
         if database.engine != "postgres":
             raise ExportValidationError("knowledge_collection_postgres_required")
         SchemaHeadValidator(database, default_migrations_dir()).require_current()
-        repo = SyncRepository(database)
+        repo = IncrementalSyncRepository(database)
         binding_id = stable_id("sync-binding", args.binding_code)
         if args.mode == "configure":
             if (
@@ -153,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0915
             if run["binding_id"] != binding_id:
                 raise ExportValidationError("knowledge_collection_scope_changed")
             repo.cancel(args.run_id)
-        active = repo.active_collection(binding_id)
+        active = repo.active_run(binding_id)
         emit(
             "knowledge_collection_status",
             {

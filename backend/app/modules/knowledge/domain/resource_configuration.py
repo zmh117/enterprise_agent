@@ -23,6 +23,7 @@ def configuration_values(
     effective = (3 if storage is not None else 2) if version == 0 else version
     if effective != 4 and effective != (3 if storage is not None else 2):
         raise KnowledgeGovernanceError("knowledge_resource_config_unsupported")
+    incremental = index.get("incremental") == 1
     values = {
         "binding_id": None,
         "index_id": index["id"],
@@ -34,16 +35,28 @@ def configuration_values(
         "knowledge_base_id": base_id,
         "configuration_version": effective,
         "source_id": source_id,
-        "source_hash": source_hash,
-        "member_ids": sorted(row["id"] for row in members),
+        **(
+            {"content_contract": "incremental/v1"}
+            if incremental
+            else {
+                "source_hash": source_hash,
+                "member_ids": sorted(row["id"] for row in members),
+            }
+        ),
         **values,
         "chunk_profile_hash": index["chunk_profile_hash"],
         "collection_name": index["collection_name"],
-        "expected_document_count": index["expected_document_count"],
-        "expected_chunk_count": index["expected_chunk_count"],
+        **(
+            {}
+            if incremental
+            else {
+                "expected_document_count": index["expected_document_count"],
+                "expected_chunk_count": index["expected_chunk_count"],
+            }
+        ),
         **({"storage": storage} if storage is not None else {}),
     }
-    if effective == 4:
+    if effective == 4 and not incremental:
         hashed["member_kinds"] = sorted((row["id"], row["document_kind"]) for row in members)
     values.update(config_hash=fingerprint(hashed), configuration_version=version)
     if storage is not None:

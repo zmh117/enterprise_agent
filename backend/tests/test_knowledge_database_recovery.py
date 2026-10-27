@@ -349,8 +349,12 @@ def test_daemon_loop_reads_pinned_success_even_before_next_tick(monkeypatch, tmp
     checkpoint = recovery.RecoveryCheckpoint(run_id="run")
     settings, _key = _synthetic_file_key_settings(tmp_path)
     _stub_schema(monkeypatch, sync_ones_knowledge)
-    repo = SimpleNamespace(binding=lambda _: {"enabled": 1}, scheduled_due=lambda *_: False)
-    monkeypatch.setattr(sync_ones_knowledge, "ManagedActivationRepository", lambda _: repo)
+    repo = SimpleNamespace(
+        binding=lambda _: {"enabled": 1},
+        scheduled_due=lambda *_: False,
+        health=lambda *_: {"healthy": True, "reasons": []},
+    )
+    monkeypatch.setattr(sync_ones_knowledge, "IncrementalSyncRepository", lambda _: repo)
     runtime = SimpleNamespace(
         database=sync_ones_knowledge.Database("unused"),
         knowledge_services=SimpleNamespace(resources=lambda: SimpleNamespace()),
@@ -364,11 +368,10 @@ def test_daemon_loop_reads_pinned_success_even_before_next_tick(monkeypatch, tmp
         )
     monkeypatch.setattr(
         sync_ones_knowledge,
-        "ManagedSyncSteps",
-        lambda *a: SimpleNamespace(
+        "IncrementalSyncSteps",
+        lambda *a, **kw: SimpleNamespace(
             capacity=SimpleNamespace(check=lambda _: None),
-            chunk=lambda *_: None,
-            index=lambda *_: None,
+            process=lambda *_: None,
         ),
     )
     monkeypatch.setattr(sync_ones_knowledge, "PlatformConfigRepository", lambda _: None)
@@ -380,7 +383,7 @@ def test_daemon_loop_reads_pinned_success_even_before_next_tick(monkeypatch, tmp
     monkeypatch.setattr(
         sync_ones_knowledge, "ManagedOnesCollectionProviderFactory", lambda *a, **kw: None
     )
-    monkeypatch.setattr(sync_ones_knowledge, "ManagedSyncPipeline", lambda *a, **kw: object())
+    monkeypatch.setattr(sync_ones_knowledge, "IncrementalSyncPipeline", lambda *a, **kw: object())
     calls = []
 
     def execute(*a, **kw):

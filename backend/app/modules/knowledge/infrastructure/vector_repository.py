@@ -150,6 +150,24 @@ class VectorRepository:
         }
 
     def assert_current(self, index: dict[str, Any]) -> None:
+        if index.get("incremental") == 1:
+            current_index = self.get(index["code"])
+            keys = (
+                "id",
+                "knowledge_base_id",
+                "source_id",
+                "profile_hash",
+                "chunk_profile_hash",
+                "collection_name",
+                "incremental",
+            )
+            if (
+                not current_index
+                or current_index["state"] != "READY"
+                or any(current_index.get(key) != index.get(key) for key in keys)
+            ):
+                raise VectorError("knowledge_vector_source_changed")
+            return
         current = self.snapshot(
             index["knowledge_base_id"],
             index["chunk_profile_hash"],
@@ -182,6 +200,8 @@ class VectorRepository:
         with self.database.unit_of_work():
             found = self.get(code)
             if found:
+                if found.get("incremental") == 1:
+                    raise VectorError("knowledge_incremental_index_managed")
                 if found["state"] == "RETIRED" or any(found[k] != v for k, v in values.items()):
                     raise VectorError("knowledge_vector_index_conflict")
                 return found
@@ -214,7 +234,7 @@ class VectorRepository:
             f"join {self.t('document_chunk_set')} s on s.id=c.chunk_set_id "
             f"join {self.t('document_revision')} r on r.id=s.document_revision_id and r.document_id=s.document_id "
             "where i.index_id=? and i.state='INDEXED' and i.embedding_text_hash=c.embedding_hash "
-            f"and c.embedding_hash in ({','.join('?' for _ in embedding_hashes)})) candidates where ordinal_for_hash=1",
+            f"and i.embedding_text_hash in ({','.join('?' for _ in embedding_hashes)})) candidates where ordinal_for_hash=1",
             (index["id"], *embedding_hashes),
         )
         result = {}
@@ -242,32 +262,31 @@ class VectorRepository:
             self.rows(index["knowledge_base_id"], index["chunk_profile_hash"]), 32
         ):
             with self.database.unit_of_work():
-                for row in batch:
-                    values = {
-                        "index_id": index["id"],
-                        "chunk_id": row["id"],
-                        "point_id": point_id(index, row),
-                        "embedding_text_hash": row["embedding_hash"],
-                    }
-                    insert(
-                        self.database,
-                        "vector_index_item",
-                        {
-                            **values,
-                            "state": "PENDING",
-                            "attempt_count": 0,
-                            "error_code": None,
-                            "created_at": now(),
-                            "updated_at": now(),
-                        },
-                        conflict="on conflict(index_id,chunk_id) do nothing",
-                    )
-                    stored = self.database.execute_one(
-                        f"select * from {self.t('vector_index_item')} where index_id=? and chunk_id=?",
-                        (index["id"], row["id"]),
-                    )
-                    if not stored or any(stored[k] != v for k, v in values.items()):
-                        raise VectorError("knowledge_vector_manifest_conflict")
+                stamp = now()
+                expected = {
+                    row["id"]: (point_id(index, row), row["embedding_hash"]) for row in batch
+                }
+                self.database.execute(
+                    f"insert into {self.t('vector_index_item')} "
+                    "(index_id,chunk_id,point_id,embedding_text_hash,state,attempt_count,error_code,created_at,updated_at) values "
+                    + ",".join("(?,?,?,?,'PENDING',0,NULL,?,?)" for _ in batch)
+                    + " on conflict(index_id,chunk_id) do nothing",
+                    tuple(
+                        value
+                        for row in batch
+                        for value in (index["id"], row["id"], *expected[row["id"]], stamp, stamp)
+                    ),
+                )
+                stored = self.database.execute(
+                    f"select chunk_id,point_id,embedding_text_hash from {self.t('vector_index_item')} "
+                    f"where index_id=? and chunk_id in ({','.join('?' for _ in batch)})",
+                    (index["id"], *expected),
+                )
+                if len(stored) != len(expected) or any(
+                    expected[row["chunk_id"]] != (row["point_id"], row["embedding_text_hash"])
+                    for row in stored
+                ):
+                    raise VectorError("knowledge_vector_manifest_conflict")
         count = self.database.execute_one(
             f"select count(*) as n from {self.t('vector_index_item')} where index_id=?",
             (index["id"],),
@@ -293,13 +312,17 @@ class VectorRepository:
         error: str | None = None,
         attempted: bool = False,
     ) -> None:
+        if not rows:
+            return
+        if len(rows) > 32:
+            raise VectorError("knowledge_vector_batch_invalid")
         with self.database.unit_of_work():
-            for row in rows:
-                self.database.execute(
-                    f"update {self.t('vector_index_item')} set state=?,error_code=?,updated_at=?,"
-                    "attempt_count=attempt_count+? where index_id=? and chunk_id=?",
-                    (state, error, now(), int(attempted), index["id"], row["id"]),
-                )
+            self.database.execute(
+                f"update {self.t('vector_index_item')} set state=?,error_code=?,updated_at=?,"
+                "attempt_count=attempt_count+? where index_id=? "
+                f"and chunk_id in ({','.join('?' for _ in rows)})",
+                (state, error, now(), int(attempted), index["id"], *(row["id"] for row in rows)),
+            )
 
     def evidence_many(
         self, index: dict[str, Any], chunk_ids: list[str]

@@ -268,6 +268,12 @@ class QdrantClient:
             self.http.request(
                 "PUT", path + "/index?wait=true", {"field_name": field, "field_schema": "keyword"}
             )
+        if index.get("incremental") == 1:
+            self.http.request(
+                "PUT",
+                path + "/index?wait=true",
+                {"field_name": "searchable", "field_schema": "bool"},
+            )
 
     def check(self, index: dict[str, Any], *, create: bool = False) -> None:
         path = self.path(index)
@@ -374,8 +380,31 @@ class QdrantClient:
             raise VectorError("knowledge_vector_response_invalid")
         return count
 
+    def set_searchable(self, index: dict[str, Any], ids: list[str], value: bool) -> None:
+        if index.get("incremental") != 1 or not ids or len(ids) > 32:
+            raise VectorError("knowledge_vector_batch_invalid")
+        result = self.http.request(
+            "POST",
+            self.path(index) + "/points/payload?wait=true",
+            {"points": ids, "payload": {"searchable": value}},
+        )
+        if result.get("result", {}).get("status") != "completed":
+            raise VectorError("knowledge_vector_write_unconfirmed")
+
+    def delete_points(self, index: dict[str, Any], ids: list[str]) -> None:
+        if index.get("incremental") != 1 or not ids or len(ids) > 32:
+            raise VectorError("knowledge_vector_batch_invalid")
+        result = self.http.request(
+            "POST", self.path(index) + "/points/delete?wait=true", {"points": ids}
+        )
+        if result.get("result", {}).get("status") != "completed":
+            raise VectorError("knowledge_vector_delete_unconfirmed")
+
     def delete_owned(self, index: dict[str, Any]) -> None:
         import uuid
+
+        if index.get("incremental") == 1:
+            raise VectorError("knowledge_vector_retention_owner_invalid")
 
         try:
             uuid.UUID(index["sync_run_id"])
@@ -410,6 +439,11 @@ class QdrantClient:
                             ("knowledge_base_id", index["knowledge_base_id"]),
                         )
                     ]
+                    + (
+                        [{"key": "searchable", "match": {"value": True}}]
+                        if index.get("incremental") == 1
+                        else []
+                    )
                 },
             },
         )
@@ -446,6 +480,11 @@ class QdrantClient:
                     ("knowledge_base_id", index["knowledge_base_id"]),
                 )
             ]
+            + (
+                [{"key": "searchable", "match": {"value": True}}]
+                if index.get("incremental") == 1
+                else []
+            )
         }
         lexical = {"text": text, "model": "qdrant/bm25", "options": BM25_OPTIONS}
         request: dict[str, Any] = {

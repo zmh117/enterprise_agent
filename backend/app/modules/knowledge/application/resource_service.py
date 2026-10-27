@@ -106,6 +106,19 @@ class KnowledgeResourceReader:
             or index["profile_hash"] != fingerprint(content.vectors.profile)
         ):
             raise KnowledgeGovernanceError("knowledge_index_unavailable")
+        if index.get("incremental") == 1:
+            source = content.records.get("source", index["source_id"])
+            values = configuration_values(
+                resource_id=resource["id"],
+                base_id=base["id"],
+                index=index,
+                source_id=source["id"],
+                source_hash="",
+                members=[],
+                storage=storage,
+                version=version,
+            )
+            return values, source, index
         members = content.records.members(base["id"])
         sources = {row["source_id"] for row in members}
         if len(sources) == 1:
@@ -160,7 +173,11 @@ class KnowledgeResourceReader:
                 "config": config,
                 "published": revision["id"],
                 "state_revision": resource["state_revision"],
-                "index_updated_at": str(index["updated_at"]),
+                **(
+                    {}
+                    if index.get("incremental") == 1
+                    else {"index_updated_at": str(index["updated_at"])}
+                ),
             }
         )
         return PinnedKnowledgeResource(

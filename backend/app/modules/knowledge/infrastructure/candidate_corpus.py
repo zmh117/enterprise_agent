@@ -54,9 +54,11 @@ class CandidateCorpus:
 
     def records(self, base_id: str, *, metadata_only: bool = False) -> Iterator[dict[str, Any]]:
         clause, params = self.member_filter(base_id)
-        columns = "x.document_id,r.id as revision_id,r.content_hash"
+        columns = (
+            "x.document_id,r.id as revision_id,r.content_hash,x.candidate_kind as document_kind"
+        )
         if not metadata_only:
-            columns += ",x.candidate_kind as document_kind,r.title,r.body_text,r.source_project_name,r.normalizer_version,r.attributes,r.completeness"
+            columns += ",r.title,r.body_text,r.source_project_name,r.normalizer_version,r.attributes,r.completeness"
         cursor = ""
         while True:
             rows = self.repository.database.execute(

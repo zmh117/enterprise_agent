@@ -125,6 +125,12 @@ class ImportRepository:
             return run
 
     def _assert_direct_write_allowed(self, source_id: str, base_id: str) -> None:
+        incremental = self.database.execute_one(
+            f"select id from {table(self.database, 'vector_index')} where source_id=? and incremental=1 and state<>'RETIRED' limit 1",
+            (source_id,),
+        )
+        if incremental:
+            raise ExportValidationError("knowledge_incremental_source_managed")
         active = self.database.execute_one(
             f"select id from {table(self.database, 'sync_run')} where source_id=? and active=1",
             (source_id,),

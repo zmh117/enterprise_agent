@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+import time
 
 from app.modules.knowledge.application.chunk_service import ChunkService
 from app.modules.knowledge.application.ports import EmbeddingPort, QdrantPort
@@ -35,6 +36,7 @@ class ManagedSyncSteps:
         self.capacity = VectorCapacity(capacity_path)
         self.progress = progress
         self.cancelled = cancelled
+        self._last_progress: tuple[str, str, float] | None = None
 
     def _check(self, run_id: str) -> dict[str, Any]:
         if self.cancelled():
@@ -108,5 +110,14 @@ class ManagedSyncSteps:
 
     def _progress(self, run_id: str, phase: str, value: dict[str, Any]) -> None:
         self._check(run_id)
-        if self.progress is not None:
-            self.progress(phase, value)
+        tick = time.monotonic()
+        last = self._last_progress
+        completed = value.get("verified", value.get("processed")) == value.get("total")
+        if last is None or last[:2] != (run_id, phase) or tick - last[2] >= 15 or completed:
+            SyncRepository(self.database).record_progress(run_id, phase, value)
+            self._last_progress = (run_id, phase, tick)
+            if self.progress is not None:
+                self.progress(phase, value)
+
+    def verification_progress(self, run_id: str, value: dict[str, int]) -> None:
+        self._progress(run_id, "verifying", value)

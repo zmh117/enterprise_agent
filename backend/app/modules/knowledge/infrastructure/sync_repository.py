@@ -62,6 +62,11 @@ class SyncRepository:  # noqa: PLR0904
             old = self.database.execute_one(
                 f"select * from {self.t('sync_binding')} where id=?", (binding_id,)
             )
+            if self.database.execute_one(
+                f"select id from {self.t('sync_run')} where source_id=? and active=1 and incremental=1 limit 1",
+                (source_id,),
+            ):
+                raise ExportValidationError("knowledge_source_import_busy")
             if (
                 old
                 and (
@@ -277,6 +282,12 @@ class SyncRepository:  # noqa: PLR0904
         return {row["knowledge_base_id"]: row["state"] for row in rows}
 
     def begin(self, binding_id: str, exports: tuple[PreparedExport, ...]) -> dict[str, Any]:
+        source_id = self.binding(binding_id)["source_id"]
+        if self.database.execute_one(
+            f"select id from {self.t('vector_index')} where source_id=? and incremental=1 and state<>'RETIRED' limit 1",
+            (source_id,),
+        ):
+            raise ExportValidationError("knowledge_incremental_source_managed")
         run = self._begin(binding_id, exports)
         if run["phase"] == "COLLECTING":
             try:
@@ -293,7 +304,12 @@ class SyncRepository:  # noqa: PLR0904
         return self.run(run["id"])
 
     def begin_collection(
-        self, binding_id: str, scan_at: str, *, through: date | None = None
+        self,
+        binding_id: str,
+        scan_at: str,
+        *,
+        through: date | None = None,
+        first: date | None = None,
     ) -> dict[str, Any]:
         """首次全历史，已激活后的轮次仅扫描北京时间最近七个创建日。"""
         binding = self.binding(binding_id)
@@ -322,8 +338,21 @@ class SyncRepository:  # noqa: PLR0904
             )
             for row in previous
         )
+        if first is not None:
+            from app.modules.knowledge.domain.collection_window import validate_backfill
+
+            if through is None or not prior_online:
+                raise ExportValidationError("knowledge_collection_backfill_requires_baseline")
+            validate_backfill(
+                first,
+                through,
+                configured_first,
+                parsed_scan.astimezone(ZoneInfo("Asia/Shanghai")).date(),
+            )
         scan_first = (
-            max(configured_first, scan_last - timedelta(days=6))
+            first
+            if first is not None
+            else max(configured_first, scan_last - timedelta(days=6))
             if prior_online
             else configured_first
         )
@@ -337,7 +366,11 @@ class SyncRepository:  # noqa: PLR0904
                     "scan_at": scan_at,
                     "scan_first": scan_first.isoformat(),
                     "scan_last": scan_last.isoformat(),
-                    "scan_mode": "recent_seven_days" if prior_online else "initial_full",
+                    "scan_mode": "backfill"
+                    if first is not None
+                    else "recent_seven_days"
+                    if prior_online
+                    else "initial_full",
                     "scope_hash": digest(collector),
                 },
                 {},
@@ -383,7 +416,13 @@ class SyncRepository:  # noqa: PLR0904
                     (binding["source_id"],),
                 )
                 if active:
-                    raise ExportValidationError("knowledge_source_import_busy")
+                    pending = self.run(active["id"])
+                    if not (
+                        pending.get("incremental") == 1 and pending["binding_id"] == binding_id
+                    ):
+                        raise ExportValidationError("knowledge_source_import_busy")
+                    if pending["binding_revision"] != expected_revision:
+                        raise ExportValidationError("knowledge_sync_configuration_changed")
                 pins = self.current_resource_pins(binding, lock=True)
             else:
                 pins = binding["resource_pins_json"]
@@ -430,6 +469,42 @@ class SyncRepository:  # noqa: PLR0904
         if not isinstance(due, datetime) or due.tzinfo is None:
             raise ExportValidationError("knowledge_sync_schedule_invalid")
         return at >= due
+
+    def health(self, binding_id: str, at: datetime) -> dict[str, Any]:
+        from app.modules.knowledge.domain.sync_health import sync_health
+
+        binding = self.binding(binding_id)
+        latest = self.database.execute_one(
+            f"select id,phase,error_code,updated_at from {self.t('sync_run')} "
+            "where binding_id=? order by created_at desc,id desc limit 1",
+            (binding_id,),
+        )
+        success = self.database.execute_one(
+            f"select updated_at from {self.t('sync_run')} where binding_id=? "
+            "and phase='ACTIVATED' order by updated_at desc limit 1",
+            (binding_id,),
+        )
+        return sync_health(binding, latest, success, self.active_run(binding_id), at)
+
+    def record_progress(self, run_id: str, phase: str, value: dict[str, int]) -> None:
+        allowed = {"processed", "total", "encoded", "reused", "verified"}
+        if phase not in {"chunking", "indexing", "verifying"} or any(
+            key not in allowed or type(count) is not int or count < 0
+            for key, count in value.items()
+        ):
+            raise ExportValidationError("knowledge_sync_progress_invalid")
+        with self.database.unit_of_work():
+            run = self.run(run_id, lock=True)
+            self.assert_configuration(run)
+            if run["phase"] not in {"CHUNKING", "INDEXING", "VERIFIED"}:
+                raise ExportValidationError("knowledge_sync_phase_invalid")
+            stamp = now()
+            checkpoint = dict(run["checkpoint_json"])
+            checkpoint["pipeline_progress"] = {"phase": phase, "at": stamp, **value}
+            self.database.execute(
+                f"update {self.t('sync_run')} set checkpoint_json=?,updated_at=?,error_code=NULL where id=?",
+                (canonical_json(checkpoint), stamp, run_id),
+            )
 
     def scheduled_started(self, binding_id: str, run_id: str, at: datetime) -> None:
         if at.tzinfo is None:
@@ -744,14 +819,7 @@ class SyncRepository:  # noqa: PLR0904
                         else "revised"
                     )
                 else:
-                    outcome = compare_version(
-                        old_stamp=candidate["baseline_stamp"],
-                        new_stamp=record.values["source_update_stamp_raw"],
-                        old_hash=semantic_hash(old),
-                        new_hash=semantic_hash(record.values),
-                        old_kind=candidate["baseline_kind"],
-                        new_kind=kind,
-                    )
+                    outcome = self._compare_candidate(run, candidate, record, old)
             revision_id = candidate["baseline_revision_id"]
             if outcome in {"created", "revised"}:
                 revision_id = stable_id("sync-revision", run_id, document_id)
@@ -816,13 +884,29 @@ class SyncRepository:  # noqa: PLR0904
             )
         return outcome
 
+    def _compare_candidate(
+        self,
+        run: dict[str, Any],
+        candidate: dict[str, Any],
+        record: PreparedRecord,
+        old: dict[str, Any],
+    ) -> str:
+        return compare_version(
+            old_stamp=candidate["baseline_stamp"],
+            new_stamp=record.values["source_update_stamp_raw"],
+            old_hash=semantic_hash(old),
+            new_hash=semantic_hash(record.values),
+            old_kind=candidate["baseline_kind"],
+            new_kind=record.document_kind,
+        )
+
     def commit_collection_page(
         self,
         run_id: str,
         records: tuple[PreparedRecord, ...],
         checkpoint: dict[str, Any],
-    ) -> None:
-        """本页候选与安全检查点同事务；崩溃后重放原页不重复计数。"""
+    ) -> list[dict[str, Any]]:
+        """本页候选与安全检查点同事务；返回已提交的安全诊断事件。"""
         allowed = {
             "kind",
             "issue_type_id",
@@ -901,6 +985,13 @@ class SyncRepository:  # noqa: PLR0904
                 f"update {self.t('sync_run')} set checkpoint_json=?,updated_at=? where id=?",
                 (canonical_json(progress), now(), run_id),
             )
+            events = self.collection_page_events(run, records)
+        return events
+
+    def collection_page_events(
+        self, run: dict[str, Any], records: tuple[PreparedRecord, ...]
+    ) -> list[dict[str, Any]]:
+        return []
 
     def staged_collection_ids(self, run_id: str) -> frozenset[str]:
         rows = self.database.execute(
@@ -938,6 +1029,44 @@ class SyncRepository:  # noqa: PLR0904
                 (canonical_json(progress), now(), run_id),
             )
 
+    def check_visibility(self, run: dict[str, Any], binding: dict[str, Any]) -> None:
+        run_id = run["id"]
+        project_ids = binding["configuration_json"]["collector"]["project_ids"]
+        placeholders = ",".join("?" for _ in project_ids)
+        manifest = run["manifest_json"]["defect"]
+        if manifest.get("scan_mode") == "initial_full":
+            missing = self.database.execute_one(
+                f"select c.document_id from {self.t('sync_candidate')} c "
+                f"join {self.t('document_revision')} r on r.id=c.baseline_revision_id "
+                f"where c.run_id=? and c.record_hash is null and r.source_project_id in ({placeholders}) limit 1",
+                (run_id, *project_ids),
+            )
+            if missing:
+                raise ExportValidationError("knowledge_collection_visibility_shrank")
+        else:
+            zone = ZoneInfo("Asia/Shanghai")
+            start = datetime.combine(date.fromisoformat(manifest["scan_first"]), time.min, zone)
+            end = datetime.combine(
+                date.fromisoformat(manifest["scan_last"]) + timedelta(days=1), time.min, zone
+            )
+            missing_rows = self.database.execute(
+                f"select r.source_snapshot from {self.t('sync_candidate')} c "
+                f"join {self.t('document_revision')} r on r.id=c.baseline_revision_id "
+                f"where c.run_id=? and c.record_hash is null and r.source_project_id in ({placeholders}) "
+                "and r.source_created_at>=? and r.source_created_at<?",
+                (
+                    run_id,
+                    *project_ids,
+                    start.astimezone(timezone.utc).isoformat(),
+                    end.astimezone(timezone.utc).isoformat(),
+                ),
+            )
+            if any(
+                not (json_value(row["source_snapshot"]).get("detail") or {}).get("parent_uuid")
+                for row in missing_rows
+            ):
+                raise ExportValidationError("knowledge_collection_visibility_shrank")
+
     def complete_collection(self, run_id: str, counts: dict[str, int]) -> dict[str, Any]:
         """仅日期水位完整且本轮范围内原有根项均再次可见时进入分块。"""
         if (
@@ -954,41 +1083,8 @@ class SyncRepository:  # noqa: PLR0904
                 for item in run["manifest_json"].values()
             ):
                 raise ExportValidationError("knowledge_sync_phase_invalid")
-            project_ids = binding["configuration_json"]["collector"]["project_ids"]
-            placeholders = ",".join("?" for _ in project_ids)
             manifest = run["manifest_json"]["defect"]
-            if manifest.get("scan_mode") == "initial_full":
-                missing = self.database.execute_one(
-                    f"select c.document_id from {self.t('sync_candidate')} c "
-                    f"join {self.t('document_revision')} r on r.id=c.baseline_revision_id "
-                    f"where c.run_id=? and c.record_hash is null and r.source_project_id in ({placeholders}) limit 1",
-                    (run_id, *project_ids),
-                )
-                if missing:
-                    raise ExportValidationError("knowledge_collection_visibility_shrank")
-            else:
-                zone = ZoneInfo("Asia/Shanghai")
-                start = datetime.combine(date.fromisoformat(manifest["scan_first"]), time.min, zone)
-                end = datetime.combine(
-                    date.fromisoformat(manifest["scan_last"]) + timedelta(days=1), time.min, zone
-                )
-                missing_rows = self.database.execute(
-                    f"select r.source_snapshot from {self.t('sync_candidate')} c "
-                    f"join {self.t('document_revision')} r on r.id=c.baseline_revision_id "
-                    f"where c.run_id=? and c.record_hash is null and r.source_project_id in ({placeholders}) "
-                    "and r.source_created_at>=? and r.source_created_at<?",
-                    (
-                        run_id,
-                        *project_ids,
-                        start.astimezone(timezone.utc).isoformat(),
-                        end.astimezone(timezone.utc).isoformat(),
-                    ),
-                )
-                if any(
-                    not (json_value(row["source_snapshot"]).get("detail") or {}).get("parent_uuid")
-                    for row in missing_rows
-                ):
-                    raise ExportValidationError("knowledge_collection_visibility_shrank")
+            self.check_visibility(run, binding)
             if (
                 run["checkpoint_json"].get("collection_next_day")
                 != (date.fromisoformat(manifest["scan_last"]) + timedelta(days=1)).isoformat()
@@ -1081,6 +1177,8 @@ class SyncRepository:  # noqa: PLR0904
                 return
             if run["phase"] == "ACTIVATED":
                 raise ExportValidationError("knowledge_sync_phase_invalid")
+            if run.get("incremental") == 1 and run["phase"] not in {"COLLECTING", "STAGED"}:
+                raise ExportValidationError("knowledge_sync_resume_required")
             self.database.execute(
                 f"update {self.t('sync_run')} set phase='CANCELLED',active=0,updated_at=? where id=?",
                 (now(), run_id),
@@ -1216,6 +1314,8 @@ class SyncRepository:  # noqa: PLR0904
             "checkpoint": {key: run["checkpoint_json"][key] for key in ("processed", "total")},
             "counts": dict(Counter({row["outcome"]: row["n"] for row in counts})),
             "error_code": run["error_code"],
+            "updated_at": run["updated_at"],
+            "progress": run["checkpoint_json"].get("pipeline_progress"),
         }
         manifest = run["manifest_json"].get("defect", {})
         if manifest.get("export_format") == "ones-online-full/v1":

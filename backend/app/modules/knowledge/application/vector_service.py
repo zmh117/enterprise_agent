@@ -142,7 +142,7 @@ class VectorService:
                     validate_sparse(found.get("sparse_vector"))
         return missing
 
-    def build(  # noqa: PLR0915
+    def build(
         self,
         code: str,
         snapshot: dict[str, Any],
@@ -221,18 +221,16 @@ class VectorService:
                             }
                         )
                 # 逐项核验包括已记账项；总数相同并不足以证明正确。
-                verified = 0
-                for rows in batches(
-                    repo.rows(index["knowledge_base_id"], index["chunk_profile_hash"]), 32
-                ):
-                    if self._verify_points(index, rows):
-                        raise VectorError("knowledge_vector_points_missing")
-                    verified += len(rows)
-                if (
-                    verified != index["expected_chunk_count"]
-                    or self.qdrant.count(index) != verified
-                ):
-                    raise VectorError("knowledge_vector_count_mismatch")
+                verified = self._verify_complete(
+                    index,
+                    progress=(
+                        lambda value: progress(
+                            {"processed": processed, "encoded": encoded, "reused": reused, **value}
+                        )
+                    )
+                    if progress
+                    else None,
+                )
                 repo.assert_current(index)
                 repo.state(index, "READY")
                 return {
@@ -276,8 +274,34 @@ class VectorService:
             raise VectorError("knowledge_vector_reuse_invalid")
         return previous
 
+    def _verify_complete(
+        self,
+        index: dict[str, Any],
+        *,
+        check_active: Callable[[], None] | None = None,
+        progress: Callable[[dict[str, int]], None] | None = None,
+    ) -> int:
+        verified = 0
+        for rows in batches(
+            self.repository.rows(index["knowledge_base_id"], index["chunk_profile_hash"]), 32
+        ):
+            if check_active is not None:
+                check_active()
+            if self._verify_points(index, rows):
+                raise VectorError("knowledge_vector_points_missing")
+            verified += len(rows)
+            if progress:
+                progress({"verified": verified, "total": index["expected_chunk_count"]})
+        if verified != index["expected_chunk_count"] or self.qdrant.count(index) != verified:
+            raise VectorError("knowledge_vector_count_mismatch")
+        return verified
+
     def verify(
-        self, index: dict[str, Any], *, check_active: Callable[[], None] | None = None
+        self,
+        index: dict[str, Any],
+        *,
+        check_active: Callable[[], None] | None = None,
+        progress: Callable[[dict[str, int]], None] | None = None,
     ) -> str:
         """维护接续用逐点只读验证；不编码，不修改索引状态。"""
         repo = self.repository
@@ -291,15 +315,7 @@ class VectorService:
         if index["expected_chunk_count"]:
             self.embedding.check()
         self.qdrant.check(index)
-        verified = 0
-        for rows in batches(repo.rows(index["knowledge_base_id"], index["chunk_profile_hash"]), 32):
-            if check_active is not None:
-                check_active()
-            if self._verify_points(index, rows):
-                raise VectorError("knowledge_vector_points_missing")
-            verified += len(rows)
-        if verified != index["expected_chunk_count"] or self.qdrant.count(index) != verified:
-            raise VectorError("knowledge_vector_count_mismatch")
+        verified = self._verify_complete(index, check_active=check_active, progress=progress)
         repo.assert_current(index)
         if check_active is not None:
             check_active()
@@ -368,7 +384,7 @@ class VectorService:
         if index["expected_document_count"] == 0:
             repo.assert_current(index)
             self.qdrant.check(index)
-            if self.qdrant.count(index) != 0:
+            if index.get("incremental") != 1 and self.qdrant.count(index) != 0:
                 raise VectorError("knowledge_vector_count_mismatch")
             return {
                 "index_id": index["id"],

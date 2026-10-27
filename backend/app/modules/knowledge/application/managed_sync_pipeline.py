@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from typing import Any, Protocol
+from datetime import date
 
 from app.modules.knowledge.domain.chunking import (
     DEFAULT_PROFILE,
@@ -12,6 +13,7 @@ from app.modules.knowledge.domain.chunking import (
 from app.modules.knowledge.domain.identity import stable_id
 from app.modules.knowledge.domain.normalization import ExportValidationError
 from app.modules.knowledge.domain.vector_contract import VectorError
+from app.modules.knowledge.domain.collection_window import check_resumed_range
 
 
 class ManagedPipelineStore(Protocol):
@@ -89,6 +91,7 @@ class ManagedSyncPipeline:
         *,
         resume_run_id: str | None = None,
         on_run_selected: Callable[[str], None] | None = None,
+        backfill: tuple[date, date] | None = None,
     ) -> dict[str, Any]:
         repo = self.repository
         binding = repo.binding(binding_id)
@@ -96,6 +99,7 @@ class ManagedSyncPipeline:
             raise ExportValidationError("knowledge_collection_disabled")
         active = self._resume_run(binding_id, resume_run_id, on_run_selected)
         if active is not None:
+            check_resumed_range(active, backfill)
             if active["phase"] == "ACTIVATED":
                 return repo.summary(active["id"])
         run_id: str | None = active["id"] if active else None

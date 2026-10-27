@@ -20,7 +20,7 @@ def point_id(index: dict[str, Any], row: dict[str, Any]) -> str:
     return str(uuid.uuid5(uuid.UUID(index["id"]), row["id"]))
 
 
-def payload(index: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
+def payload(index: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
     return {
         "index_id": index["id"],
         "knowledge_base_id": index["knowledge_base_id"],
@@ -30,4 +30,5 @@ def payload(index: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
         "profile_hash": index["profile_hash"],
         "embedding_hash": row["embedding_hash"],
         "chunk_kind": row["chunk_kind"],
+        **({"searchable": True} if index.get("incremental") == 1 else {}),
     }
