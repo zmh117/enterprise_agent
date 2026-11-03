@@ -277,7 +277,7 @@ class DeliveryConfigRequest(StrictRequest):
 
 class DeliveryRequest(StrictRequest):
     delivery_type: Literal[
-        "reply_original", "dingtalk_private", "dingtalk_group", "webhook_callback"
+        "reply_original", "dingtalk_private", "dingtalk_group", "webhook_callback", "webhook_result"
     ]
     connector_id: str = Field(min_length=1, max_length=200)
     enabled: bool = True

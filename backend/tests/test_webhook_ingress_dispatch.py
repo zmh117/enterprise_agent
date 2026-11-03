@@ -20,7 +20,7 @@ from backend.tests.helpers import (
 PUBLIC_ID = "wh_local_grafana_default_00000000000000000001"
 
 
-def _container():
+def _container(*, webhook_result=False):
     settings = replace(
         build_test_settings(),
         conversation=ConversationSettings(enabled=True),
@@ -59,8 +59,13 @@ def _container():
         webhook_definition_id=str(trigger["id"]),
         service_account_user_id=str(trigger["service_account_id"]),
         ingress_connector_id="connector-grafana-default",
-        delivery_connector_id=("connector-dingtalk-enterprise-default"),
-        delivery_target_reference="test-alert-group",
+        delivery_connector_id=(
+            "connector-grafana-default"
+            if webhook_result
+            else "connector-dingtalk-enterprise-default"
+        ),
+        delivery_type="webhook_result" if webhook_result else "dingtalk_group",
+        delivery_target_reference="" if webhook_result else "test-alert-group",
         capabilities=capabilities,
     )
     return runtime

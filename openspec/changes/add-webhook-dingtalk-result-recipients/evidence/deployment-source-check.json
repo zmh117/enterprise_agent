@@ -1,0 +1,22 @@
+{
+  "api-server": {
+    "files_checked": 6,
+    "matches_workspace": true
+  },
+  "delivery-dispatch-worker": {
+    "files_checked": 6,
+    "matches_workspace": true
+  },
+  "webhook-worker": {
+    "files_checked": 6,
+    "matches_workspace": true
+  },
+  "channel-dispatch-worker": {
+    "files_checked": 6,
+    "matches_workspace": true
+  },
+  "agent-worker": {
+    "files_checked": 6,
+    "matches_workspace": true
+  }
+}

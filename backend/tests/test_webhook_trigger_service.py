@@ -15,6 +15,39 @@ from backend.tests.helpers import container
 ADMIN_ID = "user_local_admin"
 
 
+def test_stop_unavailable_webhook_preserves_revision_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    c, service = _service(monkeypatch)
+    definition = service.create(
+        actor_id=ADMIN_ID,
+        code="stop-unavailable",
+        name="Synthetic stop",
+        trigger_type="grafana",
+        connector_id="connector-grafana-default",
+        config=_config(),
+    )["definition"]
+    c.database.execute(
+        "update integration_connector set enabled=0 where id=?", (definition["connector_id"],)
+    )
+    stopped = service.update_definition(
+        actor_id=ADMIN_ID,
+        code=definition["code"],
+        expected_revision=definition["revision"],
+        name=definition["name"],
+        connector_id=definition["connector_id"],
+        status="disabled",
+    )
+    assert stopped["status"] == "disabled"
+    with pytest.raises(NonRetryableExecutionError):
+        service.update_definition(
+            actor_id=ADMIN_ID,
+            code=definition["code"],
+            expected_revision=definition["revision"],
+            name=definition["name"],
+            connector_id=definition["connector_id"],
+            status="disabled",
+        )
+
+
 def _service(monkeypatch: pytest.MonkeyPatch) -> tuple[object, WebhookTriggerService]:
     del monkeypatch
     c = container(configure_seed_secrets=False)

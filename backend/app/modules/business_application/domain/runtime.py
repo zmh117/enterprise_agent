@@ -463,7 +463,8 @@ class RuntimeReadinessEvaluator:
         webhook_deliveries = [
             value
             for value in deliveries
-            if str(value.get("delivery_type") or "") in {"dingtalk_group", "webhook_callback"}
+            if str(value.get("delivery_type") or "")
+            in {"dingtalk_group", "webhook_callback", "webhook_result"}
         ]
         delivery_blocked = False
         if supported_triggers:
@@ -536,7 +537,12 @@ class RuntimeReadinessEvaluator:
                 target_reference = (
                     str(config.get("target_reference") or "") if isinstance(config, dict) else ""
                 )
-                if not target_reference:
+                frozen_result = webhook_deliveries[0].get("delivery_type") == "webhook_result"
+                invalid_source = frozen_result and any(
+                    trigger.get("connector_id") != webhook_deliveries[0].get("connector_id")
+                    for trigger in webhook_triggers
+                )
+                if invalid_source or (not frozen_result and not target_reference):
                     delivery_blocked = True
                     components["delivery"] = RuntimeComponentStatus(
                         RuntimeComponentState.BLOCKED,

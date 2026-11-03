@@ -708,7 +708,9 @@ class BusinessApplicationService:
             if not delivery["enabled"]:
                 continue
             direction = (
-                "ingress" if str(delivery["delivery_type"]) == "reply_original" else "delivery"
+                "ingress"
+                if str(delivery["delivery_type"]) in {"reply_original", "webhook_result"}
+                else "delivery"
             )
             reference = self._resolve_component(
                 errors,

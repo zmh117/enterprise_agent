@@ -395,6 +395,8 @@ def validate_delivery(value: dict[str, Any], index: int) -> dict[str, Any]:
     config = dict(value.get("config") or {})
     _reject_unknown(config, DELIVERY_CONFIG_FIELDS, f"deliveries.{index}.config")
     reject_dangerous_content(config, field=f"deliveries.{index}.config")
+    if delivery_type == "webhook_result" and config.get("target_reference"):
+        raise validation_error(f"deliveries.{index}.config", "接收人须在 Webhook 中配置")
     return {
         "delivery_type": delivery_type,
         "connector_id": connector_id,

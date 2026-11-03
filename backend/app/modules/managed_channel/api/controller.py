@@ -100,7 +100,7 @@ class WebhookApplicationRequest(StrictRequest):
     code: str = Field(pattern=r"^[a-z][a-z0-9-]{2,63}$")
     name: str = Field(min_length=1, max_length=200)
     trigger_type: Literal["grafana", "generic"]
-    connector_id: str = Field(min_length=1, max_length=200)
+    connector_id: str = Field(default="", max_length=200)
 
 
 class RuntimeLeaseRequest(StrictRequest):

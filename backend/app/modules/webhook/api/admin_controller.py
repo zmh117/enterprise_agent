@@ -53,7 +53,7 @@ class AgentRequest(StrictRequest):
 
 class DeliveryRequest(StrictRequest):
     type: str = Field(min_length=1, max_length=120)
-    connector_id: str = Field(min_length=1, max_length=200)
+    connector_id: str = Field(default="", max_length=200)
     target: dict[str, Any] = Field(default_factory=dict)
     options: dict[str, Any] = Field(default_factory=dict)
 
@@ -141,25 +141,29 @@ def build_webhook_admin_router() -> APIRouter:  # noqa: C901, PLR0915
         require_action(request, resource_type="webhook_trigger", resource_code="*", action="read")
         c = container(request)
         try:
-            publication = c.agent_config_service.current_publication(
-                c.settings.identity.default_agent_code
-            )
-            definition = c.agent_config_service.repository.get_definition(
-                c.settings.identity.default_agent_code
-            )
+            repository = c.agent_config_service.repository
+            default_definition = repository.find_definition(c.settings.identity.default_agent_code)
+            default_publication_id = (default_definition or {}).get("current_publication_id")
+            agents = [
+                {
+                    "code": definition["code"],
+                    "name": definition["name"],
+                    "publication_id": publication["id"],
+                    "revision": publication["revision"],
+                    "config_hash": publication["config_hash"],
+                    "read_only_tools": sorted(repository.publication_tools(str(publication["id"]))),
+                }
+                for definition in repository.list_definitions(include_disabled=False)
+                for publication in repository.list_publications(str(definition["id"]))
+            ]
         except Exception as exc:
             raise handle_exception(exc) from exc
         return {
-            "agent": {
-                "code": definition["code"],
-                "name": definition["name"],
-                "publication_id": publication["id"],
-                "revision": publication["revision"],
-                "config_hash": publication["config_hash"],
-                "read_only_tools": sorted(
-                    c.agent_config_service.repository.publication_tools(str(publication["id"]))
-                ),
-            },
+            "agent": next(
+                (item for item in agents if item["publication_id"] == default_publication_id),
+                None,
+            ),
+            "agents": agents,
             "connectors": c.agent_config_service.repository.connector_catalog(),
         }
 

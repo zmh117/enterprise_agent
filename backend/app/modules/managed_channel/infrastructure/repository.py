@@ -45,7 +45,7 @@ class ManagedChannelRepository:  # noqa: PLR0904
              where enabled = 1
                and allow_ingress = 1
                and deleted = 0
-               and connector_type != 'dingtalk_enterprise_stream'
+               and connector_type in ('managed_webhook', 'grafana_alert')
              order by name, id
             """
         )
@@ -58,6 +58,31 @@ class ManagedChannelRepository:  # noqa: PLR0904
             }
             for row in rows
         ]
+
+    def create_webhook_connector(self, *, code: str) -> str:
+        if self.database.execute_one(
+            "select id from webhook_trigger_definition where code = ?", (code,)
+        ):
+            raise NonRetryableExecutionError(
+                "Webhook code already exists",
+                safe_message="Webhook 编码已存在，请使用其他编码",
+                error_code="validation_failed",
+                field_errors=[{"field": "code", "message": "编码已存在"}],
+            )
+        connector_id = new_id("connector")
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            insert into integration_connector
+              (id, connector_type, name, base_url, enabled, metadata,
+               allow_ingress, allow_delivery, secret_ref, endpoint_ref,
+               host_allowlist, revision, created_at, updated_at, deleted)
+            values (?, 'managed_webhook', ?, '', 1, '{}', 1, 0, '', '', '',
+                    1, ?, ?, 0)
+            """,
+            (connector_id, f"Webhook · {code}", timestamp, timestamp),
+        )
+        return connector_id
 
     def get_connector(self, connector_id: str) -> dict[str, Any]:
         row = self.database.execute_one(

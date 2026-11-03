@@ -40,6 +40,7 @@ class DeliveryEvent:
     replay_count: int
     max_replay_count: int
     next_attempt_at: str
+    recipient_key: str = ""
     claimed_by: str = ""
     claim_token: str = ""
     claimed_at: str | None = None

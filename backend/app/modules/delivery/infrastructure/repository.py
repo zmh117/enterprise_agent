@@ -100,6 +100,7 @@ class DeliveryRepository:
         correlation_id: str,
         max_attempts: int,
         max_replay_count: int,
+        recipient_key: str = "",
     ) -> DeliveryEvent:
         if self._artifact_job_id(result_artifact_id) != job_id:
             raise NonRetryableExecutionError(
@@ -116,13 +117,14 @@ class DeliveryRepository:
                application_publication_id, delivery_binding_json,
                target_summary, correlation_id, status, attempt_count,
                max_attempts, replay_count, max_replay_count,
-               next_attempt_at, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, 0, ?, ?, ?, ?)
-            on conflict(job_id, result_artifact_id) do nothing
+               next_attempt_at, created_at, updated_at, recipient_key)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, 0, ?, ?, ?, ?, ?)
+            on conflict(job_id, result_artifact_id, recipient_key) do nothing
             """,
             (
                 event_id,
-                f"delivery.result:{result_artifact_id}",
+                f"delivery.result:{result_artifact_id}"
+                + (f":{recipient_key}" if recipient_key else ""),
                 job_id,
                 result_artifact_id,
                 application_publication_id,
@@ -134,14 +136,15 @@ class DeliveryRepository:
                 timestamp,
                 timestamp,
                 timestamp,
+                recipient_key,
             ),
         )
         row = self.database.execute_one(
             """
             select * from delivery_outbox
-             where job_id = ? and result_artifact_id = ?
+             where job_id = ? and result_artifact_id = ? and recipient_key = ?
             """,
-            (job_id, result_artifact_id),
+            (job_id, result_artifact_id, recipient_key),
         )
         if row is None:
             raise NonRetryableExecutionError(
@@ -902,6 +905,7 @@ class DeliveryRepository:
             replay_count=int(row.get("replay_count") or 0),
             max_replay_count=int(row.get("max_replay_count") or 0),
             next_attempt_at=str(row["next_attempt_at"]),
+            recipient_key=str(row.get("recipient_key") or ""),
             claimed_by=str(row.get("claimed_by") or ""),
             claim_token=str(row.get("claim_token") or ""),
             claimed_at=(str(row["claimed_at"]) if row.get("claimed_at") else None),

@@ -61,6 +61,7 @@ from app.modules.delivery.application.result_delivery_service import ResultDeliv
 from app.modules.delivery.infrastructure.adapters import (
     DingTalkConversationDeliveryAdapter,
     DingTalkEnterpriseAppDeliveryAdapter,
+    DingTalkRobotResultDeliveryAdapter,
     DingTalkStreamSessionWebhookDeliveryAdapter,
     DingTalkStreamSessionRejectionNotifier,
     DingTalkWebhookRobotDeliveryAdapter,
@@ -1089,6 +1090,10 @@ def _build_container(  # noqa: C901, PLR0915
             "dingtalk_stream_session_webhook": dingtalk_stream_session_webhook_adapter,
             "dingtalk_webhook_robot": dingtalk_webhook_robot_adapter,
             "dingtalk_enterprise_robot": dingtalk_enterprise_adapter,
+            "dingtalk_robot_message": DingTalkRobotResultDeliveryAdapter(
+                connector_registry=connector_registry,
+                timeout_seconds=settings.delivery.timeout_seconds,
+            ),
             "email": http_adapter,
             "webhook": http_adapter,
         },

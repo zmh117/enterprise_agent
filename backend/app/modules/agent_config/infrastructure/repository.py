@@ -552,7 +552,9 @@ class AgentConfigRepository:  # noqa: PLR0904
     def connector_catalog(self) -> list[dict[str, Any]]:
         return self.database.execute(
             """
-            select id, connector_type, name, enabled, allow_ingress, allow_delivery
+            select id, connector_type, name, enabled, allow_ingress, allow_delivery,
+                   case when connector_type = 'dingtalk_enterprise_stream'
+                        then 1 else 0 end as supports_robot_delivery
             from integration_connector
             where enabled = 1
             order by name, id
@@ -564,9 +566,10 @@ class AgentConfigRepository:  # noqa: PLR0904
         row = self.database.execute_one(
             f"""
             select id from integration_connector
-            where id = ? and enabled = 1 and {column} = 1
+            where id = ? and enabled = 1 and ({column} = 1 or
+              (? = 'delivery' and connector_type = 'dingtalk_enterprise_stream'))
             """,
-            (connector_id,),
+            (connector_id, direction),
         )
         return row is not None
 

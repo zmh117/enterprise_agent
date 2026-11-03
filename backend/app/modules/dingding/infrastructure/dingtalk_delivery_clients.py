@@ -163,6 +163,39 @@ class DingTalkEnterpriseMessageClient:
         )
         _raise_for_dingtalk_error(response, default_safe_message="钉钉企业消息发送失败")
 
+    def send_user_markdown(self, *, user_id: str, robot_code: str, title: str, text: str) -> None:
+        if not user_id or not robot_code:
+            raise NonRetryableExecutionError(
+                "DingTalk user target is missing",
+                safe_message="钉钉用户投递目标未配置",
+                error_code="dingtalk_target_invalid",
+            )
+        response = self.transport.post_json(
+            self.send_url,
+            {
+                "robotCode": robot_code,
+                "userIds": [user_id],
+                "msgKey": "sampleMarkdown",
+                "msgParam": json.dumps({"title": title, "text": text}, ensure_ascii=False),
+            },
+            {"x-acs-dingtalk-access-token": self.token_client.access_token()},
+            self.timeout_seconds,
+        )
+        _raise_for_dingtalk_error(response, default_safe_message="钉钉用户消息发送失败")
+        if response.get("invalidStaffIdList"):
+            raise NonRetryableExecutionError(
+                "DingTalk rejected recipient",
+                safe_message="钉钉用户 ID 无效或不在机器人可见范围",
+                error_code="dingtalk_recipient_invalid",
+            )
+        if response.get("flowControlledStaffIdList"):
+            raise RetryableExecutionError(
+                "DingTalk recipient rate limited",
+                safe_message="钉钉用户消息限流，稍后重试",
+                error_code="dingtalk_recipient_rate_limited",
+            )
+        self.sent_messages.append({"user_id": user_id, "robot_code": robot_code, "title": title})
+
 
 class DingTalkWebhookRobotClient:
     def __init__(

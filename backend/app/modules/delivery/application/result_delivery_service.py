@@ -9,6 +9,7 @@ from app.modules.authorization_center.application import BusinessAuthorizationSe
 from app.modules.channel.domain.channel_event import ReplyRoute, safe_payload_summary
 from app.modules.channel.infrastructure.connector_registry import Connector, ConnectorRegistry
 from app.modules.delivery.application.report_chunker import ReportChunker
+from app.modules.delivery.domain.recipient_routes import result_routes
 from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
 from app.modules.job.infrastructure.repositories import AgentRepository
@@ -218,6 +219,7 @@ class ResultDeliveryService:
             )
         return len(rows)
 
+    @operation_unit_of_work(lambda self: self.repository.database)
     def _enqueue(
         self,
         *,
@@ -230,49 +232,53 @@ class ResultDeliveryService:
         source_delivery_id: str = "",
     ) -> str:
         job = self.repository.get_job(job_id)
-        route = ReplyRoute.from_dict(job.reply_route)
         canonical_route = json.dumps(
             job.reply_route or {"type": "none"},
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
-        event = self.delivery_repository.create_delivery_event(
-            job_id=job.id,
-            result_artifact_id=artifact_id,
-            application_publication_id=(
-                job.business_application_publication_id or job.agent_publication_id
-            ),
-            delivery_binding={
-                "delivery_kind": delivery_kind,
-                "title": title,
-                "route_type": route.type,
-                "connector_id": route.connector_id,
-                "route_hash": hashlib.sha256(canonical_route.encode("utf-8")).hexdigest(),
-                "route_source": "agent_job.reply_route_json",
-                "failure_error_code": failure_error_code,
-                "source_delivery_id": source_delivery_id,
-            },
-            target_summary=_target_summary(route, None),
-            correlation_id=correlation_id,
-            max_attempts=self.settings.outbox_max_attempts,
-            max_replay_count=self.settings.outbox_max_replays,
-        )
-        self.audit_service.record(
-            "delivery.outbox.created",
-            status="PENDING",
-            summary="Delivery intent persisted for independent dispatch",
-            job_id=job.id,
-            payload={
-                "delivery_id": event.id,
-                "delivery_kind": delivery_kind,
-                "route_type": route.type,
-                "connector_id": route.connector_id,
-                "source_delivery_id": source_delivery_id,
-                **_runtime_context(job),
-            },
-        )
-        return event.id
+        event_ids = []
+        for key, route in result_routes(job.reply_route or {"type": "none"}):
+            event = self.delivery_repository.create_delivery_event(
+                recipient_key=key,
+                job_id=job.id,
+                result_artifact_id=artifact_id,
+                application_publication_id=(
+                    job.business_application_publication_id or job.agent_publication_id
+                ),
+                delivery_binding={
+                    "recipient_key": key,
+                    "delivery_kind": delivery_kind,
+                    "title": title,
+                    "route_type": route.type,
+                    "connector_id": route.connector_id,
+                    "route_hash": hashlib.sha256(canonical_route.encode("utf-8")).hexdigest(),
+                    "route_source": "agent_job.reply_route_json",
+                    "failure_error_code": failure_error_code,
+                    "source_delivery_id": source_delivery_id,
+                },
+                target_summary=_target_summary(route, None),
+                correlation_id=correlation_id,
+                max_attempts=self.settings.outbox_max_attempts,
+                max_replay_count=self.settings.outbox_max_replays,
+            )
+            self.audit_service.record(
+                "delivery.outbox.created",
+                status="PENDING",
+                summary="Delivery intent persisted for independent dispatch",
+                job_id=job.id,
+                payload={
+                    "delivery_id": event.id,
+                    "delivery_kind": delivery_kind,
+                    "route_type": route.type,
+                    "connector_id": route.connector_id,
+                    "source_delivery_id": source_delivery_id,
+                    **_runtime_context(job),
+                },
+            )
+            event_ids.append(event.id)
+        return event_ids[0]
 
 
 def _target_summary(route: ReplyRoute, connector: Connector | None) -> dict[str, Any]:

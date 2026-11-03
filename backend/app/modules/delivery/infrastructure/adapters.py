@@ -130,7 +130,12 @@ class DingTalkEnterpriseAppDeliveryAdapter:
         self, *, connector_id: str, client_id: str, client_secret: str, token_url: str
     ) -> DingTalkAccessTokenClient:
         cached = self._token_clients.get(connector_id)
-        if cached is not None:
+        if (
+            cached is not None
+            and cached.client_id == client_id
+            and cached.client_secret == client_secret
+            and cached.token_url == token_url
+        ):
             return cached
         client = DingTalkAccessTokenClient(
             client_id=client_id,
@@ -141,6 +146,50 @@ class DingTalkEnterpriseAppDeliveryAdapter:
         )
         self._token_clients[connector_id] = client
         return client
+
+
+class DingTalkRobotResultDeliveryAdapter(DingTalkEnterpriseAppDeliveryAdapter):
+    """Active robot messages, using only fixed official endpoints and frozen recipients."""
+
+    def send(
+        self, *, connector: Connector | None, route: ReplyRoute, title: str, text: str
+    ) -> None:
+        assert_external_io_allowed("dingtalk.robot_result_delivery")
+        if connector is None:
+            raise ValueError("DingTalk robot connector is required")
+        kind = str(route.target.get("kind") or "")
+        target_id = str(route.target.get("target_id") or "")
+        if kind not in {"group", "user"} or not target_id:
+            raise NonRetryableExecutionError(
+                "Invalid robot target", safe_message="机器人投递目标无效"
+            )
+        registry = self.connector_registry
+        client_id = registry.resolve_metadata_reference(
+            connector, "client_id_ref"
+        ) or registry.metadata_value(connector, "client_id")
+        token_client = self._token_client(
+            connector_id=connector.id,
+            client_id=client_id,
+            client_secret=registry.resolve_secret(connector),
+            token_url="https://api.dingtalk.com/v1.0/oauth2/accessToken",
+        )
+        endpoint = "groupMessages/send" if kind == "group" else "oToMessages/batchSend"
+        client = DingTalkEnterpriseMessageClient(
+            token_client=token_client,
+            transport=self.transport,
+            send_url=f"https://api.dingtalk.com/v1.0/robot/{endpoint}",
+            timeout_seconds=self.timeout_seconds,
+        )
+        robot_code = registry.metadata_value(connector, "default_robot_code")
+        if kind == "group":
+            client.send_markdown(
+                open_conversation_id=target_id, robot_code=robot_code, title=title, text=text
+            )
+        else:
+            client.send_user_markdown(
+                user_id=target_id, robot_code=robot_code, title=title, text=text
+            )
+        self.sent_messages.append({"kind": kind, "target_id": target_id, "title": title})
 
 
 class DingTalkWebhookRobotDeliveryAdapter:

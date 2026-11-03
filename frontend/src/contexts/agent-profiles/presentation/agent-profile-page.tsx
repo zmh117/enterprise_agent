@@ -1633,7 +1633,7 @@ function ConnectorChecklist({
     Boolean(
       direction === "ingress"
         ? connector.allow_ingress
-        : connector.allow_delivery
+        : connector.allow_delivery || connector.supports_robot_delivery
     )
   )
   const availableIds = new Set(available.map((connector) => connector.id))

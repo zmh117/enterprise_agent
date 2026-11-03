@@ -227,6 +227,7 @@ def activate_webhook_test_application(
     ingress_connector_id: str,
     delivery_connector_id: str,
     delivery_target_reference: str,
+    delivery_type: str = "dingtalk_group",
     capabilities: tuple[str, ...] = (),
     environment_code: str = "prod",
     base_code: str = "guanlan",
@@ -276,7 +277,7 @@ def activate_webhook_test_application(
             ],
             "deliveries": [
                 {
-                    "delivery_type": "dingtalk_group",
+                    "delivery_type": delivery_type,
                     "connector_id": delivery_connector_id,
                     "enabled": True,
                     "config": {

@@ -14,6 +14,7 @@ from app.modules.delivery.application.result_delivery_service import (
     ResultDeliveryService,
 )
 from app.modules.delivery.domain import DeliveryEvent, DeliveryStatus
+from app.modules.delivery.domain.recipient_routes import ROBOT_MESSAGE_ROUTE, result_routes
 from app.modules.delivery.infrastructure.file_delivery_sender import FileDeliverySender
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
@@ -182,7 +183,14 @@ class DeliveryOutboxDispatcher:
             return self._dispatch_system_notice(event=event, attempt_id=attempt_id)
         job = self.repository.get_job(event.job_id)
         artifact = self.repository.get_artifact(event.result_artifact_id)
-        route = ReplyRoute.from_dict(job.reply_route)
+        key = str(event.delivery_binding.get("recipient_key") or "")
+        route = dict(result_routes(job.reply_route or {"type": "none"})).get(key)
+        if route is None or key != event.recipient_key:
+            raise NonRetryableExecutionError(
+                "Frozen recipient does not exist",
+                safe_message="固化接收人不存在",
+                error_code="delivery_binding_mismatch",
+            )
         self._require_original_binding(event, route, job.reply_route or {})
         self.audit_service.record(
             "delivery.started",
@@ -222,14 +230,12 @@ class DeliveryOutboxDispatcher:
             str(event.delivery_binding.get("delivery_kind") or "") == "file_version"
         )
         if route.connector_id:
-            connector = self.delivery_service.connector_registry.require_delivery(
-                route.connector_id
-            )
-            endpoint = self.delivery_service.connector_registry.endpoint_url(connector)
-            self.delivery_service.connector_registry.assert_host_allowed(
-                connector,
-                endpoint,
-            )
+            registry = self.delivery_service.connector_registry
+            if route.type == ROBOT_MESSAGE_ROUTE:
+                connector = registry.require_dingtalk_robot_delivery(route.connector_id)
+            else:
+                connector = registry.require_delivery(route.connector_id)
+                registry.assert_host_allowed(connector, registry.endpoint_url(connector))
             self.audit_service.record(
                 "delivery.connector_authorized",
                 status="SUCCEEDED",

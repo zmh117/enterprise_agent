@@ -1,0 +1,425 @@
+{
+  "status": "PASS",
+  "checked_at": "2026-10-25T14:13:46.439352+00:00",
+  "environment": {
+    "compose_project": "enterprise_agent",
+    "web": "http://localhost:8080/applications/channels",
+    "public_api_origin": "http://localhost:8000",
+    "database": "existing PostgreSQL volume",
+    "schema_version": 147
+  },
+  "recovery": {
+    "observed": "core dependencies exited around 2026-10-25T06:58:20Z; OOM=false; stop initiator unknown",
+    "actions": [
+      "start existing postgres rabbitmq minio",
+      "build affected backend services and admin-web",
+      "compose up -d --no-build",
+      "restart two Runtime nodes after ready reported database unavailable"
+    ],
+    "volumes_removed": false,
+    "seed_imported": false
+  },
+  "services": [
+    {
+      "Service": "admin-web",
+      "Name": "enterprise_agent-admin-web-1",
+      "State": "running",
+      "Health": "",
+      "ExitCode": 0
+    },
+    {
+      "Service": "agent-worker",
+      "Name": "enterprise_agent-agent-worker-1",
+      "State": "running",
+      "Health": "",
+      "ExitCode": 0
+    },
+    {
+      "Service": "agent-worker",
+      "Name": "enterprise_agent-agent-worker-2",
+      "State": "running",
+      "Health": "",
+      "ExitCode": 0
+    },
+    {
+      "Service": "api-server",
+      "Name": "enterprise_agent-api-server-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "channel-dispatch-worker",
+      "Name": "enterprise_agent-channel-dispatch-worker-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "delivery-dispatch-worker",
+      "Name": "enterprise_agent-delivery-dispatch-worker-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "dingtalk-mcp",
+      "Name": "enterprise_agent-dingtalk-mcp-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "dingtalk-runtime",
+      "Name": "enterprise_agent-dingtalk-runtime-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "docling-serve",
+      "Name": "enterprise_agent-docling-serve-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "external-action-worker",
+      "Name": "enterprise_agent-external-action-worker-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "file-processing-worker",
+      "Name": "enterprise_agent-file-processing-worker-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "file-processing-worker-2",
+      "Name": "enterprise_agent-file-processing-worker-2-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "file-service",
+      "Name": "enterprise_agent-file-service-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "file-worker",
+      "Name": "enterprise_agent-file-worker-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "job-dispatch-worker",
+      "Name": "enterprise_agent-job-dispatch-worker-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "migrator",
+      "Name": "enterprise_agent-migrator-1",
+      "State": "exited",
+      "Health": "",
+      "ExitCode": 0
+    },
+    {
+      "Service": "minio",
+      "Name": "enterprise_agent-minio-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "minio-init",
+      "Name": "enterprise_agent-minio-init-1",
+      "State": "exited",
+      "Health": "",
+      "ExitCode": 0
+    },
+    {
+      "Service": "ones-mcp",
+      "Name": "enterprise_agent-ones-mcp-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "postgres",
+      "Name": "enterprise_agent-postgres-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "rabbitmq",
+      "Name": "enterprise_agent-rabbitmq-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "python-agent-runtime-a",
+      "Name": "enterprise_agent-runtime-a",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "python-agent-runtime-b",
+      "Name": "enterprise_agent-runtime-b",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "tool-mcp",
+      "Name": "enterprise_agent-tool-mcp-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    },
+    {
+      "Service": "webhook-worker",
+      "Name": "enterprise_agent-webhook-worker-1",
+      "State": "running",
+      "Health": "healthy",
+      "ExitCode": 0
+    }
+  ],
+  "source_check": {
+    "api_source_matches_workspace": true,
+    "files": {
+      "modules/channel/infrastructure/connector_registry.py": "4149101968a6b20d32ec7c0ae55066625c0a085e42263580ac083737f980d0f3",
+      "modules/managed_channel/api/controller.py": "8ac9d7e6b22f03348a77fd30226709681c16349e7a03902b5e4355f35e491d86",
+      "modules/managed_channel/application/service.py": "4b7470e8228761335d216788c61efc29a80a58bea390ad2c1f6c267e46bd25f5",
+      "modules/managed_channel/infrastructure/repository.py": "c842436175b8690be65b8085303304670fc9534bcffb3923a5ef416e13301171",
+      "modules/webhook/api/admin_controller.py": "a4ac81288d0bfade54bbd7809e43dc445e4afd7c7e64778e19df2868271f21ee",
+      "modules/webhook/application/trigger_service.py": "4518c61d7c08d0d7649fc9ddf10e7c37e64bbd21ea21bb4d79ac3542c3f310d3",
+      "modules/webhook/domain/models.py": "d9ba3abd009e4cb3d5fc907dfa232766e4515cca2823e73b2fc0532206c702c6"
+    }
+  },
+  "cases": [
+    {
+      "id": "WC-01",
+      "name": "create_first_webhook",
+      "actual": "Web creates an independent ingress connector and service account, disabled and unpublished",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-02",
+      "name": "unpublished_enable_gate",
+      "actual": "Enable button disabled before publication",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-03",
+      "name": "save_configuration",
+      "actual": "Synthetic secret ref, Agent publication, mapping, routing, none delivery and bounded limits saved",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-04",
+      "name": "missing_agent_ingress",
+      "actual": "Validation rejects publication without connector assignment",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-05",
+      "name": "unsaved_changes_gate",
+      "actual": "Changing Agent publication disables validate, preview and publish until save",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-06",
+      "name": "validate",
+      "actual": "Validation succeeds with synthetic Agent publication r2 assigning only the new ingress",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-07",
+      "name": "preview",
+      "actual": "Synthetic mapping result has side_effects=false; Event 0 and Job 224 unchanged immediately after preview",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-08",
+      "name": "publish",
+      "actual": "Draft r2 becomes immutable current publication r2 while trigger remains disabled",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-09",
+      "name": "enable",
+      "actual": "UI and database both enabled, definition revision3",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-10",
+      "name": "enabled_auth_gate",
+      "actual": "Unauthenticated public request returns401 webhook_auth_failed, records one REJECTED_AUTH event without Job",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-11",
+      "name": "disable",
+      "actual": "UI and database both disabled, definition revision4",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-12",
+      "name": "disabled_auth_gate",
+      "actual": "Even correct synthetic bearer returns401 webhook_disabled",
+      "result": "PASS"
+    },
+    {
+      "id": "WC-13",
+      "name": "reopen",
+      "actual": "Reopened form preserves r2 publication, disabled state, cooldown0, request limit5 and inflight1",
+      "result": "PASS"
+    }
+  ],
+  "fixtures": {
+    "webhook_created_via": "Web UI",
+    "supporting_secret_and_agent": "application services with explicit synthetic fixture actor",
+    "temporary_operator": "isolated audited test user with 2-hour role expiry; disabled, sessions revoked and password removed at cleanup",
+    "existing_model_connection": "referenced by new synthetic Agent only; no Provider invocation"
+  },
+  "credential_integrity": {
+    "managed_metadata": {
+      "unchanged": true,
+      "count": 7
+    },
+    "managed_ciphertext": {
+      "unchanged": true,
+      "count": 7
+    },
+    "user_credentials": {
+      "unchanged": true,
+      "count": 3
+    },
+    "external_credentials": {
+      "unchanged": true,
+      "count": 2
+    }
+  },
+  "persisted_facts": {
+    "trigger": {
+      "id": "webhook_trigger_40821567469b4e98855c2e7eae255744",
+      "code": "synthetic-compose-webhook-20261025",
+      "status": "disabled",
+      "revision": 5,
+      "connector_id": "connector_443ede1bb3d04a73afe7fe184f729ce5",
+      "service_account_id": "user_dc3d342f2c1b45f5915ead51b385b3b9",
+      "current_publication_id": "webhook_trigger_publication_d03d3b50c9bb43838702c44092794eac"
+    },
+    "publication": {
+      "id": "webhook_trigger_publication_d03d3b50c9bb43838702c44092794eac",
+      "revision": 2,
+      "agent_publication_id": "agent_publication_085661d8ff6c4f3e8450224392418241",
+      "agent_revision": 2
+    },
+    "connector": {
+      "connector_type": "managed_webhook",
+      "enabled": 0,
+      "allow_ingress": 1,
+      "allow_delivery": 0,
+      "secret_ref_length": 0
+    },
+    "synthetic_secret": {
+      "status": "disabled",
+      "active_version": 1
+    },
+    "test_user": {
+      "status": "disabled"
+    },
+    "service_account": {
+      "status": "disabled"
+    },
+    "agent": {
+      "status": "disabled"
+    },
+    "published_limits": {
+      "max_alerts": 20,
+      "max_in_flight": 1,
+      "requests_per_minute": 5
+    },
+    "published_idempotency": {
+      "cooldown_seconds": 0
+    },
+    "published_delivery": {
+      "connector_id": "",
+      "options": {},
+      "target": {},
+      "type": "none"
+    },
+    "counts_after": {
+      "webhook_event": 1,
+      "agent_job": 224,
+      "delivery_attempt": 259
+    },
+    "synthetic_events": [
+      {
+        "status": "REJECTED_AUTH",
+        "error_code": "webhook_auth_failed",
+        "job_id": null
+      }
+    ],
+    "synthetic_jobs": 0,
+    "test_password_removed": true
+  },
+  "cleanup": {
+    "fixture_status": "all synthetic access and entry components disabled; definitions/publications/rejected event/audit retained",
+    "browser_session": "ea-webhook-compose-20261025",
+    "daemon_pid": 26657,
+    "browser_pid": 26658,
+    "helper_pids": [
+      26664,
+      26665,
+      26666,
+      26669,
+      26670,
+      26671
+    ],
+    "all_recorded_processes_exited": true
+  },
+  "scope": {
+    "generic_webhook_complete_web_flow": true,
+    "grafana": "covered in earlier isolated acceptance, not repeated in deployed stack",
+    "business_application_execution": false,
+    "provider_invocation": false,
+    "public_https": false,
+    "authenticated_event_dispatch": false
+  },
+  "notes": [
+    "Initial disabled-request assertion expected404; source and observed contract are401 webhook_disabled. Rechecked with correct synthetic bearer; no product change.",
+    "Final aggregate Event count is1 because the later public authentication rejection is persisted. Preview had Event0 before and after, with no Job creation."
+  ],
+  "final_http_checks": [
+    {
+      "url": "http://localhost:8080/applications/channels",
+      "status": 200
+    },
+    {
+      "url": "http://localhost:8000/api/health",
+      "status": 200
+    },
+    {
+      "url": "http://localhost:8000/api/ready",
+      "status": 200
+    },
+    {
+      "url": "http://localhost:8080/api/ready",
+      "status": 200
+    }
+  ]
+}

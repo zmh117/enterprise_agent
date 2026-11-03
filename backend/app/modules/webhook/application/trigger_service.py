@@ -4,6 +4,8 @@ import hmac
 import re
 from typing import Any
 
+from app.modules.delivery.domain.recipient_routes import RECIPIENTS_ROUTE, normalized_recipients
+
 from app.modules.agent_config.application.service import AgentConfigService
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
@@ -32,6 +34,8 @@ from app.shared.exceptions import NonRetryableExecutionError
 
 
 _TEMPLATE_VARIABLE_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
 _SAFE_TARGET_KEYS = frozenset(
     {"webhook_id", "open_conversation_id", "robot_code", "conversation_id"}
 )
@@ -237,17 +241,43 @@ class TriggerValidator:
 
         delivery = config.get("delivery") or {}
         delivery_id = str(delivery.get("connector_id") or "")
-        try:
-            self.connector_registry.require_delivery(delivery_id)
-        except Exception as exc:
-            errors.append(
-                {
-                    "field": "delivery.connector_id",
-                    "message": getattr(exc, "safe_message", "投递连接器不可用"),
-                }
-            )
+        recipient_connectors: list[tuple[str, str]] = []
+        if delivery.get("type") == RECIPIENTS_ROUTE:
+            try:
+                recipients = normalized_recipients(delivery)
+            except NonRetryableExecutionError as exc:
+                errors.extend(exc.field_errors)
+                recipients = []
+            for index, recipient in enumerate(recipients):
+                field = f"delivery.target.recipients.{index}.connector_id"
+                recipient_connectors.append((field, recipient["connector_id"]))
+                try:
+                    self.connector_registry.require_dingtalk_robot_delivery(
+                        recipient["connector_id"]
+                    )
+                except Exception as exc:
+                    errors.append(
+                        {"field": field, "message": getattr(exc, "safe_message", "机器人不可用")}
+                    )
+        elif str(delivery.get("type")) == "none" and not delivery_id:
+            if delivery.get("target") or delivery.get("options"):
+                errors.append({"field": "delivery", "message": "不投递结果时不能配置目标或选项"})
+        else:
+            try:
+                destination = self.connector_registry.require_delivery(delivery_id)
+                if destination.connector_type != str(delivery.get("type")):
+                    errors.append({"field": "delivery.type", "message": "投递类型与连接器不匹配"})
+            except Exception as exc:
+                errors.append(
+                    {
+                        "field": "delivery.connector_id",
+                        "message": getattr(exc, "safe_message", "投递连接器不可用"),
+                    }
+                )
         target = delivery.get("target") or {}
-        if not isinstance(target, dict) or set(target) - _SAFE_TARGET_KEYS:
+        if delivery.get("type") != RECIPIENTS_ROUTE and (
+            not isinstance(target, dict) or set(target) - _SAFE_TARGET_KEYS
+        ):
             errors.append({"field": "delivery.target", "message": "投递目标包含不支持的字段"})
 
         agent = config.get("agent") or {}
@@ -280,6 +310,15 @@ class TriggerValidator:
                         "message": "Agent 发布版本未分配此投递连接器",
                     }
                 )
+            for field, recipient_connector in recipient_connectors:
+                if not self.agent_config_service.connector_allowed(
+                    publication_id=agent_publication_id,
+                    direction="delivery",
+                    connector_id=recipient_connector,
+                ):
+                    errors.append(
+                        {"field": field, "message": "Agent 发布版本未分配此机器人用于结果投递"}
+                    )
         except Exception as exc:
             errors.append(
                 {
@@ -363,6 +402,15 @@ class WebhookTriggerService:
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._require(actor_id, "edit")
+        if self.repository.database.execute_one(
+            "select id from webhook_trigger_definition where code = ?", (code,)
+        ):
+            raise NonRetryableExecutionError(
+                "Webhook code already exists",
+                safe_message="Webhook 编码已存在，请使用其他编码",
+                error_code="validation_failed",
+                field_errors=[{"field": "code", "message": "编码已存在"}],
+            )
         if not CODE_RE.fullmatch(code):
             raise NonRetryableExecutionError(
                 "Webhook Trigger code is invalid",
@@ -538,7 +586,15 @@ class WebhookTriggerService:
     ) -> dict[str, Any]:
         self._require(actor_id, "edit", code)
         before = self.repository.get_definition(code)
-        self.validator.connector_registry.require_ingress(connector_id)
+        if status == "enabled" and not before.get("current_publication_id"):
+            raise NonRetryableExecutionError(
+                "Webhook must be published before enabling",
+                safe_message="请先完成配置校验和发布，再启用 Webhook",
+                error_code="webhook_not_published",
+            )
+        # An unavailable ingress must never prevent an administrator from stopping it.
+        if status == "enabled" or connector_id != str(before["connector_id"]):
+            self.validator.connector_registry.require_ingress(connector_id)
         updated = self.repository.update_definition(
             code=code,
             expected_revision=expected_revision,
@@ -639,6 +695,10 @@ class WebhookTriggerService:
     def _normalize(self, config: dict[str, Any]) -> dict[str, Any]:
         ensure_no_secret_values(config)
         normalized = normalize_config(config)
+        if normalized["delivery"]["type"] == RECIPIENTS_ROUTE:
+            normalized["delivery"]["target"] = {
+                "recipients": normalized_recipients(normalized["delivery"])
+            }
         secret_ref = str((normalized.get("authentication") or {}).get("secret_ref") or "")
         try:
             validate_secret_ref(secret_ref)

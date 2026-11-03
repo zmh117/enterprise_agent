@@ -48,23 +48,23 @@ import {
   useRestartManagedChannel,
   useRenameDingTalkEnterprise,
   useSetManagedChannelEnabled,
+  useDisableWebhook,
   useTestManagedChannel,
   useUpdateDingTalkChannel,
-  useWebhookConnectorOptions,
 } from "@/contexts/applications/application/managed-channel-queries"
 import type {
   DingTalkChannelInput,
   DingTalkEnterprise,
   ManagedChannel,
   WebhookChannelInput,
-  WebhookConnectorOption,
 } from "@/contexts/applications/domain/managed-channel"
 import { MutationError } from "@/contexts/applications/presentation/applications-page"
 import { cn } from "@/lib/utils"
+import { WebhookSettings } from "@/contexts/applications/presentation/webhook-settings"
 export function ManagedChannelsPanel() {
   const query = useManagedChannels()
   const enterprises = useDingTalkEnterprises()
-  const webhookConnectorOptions = useWebhookConnectorOptions()
+  const [webhookCode, setWebhookCode] = useState<string | null>(null)
   const [dingTalkEditor, setDingTalkEditor] = useState<
     ManagedChannel | "create" | null
   >(null)
@@ -141,7 +141,11 @@ export function ManagedChannelsPanel() {
             <ManagedChannelCard
               key={`${channel.kind}-${channel.webhook_trigger_id ?? channel.id}`}
               channel={channel}
-              onEdit={() => setDingTalkEditor(channel)}
+              onEdit={() =>
+                channel.kind === "WEBHOOK"
+                  ? setWebhookCode(channel.code ?? null)
+                  : setDingTalkEditor(channel)
+              }
             />
           ))}
         </div>
@@ -194,9 +198,11 @@ export function ManagedChannelsPanel() {
       <WebhookEditor
         open={webhookOpen}
         onOpenChange={setWebhookOpen}
-        connectors={webhookConnectorOptions.data ?? []}
-        connectorsLoading={webhookConnectorOptions.isLoading}
-        connectorsError={webhookConnectorOptions.error}
+        onCreated={setWebhookCode}
+      />
+      <WebhookSettings
+        code={webhookCode}
+        onClose={() => setWebhookCode(null)}
       />
     </div>
   )
@@ -548,11 +554,12 @@ function ManagedChannelCard({
 }) {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const setEnabled = useSetManagedChannelEnabled()
+  const disableWebhook = useDisableWebhook()
   const restart = useRestartManagedChannel()
   const testConfiguration = useTestManagedChannel()
   const remove = useDeleteManagedChannel()
   const mutationError =
-    setEnabled.error ?? restart.error ?? testConfiguration.error ?? remove.error
+    setEnabled.error ?? disableWebhook.error ?? restart.error ?? testConfiguration.error ?? remove.error
   const status =
     channel.runtime?.status ?? (channel.enabled ? "READY" : "STOPPED")
   const dingTalk = channel.kind === "DINGTALK_APP_ROBOT"
@@ -636,27 +643,29 @@ function ManagedChannelCard({
             Corp ID；验证消息不会创建 Agent 任务。
           </p>
         ) : null}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={testConfiguration.isPending}
-            onClick={() => testConfiguration.mutate(channel.id)}
-          >
-            {testConfiguration.isPending ? (
-              <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
-            ) : (
-              <ShieldCheckIcon aria-hidden="true" />
-            )}
-            测试配置
-          </Button>
-          {testConfiguration.data ? (
-            <span className="text-xs text-emerald-700">
-              {testConfiguration.data.summary}
-            </span>
-          ) : null}
-        </div>
+        {dingTalk ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={testConfiguration.isPending}
+              onClick={() => testConfiguration.mutate(channel.id)}
+            >
+              {testConfiguration.isPending ? (
+                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+              ) : (
+                <ShieldCheckIcon aria-hidden="true" />
+              )}
+              测试配置
+            </Button>
+            {testConfiguration.data ? (
+              <span className="text-xs text-emerald-700">
+                {testConfiguration.data.summary}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {dingTalk ? (
           <>
             <div className="flex flex-wrap gap-2">
@@ -767,10 +776,21 @@ function ManagedChannelCard({
             </AlertDialog>
           </>
         ) : (
-          <p className="rounded-md border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
-            Webhook 继续使用现有受管 Webhook 生命周期；只有启用并发布完成后，
-            才会出现在 Webhook Trigger 选择器中。
-          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={onEdit}>
+              配置 Webhook
+            </Button>
+            {channel.enabled ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={disableWebhook.isPending}
+                onClick={() => disableWebhook.mutate(channel)}
+              >
+                停用 Webhook
+              </Button>
+            ) : null}
+          </div>
         )}
       </CardContent>
     </Card>
@@ -1100,45 +1120,28 @@ function DingTalkEditorForm({
 function WebhookEditor({
   open,
   onOpenChange,
-  connectors,
-  connectorsLoading,
-  connectorsError,
+  onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  connectors: WebhookConnectorOption[]
-  connectorsLoading: boolean
-  connectorsError: unknown
+  onCreated: (code: string) => void
 }) {
   const create = useCreateWebhookChannel()
   const [form, setForm] = useState<WebhookChannelInput>({
     code: "",
     name: "",
     trigger_type: "generic",
-    connector_id: connectors[0]?.id ?? "",
   })
-
   function submit(event: FormEvent) {
     event.preventDefault()
-    create.mutate(
-      {
-        ...form,
-        connector_id: form.connector_id || connectors[0]?.id || "",
+    create.mutate(form, {
+      onSuccess: () => {
+        onOpenChange(false)
+        onCreated(form.code)
+        setForm({ code: "", name: "", trigger_type: "generic" })
       },
-      {
-        onSuccess: () => {
-          setForm({
-            code: "",
-            name: "",
-            trigger_type: "generic",
-            connector_id: connectors[0]?.id ?? "",
-          })
-          onOpenChange(false)
-        },
-      }
-    )
+    })
   }
-
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
@@ -1146,8 +1149,7 @@ function WebhookEditor({
           <SheetHeader>
             <SheetTitle>新建受管 Webhook</SheetTitle>
             <SheetDescription>
-              这里只登记受管入口定义，不提供任意 HTTP 地址。完成现有 Webhook
-              配置和发布后，入口才能绑定到应用。
+              系统自动创建独立接收入口。创建后配置认证和消息映射，校验并发布后再启用。
             </SheetDescription>
           </SheetHeader>
           <div className="space-y-4 px-4">
@@ -1155,7 +1157,7 @@ function WebhookEditor({
               <Input
                 id="webhook-code"
                 required
-                pattern="[a-z][a-z0-9-]{2,63}"
+                pattern={"[a-z][a-z0-9\\-]{2,63}"}
                 value={form.code}
                 onChange={(event) =>
                   setForm({ ...form, code: event.target.value })
@@ -1191,49 +1193,11 @@ function WebhookEditor({
                 <option value="grafana">Grafana 告警</option>
               </select>
             </EditorField>
-            <EditorField label="入口 Connector" htmlFor="webhook-connector">
-              <select
-                id="webhook-connector"
-                required
-                className={selectClass}
-                value={form.connector_id || connectors[0]?.id || ""}
-                onChange={(event) =>
-                  setForm({ ...form, connector_id: event.target.value })
-                }
-              >
-                <option value="">请选择现有 Webhook Connector</option>
-                {connectors.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} · {item.connector_type}
-                  </option>
-                ))}
-              </select>
-            </EditorField>
-            {connectorsLoading ? (
-              <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
-                正在加载 Webhook 入口 Connector……
-              </p>
-            ) : connectors.length === 0 && !connectorsError ? (
-              <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
-                当前没有可复用的 Webhook 入口 Connector，无法新建。
-              </p>
-            ) : null}
-            <MutationError error={connectorsError ?? create.error} />
+            <MutationError error={create.error} />
           </div>
           <SheetFooter>
-            <Button
-              type="submit"
-              disabled={
-                create.isPending ||
-                connectorsLoading ||
-                Boolean(connectorsError) ||
-                connectors.length === 0
-              }
-            >
-              {create.isPending ? (
-                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
-              ) : null}
-              创建 Webhook 定义
+            <Button type="submit" disabled={create.isPending}>
+              创建并配置 Webhook
             </Button>
             <Button
               type="button"

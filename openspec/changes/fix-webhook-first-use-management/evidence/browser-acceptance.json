@@ -1,0 +1,49 @@
+{
+  "checked_at": "2026-10-25T10:45:56.924631+00:00",
+  "status": "PASS",
+  "backend": "isolated SQLite, real application API; synthetic fixture only",
+  "frontend": "real Chromium via Playwright CLI, local Vite",
+  "cases": {
+    "create_without_available_connector": "PASS",
+    "dedicated_source_and_service_account": "PASS",
+    "generic_configuration_save": "PASS",
+    "missing_agent_grant_blocks_publication": "PASS",
+    "explicit_synthetic_agent_grant_then_validate": "PASS",
+    "preview_has_no_side_effects": "PASS",
+    "publish_enable_disable": "PASS",
+    "reopen_saved_config": "PASS",
+    "grafana_create_and_template": "PASS",
+    "html_pattern_rejects_invalid_code": "PASS",
+    "desktop_panel_width": 768
+  },
+  "definitions": [
+    {
+      "code": "synthetic-ui-grafana",
+      "trigger_type": "grafana",
+      "status": "disabled",
+      "revision": 1,
+      "published": 0,
+      "connector_type": "managed_webhook",
+      "allow_ingress": 1,
+      "allow_delivery": 0
+    },
+    {
+      "code": "synthetic-ui-hook",
+      "trigger_type": "generic",
+      "status": "disabled",
+      "revision": 4,
+      "published": 1,
+      "connector_type": "managed_webhook",
+      "allow_ingress": 1,
+      "allow_delivery": 0
+    }
+  ],
+  "side_effect_counts": {
+    "agent_job": 0,
+    "webhook_event": 0
+  },
+  "test_fixture_authorization": "Only the isolated fixture Agent binding was explicitly inserted after verifying validation denial. Product code does not add grants.",
+  "real_credentials_read_or_changed": false,
+  "real_provider_calls": 0,
+  "production_deployed": false
+}

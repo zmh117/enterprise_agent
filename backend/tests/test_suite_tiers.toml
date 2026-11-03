@@ -202,6 +202,7 @@ contract = [
   "test_webhook_mapping_security.py",
   "test_windows_container_compatibility.py",
   "test_webhook_trigger_service.py",
+  "test_webhook_result_recipients.py",
   "test_workflow_config.py",
   "test_workflow_fact_sources.py",
 ]

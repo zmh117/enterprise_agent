@@ -1087,6 +1087,9 @@ function BindingsEditor({
                   <option value="dingtalk_private">钉钉私聊</option>
                   <option value="dingtalk_group">钉钉群聊</option>
                   <option value="webhook_callback">Webhook 回调</option>
+                  <option value="webhook_result">
+                    使用 Webhook 配置的接收人
+                  </option>
                 </select>
               </Field>
               <Field label="投递连接器" htmlFor={`delivery-connector-${index}`}>
@@ -1101,10 +1104,19 @@ function BindingsEditor({
                   }
                 >
                   <option value="">请选择投递 Connector</option>
-                  {(binding.delivery_type === "reply_original"
+                  {(["reply_original", "webhook_result"].includes(
+                    binding.delivery_type
+                  )
                     ? uniqueConnectors(
                         catalog?.connectors.filter(
-                          (item) => item.direction === "ingress"
+                          (item) =>
+                            item.direction === "ingress" &&
+                            (binding.delivery_type !== "webhook_result" ||
+                              form.triggers.some(
+                                (trigger) =>
+                                  trigger.trigger_type === "webhook" &&
+                                  trigger.connector_id === item.id
+                              ))
                         ) ?? []
                       )
                     : delivery

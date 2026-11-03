@@ -132,5 +132,5 @@ export type WebhookChannelInput = {
   code: string
   name: string
   trigger_type: "generic" | "grafana"
-  connector_id: string
+  connector_id?: string
 }

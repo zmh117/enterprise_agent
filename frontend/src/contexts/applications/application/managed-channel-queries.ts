@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import type {
   DingTalkChannelInput,
+  ManagedChannel,
   WebhookChannelInput,
 } from "@/contexts/applications/domain/managed-channel"
 import {
@@ -21,6 +22,7 @@ import {
   testManagedChannel,
   updateDingTalkChannel,
 } from "@/contexts/applications/infrastructure/managed-channel-api"
+import { setWebhookEnabled } from "@/contexts/applications/infrastructure/webhook-api"
 
 export const managedChannelKeys = {
   all: ["managed-channels"] as const,
@@ -131,6 +133,20 @@ export function useSetManagedChannelEnabled() {
   return useRefreshChannelsMutation(
     (input: { channelId: string; revision: number; enabled: boolean }) =>
       setManagedChannelEnabled(input.channelId, input.revision, input.enabled)
+  )
+}
+
+export function useDisableWebhook() {
+  return useRefreshChannelsMutation((channel: ManagedChannel) =>
+    setWebhookEnabled(
+      {
+        code: channel.code!,
+        name: channel.name,
+        connector_id: channel.id,
+        revision: channel.revision,
+      },
+      false
+    )
   )
 }
 

@@ -124,8 +124,10 @@ class ManagedChannelService:
         code: str,
         name: str,
         trigger_type: str,
-        connector_id: str,
+        connector_id: str = "",
     ) -> dict[str, Any]:
+        if not connector_id:
+            connector_id = self.repository.create_webhook_connector(code=code)
         return self.webhook_provider.create_channel(
             actor_id=actor_id,
             code=code,

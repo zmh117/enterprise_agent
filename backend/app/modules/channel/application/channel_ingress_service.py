@@ -389,7 +389,8 @@ class ChannelIngressService:
                 for value in deliveries
                 if isinstance(value, dict)
                 and bool(value.get("enabled", True))
-                and str(value.get("delivery_type") or "") in {"dingtalk_group", "webhook_callback"}
+                and str(value.get("delivery_type") or "")
+                in {"dingtalk_group", "webhook_callback", "webhook_result"}
             ]
             if len(supported) != 1:
                 raise NonRetryableExecutionError(
@@ -398,6 +399,14 @@ class ChannelIngressService:
                     error_code=RuntimeReason.MISSING_DELIVERY_BINDING.value,
                 )
             binding = supported[0]
+            if binding.get("delivery_type") == "webhook_result":
+                if str(binding.get("connector_id") or "") != event.source.connector_id:
+                    raise NonRetryableExecutionError(
+                        "Webhook result source mismatch",
+                        safe_message="结果绑定与 Webhook 入口不一致",
+                        error_code=RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
+                    )
+                return event.delivery.to_dict()
             config = binding.get("config") or {}
             if not isinstance(config, dict):
                 config = {}

@@ -18,6 +18,7 @@ DELIVERY_ONLY_CONNECTOR_TYPES = {
 INGRESS_ONLY_CONNECTOR_TYPES = {
     "debug_api",
     "grafana_alert",
+    "managed_webhook",
     DINGTALK_STREAM_CONNECTOR_TYPE,
 }
 SECRET_REQUIRED_CONNECTOR_TYPES = {
@@ -111,6 +112,28 @@ class ConnectorRegistry:
         Delivery bound to the originating Job and reply route.
         """
         return self.require_dingtalk_stream_ingress(connector_id)
+
+    def require_dingtalk_robot_delivery(self, connector_id: str) -> Connector:
+        """Only fixed robot messages authorized by a frozen result route."""
+        connector = self.require_dingtalk_stream_ingress(connector_id)
+        enterprise = self.repository.database.execute_one(
+            """select e.status, e.corp_id from integration_connector c
+                 join dingtalk_enterprise e on e.id=c.dingtalk_enterprise_id
+                where c.id=?""",
+            (connector_id,),
+        )
+        if (
+            not enterprise
+            or enterprise["status"] != "ACTIVE"
+            or not enterprise["corp_id"]
+            or not self.metadata_value(connector, "default_robot_code")
+        ):
+            raise NonRetryableExecutionError(
+                "DingTalk robot is not ready for result delivery",
+                safe_message="请先验证钉钉企业并配置机器人的 Robot Code",
+                error_code="dingtalk_robot_not_ready",
+            )
+        return connector
 
     def resolve_secret(self, connector: Connector) -> str:
         return self.resolve_reference(connector.secret_ref)

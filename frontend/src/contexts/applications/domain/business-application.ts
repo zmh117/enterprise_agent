@@ -273,6 +273,7 @@ export type SaveDraftInput = {
       | "dingtalk_private"
       | "dingtalk_group"
       | "webhook_callback"
+      | "webhook_result"
     connector_id: string
     enabled: boolean
     config: {

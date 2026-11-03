@@ -95,6 +95,8 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("145", "145_contract_python_runtime_invocation_claim.sql"),
         ("146", "146_expand_knowledge_sync_resource_pins.sql"),
         ("147", "147_expand_runtime_replica_pool.sql"),
+        ("148", "148_add_delivery_result_recipients.sql"),
+        ("149", "149_add_webhook_result_application_binding.sql"),
         ("150", "150_optimize_knowledge_vector_reuse.sql"),
         ("151", "151_add_incremental_knowledge_sync.sql"),
     ]
@@ -148,6 +150,8 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "145",
         "146",
         "147",
+        "148",
+        "149",
         "150",
         "151",
     ]
@@ -1421,7 +1425,7 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
     assert len({table for table in owned_tables if not table.startswith("knowledge.")}) == 133
     assert (
-        len({column for column in owned_columns if not column[0].startswith("knowledge.")}) == 1777
+        len({column for column in owned_columns if not column[0].startswith("knowledge.")}) == 1778
     )
     assert len({table for table in owned_tables if table.startswith("knowledge.")}) == 18
     database.close()

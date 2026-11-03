@@ -201,6 +201,7 @@ export const agentDetailSchema = z.object({
         enabled: z.union([z.boolean(), z.number()]),
         allow_ingress: z.union([z.boolean(), z.number()]),
         allow_delivery: z.union([z.boolean(), z.number()]),
+        supports_robot_delivery: z.union([z.boolean(), z.number()]).optional(),
       })
     ),
     mcp_tools: z

@@ -128,7 +128,7 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
             "options": _object(delivery.get("options")),
         },
         "idempotency": {
-            "cooldown_seconds": int(idempotency.get("cooldown_seconds") or 300),
+            "cooldown_seconds": int(idempotency.get("cooldown_seconds", 300)),
         },
         "limits": {
             "requests_per_minute": int(limits.get("requests_per_minute") or 60),
