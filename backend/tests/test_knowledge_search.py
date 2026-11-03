@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 import json
 from copy import deepcopy
+from backend.tests.support.knowledge_reranker import SyntheticReranker
 
 import httpx
 import pytest
@@ -68,6 +69,7 @@ def search_fixture(bridge_fixture):
         f["vector"].qdrant,
         client,
         f["runtime"].audit_service,
+        reranker=SyntheticReranker(),
     )
     return {**f, "search": search, "hops": hops}
 
@@ -91,7 +93,7 @@ def test_reference_search_through_both_http_hops_no_text_or_token(search_fixture
     assert hit["work_item_uuid"].startswith("MOCK-ONES-TASK-")
     assert 1 <= len(hit["evidence"]) <= 3
     assert f["vector"].qdrant.search_limits == [200]
-    assert f["calls"] == ["POST"] and len(f["hops"]) == 1 and f["hops"][0] <= 120
+    assert f["calls"] == ["POST"] and len(f["hops"]) == 1 and f["hops"][0] <= 360
     safe = json.dumps(result, ensure_ascii=False) + json.dumps(
         f["runtime"].database.execute("select * from audit_event"), ensure_ascii=False, default=str
     )
@@ -185,15 +187,16 @@ def test_embedding_failure_keeps_classification_through_content_connection(
 def test_hybrid_route_keeps_readability_scope_and_fails_without_dense_fallback(
     search_fixture, monkeypatch, outcome
 ):
-    from app.modules.knowledge.application import search as search_module
+    from app.modules.knowledge.application import candidates as candidates_module
 
     f = search_fixture
     calls = []
     qdrant = f["vector"].qdrant
     original = qdrant.search
-    monkeypatch.setattr(search_module, "hybrid_index", lambda index: True)
+    monkeypatch.setattr(candidates_module, "hybrid_index", lambda index: True)
 
-    def hybrid(index, vector, query, limit):
+    def hybrid(index, vector, query, limit, *, mode):
+        assert mode == "hybrid"
         calls.append(limit)
         assert index["knowledge_base_id"] == f["body"]["knowledge_base_id"]
         if outcome == "route_failure":
@@ -223,13 +226,17 @@ def test_hybrid_route_keeps_readability_scope_and_fails_without_dense_fallback(
 def test_hybrid_overlapping_routes_report_possible_truncation(
     search_fixture, monkeypatch, points, partial
 ):
-    from app.modules.knowledge.application import search as search_module
+    from app.modules.knowledge.application import candidates as candidates_module
 
     f = search_fixture
-    monkeypatch.setattr(search_module, "hybrid_index", lambda index: True)
-    monkeypatch.setattr(search_module, "current_documents", lambda *args: [])
+    monkeypatch.setattr(candidates_module, "hybrid_index", lambda index: True)
+    from app.modules.knowledge.application import search as search_module
+
     monkeypatch.setattr(
-        f["vector"].qdrant, "hybrid_search", lambda *args: [{}] * points, raising=False
+        search_module, "candidate_pool", lambda *args: candidates_module.CandidatePool([], {}, [])
+    )
+    monkeypatch.setattr(
+        f["vector"].qdrant, "hybrid_search", lambda *args, **kwargs: [{}] * points, raising=False
     )
     result = search(f)
     assert result["documents"] == [] and result["partial"] is partial
@@ -388,6 +395,10 @@ def test_fill_from_bounded_pool_never_check_more_than_50_work_items(search_fixtu
     assert f["vector"].qdrant.search_limits == [200]
     assert len(result["documents"]) == min(10, max(0, len(readability.checked) - allow_after))
     assert result["partial"] == (len(result["documents"]) < 10)
+    assert [doc["rank"] for doc in result["documents"]] == list(
+        range(1, len(result["documents"]) + 1)
+    )
+    assert result["ranking_method"] == "cross_encoder" and result["retrieval_mode"] == "dense"
     if result["partial"]:
         assert result["partial_reason"] == "bounded_search"
 
@@ -403,7 +414,7 @@ def test_failure_after_allowed_results_discards_entire_call(search_fixture):
 def test_job_remaining_budget_and_retry_change(search_fixture):
     f = search_fixture
     budget = job_budget(f["runtime"].database, f["job"].id)
-    assert 0 < budget.remaining() <= 120
+    assert 0 < budget.remaining() <= 360
     f["runtime"].database.execute(
         "update agent_job set retry_count=retry_count+1 where id=?", (f["job"].id,)
     )
@@ -418,16 +429,39 @@ def test_job_remaining_budget_and_retry_change(search_fixture):
     assert not f["hops"]
 
 
-@pytest.mark.parametrize("late", [False, True])
-def test_soft_cutoff_partial_and_late_result_discard(search_fixture, monkeypatch, late):
+@pytest.mark.parametrize(
+    "elapsed,late,partial",
+    [
+        (125, False, False),
+        (185, False, False),
+        (245, False, False),
+        (359.5, False, True),
+        (361, True, None),
+    ],
+)
+def test_extended_budget_soft_cutoff_and_late_result_discard(
+    search_fixture, monkeypatch, elapsed, late, partial
+):
     f = search_fixture
+    # 单独验证检索硬上限；合成 Job 的默认 300 秒不能先截断这组边界。
+    db = f["runtime"].database
+    policy = json.loads(
+        db.execute_one("select execution_policy_json from agent_job where id=?", (f["job"].id,))[
+            "execution_policy_json"
+        ]
+    )
+    for key in ("requested", "effective"):
+        policy[key]["timeout_seconds"] = 600
+    db.execute(
+        "update agent_job set execution_policy_json=? where id=?", (json.dumps(policy), f["job"].id)
+    )
     tick = [100.0]
     monkeypatch.setattr(retrieval_budget, "time", SimpleNamespace(monotonic=lambda: tick[0]))
     original = f["vector"].qdrant.search
 
     def query(*args):
         result = original(*args)
-        tick[0] += 121 if late else 119.5
+        tick[0] += elapsed
         return result
 
     monkeypatch.setattr(f["vector"].qdrant, "search", query)
@@ -436,8 +470,11 @@ def test_soft_cutoff_partial_and_late_result_discard(search_fixture, monkeypatch
             search(f)
     else:
         result = search(f)
-        assert result["documents"] == [] and result["partial"] is True
-    assert not f["hops"] and current_budget() is None
+        assert bool(result["documents"]) is not partial
+        assert result["partial"] is partial
+    if late or partial:
+        assert not f["hops"]
+    assert current_budget() is None
 
 
 def test_online_http_budget_disables_retry_without_changing_offline_default(
@@ -458,16 +495,18 @@ def test_online_http_budget_disables_retry_without_changing_offline_default(
         with job_budget(f["runtime"].database, f["job"].id).activate():
             with pytest.raises(VectorError):
                 http.request("GET", "/collections")
-        assert len(calls) == 1 and calls[0] <= 120 and sleeps == []
+        assert len(calls) == 1 and 240 < calls[0] <= 360 and sleeps == []
         calls.clear()
         with pytest.raises(VectorError):
             http.request("GET", "/collections")
-        assert len(calls) == 3 and sleeps == [1, 2]
+        assert calls == [180, 180, 180] and sleeps == [1, 2]
     finally:
         http.close()
 
 
-@pytest.mark.parametrize("stage", ["embedding_profile", "qdrant_profile", "embedding_query"])
+@pytest.mark.parametrize(
+    "stage", ["embedding_profile", "qdrant_profile", "embedding_query", "rerank"]
+)
 @pytest.mark.parametrize("mutation", ["kb", "resource", "identity"])
 def test_revocation_stops_next_upstream_stage(search_fixture, monkeypatch, stage, mutation):
     f = search_fixture
@@ -475,6 +514,7 @@ def test_revocation_stops_next_upstream_stage(search_fixture, monkeypatch, stage
         "embedding_profile": (f["search"].embedding, "check"),
         "qdrant_profile": (f["search"].qdrant, "check"),
         "embedding_query": (f["search"].embedding, "call"),
+        "rerank": (f["search"].reranker, "rank"),
     }[stage]
     original = getattr(target, method)
 
@@ -492,7 +532,8 @@ def test_revocation_stops_next_upstream_stage(search_fixture, monkeypatch, stage
     monkeypatch.setattr(target, method, revoke)
     with pytest.raises(KnowledgeGovernanceError):
         search(f)
-    assert not f["vector"].qdrant.search_limits and not f["hops"]
+    assert f["vector"].qdrant.search_limits == ([200] if stage == "rerank" else [])
+    assert not f["hops"]
     assert current_budget() is None
 
 
@@ -563,7 +604,7 @@ def test_bridge_client_does_not_relabel_exhausted_budget_as_permission_failure(
     monkeypatch.setattr(retrieval_budget, "time", SimpleNamespace(monotonic=lambda: tick[0]))
     with pytest.raises(KnowledgeGovernanceError, match="budget_exhausted"):
         with job_budget(f["runtime"].database, f["job"].id).activate():
-            tick[0] += 121
+            tick[0] += 361
             f["search"].readability.check(token=f["knowledge_token"], request=None)
     assert not f["hops"] and current_budget() is None
 
@@ -635,3 +676,42 @@ def test_directory_search_share_current_kb_gate_but_directory_is_not_ones_permis
         result = search(f)
         # 合成 Provider 不存在新 Team 的任务，必须过滤，不能以目录可见代替可读。
         assert bool(result["documents"]) is (change == "none")
+
+
+@pytest.mark.parametrize("change", ["embedding", "revision"])
+def test_reranked_inputs_changed_during_inference_fail_even_outside_returned_topk(
+    search_fixture, monkeypatch, change
+):
+    f = search_fixture
+    original = f["search"].reranker.rank
+
+    def mutate(query, documents):
+        result = original(query, documents)
+        sql = (
+            'update "knowledge.document_chunk" set embedding_hash=' + "'" + "0" * 64 + "'"
+            if change == "embedding"
+            else 'update "knowledge.document" set current_revision_id=NULL'
+        )
+        f["runtime"].database.execute(sql)
+        return result
+
+    monkeypatch.setattr(f["search"].reranker, "rank", mutate)
+    with pytest.raises(AppError):
+        search(f, top_k=1)
+
+
+@pytest.mark.parametrize("code", ["busy", "read_timeout", "input_limit", "profile_mismatch"])
+def test_online_rerank_failures_never_run_ones_or_return_original_ranking(
+    search_fixture, monkeypatch, code
+):
+    f = search_fixture
+
+    def fail(*args):
+        raise VectorError("knowledge_rerank_" + code)
+
+    monkeypatch.setattr(f["search"].reranker, "rank", fail)
+    with pytest.raises(KnowledgeGovernanceError) as caught:
+        search(f)
+    expected = code if code != "profile_mismatch" else "unavailable"
+    assert caught.value.error_code == "knowledge_rerank_" + expected
+    assert not f["hops"]

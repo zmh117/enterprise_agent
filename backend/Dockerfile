@@ -37,6 +37,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 CMD ["python", "-m", "app.agent_test_data.seeder", "seed"]
 
 FROM python-deps AS migrator
+COPY services/__init__.py /app/services/
+COPY services/knowledge_reranker /app/services/knowledge_reranker
+COPY services/knowledge_embedding /app/services/knowledge_embedding
 COPY backend/app/__init__.py /app/backend/app/
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared

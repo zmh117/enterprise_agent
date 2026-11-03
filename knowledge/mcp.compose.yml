@@ -36,6 +36,35 @@ services:
       retries: 12
       start_period: 120s
 
+  knowledge-reranker:
+    profiles: [knowledge]
+    image: enterprise-agent/knowledge-reranker:bge-v1
+    build:
+      context: .
+      dockerfile: services/knowledge_reranker/Dockerfile
+    restart: unless-stopped
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      OMP_NUM_THREADS: "8"
+      MKL_NUM_THREADS: "8"
+    volumes:
+      - knowledge-reranker-models:/models:ro
+    networks: [knowledge-internal]
+    read_only: true
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 8
+    mem_limit: 3g
+    memswap_limit: 3g
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8097/ready',timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+
   knowledge-mcp:
     profiles: [knowledge]
     build:
@@ -68,6 +97,8 @@ services:
       migrator:
         condition: service_completed_successfully
       knowledge-embedding-online:
+        condition: service_healthy
+      knowledge-reranker:
         condition: service_healthy
       knowledge-qdrant:
         condition: service_started

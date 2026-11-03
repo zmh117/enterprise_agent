@@ -57,7 +57,12 @@ def online_config(compose_cli, *, missing=None, bootstrap_path=None, env_file=No
 
 def test_online_overlay_only_changes_knowledge_mcp_and_bridge():
     overlay = yaml.safe_load((ROOT / "knowledge/mcp.compose.yml").read_text())
-    assert set(overlay["services"]) == {"api-server", "knowledge-mcp", "knowledge-embedding-online"}
+    assert set(overlay["services"]) == {
+        "api-server",
+        "knowledge-mcp",
+        "knowledge-embedding-online",
+        "knowledge-reranker",
+    }
     assert set(overlay["secrets"]) == {"knowledge_bootstrap_token"}
     assert not overlay.get("volumes")
     assert overlay["networks"] == {"knowledge-storage-egress": {"driver": "bridge"}}
@@ -325,3 +330,31 @@ def test_bootstrap_secret_is_normalized_without_private_platform_credentials():
     assert "retention_cleanup=False" in bootstrap
     assert "APP_CONFIG_MASTER_KEY" not in bootstrap
     assert "PRINCIPAL_PRIVATE_KEY_FILE" not in bootstrap
+
+
+def test_reranker_independent_internal_model_volume_and_resource_budget(compose_cli):
+    from app.modules.knowledge.infrastructure.reranker_profile import profile
+
+    result = online_config(compose_cli)
+    assert result.returncode == 0
+    config = json.loads(result.stdout)
+    reranker = config["services"]["knowledge-reranker"]
+    prepare = yaml.safe_load((ROOT / "knowledge/compose.yml").read_text())["services"][
+        "knowledge-reranker-prepare"
+    ]
+    assert reranker["cpus"] == 8 and int(reranker["mem_limit"]) == 3 * 1024**3
+    assert int(reranker["memswap_limit"]) == int(reranker["mem_limit"])
+    assert reranker["read_only"] and not reranker.get("ports") and not reranker.get("secrets")
+    assert set(reranker["networks"]) == {"knowledge-internal"}
+    assert reranker["environment"]["HF_HUB_OFFLINE"] == "1"
+    assert int(reranker["environment"]["OMP_NUM_THREADS"]) == profile()["threads"]
+    assert int(reranker["environment"]["MKL_NUM_THREADS"]) == profile()["threads"]
+    assert profile()["threads"] == reranker["cpus"]
+    assert reranker["volumes"][0]["source"] == "knowledge-reranker-models"
+    assert reranker["volumes"][0]["read_only"]
+    assert prepare["volumes"] == ["knowledge-reranker-models:/models"]
+    assert prepare["command"] == ["python", "-m", "services.knowledge_reranker.model_files"]
+    assert (
+        config["services"]["knowledge-mcp"]["depends_on"]["knowledge-reranker"]["condition"]
+        == "service_healthy"
+    )

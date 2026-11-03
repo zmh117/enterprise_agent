@@ -17,6 +17,7 @@ from app.modules.knowledge.domain.vector_contract import (
     validate_vector,
 )
 from app.modules.knowledge.infrastructure.embedding_profile import profile
+from app.modules.knowledge.domain.rerank_contract import RERANK_ENDPOINT, SAFE_ERRORS
 from app.shared.database import assert_external_io_allowed
 from app.modules.knowledge.application.retrieval_budget import current_budget, io_timeout
 from app.shared.bounded_read_http import request_bytes
@@ -54,6 +55,7 @@ class InternalHttp:
             not in {
                 INDEXING_EMBEDDING_ENDPOINT,
                 RETRIEVAL_EMBEDDING_ENDPOINT,
+                RERANK_ENDPOINT,
                 "http://knowledge-qdrant:6333",
             }
             or api_key
@@ -75,13 +77,21 @@ class InternalHttp:
     def close(self) -> None:
         self.client.close()
 
+    def _timeout(self) -> float:
+        online = (
+            self.endpoint in {RETRIEVAL_EMBEDDING_ENDPOINT, RERANK_ENDPOINT}
+            or current_io_deadline() is not None
+            or current_budget() is not None
+        )
+        return io_timeout(MAX_RETRIEVAL_SECONDS if online else 180)
+
     def request(
         self, method: str, path: str, value: Any = None, *, missing_ok: bool = False
     ) -> Any:
         assert_external_io_allowed("knowledge_vector_http")
         attempts = (
             1
-            if self.endpoint == RETRIEVAL_EMBEDDING_ENDPOINT
+            if self.endpoint in {RETRIEVAL_EMBEDDING_ENDPOINT, RERANK_ENDPOINT}
             or current_io_deadline() is not None
             or current_budget() is not None
             else 3
@@ -109,7 +119,7 @@ class InternalHttp:
                         "knowledge_embedding_body_limit",
                         "knowledge_embedding_busy",
                         "knowledge_embedding_read_timeout",
-                    }
+                    } | SAFE_ERRORS
                     raise VectorError(
                         code
                         if isinstance(code, str) and code in safe_codes
@@ -117,12 +127,12 @@ class InternalHttp:
                     )
                 return value
             except (httpx.TimeoutException, TimeoutError):
-                io_timeout(180)
+                self._timeout()
                 if attempt == attempts - 1:
                     raise VectorError("knowledge_vector_timeout") from None
                 time.sleep(2**attempt)
             except (httpx.TransportError, OSError):
-                io_timeout(180)
+                self._timeout()
                 if attempt == attempts - 1:
                     raise VectorError("knowledge_vector_unavailable") from None
                 time.sleep(2**attempt)
@@ -134,9 +144,9 @@ class InternalHttp:
 
     def _read(self, method: str, path: str, value: Any) -> tuple[int, bytes]:
         headers = {"Content-Type": "application/json", **self._headers}
-        timeout = io_timeout(180)
-        if self.endpoint == RETRIEVAL_EMBEDDING_ENDPOINT:
-            # 由调用方现有剩余预算推导绝对截止；排队不能重置 120 秒或 Job 截止。
+        timeout = self._timeout()
+        if self.endpoint in {RETRIEVAL_EMBEDDING_ENDPOINT, RERANK_ENDPOINT}:
+            # 由调用方现有剩余预算推导绝对截止；排队不能重置 360 秒或 Job 截止。
             seconds = io_timeout(MAX_RETRIEVAL_SECONDS)
             timeout = seconds
             deadline_ms = int((time.time() + seconds) * 1000)
@@ -153,7 +163,9 @@ class InternalHttp:
                 method,
                 self.endpoint + path,
                 headers=headers,
-                content=json.dumps(value).encode() if value is not None else None,
+                content=json.dumps(value, ensure_ascii=False).encode()
+                if value is not None
+                else None,
                 timeout=timeout,
                 max_bytes=2 * 1024 * 1024,
             )
@@ -168,7 +180,7 @@ class InternalHttp:
                 return response.status_code, b""
             data = bytearray()
             for part in response.iter_bytes():
-                io_timeout(180)
+                self._timeout()
                 data.extend(part)
                 if len(data) > 2 * 1024 * 1024:
                     raise VectorError("knowledge_vector_response_limit")

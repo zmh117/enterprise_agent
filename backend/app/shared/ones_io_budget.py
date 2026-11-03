@@ -31,13 +31,13 @@ def ones_io_timeout(configured: float) -> float:
 
 @contextmanager
 def ones_io_budget(seconds: float) -> Iterator[None]:
-    if not 0 < seconds <= 120:
+    if not 0 < seconds <= 360:
         raise ValueError("invalid ONES read budget")
     deadline = time.monotonic() + seconds
     parent = _DEADLINE.get()
     token = _DEADLINE.set(min(parent, deadline) if parent is not None else deadline)
     try:
         yield
-        ones_io_timeout(120)
+        ones_io_timeout(seconds)
     finally:
         _DEADLINE.reset(token)

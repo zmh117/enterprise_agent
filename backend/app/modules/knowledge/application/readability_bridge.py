@@ -18,6 +18,7 @@ from app.modules.knowledge.application.retrieval_budget import (
     MAX_RETRIEVAL_SECONDS,
     knowledge_entry,
 )
+from app.shared.io_deadline import io_deadline
 
 
 class KnowledgeReadabilityBridge:
@@ -32,6 +33,24 @@ class KnowledgeReadabilityBridge:
 
     def authenticate(self, service_token: str, knowledge_token: str) -> KnowledgeJobAccess:
         return self.gateway.authenticate(service_token, knowledge_token)
+
+    @knowledge_entry
+    def renew_principal(
+        self, *, service_token: str, knowledge_token: str, deadline_ms: int | None = None
+    ) -> dict[str, Any]:
+        with io_deadline(5):
+            access = self.authenticate(service_token, knowledge_token)
+            with self.gateway.budget(access.job_id, deadline_ms=deadline_ms).activate():
+                result = self.gateway.renew_principal(service_token, knowledge_token)
+                self.audit.record(
+                    "knowledge.principal.refreshed",
+                    status="success",
+                    summary="知识在途调用身份已续期",
+                    actor_id=access.actor_id,
+                    job_id=access.job_id,
+                    payload={},
+                )
+                return result
 
     @knowledge_entry
     def check(

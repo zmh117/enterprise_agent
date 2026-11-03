@@ -11,6 +11,7 @@ from app.modules.knowledge.application.evaluation import OfflineEvaluation
 from app.modules.knowledge.domain.evaluation import EvaluationError
 from app.modules.knowledge.infrastructure.evaluation_dataset import load_dataset
 from app.modules.knowledge.infrastructure.vector_clients import EmbeddingClient, QdrantClient
+from app.modules.knowledge.infrastructure.reranker_client import RerankerClient
 from app.modules.knowledge.domain.vector_contract import VectorError
 from app.modules.knowledge.application.vector_service import VectorService
 from app.shared.config import load_settings
@@ -26,7 +27,7 @@ class SafeArgumentParser(argparse.ArgumentParser):
 
 def main(argv: list[str] | None = None) -> int:
     database = None
-    embedding = qdrant = None
+    embedding = qdrant = reranker = None
     try:
         parser = SafeArgumentParser(
             description="本地离线知识评测；仅输出指标/摘要，不是业务授权验收"
@@ -59,8 +60,9 @@ def main(argv: list[str] | None = None) -> int:
             raise EvaluationError("knowledge_evaluation_postgres_required")
         SchemaHeadValidator(database, default_migrations_dir()).require_current()
         embedding, qdrant = EmbeddingClient(), QdrantClient()
+        reranker = RerankerClient()
         report = OfflineEvaluation(
-            VectorService(VectorRepository(database), embedding, qdrant)
+            VectorService(VectorRepository(database), embedding, qdrant, reranker=reranker)
         ).run(dataset, args.index_code)
         print(
             json.dumps({"event": "knowledge_evaluation_completed", **report}, ensure_ascii=False),
@@ -76,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         code = "knowledge_evaluation_unavailable"
     finally:
+        if reranker is not None:
+            reranker.http.close()
         if embedding is not None:
             embedding.http.close()
         if qdrant is not None:

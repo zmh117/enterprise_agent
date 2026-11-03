@@ -52,7 +52,11 @@ SERVICE_PRINCIPAL_TOKEN_PATH = "/api/internal/service-principal/token"
 KNOWLEDGE_AUTHORIZED_PARTY = "knowledge-mcp"
 KNOWLEDGE_BRIDGE_AUDIENCE = "knowledge-readability-bridge"
 KNOWLEDGE_BRIDGE_SCOPES = frozenset(
-    {"internal:knowledge:work-item:readability", "internal:knowledge:storage:connection"}
+    {
+        "internal:knowledge:work-item:readability",
+        "internal:knowledge:storage:connection",
+        "internal:knowledge:principal:refresh",
+    }
 )
 
 

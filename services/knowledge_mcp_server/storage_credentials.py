@@ -1,5 +1,7 @@
 """单调用业务 Principal 上下文；连接凭据仅来自固定平台双身份入口。"""
 
+from app.modules.knowledge.application.principal import PrincipalToken
+
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -9,11 +11,11 @@ from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.infrastructure.readability_client import KnowledgeReadabilityClient
 
 
-_TOKEN: ContextVar[str] = ContextVar("knowledge_storage_principal", default="")
+_TOKEN: ContextVar[PrincipalToken] = ContextVar("knowledge_storage_principal", default="")
 
 
 @contextmanager
-def storage_principal(token: str) -> Iterator[None]:
+def storage_principal(token: PrincipalToken) -> Iterator[None]:
     handle = _TOKEN.set(token)
     try:
         yield

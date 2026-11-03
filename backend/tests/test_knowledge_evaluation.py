@@ -1,4 +1,5 @@
 from copy import deepcopy
+from backend.tests.support.knowledge_reranker import SyntheticReranker
 import json
 from pathlib import Path
 import subprocess
@@ -56,6 +57,7 @@ def write_dataset(tmp_path, value=None):
 
 def setup_evaluation(prepared):
     db, service, snapshot = prepared
+    service.reranker = SyntheticReranker()
     service.build("synthetic-eval-v1", snapshot)
     value = sample()
     value["source_id"] = db.execute_one('select id from "knowledge.source"')["id"]
@@ -148,8 +150,8 @@ def test_document_metrics_dedupe_top10_misses_and_visible_denominator():
     assert score_documents(relevant, [str(i) for i in range(10)] + ["a"]).recall == 0
     assert score_documents(relevant, ["a"], visible_relevant=frozenset({"a"})).recall == 1
     no_visible = score_documents(relevant, [], visible_relevant=frozenset())
-    assert no_visible.recall is None and no_visible.no_answer_false_positive is False
-    assert score_documents(frozenset(), ["noise"]).no_answer_false_positive is True
+    assert no_visible.recall is None and no_visible.no_answer_candidate_returned is False
+    assert score_documents(frozenset(), ["noise"]).no_answer_candidate_returned is True
     with pytest.raises(EvaluationError, match="visibility_invalid"):
         score_documents(relevant, [], visible_relevant=frozenset({"unrelated"}))
     assert latency_summary([1, 2, 100]) == {"p50_ms": 2, "p95_ms": 100}
@@ -171,15 +173,20 @@ def test_offline_runner_reuses_kernel_without_writes_and_redacts(prepared, capsy
     before = source_fingerprint(db)
     writes = service.qdrant.writes
     report = OfflineEvaluation(service).run(parse_dataset(value), "synthetic-eval-v1")
-    assert report["recall_at_10"] == report["mrr_at_10"] == 1
-    assert report["answerable_cases"] == 1 and report["no_answer"]["false_positive_rate"] == 1
-    assert report["basis"] == "synthetic" and report["mode"] == "offline_dense"
+    assert report["reranked"]["recall_at_10"] == report["reranked"]["mrr_at_10"] == 1
+    assert (
+        report["reranked"]["answerable_cases"] == 1
+        and report["reranked"]["no_answer"]["candidate_return_rate"] == 1
+    )
+    assert report["basis"] == "synthetic" and report["mode"] == "offline_ranking_comparison"
+    assert report["retrieval_mode"] == "dense"
     assert report["recall_scope"] == "labeled_set_only" and not report["business_acceptance"]
     assert not report["authorization_verified"] and report["end_to_end_latency"] is None
     assert report["parameters"] == {
-        "top_k": 10,
+        "top_k": 20,
         "candidate_limit": 200,
-        "metrics_version": "document-v1",
+        "document_limit": 50,
+        "metrics_version": "document-comparison-v2",
     }
     assert len(report["code_hash"]) == len(report["dataset_hash"]) == 64
     assert service.qdrant.writes == writes and source_fingerprint(db) == before
@@ -209,7 +216,7 @@ def test_stale_document_cannot_produce_report(prepared, monkeypatch):
         return result
 
     monkeypatch.setattr(service, "query", remove)
-    with pytest.raises(VectorError):
+    with pytest.raises(EvaluationError, match="corpus_changed"):
         OfflineEvaluation(service).run(parse_dataset(value), "synthetic-eval-v1")
 
 
@@ -227,9 +234,10 @@ def test_failures_are_counted_not_silent_misses_or_no_answer_success(prepared, m
     monkeypatch.setattr(service, "query", Mock(side_effect=RuntimeError("hidden provider body")))
     report = OfflineEvaluation(service).run(parse_dataset(value), "synthetic-eval-v1")
     assert report["failed_cases"] == 2 and report["failures"] == {"internal_error": 2}
-    assert report["recall_at_10"] == report["mrr_at_10"] == 0
+    assert report["reranked"]["recall_at_10"] == report["reranked"]["mrr_at_10"] == 0
     assert (
-        report["no_answer"]["completed"] == 0 and report["no_answer"]["false_positive_rate"] is None
+        report["reranked"]["no_answer"]["completed"] == 0
+        and report["reranked"]["no_answer"]["candidate_return_rate"] is None
     )
     assert "hidden provider body" not in json.dumps(report)
 
@@ -266,3 +274,50 @@ def test_tracked_example_is_synthetic_only():
     root = Path(__file__).resolve().parents[2]
     value = json.loads((root / "knowledge/evaluation/synthetic.dataset.json").read_text())
     assert parse_dataset(value).basis == "synthetic"
+
+
+def test_one_candidate_snapshot_feeds_both_rankings_and_rank_failure_keeps_baseline(
+    prepared, monkeypatch
+):
+    _, service, value = setup_evaluation(prepared)
+    original = service.qdrant.search
+    calls = []
+
+    def retrieve(index, vector, limit):
+        calls.append(limit)
+        return original(index, vector, limit)
+
+    def fail(*args):
+        raise VectorError("knowledge_rerank_busy")
+
+    monkeypatch.setattr(service.qdrant, "search", retrieve)
+    monkeypatch.setattr(service.reranker, "rank", fail)
+    report = OfflineEvaluation(service).run(parse_dataset(value), "synthetic-eval-v1")
+    assert calls == [200]
+    assert report["baseline"]["mrr_at_10"] > 0
+    assert report["reranked"]["mrr_at_10"] == 0
+    assert report["candidate_recall"] == report["candidate_recall_at_50"] == 1
+    assert report["failures"] == {"reranking_failed": 1}
+    assert report["categories"]["paraphrase"]["reranked"]["answerable_cases"] == 1
+
+
+@pytest.mark.parametrize("drift", ["code", "profile", "chunk"])
+def test_comparison_rejects_drift_after_query(prepared, monkeypatch, drift):
+    db, service, value = setup_evaluation(prepared)
+    original = service.query
+
+    def mutate(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if drift == "code":
+            monkeypatch.setattr(service.repository, "implementation_hash", lambda: "changed")
+        elif drift == "profile":
+            service.reranker.profile_hash = "changed"
+        else:
+            db.execute(
+                'update "knowledge.document_chunk" set embedding_hash=' + "'" + "0" * 64 + "'"
+            )
+        return result
+
+    monkeypatch.setattr(service, "query", mutate)
+    with pytest.raises(EvaluationError, match="changed"):
+        OfflineEvaluation(service).run(parse_dataset(value), "synthetic-eval-v1")

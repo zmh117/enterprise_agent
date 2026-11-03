@@ -68,12 +68,12 @@ def held_connection(database):
             future.result(timeout=2)
 
 
-def test_budget_is_120_and_cannot_expand_parent():
-    assert MAX_RETRIEVAL_SECONDS == 120
-    assert all("120 秒" in tool.description for tool in KNOWLEDGE_TOOL_CONTRACTS.values())
-    assert 119 < CallControl(seconds=10000).remaining() <= 120
+def test_budget_is_360_and_cannot_expand_parent():
+    assert MAX_RETRIEVAL_SECONDS == 360
+    assert all("360 秒" in tool.description for tool in KNOWLEDGE_TOOL_CONTRACTS.values())
+    assert 359 < CallControl(seconds=10000).remaining() <= 360
     with io_deadline(0.15) as parent:
-        with io_deadline(120) as child:
+        with io_deadline(360) as child:
             assert child.expires == parent.expires
     assert current_io_deadline() is None
 

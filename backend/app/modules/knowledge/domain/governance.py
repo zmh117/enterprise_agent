@@ -30,6 +30,7 @@ class KnowledgeGovernanceError(NonRetryableExecutionError):
                 "knowledge_resource_changed": "知识检索资源已变化，请重新查询",
                 "knowledge_index_unavailable": "知识索引尚未就绪或与当前配置不匹配",
                 "knowledge_job_denied": "当前任务没有有效的业务应用知识库权限",
+                "knowledge_principal_refresh_failed": "知识检索身份续期失败，请重新发起查询",
                 "knowledge_authorization_changed": "知识库授权已变化，请重新查询",
                 "knowledge_readability_busy": "知识可读性检查繁忙，请稍后重试",
                 "knowledge_readability_timeout": "知识可读性检查超时，请重试",
@@ -44,6 +45,10 @@ class KnowledgeGovernanceError(NonRetryableExecutionError):
                 "knowledge_embedding_read_timeout": "知识检索向量化服务超时，请检查模型服务负载后重试",
                 "knowledge_embedding_unavailable": "知识检索向量化服务不可用或模型配置不匹配，请检查 Embedding 服务",
                 "knowledge_search_busy": "知识检索繁忙，请稍后重试",
+                "knowledge_rerank_busy": "知识重排服务繁忙，请稍后重试；不代表没有相关记录",
+                "knowledge_rerank_unavailable": "知识重排服务不可用或模型配置不匹配，请检查重排服务",
+                "knowledge_rerank_read_timeout": "知识重排超时，请检查模型负载或任务剩余预算",
+                "knowledge_rerank_input_limit": "查询超出重排模型的输入预算，请保留关键症状后缩短查询",
             }.get(code, "知识资源操作失败"),
         )
 

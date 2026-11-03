@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 KNOWLEDGE_SERVICES = {
     "knowledge-embedding",
     "knowledge-model-prepare",
+    "knowledge-reranker-prepare",
     "knowledge-qdrant",
     "knowledge-ops",
 }
@@ -31,7 +32,11 @@ def test_knowledge_definitions_are_exclusively_opt_in():
     assert set(overlay["services"]) == KNOWLEDGE_SERVICES | {"postgres", "api-server"}
     assert overlay["services"]["postgres"] == {"networks": ["knowledge-internal"]}
     assert overlay["services"]["api-server"] == {"networks": ["knowledge-internal"]}
-    assert set(overlay["volumes"]) == {"knowledge-models", "knowledge-qdrant"}
+    assert set(overlay["volumes"]) == {
+        "knowledge-models",
+        "knowledge-qdrant",
+        "knowledge-reranker-models",
+    }
     assert overlay["networks"] == {
         "knowledge-internal": {"internal": True},
         "knowledge-qdrant-access": {"driver": "bridge"},
@@ -131,8 +136,11 @@ def test_base_compose_never_requires_knowledge(compose_cli, profiles):
     "profiles,expected",
     [
         ((), set()),
-        (("knowledge",), KNOWLEDGE_SERVICES - {"knowledge-model-prepare"}),
-        (("knowledge-prepare",), {"knowledge-model-prepare"}),
+        (
+            ("knowledge",),
+            KNOWLEDGE_SERVICES - {"knowledge-model-prepare", "knowledge-reranker-prepare"},
+        ),
+        (("knowledge-prepare",), {"knowledge-model-prepare", "knowledge-reranker-prepare"}),
         (("*",), KNOWLEDGE_SERVICES),
     ],
 )
@@ -167,7 +175,7 @@ def test_overlay_profiles_and_base_services_are_preserved(compose_cli, profiles,
             assert not service.get("ports")
         assert not service.get("secrets")
         expected_networks = {"knowledge-internal"}
-        if name == "knowledge-model-prepare":
+        if name in {"knowledge-model-prepare", "knowledge-reranker-prepare"}:
             expected_networks = {"provider-egress"}
         elif name == "knowledge-qdrant":
             expected_networks.add("knowledge-qdrant-access")

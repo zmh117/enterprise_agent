@@ -20,6 +20,7 @@ from app.modules.knowledge.application.retrieval_budget import (
 from app.shared.principal_token_contract import MAX_PRINCIPAL_TOKEN_BYTES
 from app.modules.knowledge.application.storage_broker import STORAGE_PATH, StorageConnectionRequest
 from app.modules.knowledge.api.deadline import bounded_knowledge_request
+from app.modules.knowledge.application.principal import PRINCIPAL_REFRESH_PATH
 
 
 def _bearer(request: Request, name: str) -> str:
@@ -39,10 +40,12 @@ def build_knowledge_readability_router() -> APIRouter:
 
     @router.post(BRIDGE_PATH)
     @router.post(STORAGE_PATH)
+    @router.post(PRINCIPAL_REFRESH_PATH)
     @bounded_knowledge_request
     async def check_readability(request: Request) -> JSONResponse:
         runtime = request.app.state.container
         storage_request = request.url.path == STORAGE_PATH
+        refresh_request = request.url.path == PRINCIPAL_REFRESH_PATH
         bridge = getattr(
             runtime,
             "knowledge_storage_broker" if storage_request else "knowledge_readability_bridge",
@@ -79,17 +82,29 @@ def build_knowledge_readability_router() -> APIRouter:
                     if len(raw) > MAX_REQUEST_BYTES:
                         raise ValueError
                 status = 400
-                parser = StorageConnectionRequest if storage_request else ReadabilityRequest
-                body = parser.parse(json.loads(raw, object_pairs_hook=strict_object))
+                value = json.loads(raw, object_pairs_hook=strict_object)
                 deadline_ms = deadline_from_headers(request.headers.getlist(DEADLINE_HEADER))
-                status, code = 503, "knowledge_readability_failed"
-                result = await run_in_threadpool(
-                    bridge.check,
-                    service_token=service_token,
-                    knowledge_token=knowledge_token,
-                    request=body,
-                    deadline_ms=deadline_ms,
-                )
+                if refresh_request:
+                    if value != {}:
+                        raise ValueError
+                    status, code = 503, "knowledge_principal_refresh_failed"
+                    result = await run_in_threadpool(
+                        bridge.renew_principal,
+                        service_token=service_token,
+                        knowledge_token=knowledge_token,
+                        deadline_ms=deadline_ms,
+                    )
+                else:
+                    parser = StorageConnectionRequest if storage_request else ReadabilityRequest
+                    body = parser.parse(value)
+                    status, code = 503, "knowledge_readability_failed"
+                    result = await run_in_threadpool(
+                        bridge.check,
+                        service_token=service_token,
+                        knowledge_token=knowledge_token,
+                        request=body,
+                        deadline_ms=deadline_ms,
+                    )
                 return JSONResponse(result, headers={"Cache-Control": "no-store"})
             except KnowledgeGovernanceError as exc:
                 if exc.error_code == "knowledge_readability_busy":
@@ -97,9 +112,22 @@ def build_knowledge_readability_router() -> APIRouter:
             except (ValueError, UnicodeError, RecursionError, AppError):
                 pass
             except Exception:
-                status, code = 503, "knowledge_readability_failed"
+                status, code = (
+                    503,
+                    (
+                        "knowledge_principal_refresh_failed"
+                        if refresh_request
+                        else "knowledge_readability_failed"
+                    ),
+                )
             bridge.audit.record(
-                "knowledge.storage.denied" if storage_request else "knowledge.readability.denied",
+                "knowledge.principal.refresh_denied"
+                if refresh_request
+                else (
+                    "knowledge.storage.denied"
+                    if storage_request
+                    else "knowledge.readability.denied"
+                ),
                 status="denied",
                 summary="知识可读性桥拒绝本次请求",
                 payload={"error_code": code},

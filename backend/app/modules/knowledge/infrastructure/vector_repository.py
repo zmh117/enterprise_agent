@@ -390,11 +390,30 @@ class VectorRepository:
             "domain/vector_points.py",
             "application/vector_service.py",
             "application/candidates.py",
+            "application/ranking.py",
+            "domain/rerank_contract.py",
+            "infrastructure/reranker_client.py",
+            "infrastructure/reranker_profile.py",
+            "reranker_model.json",
+            "embedding_runtime.lock",
+            "embedding_runtime_amd64.lock",
             "infrastructure/vector_repository.py",
             "infrastructure/vector_clients.py",
             "infrastructure/embedding_profile.py",
             "infrastructure/evaluation_dataset.py",
         )
-        return fingerprint(
-            {name: hashlib.sha256((package / name).read_bytes()).hexdigest() for name in code_files}
-        )
+        digests = {
+            name: hashlib.sha256((package / name).read_bytes()).hexdigest() for name in code_files
+        }
+        root = package.parents[3]
+        for name in ("api.py", "engine.py", "model_files.py"):
+            path = root / "services" / "knowledge_reranker" / name
+            digests[f"services/knowledge_reranker/{name}"] = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+        for name in ("online_queue.py", "model_files.py"):
+            path = root / "services" / "knowledge_embedding" / name
+            digests[f"services/knowledge_embedding/{name}"] = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+        return fingerprint(digests)

@@ -238,3 +238,21 @@ def test_runtime_refuses_arbitrary_knowledge_endpoint(job_fixture):
             mcp_server_url="http://tool-mcp:9103/mcp",
             business_mcp_server_urls={"knowledge-mcp": "https://arbitrary.invalid/mcp"},
         )
+
+
+def test_v2_marker_changes_frozen_hash_and_old_publication_is_denied(job_fixture):
+    from app.shared.tool_contract import tool_schema_hash
+
+    f = job_fixture
+    schema = KNOWLEDGE_TOOL_CONTRACTS["knowledge_search"].input_schema
+    assert schema["$comment"] == "knowledge-search-contract/v2"
+    old = {key: value for key, value in schema.items() if key != "$comment"}
+    assert tool_schema_hash(old) != MCP_TOOL_MANIFEST["knowledge_search"].schema_hash
+    f["runtime"].database.execute(
+        "update agent_publication_mcp_tool set schema_hash=? where tool_identifier='knowledge_search'",
+        (tool_schema_hash(old),),
+    )
+    with pytest.raises(AppError):
+        f["gate"].require(
+            job_id=f["job"].id, actor_id="user_local_admin", knowledge_base_id="kb-test"
+        )

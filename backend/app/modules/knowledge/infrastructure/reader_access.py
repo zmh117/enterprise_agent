@@ -1,5 +1,7 @@
 """知识读取的当前 Principal 与本人来源；不解析任何 ONES 凭据。"""
 
+from app.modules.knowledge.application.principal import PrincipalToken, current_principal
+
 import json
 from typing import Any
 from app.modules.knowledge.application.retrieval_budget import RetrievalBudget
@@ -49,11 +51,11 @@ class KnowledgePrincipalAccess:
         self.verifier = verifier
         self.gate = gate
 
-    def authenticate(self, token: str, tool: str) -> KnowledgeJobAccess:
+    def authenticate(self, token: PrincipalToken, tool: str) -> KnowledgeJobAccess:
         if tool not in KNOWLEDGE_TOOLS:
             raise KnowledgeGovernanceError("knowledge_job_denied")
         claims = self.verifier.verify_for_running_job(
-            token,
+            current_principal(token),
             self.gate.database,
             self.gate.snapshots,
             required_scope=f"mcp:knowledge-mcp:{tool}:invoke",

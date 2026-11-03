@@ -18,6 +18,7 @@ from app.modules.knowledge.infrastructure.job_access import KnowledgeJobGate
 from app.modules.knowledge.infrastructure.reader_access import KnowledgePrincipalAccess
 from app.modules.knowledge.infrastructure.readability_client import KnowledgeReadabilityClient
 from app.modules.knowledge.infrastructure.vector_clients import EmbeddingClient, QdrantClient
+from app.modules.knowledge.infrastructure.reranker_client import RerankerClient
 from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
 from app.modules.mcp_audit import McpAuditCoordinator
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
@@ -52,6 +53,8 @@ def build_tools(
     cleanup.callback(embedding.http.close)
     qdrant = QdrantClient()
     cleanup.callback(qdrant.http.close)
+    reranker = RerankerClient()
+    cleanup.callback(reranker.http.close)
     identity = ServicePrincipalTokenClient(
         base_url="http://api-server:8000",
         allowed_hosts=("api-server",),
@@ -66,8 +69,9 @@ def build_tools(
     return KnowledgeMcpTools(
         KnowledgeMcpAuth(database, access),
         KnowledgeDirectory(access, resources, audit),
-        KnowledgeSearch(access, resources, embedding, qdrant, bridge, audit),
+        KnowledgeSearch(access, resources, embedding, qdrant, bridge, audit, reranker=reranker),
         McpAuditCoordinator(database, max_payload_bytes=16 * 1024, audit_service=audit),
+        principal_client=bridge,
     )
 
 

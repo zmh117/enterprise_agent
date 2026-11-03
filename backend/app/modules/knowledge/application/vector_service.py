@@ -6,16 +6,27 @@ import time
 from typing import Any
 
 from app.modules.knowledge.domain.vector_points import batches, payload, point_id
-from app.modules.knowledge.application.ports import EmbeddingPort, QdrantPort, VectorRepository
+from app.modules.knowledge.application.ports import (
+    EmbeddingPort,
+    QdrantPort,
+    RerankPort,
+    VectorRepository,
+)
 from app.modules.knowledge.domain.vector_contract import (
     MAX_BATCH_TOKENS,
     VectorError,
     fingerprint,
     validate_vector,
 )
-from app.modules.knowledge.application.candidates import current_documents
+from app.modules.knowledge.application.candidates import (
+    candidate_pool,
+    retrieval_mode,
+    retrieve_points,
+    route_limit,
+)
+from app.modules.knowledge.application.ranking import rerank
+from app.modules.knowledge.domain.rerank_contract import MAX_CANDIDATE_POINTS, MAX_DOCUMENTS
 from app.modules.knowledge.domain.hybrid import (
-    HYBRID_CONTRACT,
     hybrid_index,
     lexical_input,
     validate_sparse,
@@ -24,11 +35,18 @@ from app.modules.knowledge.domain.hybrid import (
 
 class VectorService:
     def __init__(
-        self, repository: VectorRepository, embedding: EmbeddingPort, qdrant: QdrantPort
+        self,
+        repository: VectorRepository,
+        embedding: EmbeddingPort,
+        qdrant: QdrantPort,
+        *,
+        reranker: RerankPort | None = None,
     ) -> None:
         self.repository = repository
         self.embedding = embedding
         self.qdrant = qdrant
+        # 建索引/显式离线召回诊断无需重排；在线 Search 必须装配重排客户端。
+        self.reranker = reranker
 
     def grouped(
         self, rows: Iterator[dict[str, Any]]
@@ -360,7 +378,14 @@ class VectorService:
         return [row for row in rows if row["embedding_hash"] not in vectors]
 
     def query(
-        self, code: str, base_code: str, query: str, *, top_k: int = 10, mode: str = "auto"
+        self,
+        code: str,
+        base_code: str,
+        query: str,
+        *,
+        top_k: int = 10,
+        mode: str = "auto",
+        compare: bool = False,
     ) -> dict[str, Any]:
         if (
             not isinstance(query, str)
@@ -371,6 +396,7 @@ class VectorService:
             or mode not in {"auto", "bm25", "dense", "hybrid"}
         ):
             raise VectorError("knowledge_vector_query_invalid")
+        started = time.monotonic()
         repo = self.repository
         index = repo.get(code)
         if (
@@ -381,52 +407,71 @@ class VectorService:
             or index["profile_hash"] != fingerprint(self.repository.profile)
         ):
             raise VectorError("knowledge_vector_index_not_ready")
-        if index["expected_document_count"] == 0:
-            repo.assert_current(index)
-            self.qdrant.check(index)
-            if index.get("incremental") != 1 and self.qdrant.count(index) != 0:
-                raise VectorError("knowledge_vector_count_mismatch")
-            return {
-                "index_id": index["id"],
-                "documents": [],
-                "partial": False,
-                "candidates": 0,
-                "candidate_limit": 0,
-                "bounded": False,
-            }
-        hybrid = hybrid_index(index)
-        selected = "hybrid" if mode == "auto" and hybrid else "dense" if mode == "auto" else mode
-        if not hybrid and selected != "dense":
-            raise VectorError("knowledge_hybrid_index_required")
-        if selected != "bm25":
-            self.embedding.check()
+        selected = retrieval_mode(index, mode)
+        if compare and self.reranker is None:
+            raise VectorError("knowledge_rerank_unavailable")
         self.qdrant.check(index)
-        vector = (
-            self.embedding.call([query], encode=True)["vectors"][0] if selected != "bm25" else None
-        )
-        limit = 200 if hybrid else min(200, max(20, top_k * 4))
-        docs: list[dict[str, Any]] = []
-        candidates = []
-        while True:
-            if hybrid:
-                candidates = self.qdrant.hybrid_search(index, vector, query, limit, mode=selected)
-            else:
-                assert vector is not None
-                candidates = self.qdrant.search(index, vector, limit)
-            docs = current_documents(repo, index, candidates)
-            if len(docs) >= top_k or len(candidates) < limit or limit == 200:
-                break
-            limit = min(200, limit * 2)
+        tick = time.monotonic()
+        vector = None
+        empty = index["expected_document_count"] == 0 and index.get("incremental") != 1
+        if empty:
+            repo.assert_current(index)
+            if self.qdrant.count(index) != 0:
+                raise VectorError("knowledge_vector_count_mismatch")
+        elif selected != "bm25":
+            self.embedding.check()
+            vector = self.embedding.call([query], encode=True)["vectors"][0]
+        encoding_ms = (time.monotonic() - tick) * 1000
+        tick = time.monotonic()
+        candidates = [] if empty else retrieve_points(self.qdrant, index, vector, query, selected)
+        pool = candidate_pool(repo, index, candidates)
+        retrieval_ms = (time.monotonic() - tick) * 1000
+        docs, ranking_ms, cropped, ranking_failure = pool.selected, 0.0, 0, None
+        if self.reranker is not None:
+            tick = time.monotonic()
+            try:
+                ranked = rerank(pool, query, self.reranker)
+                docs, cropped = ranked.documents, ranked.truncated_documents
+            except Exception as exc:
+                if not compare:
+                    raise
+                # 仅离线对照保留成功基线和失败事实；不作为线上 fallback。
+                ranking_failure = (
+                    exc.code
+                    if isinstance(exc, VectorError) and exc.code.startswith("knowledge_rerank_")
+                    else "knowledge_rerank_unavailable"
+                )
+                docs = []
+            ranking_ms = (time.monotonic() - tick) * 1000
+        pool.recheck(repo, index)
         final_index = repo.get(code)
-        if not final_index or final_index["state"] != "READY":
-            raise VectorError("knowledge_vector_index_not_ready")
-        results = docs[:top_k]
-        return {
+        if final_index != index:
+            raise VectorError("knowledge_vector_source_changed")
+        result = {
             "index_id": index["id"],
-            "documents": results,
-            "partial": len(results) < top_k,
+            "documents": [{**doc, "rank": rank} for rank, doc in enumerate(docs[:top_k], 1)],
+            "retrieval_mode": selected,
+            "ranking_method": "cross_encoder" if self.reranker else "retrieval",
+            "ranking_profile_hash": self.reranker.profile_hash if self.reranker else None,
+            "partial": len(docs) < top_k,
             "candidates": len(candidates),
-            "candidate_limit": limit,
-            "bounded": len(candidates)
-            >= (HYBRID_CONTRACT["per_route_limit"] if selected == "hybrid" else 200),
+            "candidate_limit": MAX_CANDIDATE_POINTS,
+            "bounded": len(candidates) >= route_limit(selected)
+            or len(pool.documents) > MAX_DOCUMENTS,
+            "durations_ms": {
+                "encoding": encoding_ms,
+                "retrieval": retrieval_ms,
+                "reranking": ranking_ms,
+                "total": (time.monotonic() - started) * 1000,
+            },
         }
+        if compare:
+            result["comparison"] = {
+                "baseline": pool.selected[:top_k],
+                "candidate_document_ids": [d["document_id"] for d in pool.documents],
+                "selected_document_ids": [d["document_id"] for d in pool.selected],
+                "snapshot": {"points": candidates, "digest": pool.digest},
+                "truncated_documents": cropped,
+                "ranking_failure": ranking_failure,
+            }
+        return result

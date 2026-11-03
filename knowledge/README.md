@@ -8,7 +8,7 @@ Linux x86_64 纯 CPU 部署使用同一组 Compose 文件，不需要为 Qdrant 
 
 所有命令在仓库根目录执行，始终将根 Compose 放在第一个 `-f` 参数。保留原 Compose 项目名（当前本机为 `enterprise_agent`），不要在此目录单独 `docker compose up`，也不要另取 `-p` 名称，否则会切换到另一组模型/向量卷。
 
-单独执行 `docker compose up -d` 只加载根 `docker-compose.yml`，**不会启动** Embedding、Qdrant、Knowledge MCP 或每小时同步容器。要启用已经完成模型准备、迁移、在线 MCP 配置及真实 ONES 单轮验收的部署，可从仓库根目录按以下顺序启动。以下示例适用于同时使用在线知识检索和小时同步的环境；若不使用在线 Knowledge MCP，去掉所有命令中的 `-f knowledge/mcp.compose.yml`，并从第一个 `up` 命令去掉 `knowledge-mcp knowledge-embedding-online`。不要使用无服务名的 `--profile knowledge up -d`，它还会启动一次性运维任务。
+单独执行 `docker compose up -d` 只加载根 `docker-compose.yml`，**不会启动** Embedding、Qdrant、Knowledge MCP 或每小时同步容器。要启用已经完成模型准备、迁移、在线 MCP 配置及真实 ONES 单轮验收的部署，可从仓库根目录按以下顺序启动。以下示例适用于同时使用在线知识检索和小时同步的环境；若不使用在线 Knowledge MCP，去掉所有命令中的 `-f knowledge/mcp.compose.yml`，并从第一个 `up` 命令去掉 `knowledge-mcp knowledge-embedding-online knowledge-reranker`。不要使用无服务名的 `--profile knowledge up -d`，它还会启动一次性运维任务。
 
 在既有受管部署环境中先提供 `KNOWLEDGE_SYNC_ENABLED=true`、固定的 `KNOWLEDGE_SYNC_BINDING_CODE`、`KNOWLEDGE_SYNC_DATABASE_DSN`，并显式启用数据库中的同步绑定；在线 MCP 的连接与受管文件仍按下文准备。命令中不填写或输出凭据。叠加配置可能使已运行的 PostgreSQL/API 容器为接入知识网络而重建，应在维护窗口执行；不要使用 `down -v` 或 `--remove-orphans`。
 
@@ -21,7 +21,7 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 # 根栈已按原流程启动后，使数据库/API 接入知识网络并启动常驻依赖。
 docker compose -f docker-compose.yml -f knowledge/compose.yml \
   -f knowledge/mcp.compose.yml -f knowledge/sync.compose.yml \
-  --profile knowledge up -d postgres api-server knowledge-embedding knowledge-embedding-online knowledge-qdrant knowledge-mcp
+  --profile knowledge up -d postgres api-server knowledge-embedding knowledge-embedding-online knowledge-reranker knowledge-qdrant knowledge-mcp
 
 # 依赖就绪、绑定已启用后，单独启动后台小时同步；以后维护仍叠加同一组文件。
 docker compose -f docker-compose.yml -f knowledge/compose.yml \
@@ -72,7 +72,7 @@ ONES 新版导出接口对应的受管全量采集入口见[全量采集手册](
 
 仅需要离线索引时继续使用上述两个文件，不加载 `mcp.compose.yml`。需要在线检索时顺序为根文件、`knowledge/compose.yml`、`knowledge/mcp.compose.yml`；仍使用原项目名和已有数据卷。
 
-在线扩展新增 `knowledge-mcp`（9108，仅容器网络）、独立 `knowledge-embedding-online` 及 API 的知识服务身份桥配置。它不会自动配置来源、角色或应用，也不会代替正式迁移。以下是经批准部署时的步骤；代码验收尚不表示已执行这些生产操作。
+在线扩展包含 `knowledge-mcp`（9108，仅容器网络）、独立 `knowledge-embedding-online`、`knowledge-reranker` 及 API 的知识服务身份桥配置。它不会自动配置来源、角色或应用，也不会代替正式迁移。以下是经批准部署时的步骤；代码验收尚不表示已执行这些生产操作。
 
 1. 核对非终态任务、平台镜像与当前 schema，按平台流程运行正式 Migrator。不要回退/删表。Embedding 固定模型准备和已有索引仍沿用离线流程。
 2. 直接复用根 `.env` 或既有受管部署环境中的 `DATABASE_DSN`，指向平台 PostgreSQL；不再配置 `KNOWLEDGE_DATABASE_DSN`，也不要求创建 `knowledge_mcp_reader`。该连接用于平台授权、Job、发布和审计，Web 中的知识内容库连接仍独立配置。复用账号后 Knowledge MCP 持有该账号的数据库权限，数据库层不再强制专用角色隔离；工具调用仍执行用户、Job、KB 和 ONES 权限校验。
@@ -88,7 +88,7 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
   -f knowledge/mcp.compose.yml --profile knowledge config --quiet
 
 docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml --progress quiet build knowledge-mcp knowledge-embedding-online
+  -f knowledge/mcp.compose.yml --progress quiet build knowledge-mcp knowledge-embedding-online knowledge-reranker
 ```
 
 如需使用项目根目录下的文件，在根 `.env` 中配置（仅文件路径，不填 Token 内容）：
@@ -101,7 +101,7 @@ KNOWLEDGE_BOOTSTRAP_TOKEN_FILE=./knowledge-bootstrap-token
 
 已有部署可通过此变量保留原 Knowledge 专用凭据路径，无需迁移或重新生成凭据。变量只选择挂载来源，不创建、复制或轮换文件；初始化脚本仍仅操作其显式目录参数，不读取此变量。实际更换挂载路径后需在批准的维护流程中同时更新 API 与 MCP，不能只重启一端。服务仍检查 PostgreSQL/schema 与审计就绪，不在启动时建表、授权或执行保留清理。
 
-5. 依平台维护流程更新 API（新凭据桥）、ONES、Runtime/Worker 和 Web 的对应代码版本。确认内部 Embedding/Qdrant、PostgreSQL/schema 已就绪后，使用三个文件定向启动 `knowledge-mcp`；不要用无服务名的 `up` 启动一次性运维任务。API 与 MCP 不互相声明启动依赖，桥未可用时检索明确失败关闭。
+5. 依平台维护流程更新 API（新凭据桥）、ONES、Runtime/Worker 和 Web 的对应代码版本。确认内部 Embedding/Qdrant/Reranker、PostgreSQL/schema 已就绪后，使用三个文件定向启动 `knowledge-mcp`；不要用无服务名的 `up` 启动一次性运维任务。API 与 MCP 不互相声明启动依赖，桥未可用时检索明确失败关闭。
 6. `/health` 仅验证 schema/审计依赖，不能代替向量、ONES、权限和真实 Job 验收。先完成任务 7.3 的阻塞依赖预算与隔离完整链路测试，再按批准流程在 Web 配置资源、角色应用 KB 范围和新的 Agent/Application Publication。配置流程见[管理手册](../docs/runbooks/knowledge-governance.md#管理流程)，不要求 ONES 地址/Team 来源确认、证明摘要或运行中 Job ID。不得把旧 Job 当成新增知识工具的验收。
 
 停用时先停用知识资源与相关新工具发布，再定向 `stop knowledge-mcp`，保留 PostgreSQL、模型及 Qdrant 卷。API 中的可选凭据移除需受控更新；其他仍使用知识库的应用未退出前不得撤去。不要 `down -v`，不降级 schema，不自动重分块或重编码。
@@ -128,7 +128,7 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 在线检索仍最多 4 个并发；在线 Embedding 使用固定 `create_online_app` 单进程入口，保持 1 个实际推理槽位、最多 3 个 FIFO 等待位置。`knowledge_embedding_busy` 现在表示这 4 个位置已满，而不是只要模型正在推理就拒绝。不要添加多个 Uvicorn workers，否则会重复加载模型并扩大推理容量。无需 RabbitMQ 或新环境变量，后台实例继续使用原入口和策略。
 
-客户端携带原调用绝对截止，服务端只会收紧：请求读取（最多 15 秒）、排队和推理共同消耗最长 120 秒及 Job 剩余预算，不是等待后再给 120 秒。等待超时、取消或断连会移除等待项；执行中 CPU 推理不能强杀，结果会丢弃，线程实际退出前不放开推理槽位。因此有界排队吸收短时并发，不保证慢 CPU 下四个请求都能在预算内完成。升级需要按上面的命令同时重建镜像并重新创建 `knowledge-embedding-online` 与 `knowledge-mcp` 容器，不需要重新索引或发布。
+客户端携带原调用绝对截止，服务端只会收紧：请求读取（最多 15 秒）、排队和推理共同消耗最长 360 秒及 Job 剩余预算，不是等待后再给 360 秒。等待超时、取消或断连会移除等待项；执行中 CPU 推理不能强杀，结果会丢弃，线程实际退出前不放开推理槽位。因此有界排队吸收短时并发，不保证慢 CPU 下四个请求都能在预算内完成。升级此次 360 秒上限需配套重建并重新创建 `knowledge-embedding-online`、`knowledge-reranker`、`knowledge-mcp` 及 API/ONES MCP，避免外层仍按旧截止终止；既有索引无需重建。在途 Knowledge Principal 会在到期前通过固定平台双身份入口续期，每张仍最多 300 秒；续期拒绝则取消原请求，原 360 秒/Job 截止不重置。API 与 Knowledge MCP 须同时更新新增续期 scope 的固定服务身份合同并重新获取票据。重排 v2 工具合同的协调发布见[检索评测与发布说明](../docs/runbooks/knowledge-retrieval-evaluation.md)。
 
 `knowledge_embedding_read_timeout` 表示模型服务的读取/等待/推理截止到达，`knowledge_embedding_unavailable` 表示连接/模型合同不可用；整次检索截止耗尽仍使用 `knowledge_search_budget_exhausted`。不会把这些错误包装为“内容存储不可用”，不自动额外重试，不把故障当作空库。回退需配套恢复旧 MCP 镜像和在线 Compose 配置，保留所有模型/向量卷，不能让新 MCP 静默使用后台实例。
 
@@ -196,4 +196,11 @@ Knowledge MCP 的 `DATABASE_DSN` **复用部署环境中的平台连接**，不�
 升级 schema 后，部署账号需具备当前平台授权、知识元数据和审计查询所需权限。默认复用平台连接，无需额外创建知识账号；保留的独立账号配置 CLI 仅供自行选择角色隔离的运维使用。API 与 Knowledge MCP 同步更新后重新兑换短期服务 Token，新 scope 精确包含两个内部操作。旧资源字段为空时继续使用原部署连接与原 hash，不要求重发布；切换内容连接才需创建新草稿。原导入/分块/索引 CLI 仍使用它自身的显式部署连接，不会自动跟随 Web 的读取配置。
 
 启动知识库
-docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.compose.yml --profile knowledge up -d postgres api-server knowledge-embedding knowledge-embedding-online knowledge-qdrant knowledge-mcp
+docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.compose.yml --profile knowledge up -d postgres api-server knowledge-embedding knowledge-embedding-online knowledge-reranker knowledge-qdrant knowledge-mcp
+
+
+## 文档重排与 v2 合同
+
+在线检索现在需要独立重排服务及 `knowledge-reranker-models` 模型卷。启动前必须显式运行 `knowledge-reranker-prepare`，不能只准备 embedding 模型；该操作不会自动发布工具合同或改动索引。按用户的效果优先要求保留 BGE-v2-m3 和长文本，资源配置为 8 核 / 3 GiB，实际质量和时延需在目标环境验证。
+
+准备命令、同候选对照评测、v2 schema hash 协调发布、新 Publication/Job 和回退步骤见[检索评测与运行说明](../docs/runbooks/knowledge-retrieval-evaluation.md)。`retrieval_score` 仅为召回排序分，Agent 应按最终 `rank` 核实详情，禁止自行用数值阈值丢弃尾部。

@@ -431,11 +431,11 @@ def test_duplicate_and_expired_deadlines_rejected_before_inference():
     asyncio.run(scenario())
 
 
-def test_default_and_far_future_deadline_cannot_exceed_120_seconds():
-    assert MAX_RETRIEVAL_SECONDS == 120
+def test_default_and_far_future_deadline_cannot_exceed_360_seconds():
+    assert MAX_RETRIEVAL_SECONDS == 360
     for values in ([], ["9999999999998"]):
         deadline = InferenceDeadline(values)
-        assert 119 <= deadline.remaining() <= 120
+        assert 359 <= deadline.remaining() <= 360
 
 
 def test_online_client_propagates_smaller_parent_budget_without_retry_or_fallback():
@@ -459,7 +459,7 @@ def test_online_client_propagates_smaller_parent_budget_without_retry_or_fallbac
         with pytest.raises(VectorError, match="knowledge_embedding_busy"):
             client.call(["synthetic"], encode=True)
         assert len(requests) == 1 and DEADLINE_HEADER in requests[0].headers
-        assert requests[0].extensions["timeout"]["read"] <= 120
+        assert requests[0].extensions["timeout"]["read"] == 360
     finally:
         client.http.close()
 

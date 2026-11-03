@@ -453,7 +453,7 @@ def test_budget_caps_io_and_drops_late_result_without_leaking_context(
     def late(request, timeout):
         assert 0 < timeout <= 5
         result = original(request, timeout)
-        clock[0] += 121
+        clock[0] += 361
         return result
 
     f["provider_http"]._open_response = late
@@ -476,3 +476,18 @@ def test_nested_budget_never_extends_parent_and_expires_before_io(monkeypatch):
                 budget.ones_io_timeout(30)
     assert error.value.error_code == "ones_read_budget_exhausted"
     assert budget.ones_io_timeout(-1) == -1
+
+
+def test_ones_budget_accepts_360_seconds_and_rejects_excess(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(budget, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    with pytest.raises(AppError, match="ONES read budget exhausted"):
+        with budget.ones_io_budget(360):
+            clock[0] += 305
+            assert budget.ones_io_timeout(360) == 55
+            clock[0] += 55
+            budget.ones_io_timeout(360)
+    with pytest.raises(ValueError, match="invalid ONES read budget"):
+        with budget.ones_io_budget(361):
+            pytest.fail("oversized budget accepted")
+    assert budget.ones_io_timeout(12) == 12

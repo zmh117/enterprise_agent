@@ -65,9 +65,10 @@ Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页�
 
 `POST /api/internal/knowledge/work-item-readability` 只接受固定 API 内部 Host，无浏览器 Origin、Cookie 或 URL 参数。`Authorization: Bearer` 使用独立知识服务短期身份，`X-Knowledge-Principal: Bearer` 使用原用户的 Knowledge Principal；两者必须同时有效。请求仍只包含上述 KB/资源版本/索引/块引用字段，8 KiB 上限，两端共用候选成员校验。
 
-- 服务身份固定 `sub/azp=knowledge-mcp`、`aud=knowledge-readability-bridge`，完整 scope 集合为 `internal:knowledge:work-item:readability` 与 `internal:knowledge:storage:connection`，只对应两个固定内部操作。它不授予业务权限，不与文件 Worker 或其他 Business Principal 互通。
+- 服务身份固定 `sub/azp=knowledge-mcp`、`aud=knowledge-readability-bridge`，完整 scope 集合为 `internal:knowledge:work-item:readability`、`internal:knowledge:storage:connection`、`internal:knowledge:principal:refresh`，对应可读性检查、内容连接和在途身份续期三个固定内部操作。它不授予业务权限，不与文件 Worker 或其他 Business Principal 互通。
 - 可选知识 Compose 默认读取 `$HOME/.config/enterprise-agent/knowledge-bootstrap-token`，由现有密钥初始化脚本幂等生成；宿主机可在根 `.env` 或部署环境中用 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 指定其他文件，例如 `./knowledge-bootstrap-token`。相对路径以第一个根 Compose 文件所在目录为基准，未设置或为空保留原默认；必须是预先存在的非空普通文件，不能填写目录或 Token 内容，不能复用其他服务凭据。API/MCP 同时挂载同一来源，容器内变量仍固定为 `/run/secrets/knowledge_bootstrap_token`，并要求原 `SERVICE_PRINCIPAL_ENABLED` 开启。根目录凭据文件已 Git 忽略，不进入现有 Docker 构建上下文；其他自定义位置须自行保护。文件权限沿用现有 Secret 合同，改路径不自动生成、迁移或轮换凭据。知识服务按现有短期兑换机制获取不超过 300 秒的服务 Token，不持有签名私钥。
-- API 在签发前复核完整 Knowledge scope、RUNNING Job、角色应用/KB/详情权限、当前发布资源、来源和候选成员，再按原完整 scope 签发 ONES Principal，仅调用固定 `http://ones-mcp:9104/internal/knowledge/work-item-readability`。无环境代理、重定向、通用 HTTP/MCP 代调用或 Token 交换响应。
+- API 在签发前复核完整 Knowledge scope、RUNNING Job、角色应用/KB/详情权限、当前发布资源、来源和候选成员，再按原完整 scope 签发 ONES Principal，仅调用固定 `http://ones-mcp:9104/internal/knowledge/work-item-readability`。该可读性入口无环境代理、重定向、通用 HTTP/MCP 代调用或 Token 交换响应。
+- `POST /api/internal/knowledge/principal/refresh` 只接受空 JSON 对象和上述双身份，不接受 Job、用户、Server、scope 覆盖。仅能在旧 Knowledge Principal 到期前调用；复核当前任务、用户、发布、冻结完整权限和当前授权后签发，新票据除 JTI/时间外保持绑定不变，每张仍最多 300 秒。Knowledge MCP 每次工具调用独立管理内存票据，在距到期 60 秒时续期；单次续期 I/O 最多 5 秒、无重试，原调用 360 秒/Job 预算不重置。后续鉴权、内容连接和可读性请求使用最新票据。续期拒绝或非法响应会取消原请求并返回 `knowledge_principal_refresh_failed`，正常结束、断开或取消均停止续期线程。服务身份 scope/hash 改变，API 与 Knowledge MCP 必须协调升级并重新获取服务身份，不能混跑旧签发端。
 - 平台按持久化文档 ID/版本/UUID 严格校验最多 64 KiB 的引用响应，重验两种 Principal、当前授权、身份/默认 Team/凭据 ACTIVE 状态以及资源/候选；查询中撤权、身份解绑或候选变化均丢弃结果。仅检查凭据状态，不读取或解密 ONES 凭据。401 刷新仍由原 ONES 链路负责。
 - 审计仅记录安全状态、Job/用户/KB/资源版本，不记录请求头、业务正文、被拒绝数量、Provider 原响应或任何 Token；响应禁止缓存。Bridge 不可用/依赖故障不能解释为没有相关缺陷。
 

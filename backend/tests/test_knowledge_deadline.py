@@ -258,7 +258,7 @@ def test_invalid_or_expired_deadline_never_reaches_provider(bridge_fixture, dest
 def test_future_deadline_cannot_expand_local_budget(search_fixture):
     f = search_fixture
     budget = job_budget(f["runtime"].database, f["job"].id, deadline_ms=9_999_999_999_999)
-    assert 0 < budget.remaining() <= 120
+    assert 0 < budget.remaining() <= 360
     with pytest.raises(KnowledgeGovernanceError):
         job_budget(f["runtime"].database, f["job"].id, deadline_ms=int(time.time() * 1000) - 1)
 
@@ -291,7 +291,7 @@ def test_production_bridge_clients_keep_fixed_headers_and_deadline(search_fixtur
 
     def bounded(method, url, *, headers, content, timeout, max_bytes):
         assert method == "POST" and DEADLINE_HEADER in headers
-        assert 0 < timeout <= 120 and max_bytes == 64 * 1024
+        assert 0 < timeout <= 360 and max_bytes == 64 * 1024
         urls.append(url)
         if url == "http://api-server:8000" + BRIDGE_PATH:
             response = f["bridge_client"].post(BRIDGE_PATH, content=content, headers=headers)
@@ -323,7 +323,7 @@ def test_online_vector_client_uses_total_http_budget(search_fixture, monkeypatch
         with job_budget(f["runtime"].database, f["job"].id).activate():
             assert client.request("GET", "/collections") == {"result": {}}
         assert len(requests) == 1 and requests[0][1] == "http://knowledge-qdrant:6333/collections"
-        assert requests[0][2]["timeout"] <= 120
+        assert 240 < requests[0][2]["timeout"] <= 360
     finally:
         client.close()
 

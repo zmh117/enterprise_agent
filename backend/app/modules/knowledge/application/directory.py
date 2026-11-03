@@ -1,5 +1,7 @@
 """当前授权知识库目录；游标不持久化业务数据，不给予后续调用任何授权。"""
 
+from app.modules.knowledge.application.principal import PrincipalToken
+
 from dataclasses import asdict
 import json
 import time
@@ -121,7 +123,7 @@ class KnowledgeDirectory:
             raise KnowledgeGovernanceError("knowledge_cursor_invalid") from None
 
     @knowledge_entry
-    def list_bases(self, *, token: str, arguments: Any) -> dict[str, Any]:
+    def list_bases(self, *, token: PrincipalToken, arguments: Any) -> dict[str, Any]:
         if not isinstance(arguments, dict) or not set(arguments) <= {"cursor"}:
             raise KnowledgeGovernanceError("knowledge_input_invalid")
         cursor = arguments.get("cursor")

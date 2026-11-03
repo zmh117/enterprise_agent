@@ -45,6 +45,7 @@ def mcp_fixture(search_fixture):
         KnowledgeDirectory(search.access, search.resources, search.audit),
         search,
         audit,
+        principal_client=search.readability,
     )
     app = create_app(tools, ready=audit.assert_ready)
     with TestClient(app, base_url="http://knowledge-mcp:9108") as client:

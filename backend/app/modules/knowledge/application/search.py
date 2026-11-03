@@ -1,11 +1,19 @@
 """授权后的有界 dense/混合检索；返回引用，不向调用者返回离线正文。"""
 
+from app.modules.knowledge.application.principal import PrincipalToken
+
 from dataclasses import dataclass
 import threading
 from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
-from app.modules.knowledge.application.candidates import current_documents
+from app.modules.knowledge.application.candidates import (
+    candidate_pool,
+    retrieval_mode,
+    retrieve_points,
+    route_limit,
+)
+from app.modules.knowledge.application.ranking import rerank
 from app.modules.knowledge.application.content_access import KnowledgeContent
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError, checked_identifier
 from app.modules.knowledge.application.ports import (
@@ -13,6 +21,7 @@ from app.modules.knowledge.application.ports import (
     EmbeddingPort,
     QdrantPort,
     ReadabilityPort,
+    RerankPort,
 )
 from app.modules.knowledge.application.readability import ReadabilityCandidates, ReadabilityRequest
 from app.modules.knowledge.application.readability import project_readability
@@ -24,12 +33,11 @@ from app.modules.knowledge.domain.models import (
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.application.retrieval_budget import RetrievalBudget, knowledge_entry
 from app.shared.exceptions import AppError
-from app.modules.knowledge.domain.hybrid import HYBRID_CONTRACT, hybrid_index
+from app.modules.knowledge.domain.rerank_contract import MAX_CANDIDATE_POINTS, MAX_DOCUMENTS
 from app.modules.knowledge.domain.vector_contract import VectorError
 
 
-MAX_POINTS = 200
-MAX_DOCUMENTS = 50
+MAX_POINTS = MAX_CANDIDATE_POINTS
 
 
 @dataclass(frozen=True, repr=False)
@@ -71,14 +79,17 @@ class KnowledgeSearch:
         qdrant: QdrantPort,
         readability: ReadabilityPort,
         audit: AuditService,
+        *,
+        reranker: RerankPort,
     ) -> None:
         self.access, self.resources = access, resources
         self.embedding, self.qdrant = embedding, qdrant
         self.readability, self.audit = readability, audit
+        self.reranker = reranker
         self._slots = threading.BoundedSemaphore(4)
 
     @knowledge_entry
-    def search(self, *, token: str, arguments: Any) -> dict[str, Any]:
+    def search(self, *, token: PrincipalToken, arguments: Any) -> dict[str, Any]:
         access, acquired = None, False
         try:
             request = SearchRequest.parse(arguments)
@@ -100,6 +111,17 @@ class KnowledgeSearch:
                     exc.code
                     if exc.code in {"knowledge_embedding_busy", "knowledge_embedding_read_timeout"}
                     else "knowledge_embedding_unavailable"
+                )
+            elif exc.code.startswith("knowledge_rerank_"):
+                code = (
+                    exc.code
+                    if exc.code
+                    in {
+                        "knowledge_rerank_busy",
+                        "knowledge_rerank_read_timeout",
+                        "knowledge_rerank_input_limit",
+                    }
+                    else "knowledge_rerank_unavailable"
                 )
             failure = KnowledgeGovernanceError(code)
         except AppError:
@@ -125,7 +147,7 @@ class KnowledgeSearch:
 
     def _search(
         self,
-        token: str,
+        token: PrincipalToken,
         request: SearchRequest,
         access: KnowledgeJobAccess,
         budget: RetrievalBudget,
@@ -137,7 +159,7 @@ class KnowledgeSearch:
 
     def _search_content(
         self,
-        token: str,
+        token: PrincipalToken,
         request: SearchRequest,
         access: KnowledgeJobAccess,
         budget: RetrievalBudget,
@@ -167,13 +189,13 @@ class KnowledgeSearch:
         recheck()
         vector = self.embedding.call([request.query], encode=True)["vectors"][0]
         recheck()
-        # 一次最多读取 200 点，随后在同一候选池内按文档补齐，避免重复扩大请求的累计超限。
-        candidates = (
-            qdrant.hybrid_search(index, vector, request.query, MAX_POINTS)
-            if hybrid_index(index)
-            else qdrant.search(index, vector, MAX_POINTS)
-        )
-        documents = current_documents(content.vectors, index, candidates)
+        selected_mode = retrieval_mode(index)
+        candidates = retrieve_points(qdrant, index, vector, request.query, selected_mode)
+        pool = candidate_pool(content.vectors, index, candidates)
+        recheck()
+        ranked = rerank(pool, request.query, self.reranker)
+        recheck()
+        documents = ranked.documents
         results: list[dict[str, Any]] = []
         checked, timed_out = 0, False
         while checked < min(len(documents), MAX_DOCUMENTS) and len(results) < request.top_k:
@@ -199,7 +221,16 @@ class KnowledgeSearch:
                 if reference["readable"]:
                     results.append(
                         {
-                            **document,
+                            **{
+                                key: document[key]
+                                for key in (
+                                    "document_id",
+                                    "revision_id",
+                                    "retrieval_score",
+                                    "evidence",
+                                )
+                            },
+                            "rank": len(results) + 1,
                             "index_id": pin.index_id,
                             "source_id": pin.source_id,
                             "work_item_uuid": reference["task_id"],
@@ -208,19 +239,12 @@ class KnowledgeSearch:
                     )
             checked += len(batch)
         recheck()
-        current = {
-            doc["document_id"]: doc for doc in current_documents(content.vectors, index, candidates)
-        }
-        for result in results:
-            before = {
-                key: result[key] for key in ("document_id", "revision_id", "score", "evidence")
-            }
-            if current.get(result["document_id"]) != before:
-                raise KnowledgeGovernanceError("knowledge_candidate_invalid")
+        pool.recheck(content.vectors, index)
         budget.check()
-        route_limit = HYBRID_CONTRACT["per_route_limit"] if hybrid_index(index) else MAX_POINTS
         partial = len(results) < request.top_k and (
-            timed_out or len(candidates) >= route_limit or len(documents) > MAX_DOCUMENTS
+            timed_out
+            or len(candidates) >= route_limit(selected_mode)
+            or len(pool.documents) > MAX_DOCUMENTS
         )
         self.audit.record(
             "knowledge.search.completed",
@@ -234,6 +258,10 @@ class KnowledgeSearch:
                 "index_id": pin.index_id,
                 "returned": len(results),
                 "partial": partial,
+                "retrieval_mode": selected_mode,
+                "ranking_profile_hash": ranked.profile_hash,
+                "rerank_executed": bool(pool.selected),
+                "rerank_duration_ms": round(ranked.duration_ms, 3),
             },
         )
         return {
@@ -241,6 +269,9 @@ class KnowledgeSearch:
             "resource_revision_id": pin.revision_id,
             "index_id": pin.index_id,
             "documents": results,
+            "retrieval_mode": selected_mode,
+            "ranking_method": "cross_encoder",
+            "ranking_profile_hash": ranked.profile_hash,
             "partial": partial,
             "partial_reason": "bounded_search" if partial else None,
         }

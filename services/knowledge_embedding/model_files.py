@@ -51,22 +51,24 @@ def verify_file(path: Path, expected: dict[str, Any]) -> None:
         raise VectorError("knowledge_model_file_invalid")
 
 
-def verify_model(root: Path = MODEL_DIR) -> None:
+def verify_model(root: Path = MODEL_DIR, *, model: dict[str, Any] | None = None) -> None:
+    manifest = MODEL if model is None else model
     if root.is_symlink() or not root.is_dir():
         raise VectorError("knowledge_model_missing")
     actual = {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()}
-    if actual != set(MODEL["files"]) or any(p.is_symlink() for p in root.rglob("*")):
+    if actual != set(manifest["files"]) or any(p.is_symlink() for p in root.rglob("*")):
         raise VectorError("knowledge_model_file_invalid")
-    for name, expected in MODEL["files"].items():
+    for name, expected in manifest["files"].items():
         verify_file(root / name, expected)
 
 
-def prepare_model(root: Path = MODEL_DIR) -> None:
+def prepare_model(root: Path = MODEL_DIR, *, model: dict[str, Any] | None = None) -> None:
+    manifest = MODEL if model is None else model
     endpoint = model_endpoint()
     if root.is_symlink():
         raise VectorError("knowledge_model_file_invalid")
     root.mkdir(parents=True, exist_ok=True)
-    for name, expected in MODEL["files"].items():
+    for name, expected in manifest["files"].items():
         target = root / name
         if target.parent.is_symlink() or target.is_symlink():
             raise VectorError("knowledge_model_file_invalid")
@@ -79,7 +81,7 @@ def prepare_model(root: Path = MODEL_DIR) -> None:
             raise VectorError("knowledge_model_file_invalid")
         for attempt in range(3):
             try:
-                url = f"{endpoint}/{MODEL['model_id']}/resolve/{MODEL['revision']}/{name}"
+                url = f"{endpoint}/{manifest['model_id']}/resolve/{manifest['revision']}/{name}"
                 with (
                     urllib.request.urlopen(url, timeout=60) as response,
                     partial.open("wb") as output,
@@ -110,7 +112,7 @@ def prepare_model(root: Path = MODEL_DIR) -> None:
                 if attempt == 2:
                     raise VectorError("knowledge_model_download_failed") from None
                 time.sleep(2**attempt)
-    verify_model(root)
+    verify_model(root, model=manifest)
 
 
 if __name__ == "__main__":

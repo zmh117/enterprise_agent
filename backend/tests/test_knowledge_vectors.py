@@ -215,7 +215,7 @@ def test_new_revision_filters_stale_points_and_requires_new_index_version(prepar
         service.build("synthetic-v1", current)
 
 
-def test_query_deduplication_expands_until_enough_documents(prepared, monkeypatch):
+def test_query_deduplication_uses_same_bounded_candidate_pool(prepared, monkeypatch):
     db, service, snapshot = prepared
     service.build("synthetic-v1", snapshot)
     index = service.repository.get("synthetic-v1")
@@ -247,7 +247,7 @@ def test_query_deduplication_expands_until_enough_documents(prepared, monkeypatc
 
     monkeypatch.setattr(service.qdrant, "search", search)
     result = service.query("synthetic-v1", "synthetic_base", "合成查询", top_k=2)
-    assert calls == [20, 40, 80, 160]
+    assert calls == [200]
     assert len(result["documents"]) == 2 and not result["partial"]
     assert len(result["documents"][0]["evidence"]) == 3
 

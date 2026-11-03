@@ -12,7 +12,7 @@ MAX_BATCH_TOKENS = 8192
 MAX_BODY_BYTES = 256 * 1024
 # 内部 HTTP 截止合同；在线排队和推理不得重新获得一轮预算。
 DEADLINE_HEADER = "X-Knowledge-Deadline-Ms"
-MAX_RETRIEVAL_SECONDS = 120
+MAX_RETRIEVAL_SECONDS = 360
 
 
 class VectorError(ValueError):

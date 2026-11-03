@@ -114,6 +114,7 @@ def bridge_fixture(readable_fixture):
             "key": key,
             "knowledge_token": knowledge_token,
             "service_token": service_issuer.issue(credentials["knowledge-mcp"]).access_token,
+            "service_issuer": service_issuer,
             "file_token": service_issuer.issue(credentials["file-worker"]).access_token,
             "exchanges": exchanges,
             "transport": transport,

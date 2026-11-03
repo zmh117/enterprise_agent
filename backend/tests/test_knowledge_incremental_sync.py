@@ -72,6 +72,10 @@ class IncrementalMemory(HybridMemory):
     def count(self, index):
         return sum(point["payload"]["index_id"] == index["id"] for point in self.points.values())
 
+    def hybrid_search(self, index, vector, query, limit, *, mode):
+        assert mode in {"dense", "bm25", "hybrid"}
+        return self.search(index, vector, limit)
+
 
 class Harness:
     def __init__(self, database, tmp_path):
@@ -783,3 +787,34 @@ def test_same_stamp_kind_change_moves_only_document_membership(harness):
     assert h.run()["counts"] == {"revised": 1}
     assert h.index()["expected_document_count"] == 0
     assert h.index("ticket")["expected_document_count"] == 1
+
+
+def test_same_incremental_index_cannot_return_ranking_after_input_revision_changes(
+    harness, monkeypatch
+):
+    from backend.tests.support.knowledge_reranker import SyntheticReranker
+
+    h = harness
+    record = h.records(1)[0]
+    h.stage([record])
+    h.run()
+    before = h.index()
+    reranker = SyntheticReranker()
+    original = reranker.rank
+
+    def update_during_inference(query, documents):
+        result = original(query, documents)
+        h.stage([revised(record)])
+        h.run()
+        assert h.index()["id"] == before["id"]
+        return result
+
+    monkeypatch.setattr(reranker, "rank", update_during_inference)
+    service = VectorService(h.vectors, h.embedding, h.qdrant, reranker=reranker)
+    with pytest.raises(VectorError, match="knowledge_vector_(source_changed|point_conflict)"):
+        service.query(
+            before["code"],
+            h.binding["configuration_json"]["base_codes"]["defect"],
+            "合成",
+            compare=True,
+        )

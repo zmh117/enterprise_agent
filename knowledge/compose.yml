@@ -55,6 +55,25 @@ services:
     mem_limit: 512m
     restart: "no"
 
+  knowledge-reranker-prepare:
+    profiles: [knowledge-prepare]
+    image: enterprise-agent/knowledge-reranker:bge-v1
+    build:
+      context: .
+      dockerfile: services/knowledge_reranker/Dockerfile
+    command: [python, -m, services.knowledge_reranker.model_files]
+    environment:
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+    volumes:
+      - knowledge-reranker-models:/models
+    networks: [provider-egress]
+    read_only: true
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    restart: "no"
+
   knowledge-qdrant:
     profiles: [knowledge]
     image: qdrant/qdrant:v1.19.1@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10
@@ -97,6 +116,7 @@ services:
     mem_limit: 1g
 
 volumes:
+  knowledge-reranker-models:
   knowledge-models:
   knowledge-qdrant:
 

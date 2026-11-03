@@ -1,5 +1,7 @@
 """知识 MCP 的协议身份适配，不读取 ONES 凭据或签发 Token。"""
 
+from app.modules.knowledge.application.principal import PrincipalToken
+
 from collections.abc import Mapping
 from typing import Any
 
@@ -31,7 +33,9 @@ class KnowledgeMcpAuth:
 
         return RetrievalBudget(current_job, deadline_ms=control.deadline_ms)
 
-    def resolve(self, token: str, tool: str, headers: Mapping[str, str]) -> McpAuditContext:
+    def resolve(
+        self, token: PrincipalToken, tool: str, headers: Mapping[str, str]
+    ) -> McpAuditContext:
         access = self.access.authenticate(token, tool)
         job = self.database.execute_one(
             "select id,session_id,retry_count,project_code,internal_user_id,agent_publication_id,"

@@ -2,6 +2,7 @@
 
 from dataclasses import asdict
 import json
+import time
 from typing import Any
 
 import httpx
@@ -20,8 +21,9 @@ from app.modules.knowledge.application.readability import (
     ReadabilityRequest,
 )
 from app.modules.knowledge.application.retrieval_budget import RetrievalBudget, current_budget
+from app.modules.knowledge.application.principal import stable_claims
 from app.modules.knowledge.infrastructure.reader_access import job_budget
-from app.modules.knowledge.domain.vector_contract import fingerprint
+from app.modules.knowledge.domain.vector_contract import MAX_RETRIEVAL_SECONDS, fingerprint
 from app.shared.database import assert_external_io_allowed
 from app.shared.bounded_read_http import request_bytes
 from app.shared.ones_io_budget import ones_io_timeout
@@ -59,6 +61,31 @@ class PlatformOnesReadabilityGateway:
 
     def budget(self, job_id: str, *, deadline_ms: int | None = None) -> RetrievalBudget:
         return job_budget(self.gate.database, job_id, deadline_ms=deadline_ms)
+
+    def renew_principal(self, service_token: str, knowledge_token: str) -> dict[str, Any]:
+        access = self.authenticate(service_token, knowledge_token)
+        old = self.principal.verify(
+            knowledge_token, required_scope="mcp:knowledge-mcp:knowledge_search:invoke"
+        )
+        # 续期不使用普通 JWT 验证允许的时钟宽限；过期票据不能换取新身份。
+        if old["exp"] <= time.time():
+            raise KnowledgeGovernanceError("knowledge_principal_refresh_failed")
+        token = self.issuer.issue_business_mcp_for_job(
+            job_id=access.job_id, server_code="knowledge-mcp"
+        )
+        fresh = self.principal.verify_for_running_job(
+            token,
+            self.gate.database,
+            self.gate.snapshots,
+            required_scope="mcp:knowledge-mcp:knowledge_search:invoke",
+        )
+        if (
+            stable_claims(old) != stable_claims(fresh)
+            or self.authenticate(service_token, token) != access
+            or old["exp"] <= time.time()
+        ):
+            raise KnowledgeGovernanceError("knowledge_principal_refresh_failed")
+        return {"access_token": token, "expires_at": fresh["exp"]}
 
     def identity_fingerprint(self, actor_id: str, candidates: ReadabilityCandidates) -> str:
         # 只读取身份与凭据状态，不读取/解密任何凭据。Provider 访问仍完全由 ONES MCP 负责。
@@ -112,10 +139,10 @@ class PlatformOnesReadabilityGateway:
                         **self._deadline_headers(),
                     },
                     content=json.dumps(asdict(request)).encode(),
-                    timeout=ones_io_timeout(120),
+                    timeout=ones_io_timeout(MAX_RETRIEVAL_SECONDS),
                     max_bytes=64 * 1024,
                 )
-                ones_io_timeout(120)
+                ones_io_timeout(MAX_RETRIEVAL_SECONDS)
                 if status != 200:
                     raise ValueError
                 return json.loads(body, object_pairs_hook=strict_object)
@@ -124,7 +151,9 @@ class PlatformOnesReadabilityGateway:
                 transport=self._transport,
                 trust_env=False,
                 follow_redirects=False,
-                timeout=httpx.Timeout(ones_io_timeout(120), connect=ones_io_timeout(3)),
+                timeout=httpx.Timeout(
+                    ones_io_timeout(MAX_RETRIEVAL_SECONDS), connect=ones_io_timeout(3)
+                ),
             ) as client:
                 with client.stream(
                     "POST",
@@ -136,7 +165,7 @@ class PlatformOnesReadabilityGateway:
                         raise ValueError
                     raw = bytearray()
                     for part in response.iter_bytes():
-                        ones_io_timeout(120)
+                        ones_io_timeout(MAX_RETRIEVAL_SECONDS)
                         raw.extend(part)
                         if len(raw) > 64 * 1024:
                             raise ValueError

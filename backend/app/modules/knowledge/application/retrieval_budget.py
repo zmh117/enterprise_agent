@@ -56,7 +56,7 @@ def knowledge_entry(function: Callable[P, R]) -> Callable[P, R]:
 
 
 def deadline_from_headers(values: list[str]) -> int | None:
-    # 仅传递时间上限，不是授权。未提供时仍受本地 120 秒和持久化 Job 预算限制。
+    # 仅传递时间上限，不是授权。未提供时仍受本地 360 秒和持久化 Job 预算限制。
     if not values:
         return None
     if (
