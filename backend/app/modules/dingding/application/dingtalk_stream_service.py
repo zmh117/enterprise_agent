@@ -28,7 +28,7 @@ from app.modules.identity_discovery.application import (
     DingTalkIdentityDiscoveryService,
 )
 from app.modules.identity_discovery.domain import PendingDingTalkIdentityObservation
-from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
+from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied, ToolPolicyError
 
 logger = logging.getLogger(__name__)
 
@@ -311,7 +311,7 @@ class DingTalkStreamMessageService:
                     source_connector_id if defer_rejection_notification else ""
                 ),
             )
-        except NonRetryableExecutionError as exc:
+        except (NonRetryableExecutionError, ToolPolicyError) as exc:
             logger.info(
                 "DingTalk Stream message rejected connector_id=%s actor_id=%s event_id=%s reason=%s",
                 source_connector_id,

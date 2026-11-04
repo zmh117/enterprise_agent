@@ -6,6 +6,7 @@ import unittest
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any
+from unittest.mock import Mock, patch
 
 from app.bootstrap import build_test_container
 from app.modules.channel.domain.channel_event import ReplyRoute
@@ -18,7 +19,7 @@ from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.message_bus.application.message_publisher import ChannelEventMessage
 from app.shared.config import DingTalkSettings, Settings
-from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.exceptions import NonRetryableExecutionError, ToolPolicyError
 from app.workers.agent_job_worker import AgentJobWorker
 from app.workers.dingtalk_stream_ingress_worker import DingTalkStreamIngressWorker
 from backend.tests.helpers import (
@@ -348,6 +349,55 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertFalse(result.accepted)
         self.assertEqual("permission_denied", result.status)
         self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
+
+    def test_tool_schema_rejection_is_persisted_before_notifying_once(self) -> None:
+        c = routed_container()
+        try:
+            event, _ = c.managed_channel_repository.receive_event(
+                source_type="dingding_stream",
+                connector_id="connector-dingtalk-stream-default",
+                external_event_id="schema-drift-event",
+                correlation_id="corr-schema-drift",
+                payload_hash="hash-schema-drift",
+                request_bytes=512,
+                safe_summary={"msgtype": "text"},
+                normalized_event=stream_payload(event_id="schema-drift-event"),
+                reply_credential_ciphertext="",
+            )
+            reason = "发布版本中的 MCP 工具服务或 Schema 已失效，请重新发布"
+            notifier = Mock()
+            observed_states: list[tuple[str, str]] = []
+
+            def notify(**values: Any) -> bool:
+                stored = c.managed_channel_repository.get_event(str(event["id"]))
+                observed_states.append((stored["status"], stored["error_code"]))
+                return True
+
+            notifier.notify.side_effect = notify
+            c.dingtalk_stream_message_service.rejection_notifier = notifier
+            message = ChannelEventMessage(
+                channel_event_id=str(event["id"]), correlation_id="corr-schema-drift"
+            )
+            with patch.object(
+                c.dingtalk_stream_message_service.channel_ingress_service,
+                "accept",
+                side_effect=ToolPolicyError(
+                    "Internal contract diagnostic must not be delivered",
+                    safe_message=reason,
+                    error_code="mcp_tool_schema_drift",
+                ),
+            ):
+                c.channel_dispatch_service.handle(message)
+                c.channel_dispatch_service.handle(message)
+
+            notifier.notify.assert_called_once()
+            self.assertEqual([("REJECTED", "mcp_tool_schema_drift")], observed_states)
+            self.assertEqual(reason, notifier.notify.call_args.kwargs["reason"])
+            self.assertEqual("conversation-1", notifier.notify.call_args.kwargs["conversation_id"])
+            self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
+            self.assertEqual(0, len(c.message_bus.jobs))
+        finally:
+            c.database.close()
 
     def test_stream_job_result_uses_session_webhook_by_default(self) -> None:
         c = routed_container()
