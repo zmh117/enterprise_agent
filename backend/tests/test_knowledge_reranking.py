@@ -15,7 +15,7 @@ from app.modules.knowledge.domain.rerank_contract import (
     checked_request,
     checked_result,
 )
-from app.modules.knowledge.domain.vector_contract import DEADLINE_HEADER, VectorError
+from app.modules.knowledge.domain.vector_contract import DEADLINE_HEADER, VectorError, fingerprint
 from app.modules.knowledge.infrastructure.reranker_client import RerankerClient
 from app.shared.io_deadline import io_deadline
 from backend.tests.support.knowledge_reranker import SyntheticReranker
@@ -158,7 +158,9 @@ def test_request_shape_and_text_bounds(update):
         checked_request(request, "hash")
 
 
-@pytest.mark.parametrize("failure", ["busy", "timeout", "profile", "result", "unavailable"])
+@pytest.mark.parametrize(
+    "failure", ["busy", "timeout", "profile", "threads", "result", "unavailable"]
+)
 def test_client_no_retry_or_fallback_and_common_deadline(failure):
     seen = []
     client = None
@@ -169,6 +171,11 @@ def test_client_no_retry_or_fallback_and_common_deadline(failure):
         assert request.extensions["timeout"]["read"] <= 0.5
         if failure == "profile":
             return httpx.Response(200, json={"profile": {"wrong": True}})
+        if failure == "threads":
+            old_profile = {**client.profile, "threads": 8}
+            return httpx.Response(
+                200, json={"profile": old_profile, "profile_hash": fingerprint(old_profile)}
+            )
         if request.url.path == "/profile":
             return httpx.Response(
                 200, json={"profile": client.profile, "profile_hash": client.profile_hash}
@@ -189,11 +196,12 @@ def test_client_no_retry_or_fallback_and_common_deadline(failure):
             "busy": "busy",
             "timeout": "read_timeout",
             "profile": "profile_mismatch",
+            "threads": "profile_mismatch",
             "result": "result_invalid",
             "unavailable": "unavailable",
         }
         assert caught.value.code == "knowledge_rerank_" + codes[failure]
-        assert len(seen) == (1 if failure == "profile" else 2)
+        assert len(seen) == (1 if failure in {"profile", "threads"} else 2)
     finally:
         client.http.close()
 

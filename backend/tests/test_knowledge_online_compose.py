@@ -336,7 +336,7 @@ def test_reranker_independent_internal_model_volume_and_resource_budget(compose_
     prepare = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"][
         "knowledge-reranker-prepare"
     ]
-    assert reranker["cpus"] == 8 and int(reranker["mem_limit"]) == 3 * 1024**3
+    assert reranker["cpus"] == 6 and int(reranker["mem_limit"]) == 3 * 1024**3
     assert int(reranker["memswap_limit"]) == int(reranker["mem_limit"])
     assert reranker["read_only"] and not reranker.get("ports") and not reranker.get("secrets")
     assert set(reranker["networks"]) == {"knowledge-managed"}

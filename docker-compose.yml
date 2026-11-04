@@ -1165,8 +1165,8 @@ services:
     environment:
       HF_HUB_OFFLINE: '1'
       TRANSFORMERS_OFFLINE: '1'
-      OMP_NUM_THREADS: '8'
-      MKL_NUM_THREADS: '8'
+      OMP_NUM_THREADS: '6'
+      MKL_NUM_THREADS: '6'
     volumes:
     - knowledge-reranker-models:/models:ro
     networks:
@@ -1178,7 +1178,7 @@ services:
     - ALL
     security_opt:
     - no-new-privileges:true
-    cpus: 8
+    cpus: 6
     mem_limit: 3g
     memswap_limit: 3g
     healthcheck:
