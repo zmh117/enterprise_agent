@@ -431,9 +431,7 @@ class SyncRepository:  # noqa: PLR0904
                 (
                     int(enabled),
                     canonical_json(pins),
-                    (datetime.fromisoformat(now()) + timedelta(seconds=3600)).isoformat()
-                    if enabled
-                    else None,
+                    now() if enabled else None,
                     now(),
                     binding_id,
                     expected_revision,
@@ -461,6 +459,8 @@ class SyncRepository:  # noqa: PLR0904
             return False
         if self.active_run(binding_id) is not None:
             return True
+        if not binding.get("schedule_enabled", 1):
+            return False
         due = binding["next_run_at"]
         if due is None:
             raise ExportValidationError("knowledge_sync_schedule_invalid")

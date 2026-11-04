@@ -373,7 +373,7 @@ def test_real_postgres_migration_import_constraints_and_lock(tmp_path):
         snapshot = schema_snapshot(database)
         assert "knowledge.document" in snapshot["tables"]
         comments = postgres_comment_snapshot(database)
-        assert sum(key.startswith("knowledge.") for key in comments["tables"]) == 18
+        assert sum(key.startswith("knowledge.") for key in comments["tables"]) == 21
         column_count = database.execute_one(
             "select count(*) as n from information_schema.columns where table_schema='knowledge'"
         )["n"]

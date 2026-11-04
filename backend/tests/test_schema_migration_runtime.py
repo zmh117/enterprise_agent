@@ -99,6 +99,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("149", "149_add_webhook_result_application_binding.sql"),
         ("150", "150_optimize_knowledge_vector_reuse.sql"),
         ("151", "151_add_incremental_knowledge_sync.sql"),
+        ("152", "152_add_knowledge_operations.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -154,6 +155,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "149",
         "150",
         "151",
+        "152",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -1427,7 +1429,7 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert (
         len({column for column in owned_columns if not column[0].startswith("knowledge.")}) == 1778
     )
-    assert len({table for table in owned_tables if table.startswith("knowledge.")}) == 18
+    assert len({table for table in owned_tables if table.startswith("knowledge.")}) == 21
     database.close()
 
 

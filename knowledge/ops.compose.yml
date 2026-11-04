@@ -1,0 +1,62 @@
+# 主程序 Compose 的可选扩展；不能加载到独立知识项目。
+services:
+  postgres:
+    networks: [knowledge-managed]
+  api-server:
+    networks: [knowledge-managed]
+    environment:
+      KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /run/secrets/knowledge_bootstrap_token
+    secrets: [knowledge_bootstrap_token]
+  knowledge-ops-controller:
+    profiles: [knowledge-operations]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: knowledge-ops-controller
+    command: [python, -m, app.cli.knowledge_ops_controller]
+    restart: unless-stopped
+    environment:
+      DATABASE_DSN: ${DATABASE_DSN:?配置平台数据库连接}
+      KNOWLEDGE_DEPLOY_ROOT: ${KNOWLEDGE_DEPLOY_ROOT:?配置可信部署源码绝对目录}
+      KNOWLEDGE_DEPLOY_ENV_FILE: /config/knowledge.env
+      KNOWLEDGE_COMPOSE_PROJECT: ${KNOWLEDGE_COMPOSE_PROJECT:-enterprise-knowledge}
+      KNOWLEDGE_STATE_DIR: /state
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${KNOWLEDGE_DEPLOY_ROOT:?}:${KNOWLEDGE_DEPLOY_ROOT:?}:ro
+      - ${KNOWLEDGE_DEPLOY_ENV_FILE:?}:/config/knowledge.env:ro
+      - ${APP_CONFIG_MASTER_KEY_FILE:?}:${APP_CONFIG_MASTER_KEY_FILE:?}:ro
+      - ${PRINCIPAL_JWKS_FILE:?}:${PRINCIPAL_JWKS_FILE:?}:ro
+      - ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:?}:${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:?}:ro
+      - knowledge-operation-state:/state
+    entrypoint: [/usr/local/bin/knowledge-ops-entrypoint]
+    networks: [knowledge-managed]
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777", "/root:size=16m,mode=0700"]
+    # Docker 控制权限仅此执行器持有，:ro 不能限制 socket API 的权限。
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    cpus: 1
+    mem_limit: 512m
+    stop_grace_period: 300s
+    depends_on:
+      postgres: {condition: service_healthy}
+      migrator: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, python, -m, app.cli.knowledge_ops, health, --role, controller]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+secrets:
+  knowledge_bootstrap_token:
+    file: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:?}
+volumes:
+  knowledge-operation-state:
+    name: ${KNOWLEDGE_STATE_VOLUME:?设置运维状态卷名称}
+networks:
+  knowledge-managed:
+    name: ${KNOWLEDGE_CONTENT_NETWORK:?设置共享知识内容网络}
+    internal: true

@@ -1,5 +1,9 @@
 # 可选知识库部署
 
+同机、独立 Compose 的网页运维入口见 [知识库网页运维安装与操作](OPERATIONS.md)。新入口使用 `ops.compose.yml` 在主项目安装控制器，由控制器管理独立的 `deployment.compose.yml`；支持 `knowledge.sh` 与网页共用任务队列。必须先明确绑定已有卷并停止旧同步进程，再接管，不能将下述旧扩展直接改项目名启动。
+
+以下保留原有扩展部署与一次性维护入口：
+
 知识服务的离线索引组件集中在 `compose.yml`；在线 Knowledge MCP 另加 `mcp.compose.yml`；已验收真实 ONES 后的受管小时同步另加 `sync.compose.yml`。三者都是根 Compose 的**可选扩展文件**，不是独立项目。暂时不需要知识库的环境只使用根 `docker-compose.yml`，无需构建或下载 Embedding/Qdrant，也无需知识服务凭据。
 
 ## 启用方式

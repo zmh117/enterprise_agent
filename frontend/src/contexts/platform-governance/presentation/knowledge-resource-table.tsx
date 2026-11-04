@@ -7,6 +7,7 @@ import {
   type KnowledgeResource,
 } from "@/contexts/platform-governance/domain/knowledge-resource"
 import { KnowledgeError } from "./knowledge-resource-ui"
+import type { KnowledgePlan } from "../domain/knowledge-operations"
 
 type TableProps = {
   resources: KnowledgeResource[]
@@ -14,6 +15,7 @@ type TableProps = {
   canManage: boolean
   pending: boolean
   onOpen: (resource: KnowledgeResource) => void
+  plans?: KnowledgePlan[]
 }
 
 export function KnowledgeResourceTable(props: TableProps) {
@@ -25,13 +27,19 @@ export function KnowledgeResourceTable(props: TableProps) {
         </caption>
         <thead className="border-b bg-muted/40">
           <tr>
-            {["知识资源", "存储", "来源", "索引", "检索发布", "操作"].map(
-              (x) => (
-                <th key={x} className="p-3 font-medium">
-                  {x}
-                </th>
-              )
-            )}
+            {[
+              "知识资源",
+              "存储",
+              "来源",
+              "索引",
+              "同步处理",
+              "检索发布",
+              "操作",
+            ].map((x) => (
+              <th key={x} className="p-3 font-medium">
+                {x}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -59,9 +67,18 @@ function KnowledgeResourceRow({
   canManage,
   pending,
   onOpen,
+  plans,
 }: TableProps & { resource: KnowledgeResource }) {
   const revision = resource.published ?? resource.draft
   const external = revision?.storage?.postgres.mode === "external"
+  const plan = !external
+    ? plans?.find((p) =>
+        p.bases.some((b) => b.knowledge_base_id === resource.knowledge_base_id)
+      )
+    : undefined
+  const metrics = plan?.bases.find(
+    (b) => b.knowledge_base_id === resource.knowledge_base_id
+  )?.metrics
   const catalog = useKnowledgeContentCatalog(
     external ? revision.storage! : null,
     canManage
@@ -111,6 +128,28 @@ function KnowledgeResourceRow({
       </td>
       <td className="p-3">
         {revision ? `已绑定 ${revision.index_id}` : "未选择"}
+      </td>
+      <td className="p-3">
+        {plan ? (
+          <>
+            <a className="underline" href={`#knowledge-plan-${plan.id}`}>
+              {plan.code}
+            </a>
+            {metrics ? (
+              <p className="mt-1 text-xs">
+                {metrics.total === 0
+                  ? "本轮无需处理"
+                  : `新增 ${metrics.created} · 修订 ${metrics.revised} · 完成 ${metrics.completed}/${metrics.total} · 失败 ${metrics.failed}`}
+              </p>
+            ) : (
+              <p className="text-xs">尚未采集</p>
+            )}
+          </>
+        ) : external ? (
+          "自定义连接，需核实受管目标"
+        ) : (
+          "未关联采集计划"
+        )}
       </td>
       <td className="p-3">
         {resource.published

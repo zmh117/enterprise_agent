@@ -58,6 +58,16 @@ function setup({
       const url = String(input),
         method = options.method ?? "GET"
       const body = options.body ? JSON.parse(String(options.body)) : {}
+      if (url === `${prefix}/operations` && method === "GET") {
+        const runtime = { online: false, observed_at: null, snapshot: {} }
+        return Response.json({
+          controller: runtime,
+          sync_worker: runtime,
+          deployment: runtime,
+          plans: [],
+          operations: [],
+        })
+      }
       const reply = (value: unknown, status = 200) =>
         new Response(JSON.stringify(value), {
           status,

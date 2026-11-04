@@ -30,6 +30,9 @@ TABLES = frozenset(
         "sync_binding",
         "sync_run",
         "sync_candidate",
+        "ops_operation",
+        "ops_event",
+        "ops_runtime",
     }
 )
 _SQLITE_LOCK = threading.Lock()

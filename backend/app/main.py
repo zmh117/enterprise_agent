@@ -299,6 +299,7 @@ def create_app(  # noqa: PLR0915
     from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
     from app.modules.platform_config.api import build_platform_config_router
     from app.modules.knowledge.api.controller import build_knowledge_router
+    from app.modules.knowledge.api.operations_controller import build_knowledge_operations_router
     from app.modules.knowledge.api.readability_controller import build_knowledge_readability_router
     from app.modules.workflow.api import build_workflow_router
     from app.modules.webhook.api import (
@@ -322,6 +323,7 @@ def create_app(  # noqa: PLR0915
         app.include_router(build_agent_job_debug_router())
         app.include_router(build_platform_config_router())
         app.include_router(build_knowledge_router())
+        app.include_router(build_knowledge_operations_router())
         app.include_router(build_workflow_router())
         app.include_router(build_business_application_router())
         app.include_router(build_authorization_center_router())

@@ -112,6 +112,38 @@ def _execute(  # noqa: C901, PLR0915
             raise ExportValidationError("knowledge_sync_verifier_unavailable")
         repo = IncrementalSyncRepository(database)
         checkpoint.check_binding(repo.binding(binding_id))
+        operation_id = getattr(args, "operation_id", None)
+        operations = None
+        if operation_id:
+            from app.modules.knowledge.infrastructure.operations_repository import (
+                OperationsRepository,
+            )
+
+            operations = OperationsRepository(database)
+            operation = operations.operation(operation_id)
+            if operation["binding_id"] != binding_id or operation["state"] != "RUNNING":
+                raise ExportValidationError("knowledge_ops_state_conflict")
+            if (
+                operation["parameters"]["binding_revision"]
+                != repo.binding(binding_id)["configuration_revision"]
+            ):
+                raise ExportValidationError("knowledge_sync_configuration_changed")
+            checkpoint.run_id = operation["run_id"]
+            if (
+                operation["parameters"].get("first_day"),
+                operation["parameters"].get("last_day"),
+            ) != (
+                args.from_date.isoformat() if args.from_date else None,
+                args.through_date.isoformat() if args.through_date else None,
+            ):
+                raise ExportValidationError("knowledge_collection_range_changed")
+
+        def select_run(run_id: str) -> None:
+            checkpoint.select_run(run_id)
+            if operations is not None:
+                assert isinstance(operation_id, str)
+                operations.update(operation_id, run_id=run_id)
+
         embedding, qdrant = EmbeddingClient(), QdrantClient()
         secret_provider = EncryptedDbSecretProvider(
             PlatformConfigRepository(database), master_key=settings.app_config_master_key
@@ -136,7 +168,7 @@ def _execute(  # noqa: C901, PLR0915
             return collector.collect_once(
                 code,
                 resume_run_id=checkpoint.run_id,
-                on_run_selected=checkpoint.select_run,
+                on_run_selected=select_run,
                 **(
                     {"first": args.from_date, "through": args.through_date}
                     if args.from_date
@@ -248,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--from-date", type=date.fromisoformat)
         parser.add_argument("--through-date", type=date.fromisoformat)
         parser.add_argument("--binding-code", required=True)
+        parser.add_argument("--operation-id")
         parser.add_argument("--capacity-path", type=Path)
         parser.add_argument("--commit", action="store_true")
         args = parser.parse_args(argv)

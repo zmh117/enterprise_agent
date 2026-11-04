@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
+FROM docker:28.5.2-cli AS knowledge-docker-cli
+
 FROM python:3.12-slim AS python-deps
 ARG BUILD_SOURCE_REVISION=local-dev
 ARG BUILD_ID=local-dev
@@ -230,3 +232,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && python -c "import services.file_service.app"
 USER 10005:10005
 CMD ["python", "-m", "services.file_service"]
+
+FROM ones-mcp AS knowledge-ops-controller
+USER root
+COPY --from=knowledge-docker-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=knowledge-docker-cli /usr/local/libexec/docker/cli-plugins /usr/local/libexec/docker/cli-plugins
+COPY backend/docker/knowledge_ops_entrypoint.sh /usr/local/bin/knowledge-ops-entrypoint
+RUN chmod 0555 /usr/local/bin/knowledge-ops-entrypoint
+ENTRYPOINT ["/usr/local/bin/knowledge-ops-entrypoint"]
+CMD ["python", "-m", "app.cli.knowledge_ops_controller"]

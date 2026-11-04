@@ -33,6 +33,7 @@ unit = [
 ]
 
 contract = [
+  "test_knowledge_operations.py",
   "test_knowledge_incremental_sync.py",
   "test_knowledge_sync_backfill.py",
   "test_knowledge_database_recovery.py",

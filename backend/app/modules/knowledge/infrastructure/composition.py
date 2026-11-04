@@ -18,6 +18,8 @@ from app.modules.knowledge.infrastructure.vector_clients import EmbeddingClient,
 from app.modules.knowledge.infrastructure.ones_verifier import OnesSourceVerifier
 from app.shared.database import Database
 from app.modules.knowledge.application.content_access import ContentAccess
+from app.modules.knowledge.application.operations import KnowledgeOperations
+from app.modules.knowledge.infrastructure.operations_store import OperationsStore
 
 
 class KnowledgeServices:
@@ -62,6 +64,9 @@ class KnowledgeServices:
             VectorRepository(self.database),
             content_access=self.content_access,
         )
+
+    def operations(self) -> KnowledgeOperations:
+        return KnowledgeOperations(self.sources(), OperationsStore(self.database))
 
     def verify_resource(self, **arguments: Any) -> dict[str, Any]:
         with ExitStack() as cleanup:

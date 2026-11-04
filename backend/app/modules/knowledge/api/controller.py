@@ -9,6 +9,8 @@ from starlette.concurrency import run_in_threadpool
 from app.bootstrap import Container
 from app.modules.identity.api.dependencies import current_principal, require_action, require_csrf
 from app.modules.knowledge.domain.governance import strict_object
+from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
+from app.modules.knowledge.domain.normalization import ExportValidationError
 from app.shared.exceptions import AppError, PermissionDenied
 
 if TYPE_CHECKING:
@@ -64,6 +66,11 @@ async def payload(
 async def invoke(operation: Any, **arguments: Any) -> Any:
     try:
         return await run_in_threadpool(operation, **arguments)
+    except ExportValidationError as exc:
+        error = KnowledgeGovernanceError(exc.code)
+        raise HTTPException(
+            400, detail={"error_code": error.error_code, "message": error.safe_message}
+        ) from None
     except AppError as exc:
         raise HTTPException(
             403

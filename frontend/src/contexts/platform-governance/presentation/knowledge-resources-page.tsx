@@ -4,6 +4,8 @@ import { Input } from "@/components/ui/input"
 import { ApiError } from "@/shared/api/api-client"
 import { KnowledgeStorageFields } from "./knowledge-storage-fields"
 import { KnowledgeResourceTable } from "./knowledge-resource-table"
+import { KnowledgeOperationsPanel } from "./knowledge-operations-panel"
+import { useKnowledgeOperations } from "../application/knowledge-operations-query"
 import { useKnowledgeStorage } from "@/contexts/platform-governance/application/knowledge-storage-query"
 import {
   Sheet,
@@ -49,6 +51,7 @@ export function KnowledgeResourcesPage() {
     capabilities.data?.capabilities.includes("platform.manage")
   )
   const inventory = useKnowledgeInventory(canRead)
+  const operations = useKnowledgeOperations(canRead)
   const mutation = useKnowledgeCommand()
   const [recoveringRevision, setRecoveringRevision] = useState(false)
   const pending = mutation.isPending || recoveringRevision
@@ -167,6 +170,7 @@ export function KnowledgeResourcesPage() {
       mutation.reset()
       setEditing(resource)
     },
+    plans: operations.data?.plans,
   }
   return (
     <div className="mx-auto grid w-full max-w-[1500px] gap-5 px-4 py-5 sm:px-6 lg:px-8">
@@ -178,8 +182,8 @@ export function KnowledgeResourcesPage() {
             草稿验证后才可发布；角色仍在各业务应用下选择允许使用的知识库。
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            首版支持 ONES 工作项；内容 PostgreSQL 与 Qdrant
-            可独立配置，平台授权连接不变。 不提供上传、OCR 和自动采集。
+            支持 ONES
+            采集计划、增量更新及日期补采。发布控制知识库可用性，自动同步独立设置。
           </p>
         </div>
         <div className="flex gap-2">
@@ -217,6 +221,12 @@ export function KnowledgeResourcesPage() {
           {notice}
         </p>
       )}
+      <KnowledgeOperationsPanel
+        data={operations.data}
+        error={operations.error}
+        canManage={canManage}
+        onRefresh={() => void operations.refetch()}
+      />
       {inventory.isPending && <p role="status">正在加载知识资源…</p>}
       {data && (
         <>
