@@ -1,59 +1,33 @@
 # 知识库网页运维安装与操作
 
-适用：同一服务器，主程序与知识服务分开 Compose 管理。管理页面位于“工具资源 → 知识库”。三个 ONES 类型知识库共用服务和一条采集计划，按文档增量更新；发布只控制检索可用性。
-
-## 责任与文件
-
-| 文件/服务 | 责任 |
-| --- | --- |
-| 根 Compose + `knowledge/ops.compose.yml` | 主程序、数据库、迁移及常驻 `knowledge-ops-controller` |
-| `knowledge/deployment.compose.yml` | 独立知识项目，只有知识服务及一次性模型准备/预检 |
-| `knowledge/deployment.env.example` | 独立项目的配置模板；不含真实凭据 |
-| `knowledge.sh` | 在已安装控制器中提交任务，与 Web 共用状态、互斥和事件 |
-| `knowledge-sync` | 一个调度进程串行运行计划，使用现有 `sync_ones_knowledge --mode once` 子进程 |
-
-执行器是高权限组件：只有它挂载 Docker socket，项目和 Compose 文件固定，网页不能传命令、文件路径或镜像。把 socket 标为只读也不能限制其 Docker API 权限。部署源码必须来自可信发布目录；构建期间不要原地改动源码。部署目录、配置及 Secret 文件不可由普通 Web 用户写入。
+适用：同一服务器，由根 `docker-compose.yml` 统一管理平台和知识服务。网页位于“工具资源 → 知识库”；CLI 和 Web 共享持久任务、互斥和安全事件。
 
 ## 首次安装
 
-1. 按主程序正常发布流程部署匹配的后端、前端及当前 schema head（需包含 migration **152**）。知识入口只检查数据库版本，不擅自运行主程序迁移。
-2. 从 `deployment.env.example` 准备权限为 `0600` 的独立环境文件。`KNOWLEDGE_DATABASE_DSN` 指向与主平台相同的数据库；不要输出解析后的 Compose 配置或把实际配置提交 Git。
-3. 明确填入已有的三个卷名：Qdrant、Embedding 模型、Reranker 模型。它们在独立 Compose 中都是 `external: true`，缺失会失败，不自动创建空库。仅首次空部署才显式创建相应命名卷。
-4. 为主项目提供下面的非敏感安装参数，同时沿用原主程序数据库及 Secret 配置。所有路径必须为宿主机绝对路径；控制器将 Secret 文件映射到相同路径，以便 Compose 正确绑定文件。
-
-```dotenv
-# 示例路径，按现场部署填写；不含 Secret 内容。
-KNOWLEDGE_DEPLOY_ROOT=/opt/enterprise-agent
-KNOWLEDGE_DEPLOY_ENV_FILE=/etc/enterprise-agent/knowledge.env
-KNOWLEDGE_COMPOSE_PROJECT=enterprise-knowledge
-KNOWLEDGE_STATE_VOLUME=enterprise_agent_knowledge_ops_state
-KNOWLEDGE_CONTENT_NETWORK=enterprise_agent_knowledge_managed
-APP_CONFIG_MASTER_KEY_FILE=/etc/enterprise-agent/app-config-master-key
-PRINCIPAL_JWKS_FILE=/etc/enterprise-agent/principal-jwks.json
-KNOWLEDGE_BOOTSTRAP_TOKEN_FILE=/etc/enterprise-agent/knowledge-bootstrap-token
-```
-
-独立环境文件中的 `KNOWLEDGE_STATE_VOLUME`、`KNOWLEDGE_CONTENT_NETWORK` 和 Secret 路径必须与主项目一致。`KNOWLEDGE_CONTROL_NETWORK` 必须指向主程序当前 `agent-runtime-control` 的真实 Docker 网络名。控制器扩展会创建共享知识内容网络并把主 API/PostgreSQL 接入；原有控制网络继续由主项目管理。
-
-5. 在维护窗口，主项目继续使用原项目名，加载 `knowledge/ops.compose.yml`，构建匹配镜像、运行原迁移流程，更新 API/前端，并启动控制器。例如在所有安装参数已由受控环境提供时：
+1. 准备主 `.env`、受控 Secret 和当前 schema。知识服务使用主平台数据库；只有原 `migrator` 负责迁移。运行 `scripts/bootstrap_agent_runtime_secrets.sh /绝对/Secret目录` 可幂等准备统一身份材料，其中包含 `knowledge-bootstrap-token`，不输出其内容。
+2. 在仓库根目录运行 Compose；若从其他目录调用，在主 `.env` 配置绝对 `KNOWLEDGE_DEPLOY_ROOT`。执行器将源码及知识用 Secret 源路径只读映射到相同宿主路径，因此自定义 Secret 路径使用绝对路径。常规部署与执行器均读取根目录同一 `.env`，不再使用独立知识 env 文件。
+3. 四个持久卷均为 external，缺失直接失败。已有安装先核对实际名称，使用 `KNOWLEDGE_MODEL_VOLUME`、`KNOWLEDGE_RERANKER_VOLUME`、`KNOWLEDGE_QDRANT_VOLUME`、`KNOWLEDGE_STATE_VOLUME` 绑定；绝不能创建空卷代替已有数据。仅全新空安装按当前主项目名创建：
 
 ```sh
-docker compose -p enterprise_agent -f docker-compose.yml -f knowledge/ops.compose.yml \
-  --profile knowledge-operations config --quiet
-docker compose -p enterprise_agent -f docker-compose.yml -f knowledge/ops.compose.yml \
-  --profile knowledge-operations build migrator api-server knowledge-ops-controller
-# 使用主程序既定迁移、前端发布与启动流程；接入新网络可能重建 PostgreSQL/API。
-# 迁移完成且 PostgreSQL/API 已使用上述扩展后，单独启动控制器：
-docker compose -p enterprise_agent -f docker-compose.yml -f knowledge/ops.compose.yml \
-  --profile knowledge-operations up -d --no-deps knowledge-ops-controller
+# 示例主项目名 enterprise_agent；自定义项目名时相应修改。
+docker volume create enterprise_agent_knowledge-models
+docker volume create enterprise_agent_knowledge-reranker-models
+docker volume create enterprise_agent_knowledge-qdrant
+docker volume create enterprise_agent_knowledge_ops_state
 ```
 
-如果安装参数在环境文件中，在上述所有命令中明确增加 `--env-file`，保持与原主程序相同的配置来源。不要使用 `down -v`、`--remove-orphans`，不要用独立知识项目管理主数据库。
+4. 启动全部服务：
 
-升级包含 MCP 工具接口变更时，还要核对当前启用应用及其 Agent 发布版本中的工具 Schema。旧发布版本不自动采用新接口；例如知识检索 v2 会改变 `knowledge_search` 的合同。保留原配置和工具范围，依次创建 Agent 草稿并校验发布、更新应用引用并校验发布、在原环境激活。不得直接改写历史发布记录的 hash 或关闭合同校验。升级后用一条新的渠道消息核对接收、Job 执行和回复投递；容器健康不能替代这项验收。普通内容同步和同接口重启不需要重新发布。
+```sh
+docker compose -f docker-compose.yml config --quiet
+docker compose -f docker-compose.yml up -d --build
+```
 
-6. 控制器显示在线后，网页依次“构建镜像”“启动 / 应用版本”。首次需要准备模型；已有模型按文件校验复用。三个库共享后台模型，在线 Embedding 仍保持独立进程，Reranker 维持原资源配置。
-7. 接入原采集计划，或在网页新建计划，填写 ONES 团队、项目、类型 ID、凭据中心引用及三个知识库编码。保存会关闭采集安全开关，开启自动同步后立即调度首次全量；已有未完成任务优先恢复。已有在线来源配置及运行记录时，来源范围不能原地修改。来源配置只引用凭据，不接受 Token 正文。
+首次模型准备会下载并校验固定模型，已有模型校验后复用；在线模型运行时保持离线。`knowledge-check`、`knowledge-ops` 是维护任务，不随常驻服务执行。Qdrant 默认仅绑定本机 6333 端口。不要输出完整解析配置、原始容器日志或凭据内容。
+
+5. 检查网页执行器和六个知识服务就绪，再验证受授权目录与实际检索。服务 healthy 不证明用户授权或采集成功。已有计划开关保留；新计划保存后仍需显式开启自动同步，不因启动容器自动创建或启用计划。
+
+只有执行器持有 Docker socket；API、模型和其他知识服务没有该权限。它固定主项目及主文件，只构建/启停知识服务，启动时 `--no-deps` 防止影响平台依赖。网页不能传任意命令、路径或镜像。部署目录及 `.env` 必须仅由受信部署人员维护。
 
 ## 采集计划字段
 
@@ -88,22 +62,11 @@ docker compose -p enterprise_agent -f docker-compose.yml -f knowledge/ops.compos
 - 构建/服务启动没有可靠总量时显示阶段和事件，不估算百分比。刷新或关闭网页不影响后台任务；执行器或同步心跳过期显示未连接/未知。
 - 首次全量完成前不能补采。补采按创建日期，不改变常规七日窗口；一次任务作用于计划下三库，各库只处理自己的变化文档。
 
-## 从旧扩展接管
+## 从旧独立项目迁移
 
-先核实原主项目、卷和网络名称。已有固定集合和增量身份保持不变；尚未完成增量接管的环境先按原手册执行显式 adoption，不能以新运维入口代替数据合同升级。
+先核对旧项目容器、四个卷和共享网络，确认没有活动 Job、知识运维任务或同步 run。把实际卷名写到主 `.env` 的对应非敏感变量中，保持原主项目名。先停止旧执行器与旧同步，再停止其余旧知识容器；精确移除已停止的旧知识容器，保留全部卷和原平台服务。禁止两套 Qdrant 写者共享同一个卷，也不能让两个项目同时注册相同服务别名。
 
-在切换前停止旧同步进程及旧知识服务，示例仅列知识服务：
-
-```sh
-docker compose -p enterprise_agent -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml -f knowledge/sync.compose.yml \
-  stop knowledge-sync knowledge-mcp knowledge-embedding-online knowledge-reranker \
-  knowledge-embedding knowledge-qdrant
-```
-
-不要同时运行旧 daemon、独立 cron 或手动 once 作为新队列的调度器。保留的来源锁可阻止并发写入，但不能用它代替运维接管；旧容器不能与新项目抢占端口或网络别名。确认新配置绑定的是旧卷后，再从 Web 启动新项目。
-
-自定义 PostgreSQL 连接不必然是外部数据库，但需要核实实际目标。真正外部内容库只保持原读取合同，不能因网页新增功能而自动开启写入。不同 CPU 架构的 profile 仍需原有显式索引验证/重建，正常同架构重启不重建全库。
+然后只用主文件构建并启动。首次迁移 API/ONES MCP/数据库的网络配置可能需要重新创建相关容器，应安排维护窗口。确认卷名、内容数量、计划开关以及目录/检索调用后再恢复常规使用。不要使用 `down -v` 或全项目 `--remove-orphans`。
 
 ## 日常操作
 
@@ -120,8 +83,8 @@ docker compose -p enterprise_agent -f docker-compose.yml -f knowledge/compose.ym
 
 主项目不是 `enterprise_agent` 时设置 `KNOWLEDGE_MAIN_PROJECT`。只有一个启用计划时补采可省略 `--binding-code`。命令返回持久任务 ID，不等待长任务完成；用页面、`status` 或 `logs --operation-id TASK_ID` 查看进度。`logs --after CURSOR` 可接续读取，返回最近/后续最多 200 条安全事件。
 
-- 构建使用独立任务版本标签，成功后才记录可应用版本，不触发采集或替换运行容器。
-- 启动检查 schema、外部卷/网络和服务就绪；应用版本前先停止旧同步。失败显示具体阶段，不宣称启动成功。成功后恢复未完成任务，遵循每条计划原自动调度开关。
+- 构建更新主 Compose 固定知识镜像标签，成功后记录构建操作身份，不触发采集或替换运行容器。
+- 启动检查 schema、外部卷及内部网络和服务就绪；应用版本前先停止旧同步。失败显示具体阶段，不宣称启动成功。成功后恢复未完成任务，遵循每条计划原自动调度开关。
 - 暂停自动同步不关闭采集安全开关，不打断当前任务，不影响已排队的显式任务或在线检索。
 - 停止服务先等待同步保存断点，再停止检索、模型及 Qdrant，保留卷和控制器；主程序继续运行。
 - 补采以北京时间**创建日期**为范围，含首尾日期。首次全量完成后才允许补采；等待同来源当前任务完成，恢复时不能改变日期。
@@ -146,6 +109,6 @@ docker compose -p enterprise_agent -f docker-compose.yml -f knowledge/compose.ym
 
 ## 回退与验收边界
 
-回退前停止新项目并停止主项目的控制器，避免新任务再次启动知识服务；保留全部卷及 migration 152。按旧部署流程重新启用旧知识服务，不与新同步进程并行。不要通过删除知识数据回退运维界面。
+维护或回退前先停止知识同步和执行器，保留全部模型、向量、进度及数据库。只应用与当前 schema 匹配的代码和主部署配置，不重新并行启动旧独立项目，不通过删除知识数据处理运维界面问题。
 
 代码本地验收包括迁移、HTTP 权限、幂等队列、固定日期续跑、假 Compose 启停顺序、真实隔离 PostgreSQL 并发、控制器镜像构建和合成数据浏览器交互。它们不代表现场 ONES、模型下载或已有外部连接已验收；正式接管后需要核对一个实际同步轮次及三库检索。

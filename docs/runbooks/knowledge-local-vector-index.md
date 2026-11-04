@@ -10,30 +10,30 @@
 - 模型固定 revision `5617a9f61b028005a4858fdac845db406aefb181`，使用官方 `pytorch_model.bin`，不做 safetensors 转换或 ONNX 导出。加载显式 `weights_only=True`、`trust_remote_code=False`；不增加任意类 allowlist。
 - 模型完整清单见 `backend/app/modules/knowledge/embedding_model.json`；CPU 依赖锁按架构分别固定为 `embedding_runtime.lock`（Linux ARM64）和 `embedding_runtime_amd64.lock`（Linux AMD64），PyTorch wheel 各有独立 SHA-256，其余依赖版本与哈希相同。构建时按 `TARGETARCH` 选择并验证 CPU PyTorch；未知架构失败关闭。运行时 Embedding profile 也按架构选择锁的摘要，跨架构迁移不能默用旧索引，须在目标架构重建并核验向量索引。
 - 准备容器只下载固定公开模型、校验大小/摘要，无数据库或业务卷/凭据。失败的 `.partial` 不被运行时接纳，重跑不会跳过完整校验。
-- Embedding 只读挂载模型卷，关闭 Hub 在线访问、遥测、远程代码，不发布宿主机端口。Qdrant 的旧扩展另有宿主机端口映射，独立部署默认只绑定 `127.0.0.1`；以所选部署文件为准，不要将管理端口暴露给非受信网络。
+- Embedding 只读挂载模型卷，关闭 Hub 在线访问、遥测、远程代码，不发布宿主机端口。主 Compose 的 Qdrant 默认只绑定 `127.0.0.1`，不要将管理端口暴露给非受信网络。
 - 模型服务请求上限 8 条、每条 4096 tokens、合计 8192 tokens，256 KiB 请求体、单并发；只计数端点允许批量总数超过 8192，以便客户端重新组批。所有计数包含特殊 token。服务不静默截断。
 - Qdrant 仅存向量与索引/知识库/文档/版本/块 ID、种类和摘要；不存标题、正文、URL 或人员。
 - 命令输出仅计数、摘要、固定错误码、引用。禁止打印原文、查询、向量、底层响应、DSN 或解析后的完整 Compose 配置。
 
 ## 执行顺序
 
-以下示例使用旧 `knowledge/compose.yml` 扩展；独立部署由 `knowledge/deployment.compose.yml` 管理，日常通过 Web / `knowledge.sh` 操作，不再启动旧扩展；完整部署边界见[知识库部署入口](../../knowledge/README.md)。以下命令均在仓库根目录执行，沿用原项目名和数据卷。`DATABASE_DSN` 必须从既有部署配置提供并指向同库 `postgres:5432`；不要打印配置值或复制凭据到扩展文件。
+以下命令只使用根 `docker-compose.yml`，日常通过 Web / `knowledge.sh` 操作；完整部署边界见[知识库部署入口](../../knowledge/README.md)。命令在仓库根目录执行，沿用原项目名和现有数据卷。
 
 先核对当前运行服务、数据库 head、本次目标文档、分块和索引的计数/摘要。不要在旧业务镜像仍运行时直接升级 schema。构建 head 一致的业务镜像不等于已经部署或 API 就绪；不得因本轮任务启动整个业务栈。
 
 ```sh
 docker compose config --quiet
-docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledge --profile knowledge-prepare config --quiet
-docker compose -f docker-compose.yml -f knowledge/compose.yml --progress quiet build knowledge-embedding knowledge-ops
-docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledge-prepare run --rm --no-deps knowledge-model-prepare
-docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledge up -d --no-deps knowledge-embedding knowledge-qdrant
+docker compose -f docker-compose.yml config --quiet
+docker compose -f docker-compose.yml --progress quiet build knowledge-embedding knowledge-ops
+docker compose -f docker-compose.yml run --rm --no-deps knowledge-model-prepare
+docker compose -f docker-compose.yml up -d --no-deps knowledge-embedding knowledge-qdrant
 ```
 
-PostgreSQL 需加入 `knowledge-internal` 并具有 `postgres` 网络别名。首次部署通常由 Compose 管理；若既有数据库持续运行，应在维护流程下仅附加新增网络，不能为了准备基准重建数据库。配置已声明该网络，模型/CLI 不应再加入默认网络。
+PostgreSQL 需加入 `knowledge-managed` 并具有 `postgres` 网络别名。首次部署通常由 Compose 管理；若既有数据库持续运行，应在维护流程下仅附加新增网络，不能为了准备基准重建数据库。配置已声明该网络，模型/CLI 不应再加入默认网络。
 
 ```sh
 # 只读全量 token 预检，并对按长度分层选出的 100 块做本地基准；不写 Qdrant。
-docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledge run --rm --no-deps knowledge-ops \
+docker compose -f docker-compose.yml run --rm --no-deps knowledge-ops \
   python -m app.cli.index_knowledge --index-code ones-defects-bge-m3-v1 --benchmark
 ```
 
@@ -43,11 +43,11 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledg
 
 ```sh
 # 显式提交。相同命令用于断点恢复及全量重放核验。
-docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledge run --rm --no-deps knowledge-ops \
+docker compose -f docker-compose.yml run --rm --no-deps knowledge-ops \
   python -m app.cli.index_knowledge --index-code ones-defects-bge-m3-v1 --commit
 
 # 从 stdin 输入，避免查询进入命令参数；输出只含回源核验过的定位引用。
-docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledge run --rm -T --no-deps knowledge-ops \
+docker compose -f docker-compose.yml run --rm -T --no-deps knowledge-ops \
   python -m app.cli.query_knowledge --knowledge-base-code ones-defects-offline \
   --index-code ones-defects-bge-m3-v1 --top-k 10
 ```
@@ -106,12 +106,12 @@ Qdrant 升级应核对目标版本的[官方升级说明](https://qdrant.tech/do
 
 ```sh
 # 只更新一次性运维镜像，不更新模型或其他服务。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  --profile knowledge --progress quiet build knowledge-ops
+docker compose -f docker-compose.yml \
+  --progress quiet build knowledge-ops
 
 # 仅在需要维护重启时执行；保留模型/向量卷，不重启 PostgreSQL。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  --profile knowledge restart knowledge-qdrant knowledge-embedding
+docker compose -f docker-compose.yml \
+  restart knowledge-qdrant knowledge-embedding
 ```
 
 先确认没有运行中的索引写入任务，并等待 Qdrant `/readyz`、Embedding `/ready` 就绪，再按上文查询命令使用默认 `knowledge-ops` 镜像验证 schema 门禁与本地检索。`knowledge-ops` 没有常驻进程，无需 `up` 或 `restart`；以 `run --rm --no-deps` 重新运行明确的一次性命令即可。运维镜像刷新不需要 `--commit`、模型准备任务或数据库迁移。

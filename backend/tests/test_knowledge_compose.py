@@ -1,4 +1,4 @@
-"""Optional Compose deployment contracts; no Docker daemon or real data needed."""
+"""主 Compose 知识服务部署合同；只解析合成配置，不读取实际部署配置。"""
 
 import json
 import os
@@ -9,76 +9,17 @@ import subprocess
 import pytest
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[2]
 KNOWLEDGE_SERVICES = {
     "knowledge-embedding",
-    "knowledge-model-prepare",
-    "knowledge-reranker-prepare",
+    "knowledge-embedding-online",
+    "knowledge-reranker",
     "knowledge-qdrant",
-    "knowledge-ops",
+    "knowledge-mcp",
+    "knowledge-sync",
+    "knowledge-ops-controller",
 }
-SYNTHETIC_DSN = "postgresql://synthetic:synthetic@postgres:5432/synthetic"
-
-
-def test_knowledge_definitions_are_exclusively_opt_in():
-    base = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
-    overlay = yaml.safe_load((ROOT / "knowledge/compose.yml").read_text())
-    assert not KNOWLEDGE_SERVICES.intersection(base["services"])
-    assert "knowledge-internal" not in base["networks"]
-    assert not {"knowledge-models", "knowledge-qdrant"}.intersection(base["volumes"])
-    assert "knowledge-internal" not in base["services"]["postgres"]["networks"]
-    assert not base.get("include")
-    assert set(overlay["services"]) == KNOWLEDGE_SERVICES | {"postgres", "api-server"}
-    assert overlay["services"]["postgres"] == {"networks": ["knowledge-internal"]}
-    assert overlay["services"]["api-server"] == {"networks": ["knowledge-internal"]}
-    assert set(overlay["volumes"]) == {
-        "knowledge-models",
-        "knowledge-qdrant",
-        "knowledge-reranker-models",
-    }
-    assert overlay["networks"] == {
-        "knowledge-internal": {"internal": True},
-        "knowledge-qdrant-access": {"driver": "bridge"},
-    }
-    assert not overlay.get("name")
-    assert all(not service.get("container_name") for service in overlay["services"].values())
-
-
-def test_knowledge_build_and_database_configuration_are_explicit():
-    base = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
-    services = yaml.safe_load((ROOT / "knowledge/compose.yml").read_text())["services"]
-    ops = services["knowledge-ops"]
-    assert ops["build"]["args"] == base["x-release-build-args"]
-    assert ops["build"]["target"] == "migrator"
-    assert ops["environment"]["DATABASE_DSN"].startswith("${DATABASE_DSN:?")
-    assert set(ops["environment"]) == {"DATABASE_DSN", "APP_CONFIG_MASTER_KEY_FILE", "APP_ENV"}
-    assert ops["environment"]["APP_CONFIG_MASTER_KEY_FILE"] == ""
-    for name in KNOWLEDGE_SERVICES:
-        service = services[name]
-        assert not service.get("secrets")
-        assert not service.get("extends")
-        if name != "knowledge-ops":
-            assert "DATABASE_DSN" not in service.get("environment", {})
-        if "build" in service:
-            assert service["build"]["context"] == "."
-            assert (ROOT / service["build"]["dockerfile"]).is_file()
-
-
-def test_qdrant_release_is_pinned_with_only_confirmed_http_port_published():
-    service = yaml.safe_load((ROOT / "knowledge/compose.yml").read_text())["services"][
-        "knowledge-qdrant"
-    ]
-    assert service["image"] == (
-        "qdrant/qdrant:v1.19.1@sha256:"
-        "12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10"
-    )
-    assert not service.get("build")
-    assert service["ports"] == ["0.0.0.0:6333:6333"]
-    assert service["profiles"] == ["knowledge"]
-    assert service["volumes"] == ["knowledge-qdrant:/qdrant/storage"]
-    assert service["networks"] == ["knowledge-internal", "knowledge-qdrant-access"]
-    assert service["environment"]["QDRANT__TELEMETRY_DISABLED"] == "true"
+PREPARE_SERVICES = {"knowledge-model-prepare", "knowledge-reranker-prepare"}
 
 
 @pytest.fixture(scope="module")
@@ -92,13 +33,9 @@ def compose_cli():
     return executable
 
 
-def render(compose_cli, *, overlay=False, profiles=(), dsn=SYNTHETIC_DSN, hf_endpoint=None):
-    # Never load the developer's .env or inherit credentials / COMPOSE_FILE.
+def render(compose_cli, *, profiles=(), **variables):
     env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
-    if dsn is not None:
-        env["DATABASE_DSN"] = dsn
-    if hf_endpoint is not None:
-        env["HF_ENDPOINT"] = hf_endpoint
+    env.update(KNOWLEDGE_DEPLOY_ROOT=str(ROOT), **variables)
     command = [
         compose_cli,
         "compose",
@@ -107,120 +44,152 @@ def render(compose_cli, *, overlay=False, profiles=(), dsn=SYNTHETIC_DSN, hf_end
         "-p",
         "knowledge-compose-contract",
         "-f",
-        "docker-compose.yml",
+        str(ROOT / "docker-compose.yml"),
     ]
-    if overlay:
-        command.extend(["-f", "knowledge/compose.yml"])
     for profile in profiles:
         command.extend(["--profile", profile])
     command.extend(["config", "--format", "json"])
-    return subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
-
-
-def parsed(result):
-    if result.returncode:
-        pytest.fail("Compose configuration validation failed; output intentionally withheld")
+    result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, "synthetic Compose rendering failed (details withheld)"
     return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize("profiles", [(), ("*",)])
-def test_base_compose_never_requires_knowledge(compose_cli, profiles):
-    config = parsed(render(compose_cli, profiles=profiles, dsn=None))
-    assert not KNOWLEDGE_SERVICES.intersection(config["services"])
-    assert "knowledge-internal" not in config["networks"]
-    assert "knowledge-qdrant-access" not in config["networks"]
-    assert not {"knowledge-models", "knowledge-qdrant"}.intersection(config["volumes"])
+def test_default_main_file_starts_all_resident_services_and_prepares_models(compose_cli):
+    config = render(compose_cli)
+    assert KNOWLEDGE_SERVICES | PREPARE_SERVICES <= config["services"].keys()
+    assert not {"knowledge-ops", "knowledge-check"} & config["services"].keys()
+    assert all(
+        not config["services"][name].get("profiles")
+        for name in KNOWLEDGE_SERVICES | PREPARE_SERVICES
+    )
+    for name in ("knowledge-embedding", "knowledge-embedding-online"):
+        assert (
+            config["services"][name]["depends_on"]["knowledge-model-prepare"]["condition"]
+            == "service_completed_successfully"
+        )
+    assert (
+        config["services"]["knowledge-reranker"]["depends_on"]["knowledge-reranker-prepare"][
+            "condition"
+        ]
+        == "service_completed_successfully"
+    )
+    for name in ("api-server", "postgres", "ones-mcp"):
+        assert "knowledge-managed" in config["services"][name]["networks"]
+    assert config["networks"]["knowledge-managed"]["internal"]
+    assert not any(
+        (ROOT / "knowledge" / name).exists()
+        for name in (
+            "compose.yml",
+            "mcp.compose.yml",
+            "sync.compose.yml",
+            "ops.compose.yml",
+            "deployment.compose.yml",
+        )
+    )
 
 
-@pytest.mark.parametrize(
-    "profiles,expected",
-    [
-        ((), set()),
-        (
-            ("knowledge",),
-            KNOWLEDGE_SERVICES - {"knowledge-model-prepare", "knowledge-reranker-prepare"},
-        ),
-        (("knowledge-prepare",), {"knowledge-model-prepare", "knowledge-reranker-prepare"}),
-        (("*",), KNOWLEDGE_SERVICES),
-    ],
-)
-def test_overlay_profiles_and_base_services_are_preserved(compose_cli, profiles, expected):
-    base = parsed(render(compose_cli, profiles=profiles))
-    combined = parsed(render(compose_cli, overlay=True, profiles=profiles))
-    assert KNOWLEDGE_SERVICES.intersection(combined["services"]) == expected
-    for name, service in base["services"].items():
-        actual = combined["services"][name]
-        if name in {"postgres", "api-server"}:
-            actual = dict(actual, networks=dict(actual["networks"]))
-            assert "knowledge-internal" in actual["networks"]
-            actual["networks"].pop("knowledge-internal")
-        assert actual == service
-    for kind in ("volumes", "networks", "secrets"):
-        for name, value in base.get(kind, {}).items():
-            assert combined[kind][name] == value
-    assert combined["name"] == base["name"] == "knowledge-compose-contract"
-    for name in expected:
-        service = combined["services"][name]
-        if name == "knowledge-qdrant":
-            assert service["ports"] == [
-                {
-                    "mode": "ingress",
-                    "host_ip": "0.0.0.0",
-                    "target": 6333,
-                    "published": "6333",
-                    "protocol": "tcp",
-                }
-            ]
-        else:
-            assert not service.get("ports")
-        assert not service.get("secrets")
-        expected_networks = {"knowledge-internal"}
-        if name in {"knowledge-model-prepare", "knowledge-reranker-prepare"}:
-            expected_networks = {"provider-egress"}
-        elif name == "knowledge-qdrant":
-            expected_networks.add("knowledge-qdrant-access")
-        assert set(service["networks"]) == expected_networks
+def test_fixed_volume_names_are_external_and_overrideable(compose_cli):
+    config = render(
+        compose_cli,
+        KNOWLEDGE_MODEL_VOLUME="existing-model",
+        KNOWLEDGE_QDRANT_VOLUME="existing-qdrant",
+        KNOWLEDGE_STATE_VOLUME="existing-state",
+        KNOWLEDGE_RERANKER_VOLUME="existing-reranker",
+    )
+    for key, name in {
+        "knowledge-models": "existing-model",
+        "knowledge-qdrant": "existing-qdrant",
+        "knowledge-operation-state": "existing-state",
+        "knowledge-reranker-models": "existing-reranker",
+    }.items():
+        assert config["volumes"][key] == {"name": name, "external": True}
+    default = render(compose_cli)
+    assert (
+        default["volumes"]["knowledge-qdrant"]["name"]
+        == "knowledge-compose-contract_knowledge-qdrant"
+    )
+    assert (
+        default["volumes"]["knowledge-operation-state"]["name"]
+        == "knowledge-compose-contract_knowledge_ops_state"
+    )
+
+
+def test_build_database_secret_and_maintenance_boundaries(compose_cli):
+    config = render(compose_cli, profiles=("maintenance",))
+    raw = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    services = config["services"]
+    assert {"knowledge-ops", "knowledge-check"} <= services.keys()
+    for name in KNOWLEDGE_SERVICES | PREPARE_SERVICES | {"knowledge-ops", "knowledge-check"}:
+        service = services[name]
+        assert not service.get("container_name")
+        assert service["cap_drop"] == ["ALL"]
+        assert service["security_opt"] == ["no-new-privileges:true"]
         if "build" in service:
             assert Path(service["build"]["context"]) == ROOT
-    if "knowledge-ops" in expected:
-        assert combined["services"]["knowledge-ops"]["environment"]["DATABASE_DSN"] == SYNTHETIC_DSN
-    if "knowledge-embedding" in expected:
-        mount = combined["services"]["knowledge-embedding"]["volumes"][0]
-        assert mount["source"] == "knowledge-models" and mount["read_only"]
+            assert (ROOT / service["build"]["dockerfile"]).is_file()
+        if name != "knowledge-qdrant":
+            assert service["read_only"] and not service.get("ports")
+    for name in (
+        "knowledge-mcp",
+        "knowledge-sync",
+        "knowledge-ops-controller",
+        "knowledge-ops",
+        "knowledge-check",
+    ):
         assert (
-            combined["volumes"]["knowledge-models"]["name"]
-            == "knowledge-compose-contract_knowledge-models"
+            services[name]["environment"]["DATABASE_DSN"]
+            == services["api-server"]["environment"]["DATABASE_DSN"]
         )
-    if "knowledge-qdrant" in expected:
-        assert combined["networks"]["knowledge-qdrant-access"]["driver"] == "bridge"
-        assert not combined["networks"]["knowledge-qdrant-access"].get("internal", False)
-        assert {
-            name
-            for name, service in combined["services"].items()
-            if "knowledge-qdrant-access" in service.get("networks", {})
-        } == {"knowledge-qdrant"}
-        assert (
-            combined["volumes"]["knowledge-qdrant"]["name"]
-            == "knowledge-compose-contract_knowledge-qdrant"
-        )
+        assert raw["services"][name]["build"]["args"] == raw["x-release-build-args"]
+    for name in PREPARE_SERVICES | {
+        "knowledge-embedding",
+        "knowledge-embedding-online",
+        "knowledge-reranker",
+        "knowledge-qdrant",
+        "knowledge-ops",
+    }:
+        assert not services[name].get("secrets")
+    assert services["knowledge-ops"]["environment"]["APP_CONFIG_MASTER_KEY_FILE"] == ""
+    assert "HF_ENDPOINT" not in services["knowledge-embedding"]["environment"]
+    assert services["knowledge-embedding"]["volumes"][0]["read_only"]
 
 
-def test_model_endpoint_only_reaches_prepare_job(compose_cli):
-    default = parsed(render(compose_cli, overlay=True, profiles=("*",)))
-    mirror = parsed(
-        render(compose_cli, overlay=True, profiles=("*",), hf_endpoint="https://hf-mirror.com")
+def test_qdrant_is_pinned_and_only_publishes_loopback_http_by_default(compose_cli):
+    config = render(compose_cli)
+    service = config["services"]["knowledge-qdrant"]
+    assert (
+        service["image"]
+        == "qdrant/qdrant:v1.19.1@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10"
     )
-    assert default["services"]["knowledge-model-prepare"]["environment"]["HF_ENDPOINT"] == (
-        "https://huggingface.co"
+    assert not service.get("build")
+    assert service["ports"] == [
+        {
+            "mode": "ingress",
+            "host_ip": "127.0.0.1",
+            "target": 6333,
+            "published": "6333",
+            "protocol": "tcp",
+        }
+    ]
+    assert set(service["networks"]) == {"knowledge-managed", "provider-egress"}
+    assert service["environment"]["QDRANT__TELEMETRY_DISABLED"] == "true"
+    assert (
+        render(compose_cli, KNOWLEDGE_QDRANT_BIND="0.0.0.0")["services"]["knowledge-qdrant"][
+            "ports"
+        ][0]["host_ip"]
+        == "0.0.0.0"
     )
-    assert mirror["services"]["knowledge-model-prepare"]["environment"]["HF_ENDPOINT"] == (
-        "https://hf-mirror.com"
-    )
-    assert "HF_ENDPOINT" not in mirror["services"]["knowledge-embedding"].get("environment", {})
 
 
-@pytest.mark.parametrize("dsn", [None, ""])
-def test_overlay_rejects_missing_database_configuration(compose_cli, dsn):
-    result = render(compose_cli, overlay=True, profiles=("*",), dsn=dsn)
-    assert result.returncode != 0
-    assert "配置知识库必须设置 DATABASE_DSN" in result.stderr
+def test_model_endpoint_only_reaches_prepare_jobs(compose_cli):
+    default = render(compose_cli)
+    mirror = render(compose_cli, HF_ENDPOINT="https://hf-mirror.com")
+    for name in PREPARE_SERVICES:
+        assert default["services"][name]["environment"]["HF_ENDPOINT"] == "https://huggingface.co"
+        assert mirror["services"][name]["environment"]["HF_ENDPOINT"] == "https://hf-mirror.com"
+        assert set(mirror["services"][name]["networks"]) == {"provider-egress"}
+    for name in ("knowledge-embedding", "knowledge-embedding-online", "knowledge-reranker"):
+        service = mirror["services"][name]
+        assert "HF_ENDPOINT" not in service["environment"]
+        assert service["environment"]["HF_HUB_OFFLINE"] == "1"
+        assert set(service["networks"]) == {"knowledge-managed"}

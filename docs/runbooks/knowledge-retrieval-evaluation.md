@@ -26,7 +26,7 @@
 真实运行需要当前 schema 的 `knowledge-ops` 镜像和已经就绪的本地 Embedding/Qdrant/Reranker。只读挂载受限目录到 `/evaluation`，不把文件复制进镜像：
 
 ```sh
-docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.compose.yml --profile knowledge \
+docker compose -f docker-compose.yml \
   run --rm --no-deps -T \
   -v "$PWD/.local/knowledge-evaluation:/evaluation:ro" knowledge-ops \
   python -m app.cli.evaluate_knowledge \
@@ -60,10 +60,10 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.c
 
 ```sh
 # 显式下载和核对公开模型；运行服务随后只读、离线加载。
-docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledge-prepare \
+docker compose -f docker-compose.yml \
   run --rm --no-deps --build knowledge-reranker-prepare
 # 在确定的部署窗口启动独立内部服务；不发布宿主机端口。
-docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.compose.yml --profile knowledge \
+docker compose -f docker-compose.yml \
   up -d --build knowledge-reranker
 ```
 

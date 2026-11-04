@@ -1,5 +1,5 @@
 x-database-env: &database-env
-  DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
+  DATABASE_DSN: &platform-dsn postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
   APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
 
 x-release-build-args: &release-build-args
@@ -37,6 +37,7 @@ x-api-env: &api-env
   ORACLE_VERIFICATION_ALLOWED_HOSTS: ${ORACLE_VERIFICATION_ALLOWED_HOSTS:-tool-mcp}
   MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
   SERVICE_PRINCIPAL_ENABLED: "true"
+  KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /run/secrets/knowledge_bootstrap_token
   PRINCIPAL_JWT_PRIVATE_KEY_FILE: /run/secrets/principal_jwt_private_key
   FILE_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_worker_bootstrap_token
   FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_processing_worker_bootstrap_token
@@ -80,6 +81,7 @@ services:
       timeout: 3s
       retries: 20
     networks:
+      - knowledge-managed
       - default
       - agent-runtime-control
 
@@ -89,7 +91,7 @@ services:
       dockerfile: backend/Dockerfile
       target: migrator
     environment:
-      DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
+      DATABASE_DSN: *platform-dsn
       APP_ENV: ${APP_ENV:-local}
       MIGRATOR_BUILD: ${MIGRATOR_BUILD:-local-compose}
       INITIAL_ADMIN_PASSWORD_FILE: ${INITIAL_ADMIN_PASSWORD_FILE:-/run/secrets/initial_admin_password}
@@ -283,6 +285,7 @@ services:
           cpus: "1.0"
           memory: 512M
     networks:
+      - knowledge-managed
       - agent-runtime-control
       - provider-egress
 
@@ -540,6 +543,7 @@ services:
     environment:
       <<: *api-env
     secrets:
+      - knowledge_bootstrap_token
       - dingtalk_runtime_auth_token
       - app_config_master_key
       - model_probe_auth_token
@@ -573,6 +577,7 @@ services:
       retries: 12
       start_period: 15s
     networks:
+      - knowledge-managed
       - default
       - agent-runtime-control
 
@@ -1002,7 +1007,452 @@ services:
   file-processing-worker-2:
     <<: *file-processing-worker-service
 
+  # 知识服务与平台共用主部署入口；数据卷必须预先明确绑定。
+  knowledge-embedding:
+    image: enterprise-agent/knowledge-embedding:local
+    build:
+      context: .
+      dockerfile: services/knowledge_embedding/Dockerfile
+    environment:
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+    volumes:
+    - knowledge-models:/models:ro
+    networks:
+    - knowledge-managed
+    read_only: true
+    tmpfs:
+    - /tmp:size=256m,mode=1777
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    cpus: 4
+    mem_limit: 8g
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8096/ready',timeout=2)
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 120s
+    restart: unless-stopped
+    depends_on:
+      knowledge-model-prepare:
+        condition: service_completed_successfully
+  knowledge-model-prepare:
+    image: enterprise-agent/knowledge-embedding:local
+    build:
+      context: .
+      dockerfile: services/knowledge_embedding/Dockerfile
+    command:
+    - python
+    - -m
+    - services.knowledge_embedding.model_files
+    environment:
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+    volumes:
+    - knowledge-models:/models
+    networks:
+    - provider-egress
+    read_only: true
+    tmpfs:
+    - /tmp:size=256m,mode=1777
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 512m
+    restart: 'no'
+  knowledge-reranker-prepare:
+    image: enterprise-agent/knowledge-reranker:local
+    build:
+      context: .
+      dockerfile: services/knowledge_reranker/Dockerfile
+    command:
+    - python
+    - -m
+    - services.knowledge_reranker.model_files
+    environment:
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+    volumes:
+    - knowledge-reranker-models:/models
+    networks:
+    - provider-egress
+    read_only: true
+    tmpfs:
+    - /tmp:size=128m,mode=1777
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 512m
+    restart: 'no'
+  knowledge-qdrant:
+    image: qdrant/qdrant:v1.19.1@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10
+    ports:
+    - ${KNOWLEDGE_QDRANT_BIND:-127.0.0.1}:6333:6333
+    environment:
+      QDRANT__TELEMETRY_DISABLED: 'true'
+      QDRANT__LOG_LEVEL: ERROR
+    volumes:
+    - knowledge-qdrant:/qdrant/storage
+    networks:
+    - knowledge-managed
+    - provider-egress
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    cpus: 2
+    mem_limit: 2g
+    restart: unless-stopped
+  knowledge-embedding-online:
+    image: enterprise-agent/knowledge-embedding:local
+    build:
+      context: .
+      dockerfile: services/knowledge_embedding/Dockerfile
+    command:
+    - uvicorn
+    - services.knowledge_embedding.api:create_online_app
+    - --factory
+    - --host
+    - 0.0.0.0
+    - --port
+    - '8096'
+    - --no-access-log
+    - --log-level
+    - critical
+    restart: unless-stopped
+    environment:
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+    volumes:
+    - knowledge-models:/models:ro
+    networks:
+    - knowledge-managed
+    read_only: true
+    tmpfs:
+    - /tmp:size=256m,mode=1777
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    cpus: 2
+    mem_limit: 6g
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8096/ready',timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    depends_on:
+      knowledge-model-prepare:
+        condition: service_completed_successfully
+  knowledge-reranker:
+    image: enterprise-agent/knowledge-reranker:local
+    build:
+      context: .
+      dockerfile: services/knowledge_reranker/Dockerfile
+    restart: unless-stopped
+    environment:
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+      OMP_NUM_THREADS: '8'
+      MKL_NUM_THREADS: '8'
+    volumes:
+    - knowledge-reranker-models:/models:ro
+    networks:
+    - knowledge-managed
+    read_only: true
+    tmpfs:
+    - /tmp:size=128m,mode=1777
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    cpus: 8
+    mem_limit: 3g
+    memswap_limit: 3g
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8097/ready',timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    depends_on:
+      knowledge-reranker-prepare:
+        condition: service_completed_successfully
+  knowledge-mcp:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: knowledge-mcp
+      args:
+        BUILD_SOURCE_REVISION: ${BUILD_SOURCE_REVISION:-local-dev}
+        BUILD_ID: ${BUILD_ID:-local-dev}
+        BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
+    restart: unless-stopped
+    environment:
+      DATABASE_DSN: *platform-dsn
+      PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
+      KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /run/secrets/knowledge_bootstrap_token
+    secrets:
+    - principal_jwks
+    - knowledge_bootstrap_token
+    expose:
+    - '9108'
+    networks:
+    - knowledge-managed
+    - agent-runtime-control
+    - provider-egress
+    read_only: true
+    tmpfs:
+    - /tmp:size=32m,mode=1777,uid=10008,gid=10008
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    cpus: 1
+    mem_limit: 512m
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:9108/health',timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    image: enterprise-agent/knowledge-mcp:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      knowledge-embedding-online:
+        condition: service_healthy
+      knowledge-reranker:
+        condition: service_healthy
+      knowledge-qdrant:
+        condition: service_started
+  knowledge-sync:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: ones-mcp
+      args:
+        BUILD_SOURCE_REVISION: ${BUILD_SOURCE_REVISION:-local-dev}
+        BUILD_ID: ${BUILD_ID:-local-dev}
+        BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
+    command:
+    - python
+    - -m
+    - app.cli.knowledge_sync_worker
+    environment:
+      DATABASE_DSN: *platform-dsn
+      APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
+      APP_ENV: ${APP_ENV:-local}
+      ONES_MCP_PROVIDER_ALLOWED_HOSTS: ${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-host.docker.internal}
+      ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL: ${ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL:-true}
+      KNOWLEDGE_SYNC_ENABLED: 'true'
+      KNOWLEDGE_STATE_DIR: /state
+    secrets:
+    - app_config_master_key
+    volumes:
+    - knowledge-qdrant:/qdrant/storage:ro
+    - knowledge-operation-state:/state
+    networks:
+    - knowledge-managed
+    - provider-egress
+    extra_hosts:
+    - host.docker.internal:host-gateway
+    read_only: true
+    tmpfs:
+    - /tmp:size=128m,mode=1777,uid=10003,gid=10003
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    cpus: 2
+    mem_limit: 2g
+    stop_grace_period: 240s
+    restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -m
+      - app.cli.knowledge_ops
+      - health
+      - --role
+      - sync
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    image: enterprise-agent/knowledge-sync:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      knowledge-embedding:
+        condition: service_healthy
+      knowledge-qdrant:
+        condition: service_started
+  knowledge-check:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: ones-mcp
+      args:
+        BUILD_SOURCE_REVISION: ${BUILD_SOURCE_REVISION:-local-dev}
+        BUILD_ID: ${BUILD_ID:-local-dev}
+        BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
+    command:
+    - schema
+    environment:
+      DATABASE_DSN: *platform-dsn
+      APP_ENV: ${APP_ENV:-local}
+      ONES_MCP_PROVIDER_ALLOWED_HOSTS: ${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-host.docker.internal}
+      ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL: ${ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL:-true}
+      KNOWLEDGE_SYNC_ENABLED: 'true'
+      KNOWLEDGE_STATE_DIR: /state
+    networks:
+    - knowledge-managed
+    extra_hosts:
+    - host.docker.internal:host-gateway
+    read_only: true
+    tmpfs:
+    - /tmp:size=128m,mode=1777,uid=10003,gid=10003
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    cpus: 2
+    mem_limit: 2g
+    stop_grace_period: 240s
+    restart: 'no'
+    image: enterprise-agent/knowledge-sync:local
+    profiles:
+    - maintenance
+    entrypoint:
+    - python
+    - -m
+    - app.cli.knowledge_preflight
+  knowledge-ops:
+    profiles:
+    - maintenance
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: migrator
+      args:
+        BUILD_SOURCE_REVISION: ${BUILD_SOURCE_REVISION:-local-dev}
+        BUILD_ID: ${BUILD_ID:-local-dev}
+        BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
+    environment:
+      DATABASE_DSN: *platform-dsn
+      APP_CONFIG_MASTER_KEY_FILE: ''
+      APP_ENV: local
+    entrypoint: []
+    networks:
+    - knowledge-managed
+    command:
+    - python
+    - -m
+    - app.cli.index_knowledge
+    read_only: true
+    tmpfs:
+    - /tmp:size=128m,mode=1777
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    mem_limit: 1g
+  knowledge-ops-controller:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: knowledge-ops-controller
+      args:
+        BUILD_SOURCE_REVISION: ${BUILD_SOURCE_REVISION:-local-dev}
+        BUILD_ID: ${BUILD_ID:-local-dev}
+        BUILD_IMAGE_DIGEST: ${BUILD_IMAGE_DIGEST:-}
+    command:
+    - python
+    - -m
+    - app.cli.knowledge_ops_controller
+    restart: unless-stopped
+    environment:
+      DATABASE_DSN: *platform-dsn
+      KNOWLEDGE_DEPLOY_ROOT: ${KNOWLEDGE_DEPLOY_ROOT:-${PWD}}
+      KNOWLEDGE_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
+      KNOWLEDGE_STATE_DIR: /state
+      HOME: ${HOME}
+      DOCKER_CONFIG: /tmp/docker-config
+      PYTHONUNBUFFERED: '1'
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - ${KNOWLEDGE_DEPLOY_ROOT:-${PWD}}:${KNOWLEDGE_DEPLOY_ROOT:-${PWD}}:ro
+    - ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}:${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}:ro
+    - ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}:${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}:ro
+    - ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}:${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}:ro
+    - knowledge-operation-state:/state
+    entrypoint:
+    - /usr/local/bin/knowledge-ops-entrypoint
+    networks:
+    - knowledge-managed
+    read_only: true
+    tmpfs:
+    - /tmp:size=256m,mode=1777
+    - /root:size=16m,mode=0700
+    cap_drop:
+    - ALL
+    cap_add:
+    - CHOWN
+    - DAC_OVERRIDE
+    - FOWNER
+    security_opt:
+    - no-new-privileges:true
+    cpus: 1
+    mem_limit: 512m
+    stop_grace_period: 300s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -m
+      - app.cli.knowledge_ops
+      - health
+      - --role
+      - controller
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 secrets:
+  knowledge_bootstrap_token:
+    file: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}
   app_config_master_key:
     file: ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}
   dingtalk_runtime_auth_token:
@@ -1031,6 +1481,18 @@ secrets:
     file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/model-probe-auth-token}
 
 volumes:
+  knowledge-models:
+    external: true
+    name: ${KNOWLEDGE_MODEL_VOLUME:-${COMPOSE_PROJECT_NAME}_knowledge-models}
+  knowledge-reranker-models:
+    external: true
+    name: ${KNOWLEDGE_RERANKER_VOLUME:-${COMPOSE_PROJECT_NAME}_knowledge-reranker-models}
+  knowledge-qdrant:
+    external: true
+    name: ${KNOWLEDGE_QDRANT_VOLUME:-${COMPOSE_PROJECT_NAME}_knowledge-qdrant}
+  knowledge-operation-state:
+    external: true
+    name: ${KNOWLEDGE_STATE_VOLUME:-${COMPOSE_PROJECT_NAME}_knowledge_ops_state}
   postgres18-data:
     name: enterprise_agent_postgres18_data
     external: ${POSTGRES18_VOLUME_EXTERNAL:-false}
@@ -1040,6 +1502,9 @@ volumes:
     name: enterprise_agent_minio_data
 
 networks:
+  knowledge-managed:
+    internal: true
+    name: ${KNOWLEDGE_CONTENT_NETWORK:-${COMPOSE_PROJECT_NAME}_knowledge_managed}
   agent-runtime-control:
     internal: true
   document-processing:

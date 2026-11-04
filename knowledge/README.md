@@ -1,24 +1,25 @@
 # 知识库部署与使用入口
 
-当前支持同一服务器上主程序与知识服务分开 Compose 管理，通过“工具资源 → 知识库”和根目录 `knowledge.sh` 共用持久运维队列。首次安装及原有部署接管请先阅读[网页运维安装与操作](OPERATIONS.md)。本文后半部分保留旧扩展部署的手工维护命令，不与新调度器同时运行。
+主平台和全部知识服务统一使用根 `docker-compose.yml`。准备配置、Secret 和持久卷后，在仓库根目录执行：
 
-## 当前推荐入口
+```sh
+docker compose -f docker-compose.yml config --quiet
+docker compose -f docker-compose.yml up -d --build
+```
 
-主项目加载 `knowledge/ops.compose.yml`，保留 Web、API、数据库、迁移和 `knowledge-ops-controller`；控制器使用固定的 `knowledge/deployment.compose.yml` 管理独立知识项目。独立项目不另建平台 PostgreSQL，不接管主程序迁移；模型、Qdrant、任务状态卷使用明确的持久卷名。
+不需要额外 Compose 文件或知识 profile。默认启动六个知识业务服务和 `knowledge-ops-controller`；两个模型准备任务成功退出后，模型服务才启动。一次性 `knowledge-check`、`knowledge-ops` 仍只在 maintenance profile 或显式 `run` 时执行。新安装和旧独立项目迁移见[安装与操作](OPERATIONS.md)。
 
-完成一次性安装后，在仓库根目录执行：
+网页“工具资源 → 知识库”与 `knowledge.sh` 共用持久任务队列。单独管理知识服务：
 
 ```sh
 ./knowledge.sh build
 ./knowledge.sh up
 ./knowledge.sh status
 ./knowledge.sh logs
-./knowledge.sh sync --binding-code your-plan-code
-./knowledge.sh backfill 2026-10-10 2026-10-29 --binding-code your-plan-code
 ./knowledge.sh stop
 ```
 
-构建与应用版本是两个动作。构建、启停、同步和补采返回任务 ID，使用 Web、`status`、`logs --operation-id TASK_ID` 追踪；失败任务使用 `retry --operation-id TASK_ID`。启动检查并准备模型、启动服务和恢复任务，停止保留数据、模型和断点。`knowledge.sh` 要求主项目的执行器已运行，不能替代首次安装。
+构建不会替换运行容器；`up` 应用已构建镜像。任务返回 ID，用页面或 `logs --operation-id TASK_ID` 查看结果。执行器固定使用主项目、主文件及知识服务名单；知识启停不重建 API、数据库或执行器，不删除模型、向量或同步断点。
 
 ## 六个常驻服务与三个知识库
 
@@ -49,194 +50,24 @@
 | 重排模型、效果评测与升级 | [检索评测](../docs/runbooks/knowledge-retrieval-evaluation.md) |
 | 历史离线输入和分块 CLI | [离线导入](../docs/operations/knowledge-offline-import.md)、[文本分块](../docs/operations/knowledge-text-chunking.md) |
 
-## 旧扩展部署与一次性维护
+## 一次性维护与网络
 
-以下命令只适用于仍使用根项目扩展的环境。已接管到独立知识项目后，日常启停/补采使用上面的统一入口；一次性维护 CLI 必须明确连接实际使用的数据卷、知识网络、平台数据库和匹配版本，不能直接启动另一套旧知识容器。
-
-知识服务的离线索引组件集中在 `compose.yml`；在线 Knowledge MCP 另加 `mcp.compose.yml`；已验收真实 ONES 后的受管小时同步另加 `sync.compose.yml`。三者都是根 Compose 的**可选扩展文件**，不是独立项目。暂时不需要知识库的环境只使用根 `docker-compose.yml`，无需构建或下载 Embedding/Qdrant，也无需知识服务凭据。
-
-### 旧扩展启用方式
-
-Linux x86_64 纯 CPU 部署使用同一组 Compose 文件，不需要为 Qdrant 指定 `platform`：固定的 Qdrant image index 含 `linux/amd64`。Embedding 镜像则必须在目标架构重新构建，使用独立的 AMD64 CPU 依赖锁；模型文件清单与版本不变，但运行时 profile 摘要不同，不能把 ARM 上的 READY 索引直接标记为 x86 可用。Docling 的固定镜像和模型摘要也已有 `linux/amd64` 条目，启动时仍需实际校验。完整验收必须在目标机器执行，不能以本机跨架构构建替代。
-
-所有命令在仓库根目录执行，始终将根 Compose 放在第一个 `-f` 参数。保留原 Compose 项目名（当前本机为 `enterprise_agent`），不要在此目录单独 `docker compose up`，也不要另取 `-p` 名称，否则会切换到另一组模型/向量卷。
-
-单独执行 `docker compose up -d` 只加载根 `docker-compose.yml`，**不会启动** Embedding、Qdrant、Knowledge MCP 或每小时同步容器。要启用已经完成模型准备、迁移、在线 MCP 配置及真实 ONES 单轮验收的部署，可从仓库根目录按以下顺序启动。以下示例适用于同时使用在线知识检索和小时同步的环境；若不使用在线 Knowledge MCP，去掉所有命令中的 `-f knowledge/mcp.compose.yml`，并从第一个 `up` 命令去掉 `knowledge-mcp knowledge-embedding-online knowledge-reranker`。不要使用无服务名的 `--profile knowledge up -d`，它还会启动一次性运维任务。
-
-在既有受管部署环境中先提供 `KNOWLEDGE_SYNC_ENABLED=true`、固定的 `KNOWLEDGE_SYNC_BINDING_CODE`、`KNOWLEDGE_SYNC_DATABASE_DSN`，并显式启用数据库中的同步绑定；在线 MCP 的连接与受管文件仍按下文准备。命令中不填写或输出凭据。叠加配置可能使已运行的 PostgreSQL/API 容器为接入知识网络而重建，应在维护窗口执行；不要使用 `down -v` 或 `--remove-orphans`。
+所有维护命令也只使用主文件，例如：
 
 ```sh
-# 先检查完整叠加配置，不打印解析后的连接信息。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml -f knowledge/sync.compose.yml \
-  --profile knowledge --profile knowledge-sync config --quiet
-
-# 根栈已按原流程启动后，使数据库/API 接入知识网络并启动常驻依赖。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml -f knowledge/sync.compose.yml \
-  --profile knowledge up -d postgres api-server knowledge-embedding knowledge-embedding-online knowledge-reranker knowledge-qdrant knowledge-mcp
-
-# 依赖就绪、绑定已启用后，单独启动后台小时同步；以后维护仍叠加同一组文件。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml -f knowledge/sync.compose.yml \
-  --profile knowledge --profile knowledge-sync up -d --no-deps knowledge-sync
+docker compose -f docker-compose.yml run --rm --no-deps knowledge-check ready
+docker compose -f docker-compose.yml run --rm --no-deps knowledge-ops python -m app.cli.index_knowledge --help
 ```
 
-首次采集从配置的最早创建日期开始全量扫描；首次成功激活后，每小时复查北京时间**最近 7 个创建日**的缺陷、工单和需求。复查会重新获取命中项详情，因此既覆盖这 7 天内新建的记录，也覆盖这些记录在创建后又发生的更新；内容有变化时仅处理对应文档的分块和向量，使用各库固定集合，成功文档独立生效，不重新发布。创建于更早日期的工作项，即使最近更新，也不在这 7 天的复查范围内。
+模型服务只连接内部 `knowledge-managed` 网络，模型卷只读，运行时禁止下载。准备任务使用固定模型校验和外联网络。API 与 ONES MCP 接入内容网络；Knowledge MCP 只挂载公开 JWKS 与自己的 bootstrap，不持有平台签名私钥、Master Key 或 ONES 凭据。
 
-停采超过窗口后使用单次日期补采，不要临时改七日常量或重新配置绑定。新版本支持 `sync_ones_knowledge --mode once --from-date YYYY-MM-DD --through-date YYYY-MM-DD`，按北京时间创建日闭区间扫描；范围冻结到 run，恢复时需带相同参数。常规 daemon 仍为七日，不会自动追补窗口外缺口。详见[日期补采与停采检测](../docs/runbooks/knowledge-ones-hourly-sync.md#按明确创建日期补采)。本次包含迁移 150 的复用索引及 151 的增量合同/文档断点；已有索引需按运行手册执行一次性转换（保留原向量，不重新编码）。部署时按当前统一 schema head 维护流程升级所有校验版本的配套服务并重建同步镜像，不直接在旧业务库手工建索引或启动新代码。
-
-启用环境必须在既有部署配置（根 `.env` 或进程环境）中提供 `DATABASE_DSN`，指向主栈同一数据库的容器内地址 `postgres:5432`，不能使用宿主机 `localhost` 或映射端口。不在本目录复制 `.env` 或填写明文凭据；缺失/空值时叠加配置会直接报错。未加载扩展的环境没有此新增配置要求。
-
-```sh
-# 仅检查配置，不启动服务；不要输出完整解析配置，以免泄露连接信息。
-docker compose -f docker-compose.yml config --quiet
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  --profile knowledge --profile knowledge-prepare config --quiet
-
-# 构建独立模型镜像与轻量运维镜像。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  --progress quiet build knowledge-embedding knowledge-ops
-
-# 一次性准备固定模型。已完成的文件仍验证摘要，不重复下载。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  --profile knowledge-prepare run --rm --no-deps knowledge-model-prepare
-
-# 仅启动两个常驻知识服务，不启动业务全栈或索引任务。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  --profile knowledge up -d --no-deps knowledge-embedding knowledge-qdrant
-```
-
-`knowledge-model-prepare` 和 `knowledge-ops` 都是一次性任务。不要用不指定服务的 `--profile knowledge up` 代替以上命令。基准、迁移门禁、显式提交、断点恢复及查询见[完整运行手册](../docs/runbooks/knowledge-local-vector-index.md)。运行时依赖分别锁定 Linux ARM64 与 AMD64；在目标架构构建对应镜像。
-
-模型准备任务默认从 `https://huggingface.co` 下载。目标环境不能访问时，可在既有部署环境中设置 `HF_ENDPOINT=https://hf-mirror.com`（或受信 HTTPS 镜像源）后重跑同一准备命令；仅一次性准备任务接收此变量，常驻 Embedding 服务继续离线运行。镜像源须提供相同模型 ID、固定 revision 和文件路径；下载后仍逐文件核对固定大小与摘要，不通过时不会接纳模型，也不会自动回退到官方源。不要在 endpoint URL 中放用户名、密码、查询参数或片段。
-
-平台新增迁移后，已存在的 `knowledge-ops` 镜像不会自动更新。运行知识 CLI 前应定向重建该镜像并核验 schema 门禁；不需要重新下载模型或重建索引。更新与知识服务定向重启见[运维镜像更新](../docs/runbooks/knowledge-local-vector-index.md#运维镜像更新与定向重启)。
-
-人工相关性基线使用[本地评测入口](../docs/runbooks/knowledge-retrieval-evaluation.md)。真实问题/标签留在 Git 排除的受限目录；合成、自查询和人工效果分别报告，不把运维检索成功当成 Agent 读取授权。
-
-ONES 新版导出接口对应的受管全量采集入口见[全量采集手册](../docs/runbooks/knowledge-ones-full-collector.md)。其 `collect_ones_knowledge --mode once` 仍只产生候选；完整分块、建索引与切版需使用[受管同步入口](../docs/runbooks/knowledge-ones-hourly-sync.md)。旧小时同步 Compose 默认不加载；是否启用由目标环境配置和管理员操作决定，仓库文档不代表该环境已经完成真实 ONES 验收。
-
-单次采集、单次同步和后台同步均支持 PostgreSQL 重启后自动重连：断连后按 5/10/20/40/60 秒封顶退避等待，恢复原 run、日断点和索引阶段；密码、权限、schema 或配置错误不循环重试，等待可通过 Ctrl+C/SIGTERM 停止。部署更新与恢复边界见[数据库重启恢复说明](../docs/runbooks/knowledge-ones-hourly-sync.md#采集或同步期间重启-postgresql)。
-
-工具资源 Web 页面和检索资源管理合同见[知识治理管理与排障](../docs/runbooks/knowledge-governance.md)。代码已接线不等于真实资源已发布或 Agent 已通过真实检索验收。
-
-## 在线 Knowledge MCP（旧扩展配置）
-
-仅需要离线索引时继续使用上述两个文件，不加载 `mcp.compose.yml`。需要在线检索时顺序为根文件、`knowledge/compose.yml`、`knowledge/mcp.compose.yml`；仍使用原项目名和已有数据卷。
-
-在线扩展包含 `knowledge-mcp`（9108，仅容器网络）、独立 `knowledge-embedding-online`、`knowledge-reranker` 及 API 的知识服务身份桥配置。它不会自动配置来源、角色或应用，也不会代替正式迁移。以下是经批准部署时的步骤；代码验收尚不表示已执行这些生产操作。
-
-1. 核对非终态任务、平台镜像与当前 schema，按平台流程运行正式 Migrator。不要回退/删表。Embedding 固定模型准备和已有索引仍沿用离线流程。
-2. 直接复用根 `.env` 或既有受管部署环境中的 `DATABASE_DSN`，指向平台 PostgreSQL；不再配置 `KNOWLEDGE_DATABASE_DSN`，也不要求创建 `knowledge_mcp_reader`。该连接用于平台授权、Job、发布和审计，Web 中的知识内容库连接仍独立配置。复用账号后 Knowledge MCP 持有该账号的数据库权限，数据库层不再强制专用角色隔离；工具调用仍执行用户、Job、KB 和 ONES 权限校验。
-3. 在当前部署用户的 `$HOME/.config/enterprise-agent` 目录运行既有密钥初始化脚本。脚本生成独立高熵 `knowledge-bootstrap-token`，重复执行保留已有值；Compose 默认读取此文件，也支持在根 `.env` 或部署环境中设置 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 覆盖宿主机文件路径。API 与 MCP 挂载同一文件，容器内路径固定为 `/run/secrets/knowledge_bootstrap_token`，入口将其规范化为进程可读的只读副本；服务身份签发必须启用，MCP 仍只挂载公开 JWKS。
-4. 检查配置并构建 `knowledge-mcp`，不需要提前连接数据库或配置专用账号。
-
-```sh
-# 幂等初始化固定目录中的服务凭据，不回显内容。
-scripts/bootstrap_agent_runtime_secrets.sh "$HOME/.config/enterprise-agent"
-
-# 只校验；禁止输出完整解析配置。
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml --profile knowledge config --quiet
-
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml --progress quiet build knowledge-mcp knowledge-embedding-online knowledge-reranker
-```
-
-如需使用项目根目录下的文件，在根 `.env` 中配置（仅文件路径，不填 Token 内容）：
-
-```dotenv
-KNOWLEDGE_BOOTSTRAP_TOKEN_FILE=./knowledge-bootstrap-token
-```
-
-相对路径以第一个 Compose 文件 `docker-compose.yml` 所在的项目根目录为基准，不是 `knowledge/` 或任意执行命令的当前目录；也可填写绝对文件路径。未配置或留空时保留上述 HOME 默认路径。必须指定预先存在、非空、仅部署用户可读的普通凭据文件（沿用初始化脚本的 `0400` 权限），不能只填写 `.` 或目录，也不能复用其他服务的凭据。根目录的 `knowledge-bootstrap-token` 已加入 Git 忽略，现有 Docker 构建白名单也不包含它；自定义其他位置时须自行排除 Git 与镜像构建上下文。
-
-已有部署可通过此变量保留原 Knowledge 专用凭据路径，无需迁移或重新生成凭据。变量只选择挂载来源，不创建、复制或轮换文件；初始化脚本仍仅操作其显式目录参数，不读取此变量。实际更换挂载路径后需在批准的维护流程中同时更新 API 与 MCP，不能只重启一端。服务仍检查 PostgreSQL/schema 与审计就绪，不在启动时建表、授权或执行保留清理。
-
-5. 依平台维护流程更新 API（新凭据桥）、ONES、Runtime/Worker 和 Web 的对应代码版本。确认内部 Embedding/Qdrant/Reranker、PostgreSQL/schema 已就绪后，使用三个文件定向启动 `knowledge-mcp`；不要用无服务名的 `up` 启动一次性运维任务。API 与 MCP 不互相声明启动依赖，桥未可用时检索明确失败关闭。
-6. `/health` 仅验证 schema/审计依赖，不能代替向量、ONES、权限和真实 Job 验收。升级时先验证阻塞依赖预算与隔离完整链路，再按部署流程在 Web 配置资源、角色应用 KB 范围和新的 Agent/Application Publication。配置流程见[管理手册](../docs/runbooks/knowledge-governance.md#管理流程)，不要求 ONES 地址/Team 来源确认、证明摘要或运行中 Job ID。不得把旧 Job 当成新增知识工具的验收。
-
-停用时先停用知识资源与相关新工具发布，再定向 `stop knowledge-mcp`，保留 PostgreSQL、模型及 Qdrant 卷。API 中的可选凭据移除需受控更新；其他仍使用知识库的应用未退出前不得撤去。不要 `down -v`，不降级 schema，不自动重分块或重编码。
-
-### 在线／后台 Embedding 隔离与升级
-
-本节手工 Compose 命令针对旧扩展；独立部署通过 `./knowledge.sh build` 和 `./knowledge.sh up` 应用匹配版本。
-
-Knowledge MCP 固定使用 `knowledge-embedding-online:8096`；后台 `knowledge-sync`、分块、索引及运维 CLI 继续使用 `knowledge-embedding:8096`。管理验证只读原实例的无锁 `/profile`，仅离线部署不依赖新实例。两个实例共享原 `knowledge-models` 只读模型卷和同架构固定 profile，不重复下载、不重建向量、不需要重新发布资源；在线实例失败不回退后台实例。
-
-在线实例限制 2 CPU、6 GiB，原后台限制 4 CPU、8 GiB。内存限制不是启动预留值，但独立进程会额外加载模型；服务器须预留第二份模型运行内存及业务服务余量。这隔离的是推理进程和 busy 锁，不是物理 CPU/总内存或共享 PostgreSQL/Qdrant，仍可能因整机资源不足超时。
-
-已有在线环境更新代码后，先构建并启动新实例，确认 healthy，再更新 MCP；不要只更新 MCP 而漏掉新实例。以下命令不重启同步、原 Embedding 或数据服务，不启动一次性任务。若环境还启用了 `sync.compose.yml`，所有命令继续追加该文件。
-
-```sh
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml --profile knowledge config --quiet
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml build knowledge-embedding-online knowledge-mcp
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml --profile knowledge up -d --no-deps --no-build \
-  --wait --wait-timeout 240 knowledge-embedding-online
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml --profile knowledge up -d --no-deps --no-build knowledge-mcp
-```
-
-在线检索仍最多 4 个并发；在线 Embedding 使用固定 `create_online_app` 单进程入口，保持 1 个实际推理槽位、最多 3 个 FIFO 等待位置。`knowledge_embedding_busy` 现在表示这 4 个位置已满，而不是只要模型正在推理就拒绝。不要添加多个 Uvicorn workers，否则会重复加载模型并扩大推理容量。无需 RabbitMQ 或新环境变量，后台实例继续使用原入口和策略。
-
-客户端携带原调用绝对截止，服务端只会收紧：请求读取（最多 15 秒）、排队和推理共同消耗最长 360 秒及 Job 剩余预算，不是等待后再给 360 秒。等待超时、取消或断连会移除等待项；执行中 CPU 推理不能强杀，结果会丢弃，线程实际退出前不放开推理槽位。因此有界排队吸收短时并发，不保证慢 CPU 下四个请求都能在预算内完成。升级此次 360 秒上限需配套重建并重新创建 `knowledge-embedding-online`、`knowledge-reranker`、`knowledge-mcp` 及 API/ONES MCP，避免外层仍按旧截止终止；既有索引无需重建。在途 Knowledge Principal 会在到期前通过固定平台双身份入口续期，每张仍最多 300 秒；续期拒绝则取消原请求，原 360 秒/Job 截止不重置。API 与 Knowledge MCP 须同时更新新增续期 scope 的固定服务身份合同并重新获取票据。重排 v2 工具合同的协调发布见[检索评测与发布说明](../docs/runbooks/knowledge-retrieval-evaluation.md)。
-
-`knowledge_embedding_read_timeout` 表示模型服务的读取/等待/推理截止到达，`knowledge_embedding_unavailable` 表示连接/模型合同不可用；整次检索截止耗尽仍使用 `knowledge_search_budget_exhausted`。不会把这些错误包装为“内容存储不可用”，不自动额外重试，不把故障当作空库。回退需配套恢复旧 MCP 镜像和在线 Compose 配置，保留所有模型/向量卷，不能让新 MCP 静默使用后台实例。
-
-### 历史本机部署记录（2026-09-20）
-
-此段保留当日证据，不代表当前部署拓扑、schema head 或账号策略；当前安装按本文顶部与 OPERATIONS.md 执行。
-
-经用户批准，在线 Knowledge MCP 及配套 API、ONES MCP、Agent Worker、Python Runtime 已部署为 `knowledge-online-20260920`（源码 `5d9ce4b`），包括 120 秒截止与 psycopg 3.3.6 兼容修复。固定最小权限账号和独立受管 bootstrap 已配置，健康、服务身份兑换/验签及无业务身份拒绝检查通过。schema 仍为 140，无需再次迁移；本轮不修改资源/角色/Publication，不调用真实 ONES、聊天模型或创建新 Job。
-
-上述为 2026-09-20 历史部署快照。当前配置复用根 `.env` 中的 `DATABASE_DSN` 和固定知识服务凭据路径，不再要求单独的 `knowledge-online.env`；后续维护仍保留三个 Compose 文件：
-
-```sh
-docker compose -p enterprise_agent \
-  --env-file .env \
-  -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.compose.yml \
-  --profile knowledge config --quiet
-```
-
-受管文件是 owner-only 配置，不要查看、回显或提交其内容；不要省略在线扩展后重建 API，否则会丢失知识服务桥配置。构建 ONES MCP 时须显式提供 `--build-arg BUILD_SOURCE_REVISION=<revision>` 和 `--build-arg BUILD_ID=<build>`（该主 Compose target 未继承 release args）；其他 target 也应核对实际镜像标识，不能只凭构建命令判定版本。此本机记录不代表其他环境已启用，也不代替真实业务应用与两用户 ONES 验收。
-
-## 数据、网络与运维边界
-
-- 默认内容仍使用平台 PostgreSQL 的 `knowledge` schema；Web 也可绑定独立 PostgreSQL 内容库和 Qdrant。平台治理与 RBAC、Job、审计连接始终不变。平台迁移仍属于统一 catalog：不用知识服务的环境升级后端时也须满足对应 schema head，但不会自动导入缺陷或生成向量。
-- 离线扩展为 PostgreSQL 与 API 追加 `knowledge-internal`，保留默认和运行控制网络；API 由此执行资源的本地技术验证，不需要先启用在线 MCP 或新增服务凭据。Embedding、Qdrant、运维 CLI 仍连接 internal 网络；仅 Qdrant 另接 `knowledge-qdrant-access` bridge 并按用户确认映射宿主机 HTTP `0.0.0.0:6333:6333`，Embedding 和运维 CLI 不发布端口。准备任务只使用下载网络，不获得数据库配置或平台 Secret。
-- 保留 `knowledge-models`、`knowledge-qdrant` 卷键名；同一项目仍使用原有模型和 Qdrant 数据。文件拆分不搬迁或清空任何卷。
-- Qdrant 固定为 `v1.19.1` 和已核验的镜像 digest，不使用浮动 latest。已有卷跨次版本升级必须先备份并逐级演练，不能直接换最新镜像跳级启动；见[升级与恢复记录](../docs/runbooks/knowledge-local-vector-index.md#qdrant-版本升级与恢复)。
-- 已有 PostgreSQL 若尚未接入知识网络，须在批准的维护流程中补充网络及 `postgres` 别名；不能为此直接重建数据库。新部署由叠加配置管理。当前本机已经接入，拆分不要求重启。
-- 部署了知识服务的环境，后续 Compose 运维命令应始终叠加已启用的文件（离线两个，在线三个，即使此次只操作某个业务服务），避免把知识容器误判为 orphan。禁止仅用主文件执行 `--remove-orphans`，不要用全项目 `down -v` 停用知识库。
-- 在线 MCP 保留 `knowledge-internal` 与 `agent-runtime-control` 两个内部网络，增加 `knowledge-storage-egress` 以访问管理员绑定的外部 PostgreSQL/Qdrant，不发布宿主机端口、不直接连接 ONES Provider。此网络不赋予任意代理能力；模型不能覆盖地址，建议部署防火墙只放行所需内容端点。Embedding 不加入出网网络；本地 Qdrant 仅为宿主机端口发布另接专用 bridge，不复用 MCP 的出网网络。API 沿用离线扩展的知识网络；主文件和离线扩展不因此增加在线 Secret。
-- 若只暂停全部知识服务，先停用相应检索入口与同步，再用叠加配置定向停止常驻服务；在线部署包含 `knowledge-mcp knowledge-embedding-online`，后台包含 `knowledge-embedding knowledge-qdrant`。保留卷和数据库网络，正式卸载/删卷另行审批。
-
-配置与隔离合成测试通过不意味着已正式部署或完成业务召回验收；本地资源验证、双用户 ONES、Agent 新 Job 和人工质量评测仍需单独验收。
-
-### 局域网访问 Qdrant
-
-旧 `knowledge/compose.yml` 扩展将 Qdrant 绑定到全部宿主 IPv4 接口；独立 `deployment.compose.yml` 默认 `KNOWLEDGE_QDRANT_BIND=127.0.0.1`，只有显式修改绑定才开放局域网访问。旧扩展的 Qdrant HTTP 可通过 `http://服务器IP:6333` 访问。`0.0.0.0:6333:6333` 显式绑定宿主机所有 IPv4 接口，不是仅本机地址；当前 Compose 未配置 Qdrant API Key，直接访问者不受平台角色与 ONES 双重授权保护，可能直接读写向量集合。仅用于受信局域网，由宿主机防火墙或安全组限制来源网段，不向公网开放。其他知识服务不因此开放端口；内部客户端仍使用原 `http://knowledge-qdrant:6333` 地址。
-
-纯 `internal: true` 网络不提供正常的宿主机端口发布，因此只给 Qdrant 额外连接一个标准 `knowledge-qdrant-access` bridge，保留原内部网络及别名。标准 bridge 也具备普通出站能力，不是只入不出的防火墙；不为解决端口问题取消整个知识内部网络的隔离。端口映射说明见 [Docker 官方文档](https://docs.docker.com/engine/network/port-publishing/)。
-
-已有容器需重新创建才能加载映射，不需要重新构建镜像。保留原项目名和数据卷，在仓库根目录执行（按环境追加已启用的 `mcp.compose.yml`、`sync.compose.yml`）：
-
-```sh
-docker compose -f docker-compose.yml -f knowledge/compose.yml \
-  --profile knowledge up -d --no-deps --no-build knowledge-qdrant
-```
-
-只重新创建 Qdrant，会短暂影响检索及索引；不迁移或清空数据卷，不执行全项目 `down`。无法从其他机器连接时，检查宿主机 6333 端口冲突、主机防火墙和网络路由。
+Qdrant 默认仅发布 `127.0.0.1:6333`。确需可信局域网访问时显式设置 `KNOWLEDGE_QDRANT_BIND` 并限制来源；直连 Qdrant 不经过平台用户授权。内部服务继续使用 `http://knowledge-qdrant:6333`。
 
 ## Web 配置独立内容存储
 
-内容连接拆分由 migration **140** 引入；部署需使用当前完整 migration catalog 及匹配的 API、ONES MCP、Knowledge MCP、Web。以下为历史记录：2026-09-20 本机已完成 migration 140、现有主服务和 Web 更新，并恢复既有 Embedding/Qdrant；同日后续在线部署已配置 Knowledge MCP 及独立账号/服务身份，见上方本机记录。真实外部内容库、Agent 链路仍待验收。其他环境不能据此视为已升级。
+内容连接拆分由 migration **140** 引入；部署使用当前完整 migration catalog 和匹配的 API、ONES MCP、Knowledge MCP、Web。部署与工具验收分别核对，不能以容器健康代替。
 
-此前更新 `knowledge-content-admin-20260920` 已将内容管理员/读写账号支持部署到本机 API、ONES MCP 和 Web，后续 `knowledge-online-20260920` 已补齐在线 MCP 匹配代码；没有替用户保存或发布连接配置。页面 TLS 选择必须匹配目标服务器，不因允许管理员账号而自动降级。
+页面 TLS 选择必须匹配目标服务器，不因允许管理员账号而自动降级。
 
 1. 准备已经导入、分块并构建 READY 索引的 PostgreSQL 内容库与匹配 Qdrant。首版内容 schema 固定 `knowledge`，不自动建库、搬迁数据或重编码。独立内容库不需要平台 public 中的用户、角色、Job、凭据和审计表，也不要求平台迁移账本；需要与当前内容仓储兼容的表/列。运维迁移内容是另一次显式操作。
 2. 选择具备必要读取权限的内容账号：允许管理员、所有者、读写或只读账号，不因具备写入/管理权限而拒绝。至少需要 `CONNECT`、`knowledge` 的 `USAGE` 和内容表必要的 `SELECT`。所需表为 `source`、`knowledge_base`、`knowledge_base_document`、`document`、`document_chunk_set`、`document_chunk`、`vector_index`、`vector_index_item`。当前目录、验证与检索连接仍固定并校验只读事务，保留 5 秒 SQL/连接及 3 秒锁等待上限，不修改账号权限或开放内容编辑。专用低权限账号仍可减小凭据泄露影响，但不是连接准入条件；Knowledge MCP 的平台治理连接默认复用主平台连接；专用最小权限角色是可选运维方式。这些单阶段上限不等于端到端检索时延保证。
@@ -255,6 +86,6 @@ Knowledge MCP 的 `DATABASE_DSN` **复用部署环境中的平台连接**，不�
 
 ## 文档重排与 v2 合同
 
-在线检索现在需要独立重排服务及 `knowledge-reranker-models` 模型卷。旧扩展启动前需显式运行 `knowledge-reranker-prepare`；独立项目由 `up` 任务调用模型准备，不能只准备 Embedding 模型；该操作不会自动发布工具合同或改动索引。按用户的效果优先要求保留 BGE-v2-m3 和长文本，资源配置为 8 核 / 3 GiB，实际质量和时延需在目标环境验证。
+在线检索现在需要独立重排服务及 `knowledge-reranker-models` 模型卷。主 Compose 自动等待 `knowledge-reranker-prepare`；网页 `up` 任务同样调用模型准备，不能只准备 Embedding 模型；该操作不会自动发布工具合同或改动索引。按用户的效果优先要求保留 BGE-v2-m3 和长文本，资源配置为 8 核 / 3 GiB，实际质量和时延需在目标环境验证。
 
 准备命令、同候选对照评测、v2 schema hash 协调发布、新 Publication/Job 和回退步骤见[检索评测与运行说明](../docs/runbooks/knowledge-retrieval-evaluation.md)。`retrieval_score` 仅为召回排序分，Agent 应按最终 `rank` 核实详情，禁止自行用数值阈值丢弃尾部。

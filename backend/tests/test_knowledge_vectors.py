@@ -616,17 +616,17 @@ def test_model_prepare_rejects_unsafe_endpoint_before_download(tmp_path, monkeyp
 
 def test_compose_runtime_isolation_and_valid_tmpfs():
     config = yaml.load(
-        (Path(__file__).resolve().parents[2] / "knowledge/compose.yml").read_text(),
+        (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text(),
         Loader=yaml.BaseLoader,
     )
     services = config["services"]
-    assert config["networks"]["knowledge-internal"]["internal"] == "true"
+    assert config["networks"]["knowledge-managed"]["internal"] == "true"
     for name in ("knowledge-embedding", "knowledge-qdrant", "knowledge-ops"):
         if name == "knowledge-qdrant":
-            assert services[name]["networks"] == ["knowledge-internal", "knowledge-qdrant-access"]
-            assert services[name]["ports"] == ["0.0.0.0:6333:6333"]
+            assert services[name]["networks"] == ["knowledge-managed", "provider-egress"]
+            assert services[name]["ports"] == ["${KNOWLEDGE_QDRANT_BIND:-127.0.0.1}:6333:6333"]
         else:
-            assert services[name]["networks"] == ["knowledge-internal"]
+            assert services[name]["networks"] == ["knowledge-managed"]
             assert not services[name].get("ports")
     for name in ("knowledge-embedding", "knowledge-model-prepare", "knowledge-ops"):
         assert len(services[name]["tmpfs"]) == 1

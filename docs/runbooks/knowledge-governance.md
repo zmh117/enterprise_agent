@@ -20,7 +20,7 @@ API/Worker/ONES 镜像更新须满足正式 Migrator 和平台 schema readiness 
 
 维护后若仅恢复一个已存在的入口容器，使用经确认目标的 `docker start`；本机 Compose 的 `start <service>` 会连带启动依赖，可能重跑旧 Migrator 和初始化容器。服务更新使用已构建镜像定向 `up --no-deps --no-build`，正式迁移单独运行 `run --rm --no-deps migrator python -m app.cli.migrate`，不以全栈 bootstrap 替代。
 
-即使尚未启用在线 MCP，资源技术验证也需要 API 连接内部 Embedding/Qdrant。独立部署通过 `knowledge/ops.compose.yml` 接入共享内容网络，更新 API 时必须保留该扩展；下面的 `knowledge/compose.yml` 是旧扩展路径。叠加 `knowledge/compose.yml` 会为 API 和 PostgreSQL 追加知识网络，不新增在线服务凭据；后续定向更新 API 时须保留此叠加文件，不能只用根 Compose 覆盖网络。
+资源技术验证需要 API 访问内部 Embedding/Qdrant。主 Compose 默认把 API、PostgreSQL、ONES MCP 接入知识内容网络，并为 API/Knowledge MCP 挂载各自所需的服务身份材料。定向更新 API 也只使用主文件。
 
 ## 管理流程
 
@@ -72,13 +72,13 @@ Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页�
 `POST /api/internal/knowledge/work-item-readability` 只接受固定 API 内部 Host，无浏览器 Origin、Cookie 或 URL 参数。`Authorization: Bearer` 使用独立知识服务短期身份，`X-Knowledge-Principal: Bearer` 使用原用户的 Knowledge Principal；两者必须同时有效。请求仍只包含上述 KB/资源版本/索引/块引用字段，8 KiB 上限，两端共用候选成员校验。
 
 - 服务身份固定 `sub/azp=knowledge-mcp`、`aud=knowledge-readability-bridge`，完整 scope 集合为 `internal:knowledge:work-item:readability`、`internal:knowledge:storage:connection`、`internal:knowledge:principal:refresh`，对应可读性检查、内容连接和在途身份续期三个固定内部操作。它不授予业务权限，不与文件 Worker 或其他 Business Principal 互通。
-- 可选知识 Compose 默认读取 `$HOME/.config/enterprise-agent/knowledge-bootstrap-token`，由现有密钥初始化脚本幂等生成；宿主机可在根 `.env` 或部署环境中用 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 指定其他文件，例如 `./knowledge-bootstrap-token`。相对路径以第一个根 Compose 文件所在目录为基准，未设置或为空保留原默认；必须是预先存在的非空普通文件，不能填写目录或 Token 内容，不能复用其他服务凭据。API/MCP 同时挂载同一来源，容器内变量仍固定为 `/run/secrets/knowledge_bootstrap_token`，并要求原 `SERVICE_PRINCIPAL_ENABLED` 开启。根目录凭据文件已 Git 忽略，不进入现有 Docker 构建上下文；其他自定义位置须自行保护。文件权限沿用现有 Secret 合同，改路径不自动生成、迁移或轮换凭据。知识服务按现有短期兑换机制获取不超过 300 秒的服务 Token，不持有签名私钥。
+- 主 Compose 默认读取 `$HOME/.config/enterprise-agent/knowledge-bootstrap-token`，由现有密钥初始化脚本幂等生成；宿主机可在根 `.env` 或部署环境中用 `KNOWLEDGE_BOOTSTRAP_TOKEN_FILE` 指定其他文件。完整主部署的自定义路径使用宿主机绝对路径，供执行器在相同路径访问；未设置或为空保留原默认；必须是预先存在的非空普通文件，不能填写目录或 Token 内容，不能复用其他服务凭据。API/MCP 同时挂载同一来源，容器内变量仍固定为 `/run/secrets/knowledge_bootstrap_token`，并要求原 `SERVICE_PRINCIPAL_ENABLED` 开启。根目录凭据文件已 Git 忽略，不进入现有 Docker 构建上下文；其他自定义位置须自行保护。文件权限沿用现有 Secret 合同，改路径不自动生成、迁移或轮换凭据。知识服务按现有短期兑换机制获取不超过 300 秒的服务 Token，不持有签名私钥。
 - API 在签发前复核完整 Knowledge scope、RUNNING Job、角色应用/KB/详情权限、当前发布资源、来源和候选成员，再按原完整 scope 签发 ONES Principal，仅调用固定 `http://ones-mcp:9104/internal/knowledge/work-item-readability`。该可读性入口无环境代理、重定向、通用 HTTP/MCP 代调用或 Token 交换响应。
 - `POST /api/internal/knowledge/principal/refresh` 只接受空 JSON 对象和上述双身份，不接受 Job、用户、Server、scope 覆盖。仅能在旧 Knowledge Principal 到期前调用；复核当前任务、用户、发布、冻结完整权限和当前授权后签发，新票据除 JTI/时间外保持绑定不变，每张仍最多 300 秒。Knowledge MCP 每次工具调用独立管理内存票据，在距到期 60 秒时续期；单次续期 I/O 最多 5 秒、无重试，原调用 360 秒/Job 预算不重置。后续鉴权、内容连接和可读性请求使用最新票据。续期拒绝或非法响应会取消原请求并返回 `knowledge_principal_refresh_failed`，正常结束、断开或取消均停止续期线程。服务身份 scope/hash 改变，API 与 Knowledge MCP 必须协调升级并重新获取服务身份，不能混跑旧签发端。
 - 平台按持久化文档 ID/版本/UUID 严格校验最多 64 KiB 的引用响应，重验两种 Principal、当前授权、身份/默认 Team/凭据 ACTIVE 状态以及资源/候选；查询中撤权、身份解绑或候选变化均丢弃结果。仅检查凭据状态，不读取或解密 ONES 凭据。401 刷新仍由原 ONES 链路负责。
 - 审计仅记录安全状态、Job/用户/KB/资源版本，不记录请求头、业务正文、被拒绝数量、Provider 原响应或任何 Token；响应禁止缓存。Bridge 不可用/依赖故障不能解释为没有相关缺陷。
 
-未配置此可选凭据时平台桥返回不可用，不新增未启用知识服务的主部署必需 Secret。旧扩展由 `knowledge/mcp.compose.yml` 启用；独立项目由 `knowledge/ops.compose.yml` 与 `knowledge/deployment.compose.yml` 配套启用。生产 Manifest 已注册两个知识工具，但没有冻结这两项的旧 Job 仍无法通过关卡；后续须完成部署与验收，再开放 Agent 知识检索。
+知识 bootstrap 是主部署必需材料，由初始化脚本幂等生成，API 与 Knowledge MCP 挂载同一源文件。缺失时部署应失败，不得降级为未认证请求。生产 Manifest 注册两个知识工具，旧 Job 仍受冻结合同与当前授权限制。
 
 ## 目录与检索核心
 
@@ -156,7 +156,7 @@ CLI、bootstrap、ONES 和 Embedding 镜像均使用新分层路径，不保留�
 | `knowledge_source_changed` | 本地数据或回源工作项归属变化，核对数据后重新保存、验证和发布；不要求地址/Team 来源确认 |
 | `knowledge_resource_unavailable` | 检查发布/启停状态及本地数据；旧版本须重新保存验证发布；不切换未发布或旧索引作为 fallback |
 | `knowledge_resource_changed` | 本次固定版本失效，放弃结果并重新发起查询 |
-| `knowledge_bridge_unavailable` | 知识组件未装配；先完成可选部署与 MCP 接线，不临时绕过双身份桥 |
+| `knowledge_bridge_unavailable` | 知识组件未装配；检查主 Compose 的知识认证配置与 MCP 接线，不临时绕过双身份桥 |
 | `knowledge_bridge_identity_invalid` | 核对独立服务身份、当前 Knowledge Principal 和 Job/角色授权；不导出或复用历史 Token |
 | `knowledge_readability_failed` | 检查当前授权、来源、ONES 身份和依赖服务；整批失败，不降级为零命中 |
 | `knowledge_readability_busy` | 已达固定在途上限，稍后重试，不扩大候选数量 |
@@ -170,7 +170,7 @@ CLI、bootstrap、ONES 和 Embedding 镜像均使用新分层路径，不保留�
 
 `POST /source-bindings/{id}/revoke` 只接受空 JSON 对象，幂等撤销历史绑定；新规则资源不依赖它，撤销不删除历史证据或现有索引。停止新资源读取应停用资源或撤销 KB 授权，不能由运行请求自动重新发布。
 
-完整部署与回退继续遵守[可选知识部署说明](../../knowledge/README.md)和[本地索引运行手册](knowledge-local-vector-index.md)。合成/Mock 通过仅证明代码合同；真实 ONES、正式 PostgreSQL/服务部署、本地 Embedding 和已配置聊天模型的真实新 Job 须分别验收。
+完整部署与回退继续遵守[知识部署说明](../../knowledge/README.md)和[本地索引运行手册](knowledge-local-vector-index.md)。合成/Mock 通过仅证明代码合同；真实 ONES、正式 PostgreSQL/服务部署、本地 Embedding 和已配置聊天模型的真实新 Job 须分别验收。
 
 ## 隔离容器验收
 

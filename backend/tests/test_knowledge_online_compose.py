@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def online_config(compose_cli, *, missing=None, bootstrap_path=None, env_file=None, cwd=ROOT):
     env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
     env.update(
+        KNOWLEDGE_DEPLOY_ROOT=str(ROOT),
         DATABASE_DSN="postgresql://synthetic:synthetic@postgres:5432/synthetic",
     )
     if bootstrap_path is not None:
@@ -37,12 +38,6 @@ def online_config(compose_cli, *, missing=None, bootstrap_path=None, env_file=No
             "knowledge-online-contract",
             "-f",
             str(ROOT / "docker-compose.yml"),
-            "-f",
-            str(ROOT / "knowledge/compose.yml"),
-            "-f",
-            str(ROOT / "knowledge/mcp.compose.yml"),
-            "--profile",
-            "knowledge",
             "config",
             "--format",
             "json",
@@ -55,25 +50,16 @@ def online_config(compose_cli, *, missing=None, bootstrap_path=None, env_file=No
     )
 
 
-def test_online_overlay_only_changes_knowledge_mcp_and_bridge():
-    overlay = yaml.safe_load((ROOT / "knowledge/mcp.compose.yml").read_text())
-    assert set(overlay["services"]) == {
-        "api-server",
-        "knowledge-mcp",
-        "knowledge-embedding-online",
-        "knowledge-reranker",
-    }
-    assert set(overlay["secrets"]) == {"knowledge_bootstrap_token"}
-    assert not overlay.get("volumes")
-    assert overlay["networks"] == {"knowledge-storage-egress": {"driver": "bridge"}}
-    api = overlay["services"]["api-server"]
-    assert set(api) == {"environment", "secrets"}
-    assert set(api["environment"]) == {"KNOWLEDGE_BOOTSTRAP_TOKEN_FILE"}
-    assert api["secrets"] == ["knowledge_bootstrap_token"]
+def test_main_compose_enables_knowledge_bridge_without_overlay():
+    config = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    api = config["services"]["api-server"]
     assert (
-        "knowledge-mcp"
-        not in yaml.safe_load((ROOT / "knowledge/compose.yml").read_text())["services"]
+        api["environment"]["KNOWLEDGE_BOOTSTRAP_TOKEN_FILE"]
+        == "/run/secrets/knowledge_bootstrap_token"
     )
+    assert "knowledge_bootstrap_token" in api["secrets"]
+    assert "knowledge-mcp" in config["services"]
+    assert "profiles" not in config["services"]["knowledge-mcp"]
 
 
 def test_online_render_preserves_internal_network_and_read_only_secret_boundary(compose_cli):
@@ -81,7 +67,7 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
     assert result.returncode == 0, "synthetic Compose rendering failed (details withheld)"
     config = json.loads(result.stdout)
     service = config["services"]["knowledge-mcp"]
-    assert service["profiles"] == ["knowledge"]
+    assert not service.get("profiles")
     assert service["build"]["target"] == "knowledge-mcp"
     assert not service.get("ports") and not service.get("volumes")
     assert service["read_only"] and service["cap_drop"] == ["ALL"]
@@ -95,23 +81,24 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
         "PRINCIPAL_JWKS_FILE",
         "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE",
     }
-    assert service["environment"]["DATABASE_DSN"] == (
-        "postgresql://synthetic:synthetic@postgres:5432/synthetic"
+    assert (
+        service["environment"]["DATABASE_DSN"]
+        == config["services"]["api-server"]["environment"]["DATABASE_DSN"]
     )
     assert config["secrets"]["knowledge_bootstrap_token"]["file"] == str(
         Path(os.environ["HOME"]) / ".config/enterprise-agent/knowledge-bootstrap-token"
     )
     assert set(service["networks"]) == {
-        "knowledge-internal",
+        "knowledge-managed",
         "agent-runtime-control",
-        "knowledge-storage-egress",
+        "provider-egress",
     }
     assert all(
         config["networks"][name]["internal"]
-        for name in ("knowledge-internal", "agent-runtime-control")
+        for name in ("knowledge-managed", "agent-runtime-control")
     )
-    assert not config["networks"]["knowledge-storage-egress"].get("internal", False)
-    assert "knowledge-storage-egress" not in config["services"]["knowledge-embedding"]["networks"]
+    assert not config["networks"]["provider-egress"].get("internal", False)
+    assert "provider-egress" not in config["services"]["knowledge-embedding"]["networks"]
     batch = config["services"]["knowledge-embedding"]
     online = config["services"]["knowledge-embedding-online"]
     assert online["image"] == batch["image"]
@@ -119,7 +106,7 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
     assert online["environment"] == batch["environment"]
     assert online["volumes"] == batch["volumes"]
     assert online["volumes"][0]["read_only"]
-    assert set(online["networks"]) == {"knowledge-internal"}
+    assert set(online["networks"]) == {"knowledge-managed"}
     assert not online.get("ports") and not online.get("secrets")
     assert online["read_only"] and online["cap_drop"] == ["ALL"]
     assert online["security_opt"] == ["no-new-privileges:true"]
@@ -142,7 +129,7 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
     assert "api-server" not in service["depends_on"]  # Avoid API -> Runtime boot cycles.
     assert service["depends_on"]["migrator"]["condition"] == "service_completed_successfully"
     api = config["services"]["api-server"]
-    assert "knowledge-internal" in api["networks"] and "agent-runtime-control" in api["networks"]
+    assert "knowledge-managed" in api["networks"] and "agent-runtime-control" in api["networks"]
     assert "knowledge_bootstrap_token" in {item["source"] for item in api["secrets"]}
     for name in ("agent-worker", "python-agent-runtime-a", "python-agent-runtime-b", "ones-mcp"):
         assert "knowledge_bootstrap_token" not in {
@@ -150,9 +137,14 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
         }
 
 
-def test_online_requires_existing_platform_database_dsn(compose_cli):
+def test_online_uses_platform_database_without_second_dsn(compose_cli):
     result = online_config(compose_cli, missing="DATABASE_DSN")
-    assert result.returncode != 0 and "DATABASE_DSN" in result.stderr
+    assert result.returncode == 0
+    config = json.loads(result.stdout)
+    assert (
+        config["services"]["knowledge-mcp"]["environment"]["DATABASE_DSN"]
+        == config["services"]["api-server"]["environment"]["DATABASE_DSN"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -339,13 +331,13 @@ def test_reranker_independent_internal_model_volume_and_resource_budget(compose_
     assert result.returncode == 0
     config = json.loads(result.stdout)
     reranker = config["services"]["knowledge-reranker"]
-    prepare = yaml.safe_load((ROOT / "knowledge/compose.yml").read_text())["services"][
+    prepare = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"][
         "knowledge-reranker-prepare"
     ]
     assert reranker["cpus"] == 8 and int(reranker["mem_limit"]) == 3 * 1024**3
     assert int(reranker["memswap_limit"]) == int(reranker["mem_limit"])
     assert reranker["read_only"] and not reranker.get("ports") and not reranker.get("secrets")
-    assert set(reranker["networks"]) == {"knowledge-internal"}
+    assert set(reranker["networks"]) == {"knowledge-managed"}
     assert reranker["environment"]["HF_HUB_OFFLINE"] == "1"
     assert int(reranker["environment"]["OMP_NUM_THREADS"]) == profile()["threads"]
     assert int(reranker["environment"]["MKL_NUM_THREADS"]) == profile()["threads"]

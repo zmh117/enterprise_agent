@@ -281,28 +281,58 @@ def test_plan_configuration_can_be_read_without_write_csrf(managed):
     assert response.json()["configuration"]["collector"]["credential_ref"].startswith("secret://")
 
 
-def test_independent_compose_cannot_start_or_stop_main_services():
-    deploy = yaml.safe_load((ROOT / "knowledge/deployment.compose.yml").read_text())
-    assert (
-        not {"postgres", "migrator", "api-server", "knowledge-ops-controller"}
-        & deploy["services"].keys()
+def test_only_controller_has_docker_socket_and_uses_main_compose():
+    deploy = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    for name, service in deploy["services"].items():
+        assert ("docker.sock" in json.dumps(service)) == (name == "knowledge-ops-controller")
+    assert all(
+        deploy["volumes"][name]["external"]
+        for name in (
+            "knowledge-models",
+            "knowledge-reranker-models",
+            "knowledge-qdrant",
+            "knowledge-operation-state",
+        )
     )
-    assert all(value["external"] for value in deploy["volumes"].values())
-    assert "knowledge-embedding-online" in deploy["services"]
-    assert deploy["services"]["knowledge-sync"]["command"][-1] == "app.cli.knowledge_sync_worker"
-    for service in deploy["services"].values():
-        assert "docker.sock" not in json.dumps(service)
-    controller = yaml.safe_load((ROOT / "knowledge/ops.compose.yml").read_text())["services"][
-        "knowledge-ops-controller"
-    ]
-    assert "docker.sock" in json.dumps(controller["volumes"])
+    controller = deploy["services"]["knowledge-ops-controller"]
+    assert not controller.get("profiles")
+    assert controller["environment"]["KNOWLEDGE_COMPOSE_PROJECT"] == "${COMPOSE_PROJECT_NAME}"
+
+
+def test_start_uses_fixed_main_file_and_never_recurses_platform_dependencies(
+    database, tmp_path, monkeypatch
+):
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n")
+    monkeypatch.setenv("KNOWLEDGE_DEPLOY_ROOT", str(tmp_path))
+    monkeypatch.setenv("COMPOSE_FILE", "/untrusted/compose.yml")
+    monkeypatch.setenv("DOCKER_CONTEXT", "untrusted")
+    ops = OperationsRepository(database)
+    compose = KnowledgeCompose(ops, Event())
+    command = compose.command("ps")
+    assert command[command.index("-f") + 1] == str(tmp_path / "docker-compose.yml")
+    assert (
+        "COMPOSE_FILE" not in compose.environment()
+        and "DOCKER_CONTEXT" not in compose.environment()
+    )
+    calls = []
+    monkeypatch.setattr(
+        compose, "_run", lambda operation, stage, args, **kwargs: calls.append(args)
+    )
+    # A direct main-Compose build must not require a previous web build operation.
+    compose.start({"id": "synthetic"})
+    starts = [c for c in calls if c[0] == "up"]
+    assert len(starts) == 2 and all("--no-deps" in c and "--no-build" in c for c in starts)
+    assert all("--no-deps" in c for c in calls if c[0] == "run")
+    assert not any(
+        set(c) & {"postgres", "migrator", "api-server", "knowledge-ops-controller", "down"}
+        for c in calls
+    )
 
 
 def test_stop_order_and_reconciliation_do_not_replay_build(database, tmp_path, monkeypatch):
-    env = tmp_path / "synthetic.env"
+    env = tmp_path / "docker-compose.yml"
     env.write_text("# synthetic\n")
     monkeypatch.setenv("KNOWLEDGE_DEPLOY_ROOT", str(tmp_path))
-    monkeypatch.setenv("KNOWLEDGE_DEPLOY_ENV_FILE", str(env))
     ops = OperationsRepository(database)
     compose = KnowledgeCompose(ops, Event())
     op = ops.start(ops.submit(kind="stop", request_key="stop", actor_id="synthetic")["id"])

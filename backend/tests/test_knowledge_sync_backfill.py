@@ -313,11 +313,11 @@ def test_progress_keeps_collection_checkpoint_and_updates_status(database):
 
 def test_compose_healthcheck_only_runs_read_only_health():
     service = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / "knowledge/sync.compose.yml").read_text()
+        (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text()
     )["services"]["knowledge-sync"]
     test = service["healthcheck"]["test"]
     assert "health" in test and "--commit" not in test and "--capacity-path" not in test
-    assert service["healthcheck"]["interval"] == "60s"
+    assert service["healthcheck"]["interval"] == "20s"
 
 
 def test_stage_progress_is_throttled_but_completion_is_persisted(database, tmp_path, monkeypatch):

@@ -153,7 +153,7 @@ flowchart LR
 | knowledge-sync（可选） | `app.cli.knowledge_sync_worker` | — | 持久任务队列，串行调度计划与补采 |
 | knowledge-ops-controller（可选） | `app.cli.knowledge_ops_controller` | — | 主项目内执行固定构建/启停操作，观察独立知识项目状态 |
 
-当前运维采用同机两个 Compose 项目：主项目叠加 `knowledge/ops.compose.yml` 提供执行器，知识服务由 `knowledge/deployment.compose.yml` 独立管理。Web 与 `knowledge.sh` 共用持久队列；旧 `compose.yml`、`mcp.compose.yml`、`sync.compose.yml` 保留为旧扩展和一次性维护入口。安装步骤见[运维手册](../../knowledge/OPERATIONS.md)。
+当前运维采用同机单一主 Compose 项目：根文件包含全部平台和知识服务，Web 与 `knowledge.sh` 共用持久队列，执行器仅操作固定知识服务。安装步骤见[运维手册](../../knowledge/OPERATIONS.md)。
 
 ### 2.3 网络分区
 
@@ -786,7 +786,7 @@ erDiagram
 | 文档处理 | `backend/app/modules/document_processing/`、`backend/app/workers/file_processing_worker.py` |
 | 知识库 | `backend/app/modules/knowledge/`、`backend/app/cli/*knowledge*.py`、`services/knowledge_mcp_server/`、`services/knowledge_embedding/`、`services/knowledge_reranker/`、`knowledge/` |
 | 配置、Secret、迁移 | `backend/app/modules/platform_config/`、`backend/app/shared/migrations.py`、`backend/migrations/` |
-| 知识运维与部署 | `knowledge.sh`、`knowledge/ops.compose.yml`、`knowledge/deployment.compose.yml`、`backend/app/modules/knowledge/infrastructure/operations_*.py` |
+| 知识运维与部署 | `knowledge.sh`、`docker-compose.yml`、`backend/app/modules/knowledge/infrastructure/operations_*.py` |
 
 ## 附录A 历史表字段清单（2026-09-23，head 144）
 

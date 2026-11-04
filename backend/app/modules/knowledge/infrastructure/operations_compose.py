@@ -1,4 +1,4 @@
-"""仅管理可信部署目录中的知识项目；任何 API 参数均不能变成命令或路径。"""
+"""仅管理主 Compose 中固定知识服务；任何 API 参数均不能变成命令或路径。"""
 
 import json
 import os
@@ -19,8 +19,7 @@ class KnowledgeCompose:
     def __init__(self, ops: OperationsRepository, stop: Event):
         self.ops, self.stop = ops, stop
         self.root = Path(os.environ.get("KNOWLEDGE_DEPLOY_ROOT", "/deployment")).resolve()
-        self.env_file = Path(os.environ.get("KNOWLEDGE_DEPLOY_ENV_FILE", "/config/knowledge.env"))
-        self.project = os.environ.get("KNOWLEDGE_COMPOSE_PROJECT", "enterprise-knowledge")
+        self.project = os.environ.get("KNOWLEDGE_COMPOSE_PROJECT", "enterprise_agent")
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", self.project):
             raise invalid("knowledge_ops_configuration_invalid")
 
@@ -32,24 +31,19 @@ class KnowledgeCompose:
             self.project,
             "--project-directory",
             str(self.root),
-            "--env-file",
-            str(self.env_file),
             "-f",
-            str(self.root / "knowledge/deployment.compose.yml"),
+            str(self.root / "docker-compose.yml"),
             *arguments,
         ]
 
     def environment(self, version: str | None = None) -> dict[str, str]:
-        # Compose 的配置来自安装时的固定文件；不传播主项目的 Compose 控制参数。
+        # 使用与主部署相同的 .env 和固定镜像名；不传播 Compose 文件或远端 daemon 覆盖。
         env = {
             key: value
             for key, value in os.environ.items()
             if not key.startswith("COMPOSE_") and key not in {"DOCKER_HOST", "DOCKER_CONTEXT"}
         }
         env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
-        env["KNOWLEDGE_IMAGE_TAG"] = version or self.ops.runtime("deployment")["snapshot"].get(
-            "built_version", "unbuilt"
-        )
         return env
 
     def services(self) -> list[dict[str, str]]:
@@ -161,7 +155,7 @@ class KnowledgeCompose:
             )
 
     def execute(self, operation: dict[str, Any]) -> None:
-        if not self.root.is_dir() or not self.env_file.is_file():
+        if not (self.root / "docker-compose.yml").is_file():
             raise invalid("knowledge_ops_configuration_invalid")
         kind = operation["kind"]
         if kind == "build":
@@ -202,8 +196,7 @@ class KnowledgeCompose:
 
     def start(self, operation: dict[str, Any]) -> None:
         version = self.ops.runtime("deployment")["snapshot"].get("built_version")
-        if not version:
-            raise invalid("knowledge_ops_build_required")
+        # 主 Compose 也可直接构建/启动；缺镜像由 --no-build 失败关闭，无需伪造网页构建记录。
         # external:true 卷/网络的缺失会令预检失败，不会隐式创建空库。
         self._run(
             operation,
@@ -230,7 +223,16 @@ class KnowledgeCompose:
         self._run(
             operation,
             "starting",
-            ["up", "-d", "--no-build", "--wait", "--wait-timeout", "600", *SERVICES[:-1]],
+            [
+                "up",
+                "-d",
+                "--no-deps",
+                "--no-build",
+                "--wait",
+                "--wait-timeout",
+                "600",
+                *SERVICES[:-1],
+            ],
             version=version,
         )
         self._run(
@@ -242,7 +244,16 @@ class KnowledgeCompose:
         self._run(
             operation,
             "starting",
-            ["up", "-d", "--no-build", "--wait", "--wait-timeout", "120", "knowledge-sync"],
+            [
+                "up",
+                "-d",
+                "--no-deps",
+                "--no-build",
+                "--wait",
+                "--wait-timeout",
+                "120",
+                "knowledge-sync",
+            ],
             version=version,
         )
         state = self.ops.runtime("deployment")["snapshot"]
