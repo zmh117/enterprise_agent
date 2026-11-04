@@ -1,5 +1,7 @@
 # ONES 缺陷离线文本入库
 
+本页仅描述 `import_ones_knowledge` 的离线缺陷导入合同。当前三库在线采集、文档级增量、日期补采与网页运维见[知识库部署入口](../../knowledge/README.md)。下文 2026-09-14 的数量和迁移版本是历史快照，不是当前库存或 schema head。
+
 ## 范围与存储位置
 
 使用平台现有 PostgreSQL 数据库中的 `knowledge` schema。迁移为
@@ -22,9 +24,9 @@
 
 所有内部 ID 使用文本形式的 UUID；ONES 外部 ID 按不透明文本处理，不转换为数据库 UUID。
 `document_kind` 预留 `defect`、`ticket`、`requirement`、`article`；当前 CLI 固定导入 `defect`，
-不是通用工单/需求导入器。之后接入其他类型时复用稳定工作项身份、版本与关联表，扩展对应采集契约。
+不是通用工单/需求导入器。当前在线采集和 keep_ids 三库维护已通过独立合同支持工单、需求及子任务，不改变本离线 CLI 的输入格式。
 
-## 本机已完成入库
+## 历史入库记录（2026-09-14）
 
 2026-09-14，本机 `enterprise_agent` 数据库已迁移至 131 并完成正式导入：
 5,000 个缺陷、5,000 个内容版本、5,000 条知识库收录，2,407 条关联观察。
@@ -69,7 +71,7 @@
 
 同来源、同对象类型、同外部 ID 只创建一个 `document`。同一批文件再次提交返回 `replayed=true`，
 不增加版本、收录或关联。同一内容从其他批次进入不创建版本；新时间戳内容创建新版本；旧版本不覆盖新版本；
-同一时间戳但内容不同报冲突。每条文档、版本、关联和批次进度在同一事务提交。
+本离线导入同一时间戳但内容不同报冲突；受管在线增量路径则直接用本次内容创建本地修订，二者不能混用处理规则。每条文档、版本、关联和批次进度在同一事务提交。
 中断后使用相同文件和配置重试，从上次已提交位置恢复；同来源并发导入由 PostgreSQL advisory lock 拒绝。
 已删除/不可用文档不会被新的导入自动恢复，已移除收录也不会被悄悄恢复。
 
@@ -80,10 +82,10 @@
 
    ```sh
    PYTHONPATH=backend .venv/bin/python -m app.cli.import_ones_knowledge \
-     --input-dir '/Users/mhz/Develop/enterprise_agent/知识库/数据/5000条完整数据'
+     --input-dir '/srv/knowledge-input'
    ```
 
-3. 安排平台部署窗口。平台对迁移 head 严格校验：旧版容器不识别 131，
+3. 安排平台部署窗口。平台对迁移 head 严格校验：知识基础表由 131 引入，但部署必须使用当前完整迁移目录，
    **不能只迁移数据库就继续将旧版 readiness 视为正常**。
    先准备包含本次代码和迁移的相关服务镜像，确认可以短暂停服，再按现有发布流程执行。
    one-shot 仅调用迁移入口，不要顺便执行无关 bootstrap、授权或 Agent 发布：
@@ -97,7 +99,7 @@
 
    ```sh
    docker compose run --rm --no-deps \
-     -v '/Users/mhz/Develop/enterprise_agent/知识库/数据/5000条完整数据:/knowledge-input:ro' \
+     -v '/srv/knowledge-input:/knowledge-input:ro' \
      migrator python -m app.cli.import_ones_knowledge \
      --input-dir /knowledge-input --commit
    ```

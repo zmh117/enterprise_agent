@@ -72,8 +72,10 @@ webhook_event auth/filter/status
    `secret://platform/grafana_webhook_token`；`env:` 不可直接作为运行引用，必须先受控
    导入凭据中心。Trigger snapshot 不保存明文值。
 2. 启动 `api-server`、`rabbitmq`、`agent-worker`、`webhook-worker` 和固定 Delivery 所需配置。
-3. 管理员在 `/admin/webhooks` 创建草稿，完成 preview、validate 后再 publish。新 Trigger 会创建一个不可登录的 service account；需通过统一 RBAC 明确授予 Agent、project、工具和平台数据范围。
-4. 只有已启用 Trigger、已启用 service account、已发布 Trigger revision 和固定 Agent publication 同时有效时，公共 URL 才接受事件。
+3. 在“渠道与触发器”（`/applications/channels`）新建 Webhook，自动创建不可登录的 `account_type=service` 执行账号。新建流程允许先保留未完成草稿；保存不等于可接收或可执行。
+4. 在 Agent 配置中分配这个 Webhook 入口及所需投递渠道并发布，回到 Webhook 选择该 Agent 版本，配置映射、凭据引用与结果接收人，完成校验/预览并发布，再启用接收。
+5. 在业务应用中绑定该入口及投递策略，发布并激活；给服务账号分配业务角色、应用访问、工具和数据范围。服务账号是执行主体，不是钉钉机器人，也不是结果接收人，不能用个人外部身份绑定来代替授权。
+6. Trigger、来源 Connector、服务账号和发布版本有效时才允许受理；受理后 Dispatcher 仍须通过当前业务应用路由与授权检查才能创建 Job。旧服务账号若已停用，不会因重发请求或启用 Trigger 自动恢复，应核对独立账号状态。
 
 如果 source Connector 或发布 binding 的 Bearer Secret 缺失、停用或无法解析，
 管理端将其显示为 `MISCONFIGURED`，入口返回通用不可用/认证失败响应且不会创建
@@ -81,6 +83,14 @@ Inbox 事件。修复时重新绑定平台 Secret、重新验证并发布 Trigge
 “测试配置”；不得生成临时 Token、使用空值或绕过认证。
 
 `202 Accepted` 只表示事件和 outbox 已在 PostgreSQL 中持久化，Agent 尚不一定执行完成。调用方不得因超时自行改写 event ID；重复发送相同稳定身份会返回同一个 event。
+
+## 钉钉多接收人结果投递
+
+选择“钉钉机器人（多个接收人）”时，Trigger 发布保存 1–20 个接收人，每项包含机器人 Connector、目标类型 `group`/`user`、目标 ID 和可选备注。群填写 `openConversationId`，个人填写对应机器人企业内的 `userId`；同一机器人下的相同类型/目标不能重复，不接受 URL。
+
+先在渠道页面配置并启用应用机器人，在 Agent 发布中分配这些机器人的投递权限；业务应用投递绑定选择“使用 Webhook 配置的接收人”，连接器选择该 Webhook 入口。接收人来自冻结的 Trigger 发布，外部 payload 不能增加或改写目标。
+
+Agent 只执行一次，结果按接收人分别记录投递进度；单个目标失败只重试其投递，不重新运行 Agent 或重发已经完成的目标。验收需逐个核对实际接收结果，Webhook `202`、Job 成功或机器人容器健康均不能单独证明全部投递完成。
 
 ## Grafana Contact Point
 

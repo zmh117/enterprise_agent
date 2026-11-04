@@ -7,7 +7,7 @@
 1. **当前实现**：代码、活动迁移目录和自动化测试反映当前可运行事实。
 2. **Canonical 规范**：[10个领域主规格](../openspec/specs/README.md)是当前已接受基线，已于2026-09-16按代码重建。此前29个active change已归档，未完成验收保持原状态；后续change仍只表达相对canonical的增量。
 3. **当前架构文档**：`architecture/` 解释已采用的系统边界。
-4. **操作和指南**：`operations/` 与 `guides/` 给出可执行流程，执行前仍应核对当前分支和环境。
+4. **操作和指南**：`operations/`、`runbooks/` 与 `guides/` 给出可执行流程，执行前仍应核对当前分支和环境。
 5. **日期化验证**：`verification/` 是某次验收快照，不自动代表现在仍通过。
 6. **历史记录**：明确标记为“已完成迁移/退役记录”的 operation 与 `archive/` 仅用于审计，不得按当前操作手册执行。
 
@@ -44,12 +44,23 @@
 - [钉钉测试数据重建](operations/dingtalk-test-data-rebuild.md)
 - [受治理文档处理](operations/governed-document-processing.md)
 
-## 验证与参考
+## 知识库
 
-- [知识扩展部署与内容存储](../knowledge/README.md)
-- [知识资源、授权与检索治理](runbooks/knowledge-governance.md)
-- [知识本地模型与向量索引](runbooks/knowledge-local-vector-index.md)
-- [ONES 知识受管同步与恢复](runbooks/knowledge-ones-hourly-sync.md)
+| 需要做什么 | 入口 |
+| --- | --- |
+| 了解当前部署方式与服务用途 | [知识库部署说明](../knowledge/README.md) |
+| 安装网页运维、构建/启停、配置计划、看进度 | [知识库运维手册](../knowledge/OPERATIONS.md) |
+| 准备 ONES 团队/项目/类型与采集凭据 | [受管采集配置](runbooks/knowledge-ones-full-collector.md) |
+| 首次全量、小时增量、日期补采和恢复 | [同步与恢复](runbooks/knowledge-ones-hourly-sync.md) |
+| 发布知识资源、角色应用授权与检索排障 | [知识治理](runbooks/knowledge-governance.md) |
+| 显式重建索引、跨架构和 Qdrant 维护 | [本地向量索引](runbooks/knowledge-local-vector-index.md) |
+| 重排模型升级与人工效果评测 | [检索评测](runbooks/knowledge-retrieval-evaluation.md) |
+| 维护历史离线数据和分块 | [离线导入](operations/knowledge-offline-import.md)、[文本分块](operations/knowledge-text-chunking.md) |
+| 明确替换开发环境三库快照 | [keep_ids 测试替换](runbooks/knowledge-keep-ids-replacement.md) |
+
+日常运维优先使用 Web / `knowledge.sh`。旧 Compose 扩展和离线维护 CLI 仍有明确适用范围，不能与新调度器重复运行。检索预算的实现/主规格差异集中记录在[知识治理说明](runbooks/knowledge-governance.md#实现与主规格差异)；此次文档更新不改变 canonical 规范或历史验收结论。
+
+## 验证与参考
 
 - [MCP Inspector 开发测试](development/mcp-inspector.md)
 - [Task File Workspace Sandbox 容量基线](verification/task-file-workspace-sandbox-capacity.md)

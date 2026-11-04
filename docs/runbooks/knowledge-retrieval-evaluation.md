@@ -21,6 +21,8 @@
   --dataset .local/knowledge-evaluation/dataset.json --validate-only
 ```
 
+以下命令针对旧 Compose 扩展的一次性评测容器。独立部署日常操作由 Web / `knowledge.sh` 管理，但没有评测子命令；需要另行准备匹配版本、连接当前知识网络的一次性 CLI，不启动另一套旧服务。
+
 真实运行需要当前 schema 的 `knowledge-ops` 镜像和已经就绪的本地 Embedding/Qdrant/Reranker。只读挂载受限目录到 `/evaluation`，不把文件复制进镜像：
 
 ```sh
@@ -52,6 +54,8 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.c
 
 ## 重排服务准备、发布和回退
 
+独立项目的 `./knowledge.sh build` / `up` 负责构建、准备模型和启动重排服务；下面手工 Compose 命令只适用于旧扩展。
+
 固定模型采用 `BAAI/bge-reranker-v2-m3`，revision/文件摘要见 `backend/app/modules/knowledge/reranker_model.json`。文档端最多 1024 token、配对上限 4096 token，保留完整 query，候选两块平分文档额度并受配对剩余空间限制；超长 query 无有效文档空间时明确返回输入上限错误。微批按长度分组，最多 8 对/8192 个 padding 后 token，再恢复原文档顺序。固定 CPU 推理依赖复用现有 amd64/arm64 embedding runtime 锁，ranking profile 同时包含模型、依赖摘要和窗口/微批/排序边界。新服务不需要改变向量索引、分块或知识资源身份。
 
 ```sh
@@ -63,7 +67,7 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.c
   up -d --build knowledge-reranker
 ```
 
-用户允许增加 CPU 以保留大模型和长文本，当前配置为 8 vCPU / 3 GiB，内存与 memory-swap 上限相同；线程为 8，单实例 1 执行 + 3 等待。知识目录和检索总预算为 360 秒，并取 Job 剩余时间与上游截止的较小值；排队、输入准备与微批推理共享调用方原截止时间；执行取消须等计算退出才释放槽位。`/health` 仅代表进程，`/ready` 代表固定模型加载完成，`/profile` 必须与本地 `fingerprint(profile())` 一致。健康不代表效果或容量通过。本机 8 核测试的 50 篇满长窗口合成输入曾触发原 120 秒截止，改为 180 秒后同一重排样例在 132.37 秒完成；4 核同样例在 180 秒下超时，改为 240 秒后用 230.02 秒完成，距上限约剩 10 秒。这不承诺所有合法输入或四请求的完整检索容量，详见本次 change 的 evidence.md。测试前另行确定业务 p95 门槛；不得把新的 360 秒硬截止当目标 SLA。
+用户允许增加 CPU 以保留大模型和长文本，当前配置为 8 vCPU / 3 GiB，内存与 memory-swap 上限相同；线程为 8，单实例 1 执行 + 3 等待。知识目录和检索总预算为 360 秒，并取 Job 剩余时间与上游截止的较小值；排队、输入准备与微批推理共享调用方原截止时间；执行取消须等计算退出才释放槽位。`/health` 仅代表进程，`/ready` 代表固定模型加载完成，`/profile` 必须与本地 `fingerprint(profile())` 一致。健康不代表效果或容量通过。本机 8 核测试的 50 篇满长窗口合成输入曾触发原 120 秒截止，改为 180 秒后同一重排样例在 132.37 秒完成；4 核同样例在 180 秒下超时，改为 240 秒后用 230.02 秒完成，距上限约剩 10 秒。这不承诺所有合法输入或四请求的完整检索容量，这些是历史单次测量，不能当作现场并发性能承诺。测试前另行确定业务 p95 门槛；不得把新的 360 秒硬截止当目标 SLA。
 
 超过 300 秒的在途请求通过固定内部入口续期 Knowledge Principal，单张 TTL 仍不超过 300 秒。到期前 60 秒续期，每次最多 5 秒；平台与 MCP 两端复核身份、Job 和权限，失败取消检索，不重新推理。新版固定服务 scope 增加 `internal:knowledge:principal:refresh`，需协调升级签发/验证端并重新获取服务身份。续期仅在当前调用内有效，不为后续工具调用或重试保留票据。若 Job 剩余预算不足 360 秒，仍按较短预算结束；不能通过续期延长 Job。
 
@@ -75,3 +79,5 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/mcp.c
 4. 回退须协调恢复 API/MCP 的服务身份 scope、代码镜像与对应工具合同，并重新发布产生匹配的 Publication/Job；不得只停掉 reranker 或在运行中静默改用旧排序。独立模型卷可保留，既有索引无需回滚。
 
 尚无人工作业集时，可在授权本地数据上做有界候选/性能诊断，并明确标记标签来源。原文标题自查询或自动生成问法只能作流程检查。建议从约 50 条独立问题建立人工调参集与按问题/事项隔离的冻结验收集，再验证 MRR@10 提高、Recall@20 不下降；已知漏排问题单列前 3 命中，候选不存在时先记录召回/数据缺口。
+
+规范同步边界：当前代码采用 360 秒并执行 v2 工具合同；canonical 中仍保留 120 秒，详见[实现与主规格差异](knowledge-governance.md#实现与主规格差异)。本手册描述实现，不修改或替代 canonical 要求。

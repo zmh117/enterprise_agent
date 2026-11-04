@@ -1,23 +1,25 @@
 # 本机知识向量索引
 
-本轮仅支持本机 Docker Linux ARM64 / Python 3.12、BGE-M3 dense 1024 维和 Qdrant。原始导入及分块入口不自动调用模型。此入口是受控运维 CLI，不是 Agent/MCP/RBAC 授权；知识库仍为 `storage_only`，来源仍可为 `offline_unverified`。
+本页描述显式构建和维护索引的 `index_knowledge` CLI。当前固定 BGE-M3 dense 1024 维、Qdrant 和 Linux ARM64/AMD64 各自的依赖锁；跨架构需在目标环境重建并验证。原始离线导入/分块入口不自动调用模型，建立索引也不授予 Agent/MCP/RBAC 读取权限。
+
+日常采集使用[文档级增量同步](knowledge-ones-hourly-sync.md)，沿用每库固定 collection；重启或增加文档不需要执行本页全量构建。keep_ids 的 dense/BM25 混合索引与在线文档重排分别见[三库快照维护](knowledge-keep-ids-replacement.md)和[重排评测](knowledge-retrieval-evaluation.md)。
 
 ## 数据和安全边界
 
-- PostgreSQL 原九表保留；前向 migration 134 只新增 `knowledge.vector_index` 和 `knowledge.vector_index_item`。
+- migration 134 当时保留已有内容表，只新增 `knowledge.vector_index` 和 `knowledge.vector_index_item`。
 - 模型固定 revision `5617a9f61b028005a4858fdac845db406aefb181`，使用官方 `pytorch_model.bin`，不做 safetensors 转换或 ONNX 导出。加载显式 `weights_only=True`、`trust_remote_code=False`；不增加任意类 allowlist。
 - 模型完整清单见 `backend/app/modules/knowledge/embedding_model.json`；CPU 依赖锁按架构分别固定为 `embedding_runtime.lock`（Linux ARM64）和 `embedding_runtime_amd64.lock`（Linux AMD64），PyTorch wheel 各有独立 SHA-256，其余依赖版本与哈希相同。构建时按 `TARGETARCH` 选择并验证 CPU PyTorch；未知架构失败关闭。运行时 Embedding profile 也按架构选择锁的摘要，跨架构迁移不能默用旧索引，须在目标架构重建并核验向量索引。
 - 准备容器只下载固定公开模型、校验大小/摘要，无数据库或业务卷/凭据。失败的 `.partial` 不被运行时接纳，重跑不会跳过完整校验。
-- Embedding 只读挂载模型卷，关闭 Hub 在线访问、遥测、远程代码；与 Qdrant/CLI 仅接入 internal 网络，无宿主机发布端口。不得通过开放端口把本机方案变为多租户服务。
+- Embedding 只读挂载模型卷，关闭 Hub 在线访问、遥测、远程代码，不发布宿主机端口。Qdrant 的旧扩展另有宿主机端口映射，独立部署默认只绑定 `127.0.0.1`；以所选部署文件为准，不要将管理端口暴露给非受信网络。
 - 模型服务请求上限 8 条、每条 4096 tokens、合计 8192 tokens，256 KiB 请求体、单并发；只计数端点允许批量总数超过 8192，以便客户端重新组批。所有计数包含特殊 token。服务不静默截断。
 - Qdrant 仅存向量与索引/知识库/文档/版本/块 ID、种类和摘要；不存标题、正文、URL 或人员。
 - 命令输出仅计数、摘要、固定错误码、引用。禁止打印原文、查询、向量、底层响应、DSN 或解析后的完整 Compose 配置。
 
 ## 执行顺序
 
-知识服务只在显式加载 `knowledge/compose.yml` 时存在；完整部署边界见[知识库部署入口](../../knowledge/README.md)。以下命令均在仓库根目录执行，沿用原项目名和数据卷。`DATABASE_DSN` 必须从既有部署配置提供并指向同库 `postgres:5432`；不要打印配置值或复制凭据到扩展文件。
+以下示例使用旧 `knowledge/compose.yml` 扩展；独立部署由 `knowledge/deployment.compose.yml` 管理，日常通过 Web / `knowledge.sh` 操作，不再启动旧扩展；完整部署边界见[知识库部署入口](../../knowledge/README.md)。以下命令均在仓库根目录执行，沿用原项目名和数据卷。`DATABASE_DSN` 必须从既有部署配置提供并指向同库 `postgres:5432`；不要打印配置值或复制凭据到扩展文件。
 
-先核对当前运行服务、数据库 head、原九表计数/摘要。不要在旧业务镜像仍运行时直接升级 schema。构建 head 一致的业务镜像不等于已经部署或 API 就绪；不得因本轮任务启动整个业务栈。
+先核对当前运行服务、数据库 head、本次目标文档、分块和索引的计数/摘要。不要在旧业务镜像仍运行时直接升级 schema。构建 head 一致的业务镜像不等于已经部署或 API 就绪；不得因本轮任务启动整个业务栈。
 
 ```sh
 docker compose config --quiet
@@ -54,15 +56,15 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledg
 
 ## 恢复与版本
 
-索引代码绑定固定语料和配置，一个版本一个独立 collection；不静默扩充现有索引。变更语料、chunk profile、模型/依赖时使用新的明确版本，保留旧集合。清理需要另行批准。
+本页静态 `index_knowledge` CLI 的索引代码绑定固定语料和配置，一个版本一个独立 collection；该工具不静默扩充静态索引。日常增量模式则在已接管的固定 collection 内处理变化文档，不因语料变化建立新集合。模型、chunk profile 或架构依赖变化需明确维护版本并核验，旧集合清理另行确认。
 
 单索引会话级锁覆盖清单构造和构建；数据库事务只包短写，不跨模型/Qdrant IO。清单完整后才开始推理。每点由索引 UUID 与块 UUID 确定；Qdrant 必须 `wait=true` 确认后才记账。写点成功但未记账时，重跑核对点身份后补记；数据库已记账但点缺失时补写。点身份、集合所有权、维数/距离不匹配立即停止，绝不清空其他集合。
 
-全部预期 ID、payload、向量形状、集合 exact count、来源版本/收录/摘要均核验通过才 READY。失败保留检查点和卷；重跑 `--commit` 恢复。完成后核对原九表摘要不变、重放 `encoded=0`、重启后点仍存在。
+全部预期 ID、payload、向量形状、集合 exact count、来源版本/收录/摘要均核验通过才 READY。失败保留检查点和卷；重跑 `--commit` 恢复。完成后核对源文档及分块摘要不变、重放 `encoded=0`、重启后点仍存在。
 
 ## 验收边界
 
-合成故障/真实 PostgreSQL 与 Qdrant 接口测试证明存储协议；模型合成 smoke 和原文自查询只证明计算/检索链路。没有人工相关性标注时不能报告真实 Recall@10 或 MRR。OCR、附件下载、在线采集/定时增量、Web、MCP/RBAC、混合召回和 Reranker 均不在本轮。
+合成故障/真实 PostgreSQL 与 Qdrant 接口测试证明存储协议；模型合成 smoke 和原文自查询只证明计算/检索链路。没有人工相关性标注时不能报告真实 Recall@10 或 MRR。本页索引 CLI 的测试不覆盖 OCR、附件下载、在线采集、Web、MCP/RBAC、混合召回或 Reranker；这些能力是否存在与是否验收应分别查看对应当前手册。
 
 ### 2026-09-17 本机验收快照
 
@@ -75,9 +77,9 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledg
 
 ## Qdrant 版本升级与恢复
 
-当前可选知识 Compose 固定 `qdrant/qdrant:v1.19.1@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10`，2026-09-18 已在本机 Linux ARM64 正式运行验证。镜像摘要与 image ID 是不同对象，不能互相替代；版本标签为空也不能据此判断镜像无用。
+当前知识 Compose 固定 `qdrant/qdrant:v1.19.1@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10`，2026-09-18 已在本机 Linux ARM64 正式运行验证。镜像摘要与 image ID 是不同对象，不能互相替代；版本标签为空也不能据此判断镜像无用。
 
-已有数据必须遵循 [Qdrant 官方升级路径](https://qdrant.tech/documentation/upgrades/)，单节点也不能跳过中间次版本。本次执行 `1.17.0 → 1.17.1 → 1.18.3 → 1.19.1`，每一级使用明确版本和摘要；先在冷备复制出的隔离卷验证，再仅对 `knowledge-qdrant` 使用 Compose `up -d --no-deps --pull never`。未重启 PostgreSQL、Embedding 或业务服务，未执行 DDL、重新向量化或授权发布。
+Qdrant 升级应核对目标版本的[官方升级说明](https://qdrant.tech/documentation/upgrades/)，先对数据备份做隔离恢复演练。2026-09-18 执行 `1.17.0 → 1.17.1 → 1.18.3 → 1.19.1`，每一级使用明确版本和摘要；先在冷备复制出的隔离卷验证，再仅对 `knowledge-qdrant` 使用 Compose `up -d --no-deps --pull never`。未重启 PostgreSQL、Embedding 或业务服务，未执行 DDL、重新向量化或授权发布。
 
 ### 2026-09-18 升级验收
 
@@ -96,7 +98,7 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml --profile knowledg
 
 回退必须先停止知识写入，确认后续数据变化及恢复窗口，从冷备复制到一个新的明确恢复卷，用对应 1.17.0 镜像隔离验证，再在维护窗口定向切换。不得用旧镜像直接打开已被 1.19.1 迁移的正式卷，也不得覆盖冷备或使用 `down -v`。有升级后新增写入时，不能未经核对直接回退到本恢复点。
 
-升级验收当时 Docker 可用磁盘约 0.7 GiB，需要另行规划扩容或明确范围的清理；本次没有删除其他项目镜像、卷或旧验收容器。
+2026-09-18 升级验收当时 Docker 可用磁盘约 0.7 GiB，需要另行规划扩容或明确范围的清理；本次没有删除其他项目镜像、卷或旧验收容器。
 
 ## 运维镜像更新与定向重启
 
@@ -116,4 +118,4 @@ docker compose -f docker-compose.yml -f knowledge/compose.yml \
 
 ### 2026-09-18 运维镜像刷新验收
 
-用户授权后已定向构建默认 `knowledge-ops`，镜像内 catalog 包含 migration 136；上文记录的旧镜像门禁失败已解决。Qdrant/Embedding 已定向重启并就绪，默认运维镜像无需临时覆盖即可通过 schema 门禁、5000 文档/8309 点身份核验及合成问题检索；点/向量和命中序列摘要保持不变。其他 23 个既有容器身份和启动时间未变，没有迁移、重新索引或删除恢复点。当前 Docker 数据盘约 1.4 GiB 可用（98% 已用），容量维护仍需单独安排。
+用户授权后已定向构建默认 `knowledge-ops`，镜像内 catalog 包含 migration 136；上文记录的旧镜像门禁失败已解决。Qdrant/Embedding 已定向重启并就绪，默认运维镜像无需临时覆盖即可通过 schema 门禁、5000 文档/8309 点身份核验及合成问题检索；点/向量和命中序列摘要保持不变。其他 23 个既有容器身份和启动时间未变，没有迁移、重新索引或删除恢复点。该次验收时 Docker 数据盘约 1.4 GiB 可用（98% 已用），容量维护仍需单独安排。

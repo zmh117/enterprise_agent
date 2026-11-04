@@ -1,6 +1,6 @@
 # keep_ids_v1 三库测试内容替换
 
-这是用户明确授权的开发环境快照替换，不是通用增量同步或删除推断。数据采集调度保持关闭。代码从根目录的缺陷、工单、Story、子任务明细及配套字典/采集说明读取，不递归摄入 `验收/`。
+本页仅用于明确授权的开发环境快照替换。日常新增、修订和补采使用[增量同步](knowledge-ones-hourly-sync.md)，不能为补几条数据执行三库替换；替换前应暂停调度并确认没有活动写入。代码从根目录的缺陷、工单、Story、子任务明细及配套字典/采集说明读取，不递归摄入 `验收/`。
 
 ## 内容与索引
 
@@ -11,13 +11,13 @@
 - 新分块 profile 为 `ones-keep-ids-hybrid-chunks/v1`；旧 profile 不原地改变。每个 chunk 在同一 Qdrant collection 中保存 BGE-M3 `dense` 与原生 BM25 `bm25` 两个命名向量；payload 不保存正文。
 - BM25 用 multilingual tokenizer，关闭词干和停用词，其他参数由 `domain/hybrid.py` 固定。入库/查询使用同一参数。Qdrant 镜像固定 v1.19.1。
 - 检索采用等权 RRF（两路权重 1:1，k=2），每路最多 100 点，合并最多 200 点。不是把两路原始分数各乘 50%。两路重叠到达单路上限时仍标记可能截断，不默认为完整结果。
-- 在线依旧执行应用内角色 KB 授权与用户 ONES 可读校验；候选最多核验 50 个文档，保留现有最长 120 秒总预算。任一路失败不静默退化。
+- 在线依旧执行应用内角色 KB 授权与用户 ONES 可读校验；候选最多 50 个文档，当前线上在双权限复核前执行文档重排，总预算最多 360 秒并受 Job 剩余时间限制（[主规格仍待同步](knowledge-governance.md#实现与主规格差异)）。任一路失败不静默退化。
 
 ## 维护顺序
 
-必须先检查当前数据库 schema、非终态 Job、资源修订和磁盘容量。schema 144 与配套服务需经明确维护授权部署。不要在测试里使用业务 PostgreSQL DSN。不要删除 schema 或卷。
+必须先检查当前数据库 schema、非终态 Job、资源修订和磁盘容量。迁移 144 是该替换合同的引入版本；执行时需使用当前 migration catalog 和匹配服务，不能将 144 当作当前 head。不要在测试里使用业务 PostgreSQL DSN。不要删除 schema 或卷。
 
-本机 Compose 按 [knowledge README](../../knowledge/README.md) 同时加载主栈、知识离线和在线 overlay，以及既有两个受管 env 文件；不能打印其内容。以下只展示容器内命令部分：
+按 [knowledge README](../../knowledge/README.md) 核对实际部署方式。旧扩展加载其原有 overlay；独立项目维护须连接当前知识网络和数据卷，不能并行拉起第二套旧服务。环境文件沿用本次安装配置，不打印其内容。以下只展示容器内命令部分：
 
 ```sh
 python -m app.cli.replace_ones_knowledge --mode preflight --input-dir /input
@@ -55,4 +55,4 @@ python -m app.cli.replace_ones_knowledge --mode evaluate --run-id <run-id>
 
 在同一已激活语料上，按稳定文档 ID 排序分别抽取每库前 10 个标题问题及前 10 个至少 80 字的正文片段问题，比较 BM25、dense、hybrid。输出自项命中率 @1/@5/@10、MRR@10、p50/p95 延迟和错误数，绝不输出问题、正文或命中原文；网络/索引错误使评测退出失败，不将部分结果当完整验收。
 
-这属于已知项自查询，标签只包含自己，不能证明真实业务 Recall、语义改写能力或 1:1 权重最优。真实用户问题与人工相关项标签应另建受管评测集；本机无真实 ONES，离线效果和合成双重权限测试不能替代真实 ONES 授权验收。
+这属于已知项自查询，标签只包含自己，不能证明真实业务 Recall、语义改写能力或 1:1 权重最优。真实用户问题与人工相关项标签应另建受管评测集；离线效果和合成双重权限测试不能替代真实 ONES 授权验收；当前重排前后同候选对照使用[评测手册](knowledge-retrieval-evaluation.md)，本页三路自查询不测重排质量。

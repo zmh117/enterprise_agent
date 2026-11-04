@@ -1,10 +1,26 @@
-# ONES 知识库受管同步（默认停用）
+# ONES 知识库增量同步、补采与恢复
 
 本入口把首次历史全量、最近 7 个创建日复查或明确日期补采，接到逐文档处理流程。缺陷、工单、需求各使用固定 collection；只为新增或变更文档分块、复用或编码向量、更新当前版本并删除该文档旧块。发布表示知识库可用，内容同步不重新发布。评论与附件不采集，受管写入仅使用同平台 PostgreSQL 和固定内网 Qdrant；外部内容连接继续只读。
 
+## 网页运维与日常入口
+
+已安装独立 Compose 执行器的环境，优先使用“工具资源 → 知识库”或根目录 `knowledge.sh`；首次安装和计划字段见[运维手册](../../knowledge/OPERATIONS.md)。保存计划会停用采集；点击“开启自动同步”会立即调度首次全量或恢复未完成任务，完成后按 3600 秒周期执行。
+
+```sh
+./knowledge.sh status
+./knowledge.sh sync --binding-code your-plan-code
+./knowledge.sh backfill 2026-10-07 2026-10-26 --binding-code your-plan-code
+./knowledge.sh logs --operation-id TASK_ID
+./knowledge.sh retry --operation-id TASK_ID
+```
+
+同步/补采返回持久任务 ID，同来源任务串行排队。失败任务若仍有活动 run，重试原任务；补采不必手动停常驻调度器，也不修改七日窗口。`status/logs` 读取运维投影，不等同于下面底层 CLI 的 `status/health` 输出。
+
+网页调度器对可重试依赖错误总计最多尝试三次，部分失败、次数耗尽或确定性错误进入任务记录等待显式重试。底层旧 `daemon` 的五分钟恢复循环是另一种调度方式，不与新调度器并行。下文保留单次 CLI、一次性转换及旧 Compose 的维护步骤，并标明适用范围。
+
 ## 启用前
 
-1. 在目标环境按平台维护流程升级到当前 schema head（迁移 150 的复用索引及 151 的增量合同/文档断点）及匹配的配套服务、API、ONES/同步镜像。迁移版本统一管理，不能只更新同步容器导致其他服务 schema 断言不匹配。当前本机没有真实 ONES，本手册不是启用授权。
+1. 在目标环境按平台维护流程升级到当前 schema head（包含迁移 150 的复用索引、151 的文档断点及使用网页运维时所需的 152）及匹配的配套服务、API、ONES/同步镜像。迁移版本统一管理，不能只更新同步容器导致其他服务 schema 断言不匹配。真实 ONES 验收按目标环境单独记录，不从仓库文档推断已具备采集权限。
 2. 按[全量采集手册](knowledge-ones-full-collector.md)准备固定 Provider、Team、项目/类型 UUID 与受管只读采集身份。`knowledge/ones-collector.example.json` 的来源和三库映射决定采集范围；`resource_ids` 不再用来控制内容发布。重新 `configure` 会停用绑定并清除旧资源钉住值，需重新显式启用。
 3. 确认采集写入目标采用同平台 `knowledge` 内容库；已有内容须先完成下述一次性索引转换。管理员草稿或资源停用不会停止内容采集。外部内容 PostgreSQL 仍可用于在线只读知识资源，但不能被此同步入口自动写入。Qdrant、Embedding、容量路径必须可达；容量不足只暂停候选，不删除旧索引/卷。
    单轮 `once` 和每小时 `daemon` 都必须从 `APP_CONFIG_MASTER_KEY_FILE` 读取与平台相同的只读 Master Key；缺失或无效时返回 `knowledge_sync_master_key_unavailable`，不会开始同步。仅查看 `status` 不要求加载 Key。
@@ -25,7 +41,7 @@ python -m app.cli.adopt_incremental_knowledge --binding-code <binding-code> --in
 
 ## 单次执行与恢复
 
-`configure`、`enable`、`disable`、`cancel` 仍使用 `app.cli.collect_ones_knowledge`。绑定开关控制采集，资源发布/停用控制检索，两者独立；固定索引的模型、分块和来源身份必须匹配。`enable` 后第一次自动到期在 3600 秒后；明确单次执行不需要等待它。
+`configure`、`enable`、`disable`、`cancel` 仍使用 `app.cli.collect_ones_knowledge`。绑定开关控制采集，资源发布/停用控制检索，两者独立；固定索引的模型、分块和来源身份必须匹配。底层 CLI 的 `enable` 将首次到期设在 3600 秒后；网页“开启自动同步”额外将到期时间设为当前时刻。明确单次执行不需要等待。
 
 ```sh
 python -m app.cli.collect_ones_knowledge --mode status --binding-code <binding-code>
@@ -34,9 +50,9 @@ python -m app.cli.sync_ones_knowledge --mode status --binding-code <binding-code
 python -m app.cli.sync_ones_knowledge --mode once --binding-code <binding-code> --capacity-path /qdrant/storage --commit
 ```
 
-容量路径须是同步进程可见的 Qdrant 数据卷路径；`once` 只使用已配置的受管 Secret 引用，不接受 Token 或密码 CLI 参数。每篇文档保留 `PENDING → APPLIED → DONE` 断点：准备块/隐藏向量、应用当前版本、开放新块并清理旧块。重启跳过 DONE，未完成步骤按稳定点 ID 恢复。`status` 仅输出安全 ID、阶段、计数和错误码；新增 `documents.total/completed/failed` 和 `content_status`。部分失败返回 PARTIAL，单次命令非零退出，daemon 每五分钟重试原 run；其他成功文档已可检索。未解决的失败仍占用该来源活动 run，排查后继续，不累积多轮。
+容量路径须是同步进程可见的 Qdrant 数据卷路径；`once` 只使用已配置的受管 Secret 引用，不接受 Token 或密码 CLI 参数。每篇文档保留 `PENDING → APPLIED → DONE` 断点：准备块/隐藏向量、应用当前版本、开放新块并清理旧块。重启跳过 DONE，未完成步骤按稳定点 ID 恢复。`status` 仅输出安全 ID、阶段、计数和错误码；新增 `documents.total/completed/failed` 和 `content_status`。部分失败返回 PARTIAL，单次命令非零退出；旧 daemon 每五分钟重试原 run，网页调度器按上文规则记录任务并重试；其他成功文档已可检索。未解决的失败仍占用该来源活动 run，排查后继续，不累积多轮。
 
-无变化轮次只记录来源观察和完成水位，不分块、编码、写向量或发布。文档跨库移动只影响该文档在两库的点，空库保留原集合。现有 run 阶段字段保留，`ACTIVATED` 现在表示本轮全部文档处理完成，不代表发布动作。向量与数据库没有跨存储事务：单篇在开放新点前允许短暂缺失，旧修订经当前版本校验被排除；隐藏点不占用检索候选。Knowledge MCP 保留当前 KB 授权和个人 ONES 权限校验及 120 秒预算。
+无变化轮次只记录来源观察和完成水位，不分块、编码、写向量或发布。文档跨库移动只影响该文档在两库的点，空库保留原集合。现有 run 阶段字段保留，`ACTIVATED` 现在表示本轮全部文档处理完成，不代表发布动作。向量与数据库没有跨存储事务：单篇在开放新点前允许短暂缺失，旧修订经当前版本校验被排除；隐藏点不占用检索候选。Knowledge MCP 保留当前 KB 授权和个人 ONES 权限校验及最多 360 秒/Job 剩余预算；[主规格差异](knowledge-governance.md#实现与主规格差异)仍单独保留。
 
 ### 按明确创建日期补采
 
@@ -44,7 +60,7 @@ python -m app.cli.sync_ones_knowledge --mode once --binding-code <binding-code> 
 
 先通过既有 `status` 确认活动 run。如果旧补采仍有进展，优先完成原 run，不取消重建。旧整代 run 必须在升级前完成，或停止旧写者后显式取消再转换；新入口对旧 run 返回 `knowledge_sync_migration_required`，不混用两种合同。新版 backfill 必须使用相同日期恢复；daemon 或另一个范围接续它会返回 `knowledge_collection_range_changed`。
 
-以下是已获维护许可的目标环境执行示例；保留原 Compose 项目名，按实际部署追加 `mcp.compose.yml` 等既有扩展，所有命令在仓库根目录执行。用真实绑定编码替换示例值；仅停止 daemon 容器，不 disable 绑定，否则 once 也会被拒绝。
+以下手工停止 daemon 的示例只适用于尚未接入网页运维的旧扩展部署；独立项目直接提交上面的 `knowledge.sh backfill` 任务。旧扩展维护时保留原 Compose 项目名，按实际部署追加 `mcp.compose.yml` 等既有扩展，所有命令在仓库根目录执行。用真实绑定编码替换示例值；仅停止 daemon 容器，不 disable 绑定，否则 once 也会被拒绝。
 
 ```sh
 docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/sync.compose.yml \
@@ -76,7 +92,7 @@ python -m app.cli.sync_ones_knowledge --mode health --binding-code your-binding-
 
 停用不告警；首次绑定有两个同步周期宽限。已启用后最近成功激活或活动进度超过两个周期未更新，或最新运行失败时，health 返回非零，并以固定 `knowledge_sync_success_stale` / `knowledge_sync_progress_stale` / `knowledge_sync_run_failed` 标明原因。长时间首次全量或补采超过该阈值也可能被标为陈旧，应结合进度判断，健康检查不会取消正在执行的补采。
 
-可选同步容器每六十秒运行 health，三次失败标记 unhealthy；daemon 在诊断状态改变为异常时输出安全 `knowledge_sync_alert`，阶段进度输出 `knowledge_sync_progress`。健康日志不包含正文、凭据或连接串。部署监控必须同时关注 **unhealthy、容器 exited 和最近成功时间**；停止的容器不会继续执行自身健康检查，不接监控就不会主动通知人。本轮不新增钉钉/邮件账号、外部消息或自动修复配置，`on-failure:3` 的停机策略保持不变。
+旧 `knowledge/sync.compose.yml` 容器每六十秒运行底层 health，三次失败标记 unhealthy；daemon 在诊断状态改变为异常时输出安全 `knowledge_sync_alert`，阶段进度输出 `knowledge_sync_progress`。健康日志不包含正文、凭据或连接串。部署监控必须同时关注 **unhealthy、容器 exited 和最近成功时间**；停止的容器不会继续执行自身健康检查，不接监控就不会主动通知人。旧容器采用 `on-failure:3`；独立部署的同步调度器采用 `unless-stopped` 和心跳健康检查。两者均不能把心跳正常当成计划最近成功，也不自动向钉钉/邮件发告警。
 
 ### 采集或同步期间重启 PostgreSQL
 
@@ -87,23 +103,23 @@ python -m app.cli.sync_ones_knowledge --mode health --binding-code your-binding-
 - 密码/身份、数据库名、权限、TLS 配置、schema 不匹配、配置/资源变化及业务数据校验错误不作为数据库断连循环重试。应处理错误原因后显式重跑；不会回退其他库、绕过校验或删除旧数据。
 - 等待期间可用 Ctrl+C 或容器 SIGTERM 停止；恢复后若发现 binding 已停用或原 run 已取消，不继续采集。数据库不可用期间无法读取库内开关，需要立即停止时使用进程/容器停止信号；在途请求仍受现有超时约束。已提交断点保留。
 
-重试日志只输出固定 `knowledge_collection_database_retry_pending` / `knowledge_sync_database_retry_pending` 事件、`knowledge_database_temporarily_unavailable` 错误码、次数和下次等待秒数，不输出底层异常、连接串或业务正文。本能力不改变默认停用和每小时触发设置；更新代码后需重建并重新创建同步容器，单纯 restart 不会装入新代码：
+重试日志只输出固定 `knowledge_collection_database_retry_pending` / `knowledge_sync_database_retry_pending` 事件、`knowledge_database_temporarily_unavailable` 错误码、次数和下次等待秒数，不输出底层异常、连接串或业务正文。本能力不改变计划开关和每小时触发设置；更新代码后需重建并应用新镜像，单纯 restart 不会装入新代码。独立项目使用 `./knowledge.sh build` 后 `./knowledge.sh up`；以下命令仅适用于旧扩展：
 
 ```sh
 docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/sync.compose.yml --profile knowledge --profile knowledge-sync build knowledge-sync
 docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/sync.compose.yml --profile knowledge --profile knowledge-sync up -d --no-deps --force-recreate knowledge-sync
 ```
 
-以上仅用于已启用采集的目标环境，本轮不自动启用本机采集或重启业务数据库。
+知识运维入口不自动重启主程序 PostgreSQL；数据库维护仍按主程序流程执行。
 
-## 可选每小时容器
+## 旧扩展的可选每小时容器
 
 只在真实环境单次验收和独立启用授权后加载 `knowledge/sync.compose.yml`。必须同时设置 `KNOWLEDGE_SYNC_ENABLED=true`、固定 `KNOWLEDGE_SYNC_BINDING_CODE`、平台写入用 `KNOWLEDGE_SYNC_DATABASE_DSN`，并保持数据库绑定 `enabled=1`。受管主密钥由现有 Compose Secret 挂载，不在本文件或命令中填明文。同步容器需要访问固定 ONES 目标、PostgreSQL、内网 Embedding/Qdrant，以及只读挂载的 Qdrant 数据卷用于容量门禁。
 
 ```sh
 # 只校验配置，不显示解析后的 DSN。
 docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/sync.compose.yml --profile knowledge --profile knowledge-sync config --quiet
-# 下列启动命令仅用于已批准的目标环境；当前本机不得执行。
+# 仅用于已配置、启用且未接入新调度器的旧扩展。
 docker compose -f docker-compose.yml -f knowledge/compose.yml -f knowledge/sync.compose.yml --profile knowledge --profile knowledge-sync up -d --no-deps knowledge-sync
 ```
 

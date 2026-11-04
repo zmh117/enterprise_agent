@@ -1,20 +1,26 @@
 # 知识治理管理与排障
 
-本页描述 `enable-governed-knowledge-retrieval` 已实现的来源、资源 Web 管理、角色应用 KB 允许范围、Job/ONES 内部投影、平台双身份桥与目录/检索应用服务，以及正式工具合同、固定 Runtime 路由、独立 MCP 服务入口与可选部署配置。120 秒截止与阻塞 I/O 取消、完整合成隔离容器验收已完成；2026-09-20 本机在线服务已部署，真实业务应用/ONES/模型验收仍未完成。服务启动不会自动发布资源或赋予业务权限。
+本页描述当前资源管理、角色应用 KB 范围、Job/ONES 双重授权、目录检索与文档重排。采集、服务启停和任务进度见[知识库网页运维](../../knowledge/OPERATIONS.md)。服务启动与内容同步不会自动授权；普通内容更新不重新发布知识资源。本文的代码合同与日期化验收证据分别表述，不把容器健康当作真实用户检索验收。
+
+## 实现与主规格差异
+
+截至 2026-11-04，代码 `domain/vector_contract.py`、共享工具合同及检索链路采用 **360 秒**上限，取当前 Job 剩余时间和上游截止的较小值；启用文档重排、`rank` / `retrieval_score` 与调用内 Principal 续期。`openspec/specs/builtin-tool-resource/spec.md` 的“知识检索必须有界且只返回可读引用”仍写 **120 秒**，对应主规格尚未同步。
+
+本次按要求只更新说明和运维文档，不修改 canonical 主规格、不归档 change、不补勾验收任务。这里记录的是已核对的实现，不把运维说明当成对已接受规范的替代；规格协调应另行处理 `improve-knowledge-retrieval-ranking`。
 
 ## 数据库和部署边界
 
 2026-09-20 新增内容连接拆分：平台保留逻辑 KB、授权/发布、Job 和审计；内容 PostgreSQL 的 `knowledge` schema 与 Qdrant 可在 Web 配置。migration 140 增加仅含连接配置/凭据引用的字段并解除平台本地索引外键；旧发布原 hash 和数据保持不变。独立内容库不要求平台身份/Job/迁移账本，也不会自动建立或搬迁。部署及账号要求见[内容存储配置](../../knowledge/README.md#web-配置独立内容存储)。本机已部署平台侧、Web 和在线 Knowledge MCP；真实外部内容库接入仍待验收。用户确认内容账号可以具备管理/写权限，现有外部读取连接仍强制只读事务；配套代码已部署，不代表新增内容编辑能力。
 
-本机已于同日定向更新 API、ONES MCP 和 Web 至 `knowledge-content-admin-20260920`，账号策略已生效；schema 仍为 140，资源 revision=6 与发布指针未改。刷新 Web 后可使用管理员用户名，但本机未启用 PostgreSQL TLS 时仍须显式选择“不加密（仅受信内网）”。未代用户测试所选真实凭据、保存草稿或发布。
+本机已于同日定向更新 API、ONES MCP 和 Web 至 `knowledge-content-admin-20260920`，账号策略已生效；当时 schema 为 140，资源 revision=6 与发布指针未改。刷新 Web 后可使用管理员用户名，但本机未启用 PostgreSQL TLS 时仍须显式选择“不加密（仅受信内网）”。未代用户测试所选真实凭据、保存草稿或发布。
 
 治理表通过平台前向迁移 `137_expand_knowledge_retrieval_governance.sql` 加入现有数据库的 `knowledge` schema；角色 KB 关系 `rbac_role_application_knowledge_base` 留在现有 RBAC 所属的 public schema，以外键引用逻辑 KB。不新建数据库，也不改变现有 source/knowledge_base 的离线存储状态、文档、分块或向量身份。迁移不创建真实来源绑定、发布或角色授权。`138_expand_knowledge_source_confirmation.sql` 新增 CONFIRMED 状态，保留所有旧绑定及引用，不把 PENDING 自动升级；其含义是历史导入声明，不是 Provider 权限证明。`139_relax_knowledge_resource_source_binding.sql` 允许新资源版本不关联来源绑定，保留全部历史和外键；旧资源版本必须重新保存、验证、发布，不能复用旧验证或直接改 hash。
 
-API/Worker/ONES 镜像更新须满足正式 Migrator 和平台 schema readiness 门禁。2026-09-20 经用户批准，本机已从 139 升级至 140、更新相关服务和 Web、恢复 Embedding/Qdrant；后续部署 `knowledge-online-20260920` 无新迁移，已启用在线 MCP、独立读取角色和受管服务身份，更新 API/ONES/Agent Worker/Runtime。5000 文档、8309 分块/向量点及已有知识资源 revision=6 的发布记录保持不变；未保存草稿、发布或修改业务授权。后续维护须沿用[本机在线部署配置](../../knowledge/README.md#当前本机部署记录2026-09-20)。仅此部署证据不能替代真实 Agent 检索验收。不要在未升级 schema 时只替换后端，也不要在新库上直接回滚到只认识旧 schema 的镜像。停用知识检索时保留表、文档、索引和向量卷，不执行降级删表或重编码。
+API/Worker/ONES 镜像更新须满足正式 Migrator 和平台 schema readiness 门禁。2026-09-20 经用户批准，本机已从 139 升级至 140、更新相关服务和 Web、恢复 Embedding/Qdrant；后续部署 `knowledge-online-20260920` 无新迁移，已启用在线 MCP、独立读取角色和受管服务身份，更新 API/ONES/Agent Worker/Runtime。5000 文档、8309 分块/向量点及已有知识资源 revision=6 的发布记录保持不变；未保存草稿、发布或修改业务授权。上述为 2026-09-20 的历史快照；后续维护按[当前部署入口](../../knowledge/README.md)执行，不复用历史 head、容器名或账号假设。仅此部署证据不能替代真实 Agent 检索验收。不要在未升级 schema 时只替换后端，也不要在新库上直接回滚到只认识旧 schema 的镜像。停用知识检索时保留表、文档、索引和向量卷，不执行降级删表或重编码。
 
 维护后若仅恢复一个已存在的入口容器，使用经确认目标的 `docker start`；本机 Compose 的 `start <service>` 会连带启动依赖，可能重跑旧 Migrator 和初始化容器。服务更新使用已构建镜像定向 `up --no-deps --no-build`，正式迁移单独运行 `run --rm --no-deps migrator python -m app.cli.migrate`，不以全栈 bootstrap 替代。
 
-即使尚未启用在线 MCP，资源技术验证也需要 API 连接内部 Embedding/Qdrant。叠加 `knowledge/compose.yml` 会为 API 和 PostgreSQL 追加知识网络，不新增在线服务凭据；后续定向更新 API 时须保留此叠加文件，不能只用根 Compose 覆盖网络。
+即使尚未启用在线 MCP，资源技术验证也需要 API 连接内部 Embedding/Qdrant。独立部署通过 `knowledge/ops.compose.yml` 接入共享内容网络，更新 API 时必须保留该扩展；下面的 `knowledge/compose.yml` 是旧扩展路径。叠加 `knowledge/compose.yml` 会为 API 和 PostgreSQL 追加知识网络，不新增在线服务凭据；后续定向更新 API 时须保留此叠加文件，不能只用根 Compose 覆盖网络。
 
 ## 管理流程
 
@@ -22,11 +28,11 @@ API/Worker/ONES 镜像更新须满足正式 Migrator 和平台 schema readiness 
 
 1. `GET /sources`、`GET /catalog` 查看已入库数据集和索引。来源只代表本地导入记录，不要求确认 ONES 地址、实例或 Team，不需要 ONES 密码/Token、证明摘要、Job 或导入确认 CLI。
 2. 默认 `POST /resources` 提交 `knowledge_base_id`、`code`、`name`；自定义连接先通过 `POST /content-catalog` 读取目录，创建时同时提交 `storage` 和 `index_id` 形成初始草稿。一个 KB 最多一个启用资源，创建不等于发布。
-3. `PUT /resources/{id}/draft` 提交 `expected_revision`、`index_id` 及可选 `storage`（空值/省略表示原部署连接）。服务端从所选内容库 KB 成员派生 source ID，核对文档身份和单一来源，固定成员/修订/项目/内容、连接与索引摘要；不接收来源绑定，不自动创建来源确认记录。
+3. `PUT /resources/{id}/draft` 提交 `expected_revision`、`index_id` 及可选 `storage`（空值/省略表示原部署连接）。服务端核对所选内容库、KB、来源与索引配置，冻结存储、模型和分块等配置事实；当前增量发布不冻结全库成员、文档数或内容摘要；不接收来源绑定，不自动创建来源确认记录。
 4. `POST /resources/{id}/verify` 只检查内容 PostgreSQL 必要元数据可读、所选 KB/READY 索引归属和 profile、Embedding `/profile` 与 Qdrant 所选集合配置兼容连接；不扫描文档/成员/分块、不重算全库 hash、不统计向量点数。读取已有草稿/索引配置摘要只是核对引用，不重新计算语料。服务停止时验证仍失败；连接成功不代表本轮数据已同步完成。
 5. 验证通过后 `POST /resources/{id}/publish`，均携带最新 revision。发布仅复核索引配置、管理权限、验证所属草稿及并发修订，不再全量扫描。验证/发布总 I/O 最长 30 秒，探针不自动重试；超时返回 HTTP 503 和 `knowledge_verification_timeout` 中文 JSON，不等待网关 504。仅失败证据收尾至多另用 1 秒，不接受迟到成功。发布不自动赋予角色权限；实际检索依旧需要 KB＋当前用户 ONES 逐项可读权限。
 
-此简化仅针对管理验证/发布；保存草稿的现有来源摘要、后台分块/索引构建的全量完整性检查及运行时的数据一致性、双重授权不变，不新增内容版本或迁移。同步 INDEXING 仍可与连接检查竞争 I/O，但管理请求的工作量不再随文档/分块数量增加。
+此简化仅针对管理验证/发布；显式全量建索引仍有完整性检查，日常同步按变化文档处理；运行时的数据一致性和双重授权仍保留。同步 INDEXING 仍可与连接检查竞争 I/O，但管理请求的工作量不再随文档/分块数量增加。
 
 历史来源确认 CLI/API 只为兼容留存，不再是新资源保存/发布或运行读取的前提。不得为解决按钮不可用而自动确认真实批次或绑定 Mock Team；撤销历史来源确认不影响新规则资源，应通过停用资源或撤销角色 KB 授权停止检索。
 
@@ -34,7 +40,7 @@ API/Worker/ONES 镜像更新须满足正式 Migrator 和平台 schema readiness 
 
 Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页签并列，选择该页签后才加载知识目录。它复用上述 API：
 
-- 列表和详情分别显示存储、导入来源、索引就绪及发布状态；新建资源只关联所选内容库中已入库 KB，可配置 PostgreSQL/Qdrant 连接并选择凭据中心引用，不提供正文上传、OCR、自动采集或明文密码表单。
+- 列表和详情分别显示存储、导入来源、索引就绪及发布状态；新建资源只关联所选内容库中已入库 KB，可配置 PostgreSQL/Qdrant 连接并选择凭据中心引用，资源表单不提供正文上传、OCR 或明文密码；同页另有运维面板管理 ONES 采集计划、服务和补采。
 - 草稿只选择当前 KB 的 READY 索引；来源只读展示导入记录，不受历史确认状态控制；后台仍核验本地数据、索引和管理权限。保存/验证/发布依次使用返回的新 revision，发布、停用、恢复和归档需要明确确认。
 - 原“来源确认与核验”区域与手工摘要、Job ID 输入已删除。详情仅展示来源，不提供来源写入操作；无需另走导入侧确认流程；历史来源 API 保留但不控制新规则资源，原始文本和向量不变。
 - 读写能力沿用 `platform.read/manage`，只读用户不可修改；前端隐藏不代替服务端管理鉴权。401、403、服务异常和 revision 冲突分开显示固定中文信息，不直接展示原始异常。
@@ -57,7 +63,7 @@ Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页�
 `ones-mcp` 内部 `POST /internal/knowledge/work-item-readability` 使用该 Job 的完整 scope ONES Principal，不注册为模型工具。请求只含 `knowledge_base_id`、`resource_revision_id`、`index_id` 和最多 50 个唯一 `chunk_ids`；无 actor、Team、Provider 地址、操作或任意工作项 UUID。服务端按当前发布资源、来源、索引成员和当前文档版本解析 ONES UUID，同一文档的多个块只检查一次。
 
 - 资源只读解析器仅依赖本地数据/索引，不需要 ONES 地址、Team、管理权限或 JWT 签发器；ONES 内部入口仍校验部署实例与本人身份。复用现有详情 Operation、本人唯一 ONES 身份、默认 Team 和一次 401 刷新，返回前重验授权、身份、资源与候选。
-- Host/Origin、唯一 Bearer、8 KiB 请求体、严格 JSON 字段及每实例最多 4 个在途批次均独立覆盖此入口。调用内 120 秒预算缩短 Provider/登录超时与刷新锁等待，接收调用方截止时间并服从 Job 剩余预算，过期结果丢弃；首次鉴权与阻塞数据库也进入预算。来源管理核验入口仍使用独立的 4 KiB 限额。
+- Host/Origin、唯一 Bearer、8 KiB 请求体、严格 JSON 字段及每实例最多 4 个在途批次均独立覆盖此入口。调用内 360 秒预算缩短 Provider/登录超时与刷新锁等待，接收调用方截止时间并服从 Job 剩余预算，过期结果丢弃；首次鉴权与阻塞数据库也进入预算。来源管理核验入口仍使用独立的 4 KiB 限额。
 - 明确的 Provider 403/404 返回此候选不可读，不附 UUID、标题或正文；其他 Provider/凭据/解析/预算故障使整个批次失败，不返回部分允许项。允许结果不跨调用缓存。
 - 成功只返回已核验引用与编号，正文只在详情解析的内存中短暂存在；响应和该投影的操作审计均不保存正文或 Token。不得把此入口当作来源管理核验、全库权限证明或通用 ONES 代理。
 
@@ -72,25 +78,25 @@ Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页�
 - 平台按持久化文档 ID/版本/UUID 严格校验最多 64 KiB 的引用响应，重验两种 Principal、当前授权、身份/默认 Team/凭据 ACTIVE 状态以及资源/候选；查询中撤权、身份解绑或候选变化均丢弃结果。仅检查凭据状态，不读取或解密 ONES 凭据。401 刷新仍由原 ONES 链路负责。
 - 审计仅记录安全状态、Job/用户/KB/资源版本，不记录请求头、业务正文、被拒绝数量、Provider 原响应或任何 Token；响应禁止缓存。Bridge 不可用/依赖故障不能解释为没有相关缺陷。
 
-当前未配置此可选凭据时平台桥返回不可用，不新增主部署的必需 Secret。在线配置现由 `knowledge/mcp.compose.yml` 显式启用；正式部署仍需批准。生产 Manifest 已注册两个知识工具，但没有冻结这两项的旧 Job 仍无法通过关卡；后续须完成部署与验收，再开放 Agent 知识检索。
+未配置此可选凭据时平台桥返回不可用，不新增未启用知识服务的主部署必需 Secret。旧扩展由 `knowledge/mcp.compose.yml` 启用；独立项目由 `knowledge/ops.compose.yml` 与 `knowledge/deployment.compose.yml` 配套启用。生产 Manifest 已注册两个知识工具，但没有冻结这两项的旧 Job 仍无法通过关卡；后续须完成部署与验收，再开放 Agent 知识检索。
 
-## 目录与检索核心（本机已部署，真实业务链待验收）
+## 目录与检索核心
 
 目录仅返回冻结与当前授权交集内、资源已发布、本地数据/索引兼容的 KB，要求本人具有有效 ONES 身份，但不再与知识库预填实例/Team 比较。仅包含 ID、编码、管理名称和可用状态，不返回文档数量或样本；具体工作项仍由内部桥和 ONES 使用本人默认 Team 逐项检查。固定每页 50 项，按稳定 KB ID 续页。cursor 绑定 Job/用户/应用/发布/快照/授权、可见资源与本人身份，300 秒有效。进程重启、另一实例或篡改导致 invalid；授权或可见资源变化导致 stale，均须从首页重查。游标不可当作授权票据，也不承诺跨副本连续分页。
 
-检索仅接受一个 KB、1–2000 字符的 query、1–20 的 top_k（默认 10）。固定一次读取最多 200 个候选点，回 PostgreSQL 校验当前版本/收录和点身份，按文档去重后逐批通过双身份桥检查本人可读性，最多 50 个工作项、每实例最多 4 个并行检索。输出只包含允许引用和每文档至多 3 个证据位置，不输出缓存标题/正文/附件 URL、向量或拒绝计数。Agent 后续仍需经现有 ONES 详情工具读取当前内容。
+检索仅接受一个 KB、1–2000 字符的 query、1–20 的 top_k（默认 10）。固定一次读取最多 200 个候选点，回 PostgreSQL 校验当前版本/收录和点身份，按文档去重取前 50 篇，用本地 Cross-Encoder 重排后逐批通过双身份桥检查本人可读性，最多 50 个工作项、每实例最多 4 个并行检索。输出包含连续 `rank`、原召回 `retrieval_score`、检索模式与排名 profile，以及允许引用和每文档至多 3 个证据位置，不输出缓存标题/正文/附件 URL、向量或拒绝计数。Agent 后续仍需经现有 ONES 详情工具读取当前内容。
 
 - 明确 403/404 仅过滤该项；Provider/凭据/解析失败使整次检索失败，即使先前已有允许项也不返回部分成功。
 - 候选上限或预留返回复核时间使 top_k 不满时，返回已确认可读引用及 `partial=true`、通用 `bounded_search`；不能据此宣称全库无数据。硬预算已经耗尽则报错并丢弃结果。
-- 已实现的调用内预算取 120 秒与当前 Job attempt 剩余时间的较小值，以 `locked_at` 和执行策略识别当前 claim；重试/终态改变后结果失效。在线 Embedding/Qdrant 不额外重试，离线构建仍保留原超时与重试。
-- 内部 `X-Knowledge-Deadline-Ms`（UTC 毫秒）已从搜索传播到平台/ONES；接收方再次取本地 120 秒与当前 Job attempt 剩余预算的较小值。Header 不增加权限，重复/格式错误/过期拒绝；未提供时仍有本地 Job 限额。部署需同步各服务时钟。服务身份缓存命中、刷新锁、兑换、ONES 登录和 Provider 使用同一剩余预算，超时不标记正常 ONES 凭据失效。
+- 已实现的调用内预算取 360 秒与当前 Job attempt 剩余时间的较小值，以 `locked_at` 和执行策略识别当前 claim；重试/终态改变后结果失效。在线 Embedding/Qdrant 不额外重试，离线构建仍保留原超时与重试。
+- 内部 `X-Knowledge-Deadline-Ms`（UTC 毫秒）已从搜索传播到平台/ONES；接收方再次取本地 360 秒与当前 Job attempt 剩余预算的较小值。Header 不增加权限，重复/格式错误/过期拒绝；未提供时仍有本地 Job 限额。部署需同步各服务时钟。服务身份缓存命中、刷新锁、兑换、ONES 登录和 Provider 使用同一剩余预算，超时不标记正常 ONES 凭据失效。
 - 生产知识 HTTP 已有可取消网络协程的整次请求 timeout，覆盖连接/响应及持续滴流，不只是 socket 空闲超时；不继承代理、不跟随重定向、请求 identity 编码并拒绝压缩响应。目标验证、本人身份、详情解析及一次 401 刷新仍归原客户端，普通 ONES 与离线索引调用保持旧传输合同。本机临时 HTTP 服务测试证明慢响应会中止连接，不代表真实 Provider/部署验收。
-- **任务 7.3/10.4 已完成隔离验收，相关代码已部署本机**：首次鉴权、连接池/锁、SQL/fetch/事务完成与网络均受预算控制。PostgreSQL 轮询取消并淘汰异常连接，正常连接恢复原超时设置；DNS 仅把域名解析交给可终止、无业务内容的短生命周期子进程，IP 不建子进程，不改 Host/TLS。ONES 正文回放保留真实断开语义。120 秒是业务结果截止，并非所有资源必须同一瞬间消失；驱动取消、子进程/临时池回收及失败审计各允许至多 1 秒有界收尾，不再读取或返回业务结果。迟到线程实际退出前仍占用槽位。真实环境网络/ONES/Agent 延迟仍需任务 11 验收，不以健康或隔离故障测试代替真实证据。
+- **阻塞依赖与收尾边界**：首次鉴权、连接池/锁、SQL/fetch/事务完成与网络均受预算控制。PostgreSQL 轮询取消并淘汰异常连接，正常连接恢复原超时设置；DNS 仅把域名解析交给可终止、无业务内容的短生命周期子进程，IP 不建子进程，不改 Host/TLS。ONES 正文回放保留真实断开语义。360 秒是业务结果截止，并非所有资源必须同一瞬间消失；驱动取消、子进程/临时池回收及失败审计各允许至多 1 秒有界收尾，不再读取或返回业务结果。迟到线程实际退出前仍占用槽位。真实环境网络/ONES/Agent 延迟仍需单独验收，不以健康或隔离故障测试代替真实证据。
 - 成功审计仅有授权后的 KB/资源版本/索引、返回数量和 partial；失败仅安全错误码及已认证 Job/用户。无 query、原始异常、业务正文、被拒绝身份/数量或 Token。返回前重验当前授权、身份、来源、发布资源与证据；撤权后不返回旧结果。
 
 ## 模型边界：本地 Embedding，沿用已配置聊天模型
 
-在线 MCP 向量化使用独立 `knowledge-embedding-online`，后台分块/索引/小时同步使用原 `knowledge-embedding`，共享只读固定模型而不共享推理锁。部署/升级和额外内存预算见[Embedding 隔离](../../knowledge/README.md#在线后台-embedding-隔离与升级)。模型繁忙、超时和不可用分别返回 `knowledge_embedding_busy`、`knowledge_embedding_read_timeout`、`knowledge_embedding_unavailable`，不是 PostgreSQL 故障；原始异常不进入响应/审计，不回退后台实例，总预算仍最多 120 秒。
+在线 MCP 向量化使用独立 `knowledge-embedding-online`，后台分块/索引/小时同步使用原 `knowledge-embedding`，共享只读固定模型而不共享推理锁。部署/升级和额外内存预算见[Embedding 隔离](../../knowledge/README.md#在线后台-embedding-隔离与升级)。模型繁忙、超时和不可用分别返回 `knowledge_embedding_busy`、`knowledge_embedding_read_timeout`、`knowledge_embedding_unavailable`，不是 PostgreSQL 故障；原始异常不进入响应/审计，不回退后台实例，总预算仍最多 360 秒，并受 Job 剩余时间限制；文档重排使用独立 `knowledge-reranker`，重排失败返回错误，不静默退回原排序。
 
 用户已接受授权后的检索结果、ONES 正文和历史上下文进入 Agent 既有聊天模型（包括外部模型）。本地 Embedding 只保证向量化不外发，不表示聊天分析阶段也不外发。检索、索引仍使用部署固定的内部 Embedding，失败不回退外部向量服务。
 
@@ -108,11 +114,11 @@ Runtime 的部署默认地址为 `http://knowledge-mcp:9108/mcp`，可选 `KNOWL
 
 工具说明与使用知识工具时的系统提示一致：先分页发现获准 KB，明确选库后检索引用，需要正文再经 ONES 详情回源。不猜 KB/Team；目录可见不代表全文可读；零命中、部分结果和服务异常分别说明；名称、命中及业务正文只作为不可信数据。
 
-**代码注册不是服务已可用。** MCP/ASGI 入口与安全 MCP 审计已有合成测试，可选 Compose 和最小数据库权限已有代码及隔离验证；阻塞依赖的统一截止/取消验收仍归任务 7.3，完整隔离容器归任务 10.4。完成这些步骤和相应验收前，不应发布真实知识应用。本次不会修改旧 Publication、Job Snapshot 或角色授权。
+**代码注册不是服务已可用。** 实际发布前核对部署版本、模型就绪及双权限新 Job 链路。`knowledge_search` v2 的 Schema 已变化，必须按正常流程发布新 Agent、更新应用引用并发布激活；否则新 Job 会被 `mcp_tool_schema_drift` 拒绝。旧 Publication 和 Job Snapshot 不原地改写；知识内容日常同步不要求这项重新发布。
 
 ## 独立 Knowledge MCP 服务
 
-代码位于 [`services/knowledge_mcp_server`](../../services/knowledge_mcp_server/)，与 ONES、钉钉 MCP 同级；不新建单数 `service` 目录。入口为 `services.knowledge_mcp_server.app`，提供固定端口 9108 的 `/mcp`（无状态 Streamable HTTP、JSON 响应）和 `/health`。使用与其他 MCP 一致的 `mcp==2.0.0` 可选依赖组 `knowledge-mcp`，由 `backend/Dockerfile` 的同名 target 打包，非 root、只读根目录、仅受限 tmpfs。部署文件及步骤见[可选知识部署](../../knowledge/README.md#在线-knowledge-mcp独立可选扩展)。
+代码位于 [`services/knowledge_mcp_server`](../../services/knowledge_mcp_server/)，与 ONES、钉钉 MCP 同级；不新建单数 `service` 目录。入口为 `services.knowledge_mcp_server.app`，提供固定端口 9108 的 `/mcp`（无状态 Streamable HTTP、JSON 响应）和 `/health`。使用与其他 MCP 一致的 `mcp==2.0.0` 可选依赖组 `knowledge-mcp`，由 `backend/Dockerfile` 的同名 target 打包，非 root、只读根目录、仅受限 tmpfs。部署文件及步骤见[知识部署入口](../../knowledge/README.md)。
 
 - `app.py` 处理严格 HTTP/JSON、固定工具发现/调用和断开通知；32 KiB 请求、256 KiB 工具结果上限，拒绝重复关键头、Origin、Cookie、URL 参数、非固定 Host 和过期 deadline，响应不缓存。
 - `auth.py` 复用独立 Knowledge audience、完整 scope 和当前 Job 关卡，核对持久化 Job/用户/应用发布/Agent 发布及 attempt、correlation；不读取 ONES 凭据或签发 Token。
@@ -178,6 +184,6 @@ KNOWLEDGE_CONTAINER_ACCEPTANCE=1 .venv/bin/pytest -q --tb=short backend/tests/te
 
 API、ONES MCP、Knowledge MCP 使用正式 Dockerfile target 与启动入口；仅测试驱动镜像增加 pytest/合成夹具。验证真实 HTTP 下的管理登录、草稿/验证/发布、服务身份兑换、已发布内容连接凭据桥、独立 Principal、知识检索、ONES 详情回源、403 过滤、5xx 失败、KB 撤权/恢复、资源停用/启用及容器重启后读取。关闭知识组件后，以独立空知识库数据库及未配置知识凭据的 API 验证普通登录与身份接口。
 
-测试同时在镜像所装 psycopg 版本下执行数据库/DNS/握手/事务截止回归。驱动适配只转发实际 `connect()` 传入的参数，兼容 3.3.4 的生成器 timeout 与 3.3.6 的外层 wait_conn timeout，不扩大 120 秒预算或普通调用权限。
+测试同时在镜像所装 psycopg 版本下执行数据库/DNS/握手/事务截止回归。驱动适配只转发实际 `connect()` 传入的参数，兼容 3.3.4 的生成器 timeout 与 3.3.6 的外层 wait_conn timeout，不扩大调用方原截止或普通调用权限；当前代码的整体上限为 360 秒，主规格差异见本页开头。
 
 证据边界：测试采用合成 ONES HTTP 服务、确定性 Embedding 引擎和单文档语料；外部内容连接模式指向同一个临时 PostgreSQL 数据库。通过不证明真实用户 ONES 权限、物理异库网络/TLS、真实 BGE-M3 质量、聊天模型或完整消息投递链路。正式上线、双真实用户和人工相关性评测仍须单独验收。

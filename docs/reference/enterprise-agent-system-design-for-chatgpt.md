@@ -1,6 +1,6 @@
 # Enterprise Agent 系统设计上下文：架构、表设计与数据流
 
-> 核对日期：2026-09-23（Asia/Shanghai）。依据：当前工作区代码（提交 `48e3f55` 加上未提交改动）、活动迁移目录、Compose 文件与测试。
+> 知识库章节更新：2026-11-04（Asia/Shanghai），依据当前已提交源码、迁移和 Compose 配置。其他领域及附录 A 保留 2026-09-23 的静态快照，不代表本轮重新验收。
 > 用途：上传到 ChatGPT，作为讨论后续规格设计的单文件背景。本文是实现摘要，**不是**主规格；已接受规范以 `openspec/specs/` 下 10 个领域 `spec.md` 为准。
 > 本文不包含任何 Secret、Token、口令、连接串或业务原文。
 
@@ -11,7 +11,7 @@
 | 标签 | 含义 |
 | --- | --- |
 | 已实现 | 在已提交代码、迁移或测试中可以定位 |
-| WIP | 只存在于当前未提交的工作区改动（迁移 141–144 及知识库同步相关代码） |
+| WIP | 历史快照中当时尚未提交的内容；附录中的标记不代表当前实现状态 |
 | 设计意图 | 只出现在 active change 的 proposal/design/tasks 中，代码尚未落地 |
 | 验收欠账 | 代码与自动化测试存在，但目标环境或真实 Provider 的完整链路未验收 |
 
@@ -19,8 +19,8 @@
 
 ### 0.2 本次证据范围
 
-- 在隔离内存 SQLite 上用当前 `Migrator` 从空库执行 `100..144` 共 45 项迁移，导出最终 schema（151 张表），附录 A 由此自动生成。
-- 源码静态核对：服务入口、队列名、状态常量、工具合同、鉴权方式。
+- 2026-09-23 在隔离内存 SQLite 上执行 `100..144` 共 45 项迁移，导出 schema（151 张表），附录 A 保留这份历史结果。
+- 2026-11-04 复核知识库服务入口、增量处理、网页运维、检索合同与当前迁移目录（截至 152）；本轮未重导全库 schema，也未重跑历史验收。
 - **未做**：访问生产或现网数据库、调用真实 ONES/钉钉/模型、部署或重启任何服务。
 
 ### 0.3 与已有文档的关系
@@ -111,7 +111,8 @@ flowchart LR
   FPW --> DOC["docling-serve (2 个本地执行器)"]
   FPW --> FS
 
-  KM --> EMB["knowledge-embedding (bge-m3)"]
+  KM --> EMB["knowledge-embedding-online (BGE-M3 查询向量)"]
+  KM --> RERANK["knowledge-reranker (文档重排)"]
   KM --> QD[("knowledge-qdrant v1.19.1")]
   KM -->|"可读性桥"| API
 
@@ -143,14 +144,20 @@ flowchart LR
 | file-worker | `app.workers.file_worker` | — | 附件下载导入、生命周期维护、Outbox 投影 |
 | file-processing-worker ×2 | `app.workers.file_processing_worker` | 9106 | 各单并发，经 file-service 领取 Docling 槽位 |
 | docling-serve | 固定镜像 `docling-serve:v1.30.0-layout-ocr-v2` | 5001 | 私网文档解析/OCR，不暴露为 Agent 工具 |
-| knowledge-embedding（可选） | `knowledge-embedding:bge-m3-v1` | 内部 | 固定 BGE-M3 向量模型，1024 维 |
+| knowledge-embedding（可选） | 后台 Embedding 服务 | 内部 | 固定 BGE-M3，1024 维，供采集索引使用 |
+| knowledge-embedding-online（可选） | 在线 Embedding 服务 | 内部 | 页面显示“检索向量模型”，供查询使用，与后台进程隔离 |
+| knowledge-reranker（可选） | `services.knowledge_reranker.api` | 内部 | 固定 BGE reranker v2 m3，对召回文档重排 |
 | knowledge-qdrant（可选） | `qdrant/qdrant:v1.19.1@sha256:…` | 内部 | 向量库 |
 | knowledge-ops / knowledge-model-prepare（可选） | 一次性任务 | — | 导入/分块/索引 CLI；模型文件准备 |
 | knowledge-mcp（可选） | `services.knowledge_mcp_server.app` | 9108 | 在线知识检索 MCP |
+| knowledge-sync（可选） | `app.cli.knowledge_sync_worker` | — | 持久任务队列，串行调度计划与补采 |
+| knowledge-ops-controller（可选） | `app.cli.knowledge_ops_controller` | — | 主项目内执行固定构建/启停操作，观察独立知识项目状态 |
 
-知识库组件只在叠加 `knowledge/compose.yml`（离线）与 `knowledge/mcp.compose.yml`（在线）时启用，是根 Compose 的可选扩展。
+当前运维采用同机两个 Compose 项目：主项目叠加 `knowledge/ops.compose.yml` 提供执行器，知识服务由 `knowledge/deployment.compose.yml` 独立管理。Web 与 `knowledge.sh` 共用持久队列；旧 `compose.yml`、`mcp.compose.yml`、`sync.compose.yml` 保留为旧扩展和一次性维护入口。安装步骤见[运维手册](../../knowledge/OPERATIONS.md)。
 
 ### 2.3 网络分区
+
+下表中的知识网络名称对应旧扩展。独立部署通过明确的 `KNOWLEDGE_CONTENT_NETWORK` 连接主 PostgreSQL/API，通过 `KNOWLEDGE_CONTROL_NETWORK` 接入主控制网络；沿用既有数据/模型卷。只有运维执行器持有 Docker socket，API 与前端不持有。
 
 | 网络 | 成员 | 目的 |
 | --- | --- | --- |
@@ -434,27 +441,33 @@ flowchart TD
 
 ### 3.10 知识库
 
-知识库分为已实现的“离线入库 → 分块 → 向量化 → 治理发布 → 在线检索”主链，以及 WIP 的“ONES 工作项增量同步”。
+当前已实现离线导入、ONES 受管采集、按文档增量索引、检索治理及网页运维。源码存在不代表现场凭据、真实 ONES 或 Agent 链路已通过验收。
 
 ```mermaid
 flowchart LR
-  EXP["ONES 导出 jsonl"] -->|"import_ones_knowledge 默认只预检，显式 commit 才写库"| IMP["source / knowledge_base / import_run / document / document_revision / knowledge_base_document / document_relation"]
-  IMP -->|"prepare_knowledge_chunks"| CH["document_chunk_set / document_chunk"]
-  CH -->|"index_knowledge 显式 commit"| VI["vector_index / vector_index_item"]
-  VI --> QD[("Qdrant collection：knowledge_ + 索引UUID十六进制")]
-  EMB["knowledge-embedding bge-m3 1024维"] --> VI
-  VI --> RR["retrieval_resource / retrieval_revision / retrieval_verification（Web 草稿、验证、发布）"]
+  OPS["Web / knowledge.sh"] --> QUEUE["ops_operation 持久队列"]
+  QUEUE --> SYNC["knowledge-sync：计划按来源串行运行"]
+  SYNC --> ONES["ONES 首次全量 / 七日创建窗口 / 指定日期补采"]
+  ONES --> DOC["缺陷、需求、工单三库：变化文档与断点"]
+  EXP["ONES 导出 jsonl：显式离线导入"] --> DOC
+  DOC --> CH["分块与向量检查点"]
+  EMB["后台 BGE-M3"] --> CH
+  CH --> QD[("各库固定 Qdrant collection，增量 upsert")]
+  QD --> RR["资源配置：草稿、验证、发布"]
   RR --> KM["knowledge-mcp"]
+  KM --> QUERY["独立查询 BGE-M3 + 混合召回 + 文档重排"]
   RBAC["rbac_role_application_knowledge_base"] --> KM
   KM -->|"双 Bearer：服务身份 + Knowledge Principal"| BR["api-server 可读性桥（按本人 ONES 权限过滤）"]
 ```
 
 - **离线导入（已实现）**：幂等键为 `import_run(source_id, knowledge_base_id, input_hash)`；文档身份 `document(source_id, source_object_type, external_id)`；修订按内容哈希与来源时间戳判定 `created`/`revised`/`unchanged`/`stale`。导入不调用 ONES、OCR、Embedding 或 Qdrant，也不自动授予 Agent 读取权。
-- **分块（已实现）**：`document_chunk_set(document_revision_id, profile_hash)` 唯一；证据文本 ≤1200 字，嵌入文本 ≤1800 字；块类型 `problem`/`solution`。缺陷使用 `ones-text-chunks/v1`，工单/需求（WIP）使用 `ones-work-item-chunks/v1`，两者刻意分开，避免重算已有缺陷向量。
-- **向量化（已实现）**：Qdrant collection 名只由索引 UUID 派生，point id 为 `uuid5(index_id, chunk_id)`；索引状态 `BUILDING`/`READY`/`FAILED`（WIP 增加 `RETIRED`）。
+- **分块（已实现）**：`document_chunk_set(document_revision_id, profile_hash)` 唯一；证据文本 ≤1200 字，嵌入文本 ≤1800 字；块类型 `problem`/`solution`。支持 `ones-text-chunks/v1`、`ones-work-item-chunks/v1` 及保留标识的 `ones-keep-ids-hybrid-chunks/v1`。增量处理沿用既有兼容索引的分块 profile，不因重启或新增文档重算整库。
+- **向量化（已实现）**：Qdrant collection 名只由索引 UUID 派生，point id 为 `uuid5(index_id, chunk_id)`；索引状态 `BUILDING`/`READY`/`FAILED`/`RETIRED`。迁移 151 引入固定集合增量标记；已有旧索引需显式 adoption，不能由新运维入口自动替代合同转换。
 - **检索治理（已实现）**：每个知识库至多一个 enabled 检索资源；草稿 → 技术验证 → 显式发布；`storage_config_json`（迁移 140）允许绑定独立的 PostgreSQL 内容库与 Qdrant，只存 Secret 引用。平台库始终持有逻辑知识库、授权、资源版本与审计。
-- **在线检索（已实现，验收欠账）**：工具 `knowledge_list_bases`（每页 50）与 `knowledge_search`（`knowledge_base_id`、`query` 1–2000 字、`top_k` 1–20）。knowledge-mcp 使用固定最小权限数据库角色 `knowledge_mcp_reader`；候选结果必须经 api-server 可读性桥按**调用者本人**的 ONES 权限过滤；单次工具总预算最多 120 秒；审计只记计数与版本指针，不记查询与正文。`partial=true` 或零命中不代表知识库为空。
-- **ONES 工作项同步（WIP / 设计意图）**：迁移 142 新增 `sync_binding`（默认停用，固定 3600 秒）、`sync_run`（阶段 `COLLECTING → STAGED → CHUNKING → INDEXING → VERIFIED → ACTIVATED`，另有 `CANCELLED`）、`sync_candidate`（冻结基线 + 候选修订引用，不复制正文），`document` 增加 `pending` 状态；143 增加向量索引代际字段与失引用清理；144 增加 `configuration_version`（4 表示按知识库成员计算摘要）。目前 `SyncService` 只实现到 `COLLECTING → STAGED`；同库短事务激活、ONES 采集适配器、定时 worker、正式数据与真实 ONES 验收都未完成。
+- **在线检索（已实现）**：工具 `knowledge_list_bases`（每页 50）与 `knowledge_search`（`knowledge_base_id`、`query` 1–2000 字、`top_k` 1–20）。最多 200 个候选点去重为 50 篇文档，经本地 Cross-Encoder 重排后，按**调用者本人**的当前 ONES 权限过滤。v2 输出区分 `rank` 与原召回 `retrieval_score`。默认平台连接可复用主平台账号，专用 `knowledge_mcp_reader` 是可选部署方式；外部内容连接仍强制只读事务。
+- **预算与规格差异**：代码最大预算为 360 秒，并取 Job 与上游剩余时间的较小值，调用中续期 Principal 不延长截止；canonical 仍写 120 秒。此处只描述实现，不替代主规格，详见[差异说明](../runbooks/knowledge-governance.md#实现与主规格差异)。审计不记查询或正文；`partial=true` 或零命中不代表知识库为空。
+- **ONES 同步与恢复（已实现）**：一条计划按类型写入三个知识库；首次按起始创建日期全量，此后每小时复核最近七个北京时间创建日，可按创建日期补采。逐文档持久断点为 `PENDING → APPLIED → DONE`，只处理变化项，失败和重启保留成功项。同来源时间戳但内容变化采用返回的新内容创建本地修订，保留旧版本，不伪造 ONES 时间戳；离线导入仍使用自己的冲突合同。
+- **网页运维（已实现）**：迁移 152 增加任务、事件与心跳快照。构建/启停针对共享部署，同步/补采针对计划；暂停自动同步不终止当前任务，关闭网页不影响执行。资源发布控制检索配置可用性，普通内容增量不要求重新发布。外部内容库仍只支持读取，不能借此自动开放受管写入。
 
 ### 3.11 一次工具调用的授权判定链
 
@@ -469,7 +482,7 @@ flowchart LR
 
 ### 4.1 总体约定
 
-- 共 **151 张表**：`public` schema 133 张平台事实表，`knowledge` schema 18 张知识内容表。已提交 head 为 140；工作区 head 为 144，其中 3 张同步表和若干字段是 WIP。
+- 附录 A 的 **151 张表**（平台 133、知识 18）是 2026-09-23 的 head 144 快照，不能用于当前 schema readiness 判断。2026-11-04 迁移目录已到 152，含向量复用、文档增量断点与网页运维表；部署始终使用同一版本代码对应的完整 migration catalog。
 - `public` schema 的 ID 为文本 UUID，时间为 ISO 文本，`*_json` 为 JSON 文本（未使用 JSONB/TIMESTAMPTZ）；`knowledge` schema 在 PostgreSQL 下使用 TIMESTAMPTZ、BIGINT 等原生类型。
 - 迁移目录从 `100_baseline_v1.sql` 开始，版本单调递增、不可复用；已应用迁移不可改 checksum。baseline 同时包含 SQLite 与 PostgreSQL 两套 DDL 块。精确 legacy 042 数据库只能通过 manifest 校验的 adoption 接入。
 - PostgreSQL 表和字段都有中文 `COMMENT`，附录 A 的表说明即来源于此。
@@ -621,7 +634,7 @@ erDiagram
 - Secret：`platform_secret`（元数据与当前版本）+ `platform_secret_version`（AES-GCM 密文、nonce、key_id）+ `platform_secret_reference`（env/vault/kms 引用）+ `platform_secret_change_event`。引用格式 `secret://platform/<code>`。
 - Schema 治理：`schema_migration`（账本）、`schema_baseline_adoption`、`schema_consolidation_checkpoint`、`schema_consolidation_contract_approval`。
 
-### 4.7 知识库 `knowledge` schema（18 张，其中 3 张 WIP）
+### 4.7 知识库 `knowledge` schema（当前主要关系）
 
 ```mermaid
 erDiagram
@@ -641,13 +654,15 @@ erDiagram
   knowledge_base ||--o{ retrieval_resource : "至多一个 enabled"
   retrieval_resource ||--o{ retrieval_revision : ""
   retrieval_revision ||--o{ retrieval_verification : ""
-  source ||--o| sync_binding : "WIP"
-  sync_binding ||--o{ sync_run : "WIP 每来源至多一个活动运行"
-  sync_run ||--o{ sync_candidate : "WIP"
-  sync_run ||--o{ vector_index : "WIP 代际归属"
+  source ||--o| sync_binding : "采集范围与三库映射"
+  sync_binding ||--o{ sync_run : "每来源至多一个活动运行"
+  sync_run ||--o{ sync_candidate : "逐文档断点"
+  sync_binding ||--o{ ops_operation : "逻辑关联，部署操作不带计划"
+  ops_operation ||--o{ ops_event : "安全阶段事件"
 ```
 
-- `document.current_revision_id` 指向当前修订；WIP 的 `pending` 状态要求 `current_revision_id` 为空。
+- `document.current_revision_id` 指向当前修订；`pending` 状态要求 `current_revision_id` 为空。`sync_candidate.processing_step` 保存逐文档进度，`vector_index_item` 保存逐块进度。
+- `ops_operation` 记录操作、重试与关联 run；`ops_event` 仅保存允许的标识、计数、错误码；`ops_runtime` 保存 controller/sync/deployment 心跳及安全快照。ER 图中的运维关系是逻辑关联，不表示存在数据库外键。
 - `document_kind`：`defect`、`ticket`、`requirement`、`article`。
 - 平台 `public.rbac_role_application_knowledge_base` 通过外键引用 `knowledge.knowledge_base`，这是两个 schema 之间唯一的授权连接。
 - 使用独立内容库时，内容实例只需要 `source`、`knowledge_base`、`knowledge_base_document`、`document`、`document_chunk_set`、`document_chunk`、`vector_index`、`vector_index_item` 这些表，不需要平台迁移账本。
@@ -674,11 +689,13 @@ erDiagram
 | `document_processing_docling_slot.state` | AVAILABLE、OCCUPIED、QUARANTINED |
 | `file_representation.status` | AVAILABLE、CONTENT_UNAVAILABLE、DELETED |
 | `knowledge.import_run.state` | running、failed、completed |
-| `knowledge.document.lifecycle_state` | active、unavailable、deleted（WIP：pending） |
-| `knowledge.vector_index.state` | BUILDING、READY、FAILED（WIP：RETIRED） |
+| `knowledge.document.lifecycle_state` | active、unavailable、deleted、pending |
+| `knowledge.vector_index.state` | BUILDING、READY、FAILED、RETIRED |
 | `knowledge.retrieval_resource.status` | enabled、disabled、archived |
 | `knowledge.source_binding.state` | PENDING、CONFIRMED、VERIFIED、REVOKED |
-| `knowledge.sync_run.phase`（WIP） | COLLECTING、STAGED、CHUNKING、INDEXING、VERIFIED、ACTIVATED、CANCELLED |
+| `knowledge.sync_run.phase` | COLLECTING、STAGED、CHUNKING、INDEXING、VERIFIED、ACTIVATED、CANCELLED |
+| `knowledge.sync_candidate.processing_step` | PENDING、APPLIED、DONE |
+| `knowledge.ops_operation.state` | QUEUED、RUNNING、RETRY_WAIT、SUCCEEDED、PARTIAL、FAILED、INTERRUPTED |
 
 ## 6. 固定工具目录
 
@@ -724,20 +741,21 @@ erDiagram
 | 平台范围授权 | `AuthorizationEvaluator.decide_platform_scope` 恒失败，以 `BusinessAuthorizationService` 为准 | 旧的平台范围授权接口仍可用 |
 | MQ 拓扑 | 默认交换机直投；投递不走 MQ | 存在业务交换机或投递队列 |
 | 知识库前端 | 在“工具资源”页的“知识库”Tab 中，没有独立路由 | 知识库没有管理界面 |
-| 迁移范围 | 已提交 head 140，工作区 head 144 | 旧文档中的“当前迁移 132” |
+| 迁移范围 | 2026-11-04 目录截至 152，部署按匹配 catalog 检查 | 将附录的 head 144 当作当前 schema |
+| 知识检索预算 | 实现为最多 360 秒，canonical 仍为 120 秒 | 将运行手册的实现描述视为已经同步规范 |
 
 ## 9. 验收状态与未完成事项
 
 - 2026-09-16 按代码重建 canonical 基线时关闭了此前 29 个 active change，其中 22 项未完成任务保持未勾选，涉及真实 ONES、钉钉、Oracle、新 Publication/Job、Runtime/文件链、跨架构 Docling 等验收。
 - 知识库：本机于 2026-09-20 部署了在线 knowledge-mcp（schema 140），健康检查、服务身份兑换与无业务身份拒绝检查通过；但真实外部内容库、双用户 ONES 权限、Agent 新 Job 与人工召回质量评测都还没有验收。
-- 当前 active change `sync-ones-knowledge-work-items` 对应未提交的 141–144 迁移与同步代码；同步闭环（采集适配器、定时 worker、激活事务）未完成，本机默认同步必须保持停用。
+- 2026-11-04 静态核对：受管采集、定时调度、文档增量应用、重排和网页运维已经落地；上述 2026-09-20 记录仅为历史部署证据。本轮文档更新未调用真实 ONES、执行采集或验证新 Job，也不补勾历史验收任务。
 - 验证层级应分别记录：代码/静态合同 → 本地自动化 → 隔离数据库 → 构建 → 部署就绪 → 新 Job 真实链路。Mock 或容器 healthy 不能替代真实环境验收。
 
 ## 10. 后续规格讨论可以从这里切入
 
 以下是从当前代码状态中观察到的**开放问题**，供讨论时选择，不代表已经决定要做。
 
-1. **知识同步闭环**：激活事务的边界（同库短事务、CAS 水位）、独立内容库场景下是否允许自动激活、失败回退与代际清理策略、同步与离线 CLI 的职责切分。
+1. **知识库后续验收与规格差异**：真实 ONES/双用户授权/新 Job 回复链路、目标主机重排时延与容量，以及 360 秒实现和 120 秒 canonical 的差异；创建日窗口仍不等于更新时间增量或权威删除枚举。
 2. **群聊会话与工作区共享**：是否要让群成员共享 Session/工作区；如果要，需要重新设计 Session key、工作区唯一约束、文件授权与“群共享副本”规则。
 3. **工作区切换判定**：何时由 Agent 询问用户、何时自动关闭旧工作区开启新工作区，以及跨工作区引用已关闭工作区文件的规则。
 4. **Webhook 安全**：是否需要请求体签名与 nonce 防重放，还是明确 Bearer + dedup 即为规范并清理未用的 nonce 表。
@@ -766,13 +784,13 @@ erDiagram
 | ONES/钉钉/知识工具合同 | `backend/app/shared/ones_tool_contracts.py`、`dingtalk_tool_contracts.py`、`knowledge_tool_contracts.py` |
 | 文件与工作区 | `backend/app/modules/file_workspace/`、`attachments/`、`services/file_service/` |
 | 文档处理 | `backend/app/modules/document_processing/`、`backend/app/workers/file_processing_worker.py` |
-| 知识库 | `backend/app/modules/knowledge/`、`backend/app/cli/*knowledge*.py`、`services/knowledge_mcp_server/`、`services/knowledge_embedding/`、`knowledge/` |
+| 知识库 | `backend/app/modules/knowledge/`、`backend/app/cli/*knowledge*.py`、`services/knowledge_mcp_server/`、`services/knowledge_embedding/`、`services/knowledge_reranker/`、`knowledge/` |
 | 配置、Secret、迁移 | `backend/app/modules/platform_config/`、`backend/app/shared/migrations.py`、`backend/migrations/` |
-| 部署 | `docker-compose.yml`、`knowledge/compose.yml`、`knowledge/mcp.compose.yml`、`backend/Dockerfile` |
+| 知识运维与部署 | `knowledge.sh`、`knowledge/ops.compose.yml`、`knowledge/deployment.compose.yml`、`backend/app/modules/knowledge/infrastructure/operations_*.py` |
 
-## 附录A 全量表字段清单（按领域分组，自动导出）
+## 附录A 历史表字段清单（2026-09-23，head 144）
 
-由当前工作区迁移目录在隔离内存 SQLite 上执行到 head 144 后导出，共 151 张表。说明取自迁移中的 `COMMENT ON TABLE`；PK/FK/唯一约束取自 SQLite 元数据，复合外键合并显示，部分唯一索引附带其 WHERE 条件。标注〔WIP〕的表/字段来自尚未提交的 141–144 迁移。字段类型未逐列列出：public schema 全部以 TEXT/INTEGER 存储，ID 为文本 UUID，时间为 ISO 文本，`*_json` 为 JSON 文本；`knowledge` schema 在 PostgreSQL 中使用 TIMESTAMPTZ、BIGINT 等原生类型。
+以下保留当时在隔离内存 SQLite 上执行到 head 144 的导出，共 151 张表；不是当前完整 schema。〔WIP〕仅表示当时提交状态，不能据此判断今天是否实现。当前字段和约束以匹配版本的 `backend/migrations/` 为准，新增知识运维与断点见正文第 4.7 节。说明取自 `COMMENT ON TABLE`，PK/FK/唯一约束取自当时的 SQLite 元数据；部分唯一索引附带 WHERE 条件。字段类型未逐列列出，PostgreSQL 知识 schema 还使用 TIMESTAMPTZ、BIGINT 等原生类型。
 
 ### A.1 身份、外部身份与RBAC（identity-access）（19 张）
 

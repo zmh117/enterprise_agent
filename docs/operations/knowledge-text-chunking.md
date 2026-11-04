@@ -33,6 +33,8 @@
 
 ## 操作
 
+以下是离线 v1 的显式维护命令；日常采集通过 Web / `knowledge.sh` 按文档增量处理，无需另跑全库分块。采用 keep_ids profile 的三库不能直接套用本页旧 profile，应按[同步接管要求](../runbooks/knowledge-ones-hourly-sync.md#已有索引的一次性转换)核对。
+
 在仓库根目录使用当前源码构建的 migrator 镜像。迁移只由 one-shot Migrator 执行；分块 CLI 不执行 DDL。
 
 ```sh
@@ -66,6 +68,6 @@ docker compose run --rm --no-deps migrator python -m app.cli.prepare_knowledge_c
 
 ## 部署边界
 
-执行本阶段时原应用栈已停止，仅恢复原 PostgreSQL 数据卷。更新 schema 后须使用包含相同迁移 head 的新后端镜像；只构建镜像不代表服务已部署或 API 已通过验收。不为完成离线分块擅自启动整个应用栈。
+最初离线分块验收时应用栈曾停止、只保留 PostgreSQL；这是当时的执行环境，不是当前部署状态或每次分块的启动步骤。更新 schema 后须使用包含相同迁移 head 的新后端镜像；只构建镜像不代表服务已部署或 API 已通过验收。不为完成离线分块擅自启动整个应用栈。
 
 分块后按当前向量索引和知识治理手册继续显式准备、验证及发布。当前分块结果本身不能直接视为 Agent 已获准读取的知识资源，也不能代替召回效果或真实 ONES/模型验收。

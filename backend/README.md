@@ -21,9 +21,9 @@ Ingress -> API/Dispatcher -> RabbitMQ -> Worker
 - `managed_channel`、`webhook`、`dingding`：渠道入口、身份解析和结果投递。
 - `external_action`：外部操作意图、确认、固定Provider分派与结果卡片。
 - `file_workspace`、`document_processing`：文件事实、准入、Docling处理与生命周期。
-- `knowledge`：统一来源与版本、知识库收录、受限 ONES 离线导入、分块/Embedding/Qdrant 索引、受管同步及在线目录/检索授权。平台治理与可配置内容存储分别管理；线上 MCP 是可选扩展，不自动发布资源或授予读取权限。
+- `knowledge`：统一来源与版本、知识库收录、受限 ONES 离线导入、分块/Embedding/Qdrant 索引、按文档增量同步、日期补采、文档重排及在线目录/检索授权。平台治理与可配置内容存储分别管理；线上 MCP 是可选扩展，不自动发布资源或授予读取权限。
 
-当前协议为 Runtime 1.5（代码支持 1.4），Agent Runtime 仅为 `python-v1`。截至 2026-10-04，迁移目录为 `100..146`；实际目标 head 以部署镜像的 migration catalog 为准。规范入口为[领域导航](../openspec/specs/README.md)，代码存在不等于目标环境验收通过。
+当前协议为 Runtime 1.5（代码支持 1.4），Agent Runtime 仅为 `python-v1`。截至 2026-11-04，迁移目录为 `100..152`；实际目标 head 以部署镜像的 migration catalog 为准。规范入口为[领域导航](../openspec/specs/README.md)，代码存在不等于目标环境验收通过。
 
 API Capability、Handler、API Connection、Resource Mapping、Tool Release 生命周期和 Internal API Platform 不属于当前后端。
 
@@ -120,3 +120,9 @@ docker compose config --quiet
 ```
 
 Python Runtime 工具链验收必须通过目标 MCP 产生 Tool Call、Runtime Event 与最终 Delivery 证据，不能只以容器健康或配置存在作为成功依据。知识能力的部署、配置和真实 ONES/模型验收边界见[知识扩展说明](../knowledge/README.md)和[知识治理手册](../docs/runbooks/knowledge-governance.md)。
+
+## 知识运维入口
+
+主程序侧 `knowledge-ops-controller` 处理固定知识项目的构建、启停和服务状态；独立知识项目侧 `knowledge-sync` 调度持久计划，再启动 `sync_ones_knowledge --mode once` 执行采集及派生。Web 的 `/api/platform/knowledge/operations` 与根目录 `knowledge.sh` 共用队列、互斥和事件，API 不执行 Shell 或持有 Docker socket。
+
+相关迁移为 150（复用索引）、151（文档增量断点）、152（运维队列与调度），实际部署必须匹配当前 migration catalog。CLI 与服务启动不擅自迁移数据库。安装、采集字段和恢复流程见[知识库运维手册](../knowledge/OPERATIONS.md)；检索预算的实现/主规格差异见[知识治理说明](../docs/runbooks/knowledge-governance.md#实现与主规格差异)。

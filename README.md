@@ -29,7 +29,7 @@ ONES 本人身份绑定属于统一身份体系，独立于旧 API Platform。�
 - 任务文件：File Service内置File MCP与内部流式API，是唯一业务对象存储入口；TXT/Markdown可读写，LOG只读。PDF、DOCX、PPTX、XLSX、PNG、JPEG、WebP使用固定Docling/OCR Profile派生Markdown，原件不进入Job Sandbox。
 - 文档处理：两个Processing Worker各单并发，一个Docling容器含两个执行器；全局两个槽位由PostgreSQL经File Service协调。
 - 只读资源工具：资源目录、数据库 schema/query、Redis、Loki 查询与标签诊断。
-- 知识能力：受限离线导入、固定模型的本地 Embedding/Qdrant 索引、可选 Knowledge MCP 目录与检索，以及显式启用的 ONES 受管同步。检索只返回当前用户可读的工作项引用和证据位置，最新正文通过 ONES 详情工具读取；导入、索引和服务启动不会自动授权或发布资源。
+- 知识能力：受限离线导入、本地 BGE-M3 向量与混合召回、BGE 重排、可选 Knowledge MCP，以及文档级增量采集和日期补采。支持同机独立 Compose，通过 Web 和 `knowledge.sh` 共用运维队列。检索只返回本人 ONES 可读引用，最新正文通过 ONES 详情工具读取；普通同步不重新发布知识资源。
 - 工具资源：Draft、技术验证、Publish、Disable、Archive；运行时只解析已发布 Revision。
 - 工具目标由 Agent 根据用户输入和发布 Skill 在每次 Tool Call 中显式提供，服务端实时复核角色、应用、数据范围和唯一资源。
 - Runtime Grant、Model Probe Token 和配置 Master Key 是其它边界，不属于已退役的 MCP/平台签名密钥。
@@ -124,71 +124,26 @@ docker compose config --quiet
 - [受治理任务文件工作区](docs/architecture/task-file-workspaces.md)
 - [数据库备份与恢复](docs/operations/compose-postgres18-rabbitmq4-upgrade.md)
 
-运维相关
-在**仓库根目录**执行。下面包含主服务、Knowledge MCP、Embedding、Qdrant 和后台同步。
+## 知识库部署与运维
 
-### 1. 全量构建
+同一服务器上，主程序与知识服务可以分开 Compose 管理。首次安装、原卷接管、网络和凭据准备见[知识库网页运维手册](knowledge/OPERATIONS.md)；各服务用途及旧扩展入口见[知识库部署说明](knowledge/README.md)。只运行根 Compose 不会安装知识服务。
 
-```sh
-docker compose \
-  -f docker-compose.yml \
-  -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml \
-  -f knowledge/sync.compose.yml \
-  --profile knowledge --profile knowledge-sync \
-  build
-```
-
-### 2. 首次部署：准备 Embedding 模型
-
-模型已经准备过可跳过；重复执行会验证已有文件。
+控制器安装后，在仓库根目录操作：
 
 ```sh
-docker compose \
-  -f docker-compose.yml \
-  -f knowledge/compose.yml \
-  --profile knowledge-prepare \
-  run --rm --no-deps knowledge-model-prepare
+./knowledge.sh build
+./knowledge.sh up
+./knowledge.sh status
+./knowledge.sh logs
+./knowledge.sh sync --binding-code your-plan-code
+./knowledge.sh backfill 2026-10-10 2026-10-29 --binding-code your-plan-code
+./knowledge.sh stop
 ```
 
-### 3. 全量启动
+构建、启停、同步和补采返回持久任务 ID，进度可在“工具资源 → 知识库”查看。构建成功后需执行 `up` 应用版本；`stop` 保留数据、模型、采集断点和主程序侧执行器。同步命令要求计划已配置并启用；首次启用立即调度全量，之后每小时扫描最近七个北京时间创建日，更早日期使用显式补采。
 
-明确列出服务，避免误启动一次性的 `knowledge-ops` 索引任务：
+日常同步仅处理新增或变化文档，重启复用已完成步骤，不全库重新分块、编码或发布。旧索引接入增量模式仍需按[同步手册](docs/runbooks/knowledge-ones-hourly-sync.md)执行一次性转换；模型、分块或运行架构变化另行维护。
 
-```sh
-docker compose \
-  -f docker-compose.yml \
-  -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml \
-  -f knowledge/sync.compose.yml \
-  --profile knowledge --profile knowledge-sync \
-  up -d \
-  postgres migrator rabbitmq minio minio-init \
-  api-server admin-web python-agent-runtime-a python-agent-runtime-b agent-worker \
-  job-dispatch-worker delivery-dispatch-worker channel-dispatch-worker webhook-worker \
-  file-service file-worker file-processing-worker file-processing-worker-2 docling-serve \
-  tool-mcp ones-mcp dingtalk-mcp dingtalk-runtime external-action-worker \
-  knowledge-embedding knowledge-qdrant knowledge-mcp knowledge-sync
-```
+已接入网页运维的主项目，后续更新 API/前端时继续加载 `knowledge/ops.compose.yml` 和安装时的环境文件；不要恢复成省略知识网络与 Secret 挂载的根 Compose 配置。旧 `knowledge/compose.yml`、`mcp.compose.yml`、`sync.compose.yml` 仅用于尚未接管的扩展部署或明确的一次性维护，不与新调度器并行运行。
 
-后台采集需要 `.env` 配置以下项，并且数据库中的采集绑定已配置、启用：
-
-```dotenv
-KNOWLEDGE_SYNC_ENABLED=true
-KNOWLEDGE_SYNC_BINDING_CODE=你的采集绑定代码(初次可以自定义，后面要固定)
-KNOWLEDGE_SYNC_DATABASE_DSN=${DATABASE_DSN}
-```
-
-暂时不启用采集，就从启动命令末尾去掉 `knowledge-sync`。
-
-```sh
-docker compose --env-file .env \
-  -f docker-compose.yml \
-  -f knowledge/compose.yml \
-  -f knowledge/mcp.compose.yml \
-  -f knowledge/sync.compose.yml \
-  --profile knowledge --profile knowledge-sync \
-  up -d --no-deps knowledge-sync
-```
-
-执行前还需完成凭据初始化。全量启动会运行正常迁移，并可能重建已有服务，建议在维护窗口执行；**不要执行 `down -v`**。
+知识检索 v2 改变了工具 Schema；升级镜像后还需按正式流程更新 Agent、应用发布并激活，以免新消息被 `mcp_tool_schema_drift` 拒绝。知识内容同步无需这项重发布。实现与主规格的预算差异见[知识治理手册](docs/runbooks/knowledge-governance.md#实现与主规格差异)。
