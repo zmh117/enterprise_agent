@@ -12,6 +12,7 @@ from app.modules.delivery.infrastructure.adapters import (
     DingTalkStreamSessionWebhookDeliveryAdapter,
     DingTalkWebhookRobotDeliveryAdapter,
 )
+from app.modules.delivery.application.report_chunker import ReportChunker
 from app.modules.channel.domain.channel_event import ReplyRoute
 from app.modules.dingding.infrastructure.dingtalk_delivery_clients import (
     DingTalkAccessTokenClient,
@@ -42,6 +43,27 @@ class FakeDingTalkTransport:
         if url.endswith("/oauth2/accessToken"):
             return {"accessToken": "fake-access-token", "expireIn": 7200}
         return {"code": "0"}
+
+
+def test_dingtalk_transport_preserves_chunked_markdown_and_emoji() -> None:
+    transport = FakeDingTalkTransport()
+    adapter = DingTalkStreamSessionWebhookDeliveryAdapter(transport=transport)
+    route = ReplyRoute(
+        type="dingtalk_stream_session_webhook",
+        connector_id="",
+        target={"session_webhook": "https://example.test/synthetic-webhook"},
+    )
+    report = "\n\n".join(
+        f"### 🔎 合成条目 SYN-{index}\n**状态：待确认**\n⚠️ 保留证据及不确定性。"
+        for index in range(10)
+    )
+    chunks = ReportChunker(200).titled_chunks(title="合成报告", text=report)
+    assert len(chunks) > 1
+    for title, text in chunks:
+        adapter.send(connector=None, route=route, title=title, text=text)
+    assert [call["payload"]["markdown"] for call in transport.calls] == [
+        {"title": title, "text": text} for title, text in chunks
+    ]
 
 
 class DingTalkDeliveryTests(unittest.TestCase):

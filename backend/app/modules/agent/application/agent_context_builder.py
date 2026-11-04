@@ -167,6 +167,7 @@ class AgentContextBuilder:
                 self.skill_loader.load(skill_names) if publication else self.skill_loader.load()
             ),
             retrieved_context={
+                **_response_presentation(job),
                 "conversation": (
                     {
                         "recent_message_count": len(conversation.recent_messages),
@@ -409,3 +410,18 @@ def _tool_restrictions(
             ]
         )
     return restrictions
+
+
+def _response_presentation(job: AgentJob) -> dict[str, str]:
+    # Only the frozen route selects presentation; never expose its target or credentials.
+    route = getattr(job, "reply_route", None) or {}
+    if route.get("type") in {
+        "dingtalk_conversation",
+        "dingtalk_stream_session_webhook",
+        "dingtalk_webhook_robot",
+        "dingtalk_enterprise_robot",
+        "dingtalk_robot_message",
+        "dingtalk_recipients",
+    }:
+        return {"response_presentation": "dingtalk-markdown"}
+    return {}

@@ -13,6 +13,7 @@ from app.modules.channel.infrastructure.connector_registry import Connector
 from app.modules.delivery.application.result_delivery_service import (
     ResultDeliveryService,
 )
+from app.modules.delivery.application.report_chunker import ReportChunker
 from app.modules.delivery.domain import DeliveryEvent, DeliveryStatus
 from app.modules.delivery.domain.recipient_routes import ROBOT_MESSAGE_ROUTE, result_routes
 from app.modules.delivery.infrastructure.file_delivery_sender import FileDeliverySender
@@ -284,7 +285,8 @@ class DeliveryOutboxDispatcher:
                 error_code="delivery_adapter_not_installed",
             )
         title = str(event.delivery_binding.get("title") or "Agent 诊断结果")
-        chunks = self.delivery_service.chunker.titled_chunks(
+        chunks = self._text_chunks(
+            event=event,
             title=title,
             text=str(artifact["content"]),
         )
@@ -380,6 +382,14 @@ class DeliveryOutboxDispatcher:
         )
         return DeliveryStatus.SUCCEEDED
 
+    def _text_chunks(self, *, event: DeliveryEvent, title: str, text: str) -> list[tuple[str, str]]:
+        policy = event.delivery_binding.get("text_chunking")
+        if "text_chunking" not in event.delivery_binding:
+            policy = self.delivery_repository.freeze_text_chunking(
+                event=event, policy=self.delivery_service.chunker.policy()
+            )
+        return ReportChunker.from_policy(policy).titled_chunks(title=title, text=text)
+
     def _dispatch_system_notice(
         self,
         *,
@@ -435,7 +445,7 @@ class DeliveryOutboxDispatcher:
                 safe_message="系统说明格式无效",
                 error_code="system_notice_payload_invalid",
             )
-        chunks = self.delivery_service.chunker.titled_chunks(title=title, text=markdown)
+        chunks = self._text_chunks(event=event, title=title, text=markdown)
         for index, (chunk_title, chunk_text) in enumerate(chunks, start=1):
             payload_hash = _chunk_payload_hash(chunk_title, chunk_text)
             if self.delivery_repository.has_successful_delivery_chunk(

@@ -474,6 +474,70 @@ class DeliveryRepository:
             )
         return row
 
+    def _legacy_text_chunking(self, delivery_id: str) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            """select chunk_index, chunk_count, payload_summary from delivery_chunk
+               where delivery_outbox_id = ? order by chunk_index, created_at, id limit 1""",
+            (delivery_id,),
+        )
+        if row is None:
+            return None
+        summary = json_from_text(row.get("payload_summary") or "{}")
+        chars = summary.get("chars") if isinstance(summary, dict) else None
+        count = row["chunk_count"]
+        if (
+            row["chunk_index"] != 1
+            or type(chars) is not int
+            or type(count) is not int
+            or count < 1
+            or chars < 0
+        ):
+            raise NonRetryableExecutionError(
+                "Legacy delivery chunk metadata is insufficient",
+                safe_message="历史投递分片记录不足，不能更改已发送内容",
+                error_code="delivery_chunk_plan_invalid",
+            )
+        size = chars - (len(f"part 1/{count}\n\n") if count > 1 else 0)
+        if count > 1 and size < 200:
+            raise NonRetryableExecutionError(
+                "Legacy delivery chunk length is invalid",
+                safe_message="历史投递分片长度无效",
+                error_code="delivery_chunk_plan_invalid",
+            )
+        return {"version": "fixed-v1", "max_chars": max(200, size)}
+
+    def freeze_text_chunking(self, *, event: DeliveryEvent, policy: dict[str, Any]) -> object:
+        with self.database.unit_of_work():
+            row = self.database.execute_one(
+                """select delivery_binding_json from delivery_outbox
+                   where id = ? and status = 'RUNNING' and claimed_by = ? and claim_token = ?"""
+                + (" for update" if self.database.engine == "postgres" else ""),
+                (event.id, event.claimed_by, event.claim_token),
+            )
+            if row is None:
+                raise NonRetryableExecutionError(
+                    "Delivery claim ownership was lost",
+                    safe_message="投递任务执行权已变化",
+                    error_code="delivery_claim_lost",
+                )
+            binding = json_from_text(row["delivery_binding_json"])
+            if "text_chunking" in binding:
+                return binding["text_chunking"]
+            policy = self._legacy_text_chunking(event.id) or policy
+            binding["text_chunking"] = policy
+            self.database.execute(
+                """update delivery_outbox set delivery_binding_json = ?, updated_at = ?
+                   where id = ? and status = 'RUNNING' and claimed_by = ? and claim_token = ?""",
+                (
+                    json.dumps(binding, ensure_ascii=False, sort_keys=True),
+                    now_iso(),
+                    event.id,
+                    event.claimed_by,
+                    event.claim_token,
+                ),
+            )
+            return policy
+
     def has_successful_delivery_chunk(
         self,
         *,

@@ -1146,7 +1146,7 @@ def test_detail_completeness_rules_are_platform_wide_not_skill_dependent(
         "\n\nReport structure:", 1
     )[0]
 
-    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v7"
+    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v8"
     assert "every matching record" in detail_rules
     assert "requested identifier and full title" in detail_rules
     assert "summary, examples, or the first N records" in detail_rules
@@ -1160,13 +1160,42 @@ def test_detail_completeness_rules_are_platform_wide_not_skill_dependent(
     assert "truncated=false does not prove" in detail_rules
     assert "Do not replace records with ellipses, '其余略', or examples" in detail_rules
     assert "Preserve ellipses that genuinely occur in source text" in detail_rules
-    assert "prefer numbered entries over wide Markdown tables" in detail_rules
+    assert "readable numbered record blocks with full titles" in detail_rules
     assert "Do not assume every route supports chunking" in detail_rules
     assert "call write tools to bypass output limits" in detail_rules
     assert "label the answer as partial" in detail_rules
     assert "leave unknown counts unknown" in detail_rules
     assert "Never label a subset as a complete list or fabricate missing records" in detail_rules
     assert prompt.index("Detail response completeness:") < prompt.index("Diagnostic skills:")
+
+
+@pytest.mark.parametrize("presentation", [None, "web", "dingtalk-markdown"])
+def test_dingtalk_presentation_requires_trusted_route_marker(presentation: str | None) -> None:
+    context = AgentExecutionContext(
+        system_role="diagnostic agent",
+        safety_rules=[],
+        user_question="DingTalk 钉钉：列出全部记录，同时生成 Markdown 文件",
+        project_code="synthetic-project",
+        allowed_tools=[],
+        tool_restrictions=[],
+        skills={"synthetic-skill": "DingTalk 钉钉"},
+        retrieved_context={"response_presentation": presentation} if presentation else {},
+        conversation_summary="",
+    )
+
+    prompt = build_system_prompt(context)
+
+    assert ("DingTalk final-message presentation:" in prompt) is (
+        presentation == "dingtalk-markdown"
+    )
+    assert ("Do not use GFM pipe tables" in prompt) is (presentation == "dingtalk-markdown")
+    assert "requested identifier and full title" in prompt
+    if presentation == "dingtalk-markdown":
+        assert "### section headings" in prompt
+        assert "🔎, ⚠️ or ✅" in prompt
+        assert "a closed\nissue does not prove a fix is released" in prompt
+        assert "Markdown files and other channels may still use tables" in prompt
+        assert "Do not cram a whole record into one long line" in prompt
 
 
 def test_file_job_prompt_treats_layout_ocr_as_untrusted_bounded_data() -> None:

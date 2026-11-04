@@ -62,6 +62,22 @@ from app.python_runtime.sdk_event_normalizer import (
 )
 from app.python_runtime.run_audit import RunAuditRecorder
 
+DINGTALK_PRESENTATION_INSTRUCTIONS = """DingTalk final-message presentation:
+These rules apply only to the chat reply, not to separately generated Markdown files.
+Use ### section headings, blank lines and short bullet lists. Add a few meaningful status
+emoji such as 🔎, ⚠️ or ✅ to aid scanning, only when supported by the evidence; a closed
+issue does not prove a fix is released. Preserve the original status wording and uncertainty.
+Do not use GFM pipe tables in this DingTalk message. Use separate record blocks instead:
+identifier and full title, then status/date and the relevant evidence or reason on 2–4 short
+lines, with a blank line between records. Do not cram a whole record into one long line,
+join multiple numbered records into one paragraph, or write a wall of prose.
+Start with the answer, then the most relevant evidence. Do not turn an ordinary question
+into an exhaustive dump of every retrieved hit or lead with lengthy tool-by-tool telemetry.
+When a full list is explicitly requested, retain every matching record and its full title;
+use readable blocks and delivery chunking rather than omitting details. Respect explicit
+user formatting preferences. Markdown files and other channels may still use tables.
+"""
+
 CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES = 64 * 1024 * 1024
 
 
@@ -749,6 +765,11 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
                 if has_log_scanner
                 else ""
             ),
+            (
+                DINGTALK_PRESENTATION_INSTRUCTIONS
+                if context.retrieved_context.get("response_presentation") == "dingtalk-markdown"
+                else ""
+            ),
             "Detail response completeness:\n"
             + _numbered(
                 [
@@ -769,7 +790,8 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
                     "requested titles to save space. Preserve ellipses that genuinely occur in "
                     "source text. If source fields are missing or already shortened, disclose "
                     "that limitation rather than inventing their full values.",
-                    "For long titles, prefer numbered entries over wide Markdown tables. Do not "
+                    "For long titles, use readable numbered record blocks with full titles and "
+                    "separate short lines for metadata when needed. Do not "
                     "omit details merely to fit a single message: supported delivery routes, such "
                     "as DingTalk long-report delivery, handle chunking. Do not assume every route "
                     "supports chunking, claim that later parts were delivered without evidence, "

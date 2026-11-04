@@ -520,8 +520,28 @@ def test_resource_tool_restrictions_discover_before_target_and_do_not_repeat_fai
 
 
 @pytest.mark.parametrize("runtime_kind", ["python-v1"])
+@pytest.mark.parametrize(
+    ("route_type", "presentation"),
+    [
+        ("none", {}),
+        ("webhook", {}),
+        *[
+            (route, {"response_presentation": "dingtalk-markdown"})
+            for route in (
+                "dingtalk_conversation",
+                "dingtalk_stream_session_webhook",
+                "dingtalk_webhook_robot",
+                "dingtalk_enterprise_robot",
+                "dingtalk_robot_message",
+                "dingtalk_recipients",
+            )
+        ],
+    ],
+)
 def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_tools(
     runtime_kind: str,
+    route_type: str,
+    presentation: dict[str, str],
 ) -> None:
     registry = _NoPrefetchToolRegistry()
     builder = AgentContextBuilder(
@@ -542,14 +562,16 @@ def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_too
         agent_runtime_protocol_version="1.5",
         business_application_publication_id="application-publication-1",
         control_plane_build_identity=_CONTROL_PLANE_BUILD_IDENTITY,
+        reply_route={"type": route_type, "target": {"fixture": "synthetic-route-private"}},
     )
 
     context = builder.build(job)  # type: ignore[arg-type]
 
     assert registry.calls == []
     assert context.allowed_tools == ["get_schema_directory"]
-    assert context.retrieved_context == {"conversation": {}}
+    assert context.retrieved_context == {"conversation": {}, **presentation}
     serialized = json.dumps(context.retrieved_context, ensure_ascii=False)
+    assert "synthetic-route-private" not in serialized
     assert "tool_not_assigned" not in serialized
     assert "query_database" not in serialized
     assert "query_loki" not in serialized
