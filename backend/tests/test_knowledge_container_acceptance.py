@@ -18,12 +18,14 @@ ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "backend/tests/support/knowledge_container/compose.yml"
 
 
-def test_isolated_knowledge_container_chain(tmp_path):
+@pytest.mark.parametrize("access_mode", ["online", "offline"])
+def test_isolated_knowledge_container_chain(tmp_path, access_mode):
     if os.environ.get("KNOWLEDGE_CONTAINER_ACCEPTANCE") != "1":
         pytest.skip("explicit isolated container acceptance opt-in required")
     # No deployment environment, credentials, host ports, volumes or Docker socket mounts.
     env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
     env["KNOWLEDGE_ACCEPTANCE_STATE"] = str(tmp_path)
+    env["KNOWLEDGE_ACCESS_MODE"] = access_mode
     project = "knowledge-acceptance-" + uuid.uuid4().hex[:12]
     command = ["docker", "compose", "--env-file", os.devnull, "-p", project, "-f", str(COMPOSE)]
 
@@ -74,6 +76,7 @@ def test_isolated_knowledge_container_chain(tmp_path):
             "ones-mock",
             "knowledge-embedding",
             "knowledge-embedding-online",
+            "knowledge-reranker",
         )
         compose("run", "--rm", "--no-deps", "driver", "seed", timeout=240)
         compose(
@@ -107,6 +110,7 @@ def test_isolated_knowledge_container_chain(tmp_path):
             "ones-mock",
             "knowledge-embedding",
             "knowledge-embedding-online",
+            "knowledge-reranker",
         )
         compose("up", "-d", "--no-build", "--pull", "never", "api-without-knowledge")
         compose("run", "--rm", "--no-deps", "driver", "without", timeout=180)

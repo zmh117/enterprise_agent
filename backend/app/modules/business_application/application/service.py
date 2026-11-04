@@ -469,7 +469,7 @@ class BusinessApplicationService:
         if tool_errors:
             raise NonRetryableExecutionError(
                 "Knowledge application tool dependency is unavailable",
-                safe_message="知识应用缺少 ONES 详情工具依赖",
+                safe_message="知识应用必须同时配置目录与检索工具",
                 error_code="validation_failed",
                 field_errors=tool_errors,
             )

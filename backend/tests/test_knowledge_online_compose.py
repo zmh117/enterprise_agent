@@ -80,6 +80,7 @@ def test_online_render_preserves_internal_network_and_read_only_secret_boundary(
         "DATABASE_DSN",
         "PRINCIPAL_JWKS_FILE",
         "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE",
+        "KNOWLEDGE_ACCESS_MODE",
     }
     assert (
         service["environment"]["DATABASE_DSN"]
@@ -228,9 +229,10 @@ def test_shared_platform_dsn_starts_without_provisioning_reader_role(monkeypatch
         captured["dsn"] = value
         return database
 
-    def assemble(value, keys, *, bootstrap_file, cleanup):
+    def assemble(value, keys, *, bootstrap_file, cleanup, access_mode):
         assert value is database and keys is public_keys
         assert bootstrap_file == "/synthetic/bootstrap"
+        assert access_mode.value == "online"
         return tools
 
     def create(value, *, ready, close):

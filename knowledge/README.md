@@ -36,7 +36,7 @@ docker compose -f docker-compose.yml up -d --build
 
 首次采集从 `first_date` 按北京时间创建日扫描到执行当天；之后每小时复查最近七个创建日。时间戳相同但语义内容变化时采用本次采集内容创建本地修订，旧修订保留。较早创建的事项更新需要明确日期补采。普通重启复用模型、向量与持久断点；模型、分块配置或 CPU 架构变化才进入显式索引维护流程。
 
-知识资源发布表示该库配置可用于检索，普通内容更新不重新发布。工具接口升级则需要新的 Agent/应用发布；例如 `knowledge_search` v2 的 hash 不匹配会阻止新 Job。检索实现使用最多 360 秒预算和文档重排；主规格尚未同步的 120 秒差异见[治理说明](../docs/runbooks/knowledge-governance.md#实现与主规格差异)。
+知识资源发布表示该库配置可用于检索，普通内容更新不重新发布。工具接口升级则需要新的 Agent/应用发布；例如 `knowledge_search` v4 的 hash 不匹配会阻止新 Job。检索实现使用最多 360 秒预算和文档重排；平台知识库授权与离线快照规则见[治理说明](../docs/runbooks/knowledge-governance.md#实现与主规格差异)。
 
 ## 文档导航
 
@@ -79,13 +79,29 @@ Qdrant 默认仅发布 `127.0.0.1:6333`。确需可信局域网访问时显式�
 
 平台持有逻辑 KB、角色应用授权、资源版本和审计；内容实例不成为授权事实源。新外部 KB 首次注册仅在平台创建相同 KB ID 的逻辑身份，不复制正文。保持 KB/文档/分块/索引/点 ID 稳定；同一逻辑 KB 不应指向不相关的新语料。
 
-Knowledge MCP 的 `DATABASE_DSN` **复用部署环境中的平台连接**，不能换成 Web 配置的内容库 DSN。内容凭据经固定 `/api/internal/knowledge/storage-connection` 由服务身份＋当前 Knowledge JWT 双重验证获取；仅可读取当前获授权 KB 的已发布连接，不接收任意 Secret 引用。主密钥、签名私钥和 ONES 凭据不进入 Knowledge MCP。API 与 ONES 核验使用同一内容绑定，返回前继续检查 KB＋本人 ONES 权限。
+Knowledge MCP 的 `DATABASE_DSN` **复用部署环境中的平台连接**，不能换成 Web 配置的内容库 DSN。内容凭据经固定 `/api/internal/knowledge/storage-connection` 由服务身份＋当前 Knowledge JWT 双重验证获取；仅可读取当前获授权 KB 的已发布连接，不接收任意 Secret 引用。主密钥、签名私钥和 ONES 凭据不进入 Knowledge MCP。离线检索不检查本人 ONES 权限；返回前继续检查当前平台 KB 授权、发布资源、收录及修订一致性。
 
 升级 schema 后，部署账号需具备当前平台授权、知识元数据和审计查询所需权限。默认复用平台连接，无需额外创建知识账号；保留的独立账号配置 CLI 仅供自行选择角色隔离的运维使用。API 与 Knowledge MCP 同步更新后重新兑换短期服务 Token，新 scope 精确包含可读性检查、内容连接和在途 Principal 续期三个内部操作。旧资源字段为空时继续使用原部署连接与原 hash，不要求重发布；切换内容连接才需创建新草稿。原导入/分块/索引 CLI 仍使用它自身的显式部署连接，不会自动跟随 Web 的读取配置。
 
 
-## 文档重排与 v2 合同
+## 文档重排与 v4 内容合同
 
 在线检索现在需要独立重排服务及 `knowledge-reranker-models` 模型卷。主 Compose 自动等待 `knowledge-reranker-prepare`；网页 `up` 任务同样调用模型准备，不能只准备 Embedding 模型；该操作不会自动发布工具合同或改动索引。按用户的效果优先要求保留 BGE-v2-m3 和长文本，资源配置为 8 核 / 3 GiB，实际质量和时延需在目标环境验证。
 
-准备命令、同候选对照评测、v2 schema hash 协调发布、新 Publication/Job 和回退步骤见[检索评测与运行说明](../docs/runbooks/knowledge-retrieval-evaluation.md)。`retrieval_score` 仅为召回排序分，Agent 应按最终 `rank` 核实详情，禁止自行用数值阈值丢弃尾部。
+准备命令、同候选对照评测、v4 schema hash 协调发布、新 Publication/Job 和回退步骤见[检索评测与运行说明](../docs/runbooks/knowledge-retrieval-evaluation.md)。`retrieval_score` 仅为召回排序分，Agent 应按最终 `rank` 核实详情，禁止自行用数值阈值丢弃尾部。
+
+## 在线与离线内容检索配置
+
+主 Compose 读取 `KNOWLEDGE_ACCESS_MODE`，默认 `online`。在部署 `.env` 中配置：
+
+```dotenv
+# 真实环境：默认值，逐项核验本人 ONES 当前可读性
+KNOWLEDGE_ACCESS_MODE=online
+# 本机离线测试时显式改为 offline
+```
+
+`online` 需要可达的真实 ONES、本人有效身份，以及 Agent/应用已选择并授予本人的 `ones_get_work_item_detail` 能力；明确 403/404 项过滤，其他核验失败整次报错，不自动降级。`offline` 只按当前用户和业务应用知识库权限读取入库内容，不要求 ONES 身份、详情工具或服务；本次本机测试采用此模式。非法值阻止启动，模型不能通过参数改模式。
+
+修改模式前等待当前任务完成，再执行 `docker compose -f docker-compose.yml up -d --no-deps knowledge-mcp`。该配置在容器启动时生效；两种模式使用同一工具合同，切换模式无需重建索引或再次发布。目录仍需先发现明确 KB，再调用搜索。结果返回完整标题、状态、来源、来源更新时间、入库时间和至多三个命中文本片段；固定标记为入库快照及局部片段，不代表完整文档或最新来源状态。
+
+目录与搜索输入合同标记已升级，须正式更新 Agent 与应用发布后使用新 Job；保留原数据与知识库范围。首次返回只证明该请求成功，不证明业务问题根因或全库检索完整性。

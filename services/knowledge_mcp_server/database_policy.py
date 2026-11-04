@@ -8,6 +8,7 @@ ROLE = "knowledge_mcp_reader"
 READ_COLUMNS = {
     table: tuple(columns.split())
     for table, columns in {
+        "public.user_external_identity": "id user_id provider external_subject_id tenant_code metadata_json status",
         "public.agent_job": "id internal_user_id status session_id agent_publication_id agent_config_hash business_application_id business_application_publication_id business_application_config_hash business_application_route_decision_json execution_policy_json locked_at project_code retry_count",
         "public.agent_session": "id application_publication_id",
         "public.app_user": "id username display_name email status account_type revision created_at updated_at",
@@ -27,7 +28,6 @@ READ_COLUMNS = {
         "public.platform_environment": "id code",
         "public.platform_base": "id code",
         "public.platform_workshop": "id code",
-        "public.user_external_identity": "id external_subject_id metadata_json provider status tenant_code user_id",
         "public.audit_event": "id",
         "public.agent_tool_call": "id mcp_call_id status",
         "public.mcp_operation_audit": "id agent_tool_call_id status",
@@ -37,8 +37,8 @@ READ_COLUMNS = {
         "knowledge.retrieval_resource": "id knowledge_base_id code name status revision state_revision draft_revision_id published_revision_id created_by created_at updated_at",
         "knowledge.retrieval_revision": "id resource_id revision binding_id index_id profile_hash corpus_hash config_hash created_by created_at published_by published_at storage_config_json configuration_version",
         "knowledge.knowledge_base": "id code display_name description state created_at",
-        "knowledge.document": "id current_revision_id external_id lifecycle_state source_id source_object_type document_kind",
-        "knowledge.document_revision": "id document_id content_hash source_project_id",
+        "knowledge.document": "id current_revision_id external_id external_number lifecycle_state source_id source_object_type document_kind",
+        "knowledge.document_revision": "id document_id content_hash title source_project_id source_project_name source_status_name source_updated_at ingested_at",
         "knowledge.knowledge_base_document": "document_id knowledge_base_id state",
         "knowledge.vector_index": "id code knowledge_base_id state profile profile_hash chunk_profile_hash collection_name corpus_hash expected_document_count expected_chunk_count error_code created_at updated_at sync_run_id source_id unreferenced_at incremental",
         "knowledge.document_chunk": "id chunk_set_id ordinal chunk_kind source_field source_start source_end evidence_text evidence_hash embedding_text embedding_hash char_count embedding_char_count quality_flags",

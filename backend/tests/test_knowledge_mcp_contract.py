@@ -67,9 +67,7 @@ def test_real_catalogs_and_frozen_application_contracts(job_fixture):
         assert role_tools[name]["display_name_zh"] != "MCP Tool"
 
 
-@pytest.mark.parametrize(
-    "missing", ["knowledge_list_bases", "knowledge_search", "ones_get_work_item_detail"]
-)
+@pytest.mark.parametrize("missing", ["knowledge_list_bases", "knowledge_search"])
 def test_publication_requires_whole_workflow_without_auto_addition(job_fixture, missing):
     selected = [
         name for name in (*KNOWLEDGE_TOOL_CONTRACTS, "ones_get_work_item_detail") if name != missing
@@ -145,9 +143,14 @@ def test_application_outputs_match_strict_reference_only_contracts(search_fixtur
         assert not Draft202012Validator(schema).is_valid({**output, "raw_text": "合成正文"})
 
 
-def test_runtime_routes_only_frozen_tools_and_isolates_audiences(job_fixture):
+@pytest.mark.parametrize(
+    "job_timeout, expected_timeout_ms", [(30, 30000), (300, 300000), (900, 360000)]
+)
+def test_runtime_routes_only_frozen_tools_and_isolates_audiences(
+    job_fixture, job_timeout, expected_timeout_ms
+):
     c, job = job_fixture["runtime"], job_fixture["job"]
-    context = c.agent_executor.context_builder.build(job)
+    context = replace(c.agent_executor.context_builder.build(job), timeout_seconds=job_timeout)
     initial = AgentRunRequest(
         job.id, job.internal_user_id, job.project_code, context, "synthetic-invocation"
     )
@@ -174,6 +177,8 @@ def test_runtime_routes_only_frozen_tools_and_isolates_audiences(job_fixture):
     servers = client._build_mcp_server(request)
     assert set(servers) == {"ones_mcp", "knowledge_mcp"}
     assert servers["knowledge_mcp"]["url"] == "http://knowledge-mcp:9108/mcp"
+    assert servers["knowledge_mcp"]["timeout"] == expected_timeout_ms
+    assert "timeout" not in servers["ones_mcp"]
     assert servers["knowledge_mcp"]["headers"]["Authorization"] == "Bearer synthetic-kb-token"
     assert "synthetic-ones-token" not in json.dumps(servers["knowledge_mcp"])
     assert "synthetic-kb-token" not in json.dumps(servers["ones_mcp"])
@@ -240,13 +245,13 @@ def test_runtime_refuses_arbitrary_knowledge_endpoint(job_fixture):
         )
 
 
-def test_v2_marker_changes_frozen_hash_and_old_publication_is_denied(job_fixture):
+def test_offline_v3_marker_changes_frozen_hash_and_old_publication_is_denied(job_fixture):
     from app.shared.tool_contract import tool_schema_hash
 
     f = job_fixture
     schema = KNOWLEDGE_TOOL_CONTRACTS["knowledge_search"].input_schema
-    assert schema["$comment"] == "knowledge-search-contract/v2"
-    old = {key: value for key, value in schema.items() if key != "$comment"}
+    assert schema["$comment"] == "knowledge-search-contract/v4-access-mode"
+    old = {**schema, "$comment": "knowledge-search-contract/v2"}
     assert tool_schema_hash(old) != MCP_TOOL_MANIFEST["knowledge_search"].schema_hash
     f["runtime"].database.execute(
         "update agent_publication_mcp_tool set schema_hash=? where tool_identifier='knowledge_search'",
@@ -256,3 +261,7 @@ def test_v2_marker_changes_frozen_hash_and_old_publication_is_denied(job_fixture
         f["gate"].require(
             job_id=f["job"].id, actor_id="user_local_admin", knowledge_base_id="kb-test"
         )
+
+
+def test_knowledge_tool_selection_does_not_require_ones_detail():
+    assert knowledge_tool_dependency_errors(KNOWLEDGE_TOOL_CONTRACTS) == []

@@ -25,7 +25,6 @@ from backend.tests.test_knowledge_search import (
     readable_fixture as readable_fixture,
     bridge_fixture as bridge_fixture,
     search_fixture as search_fixture,
-    search,
 )
 
 
@@ -200,6 +199,7 @@ def test_service_identity_late_refresh_cannot_fallback_or_cache(monkeypatch):
 
 
 def test_same_deadline_crosses_both_http_hops_and_limits_provider(search_fixture, monkeypatch):
+    from app.modules.knowledge.application.readability import ReadabilityRequest
 
     f, observed, provider_limits = search_fixture, [], []
     deadline = int(time.time() * 1000) + 1500
@@ -223,7 +223,10 @@ def test_same_deadline_crosses_both_http_hops_and_limits_provider(search_fixture
         return original_provider(request, timeout)
 
     f["provider_http"]._open_response = provider
-    assert search(f)["documents"]
+    with job_budget(f["runtime"].database, f["job"].id, deadline_ms=deadline).activate():
+        assert f["readability_client"].check(
+            token=f["knowledge_token"], request=ReadabilityRequest.parse(f["body"])
+        )
     assert len(observed) == 2 and observed[1] <= observed[0] <= deadline
     assert all(0 < seconds <= 1.5 for seconds in provider_limits)
 
@@ -302,9 +305,14 @@ def test_production_bridge_clients_keep_fixed_headers_and_deadline(search_fixtur
 
     monkeypatch.setattr(readability_client, "request_bytes", bounded)
     monkeypatch.setattr(readability_bridge, "request_bytes", bounded)
-    f["search"].readability._transport = None
+    f["readability_client"]._transport = None
     f["bridge"].gateway._transport = None
-    assert search(f)["documents"]
+    from app.modules.knowledge.application.readability import ReadabilityRequest
+
+    with job_budget(f["runtime"].database, f["job"].id).activate():
+        assert f["readability_client"].check(
+            token=f["knowledge_token"], request=ReadabilityRequest.parse(f["body"])
+        )["items"]
     assert len(urls) == 2 and f["calls"] == ["POST"]
 
 

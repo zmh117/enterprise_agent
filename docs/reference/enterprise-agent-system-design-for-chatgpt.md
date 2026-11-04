@@ -114,7 +114,7 @@ flowchart LR
   KM --> EMB["knowledge-embedding-online (BGE-M3 查询向量)"]
   KM --> RERANK["knowledge-reranker (文档重排)"]
   KM --> QD[("knowledge-qdrant v1.19.1")]
-  KM -->|"可读性桥"| API
+  KM -->|"内容连接与 Principal 续期"| API
 
   DDW --> FS
   DDW --> DING
@@ -457,14 +457,14 @@ flowchart LR
   RR --> KM["knowledge-mcp"]
   KM --> QUERY["独立查询 BGE-M3 + 混合召回 + 文档重排"]
   RBAC["rbac_role_application_knowledge_base"] --> KM
-  KM -->|"双 Bearer：服务身份 + Knowledge Principal"| BR["api-server 可读性桥（按本人 ONES 权限过滤）"]
+  KM -->|"双 Bearer：服务身份 + Knowledge Principal"| BR["api-server 内容连接与身份续期"]
 ```
 
 - **离线导入（已实现）**：幂等键为 `import_run(source_id, knowledge_base_id, input_hash)`；文档身份 `document(source_id, source_object_type, external_id)`；修订按内容哈希与来源时间戳判定 `created`/`revised`/`unchanged`/`stale`。导入不调用 ONES、OCR、Embedding 或 Qdrant，也不自动授予 Agent 读取权。
 - **分块（已实现）**：`document_chunk_set(document_revision_id, profile_hash)` 唯一；证据文本 ≤1200 字，嵌入文本 ≤1800 字；块类型 `problem`/`solution`。支持 `ones-text-chunks/v1`、`ones-work-item-chunks/v1` 及保留标识的 `ones-keep-ids-hybrid-chunks/v1`。增量处理沿用既有兼容索引的分块 profile，不因重启或新增文档重算整库。
 - **向量化（已实现）**：Qdrant collection 名只由索引 UUID 派生，point id 为 `uuid5(index_id, chunk_id)`；索引状态 `BUILDING`/`READY`/`FAILED`/`RETIRED`。迁移 151 引入固定集合增量标记；已有旧索引需显式 adoption，不能由新运维入口自动替代合同转换。
 - **检索治理（已实现）**：每个知识库至多一个 enabled 检索资源；草稿 → 技术验证 → 显式发布；`storage_config_json`（迁移 140）允许绑定独立的 PostgreSQL 内容库与 Qdrant，只存 Secret 引用。平台库始终持有逻辑知识库、授权、资源版本与审计。
-- **在线检索（已实现）**：工具 `knowledge_list_bases`（每页 50）与 `knowledge_search`（`knowledge_base_id`、`query` 1–2000 字、`top_k` 1–20）。最多 200 个候选点去重为 50 篇文档，经本地 Cross-Encoder 重排后，按**调用者本人**的当前 ONES 权限过滤。v2 输出区分 `rank` 与原召回 `retrieval_score`。默认平台连接可复用主平台账号，专用 `knowledge_mcp_reader` 是可选部署方式；外部内容连接仍强制只读事务。
+- **在线检索（已实现）**：工具 `knowledge_list_bases`（每页 50）与 `knowledge_search`（`knowledge_base_id`、`query` 1–2000 字、`top_k` 1–20）。最多 200 个候选点去重为 50 篇文档，经本地 Cross-Encoder 重排后，按部署配置决定权限边界：`KNOWLEDGE_ACCESS_MODE` 默认 online，需要平台 KB 授权及本人 ONES 当前可读性；显式 offline 才只按平台 KB 授权读取，在线故障不降级。v4 返回完整标题、状态、来源及入库/来源更新时间，并区分 `rank` 与原召回 `retrieval_score`。默认平台连接可复用主平台账号，专用 `knowledge_mcp_reader` 是可选部署方式；外部内容连接仍强制只读事务。
 - **预算与规格差异**：代码最大预算为 360 秒，并取 Job 与上游剩余时间的较小值，调用中续期 Principal 不延长截止；canonical 仍写 120 秒。此处只描述实现，不替代主规格，详见[差异说明](../runbooks/knowledge-governance.md#实现与主规格差异)。审计不记查询或正文；`partial=true` 或零命中不代表知识库为空。
 - **ONES 同步与恢复（已实现）**：一条计划按类型写入三个知识库；首次按起始创建日期全量，此后每小时复核最近七个北京时间创建日，可按创建日期补采。逐文档持久断点为 `PENDING → APPLIED → DONE`，只处理变化项，失败和重启保留成功项。同来源时间戳但内容变化采用返回的新内容创建本地修订，保留旧版本，不伪造 ONES 时间戳；离线导入仍使用自己的冲突合同。
 - **网页运维（已实现）**：迁移 152 增加任务、事件与心跳快照。构建/启停针对共享部署，同步/补采针对计划；暂停自动同步不终止当前任务，关闭网页不影响执行。资源发布控制检索配置可用性，普通内容增量不要求重新发布。外部内容库仍只支持读取，不能借此自动开放受管写入。

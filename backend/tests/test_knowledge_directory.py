@@ -99,7 +99,6 @@ def test_strict_input_no_catalog_side_channel(directory_fixture, arguments):
         "role",
         "resource",
         "binding",
-        "identity",
         "name",
     ],
 )
@@ -144,7 +143,7 @@ def test_cursor_isolated_and_invalidated(directory_fixture, change, monkeypatch)
     assert exc.value.error_code == code
 
 
-@pytest.mark.parametrize("mutation", ["kb", "role", "detail", "identity", "job"])
+@pytest.mark.parametrize("mutation", ["kb", "role", "detail", "job"])
 def test_return_recheck_drops_directory_after_revocation(directory_fixture, monkeypatch, mutation):
     f = directory_fixture
     original = f["directory"]._catalog
@@ -194,3 +193,14 @@ def test_current_user_source_and_no_document_metadata(directory_fixture):
     assert len(listing(f)["items"]) == 1
     with pytest.raises(AppError):
         f["directory"].list_bases(token=f["token"], arguments={})
+
+
+@pytest.mark.parametrize("readable_fixture", [51], indirect=True)
+def test_offline_cursor_survives_ones_identity_changes(directory_fixture):
+    f = directory_fixture
+    cursor = listing(f)["next_cursor"]
+    f["runtime"].database.execute(
+        "update user_external_identity set status='disabled' where provider='ones'"
+    )
+    assert len(listing(f, {"cursor": cursor})["items"]) == 1
+    assert not f["calls"] and not f["exchanges"]

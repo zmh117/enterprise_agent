@@ -5,6 +5,8 @@ import json
 import math
 from typing import Any
 
+from app.shared.knowledge_limits import MAX_RETRIEVAL_SECONDS as MAX_RETRIEVAL_SECONDS
+
 DIMENSION = 1024
 MAX_ITEMS = 8
 MAX_TOKENS = 4096
@@ -12,7 +14,6 @@ MAX_BATCH_TOKENS = 8192
 MAX_BODY_BYTES = 256 * 1024
 # 内部 HTTP 截止合同；在线排队和推理不得重新获得一轮预算。
 DEADLINE_HEADER = "X-Knowledge-Deadline-Ms"
-MAX_RETRIEVAL_SECONDS = 360
 
 
 class VectorError(ValueError):

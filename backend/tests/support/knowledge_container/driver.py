@@ -4,6 +4,7 @@ from dataclasses import replace
 from contextlib import contextmanager
 import base64
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -36,6 +37,7 @@ DSN = "postgresql://postgres@postgres:5432/knowledge_acceptance"
 BASE_URL = "http://api-server:8000"
 ROOT = "/api/platform/knowledge"
 QUERY = "仅合成容器验收查询，不应进入审计"
+ACCESS_MODE = os.environ.get("KNOWLEDGE_ACCESS_MODE", "online")
 
 
 def settings():
@@ -221,8 +223,15 @@ def positive(headers, facts):
         headers, arguments={"knowledge_base_id": facts["knowledge_base_id"], "query": QUERY}
     )
     assert not result.get("isError"), result.get("structuredContent")
-    assert len(result["structuredContent"]["documents"]) == 1
-    return result["structuredContent"]["documents"][0]
+    content = result["structuredContent"]
+    assert content["access_mode"] == ACCESS_MODE
+    assert content["content_mode"] == "ingested_snapshot"
+    assert content["content_scope"] == "matched_chunks"
+    assert len(content["documents"]) == 1
+    hit = content["documents"][0]
+    assert hit["title"] and hit["source_name"] and hit["ingested_at"]
+    assert any(evidence["text"] for evidence in hit["evidence"])
+    return hit
 
 
 def verify(*, after_restart=False):  # noqa: PLR0915
@@ -246,7 +255,7 @@ def verify(*, after_restart=False):  # noqa: PLR0915
                 )
             )
             path = ROOT + "/resources/" + resource["id"]
-            # Exercise the published-connection broker as well as the readability bridge.
+            # Exercise the published-connection broker with a separate reader role.
             storage = {
                 "postgres": {
                     "mode": "external",
@@ -324,11 +333,17 @@ def verify(*, after_restart=False):  # noqa: PLR0915
         assert rpc(ones_headers, arguments=args)["isError"]
         for mode in ("403", "500"):
             (STATE / "provider-mode").write_text(mode)
-            result = rpc(headers, arguments=args)
-            if mode == "403":
-                assert not result.get("isError") and result["structuredContent"]["documents"] == []
+            if ACCESS_MODE == "offline":
+                assert positive(headers, facts) == hit
             else:
-                assert result["isError"] and "documents" not in result["structuredContent"]
+                result = rpc(headers, arguments=args)
+                if mode == "403":
+                    assert (
+                        not result.get("isError") and result["structuredContent"]["documents"] == []
+                    )
+                    assert result["structuredContent"]["access_mode"] == "online"
+                else:
+                    assert result["isError"] and "documents" not in result["structuredContent"]
         (STATE / "provider-mode").write_text("allow")
         positive(headers, facts)
         grants = runtime.database.execute("select * from rbac_role_application_knowledge_base")

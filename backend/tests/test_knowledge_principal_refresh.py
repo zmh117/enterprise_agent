@@ -10,7 +10,11 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from app.modules.knowledge.application.principal import PRINCIPAL_REFRESH_PATH, stable_claims
+from app.modules.knowledge.application.principal import (
+    PRINCIPAL_REFRESH_PATH,
+    current_principal,
+    stable_claims,
+)
 from app.modules.knowledge.application.readability import BRIDGE_PATH
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.infrastructure import readability_bridge as bridge_module
@@ -192,12 +196,30 @@ def wait_for(predicate):
     assert predicate()
 
 
-def test_mcp_crosses_old_300_second_expiry_and_reuses_fresh_identity(mcp_fixture, monkeypatch):
+@pytest.mark.parametrize("access_mode", ["online", "offline"])
+def test_mcp_crosses_old_300_second_expiry_and_reuses_fresh_identity(
+    mcp_fixture, monkeypatch, access_mode
+):
     f = mcp_fixture
     clock, old = identity_clock(f, monkeypatch)
     observed = []
     client = local_client(f, observed)
-    f["tools"].principal_client = f["search"].readability = client
+    f["tools"].principal_client = client
+    from app.modules.knowledge.domain.models import KnowledgeAccessMode
+
+    f["search"].access_mode = KnowledgeAccessMode(access_mode)
+    f["search"].readability = client
+    fresh = []
+    original_authenticate = f["search"].access.authenticate
+
+    def authenticate(token, tool):
+        result = original_authenticate(token, tool)
+        actual = current_principal(token)
+        if actual != f["knowledge_token"]:
+            fresh.append(actual)
+        return result
+
+    monkeypatch.setattr(f["search"].access, "authenticate", authenticate)
     started, release, renewed = threading.Event(), threading.Event(), threading.Event()
     original_renew = InflightPrincipal._renew
 
@@ -229,8 +251,10 @@ def test_mcp_crosses_old_300_second_expiry_and_reuses_fresh_identity(mcp_fixture
     payload = response.json()["result"]
     assert not payload.get("isError") and payload["structuredContent"]["documents"]
     assert f["search"].reranker.calls == 1
-    fresh = [token for path, token in observed if path == BRIDGE_PATH]
-    assert len(fresh) == 1 and fresh[0] != f["knowledge_token"]
+    assert fresh
+    bridge_tokens = [token for path, token in observed if path == BRIDGE_PATH]
+    assert bool(bridge_tokens) == (access_mode == "online")
+    assert all(token in fresh for token in bridge_tokens)
     safe = response.text + json.dumps(
         f["runtime"].database.execute("select * from audit_event"), default=str
     )

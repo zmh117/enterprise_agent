@@ -526,7 +526,9 @@ def test_search_platform_bridge_and_ones_all_read_the_selected_content_database(
         monkeypatch.setattr(platform, "execute_one", execute_one)
         result = search(f)
         assert result["resource_revision_id"] == published["published"]["id"]
-        assert len(result["documents"]) == 1 and f["calls"] == ["POST"]
+        assert len(result["documents"]) == 1 and not f["calls"]
+        assert result["documents"][0]["title"]
+        assert result["documents"][0]["evidence"][0]["text"]
         # 同一索引在内容库中撤销，必须失效，不能读平台原来的 READY 索引兜底。
         remote.execute("update \"knowledge.vector_index\" set state='FAILED'")
         with pytest.raises(KnowledgeGovernanceError):

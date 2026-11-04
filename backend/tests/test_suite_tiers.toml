@@ -52,6 +52,7 @@ contract = [
   "test_knowledge_mcp_server.py",
   "test_knowledge_principal_refresh.py",
   "test_knowledge_database_policy.py",
+  "test_knowledge_access_modes.py",
   "test_knowledge_mcp_contract.py",
   "test_knowledge_authorization.py",
   "test_knowledge_job_access.py",

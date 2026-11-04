@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from backend.tests.support.ones_provider import create_app
 from services.knowledge_embedding.api import create_app as embedding_app
+from services.knowledge_reranker.api import create_app as reranker_app
 
 
 class SyntheticEngine:
@@ -29,3 +30,16 @@ async def controlled_provider(request, call_next):
 
 
 embedding = embedding_app(SyntheticEngine())
+
+
+class SyntheticReranker:
+    def rank(self, query, documents, deadline):
+        deadline.check()
+        return {
+            "scores": [1.0] * len(documents),
+            "token_counts": [10] * len(documents),
+            "truncated": [False] * len(documents),
+        }
+
+
+reranker = reranker_app(SyntheticReranker())

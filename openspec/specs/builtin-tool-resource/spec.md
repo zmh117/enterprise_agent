@@ -444,7 +444,7 @@ tool-mcp MUST 通过通用 MCP Operation Audit 记录 server/tool/schema、Job/S
 - **THEN** 受控事务只清理指定资源领域，verify 核对保留对象与清理结果
 
 ### Requirement: 知识资源与固定目录检索必须执行当前双重授权
-系统 SHALL 通过已验证、已发布且当前启用的知识资源和代码固定 `knowledge_list_bases`、`knowledge_search` 提供读取。发布 SHALL 只确认知识库及其来源、存储、模型和分块配置可用，不冻结成员、数量或内容摘要；正常内容更新不得改变发布修订或要求重新发布。Knowledge MCP MUST 验证自身 audience/scope、RUNNING Job、冻结工具合同、当前用户/应用/角色 KB 范围及资源发布配置；目录可见 MUST NOT 被解释为所有文档可读，命中 MUST 再校验当前文档版本及用户 ONES 可读权限。新工具、收录、索引和目录变化 MUST NOT 自动扩大旧 Publication 或 Job 权限。
+系统 SHALL 通过已验证、已发布且当前启用的知识资源和代码固定 `knowledge_list_bases`、`knowledge_search` 提供入库内容读取。发布 SHALL 只确认知识库及其来源、存储、模型和分块配置可用，不冻结成员、数量或内容摘要；正常内容更新不得改变发布修订或要求重新发布。Knowledge MCP MUST 验证自身 audience/scope、RUNNING Job、冻结工具合同、当前用户/应用/角色 KB 范围及资源发布配置；命中 MUST 再校验当前知识库成员、文档修订和索引证据。部署配置 `KNOWLEDGE_ACCESS_MODE` SHALL 仅接受 `online` 或 `offline`，未设置时默认 `online`，非法值 MUST 阻止启动。在线检索 MUST 在平台知识库授权基础上逐项核验本人 ONES 当前可读性，403/404 项不得返回，身份、权限或服务核验失败 MUST 整次报错，禁止自动降级。只有显式 `offline` 才仅依据知识库授权读取入库内容，不依赖 ONES；模型参数 MUST NOT 覆盖部署模式。目录仅表示平台 KB 可见性，不保证在线命中均可读。新工具、收录、索引和目录变化 MUST NOT 自动扩大旧 Publication 或 Job 的知识库范围；内容返回合同变更 MUST 更新正式发布，不改写历史快照。
 
 #### Scenario: 发现当前知识库
 - **WHEN** 当前 Job 获准调用知识目录
@@ -454,20 +454,32 @@ tool-mcp MUST 通过通用 MCP Operation Audit 记录 server/tool/schema、Job/S
 - **WHEN** 用户/应用/角色 KB 权限撤销、资源停用或发布配置变化
 - **THEN** 目录或检索失败关闭，不回退旧配置；普通内容更新不触发发布配置变化错误
 
-#### Scenario: 来源事项不可读
-- **WHEN** 向量候选对应事项未通过当前用户 ONES 可读性校验
-- **THEN** 不返回该事项引用，也不以服务账号或知识库授权代替个人权限
+#### Scenario: 显式离线模式
+- **WHEN** 部署显式配置 offline，用户和业务应用具有该知识库权限，但 ONES 不可达、未绑定本人身份或未授权详情工具
+- **THEN** 目录与检索仍可返回该库当前有效的入库内容，查询路径不调用 ONES
+
+#### Scenario: 默认在线模式与故障拒绝
+- **WHEN** 配置未设置或为 online，ONES 身份、当前权限或来源服务核验失败
+- **THEN** 检索整体失败，不降级返回离线内容；只有明确通过逐项核验的命中才可返回
+
+#### Scenario: 非法部署配置
+- **WHEN** 配置为空、拼写错误或不是 online/offline
+- **THEN** 知识服务拒绝启动，不选择较宽松的模式
+
+#### Scenario: 当前成员或修订变化
+- **WHEN** 检索途中知识库授权被撤销、命中文档被移出库或修订与索引证据变化
+- **THEN** 返回前复核失败并丢弃整次结果，不返回跨库或过期修订内容
 
 #### Scenario: 内容独立生效
 - **WHEN** 已发布知识库新增文档完成向量处理
 - **THEN** 该文档可参与检索，资源发布修订及未变更文档保持不变
 
-### Requirement: 知识检索必须有界且只返回可读引用
-`knowledge_search` SHALL 接受明确 `knowledge_base_id`、1–2000 字符非空查询和默认 10、范围 1–20 的 `top_k`，不得允许覆盖身份、Team、filter、collection、向量或服务地址。目录和检索 SHALL 受最多 120 秒及当前 Job 剩余预算共同约束。检索 SHALL 只返回文档/修订/索引/来源/工作项引用、编号、分数和每项最多三条证据位置/hash，不返回缓存标题、摘要或正文；获取最新正文 SHALL 使用已有 ONES 详情工具。零命中、受限部分结果和依赖失败 MUST 分别表达，认证材料、查询原文和业务正文不得复制到普通安全摘要或日志。
+### Requirement: 知识检索必须有界且明确返回入库内容快照
+`knowledge_search` SHALL 接受明确 `knowledge_base_id`、1–2000 字符非空查询和默认 10、范围 1–20 的 `top_k`，不得允许覆盖身份、Team、filter、collection、向量或服务地址。目录和检索 SHALL 受最多 360 秒及当前 Job 剩余预算共同约束。检索 SHALL 返回文档/修订/索引/来源/工作项引用、原来源编号、完整标题、原状态、来源项目、来源更新时间、入库时间、排序和每项最多三条带位置/hash 的已入库文本片段；每片段最多 1200 字符，总响应最多 512 KiB，超限明确失败，不悄悄丢弃标题。结果 MUST 标明 `access_mode`（online/offline）、`ingested_snapshot` 与 `matched_chunks`，不得宣称完整文档、来源最新状态或完整检索结果；入库时间不得冒充来源更新时间或最近采集时间。零命中、受限部分结果和依赖失败 MUST 分别表达，认证材料、查询原文和业务正文不得复制到普通安全摘要或日志。在线模式复用当前用户已授权的 ONES 详情能力作实时可读性核验，通过后仍返回带来源时间和入库时间的快照片段；实时权限不意味着快照是最新正文。离线模式不要求 ONES 详情能力。
 
 #### Scenario: 合法检索
-- **WHEN** 合同、索引与当前权限均有效且存在可读命中
-- **THEN** 返回当前版本的有界引用与证据位置，正文仍通过受治理 ONES 详情工具取得
+- **WHEN** 合同、索引与当前知识库权限均有效且存在命中
+- **THEN** 按部署模式完成所需权限核验后返回当前入库修订的有界内容片段和元数据，说明实际模式、快照时间与范围
 
 #### Scenario: 预算或依赖失败
 - **WHEN** 总预算耗尽、依赖异常或读取投影不完整

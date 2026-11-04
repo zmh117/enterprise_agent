@@ -11,7 +11,6 @@ from backend.tests.test_knowledge_mcp_server import (
     mcp_fixture as mcp_fixture_impl,
     headers,
 )
-from backend.tests.test_knowledge_search import SyntheticReadability
 from services.knowledge_mcp_server.execution import CallControl
 from services.knowledge_mcp_server.database_policy import (
     READ_COLUMNS,
@@ -30,7 +29,6 @@ mcp_fixture = mcp_fixture_impl
 
 def test_reader_sql_surface(mcp_fixture, monkeypatch):
     f = mcp_fixture
-    f["tools"].search.readability = SyntheticReadability(f)
     database = f["runtime"].database
     original = database.session
     reads, writes = {}, {}
@@ -69,6 +67,7 @@ def test_reader_sql_surface(mcp_fixture, monkeypatch):
     # SQLite authorizes FK metadata reads itself; PostgreSQL checks FK without
     # exposing the referenced credential table to the caller.
     assert reads.pop("external_identity_credential", set()) <= {"id"}
+    assert reads.pop("user_external_identity", set()) <= {"id"}
     for table, columns in reads.items():
         qualified = table if table.startswith("knowledge.") else "public." + table
         assert columns - {""} <= set(READ_COLUMNS.get(qualified, ())), qualified
@@ -89,6 +88,15 @@ def test_reader_never_grants_raw_messages_credentials_or_business_writes():
         READ_COLUMNS["public.agent_job"]
     )
     assert "public.external_identity_credential" not in READ_COLUMNS
+    assert set(READ_COLUMNS["public.user_external_identity"]) == {
+        "id",
+        "user_id",
+        "provider",
+        "external_subject_id",
+        "tenant_code",
+        "metadata_json",
+        "status",
+    }
     assert "knowledge.document_payload" not in READ_COLUMNS
     assert set(WRITE_TABLES) == {
         "public.audit_event",

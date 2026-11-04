@@ -258,5 +258,9 @@ def test_knowledge_principal_uses_gate_and_exact_audience_scope(job_fixture):
     c.database.execute(
         "delete from rbac_role_application_mcp_tool where tool_identifier='ones_get_work_item_detail'"
     )
+    assert issuer.issue_business_mcp_for_job(job_id=f["job"].id, server_code="knowledge-mcp")
+    c.database.execute(
+        "delete from rbac_role_application_mcp_tool where tool_identifier='knowledge_search'"
+    )
     with pytest.raises(AppError):
         issuer.issue_business_mcp_for_job(job_id=f["job"].id, server_code="knowledge-mcp")

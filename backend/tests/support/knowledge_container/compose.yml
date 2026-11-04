@@ -1,6 +1,7 @@
 # Standalone synthetic acceptance only; never overlay a deployment or load its .env.
 x-platform: &platform
   APP_ENV: test
+  KNOWLEDGE_ACCESS_MODE: ${KNOWLEDGE_ACCESS_MODE-online}
   FEATURE_WEB_ADMIN: "true"
   DATABASE_DSN: postgresql://postgres@postgres:5432/knowledge_acceptance
   APP_CONFIG_MASTER_KEY_FILE: /fixture/master
@@ -41,6 +42,7 @@ services:
       FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE: /fixture/file-processing
       DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE: /fixture/delivery
       KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /fixture/knowledge
+      KNOWLEDGE_ACCESS_MODE: ${KNOWLEDGE_ACCESS_MODE-online}
     volumes: ["${KNOWLEDGE_ACCEPTANCE_STATE:?temporary synthetic directory required}:/fixture:ro"]
     mem_limit: 512m
   api-without-knowledge:
@@ -75,6 +77,7 @@ services:
       DATABASE_DSN: postgresql://knowledge_mcp_reader:synthetic-only-reader-password@postgres:5432/knowledge_acceptance
       PRINCIPAL_JWKS_FILE: /fixture/jwks.json
       KNOWLEDGE_BOOTSTRAP_TOKEN_FILE: /fixture/knowledge
+      KNOWLEDGE_ACCESS_MODE: ${KNOWLEDGE_ACCESS_MODE-online}
     volumes:
       - "${KNOWLEDGE_ACCEPTANCE_STATE}/jwks.json:/fixture/jwks.json:ro"
       - "${KNOWLEDGE_ACCEPTANCE_STATE}/knowledge:/fixture/knowledge:ro"
@@ -104,6 +107,10 @@ services:
   knowledge-embedding-online:
     image: enterprise-agent-knowledge-acceptance-driver:local
     entrypoint: [python, -m, uvicorn, backend.tests.support.knowledge_container.dependencies:embedding, --host, 0.0.0.0, --port, "8096", --no-access-log]
+    mem_limit: 256m
+  knowledge-reranker:
+    image: enterprise-agent-knowledge-acceptance-driver:local
+    entrypoint: [python, -m, uvicorn, backend.tests.support.knowledge_container.dependencies:reranker, --host, 0.0.0.0, --port, "8097", --no-access-log]
     mem_limit: 256m
 
 networks:

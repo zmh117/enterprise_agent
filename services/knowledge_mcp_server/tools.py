@@ -20,7 +20,7 @@ from services.knowledge_mcp_server.storage_credentials import storage_principal
 from services.knowledge_mcp_server.principal import InflightPrincipal
 from app.modules.knowledge.infrastructure.readability_client import KnowledgeReadabilityClient
 
-MAX_RESPONSE_BYTES = 256 * 1024
+MAX_RESPONSE_BYTES = 512 * 1024
 
 
 class KnowledgeMcpTools:
@@ -38,7 +38,7 @@ class KnowledgeMcpTools:
     def list_tools(
         self, *, token: str, headers: Mapping[str, str], control: CallControl
     ) -> list[str]:
-        # Gate 已要求目录/搜索/详情成套授权；同时验证两项完整 scope。
+        # Gate 已要求目录/搜索成套授权；同时验证两项完整 scope。
         for name in KNOWLEDGE_TOOL_CONTRACTS:
             control.check()
             self.auth.resolve(token, name, headers)
@@ -88,7 +88,13 @@ class KnowledgeMcpTools:
                 if name == "knowledge_list_bases"
                 else {
                     key: result[key]
-                    for key in ("knowledge_base_id", "resource_revision_id", "index_id", "partial")
+                    for key in (
+                        "knowledge_base_id",
+                        "resource_revision_id",
+                        "index_id",
+                        "partial",
+                        "access_mode",
+                    )
                 }
                 | {"returned": len(result["documents"])}
             )

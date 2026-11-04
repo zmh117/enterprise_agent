@@ -1,8 +1,10 @@
-"""授权后的有界 dense/混合检索；返回引用，不向调用者返回离线正文。"""
+"""有界入库快照检索；默认执行 ONES 当前可读性检查，显式离线模式仅校验 KB 授权。"""
 
 from app.modules.knowledge.application.principal import PrincipalToken
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 import threading
 from typing import Any
 
@@ -20,15 +22,18 @@ from app.modules.knowledge.application.ports import (
     PrincipalAccess,
     EmbeddingPort,
     QdrantPort,
-    ReadabilityPort,
     RerankPort,
+    ReadabilityPort,
 )
-from app.modules.knowledge.application.readability import ReadabilityCandidates, ReadabilityRequest
-from app.modules.knowledge.application.readability import project_readability
 from app.modules.knowledge.domain.models import (
     KnowledgeJobAccess,
+    KnowledgeAccessMode,
     PinnedKnowledgeResource,
-    OnesKnowledgeIdentity,
+)
+from app.modules.knowledge.application.readability import (
+    ReadabilityCandidates,
+    ReadabilityRequest,
+    project_readability,
 )
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.application.retrieval_budget import RetrievalBudget, knowledge_entry
@@ -77,14 +82,19 @@ class KnowledgeSearch:
         resources: KnowledgeResourceReader,
         embedding: EmbeddingPort,
         qdrant: QdrantPort,
-        readability: ReadabilityPort,
         audit: AuditService,
         *,
         reranker: RerankPort,
+        access_mode: KnowledgeAccessMode = KnowledgeAccessMode.ONLINE,
+        readability: ReadabilityPort | None = None,
     ) -> None:
+        self.access_mode = KnowledgeAccessMode(access_mode)
+        if self.access_mode is KnowledgeAccessMode.ONLINE and readability is None:
+            raise ValueError("在线知识检索必须装配 ONES 可读性检查")
+        self.readability = readability
         self.access, self.resources = access, resources
         self.embedding, self.qdrant = embedding, qdrant
-        self.readability, self.audit = readability, audit
+        self.audit = audit
         self.reranker = reranker
         self._slots = threading.BoundedSemaphore(4)
 
@@ -152,10 +162,9 @@ class KnowledgeSearch:
         access: KnowledgeJobAccess,
         budget: RetrievalBudget,
     ) -> dict[str, Any]:
-        identity = self.access.identity(access.actor_id)
         pin = self.resources.resolve(request.knowledge_base_id)
         with self.resources.content_for(pin) as content:
-            return self._search_content(token, request, access, budget, identity, pin, content)
+            return self._search_content(token, request, access, budget, pin, content)
 
     def _search_content(
         self,
@@ -163,10 +172,14 @@ class KnowledgeSearch:
         request: SearchRequest,
         access: KnowledgeJobAccess,
         budget: RetrievalBudget,
-        identity: OnesKnowledgeIdentity,
         pin: PinnedKnowledgeResource,
         content: KnowledgeContent,
     ) -> dict[str, Any]:
+        identity = (
+            self.access.identity(access.actor_id)
+            if self.access_mode is KnowledgeAccessMode.ONLINE
+            else None
+        )
         index = content.vectors.get(pin.index_code)
         qdrant = content.qdrant or self.qdrant
         if index is None:
@@ -174,10 +187,9 @@ class KnowledgeSearch:
 
         def recheck() -> None:
             budget.check()
-            if (
-                self.access.authenticate(token, "knowledge_search") != access
-                or self.access.identity(access.actor_id) != identity
-            ):
+            if self.access.authenticate(token, "knowledge_search") != access:
+                raise KnowledgeGovernanceError("knowledge_authorization_changed")
+            if identity is not None and self.access.identity(access.actor_id) != identity:
                 raise KnowledgeGovernanceError("knowledge_authorization_changed")
             self.resources.recheck(pin)
             budget.check()
@@ -195,52 +207,63 @@ class KnowledgeSearch:
         recheck()
         ranked = rerank(pool, request.query, self.reranker)
         recheck()
-        documents = ranked.documents
+        documents, timed_out = self._select_documents(
+            ranked.documents,
+            token=token,
+            request=request,
+            access=access,
+            pin=pin,
+            budget=budget,
+            recheck=recheck,
+        )
+        ids = tuple(document["document_id"] for document in documents)
+        snapshots = content.records.document_snapshots(pin.knowledge_base_id, pin.source_id, ids)
         results: list[dict[str, Any]] = []
-        checked, timed_out = 0, False
-        while checked < min(len(documents), MAX_DOCUMENTS) and len(results) < request.top_k:
-            budget.check()
-            if budget.remaining() <= 1:
-                timed_out = True
-                break  # 预留返回前授权/资源复核时间，不启动新的外部请求。
-            recheck()
-            batch = documents[
-                checked : checked + min(10, request.top_k - len(results), MAX_DOCUMENTS - checked)
-            ]
-            bridge_request = ReadabilityRequest(
-                pin.knowledge_base_id,
-                pin.revision_id,
-                pin.index_id,
-                tuple(doc["evidence"][0]["chunk_id"] for doc in batch),
+        for document in documents:
+            snapshot = snapshots[document["document_id"]]
+            if snapshot["current_revision_id"] != document["revision_id"]:
+                raise KnowledgeGovernanceError("knowledge_candidate_invalid")
+            results.append(
+                {
+                    **{
+                        key: document[key]
+                        for key in ("document_id", "revision_id", "retrieval_score")
+                    },
+                    "rank": len(results) + 1,
+                    "index_id": pin.index_id,
+                    "source_id": pin.source_id,
+                    "work_item_uuid": snapshot["external_id"],
+                    "number": snapshot["external_number"],
+                    **{
+                        key: snapshot[key]
+                        for key in (
+                            "title",
+                            "document_kind",
+                            "source_name",
+                            "source_project_id",
+                            "source_project_name",
+                            "source_status_name",
+                        )
+                    },
+                    **{
+                        key: value.isoformat() if isinstance(value, datetime) else value
+                        for key in ("source_updated_at", "ingested_at")
+                        for value in (snapshot[key],)
+                    },
+                    "evidence": [
+                        {**evidence, "text": pool.rows[evidence["chunk_id"]]["evidence_text"]}
+                        for evidence in document["evidence"]
+                    ],
+                }
             )
-            member_facts = ReadabilityCandidates.load(self.resources, bridge_request)
-            raw = self.readability.check(token=token, request=bridge_request)
-            verified = project_readability(raw, bridge_request, access, member_facts)
-            budget.check()
-            for document, reference in zip(batch, verified["items"], strict=True):
-                if reference["readable"]:
-                    results.append(
-                        {
-                            **{
-                                key: document[key]
-                                for key in (
-                                    "document_id",
-                                    "revision_id",
-                                    "retrieval_score",
-                                    "evidence",
-                                )
-                            },
-                            "rank": len(results) + 1,
-                            "index_id": pin.index_id,
-                            "source_id": pin.source_id,
-                            "work_item_uuid": reference["task_id"],
-                            "number": reference["number"],
-                        }
-                    )
-            checked += len(batch)
         recheck()
         pool.recheck(content.vectors, index)
-        budget.check()
+        if (
+            content.records.document_snapshots(pin.knowledge_base_id, pin.source_id, ids)
+            != snapshots
+        ):
+            raise KnowledgeGovernanceError("knowledge_candidate_invalid")
+        recheck()
         partial = len(results) < request.top_k and (
             timed_out
             or len(candidates) >= route_limit(selected_mode)
@@ -257,6 +280,7 @@ class KnowledgeSearch:
                 "resource_revision_id": pin.revision_id,
                 "index_id": pin.index_id,
                 "returned": len(results),
+                "access_mode": self.access_mode.value,
                 "partial": partial,
                 "retrieval_mode": selected_mode,
                 "ranking_profile_hash": ranked.profile_hash,
@@ -269,9 +293,54 @@ class KnowledgeSearch:
             "resource_revision_id": pin.revision_id,
             "index_id": pin.index_id,
             "documents": results,
+            "content_mode": "ingested_snapshot",
+            "access_mode": self.access_mode.value,
+            "content_scope": "matched_chunks",
             "retrieval_mode": selected_mode,
             "ranking_method": "cross_encoder",
             "ranking_profile_hash": ranked.profile_hash,
             "partial": partial,
             "partial_reason": "bounded_search" if partial else None,
         }
+
+    def _select_documents(
+        self,
+        documents: list[dict[str, Any]],
+        *,
+        token: PrincipalToken,
+        request: SearchRequest,
+        access: KnowledgeJobAccess,
+        pin: PinnedKnowledgeResource,
+        budget: RetrievalBudget,
+        recheck: Callable[[], None],
+    ) -> tuple[list[dict[str, Any]], bool]:
+        if self.access_mode is KnowledgeAccessMode.OFFLINE:
+            return documents[: request.top_k], False
+        assert self.readability is not None
+        selected: list[dict[str, Any]] = []
+        checked = 0
+        while checked < min(len(documents), MAX_DOCUMENTS) and len(selected) < request.top_k:
+            recheck()
+            if budget.remaining() <= 1:
+                return selected, True
+            batch = documents[
+                checked : checked + min(10, request.top_k - len(selected), MAX_DOCUMENTS - checked)
+            ]
+            bridge_request = ReadabilityRequest(
+                pin.knowledge_base_id,
+                pin.revision_id,
+                pin.index_id,
+                tuple(doc["evidence"][0]["chunk_id"] for doc in batch),
+            )
+            facts = ReadabilityCandidates.load(self.resources, bridge_request)
+            raw = self.readability.check(token=token, request=bridge_request)
+            verified = project_readability(raw, bridge_request, access, facts)
+            facts.recheck(self.resources)
+            recheck()
+            selected.extend(
+                document
+                for document, reference in zip(batch, verified["items"], strict=True)
+                if reference["readable"]
+            )
+            checked += len(batch)
+        return selected, False

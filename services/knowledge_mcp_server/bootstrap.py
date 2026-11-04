@@ -10,6 +10,7 @@ from app.modules.identity.application.principal_jwt import PrincipalJwks, Princi
 from app.modules.identity.application.service_principal import ServicePrincipalTokenClient
 from app.modules.identity.infrastructure.repository import IdentityRepository
 from app.modules.job.infrastructure.repositories import AuditRepository
+from app.modules.knowledge.domain.models import KnowledgeAccessMode
 from app.modules.knowledge.application.directory import KnowledgeDirectory
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.application.search import KnowledgeSearch
@@ -32,12 +33,18 @@ from services.knowledge_mcp_server.storage_credentials import BrokerStorageCrede
 from app.modules.knowledge.infrastructure.content_access import ManagedContentAccess
 
 
+def configured_access_mode() -> KnowledgeAccessMode:
+    # 未设置时必须在线；非法值不能悄悄放宽为离线权限。
+    return KnowledgeAccessMode(os.environ.get("KNOWLEDGE_ACCESS_MODE", "online"))
+
+
 def build_tools(
     database: Database,
     public_keys: PrincipalJwks,
     *,
     bootstrap_file: str,
     cleanup: ExitStack,
+    access_mode: KnowledgeAccessMode = KnowledgeAccessMode.ONLINE,
 ) -> KnowledgeMcpTools:
     audit = AuditService(AuditRepository(database))
     authorization = BusinessAuthorizationService(
@@ -69,7 +76,16 @@ def build_tools(
     return KnowledgeMcpTools(
         KnowledgeMcpAuth(database, access),
         KnowledgeDirectory(access, resources, audit),
-        KnowledgeSearch(access, resources, embedding, qdrant, bridge, audit, reranker=reranker),
+        KnowledgeSearch(
+            access,
+            resources,
+            embedding,
+            qdrant,
+            audit,
+            reranker=reranker,
+            access_mode=access_mode,
+            readability=bridge,
+        ),
         McpAuditCoordinator(database, max_payload_bytes=16 * 1024, audit_service=audit),
         principal_client=bridge,
     )
@@ -78,6 +94,7 @@ def build_tools(
 def build_app() -> KnowledgeSecurityMiddleware:
     cleanup = ExitStack()
     try:
+        access_mode = configured_access_mode()
         # 不调用平台 load_settings：知识读取端不加载主密钥、签名私钥、模型 Key 或种子配置。
         required = (
             "DATABASE_DSN",
@@ -97,6 +114,7 @@ def build_app() -> KnowledgeSecurityMiddleware:
             PrincipalJwks.from_file(os.environ["PRINCIPAL_JWKS_FILE"]),
             bootstrap_file=os.environ["KNOWLEDGE_BOOTSTRAP_TOKEN_FILE"],
             cleanup=cleanup,
+            access_mode=access_mode,
         )
 
         def ready() -> None:

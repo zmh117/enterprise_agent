@@ -1,6 +1,20 @@
 """知识读取上下文与固定资源引用；不含凭据或正文。"""
 
 from dataclasses import dataclass
+from enum import StrEnum
+
+
+class KnowledgeAccessMode(StrEnum):
+    ONLINE = "online"
+    OFFLINE = "offline"
+
+
+@dataclass(frozen=True)
+class OnesKnowledgeIdentity:
+    identity_id: str
+    subject_id: str
+    instance_code: str
+    team_id: str
 
 
 @dataclass(frozen=True)
@@ -13,14 +27,6 @@ class KnowledgeJobAccess:
     authorization_hash: str
     knowledge_base_ids: tuple[str, ...]
     current_authorization_hash: str
-
-
-@dataclass(frozen=True)
-class OnesKnowledgeIdentity:
-    identity_id: str
-    subject_id: str
-    instance_code: str
-    team_id: str
 
 
 @dataclass(frozen=True)

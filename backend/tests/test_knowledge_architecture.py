@@ -75,9 +75,10 @@ def test_domain_has_no_storage_network_or_outer_layer_dependency(source):
     for name in imports(tree):
         assert not name.startswith(forbidden), (source.name, name)
         if name.startswith("app."):
-            assert (
-                name.startswith("app.modules.knowledge.domain.") or name == "app.shared.exceptions"
-            )
+            assert name.startswith("app.modules.knowledge.domain.") or name in {
+                "app.shared.exceptions",
+                "app.shared.knowledge_limits",
+            }
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             assert not (isinstance(node.func, ast.Name) and node.func.id in {"open", "__import__"})

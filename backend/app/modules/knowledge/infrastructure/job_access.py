@@ -19,7 +19,6 @@ from app.modules.knowledge.domain.models import KnowledgeJobAccess
 
 KNOWLEDGE_TOOLS = ("knowledge_list_bases", "knowledge_search")
 KNOWLEDGE_SERVER = "knowledge-mcp"
-DETAIL_TOOL = "ones_get_work_item_detail"
 
 
 class KnowledgeJobGate:
@@ -73,7 +72,7 @@ class KnowledgeJobGate:
             or snapshot.get("agent_publication_id") != job["agent_publication_id"]
         ):
             raise self._invalid()
-        expected = {**dict.fromkeys(KNOWLEDGE_TOOLS, KNOWLEDGE_SERVER), DETAIL_TOOL: "ones-mcp"}
+        expected = dict.fromkeys(KNOWLEDGE_TOOLS, KNOWLEDGE_SERVER)
         tools = {tool["tool_identifier"]: tool for tool in snapshot["tools"]}
         if any(
             tools.get(name, {}).get("server_code") != server for name, server in expected.items()
@@ -181,7 +180,7 @@ class KnowledgeJobGate:
                 or row["agent_schema_hash"] != tools[name]["schema_hash"]
             ):
                 raise self._invalid()
-        for tool in (*KNOWLEDGE_TOOLS, DETAIL_TOOL):
+        for tool in KNOWLEDGE_TOOLS:
             self.authorization.require(
                 user_id=actor_id,
                 application_id=job["business_application_id"],

@@ -16,6 +16,7 @@ from app.modules.agent.domain.runtime import (
     ToolCallBudget,
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.shared.knowledge_limits import MAX_RETRIEVAL_SECONDS
 from app.shared.mcp_server_policy import (
     FILE_MCP_SERVER_CODE,
     DINGTALK_MCP_SERVER_CODE,
@@ -367,6 +368,12 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                         "Authorization": f"Bearer {token}",
                     },
                 }
+                if server_code == KNOWLEDGE_MCP_SERVER_CODE:
+                    # SDK 的 HTTP 首响应默认只有 60 秒；显式跟随服务/Job 上限。
+                    # invocation 总截止与服务端剩余预算仍独立生效，不为本次调用续期。
+                    servers[alias]["timeout"] = (
+                        min(MAX_RETRIEVAL_SECONDS, request.context.timeout_seconds) * 1000
+                    )
                 continue
             if policy.auth_mode is McpServerAuthMode.FILE_PRINCIPAL_JWT:
                 if server_code != FILE_MCP_SERVER_CODE:

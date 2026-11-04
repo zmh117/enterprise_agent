@@ -54,6 +54,7 @@ def test_external_chat_publication_needs_no_internal_approval(knowledge_contract
         ]
         if missing_tool:
             config["mcp_tool_ids"].remove(missing_tool)
+        if missing_tool in {"knowledge_search", "knowledge_list_bases"}:
             with pytest.raises(NonRetryableExecutionError):
                 publish(c, config)
         else:
@@ -122,7 +123,7 @@ def test_worker_accepts_authorized_knowledge_with_existing_external_model(knowle
         c.database.close()
 
 
-def test_application_cannot_drop_detail_from_agent_envelope(job_fixture):
+def test_application_cannot_drop_directory_from_knowledge_pair(job_fixture):
     c, job = job_fixture["runtime"], job_fixture["job"]
     with pytest.raises(NonRetryableExecutionError) as failure:
         c.business_application_service.mcp_tool_composition_service.prepare(
@@ -132,7 +133,7 @@ def test_application_cannot_drop_detail_from_agent_envelope(job_fixture):
     assert failure.value.field_errors[0]["field"] == "mcp_tools"
 
 
-@pytest.mark.parametrize("tool", ["knowledge_search", "ones_get_work_item_detail"])
+@pytest.mark.parametrize("tool", ["knowledge_search", "knowledge_list_bases"])
 def test_worker_rechecks_current_grants_before_model_or_summary(job_fixture, monkeypatch, tool):
     c, job = job_fixture["runtime"], job_fixture["job"]
     c.database.execute(

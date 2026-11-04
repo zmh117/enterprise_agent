@@ -47,7 +47,7 @@ docker compose -f docker-compose.yml \
 - 报告 `encoding/retrieval/reranking/total` 耗时、截断比例、`partial_rate`、`bounded_rate`、失败类别。p95 表示约 95% 请求不超过该耗时，使用 nearest-rank；少量样本的 p95 仅供观察。
 - 报告只含汇总、索引/KB/source 身份和数据集/代码/候选快照/语料/embedding/chunk/ranking profile 摘要；不输出问题、query_id、标签、命中清单、文本或原始异常。
 - 完成时重新校验候选 revision/块 hash、索引、来源、代码和 ranking profile；包括增量索引中保持 index ID 不变但内容变化的情况。变化使比较无效。
-- `end_to_end_latency=null`、`authorization_verified=false`。离线耗时不包括 ONES 可读性、详情或 Agent 模型响应；不能替代在线总检索 p95 或 Agent 端到端验收。
+- `end_to_end_latency=null`、`authorization_verified=false`。离线评测耗时不包括平台知识库授权复核或 Agent 模型响应；不能替代在线总检索 p95 或 Agent 端到端验收。
 
 有任一调用故障时 CLI 输出脱敏汇总但退出码为 1；输入、语料或版本不合法时只输出固定失败码，没有部分指标。真实人工集也始终 `business_acceptance=false`：取得基线后仍需用户确认质量/时延门槛和双权限端到端复测。纯指标函数支持按当前授权观察得到的可见相关集合计算，但本离线 CLI 不接受文件自报权限，也不宣称已执行权限校验。
 
@@ -71,13 +71,13 @@ docker compose -f docker-compose.yml \
 
 超过 300 秒的在途请求通过固定内部入口续期 Knowledge Principal，单张 TTL 仍不超过 300 秒。到期前 60 秒续期，每次最多 5 秒；平台与 MCP 两端复核身份、Job 和权限，失败取消检索，不重新推理。新版固定服务 scope 增加 `internal:knowledge:principal:refresh`，需协调升级签发/验证端并重新获取服务身份。续期仅在当前调用内有效，不为后续工具调用或重试保留票据。若 Job 剩余预算不足 360 秒，仍按较短预算结束；不能通过续期延长 Job。
 
-`knowledge_search` v2 将 `score` 改为 `retrieval_score`，新增连续 `rank`、实际检索模式及 ranking profile；不返回重排 logit。input schema 的固定 `$comment=knowledge-search-contract/v2` 进入既有 schema hash，旧 Publication/Job 会继续因合同不匹配被拒绝。协调发布步骤：
+`knowledge_search` v4 在既有 `retrieval_score`、连续 `rank`、实际检索模式及 ranking profile 上增加入库快照元数据、命中文本片段和实际 `access_mode`；不返回重排 logit。input schema 的固定 `$comment=knowledge-search-contract/v4-access-mode` 进入既有 schema hash，旧 Publication/Job 会继续因合同不匹配被拒绝。协调发布步骤：
 
 1. 截止上限已由 240 秒调整为 360 秒，需协调重建 Knowledge MCP、在线 Embedding、Reranker 及配套 API/ONES MCP；只更新模型服务无法解除外层旧截止。保存现有镜像版本与已发布合同摘要，准备模型并验证固定 profile，在隔离环境完成质量及资源测试。
 2. 在发布窗口更新 MCP/API/Worker/Runtime 中使用统一工具合同的组件；确认实际 MCP tools/list 与 Runtime 冻结输入 schema 均保留 v2 注解。
-3. 通过既有应用/Agent 发布流程产生新 Publication，使用新 Job；不修改历史快照。复测 ONES 可读性、撤权、最新详情和统一 Agent 核实规则。
+3. 通过既有应用/Agent 发布流程产生新 Publication，使用新 Job；不修改历史快照。复测显式 offline 时内容读取、默认 online 的实时可读性核验与故障拒绝、平台撤权、成员/版本变化及快照时效说明。
 4. 回退须协调恢复 API/MCP 的服务身份 scope、代码镜像与对应工具合同，并重新发布产生匹配的 Publication/Job；不得只停掉 reranker 或在运行中静默改用旧排序。独立模型卷可保留，既有索引无需回滚。
 
 尚无人工作业集时，可在授权本地数据上做有界候选/性能诊断，并明确标记标签来源。原文标题自查询或自动生成问法只能作流程检查。建议从约 50 条独立问题建立人工调参集与按问题/事项隔离的冻结验收集，再验证 MRR@10 提高、Recall@20 不下降；已知漏排问题单列前 3 命中，候选不存在时先记录召回/数据缺口。
 
-规范同步边界：当前代码采用 360 秒并执行 v2 工具合同；canonical 中仍保留 120 秒，详见[实现与主规格差异](knowledge-governance.md#实现与主规格差异)。本手册描述实现，不修改或替代 canonical 要求。
+规范同步边界：本次离线检索变更将 canonical 同步为 360 秒上限与 v4 可配置内容合同，详见[实现与主规格差异](knowledge-governance.md#实现与主规格差异)。真实运行效果仍以独立验收证据为准。

@@ -149,6 +149,31 @@ class GovernanceStore:  # noqa: PLR0904
             raise KnowledgeGovernanceError("knowledge_candidate_invalid")
         return result
 
+    def document_snapshots(
+        self, base_id: str, source_id: str, ids: tuple[str, ...]
+    ) -> dict[str, Any]:
+        if not ids:
+            return {}
+        if len(ids) > 20:
+            raise KnowledgeGovernanceError("knowledge_candidate_invalid")
+        rows = self.database.execute(
+            "select d.id,d.external_id,d.external_number,d.current_revision_id,d.document_kind,"
+            "r.title,r.source_project_id,r.source_project_name,r.source_status_name,"
+            "r.source_updated_at,r.ingested_at,s.display_name as source_name "
+            f"from {self.t('document')} d join {self.t('document_revision')} r "
+            "on r.id=d.current_revision_id and r.document_id=d.id "
+            f"join {self.t('knowledge_base_document')} m on m.document_id=d.id "
+            f"join {self.t('source')} s on s.id=d.source_id "
+            "where m.knowledge_base_id=? and m.state='included' "
+            "and d.lifecycle_state='active' and d.source_id=? "
+            f"and d.id in ({','.join('?' for _ in ids)})",
+            (base_id, source_id, *ids),
+        )
+        result = {row["id"]: row for row in rows}
+        if set(result) != set(ids):
+            raise KnowledgeGovernanceError("knowledge_candidate_invalid")
+        return result
+
     def source_catalog(self) -> dict[str, Any]:
         return {
             "sources": self.sources(),

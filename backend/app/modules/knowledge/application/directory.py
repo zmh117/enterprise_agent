@@ -18,7 +18,6 @@ from app.modules.knowledge.domain.governance import (
 )
 from app.modules.knowledge.domain.models import KnowledgeJobAccess
 from app.modules.knowledge.application.ports import PrincipalAccess
-from app.modules.knowledge.domain.models import OnesKnowledgeIdentity
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.domain.vector_contract import fingerprint
 from app.modules.knowledge.application.retrieval_budget import knowledge_entry
@@ -69,9 +68,7 @@ class KnowledgeDirectory:
             }
         )
 
-    def _catalog(
-        self, access: KnowledgeJobAccess, identity: OnesKnowledgeIdentity
-    ) -> tuple[list[dict[str, Any]], str]:
+    def _catalog(self, access: KnowledgeJobAccess) -> tuple[list[dict[str, Any]], str]:
         items, facts = [], []
         for base_id in access.knowledge_base_ids:
             try:
@@ -95,7 +92,6 @@ class KnowledgeDirectory:
         return items, fingerprint(
             {
                 "resources": facts,
-                "identity": asdict(identity),
                 "authorization": access.current_authorization_hash,
             }
         )
@@ -132,8 +128,7 @@ class KnowledgeDirectory:
         ):
             raise KnowledgeGovernanceError("knowledge_cursor_invalid")
         access = self.access.authenticate(token, "knowledge_list_bases")
-        identity = self.access.identity(access.actor_id)
-        items, state = self._catalog(access, identity)
+        items, state = self._catalog(access)
         binding = self._binding(access)
         after = self._position(cursor, binding, state) if cursor else ""
         if after and not any(item["knowledge_base_id"] == after for item in items):
@@ -156,12 +151,7 @@ class KnowledgeDirectory:
             ).decode("ascii")
         # 包括页外新增/停用的资源，避免以第一页的允许状态代替后续页面授权。
         current = self.access.authenticate(token, "knowledge_list_bases")
-        current_identity = self.access.identity(access.actor_id)
-        if (
-            current != access
-            or current_identity != identity
-            or self._catalog(current, current_identity)[1] != state
-        ):
+        if current != access or self._catalog(current)[1] != state:
             raise KnowledgeGovernanceError("knowledge_cursor_stale")
         self.audit.record(
             "knowledge.directory.listed",

@@ -14,6 +14,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && pip install --require-hashes --no-deps -r "$lock" \
     && python -c "import platform, torch; assert platform.machine() in {'aarch64', 'x86_64'}; assert torch.version.cuda is None"
 COPY backend/app/__init__.py /app/backend/app/
+COPY backend/app/shared/__init__.py backend/app/shared/knowledge_limits.py /app/backend/app/shared/
 COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/knowledge/__init__.py /app/backend/app/modules/knowledge/
 COPY backend/app/modules/knowledge/embedding_model.json backend/app/modules/knowledge/embedding_runtime.lock backend/app/modules/knowledge/embedding_runtime_amd64.lock /app/backend/app/modules/knowledge/

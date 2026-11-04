@@ -15,8 +15,9 @@ from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.application.directory import KnowledgeDirectory
 from app.modules.knowledge.infrastructure.reader_access import KnowledgePrincipalAccess
 from app.modules.knowledge.infrastructure.readability_client import KnowledgeReadabilityClient
-from app.modules.knowledge.application.readability import BRIDGE_PATH, ReadabilityCandidates
+from app.modules.knowledge.application.readability import BRIDGE_PATH
 from app.modules.knowledge.application.search import KnowledgeSearch
+from app.modules.knowledge.domain.models import KnowledgeAccessMode
 from app.modules.knowledge.application import retrieval_budget
 from app.modules.knowledge.application.retrieval_budget import DEADLINE_HEADER, current_budget
 from app.modules.knowledge.domain.vector_contract import VectorError
@@ -67,11 +68,12 @@ def search_fixture(bridge_fixture):
         f["endpoint"].resources,
         f["vector"].embedding,
         f["vector"].qdrant,
-        client,
         f["runtime"].audit_service,
         reranker=SyntheticReranker(),
+        access_mode=KnowledgeAccessMode.OFFLINE,
+        readability=client,
     )
-    return {**f, "search": search, "hops": hops}
+    return {**f, "search": search, "readability_client": client, "hops": hops}
 
 
 def search(f, **extra):
@@ -85,7 +87,7 @@ def search(f, **extra):
     )
 
 
-def test_reference_search_through_both_http_hops_no_text_or_token(search_fixture):
+def test_offline_search_returns_snapshot_content_without_provider_or_audit_text(search_fixture):
     f = search_fixture
     result = search(f)
     assert len(result["documents"]) == 1 and result["partial"] is False
@@ -93,8 +95,13 @@ def test_reference_search_through_both_http_hops_no_text_or_token(search_fixture
     assert hit["work_item_uuid"].startswith("MOCK-ONES-TASK-")
     assert 1 <= len(hit["evidence"]) <= 3
     assert f["vector"].qdrant.search_limits == [200]
-    assert f["calls"] == ["POST"] and len(f["hops"]) == 1 and f["hops"][0] <= 360
-    safe = json.dumps(result, ensure_ascii=False) + json.dumps(
+    assert not f["calls"] and not f["hops"]
+    assert result["content_mode"] == "ingested_snapshot"
+    assert result["content_scope"] == "matched_chunks"
+    assert hit["title"] and hit["ingested_at"] and hit["source_name"]
+    assert isinstance(hit["number"], str)
+    assert any(evidence["text"] for evidence in hit["evidence"])
+    safe = json.dumps(
         f["runtime"].database.execute("select * from audit_event"), ensure_ascii=False, default=str
     )
     for forbidden in (
@@ -214,7 +221,7 @@ def test_hybrid_route_keeps_readability_scope_and_fails_without_dense_fallback(
     if outcome == "success":
         result = search(f)
         assert len(result["documents"]) == 1
-        assert f["calls"] == ["POST"] and len(f["hops"]) == 1
+        assert not f["calls"] and not f["hops"]
     else:
         with pytest.raises(AppError):
             search(f)
@@ -275,20 +282,15 @@ def test_query_top_k_boundaries(search_fixture, query, top_k):
 
 
 @pytest.mark.parametrize("status", [403, 404, 401, 429, 500])
-def test_permission_filter_is_not_provider_failure(search_fixture, status):
+def test_source_provider_failure_does_not_block_offline_search(search_fixture, status):
     f = search_fixture
 
     def fail(*args):
-        raise f["provider_http"].status_error(status)
+        pytest.fail("offline retrieval must never call the source provider")
 
     f["provider_http"]._open_response = fail
-    if status in {403, 404}:
-        result = search(f)
-        assert result["documents"] == [] and result["partial"] is False
-        assert "denied" not in json.dumps(result)
-    else:
-        with pytest.raises(KnowledgeGovernanceError, match="knowledge_readability_failed"):
-            search(f)
+    assert search(f)["documents"]
+    assert not f["calls"] and not f["hops"]
 
 
 @pytest.mark.parametrize("corruption", ["duplicate", "nan", "payload", "too_many", "stale"])
@@ -320,18 +322,22 @@ def test_current_candidate_contract(search_fixture, corruption, monkeypatch):
     assert not f["hops"]
 
 
-@pytest.mark.parametrize("change", ["kb", "member", "identity", "resource", "candidate", "job"])
+@pytest.mark.parametrize(
+    "change", ["kb", "member", "user", "resource", "candidate", "job", "snapshot", "removed"]
+)
 def test_final_recheck_after_all_upstream_success(search_fixture, change, monkeypatch):
     f = search_fixture
-    original = f["search"].readability.check
+    original = f["search"].resources.store.document_snapshots
 
-    def check(**kwargs):
-        result = original(**kwargs)
+    def check(*args, **kwargs):
+        result = original(*args, **kwargs)
         f["runtime"].database.execute(
             {
                 "kb": "delete from rbac_role_application_knowledge_base",
                 "member": "update rbac_user_role set status='disabled'",
-                "identity": "update user_external_identity set status='disabled' where provider='ones'",
+                "user": "update app_user set status='disabled' where id='user_local_admin'",
+                "snapshot": "update \"knowledge.document_revision\" set title='changed'",
+                "removed": "update \"knowledge.knowledge_base_document\" set state='excluded'",
                 "resource": "update \"knowledge.retrieval_resource\" set status='disabled'",
                 "candidate": 'update "knowledge.document_chunk" set evidence_hash=\''
                 + "0" * 64
@@ -341,74 +347,28 @@ def test_final_recheck_after_all_upstream_success(search_fixture, change, monkey
         )
         return result
 
-    monkeypatch.setattr(f["search"].readability, "check", check)
+    monkeypatch.setattr(f["search"].resources.store, "document_snapshots", check)
     with pytest.raises(AppError):
         search(f)
 
 
-class SyntheticReadability:
-    """仅大候选预算用例的权限替身；完整 HTTP 权限链在上面单独验证。"""
-
-    def __init__(self, f, *, allow_after=0, failure_after=None):
-        self.f, self.allow_after, self.failure_after = f, allow_after, failure_after
-        self.checked = []
-
-    def check(self, *, token, request):
-        if self.failure_after is not None and len(self.checked) >= self.failure_after:
-            raise KnowledgeGovernanceError("knowledge_readability_failed")
-        facts = ReadabilityCandidates.load(self.f["endpoint"].resources, request)
-        items = []
-        for chunk in request.chunk_ids:
-            row = facts.documents[facts.evidence[chunk]["document_id"]]
-            allowed = len(self.checked) >= self.allow_after
-            self.checked.append(row["id"])
-            item = {"chunk_id": chunk, "readable": allowed}
-            if allowed:
-                item.update(
-                    task_id=row["external_id"],
-                    document_id=row["id"],
-                    revision_id=row["current_revision_id"],
-                    source_id=facts.pin.source_id,
-                    number=1,
-                )
-            items.append(item)
-        return {
-            "knowledge_base_id": request.knowledge_base_id,
-            "resource_revision_id": request.resource_revision_id,
-            "index_id": request.index_id,
-            "job_id": self.f["job"].id,
-            "actor_id": "user_local_admin",
-            "items": items,
-        }
-
-
 @pytest.mark.parametrize("readable_fixture", [{"documents": 70}], indirect=True)
-@pytest.mark.parametrize("allow_after", [0, 45, 60])
-def test_fill_from_bounded_pool_never_check_more_than_50_work_items(search_fixture, allow_after):
+def test_offline_search_reranks_at_most_50_and_returns_requested_topk(search_fixture, monkeypatch):
     f = search_fixture
-    readability = SyntheticReadability(f, allow_after=allow_after)
-    f["search"].readability = readability
-    result = search(f)
-    assert len(readability.checked) <= 50 and len(set(readability.checked)) == len(
-        readability.checked
-    )
+    original = f["search"].reranker.rank
+    sizes = []
+
+    def rank(query, documents):
+        sizes.append(len(documents))
+        return original(query, documents)
+
+    monkeypatch.setattr(f["search"].reranker, "rank", rank)
+    result = search(f, top_k=20)
+    assert sizes == [50]
+    assert len(result["documents"]) == 20
+    assert [doc["rank"] for doc in result["documents"]] == list(range(1, 21))
     assert f["vector"].qdrant.search_limits == [200]
-    assert len(result["documents"]) == min(10, max(0, len(readability.checked) - allow_after))
-    assert result["partial"] == (len(result["documents"]) < 10)
-    assert [doc["rank"] for doc in result["documents"]] == list(
-        range(1, len(result["documents"]) + 1)
-    )
-    assert result["ranking_method"] == "cross_encoder" and result["retrieval_mode"] == "dense"
-    if result["partial"]:
-        assert result["partial_reason"] == "bounded_search"
-
-
-@pytest.mark.parametrize("readable_fixture", [{"documents": 20}], indirect=True)
-def test_failure_after_allowed_results_discards_entire_call(search_fixture):
-    f = search_fixture
-    f["search"].readability = SyntheticReadability(f, allow_after=8, failure_after=10)
-    with pytest.raises(KnowledgeGovernanceError, match="knowledge_readability_failed"):
-        search(f)
+    assert not f["calls"] and not f["hops"]
 
 
 def test_job_remaining_budget_and_retry_change(search_fixture):
@@ -435,7 +395,7 @@ def test_job_remaining_budget_and_retry_change(search_fixture):
         (125, False, False),
         (185, False, False),
         (245, False, False),
-        (359.5, False, True),
+        (359.5, False, False),
         (361, True, None),
     ],
 )
@@ -507,7 +467,7 @@ def test_online_http_budget_disables_retry_without_changing_offline_default(
 @pytest.mark.parametrize(
     "stage", ["embedding_profile", "qdrant_profile", "embedding_query", "rerank"]
 )
-@pytest.mark.parametrize("mutation", ["kb", "resource", "identity"])
+@pytest.mark.parametrize("mutation", ["kb", "resource", "user"])
 def test_revocation_stops_next_upstream_stage(search_fixture, monkeypatch, stage, mutation):
     f = search_fixture
     target, method = {
@@ -524,7 +484,9 @@ def test_revocation_stops_next_upstream_stage(search_fixture, monkeypatch, stage
             {
                 "kb": "delete from rbac_role_application_knowledge_base",
                 "resource": "update \"knowledge.retrieval_resource\" set status='disabled'",
-                "identity": "update user_external_identity set status='disabled' where provider='ones'",
+                "user": "update app_user set status='disabled' where id='user_local_admin'",
+                "snapshot": "update \"knowledge.document_revision\" set title='changed'",
+                "removed": "update \"knowledge.knowledge_base_document\" set state='excluded'",
             }[mutation]
         )
         return value
@@ -537,7 +499,7 @@ def test_revocation_stops_next_upstream_stage(search_fixture, monkeypatch, stage
     assert current_budget() is None
 
 
-@pytest.mark.parametrize("stage", ["embedding", "qdrant", "readability"])
+@pytest.mark.parametrize("stage", ["embedding", "qdrant", "snapshot"])
 def test_unexpected_dependency_exception_and_failure_audit_are_sanitized(
     search_fixture, monkeypatch, stage
 ):
@@ -546,7 +508,7 @@ def test_unexpected_dependency_exception_and_failure_audit_are_sanitized(
     target, method = {
         "embedding": (f["search"].embedding, "check"),
         "qdrant": (f["search"].qdrant, "search"),
-        "readability": (f["search"].readability, "check"),
+        "snapshot": (f["search"].resources.store, "document_snapshots"),
     }[stage]
 
     def fail(*args, **kwargs):
@@ -583,17 +545,13 @@ def test_four_inflight_limit_and_no_slot_leak_on_failure(search_fixture):
     assert search(f)["documents"]
 
 
-def test_no_positive_permission_cache_between_search_calls(search_fixture):
+def test_no_positive_knowledge_permission_cache_between_search_calls(search_fixture):
     f = search_fixture
     assert search(f)["documents"]
-
-    def forbidden(*args):
-        raise f["provider_http"].status_error(403)
-
-    f["provider_http"]._open_response = forbidden
-    result = search(f)
-    assert result["documents"] == [] and result["partial"] is False
-    assert len(f["hops"]) == 2
+    f["runtime"].database.execute("delete from rbac_role_application_knowledge_base")
+    with pytest.raises(KnowledgeGovernanceError):
+        search(f)
+    assert not f["hops"]
 
 
 def test_bridge_client_does_not_relabel_exhausted_budget_as_permission_failure(
@@ -605,7 +563,7 @@ def test_bridge_client_does_not_relabel_exhausted_budget_as_permission_failure(
     with pytest.raises(KnowledgeGovernanceError, match="budget_exhausted"):
         with job_budget(f["runtime"].database, f["job"].id).activate():
             tick[0] += 361
-            f["search"].readability.check(token=f["knowledge_token"], request=None)
+            f["readability_client"].check(token=f["knowledge_token"], request=None)
     assert not f["hops"] and current_budget() is None
 
 
@@ -625,7 +583,8 @@ def test_bridge_client_does_not_relabel_exhausted_budget_as_permission_failure(
         ("expired", None, True),
         ("list_tool", None, True),
         ("search_tool", None, True),
-        ("detail_tool", None, True),
+        ("detail_tool", True, False),
+        ("no_identity", True, False),
         ("old_hash", None, True),
         ("direct", None, True),
     ],
@@ -642,6 +601,7 @@ def test_directory_search_share_current_kb_gate_but_directory_is_not_ones_permis
         "source": "update \"knowledge.source\" set source_system='other'",
         "resource": "update \"knowledge.retrieval_resource\" set status='disabled'",
         "index": "update \"knowledge.vector_index\" set state='FAILED'",
+        "no_identity": "update user_external_identity set status='disabled' where provider='ones'",
         "team": 'update user_external_identity set metadata_json=\'{"team_uuids":["other"],"default_team_id":"other"}\' where provider=\'ones\'',
         "user": "update app_user set status='disabled' where id='user_local_admin'",
         "role": "update rbac_role set status='disabled' where code='ones-mcp-runtime-reader'",
@@ -674,8 +634,8 @@ def test_directory_search_share_current_kb_gate_but_directory_is_not_ones_permis
         assert not f["hops"] and not f["vector"].qdrant.search_limits
     else:
         result = search(f)
-        # 合成 Provider 不存在新 Team 的任务，必须过滤，不能以目录可见代替可读。
-        assert bool(result["documents"]) is (change == "none")
+        assert result["documents"]
+        assert not f["hops"] and not f["calls"]
 
 
 @pytest.mark.parametrize("change", ["embedding", "revision"])
