@@ -20,6 +20,8 @@ from app.modules.knowledge.infrastructure.embedding_profile import profile
 from app.modules.knowledge.domain.rerank_contract import RERANK_ENDPOINT, SAFE_ERRORS
 from app.shared.database import assert_external_io_allowed
 from app.modules.knowledge.application.retrieval_budget import current_budget, io_timeout
+from app.modules.knowledge.application.retrieval_timing import current_timing
+from app.shared.knowledge_limits import KNOWLEDGE_REQUEST_ID_HEADER
 from app.shared.bounded_read_http import request_bytes
 from app.shared.io_deadline import current_io_deadline
 from app.modules.knowledge.domain.hybrid import (
@@ -102,12 +104,14 @@ class InternalHttp:
                 if status == 404 and missing_ok:
                     return None
                 if status >= 500:
+                    self._observe_rerank_timing(path, data)
                     raise httpx.TransportError("temporary")
                 if 300 <= status < 400:
                     raise VectorError("knowledge_vector_request_rejected")
                 value = json.loads(data)
                 if not isinstance(value, dict):
                     raise VectorError("knowledge_vector_response_invalid")
+                self._observe_rerank_timing(path, value)
                 if not 200 <= status < 300:
                     # 只透传已定义的机器码，绝不回显远端消息、input 或 validation detail。
                     code = value.get("error_code")
@@ -142,6 +146,20 @@ class InternalHttp:
                 raise VectorError("knowledge_vector_response_invalid") from None
         raise VectorError("knowledge_vector_unavailable")
 
+    def _observe_rerank_timing(self, path: str, value: Any) -> None:
+        if self.endpoint != RERANK_ENDPOINT or path != "/rerank":
+            return
+        if isinstance(value, bytes):
+            try:
+                value = json.loads(value)
+            except (ValueError, TypeError):
+                return
+        if isinstance(value, dict):
+            details = value.pop("timing", None)
+            timing = current_timing()
+            if timing is not None:
+                timing.observe_rerank(details)
+
     def _read(self, method: str, path: str, value: Any) -> tuple[int, bytes]:
         headers = {"Content-Type": "application/json", **self._headers}
         timeout = self._timeout()
@@ -154,6 +172,9 @@ class InternalHttp:
             if budget is not None:
                 deadline_ms = min(deadline_ms, budget.deadline_ms)
             headers[DEADLINE_HEADER] = str(deadline_ms)
+            timing = current_timing()
+            if timing is not None:
+                headers[KNOWLEDGE_REQUEST_ID_HEADER] = timing.request_id
         if (
             current_io_deadline() is not None
             or current_budget() is not None
@@ -176,7 +197,10 @@ class InternalHttp:
             headers=headers,
             timeout=httpx.Timeout(timeout, connect=io_timeout(5)),
         ) as response:
-            if response.status_code >= 500 or 300 <= response.status_code < 400:
+            if (
+                response.status_code >= 500
+                and not (self.endpoint == RERANK_ENDPOINT and path == "/rerank")
+            ) or 300 <= response.status_code < 400:
                 return response.status_code, b""
             data = bytearray()
             for part in response.iter_bytes():

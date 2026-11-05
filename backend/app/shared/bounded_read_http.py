@@ -2,6 +2,8 @@
 
 import asyncio
 from contextvars import ContextVar
+from contextlib import contextmanager
+from collections.abc import Iterator
 import logging
 
 import httpx
@@ -28,6 +30,16 @@ def _quiet_library_logs() -> None:
     for name in ("httpx", *tuple(logging.Logger.manager.loggerDict)):
         if name == "httpx" or name == "httpcore" or name.startswith("httpcore."):
             logging.getLogger(name).addFilter(_FILTER)
+
+
+@contextmanager
+def quiet_read_http() -> Iterator[None]:
+    previous = _QUIET.set(True)
+    _quiet_library_logs()
+    try:
+        yield
+    finally:
+        _QUIET.reset(previous)
 
 
 def request_bytes(

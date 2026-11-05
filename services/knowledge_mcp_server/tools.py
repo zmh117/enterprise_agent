@@ -13,6 +13,7 @@ from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.mcp_audit import McpAuditCoordinator, McpAuditHandle
 from app.shared.knowledge_tool_contracts import KNOWLEDGE_TOOL_CONTRACTS
 from app.shared.io_deadline import io_cleanup
+from app.modules.knowledge.application.retrieval_timing import retrieval_timing, stage
 from services.knowledge_mcp_server.auth import KnowledgeMcpAuth
 from services.knowledge_mcp_server.errors import failure, safe_failure
 from services.knowledge_mcp_server.execution import CallControl
@@ -54,10 +55,25 @@ class KnowledgeMcpTools:
         headers: Mapping[str, str],
         control: CallControl,
     ) -> tuple[dict[str, Any], McpAuditHandle]:
+        with retrieval_timing(control.timing):
+            return self._invoke(
+                name=name, token=token, arguments=arguments, headers=headers, control=control
+            )
+
+    def _invoke(
+        self,
+        *,
+        name: str,
+        token: str,
+        arguments: Any,
+        headers: Mapping[str, str],
+        control: CallControl,
+    ) -> tuple[dict[str, Any], McpAuditHandle]:
         control.check()
         if name not in KNOWLEDGE_TOOL_CONTRACTS:
             raise failure("knowledge_mcp_tool_not_found")
-        context = self.auth.resolve(token, name, headers)
+        with stage("access_check"):
+            context = self.auth.resolve(token, name, headers)
         handle = self.audit.begin(context, business_request={"tool": name})
         started = time.monotonic()
         principal = InflightPrincipal(token, name, self.auth.access, self.principal_client, control)
@@ -102,7 +118,7 @@ class KnowledgeMcpTools:
             self.audit.complete(
                 handle,
                 status="SUCCEEDED",
-                business_response=summary,
+                business_response={**summary, "retrieval_timing": control.timing.snapshot()},
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
             control.check()
@@ -119,7 +135,10 @@ class KnowledgeMcpTools:
                     self.audit.complete(
                         handle,
                         status="FAILED",
-                        business_response={"error_code": error.error_code},
+                        business_response={
+                            "error_code": error.error_code,
+                            "retrieval_timing": control.timing.snapshot(),
+                        },
                         error_code=error.error_code,
                         duration_ms=int((time.monotonic() - started) * 1000),
                     )

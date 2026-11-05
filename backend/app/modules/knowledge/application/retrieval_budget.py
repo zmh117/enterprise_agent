@@ -18,6 +18,7 @@ from app.modules.knowledge.domain.vector_contract import (
 )
 from app.shared.ones_io_budget import ones_io_budget
 from app.shared.io_deadline import IODeadlineExceeded, io_deadline, io_wait_timeout
+from app.modules.knowledge.application.retrieval_timing import current_timing
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -105,6 +106,14 @@ class RetrievalBudget:
             duration = min(duration, parent.remaining())
         self.deadline = entered + duration
         self.deadline_ms = int((wall.timestamp() + duration) * 1000)
+        timing = current_timing()
+        if timing is not None and timing.budget_after_auth_ms is None:
+            timing.limit(int((wall.timestamp() + remaining) * 1000), "job")
+            if deadline_ms is not None:
+                timing.limit(deadline_ms, "upstream")
+            if parent is not None:
+                timing.limit(parent.deadline_ms, "parent")
+            timing.budget_after_auth_ms = max(0, int(self.remaining() * 1000))
         try:
             with io_deadline(self.remaining()):
                 self.check()

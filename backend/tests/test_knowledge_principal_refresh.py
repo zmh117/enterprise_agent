@@ -30,6 +30,7 @@ from backend.tests.test_knowledge_mcp_server import (
     search_fixture,
     mcp_fixture,
     rpc,
+    headers as mcp_headers,
 )
 
 # Pytest 需要显式导入整条合成 fixture 链。
@@ -237,7 +238,9 @@ def test_mcp_crosses_old_300_second_expiry_and_reuses_fresh_identity(
 
     monkeypatch.setattr(f["search"].reranker, "rank", held_rank)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        result = pool.submit(rpc, f)
+        result = pool.submit(
+            rpc, f, headers={**mcp_headers(f), "X-Knowledge-Principal-Continuation": "1"}
+        )
         try:
             assert started.wait(5)
             clock[0] = old["iat"] + 241
@@ -260,6 +263,20 @@ def test_mcp_crosses_old_300_second_expiry_and_reuses_fresh_identity(
     )
     assert fresh[0] not in safe and f["knowledge_token"] not in safe
     assert not any(t.name == "knowledge-principal-refresh" for t in threading.enumerate())
+
+    _assert_continuation(f, response, fresh)
+
+
+def _assert_continuation(f, response, fresh):
+    continued = response.headers["X-Knowledge-Principal-Continuation"]
+    assert continued in fresh and response.headers["cache-control"] == "no-store"
+    assert not rpc(f, headers={**mcp_headers(f), "authorization": "Bearer " + continued}).json()[
+        "result"
+    ]["isError"]
+    assert rpc(f).json()["result"]["isError"]  # 已过期初始凭证仍失败关闭。
+    assert continued not in json.dumps(
+        f["runtime"].database.execute("select * from mcp_operation_audit"), default=str
+    )
 
 
 @pytest.mark.parametrize("kind", ["shape", "signature", "aud", "scope", "ttl", "expiry"])

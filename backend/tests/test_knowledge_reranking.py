@@ -1,6 +1,7 @@
 """Synthetic ranking, window and dependency contracts; not a semantic benchmark."""
 
 import json
+import time
 
 import httpx
 import pytest
@@ -21,6 +22,70 @@ from app.shared.io_deadline import io_deadline
 from backend.tests.support.knowledge_reranker import SyntheticReranker
 from services.knowledge_embedding.online_queue import InferenceDeadline
 from services.knowledge_reranker.engine import microbatches, prepare_pairs, window
+from app.modules.knowledge.application.retrieval_timing import RetrievalTiming, retrieval_timing
+from app.shared.knowledge_limits import KNOWLEDGE_REQUEST_ID_HEADER
+
+
+@pytest.mark.parametrize("status", [200, 408, 429, 503])
+def test_reranker_timing_crosses_success_and_failure_without_changing_result(status):
+    from app.modules.knowledge.domain.rerank_contract import input_hashes
+    from app.modules.knowledge.infrastructure.reranker_profile import profile
+
+    timing = RetrievalTiming(int((time.time() + 10) * 1000))
+    measured = {"queue_ms": 32.5, "compute_ms": 14.2, "state": "finished"}
+
+    def remote(request):
+        if request.url.path == "/profile":
+            return httpx.Response(
+                200, json={"profile": profile(), "profile_hash": fingerprint(profile())}
+            )
+        assert request.headers[KNOWLEDGE_REQUEST_ID_HEADER] == timing.request_id
+        code = {
+            408: "knowledge_rerank_read_timeout",
+            429: "knowledge_rerank_busy",
+            503: "knowledge_rerank_unavailable",
+        }.get(status)
+        value = (
+            {"error_code": code}
+            if code
+            else {
+                "profile_hash": fingerprint(profile()),
+                "input_hashes": input_hashes("synthetic", [["document"]]),
+                "scores": [1.0],
+                "token_counts": [8],
+                "truncated": [False],
+            }
+        )
+        return httpx.Response(status, json={**value, "timing": measured})
+
+    client = RerankerClient(transport=httpx.MockTransport(remote))
+    try:
+        with retrieval_timing(timing), io_deadline(10):
+            if status == 200:
+                assert "timing" not in client.rank("synthetic", [["document"]])
+            else:
+                with pytest.raises(VectorError):
+                    client.rank("synthetic", [["document"]])
+        assert timing.snapshot()["rerank"] == measured
+    finally:
+        client.http.close()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {"query": "synthetic-private"},
+        {"queue_ms": 1, "compute_ms": 1, "state": []},
+        {"queue_ms": -1, "compute_ms": 1, "state": "finished"},
+        {"queue_ms": 1, "compute_ms": float("inf"), "state": "finished"},
+    ],
+)
+def test_untrusted_rerank_timing_is_unknown_not_copied(value):
+    timing = RetrievalTiming(int((time.time() + 10) * 1000))
+    timing.observe_rerank(value)
+    assert timing.snapshot()["rerank"] is None
+    assert "synthetic-private" not in json.dumps(timing.snapshot())
 
 
 class Tokenizer:

@@ -12,6 +12,7 @@ from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from services.knowledge_mcp_server.errors import failure
 from app.modules.knowledge.application.retrieval_budget import MAX_RETRIEVAL_SECONDS, entry_budget
 from app.shared.io_deadline import io_deadline
+from app.modules.knowledge.application.retrieval_timing import RetrievalTiming
 
 T = TypeVar("T")
 
@@ -28,6 +29,13 @@ class CallControl:
         self.deadline = time.monotonic() + seconds
         self.deadline_ms = int((wall + seconds) * 1000)
         self.cancelled = threading.Event()
+        self.timing = RetrievalTiming(
+            self.deadline_ms,
+            source="upstream"
+            if deadline_ms is not None and deadline_ms <= self.deadline_ms
+            else "call_limit",
+        )
+        self.response_principal = ""
 
     def remaining(self) -> float:
         return self.deadline - time.monotonic()

@@ -32,6 +32,10 @@ from app.shared.mcp_server_policy import KNOWLEDGE_MCP_SERVER_CODE
 from services.knowledge_mcp_server.errors import failure, safe_failure
 from services.knowledge_mcp_server.execution import BoundedCalls, CallControl
 from services.knowledge_mcp_server.tools import KnowledgeMcpTools
+from app.shared.knowledge_limits import (
+    KNOWLEDGE_CONTINUATION_HEADER,
+    KNOWLEDGE_DISPATCH_WAIT_HEADER,
+)
 
 MAX_REQUEST_BYTES = 32 * 1024
 SERVER_VERSION = "1.0.0"
@@ -177,7 +181,25 @@ class KnowledgeSecurityMiddleware:
                     raise ValueError
             incoming = deadline_from_headers(headers.getlist(DEADLINE_HEADER))
             if incoming is not None:
-                control = CallControl(deadline_ms=min(control.deadline_ms, incoming))
+                control.timing.limit(incoming, "upstream")
+                if incoming < control.deadline_ms:
+                    control.deadline -= (control.deadline_ms - incoming) / 1000
+                    control.deadline_ms = incoming
+                    control.timing.entry_budget_ms = max(0, int(control.remaining() * 1000))
+            waits = headers.getlist(KNOWLEDGE_DISPATCH_WAIT_HEADER)
+            if waits:
+                if (
+                    len(waits) != 1
+                    or not waits[0].isascii()
+                    or not waits[0].isdigit()
+                    or len(waits[0]) > 7
+                    or int(waits[0]) > 3_600_000
+                ):
+                    raise ValueError
+                control.timing.dispatch_wait_ms = int(waits[0])
+            continuation = headers.getlist(KNOWLEDGE_CONTINUATION_HEADER)
+            if continuation and continuation != ["1"]:
+                raise ValueError
             control.check()
             if (
                 headers.getlist("content-type") != ["application/json"]
@@ -242,9 +264,17 @@ class KnowledgeSecurityMiddleware:
 
         async def no_store(message: Message) -> None:
             if message["type"] == "http.response.start":
+                extra = [(b"cache-control", b"no-store")]
+                if continuation and control.response_principal:
+                    extra.append(
+                        (
+                            KNOWLEDGE_CONTINUATION_HEADER.lower().encode(),
+                            control.response_principal.encode(),
+                        )
+                    )
                 message = {
                     **message,
-                    "headers": [*message.get("headers", []), (b"cache-control", b"no-store")],
+                    "headers": [*message.get("headers", []), *extra],
                 }
             await send(message)
 
@@ -264,6 +294,7 @@ class KnowledgeSecurityMiddleware:
             dispatch.cancel()
             watcher.cancel()
             await asyncio.gather(dispatch, watcher, return_exceptions=True)
+            control.response_principal = ""
 
 
 class _Transport:

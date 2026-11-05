@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+
 from app.modules.identity.application.service_principal import ServicePrincipalTokenClient
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.application.readability import BRIDGE_PATH, READABILITY_PATH
@@ -372,3 +373,31 @@ def test_http_entry_budget_precedes_first_authentication(bridge_fixture, monkeyp
         assert client.post(path, json=f["body"], headers=headers).status_code == 200
     finally:
         blocked.close()
+
+
+@pytest.mark.parametrize("source", ["job", "upstream"])
+def test_retrieval_timing_reports_effective_shorter_deadline(search_fixture, source):
+    from datetime import UTC, datetime, timedelta
+    from app.modules.knowledge.application.retrieval_budget import RetrievalBudget
+    from app.modules.knowledge.application.retrieval_timing import RetrievalTiming, retrieval_timing
+
+    f = search_fixture
+    row = f["runtime"].database.execute_one(
+        "select retry_count,locked_at,execution_policy_json from agent_job where id=?",
+        (f["job"].id,),
+    )
+    policy = json.loads(row["execution_policy_json"])
+    total = policy["effective"]["timeout_seconds"]
+    remaining = 30 if source == "job" else 60
+    row["locked_at"] = (datetime.now(UTC) - timedelta(seconds=total - remaining)).isoformat()
+    incoming = int((time.time() + (60 if source == "job" else 30)) * 1000)
+    timing = RetrievalTiming(int((time.time() + 360) * 1000))
+    with retrieval_timing(timing):
+        budget = RetrievalBudget(lambda: row, deadline_ms=incoming)
+        with budget.activate():
+            original = timing.snapshot()
+            with RetrievalBudget(lambda: row).activate():
+                assert timing.deadline_ms == original["deadline_ms"]
+    assert timing.deadline_source == source
+    assert 29000 <= timing.budget_after_auth_ms <= 30000
+    assert abs(timing.deadline_ms - budget.deadline_ms) <= 2

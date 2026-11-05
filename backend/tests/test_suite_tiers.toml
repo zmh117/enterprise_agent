@@ -50,6 +50,7 @@ contract = [
   "test_knowledge_hybrid.py",
   "test_knowledge_storage_connections.py",
   "test_knowledge_mcp_server.py",
+  "test_knowledge_runtime_dispatch.py",
   "test_knowledge_principal_refresh.py",
   "test_knowledge_database_policy.py",
   "test_knowledge_access_modes.py",

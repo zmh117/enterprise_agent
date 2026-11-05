@@ -60,6 +60,7 @@ from app.shared.exceptions import ExecutionPolicyExceeded, NonRetryableExecution
 from app.python_runtime.tool_contract import build_tool_contract_observation
 from app.python_runtime.ones_result_bridge import OnesResultBridge
 from app.python_runtime.tool_result_bridge import ToolResultBridge
+from app.python_runtime.knowledge_mcp_bridge import KnowledgeMcpBridge
 from app.shared.query_result_contract import QUERY_RESULT_TOOLS
 from app.shared.ones_tool_contracts import ONES_COLLECTED_LIST_FIELDS
 
@@ -200,6 +201,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         file_bridge_factory: PythonRuntimeFileBridgeFactory = (create_python_runtime_file_bridge),
         ones_bridge_factory: Callable[..., OnesResultBridge] = OnesResultBridge,
         tool_result_bridge_factory: Callable[..., ToolResultBridge] = ToolResultBridge,
+        knowledge_bridge_factory: Callable[..., KnowledgeMcpBridge] = KnowledgeMcpBridge,
         runtime_build_identity: BuildIdentity | None = None,
         tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
@@ -256,6 +258,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         self._ones_bridge: OnesResultBridge | None = None
         self._tool_result_bridge_factory = tool_result_bridge_factory
         self._tool_result_bridge: ToolResultBridge | None = None
+        self._knowledge_bridge_factory = knowledge_bridge_factory
+        self._knowledge_bridge: KnowledgeMcpBridge | None = None
         self._runtime_build_identity = runtime_build_identity or build_identity_from_environment(
             "python-runtime"
         )
@@ -508,7 +512,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             if item.server_code == "tool-mcp"
         }
         if not set(bindings).intersection(QUERY_RESULT_TOOLS):
-            return servers
+            return await self._open_knowledge_bridge(request, sdk, servers)
         sandbox = self._sandbox.get()
         if sandbox is None:
             raise NonRetryableExecutionError(
@@ -527,6 +531,35 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             timeout=float(request.context.timeout_seconds),
         )
         self._tool_result_bridge = bridge
+        try:
+            await bridge.connect()
+        except BaseException:
+            await self._close_mcp_server()
+            raise
+        servers[alias] = bridge.server
+        return await self._open_knowledge_bridge(request, sdk, servers)
+
+    async def _open_knowledge_bridge(
+        self, request: AgentRunRequest, sdk: Any, servers: dict[str, Any]
+    ) -> dict[str, Any]:
+        bindings = {
+            item.tool_name: item.tool_schema_hash
+            for item in request.context.mcp_bindings
+            if item.server_code == KNOWLEDGE_MCP_SERVER_CODE
+        }
+        if not bindings:
+            return servers
+        alias = mcp_sdk_server_alias(KNOWLEDGE_MCP_SERVER_CODE)
+        remote = servers[alias]
+        bridge = self._knowledge_bridge_factory(
+            sdk=sdk,
+            url=remote["url"],
+            headers=remote["headers"],
+            frozen=bindings,
+            timeout=float(request.context.timeout_seconds),
+            cancellation_event=self.cancellation_event,
+        )
+        self._knowledge_bridge = bridge
         try:
             await bridge.connect()
         except BaseException:
@@ -588,12 +621,13 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             self._tool_contract_observer(dict(observation))
 
     async def _close_mcp_server(self) -> None:
+        knowledge_bridge, self._knowledge_bridge = self._knowledge_bridge, None
         tool_bridge, self._tool_result_bridge = self._tool_result_bridge, None
         ones_bridge, self._ones_bridge = self._ones_bridge, None
         file_bridge = self._file_bridge
         self._file_bridge = None
         self._effective_context = None
-        for bridge in (tool_bridge, ones_bridge, file_bridge):
+        for bridge in (knowledge_bridge, tool_bridge, ones_bridge, file_bridge):
             if bridge is not None:
                 try:
                     await bridge.close()

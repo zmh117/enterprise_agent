@@ -3,6 +3,7 @@
 from app.modules.knowledge.application.principal import PrincipalToken
 
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 import threading
@@ -37,6 +38,7 @@ from app.modules.knowledge.application.readability import (
 )
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.application.retrieval_budget import RetrievalBudget, knowledge_entry
+from app.modules.knowledge.application.retrieval_timing import stage
 from app.shared.exceptions import AppError
 from app.modules.knowledge.domain.rerank_contract import MAX_CANDIDATE_POINTS, MAX_DOCUMENTS
 from app.modules.knowledge.domain.vector_contract import VectorError
@@ -103,7 +105,8 @@ class KnowledgeSearch:
         access, acquired = None, False
         try:
             request = SearchRequest.parse(arguments)
-            access = self.access.authenticate(token, "knowledge_search")
+            with stage("access_check"):
+                access = self.access.authenticate(token, "knowledge_search")
             if request.knowledge_base_id not in access.knowledge_base_ids:
                 raise KnowledgeGovernanceError("knowledge_job_denied")
             acquired = self._slots.acquire(blocking=False)
@@ -162,8 +165,10 @@ class KnowledgeSearch:
         access: KnowledgeJobAccess,
         budget: RetrievalBudget,
     ) -> dict[str, Any]:
-        pin = self.resources.resolve(request.knowledge_base_id)
-        with self.resources.content_for(pin) as content:
+        with ExitStack() as stack:
+            with stage("resource"):
+                pin = self.resources.resolve(request.knowledge_base_id)
+                content = stack.enter_context(self.resources.content_for(pin))
             return self._search_content(token, request, access, budget, pin, content)
 
     def _search_content(
@@ -195,18 +200,23 @@ class KnowledgeSearch:
             budget.check()
 
         recheck()
-        self.embedding.check()
-        recheck()
-        qdrant.check(index)
-        recheck()
-        vector = self.embedding.call([request.query], encode=True)["vectors"][0]
-        recheck()
+        with stage("embedding"):
+            self.embedding.check()
+            recheck()
+        with stage("vector_search"):
+            qdrant.check(index)
+            recheck()
+        with stage("embedding"):
+            vector = self.embedding.call([request.query], encode=True)["vectors"][0]
+            recheck()
         selected_mode = retrieval_mode(index)
-        candidates = retrieve_points(qdrant, index, vector, request.query, selected_mode)
-        pool = candidate_pool(content.vectors, index, candidates)
-        recheck()
-        ranked = rerank(pool, request.query, self.reranker)
-        recheck()
+        with stage("vector_search"):
+            candidates = retrieve_points(qdrant, index, vector, request.query, selected_mode)
+            pool = candidate_pool(content.vectors, index, candidates)
+            recheck()
+        with stage("rerank"):
+            ranked = rerank(pool, request.query, self.reranker)
+            recheck()
         documents, timed_out = self._select_documents(
             ranked.documents,
             token=token,
@@ -216,59 +226,62 @@ class KnowledgeSearch:
             budget=budget,
             recheck=recheck,
         )
-        ids = tuple(document["document_id"] for document in documents)
-        snapshots = content.records.document_snapshots(pin.knowledge_base_id, pin.source_id, ids)
-        results: list[dict[str, Any]] = []
-        for document in documents:
-            snapshot = snapshots[document["document_id"]]
-            if snapshot["current_revision_id"] != document["revision_id"]:
-                raise KnowledgeGovernanceError("knowledge_candidate_invalid")
-            results.append(
-                {
-                    **{
-                        key: document[key]
-                        for key in ("document_id", "revision_id", "retrieval_score")
-                    },
-                    "rank": len(results) + 1,
-                    "index_id": pin.index_id,
-                    "source_id": pin.source_id,
-                    "work_item_uuid": snapshot["external_id"],
-                    "number": snapshot["external_number"],
-                    **{
-                        key: snapshot[key]
-                        for key in (
-                            "title",
-                            "document_kind",
-                            "source_name",
-                            "source_project_id",
-                            "source_project_name",
-                            "source_status_name",
-                        )
-                    },
-                    **{
-                        key: value.isoformat() if isinstance(value, datetime) else value
-                        for key in ("source_updated_at", "ingested_at")
-                        for value in (snapshot[key],)
-                    },
-                    "evidence": [
-                        {**evidence, "text": pool.rows[evidence["chunk_id"]]["evidence_text"]}
-                        for evidence in document["evidence"]
-                    ],
-                }
+        with stage("response"):
+            ids = tuple(document["document_id"] for document in documents)
+            snapshots = content.records.document_snapshots(
+                pin.knowledge_base_id, pin.source_id, ids
             )
-        recheck()
-        pool.recheck(content.vectors, index)
-        if (
-            content.records.document_snapshots(pin.knowledge_base_id, pin.source_id, ids)
-            != snapshots
-        ):
-            raise KnowledgeGovernanceError("knowledge_candidate_invalid")
-        recheck()
-        partial = len(results) < request.top_k and (
-            timed_out
-            or len(candidates) >= route_limit(selected_mode)
-            or len(pool.documents) > MAX_DOCUMENTS
-        )
+            results: list[dict[str, Any]] = []
+            for document in documents:
+                snapshot = snapshots[document["document_id"]]
+                if snapshot["current_revision_id"] != document["revision_id"]:
+                    raise KnowledgeGovernanceError("knowledge_candidate_invalid")
+                results.append(
+                    {
+                        **{
+                            key: document[key]
+                            for key in ("document_id", "revision_id", "retrieval_score")
+                        },
+                        "rank": len(results) + 1,
+                        "index_id": pin.index_id,
+                        "source_id": pin.source_id,
+                        "work_item_uuid": snapshot["external_id"],
+                        "number": snapshot["external_number"],
+                        **{
+                            key: snapshot[key]
+                            for key in (
+                                "title",
+                                "document_kind",
+                                "source_name",
+                                "source_project_id",
+                                "source_project_name",
+                                "source_status_name",
+                            )
+                        },
+                        **{
+                            key: value.isoformat() if isinstance(value, datetime) else value
+                            for key in ("source_updated_at", "ingested_at")
+                            for value in (snapshot[key],)
+                        },
+                        "evidence": [
+                            {**evidence, "text": pool.rows[evidence["chunk_id"]]["evidence_text"]}
+                            for evidence in document["evidence"]
+                        ],
+                    }
+                )
+            recheck()
+            pool.recheck(content.vectors, index)
+            if (
+                content.records.document_snapshots(pin.knowledge_base_id, pin.source_id, ids)
+                != snapshots
+            ):
+                raise KnowledgeGovernanceError("knowledge_candidate_invalid")
+            recheck()
+            partial = len(results) < request.top_k and (
+                timed_out
+                or len(candidates) >= route_limit(selected_mode)
+                or len(pool.documents) > MAX_DOCUMENTS
+            )
         self.audit.record(
             "knowledge.search.completed",
             status="success",
@@ -332,11 +345,12 @@ class KnowledgeSearch:
                 pin.index_id,
                 tuple(doc["evidence"][0]["chunk_id"] for doc in batch),
             )
-            facts = ReadabilityCandidates.load(self.resources, bridge_request)
-            raw = self.readability.check(token=token, request=bridge_request)
-            verified = project_readability(raw, bridge_request, access, facts)
-            facts.recheck(self.resources)
-            recheck()
+            with stage("readability"):
+                facts = ReadabilityCandidates.load(self.resources, bridge_request)
+                raw = self.readability.check(token=token, request=bridge_request)
+                verified = project_readability(raw, bridge_request, access, facts)
+                facts.recheck(self.resources)
+                recheck()
             selected.extend(
                 document
                 for document, reference in zip(batch, verified["items"], strict=True)

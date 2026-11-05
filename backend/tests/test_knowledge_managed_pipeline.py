@@ -184,7 +184,7 @@ def test_pipeline_stops_after_disable_and_keeps_safe_failure_code():
     assert store.phase == "CHUNKING" and store.error_code == "knowledge_collection_disabled"
 
 
-def test_hourly_due_coalesces_long_run_and_resets_after_explicit_disable(database):
+def test_four_hour_due_coalesces_long_run_and_resets_after_explicit_disable(database):
     repo = SyncRepository(database)
     config = {
         "base_codes": {
@@ -222,6 +222,8 @@ def test_hourly_due_coalesces_long_run_and_resets_after_explicit_disable(databas
     assert repo.scheduled_due(binding["id"], due)
     run = repo.begin_collection(binding["id"], due.isoformat())
     repo.scheduled_started(binding["id"], run["id"], due)
+    scheduled = repo.binding(binding["id"])["next_run_at"]
+    assert datetime.fromisoformat(str(scheduled)) == due + timedelta(hours=4)
     assert repo.scheduled_due(binding["id"], due - timedelta(microseconds=1))
     assert repo.scheduled_due(binding["id"], due + timedelta(hours=5))
     assert repo.active_run(binding["id"])["id"] == run["id"]

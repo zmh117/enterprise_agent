@@ -71,7 +71,29 @@ docker compose -f docker-compose.yml \
 
 推理线程数由 `rerank_contract.INFERENCE_THREADS` 固定，并进入 ranking profile。改为 6 线程后，应协调重建重排服务、Knowledge MCP 和使用本地重排客户端的离线评测镜像；Compose 的 CPU 配额、OMP/MKL 线程环境变量必须一致。旧 8 线程服务与新客户端混用会被 profile 校验拒绝，不能只更新单端镜像。模型权重与窗口不变，既有向量索引无需重建。
 
-超过 300 秒的在途请求通过固定内部入口续期 Knowledge Principal，单张 TTL 仍不超过 300 秒。到期前 60 秒续期，每次最多 5 秒；平台与 MCP 两端复核身份、Job 和权限，失败取消检索，不重新推理。新版固定服务 scope 增加 `internal:knowledge:principal:refresh`，需协调升级签发/验证端并重新获取服务身份。续期仅在当前调用内有效，不为后续工具调用或重试保留票据。若 Job 剩余预算不足 360 秒，仍按较短预算结束；不能通过续期延长 Job。
+超过 300 秒的在途请求通过固定内部入口续期 Knowledge Principal，单张 TTL 仍不超过 300 秒。到期前 60 秒续期，每次最多 5 秒；平台与 MCP 两端复核身份、Job 和权限，失败取消检索，不重新推理。新版固定服务 scope 增加 `internal:knowledge:principal:refresh`，需协调升级签发/验证端并重新获取服务身份。Runtime 知识 bridge 可通过内部响应头接续请求内更新后的有效凭证，后续调用仍重新检查当前授权；票据只在当前 Job 的 bridge 内存保存，不进入模型、日志或审计，过期旧票据仍拒绝。若 Job 剩余预算不足 360 秒，仍按较短预算结束；不能通过续期延长 Job。
+
+### 预算耗尽与串行派发
+
+同 Job 的知识工具由 Runtime bridge 按到达顺序串行派发，等前一请求结束后才发出下一条 HTTP 请求；等待计入 Job 原预算，不消耗尚未发出的单次检索预算。CLI 等待 bridge 的上限跟随 Job，远端请求仍取 360 秒、上游截止及当前 Job 剩余时间的最小值。目录和检索均保留冻结名称/schema 校验，失败不自动重试。该协调只限制同 Job，多个 Job 仍共享单路重排容量；四小时同步间隔也不会降低当前 CHUNKING 的瞬时负载。
+
+统一工具审计 `mcp_operation_audit.business_response_json.retrieval_timing` 在成功和失败时保留：
+
+| 字段 | 含义 |
+| --- | --- |
+| `request_id` | 本次 MCP 请求生成的随机关联标识，可匹配重排事件；不是业务查询 |
+| `deadline_ms` / `deadline_source` | 生效绝对截止及来源：`call_limit`、`job`、`upstream` 或 `parent` |
+| `entry_budget_ms` / `budget_after_auth_ms` | HTTP 入口剩余时间、完成初始授权后的剩余时间；计时起点不同于旧审计总耗时 |
+| `dispatch_wait_ms` | Runtime 发出本请求前等待派发的毫秒数，不是重排排队 |
+| `stage_ms` | `access_check`、`resource`、`embedding`、`vector_search`、`rerank`、`readability`、`response` 的实际计时；只记录进入的阶段 |
+| `stopped_stage` | 异常退出的已观测阶段；未进入可计时阶段时可为空 |
+| `rerank` | 已收到的 `queue_ms`、`compute_ms` 和 `state`；未收到时为 `null`，不能当作零耗时 |
+
+阶段包含阶段内必要的授权/版本复核，耗时之和不等于整条链路时间。离线检索不进入 `readability` 阶段。重排响应的细分计时用于内部审计，不加入知识工具内容合同。
+
+重排服务输出 `knowledge_rerank_timing` 安全事件，仅有 `request_id`、排队/计算毫秒数与状态。`queued` 表示返回前尚未开始计算，`running` 表示请求结束时计算线程仍退出中，`finished` 才是完整执行计时；取消不会提前释放计算槽。客户端未收到超时响应时，按关联标识核对该事件，不从两条工具同时结束推断共用截止，也不从 CPU 百分比推断具体慢阶段。
+
+本变更需协调更新 Python Runtime、Knowledge MCP 与重排服务镜像；无需改变知识工具输入输出 schema、发布合同、访问模式或候选量。仅更新 Runtime 不能补齐服务端审计；旧 MCP 无凭证接续头时不得声称长时间连续调用已验收。真实环境应比较同步空闲/繁忙、单 Job/多 Job 的阶段计时及实际成功率，本地合成协议回归不是现场容量验收。
 
 `knowledge_search` v4 在既有 `retrieval_score`、连续 `rank`、实际检索模式及 ranking profile 上增加入库快照元数据、命中文本片段和实际 `access_mode`；不返回重排 logit。input schema 的固定 `$comment=knowledge-search-contract/v4-access-mode` 进入既有 schema hash，旧 Publication/Job 会继续因合同不匹配被拒绝。协调发布步骤：
 

@@ -114,6 +114,14 @@ def test_mcp_keeps_safe_embedding_error_classification(mcp_fixture, monkeypatch,
     assert "knowledge_storage_unavailable" not in response.text
     assert "合成查询绝不记录" not in response.text and f["knowledge_token"] not in response.text
     assert not f["hops"] and not f["vector"].qdrant.search_limits
+    audit = f["runtime"].database.execute_one(
+        "select business_response_json from mcp_operation_audit order by created_at desc limit 1"
+    )
+    timing = json.loads(audit["business_response_json"])["retrieval_timing"]
+    assert timing["stopped_stage"] == "embedding"
+    assert timing["stage_ms"]["embedding"] >= 0
+    assert timing["rerank"] is None
+    assert timing["deadline_source"] in {"call_limit", "job"}
 
 
 def test_real_mcp_entry_bounds_first_authentication_pool_wait(mcp_fixture, monkeypatch):
@@ -143,8 +151,12 @@ def test_real_mcp_entry_bounds_first_authentication_pool_wait(mcp_fixture, monke
         blocked.close()
 
 
-def test_initialize_list_call_and_safe_audit(mcp_fixture, caplog):
+@pytest.mark.parametrize("mode", ["online", "offline"])
+def test_initialize_list_call_and_safe_audit(mcp_fixture, caplog, mode):
+    from app.modules.knowledge.domain.models import KnowledgeAccessMode
+
     f = mcp_fixture
+    f["search"].access_mode = KnowledgeAccessMode(mode)
     assert f["mcp"].get("/health").status_code == 200
     initialized = rpc(
         f,
@@ -169,6 +181,7 @@ def test_initialize_list_call_and_safe_audit(mcp_fixture, caplog):
     assert not directory.json()["result"]["isError"]
     response = rpc(f)
     assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    assert "X-Knowledge-Principal-Continuation" not in response.headers
     result = response.json()["result"]
     assert not result["isError"] and len(result["structuredContent"]["documents"]) == 1
     audit_id = result["_meta"]["enterprise-agent/mcp-call-id"]
@@ -176,6 +189,13 @@ def test_initialize_list_call_and_safe_audit(mcp_fixture, caplog):
     rows = db.execute("select * from mcp_operation_audit where mcp_call_id=?", (audit_id,))
     assert len(rows) == 1 and rows[0]["status"] == "SUCCEEDED"
     assert json.loads(rows[0]["business_response_json"])["returned"] == 1
+    timing = json.loads(rows[0]["business_response_json"])["retrieval_timing"]
+    assert {"access_check", "embedding", "vector_search", "rerank", "response"} <= set(
+        timing["stage_ms"]
+    )
+    assert ("readability" in timing["stage_ms"]) == (mode == "online")
+    assert 0 < timing["budget_after_auth_ms"] <= timing["entry_budget_ms"] <= 360000
+    assert timing["stopped_stage"] is None and len(timing["request_id"]) == 32
     all_audit = json.dumps(rows, default=str, ensure_ascii=False) + json.dumps(
         db.execute("select * from audit_event"), default=str, ensure_ascii=False
     )
@@ -358,6 +378,75 @@ def test_official_sdk_initialize_discover_and_search(mcp_fixture):
     asyncio.run(run())
 
 
+def test_runtime_bridge_real_mcp_serializes_and_audits_wait(mcp_fixture, monkeypatch):
+    import httpx
+    from mcp import ClientSession
+    from mcp.client._memory import InMemoryTransport
+    from app.python_runtime.claude_client import load_claude_agent_sdk
+    from app.python_runtime.knowledge_mcp_bridge import KnowledgeMcpBridge
+    from app.shared.tool_contract import tool_schema_hash
+
+    f = mcp_fixture
+    original = f["search"].reranker.rank
+
+    def slow_rank(*args):
+        time.sleep(0.03)
+        return original(*args)
+
+    monkeypatch.setattr(f["search"].reranker, "rank", slow_rank)
+
+    async def run():
+        app = create_app(f["tools"], ready=lambda: None)
+        async with app.app.router.lifespan_context(app.app):
+            bridge = KnowledgeMcpBridge(
+                sdk=load_claude_agent_sdk(),
+                url="http://knowledge-mcp:9108/mcp",
+                headers=headers(f),
+                frozen={
+                    name: tool_schema_hash(contract.input_schema)
+                    for name, contract in KNOWLEDGE_TOOL_CONTRACTS.items()
+                },
+                timeout=10,
+                transport=httpx.ASGITransport(app=app),
+            )
+            try:
+                await bridge.connect()
+                async with InMemoryTransport(bridge.server["instance"]) as streams:
+                    async with ClientSession(*streams) as session:
+                        await session.initialize()
+                        results = await asyncio.gather(
+                            *(
+                                session.call_tool(
+                                    "knowledge_search",
+                                    {
+                                        "knowledge_base_id": f["body"]["knowledge_base_id"],
+                                        "query": "合成并行查询",
+                                    },
+                                )
+                                for _ in range(3)
+                            )
+                        )
+                        assert [
+                            r.structured_content.get("error_code") for r in results if r.is_error
+                        ] == []
+                        assert all(
+                            not r.is_error and len(r.structured_content["documents"]) == 1
+                            for r in results
+                        )
+            finally:
+                await bridge.close()
+        rows = f["runtime"].database.execute(
+            "select business_response_json from mcp_operation_audit where status='SUCCEEDED' order by created_at"
+        )
+        timings = [json.loads(row["business_response_json"])["retrieval_timing"] for row in rows]
+        assert len(timings) == 3
+        assert timings[2]["dispatch_wait_ms"] >= 50
+        assert all(t["deadline_source"] == "upstream" for t in timings)
+        assert len({t["request_id"] for t in timings}) == 3
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("readable_fixture", [51], indirect=True)
 def test_directory_cursor_through_mcp(mcp_fixture):
     f = mcp_fixture
@@ -415,6 +504,39 @@ def test_nested_budget_observes_mcp_cancellation(mcp_fixture):
                 current_budget().check()
     assert error.value.error_code == "knowledge_mcp_cancelled"
     assert current_budget() is None
+
+
+def test_rerank_deadline_failure_keeps_stage_audit_without_inventing_remote_time(
+    mcp_fixture, monkeypatch
+):
+    from app.shared.io_deadline import current_io_deadline
+
+    f = mcp_fixture
+
+    def blocked_rank(*_):
+        while True:
+            time.sleep(0.01)
+            current_io_deadline().check()
+
+    monkeypatch.setattr(f["search"].reranker, "rank", blocked_rank)
+    response = rpc(f, headers={**headers(f), DEADLINE_HEADER: str(int(time.time() * 1000) + 1000)})
+    assert (
+        response.json()["result"]["structuredContent"]["error_code"]
+        == "knowledge_search_budget_exhausted"
+    )
+    until = time.monotonic() + 2
+    while True:
+        row = f["runtime"].database.execute_one(
+            "select status,business_response_json from mcp_operation_audit order by created_at desc limit 1"
+        )
+        if row and row["status"] == "FAILED" or time.monotonic() >= until:
+            break
+        time.sleep(0.01)
+    assert row["status"] == "FAILED"
+    timing = json.loads(row["business_response_json"])["retrieval_timing"]
+    assert timing["stopped_stage"] == "rerank" and timing["deadline_source"] == "upstream"
+    assert 0 < timing["stage_ms"]["rerank"] <= timing["elapsed_ms"]
+    assert timing["entry_budget_ms"] <= 1000 and timing["rerank"] is None
 
 
 def test_http_disconnect_cancels_dispatch_and_preserves_control():

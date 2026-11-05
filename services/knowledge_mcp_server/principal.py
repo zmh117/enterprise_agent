@@ -59,6 +59,7 @@ class InflightPrincipal:
             self._expires = claims["exp"]
             self._authorization = self._access.authenticate(self._token, self._tool)
             self.current()
+            self._control.response_principal = self._token
             if self._expires - time.time() <= REFRESH_MARGIN_SECONDS:
                 self._renew()
             context = copy_context()
@@ -103,12 +104,15 @@ class InflightPrincipal:
                 raise ValueError
             self._control.check()
             with self._lock:
-                if not self._stop.is_set():
+                if not self._stop.is_set() and not self._control.cancelled.is_set():
                     self._token, self._expires = token, claims["exp"]
+                    # 即使业务 HTTP 随后超时，Runtime 也可接续已完成的有效续期。
+                    self._control.response_principal = token
 
     def _fail(self) -> None:
         with self._lock:
             self._failed = True
+            self._control.response_principal = ""
         self._control.cancelled.set()
 
     def _active(self) -> bool:

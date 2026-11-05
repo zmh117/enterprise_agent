@@ -17,6 +17,7 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST, validate_mc
 from app.modules.model_connection.domain import ModelRuntimeBinding
 from app.python_runtime.claude_client import build_system_prompt
 from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
+from app.shared.build_identity import BuildIdentity
 from app.shared.exceptions import AppError
 from app.shared.knowledge_tool_contracts import (
     KNOWLEDGE_TOOL_CONTRACTS,
@@ -212,6 +213,74 @@ def test_runtime_routes_only_frozen_tools_and_isolates_audiences(
     assert KNOWLEDGE_USAGE_INSTRUCTIONS not in build_system_prompt(
         replace(context, effective_tool_names=())
     )
+
+
+def test_runtime_opens_job_local_knowledge_bridge_and_closes_it(job_fixture):
+    import httpx
+    from app.python_runtime.claude_client import load_claude_agent_sdk
+    from app.python_runtime.knowledge_mcp_bridge import KnowledgeMcpBridge
+    from backend.tests.test_knowledge_runtime_dispatch import Remote
+
+    c, job = job_fixture["runtime"], job_fixture["job"]
+    identity = BuildIdentity("python-runtime", "test-revision", "test-build", "linux/amd64")
+    context = replace(
+        c.agent_executor.context_builder.build(job),
+        timeout_seconds=900,
+        control_plane_build_identity=replace(identity, component="control-plane").to_dict(),
+        worker_build_identity=replace(identity, component="agent-worker").to_dict(),
+    )
+    request = AgentRunRequest(
+        job.id, job.internal_user_id, job.project_code, context, "synthetic-invocation"
+    )
+    bindings = tuple(
+        binding
+        for binding in AgentRuntimeHttpClient._runtime_bindings(request)
+        if binding.server_code == "knowledge-mcp"
+        or binding.tool_name == "ones_get_work_item_detail"
+    )
+    request = replace(
+        request,
+        context=replace(
+            context,
+            mcp_bindings=bindings,
+            allowed_tools=tuple(binding.tool_name for binding in bindings),
+            effective_tool_names=tuple(
+                f"mcp__{b.server_code.replace('-', '_')}__{b.tool_name}" for b in bindings
+            ),
+        ),
+    )
+    created = []
+
+    def factory(**kwargs):
+        item = KnowledgeMcpBridge(**kwargs, transport=httpx.MockTransport(Remote().handle))
+        created.append(item)
+        return item
+
+    client = FixedMcpClaudeSdkClient(
+        limits=c.settings.execution,
+        api_key="synthetic-model-key",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        mcp_principal_tokens={
+            "knowledge-mcp": "synthetic-original-principal",
+            "ones-mcp": "synthetic-ones",
+        },
+        knowledge_bridge_factory=factory,
+        runtime_build_identity=identity,
+    )
+
+    async def run():
+        try:
+            servers = await client._open_mcp_server(request, load_claude_agent_sdk())
+            assert servers["knowledge_mcp"]["type"] == "sdk"
+            assert servers["knowledge_mcp"]["timeout"] == 900000
+            assert "headers" not in servers["knowledge_mcp"]
+            assert servers["ones_mcp"]["type"] == "http"
+            assert len(created) == 1 and not created[0]._closed
+        finally:
+            await client._close_mcp_server()
+        assert created[0]._closed and not created[0].headers
+
+    asyncio.run(run())
 
 
 def test_registration_does_not_grant_old_job_new_tools():

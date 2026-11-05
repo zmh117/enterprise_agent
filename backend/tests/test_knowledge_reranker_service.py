@@ -12,6 +12,7 @@ from app.modules.knowledge.domain.rerank_contract import MAX_BODY_BYTES
 from app.modules.knowledge.domain.vector_contract import DEADLINE_HEADER, fingerprint
 from app.modules.knowledge.infrastructure.reranker_profile import profile
 from services.knowledge_reranker.api import create_app
+from app.shared.knowledge_limits import KNOWLEDGE_REQUEST_ID_HEADER
 
 
 class Engine:
@@ -83,9 +84,8 @@ def test_one_running_three_waiting_then_busy_health_outside_queue():
             await entered(engine)
             waiting = [await submit(client, str(i)) for i in range(3)]
             busy = await client.post("/rerank", json=body("fifth"))
-            assert busy.status_code == 429 and busy.json() == {
-                "error_code": "knowledge_rerank_busy"
-            }
+            assert busy.status_code == 429 and busy.json()["error_code"] == "knowledge_rerank_busy"
+            assert busy.json()["timing"]["state"] == "not_admitted"
             for path in ("/health", "/ready", "/profile"):
                 assert (await client.get(path)).status_code == 200
             engine.release.set()
@@ -93,6 +93,33 @@ def test_one_running_three_waiting_then_busy_health_outside_queue():
             assert engine.peak == 1 and engine.calls == ["first", "0", "1", "2"]
 
     asyncio.run(run())
+
+
+def test_reranker_timeout_reports_queue_time_and_safe_correlation(capsys):
+    async def run():
+        engine = Engine()
+        async with service(engine) as client:
+            first = await submit(client, "first")
+            await entered(engine)
+            failed = await client.post(
+                "/rerank",
+                json=body("synthetic-private-query"),
+                headers={
+                    DEADLINE_HEADER: str(int((time.time() + 0.06) * 1000)),
+                    KNOWLEDGE_REQUEST_ID_HEADER: "a" * 32,
+                },
+            )
+            assert failed.status_code == 408
+            timing = failed.json()["timing"]
+            assert timing["state"] == "queued" and timing["queue_ms"] >= 30
+            assert timing["compute_ms"] == 0 and engine.calls == ["first"]
+            engine.release.set()
+            completed = await first
+            assert completed.json()["timing"]["state"] == "finished"
+
+    asyncio.run(run())
+    output = capsys.readouterr().out
+    assert "synthetic-private-query" not in output and "a" * 32 in output
 
 
 @pytest.mark.parametrize("cancel_running", [False, True])
@@ -126,7 +153,8 @@ def test_deadline_body_limit_validation_and_exception_are_safe():
         async with service(engine) as client:
             failed = await client.post("/rerank", json=body("fail"))
             assert failed.status_code == 503
-            assert failed.json() == {"error_code": "knowledge_rerank_unavailable"}
+            assert failed.json()["error_code"] == "knowledge_rerank_unavailable"
+            assert failed.json()["timing"]["state"] == "finished"
             too_big = await client.post("/rerank", content=b"x" * (MAX_BODY_BYTES + 1))
             assert too_big.status_code == 413
             invalid = await client.post("/rerank", json={**body("private"), "extra": "private"})

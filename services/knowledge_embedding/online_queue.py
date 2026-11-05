@@ -45,6 +45,32 @@ class _Inference:
     work: Callable[[], dict[str, Any]]
     deadline: InferenceDeadline
     result: asyncio.Future[dict[str, Any]]
+    timing: "InferenceTiming"
+
+
+@dataclass
+class InferenceTiming:
+    queued: float | None = None
+    started: float | None = None
+    finished: float | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        end = self.finished or time.monotonic()
+        return {
+            "queue_ms": round(((self.started or end) - self.queued) * 1000, 3)
+            if self.queued is not None
+            else 0.0,
+            "compute_ms": round((end - self.started) * 1000, 3)
+            if self.started is not None
+            else 0.0,
+            "state": "finished"
+            if self.finished is not None
+            else "running"
+            if self.started is not None
+            else "queued"
+            if self.queued is not None
+            else "not_admitted",
+        }
 
 
 class OnlineInferenceQueue:
@@ -65,6 +91,8 @@ class OnlineInferenceQueue:
         work: Callable[[], dict[str, Any]],
         deadline: InferenceDeadline,
         disconnected: Callable[[], Awaitable[bool]],
+        *,
+        timing: InferenceTiming | None = None,
     ) -> dict[str, Any]:
         deadline.check()
         if self._closed or len(self._waiting) + int(self._active is not None) >= 4:
@@ -72,7 +100,9 @@ class OnlineInferenceQueue:
         result: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         # 请求结束后仍安全观察异常，不打印异常字符串或业务文本。
         result.add_done_callback(lambda done: None if done.cancelled() else done.exception())
-        item = _Inference(work, deadline, result)
+        timing = timing or InferenceTiming()
+        timing.queued = time.monotonic()
+        item = _Inference(work, deadline, result, timing)
         self._waiting.append(item)
         if self._pump is None:
             self._pump = asyncio.create_task(self._drain())
@@ -114,6 +144,7 @@ class OnlineInferenceQueue:
                 self._active = item
                 try:
                     item.deadline.check()
+                    item.timing.started = time.monotonic()
                     value = await asyncio.get_running_loop().run_in_executor(
                         self._workers, item.work
                     )
@@ -124,6 +155,8 @@ class OnlineInferenceQueue:
                     if not item.result.done():
                         item.result.set_exception(exc)
                 finally:
+                    if item.timing.started is not None:
+                        item.timing.finished = time.monotonic()
                     # HTTP 超时或断连不会取消 pump；实际线程退出后才轮到下一项。
                     self._active = None
         finally:

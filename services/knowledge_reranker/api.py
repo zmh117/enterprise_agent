@@ -3,6 +3,8 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import json
+import re
+from uuid import uuid4
 from typing import Any
 
 import anyio
@@ -19,7 +21,12 @@ from app.modules.knowledge.domain.rerank_contract import (
 )
 from app.modules.knowledge.domain.vector_contract import DEADLINE_HEADER, VectorError, fingerprint
 from app.modules.knowledge.infrastructure.reranker_profile import profile
-from services.knowledge_embedding.online_queue import InferenceDeadline, OnlineInferenceQueue
+from services.knowledge_embedding.online_queue import (
+    InferenceDeadline,
+    OnlineInferenceQueue,
+    InferenceTiming,
+)
+from app.shared.knowledge_limits import KNOWLEDGE_REQUEST_ID_HEADER
 
 
 async def read_request(
@@ -98,6 +105,10 @@ def create_app(engine: Any = None) -> FastAPI:
     async def process(request: Request) -> JSONResponse:
         if current["engine"] is None:
             return JSONResponse({"error_code": "knowledge_rerank_unavailable"}, status_code=503)
+        timing = InferenceTiming()
+        request_id = request.headers.get(KNOWLEDGE_REQUEST_ID_HEADER, "")
+        if re.fullmatch(r"[0-9a-f]{32}", request_id) is None:
+            request_id = uuid4().hex
         try:
             deadline = InferenceDeadline(
                 request.headers.getlist(DEADLINE_HEADER),
@@ -108,17 +119,37 @@ def create_app(engine: Any = None) -> FastAPI:
                 lambda: infer(current["engine"], query, documents, deadline),
                 deadline,
                 request.is_disconnected,
+                timing=timing,
             )
-            return JSONResponse(value)
+            return JSONResponse({**value, "timing": timing.snapshot()})
         except VectorError as exc:
             code = exc.code if exc.code in SAFE_ERRORS else "knowledge_rerank_unavailable"
             status = 429 if code == "knowledge_rerank_busy" else 422
             if code == "knowledge_rerank_input_limit":
                 status = 413
-            return JSONResponse({"error_code": code}, status_code=status)
+            return JSONResponse(
+                {"error_code": code, "timing": timing.snapshot()}, status_code=status
+            )
         except TimeoutError:
-            return JSONResponse({"error_code": "knowledge_rerank_read_timeout"}, status_code=408)
+            return JSONResponse(
+                {"error_code": "knowledge_rerank_read_timeout", "timing": timing.snapshot()},
+                status_code=408,
+            )
         except Exception:
-            return JSONResponse({"error_code": "knowledge_rerank_unavailable"}, status_code=503)
+            return JSONResponse(
+                {"error_code": "knowledge_rerank_unavailable", "timing": timing.snapshot()},
+                status_code=503,
+            )
+        finally:
+            print(
+                json.dumps(
+                    {
+                        "event": "knowledge_rerank_timing",
+                        "request_id": request_id,
+                        **timing.snapshot(),
+                    }
+                ),
+                flush=True,
+            )
 
     return app
