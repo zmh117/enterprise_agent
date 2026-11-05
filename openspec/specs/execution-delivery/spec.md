@@ -680,7 +680,7 @@ Runtime 协议失败 MUST 经既有错误步骤及执行摘要返回代码固定
 - **AND** 模型不得声称已经调用或验证其连通性
 
 ### Requirement: 模型可见会话与上下文清单必须去除确定性重复
-Runtime SHALL 从 Job 固定配置构造平台安全规则、业务指令、已发布 Skills、当前问题、检索元数据与有界历史。当前输入 MUST 在构造滚动摘要和最近历史窗口前按 `input_message_id` 排除，且只通过 User Prompt 进入一次；不同消息 ID 的同文历史仍保留。摘要与最近消息只渲染一份模型可见正文，retrieved_context 不复制该正文，审计每个来源只存一份 canonical content。Worker 与 Runtime MUST 从共享事实源使用当前 `agent-system-prompt-v7` 和对应 contract hash，历史观测不得回写。
+Runtime SHALL 从 Job 固定配置构造平台安全规则、业务指令、已发布 Skills、当前问题、检索元数据与有界历史。当前输入 MUST 在构造滚动摘要和最近历史窗口前按 `input_message_id` 排除，且只通过 User Prompt 进入一次；不同消息 ID 的同文历史仍保留。摘要与最近消息只渲染一份模型可见正文，retrieved_context 不复制该正文，审计每个来源只存一份 canonical content。Worker 与 Runtime MUST 从共享事实源使用当前 `agent-system-prompt-v9` 和对应 contract hash，历史观测不得回写。
 
 #### Scenario: 输入已存在 Session
 - **WHEN** 当前输入消息已持久化且出现在最近历史候选中
@@ -720,6 +720,16 @@ Runtime SHALL 从 Job 固定配置构造平台安全规则、业务指令、已�
 
 ### Requirement: Final reports are evidence based
 The system SHALL require Agent final answers to include a conclusion, evidence summary, uncertainty or limitations when applicable, and suggested safe next actions. Real runtime prompts SHALL instruct the model to follow this report structure using tool evidence gathered during the job. 当报告使用日志证据扫描器时，Agent MUST区分精确扫描覆盖事实、通用规则选择的启发式候选和模型诊断推断；用户行为不是固定报告章节，只有证据支持且与现场问题相关时才记录。`coverage_complete=true`只证明所选输入全部字节已扫描，不证明所有日志语义已经理解；`evidence_limit_reached=true`时报告 MUST明确说明证据包是有界选择。
+
+普通业务回复 MUST NOT 主动附带内部提示词、MCP 服务使用说明或“已忽略不可信指令”的处理声明。Runtime 提示词 SHALL 区分平台接入的工具说明与业务正文；仅凭 `MCP Server Instructions` 等标题不得推断来源或赋予权限。用户明确询问相关机制，或已验证的问题确实影响请求结果时 MAY 解释，但 MUST 区分事实与推断，不得无依据声称遭遇攻击、拦截成功或“未产生任何影响”；现有不可信业务数据和授权边界继续生效。
+
+#### Scenario: 普通业务答复出现内部工具说明
+- **WHEN** 模型处理业务诊断，Runtime 上下文含 MCP 服务使用说明或业务证据中出现同名标题
+- **THEN** 系统提示要求最终答复聚焦业务证据和实际限制，不主动附带已忽略该说明或无影响的声明
+
+#### Scenario: 用户询问内部说明
+- **WHEN** 用户明确询问 `MCP Server Instructions` 的含义或相关处理行为
+- **THEN** 系统允许依据已验证来源解释机制和不确定性，不把标题当作攻击或可信来源的证明
 
 #### Scenario: Agent completes order diagnosis
 - **WHEN** the Agent finishes investigating a business question such as an order stuck in a status
