@@ -85,6 +85,7 @@ export const planSchema = z.object({
           total: z.number().optional(),
           encoded: z.number().optional(),
           reused: z.number().optional(),
+          verified: z.number().optional(),
         })
         .nullable(),
       collection: z
@@ -254,6 +255,31 @@ export function buildStepLines(
     lines.push(`当前构建阶段：第 ${current} / ${total} 步`)
   }
   return lines
+}
+export function vectorProgressSummary(
+  progress: NonNullable<NonNullable<KnowledgePlan["run"]>["progress"]>
+): string {
+  const completed = progress.processed ?? progress.verified
+  const counts =
+    completed !== undefined && progress.total !== undefined
+      ? `已完成 ${completed} / ${progress.total} 块`
+      : [
+          completed === undefined
+            ? "已完成块数待上报"
+            : `已完成 ${completed} 块`,
+          progress.total === undefined
+            ? "总块数待上报"
+            : `总计 ${progress.total} 块`,
+        ].join(" · ")
+  return [
+    counts,
+    ...(progress.encoded === undefined
+      ? []
+      : [`新生成向量 ${progress.encoded} 块`]),
+    ...(progress.reused === undefined
+      ? []
+      : [`复用已有向量 ${progress.reused} 块`]),
+  ].join(" · ")
 }
 export function displayTime(value: string | null | undefined) {
   return value

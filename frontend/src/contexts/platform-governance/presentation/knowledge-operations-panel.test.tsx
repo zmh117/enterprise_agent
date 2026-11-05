@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { KnowledgeOperationsPanel } from "./knowledge-operations-panel"
 import type { KnowledgeOperationsSnapshot } from "../domain/knowledge-operations"
+import { operationsSchema } from "../domain/knowledge-operations"
 
 function fixture(): KnowledgeOperationsSnapshot {
   const runtime = {
@@ -118,6 +119,41 @@ function setup({
 }
 
 describe("知识库运维", () => {
+  it.each([
+    {
+      progress: { processed: 2, total: 5, encoded: 1, reused: 1, verified: 2 },
+      expected: "已完成 2 / 5 块 · 新生成向量 1 块 · 复用已有向量 1 块",
+    },
+    {
+      progress: { verified: 1, encoded: 1, reused: 0 },
+      expected:
+        "已完成 1 块 · 总块数待上报 · 新生成向量 1 块 · 复用已有向量 0 块",
+    },
+    {
+      progress: {},
+      expected: "已完成块数待上报 · 总块数待上报",
+    },
+    {
+      progress: { processed: 0, total: 0, encoded: 0, reused: 0 },
+      expected: "已完成 0 / 0 块 · 新生成向量 0 块 · 复用已有向量 0 块",
+    },
+  ])("按已上报的块数显示文档进度：$expected", ({ progress, expected }) => {
+    const data = fixture()
+    data.plans[0].run = {
+      run_id: "run",
+      phase: "CHUNKING",
+      active: true,
+      error_code: null,
+      updated_at: "2026-11-03T10:00:00Z",
+      progress: { phase: "indexing", ...progress },
+    }
+    setup({ data: operationsSchema.parse(data) })
+    expect(
+      screen.getByText(`当前文档向量处理：${expected}`)
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/0 \/ 未知/)).not.toBeInTheDocument()
+  })
+
   it("停止服务明确影响全部知识库，确认后提交任务", async () => {
     const { calls } = setup()
     fireEvent.click(screen.getByRole("button", { name: "停止服务" }))

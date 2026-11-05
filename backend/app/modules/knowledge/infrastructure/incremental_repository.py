@@ -263,17 +263,19 @@ class IncrementalSyncRepository(SyncRepository):
         )
         return result
 
-    def prepare_document(self, candidate: dict[str, Any], profile: ChunkProfile) -> None:
+    def prepare_document(self, candidate: dict[str, Any], profile: ChunkProfile) -> int:
         record = {
             **self.revision(candidate["candidate_revision_id"]),
             "revision_id": candidate["candidate_revision_id"],
             "document_kind": candidate["candidate_kind"],
         }
         repository = ChunkRepository(self.database, profile=profile)
-        if repository.reuse(record) is None:
+        prepared = repository.reuse(record)
+        if prepared is None:
             prepared = prepare_chunks(record, profile)
             with self.database.unit_of_work():
                 repository._save_immutable(record, prepared)
+        return len(prepared.chunks)
 
     def apply_document(self, candidate: dict[str, Any]) -> None:
         with self.database.unit_of_work():

@@ -49,10 +49,12 @@ class IncrementalVectorWriter:
         index: dict[str, Any],
         rows: Iterator[dict[str, Any]],
         *,
+        total: int,
         capacity: Callable[[int], None] = lambda _: None,
         progress: Callable[[dict[str, int]], None] = lambda _: None,
     ) -> dict[str, int]:
-        counts = {"encoded": 0, "reused": 0, "verified": 0}
+        counts = {"processed": 0, "total": total, "encoded": 0, "reused": 0, "verified": 0}
+        progress(dict(counts))
         self.qdrant.ensure(index)
         for batch in batches(rows, 32):
             self.check_active()
@@ -85,6 +87,7 @@ class IncrementalVectorWriter:
                 self._valid(index, row, point)
             self.repository.checkpoint(index, batch, "INDEXED")
             counts["verified"] += len(batch)
+            counts["processed"] = counts["verified"]
             progress(dict(counts))
         return counts
 

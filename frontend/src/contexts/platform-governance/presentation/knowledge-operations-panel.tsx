@@ -26,6 +26,7 @@ import {
 import {
   displayTime,
   buildStepLines,
+  vectorProgressSummary,
   operationNames,
   phaseNames,
   serviceNames,
@@ -225,6 +226,9 @@ export function KnowledgeOperationsPanel({
         </p>
       )}
       {data?.plans.map((plan) => {
+        const syncRunning = data.operations.some(
+          (o) => o.binding_id === plan.id && o.state === "RUNNING"
+        )
         const activeOperation = data.operations.find(
           (o) =>
             o.binding_id === plan.id &&
@@ -252,7 +256,9 @@ export function KnowledgeOperationsPanel({
             <p className="text-xs text-muted-foreground">
               每 {plan.interval_seconds / 3600} 小时执行 · 最近成功：
               {displayTime(plan.last_success_at)} · 下次执行：
-              {displayTime(plan.next_run_at)}
+              {plan.enabled && plan.schedule_enabled && syncRunning
+                ? "本轮完成后 1 小时"
+                : displayTime(plan.next_run_at)}
             </p>
             {activeOperation && (
               <p className="text-sm">
@@ -288,10 +294,8 @@ export function KnowledgeOperationsPanel({
                 )}
                 {plan.run.progress && (
                   <p>
-                    当前文档向量处理：{plan.run.progress.processed ?? 0} /{" "}
-                    {plan.run.progress.total ?? "未知"} 块 · 编码{" "}
-                    {plan.run.progress.encoded ?? 0} · 复用{" "}
-                    {plan.run.progress.reused ?? 0}
+                    当前文档向量处理：
+                    {vectorProgressSummary(plan.run.progress)}
                   </p>
                 )}
                 {plan.run.error_code && (

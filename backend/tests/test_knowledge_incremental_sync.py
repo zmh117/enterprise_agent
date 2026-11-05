@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import date
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -167,6 +168,70 @@ def same_stamp_revised(record):
     values = deepcopy(record.values)
     values["title"] += " 本次内容 B"
     return replace(record, values=values, content_hash=digest(values))
+
+
+def test_document_progress_persists_start_and_completion_within_throttle_window(
+    harness, monkeypatch
+):
+    from app.modules.knowledge.infrastructure import incremental_steps
+
+    h = harness
+    records = h.records(1, 2)
+    values = {**records[1].values, "body_text": "合成多块文档内容。" * 300}
+    records[1] = replace(records[1], values=values, content_hash=digest(values))
+    run_id = h.stage(records)
+    monkeypatch.setattr(incremental_steps, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    events = []
+
+    def observe(event):
+        persisted = h.repo.summary(run_id)["progress"]
+        for key in ("processed", "total", "encoded", "reused", "verified"):
+            assert persisted[key] == event[key]
+        events.append(event)
+
+    h.steps.progress = observe
+    assert h.run()["content_status"] == "COMPLETED"
+    assert len(events) == 4
+    totals = set()
+    for started, finished in zip(events[::2], events[1::2], strict=True):
+        assert started["document_id"] == finished["document_id"]
+        actual = h.db.execute_one(
+            f"select count(*) as n from {h.repo.t('document_chunk')} c "
+            f"join {h.repo.t('document_chunk_set')} s on s.id=c.chunk_set_id "
+            "where s.document_id=?",
+            (finished["document_id"],),
+        )["n"]
+        totals.add(actual)
+        assert started["processed"] == started["encoded"] == started["reused"] == 0
+        assert started["total"] == finished["total"] == actual
+        assert finished["processed"] == finished["verified"] == actual
+        assert finished["encoded"] + finished["reused"] == actual
+    assert len(totals) == 2
+
+
+def test_vector_progress_counts_only_verified_blocks_and_resumes_with_reuse(harness, monkeypatch):
+    h = harness
+    run_id = h.stage(h.records(1))
+    original = h.qdrant.retrieve
+
+    def fail_verification(index, ids):
+        if h.qdrant.points:
+            return {}
+        return original(index, ids)
+
+    monkeypatch.setattr(h.qdrant, "retrieve", fail_verification)
+    failed = h.run()
+    assert failed["content_status"] == "PARTIAL"
+    assert failed["progress"]["processed"] == 0
+    assert failed["progress"]["total"] == len(h.qdrant.points) > 0
+    encoded = h.embedding.encoded
+    monkeypatch.setattr(h.qdrant, "retrieve", original)
+    completed = h.run()
+    assert completed["content_status"] == "COMPLETED"
+    progress = h.repo.summary(run_id)["progress"]
+    assert progress["processed"] == progress["total"] == progress["reused"]
+    assert progress["encoded"] == 0
+    assert h.embedding.encoded == encoded
 
 
 def test_three_new_documents_keep_collections_and_old_vectors(harness, monkeypatch):

@@ -44,7 +44,8 @@ class IncrementalSyncSteps:
 
     def _record_progress(self, candidate: dict[str, Any], counts: dict[str, int]) -> None:
         tick = time.monotonic()
-        if tick - self._progress_at >= 15:
+        # 每篇文档开始和完成时立即落库；仅节流中间批次，避免显示上一份文档的进度。
+        if counts["processed"] in (0, counts["total"]) or tick - self._progress_at >= 15:
             self.repo.record_progress(candidate["run_id"], "indexing", counts)
             self._progress_at = tick
             if self.progress:
@@ -89,20 +90,17 @@ class IncrementalSyncSteps:
                 index = vectors.index_for(base_id, run["source_id"], profile)
                 indexes[base_id] = index
                 if state == "included" and candidate["processing_step"] == "PENDING":
-                    repo.prepare_document(candidate, profile)
+                    total = repo.prepare_document(candidate, profile)
                     self.capacity.check(0)
-                    counts = self.writer.prepare(
+                    self.writer.prepare(
                         index,
                         vectors.document_rows(
                             candidate["candidate_revision_id"], profile.fingerprint
                         ),
+                        total=total,
                         capacity=self.capacity.check,
                         progress=lambda value: self._record_progress(candidate, value),
                     )
-                    if self.progress:
-                        self.progress(
-                            {"run_id": run["id"], "document_id": candidate["document_id"], **counts}
-                        )
         if candidate["processing_step"] == "PENDING":
             repo.apply_document(candidate)
         for base_id, index in indexes.items():
