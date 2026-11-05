@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any
 
 from app.modules.agent.domain.runtime import AgentExecutionContext
+from app.shared.sdk_failure_metadata import safe_sdk_failure_metadata
 from app.python_runtime.sdk_event_normalizer import (
     content_blocks,
     sdk_block_type,
@@ -100,6 +101,12 @@ class RunAuditRecorder:
                 "exception_class": error.__class__.__name__,
                 "safe_message": (str(safe_message) if isinstance(safe_message, str) else ""),
             }
+            diagnostics = getattr(error, "diagnostics", {})
+            metadata = safe_sdk_failure_metadata(
+                diagnostics.get("sdk_result") if isinstance(diagnostics, dict) else None
+            )
+            if metadata:
+                self.audit["error"]["sdk_result"] = metadata
         _finalize_summary(self.audit)
         return self.audit
 

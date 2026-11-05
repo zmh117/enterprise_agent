@@ -408,7 +408,7 @@ Runtime SHALL 提供 health、ready、version 和受服务授权保护的模型 
 - **AND** 不调用模型或任何内部工具
 
 ### Requirement: SDK failures are classified for retry policy
-系统 SHALL 根据结构化语义分类 Claude Agent SDK/CLI 故障：网络、429/5xx、transport、CLI JSON decode 和可确认的瞬时 provider 故障映射为可重试；缺少凭据、CLI 不存在、明确无效模型配置、工具策略拒绝和 Runtime 自身 Job 墙钟预算耗尽映射为不可重试；矛盾的 error result MUST 使用独立错误码并只允许受最大次数约束的有限重试。错误分类 MUST 使用稳定错误码和协议 retry class，不得依赖用户可见消息文本。
+系统 SHALL 根据结构化语义分类 Claude Agent SDK/CLI 故障：网络、429/5xx、transport、CLI JSON decode 和可确认的瞬时 provider 故障映射为可重试；缺少凭据、明确模型认证或权限失败、CLI 不存在、明确无效模型配置、工具策略拒绝和 Runtime 自身 Job 墙钟预算耗尽映射为不可重试；没有明确认证或权限失败证据的矛盾 error result MUST 使用独立错误码并只允许受最大次数约束的有限重试。错误分类 MUST 使用稳定错误码和协议 retry class，不得依赖用户可见消息文本。
 
 #### Scenario: Transient process error triggers retry
 - **WHEN** SDK 返回网络、rate limit、overloaded、transport 或 CLI JSON decode 瞬时错误
@@ -420,7 +420,7 @@ Runtime SHALL 提供 health、ready、version 和受服务授权保护的模型 
 - **AND** Job 进入 `TIMEOUT`，已有安全工具事件和执行证据继续持久化
 
 #### Scenario: SDK reports contradictory success error
-- **WHEN** SDK/CLI 返回 `is_error=true`，但 errors 为空且 subtype 为 `success`，或抛出等价的 `Claude Code returned an error result: success`
+- **WHEN** SDK/CLI 返回 `is_error=true`，但 errors 为空且 subtype 为 `success`，或抛出等价的 `Claude Code returned an error result: success`，且没有明确模型认证或权限失败证据
 - **THEN** runtime 不把该结果作为最终答案，映射为 `claude_inconsistent_result`，生成用户可理解的安全消息，并在最大重试次数内有限重试
 
 #### Scenario: Contradictory result exhausts retries
@@ -430,6 +430,19 @@ Runtime SHALL 提供 health、ready、version 和受服务授权保护的模型 
 #### Scenario: Configuration failure does not retry
 - **WHEN** runtime 确认缺少凭据、CLI runtime 不存在或模型配置明确无效
 - **THEN** runtime 返回不可重试配置错误，不进入延迟 retry queue
+
+#### Scenario: Model authentication failure overrides contradictory success markers
+- **WHEN** 模型调用或模型连接测试返回 HTTP 401、结构化 authentication error，或 SDK AssistantMessage 标明 `authentication_failed`，即使 terminal subtype 为 `success`
+- **THEN** runtime 返回 `runtime_model_authentication` 与 `CONFIGURATION` retry class，安全文案明确提示模型 API Key 认证失败并指导管理员检查更新；不得仅凭 401 断言一定已过期
+- **AND** Worker 不创建后续重试 attempt，Job 详情和原 reply route 的一次失败通知保留准确安全原因，不回显 Key、原始 Provider 正文或堆栈
+
+#### Scenario: Model permission denial remains distinct from invalid credentials
+- **WHEN** 模型调用或模型连接测试返回 HTTP 403 或结构化 permission error
+- **THEN** runtime 返回 `runtime_model_permission_denied` 与 `CONFIGURATION` retry class，提示当前凭据无权访问模型或资源，不将其称为 API Key 过期
+
+#### Scenario: Legacy SDK preserves access failure classification without scanning business text
+- **WHEN** 旧 SDK 只在已确认失败的模型 result 或异常中返回固定 `API Error: 401/403` 信封
+- **THEN** runtime 可从该信封提取 HTTP 状态；明确结构化 HTTP 状态优先，普通回答、Tool Result 和 stderr 中出现相同字样不得触发认证失败分类
 
 #### Scenario: Policy violation does not retry as transport error
 - **WHEN** 工具调用因为 SQL policy、只读边界、权限拒绝或 `max_tool_calls` 耗尽而停止

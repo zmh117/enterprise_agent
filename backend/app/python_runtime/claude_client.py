@@ -36,6 +36,7 @@ from app.python_runtime.error_mapper import (
     looks_max_turns_exhausted,
     looks_placeholder_api_key,
     looks_transient,
+    model_access_failure,
     provider_host,
     result_error_details,
     safe_sdk_error_message,
@@ -44,6 +45,7 @@ from app.python_runtime.error_mapper import (
 from app.shared.config import ExecutionSettings
 from app.shared.knowledge_tool_contracts import KNOWLEDGE_USAGE_INSTRUCTIONS
 from app.shared.database import assert_external_io_allowed
+from app.shared.sdk_failure_metadata import safe_sdk_failure_metadata
 from app.shared.exceptions import (
     DiagnosticLoopExhausted,
     ExecutionTimeout,
@@ -280,6 +282,7 @@ class ClaudeSdkClient:
                 run_audit_recorder.observe_message(message)
                 self.last_runtime_events = list(audit.events)
                 self.last_accounting = dict(audit.accounting)
+                self._raise_model_access_failure(message, cli_stderr, tool_events, binding)
                 error_result = result_error_details(message)
                 if error_result is not None:
                     detail, inconsistent = error_result
@@ -296,7 +299,7 @@ class ClaudeSdkClient:
                         tool_events=tool_events,
                         error_code=error_code,
                         diagnostics=self._safe_runtime_diagnostics(
-                            RuntimeError(detail), cli_stderr, binding
+                            RuntimeError(detail), cli_stderr, binding, result_message=message
                         ),
                     )
                 assistant_texts.extend(extract_text_blocks(message))
@@ -464,6 +467,7 @@ class ClaudeSdkClient:
                 async def consume() -> None:
                     nonlocal received
                     async for message in sdk.query(prompt="Reply OK.", options=options):
+                        self._raise_model_access_failure(message, stderr, [], binding)
                         error_result = result_error_details(message)
                         if error_result is not None:
                             raise RetryableExecutionError(
@@ -618,6 +622,30 @@ class ClaudeSdkClient:
             ),
         )
 
+    def _raise_model_access_failure(
+        self,
+        source: Any,
+        cli_stderr: list[str],
+        tool_events: list[dict[str, Any]],
+        binding: ModelRuntimeBinding | None,
+    ) -> None:
+        failure = model_access_failure(source)
+        if failure is None:
+            return
+        code, safe_message = failure
+        raise NonRetryableExecutionError(
+            code,
+            safe_message=safe_message,
+            tool_events=tool_events,
+            error_code=code,
+            diagnostics=self._safe_runtime_diagnostics(
+                source if isinstance(source, Exception) else RuntimeError(code),
+                cli_stderr,
+                binding,
+                result_message=None if isinstance(source, Exception) else source,
+            ),
+        )
+
     def _raise_mapped_sdk_error(
         self,
         exc: Exception,
@@ -635,6 +663,7 @@ class ClaudeSdkClient:
                 tool_events=tool_events,
                 error_code="tool_policy_error",
             ) from exc
+        self._raise_model_access_failure(exc, cli_stderr, tool_events, binding)
         name = exc.__class__.__name__
         message = sdk_error_message(exc, cli_stderr)
         diagnostics = self._safe_runtime_diagnostics(exc, cli_stderr, binding)
@@ -691,9 +720,31 @@ class ClaudeSdkClient:
         exc: Exception,
         cli_stderr: list[str],
         binding: ModelRuntimeBinding | None = None,
+        *,
+        result_message: Any = None,
     ) -> dict[str, object]:
         subtype = getattr(exc, "subtype", None)
         errors = getattr(exc, "errors", None)
+        source = result_message if result_message is not None else getattr(exc, "data", exc)
+        result_errors = sdk_value(source, "errors")
+        result_text = sdk_value(source, "result")
+        metadata = safe_sdk_failure_metadata(
+            {
+                **{
+                    key: sdk_value(source, key)
+                    for key in (
+                        "subtype",
+                        "terminal_reason",
+                        "is_error",
+                        "api_error_status",
+                        "duration_ms",
+                        "num_turns",
+                    )
+                },
+                "error_count": len(result_errors) if isinstance(result_errors, list) else None,
+                "result_present": bool(result_text) if isinstance(result_text, str) else None,
+            }
+        )
         return {
             "exception_class": exc.__class__.__name__[:120],
             "sdk_version": claude_sdk_version(),
@@ -703,6 +754,7 @@ class ClaudeSdkClient:
             "subtype": bounded_safe_diagnostic(subtype),
             "errors": bounded_safe_diagnostic(errors),
             "stderr": bounded_safe_diagnostic("\n".join(cli_stderr)),
+            "sdk_result": metadata,
         }
 
 

@@ -9,6 +9,7 @@ from app.modules.job.application.create_agent_job_service import CreateAgentJobC
 from app.modules.job.application.retry_recovery_service import RetryRecoveryService
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from app.python_runtime.claude_client import ClaudeSdkClient
 from app.workers.agent_job_worker import AgentJobWorker
 from backend.tests.helpers import (
     container,
@@ -56,6 +57,7 @@ class _AlwaysFailClient:
             "synthetic persistent transient",
             safe_message="模型服务持续不可用",
             error_code="synthetic_transient",
+            diagnostics={"sdk_result": {"api_error_status": 503, "terminal_reason": "api_error"}},
         )
 
 
@@ -180,6 +182,53 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         self.assertEqual(job.id, payload["job_id"])
         self.assertNotIn("secret", payload["message"])
         self.assertNotIn("http", payload["message"].lower())
+
+    def test_authentication_failure_does_not_retry_and_delivers_precise_message_once(self) -> None:
+        c = container()
+        adapter = _CaptureAdapter()
+        c.result_delivery_service.adapters["test_capture"] = adapter
+        client = ClaudeSdkClient(
+            model="synthetic-model",
+            limits=c.settings.execution,
+            api_key="synthetic-model-key",
+        )
+        try:
+            client._raise_mapped_sdk_error(
+                RuntimeError(
+                    "Claude Code returned an error result: API Error: 401 synthetic-private-key"
+                ),
+                [],
+            )
+        except NonRetryableExecutionError as exc:
+            failure = exc
+        else:
+            self.fail("authentication failure must be non-retryable")
+
+        job = self._create_job(
+            c,
+            "authentication-failure",
+            reply_route={"type": "test_capture", "target": {}},
+        )
+        claimed = c.agent_repository.claim_job(job.id, "worker")
+        self.assertEqual("dead", c.retry_service.handle_failure(claimed, failure, "corr-auth"))
+        terminal = c.agent_repository.get_job(job.id)
+        self.assertEqual(JobStatus.FAILED, terminal.status)
+        self.assertEqual(0, terminal.retry_count)
+        self.assertIsNone(terminal.next_retry_at)
+        self.assertEqual("runtime_model_authentication", terminal.last_error_code)
+        self.assertEqual(failure.safe_message, terminal.error_message)
+        self.assertNotIn(
+            "job.retry.scheduled",
+            {row["event_type"] for row in c.audit_repository.list_for_job(job.id)},
+        )
+        dispatch_pending_deliveries(c)
+        dispatch_pending_deliveries(c)
+        self.assertEqual(1, len(adapter.sent))
+        payload = json.loads(adapter.sent[0])
+        self.assertEqual("runtime_model_authentication", payload["error_code"])
+        self.assertEqual(failure.safe_message, payload["message"])
+        self.assertNotIn("synthetic-private", adapter.sent[0])
+        self.assertNotIn("重试策略", adapter.sent[0])
 
     def test_recovery_dry_run_has_no_writes_and_apply_is_idempotent(self) -> None:
         c = container()
@@ -342,6 +391,13 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         self.assertEqual(1, len(adapter.sent))
         event_types = {row["event_type"] for row in c.audit_repository.list_for_job(job.id)}
         self.assertIn("job.dead.persisted", event_types)
+        for event in c.audit_repository.list_for_job(job.id):
+            if event["event_type"] in {"job.retry.scheduled", "job.dead.persisted"}:
+                summary = json.loads(event["payload_summary"])
+                self.assertEqual(
+                    {"api_error_status": 503, "terminal_reason": "api_error"},
+                    json.loads(summary["payload"])["sdk_result"],
+                )
         event_types = [
             row["event_type"]
             for row in c.database.execute(

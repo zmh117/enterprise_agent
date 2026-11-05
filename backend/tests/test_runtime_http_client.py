@@ -812,10 +812,20 @@ def test_v15_audit_chunk_metadata_keeps_real_runtime_event_repository_contiguous
 
 
 def test_worker_attaches_complete_v15_run_audit_to_runtime_failure() -> None:
+    metadata = {
+        "subtype": "success",
+        "terminal_reason": "api_error",
+        "api_error_status": 429,
+        "is_error": True,
+        "error_count": 0,
+    }
     run_audit = {
         "status": "FAILED",
         "system_prompt": "失败调用完整提示词",
-        "error": {"message": "provider failure"},
+        "error": {
+            "message": "synthetic-private-error",
+            "sdk_result": {**metadata, "result": "synthetic-private-response"},
+        },
     }
     client, _ = _client(GoldenTransport(terminal_status="FAILED", run_audit=run_audit))
 
@@ -823,6 +833,8 @@ def test_worker_attaches_complete_v15_run_audit_to_runtime_failure() -> None:
         client.run(_request())
 
     assert getattr(raised.value, "run_audit") == run_audit
+    assert raised.value.diagnostics["sdk_result"] == metadata
+    assert "synthetic-private" not in json.dumps(raised.value.diagnostics)
 
 
 def test_worker_passes_manifest_v5_without_projection() -> None:
@@ -1215,6 +1227,23 @@ def test_worker_maps_runtime_failure_and_preserves_prior_tool_events() -> None:
     assert raised.value.error_code == "runtime_model_rate_limited"
     assert len(raised.value.tool_events) == 1
     assert raised.value.diagnostics["runtime_provenance"]["sdk_version"] == "0.3.226"
+
+
+@pytest.mark.parametrize(
+    "code", ["runtime_model_authentication", "runtime_model_permission_denied"]
+)
+def test_worker_preserves_model_access_failure_without_retry(code: str) -> None:
+    safe_message = "模型服务认证失败，请管理员检查模型连接的 API Key。"
+    client, _ = _client(
+        GoldenTransport(
+            terminal_status="FAILED",
+            failure={"code": code, "retry_class": "CONFIGURATION", "safe_message": safe_message},
+        )
+    )
+    with pytest.raises(NonRetryableExecutionError) as captured:
+        client.run(_request())
+    assert captured.value.error_code == code
+    assert captured.value.safe_message == safe_message
 
 
 @pytest.mark.parametrize("retry_class", ["NEVER", "TRANSIENT"])

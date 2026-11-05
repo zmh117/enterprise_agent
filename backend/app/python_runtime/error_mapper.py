@@ -6,10 +6,79 @@ from typing import Any
 from urllib.parse import urlsplit
 
 
+_MODEL_ACCESS_FAILURES = {
+    401: (
+        "runtime_model_authentication",
+        "模型服务认证失败：API Key 无效或已失效，请管理员检查并更新模型连接的 API Key 后重试。",
+    ),
+    403: (
+        "runtime_model_permission_denied",
+        "模型服务拒绝访问：当前凭据无权访问该模型或资源，请管理员检查模型授权。",
+    ),
+}
+_MODEL_ACCESS_ERROR_TYPES = {
+    "authentication_failed": 401,
+    "authentication_error": 401,
+    "invalid_api_key": 401,
+    "permission_error": 403,
+    "permission_denied_error": 403,
+}
+
+
 def sdk_value(source: Any, key: str) -> Any:
     if isinstance(source, dict):
         return source.get(key)
     return getattr(source, key, None)
+
+
+def model_access_failure(source: Any) -> tuple[str, str] | None:
+    """Classify model-boundary failures, never ordinary assistant/tool content."""
+    is_exception = isinstance(source, Exception)
+    data = getattr(source, "data", None) if is_exception else None
+    payload = data if isinstance(data, dict) else source
+    error = sdk_value(payload, "error")
+    error_type = error if isinstance(error, str) else sdk_value(error, "type")
+    is_assistant = (
+        sdk_value(payload, "type") == "assistant" or type(payload).__name__ == "AssistantMessage"
+    )
+    is_result = sdk_value(payload, "type") == "result" or type(payload).__name__ == "ResultMessage"
+    if not (
+        is_exception
+        or (is_result and sdk_value(payload, "is_error") is True)
+        or (is_assistant and error_type == "authentication_failed")
+    ):
+        return None
+    status = sdk_value(payload, "api_error_status")
+    if status is None and is_exception:
+        status = getattr(source, "status_code", None)
+    # A concrete HTTP status takes precedence over lower-fidelity text/type hints.
+    if type(status) is int and 100 <= status <= 599:
+        return _MODEL_ACCESS_FAILURES.get(status)
+    if isinstance(error_type, str) and error_type in _MODEL_ACCESS_ERROR_TYPES:
+        return _MODEL_ACCESS_FAILURES[_MODEL_ACCESS_ERROR_TYPES[error_type]]
+    texts = [sdk_value(payload, "result")]
+    errors = sdk_value(payload, "errors")
+    if isinstance(errors, list):
+        texts.extend(errors[:5])
+    if is_exception:
+        texts.append(str(source))
+    return _legacy_model_access_failure(texts)
+
+
+def _legacy_model_access_failure(texts: list[Any]) -> tuple[str, str] | None:
+    # Older CLI versions expose the HTTP status only in this API-error envelope.
+    # Do not scan arbitrary prose, tool results, or stderr for auth-related words.
+    for text in texts:
+        if not isinstance(text, str):
+            continue
+        match = re.match(
+            r"^\s*(?:Claude Code returned an error result:\s*)?API Error:\s*(\d{3})\b",
+            text[:256],
+            re.IGNORECASE,
+        )
+        if match:
+            return _MODEL_ACCESS_FAILURES.get(int(match.group(1)))
+    return None
 
 
 def looks_transient(message: str) -> bool:

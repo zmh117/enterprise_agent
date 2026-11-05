@@ -59,6 +59,7 @@ from app.shared.exceptions import (
 )
 from app.shared.tool_contract import PROMPT_TEMPLATE_VERSION, canonical_json_sha256
 from app.shared.agent_run_audit_codec import decode_audit_chunks
+from app.shared.sdk_failure_metadata import safe_sdk_failure_metadata
 
 MAX_EVENT_LINE_BYTES = 65_536
 MAX_STREAM_BYTES = 2_097_152
@@ -1143,6 +1144,10 @@ class AgentRuntimeHttpClient:
             )
         failure = dict(terminal.get("failure") or {})
         failure_code = str(failure.get("code") or "runtime_failure")
+        audit_error = run_audit.get("error") if isinstance(run_audit, dict) else None
+        sdk_result = safe_sdk_failure_metadata(
+            audit_error.get("sdk_result") if isinstance(audit_error, dict) else None
+        )
         exception_type: type[
             ExecutionTimeout | RetryableExecutionError | NonRetryableExecutionError
         ]
@@ -1171,6 +1176,7 @@ class AgentRuntimeHttpClient:
                     }
                 ],
                 "execution_accounting": dict(terminal.get("accounting") or {}),
+                **({"sdk_result": sdk_result} if sdk_result else {}),
             },
         )
         setattr(error, "run_audit", run_audit)

@@ -70,6 +70,30 @@ docker compose exec python-agent-runtime-a touch /tmp/python-agent-runtime/drain
 
 请求快照、事件、终态正文仅在 Job 已终结且 Invocation 已终结并确认停止后才可清理；`RuntimePoolStore.prune_body` 验证这些条件。生命周期身份随 Job 保留，普通读取不触发清理。当前没有按 TTL 自动删除运行结果的定时任务；现有 ledger TTL 参数不会越过这些条件。正文清理后恢复返回 `runtime_recovery_expired`，不能重新执行。普通状态、队列和运维报告不得输出快照正文、凭据或认证 Header。
 
+## 模型失败与跨节点重试排查
+
+`claude_inconsistent_result` 表示 SDK/CLI 的失败结果同时带有成功 subtype 等标记，不能据此确定上游根因。SDK 的 API 失败也可能返回 `subtype=success`、`is_error=true`；HTTP 状态、`terminal_reason` 才是进一步定位的证据。不要把这类结果当成成功，也不要仅靠增加重试次数掩盖持续故障。
+
+明确模型认证失败会优先返回 `runtime_model_authentication`（HTTP 401 或 SDK 认证标记），并提示管理员检查更新模型连接的 API Key；403/权限错误返回 `runtime_model_permission_denied`。这两类错误均使用 `CONFIGURATION`，不创建后续自动重试，任务详情和钉钉等原回复渠道使用同一安全原因。模型连接测试使用相同分类。401 本身不能区分填错、过期或撤销；没有上游认证证据时仍保留不一致结果分类。旧 SDK 仅支持从已确认失败的 `API Error: 401/403` 信封提取状态，不扫描普通消息或 stderr 猜测认证失败。
+
+新的失败记录在完整运行审计的 `error.sdk_result` 保存不含正文的结构化字段：`subtype`、`is_error`、`api_error_status`、`terminal_reason`、`error_count`、`result_present`、`duration_ms` 和 `num_turns`（上游未提供的数值字段不补猜）。Worker 将其投影到 `job.retry.scheduled` 和 `job.dead.persisted` 的 `sdk_result`，放在可能截断的其他诊断明细之前。未知 subtype/reason 只显示 `unknown`，不把响应正文、errors 文本或 stderr 复制进该摘要。旧记录不会自动补齐。
+
+同一个 Job 可以在首次失败并确认执行停止后，使用新的 attempt 在另一节点重试。收到 HTTP 请求或重放已有终态不等于再次运行模型。排查两个 Runtime 是否重复执行时，在部署数据库中只查询以下元数据（替换 Job ID）：
+
+```sql
+SELECT invocation_id, attempt, node_id, state, accepted_at,
+       execution_quiesced_at, terminal_at, terminal_code
+FROM agent_runtime_invocation
+WHERE job_id = '<job_id>'
+ORDER BY attempt;
+
+SELECT id, status, retry_count, max_retry_count, next_retry_at, last_error_code
+FROM agent_job
+WHERE id = '<job_id>';
+```
+
+不同 attempt 的执行必须满足：前一次 `execution_quiesced_at` 不晚于下一次 `accepted_at`。同一 invocation 只有一个数据库 owner；若节点日志显示它在两个节点真正启动了 SDK，需要继续核对节点是否共享数据库、节点/实例标识和部署版本。仅看到两个节点均收到请求，不能认定重复执行。对外只提供上述元数据及安全诊断字段，不导出完整运行审计或原始消息。
+
 ## 隔离验收与回退
 
 三节点拓扑和可阻塞确定性 Provider 位于 [验收脚本](../../backend/tests/support/runtime_pool/run.py) 与 [Compose](../../backend/tests/support/runtime_pool/compose.yml)。它们使用独立项目、临时 PostgreSQL/RabbitMQ、生成的测试密钥，不能连接部署数据库。按脚本 `init` 输出目录依次执行 `start`、所需 case、`cleanup`；镜像需先构建为 `ea-runtime-pool-test:local` 和 `ea-runtime-pool-worker-test:local`。故障注入只安装在测试挂载模块，不进入产品镜像。

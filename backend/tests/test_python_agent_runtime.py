@@ -15,6 +15,8 @@ from typing import Any, cast
 import pytest
 from claude_agent_sdk import (
     AssistantMessage,
+    ResultError,
+    ResultMessage,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
@@ -3070,6 +3072,197 @@ def test_sdk_file_bridge_result_keeps_only_safe_metadata(tool_name: str) -> None
     assert "synthetic-private" not in json.dumps(completed)
 
 
+@pytest.mark.parametrize("as_sdk_object", [False, True])
+@pytest.mark.parametrize("http_status", [401, 403, 429])
+def test_model_result_keeps_safe_failure_metadata_in_run_audit(
+    as_sdk_object: bool,
+    http_status: int,
+) -> None:
+    payload = {
+        "subtype": "success",
+        "is_error": True,
+        "errors": [],
+        "result": "API Error: synthetic-private-response",
+        "api_error_status": http_status,
+        "terminal_reason": "api_error",
+        "duration_ms": 1234,
+        "duration_api_ms": 1200,
+        "num_turns": 2,
+        "session_id": "synthetic-private-session",
+    }
+
+    async def query(**_kwargs: Any) -> Any:
+        yield ResultMessage(**payload) if as_sdk_object else {"type": "result", **payload}
+
+    client = ClaudeSdkClient(
+        model="synthetic-model",
+        limits=build_settings().execution,
+        api_key="synthetic-model-key",
+        sdk_loader=lambda: ClaudeSdk(
+            query=query,
+            options=lambda **kwargs: kwargs,
+            tool=cast(Any, None),
+            create_sdk_mcp_server=cast(Any, None),
+            tool_annotations=None,
+        ),
+    )
+    context = replace(
+        _tool_budget_test_context(1),
+        model_runtime_binding=None,
+        allowed_tools=[],
+        mcp_bindings=(),
+        effective_tool_names=(),
+    )
+    failure_type = RetryableExecutionError if http_status == 429 else NonRetryableExecutionError
+    with pytest.raises(failure_type) as captured:
+        client.run(
+            AgentRunRequest(
+                job_id="job-result-error",
+                user_id="user-result-error",
+                project_code="project-1",
+                context=context,
+            )
+        )
+
+    assert (
+        captured.value.error_code
+        == {
+            401: "runtime_model_authentication",
+            403: "runtime_model_permission_denied",
+            429: "claude_inconsistent_result",
+        }[http_status]
+    )
+    metadata = captured.value.diagnostics["sdk_result"]
+    assert metadata == {
+        "subtype": "success",
+        "terminal_reason": "api_error",
+        "is_error": True,
+        "api_error_status": http_status,
+        "error_count": 0,
+        "duration_ms": 1234,
+        "num_turns": 2,
+        "result_present": True,
+    }
+    audit = client.finalize_run_audit(status="FAILED", error=captured.value)
+    assert audit["error"]["sdk_result"] == metadata
+    assert "synthetic-private" not in json.dumps(audit["error"])
+
+
+@pytest.mark.parametrize("http_status", [401, 403, 503])
+def test_typed_sdk_result_error_preserves_safe_http_metadata(http_status: int) -> None:
+    client = ClaudeSdkClient(
+        model="synthetic-model",
+        limits=build_settings().execution,
+        api_key="synthetic-model-key",
+    )
+    failure = ResultError(
+        "API Error: synthetic-private-response",
+        data={
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "errors": [],
+            "result": "synthetic-private-response",
+            "api_error_status": http_status,
+            "terminal_reason": "api_error",
+        },
+        exit_code=1,
+    )
+    failure_type = RetryableExecutionError if http_status == 503 else NonRetryableExecutionError
+    with pytest.raises(failure_type) as captured:
+        client._raise_mapped_sdk_error(failure, [])
+    if http_status != 503:
+        assert (
+            captured.value.error_code
+            == {
+                401: "runtime_model_authentication",
+                403: "runtime_model_permission_denied",
+            }[http_status]
+        )
+        assert "synthetic-private" not in captured.value.safe_message
+    metadata = captured.value.diagnostics["sdk_result"]
+    assert metadata == {
+        "subtype": "success",
+        "is_error": True,
+        "terminal_reason": "api_error",
+        "api_error_status": http_status,
+        "error_count": 0,
+        "result_present": True,
+    }
+    assert "synthetic-private" not in json.dumps(metadata)
+
+
+@pytest.mark.parametrize("flow", ["job", "probe"])
+@pytest.mark.parametrize("message_kind", ["assistant", "legacy_result", "legacy_exception"])
+def test_model_authentication_failure_reaches_jobs_and_connection_probes(
+    flow: str,
+    message_kind: str,
+) -> None:
+    async def query(**_kwargs: Any) -> Any:
+        if message_kind == "assistant":
+            yield AssistantMessage(
+                content=[TextBlock(text="synthetic-private-key")],
+                model="synthetic-model",
+                error="authentication_failed",
+            )
+        elif message_kind == "legacy_result":
+            yield {
+                "type": "result",
+                "is_error": True,
+                "subtype": "success",
+                "errors": [],
+                "result": "API Error: 401 synthetic-private-key",
+            }
+        else:
+            raise RuntimeError(
+                "Claude Code returned an error result: API Error: 401 synthetic-private-key"
+            )
+        pytest.fail("definitive authentication failure must stop this attempt")
+
+    client = ClaudeSdkClient(
+        model="synthetic-model",
+        limits=build_settings().execution,
+        api_key="synthetic-model-key",
+        sdk_loader=lambda: ClaudeSdk(
+            query=query,
+            options=lambda **kwargs: kwargs,
+            tool=cast(Any, None),
+            create_sdk_mcp_server=cast(Any, None),
+            tool_annotations=None,
+        ),
+    )
+    context = replace(
+        _tool_budget_test_context(1),
+        model_runtime_binding=None,
+        allowed_tools=[],
+        mcp_bindings=(),
+        effective_tool_names=(),
+    )
+    with pytest.raises(NonRetryableExecutionError) as captured:
+        if flow == "job":
+            client.run(
+                AgentRunRequest(
+                    job_id="job-auth-failure",
+                    user_id="user-auth-failure",
+                    project_code="project-1",
+                    context=context,
+                )
+            )
+        else:
+            binding = _tool_budget_test_context(1).model_runtime_binding
+            assert binding is not None
+            client.test_connection(
+                binding,
+                "synthetic-model-key",
+                5,
+            )
+    assert captured.value.error_code == "runtime_model_authentication"
+    assert captured.value.safe_message == (
+        "模型服务认证失败：API Key 无效或已失效，请管理员检查并更新模型连接的 API Key 后重试。"
+    )
+    assert "synthetic-private" not in str(captured.value)
+
+
 def test_python_runtime_keeps_real_sdk_tool_events_when_model_result_fails() -> None:
     async def query(**_kwargs: Any) -> Any:
         yield AssistantMessage(
@@ -3266,16 +3459,19 @@ def test_python_runtime_provider_timeout_remains_retryable() -> None:
 
 
 @pytest.mark.parametrize(
-    ("failure_type", "error_code"),
+    ("failure_type", "error_code", "retry_class"),
     [
-        (ExecutionPolicyExceeded, "execution_policy_max_tool_calls_exhausted"),
-        (ExecutionTimeout, "runtime_timeout"),
+        (ExecutionPolicyExceeded, "execution_policy_max_tool_calls_exhausted", "NEVER"),
+        (ExecutionTimeout, "runtime_timeout", "NEVER"),
+        (NonRetryableExecutionError, "runtime_model_authentication", "CONFIGURATION"),
+        (NonRetryableExecutionError, "runtime_model_permission_denied", "CONFIGURATION"),
     ],
 )
-def test_python_runtime_projects_policy_and_timeout_failures_as_never(
+def test_python_runtime_projects_non_retryable_failures(
     monkeypatch: pytest.MonkeyPatch,
     failure_type: Any,
     error_code: str,
+    retry_class: str,
 ) -> None:
     failure = failure_type(
         "internal terminal detail",
@@ -3318,7 +3514,7 @@ def test_python_runtime_projects_policy_and_timeout_failures_as_never(
     assert outcome.status == "FAILED"
     assert outcome.failure == {
         "code": error_code,
-        "retry_class": "NEVER",
+        "retry_class": retry_class,
         "safe_message": "执行已安全停止",
     }
     assert [(item["tool_name"], item["status"]) for item in outcome.tool_events] == [

@@ -18,6 +18,7 @@ from app.modules.mcp_tool_runtime.job_snapshot import (
 )
 from app.shared.config import QueueSettings
 from app.shared.database import operation_unit_of_work, require_shared_database
+from app.shared.sdk_failure_metadata import safe_sdk_failure_metadata
 from app.shared.exceptions import (
     ExecutionTimeout,
     DiagnosticLoopExhausted,
@@ -125,6 +126,7 @@ class JobRetryService:
                     "next_retry_at": scheduled.next_retry_at,
                     "dispatch_event_id": dispatch_event.id,
                     "error_code": error_code,
+                    "sdk_result": safe_sdk_failure_metadata(diagnostics.get("sdk_result")),
                     "diagnostics": diagnostics,
                     **_business_application_context(job),
                 },
@@ -156,6 +158,7 @@ class JobRetryService:
                 "correlation_id": correlation_id,
                 "error_code": error_code,
                 "delivery_id": delivery_id,
+                "sdk_result": safe_sdk_failure_metadata(diagnostics.get("sdk_result")),
                 **_business_application_context(job),
             },
         )
