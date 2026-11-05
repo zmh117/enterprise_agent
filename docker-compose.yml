@@ -1400,18 +1400,38 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_DSN: *platform-dsn
-      KNOWLEDGE_DEPLOY_ROOT: ${KNOWLEDGE_DEPLOY_ROOT:-${PWD}}
+      KNOWLEDGE_DEPLOY_ROOT: /deployment
       KNOWLEDGE_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
       KNOWLEDGE_STATE_DIR: /state
-      HOME: ${HOME}
+      HOME: /root
       DOCKER_CONFIG: /tmp/docker-config
       PYTHONUNBUFFERED: '1'
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock
-    - ${KNOWLEDGE_DEPLOY_ROOT:-${PWD}}:${KNOWLEDGE_DEPLOY_ROOT:-${PWD}}:ro
-    - ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}:${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}:ro
-    - ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}:${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}:ro
-    - ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}:${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}:ro
+    - type: bind
+      source: ${KNOWLEDGE_DEPLOY_ROOT:-.}
+      target: /deployment
+      read_only: true
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}
+      target: /deployment-secrets/app-config-master-key
+      read_only: true
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}
+      target: /deployment-secrets/principal-jwks.json
+      read_only: true
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}
+      target: /deployment-secrets/knowledge-bootstrap-token
+      read_only: true
+      bind:
+        create_host_path: false
     - knowledge-operation-state:/state
     entrypoint:
     - /usr/local/bin/knowledge-ops-entrypoint

@@ -379,7 +379,11 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
     assert ones["read_only"] is True
     assert "ports" not in ones
     assert ones["expose"] == ["9104"]
-    assert set(ones["networks"]) == {"agent-runtime-control", "provider-egress"}
+    assert set(ones["networks"]) == {
+        "agent-runtime-control",
+        "provider-egress",
+        "knowledge-managed",
+    }
     assert set(ones["secrets"]) == {"app_config_master_key", "principal_jwks"}
     assert ones["environment"]["PRINCIPAL_JWKS_FILE"] == ("/run/secrets/principal_jwks")
     assert ones["environment"]["ONES_MCP_PROVIDER_BASE_URL"] == (
@@ -440,17 +444,18 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
         if service_name not in {"agent-worker", "api-server"}:
             assert "principal_jwt_private_key" not in service.get("secrets", [])
 
-    runtime = services["python-agent-runtime"]
-    assert runtime["environment"]["ONES_MCP_SERVER_URL"] == ("http://ones-mcp:9104/mcp")
-    assert runtime["environment"]["DINGTALK_MCP_SERVER_URL"] == ("http://dingtalk-mcp:9107/mcp")
-    assert runtime["depends_on"]["ones-mcp"]["condition"] == "service_healthy"
-    assert runtime["depends_on"]["dingtalk-mcp"]["condition"] == "service_healthy"
-    assert not {
-        "PRINCIPAL_JWT_PRIVATE_KEY_FILE",
-        "PRINCIPAL_JWKS_FILE",
-        "ONES_MCP_PROVIDER_BASE_URL",
-        "ONES_MCP_PROVIDER_ALLOWED_HOSTS",
-    }.intersection(runtime["environment"])
+    for runtime_name in ("python-agent-runtime-a", "python-agent-runtime-b"):
+        runtime = services[runtime_name]
+        assert runtime["environment"]["ONES_MCP_SERVER_URL"] == ("http://ones-mcp:9104/mcp")
+        assert runtime["environment"]["DINGTALK_MCP_SERVER_URL"] == ("http://dingtalk-mcp:9107/mcp")
+        assert runtime["depends_on"]["ones-mcp"]["condition"] == "service_healthy"
+        assert runtime["depends_on"]["dingtalk-mcp"]["condition"] == "service_healthy"
+        assert not {
+            "PRINCIPAL_JWT_PRIVATE_KEY_FILE",
+            "PRINCIPAL_JWKS_FILE",
+            "ONES_MCP_PROVIDER_BASE_URL",
+            "ONES_MCP_PROVIDER_ALLOWED_HOSTS",
+        }.intersection(runtime["environment"])
 
     dockerfile = (REPOSITORY_ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
     assert "FROM api-server AS ones-mcp" in dockerfile
@@ -530,7 +535,7 @@ def test_secret_bootstrap_refuses_invalid_knowledge_credential(tmp_path: Path, i
         text=True,
     )
     assert result.returncode != 0
-    assert "knowledge bootstrap credential must be a nonempty regular file" in result.stderr
+    assert "existing secret must be a nonempty regular file" in result.stderr
     assert not (tmp_path / "principal-jwt-private.pem").exists()
     if invalid == "symlink":
         assert target.read_text(encoding="utf-8") == "synthetic credential"
@@ -541,7 +546,7 @@ def test_local_ones_mcp_runs_without_deployable_mock() -> None:
     assert "ones-mock" not in compose["services"]
 
     assert not compose["services"]["ones-mcp"].get("profiles")
-    for service in ("python-agent-runtime", "agent-worker"):
+    for service in ("python-agent-runtime-a", "python-agent-runtime-b", "agent-worker"):
         dependency = compose["services"][service]["depends_on"]["ones-mcp"]
         assert dependency["condition"] == "service_healthy"
         assert dependency.get("required", True) is True

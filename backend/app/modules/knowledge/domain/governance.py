@@ -18,6 +18,7 @@ class KnowledgeGovernanceError(NonRetryableExecutionError):
                 "knowledge_ops_retry_required": "当前计划有未完成的失败任务，请在任务记录中重试",
                 "knowledge_ops_state_conflict": "任务状态已变化，请刷新后重试",
                 "knowledge_ops_build_required": "请先成功构建知识库镜像",
+                "knowledge_ops_mount_invalid": "知识运维执行器路径映射无效，请运行部署兼容预检并重建执行器",
                 "knowledge_sync_configuration_changed": "采集配置已变化，请刷新计划；旧任务不能跨配置续跑",
                 "knowledge_collection_scope_changed": "已有采集记录的来源范围不能修改，请创建新的采集计划",
                 "knowledge_collection_disabled": "请先启用采集计划，再执行同步或补采",

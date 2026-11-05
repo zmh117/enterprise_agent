@@ -32,7 +32,11 @@ def main(argv: list[str] | None = None) -> int:
         SchemaHeadValidator(database, default_migrations_dir()).require_current()
         ops = OperationsRepository(database)
         if args.command == "health":
-            return 0 if ops.runtime(args.role)["online"] else 1
+            runtime = ops.runtime(args.role)
+            ready = runtime["online"] and (
+                args.role != "controller" or not runtime["snapshot"].get("error_code")
+            )
+            return 0 if ready else 1
         if args.command == "status":
             value = OperationsStore(database).snapshot()
         elif args.command == "logs":

@@ -2,13 +2,27 @@
 set -eu
 
 target_dir=${1:-}
+docker_acl=${2:-}
 if [ -z "$target_dir" ] || [ "${target_dir#/}" = "$target_dir" ]; then
-  echo "usage: $0 /absolute/secret/directory" >&2
+  echo "usage: $0 /absolute/secret/directory [--docker-acl]" >&2
   exit 2
+fi
+if [ -n "$docker_acl" ] && [ "$docker_acl" != "--docker-acl" ]; then
+  echo "unsupported bootstrap option" >&2
+  exit 2
+fi
+if [ "$docker_acl" = "--docker-acl" ] && ! command -v setfacl >/dev/null 2>&1; then
+  echo "Docker file secrets require setfacl; install the Linux acl package" >&2
+  exit 1
 fi
 
 umask 077
+if [ -L "$target_dir" ]; then
+  echo "secret directory must not be a symbolic link" >&2
+  exit 1
+fi
 mkdir -p "$target_dir"
+chmod 0700 "$target_dir"
 
 private_key="$target_dir/runtime-grant-private.pem"
 public_key="$target_dir/runtime-grant-public.pem"
@@ -21,11 +35,18 @@ file_processing_worker_bootstrap_token="$target_dir/file-processing-worker-boots
 delivery_worker_bootstrap_token="$target_dir/delivery-worker-bootstrap-token"
 knowledge_bootstrap_token="$target_dir/knowledge-bootstrap-token"
 docling_api_key="$target_dir/docling-api-key"
+master_key="$target_dir/app-config-master-key"
 
-if [ -L "$knowledge_bootstrap_token" ] || { [ -e "$knowledge_bootstrap_token" ] && { [ ! -f "$knowledge_bootstrap_token" ] || [ ! -s "$knowledge_bootstrap_token" ]; }; }; then
-  echo "knowledge bootstrap credential must be a nonempty regular file" >&2
-  exit 1
-fi
+# Validate metadata before generating anything; never rotate or print existing material.
+for existing_file in "$private_key" "$public_key" "$probe_token" \
+  "$principal_private_key" "$principal_jwks" "$file_worker_bootstrap_token" \
+  "$file_processing_worker_bootstrap_token" "$delivery_worker_bootstrap_token" \
+  "$knowledge_bootstrap_token" "$docling_api_key" "$master_key"; do
+  if [ -L "$existing_file" ] || { [ -e "$existing_file" ] && { [ ! -f "$existing_file" ] || [ ! -s "$existing_file" ]; }; }; then
+    echo "existing secret must be a nonempty regular file; initialization refused" >&2
+    exit 1
+  fi
+done
 
 for temporary_key in "$principal_public_der"; do
   if [ -e "$temporary_key" ]; then
@@ -101,6 +122,20 @@ if [ ! -e "$docling_api_key" ]; then
   openssl rand -base64 48 | tr -d '\n' > "$docling_api_key"
 fi
 
+python3 - "$master_key" <<'PY'
+import base64
+import os
+import pathlib
+import secrets
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.exists():
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write("EA_MASTER_KEY_V1:" + base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=") + "\n")
+PY
+
 chmod 0600 "$private_key" "$public_key" "$probe_token"
 chmod 0400 \
   "$principal_private_key" \
@@ -108,7 +143,22 @@ chmod 0400 \
   "$file_processing_worker_bootstrap_token" \
   "$delivery_worker_bootstrap_token" \
   "$knowledge_bootstrap_token" \
-  "$docling_api_key"
+  "$docling_api_key" \
+  "$master_key"
 chmod 0644 "$principal_jwks"
+
+if [ "$docker_acl" = "--docker-acl" ]; then
+  # File-backed Compose secrets keep host ownership. Grant only the fixed consumer
+  # UIDs read access; the entrypoint copies them into private 0400 runtime files.
+  # No directory traversal or world-readable permission is granted to these UIDs.
+  setfacl --set u::r,g::---,o::---,u:0:r,u:10001:r,u:10002:r,u:10003:r,u:10005:r,u:10007:r "$master_key"
+  setfacl --set u::r,g::---,o::---,u:0:r "$private_key" "$principal_private_key" \
+    "$file_worker_bootstrap_token" "$delivery_worker_bootstrap_token"
+  setfacl --set u::r,g::---,o::---,u:10002:r "$public_key"
+  setfacl --set u::r,g::---,o::---,u:0:r,u:10002:r "$probe_token"
+  setfacl --set u::r,g::---,o::---,u:0:r,u:10006:r "$file_processing_worker_bootstrap_token"
+  setfacl --set u::r,g::---,o::---,u:0:r,u:10008:r "$knowledge_bootstrap_token"
+  setfacl --set u::r,g::---,o::---,u:1001:r,u:10006:r "$docling_api_key"
+fi
 
 echo "Agent Runtime secret files are complete in $target_dir"

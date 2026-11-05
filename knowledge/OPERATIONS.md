@@ -4,16 +4,13 @@
 
 ## 首次安装
 
-1. 准备主 `.env`、受控 Secret 和当前 schema。知识服务使用主平台数据库；只有原 `migrator` 负责迁移。运行 `scripts/bootstrap_agent_runtime_secrets.sh /绝对/Secret目录` 可幂等准备统一身份材料，其中包含 `knowledge-bootstrap-token`，不输出其内容。
-2. 在仓库根目录运行 Compose；若从其他目录调用，在主 `.env` 配置绝对 `KNOWLEDGE_DEPLOY_ROOT`。执行器将源码及知识用 Secret 源路径只读映射到相同宿主路径，因此自定义 Secret 路径使用绝对路径。常规部署与执行器均读取根目录同一 `.env`，不再使用独立知识 env 文件。
-3. 四个持久卷均为 external，缺失直接失败。已有安装先核对实际名称，使用 `KNOWLEDGE_MODEL_VOLUME`、`KNOWLEDGE_RERANKER_VOLUME`、`KNOWLEDGE_QDRANT_VOLUME`、`KNOWLEDGE_STATE_VOLUME` 绑定；绝不能创建空卷代替已有数据。仅全新空安装按当前主项目名创建：
+1. 按[两种环境部署手册](../docs/operations/docker-deployment.md)准备主 `.env` 和受控 Secret。知识服务使用主平台数据库；只有原 `migrator` 负责迁移。`sh scripts/bootstrap_agent_runtime_secrets.sh /绝对/Secret目录 --docker-acl` 幂等准备统一身份材料、Master Key 和固定容器 UID 的读取 ACL，不输出内容；已有环境必须沿用原密钥目录。
+2. 执行器将源码只读挂载到 `/deployment`，三个知识用 Secret 挂载到固定 `/deployment-secrets/`，再从自身 Docker 挂载元数据核对 daemon 源路径。`KNOWLEDGE_DEPLOY_ROOT` 留空默认为主 Compose 所在目录，自定义时须指向同一仓库根目录。常规部署与执行器均读取根目录同一 `.env`；不要只在宿主 shell 设置发布配置或使用额外 env 文件。
+3. 四个持久卷仍为 external，常规启动时缺失直接失败。已有安装先核对实际名称，使用 `KNOWLEDGE_MODEL_VOLUME`、`KNOWLEDGE_RERANKER_VOLUME`、`KNOWLEDGE_QDRANT_VOLUME`、`KNOWLEDGE_STATE_VOLUME` 绑定；绝不能创建空卷代替已有数据。仅全新空安装运行：
 
 ```sh
-# 示例主项目名 enterprise_agent；自定义项目名时相应修改。
-docker volume create enterprise_agent_knowledge-models
-docker volume create enterprise_agent_knowledge-reranker-models
-docker volume create enterprise_agent_knowledge-qdrant
-docker volume create enterprise_agent_knowledge_ops_state
+python3 scripts/deployment_check.py init-volumes --fresh
+python3 scripts/deployment_check.py check
 ```
 
 4. 启动全部服务：
@@ -25,7 +22,7 @@ docker compose -f docker-compose.yml up -d --build
 
 首次模型准备会下载并校验固定模型，已有模型校验后复用；在线模型运行时保持离线。`knowledge-check`、`knowledge-ops` 是维护任务，不随常驻服务执行。Qdrant 默认仅绑定本机 6333 端口。不要输出完整解析配置、原始容器日志或凭据内容。
 
-5. 检查网页执行器和六个知识服务就绪，再验证受授权目录与实际检索。服务 healthy 不证明用户授权或采集成功。已有计划开关保留；新计划保存后仍需显式开启自动同步，不因启动容器自动创建或启用计划。
+5. 运行 `python3 scripts/deployment_check.py accept` 检查默认服务和控制器真实路径解析，再验证网页启停、受授权目录与实际检索。服务 healthy 不证明用户授权或采集成功。已有计划开关保留；新计划保存后仍需显式开启自动同步，不因启动容器自动创建或启用计划。
 
 只有执行器持有 Docker socket；API、模型和其他知识服务没有该权限。它固定主项目及主文件，只构建/启停知识服务，启动时 `--no-deps` 防止影响平台依赖。网页不能传任意命令、路径或镜像。部署目录及 `.env` 必须仅由受信部署人员维护。
 

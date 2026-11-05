@@ -42,6 +42,14 @@ API、Worker 和 tool-mcp 在文件缺失、权限过宽、格式错误时
 
 ## Windows Docker Desktop 权限规范化
 
+Linux VM 和 WSL2 Linux 文件系统上的 Compose 文件型 Secret 会保留宿主 UID 和权限。
+仅 owner-only 文件可能无法被容器固定 UID 读取。Docker 部署可显式运行
+`sh scripts/bootstrap_agent_runtime_secrets.sh /原密钥目录 --docker-acl`：仅给主 Compose
+中使用该文件的固定 UID 增加读取 ACL，目录保持 `0700`，不开放 world-readable，
+不改变原 Key。入口复制后的私有文件仍满足下述校验。普通非容器部署保持 owner-only。
+这要求宿主支持 POSIX ACL，且未启用需要另一套 UID 映射的 rootless/userns-remap；完整步骤见
+[部署手册](docker-deployment.md)。
+
 Windows 文件共享可能把宿主 Secret 在 Linux 容器内呈现为 `0777`，不能满足上述
 只读校验。所有继承后端 `python-deps` 镜像的服务在应用启动前执行固定 ENTRYPOINT：
 

@@ -1117,7 +1117,7 @@ File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、
 - **AND** 不创建无人消费队列、重复文件版本、processing run或representation
 
 ### Requirement: Compose完整配置Service Principal签发与刷新链路
-默认Compose MUST 只维护一套平台Principal签名私钥和公开JWKS：现有平台API身份模块与Agent Worker只在需要签发对应Token时挂载同一私钥，File Service、ONES MCP及后续MCP只挂载同一公开`PRINCIPAL_JWKS`；不得声明或挂载第二套Service Principal私钥/JWKS。平台API还 MUST 挂载角色隔离的File Worker、File Processing Worker、Delivery Worker和Knowledge MCP bootstrap credential，并让每个Worker及Knowledge MCP只挂载自己的bootstrap credential。部署 MUST 使用按需签发和到期前刷新，不得要求宿主机预先提供短时Service JWT文件。密钥初始化 MUST 幂等生成统一Principal密钥/JWKS与全部bootstrap材料、拒绝不完整统一密钥组并保持私钥和bootstrap文件owner-only。Docling API Key MUST 与平台Principal体系分离，只挂载到`file-processing-worker`和`docling-serve`。
+默认Compose MUST 只维护一套平台Principal签名私钥和公开JWKS：现有平台API身份模块与Agent Worker只在需要签发对应Token时挂载同一私钥，File Service、ONES MCP及后续MCP只挂载同一公开`PRINCIPAL_JWKS`；不得声明或挂载第二套Service Principal私钥/JWKS。平台API还 MUST 挂载角色隔离的File Worker、File Processing Worker、Delivery Worker和Knowledge MCP bootstrap credential，并让每个Worker及Knowledge MCP只挂载自己的bootstrap credential。部署 MUST 使用按需签发和到期前刷新，不得要求宿主机预先提供短时Service JWT文件。密钥初始化 MUST 幂等生成统一Principal密钥/JWKS与全部bootstrap材料、拒绝不完整统一密钥组并默认保持私钥和bootstrap文件owner-only；Docker 文件型 Secret 可按本规格的固定消费者 UID 规则显式添加只读 ACL，容器内规范化副本仍须 owner-only。Docling API Key MUST 与平台Principal体系分离，只挂载到`file-processing-worker`和`docling-serve`。
 #### Scenario: 新环境首次启动
 - **WHEN** 运维运行受控密钥初始化后启动默认Compose
 - **THEN** 统一Principal密钥/JWKS及File Worker、File Processing Worker、Delivery Worker、Knowledge MCP bootstrap bind source均存在且容器可创建
@@ -2224,3 +2224,28 @@ CI 的运行镜像构建 SHALL 仅在后端 lint、格式和类型检查、管�
 #### Scenario: 网页单独启动知识服务
 - **WHEN** 执行器执行网页知识启动操作
 - **THEN** 只操作固定知识服务且不递归启动或重建平台依赖，平台依赖不就绪时预检失败
+
+### Requirement: WSL2 和 Linux 部署必须核验控制器路径与首次初始化
+部署 SHALL 支持 Windows 10/11 Docker Desktop 的 WSL2 Linux 容器操作方式及 Linux x86-64 虚拟机。知识控制器 MUST 使用固定容器路径只读挂载主部署目录与所需文件型 Secret，通过自身容器的项目标签、服务标签和只读挂载元数据确定 daemon 源路径；不得把宿主 Windows 盘符或 WSL 客户端别名直接作为嵌套 Compose 的挂载源。缺失宿主路径 MUST NOT 隐式创建为目录。控制器状态查询失败或路径不符时健康检查 MUST 失败，不能只凭进程心跳标为就绪。
+
+部署 SHALL 提供不输出凭据或解析配置的兼容预检、显式全新安装卷初始化和启动后验收入口。卷初始化 MUST 先检查全部目标；已有项目容器、平台数据卷或未经该初始化入口标记的既有知识卷存在时拒绝，不删除或覆盖数据。普通启动和预检不得自动补建缺失知识外部卷。密钥初始化 SHALL 幂等补齐 Master Key 及现有角色身份材料。
+
+Docker 文件型 Secret 初始化 MAY 显式对宿主源文件添加实际消费者固定 UID 的只读 POSIX ACL，目录 MUST 保持 owner-only，不得开放其他用户读取或放宽容器用户。继承 `python-deps` 的服务入口 SHALL 在应用启动前复制到运行用户所有、权限 `0400` 的私有 tmpfs 文件；普通非容器源文件继续保持 owner-only。不支持 ACL 或另有 UID 映射的环境 MUST 明确拒绝或另行验收，不把当前固定 UID 合同直接套用。
+
+#### Scenario: Docker Desktop 使用不同的客户端与 daemon 路径
+- **WHEN** 源码和 Secret 的 daemon 挂载源与控制器内可见路径不同
+- **THEN** 控制器通过固定挂载点读取主文件及同一 `.env`，通过经验证的 daemon 源路径挂载知识服务 Secret，以容器内源码路径构建镜像
+- **AND** 检查只处理挂载和标签元数据，不读取或输出凭据内容
+
+#### Scenario: 全新安装重复执行卷初始化
+- **WHEN** 项目尚无容器和平台数据，仅存在该初始化入口为同一项目创建的部分或全部知识卷
+- **THEN** 只创建缺失知识卷，保留已有卷，最终验证四卷存在
+
+#### Scenario: 错误项目名或卷名指向既有部署
+- **WHEN** 初始化发现既有项目容器、平台数据或未标记知识卷
+- **THEN** 在创建任何卷前拒绝并要求按升级流程核对，不自动以空库替代
+
+#### Scenario: 目标环境验收边界
+- **WHEN** 兼容预检、合成测试或模拟架构容器通过
+- **THEN** 仅记录已检查的平台和范围，不宣称 Windows 或 x86 VM 整套部署已验收
+- **AND** 启动后验收核对默认服务健康、一次性初始化退出码和真实控制器配置，业务授权、同步、检索及网页启停仍在各目标环境单独验收

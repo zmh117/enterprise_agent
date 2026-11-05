@@ -40,7 +40,8 @@ def test_compose_business_services_wait_for_one_shot_migrator() -> None:
     for service_name in (
         "tool-mcp",
         "file-service",
-        "python-agent-runtime",
+        "python-agent-runtime-a",
+        "python-agent-runtime-b",
         "api-server",
         "agent-worker",
         "job-dispatch-worker",
@@ -59,7 +60,8 @@ def test_runtime_services_do_not_force_local_seed_replay() -> None:
     for service_name in (
         "tool-mcp",
         "file-service",
-        "python-agent-runtime",
+        "python-agent-runtime-a",
+        "python-agent-runtime-b",
         "api-server",
         "agent-worker",
         "job-dispatch-worker",

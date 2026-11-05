@@ -35,7 +35,7 @@ def compose_cli():
 
 def render(compose_cli, *, profiles=(), **variables):
     env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
-    env.update(KNOWLEDGE_DEPLOY_ROOT=str(ROOT), **variables)
+    env.update({"KNOWLEDGE_DEPLOY_ROOT": str(ROOT), **variables})
     command = [
         compose_cli,
         "compose",
@@ -112,6 +112,26 @@ def test_fixed_volume_names_are_external_and_overrideable(compose_cli):
         default["volumes"]["knowledge-operation-state"]["name"]
         == "knowledge-compose-contract_knowledge_ops_state"
     )
+
+
+@pytest.mark.parametrize(
+    "root", ["/home/deploy/项目 with spaces", "C:/Users/deploy/enterprise agent"]
+)
+def test_controller_mount_targets_do_not_inherit_host_path_syntax(compose_cli, root):
+    config = render(compose_cli, KNOWLEDGE_DEPLOY_ROOT=root)
+    controller = config["services"]["knowledge-ops-controller"]
+    assert controller["environment"]["KNOWLEDGE_DEPLOY_ROOT"] == "/deployment"
+    mounts = {row["target"]: row for row in controller["volumes"]}
+    for target in (
+        "/deployment",
+        "/deployment-secrets/app-config-master-key",
+        "/deployment-secrets/principal-jwks.json",
+        "/deployment-secrets/knowledge-bootstrap-token",
+    ):
+        assert mounts[target]["type"] == "bind"
+        assert mounts[target]["read_only"] is True
+        assert not mounts[target].get("bind", {}).get("create_host_path", False)
+    assert all(not target.startswith("C:") for target in mounts)
 
 
 def test_build_database_secret_and_maintenance_boundaries(compose_cli):

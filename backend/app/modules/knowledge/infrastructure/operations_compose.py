@@ -9,6 +9,7 @@ from threading import Event
 from typing import Any
 
 from app.modules.knowledge.domain.operations import SERVICES, invalid
+from app.modules.knowledge.infrastructure.deployment_paths import controller_environment
 from app.modules.knowledge.infrastructure.operations_process import run_process
 from app.modules.knowledge.infrastructure.operations_repository import OperationsRepository
 
@@ -81,6 +82,7 @@ class KnowledgeCompose:
         self.ops, self.stop = ops, stop
         self.root = Path(os.environ.get("KNOWLEDGE_DEPLOY_ROOT", "/deployment")).resolve()
         self.project = os.environ.get("KNOWLEDGE_COMPOSE_PROJECT", "enterprise_agent")
+        self._environment: dict[str, str] | None = None
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", self.project):
             raise invalid("knowledge_ops_configuration_invalid")
 
@@ -92,20 +94,17 @@ class KnowledgeCompose:
             self.project,
             "--project-directory",
             str(self.root),
+            "--env-file",
+            str(self.root / ".env"),
             "-f",
             str(self.root / "docker-compose.yml"),
             *arguments,
         ]
 
     def environment(self, version: str | None = None) -> dict[str, str]:
-        # 使用与主部署相同的 .env 和固定镜像名；不传播 Compose 文件或远端 daemon 覆盖。
-        env = {
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith("COMPOSE_") and key not in {"DOCKER_HOST", "DOCKER_CONTEXT"}
-        }
-        env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
-        return env
+        if self._environment is None:
+            self._environment = controller_environment(self.project)
+        return dict(self._environment)
 
     def services(self) -> list[dict[str, str]]:
         result = subprocess.run(
@@ -159,8 +158,9 @@ class KnowledgeCompose:
         snapshot: dict[str, Any]
         try:
             snapshot = {"services": self.services(), "error_code": None}
-        except Exception:
-            snapshot = {"services": [], "error_code": "knowledge_ops_status_unavailable"}
+        except Exception as exc:
+            code = getattr(exc, "error_code", "knowledge_ops_status_unavailable")
+            snapshot = {"services": [], "error_code": code}
         previous = self.ops.runtime("controller")["snapshot"].get("services", [])
         for service in snapshot["services"]:
             if service not in previous:

@@ -46,11 +46,12 @@ make check
 docker compose up --build
 ```
 
-Windows Docker Desktop 部署同样使用上述命令。仓库通过 `.gitattributes` 强制所有
-Shell 脚本使用 LF，避免 Linux 镜像把 CRLF shebang 解析为 `bash\r`。Windows 文件共享
-无法稳定表达 Unix Secret 权限时，后端镜像只把白名单文件复制到容器自己的
-`${TMPDIR:-/tmp}/ea-secrets`，收紧为目录 `0700`、文件 `0400` 后再启动应用；原始宿主机
-Secret 不会被修改。具体安全边界见[平台固定 Master Key](docs/operations/platform-master-key.md)。
+Windows 10/11 Docker Desktop（WSL2、Linux 容器）和 x86-64 Linux 虚拟机部署请使用
+[部署初始化、兼容预检和验收手册](docs/operations/docker-deployment.md)。Windows 在 WSL2
+Linux 终端中操作；上面的开发命令不能替代 Secret、外部卷初始化和真实部署验收。
+仓库强制 Shell 脚本使用 LF，后端入口规范化共享文件的 Secret 权限；控制器使用固定
+容器路径，并核验 Docker daemon 实际挂载源。具体凭据边界见
+[平台固定 Master Key](docs/operations/platform-master-key.md)。
 
 可部署的 ONES Mock 已删除。`ones_mock/ones` 保留现场接口文档；测试替身位于
 `backend/tests/support`，不启动网络服务。`ones-mcp` 的启动方式和连接配置保持不变。

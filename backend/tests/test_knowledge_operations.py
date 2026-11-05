@@ -20,6 +20,7 @@ from app.modules.knowledge.infrastructure.operations_repository import Operation
 from app.modules.knowledge.infrastructure.operations_scheduler import KnowledgeSyncScheduler
 from app.modules.knowledge.infrastructure.operations_store import OperationsStore
 from app.modules.knowledge.infrastructure.operations_compose import KnowledgeCompose
+from app.modules.knowledge.infrastructure.deployment_paths import docker_environment
 from app.modules.knowledge.infrastructure.operations_process import exclusive_process, run_process
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator, SchemaHeadValidator, load_migration_catalog
@@ -408,6 +409,37 @@ def test_only_controller_has_docker_socket_and_uses_main_compose():
     assert controller["environment"]["KNOWLEDGE_COMPOSE_PROJECT"] == "${COMPOSE_PROJECT_NAME}"
 
 
+@pytest.mark.parametrize(
+    "role, error, expected",
+    [
+        ("controller", "knowledge_ops_mount_invalid", 1),
+        ("controller", None, 0),
+        ("sync", "knowledge_collection_provider_unavailable", 0),
+    ],
+)
+def test_controller_health_requires_valid_observation_without_changing_sync_health(
+    monkeypatch, role, error, expected
+):
+    from types import SimpleNamespace
+    from app.cli import knowledge_ops
+
+    monkeypatch.setenv("DATABASE_DSN", "synthetic")
+    monkeypatch.setattr(knowledge_ops, "Database", lambda _: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        knowledge_ops,
+        "SchemaHeadValidator",
+        lambda *_: SimpleNamespace(require_current=lambda: None),
+    )
+    monkeypatch.setattr(
+        knowledge_ops,
+        "OperationsRepository",
+        lambda _: SimpleNamespace(
+            runtime=lambda _: {"online": True, "snapshot": {"error_code": error}}
+        ),
+    )
+    assert knowledge_ops.main(["health", "--role", role]) == expected
+
+
 def test_start_uses_fixed_main_file_and_never_recurses_platform_dependencies(
     database, tmp_path, monkeypatch
 ):
@@ -417,6 +449,7 @@ def test_start_uses_fixed_main_file_and_never_recurses_platform_dependencies(
     monkeypatch.setenv("DOCKER_CONTEXT", "untrusted")
     ops = OperationsRepository(database)
     compose = KnowledgeCompose(ops, Event())
+    compose._environment = docker_environment()
     command = compose.command("ps")
     assert command[command.index("-f") + 1] == str(tmp_path / "docker-compose.yml")
     assert (
@@ -623,6 +656,7 @@ def test_build_events_keep_parallel_step_order_and_never_persist_commands(databa
 
     ops = OperationsRepository(database)
     compose = KnowledgeCompose(ops, Event())
+    compose._environment = docker_environment()
     op = ops.start(ops.submit(kind="build", request_key="safe-build", actor_id="synthetic")["id"])
 
     def process(*args, line, **kwargs):
