@@ -47,7 +47,16 @@ function fixture(): KnowledgeOperationsSnapshot {
     ],
   }
 }
-function setup({ canManage = true, data = fixture() } = {}) {
+function setup({
+  canManage = true,
+  data = fixture(),
+  eventDetails = {
+    step: 11,
+    build_action: "install_python_dependencies",
+    stage_step: 4,
+    stage_total: 11,
+  } as Record<string, string | number>,
+} = {}) {
   const calls: { url: string; body: Record<string, unknown> }[] = []
   const fetch = vi.fn(
     async (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -58,10 +67,10 @@ function setup({ canManage = true, data = fixture() } = {}) {
             {
               id: "event",
               operation_id: "operation",
-              service: "controller",
-              code: "building",
+              service: "knowledge-embedding",
+              code: "build_step",
               created_at: "2026-11-03T10:00:00Z",
-              details: { step: 2 },
+              details: eventDetails,
             },
           ],
           cursor: "cursor",
@@ -175,10 +184,19 @@ describe("知识库运维", () => {
     expect(screen.getByText(/不会推断知识服务已停止/)).toBeInTheDocument()
   })
 
+  it("旧记录只说明已知编号，不推测具体操作", async () => {
+    setup({ eventDetails: { step: 11 } })
+    fireEvent.click(screen.getByRole("button", { name: "查看统一日志" }))
+    await screen.findByText("步骤 11：此历史记录未保存具体操作")
+    expect(screen.queryByText(/当前构建阶段/)).not.toBeInTheDocument()
+  })
+
   it("按服务筛选安全事件", async () => {
     const { fetch } = setup()
     fireEvent.click(screen.getByRole("button", { name: "查看统一日志" }))
-    await screen.findByText("step：2")
+    await screen.findByText("步骤 11：安装 Python 依赖")
+    expect(screen.getByText("当前构建阶段：第 4 / 11 步")).toBeInTheDocument()
+    expect(screen.queryByText("step：11")).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText("筛选日志服务"), {
       target: { value: "knowledge-sync" },
     })

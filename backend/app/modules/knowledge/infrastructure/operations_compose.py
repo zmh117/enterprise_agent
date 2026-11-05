@@ -15,6 +15,67 @@ from app.modules.knowledge.infrastructure.operations_repository import Operation
 BUILD_SERVICES = ("knowledge-embedding", "knowledge-reranker", "knowledge-mcp", "knowledge-sync")
 
 
+def build_step_details(raw: str) -> dict[str, Any] | None:
+    """仅把 BuildKit 步骤头分类为固定操作码，不保存命令、参数、路径或地址。"""
+    match = re.match(r"^#(\d{1,12}) (?:\[([^\]]{1,300})\] )?(.*)$", raw)
+    if not match:
+        return None
+    step, context, description = match.groups()
+    prefixes = {
+        "load local bake definitions": "load_build_definition",
+        "load build definition": "load_build_definition",
+        "load build context": "load_build_context",
+        "load .dockerignore": "load_ignore_rules",
+        "load metadata": "load_image_metadata",
+        "exporting ": "export_image",
+        "resolving provenance": "resolve_provenance",
+    }
+    action = next(
+        (value for prefix, value in prefixes.items() if description.startswith(prefix)), None
+    )
+    if not context and action is None:
+        return None  # DONE、CACHED、命令输出不是新步骤。
+    instruction = description.partition(" ")[0]
+    if context == "auth":
+        action = "registry_auth"
+    elif instruction in {"COPY", "ADD"}:
+        action = "copy_files"
+        if re.search(r"\b(?:embedding_model|reranker_model)\.json\b", description):
+            action = "copy_model_configuration"
+        elif re.search(r"(?:requirements|runtime.*\.lock|pyproject\.toml)", description):
+            action = "copy_dependency_manifests"
+        elif re.search(r"(?:backend/app|services)/", description):
+            action = "copy_application_code"
+    elif instruction == "RUN":
+        action = "run_build_command"
+        if re.search(r"\bpip3?\s+install\b|['\"]pip['\"]\s*,\s*['\"]install['\"]", description):
+            action = "install_python_dependencies"
+        elif re.search(r"\b(?:apt-get|apt|apk)\b.*\b(?:install|add)\b", description):
+            action = "install_system_packages"
+        elif re.search(r"\b(?:groupadd|useradd|adduser|addgroup)\b", description):
+            action = "configure_runtime_user"
+        elif re.search(r"\b(?:chmod|chown)\b", description):
+            action = "configure_permissions"
+        elif re.search(r"\bpython3?\b", description):
+            action = "run_python_script"
+    else:
+        action = {
+            "FROM": "prepare_base_image",
+            "WORKDIR": "configure_workdir",
+            "ENV": "configure_environment",
+            "USER": "configure_runtime_user",
+            "CMD": "configure_entrypoint",
+            "ENTRYPOINT": "configure_entrypoint",
+            "EXPOSE": "configure_image",
+            "LABEL": "configure_image",
+        }.get(instruction, action)
+    details: dict[str, Any] = {"step": int(step), "build_action": action or "other_build_step"}
+    position = re.search(r"(?:^|\s)(\d{1,5})/(\d{1,5})$", context or "")
+    if position and 1 <= int(position[1]) <= int(position[2]):
+        details.update(stage_step=int(position[1]), stage_total=int(position[2]))
+    return details
+
+
 class KnowledgeCompose:
     def __init__(self, ops: OperationsRepository, stop: Event):
         self.ops, self.stop = ops, stop
@@ -128,15 +189,15 @@ class KnowledgeCompose:
     ) -> None:
         self.ops.update(operation["id"], stage=stage)
         self.ops.event(operation["id"], service, stage)
-        last_step = 0
+        seen_steps: set[int] = set()
 
         def line(raw: str) -> None:
-            nonlocal last_step
-            # BuildKit 输出只提取数字步骤，不保存命令、路径、仓库地址等文本。
-            match = re.match(r"^#(\d+) \[", raw)
-            if match and int(match[1]) > last_step:
-                last_step = int(match[1])
-                self.ops.event(operation["id"], service, "build_step", {"step": last_step})
+            if stage != "building":
+                return
+            details = build_step_details(raw)
+            if details and details["step"] not in seen_steps:
+                seen_steps.add(details["step"])
+                self.ops.event(operation["id"], service, "build_step", details)
 
         result = run_process(
             self.command(*arguments),

@@ -209,6 +209,52 @@ export const serviceNames: Record<string, string> = {
   sync: "采集计划",
   controller: "运维执行器",
 }
+const buildActionNames: Record<string, string> = {
+  load_build_definition: "读取镜像构建配置",
+  load_build_context: "读取构建文件",
+  load_ignore_rules: "读取构建文件排除规则",
+  load_image_metadata: "读取基础镜像信息",
+  registry_auth: "验证镜像仓库访问权限",
+  prepare_base_image: "准备基础镜像",
+  copy_dependency_manifests: "复制依赖清单",
+  copy_model_configuration: "复制模型配置与版本清单",
+  copy_application_code: "复制服务代码",
+  copy_files: "复制构建文件",
+  install_python_dependencies: "安装 Python 依赖",
+  install_system_packages: "安装系统依赖",
+  configure_runtime_user: "配置容器运行用户",
+  configure_permissions: "设置文件访问权限",
+  run_python_script: "执行 Python 构建脚本",
+  run_build_command: "执行镜像构建命令",
+  configure_workdir: "设置容器工作目录",
+  configure_environment: "配置运行环境",
+  configure_entrypoint: "配置服务启动方式",
+  configure_image: "配置镜像属性",
+  export_image: "导出构建镜像",
+  resolve_provenance: "生成镜像构建来源信息",
+  other_build_step: "执行其他构建操作",
+}
+export function buildStepLines(
+  details: Record<string, string | number>
+): string[] {
+  const step =
+    typeof details.step === "number" ? `步骤 ${details.step}` : "构建步骤"
+  const action =
+    typeof details.build_action === "string"
+      ? (buildActionNames[details.build_action] ?? "未识别的构建操作")
+      : "此历史记录未保存具体操作"
+  const lines = [`${step}：${action}`]
+  const { stage_step: current, stage_total: total } = details
+  if (
+    typeof current === "number" &&
+    typeof total === "number" &&
+    current > 0 &&
+    current <= total
+  ) {
+    lines.push(`当前构建阶段：第 ${current} / ${total} 步`)
+  }
+  return lines
+}
 export function displayTime(value: string | null | undefined) {
   return value
     ? new Date(value).toLocaleString("zh-CN", {

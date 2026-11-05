@@ -448,3 +448,100 @@ def test_real_postgres_concurrent_idempotency_and_persisted_recovery():
         )
     finally:
         database.close()
+
+
+@pytest.mark.parametrize(
+    "line,action,position",
+    [
+        ("#1 [internal] load local bake definitions", "load_build_definition", None),
+        ("#2 [internal] load build context", "load_build_context", None),
+        (
+            "#3 [internal] load metadata for private.invalid/team/image:tag",
+            "load_image_metadata",
+            None,
+        ),
+        ("#4 [auth] private/image:pull token for registry.invalid", "registry_auth", None),
+        (
+            "#11 [knowledge-embedding 4/11] RUN pip install --require-hashes -r /tmp/runtime.lock",
+            "install_python_dependencies",
+            (4, 11),
+        ),
+        (
+            "#5 [api python-deps 3/7] RUN python -c \"subprocess.run(['pip', 'install', 'package'])\"",
+            "install_python_dependencies",
+            (3, 7),
+        ),
+        (
+            "#6 [knowledge-embedding 5/11] COPY backend/app/modules/knowledge/embedding_model.json /app/",
+            "copy_model_configuration",
+            (5, 11),
+        ),
+        (
+            "#7 [knowledge-mcp 2/4] COPY services/knowledge_mcp_server /app/services/",
+            "copy_application_code",
+            (2, 4),
+        ),
+        (
+            "#8 [knowledge-embedding 6/11] COPY backend/app/modules/knowledge/embedding_runtime.lock /tmp/",
+            "copy_dependency_manifests",
+            (6, 11),
+        ),
+        ("#9 [stage 1/3] RUN groupadd --gid 10007 embedding", "configure_runtime_user", (1, 3)),
+        ("#10 [stage 4/3] WORKDIR /private/path", "configure_workdir", None),
+        ("#12 exporting to image", "export_image", None),
+        ("#13 resolving provenance for metadata file", "resolve_provenance", None),
+    ],
+)
+def test_build_step_description_is_structured_without_raw_output(line, action, position):
+    from app.modules.knowledge.infrastructure.operations_compose import build_step_details
+    from app.modules.knowledge.domain.operations import safe_details
+
+    details = build_step_details(line)
+    assert details is not None and details["build_action"] == action
+    assert safe_details(details) == details
+    assert set(details) == (
+        {"step", "build_action", "stage_step", "stage_total"}
+        if position
+        else {"step", "build_action"}
+    )
+    if position:
+        assert (details["stage_step"], details["stage_total"]) == position
+    assert "private" not in json.dumps(details) and "token" not in json.dumps(details)
+
+
+def test_build_events_keep_parallel_step_order_and_never_persist_commands(database, monkeypatch):
+    from app.modules.knowledge.infrastructure import operations_compose
+
+    ops = OperationsRepository(database)
+    compose = KnowledgeCompose(ops, Event())
+    op = ops.start(ops.submit(kind="build", request_key="safe-build", actor_id="synthetic")["id"])
+
+    def process(*args, line, **kwargs):
+        for raw in (
+            "#11 [stage 4/11] RUN pip install --index-url https://synthetic-secret.invalid package",
+            "#3 [internal] load build context",
+            "#11 [stage 4/11] RUN pip install repeated-output",
+            "#11 0.2 synthetic-secret-command-output",
+            "#11 DONE 1.0s",
+            "#3 CACHED",
+            "#12 exporting to image",
+        ):
+            line(raw)
+        return 0
+
+    monkeypatch.setattr(operations_compose, "run_process", process)
+    compose._run(op, "building", ["build", "knowledge-embedding"], service="knowledge-embedding")
+    events = [e for e in ops.events(operation_id=op["id"])["events"] if e["code"] == "build_step"]
+    assert [e["details"]["step"] for e in events] == [11, 3, 12]
+    assert events[0]["details"]["build_action"] == "install_python_dependencies"
+    assert "synthetic-secret" not in json.dumps(events) and "repeated-output" not in json.dumps(
+        events
+    )
+
+
+def test_build_action_is_a_closed_safety_projection():
+    from app.modules.knowledge.domain.operations import safe_details
+
+    assert safe_details(
+        {"step": 11, "build_action": "synthetic-private-value", "command": "synthetic-secret"}
+    ) == {"step": 11}

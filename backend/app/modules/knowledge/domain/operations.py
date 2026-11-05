@@ -63,6 +63,8 @@ COUNT_FIELDS = frozenset(
         "completed",
         "failed",
         "step",
+        "stage_step",
+        "stage_total",
         "attempt",
     }
 )
@@ -88,6 +90,33 @@ ID_FIELDS = frozenset(
     }
 )
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")
+BUILD_ACTIONS = frozenset(
+    {
+        "load_build_definition",
+        "load_build_context",
+        "load_ignore_rules",
+        "load_image_metadata",
+        "registry_auth",
+        "prepare_base_image",
+        "copy_dependency_manifests",
+        "copy_model_configuration",
+        "copy_application_code",
+        "copy_files",
+        "install_python_dependencies",
+        "install_system_packages",
+        "configure_runtime_user",
+        "configure_permissions",
+        "run_python_script",
+        "run_build_command",
+        "configure_workdir",
+        "configure_environment",
+        "configure_entrypoint",
+        "configure_image",
+        "export_image",
+        "resolve_provenance",
+        "other_build_step",
+    }
+)
 
 
 def invalid(code: str = "knowledge_ops_input_invalid") -> KnowledgeGovernanceError:
@@ -102,6 +131,7 @@ def safe_details(value: dict[str, Any]) -> dict[str, Any]:
         if (key in COUNT_FIELDS and type(item) is int and 0 <= item <= 10**12)
         or (key in {"old_stamp", "new_stamp"} and type(item) is int and 0 <= item <= 10**20)
         or (key in ID_FIELDS and isinstance(item, str) and SAFE_ID.fullmatch(item))
+        or (key == "build_action" and isinstance(item, str) and item in BUILD_ACTIONS)
     }
 
 

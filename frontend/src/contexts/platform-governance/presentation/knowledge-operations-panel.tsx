@@ -25,6 +25,7 @@ import {
 } from "../application/knowledge-operations-query"
 import {
   displayTime,
+  buildStepLines,
   operationNames,
   phaseNames,
   serviceNames,
@@ -576,11 +577,17 @@ export function KnowledgeOperationsPanel({
                     {serviceNames[event.service] ?? event.service}
                   </p>
                   <p>{phaseNames[event.code] ?? event.code}</p>
-                  {Object.entries(event.details).map(([key, value]) => (
-                    <p key={key} className="text-xs break-all">
-                      {key}：{value}
-                    </p>
-                  ))}
+                  {event.code === "build_step"
+                    ? buildStepLines(event.details).map((line) => (
+                        <p key={line} className="text-xs break-all">
+                          {line}
+                        </p>
+                      ))
+                    : Object.entries(event.details).map(([key, value]) => (
+                        <p key={key} className="text-xs break-all">
+                          {key}：{value}
+                        </p>
+                      ))}
                 </li>
               ))}
             </ol>
