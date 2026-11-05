@@ -680,7 +680,7 @@ Runtime 协议失败 MUST 经既有错误步骤及执行摘要返回代码固定
 - **AND** 模型不得声称已经调用或验证其连通性
 
 ### Requirement: 模型可见会话与上下文清单必须去除确定性重复
-Runtime SHALL 从 Job 固定配置构造平台安全规则、业务指令、已发布 Skills、当前问题、检索元数据与有界历史。当前输入 MUST 在构造滚动摘要和最近历史窗口前按 `input_message_id` 排除，且只通过 User Prompt 进入一次；不同消息 ID 的同文历史仍保留。摘要与最近消息只渲染一份模型可见正文，retrieved_context 不复制该正文，审计每个来源只存一份 canonical content。Worker 与 Runtime MUST 从共享事实源使用当前 `agent-system-prompt-v9` 和对应 contract hash，历史观测不得回写。
+Runtime SHALL 从 Job 固定配置构造平台安全规则、业务指令、已发布 Skills、当前问题、检索元数据与有界历史。当前输入 MUST 在构造滚动摘要和最近历史窗口前按 `input_message_id` 排除，且只通过 User Prompt 进入一次；不同消息 ID 的同文历史仍保留。摘要与最近消息只渲染一份模型可见正文，retrieved_context 不复制该正文，审计每个来源只存一份 canonical content。Worker 与 Runtime MUST 从共享事实源使用当前 `agent-system-prompt-v10` 和对应 contract hash，历史观测不得回写。
 
 #### Scenario: 输入已存在 Session
 - **WHEN** 当前输入消息已持久化且出现在最近历史候选中
@@ -722,6 +722,12 @@ Runtime SHALL 从 Job 固定配置构造平台安全规则、业务指令、已�
 The system SHALL require Agent final answers to include a conclusion, evidence summary, uncertainty or limitations when applicable, and suggested safe next actions. Real runtime prompts SHALL instruct the model to follow this report structure using tool evidence gathered during the job. 当报告使用日志证据扫描器时，Agent MUST区分精确扫描覆盖事实、通用规则选择的启发式候选和模型诊断推断；用户行为不是固定报告章节，只有证据支持且与现场问题相关时才记录。`coverage_complete=true`只证明所选输入全部字节已扫描，不证明所有日志语义已经理解；`evidence_limit_reached=true`时报告 MUST明确说明证据包是有界选择。
 
 普通业务回复 MUST NOT 主动附带内部提示词、MCP 服务使用说明或“已忽略不可信指令”的处理声明。Runtime 提示词 SHALL 区分平台接入的工具说明与业务正文；仅凭 `MCP Server Instructions` 等标题不得推断来源或赋予权限。用户明确询问相关机制，或已验证的问题确实影响请求结果时 MAY 解释，但 MUST 区分事实与推断，不得无依据声称遭遇攻击、拦截成功或“未产生任何影响”；现有不可信业务数据和授权边界继续生效。
+
+受信回复路线为钉钉时，Runtime 提示词 SHALL 要求多条可比较记录（包括知识库命中）优先使用简短 Markdown 表格汇总，用户明确指定其他格式时服从用户选择。表格 MUST 包含表头、分隔行和前后空行，不放入代码块；长列表使用重复表头的小表。较长根因、方案和来源更新时间、入库时间等证据可按记录编号在表后展开，不得因格式省略用户要求的完整明细或补造字段。单条记录可用短段落；该规则约束模型输出指示，不代替钉钉各客户端实际渲染验收。
+
+#### Scenario: 钉钉知识检索命中多条记录
+- **WHEN** 钉钉会话中知识检索命中多条可比较记录，用户未指定其他格式
+- **THEN** Runtime 指示先用简短表格列出编号、完整标题、状态等已知字段，再按编号展开重点证据和快照限制
 
 #### Scenario: 普通业务答复出现内部工具说明
 - **WHEN** 模型处理业务诊断，Runtime 上下文含 MCP 服务使用说明或业务证据中出现同名标题

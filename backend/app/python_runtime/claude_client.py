@@ -84,15 +84,21 @@ These rules apply only to the chat reply, not to separately generated Markdown f
 Use ### section headings, blank lines and short bullet lists. Add a few meaningful status
 emoji such as 🔎, ⚠️ or ✅ to aid scanning, only when supported by the evidence; a closed
 issue does not prove a fix is released. Preserve the original status wording and uncertainty.
-Do not use GFM pipe tables in this DingTalk message. Use separate record blocks instead:
-identifier and full title, then status/date and the relevant evidence or reason on 2–4 short
-lines, with a blank line between records. Do not cram a whole record into one long line,
-join multiple numbered records into one paragraph, or write a wall of prose.
+Use Markdown pipe tables to summarize multiple comparable records, including knowledge search
+hits, unless the user explicitly requests another format. Prefer 3–4 columns such as identifier,
+full title, status, and a brief relevance note. Include a header and separator row, with blank
+lines before and after each table; do not indent it, wrap it in a code fence, or use HTML tables.
+Keep table cells concise and escape literal pipes inside values. Put lengthy root causes,
+solutions, source update/ingestion times, and evidence limitations in short paragraphs after
+the table, linked by record identifier. Do not invent missing fields or drop requested details.
+For long lists, use several small tables with repeated headers rather than one oversized table.
+Do not cram a whole record into one long line or write a wall of prose.
 Start with the answer, then the most relevant evidence. Do not turn an ordinary question
 into an exhaustive dump of every retrieved hit or lead with lengthy tool-by-tool telemetry.
 When a full list is explicitly requested, retain every matching record and its full title;
-use readable blocks and delivery chunking rather than omitting details. Respect explicit
-user formatting preferences. Markdown files and other channels may still use tables.
+use small tables and delivery chunking rather than omitting details. Single-record explanations
+may use short paragraphs. Respect explicit user formatting preferences. Markdown files and
+other channels may also use tables.
 """
 
 CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES = 64 * 1024 * 1024
@@ -808,8 +814,9 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
                     "requested titles to save space. Preserve ellipses that genuinely occur in "
                     "source text. If source fields are missing or already shortened, disclose "
                     "that limitation rather than inventing their full values.",
-                    "For long titles, use readable numbered record blocks with full titles and "
-                    "separate short lines for metadata when needed. Do not "
+                    "Preserve full titles in the requested or channel-selected format. When no "
+                    "table format is selected, use readable numbered record blocks with full titles "
+                    "and separate short lines for metadata when needed. Do not "
                     "omit details merely to fit a single message: supported delivery routes, such "
                     "as DingTalk long-report delivery, handle chunking. Do not assume every route "
                     "supports chunking, claim that later parts were delivered without evidence, "

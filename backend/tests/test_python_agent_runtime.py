@@ -1146,7 +1146,7 @@ def test_detail_completeness_rules_are_platform_wide_not_skill_dependent(
         "\n\nReport structure:", 1
     )[0]
 
-    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v9"
+    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v10"
     assert "every matching record" in detail_rules
     assert "requested identifier and full title" in detail_rules
     assert "summary, examples, or the first N records" in detail_rules
@@ -1188,13 +1188,19 @@ def test_dingtalk_presentation_requires_trusted_route_marker(presentation: str |
     assert ("DingTalk final-message presentation:" in prompt) is (
         presentation == "dingtalk-markdown"
     )
-    assert ("Do not use GFM pipe tables" in prompt) is (presentation == "dingtalk-markdown")
+    assert "Do not use GFM pipe tables" not in prompt
+    assert ("Use Markdown pipe tables to summarize multiple comparable records" in prompt) is (
+        presentation == "dingtalk-markdown"
+    )
     assert "requested identifier and full title" in prompt
     if presentation == "dingtalk-markdown":
         assert "### section headings" in prompt
         assert "🔎, ⚠️ or ✅" in prompt
         assert "a closed\nissue does not prove a fix is released" in prompt
-        assert "Markdown files and other channels may still use tables" in prompt
+        assert "header and separator row, with blank\nlines before and after each table" in prompt
+        assert "several small tables with repeated headers" in prompt
+        assert "linked by record identifier" in prompt
+        assert "unless the user explicitly requests another format" in prompt
         assert "Do not cram a whole record into one long line" in prompt
 
 
