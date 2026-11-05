@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { createRequestKey } from "@/lib/request-key"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -70,7 +71,7 @@ export function KnowledgeOperationsPanel({
     command.reset()
     setConfirmation({
       kind,
-      request_key: crypto.randomUUID(),
+      request_key: createRequestKey(),
       ...(plan ? { binding_id: plan.id } : {}),
     })
   }
@@ -469,7 +470,7 @@ export function KnowledgeOperationsPanel({
               )
                 setConfirmation({
                   kind: "backfill",
-                  request_key: crypto.randomUUID(),
+                  request_key: createRequestKey(),
                   binding_id: backfill.id,
                   first_day: dates.first,
                   last_day: dates.last,

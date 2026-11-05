@@ -119,6 +119,33 @@ function setup({
 }
 
 describe("知识库运维", () => {
+  it("HTTP 环境没有 randomUUID 时仍能同步，失败重试复用同一幂等键", async () => {
+    const browserCrypto = globalThis.crypto
+    vi.stubGlobal("crypto", {
+      getRandomValues: browserCrypto.getRandomValues.bind(browserCrypto),
+    })
+    try {
+      const { calls, fetch } = setup()
+      fetch.mockRejectedValueOnce(new TypeError("synthetic network failure"))
+      fireEvent.click(screen.getByRole("button", { name: "立即同步" }))
+      expect(fetch).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole("button", { name: "确认执行" }))
+      await screen.findByRole("alert")
+      expect(fetch).toHaveBeenCalledTimes(1)
+      const first = JSON.parse(String(fetch.mock.calls[0][1]?.body))
+      expect(first).toMatchObject({ kind: "sync", binding_id: "plan" })
+      expect(first.request_key).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+      )
+      fireEvent.click(screen.getByRole("button", { name: "确认执行" }))
+      await waitFor(() => expect(calls).toHaveLength(1))
+      expect(calls[0].body).toEqual(first)
+      await screen.findByText("任务进度与日志")
+    } finally {
+      vi.stubGlobal("crypto", browserCrypto)
+    }
+  })
+
   it("运行中的四小时计划显示完成后间隔，暂停后不承诺下次自动执行", () => {
     const data = fixture()
     data.plans.push({
@@ -196,6 +223,9 @@ describe("知识库运维", () => {
   })
 
   it("补采展示三库范围并提交固定日期", async () => {
+    const randomUUID = vi.spyOn(crypto, "randomUUID").mockImplementation(() => {
+      throw new Error("randomUUID must not be required for backfill")
+    })
     const { calls } = setup()
     fireEvent.click(screen.getByRole("button", { name: "日期补采" }))
     expect(screen.getByText(/范围：缺陷、需求、工单/)).toBeInTheDocument()
@@ -214,6 +244,7 @@ describe("知识库运维", () => {
       first_day: "2024-01-02",
       last_day: "2024-01-20",
     })
+    expect(randomUUID).not.toHaveBeenCalled()
   })
 
   it("暂停自动同步使用计划开关，不停止容器或停用资源", async () => {
