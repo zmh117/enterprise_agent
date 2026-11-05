@@ -257,7 +257,7 @@ export function KnowledgeOperationsPanel({
               每 {plan.interval_seconds / 3600} 小时执行 · 最近成功：
               {displayTime(plan.last_success_at)} · 下次执行：
               {plan.enabled && plan.schedule_enabled && syncRunning
-                ? "本轮完成后 1 小时"
+                ? `本轮完成后 ${plan.interval_seconds / 3600} 小时`
                 : displayTime(plan.next_run_at)}
             </p>
             {activeOperation && (

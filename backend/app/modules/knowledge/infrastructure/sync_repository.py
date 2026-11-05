@@ -17,6 +17,7 @@ from app.modules.knowledge.domain.normalization import (
     identifier,
 )
 from app.modules.knowledge.domain.sync import (
+    SYNC_INTERVAL_SECONDS,
     checked_configuration,
     semantic_hash,
     next_phase,
@@ -120,7 +121,7 @@ class SyncRepository:  # noqa: PLR0904
                         "configuration_json": config,
                         "resource_pins_json": {},
                         "enabled": 0,
-                        "interval_seconds": 3600,
+                        "interval_seconds": SYNC_INTERVAL_SECONDS,
                         "next_run_at": None,
                         "created_at": now(),
                         "updated_at": now(),
@@ -526,7 +527,11 @@ class SyncRepository:  # noqa: PLR0904
             if at >= due:
                 self.database.execute(
                     f"update {self.t('sync_binding')} set next_run_at=?,updated_at=? where id=?",
-                    ((at + timedelta(seconds=3600)).isoformat(), now(), binding_id),
+                    (
+                        (at + timedelta(seconds=binding["interval_seconds"])).isoformat(),
+                        now(),
+                        binding_id,
+                    ),
                 )
 
     def cancel_disabled_collection(self, run_id: str) -> None:

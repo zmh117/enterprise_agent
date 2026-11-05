@@ -66,7 +66,7 @@ def test_new_work_items_are_pending_and_not_current_members(database, tmp_path):
     assert doc["lifecycle_state"] == "pending" and doc["current_revision_id"] is None
     assert database.execute('select * from "knowledge.knowledge_base_document"') == []
     assert database.execute_one('select count(*) as n from "knowledge.document_revision"')["n"] == 1
-    assert binding["enabled"] == 0 and binding["interval_seconds"] == 3600
+    assert binding["enabled"] == 0 and binding["interval_seconds"] == 14400
     assert repo.run(result["run_id"])["activated_watermark"] is None
     assert service.stage_exports(binding["id"], (prepared,)) == result
 

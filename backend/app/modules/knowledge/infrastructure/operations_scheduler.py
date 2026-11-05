@@ -179,9 +179,14 @@ class KnowledgeSyncScheduler:
             "completed" if state == "SUCCEEDED" else "failed",
             {"error_code": error or "none"},
         )
+        interval = self.sync.binding(operation["binding_id"])["interval_seconds"]
         self.db.execute(
             f"update {self.sync.t('sync_binding')} set next_run_at=?,updated_at=? where id=?",
-            ((datetime.now(UTC) + timedelta(hours=1)).isoformat(), now(), operation["binding_id"]),
+            (
+                (datetime.now(UTC) + timedelta(seconds=interval)).isoformat(),
+                now(),
+                operation["binding_id"],
+            ),
         )
 
     def observe(self, operation_id: str, line: str) -> str | None:

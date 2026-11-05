@@ -100,6 +100,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("150", "150_optimize_knowledge_vector_reuse.sql"),
         ("151", "151_add_incremental_knowledge_sync.sql"),
         ("152", "152_add_knowledge_operations.sql"),
+        ("153", "153_change_knowledge_sync_interval.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -156,6 +157,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "150",
         "151",
         "152",
+        "153",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)

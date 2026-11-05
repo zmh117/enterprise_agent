@@ -33,8 +33,8 @@ function fixture(): KnowledgeOperationsSnapshot {
         revision: 3,
         enabled: true,
         schedule_enabled: true,
-        interval_seconds: 3600,
-        next_run_at: "2026-11-03T11:00:00Z",
+        interval_seconds: 14400,
+        next_run_at: "2026-11-03T14:00:00Z",
         last_success_at: "2026-11-03T10:00:00Z",
         first_day: "2024-01-01",
         run: null,
@@ -119,6 +119,34 @@ function setup({
 }
 
 describe("知识库运维", () => {
+  it("运行中的四小时计划显示完成后间隔，暂停后不承诺下次自动执行", () => {
+    const data = fixture()
+    data.plans.push({
+      ...data.plans[0],
+      id: "paused",
+      code: "paused",
+      schedule_enabled: false,
+      next_run_at: null,
+    })
+    data.operations = data.plans.map((plan) => ({
+      id: `operation-${plan.id}`,
+      kind: "sync",
+      binding_id: plan.id,
+      state: "RUNNING",
+      stage: "started",
+      run_id: "run",
+      attempts: 1,
+      error_code: null,
+      created_at: "2026-11-03T10:00:00Z",
+      updated_at: "2026-11-03T10:00:00Z",
+      parameters: {},
+    }))
+    setup({ data })
+    expect(screen.getAllByText(/每 4 小时执行/)).toHaveLength(2)
+    expect(screen.getAllByText(/下次执行：本轮完成后 4 小时/)).toHaveLength(1)
+    expect(screen.queryByText(/本轮完成后 1 小时/)).not.toBeInTheDocument()
+  })
+
   it.each([
     {
       progress: { processed: 2, total: 5, encoded: 1, reused: 1, verified: 2 },

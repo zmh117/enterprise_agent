@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 import json
 import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 from pathlib import Path
@@ -21,14 +22,18 @@ from app.modules.knowledge.infrastructure.operations_store import OperationsStor
 from app.modules.knowledge.infrastructure.operations_compose import KnowledgeCompose
 from app.modules.knowledge.infrastructure.operations_process import exclusive_process, run_process
 from app.shared.database import Database, default_migrations_dir
-from app.shared.migrations import Migrator, SchemaHeadValidator
+from app.shared.migrations import Migrator, SchemaHeadValidator, load_migration_catalog
 from backend.tests.test_knowledge_import import database as database_fixture
 from backend.tests.test_knowledge_ones_collection import _enabled_binding
 from backend.tests.test_knowledge_api import managed as managed_fixture
 from backend.tests.test_unified_identity_rbac import login, csrf_headers
+from backend.tests.test_schema_migration_postgres_integration import (
+    postgres_database_dsn as postgres_fixture,
+)
 
 database = database_fixture
 managed = managed_fixture
+postgres_database_dsn = postgres_fixture
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -102,6 +107,110 @@ def test_initial_schedule_is_immediate_and_pause_keeps_current_run(database, pla
     assert repo.binding(plan["id"])["enabled"] == 1
     assert repo.active_run(plan["id"])["id"] == run["id"]
     assert store.plan(plan["id"])["next_run_at"] is None
+
+
+def test_completed_sync_waits_four_hours_without_accumulating_runs(database, plan):
+    repo, ops = IncrementalSyncRepository(database), OperationsRepository(database)
+    database.execute('update "knowledge.sync_binding" set schedule_enabled=1')
+    operation = ops.start(submit(ops, plan)["id"])
+    run = baseline(database, plan)
+    ops.update(operation["id"], run_id=run["id"])
+    scheduler = KnowledgeSyncScheduler(ops)
+    before = datetime.now(UTC)
+    scheduler.finish(operation, 0, None)
+    binding = repo.binding(plan["id"])
+    due = datetime.fromisoformat(binding["next_run_at"])
+    assert binding["interval_seconds"] == 14400
+    assert before + timedelta(hours=4) <= due <= datetime.now(UTC) + timedelta(hours=4)
+    assert not repo.scheduled_due(plan["id"], due - timedelta(microseconds=1))
+    assert repo.scheduled_due(plan["id"], due)
+    assert scheduler.select() is None
+    assert len(ops.history()) == 1
+
+
+@pytest.mark.parametrize("engine", ["sqlite", "postgres"])
+def test_four_hour_migration_preserves_existing_plans_and_run(
+    engine, tmp_path, monkeypatch, request
+):
+    from app.modules.knowledge.infrastructure import sync_repository
+
+    if engine == "postgres" and not os.getenv("MIGRATION_POSTGRES_DSN"):
+        pytest.skip("requires isolated PostgreSQL")
+    dsn = (
+        request.getfixturevalue("postgres_database_dsn")
+        if engine == "postgres"
+        else "sqlite:///:memory:"
+    )
+    database = Database(dsn)
+    historical = tmp_path / "head-152"
+    historical.mkdir()
+    shutil.copyfile(
+        default_migrations_dir() / "legacy-v1-manifest.json", historical / "legacy-v1-manifest.json"
+    )
+    for entry in load_migration_catalog(default_migrations_dir()):
+        if entry.version <= "152":
+            shutil.copyfile(default_migrations_dir() / entry.name, historical / entry.name)
+    try:
+        Migrator(database, historical, migrator_build="interval-before").run()
+        with monkeypatch.context() as patch:
+            patch.setattr(sync_repository, "SYNC_INTERVAL_SECONDS", 3600)
+            repo, binding = _enabled_binding(database)
+            for suffix, enabled in (("first", True), ("disabled", False)):
+                configuration = {
+                    **binding["configuration_json"],
+                    "base_codes": {
+                        kind: code + suffix
+                        for kind, code in binding["configuration_json"]["base_codes"].items()
+                    },
+                }
+                fresh = repo.configure(
+                    code=suffix,
+                    source_code=suffix,
+                    configuration=configuration,
+                    expected_revision=0,
+                )
+                if enabled:
+                    repo.set_collection_enabled(fresh["id"], enabled=True, expected_revision=1)
+        ops = OperationsRepository(database)
+        operation = ops.start(submit(ops, binding)["id"])
+        run = repo.begin_collection(binding["id"], now())
+        ops.update(operation["id"], run_id=run["id"])
+        database.execute(
+            f"update {repo.t('sync_binding')} set schedule_enabled=0 where id=?", (binding["id"],)
+        )
+        database.execute(
+            f"update {repo.t('sync_binding')} set next_run_at=? where enabled=1",
+            ("2026-11-05T04:00:00+00:00",),
+        )
+        before = database.execute(f"select * from {repo.t('sync_binding')} order by id")
+        run_before, operation_before = repo.run(run["id"]), ops.operation(operation["id"])
+        assert Migrator(
+            database, default_migrations_dir(), migrator_build="interval-after"
+        ).run().applied == ("153",)
+        after = database.execute(f"select * from {repo.t('sync_binding')} order by id")
+        for old, new in zip(before, after, strict=True):
+            assert old.pop("interval_seconds") == 3600 and new.pop("interval_seconds") == 14400
+            old_due, new_due = old.pop("next_run_at"), new.pop("next_run_at")
+            if old["id"] == binding["id"]:
+                assert datetime.fromisoformat(str(new_due)) - datetime.fromisoformat(
+                    str(old_due)
+                ) == timedelta(hours=3)
+            else:
+                assert old_due == new_due
+            assert old == new
+        assert repo.run(run["id"]) == run_before
+        assert ops.operation(operation["id"]) == operation_before
+        SchemaHeadValidator(database, default_migrations_dir()).require_current()
+        assert (
+            Migrator(database, default_migrations_dir(), migrator_build="interval-replay")
+            .run()
+            .applied
+            == ()
+        )
+        if engine == "sqlite":
+            assert database.execute("PRAGMA foreign_key_check") == []
+    finally:
+        database.close()
 
 
 def test_backfill_waits_for_current_run_then_preserves_range_on_restart(database, plan):

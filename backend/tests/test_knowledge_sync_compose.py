@@ -1,4 +1,4 @@
-"""小时同步可选 Compose 和默认关闭 CLI 合同；只用合成配置。"""
+"""周期同步可选 Compose 和默认关闭 CLI 合同；只用合成配置。"""
 
 import base64
 from pathlib import Path
@@ -201,7 +201,7 @@ def test_knowledge_status_does_not_require_master_key_file(
     )
     monkeypatch.setattr(module, "load_settings", lambda: settings)
     _stub_schema(monkeypatch, module)
-    binding = {"configuration_revision": 1, "enabled": 0, "interval_seconds": 3600}
+    binding = {"configuration_revision": 1, "enabled": 0, "interval_seconds": 14400}
     if module_name == "collect_ones_knowledge":
         monkeypatch.setattr(
             module,

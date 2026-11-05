@@ -278,8 +278,8 @@ def test_activation_verifies_same_target_once_and_not_again_on_replay(
 )
 def test_health_distinguishes_stale_and_disabled(state, expected):
     now = datetime(2026, 10, 26, 12, tzinfo=UTC)
-    old, fresh = (now - timedelta(hours=3)).isoformat(), (now - timedelta(minutes=5)).isoformat()
-    binding = {"enabled": int(state != "disabled"), "interval_seconds": 3600, "created_at": fresh}
+    old, fresh = (now - timedelta(hours=9)).isoformat(), (now - timedelta(minutes=5)).isoformat()
+    binding = {"enabled": int(state != "disabled"), "interval_seconds": 14400, "created_at": fresh}
     success = {"updated_at": old if state == "success_stale" else fresh}
     latest = {
         "id": "synthetic",
@@ -348,7 +348,7 @@ def test_health_error_is_machine_code_not_exception_text():
     at = datetime(2026, 10, 26, 12, tzinfo=UTC)
     fresh = at.isoformat()
     value = sync_health(
-        {"enabled": 1, "interval_seconds": 3600, "created_at": fresh},
+        {"enabled": 1, "interval_seconds": 14400, "created_at": fresh},
         {
             "id": "synthetic",
             "phase": "INDEXING",
@@ -428,7 +428,7 @@ def test_health_does_not_load_master_key_or_provider(monkeypatch, tmp_path, caps
             binding=lambda _: {
                 "configuration_revision": 1,
                 "enabled": 1,
-                "interval_seconds": 3600,
+                "interval_seconds": 14400,
                 "next_run_at": None,
             },
             active_run=lambda _: None,

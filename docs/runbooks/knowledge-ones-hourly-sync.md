@@ -4,7 +4,7 @@
 
 ## 网页运维与日常入口
 
-已安装独立 Compose 执行器的环境，优先使用“工具资源 → 知识库”或根目录 `knowledge.sh`；首次安装和计划字段见[运维手册](../../knowledge/OPERATIONS.md)。保存计划会停用采集；点击“开启自动同步”会立即调度首次全量或恢复未完成任务，完成后按 3600 秒周期执行。
+已安装独立 Compose 执行器的环境，优先使用“工具资源 → 知识库”或根目录 `knowledge.sh`；首次安装和计划字段见[运维手册](../../knowledge/OPERATIONS.md)。保存计划会停用采集；点击“开启自动同步”会立即调度首次全量或恢复未完成任务，完成后按完成时间加 14400 秒（4 小时）安排下一轮。
 
 ```sh
 ./knowledge.sh status
@@ -20,11 +20,11 @@
 
 ## 启用前
 
-1. 在目标环境按平台维护流程升级到当前 schema head（包含迁移 150 的复用索引、151 的文档断点及使用网页运维时所需的 152）及匹配的配套服务、API、ONES/同步镜像。迁移版本统一管理，不能只更新同步容器导致其他服务 schema 断言不匹配。真实 ONES 验收按目标环境单独记录，不从仓库文档推断已具备采集权限。
+1. 在目标环境按平台维护流程升级到当前 schema head（包含迁移 150 的复用索引、151 的文档断点、152 的网页运维及 153 的四小时间隔）及匹配的配套服务、API、ONES/同步镜像。迁移版本统一管理，不能只更新同步容器导致其他服务 schema 断言不匹配。真实 ONES 验收按目标环境单独记录，不从仓库文档推断已具备采集权限。
 2. 按[全量采集手册](knowledge-ones-full-collector.md)准备固定 Provider、Team、项目/类型 UUID 与受管只读采集身份。`knowledge/ones-collector.example.json` 的来源和三库映射决定采集范围；`resource_ids` 不再用来控制内容发布。重新 `configure` 会停用绑定并清除旧资源钉住值，需重新显式启用。
 3. 确认采集写入目标采用同平台 `knowledge` 内容库；已有内容须先完成下述一次性索引转换。管理员草稿或资源停用不会停止内容采集。外部内容 PostgreSQL 仍可用于在线只读知识资源，但不能被此同步入口自动写入。Qdrant、Embedding、容量路径必须可达；容量不足只暂停候选，不删除旧索引/卷。
-   单轮 `once` 和每小时 `daemon` 都必须从 `APP_CONFIG_MASTER_KEY_FILE` 读取与平台相同的只读 Master Key；缺失或无效时返回 `knowledge_sync_master_key_unavailable`，不会开始同步。仅查看 `status` 不要求加载 Key。
-4. 先在真实 ONES 目标环境完成一次明确单轮采集与分页/版本/权限验收，再决定是否启用每小时入口。合成 Provider、本地 Embedding/Qdrant 和容器健康均不替代真实验收。
+   单轮 `once` 和每 4 小时 `daemon` 都必须从 `APP_CONFIG_MASTER_KEY_FILE` 读取与平台相同的只读 Master Key；缺失或无效时返回 `knowledge_sync_master_key_unavailable`，不会开始同步。仅查看 `status` 不要求加载 Key。
+4. 先在真实 ONES 目标环境完成一次明确单轮采集与分页/版本/权限验收，再决定是否启用每 4 小时入口。合成 Provider、本地 Embedding/Qdrant 和容器健康均不替代真实验收。
 
 ## 已有索引的一次性转换
 
@@ -41,7 +41,7 @@ python -m app.cli.adopt_incremental_knowledge --binding-code <binding-code> --in
 
 ## 单次执行与恢复
 
-`configure`、`enable`、`disable`、`cancel` 仍使用 `app.cli.collect_ones_knowledge`。绑定开关控制采集，资源发布/停用控制检索，两者独立；固定索引的模型、分块和来源身份必须匹配。底层 CLI 的 `enable` 将首次到期设在 3600 秒后；网页“开启自动同步”额外将到期时间设为当前时刻。明确单次执行不需要等待。
+`configure`、`enable`、`disable`、`cancel` 仍使用 `app.cli.collect_ones_knowledge`。绑定开关控制采集，资源发布/停用控制检索，两者独立；固定索引的模型、分块和来源身份必须匹配。CLI 的 `enable` 和网页“开启自动同步”都将首次到期时间设为当前时刻。明确单次执行不需要等待。
 
 ```sh
 python -m app.cli.collect_ones_knowledge --mode status --binding-code <binding-code>
@@ -56,7 +56,7 @@ python -m app.cli.sync_ones_knowledge --mode once --binding-code <binding-code> 
 
 ### 按明确创建日期补采
 
-仅在已完成首次全量的来源上使用 `--mode once --from-date ... --through-date ...`，两参数必须同时给出。范围是北京时间的**创建日闭区间**，不得早于绑定 `first_date`、晚于执行当天或逆序；这不是更新时间补扫。范围冻结到 run 的 manifest，状态显示 `mode=backfill`。普通每小时七日策略、绑定配置、凭据和授权不变，不需要先重新 configure/enable。
+仅在已完成首次全量的来源上使用 `--mode once --from-date ... --through-date ...`，两参数必须同时给出。范围是北京时间的**创建日闭区间**，不得早于绑定 `first_date`、晚于执行当天或逆序；这不是更新时间补扫。范围冻结到 run 的 manifest，状态显示 `mode=backfill`。普通每 4 小时七日策略、绑定配置、凭据和授权不变，不需要先重新 configure/enable。
 
 先通过既有 `status` 确认活动 run。如果旧补采仍有进展，优先完成原 run，不取消重建。旧整代 run 必须在升级前完成，或停止旧写者后显式取消再转换；新入口对旧 run 返回 `knowledge_sync_migration_required`，不混用两种合同。新版 backfill 必须使用相同日期恢复；daemon 或另一个范围接续它会返回 `knowledge_collection_range_changed`。
 
@@ -103,7 +103,7 @@ python -m app.cli.sync_ones_knowledge --mode health --binding-code your-binding-
 - 密码/身份、数据库名、权限、TLS 配置、schema 不匹配、配置/资源变化及业务数据校验错误不作为数据库断连循环重试。应处理错误原因后显式重跑；不会回退其他库、绕过校验或删除旧数据。
 - 等待期间可用 Ctrl+C 或容器 SIGTERM 停止；恢复后若发现 binding 已停用或原 run 已取消，不继续采集。数据库不可用期间无法读取库内开关，需要立即停止时使用进程/容器停止信号；在途请求仍受现有超时约束。已提交断点保留。
 
-重试日志只输出固定 `knowledge_collection_database_retry_pending` / `knowledge_sync_database_retry_pending` 事件、`knowledge_database_temporarily_unavailable` 错误码、次数和下次等待秒数，不输出底层异常、连接串或业务正文。本能力不改变计划开关和每小时触发设置；更新代码后需重建并应用新镜像，单纯 restart 不会装入新代码。日常使用 `./knowledge.sh build` 后 `./knowledge.sh up`；定向维护也只使用主文件：
+重试日志只输出固定 `knowledge_collection_database_retry_pending` / `knowledge_sync_database_retry_pending` 事件、`knowledge_database_temporarily_unavailable` 错误码、次数和下次等待秒数，不输出底层异常、连接串或业务正文。本能力不改变计划开关和每 4 小时触发设置；更新代码后需重建并应用新镜像，单纯 restart 不会装入新代码。日常使用 `./knowledge.sh build` 后 `./knowledge.sh up`；定向维护也只使用主文件：
 
 ```sh
 docker compose -f docker-compose.yml build knowledge-sync

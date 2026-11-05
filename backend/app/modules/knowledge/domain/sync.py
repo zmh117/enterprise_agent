@@ -10,6 +10,7 @@ from app.modules.knowledge.domain.normalization import ExportValidationError, di
 from app.modules.knowledge.domain.work_items import DOCUMENT_KINDS
 
 
+SYNC_INTERVAL_SECONDS = 4 * 60 * 60
 PHASES = ("COLLECTING", "STAGED", "CHUNKING", "INDEXING", "VERIFIED", "ACTIVATED")
 VALUE_FIELDS = (
     "title",
