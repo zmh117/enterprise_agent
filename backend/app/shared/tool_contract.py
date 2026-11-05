@@ -8,7 +8,7 @@ from typing import Any, Mapping
 MAX_TOOL_CONTRACT_ITEMS = 128
 MAX_TOOL_SCHEMA_BYTES = 65_536
 # Worker requests and Runtime observations must advance together.
-PROMPT_TEMPLATE_VERSION = "agent-system-prompt-v10"
+PROMPT_TEMPLATE_VERSION = "agent-system-prompt-v11"
 
 
 class ToolContractValueError(ValueError):

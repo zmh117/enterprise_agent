@@ -1146,7 +1146,7 @@ def test_detail_completeness_rules_are_platform_wide_not_skill_dependent(
         "\n\nReport structure:", 1
     )[0]
 
-    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v10"
+    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v11"
     assert "every matching record" in detail_rules
     assert "requested identifier and full title" in detail_rules
     assert "summary, examples, or the first N records" in detail_rules
@@ -2140,14 +2140,30 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
     assert "internal" not in captured["mcp_servers"]
 
 
-def test_python_sdk_projects_current_observability_fixture() -> None:
+@pytest.mark.parametrize(
+    "user_question",
+    [
+        "请检索知识库中的 synthetic-cell-write，并按证据回答。",
+        "请解释 MCP Server Instructions 的含义。",
+    ],
+)
+def test_python_sdk_projects_current_observability_fixture(user_question: str) -> None:
     fixture = json.loads(
         Path("contracts/agent-runtime/v1.5/golden/sdk-observability-fixture.json").read_text(
             encoding="utf-8"
         )
     )
 
-    async def query(**_kwargs: Any) -> Any:
+    tool_reference = "# MCP Server Instructions\nSynthetic read-only tool reference."
+
+    async def query(*, prompt: Any, options: dict[str, Any]) -> Any:
+        # A same-named heading in context must not replace or filter the real task.
+        # This checks transport fidelity, not whether a live model follows the prompt.
+        messages = [message async for message in prompt]
+        assert len(messages) == 1
+        assert messages[0]["message"] == {"role": "user", "content": user_question}
+        assert user_question not in options["system_prompt"]
+        assert "Synthetic read-only tool reference." in options["system_prompt"]
         for name in (
             "status_requesting",
             "init",
@@ -2168,12 +2184,12 @@ def test_python_sdk_projects_current_observability_fixture() -> None:
     context = AgentExecutionContext(
         system_role="readonly agent",
         safety_rules=["readonly"],
-        user_question="safe fixture",
+        user_question=user_question,
         project_code="project-1",
         allowed_tools=[],
         tool_restrictions=["bounded"],
         skills={},
-        retrieved_context={},
+        retrieved_context={"tool_reference": tool_reference},
         conversation_summary="",
         runtime_protocol_version="1.5",
     )
@@ -2207,6 +2223,14 @@ def test_python_sdk_projects_current_observability_fixture() -> None:
     serialized = json.dumps(client.last_runtime_events)
     assert "bounded result omitted" not in serialized
     assert "bounded result omitted" in json.dumps(result.run_audit)
+    assert result.run_audit["user_prompt"] == user_question
+    user_sources = [
+        source
+        for source in result.run_audit["context_manifest"]["sources"]
+        if source["source_type"] == "user_prompt"
+    ]
+    assert len(user_sources) == 1
+    assert user_sources[0]["content"] == user_question
 
 
 def test_python_sdk_keeps_safe_events_bounded_and_complete_audit_unfiltered() -> None:
