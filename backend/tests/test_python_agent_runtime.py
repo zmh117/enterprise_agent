@@ -377,6 +377,7 @@ def _request() -> dict[str, Any]:
     path = Path("contracts/agent-runtime/v1.4/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
+    request["prompt"]["template_version"] = PROMPT_TEMPLATE_VERSION
     request["request_digest"] = canonical_request_digest(request)
     return request
 
@@ -386,6 +387,7 @@ def _current_request() -> dict[str, Any]:
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"] = []
+    request["prompt"]["template_version"] = PROMPT_TEMPLATE_VERSION
     request["request_digest"] = canonical_request_digest(request)
     return request
 
@@ -396,6 +398,7 @@ def _request_for_version(protocol_version: str) -> dict[str, Any]:
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"] = []
+    request["prompt"]["template_version"] = PROMPT_TEMPLATE_VERSION
     request["request_digest"] = canonical_request_digest(request)
     return request
 
@@ -669,11 +672,7 @@ def test_python_runtime_http_keeps_dual_business_tokens_out_of_request_and_ledge
     executor = FakePythonExecutor()
     dependencies, private_key = _dependencies(tmp_path, executor)
     dependencies.server_policies = business_mcp_test_policies()
-    request = json.loads(
-        Path("contracts/agent-runtime/v1.4/golden/execution-request.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    request = _request()
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"].append(
         {
@@ -806,6 +805,7 @@ def test_python_runtime_error_redaction_covers_per_server_and_file_headers() -> 
 
 def test_python_runtime_cancel_wins_once_and_ledger_recovers_after_restart(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = _database(tmp_path)
     executor = FakePythonExecutor(block_until_cancelled=True)
@@ -822,6 +822,9 @@ def test_python_runtime_cancel_wins_once_and_ledger_recovers_after_restart(
     assert len([event for event in events if event["event_type"] == "terminal"]) == 1
     assert invocation.cancel() is False
 
+    monkeypatch.setattr(
+        "app.python_runtime.invocations.PROMPT_TEMPLATE_VERSION", "agent-system-prompt-v999"
+    )
     replacement = FakePythonExecutor()
     recovered = PythonInvocationRegistry(
         replacement,
@@ -831,8 +834,37 @@ def test_python_runtime_cancel_wins_once_and_ledger_recovers_after_restart(
     assert replacement.requests == []
 
 
+@pytest.mark.parametrize("version", ["1.4", "1.5"])
+def test_runtime_rejects_old_prompt_before_slot_admission_or_executor(
+    tmp_path: Path,
+    version: str,
+) -> None:
+    executor = FakePythonExecutor()
+    dependencies, private_key = _dependencies(tmp_path, executor)
+    request = _request_for_version(version)
+    request["prompt"]["template_version"] = "agent-system-prompt-v8"
+    request["request_digest"] = canonical_request_digest(request)
+    _prepare(dependencies.database, request)
+
+    response = _client(dependencies).post(
+        "/internal/v1/executions",
+        json=request,
+        headers={"Authorization": f"Bearer {_token(private_key, request)}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"code": "runtime_prompt_version_mismatch"}
+    assert executor.requests == []
+    assert not dependencies.registry.slot.busy
+    row = dependencies.registry.pool.require(request["invocation_id"], request["request_digest"])
+    assert row["state"] == "PREPARED"
+    assert row["accepted_at"] is None
+    assert dependencies.registry.pool.request(request["invocation_id"]) == request
+
+
 def test_python_runtime_streams_tool_contract_before_executor_continues(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = _database(tmp_path)
     executor = FakePythonExecutor(block_until_cancelled=True)
@@ -847,6 +879,10 @@ def test_python_runtime_streams_tool_contract_before_executor_continues(
     ]
     assert invocation.events()[1]["payload"]["status"] == "MATCH"
 
+    monkeypatch.setattr(
+        "app.python_runtime.invocations.PROMPT_TEMPLATE_VERSION", "agent-system-prompt-v999"
+    )
+    assert registry.acquire(_request()) is invocation
     assert invocation.cancel() is True
     events = list(invocation.stream())
     assert events[-1]["event_type"] == "terminal"
@@ -901,7 +937,9 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
         "platform": "linux/amd64",
     }
     assert client.get("/ready").status_code == 200
+    assert client.get("/ready").json()["prompt_template_version"] == PROMPT_TEMPLATE_VERSION
     version = client.get("/version").json()
+    assert version["prompt_template_version"] == PROMPT_TEMPLATE_VERSION
     assert version["protocol_version"] == CURRENT_RUNTIME_PROTOCOL_VERSION
     assert version["supported_protocol_versions"] == ",".join(SUPPORTED_RUNTIME_PROTOCOL_VERSIONS)
 

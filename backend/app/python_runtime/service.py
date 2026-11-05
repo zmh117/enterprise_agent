@@ -42,6 +42,7 @@ from app.shared.mcp_server_policy import (
     validate_mcp_server_policies,
 )
 from app.shared.config import Settings, load_settings
+from app.shared.tool_contract import PROMPT_TEMPLATE_VERSION
 from app.shared.database import Database
 from app.shared.master_key import load_master_key_settings
 from app.shared.build_identity import (
@@ -223,6 +224,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             "runtime": PYTHON_RUNTIME_KIND,
             "runtime_version": PYTHON_RUNTIME_VERSION,
             "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
+            "prompt_template_version": PROMPT_TEMPLATE_VERSION,
             "pool_enabled": True,
             "node_id": runtime.registry.node_id,
             "instance_id": runtime.registry.instance_id,
@@ -287,6 +289,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
                 "sandbox_max_tmp_files": sandbox_max_tmp_files,
                 "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
                 "build_identity": runtime_build_identity.to_dict(),
+                "prompt_template_version": PROMPT_TEMPLATE_VERSION,
             },
         )
 

@@ -6,6 +6,7 @@ import io
 import urllib.error
 from collections.abc import Callable, Iterator
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import jwt
@@ -16,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
+    AgentRunResult,
     McpRuntimeBinding,
 )
 from app.modules.agent.infrastructure.runtime_http_client import (
@@ -23,6 +25,7 @@ from app.modules.agent.infrastructure.runtime_http_client import (
     RuntimeClientSettings,
     RuntimeGrantIssuer,
     RuntimePrincipalTokens,
+    UrlLibRuntimeTransport,
     probe_runtime_readiness,
 )
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
@@ -72,8 +75,25 @@ class _PassiveResponse:
         return json.dumps(self.payload).encode("utf-8")
 
 
+@pytest.mark.parametrize(
+    ("reported", "ready_reported", "expected", "is_ready"),
+    [
+        (PROMPT_TEMPLATE_VERSION, PROMPT_TEMPLATE_VERSION, PROMPT_TEMPLATE_VERSION, True),
+        ("agent-system-prompt-v8", "agent-system-prompt-v8", PROMPT_TEMPLATE_VERSION, False),
+        (None, None, PROMPT_TEMPLATE_VERSION, False),
+        (PROMPT_TEMPLATE_VERSION, "agent-system-prompt-v8", PROMPT_TEMPLATE_VERSION, False),
+        ("synthetic-private-value", "synthetic-private-value", PROMPT_TEMPLATE_VERSION, False),
+        ("synthetic-private-value", "synthetic-private-value", "synthetic-private-value", False),
+        ("agent-system-prompt-v8", "agent-system-prompt-v8", "agent-system-prompt-v8", True),
+        ("agent-system-prompt-v8", "agent-system-prompt-v8", None, True),
+    ],
+)
 def test_passive_runtime_readiness_calls_only_version_and_ready(
     monkeypatch: pytest.MonkeyPatch,
+    reported: str | None,
+    ready_reported: str | None,
+    expected: str | None,
+    is_ready: bool,
 ) -> None:
     paths: list[str] = []
 
@@ -87,6 +107,7 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
+                    **({"prompt_template_version": reported} if reported else {}),
                     "pool_enabled": True,
                     "node_id": "runtime-local",
                     "instance_id": "11111111-1111-4111-8111-111111111111",
@@ -107,6 +128,7 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
         return _PassiveResponse(
             {
                 "ready": True,
+                **({"prompt_template_version": ready_reported} if ready_reported else {}),
                 "database": "ready",
                 "master_key": "ready",
                 "build_identity": {
@@ -127,10 +149,15 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
             base_url="http://agent-runtime:9102",
             allowed_runtime_hosts=("agent-runtime",),
             allow_insecure_internal_http=True,
-        )
+        ),
+        expected_prompt_version=expected,
     )
 
-    assert result["ready"] is True
+    assert result["ready"] is is_ready
+    assert result["prompt_status"] == (
+        "NOT_CHECKED" if expected is None else "MATCH" if is_ready else "MISMATCH"
+    )
+    assert "synthetic-private-value" not in json.dumps(result)
     assert result["model_invoked"] is False
     assert result["mcp_invoked"] is False
     assert result["build_identity"]["platform"] == "linux/arm64"
@@ -150,6 +177,7 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
                 {
                     "runtime": "python-v1",
                     "runtime_version": "0.1.0",
+                    "prompt_template_version": PROMPT_TEMPLATE_VERSION,
                     "pool_enabled": True,
                     "node_id": "runtime-local",
                     "instance_id": "11111111-1111-4111-8111-111111111111",
@@ -169,6 +197,7 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
         body = json.dumps(
             {
                 "ready": False,
+                "prompt_template_version": PROMPT_TEMPLATE_VERSION,
                 "database": "ready",
                 "master_key": "unavailable",
                 "build_identity": {
@@ -257,6 +286,107 @@ def _private_key() -> tuple[bytes, bytes]:
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     return private_pem, public_pem
+
+
+@pytest.mark.parametrize("state", ["PREPARED", "RUNNING", "TERMINAL"])
+def test_pool_selects_frozen_prompt_for_new_calls_and_preserves_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+) -> None:
+    client, _ = _client(GoldenTransport())
+    client.settings = replace(
+        client.settings,
+        nodes=(("a", "http://runtime-a:8090"), ("b", "http://runtime-b:8090")),
+        allowed_runtime_hosts=("runtime-a", "runtime-b"),
+    )
+    run_request = _request()
+    frozen = client._execution_request(
+        replace(
+            run_request,
+            context=replace(run_request.context, prompt_template_version="agent-system-prompt-v8"),
+        )
+    )
+    original = json.dumps(frozen, sort_keys=True)
+    client.pool = SimpleNamespace(
+        require=lambda *_: {
+            "state": state,
+            "terminal_code": "",
+            "node_id": "a",
+            "instance_id": "boot-a",
+        },
+        record_replacement=lambda *_: None,
+    )
+    monkeypatch.setattr(client, "_frozen_request", lambda _: frozen)
+    monkeypatch.setattr(client, "_principal_tokens", lambda *_: RuntimePrincipalTokens())
+    probes = []
+
+    def probe(
+        settings: RuntimeClientSettings, *, expected_prompt_version: str | None
+    ) -> dict[str, Any]:
+        node = "a" if "runtime-a" in settings.base_url else "b"
+        probes.append((node, expected_prompt_version))
+        return {
+            "ready": expected_prompt_version is None or node == "b",
+            "pool_enabled": True,
+            "node_id": node,
+            "instance_id": "boot-" + node,
+        }
+
+    sent = []
+
+    def consume(*args: Any, **kwargs: Any) -> AgentRunResult:
+        assert args[1] is frozen
+        sent.append(kwargs)
+        return AgentRunResult(final_answer="synthetic result")
+
+    monkeypatch.setattr(
+        "app.modules.agent.infrastructure.runtime_http_client.probe_runtime_readiness", probe
+    )
+    monkeypatch.setattr(client, "_consume_stream", consume)
+    assert client._run_pool(run_request).final_answer == "synthetic result"
+    assert json.dumps(frozen, sort_keys=True) == original
+    if state == "PREPARED":
+        assert probes == [("a", "agent-system-prompt-v8"), ("b", "agent-system-prompt-v8")]
+        assert sent[0]["instance"] == ("b", "boot-b")
+        assert sent[0]["recovery"] is False
+    else:
+        assert probes == [("a", None)]
+        assert sent[0]["url"].endswith("/recover")
+        assert sent[0]["recovery"] is True
+
+
+def test_prompt_mismatch_transport_error_is_safe_and_not_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject(request: Any, *, timeout: int) -> Any:
+        del timeout
+        raise urllib.error.HTTPError(
+            request.full_url,
+            409,
+            "conflict",
+            {},
+            io.BytesIO(
+                json.dumps(
+                    {
+                        "code": "runtime_prompt_version_mismatch",
+                        "message": "synthetic-private-value",
+                    }
+                ).encode()
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.modules.agent.infrastructure.runtime_http_client.runtime_urlopen", reject
+    )
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        list(
+            UrlLibRuntimeTransport().stream(
+                url="http://runtime.test/executions", body=b"{}", headers={}, timeout_seconds=1
+            )
+        )
+    assert raised.value.error_code == "runtime_prompt_version_mismatch"
+    assert "统一更新" in raised.value.safe_message
+    assert "synthetic-private-value" not in raised.value.safe_message
 
 
 def _context() -> AgentExecutionContext:

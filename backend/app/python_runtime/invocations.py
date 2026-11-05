@@ -26,6 +26,7 @@ from .claude_client import claude_cli_version, claude_sdk_version
 from .executor import PythonExecutionOutcome, agent_request_from_runtime_request
 from .run_audit import encode_audit_chunks
 from .tool_contract import build_tool_contract_observation
+from app.shared.tool_contract import PROMPT_TEMPLATE_VERSION
 
 
 class InvocationSecretContextPort(Protocol):
@@ -374,6 +375,10 @@ class PythonInvocationRegistry:
                 raise RuntimePoolError("runtime_recovery_expired", status=410)
             if row["state"] == "RUNNING":
                 raise RuntimePoolError("runtime_invocation_owner_mismatch")
+            # Existing executions replay their original events. Only a new admission
+            # builds a new prompt, and must use exactly the requested template.
+            if request["prompt"]["template_version"] != PROMPT_TEMPLATE_VERSION:
+                raise RuntimePoolError("runtime_prompt_version_mismatch")
             self.slot.acquire()
             try:
                 if not self.pool.admit(

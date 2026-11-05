@@ -2,6 +2,10 @@
   "protocol_version": "1.5",
   "errors": [
     {
+      "code": "runtime_prompt_version_mismatch",
+      "retry_class": "NEVER"
+    },
+    {
       "code": "runtime_request_invalid",
       "retry_class": "NEVER"
     },

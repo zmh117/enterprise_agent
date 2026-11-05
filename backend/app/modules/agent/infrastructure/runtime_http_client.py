@@ -57,7 +57,7 @@ from app.shared.exceptions import (
     NonRetryableExecutionError,
     RetryableExecutionError,
 )
-from app.shared.tool_contract import canonical_json_sha256
+from app.shared.tool_contract import PROMPT_TEMPLATE_VERSION, canonical_json_sha256
 from app.shared.agent_run_audit_codec import decode_audit_chunks
 
 MAX_EVENT_LINE_BYTES = 65_536
@@ -312,6 +312,12 @@ class UrlLibRuntimeTransport:
                     safe_message="执行恢复正文已过期",
                     error_code=code,
                 ) from exc
+            if code == "runtime_prompt_version_mismatch":
+                raise NonRetryableExecutionError(
+                    "Worker and Runtime prompt templates do not match",
+                    safe_message="Worker 与 Runtime 提示词版本不一致，请统一更新所有 Agent 服务副本",
+                    error_code=code,
+                ) from exc
             if code in {
                 "runtime_pool_busy",
                 "runtime_pool_unavailable",
@@ -488,11 +494,18 @@ class RuntimeClientSettings:
         return f"{normalized}/internal/v1/executions"
 
 
-def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
+def probe_runtime_readiness(
+    settings: RuntimeClientSettings,
+    *,
+    expected_prompt_version: str | None = PROMPT_TEMPLATE_VERSION,
+) -> dict[str, Any]:
     """Passive service-identity/readiness probe; never invokes a model or MCP Tool."""
     if settings.nodes:
         members = {
-            node: probe_runtime_readiness(replace(settings, base_url=url, nodes=()))
+            node: probe_runtime_readiness(
+                replace(settings, base_url=url, nodes=()),
+                expected_prompt_version=expected_prompt_version,
+            )
             for node, url in settings.nodes
         }
         ready = sum(
@@ -596,9 +609,27 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
             and readiness.get("database") == "ready"
             and readiness.get("master_key") == "ready"
         )
+        prompt_ready = expected_prompt_version is None or (
+            re.fullmatch(r"agent-system-prompt-v[0-9]{1,4}", expected_prompt_version) is not None
+            and version.get("prompt_template_version") == expected_prompt_version
+            and readiness.get("prompt_template_version") == expected_prompt_version
+        )
         return {
             "configured": True,
-            "ready": bool(identity_ready and dependency_ready and pool_ready),
+            "ready": bool(identity_ready and dependency_ready and pool_ready and prompt_ready),
+            "prompt_status": "NOT_CHECKED"
+            if expected_prompt_version is None
+            else "MATCH"
+            if prompt_ready
+            else "MISMATCH",
+            "prompt_template_version": _safe_contract_value(
+                "prompt.template_version", version.get("prompt_template_version")
+            ),
+            "expected_prompt_template_version": _safe_contract_value(
+                "prompt.template_version", expected_prompt_version
+            )
+            if expected_prompt_version is not None
+            else "",
             "identity": "verified" if identity_ready else "invalid",
             "database": readiness.get("database", "unavailable"),
             "master_key": readiness.get("master_key", "unavailable"),
@@ -622,6 +653,13 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
             "configured": True,
             "ready": False,
             "identity": "unavailable",
+            "prompt_status": "UNAVAILABLE",
+            "prompt_template_version": "",
+            "expected_prompt_template_version": _safe_contract_value(
+                "prompt.template_version", expected_prompt_version
+            )
+            if expected_prompt_version is not None
+            else "",
             "database": "unavailable",
             "master_key": "unavailable",
             "runtime_version": "",
@@ -798,7 +836,13 @@ class AgentRuntimeHttpClient:
             if row["state"] == "RUNNING" and row["node_id"] != node_id:
                 continue
             settings = replace(self.settings, base_url=base_url, nodes=())
-            readiness = probe_runtime_readiness(settings)
+            readiness = probe_runtime_readiness(
+                settings,
+                # Recovery replays immutable events rather than building a new prompt.
+                expected_prompt_version=request["prompt"]["template_version"]
+                if row["state"] == "PREPARED"
+                else None,
+            )
             if (
                 not readiness["ready"]
                 or not readiness.get("pool_enabled")

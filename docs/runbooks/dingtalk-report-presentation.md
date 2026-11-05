@@ -1,9 +1,12 @@
 # 钉钉报告排版与分片恢复
 
-本说明对应 `fix-dingtalk-report-presentation` 的本地实现。Prompt 使用
-`agent-system-prompt-v8`；真实模型遵循情况和钉钉客户端显示效果需在部署后验收。
+本说明记录 `fix-dingtalk-report-presentation` 在 Prompt v8 引入的分片与呈现方案。
+后续模板已迭代：v10 起多条可比较记录优先使用 Markdown 表格，当前版本以
+`backend/app/shared/tool_contract.py` 和对应 Runtime 代码为准，部署不要固定检查 v8。
+版本不一致时参见[Worker / Runtime 版本核对](runtime-prompt-version-drift.md)。
+真实模型遵循情况和钉钉客户端显示效果需在部署后验收。
 
-## 回复格式
+## v8 回复格式（历史说明）
 
 Worker 从 Job 冻结的回复路由生成 `response_presentation=dingtalk-markdown`。
 Runtime 根据这个标识加入钉钉专用指引，不根据用户问题或 Skill 中的“钉钉”字样判断渠道，
@@ -68,11 +71,11 @@ Provider 已收件但成功记录尚未落库时，仍受原有至少一次投�
 Runtime 协议回归。这些测试不证明真实模型必然遵循，也不证明客户端排版已经验收。
 
 部署后用新请求检查短回复、长明细、完整清单和文件报告；核对 Worker 请求与 Runtime 观测
-版本都是 v8，并在真实钉钉客户端确认小标题、分行、图标和连续分片。无需为此读取或输出
+版本与本次发布一致，并在真实钉钉客户端确认小标题、分行、图标和连续分片。无需为此读取或输出
 生产凭据、原始业务消息。
 
 ## 实现与主规格差异
 
-Canonical `execution-delivery/spec.md` 当前仍记录 Prompt v7。新增呈现规则、v8 和稳定分片
+Canonical `execution-delivery/spec.md` 当前仍记录 Prompt v7，实际模板版本已继续迭代。v8 呈现规则和稳定分片
 已记录在 [变更规格](../../openspec/changes/fix-dingtalk-report-presentation/specs/execution-delivery/spec.md)，
 本次未同步或归档主规格，也未将本地回归写成生产验收。

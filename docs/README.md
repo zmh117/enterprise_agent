@@ -41,6 +41,7 @@
 - [Compose PostgreSQL 18 / RabbitMQ 4 升级与恢复](operations/compose-postgres18-rabbitmq4-upgrade.md)
 - [Agent 重试与失败投递](operations/agent-retry-failure-delivery.md)
 - [钉钉报告排版与分片恢复](runbooks/dingtalk-report-presentation.md)
+- [Worker / Runtime 提示词版本不一致](runbooks/runtime-prompt-version-drift.md)
 - [平台 Master Key](operations/platform-master-key.md)
 - [钉钉测试数据重建](operations/dingtalk-test-data-rebuild.md)
 - [受治理文档处理](operations/governed-document-processing.md)
