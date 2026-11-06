@@ -40,7 +40,8 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "list_available_tool_resources": {
         "description": (
             "分页列出当前 Job、当前用户和当前业务应用共同授权的数据库、Redis 与 Loki "
-            "资源地址摘要。目标不明确或用户询问可用资源时应先调用本工具。"
+            "资源名称（resource_name）、资源码（resource_code）与地址摘要。"
+            "展示资源清单时同时保留资源名称和资源码。目标不明确或用户询问可用资源时应先调用本工具。"
         ),
         "schema": {
             "type": "object",

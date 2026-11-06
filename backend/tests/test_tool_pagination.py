@@ -302,6 +302,7 @@ def _resource(index: int, *, environment: str = "prod") -> dict[str, object]:
     return {
         "resource_id": f"resource-{code}",
         "code": code,
+        "name": f"测试数据库 {index:03d}",
         "resource_kind": "database",
         "scope_type": "environment",
         "placement": "cloud",
@@ -344,6 +345,9 @@ def test_authorized_resource_directory_pages_without_resolving_secrets() -> None
     assert first.truncated is True
     assert all(item["environment"] == "prod" for item in first.summary["resources"])
     assert all(item["resolution_status"] == "AMBIGUOUS" for item in first.summary["resources"])
+    assert [item["resource_name"] for item in first.summary["resources"]] == [
+        f"测试数据库 {index:03d}" for index in range(50)
+    ]
     assert "host" not in json.dumps(first.summary)
 
     second = executor.list_available_tool_resources(
@@ -354,8 +358,20 @@ def test_authorized_resource_directory_pages_without_resolving_secrets() -> None
         cursor=first.summary["next_cursor"],
     )
     assert [item["resource_code"] for item in second.summary["resources"]] == ["db-050"]
+    assert [item["resource_name"] for item in second.summary["resources"]] == ["测试数据库 050"]
     assert second.summary["has_more"] is False
     assert second.summary["next_cursor"] == ""
+
+    database.rows[0]["name"] = "更新后的资源名称"
+    with pytest.raises(ToolPolicyError) as stale:
+        executor.list_available_tool_resources(
+            _context(),
+            grants=grants,
+            resource_kind="database",
+            limit=50,
+            cursor=first.summary["next_cursor"],
+        )
+    assert stale.value.error_code == "mcp_pagination_cursor_stale"
 
 
 def test_directory_roles_are_exact_and_ambiguity_is_not_hidden_by_search() -> None:

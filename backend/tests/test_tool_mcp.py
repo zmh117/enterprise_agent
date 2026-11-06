@@ -64,6 +64,34 @@ def test_standard_tool_mcp_invokes_current_python_job() -> None:
     ]
 
 
+def test_resource_directory_mcp_returns_configured_name_without_resolving_secrets() -> None:
+    runtime, job, service = _runtime_job(capabilities=("list_available_tool_resources", TOOL_NAME))
+    try:
+        secrets = Mock()
+        secrets.resolve.side_effect = AssertionError("directory must not resolve credentials")
+        runtime.tool_service.tool_executor = DirectReadOnlyToolExecutor(
+            DirectResourceResolver(runtime.database, secret_provider=secrets),
+            limits=runtime.settings.execution,
+        )
+        selected_job, descriptor = service.descriptor(job.id, "list_available_tool_resources")
+        result = service.invoke(
+            job=selected_job,
+            descriptor=descriptor,
+            arguments={"query": "tool_mcp_test_database"},
+            request_identity=_request_identity(job, "resource-directory-test"),
+        )
+
+        resources = result.payload["data"]["resources"]
+        assert [(item["resource_name"], item["resource_code"]) for item in resources] == [
+            ("Tool MCP Test Database", "tool_mcp_test_database")
+        ]
+        assert resources[0]["resolution_status"] == "AVAILABLE"
+        assert resources[0]["usable_tools"] == [TOOL_NAME]
+        secrets.resolve.assert_not_called()
+    finally:
+        runtime.database.close()
+
+
 @pytest.fixture
 def paged_schema_runtime():
     runtime, job, service = _runtime_job()

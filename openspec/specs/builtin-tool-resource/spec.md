@@ -135,6 +135,11 @@ Resource SHALL 仅保存受管 Secret reference，基础设施层在验证或执
 - **WHEN** Job 冻结目录及相应数据 Tool，且同一访问记录同时允许 Tool 与目标
 - **THEN** 目录返回对应非敏感资源地址、有效查询限制及 AVAILABLE 或 AMBIGUOUS 状态
 
+#### Scenario: 资源清单显示名称与编码
+- **WHEN** 目录返回当前授权的已发布资源，且 Agent 向用户展示资源清单
+- **THEN** 每项包含 Resource Identity 的 `resource_name`（资源名称）及 `resource_code`（资源码），Agent 同时展示两者
+- **AND** 名称仅作为展示数据，不用于替代精确目标或 placement；名称缺失时明确显示未提供，不得根据编码编造名称
+
 #### Scenario: 不同角色权限不可拼接
 - **WHEN** 角色 A 只有 Tool，角色 B 只有目标 scope
 - **THEN** 目录不把两者合成为可见资源

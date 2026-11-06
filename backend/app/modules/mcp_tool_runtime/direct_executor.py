@@ -114,6 +114,7 @@ class DirectReadOnlyToolExecutor:
         items = [
             {
                 "resource_code": address.resource_code,
+                "resource_name": address.resource_name,
                 "resource_kind": address.resource_kind,
                 "environment": address.environment,
                 "base": address.base or None,
@@ -150,6 +151,7 @@ class DirectReadOnlyToolExecutor:
             [
                 {
                     "sort_key": item["_sort_key"],
+                    "resource_name": item["resource_name"],
                     "content_hash": item["_content_hash"],
                     "usable_tools": item["usable_tools"],
                     "resolution_status": item["resolution_status"],

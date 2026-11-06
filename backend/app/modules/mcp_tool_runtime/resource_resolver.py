@@ -48,6 +48,7 @@ class ResolvedToolResource:
 class PublishedToolResourceAddress:
     resource_id: str
     resource_code: str
+    resource_name: str
     resource_kind: str
     resource_revision_id: str
     resource_revision: int
@@ -173,6 +174,7 @@ class DirectResourceResolver:
             "resources": [
                 {
                     "code": value.resource_code,
+                    "name": value.resource_name,
                     "kind": value.resource_kind,
                     "environment": value.environment,
                     "base": value.base,
@@ -214,6 +216,7 @@ class DirectResourceResolver:
                         PublishedToolResourceAddress(
                             resource_id=str(row["resource_id"]),
                             resource_code=str(row["code"]),
+                            resource_name=str(row["name"]),
                             resource_kind=kind,
                             resource_revision_id=str(row["resource_revision_id"]),
                             resource_revision=int(row.get("revision") or 0),
@@ -230,7 +233,7 @@ class DirectResourceResolver:
     def _latest_published_address_rows(self, resource_kind: str) -> list[dict[str, Any]]:
         rows = self.database.execute(
             """
-            select resource.id as resource_id, resource.code, resource.resource_kind,
+            select resource.id as resource_id, resource.code, resource.name, resource.resource_kind,
                    resource.scope_type, revision.placement,
                    environment.code as environment_code,
                    base.code as base_code, workshop.code as workshop_code,
