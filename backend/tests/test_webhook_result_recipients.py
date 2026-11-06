@@ -267,7 +267,13 @@ def _publish_private(runtime, connector_id, user_ids):
             "delivery_type": "dingtalk_private",
             "connector_id": connector_id,
             "enabled": True,
-            "config": {"target_user_ids": user_ids},
+            "config": {
+                "target_user_ids": user_ids,
+                "trigger": {
+                    key: payload["triggers"][0][key]
+                    for key in ("trigger_type", "connector_id", "routing_key")
+                },
+            },
         }
     ]
     revision = service.save_draft(
@@ -550,3 +556,169 @@ def test_invalid_user_response_is_failure_without_resending_successful_group():
         assert len([x for x in transport.calls if "robot/" in x["url"]]) == 2
     finally:
         runtime.database.close()
+
+
+def test_http_application_draft_saves_recipients_with_explicit_trigger():
+    from dataclasses import replace
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from app.shared.config import synchronize_feature_configuration
+    from backend.tests.test_unified_identity_rbac import csrf_headers, login, unified_settings
+    from backend.tests.test_webhook_ingress_dispatch import _container
+
+    runtime = _container()
+    settings = replace(unified_settings(), feature_business_application_control_plane=True)
+    runtime.settings = synchronize_feature_configuration(
+        replace(
+            runtime.settings,
+            identity=settings.identity,
+            feature_business_application_control_plane=True,
+        )
+    )
+    connector = robot(runtime)
+    people = [_bound_person(runtime, connector, suffix) for suffix in ("http-one", "http-two")]
+    detail = runtime.business_application_service.detail(
+        actor_id="user_local_admin", code="grafana-strict-runtime"
+    )
+    draft = detail["draft"]
+    source = {
+        key: draft["triggers"][0][key] for key in ("trigger_type", "connector_id", "routing_key")
+    }
+    payload = {
+        "expected_revision": detail["revision"],
+        "agent_publication_id": draft["agent_publication_id"],
+        "triggers": [
+            {
+                key: draft["triggers"][0][key]
+                for key in (
+                    "trigger_type",
+                    "connector_id",
+                    "routing_key",
+                    "actor_policy",
+                    "service_account_user_id",
+                    "enabled",
+                    "config",
+                )
+            }
+        ],
+        "deliveries": [
+            {
+                "delivery_type": "dingtalk_private",
+                "connector_id": connector,
+                "enabled": True,
+                "config": {"target_user_ids": people, "trigger": source},
+            }
+        ],
+        "mcp_tools": [tool["tool_identifier"] for tool in draft["mcp_tools"]],
+    }
+    path = "/api/admin/business-applications/grafana-strict-runtime"
+    with TestClient(create_app(settings, container_factory=lambda _: runtime)) as client:
+        headers = csrf_headers(login(client))
+        saved = client.put(path + "/draft", json=payload, headers=headers)
+        assert saved.status_code == 200, saved.text
+        revision = saved.json()["revision"]
+        assert revision["deliveries"][0]["config"]["target_user_ids"] == people
+        assert revision["deliveries"][0]["config"]["trigger"] == source
+        read = client.get(path).json()["application"]["draft"]
+        assert read["deliveries"][0]["config"] == revision["deliveries"][0]["config"]
+        payload["expected_revision"] = revision["revision"]
+        for variant in ("missing", "orphan", "duplicate"):
+            invalid = deepcopy(payload)
+            if variant == "missing":
+                invalid["deliveries"][0]["config"].pop("trigger")
+            elif variant == "orphan":
+                invalid["deliveries"][0]["config"]["trigger"]["routing_key"] = (
+                    "webhook:another-entry"
+                )
+            else:
+                invalid["deliveries"].append(deepcopy(invalid["deliveries"][0]))
+            rejected = client.put(path + "/draft", json=invalid, headers=headers)
+            assert rejected.status_code in {400, 422}, rejected.text
+        payload["deliveries"][0]["config"]["target_user_ids"] = []
+        empty = client.put(path + "/draft", json=payload, headers=headers)
+        assert empty.status_code == 200, empty.text
+        assert empty.json()["revision"]["deliveries"][0]["config"]["target_user_ids"] == []
+
+
+def test_each_webhook_uses_only_its_own_delivery_independent_of_order():
+    from types import SimpleNamespace
+    from app.modules.business_application.domain.runtime import (
+        RuntimeReadinessEvaluator,
+        RouteResolutionOutcome,
+    )
+    from app.modules.channel.application.channel_ingress_service import ChannelIngressService
+    from app.modules.channel.domain.channel_event import (
+        ChannelEvent,
+        ChannelSource,
+        ReplyRoute,
+        RoutingContext,
+    )
+
+    def source(name):
+        return {
+            "trigger_type": "webhook",
+            "connector_id": "synthetic-ingress",
+            "routing_key": f"webhook:{name}",
+        }
+
+    snapshot = {
+        "delivery_binding_mode": "per_trigger",
+        "agent": {"id": "synthetic-agent", "config_hash": "synthetic-hash"},
+        "triggers": [
+            {
+                **source(name),
+                "enabled": True,
+                "actor_policy": "SERVICE_ACCOUNT",
+                "service_account_user_id": "synthetic-service",
+            }
+            for name in ("one", "two", "no-delivery")
+        ],
+        "deliveries": [
+            {
+                "delivery_type": "webhook_callback",
+                "connector_id": "synthetic-callback",
+                "enabled": True,
+                "config": {"trigger": source("two"), "target_reference": "system-two"},
+            },
+            {
+                "delivery_type": "dingtalk_private",
+                "connector_id": "synthetic-robot",
+                "enabled": True,
+                "config": {"trigger": source("one")},
+                "resolved_recipients": [
+                    {
+                        "connector_id": "synthetic-robot",
+                        "kind": "user",
+                        "target_id": "synthetic-person-one",
+                    }
+                ],
+            },
+        ],
+    }
+    readiness = RuntimeReadinessEvaluator(
+        data_plane_enabled=True, runtime_environment="local"
+    ).evaluate(snapshot=snapshot, deployment={"environment": "local", "active": True})
+    assert readiness.components["delivery"].status.value == "wired"
+    resolution = SimpleNamespace(outcome=RouteResolutionOutcome.MATCHED)
+
+    def reply(name):
+        event = ChannelEvent(
+            source=ChannelSource(
+                type="managed_webhook",
+                connector_id="synthetic-ingress",
+                event_id=name,
+                actor_id="synthetic-service",
+            ),
+            delivery=ReplyRoute(type="none"),
+            routing=RoutingContext(),
+            webhook_trigger_id=name,
+        )
+        return ChannelIngressService._application_reply_route(event, resolution, snapshot)
+
+    assert reply("one")["target"]["recipients"][0]["target_id"] == "synthetic-person-one"
+    assert reply("two")["target"] == {"target_reference": "system-two"}
+    assert reply("no-delivery")["type"] == "none"
+    snapshot["deliveries"].reverse()
+    assert reply("two")["connector_id"] == "synthetic-callback"
+    snapshot["deliveries"][0]["resolved_recipients"] = []
+    assert reply("one")["type"] == "none"

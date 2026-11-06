@@ -50,6 +50,16 @@ import {
 import { useFileOperations } from "@/contexts/operations/application/runtime-record-queries"
 import type { FileOperations } from "@/contexts/operations/domain/runtime-record"
 import { cn } from "@/lib/utils"
+import {
+  bindingErrors,
+  matchesTrigger,
+  prepareDraftDeliveries,
+  removeTrigger,
+  replaceTrigger,
+  replyOriginal,
+  triggerReference,
+  unassignedDeliveries,
+} from "./delivery-bindings"
 
 const FILE_MCP_READ_TOOL_IDS = [
   "task_workspace_get",
@@ -306,9 +316,34 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
   const [form, setForm] = useState<SaveDraftInput>(() =>
     draftToForm(application)
   )
+  const [attemptedSave, setAttemptedSave] = useState(false)
+  const errors = bindingErrors(
+    form,
+    catalog.data?.agents.find((agent) => agent.id === form.agent_publication_id)
+      ?.ingress_connector_ids ?? []
+  )
+
+  function selectAgent(agentPublicationId: string) {
+    const availableTools = new Set(
+      (
+        catalog.data?.mcp_tools_by_agent_publication[agentPublicationId] ?? []
+      ).map((tool) => tool.tool_identifier)
+    )
+    setForm({
+      ...form,
+      agent_publication_id: agentPublicationId,
+      mcp_tools: selectRequiredFileMcpTools(
+        form.mcp_tools.filter((identifier) => availableTools.has(identifier)),
+        form.task_file_features,
+        availableTools
+      ),
+    })
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault()
+    setAttemptedSave(true)
+    if (errors.length > 0) return
     save.mutate(form)
   }
 
@@ -326,27 +361,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
               aria-describedby="draft-agent-help"
               required
               value={form.agent_publication_id}
-              onChange={(event) => {
-                const agentPublicationId = event.target.value
-                const availableTools = new Set(
-                  (
-                    catalog.data?.mcp_tools_by_agent_publication[
-                      agentPublicationId
-                    ] ?? []
-                  ).map((tool) => tool.tool_identifier)
-                )
-                setForm({
-                  ...form,
-                  agent_publication_id: agentPublicationId,
-                  mcp_tools: selectRequiredFileMcpTools(
-                    form.mcp_tools.filter((identifier) =>
-                      availableTools.has(identifier)
-                    ),
-                    form.task_file_features,
-                    availableTools
-                  ),
-                })
-              }}
+              onChange={(event) => selectAgent(event.target.value)}
             >
               <option value="">请选择已发布 Agent</option>
               {catalog.data?.agents
@@ -355,12 +370,15 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
                   <option key={item.id} value={item.id}>
                     {item.code} · r{item.revision} ·{" "}
                     {applicationRuntimeLabel(item.runtime_kind)}
+                    {item.id === draft?.agent_publication_id
+                      ? " · 当前草稿固定版本"
+                      : ""}
                   </option>
                 ))}
             </select>
             <p id="draft-agent-help" className="text-xs text-muted-foreground">
               可选择所有已发布且启用的 Agent
-              当前版本，不限项目；保存后固定到所选版本。
+              当前版本，不限项目；当前草稿已固定的版本也会保留，保存后固定到所选版本。
             </p>
           </Field>
           <Field label="工作流发布版本（可选）" htmlFor="draft-workflow">
@@ -396,24 +414,54 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
       </Card>
 
       <PolicyEditor form={form} setForm={setForm} catalog={catalog.data} />
-      <BindingsEditor form={form} setForm={setForm} catalog={catalog.data} />
+      <BindingsEditor
+        form={form}
+        setForm={setForm}
+        catalog={catalog.data}
+        onSelectAgent={selectAgent}
+      />
 
       <McpToolSelector form={form} setForm={setForm} catalog={catalog.data} />
 
-      <MutationError error={save.error} />
-      <div className="sticky bottom-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur">
-        <p className="text-xs text-muted-foreground">
-          保存将基于 expected revision r{application.revision}{" "}
-          创建新的追加式草稿。
-        </p>
-        <Button type="submit" disabled={save.isPending || catalog.isLoading}>
-          {save.isPending ? (
-            <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+      <div className="sticky bottom-4 z-10 rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur">
+        <div
+          className="max-h-48 overflow-auto"
+          data-testid="application-save-feedback"
+        >
+          {attemptedSave && errors.length > 0 ? (
+            <div role="alert" className="mb-3 text-sm text-destructive">
+              <p>请补全以下配置后保存：</p>
+              <ul className="list-inside list-disc">
+                {errors.map((error) => (
+                  <li key={error}>{error}</li>
+                ))}
+              </ul>
+            </div>
           ) : (
-            <SaveIcon aria-hidden="true" />
+            <MutationError error={save.error} />
           )}
-          保存新草稿
-        </Button>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            保存将基于 expected revision r{application.revision}{" "}
+            创建新的追加式草稿。
+          </p>
+          <Button
+            type="submit"
+            disabled={
+              save.isPending ||
+              catalog.isLoading ||
+              unassignedDeliveries(form).length > 0
+            }
+          >
+            {save.isPending ? (
+              <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+            ) : (
+              <SaveIcon aria-hidden="true" />
+            )}
+            保存新草稿
+          </Button>
+        </div>
       </div>
       {draft ? (
         <p className="sr-only">当前草稿修订为 {draft.revision}</p>
@@ -868,19 +916,19 @@ function BindingsEditor({
   form,
   setForm,
   catalog,
+  onSelectAgent,
 }: {
   form: SaveDraftInput
   setForm: (value: SaveDraftInput) => void
   catalog: Catalog
+  onSelectAgent: (id: string) => void
 }) {
-  const delivery = uniqueConnectors(
-    catalog?.connectors.filter((item) => item.direction === "delivery") ?? []
-  )
+  const unassigned = unassignedDeliveries(form)
   return (
-    <div className="grid gap-5 xl:grid-cols-2">
+    <div className="space-y-5">
       <Card className="shadow-none">
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>触发器绑定</CardTitle>
+          <CardTitle>触发器与结果去向</CardTitle>
           <Button
             type="button"
             size="sm"
@@ -888,6 +936,22 @@ function BindingsEditor({
             onClick={() =>
               setForm({
                 ...form,
+                deliveries: [
+                  ...form.deliveries,
+                  replyOriginal({
+                    trigger_type: "dingtalk_private",
+                    connector_id: "",
+                    routing_key: "bot:",
+                    actor_policy: "CURRENT_SENDER",
+                    service_account_user_id: "",
+                    enabled: true,
+                    config: {
+                      conversation_type: "private",
+                      require_mention: false,
+                      webhook_definition_id: "",
+                    },
+                  }),
+                ],
                 triggers: [
                   ...form.triggers,
                   {
@@ -965,11 +1029,9 @@ function BindingsEditor({
                   <EligibleChannelSelect
                     id={`trigger-connector-${index}`}
                     trigger={trigger}
-                    allowedWebhookConnectors={
-                      catalog?.agents.find(
-                        (agent) => agent.id === form.agent_publication_id
-                      )?.ingress_connector_ids ?? []
-                    }
+                    agents={catalog?.agents ?? []}
+                    agentPublicationId={form.agent_publication_id}
+                    onSelectAgent={onSelectAgent}
                     onChange={(change) =>
                       changeTrigger(form, setForm, index, change)
                     }
@@ -1022,6 +1084,12 @@ function BindingsEditor({
                   </p>
                 )}
               </div>
+              <TriggerDeliveryEditor
+                form={form}
+                setForm={setForm}
+                catalog={catalog}
+                triggerIndex={index}
+              />
               <Button
                 type="button"
                 variant="ghost"
@@ -1029,7 +1097,7 @@ function BindingsEditor({
                 onClick={() =>
                   setForm({
                     ...form,
-                    triggers: form.triggers.filter((_, item) => item !== index),
+                    ...removeTrigger(form, index),
                   })
                 }
               >
@@ -1040,73 +1108,171 @@ function BindingsEditor({
         </CardContent>
       </Card>
 
-      <Card className="shadow-none">
-        <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>投递绑定</CardTitle>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() =>
-              setForm({
-                ...form,
-                deliveries: [
-                  ...form.deliveries,
-                  {
-                    delivery_type: "dingtalk_private",
-                    connector_id: "",
-                    enabled: true,
-                    config: {
-                      target_reference: "",
-                      reply_mode: "configured",
-                      target_user_ids: [],
-                    },
-                  },
-                ],
-              })
-            }
-          >
-            添加投递
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {form.deliveries.length === 0 ? (
-            <EmptyBinding text="Webhook 未配置投递时，只执行并保存结果。" />
-          ) : null}
-          <details className="rounded-lg border p-3 text-sm">
+      {unassigned.length > 0 && (
+        <Card className="border-destructive/40 shadow-none">
+          <CardHeader>
+            <CardTitle>待处理的旧投递</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              这些投递未对应到任何唯一入口，不能随草稿保存。请先移除，再到需要的触发器下配置结果去向。
+            </p>
+            {unassigned.map((item, index) => (
+              <div
+                key={index}
+                className="flex items-center justify-between gap-3 rounded border p-3 text-sm"
+              >
+                <span>
+                  {item.delivery_type === "dingtalk_private"
+                    ? "钉钉私聊"
+                    : item.delivery_type === "reply_original"
+                      ? "回复原会话"
+                      : item.delivery_type === "dingtalk_group"
+                        ? "钉钉群聊"
+                        : "HTTP 回调"}{" "}
+                  ·{" "}
+                  {catalog?.connectors.find(
+                    (connector) => connector.id === item.connector_id
+                  )?.code ?? "连接器不可用"}{" "}
+                  · 目标人员 {(item.config.target_user_ids ?? []).length} 人
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      deliveries: form.deliveries.filter(
+                        (value) => value !== item
+                      ),
+                    })
+                  }
+                >
+                  移除未关联投递
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+function TriggerDeliveryEditor({
+  form,
+  setForm,
+  catalog,
+  triggerIndex,
+}: {
+  form: SaveDraftInput
+  setForm: (value: SaveDraftInput) => void
+  catalog: Catalog
+  triggerIndex: number
+}) {
+  const trigger = form.triggers[triggerIndex]
+  const sourceReady = Boolean(
+    trigger.connector_id &&
+    trigger.routing_key &&
+    trigger.config.webhook_definition_id &&
+    catalog?.agents
+      .find((agent) => agent.id === form.agent_publication_id)
+      ?.ingress_connector_ids.includes(trigger.connector_id)
+  )
+  const index = form.deliveries.findIndex((item) =>
+    matchesTrigger(item, trigger)
+  )
+  const binding = form.deliveries[index]
+  const agentName =
+    catalog?.agents.find((agent) => agent.id === form.agent_publication_id)
+      ?.code ?? "所选 Agent"
+  const destination =
+    trigger.trigger_type !== "webhook"
+      ? "回复原会话"
+      : !binding
+        ? "仅保存结果"
+        : binding.delivery_type === "dingtalk_private"
+          ? `钉钉私聊 · ${(binding.config.target_user_ids ?? []).length} 人${(binding.config.target_user_ids ?? []).length === 0 ? "（不发送）" : ""}`
+          : binding.delivery_type === "dingtalk_group"
+            ? "指定钉钉群"
+            : "HTTP 回调"
+  const delivery = uniqueConnectors(
+    catalog?.connectors.filter((item) => item.direction === "delivery") ?? []
+  )
+  function choose(type: "dingtalk_private" | "webhook_callback") {
+    setForm({
+      ...form,
+      deliveries: [
+        ...form.deliveries.filter((item) => !matchesTrigger(item, trigger)),
+        {
+          delivery_type: type,
+          connector_id: "",
+          enabled: true,
+          config: {
+            target_reference: "",
+            reply_mode: "configured",
+            target_user_ids: [],
+            trigger: triggerReference(trigger),
+          },
+        },
+      ],
+    })
+  }
+  return (
+    <section
+      aria-label={`触发器 ${triggerIndex + 1} 结果去向`}
+      className="space-y-3 rounded-lg bg-muted/30 p-3"
+    >
+      <p className="text-sm font-medium">
+        {trigger.trigger_type === "webhook"
+          ? "Webhook"
+          : trigger.trigger_type === "dingtalk_private"
+            ? "钉钉私聊"
+            : "钉钉群聊"}{" "}
+        → {agentName} → {destination}
+      </p>
+      {trigger.trigger_type !== "webhook" ? (
+        <p className="text-xs text-muted-foreground">
+          处理完成后，通过入口机器人回复发起消息的私聊或群聊。
+        </p>
+      ) : (
+        <>
+          {!sourceReady && (
+            <p className="text-xs text-muted-foreground">
+              请先选择所选 Agent 已绑定的 Webhook 入口，再配置投递。
+            </p>
+          )}
+          {!binding && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!sourceReady}
+              onClick={() => choose("dingtalk_private")}
+            >
+              添加投递
+            </Button>
+          )}
+          <details className="rounded border p-3 text-sm">
             <summary className="cursor-pointer font-medium">
               高级投递设置
             </summary>
             <p className="my-2 text-muted-foreground">
-              HTTP 回调将 Agent 结果发送给外部系统，使用平台托管的 HTTP 连接器。
+              HTTP 回调将本入口的 Agent
+              结果发送给外部系统；选择后替换当前投递方式。
             </p>
             <Button
               type="button"
-              size="sm"
               variant="outline"
-              onClick={() =>
-                setForm({
-                  ...form,
-                  deliveries: [
-                    ...form.deliveries,
-                    {
-                      delivery_type: "webhook_callback",
-                      connector_id: "",
-                      enabled: true,
-                      config: {
-                        target_reference: "",
-                        reply_mode: "configured",
-                      },
-                    },
-                  ],
-                })
-              }
+              size="sm"
+              disabled={!sourceReady}
+              onClick={() => choose("webhook_callback")}
             >
-              添加 HTTP 回调
+              使用 HTTP 回调
             </Button>
           </details>
-          {form.deliveries.map((binding, index) => (
-            <div key={index} className="space-y-3 rounded-lg border p-3">
+          {binding && (
+            <div className="space-y-3 rounded-lg border p-3">
               <Field
                 label={`投递 ${index + 1} 类型`}
                 htmlFor={`delivery-type-${index}`}
@@ -1128,7 +1294,6 @@ function BindingsEditor({
                     })
                   }
                 >
-                  <option value="reply_original">回复原会话</option>
                   <option value="dingtalk_private">钉钉私聊</option>
                   <option value="dingtalk_group">钉钉群聊</option>
                   {binding.delivery_type === "webhook_callback" && (
@@ -1288,28 +1453,34 @@ function BindingsEditor({
                   })
                 }
               >
-                删除投递
+                仅保存结果，不投递
               </Button>
             </div>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
+          )}
+        </>
+      )}
+    </section>
   )
 }
 
 function EligibleChannelSelect({
   id,
   trigger,
-  allowedWebhookConnectors,
+  agents,
+  agentPublicationId,
+  onSelectAgent,
   onChange,
 }: {
   id: string
   trigger: SaveDraftInput["triggers"][number]
-  allowedWebhookConnectors: string[]
+  agents: NonNullable<Catalog>["agents"]
+  agentPublicationId: string
+  onSelectAgent: (id: string) => void
   onChange: (patch: Partial<SaveDraftInput["triggers"][number]>) => void
 }) {
   const query = useEligibleChannels(trigger.trigger_type)
+  const agent = agents.find((item) => item.id === agentPublicationId)
+  const allowedWebhookConnectors = agent?.ingress_connector_ids ?? []
   const items = (query.data ?? []).filter(
     (item) =>
       trigger.trigger_type !== "webhook" ||
@@ -1326,6 +1497,23 @@ function EligibleChannelSelect({
     ? (current.webhook_trigger_id ?? current.id)
     : trigger.config.webhook_definition_id || trigger.connector_id
   const invalid = Boolean(selected) && !current
+  const newerAgent =
+    agent &&
+    agents
+      .filter(
+        (candidate) =>
+          candidate.code === agent.code &&
+          candidate.runtime_kind === "python-v1" &&
+          candidate.revision > agent.revision &&
+          query.data?.some((channel) =>
+            candidate.ingress_connector_ids.includes(channel.id)
+          )
+      )
+      .sort((a, b) => b.revision - a.revision)[0]
+  const missingWebhook =
+    trigger.trigger_type === "webhook" &&
+    query.isSuccess &&
+    (items.length === 0 || invalid)
 
   return (
     <>
@@ -1333,6 +1521,7 @@ function EligibleChannelSelect({
         id={id}
         className={selectClass}
         value={selected}
+        aria-describedby={`${id}-help`}
         disabled={query.isLoading}
         onChange={(event) => {
           const item = items.find(
@@ -1343,6 +1532,8 @@ function EligibleChannelSelect({
           if (!item) {
             onChange({
               connector_id: "",
+              routing_key:
+                trigger.trigger_type === "webhook" ? "" : trigger.routing_key,
               config: {
                 ...trigger.config,
                 webhook_definition_id: "",
@@ -1384,15 +1575,69 @@ function EligibleChannelSelect({
           </option>
         ))}
       </select>
-      {query.isError ? (
-        <p className="text-xs text-destructive">
-          无法加载可用渠道，请刷新后重试。
-        </p>
-      ) : invalid ? (
-        <p className="text-xs text-amber-700">
-          该旧绑定不再满足入口条件；保存前请选择新的可用渠道。
-        </p>
-      ) : null}
+      <div id={`${id}-help`} className="space-y-2">
+        {query.isError ? (
+          <p className="text-xs text-destructive">
+            无法加载可用渠道，请刷新后重试。
+          </p>
+        ) : invalid ? (
+          <p className="text-xs text-amber-700">
+            该旧绑定不再满足入口条件；保存前请选择新的可用渠道。
+          </p>
+        ) : null}
+        {missingWebhook && (
+          <div className="space-y-2 text-xs text-muted-foreground">
+            {!agent ? (
+              <p>请先选择 Agent 发布版本，再选择其绑定的 Webhook。</p>
+            ) : !query.data?.length ? (
+              <p>
+                暂无可用 Webhook，请先在“渠道与触发器”中配置、发布并启用
+                Webhook。
+              </p>
+            ) : (
+              <>
+                <p>
+                  当前 Agent r{agent.revision}{" "}
+                  {items.length === 0
+                    ? "未绑定可用的 Webhook"
+                    : "不支持当前 Webhook 入口"}
+                  。
+                </p>
+                {newerAgent ? (
+                  <>
+                    <p>
+                      同一 Agent 的 r{newerAgent.revision} 已绑定可用
+                      Webhook。切换后请检查该版本的工具与执行配置，再保存草稿。
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onSelectAgent(newerAgent.id)}
+                    >
+                      切换到 r{newerAgent.revision}（已绑定 Webhook）
+                    </Button>
+                  </>
+                ) : (
+                  <p>
+                    请在{" "}
+                    <Link
+                      className="underline"
+                      target="_blank"
+                      rel="noreferrer"
+                      to={`/agent-profiles/${encodeURIComponent(agent.code)}`}
+                    >
+                      Agent 配置
+                    </Link>{" "}
+                    的入口 Connector 中绑定 Webhook 并发布，然后在本页选择新的
+                    Agent 发布版本。
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </>
   )
 }
@@ -1863,7 +2108,7 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
     runtime_file_edit_enabled: false,
     default_file_delivery_enabled: false,
   }
-  return {
+  const form: SaveDraftInput = {
     expected_revision: application.revision,
     agent_publication_id: draft?.agent_publication_id ?? "",
     workflow_publication_id: draft?.workflow_publication_id ?? "",
@@ -1915,6 +2160,8 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
         connector_id: item.connector_id,
         enabled: item.enabled,
         config: {
+          trigger: item.config
+            .trigger as SaveDraftInput["deliveries"][number]["config"]["trigger"],
           target_reference: String(item.config.target_reference ?? ""),
           reply_mode: String(item.config.reply_mode ?? ""),
           target_user_ids: Array.isArray(item.config.target_user_ids)
@@ -1924,6 +2171,15 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
       })) ?? [],
     mcp_tools: draft?.mcp_tools.map((tool) => tool.tool_identifier) ?? [],
   }
+  form.deliveries = prepareDraftDeliveries(form.triggers, form.deliveries)
+  for (const trigger of form.triggers) {
+    if (
+      trigger.trigger_type !== "webhook" &&
+      !form.deliveries.some((delivery) => matchesTrigger(delivery, trigger))
+    )
+      form.deliveries.push(replyOriginal(trigger))
+  }
+  return form
 }
 
 function nextTaskFileFeatures(
@@ -2044,12 +2300,7 @@ function changeTrigger(
   index: number,
   patch: Partial<SaveDraftInput["triggers"][number]>
 ) {
-  setForm({
-    ...form,
-    triggers: form.triggers.map((item, itemIndex) =>
-      itemIndex === index ? { ...item, ...patch } : item
-    ),
-  })
+  setForm(replaceTrigger(form, index, patch))
 }
 
 function changeDelivery(
@@ -2061,7 +2312,16 @@ function changeDelivery(
   setForm({
     ...form,
     deliveries: form.deliveries.map((item, itemIndex) =>
-      itemIndex === index ? { ...item, ...patch } : item
+      itemIndex === index
+        ? {
+            ...item,
+            ...patch,
+            config: {
+              ...(patch.config ?? item.config),
+              trigger: item.config.trigger,
+            },
+          }
+        : item
     ),
   })
 }

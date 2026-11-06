@@ -62,8 +62,15 @@ def _application_payload(*, max_turns: int) -> dict[str, Any]:
             "delivery_type": "reply_original",
             "connector_id": CONNECTOR_ID,
             "enabled": True,
-            "config": {"target_reference": "", "reply_mode": "original"},
+            "config": {
+                "target_reference": "",
+                "reply_mode": "original",
+                "trigger": {
+                    key: trigger[key] for key in ("trigger_type", "connector_id", "routing_key")
+                },
+            },
         }
+        for trigger in payload["triggers"]
     ]
     payload["execution_policy"] = {
         "max_turns": max_turns,

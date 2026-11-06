@@ -103,6 +103,11 @@ def _runtime_with_targets() -> tuple[Container, dict[str, str]]:
                     "config": {
                         "target_reference": "",
                         "reply_mode": "original",
+                        "trigger": {
+                            "trigger_type": "dingtalk_private",
+                            "connector_id": connector["id"],
+                            "routing_key": "bot:rebuild-test-client",
+                        },
                     },
                 }
             ],

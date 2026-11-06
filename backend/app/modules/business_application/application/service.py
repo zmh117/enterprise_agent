@@ -38,6 +38,10 @@ from app.modules.business_application.domain.policies import (
     verify_historical_document_profile_snapshot,
     verify_publication_snapshot,
 )
+from app.modules.business_application.domain.delivery_routing import (
+    PER_TRIGGER,
+    delivery_link_errors,
+)
 from app.modules.document_processing import (
     DOCLING_LAYOUT_OCR_V2,
     DocumentProcessingProfileCode,
@@ -58,7 +62,7 @@ from app.modules.identity.application.authorization import AuthorizationEvaluato
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import AppError, NonRetryableExecutionError, NotFound
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 WRITABLE_AGENT_RUNTIME_KIND = "python-v1"
 
 
@@ -237,6 +241,14 @@ class BusinessApplicationService:
             validate_delivery(dict(value), index)
             for index, value in enumerate(payload.get("deliveries") or [])
         ]
+        link_errors = delivery_link_errors(triggers, deliveries)
+        if link_errors:
+            raise NonRetryableExecutionError(
+                "Invalid trigger delivery association",
+                safe_message="请修正触发器与投递的对应关系",
+                error_code="validation_failed",
+                field_errors=link_errors,
+            )
         agent_publication_id = str(payload.get("agent_publication_id") or "").strip()
         if not agent_publication_id:
             raise NonRetryableExecutionError(
@@ -658,6 +670,15 @@ class BusinessApplicationService:
             for item in self.agent_reader.catalog()
             if item.runtime_kind == WRITABLE_AGENT_RUNTIME_KIND
         ]
+        draft = self.repository.latest_revision(str(application["id"]))
+        pinned_id = str((draft or {}).get("agent_publication_id") or "")
+        if pinned_id and not any(item["id"] == pinned_id for item in agents):
+            try:
+                pinned = self.agent_reader.resolve(pinned_id)
+                if pinned.runtime_kind == WRITABLE_AGENT_RUNTIME_KIND:
+                    agents.append(reference(pinned))
+            except AppError:
+                pass
         mcp_tool_catalog = self.mcp_tool_composition_service.management_catalog(
             agent_publication_ids=[str(item["id"]) for item in agents],
         )
@@ -753,6 +774,7 @@ class BusinessApplicationService:
                 if account:
                     components.setdefault("actors", []).append(account)
         components["deliveries"] = []
+        errors.extend(delivery_link_errors(revision["triggers"], revision["deliveries"]))
         for index, delivery in enumerate(revision["deliveries"]):
             if not delivery["enabled"]:
                 continue
@@ -914,6 +936,7 @@ class BusinessApplicationService:
 
         snapshot = {
             "schema_version": SCHEMA_VERSION,
+            "delivery_binding_mode": PER_TRIGGER,
             "application": {
                 "id": application["id"],
                 "code": application["code"],

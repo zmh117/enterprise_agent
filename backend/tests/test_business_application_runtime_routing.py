@@ -123,14 +123,26 @@ def _publish(
     )
     payload = draft_payload()
     payload["triggers"] = triggers
-    payload["deliveries"] = deliveries or [
-        {
-            "delivery_type": "reply_original",
-            "connector_id": CONNECTOR_ID,
-            "enabled": True,
-            "config": {"target_reference": "", "reply_mode": "original"},
-        }
-    ]
+    payload["deliveries"] = (
+        deliveries
+        if deliveries is not None
+        else [
+            {
+                "delivery_type": "reply_original",
+                "connector_id": trigger["connector_id"],
+                "enabled": True,
+                "config": {
+                    "target_reference": "",
+                    "reply_mode": "original",
+                    "trigger": {
+                        key: trigger[key] for key in ("trigger_type", "connector_id", "routing_key")
+                    },
+                },
+            }
+            for trigger in triggers
+            if trigger["trigger_type"] != "webhook"
+        ]
+    )
     if session_policy is not None:
         payload["session_policy"] = session_policy
     if execution_policy is not None:

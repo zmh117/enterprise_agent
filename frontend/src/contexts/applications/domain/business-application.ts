@@ -274,6 +274,11 @@ export type SaveDraftInput = {
       target_reference: string
       reply_mode: string
       target_user_ids?: string[]
+      trigger?: {
+        trigger_type: "dingtalk_private" | "dingtalk_group" | "webhook"
+        connector_id: string
+        routing_key: string
+      }
     }
   }>
   mcp_tools: string[]

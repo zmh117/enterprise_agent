@@ -272,9 +272,17 @@ class TriggerRequest(StrictRequest):
     config: TriggerConfigRequest = Field(default_factory=TriggerConfigRequest)
 
 
+class DeliveryTriggerRequest(StrictRequest):
+    trigger_type: Literal["dingtalk_private", "dingtalk_group", "webhook"]
+    connector_id: str = Field(min_length=1, max_length=200)
+    routing_key: str = Field(min_length=1, max_length=240)
+
+
 class DeliveryConfigRequest(StrictRequest):
     target_reference: str = Field(default="", max_length=240)
     reply_mode: str = Field(default="", max_length=80)
+    target_user_ids: list[str] = Field(default_factory=list, max_length=20)
+    trigger: DeliveryTriggerRequest
 
 
 class DeliveryRequest(StrictRequest):
@@ -283,7 +291,7 @@ class DeliveryRequest(StrictRequest):
     ]
     connector_id: str = Field(min_length=1, max_length=200)
     enabled: bool = True
-    config: DeliveryConfigRequest = Field(default_factory=DeliveryConfigRequest)
+    config: DeliveryConfigRequest
 
 
 class SaveDraftRequest(StrictRequest):

@@ -5,6 +5,10 @@ from enum import StrEnum
 import hashlib
 from typing import Any
 
+from app.modules.business_application.domain.delivery_routing import (
+    PER_TRIGGER,
+    delivery_link_errors,
+)
 from app.modules.business_application.domain.policies import (
     required_file_mcp_tools,
     validate_task_file_features,
@@ -447,127 +451,155 @@ class RuntimeReadinessEvaluator:
             for value in snapshot.get("deliveries") or []
             if bool(value.get("enabled", True))
         ]
-        reply_deliveries = [
-            value
-            for value in deliveries
-            if str(value.get("delivery_type") or "") == "reply_original"
-        ]
-        supported_triggers = [
-            value
-            for value in triggers
-            if str(value.get("trigger_type") or "") in {"dingtalk_private", "dingtalk_group"}
-        ]
-        webhook_triggers = [
-            value for value in triggers if str(value.get("trigger_type") or "") == "webhook"
-        ]
-        webhook_deliveries = [
-            value
-            for value in deliveries
-            if str(value.get("delivery_type") or "")
-            in {"dingtalk_private", "dingtalk_group", "webhook_callback"}
-        ]
-        delivery_blocked = False
-        if supported_triggers:
-            if not reply_deliveries:
-                delivery_blocked = True
-                components["delivery"] = RuntimeComponentStatus(
-                    RuntimeComponentState.BLOCKED,
-                    RuntimeReason.MISSING_DELIVERY_BINDING.value,
-                    "钉钉路由必须配置 reply_original 投递",
-                )
-                blockers.append(
-                    (
-                        RuntimeReason.MISSING_DELIVERY_BINDING.value,
-                        "业务应用缺少原会话回复投递",
-                    )
-                )
-            elif len(reply_deliveries) != 1:
-                delivery_blocked = True
-                components["delivery"] = RuntimeComponentStatus(
-                    RuntimeComponentState.BLOCKED,
-                    RuntimeReason.DUPLICATE_DELIVERY_BINDING.value,
-                    "必须且只能配置一个 reply_original 投递",
-                )
-                blockers.append(
-                    (
-                        RuntimeReason.DUPLICATE_DELIVERY_BINDING.value,
-                        "业务应用配置了重复的原会话回复投递",
-                    )
-                )
-            else:
-                delivery_connector = str(reply_deliveries[0].get("connector_id") or "")
-                mismatched = any(
-                    str(trigger.get("connector_id") or "") != delivery_connector
-                    for trigger in supported_triggers
-                )
-                if mismatched:
-                    delivery_blocked = True
-                    components["delivery"] = RuntimeComponentStatus(
-                        RuntimeComponentState.BLOCKED,
-                        RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
-                        "原会话回复连接器必须与接入连接器一致",
-                    )
-                    blockers.append(
-                        (
-                            RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
-                            "业务应用投递连接器与接入连接器不匹配",
-                        )
-                    )
-        if webhook_triggers:
-            unsupported_delivery = any(
-                value.get("delivery_type")
-                not in {"dingtalk_private", "dingtalk_group", "webhook_callback", "reply_original"}
-                for value in deliveries
+        if snapshot.get("delivery_binding_mode") == PER_TRIGGER:
+            errors = delivery_link_errors(
+                list(snapshot.get("triggers") or []),
+                list(snapshot.get("deliveries") or []),
+                require_reply=True,
             )
-            if unsupported_delivery or len(webhook_deliveries) > 1:
-                delivery_blocked = True
-                reason = (
-                    RuntimeReason.UNSUPPORTED_DELIVERY
-                    if unsupported_delivery
-                    else RuntimeReason.DUPLICATE_DELIVERY_BINDING
-                )
+            if errors:
+                reason = errors[0].get("reason_code", RuntimeReason.MISSING_DELIVERY_BINDING.value)
                 components["delivery"] = RuntimeComponentStatus(
                     RuntimeComponentState.BLOCKED,
-                    reason.value,
-                    "Webhook 最多配置一个结果投递",
+                    reason,
+                    errors[0]["message"],
                 )
-                blockers.append(
-                    (
-                        reason.value,
-                        "Webhook 业务应用结果投递配置无效",
-                    )
+                blockers.append((reason, errors[0]["message"]))
+            elif triggers:
+                components["delivery"] = RuntimeComponentStatus(
+                    RuntimeComponentState.WIRED,
+                    RuntimeReason.READY.value,
+                    "已按各入口配置结果去向",
                 )
-            elif webhook_deliveries:
-                config = webhook_deliveries[0].get("config") or {}
-                target_reference = (
-                    str(config.get("target_reference") or "") if isinstance(config, dict) else ""
-                )
-                private = webhook_deliveries[0].get("delivery_type") == "dingtalk_private"
-                if not private and not target_reference:
+        else:
+            reply_deliveries = [
+                value
+                for value in deliveries
+                if str(value.get("delivery_type") or "") == "reply_original"
+            ]
+            supported_triggers = [
+                value
+                for value in triggers
+                if str(value.get("trigger_type") or "") in {"dingtalk_private", "dingtalk_group"}
+            ]
+            webhook_triggers = [
+                value for value in triggers if str(value.get("trigger_type") or "") == "webhook"
+            ]
+            webhook_deliveries = [
+                value
+                for value in deliveries
+                if str(value.get("delivery_type") or "")
+                in {"dingtalk_private", "dingtalk_group", "webhook_callback"}
+            ]
+            delivery_blocked = False
+            if supported_triggers:
+                if not reply_deliveries:
                     delivery_blocked = True
                     components["delivery"] = RuntimeComponentStatus(
                         RuntimeComponentState.BLOCKED,
                         RuntimeReason.MISSING_DELIVERY_BINDING.value,
-                        "Webhook 结果投递目标未配置",
+                        "钉钉路由必须配置 reply_original 投递",
                     )
                     blockers.append(
                         (
                             RuntimeReason.MISSING_DELIVERY_BINDING.value,
-                            "Webhook 业务应用缺少结果投递目标",
+                            "业务应用缺少原会话回复投递",
                         )
                     )
-        if (supported_triggers or webhook_triggers) and not delivery_blocked:
-            components["delivery"] = RuntimeComponentStatus(
-                RuntimeComponentState.WIRED,
-                RuntimeReason.READY.value,
-                "已配置受支持的结果投递",
-            )
-        elif not (supported_triggers or webhook_triggers) and deliveries:
-            components["delivery"] = RuntimeComponentStatus(
-                RuntimeComponentState.STORED_ONLY,
-                RuntimeReason.UNSUPPORTED_DELIVERY.value,
-                "投递配置已保存，但当前运行阶段尚未接入",
-            )
+                elif len(reply_deliveries) != 1:
+                    delivery_blocked = True
+                    components["delivery"] = RuntimeComponentStatus(
+                        RuntimeComponentState.BLOCKED,
+                        RuntimeReason.DUPLICATE_DELIVERY_BINDING.value,
+                        "必须且只能配置一个 reply_original 投递",
+                    )
+                    blockers.append(
+                        (
+                            RuntimeReason.DUPLICATE_DELIVERY_BINDING.value,
+                            "业务应用配置了重复的原会话回复投递",
+                        )
+                    )
+                else:
+                    delivery_connector = str(reply_deliveries[0].get("connector_id") or "")
+                    mismatched = any(
+                        str(trigger.get("connector_id") or "") != delivery_connector
+                        for trigger in supported_triggers
+                    )
+                    if mismatched:
+                        delivery_blocked = True
+                        components["delivery"] = RuntimeComponentStatus(
+                            RuntimeComponentState.BLOCKED,
+                            RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
+                            "原会话回复连接器必须与接入连接器一致",
+                        )
+                        blockers.append(
+                            (
+                                RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
+                                "业务应用投递连接器与接入连接器不匹配",
+                            )
+                        )
+            if webhook_triggers:
+                unsupported_delivery = any(
+                    value.get("delivery_type")
+                    not in {
+                        "dingtalk_private",
+                        "dingtalk_group",
+                        "webhook_callback",
+                        "reply_original",
+                    }
+                    for value in deliveries
+                )
+                if unsupported_delivery or len(webhook_deliveries) > 1:
+                    delivery_blocked = True
+                    reason = (
+                        RuntimeReason.UNSUPPORTED_DELIVERY
+                        if unsupported_delivery
+                        else RuntimeReason.DUPLICATE_DELIVERY_BINDING
+                    )
+                    components["delivery"] = RuntimeComponentStatus(
+                        RuntimeComponentState.BLOCKED,
+                        reason.value,
+                        "Webhook 最多配置一个结果投递",
+                    )
+                    blockers.append(
+                        (
+                            reason.value,
+                            "Webhook 业务应用结果投递配置无效",
+                        )
+                    )
+                elif webhook_deliveries:
+                    config = webhook_deliveries[0].get("config") or {}
+                    target_reference = (
+                        str(config.get("target_reference") or "")
+                        if isinstance(config, dict)
+                        else ""
+                    )
+                    private = webhook_deliveries[0].get("delivery_type") == "dingtalk_private"
+                    if not private and not target_reference:
+                        delivery_blocked = True
+                        components["delivery"] = RuntimeComponentStatus(
+                            RuntimeComponentState.BLOCKED,
+                            RuntimeReason.MISSING_DELIVERY_BINDING.value,
+                            "Webhook 结果投递目标未配置",
+                        )
+                        blockers.append(
+                            (
+                                RuntimeReason.MISSING_DELIVERY_BINDING.value,
+                                "Webhook 业务应用缺少结果投递目标",
+                            )
+                        )
+            if (supported_triggers or webhook_triggers) and not delivery_blocked:
+                components["delivery"] = RuntimeComponentStatus(
+                    RuntimeComponentState.WIRED,
+                    RuntimeReason.READY.value,
+                    "已配置受支持的结果投递",
+                )
+            elif not (supported_triggers or webhook_triggers) and deliveries:
+                components["delivery"] = RuntimeComponentStatus(
+                    RuntimeComponentState.STORED_ONLY,
+                    RuntimeReason.UNSUPPORTED_DELIVERY.value,
+                    "投递配置已保存，但当前运行阶段尚未接入",
+                )
 
         session_policy = dict(snapshot.get("session_policy") or {})
         if session_policy:

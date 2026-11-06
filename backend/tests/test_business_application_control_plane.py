@@ -239,7 +239,14 @@ def draft_payload(*, route: str = "", mcp_tools: list[str] | None = None) -> dic
                 "delivery_type": "reply_original",
                 "connector_id": "connector-dingtalk-stream-default",
                 "enabled": True,
-                "config": {"target_reference": "", "reply_mode": "original"},
+                "config": {
+                    "target_reference": "",
+                    "reply_mode": "original",
+                    "trigger": {
+                        key: triggers[0][key]
+                        for key in ("trigger_type", "connector_id", "routing_key")
+                    },
+                },
             }
         )
     return {
@@ -374,7 +381,7 @@ def test_workspace_retention_is_frozen_in_revision_publication_hash_and_audit() 
         code="workspace-retention-policy",
         revision_id=str(revision["id"]),
     )
-    assert publication["schema_version"] == 6
+    assert publication["schema_version"] == 7
     assert publication["task_file_features"] == {
         "default_file_delivery_enabled": False,
         "file_mcp_enabled": False,
@@ -599,7 +606,7 @@ def test_document_processing_profile_is_strict_and_frozen() -> None:
         "version": "2",
         "hash": DOCLING_LAYOUT_OCR_V2.profile_hash,
     }
-    assert publication["schema_version"] == 6
+    assert publication["schema_version"] == 7
     assert publication["snapshot"]["document_processing_profile"] == expected_profile
     assert publication["document_processing_profile_code"] == "docling-layout-ocr-v2"
     assert publication["document_processing_profile_version"] == "2"
@@ -608,7 +615,7 @@ def test_document_processing_profile_is_strict_and_frozen() -> None:
     assert snapshot_hash(publication["snapshot"]) == publication["config_hash"]
     assert verify_publication_snapshot(
         publication["snapshot"],
-        schema_version=6,
+        schema_version=7,
         expected_hash=publication["config_hash"],
     )
 
@@ -631,7 +638,7 @@ def test_document_processing_profile_is_strict_and_frozen() -> None:
     }
     assert not verify_publication_snapshot(
         tampered,
-        schema_version=6,
+        schema_version=7,
         expected_hash=snapshot_hash(tampered),
     )
 
@@ -1687,6 +1694,21 @@ def test_agent_catalog_lists_current_publications_across_projects() -> None:
         rolled_back = client.get(
             f"/api/admin/business-applications/{application['code']}/catalog"
         ).json()
+        container.business_application_service.save_draft(
+            actor_id="user_local_admin",
+            code=application["code"],
+            expected_revision=application["revision"],
+            payload={**draft_payload(), "agent_publication_id": latest["id"]},
+        )
+        pinned_catalog = container.business_application_service.catalog(
+            actor_id="user_local_admin", code=application["code"]
+        )
+        assert {item["id"] for item in pinned_catalog["agents"]} == {
+            "agent_publication_default_v1",
+            first["id"],
+            latest["id"],
+        }
+        assert latest["id"] in pinned_catalog["mcp_tools_by_agent_publication"]
     assert response.status_code == 200
     catalog = response.json()
     assert [(item["code"], item["id"]) for item in catalog["agents"]] == [

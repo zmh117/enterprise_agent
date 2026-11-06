@@ -154,7 +154,9 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
         {
           save: "草稿已保存，当前运行版本保持不变。",
           validate: result.updated.draft?.validation.valid
-            ? "校验通过，可以预览或发布。"
+            ? result.updated.draft.status === "published"
+              ? "校验通过，该修订已发布。"
+              : "校验通过，可以预览或发布。"
             : "校验未通过，请处理下面的字段错误。",
           preview: "预览完成，未创建业务任务。",
           publish:
@@ -343,7 +345,11 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
           校验草稿
         </Button>
         <Button
-          disabled={savedActionsDisabled || draftPublished || !detail.draft?.validation.valid}
+          disabled={
+            savedActionsDisabled ||
+            draftPublished ||
+            !detail.draft?.validation.valid
+          }
           onClick={() => mutation.mutate("publish")}
         >
           {draftPublished ? "该修订已发布" : "发布草稿"}

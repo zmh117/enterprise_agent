@@ -196,6 +196,11 @@ def _activate_application(
                     "config": {
                         "target_reference": "",
                         "reply_mode": "original",
+                        "trigger": {
+                            "trigger_type": "dingtalk_private",
+                            "connector_id": connector_id,
+                            "routing_key": f"bot:{robot_code}",
+                        },
                     },
                 }
             ],

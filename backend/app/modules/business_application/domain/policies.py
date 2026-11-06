@@ -53,7 +53,7 @@ SESSION_POLICY_FIELDS = {
 }
 EXECUTION_POLICY_FIELDS = {"max_turns", "timeout_seconds", "max_tool_calls"}
 TRIGGER_CONFIG_FIELDS = {"conversation_type", "require_mention", "webhook_definition_id"}
-DELIVERY_CONFIG_FIELDS = {"target_reference", "reply_mode", "target_user_ids"}
+DELIVERY_CONFIG_FIELDS = {"target_reference", "reply_mode", "target_user_ids", "trigger"}
 FORBIDDEN_KEYS = {
     "url",
     "base_url",
@@ -250,7 +250,9 @@ def verify_publication_snapshot(
     schema_version: int,
     expected_hash: str,
 ) -> bool:
-    if schema_version != 6 or snapshot.get("schema_version") != 6:
+    if schema_version not in {6, 7} or snapshot.get("schema_version") != schema_version:
+        return False
+    if schema_version == 7 and snapshot.get("delivery_binding_mode") != "per_trigger":
         return False
     if not verify_snapshot(snapshot, expected_hash):
         return False
@@ -283,7 +285,9 @@ def verify_historical_document_profile_snapshot(
     expected_hash: str,
 ) -> bool:
     """Recognize an intact immutable snapshot whose only drift is Profile hash."""
-    if schema_version != 6 or snapshot.get("schema_version") != 6:
+    if schema_version not in {6, 7} or snapshot.get("schema_version") != schema_version:
+        return False
+    if schema_version == 7 and snapshot.get("delivery_binding_mode") != "per_trigger":
         return False
     if not verify_snapshot(snapshot, expected_hash):
         return False
@@ -395,6 +399,22 @@ def validate_delivery(value: dict[str, Any], index: int) -> dict[str, Any]:
     config = dict(value.get("config") or {})
     _reject_unknown(config, DELIVERY_CONFIG_FIELDS, f"deliveries.{index}.config")
     reject_dangerous_content(config, field=f"deliveries.{index}.config")
+    source = config.get("trigger")
+    if not isinstance(source, dict):
+        raise validation_error(f"deliveries.{index}.config.trigger", "请在对应触发器下配置投递")
+    _reject_unknown(
+        source,
+        {"trigger_type", "connector_id", "routing_key"},
+        f"deliveries.{index}.config.trigger",
+    )
+    if source.get("trigger_type") not in {item.value for item in TriggerType} or not source.get(
+        "connector_id"
+    ):
+        raise validation_error(f"deliveries.{index}.config.trigger", "请选择有效的入口触发器")
+    config["trigger"] = {
+        **source,
+        "routing_key": normalize_routing_key(str(source.get("routing_key") or "")),
+    }
     if delivery_type == "webhook_callback":
         target = config.get("target_reference", "")
         if not isinstance(target, str) or "://" in target or len(target) > 240:

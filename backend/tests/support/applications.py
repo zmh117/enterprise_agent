@@ -161,6 +161,29 @@ def activate_dingtalk_test_application(
         }
         for conversation_id in group_conversation_ids
     )
+    if additional_deliveries:
+        from backend.tests.support.webhooks import prepare_test_webhook
+
+        assert len(additional_deliveries) == 1
+        prepare_test_webhook(container)
+        source = {
+            "trigger_type": "webhook",
+            "connector_id": "connector-grafana-default",
+            "routing_key": "webhook:webhook_trigger_grafana_default",
+        }
+        triggers.append(
+            {
+                **source,
+                "actor_policy": "SERVICE_ACCOUNT",
+                "service_account_user_id": "user_webhook_grafana_default",
+                "enabled": True,
+                "config": {},
+            }
+        )
+        additional_deliveries = tuple(
+            {**item, "config": {**item["config"], "trigger": source}}
+            for item in additional_deliveries
+        )
     application = container.business_application_service.create(
         actor_id="user_local_admin",
         code=code,
@@ -192,12 +215,23 @@ def activate_dingtalk_test_application(
             "document_processing_profile_code": document_processing_profile_code,
             "triggers": triggers,
             "deliveries": [
-                {
-                    "delivery_type": "reply_original",
-                    "connector_id": "connector-dingtalk-stream-default",
-                    "enabled": True,
-                    "config": {"target_reference": "", "reply_mode": "original"},
-                },
+                *[
+                    {
+                        "delivery_type": "reply_original",
+                        "connector_id": "connector-dingtalk-stream-default",
+                        "enabled": True,
+                        "config": {
+                            "target_reference": "",
+                            "reply_mode": "original",
+                            "trigger": {
+                                key: trigger[key]
+                                for key in ("trigger_type", "connector_id", "routing_key")
+                            },
+                        },
+                    }
+                    for trigger in triggers
+                    if trigger["trigger_type"] != "webhook"
+                ],
                 *additional_deliveries,
             ],
             "mcp_tools": list(mcp_tools),
@@ -283,6 +317,11 @@ def activate_webhook_test_application(
                     "config": {
                         "target_reference": delivery_target_reference,
                         "reply_mode": "fixed",
+                        "trigger": {
+                            "trigger_type": "webhook",
+                            "connector_id": ingress_connector_id,
+                            "routing_key": f"webhook:{webhook_definition_id}",
+                        },
                     },
                 }
             ]

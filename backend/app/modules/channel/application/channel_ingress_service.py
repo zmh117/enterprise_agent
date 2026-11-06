@@ -12,6 +12,10 @@ from app.modules.business_application.domain import (
 from app.modules.business_application.domain.policies import (
     publication_document_processing_profile,
 )
+from app.modules.business_application.domain.delivery_routing import (
+    PER_TRIGGER,
+    deliveries_for_trigger,
+)
 from app.modules.channel.domain.channel_event import ChannelEvent, ReplyRoute
 from app.modules.document_processing import document_processing_profile_snapshot
 from app.modules.identity.application import IdentityService
@@ -392,6 +396,15 @@ class ChannelIngressService:
         raw_deliveries = snapshot.get("deliveries")
         deliveries = raw_deliveries if isinstance(raw_deliveries, list) else []
         trigger_type = _trigger_type(event)
+        if snapshot.get("delivery_binding_mode") == PER_TRIGGER:
+            deliveries = deliveries_for_trigger(
+                snapshot,
+                {
+                    "trigger_type": trigger_type,
+                    "connector_id": event.source.connector_id,
+                    "routing_key": _business_application_routing_key(event, trigger_type),
+                },
+            )
         if trigger_type == "webhook":
             if any(
                 isinstance(value, dict)

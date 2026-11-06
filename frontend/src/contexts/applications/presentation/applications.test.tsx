@@ -593,7 +593,7 @@ describe("Business Application workbench", () => {
     })
     expect(
       await within(agentSelector).findByRole("option", {
-        name: "default-diagnostic-agent · r29 · Python Runtime",
+        name: /default-diagnostic-agent · r29 · Python Runtime/,
       })
     ).toBeInTheDocument()
     expect(
@@ -603,7 +603,7 @@ describe("Business Application workbench", () => {
     ).toBeInTheDocument()
     expect(within(agentSelector).getAllByRole("option")).toHaveLength(3)
     expect(agentSelector).toHaveAccessibleDescription(
-      "可选择所有已发布且启用的 Agent 当前版本，不限项目；保存后固定到所选版本。"
+      "可选择所有已发布且启用的 Agent 当前版本，不限项目；当前草稿已固定的版本也会保留，保存后固定到所选版本。"
     )
     expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
     const continuousConversation = screen.getByLabelText("连续会话")
@@ -768,14 +768,31 @@ describe("Business Application workbench", () => {
   })
 })
 
-it("binds only the Agent's Webhooks and saves optional DingTalk people in the application", async () => {
+it.each([
+  {
+    scenario: "upgrades the Agent and saves Webhook recipients",
+    enabledWebhook: true,
+    newerAgentAvailable: true,
+  },
+  {
+    scenario: "explains that no Webhook is enabled",
+    enabledWebhook: false,
+    newerAgentAvailable: true,
+  },
+  {
+    scenario: "links to Agent configuration when no bound version exists",
+    enabledWebhook: true,
+    newerAgentAvailable: false,
+  },
+])("$scenario", async ({ enabledWebhook, newerAgentAvailable }) => {
   let saved: Record<string, unknown> | undefined
+  let failSave = false
   const draft = {
     id: "draft",
     application_id: "app",
     revision: 1,
     status: "draft",
-    agent_publication_id: "agent-pub",
+    agent_publication_id: "agent-old",
     session_policy: {},
     execution_policy: {},
     triggers: [],
@@ -794,42 +811,60 @@ it("binds only the Agent's Webhooks and saves optional DingTalk people in the ap
     const url = String(input)
     if (url.includes("/eligible?"))
       return response({
-        items: [
-          {
-            id: "bound-hook",
-            name: "已绑定入口",
-            code: "bound-hook",
-            kind: "WEBHOOK",
-            webhook_trigger_id: "hook-one",
-            routing_key: "webhook:hook-one",
-            enabled: true,
-            revision: 1,
-          },
-          {
-            id: "other-hook",
-            name: "其他入口",
-            code: "other-hook",
-            kind: "WEBHOOK",
-            webhook_trigger_id: "hook-two",
-            routing_key: "webhook:hook-two",
-            enabled: true,
-            revision: 1,
-          },
-        ],
+        items: enabledWebhook
+          ? [
+              {
+                id: "bound-hook",
+                name: "已绑定入口",
+                code: "bound-hook",
+                kind: "WEBHOOK",
+                webhook_trigger_id: "hook-one",
+                routing_key: "webhook:hook-one",
+                enabled: true,
+                revision: 1,
+              },
+              {
+                id: "other-hook",
+                name: "其他入口",
+                code: "other-hook",
+                kind: "WEBHOOK",
+                webhook_trigger_id: "hook-two",
+                routing_key: "webhook:hook-two",
+                enabled: true,
+                revision: 1,
+              },
+            ]
+          : [],
       })
     if (url.endsWith("/catalog"))
       return response({
         agents: [
           {
             ...component,
+            id: "agent-old",
+            code: "Agent",
+            revision: 48,
+            runtime_kind: "python-v1",
+            ingress_connector_ids: [],
+          },
+          {
+            ...component,
             id: "agent-pub",
             code: "Agent",
+            revision: 49,
             runtime_kind: "python-v1",
             ingress_connector_ids: ["bound-hook"],
           },
-        ],
+        ].filter((agent) => newerAgentAvailable || agent.id === "agent-old"),
         workflows: [],
         connectors: [
+          {
+            ...component,
+            id: "http-callback",
+            code: "结果回调",
+            direction: "delivery",
+            component_type: "http",
+          },
           {
             ...component,
             id: "robot",
@@ -846,6 +881,22 @@ it("binds only the Agent's Webhooks and saves optional DingTalk people in the ap
         },
       })
     if (url.endsWith("/draft") && init?.method === "PUT") {
+      if (failSave)
+        return response(
+          {
+            detail: {
+              code: "validation_failed",
+              message: "请检查本入口的投递目标",
+              field_errors: [
+                {
+                  field: "deliveries.0.config.target_user_ids",
+                  message: "所选人员已停用",
+                },
+              ],
+            },
+          },
+          400
+        )
       saved = JSON.parse(String(init.body))
       return response({ revision: { ...draft, ...saved } })
     }
@@ -892,6 +943,46 @@ it("binds only the Agent's Webhooks and saves optional DingTalk people in the ap
     target: { value: "webhook" },
   })
   const entrance = screen.getByLabelText("入口渠道")
+  if (!enabledWebhook) {
+    expect(
+      await screen.findByText(
+        "暂无可用 Webhook，请先在“渠道与触发器”中配置、发布并启用 Webhook。"
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /切换到 r49/ })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "添加投递" })).toBeDisabled()
+    return
+  }
+  expect(
+    await screen.findByText("当前 Agent r48 未绑定可用的 Webhook。")
+  ).toBeInTheDocument()
+  expect(screen.getByLabelText("Agent 发布版本")).toHaveValue("agent-old")
+  expect(screen.getByRole("button", { name: "添加投递" })).toBeDisabled()
+  expect(screen.getByRole("button", { name: "使用 HTTP 回调" })).toBeDisabled()
+  fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+  expect(
+    within(screen.getByTestId("application-save-feedback")).getByRole("alert")
+  ).toHaveTextContent("触发器 1：请选择入口渠道。")
+  expect(saved).toBeUndefined()
+  expect(
+    vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "PUT")
+  ).toBe(false)
+  if (!newerAgentAvailable) {
+    expect(
+      screen.queryByRole("button", { name: /切换到 r49/ })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Agent 配置" })).toHaveAttribute(
+      "href",
+      "/agent-profiles/Agent"
+    )
+    return
+  }
+  fireEvent.click(
+    screen.getByRole("button", { name: "切换到 r49（已绑定 Webhook）" })
+  )
+  expect(screen.getByLabelText("Agent 发布版本")).toHaveValue("agent-pub")
   expect(
     await within(entrance).findByRole("option", { name: /已绑定入口/ })
   ).toBeInTheDocument()
@@ -918,6 +1009,7 @@ it("binds only the Agent's Webhooks and saves optional DingTalk people in the ap
   fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
   await waitFor(() =>
     expect(saved).toMatchObject({
+      agent_publication_id: "agent-pub",
       triggers: [
         { connector_id: "bound-hook", routing_key: "webhook:hook-one" },
       ],
@@ -925,7 +1017,14 @@ it("binds only the Agent's Webhooks and saves optional DingTalk people in the ap
         {
           delivery_type: "dingtalk_private",
           connector_id: "robot",
-          config: { target_user_ids: ["person-one", "person-two"] },
+          config: {
+            target_user_ids: ["person-one", "person-two"],
+            trigger: {
+              trigger_type: "webhook",
+              connector_id: "bound-hook",
+              routing_key: "webhook:hook-one",
+            },
+          },
         },
       ],
     })
@@ -939,6 +1038,23 @@ it("binds only the Agent's Webhooks and saves optional DingTalk people in the ap
     })
   )
   fireEvent.click(screen.getByText("高级投递设置"))
-  fireEvent.click(screen.getByRole("button", { name: "添加 HTTP 回调" }))
+  fireEvent.click(screen.getByRole("button", { name: "使用 HTTP 回调" }))
   expect(screen.getByLabelText("外部系统目标标识")).toBeInTheDocument()
+  expect(screen.getAllByLabelText(/投递 \d 类型/)).toHaveLength(1)
+  fireEvent.change(screen.getByLabelText("投递连接器"), {
+    target: { value: "http-callback" },
+  })
+  failSave = true
+  fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+  expect(
+    await within(screen.getByTestId("application-save-feedback")).findByRole(
+      "alert"
+    )
+  ).toHaveTextContent("请检查本入口的投递目标")
+  fireEvent.click(screen.getByRole("button", { name: "删除触发器" }))
+  failSave = false
+  fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+  await waitFor(() =>
+    expect(saved).toMatchObject({ triggers: [], deliveries: [] })
+  )
 })

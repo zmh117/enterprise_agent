@@ -133,7 +133,11 @@ function setup(
       detail = {
         ...detail,
         definition: { ...detail.definition, revision: 2 },
-        current_publication: { id: "publication-1", revision: 1 },
+        draft: { ...detail.draft!, status: "published" },
+        current_publication: {
+          id: "publication-1",
+          revision: detail.draft!.revision,
+        },
       }
       return reply({ publication: detail.current_publication })
     }
@@ -310,6 +314,14 @@ describe("Webhook first-use configuration", () => {
     })
     fireEvent.click(screen.getByRole("button", { name: "发布草稿" }))
     await screen.findByText(/发布成功；启用后/)
+    const publishedButton = screen.getByRole("button", { name: "该修订已发布" })
+    expect(publishedButton).toBeDisabled()
+    fireEvent.click(publishedButton)
+    expect(writes.filter((item) => item.url.endsWith("/publish"))).toHaveLength(
+      1
+    )
+    fireEvent.click(screen.getByRole("button", { name: "校验草稿" }))
+    await screen.findByText("校验通过，该修订已发布。")
     fireEvent.click(screen.getByRole("button", { name: "启用 Webhook" }))
     await screen.findByRole("button", { name: "停用 Webhook" })
     expect(writes.at(-1)?.body).toMatchObject({
@@ -328,6 +340,11 @@ describe("Webhook first-use configuration", () => {
     expect(screen.getByLabelText("Bearer 凭据引用（可选）")).toHaveValue(
       "secret://platform/unsaved"
     )
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
+    await screen.findByText("草稿已保存，当前运行版本保持不变。")
+    fireEvent.click(screen.getByRole("button", { name: "校验草稿" }))
+    await screen.findByText("校验通过，可以预览或发布。")
+    expect(screen.getByRole("button", { name: "发布草稿" })).toBeEnabled()
   })
   it("preserves unsaved roles and credential reference on revision conflicts", async () => {
     const { conflict } = setup()
