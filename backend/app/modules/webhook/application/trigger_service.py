@@ -41,7 +41,7 @@ class TriggerValidator:
         self.connector_registry = connector_registry
         self.agent_config_service = agent_config_service
 
-    def validate(  # noqa: C901
+    def validate(
         self, *, definition: dict[str, Any], config: dict[str, Any]
     ) -> tuple[list[dict[str, str]], dict[str, Any]]:
         errors: list[dict[str, str]] = []
@@ -75,17 +75,29 @@ class TriggerValidator:
                 }
             )
 
+        errors.extend(self._validate_authentication(definition=definition, config=config))
+
+        if not config.get("role_ids"):
+            errors.append({"field": "role_ids", "message": "请至少选择一个业务角色"})
+        return errors, {"role_ids": config.get("role_ids", [])}
+
+    def _validate_authentication(
+        self, *, definition: dict[str, Any], config: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        errors: list[dict[str, str]] = []
         auth = config.get("authentication") or {}
         auth_type = str(auth.get("type") or "")
-        if auth_type != AuthenticationType.BEARER_V1.value:
+        secret_ref = str(auth.get("secret_ref") or "")
+        if auth_type == AuthenticationType.NONE.value and not secret_ref:
+            pass
+        elif auth_type != AuthenticationType.BEARER_V1.value:
             errors.append(
                 {
                     "field": "authentication.type",
-                    "message": "外部 Webhook 只支持标准 Bearer Token",
+                    "message": "Webhook 支持免鉴权或标准 Bearer Token，填写凭据时须使用 Bearer",
                 }
             )
-        secret_ref = str(auth.get("secret_ref") or "")
-        if not secret_ref.startswith(SECRET_REF_PREFIXES):
+        elif not secret_ref.startswith(SECRET_REF_PREFIXES):
             if secret_ref.startswith(("vault:", "kms:")):
                 message = "Provider 尚未实现"
             elif secret_ref.startswith("env:"):
@@ -140,10 +152,7 @@ class TriggerValidator:
                             }
                         )
                         break
-
-        if not config.get("role_ids"):
-            errors.append({"field": "role_ids", "message": "请至少选择一个业务角色"})
-        return errors, {"role_ids": config.get("role_ids", [])}
+        return errors
 
 
 class WebhookTriggerService:
@@ -332,9 +341,23 @@ class WebhookTriggerService:
     @operation_unit_of_work(lambda service: service.repository.database)
     def publish(self, *, actor_id: str, code: str, revision_id: str) -> dict[str, Any]:
         self._require(actor_id, "publish", code)
-        definition = self.repository.get_definition(code)
+        definition = self.repository.get_definition(code, for_update=True)
         revision = self.repository.get_revision(revision_id)
         self._assert_revision_owner(definition, revision)
+        existing = self.repository.publication_for_revision(
+            trigger_id=str(definition["id"]), revision_id=revision_id
+        )
+        if existing is not None:
+            if (
+                existing["status"] == "active"
+                and definition.get("current_publication_id") == existing["id"]
+            ):
+                return existing
+            raise NonRetryableExecutionError(
+                "Webhook revision was already published and is no longer current",
+                safe_message="该修订版本已经发布；请保存新草稿后发布，或回退到已有发布版本",
+                error_code="revision_already_published",
+            )
         errors, summary = self.validator.validate(definition=definition, config=revision["config"])
         try:
             self.role_service.validate_service_roles(
@@ -523,7 +546,8 @@ class WebhookTriggerService:
         normalized = normalize_config(config)
         secret_ref = str((normalized.get("authentication") or {}).get("secret_ref") or "")
         try:
-            validate_secret_ref(secret_ref)
+            if secret_ref:
+                validate_secret_ref(secret_ref)
         except NonRetryableExecutionError as exc:
             raise NonRetryableExecutionError(
                 "Invalid Webhook secret reference",

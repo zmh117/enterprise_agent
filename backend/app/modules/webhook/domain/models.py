@@ -15,6 +15,7 @@ class TriggerSchema(StrEnum):
 
 
 class AuthenticationType(StrEnum):
+    NONE = "none"
     BEARER_V1 = "bearer_v1"
 
 
@@ -72,12 +73,25 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
             safe_message="请使用简化 Webhook 配置重新保存",
             error_code="validation_failed",
         )
+    auth_type = str(authentication.get("type") or "")
+    secret_ref = str(authentication.get("secret_ref") or "").strip()
+    if auth_type == AuthenticationType.NONE.value and secret_ref:
+        raise NonRetryableExecutionError(
+            "Unauthenticated Webhook cannot reference a credential",
+            safe_message="填写凭据时必须使用 Bearer 鉴权",
+            error_code="validation_failed",
+            field_errors=[
+                {"field": "authentication.type", "message": "填写凭据时必须使用 Bearer 鉴权"}
+            ],
+        )
+    if auth_type == AuthenticationType.BEARER_V1.value and not secret_ref:
+        auth_type = AuthenticationType.NONE.value
     return {
         "schema_version": 2,
         "adapter": str(config.get("adapter") or ""),
         "authentication": {
-            "type": str(authentication.get("type") or ""),
-            "secret_ref": str(authentication.get("secret_ref") or ""),
+            "type": auth_type,
+            "secret_ref": secret_ref,
         },
         "role_ids": sorted(set(role.strip() for role in roles)),
     }

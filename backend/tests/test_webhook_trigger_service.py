@@ -27,6 +27,9 @@ def test_stop_unavailable_webhook_preserves_revision_guard(monkeypatch: pytest.M
     c.database.execute(
         "update integration_connector set enabled=0 where id=?", (definition["connector_id"],)
     )
+    with pytest.raises(PermissionDenied, match="is disabled") as disabled:
+        c.connector_registry.require_ingress(definition["connector_id"])
+    assert disabled.value.safe_message == "入口连接器已停用，请先启用连接器"
     stopped = service.update_definition(
         actor_id=ADMIN_ID,
         code=definition["code"],

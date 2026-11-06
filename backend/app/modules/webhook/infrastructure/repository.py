@@ -44,7 +44,8 @@ class WebhookTriggerRepository:
         )
         return [self._definition(row) for row in rows]
 
-    def get_definition(self, code: str) -> dict[str, Any]:
+    def get_definition(self, code: str, *, for_update: bool = False) -> dict[str, Any]:
+        lock = " for update of d" if for_update and self.database.engine == "postgres" else ""
         row = self.database.execute_one(
             """
             select d.*, u.username as service_account_username,
@@ -54,7 +55,7 @@ class WebhookTriggerRepository:
             from webhook_trigger_definition d
             join app_user u on u.id = d.service_account_id
             where d.code = ?
-            """,
+            """ + lock,
             (code,),
         )
         if not row:
@@ -116,6 +117,8 @@ class WebhookTriggerRepository:
                 continue
             authentication = snapshot.get("authentication") if isinstance(snapshot, dict) else None
             if not isinstance(authentication, dict):
+                continue
+            if authentication.get("type") != "bearer_v1":
                 continue
             result.append(
                 {
@@ -336,6 +339,15 @@ class WebhookTriggerRepository:
             (publication_id, timestamp, trigger_id),
         )
         return self.get_publication(publication_id)
+
+    def publication_for_revision(
+        self, *, trigger_id: str, revision_id: str
+    ) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            "select * from webhook_trigger_publication where trigger_id = ? and revision_id = ?",
+            (trigger_id, revision_id),
+        )
+        return self._publication(row) if row else None
 
     def get_publication(self, publication_id: str) -> dict[str, Any]:
         row = self.database.execute_one(

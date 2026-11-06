@@ -69,11 +69,12 @@ class ConnectorRegistry:
 
     def require_ingress(self, connector_id: str) -> Connector:
         connector = self._require(connector_id)
-        if (
-            not connector.enabled
-            or not connector.allow_ingress
-            or connector.connector_type in DELIVERY_ONLY_CONNECTOR_TYPES
-        ):
+        if not connector.enabled:
+            raise PermissionDenied(
+                f"Connector {connector_id} is disabled",
+                safe_message="入口连接器已停用，请先启用连接器",
+            )
+        if not connector.allow_ingress or connector.connector_type in DELIVERY_ONLY_CONNECTOR_TYPES:
             raise PermissionDenied(
                 f"Connector {connector_id} is not allowed for ingress",
                 safe_message="该连接器不允许用于消息接入",

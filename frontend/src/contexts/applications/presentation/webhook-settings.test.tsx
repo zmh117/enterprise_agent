@@ -7,13 +7,17 @@ import type {
   WebhookDetail,
 } from "@/contexts/applications/domain/webhook"
 
-function setup(enabled = false, legacy = false) {
+function setup(
+  enabled = false,
+  legacy = false,
+  triggerType: "generic" | "grafana" = "generic"
+) {
   let detail: WebhookDetail = {
     definition: {
       id: "trigger-1",
       code: "synthetic-hook",
       name: "合成入口",
-      trigger_type: "generic",
+      trigger_type: triggerType,
       connector_id: "source-1",
       public_id: "wh_synthetic",
       revision: 1,
@@ -180,16 +184,64 @@ async function createWebhook() {
     target: { value: "合成入口" },
   })
   fireEvent.click(screen.getByRole("button", { name: "创建并配置 Webhook" }))
-  await screen.findByLabelText("Bearer 凭据引用")
+  await screen.findByLabelText("Bearer 凭据引用（可选）")
 }
 async function fillDraft() {
-  fireEvent.change(screen.getByLabelText("Bearer 凭据引用"), {
+  fireEvent.change(screen.getByLabelText("Bearer 凭据引用（可选）"), {
     target: { value: "secret://platform/synthetic" },
   })
   fireEvent.click(await screen.findByRole("checkbox", { name: /合成业务角色/ }))
 }
 
 describe("Webhook first-use configuration", () => {
+  it("saves without credentials and copies the matching public HTTP example", async () => {
+    const { writes } = setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal("navigator", { clipboard: { writeText } })
+    await createWebhook()
+    const example = screen.getByLabelText("HTTP 调用示例")
+    expect(example).toHaveTextContent(
+      "http://localhost:8000/webhooks/v1/wh_synthetic"
+    )
+    expect(example).toHaveTextContent('"id": "manual-test-001"')
+    expect(example).toHaveTextContent('"message": "请回复：Webhook 测试成功"')
+    expect(example).not.toHaveTextContent("Authorization")
+    fireEvent.change(screen.getByLabelText("Bearer 凭据引用（可选）"), {
+      target: { value: "secret://platform/synthetic" },
+    })
+    expect(example).toHaveTextContent(
+      "Authorization: Bearer 替换为凭据中心保存的Token原文"
+    )
+    expect(example).not.toHaveTextContent("secret://platform/synthetic")
+    fireEvent.change(screen.getByLabelText("Bearer 凭据引用（可选）"), {
+      target: { value: "" },
+    })
+    expect(example).not.toHaveTextContent("Authorization")
+    fireEvent.click(screen.getByRole("button", { name: "复制调用示例" }))
+    await screen.findByText("调用示例已复制")
+    expect(writeText).toHaveBeenCalledWith(example.textContent)
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /合成业务角色/ })
+    )
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
+    await screen.findByText("草稿已保存，当前运行版本保持不变。")
+    expect(
+      (writes.at(-1)!.body.config as WebhookConfig).authentication
+    ).toEqual({
+      type: "none",
+      secret_ref: "",
+    })
+    vi.unstubAllGlobals()
+  })
+  it("shows a standard Grafana payload for a Grafana webhook", async () => {
+    setup(true, false, "grafana")
+    fireEvent.click(await screen.findByRole("button", { name: "配置 Webhook" }))
+    const example = await screen.findByLabelText("HTTP 调用示例")
+    expect(example).toHaveTextContent('"status": "firing"')
+    expect(example).toHaveTextContent('"groupKey": "manual-test-001"')
+    expect(example).toHaveTextContent('"commonAnnotations"')
+    expect(example).not.toHaveTextContent('"message"')
+  })
   it("saves roles without Agent, people, mappings or delivery and reopens them", async () => {
     const { writes } = setup()
     await createWebhook()
@@ -248,12 +300,12 @@ describe("Webhook first-use configuration", () => {
     expect(await screen.findByLabelText("报文预览")).toHaveTextContent(
       '"side_effects": false'
     )
-    fireEvent.change(screen.getByLabelText("Bearer 凭据引用"), {
+    fireEvent.change(screen.getByLabelText("Bearer 凭据引用（可选）"), {
       target: { value: "secret://platform/changed" },
     })
     expect(screen.getByRole("button", { name: "发布草稿" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "预览报文" })).toBeDisabled()
-    fireEvent.change(screen.getByLabelText("Bearer 凭据引用"), {
+    fireEvent.change(screen.getByLabelText("Bearer 凭据引用（可选）"), {
       target: { value: "secret://platform/synthetic" },
     })
     fireEvent.click(screen.getByRole("button", { name: "发布草稿" }))
@@ -268,12 +320,12 @@ describe("Webhook first-use configuration", () => {
     expect(writes.some((item) => item.url.endsWith("/source-1/test"))).toBe(
       false
     )
-    fireEvent.change(screen.getByLabelText("Bearer 凭据引用"), {
+    fireEvent.change(screen.getByLabelText("Bearer 凭据引用（可选）"), {
       target: { value: "secret://platform/unsaved" },
     })
     fireEvent.click(screen.getByRole("button", { name: "停用 Webhook" }))
     await waitFor(() => expect(writes.at(-1)?.body.status).toBe("disabled"))
-    expect(screen.getByLabelText("Bearer 凭据引用")).toHaveValue(
+    expect(screen.getByLabelText("Bearer 凭据引用（可选）")).toHaveValue(
       "secret://platform/unsaved"
     )
   })
@@ -284,7 +336,7 @@ describe("Webhook first-use configuration", () => {
     conflict()
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
     await screen.findByText("Webhook 触发器草稿已发生变化，请刷新后重试")
-    expect(screen.getByLabelText("Bearer 凭据引用")).toHaveValue(
+    expect(screen.getByLabelText("Bearer 凭据引用（可选）")).toHaveValue(
       "secret://platform/synthetic"
     )
     expect(screen.getByRole("checkbox", { name: /合成业务角色/ })).toBeChecked()

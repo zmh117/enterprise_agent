@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/sheet"
 import {
   initialWebhookConfig,
+  type WebhookDefinition,
   type WebhookDetail,
 } from "@/contexts/applications/domain/webhook"
 import {
@@ -66,7 +67,7 @@ export function WebhookSettings({
         <SheetHeader>
           <SheetTitle>配置 Webhook</SheetTitle>
           <SheetDescription>
-            选择凭据和业务角色，发布并启用后即可在 Agent
+            选择业务角色，可按需填写 Bearer 凭据；发布并启用后即可在 Agent
             入口中绑定。投递目标在应用中配置。
           </SheetDescription>
         </SheetHeader>
@@ -168,6 +169,10 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
   const busy = mutation.isPending
   const savedActionsDisabled =
     busy || dirty || !detail.draft || detail.draft.config.schema_version !== 2
+  const draftPublished =
+    detail.draft?.status === "published" ||
+    (detail.draft != null &&
+      detail.current_publication?.revision === detail.draft.revision)
   return (
     <div className="space-y-5">
       <section className="space-y-2 rounded-lg border p-3 text-sm">
@@ -202,22 +207,23 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
       </section>
       {detail.draft && detail.draft.config.schema_version !== 2 && (
         <p role="status" className="rounded-md bg-muted p-3 text-sm">
-          此 Webhook 使用旧配置，请选择凭据和业务角色后重新保存、发布并启用。
+          此 Webhook
+          使用旧配置，请选择业务角色并按需填写凭据后重新保存、发布并启用。
         </p>
       )}
       <MutationError error={catalog.error} />
       <fieldset disabled={busy} className="space-y-4">
-        <Field label="Bearer 凭据引用" id="wh-secret">
+        <Field label="Bearer 凭据引用（可选）" id="wh-secret">
           <Input
             id="wh-secret"
             list="wh-secret-options"
             value={config.authentication.secret_ref}
-            placeholder="secret://platform/独立凭据编码"
+            placeholder="留空免鉴权，或选择 secret://platform/凭据编码"
             onChange={(event) =>
               setConfig({
                 ...config,
                 authentication: {
-                  type: "bearer_v1",
+                  type: event.target.value.trim() ? "bearer_v1" : "none",
                   secret_ref: event.target.value,
                 },
               })
@@ -233,7 +239,8 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
               ))}
           </datalist>
           <p className="text-xs text-muted-foreground">
-            使用独立且至少 32 个高熵字符的 Bearer Token。
+            留空时无需 Authorization 请求头。填写后，请求须携带对应的 Bearer
+            Token；Token 至少包含 32 个高熵字符。
             <a
               href="/platform/secrets"
               target="_blank"
@@ -336,12 +343,17 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
           校验草稿
         </Button>
         <Button
-          disabled={savedActionsDisabled || !detail.draft?.validation.valid}
+          disabled={savedActionsDisabled || draftPublished || !detail.draft?.validation.valid}
           onClick={() => mutation.mutate("publish")}
         >
-          发布草稿
+          {draftPublished ? "该修订已发布" : "发布草稿"}
         </Button>
       </div>
+      {draftPublished && (
+        <p className="text-sm text-muted-foreground">
+          该修订已发布。修改配置后请先保存新草稿，再校验、发布。
+        </p>
+      )}
       {notice ? (
         <p role="status" className="text-sm">
           {notice}
@@ -360,6 +372,10 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
           ))}
         </ul>
       ) : null}
+      <WebhookRequestExample
+        definition={definition}
+        useBearer={Boolean(config.authentication.secret_ref.trim())}
+      />
       <Field label="合成示例报文（JSON）" id="wh-sample">
         <textarea
           id="wh-sample"
@@ -386,6 +402,78 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
         </pre>
       ) : null}
     </div>
+  )
+}
+function WebhookRequestExample({
+  definition,
+  useBearer,
+}: {
+  definition: WebhookDefinition
+  useBearer: boolean
+}) {
+  const [copyNotice, setCopyNotice] = useState("")
+  const payload =
+    definition.trigger_type === "generic"
+      ? { id: "manual-test-001", message: "请回复：Webhook 测试成功" }
+      : {
+          status: "firing",
+          groupKey: "manual-test-001",
+          commonAnnotations: { summary: "Webhook 测试告警" },
+          alerts: [],
+        }
+  const example = [
+    `curl -i -X POST 'http://localhost:8000/webhooks/v1/${encodeURIComponent(definition.public_id)}'`,
+    ...(useBearer
+      ? ["  -H 'Authorization: Bearer 替换为凭据中心保存的Token原文'"]
+      : []),
+    "  -H 'Content-Type: application/json'",
+    `  --data '${pretty(payload)}'`,
+  ].join(" \\\n")
+
+  async function copyExample() {
+    try {
+      await navigator.clipboard.writeText(example)
+      setCopyNotice("调用示例已复制")
+    } catch {
+      setCopyNotice("无法自动复制，请选中下面的示例手动复制。")
+    }
+  }
+
+  return (
+    <section className="space-y-3 rounded-lg border p-3 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-medium">HTTP 调用示例</h3>
+        <Button type="button" variant="outline" size="sm" onClick={copyExample}>
+          复制调用示例
+        </Button>
+      </div>
+      <p className="text-muted-foreground">
+        示例根据当前编辑配置生成，接收路径已填入当前 Webhook ID。
+        修改配置后需保存、发布并启用；对应应用需绑定此 Webhook 并发布、激活。
+      </p>
+      <p>
+        {useBearer
+          ? "已配置 Bearer：将示例中的 Token 占位符替换为凭据原文，secret:// 引用只用于平台配置。"
+          : "未配置 Bearer：请求无需 Authorization 头。"}
+      </p>
+      <pre
+        aria-label="HTTP 调用示例"
+        className="overflow-x-auto rounded-md bg-muted p-3 text-xs break-all whitespace-pre-wrap"
+      >
+        <code>{example}</code>
+      </pre>
+      {copyNotice && <p role="status">{copyNotice}</p>}
+      <p className="text-muted-foreground">
+        localhost:8000
+        是本机后端地址；从其他机器调用时，请替换为服务器可访问的后端地址。
+      </p>
+      <p className="text-muted-foreground">
+        {definition.trigger_type === "generic"
+          ? "id 由调用方生成，用于去重；新事件换新 id，同一事件重试保持相同 id。message 是交给 Agent 的任务内容。"
+          : "Grafana 使用标准告警报文；仅 firing 触发任务，同一告警分组使用稳定的 groupKey。"}
+        HTTP 202 表示已受理，处理结果可在 Agent 运行记录中查看。
+      </p>
+    </section>
   )
 }
 function Field({

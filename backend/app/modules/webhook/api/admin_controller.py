@@ -13,8 +13,8 @@ class StrictRequest(BaseModel):
 
 
 class AuthenticationRequest(StrictRequest):
-    type: Literal["bearer_v1"]
-    secret_ref: str = Field(min_length=1, max_length=500)
+    type: Literal["none", "bearer_v1"]
+    secret_ref: str = Field(default="", max_length=500)
 
 
 class TriggerConfigRequest(StrictRequest):

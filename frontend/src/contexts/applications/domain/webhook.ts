@@ -1,7 +1,7 @@
 export type WebhookConfig = {
   schema_version: 2
   adapter: "generic_json_v1" | "grafana_alertmanager_v1"
-  authentication: { type: "bearer_v1"; secret_ref: string }
+  authentication: { type: "none" | "bearer_v1"; secret_ref: string }
   role_ids: string[]
 }
 export type WebhookDefinition = {
@@ -20,6 +20,7 @@ export type WebhookDefinition = {
 export type WebhookRevision = {
   id: string
   revision: number
+  status?: "draft" | "validated" | "published"
   config: WebhookConfig
   validation: {
     valid?: boolean
@@ -40,7 +41,7 @@ export function initialWebhookConfig(
   return {
     schema_version: 2,
     adapter: type === "grafana" ? "grafana_alertmanager_v1" : "generic_json_v1",
-    authentication: { type: "bearer_v1", secret_ref: "" },
+    authentication: { type: "none", secret_ref: "" },
     role_ids: [],
   }
 }

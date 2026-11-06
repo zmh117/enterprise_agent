@@ -19,6 +19,8 @@ class WebhookAuthenticator:
         headers: Mapping[str, str],
     ) -> str:
         auth = config.get("authentication") or {}
+        if auth.get("type") == "none" and auth.get("secret_ref") == "":
+            return "none"
         if str(auth.get("type") or "") != "bearer_v1":
             raise PermissionDenied(
                 "Webhook authentication scheme is unsupported",
