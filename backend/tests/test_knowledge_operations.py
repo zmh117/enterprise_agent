@@ -31,6 +31,7 @@ from backend.tests.test_unified_identity_rbac import login, csrf_headers
 from backend.tests.test_schema_migration_postgres_integration import (
     postgres_database_dsn as postgres_fixture,
 )
+from backend.tests.support.migrations import schema_versions_after
 
 database = database_fixture
 managed = managed_fixture
@@ -187,7 +188,7 @@ def test_four_hour_migration_preserves_existing_plans_and_run(
         run_before, operation_before = repo.run(run["id"]), ops.operation(operation["id"])
         assert Migrator(
             database, default_migrations_dir(), migrator_build="interval-after"
-        ).run().applied == ("153",)
+        ).run().applied == schema_versions_after("152")
         after = database.execute(f"select * from {repo.t('sync_binding')} order by id")
         for old, new in zip(before, after, strict=True):
             assert old.pop("interval_seconds") == 3600 and new.pop("interval_seconds") == 14400

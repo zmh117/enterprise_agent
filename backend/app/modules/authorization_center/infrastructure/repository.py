@@ -13,6 +13,8 @@ from app.shared.exceptions import NonRetryableExecutionError, NotFound
 _BUSINESS_CAPABILITY_NAMES_ZH = {
     "knowledge_list_bases": "查看当前授权知识库",
     "knowledge_search": "检索知识库引用",
+    "knowledge_get_behavior": "读取完整业务规则",
+    "knowledge_compare_behavior": "比较业务规则版本",
     "dingtalk_search_users": "搜索钉钉用户",
     "dingtalk_get_user": "查看钉钉用户",
     "dingtalk_list_department_users": "查看部门用户",

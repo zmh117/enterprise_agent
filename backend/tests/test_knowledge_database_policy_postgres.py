@@ -220,3 +220,40 @@ def test_content_admin_can_read_but_its_managed_sessions_cannot_write(isolated_p
     admin.execute("update knowledge.knowledge_base set display_name='synthetic' where false")
     with pytest.raises(ValueError):
         assert_reader_role(admin)
+
+
+def test_code_snapshot_queries_use_only_granted_columns(isolated_policy_database):
+    from app.modules.knowledge.application.code_behavior import CodeBehaviorReader
+    from app.modules.knowledge.infrastructure.code_indexing import CodeSnapshotIndexer
+    from app.modules.knowledge.infrastructure.code_build_repository import CodeBuildRepository
+    from app.modules.knowledge.infrastructure.code_repository import CodeRepository, knowledge_id
+    from backend.tests.test_code_indexing import candidate, SnapshotQdrant
+    from backend.tests.test_knowledge_vectors import SyntheticEmbedding
+
+    admin, reader = isolated_policy_database
+    ids, build, lease = candidate(admin, 100)
+    indexer = CodeSnapshotIndexer(admin, SyntheticEmbedding(), SnapshotQdrant())
+    assert not indexer.index(build["build_id"], lease)
+    assert indexer.index(build["build_id"], lease)
+    CodeBuildRepository(admin).finish_history(build["build_id"], lease)
+    repo = CodeRepository(reader)
+    key = knowledge_id(ids["source_id"], "factory.work_order.publish")
+    assert repo.resolve(ids["knowledge_base_id"], None)["status"] == "VERSION_REQUIRED"
+    assert (
+        repo.resolve(ids["knowledge_base_id"], {"kind": "svn", "revision": 100})["snapshot_id"]
+        == build["snapshot_id"]
+    )
+    value = CodeBehaviorReader(repo, lambda *a: "synthetic-authorized").get(
+        ids["knowledge_base_id"], build["snapshot_id"], key
+    )
+    assert value["root"]["knowledge"]["guard"]["expression"] == "a is not empty"
+    assert not repo.history_facts(ids["knowledge_base_id"], 100, 102)["ledger_complete"]
+    for statement in (
+        "select config_json from knowledge.code_binding",
+        "select manifest_json from knowledge.code_source_snapshot",
+        "select * from knowledge.code_source_file",
+        "select * from knowledge.code_unit",
+        "update knowledge.code_binding set enabled=1",
+    ):
+        with pytest.raises(InsufficientPrivilege):
+            reader.execute(statement)

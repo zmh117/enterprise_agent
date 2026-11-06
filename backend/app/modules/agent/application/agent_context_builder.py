@@ -32,6 +32,7 @@ class AgentContextBuilder:
         agent_config_service: AgentConfigService | None = None,
         file_manifest_service: JobFileManifestService | None = None,
         knowledge_job_check: Callable[[str, str], None] | None = None,
+        code_source_grant: Callable[[str], dict[str, Any]] | None = None,
     ) -> None:
         self.tool_registry = tool_registry
         self.skill_loader = skill_loader
@@ -39,6 +40,7 @@ class AgentContextBuilder:
         self.agent_config_service = agent_config_service
         self.file_manifest_service = file_manifest_service
         self.knowledge_job_check = knowledge_job_check
+        self.code_source_grant = code_source_grant
 
     def build(self, job: AgentJob) -> AgentExecutionContext:
         if job.input_message is None:
@@ -122,7 +124,15 @@ class AgentContextBuilder:
                 error_code="runtime_protocol_unsupported",
             )
         conversation = self.conversation_service.build(job) if self.conversation_service else None
-        skill_names = tuple(str(item) for item in snapshot.get("skills") or [])
+        code_source = None
+        if job.source_channel == "code_knowledge":
+            if self.code_source_grant is None:
+                raise NonRetryableExecutionError(
+                    "Code source authorization is unavailable",
+                    safe_message="代码来源授权不可用",
+                    error_code="code_source_unavailable",
+                )
+            code_source = self.code_source_grant(job.id)
         return AgentExecutionContext(
             system_role=str(
                 snapshot.get("business_role") or "Enterprise internal read-only diagnostic Agent"
@@ -164,7 +174,9 @@ class AgentContextBuilder:
                 file_job=file_job,
             ),
             skills=(
-                self.skill_loader.load(skill_names) if publication else self.skill_loader.load()
+                self.skill_loader.load_publication(snapshot)
+                if publication
+                else self.skill_loader.load()
             ),
             retrieved_context={
                 **_response_presentation(job),
@@ -181,6 +193,7 @@ class AgentContextBuilder:
                     else {}
                 ),
                 **({"file_manifest": file_manifest} if file_manifest is not None else {}),
+                **({"code_source": code_source} if code_source is not None else {}),
             },
             conversation_summary=(
                 conversation.prompt_text()

@@ -5,6 +5,7 @@ import { ApiError } from "@/shared/api/api-client"
 import { KnowledgeStorageFields } from "./knowledge-storage-fields"
 import { KnowledgeResourceTable } from "./knowledge-resource-table"
 import { KnowledgeOperationsPanel } from "./knowledge-operations-panel"
+import { CodeKnowledgePanel } from "./code-knowledge-panel"
 import { useKnowledgeOperations } from "../application/knowledge-operations-query"
 import { useKnowledgeStorage } from "@/contexts/platform-governance/application/knowledge-storage-query"
 import {
@@ -227,6 +228,7 @@ export function KnowledgeResourcesPage() {
         canManage={canManage}
         onRefresh={() => void operations.refetch()}
       />
+      <CodeKnowledgePanel canRead={canRead} canManage={canManage} />
       {inventory.isPending && <p role="status">正在加载知识资源…</p>}
       {data && (
         <>

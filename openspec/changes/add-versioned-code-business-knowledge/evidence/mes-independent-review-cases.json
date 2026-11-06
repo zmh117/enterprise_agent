@@ -1,0 +1,752 @@
+{
+  "review_contract": "mes-independent-source-review/v1",
+  "prepared_at": "2026-11-06T00:38:56.356541+00:00",
+  "prepared_before_model_extraction": true,
+  "review_method": "由主助手独立阅读固定源码后预先编写；真实提取模型不接收此文件；后续人工逐条核对模型知识与实际查询回答，不以关键词命中评分。",
+  "source_ref": {
+    "kind": "local_bundle",
+    "bundle_id": "0c026455-a22f-57d0-9352-8389b3465bb6",
+    "manifest_hash": "ca44b57635a5dfad82a964eba80d1307123a97cfc20d2e398d06ec436144a187",
+    "svn_revision": null
+  },
+  "limits": [
+    "不是 MES 运行实验，不证明现场配置值或运行行为。",
+    "不覆盖全部 MES 模块、全部编译选项或未读公共实现。",
+    "不构成真实 SVN 历史变更证据。"
+  ],
+  "questions": [
+    {
+      "id": "P01",
+      "entry_id": "factory.work_order.publish",
+      "question": "正式工单启用允许未发布处方后，主配方也可以未发布吗？",
+      "expected_claims": [
+        "处方允许非作废状态；非零主配方仍要求已发布。",
+        "必须使用有效编译分支，#if 0 内的放宽逻辑不生效。"
+      ],
+      "unacceptable_claims": [
+        "该开关同时放开处方与主配方发布状态。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 14144,
+          "end_line": 14230,
+          "excerpt_sha256": "2d8a01fd6a5e7fa86334c7110d0aaad5862e8b66d3a77ee0c2ac5efbf819b35d"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "P02",
+      "entry_id": "factory.work_order.publish",
+      "question": "未发布处方开关默认是什么，是否还检查有效期？",
+      "expected_claims": [
+        "默认 false，已取到的配置字符串 atoi 非零才启用。",
+        "非零处方和主配方仍检查有效期；不能把放宽状态理解为放宽有效期。"
+      ],
+      "unacceptable_claims": [
+        "开启后不再检查有效期。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 14144,
+          "end_line": 14230,
+          "excerpt_sha256": "2d8a01fd6a5e7fa86334c7110d0aaad5862e8b66d3a77ee0c2ac5efbf819b35d"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "P03",
+      "entry_id": "factory.work_order.publish",
+      "question": "模拟工单对处方、主配方有何不同限制？",
+      "expected_claims": [
+        "模拟分支处方不能作废、主配方不能废弃，非零对象仍检查有效期。"
+      ],
+      "unacceptable_claims": [
+        "模拟工单可以使用任何处方或主配方。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 14229,
+          "end_line": 14279,
+          "excerpt_sha256": "70bbd9e3a96bff77ceaf1188cc99054ea9707dbd011905d00162b8ae0086f792"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "P04",
+      "entry_id": "factory.work_order.publish",
+      "question": "现有工单哪些状态可以进入发布处理？",
+      "expected_claims": [
+        "SaveAndPublishWo 的现有工单及 _PublishWo 接受 WO_Created、WO_Audited、WO_Publish_Error；其他状态拒绝。"
+      ],
+      "unacceptable_claims": [
+        "只允许创建和发布失败，遗漏已审核。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 780,
+          "end_line": 805,
+          "excerpt_sha256": "d11601b47ee3e3919c7f296ef19e6ef20a623e72019f80f39be07e8834d6560a"
+        },
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 9724,
+          "end_line": 9738,
+          "excerpt_sha256": "6c83ed082ecf2d9ab935a78722490c2741235748bee075fd82084c2312c72796"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "P05",
+      "entry_id": "factory.work_order.publish",
+      "question": "发布前处方和主配方只是各自存在就够了吗？",
+      "expected_claims": [
+        "二者 id 都非零时，CheckPIRelevance 查询明确的处方主配方关联；无匹配返回 ERROR_PI_RELEVANCE。",
+        "任一 id 为零在该函数跳过，不能外推整个发布流程允许缺失。"
+      ],
+      "unacceptable_claims": [
+        "工单任意关联两个合法对象即可发布。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 16527,
+          "end_line": 16546,
+          "excerpt_sha256": "d9620f1b15681c6b051d49cd854b338eead5be4aec05806fa8323b3222252315"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "P06",
+      "entry_id": "factory.work_order.publish",
+      "question": "发布接口返回成功就代表发布已完成吗？",
+      "expected_claims": [
+        "if_continue 为 false 时存在有效期提示的早返回，返回 EBR_NO_ERROR 并不等于执行了后续发布。",
+        "if_continue 跳过的只是相应提示分支，前置 CheckValidity 和后续状态检查仍在。"
+      ],
+      "unacceptable_claims": [
+        "if_continue=true 跳过全部有效期和状态限制。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 704,
+          "end_line": 754,
+          "excerpt_sha256": "45113e5f1b9dd8c95280bd50313ef27fa2bb729f4b95ebe58bad9b0b93f467d8"
+        },
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 795,
+          "end_line": 810,
+          "excerpt_sha256": "d16821b625c3e6d9283155e557af99eb738ff7cf6fc25c5ec4b8796617228cec"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "P07",
+      "entry_id": "factory.work_order.publish",
+      "question": "工单的处方物料是一直直接读取物料主数据吗？",
+      "expected_claims": [
+        "发布流程按工单、处方、number、dose、order、wo_ver=1 定位运行期处方物料行，写入物料编号、id、名称、单位、计划用量。",
+        "关系要保留操作时复制/运行期快照语义；不能将处方用量归为物料主数据属性。"
+      ],
+      "unacceptable_claims": [
+        "修改物料主数据必然同步改变已发布工单的全部物料字段。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 1077,
+          "end_line": 1110,
+          "excerpt_sha256": "3daa1fdccd212a6067325ccdde03a31e310c8c1e1f3124e0bca6abb08dce698a"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "P08",
+      "entry_id": "factory.work_order.publish",
+      "question": "发布过程中任意数据库写失败都会整体回滚吗？",
+      "expected_claims": [
+        "运行期处方物料 Update 失败在该循环只记录错误，未直接返回。",
+        "_PublishWo 的组态更新或运行期转发失败会尝试写发布失败状态；不能声称整个链路是单一原子事务。"
+      ],
+      "unacceptable_claims": [
+        "所有失败都会回滚所有已发生动作。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 1104,
+          "end_line": 1115,
+          "excerpt_sha256": "f25d67548ad2d7755c542d60228a202e946d22dbb738c0448d86b86e5f1fb8ef"
+        },
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 9854,
+          "end_line": 9915,
+          "excerpt_sha256": "9da4fea104de7a0130cffbc21f429ab2ecd9da907d03dd6439ece5ef590a04d0"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "S01",
+      "entry_id": "factory.work_order.start",
+      "question": "工单开始返回成功是否说明已经运行？",
+      "expected_claims": [
+        "wo_execute 权限与签名校验后将 WoRun 放入线程池，立即返回成功。",
+        "后台仍会检查处理程序、状态、参数和工作流运行结果。"
+      ],
+      "unacceptable_claims": [
+        "回执成功等于 WO_Working 已落库。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWORun/src/Logic/WOKernel.cpp",
+          "file_id": "2dd50cbd-1c24-5553-81bb-aa3c0719b298",
+          "raw_hash": "5ddee07ac2d3f2148cd2b7dabc1a0381971c03eadbef4b183819ecd2024d30de",
+          "representation_hash": "0c34b024265d01a9583859e79bf45e61d8d3acdb05782ec8380f44d3d44ad8f2",
+          "start_line": 265,
+          "end_line": 295,
+          "excerpt_sha256": "2acbb8adb5ae71049a985d41a170456095c902a6617b7cdbdbb446b2e6b3cd1c"
+        },
+        {
+          "path": "set_server/mes_business/MDWORun/src/Logic/WOKernel.cpp",
+          "file_id": "2dd50cbd-1c24-5553-81bb-aa3c0719b298",
+          "raw_hash": "5ddee07ac2d3f2148cd2b7dabc1a0381971c03eadbef4b183819ecd2024d30de",
+          "representation_hash": "0c34b024265d01a9583859e79bf45e61d8d3acdb05782ec8380f44d3d44ad8f2",
+          "start_line": 625,
+          "end_line": 659,
+          "excerpt_sha256": "7c15fbe6116e4095dba5db211831ddb6e909985f118522db2ae134637716b7b8"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "S02",
+      "entry_id": "factory.work_order.start",
+      "question": "后台开始允许哪些工单状态？",
+      "expected_claims": [
+        "通过 CheckWOHandleRun 后，只接受 WO_Published 或 WO_Todo。",
+        "wo_code 空、wo_ver=0 或 pi_code 空会记录错误并退出；这些检查发生在异步处理内。"
+      ],
+      "unacceptable_claims": [
+        "所有已发布以后的状态均可开始。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWORun/src/Logic/WOKernel.cpp",
+          "file_id": "2dd50cbd-1c24-5553-81bb-aa3c0719b298",
+          "raw_hash": "5ddee07ac2d3f2148cd2b7dabc1a0381971c03eadbef4b183819ecd2024d30de",
+          "representation_hash": "0c34b024265d01a9583859e79bf45e61d8d3acdb05782ec8380f44d3d44ad8f2",
+          "start_line": 640,
+          "end_line": 659,
+          "excerpt_sha256": "9355249f4d115ad654bb42e53387319426dd64654bfb477f8f7289cc1ef5c931"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "S03",
+      "entry_id": "factory.work_order.start",
+      "question": "开始工单需要哪些权限和签名？",
+      "expected_claims": [
+        "入口调用 PIEXE_WO_START 权限校验及 ESIGN_PIEXE_WO_START 签名校验，失败不入线程池。",
+        "公共校验内部政策需要追踪，不能从调用点推断所有部署都弹签名。"
+      ],
+      "unacceptable_claims": [
+        "没有看到弹窗就不需要后端权限检查。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWORun/src/Logic/WOKernel.cpp",
+          "file_id": "2dd50cbd-1c24-5553-81bb-aa3c0719b298",
+          "raw_hash": "5ddee07ac2d3f2148cd2b7dabc1a0381971c03eadbef4b183819ecd2024d30de",
+          "representation_hash": "0c34b024265d01a9583859e79bf45e61d8d3acdb05782ec8380f44d3d44ad8f2",
+          "start_line": 265,
+          "end_line": 295,
+          "excerpt_sha256": "2acbb8adb5ae71049a985d41a170456095c902a6617b7cdbdbb446b2e6b3cd1c"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "S04",
+      "entry_id": "factory.work_order.start",
+      "question": "工单启动的完成通知在哪里？",
+      "expected_claims": [
+        "WfRun 失败会退出；后续状态历史和 Redis 更新失败也会退出。",
+        "末尾排入 wo_list_change 通知，state 为 WO_Working；它与最初受理回执不同。"
+      ],
+      "unacceptable_claims": [
+        "通知前所有动作属于同一事务，失败均恢复初始状态。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWORun/src/Logic/WOKernel.cpp",
+          "file_id": "2dd50cbd-1c24-5553-81bb-aa3c0719b298",
+          "raw_hash": "5ddee07ac2d3f2148cd2b7dabc1a0381971c03eadbef4b183819ecd2024d30de",
+          "representation_hash": "0c34b024265d01a9583859e79bf45e61d8d3acdb05782ec8380f44d3d44ad8f2",
+          "start_line": 760,
+          "end_line": 790,
+          "excerpt_sha256": "fc596a4c283edb0a6f070e09e3cd9dafc390014b097349c4682a8e55b2e5e757"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "S05",
+      "entry_id": "factory.work_order.start",
+      "question": "开始时批记录写失败是否必然阻止工作流启动？",
+      "expected_claims": [
+        "批记录头和 PI 文本 TransferQuery 失败在所查 WoRun 中记录错误后继续，之后仍调用 WfRun。"
+      ],
+      "unacceptable_claims": [
+        "批记录写失败必定拒绝开始。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWORun/src/Logic/WOKernel.cpp",
+          "file_id": "2dd50cbd-1c24-5553-81bb-aa3c0719b298",
+          "raw_hash": "5ddee07ac2d3f2148cd2b7dabc1a0381971c03eadbef4b183819ecd2024d30de",
+          "representation_hash": "0c34b024265d01a9583859e79bf45e61d8d3acdb05782ec8380f44d3d44ad8f2",
+          "start_line": 733,
+          "end_line": 762,
+          "excerpt_sha256": "a477eee997ce578366a1b32506322f176934d3cde7bf7a112bd48e518fdcc84b"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "R01",
+      "entry_id": "factory.work_order.report",
+      "question": "工单报工和报表查询是不是同一个入口？",
+      "expected_claims": [
+        "工单页面 workOrderConfirm 调用 api_wo_manuDeclUpdate，并在成功/签名通过后继续报工操作。",
+        "报工确认另经 mat_decl_ack；api-reportrun 是查询报表，不能代替工单报工链路。"
+      ],
+      "unacceptable_claims": [
+        "从 api-reportrun 的查询推断报工状态迁移。"
+      ],
+      "evidence": [
+        {
+          "path": "set_web/EBR/src/view/production/workOrderConfirm.vue",
+          "file_id": "39d20bcd-d1e7-5e0b-9526-cbd22acad792",
+          "raw_hash": "fe829d4116d2c25633687d38041c0f2046234f98b4681241ed8672be7e43123d",
+          "representation_hash": "fe829d4116d2c25633687d38041c0f2046234f98b4681241ed8672be7e43123d",
+          "start_line": 3249,
+          "end_line": 3294,
+          "excerpt_sha256": "570d34753bc05ca70f65459bd964288d8c2fe3ecab4ebfd6c528dc69935f797c"
+        },
+        {
+          "path": "set_web/EBR/src/api/api-wo.js",
+          "file_id": "34fc3536-a001-59ab-84f0-8b2e1034a10c",
+          "raw_hash": "3c6410af1f55fc37002b5cb8cfd3c29c8930742aceb48ad6bf688481571afed7",
+          "representation_hash": "3c6410af1f55fc37002b5cb8cfd3c29c8930742aceb48ad6bf688481571afed7",
+          "start_line": 15,
+          "end_line": 19,
+          "excerpt_sha256": "4a6b4d34b40096b2eb3a7108471629fcb10c8120191557b8bbf679bea58fed30"
+        },
+        {
+          "path": "set_web/EBR/src/api/api-mat.js",
+          "file_id": "84db47b8-9bb8-5739-9773-921bf42f1aa6",
+          "raw_hash": "eecd820b81587d28866ebc55e0ce8a04a7638736bba76fd616a6395705be05f7",
+          "representation_hash": "eecd820b81587d28866ebc55e0ce8a04a7638736bba76fd616a6395705be05f7",
+          "start_line": 92,
+          "end_line": 110,
+          "excerpt_sha256": "a96f81eff5322e4e9309e3ba9ff119feb1cd726f20c9b9e5c7c2a4b6d30b1611"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "R02",
+      "entry_id": "factory.work_order.report",
+      "question": "系统和主配方都设置必须报工时，审核中的工单还能从该入口报工吗？",
+      "expected_claims": [
+        "AddManuDecl 在 wo_report=1 且 review_declar=1 时先限制为 WO_Terminated、WO_Closed、WO_ManuDecl。",
+        "此先行限制不能被后面更宽的状态列表覆盖。"
+      ],
+      "unacceptable_claims": [
+        "后面列表包含 WO_Checking，所以总能报工。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 1907,
+          "end_line": 1955,
+          "excerpt_sha256": "ec2735c20f853c42166d224fee0f6adc0bc79e998a6daa5d587710302d3e6db3"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "R03",
+      "entry_id": "factory.work_order.report",
+      "question": "工单生产中能否报工？",
+      "expected_claims": [
+        "后段检查允许 WO_Working 且 in_pro_decl 非零构成 is_pro。",
+        "仍须先通过系统/主配方要求报工的先行限制及权限签名，不能只看 is_pro。"
+      ],
+      "unacceptable_claims": [
+        "in_pro_decl 非零就可以无条件报工。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 1907,
+          "end_line": 1970,
+          "excerpt_sha256": "52948849690bd17b7681ea20fd286281372d6ef1e855e4cb62204e3f4127e306"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "R04",
+      "entry_id": "factory.work_order.report",
+      "question": "manuDeclUpdate 成功是否直接把工单改为已报工？",
+      "expected_claims": [
+        "当前 AddManuDecl 中旧状态写入为注释，不是执行证据。",
+        "实际 _UpdateWoStatusToDecl 在 DeclAck 的外部同步检查后调用。"
+      ],
+      "unacceptable_claims": [
+        "按注释或函数名声称 manuDeclUpdate 已修改工单状态。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+          "file_id": "41c6bde5-ce07-5b35-86a9-d5a5a9d6412a",
+          "raw_hash": "ca75f4178466b768b2f61bf0c7e12c6a4691f3faaa01f5f074102c6bb1624503",
+          "representation_hash": "7a9c71c962550f318a894ca7959fab27383d7e3ca1924958787373422d73c14e",
+          "start_line": 2022,
+          "end_line": 2082,
+          "excerpt_sha256": "d139a455f991d725c56467b27bc9e3da49f726fb96467a7717601138b6c8a940"
+        },
+        {
+          "path": "set_server/mes_business/MDMat/src/Logic/EBRMatOpr.cpp",
+          "file_id": "88c0d3a6-4538-5986-b65e-0f4295bfb9de",
+          "raw_hash": "a371c2768ba3f065ca0848fd4d52dccc2abf261f5bd94389d59701059443ddf0",
+          "representation_hash": "89797a8b50553ea639a5a84de13a9f577635b59dc73b324dc85e2bd5bf5f4ee1",
+          "start_line": 10289,
+          "end_line": 10327,
+          "excerpt_sha256": "b20a735b78f195bb11e46bde1152812eaf3d5ba6f0da02b68e42841f86858c73"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "R05",
+      "entry_id": "factory.work_order.report",
+      "question": "报工 ERP 或 LIMS 同步失败，本地报工是否一定回滚？",
+      "expected_claims": [
+        "DeclAck 先 CommitTrans，再调用 ERP 和 LIMS 同步；失败在同步阶段返回。",
+        "这些错误不能证明前面已提交数据被回滚；ERP 返回原错误，LIMS 分支返回 ERROR_3rd_API_ERROR。"
+      ],
+      "unacceptable_claims": [
+        "外部接口失败则整个报工全部回滚。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDMat/src/Logic/EBRMatOpr.cpp",
+          "file_id": "88c0d3a6-4538-5986-b65e-0f4295bfb9de",
+          "raw_hash": "a371c2768ba3f065ca0848fd4d52dccc2abf261f5bd94389d59701059443ddf0",
+          "representation_hash": "89797a8b50553ea639a5a84de13a9f577635b59dc73b324dc85e2bd5bf5f4ee1",
+          "start_line": 10280,
+          "end_line": 10327,
+          "excerpt_sha256": "8ad297d86a381478e017e52b154297c707742fceb767c62d8167b3026c8e64c3"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "R06",
+      "entry_id": "factory.work_order.report",
+      "question": "所有报工确认都会把工单改成已报工吗？",
+      "expected_claims": [
+        "_UpdateWoStatusToDecl 对 WO_Terminated 或 WO_Closed 才写 WO_ManuDecl。",
+        "其他状态仅增加报工次数；生产中报工不应被解释为工单结束。"
+      ],
+      "unacceptable_claims": [
+        "任何报工确认都让工单从生产中进入已报工。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDMat/src/Logic/EBRMatOpr.cpp",
+          "file_id": "88c0d3a6-4538-5986-b65e-0f4295bfb9de",
+          "raw_hash": "a371c2768ba3f065ca0848fd4d52dccc2abf261f5bd94389d59701059443ddf0",
+          "representation_hash": "89797a8b50553ea639a5a84de13a9f577635b59dc73b324dc85e2bd5bf5f4ee1",
+          "start_line": 16325,
+          "end_line": 16421,
+          "excerpt_sha256": "6b271bef0ab23972162fbd77899242b6c55666af6618d336c2ec2a90e2c4c096"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "R07",
+      "entry_id": "factory.work_order.report",
+      "question": "报工确认是否只看处方，不读取物料主数据？",
+      "expected_claims": [
+        "DeclAck 读取工单运行期 FORMULA_PRODUCT_MAN 的产出参数，另将报工行与 MAT_HEADER 按物料编号关联取得主数据字段。",
+        "区分工单运行期处方数据与当时读取的物料主数据，不能笼统说全是快照或全是实时。"
+      ],
+      "unacceptable_claims": [
+        "全部报工信息只来自工单快照。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDMat/src/Logic/EBRMatOpr.cpp",
+          "file_id": "88c0d3a6-4538-5986-b65e-0f4295bfb9de",
+          "raw_hash": "a371c2768ba3f065ca0848fd4d52dccc2abf261f5bd94389d59701059443ddf0",
+          "representation_hash": "89797a8b50553ea639a5a84de13a9f577635b59dc73b324dc85e2bd5bf5f4ee1",
+          "start_line": 9657,
+          "end_line": 9797,
+          "excerpt_sha256": "1ce9a8fcd8e0cb379ed5955d96be290732dfc827cf292614df7463c3f2c6f99f"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "G01",
+      "entry_id": "group.application.enable",
+      "question": "集团应用启用操作写什么状态？",
+      "expected_claims": [
+        "mgt/app/index.vue 的 startApp 发送 legal_status.start，枚举值为 2。",
+        "已处于 start 状态时前端禁用启用操作；后端 ChangeApplicationStatus 按名称写 status 和 opt_user。"
+      ],
+      "unacceptable_claims": [
+        "将前端按钮禁用直接视为后端拒绝同状态请求。"
+      ],
+      "evidence": [
+        {
+          "path": "set_web/JTH/src/view/mgt/app/index.vue",
+          "file_id": "c38332b8-a7d4-59b3-8ecb-9c02878534e3",
+          "raw_hash": "b8f2e1c88400ef3d87ebc8bb42b1b1d4a1f911fd3e64f6a7d266cd304ba95e60",
+          "representation_hash": "aa403f699e2965a0920f74d981bf39758a2308056af76c08526be6f15bb73db6",
+          "start_line": 276,
+          "end_line": 290,
+          "excerpt_sha256": "bf2026b6ecf7264904e716acdc90c12aac6770f6ef04a818cbd55d0611667f9b"
+        },
+        {
+          "path": "set_web/JTH/src/view/mgt/app/index.vue",
+          "file_id": "c38332b8-a7d4-59b3-8ecb-9c02878534e3",
+          "raw_hash": "b8f2e1c88400ef3d87ebc8bb42b1b1d4a1f911fd3e64f6a7d266cd304ba95e60",
+          "representation_hash": "aa403f699e2965a0920f74d981bf39758a2308056af76c08526be6f15bb73db6",
+          "start_line": 525,
+          "end_line": 545,
+          "excerpt_sha256": "43ea12459c9618ff9134445526198debee1124adac2ffa63f59b946cf9f4e2d7"
+        },
+        {
+          "path": "set_web/JTH/src/enums/permissions.js",
+          "file_id": "ce4ca0bd-cc71-5f52-90d2-5ff79e7bce18",
+          "raw_hash": "c7159871efaee742790a86693e858cb872da443217934d4bfee2f1bea61201a9",
+          "representation_hash": "c7159871efaee742790a86693e858cb872da443217934d4bfee2f1bea61201a9",
+          "start_line": 39,
+          "end_line": 43,
+          "excerpt_sha256": "30714e24306f71992a0eefa84217992149ef2342a10b61620335e6e81ed03073"
+        },
+        {
+          "path": "set_server/mes_business/MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
+          "file_id": "b30d27c7-6fb1-57ff-9032-63011fa65b39",
+          "raw_hash": "a3f7676c35008a0e8acc0b919141a9ad98529c20afb1b3d68126fee7b658fcbf",
+          "representation_hash": "d15e6a88be7b38e0345286fe588861ce71b19050166b7943aaf3954658c78d71",
+          "start_line": 99,
+          "end_line": 112,
+          "excerpt_sha256": "ef2e66e86031079cab2ebd29ae3601c5db109468844f0e3740e3f43790ee1bb4"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "G02",
+      "entry_id": "group.application.disable",
+      "question": "集团应用停用是否删除应用或清空授权范围？",
+      "expected_claims": [
+        "stopApp 发送 legal_status.stop，枚举值为 3；已停用时前端禁用停用与配置操作。",
+        "所查状态处理只写 status、opt_user，没有删除应用或清空授权范围的动作。"
+      ],
+      "unacceptable_claims": [
+        "停用会删除应用及所有部门授权。"
+      ],
+      "evidence": [
+        {
+          "path": "set_web/JTH/src/view/mgt/app/index.vue",
+          "file_id": "c38332b8-a7d4-59b3-8ecb-9c02878534e3",
+          "raw_hash": "b8f2e1c88400ef3d87ebc8bb42b1b1d4a1f911fd3e64f6a7d266cd304ba95e60",
+          "representation_hash": "aa403f699e2965a0920f74d981bf39758a2308056af76c08526be6f15bb73db6",
+          "start_line": 292,
+          "end_line": 305,
+          "excerpt_sha256": "9b489cefe63e6bb5bef76ca8ececd7c1ff04554aa07bb154ab3543f69c40cc9c"
+        },
+        {
+          "path": "set_web/JTH/src/view/mgt/app/index.vue",
+          "file_id": "c38332b8-a7d4-59b3-8ecb-9c02878534e3",
+          "raw_hash": "b8f2e1c88400ef3d87ebc8bb42b1b1d4a1f911fd3e64f6a7d266cd304ba95e60",
+          "representation_hash": "aa403f699e2965a0920f74d981bf39758a2308056af76c08526be6f15bb73db6",
+          "start_line": 525,
+          "end_line": 545,
+          "excerpt_sha256": "43ea12459c9618ff9134445526198debee1124adac2ffa63f59b946cf9f4e2d7"
+        },
+        {
+          "path": "set_web/JTH/src/enums/permissions.js",
+          "file_id": "ce4ca0bd-cc71-5f52-90d2-5ff79e7bce18",
+          "raw_hash": "c7159871efaee742790a86693e858cb872da443217934d4bfee2f1bea61201a9",
+          "representation_hash": "c7159871efaee742790a86693e858cb872da443217934d4bfee2f1bea61201a9",
+          "start_line": 39,
+          "end_line": 43,
+          "excerpt_sha256": "30714e24306f71992a0eefa84217992149ef2342a10b61620335e6e81ed03073"
+        },
+        {
+          "path": "set_server/mes_business/MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
+          "file_id": "b30d27c7-6fb1-57ff-9032-63011fa65b39",
+          "raw_hash": "a3f7676c35008a0e8acc0b919141a9ad98529c20afb1b3d68126fee7b658fcbf",
+          "representation_hash": "d15e6a88be7b38e0345286fe588861ce71b19050166b7943aaf3954658c78d71",
+          "start_line": 99,
+          "end_line": 112,
+          "excerpt_sha256": "ef2e66e86031079cab2ebd29ae3601c5db109468844f0e3740e3f43790ee1bb4"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "G03",
+      "entry_id": "group.application.authorization",
+      "question": "集团应用授权范围是追加还是整体替换？",
+      "expected_claims": [
+        "ChangeApplicationScope 先校验 PRIV_MOD_CFG 和 GPX_ESIGN_APP_MODULE_AUTHORIZATION。",
+        "事务内更新 scope，删除本应用 BU_OBJ_APP 关系，再插入请求 data_array；提交失败返回错误。"
+      ],
+      "unacceptable_claims": [
+        "只追加选中部门，保留此前全部关系。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
+          "file_id": "b30d27c7-6fb1-57ff-9032-63011fa65b39",
+          "raw_hash": "a3f7676c35008a0e8acc0b919141a9ad98529c20afb1b3d68126fee7b658fcbf",
+          "representation_hash": "d15e6a88be7b38e0345286fe588861ce71b19050166b7943aaf3954658c78d71",
+          "start_line": 114,
+          "end_line": 186,
+          "excerpt_sha256": "07812f9b1bdb632711c0f6dd89f73c5a1893d1495bd2c658db6af0f45a45d7a7"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "G04",
+      "entry_id": "group.application.authorization",
+      "question": "集团应用启停和授权范围有相同的签名逻辑吗？",
+      "expected_claims": [
+        "授权范围方法显式调用权限和签名校验；状态方法没有相同调用。",
+        "该差异仅描述所查方法，不能据此宣称整个启停接口没有认证/授权。"
+      ],
+      "unacceptable_claims": [
+        "将授权方法的签名要求直接复制给启停。",
+        "因为状态函数无 AuthCheck 就断言任何人都能停用。"
+      ],
+      "evidence": [
+        {
+          "path": "set_server/mes_business/MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
+          "file_id": "b30d27c7-6fb1-57ff-9032-63011fa65b39",
+          "raw_hash": "a3f7676c35008a0e8acc0b919141a9ad98529c20afb1b3d68126fee7b658fcbf",
+          "representation_hash": "d15e6a88be7b38e0345286fe588861ce71b19050166b7943aaf3954658c78d71",
+          "start_line": 99,
+          "end_line": 141,
+          "excerpt_sha256": "a672f26e562ed8d009af827968089bd6cc5b9585772715251dc85c822ff5d92a"
+        }
+      ],
+      "verdict": "not_run"
+    },
+    {
+      "id": "G05",
+      "entry_id": "group.application.authorization",
+      "question": "两处集团前端的授权请求结构是否完全一致？",
+      "expected_claims": [
+        "mgt/app/index.vue 发送 bu_scope_array 字符串列表；mgt/service/app.vue 发送 data_array 对象并处理签名重试。",
+        "后端请求解析读取 data_array；应报告这个源码差异，路由可达性/转换与现场影响未验证。"
+      ],
+      "unacceptable_claims": [
+        "把两处前端视为同一实现并自动断言现场授权丢失。"
+      ],
+      "evidence": [
+        {
+          "path": "set_web/JTH/src/view/mgt/app/index.vue",
+          "file_id": "c38332b8-a7d4-59b3-8ecb-9c02878534e3",
+          "raw_hash": "b8f2e1c88400ef3d87ebc8bb42b1b1d4a1f911fd3e64f6a7d266cd304ba95e60",
+          "representation_hash": "aa403f699e2965a0920f74d981bf39758a2308056af76c08526be6f15bb73db6",
+          "start_line": 308,
+          "end_line": 330,
+          "excerpt_sha256": "566a80a4fdbd00743be08fdabd5cbf13483f0b0273dc2bef865fbd107fa8477c"
+        },
+        {
+          "path": "set_web/JTH/src/view/mgt/service/app.vue",
+          "file_id": "ba6b6290-4690-5a2a-b262-295a368dd8c3",
+          "raw_hash": "aebce83fdb6ecb269de67cac674646b4dd093a5d27cac5241dee5b72dd173560",
+          "representation_hash": "aebce83fdb6ecb269de67cac674646b4dd093a5d27cac5241dee5b72dd173560",
+          "start_line": 273,
+          "end_line": 325,
+          "excerpt_sha256": "6036476d52a0c6ef257d9e604765a2a354655e2713133c4cb59a84c0663baf1e"
+        },
+        {
+          "path": "set_server/mes_business/MDGrouping/GroupingBasic/Logic/GroupingBasicProtocol.cpp",
+          "file_id": "4a650077-02b4-5366-938c-d59de6b7e06b",
+          "raw_hash": "66d243cdc6d1d6105b68ddb76ce042bd2013ace02c52704bae81fa23dcbaf52c",
+          "representation_hash": "bfe81c4ba67b683a2303c105e0a6e37fb812e49f407e5aa75bf5d231cdb6b5dd",
+          "start_line": 1600,
+          "end_line": 1620,
+          "excerpt_sha256": "b414677d29c9c8f0916f033176b904475eee92bfb72e89b1beed72dc3058a72e"
+        }
+      ],
+      "verdict": "not_run"
+    }
+  ]
+}

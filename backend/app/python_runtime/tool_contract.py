@@ -29,7 +29,7 @@ _SDK_BUILTIN_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
-def build_tool_contract_observation(  # noqa: C901
+def build_tool_contract_observation(
     context: AgentExecutionContext,
     *,
     file_live: dict[str, Any] | None,
@@ -154,28 +154,7 @@ def build_tool_contract_observation(  # noqa: C901
                 "status": "RUNTIME_DERIVED",
             }
         )
-    ones_result_job = any(
-        item.server_code == "ones-mcp" and item.tool_name in ONES_COLLECTED_LIST_FIELDS
-        for item in context.mcp_bindings
-    )
-    resource_result_job = any(
-        item.server_code == "tool-mcp" and item.tool_name in QUERY_RESULT_TOOLS
-        for item in context.mcp_bindings
-    )
-    if file_job or ones_result_job or resource_result_job:
-        for name in FILE_TOOL_NAMES if file_job else ("Read", "Glob", "Grep"):
-            effective.append(
-                {
-                    "server_code": FILE_MCP_SERVER_CODE
-                    if file_job
-                    else ("ones-mcp" if ones_result_job else "tool-mcp"),
-                    "tool_name": name,
-                    "sdk_tool_name": name,
-                    "origin": "sdk_builtin",
-                    "schema_hash": tool_schema_hash(_SDK_BUILTIN_SCHEMAS[name]),
-                    "authorization_status": "ALLOWED",
-                }
-            )
+    effective.extend(_builtin_tools(context, file_job))
     effective.sort(key=lambda item: str(item["sdk_tool_name"]))
     declared_tools = [
         str(item["sdk_tool_name"])
@@ -229,3 +208,37 @@ def build_tool_contract_observation(  # noqa: C901
         "observation_hash": canonical_json_sha256(observation),
         **observation,
     }
+
+
+def _builtin_tools(context: AgentExecutionContext, file_job: bool) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    ones_result_job = any(
+        item.server_code == "ones-mcp" and item.tool_name in ONES_COLLECTED_LIST_FIELDS
+        for item in context.mcp_bindings
+    )
+    resource_result_job = any(
+        item.server_code == "tool-mcp" and item.tool_name in QUERY_RESULT_TOOLS
+        for item in context.mcp_bindings
+    )
+    code_job = bool(context.retrieved_context.get("code_source"))
+    if file_job or ones_result_job or resource_result_job or code_job:
+        for name in FILE_TOOL_NAMES if file_job or code_job else ("Read", "Glob", "Grep"):
+            result.append(
+                {
+                    "server_code": "code-source"
+                    if code_job
+                    else FILE_MCP_SERVER_CODE
+                    if file_job
+                    else ("ones-mcp" if ones_result_job else "tool-mcp"),
+                    "tool_name": name,
+                    "sdk_tool_name": name,
+                    "origin": "sdk_builtin",
+                    "schema_hash": tool_schema_hash(
+                        {"type": "object", "runtime_policy": f"code-source-v1/{name}"}
+                        if code_job
+                        else _SDK_BUILTIN_SCHEMAS[name]
+                    ),
+                    "authorization_status": "ALLOWED",
+                }
+            )
+    return result

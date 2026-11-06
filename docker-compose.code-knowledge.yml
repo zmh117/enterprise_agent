@@ -1,0 +1,31 @@
+# Opt in only after publishing the extraction application and configuring its service account.
+# Base Compose provides source/artifact mounts. No source collection schedule is enabled here.
+services:
+  job-dispatch-worker:
+    environment:
+      CODE_KNOWLEDGE_WORKER_ENABLED: "true"
+    networks:
+      - default
+      - agent-runtime-control
+      - knowledge-managed
+  api-server:
+    environment:
+      CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE: /run/secrets/code_runtime_bootstrap_token
+    secrets:
+      - code_runtime_bootstrap_token
+  python-agent-runtime-a:
+    environment:
+      SERVICE_PRINCIPAL_ENABLED: "true"
+      CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE: /run/secrets/code_runtime_bootstrap_token
+    secrets:
+      - code_runtime_bootstrap_token
+  python-agent-runtime-b:
+    environment:
+      SERVICE_PRINCIPAL_ENABLED: "true"
+      CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE: /run/secrets/code_runtime_bootstrap_token
+    secrets:
+      - code_runtime_bootstrap_token
+
+secrets:
+  code_runtime_bootstrap_token:
+    file: ${CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE:?configure a distinct code Runtime bootstrap credential file}

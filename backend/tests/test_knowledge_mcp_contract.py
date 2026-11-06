@@ -314,13 +314,13 @@ def test_runtime_refuses_arbitrary_knowledge_endpoint(job_fixture):
         )
 
 
-def test_offline_v3_marker_changes_frozen_hash_and_old_publication_is_denied(job_fixture):
+def test_versioned_code_marker_changes_frozen_hash_and_old_publication_is_denied(job_fixture):
     from app.shared.tool_contract import tool_schema_hash
 
     f = job_fixture
     schema = KNOWLEDGE_TOOL_CONTRACTS["knowledge_search"].input_schema
-    assert schema["$comment"] == "knowledge-search-contract/v4-access-mode"
-    old = {**schema, "$comment": "knowledge-search-contract/v2"}
+    assert schema["$comment"] == "knowledge-search-contract/v5-versioned-code"
+    old = {**schema, "$comment": "knowledge-search-contract/v4-access-mode"}
     assert tool_schema_hash(old) != MCP_TOOL_MANIFEST["knowledge_search"].schema_hash
     f["runtime"].database.execute(
         "update agent_publication_mcp_tool set schema_hash=? where tool_identifier='knowledge_search'",
@@ -334,3 +334,14 @@ def test_offline_v3_marker_changes_frozen_hash_and_old_publication_is_denied(job
 
 def test_knowledge_tool_selection_does_not_require_ones_detail():
     assert knowledge_tool_dependency_errors(KNOWLEDGE_TOOL_CONTRACTS) == []
+
+
+def test_query_skill_requires_all_four_tools(job_fixture):
+    service = job_fixture["runtime"].agent_config_service
+    config = {
+        "skills": ["code-business-query"],
+        "mcp_tool_ids": ["knowledge_list_bases", "knowledge_search"],
+    }
+    assert any("四个知识工具" in error["message"] for error in service._validate_config(config))
+    config["mcp_tool_ids"] = list(KNOWLEDGE_TOOL_CONTRACTS)
+    assert not any("四个知识工具" in error["message"] for error in service._validate_config(config))

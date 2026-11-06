@@ -245,7 +245,10 @@ def test_knowledge_principal_uses_gate_and_exact_audience_scope(job_fixture):
         required_scope=mcp_server_policy.mcp_invoke_scope("knowledge-mcp", "knowledge_search"),
     )
     assert claims["sub"] == "user_local_admin"
-    assert len(claims["scope"]) == 2
+    assert set(claims["scope"]) == {
+        mcp_server_policy.mcp_invoke_scope("knowledge-mcp", name)
+        for name in KNOWLEDGE_TOOLS
+    }
     with pytest.raises(AppError):
         verifier.verify_for_running_job(
             f["token"],

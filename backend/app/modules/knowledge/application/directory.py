@@ -79,11 +79,17 @@ class KnowledgeDirectory:
                 continue
             base = self.resources.store.get("knowledge_base", base_id)
             resource = self.resources.store.get("retrieval_resource", pin.resource_id)
+            with self.resources.content_for(pin) as content:
+                source = content.records.get("source", pin.source_id)
             item = {
                 "knowledge_base_id": base_id,
                 "code": base["code"],
                 "name": resource["name"],
                 "status": "AVAILABLE",
+                "source_kind": "code" if source["source_system"] == "code" else "ones",
+                "component_roles": ["backend", "factory_frontend", "group_frontend"]
+                if source["source_system"] == "code"
+                else [],
             }
             items.append(item)
             facts.append({"resource": asdict(pin), "view": item})

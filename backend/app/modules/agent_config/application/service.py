@@ -253,7 +253,7 @@ class AgentConfigService:
     def catalog(self) -> dict[str, Any]:
         return {
             "models": sorted(self.allowed_models),
-            "skills": sorted(self.skill_loader.load()),
+            "skills": sorted(self.skill_loader.load(SkillLoader.MANAGED_SKILLS)),
             "connectors": self.repository.connector_catalog(),
             "mcp_tools": [
                 {
@@ -421,6 +421,9 @@ class AgentConfigService:
             )
         with self.repository.database.unit_of_work():
             snapshot = dict(revision["config"])
+            frozen_skills = self.skill_loader.freeze_versioned(tuple(snapshot.get("skills") or []))
+            if frozen_skills:
+                snapshot["versioned_skills"] = frozen_skills
             runtime_kind = str(definition.get("runtime_kind") or "")
             if runtime_kind not in SUPPORTED_RUNTIME_KINDS:
                 raise NonRetryableExecutionError(
@@ -842,7 +845,17 @@ class AgentConfigService:
             {**error, "field": "mcp_tool_ids"}
             for error in knowledge_tool_dependency_errors(tool_ids)
         )
-        available_skills = set(self.skill_loader.load())
+        available_skills = set(self.skill_loader.load(SkillLoader.MANAGED_SKILLS))
+        if "code-business-query" in (config.get("skills") or []):
+            from app.modules.knowledge.domain.tool_policy import KNOWLEDGE_TOOL_IDS
+
+            if not KNOWLEDGE_TOOL_IDS <= set(tool_ids):
+                errors.append(
+                    {
+                        "field": "mcp_tool_ids",
+                        "message": "代码业务问答 Skill 必须配置目录、检索、业务详情和版本比较四个知识工具",
+                    }
+                )
         for skill_code in config.get("skills") or []:
             if str(skill_code) not in available_skills:
                 errors.append(

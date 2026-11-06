@@ -1,4 +1,4 @@
-"""两个固定工具的适配与安全审计；不复制检索、目录或权限业务规则。"""
+"""固定知识工具的适配与安全审计；不复制检索、目录或权限业务规则。"""
 
 from collections.abc import Mapping
 import json
@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 
 from app.modules.knowledge.application.directory import KnowledgeDirectory
 from app.modules.knowledge.application.search import KnowledgeSearch
+from app.modules.knowledge.application.code_query import CodeKnowledgeQuery
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.mcp_audit import McpAuditCoordinator, McpAuditHandle
 from app.shared.knowledge_tool_contracts import KNOWLEDGE_TOOL_CONTRACTS
@@ -32,19 +33,29 @@ class KnowledgeMcpTools:
         search: KnowledgeSearch,
         audit: McpAuditCoordinator,
         principal_client: KnowledgeReadabilityClient,
+        code: CodeKnowledgeQuery | None = None,
     ) -> None:
         self.auth, self.directory, self.search, self.audit = auth, directory, search, audit
         self.principal_client = principal_client
+        self.code = code
 
     def list_tools(
         self, *, token: str, headers: Mapping[str, str], control: CallControl
     ) -> list[str]:
-        # Gate 已要求目录/搜索成套授权；同时验证两项完整 scope。
-        for name in KNOWLEDGE_TOOL_CONTRACTS:
+        self.auth.resolve(token, "knowledge_list_bases", headers)
+        claims = self.auth.access.verifier.verify(
+            token, required_scope=KNOWLEDGE_TOOL_CONTRACTS["knowledge_list_bases"].required_scope
+        )
+        selected = [
+            name
+            for name, contract in KNOWLEDGE_TOOL_CONTRACTS.items()
+            if contract.required_scope in claims["scope"]
+        ]
+        for name in selected:
             control.check()
             self.auth.resolve(token, name, headers)
         control.check()
-        return list(KNOWLEDGE_TOOL_CONTRACTS)
+        return selected
 
     def invoke(
         self,
@@ -86,11 +97,16 @@ class KnowledgeMcpTools:
                 contract = KNOWLEDGE_TOOL_CONTRACTS[name]
                 if not Draft202012Validator(contract.input_schema).is_valid(arguments):
                     raise failure("knowledge_mcp_input_invalid")
-                result = (
-                    self.directory.list_bases(token=principal.current, arguments=arguments)
-                    if name == "knowledge_list_bases"
-                    else self.search.search(token=principal.current, arguments=arguments)
-                )
+                if name == "knowledge_list_bases":
+                    result = self.directory.list_bases(token=principal.current, arguments=arguments)
+                elif name == "knowledge_search":
+                    result = self.search.search(token=principal.current, arguments=arguments)
+                elif self.code is not None:
+                    result = self.code.invoke(
+                        tool=name, token=principal.current, arguments=arguments
+                    )
+                else:
+                    raise failure("knowledge_mcp_unavailable")
                 if not Draft202012Validator(contract.output_schema).is_valid(result):
                     raise failure("knowledge_mcp_result_invalid")
                 encoded = json.dumps(result, ensure_ascii=False, allow_nan=False).encode()
@@ -100,7 +116,12 @@ class KnowledgeMcpTools:
                 self.auth.resolve(principal.current, name, headers)
             # 不保存 query、cursor、库名称、命中/拒绝 ID 或正文，只记录授权后版本与计数。
             summary = (
-                {"returned": len(result["items"]), "has_more": result["has_more"]}
+                {
+                    "mode": result.get("mode", "behavior"),
+                    "partial": result.get("partial", not result.get("complete", False)),
+                }
+                if name in {"knowledge_get_behavior", "knowledge_compare_behavior"}
+                else {"returned": len(result["items"]), "has_more": result["has_more"]}
                 if name == "knowledge_list_bases"
                 else {
                     key: result[key]

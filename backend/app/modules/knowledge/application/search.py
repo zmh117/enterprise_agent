@@ -7,7 +7,13 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 import threading
-from typing import Any
+from typing import Any, cast
+from app.modules.knowledge.application.code_search import CodeSearchQdrant, search_code
+from app.modules.knowledge.domain.code_contracts import (
+    CodeKnowledgeError,
+    VERSION_SELECTOR,
+    validate,
+)
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.knowledge.application.candidates import (
@@ -25,6 +31,7 @@ from app.modules.knowledge.application.ports import (
     QdrantPort,
     RerankPort,
     ReadabilityPort,
+    CodeHistoryPort,
 )
 from app.modules.knowledge.domain.models import (
     KnowledgeJobAccess,
@@ -52,13 +59,14 @@ class SearchRequest:
     knowledge_base_id: str
     query: str
     top_k: int
+    version: dict[str, Any] | None = None
 
     @classmethod
     def parse(cls, value: Any) -> "SearchRequest":
         if (
             not isinstance(value, dict)
             or not {"knowledge_base_id", "query"} <= set(value)
-            or not set(value) <= {"knowledge_base_id", "query", "top_k"}
+            or not set(value) <= {"knowledge_base_id", "query", "top_k", "version"}
         ):
             raise KnowledgeGovernanceError("knowledge_input_invalid")
         query, top_k = value["query"], value.get("top_k", 10)
@@ -74,7 +82,11 @@ class SearchRequest:
             query.encode("utf-8", errors="strict")
         except UnicodeError:
             raise KnowledgeGovernanceError("knowledge_input_invalid") from None
-        return cls(checked_identifier(value["knowledge_base_id"]), query, top_k)
+        if "version" in value:
+            validate(value["version"], VERSION_SELECTOR)
+        return cls(
+            checked_identifier(value["knowledge_base_id"]), query, top_k, value.get("version")
+        )
 
 
 class KnowledgeSearch:
@@ -89,11 +101,13 @@ class KnowledgeSearch:
         reranker: RerankPort,
         access_mode: KnowledgeAccessMode = KnowledgeAccessMode.ONLINE,
         readability: ReadabilityPort | None = None,
+        code_history: CodeHistoryPort | None = None,
     ) -> None:
         self.access_mode = KnowledgeAccessMode(access_mode)
         if self.access_mode is KnowledgeAccessMode.ONLINE and readability is None:
             raise ValueError("在线知识检索必须装配 ONES 可读性检查")
         self.readability = readability
+        self.code_history = code_history
         self.access, self.resources = access, resources
         self.embedding, self.qdrant = embedding, qdrant
         self.audit = audit
@@ -117,6 +131,8 @@ class KnowledgeSearch:
                 return self._search(token, request, access, budget)
         except KnowledgeGovernanceError as exc:
             failure = exc
+        except CodeKnowledgeError as exc:
+            failure = KnowledgeGovernanceError(exc.code)
         except VectorError as exc:
             code = "knowledge_search_dependency_failed"
             if exc.code.startswith("knowledge_embedding_"):
@@ -169,7 +185,80 @@ class KnowledgeSearch:
             with stage("resource"):
                 pin = self.resources.resolve(request.knowledge_base_id)
                 content = stack.enter_context(self.resources.content_for(pin))
+            if content.records.get("source", pin.source_id)["source_system"] == "code":
+                return self._search_code(token, request, access, budget, pin, content)
+            if request.version is not None:
+                raise KnowledgeGovernanceError("knowledge_input_invalid")
             return self._search_content(token, request, access, budget, pin, content)
+
+    def _search_code(
+        self,
+        token: PrincipalToken,
+        request: SearchRequest,
+        access: KnowledgeJobAccess,
+        budget: RetrievalBudget,
+        pin: PinnedKnowledgeResource,
+        content: KnowledgeContent,
+    ) -> dict[str, Any]:
+        index = content.vectors.get(pin.index_code)
+        store = content.code
+        if store is None or index is None:
+            raise CodeKnowledgeError("code_source_unavailable")
+
+        def check() -> None:
+            budget.check()
+            if self.access.authenticate(token, "knowledge_search") != access:
+                raise KnowledgeGovernanceError("knowledge_authorization_changed")
+            self.resources.recheck(pin)
+
+        def retrieve() -> dict[str, Any]:
+            return search_code(
+                store=store,
+                index=index,
+                version=request.version,
+                query=request.query,
+                top_k=request.top_k,
+                resource_revision_id=pin.revision_id,
+                embedding=self.embedding,
+                qdrant=cast(CodeSearchQdrant, content.qdrant or self.qdrant),
+                reranker=self.reranker,
+                check=check,
+            )
+
+        result = retrieve()
+        if (
+            result["version"]["status"] == "BUILD_REQUIRED"
+            and request.version is not None
+            and request.version["kind"] == "svn"
+            and self.code_history is not None
+        ):
+            result["version"] = self.code_history.code_history(
+                token=token,
+                request={
+                    "action": "version",
+                    "knowledge_base_id": request.knowledge_base_id,
+                    "resource_revision_id": pin.revision_id,
+                    "revision": request.version["revision"],
+                },
+            )
+            check()
+            if result["version"]["status"] == "READY":
+                # The exact snapshot can finish between the read and cache request.
+                # Return its verified contents rather than READY with a stale empty result.
+                result = retrieve()
+        self.audit.record(
+            "knowledge.search.completed",
+            status="success",
+            summary="已返回指定版本代码知识定位结果",
+            actor_id=access.actor_id,
+            job_id=access.job_id,
+            payload={
+                "knowledge_base_id": pin.knowledge_base_id,
+                "returned": len(result["documents"]),
+                "version_status": result["version"]["status"],
+            },
+        )
+        return result
 
     def _search_content(
         self,

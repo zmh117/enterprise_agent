@@ -20,6 +20,7 @@ from app.modules.knowledge.application.retrieval_budget import (
 from app.shared.database import assert_external_io_allowed
 from app.shared.bounded_read_http import request_bytes
 from app.modules.knowledge.application.storage_broker import STORAGE_PATH
+from app.shared.code_knowledge_tool_contracts import CODE_HISTORY_PATH
 
 
 class KnowledgeReadabilityClient:
@@ -45,8 +46,11 @@ class KnowledgeReadabilityClient:
     def renew_principal(self, token: str) -> dict[str, Any]:
         return self._post(token=token, path=PRINCIPAL_REFRESH_PATH, body={})
 
+    def code_history(self, *, token: PrincipalToken, request: dict[str, Any]) -> dict[str, Any]:
+        return self._post(token=token, path=CODE_HISTORY_PATH, body=request)
+
     def _post(self, *, token: PrincipalToken, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        if path not in {BRIDGE_PATH, STORAGE_PATH, PRINCIPAL_REFRESH_PATH}:
+        if path not in {BRIDGE_PATH, STORAGE_PATH, PRINCIPAL_REFRESH_PATH, CODE_HISTORY_PATH}:
             raise KnowledgeGovernanceError("knowledge_input_invalid")
         try:
             io_timeout(MAX_RETRIEVAL_SECONDS)
@@ -65,7 +69,7 @@ class KnowledgeReadabilityClient:
                     },
                     content=json.dumps(body).encode(),
                     timeout=io_timeout(MAX_RETRIEVAL_SECONDS),
-                    max_bytes=64 * 1024,
+                    max_bytes=512 * 1024 if path == CODE_HISTORY_PATH else 64 * 1024,
                 )
                 io_timeout(MAX_RETRIEVAL_SECONDS)
                 if status != 200:
@@ -97,7 +101,7 @@ class KnowledgeReadabilityClient:
                     for part in response.iter_bytes():
                         io_timeout(MAX_RETRIEVAL_SECONDS)
                         raw.extend(part)
-                        if len(raw) > 64 * 1024:
+                        if len(raw) > (512 * 1024 if path == CODE_HISTORY_PATH else 64 * 1024):
                             raise ValueError
             value = json.loads(raw, object_pairs_hook=strict_object)
             if not isinstance(value, dict):

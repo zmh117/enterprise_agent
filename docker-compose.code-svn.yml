@@ -1,0 +1,14 @@
+# Explicit network-collection opt-in. Runtime source mounts remain read-only.
+services:
+  knowledge-sync:
+    environment:
+      CODE_COLLECTION_ENABLED: "true"
+      CODE_SVN_REGISTRY_FILE: /etc/code-knowledge/sources.json
+      CODE_SVN_AUTH_ROOT: /run/code-svn-auth
+      CODE_SOURCE_SNAPSHOT_ROOT: /var/lib/code-knowledge/sources
+    volumes:
+      - ${CODE_SVN_REGISTRY_HOST_FILE:?configure deployment-owned SVN registry}:/etc/code-knowledge/sources.json:ro
+      - ${CODE_SVN_AUTH_HOST_ROOT:?configure read-only SVN auth directory references}:/run/code-svn-auth:ro
+      - ${CODE_SOURCE_SNAPSHOT_HOST_ROOT:?configure admitted source snapshot directory}:/var/lib/code-knowledge/sources
+    tmpfs:
+      - /tmp:size=768m,mode=1777,uid=10003,gid=10003

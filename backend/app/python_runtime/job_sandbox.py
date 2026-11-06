@@ -9,7 +9,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Callable, Mapping, Never
+from typing import Any, Callable, Mapping, Never, Protocol
 
 from app.modules.file_workspace.text_format_policy import (
     get_text_format_policy,
@@ -31,6 +31,10 @@ SANDBOX_SCHEMA_VERSION = 1
 FILE_TOOL_NAMES = ("Read", "Glob", "Grep", "Edit", "Write")
 ALLOWED_FILE_TOOLS = frozenset(FILE_TOOL_NAMES)
 ALLOWED_TOP_LEVEL = frozenset({"inputs", "work", "outputs", "tmp"})
+
+
+class SourceMountPolicy(Protocol):
+    def authorize(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any] | None: ...
 
 
 class JobSandboxError(ValueError):
@@ -142,6 +146,7 @@ class JobSandbox:
     job_id: str
     path: Path
     limits: JobSandboxLimits
+    source_mount: SourceMountPolicy | None = field(default=None, repr=False)
     _budget_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _pending: dict[str, _PendingReservation] = field(default_factory=dict, repr=False)
     _input_tokens: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
@@ -158,6 +163,23 @@ class JobSandbox:
         if tool_name not in ALLOWED_FILE_TOOLS or not isinstance(raw_input, dict):
             self._deny("sandbox_tool_denied", "tool is not allowed in the Job Sandbox")
         value = dict(raw_input)
+        if self.source_mount is not None:
+            path_field = "path" if tool_name in {"Glob", "Grep"} else "file_path"
+            source_path = value.get(path_field)
+            # Claude Code can resolve source/... against cwd before invoking a
+            # hook. Normalize only this Job's virtual source alias, never other roots.
+            if isinstance(source_path, str) and source_path.startswith(
+                str(self.path.resolve(strict=True)) + "/source/"
+            ):
+                value[path_field] = self._sdk_relative_path(source_path, allow_root=False)
+            try:
+                mounted = self.source_mount.authorize(tool_name, value)
+            except ValueError as exc:
+                self._deny(
+                    getattr(exc, "code", "sandbox_source_denied"), "source snapshot access is denied"
+                )
+            if mounted is not None:
+                return mounted
         expected = {
             "Read": {"file_path", "offset", "limit", "pages"},
             "Glob": {"pattern", "path"},
@@ -218,6 +240,8 @@ class JobSandbox:
     def _authorize_write(self, tool_name: str, target: Path, value: Mapping[str, object]) -> None:
         relative = target.relative_to(self.path.resolve(strict=True)).as_posix()
         top_level = PurePosixPath(relative).parts[0]
+        if self.source_mount is not None and top_level != "outputs":
+            self._deny("sandbox_source_output_denied", "extraction writes require outputs/")
         if relative in self._runtime_artifacts:
             self._deny(
                 "sandbox_file_read_only",
@@ -1025,6 +1049,9 @@ class JobSandboxManager:
     ) -> None:
         self.root = root
         self.limits = limits or JobSandboxLimits()
+
+    def finish(self, sandbox: JobSandbox) -> None:
+        """Optional trusted completion hook, called before cleanup only after SDK success."""
 
     def create(
         self,

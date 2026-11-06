@@ -63,6 +63,7 @@ ISOLATED_SESSION_SOURCE_CHANNELS = {
     "grafana_alert",
     "managed_webhook",
     "webhook",
+    "code_knowledge",
 }
 TERMINAL_ATTACHMENT_STATUSES = {"READY", "REJECTED", "FAILED", "stored_not_interpreted"}
 
@@ -454,6 +455,25 @@ class CreateAgentJobService:
         )
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob | SystemNoticeIntake:
+        if command.source_channel == "code_knowledge":
+            raise PermissionDenied(
+                "Internal code entry required",
+                safe_message="代码提取必须使用受管内部入口",
+                error_code="code_job_internal_entry_required",
+            )
+        return self._execute(command)
+
+    def execute_code_unit(
+        self, command: CreateAgentJobCommand, *, unit_id: str, lease_version: int
+    ) -> AgentJob | SystemNoticeIntake:
+        from app.modules.knowledge.infrastructure.code_job_binding import validate_internal_command
+
+        validate_internal_command(self.repository.database, command, unit_id, lease_version)
+        return self._execute(command, code_unit=(unit_id, lease_version))
+
+    def _execute(
+        self, command: CreateAgentJobCommand, *, code_unit: tuple[str, int] | None = None
+    ) -> AgentJob | SystemNoticeIntake:
         replayed = self._replay(command)
         if replayed is not None:
             return replayed
@@ -474,6 +494,15 @@ class CreateAgentJobService:
             self._require_credential_cipher()
         isolation = self._session_isolation(command, routing)
         with self.repository.database.unit_of_work():
+            internal_unit = None
+            if code_unit is not None:
+                from app.modules.knowledge.infrastructure.code_job_binding import (
+                    validate_internal_command,
+                )
+
+                internal_unit = validate_internal_command(
+                    self.repository.database, command, *code_unit, lock=True
+                )
             runtime_authorization = self._capture_runtime_authorization(command, routing)
             session = self._open_session(command, routing, isolation)
             admission = self._admit_files(command, routing, session)
@@ -506,6 +535,10 @@ class CreateAgentJobService:
                 runtime_authorization=runtime_authorization,
                 agent=agent,
             )
+            if internal_unit is not None:
+                from app.modules.knowledge.infrastructure.code_job_binding import bind_internal_job
+
+                bind_internal_job(self.repository.database, internal_unit, job.id)
             attachment_ids = self._add_message_attachments(command, job, admission)
             self._claim_bound_attachments(routing, session=session, job=job, admission=admission)
             file_manifest = self._register_file_manifest(command, routing, job, admission)
@@ -1299,7 +1332,7 @@ class CreateAgentJobService:
         if self.connector_registry is None:
             return
         source_connector_id = command.source_connector_id
-        if source_connector_id:
+        if source_connector_id and command.source_channel != "code_knowledge":
             self.connector_registry.require_ingress(source_connector_id)
             self.audit_service.record(
                 "permission.connector_ingress",

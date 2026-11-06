@@ -3,7 +3,9 @@
 from collections.abc import Iterable
 from typing import Any
 
-KNOWLEDGE_TOOL_IDS = frozenset({"knowledge_list_bases", "knowledge_search"})
+BASE_KNOWLEDGE_TOOL_IDS = frozenset({"knowledge_list_bases", "knowledge_search"})
+CODE_KNOWLEDGE_TOOL_IDS = frozenset({"knowledge_get_behavior", "knowledge_compare_behavior"})
+KNOWLEDGE_TOOL_IDS = BASE_KNOWLEDGE_TOOL_IDS | CODE_KNOWLEDGE_TOOL_IDS
 
 
 def uses_knowledge_tools(tools: Iterable[Any]) -> bool:
@@ -20,6 +22,8 @@ def uses_knowledge_tools(tools: Iterable[Any]) -> bool:
 
 def knowledge_tool_dependency_errors(tools: Iterable[Any]) -> list[dict[str, str]]:
     names = {tool.get("tool_identifier") if isinstance(tool, dict) else tool for tool in tools}
-    if names & KNOWLEDGE_TOOL_IDS and not KNOWLEDGE_TOOL_IDS <= names:
+    if names & KNOWLEDGE_TOOL_IDS and not BASE_KNOWLEDGE_TOOL_IDS <= names:
         return [{"field": "mcp_tools", "message": "知识库目录与知识检索工具必须同时选择"}]
+    if names & CODE_KNOWLEDGE_TOOL_IDS and not CODE_KNOWLEDGE_TOOL_IDS <= names:
+        return [{"field": "mcp_tools", "message": "代码业务详情与版本比较工具必须同时选择"}]
     return []

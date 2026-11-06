@@ -300,7 +300,12 @@ class QdrantClient:
     def ensure(self, index: dict[str, Any]) -> None:
         self.check(index, create=True)
         path = self.path(index)
-        for field in ("index_id", "knowledge_base_id"):
+        from app.modules.knowledge.domain.code_projection import PROJECTION_HASH
+
+        fields = ("index_id", "knowledge_base_id")
+        if index.get("chunk_profile_hash") == PROJECTION_HASH:
+            fields += ("snapshot_id", "point_kind")
+        for field in fields:
             self.http.request(
                 "PUT", path + "/index?wait=true", {"field_name": field, "field_schema": "keyword"}
             )
@@ -415,6 +420,63 @@ class QdrantClient:
         if type(count) is not int or count < 0:
             raise VectorError("knowledge_vector_response_invalid")
         return count
+
+    @staticmethod
+    def _code_scope(index: dict[str, Any], snapshot_id: str) -> dict[str, Any]:
+        from app.modules.knowledge.domain.code_projection import PROJECTION_HASH
+
+        if index.get("chunk_profile_hash") != PROJECTION_HASH or not snapshot_id:
+            raise VectorError("knowledge_code_index_invalid")
+        return {
+            "must": [
+                {"key": key, "match": {"value": value}}
+                for key, value in (
+                    ("index_id", index["id"]),
+                    ("knowledge_base_id", index["knowledge_base_id"]),
+                    ("snapshot_id", snapshot_id),
+                    ("point_kind", "code_knowledge"),
+                )
+            ]
+        }
+
+    def code_count(self, index: dict[str, Any], snapshot_id: str) -> int:
+        result = (
+            self.http.request(
+                "POST",
+                self.path(index) + "/points/count",
+                {
+                    "exact": True,
+                    "filter": self._code_scope(index, snapshot_id),
+                },
+            )
+            .get("result", {})
+            .get("count")
+        )
+        if type(result) is not int or result < 0:
+            raise VectorError("knowledge_vector_response_invalid")
+        return int(result)
+
+    def code_search(
+        self, index: dict[str, Any], snapshot_id: str, vector: list[float], limit: int
+    ) -> list[dict[str, Any]]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise VectorError("knowledge_vector_batch_invalid")
+        validate_vector(vector)
+        response = self.http.request(
+            "POST",
+            self.path(index) + "/points/query",
+            {
+                "query": vector,
+                "limit": limit,
+                "with_payload": True,
+                "with_vector": False,
+                "filter": self._code_scope(index, snapshot_id),
+            },
+        )
+        result = response.get("result", {}).get("points")
+        if not isinstance(result, list) or len(result) > limit:
+            raise VectorError("knowledge_vector_response_invalid")
+        return result
 
     def set_searchable(self, index: dict[str, Any], ids: list[str], value: bool) -> None:
         if index.get("incremental") != 1 or not ids or len(ids) > 32:

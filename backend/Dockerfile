@@ -80,6 +80,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 CMD ["python", "-m", "app.workers.dingtalk_stream_ingress_worker"]
 
 FROM python-deps AS agent-worker
+RUN mkdir -p /var/lib/code-knowledge/artifacts \
+    && chown 10002:10002 /var/lib/code-knowledge/artifacts
 COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
@@ -146,6 +148,10 @@ COPY backend/app/modules/agent/infrastructure/generated_runtime_contracts*.py ba
 COPY backend/app/modules/mcp_tool_runtime/__init__.py backend/app/modules/mcp_tool_runtime/contracts.py backend/app/modules/mcp_tool_runtime/manifest.py /app/backend/app/modules/mcp_tool_runtime/
 # Keep this as a narrow namespace-package whitelist. Its __init__.py imports the repository layer.
 COPY backend/app/modules/file_workspace/contracts.py backend/app/modules/file_workspace/domain.py backend/app/modules/file_workspace/text_format_policy.py /app/backend/app/modules/file_workspace/
+# Runtime reads immutable mounted source and writes invocation artifacts; no knowledge repository/SQL.
+COPY backend/app/modules/knowledge/__init__.py /app/backend/app/modules/knowledge/
+COPY backend/app/modules/knowledge/domain/__init__.py backend/app/modules/knowledge/domain/code_contracts.py backend/app/modules/knowledge/domain/code_package.py backend/app/modules/knowledge/domain/normalization.py backend/app/modules/knowledge/domain/identity.py /app/backend/app/modules/knowledge/domain/
+COPY backend/app/modules/knowledge/infrastructure/__init__.py backend/app/modules/knowledge/infrastructure/code_source.py backend/app/modules/knowledge/infrastructure/code_snapshot_directory.py backend/app/modules/knowledge/infrastructure/code_artifact_directory.py /app/backend/app/modules/knowledge/infrastructure/
 COPY backend/app/modules/model_connection/__init__.py /app/backend/app/modules/model_connection/
 COPY backend/app/modules/model_connection/domain /app/backend/app/modules/model_connection/domain
 COPY backend/app/modules/model_connection/infrastructure/__init__.py backend/app/modules/model_connection/infrastructure/repository.py /app/backend/app/modules/model_connection/infrastructure/
@@ -157,6 +163,8 @@ COPY contracts/agent-runtime/v1.4 /app/contracts/agent-runtime/v1.4
 COPY contracts/agent-runtime/v1.5 /app/contracts/agent-runtime/v1.5
 RUN groupadd --system --gid 10002 python-runtime \
     && useradd --system --uid 10002 --gid 10002 --no-create-home python-runtime \
+    && mkdir -p /var/lib/code-knowledge/artifacts \
+    && chown 10002:10002 /var/lib/code-knowledge/artifacts \
     && python -c "import app.python_runtime; import app.python_runtime.file_principal; import app.python_runtime.file_transfer_http; import app.modules.agent.infrastructure.runtime_protocol; from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST; from mcp import types; from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version; from app.python_runtime.file_mcp_bridge import _mcp_list_tools_next_cursor, _mcp_tool_input_schema; assert MCP_TOOL_MANIFEST; assert claude_sdk_version() != 'unknown'; assert claude_cli_version() not in {'unknown', 'unavailable'}; assert _mcp_tool_input_schema(types.Tool(name='probe', inputSchema={})) == {}; assert _mcp_list_tools_next_cursor(types.ListToolsResult(tools=[])) == ''"
 USER 10002:10002
 CMD ["python", "-m", "uvicorn", "app.python_runtime.service:create_app", "--factory", "--workers", "1", "--host", "0.0.0.0", "--port", "8091"]
@@ -202,6 +210,8 @@ CMD ["python", "-m", "services.knowledge_mcp_server.app"]
 
 FROM api-server AS ones-mcp
 USER root
+RUN apt-get update && apt-get install -y --no-install-recommends subversion \
+    && rm -rf /var/lib/apt/lists/*
 COPY services /app/services
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['ones-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \

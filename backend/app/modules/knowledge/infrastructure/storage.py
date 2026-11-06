@@ -33,9 +33,21 @@ TABLES = frozenset(
         "ops_operation",
         "ops_event",
         "ops_runtime",
+        "code_binding",
+        "code_source_snapshot",
+        "code_source_file",
+        "code_commit",
+        "code_build",
+        "code_unit",
+        "code_snapshot",
+        "code_member",
+        "code_relation",
+        "code_dependency",
+        "code_history_check",
+        "code_demand",
     }
 )
-_SQLITE_LOCK = threading.Lock()
+_SQLITE_LOCK = threading.RLock()
 
 
 def table(database: Database, name: str) -> str:

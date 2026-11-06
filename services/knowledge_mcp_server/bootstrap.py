@@ -14,6 +14,7 @@ from app.modules.knowledge.domain.models import KnowledgeAccessMode
 from app.modules.knowledge.application.directory import KnowledgeDirectory
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.application.search import KnowledgeSearch
+from app.modules.knowledge.application.code_query import CodeKnowledgeQuery
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
 from app.modules.knowledge.infrastructure.job_access import KnowledgeJobGate
 from app.modules.knowledge.infrastructure.reader_access import KnowledgePrincipalAccess
@@ -85,9 +86,11 @@ def build_tools(
             reranker=reranker,
             access_mode=access_mode,
             readability=bridge,
+            code_history=bridge,
         ),
         McpAuditCoordinator(database, max_payload_bytes=16 * 1024, audit_service=audit),
         principal_client=bridge,
+        code=CodeKnowledgeQuery(access, resources, history=bridge),
     )
 
 

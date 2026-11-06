@@ -38,12 +38,19 @@ READ_COLUMNS = {
         "knowledge.retrieval_revision": "id resource_id revision binding_id index_id profile_hash corpus_hash config_hash created_by created_at published_by published_at storage_config_json configuration_version",
         "knowledge.knowledge_base": "id code display_name description state created_at",
         "knowledge.document": "id current_revision_id external_id external_number lifecycle_state source_id source_object_type document_kind",
-        "knowledge.document_revision": "id document_id content_hash title source_project_id source_project_name source_status_name source_updated_at ingested_at",
+        "knowledge.document_revision": "id document_id content_hash title source_project_id source_project_name source_status_name source_updated_at ingested_at attributes",
         "knowledge.knowledge_base_document": "document_id knowledge_base_id state",
         "knowledge.vector_index": "id code knowledge_base_id state profile profile_hash chunk_profile_hash collection_name corpus_hash expected_document_count expected_chunk_count error_code created_at updated_at sync_run_id source_id unreferenced_at incremental",
         "knowledge.document_chunk": "id chunk_set_id ordinal chunk_kind source_field source_start source_end evidence_text evidence_hash embedding_text embedding_hash char_count embedding_char_count quality_flags",
         "knowledge.document_chunk_set": "id document_id document_revision_id profile_hash source_content_hash",
         "knowledge.vector_index_item": "chunk_id embedding_text_hash index_id point_id state",
+        "knowledge.code_binding": "source_id knowledge_base_id config_hash active_snapshot_id collected_revision collected_from_revision",
+        "knowledge.code_source_snapshot": "id source_ref svn_revision config_hash retired_at",
+        "knowledge.code_snapshot": "id source_id knowledge_base_id source_snapshot_id processing_hash state index_manifest validation_json created_at ready_at",
+        "knowledge.code_member": "snapshot_id document_id revision_id",
+        "knowledge.code_relation": "snapshot_id relation_id from_document_id to_document_id kind relation_json",
+        "knowledge.code_commit": "source_id config_hash revision complete",
+        "knowledge.code_history_check": "source_id config_hash from_revision to_revision ledger_complete",
     }.items()
 }
 WRITE_TABLES = {

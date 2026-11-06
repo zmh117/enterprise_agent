@@ -58,6 +58,17 @@ function setup({
       const url = String(input),
         method = options.method ?? "GET"
       const body = options.body ? JSON.parse(String(options.body)) : {}
+      if (url === `${prefix}/code` && method === "GET") {
+        return Response.json({
+          components: {},
+          sources: [],
+          source_snapshots: [],
+          builds: [],
+          demands: [],
+          history_checks: [],
+          partial: false,
+        })
+      }
       if (url === `${prefix}/operations` && method === "GET") {
         const runtime = { online: false, observed_at: null, snapshot: {} }
         return Response.json({

@@ -11,6 +11,7 @@ from app.modules.identity.api.dependencies import current_principal, require_act
 from app.modules.knowledge.domain.governance import strict_object
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.domain.normalization import ExportValidationError
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.shared.exceptions import AppError, PermissionDenied
 
 if TYPE_CHECKING:
@@ -66,7 +67,7 @@ async def payload(
 async def invoke(operation: Any, **arguments: Any) -> Any:
     try:
         return await run_in_threadpool(operation, **arguments)
-    except ExportValidationError as exc:
+    except (ExportValidationError, CodeKnowledgeError) as exc:
         error = KnowledgeGovernanceError(exc.code)
         raise HTTPException(
             400, detail={"error_code": error.error_code, "message": error.safe_message}

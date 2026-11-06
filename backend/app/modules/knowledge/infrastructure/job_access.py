@@ -1,6 +1,7 @@
 """知识调用的持久化 Job 边界；不签发身份、不执行 Provider 或模型请求。"""
 
 import json
+from typing import Any
 
 from app.modules.authorization_center.application.service import BusinessAuthorizationService
 from app.modules.agent_config.application.service import agent_config_hash
@@ -17,7 +18,12 @@ from app.shared.database import Database
 from app.modules.knowledge.domain.models import KnowledgeJobAccess
 
 
-KNOWLEDGE_TOOLS = ("knowledge_list_bases", "knowledge_search")
+KNOWLEDGE_TOOLS = (
+    "knowledge_list_bases",
+    "knowledge_search",
+    "knowledge_get_behavior",
+    "knowledge_compare_behavior",
+)
 KNOWLEDGE_SERVER = "knowledge-mcp"
 
 
@@ -42,6 +48,15 @@ class KnowledgeJobGate:
     @staticmethod
     def _invalid() -> KnowledgeGovernanceError:
         return KnowledgeGovernanceError("knowledge_job_denied")
+
+    def _selected_tools(self, snapshot: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+        from app.modules.knowledge.domain.tool_policy import knowledge_tool_dependency_errors
+
+        tools = {tool["tool_identifier"]: tool for tool in snapshot["tools"]}
+        selected = tuple(name for name in KNOWLEDGE_TOOLS if name in tools)
+        if not selected or knowledge_tool_dependency_errors(selected):
+            raise self._invalid()
+        return tools, selected
 
     def resolve(self, *, job_id: str, actor_id: str) -> KnowledgeJobAccess:  # noqa: C901
         # 调用者身份必须已由相应 audience 的 Principal 认证；这里不把 actor 字段当凭证。
@@ -72,8 +87,8 @@ class KnowledgeJobGate:
             or snapshot.get("agent_publication_id") != job["agent_publication_id"]
         ):
             raise self._invalid()
-        expected = dict.fromkeys(KNOWLEDGE_TOOLS, KNOWLEDGE_SERVER)
-        tools = {tool["tool_identifier"]: tool for tool in snapshot["tools"]}
+        tools, selected_tools = self._selected_tools(snapshot)
+        expected = dict.fromkeys(selected_tools, KNOWLEDGE_SERVER)
         if any(
             tools.get(name, {}).get("server_code") != server for name, server in expected.items()
         ):
@@ -180,7 +195,7 @@ class KnowledgeJobGate:
                 or row["agent_schema_hash"] != tools[name]["schema_hash"]
             ):
                 raise self._invalid()
-        for tool in KNOWLEDGE_TOOLS:
+        for tool in selected_tools:
             self.authorization.require(
                 user_id=actor_id,
                 application_id=job["business_application_id"],
@@ -190,7 +205,7 @@ class KnowledgeJobGate:
         current = self.authorization.knowledge_access_projection(
             user_id=actor_id,
             application_id=job["business_application_id"],
-            tool_identifiers=KNOWLEDGE_TOOLS,
+            tool_identifiers=selected_tools,
         )
         # 老 Job 的冻结授权不能因后来的角色扩权而自动增加 KB。两次求值均逐记录联合匹配。
         frozen_ids: set[str] = set()
@@ -204,7 +219,7 @@ class KnowledgeJobGate:
                 or not isinstance(grant.get("tool_identifiers"), list)
             ):
                 raise self._invalid()
-            if set(KNOWLEDGE_TOOLS).issubset(grant["tool_identifiers"]):
+            if set(selected_tools).issubset(grant["tool_identifiers"]):
                 frozen_ids.update(checked_identifier(key) for key in grant["knowledge_base_ids"])
         current_ids = {key for grant in current for key in grant["knowledge_base_ids"]}
         return KnowledgeJobAccess(

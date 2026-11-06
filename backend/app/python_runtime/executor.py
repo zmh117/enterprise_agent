@@ -106,6 +106,7 @@ class PythonRuntimeExecutor:
         cli_version: str | None = None,
         fake_provider_mode: bool = False,
         sandbox_manager: JobSandboxManager | None = None,
+        code_sandbox_factory: Callable[[dict[str, Any]], JobSandboxManager] | None = None,
         build_identity: BuildIdentity | None = None,
     ) -> None:
         self._bindings = binding_resolver
@@ -149,6 +150,7 @@ class PythonRuntimeExecutor:
         self._cli_version: str = cli_version or claude_cli_version()
         self._fake_provider_mode = fake_provider_mode
         self._sandbox_manager = sandbox_manager
+        self._code_sandbox_factory = code_sandbox_factory
         self._build_identity = build_identity or build_identity_from_environment("python-runtime")
 
     @property
@@ -178,6 +180,15 @@ class PythonRuntimeExecutor:
         if cancel_event.is_set():
             return self._cancelled(provenance)
         run_request = agent_request_from_runtime_request(request, resolved.binding)
+        sandbox_manager = self._sandbox_manager
+        if run_request.context.retrieved_context.get("code_source") is not None:
+            if self._code_sandbox_factory is None or self._fake_provider_mode:
+                raise NonRetryableExecutionError(
+                    "Code extraction Runtime is unavailable",
+                    safe_message="代码提取运行时不可用",
+                    error_code="code_runtime_unavailable",
+                )
+            sandbox_manager = self._code_sandbox_factory(request)
         file_principal_token = secret_context.file_principal_token if secret_context else ""
         file_principal_token_provider = (
             FilePrincipalTokenClient(
@@ -201,7 +212,7 @@ class PythonRuntimeExecutor:
             file_principal_token=file_principal_token,
             file_principal_token_provider=file_principal_token_provider,
             server_policies=self._server_policies,
-            sandbox_manager=self._sandbox_manager,
+            sandbox_manager=sandbox_manager,
             cancellation_event=cancel_event,
             runtime_build_identity=self._build_identity,
             tool_contract_observer=tool_contract_observer,

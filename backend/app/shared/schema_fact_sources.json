@@ -104,13 +104,25 @@
       "semantics": "现有角色应用业务访问记录的明确知识库允许集合；不支持显式拒绝或跨应用继承",
       "classification": "canonical_mutable_fact",
       "canonical_source": "角色业务访问分区的明确授权操作",
-      "writers": ["code:backend/app/modules/authorization_center/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/authorization_center/infrastructure/repository.py"],
+      "writers": [
+        "code:backend/app/modules/authorization_center/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/authorization_center/infrastructure/repository.py"
+      ],
       "lifecycle": "随业务分区 revision 原子替换，当前全部展开明确 ID，移除应用记录级联撤销",
       "retention_policy": "当前事实保留至撤销；授权变更摘要保留于既有审计",
       "audit_requirement": "记录角色、应用、KB 标识和业务修订；不记录知识正文或凭据",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["替代授权事实源必须明确迁移"]},
-      "evidence_refs": ["migration:137_expand_knowledge_retrieval_governance"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代授权事实源必须明确迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:137_expand_knowledge_retrieval_governance"
+      ]
     },
     {
       "id": "knowledge.source_binding",
@@ -237,15 +249,21 @@
       "semantics": "Schema 分页短引用到原始有界游标的临时映射，不是授权凭据",
       "classification": "operational_coordination_fact",
       "canonical_source": "已授权 Schema 查询签发的上下文及资源绑定游标",
-      "writers": ["code:backend/app/modules/mcp_tool_runtime/schema_cursor_store.py"],
-      "readers": ["code:backend/app/modules/mcp_tool_runtime/schema_cursor_store.py"],
+      "writers": [
+        "code:backend/app/modules/mcp_tool_runtime/schema_cursor_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/mcp_tool_runtime/schema_cursor_store.py"
+      ],
       "lifecycle": "仅 RUNNING Job 签发和使用；跨实例持久化；不修改旧引用",
       "retention_policy": "24 小时到期；tool-mcp 每分钟最多清理 500 项；Job 删除级联清理",
       "audit_requirement": "仅短引用和稳定错误码，不保存认证材料或业务记录正文",
       "retirement": {
         "status": "retained",
         "earliest_phase": "never",
-        "gates": ["停止签发并耗尽运行中分页状态后方可退役"]
+        "gates": [
+          "停止签发并耗尽运行中分页状态后方可退役"
+        ]
       },
       "evidence_refs": [
         "migration:135_expand_schema_pagination_cursors",
@@ -593,13 +611,29 @@
       "owner": "job-channel",
       "semantics": "Canonical conversation identity, routing boundary, application publication isolation, and context cursor.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/session_repository.py", "code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/agent/application/agent_context_builder.py", "code:backend/app/modules/job/infrastructure/attachment_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py",
+        "code:backend/app/modules/job/infrastructure/repositories.py",
+        "code:backend/app/modules/agent/application/agent_context_builder.py",
+        "code:backend/app/modules/job/infrastructure/attachment_repository.py"
+      ],
       "lifecycle": "active; historical rows become read-only when their publication or execution scope is superseded",
       "retention_policy": "conversation-history-policy",
       "audit_requirement": "history reads are permission checked and audited without message bodies",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement requires a separately accepted canonical-spec change"]},
-      "evidence_refs": ["execution-delivery:Agent sessions and jobs are persisted", "channel-conversation:应用会话上下文按业务应用隔离"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "replacement requires a separately accepted canonical-spec change"
+        ]
+      },
+      "evidence_refs": [
+        "execution-delivery:Agent sessions and jobs are persisted",
+        "channel-conversation:应用会话上下文按业务应用隔离"
+      ]
     },
     {
       "id": "session.source_channel",
@@ -609,13 +643,26 @@
       "owner": "job-channel",
       "semantics": "Canonical normalized source channel for the session.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/session_repository.py", "code:backend/app/modules/job/infrastructure/attachment_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py",
+        "code:backend/app/modules/job/infrastructure/attachment_repository.py"
+      ],
       "lifecycle": "active",
       "retention_policy": "same-as-agent-session",
       "audit_requirement": "retain as non-secret routing provenance",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["session replacement contract"]},
-      "evidence_refs": ["schema:100_baseline_v1"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "session replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "schema:100_baseline_v1"
+      ]
     },
     {
       "id": "session.source_connector_id",
@@ -625,13 +672,26 @@
       "owner": "job-channel",
       "semantics": "Canonical connector identity participating in session isolation.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/session_repository.py", "code:backend/app/modules/job/infrastructure/attachment_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py",
+        "code:backend/app/modules/job/infrastructure/attachment_repository.py"
+      ],
       "lifecycle": "active",
       "retention_policy": "same-as-agent-session",
       "audit_requirement": "retain connector provenance after connector lifecycle changes",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["session replacement contract"]},
-      "evidence_refs": ["schema:100_baseline_v1"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "session replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "schema:100_baseline_v1"
+      ]
     },
     {
       "id": "session.external_conversation_id",
@@ -641,13 +701,25 @@
       "owner": "job-channel",
       "semantics": "Canonical bounded external conversation identity.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
       "lifecycle": "active",
       "retention_policy": "same-as-agent-session",
       "audit_requirement": "treat as identity metadata and do not expose across scope",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["session replacement contract"]},
-      "evidence_refs": ["schema:100_baseline_v1"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "session replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "schema:100_baseline_v1"
+      ]
     },
     {
       "id": "session.requester_id",
@@ -657,13 +729,27 @@
       "owner": "identity-job",
       "semantics": "Canonical internal requester identity for private-session isolation.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/session_repository.py", "code:backend/app/modules/agent/application/agent_context_builder.py", "code:backend/app/modules/job/infrastructure/attachment_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py",
+        "code:backend/app/modules/agent/application/agent_context_builder.py",
+        "code:backend/app/modules/job/infrastructure/attachment_repository.py"
+      ],
       "lifecycle": "active",
       "retention_policy": "same-as-agent-session",
       "audit_requirement": "identity access is scope checked and auditable",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["session replacement contract"]},
-      "evidence_refs": ["schema:100_baseline_v1"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "session replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "schema:100_baseline_v1"
+      ]
     },
     {
       "id": "session.application_publication_id",
@@ -674,13 +760,26 @@
       "semantics": "Immutable application publication boundary fixed for a session.",
       "classification": "immutable_snapshot",
       "source_contract": "Business application routing result fixed when the session is created; never derived from the current deployment later.",
-      "writers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/session_repository.py", "code:backend/app/modules/job/infrastructure/repositories.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py",
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
       "lifecycle": "fixed at session creation",
       "retention_policy": "same-as-agent-session",
       "audit_requirement": "retain publication provenance for historical context decisions",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["session replacement contract"]},
-      "evidence_refs": ["execution-delivery:应用会话策略在Job创建时冻结"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "session replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "execution-delivery:应用会话策略在Job创建时冻结"
+      ]
     },
     {
       "id": "session.execution_scope_hash",
@@ -691,13 +790,25 @@
       "semantics": "Immutable execution-scope identity participating in session isolation.",
       "classification": "immutable_snapshot",
       "source_contract": "Hash of the governed execution scope selected at session creation.",
-      "writers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
       "lifecycle": "fixed at session creation",
       "retention_policy": "same-as-agent-session",
       "audit_requirement": "retain safe hash only",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["execution-scope replacement contract"]},
-      "evidence_refs": ["schema:100_baseline_v1"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "execution-scope replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "schema:100_baseline_v1"
+      ]
     },
     {
       "id": "session.legacy_dingding_conversation_id",
@@ -708,13 +819,28 @@
       "semantics": "Legacy DingTalk-specific shadow of external_conversation_id.",
       "classification": "compatibility_shadow",
       "canonical_source": "agent_session.external_conversation_id",
-      "writers": ["migration:legacy-only-before-write-cutover"],
-      "readers": ["code:backend/app/shared/schema_consolidation.py"],
+      "writers": [
+        "migration:legacy-only-before-write-cutover"
+      ],
+      "readers": [
+        "code:backend/app/shared/schema_consolidation.py"
+      ],
       "lifecycle": "compatibility window only",
       "retention_policy": "remove only after full parity and observation",
       "audit_requirement": "parity evidence contains IDs and counts only",
-      "retirement": {"status": "planned", "earliest_phase": "contract/drop", "gates": ["full parity", "zero production readers", "zero production writers", "authorized backup and rollback"]},
-      "evidence_refs": ["change:consolidate-schema-fact-sources-and-retire-legacy-tables"]
+      "retirement": {
+        "status": "planned",
+        "earliest_phase": "contract/drop",
+        "gates": [
+          "full parity",
+          "zero production readers",
+          "zero production writers",
+          "authorized backup and rollback"
+        ]
+      },
+      "evidence_refs": [
+        "change:consolidate-schema-fact-sources-and-retire-legacy-tables"
+      ]
     },
     {
       "id": "session.legacy_dingding_user_id",
@@ -725,13 +851,28 @@
       "semantics": "Legacy DingTalk-specific shadow of requester_id.",
       "classification": "compatibility_shadow",
       "canonical_source": "agent_session.requester_id",
-      "writers": ["migration:legacy-only-before-write-cutover"],
-      "readers": ["code:backend/app/shared/schema_consolidation.py"],
+      "writers": [
+        "migration:legacy-only-before-write-cutover"
+      ],
+      "readers": [
+        "code:backend/app/shared/schema_consolidation.py"
+      ],
       "lifecycle": "compatibility window only",
       "retention_policy": "remove only after full parity and observation",
       "audit_requirement": "parity evidence contains IDs and counts only",
-      "retirement": {"status": "planned", "earliest_phase": "contract/drop", "gates": ["full parity", "zero production readers", "zero production writers", "authorized backup and rollback"]},
-      "evidence_refs": ["change:consolidate-schema-fact-sources-and-retire-legacy-tables"]
+      "retirement": {
+        "status": "planned",
+        "earliest_phase": "contract/drop",
+        "gates": [
+          "full parity",
+          "zero production readers",
+          "zero production writers",
+          "authorized backup and rollback"
+        ]
+      },
+      "evidence_refs": [
+        "change:consolidate-schema-fact-sources-and-retire-legacy-tables"
+      ]
     },
     {
       "id": "session.legacy_source",
@@ -742,13 +883,28 @@
       "semantics": "Legacy shadow of normalized source_channel.",
       "classification": "compatibility_shadow",
       "canonical_source": "agent_session.source_channel",
-      "writers": ["migration:legacy-only-before-write-cutover"],
-      "readers": ["code:backend/app/shared/schema_consolidation.py"],
+      "writers": [
+        "migration:legacy-only-before-write-cutover"
+      ],
+      "readers": [
+        "code:backend/app/shared/schema_consolidation.py"
+      ],
       "lifecycle": "compatibility window only",
       "retention_policy": "remove only after full parity and observation",
       "audit_requirement": "parity evidence contains IDs and counts only",
-      "retirement": {"status": "planned", "earliest_phase": "contract/drop", "gates": ["full parity", "zero production readers", "zero production writers", "authorized backup and rollback"]},
-      "evidence_refs": ["change:consolidate-schema-fact-sources-and-retire-legacy-tables"]
+      "retirement": {
+        "status": "planned",
+        "earliest_phase": "contract/drop",
+        "gates": [
+          "full parity",
+          "zero production readers",
+          "zero production writers",
+          "authorized backup and rollback"
+        ]
+      },
+      "evidence_refs": [
+        "change:consolidate-schema-fact-sources-and-retire-legacy-tables"
+      ]
     },
     {
       "id": "job.aggregate",
@@ -757,13 +913,30 @@
       "owner": "job-runtime",
       "semantics": "Canonical immutable execution provenance plus controlled status, retry, and result facts.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/agent/application/agent_context_builder.py", "code:backend/app/modules/job/infrastructure/dispatch_repository.py", "code:backend/app/modules/job/infrastructure/job_status_lookup.py", "code:backend/app/modules/delivery/infrastructure/repository.py", "code:backend/app/modules/job/infrastructure/attachment_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py",
+        "code:backend/app/modules/agent/application/agent_context_builder.py",
+        "code:backend/app/modules/job/infrastructure/dispatch_repository.py",
+        "code:backend/app/modules/job/infrastructure/job_status_lookup.py",
+        "code:backend/app/modules/delivery/infrastructure/repository.py",
+        "code:backend/app/modules/job/infrastructure/attachment_repository.py"
+      ],
       "lifecycle": "active state machine followed by retained terminal history",
       "retention_policy": "job-history-policy",
       "audit_requirement": "retain bounded execution provenance and safe failure metadata",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["job lifecycle replacement contract"]},
-      "evidence_refs": ["execution-delivery:Agent sessions and jobs are persisted"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "job lifecycle replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "execution-delivery:Agent sessions and jobs are persisted"
+      ]
     },
     {
       "id": "job.source_channel",
@@ -774,13 +947,25 @@
       "semantics": "Canonical normalized source channel fixed for the Job.",
       "classification": "immutable_snapshot",
       "source_contract": "Copied from the verified channel event at Job creation and fixed across retries.",
-      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
       "lifecycle": "fixed at Job creation",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "retain non-secret source provenance",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["job provenance replacement contract"]},
-      "evidence_refs": ["schema:100_baseline_v1"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "job provenance replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "schema:100_baseline_v1"
+      ]
     },
     {
       "id": "job.tool_contract_status",
@@ -791,13 +976,25 @@
       "semantics": "Rebuildable Job summary of immutable per-invocation tool-contract observations.",
       "classification": "derived_projection",
       "source_contract": "agent_runtime_event.event_type = tool_contract_observed",
-      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
-      "readers": ["code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/admin/infrastructure/read_repository.py"
+      ],
       "lifecycle": "NOT_OBSERVED until a current protocol observation; DRIFT is sticky for the Job",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "store only status, last invocation, and bounded hashes; never duplicate the frozen snapshot",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement requires an equivalent immutable-event projection"]},
-      "evidence_refs": ["execution-delivery:每次调用工具契约观测与失败关闭"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "replacement requires an equivalent immutable-event projection"
+        ]
+      },
+      "evidence_refs": [
+        "execution-delivery:每次调用工具契约观测与失败关闭"
+      ]
     },
     {
       "id": "job.control_plane_build_identity",
@@ -808,13 +1005,26 @@
       "semantics": "Safe Control Plane build identity captured when the Job is created.",
       "classification": "immutable_snapshot",
       "source_contract": "Control Plane release manifest and validated build environment",
-      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
-      "readers": ["code:backend/app/modules/agent/application/agent_context_builder.py", "code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/agent/application/agent_context_builder.py",
+        "code:backend/app/modules/admin/infrastructure/read_repository.py"
+      ],
       "lifecycle": "frozen at Job creation",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "allow only component, revision, build id, platform, and verified optional image digest",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement build-provenance contract"]},
-      "evidence_refs": ["execution-delivery:运行记录必须展示跨组件安全构建身份"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "replacement build-provenance contract"
+        ]
+      },
+      "evidence_refs": [
+        "execution-delivery:运行记录必须展示跨组件安全构建身份"
+      ]
     },
     {
       "id": "job.requester_id",
@@ -825,13 +1035,26 @@
       "semantics": "Canonical requester identity fixed for the Job.",
       "classification": "immutable_snapshot",
       "source_contract": "Resolved internal requester from the accepted event, fixed across retries.",
-      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/agent/application/agent_context_builder.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py",
+        "code:backend/app/modules/agent/application/agent_context_builder.py"
+      ],
       "lifecycle": "fixed at Job creation",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "retain identity reference for authorization replay and audit",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["job identity replacement contract"]},
-      "evidence_refs": ["execution-delivery:Job retries preserve identity, Agent publication and reply route"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "job identity replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "execution-delivery:Job retries preserve identity, Agent publication and reply route"
+      ]
     },
     {
       "id": "job.project_code",
@@ -842,13 +1065,26 @@
       "semantics": "Project execution boundary fixed for the Job; intentional provenance rather than a removable duplicate.",
       "classification": "immutable_snapshot",
       "source_contract": "Copied from the accepted route/session scope at Job creation and fixed across retries.",
-      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/agent/application/agent_context_builder.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py",
+        "code:backend/app/modules/agent/application/agent_context_builder.py"
+      ],
       "lifecycle": "fixed at Job creation",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "retain scope provenance",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["project-scope replacement contract"]},
-      "evidence_refs": ["schema:100_baseline_v1"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "project-scope replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "schema:100_baseline_v1"
+      ]
     },
     {
       "id": "job.legacy_user_id",
@@ -859,13 +1095,28 @@
       "semantics": "Legacy requester shadow superseded by requester_id and internal_user_id.",
       "classification": "compatibility_shadow",
       "canonical_source": "agent_job.requester_id",
-      "writers": ["migration:legacy-only-before-write-cutover"],
-      "readers": ["code:backend/app/shared/schema_consolidation.py"],
+      "writers": [
+        "migration:legacy-only-before-write-cutover"
+      ],
+      "readers": [
+        "code:backend/app/shared/schema_consolidation.py"
+      ],
       "lifecycle": "compatibility window only",
       "retention_policy": "remove only after full parity and observation",
       "audit_requirement": "parity evidence contains IDs and counts only",
-      "retirement": {"status": "planned", "earliest_phase": "contract/drop", "gates": ["full parity", "zero production readers", "zero production writers", "authorized backup and rollback"]},
-      "evidence_refs": ["change:consolidate-schema-fact-sources-and-retire-legacy-tables"]
+      "retirement": {
+        "status": "planned",
+        "earliest_phase": "contract/drop",
+        "gates": [
+          "full parity",
+          "zero production readers",
+          "zero production writers",
+          "authorized backup and rollback"
+        ]
+      },
+      "evidence_refs": [
+        "change:consolidate-schema-fact-sources-and-retire-legacy-tables"
+      ]
     },
     {
       "id": "job.legacy_source",
@@ -876,13 +1127,28 @@
       "semantics": "Legacy source shadow superseded by source_channel.",
       "classification": "compatibility_shadow",
       "canonical_source": "agent_job.source_channel",
-      "writers": ["migration:legacy-only-before-write-cutover"],
-      "readers": ["code:backend/app/shared/schema_consolidation.py"],
+      "writers": [
+        "migration:legacy-only-before-write-cutover"
+      ],
+      "readers": [
+        "code:backend/app/shared/schema_consolidation.py"
+      ],
       "lifecycle": "compatibility window only",
       "retention_policy": "remove only after full parity and observation",
       "audit_requirement": "parity evidence contains IDs and counts only",
-      "retirement": {"status": "planned", "earliest_phase": "contract/drop", "gates": ["full parity", "zero production readers", "zero production writers", "authorized backup and rollback"]},
-      "evidence_refs": ["change:consolidate-schema-fact-sources-and-retire-legacy-tables"]
+      "retirement": {
+        "status": "planned",
+        "earliest_phase": "contract/drop",
+        "gates": [
+          "full parity",
+          "zero production readers",
+          "zero production writers",
+          "authorized backup and rollback"
+        ]
+      },
+      "evidence_refs": [
+        "change:consolidate-schema-fact-sources-and-retire-legacy-tables"
+      ]
     },
     {
       "id": "job.legacy_user_message",
@@ -893,13 +1159,28 @@
       "semantics": "Legacy writable shadow of the canonical ordered user agent_message.",
       "classification": "compatibility_shadow",
       "canonical_source": "agent_message.content where agent_message.job_id = agent_job.id and role = 'user'",
-      "writers": ["migration:legacy-only-before-write-cutover"],
-      "readers": ["code:backend/app/shared/schema_consolidation.py"],
+      "writers": [
+        "migration:legacy-only-before-write-cutover"
+      ],
+      "readers": [
+        "code:backend/app/shared/schema_consolidation.py"
+      ],
       "lifecycle": "compatibility window only",
       "retention_policy": "remove only after message cardinality and history gates pass",
       "audit_requirement": "never emit message content in parity or retirement evidence",
-      "retirement": {"status": "planned", "earliest_phase": "contract/drop", "gates": ["exactly one canonical user message for executable Jobs", "zero production readers", "zero production writers", "authorized backup and rollback"]},
-      "evidence_refs": ["change:consolidate-schema-fact-sources-and-retire-legacy-tables"]
+      "retirement": {
+        "status": "planned",
+        "earliest_phase": "contract/drop",
+        "gates": [
+          "exactly one canonical user message for executable Jobs",
+          "zero production readers",
+          "zero production writers",
+          "authorized backup and rollback"
+        ]
+      },
+      "evidence_refs": [
+        "change:consolidate-schema-fact-sources-and-retire-legacy-tables"
+      ]
     },
     {
       "id": "job.input_message_id",
@@ -910,13 +1191,26 @@
       "semantics": "Immutable explicit link to the single ordered role=user agent_message used as Job input.",
       "classification": "immutable_snapshot",
       "source_contract": "Generated with the Job and user message in one local transaction; unresolved pre-cutover history remains explicitly read-only.",
-      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/agent/application/agent_context_builder.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py",
+        "code:backend/app/modules/agent/application/agent_context_builder.py"
+      ],
       "lifecycle": "fixed at Job creation after separately authorized legacy backfill",
       "retention_policy": "same-as-agent-job-and-input-message",
       "audit_requirement": "evidence may include only linkage counts and stable IDs, never message bodies",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["job input contract replacement"]},
-      "evidence_refs": ["schema:101_expand_canonical_job_message"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "job input contract replacement"
+        ]
+      },
+      "evidence_refs": [
+        "schema:101_expand_canonical_job_message"
+      ]
     },
     {
       "id": "message.aggregate",
@@ -925,13 +1219,28 @@
       "owner": "job-message",
       "semantics": "Canonical ordered user and assistant message facts associated with a Session and optional Job.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/session_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/session_repository.py", "code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/agent/application/agent_context_builder.py", "code:backend/app/modules/job/infrastructure/attachment_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/session_repository.py",
+        "code:backend/app/modules/job/infrastructure/repositories.py",
+        "code:backend/app/modules/agent/application/agent_context_builder.py",
+        "code:backend/app/modules/job/infrastructure/attachment_repository.py"
+      ],
       "lifecycle": "append-only messages with governed content lifecycle",
       "retention_policy": "conversation-history-policy",
       "audit_requirement": "message bodies never enter migration evidence or audit summaries",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["message-store replacement contract"]},
-      "evidence_refs": ["channel-conversation:会话消息保持幂等顺序和发送人归属"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "message-store replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "channel-conversation:会话消息保持幂等顺序和发送人归属"
+      ]
     },
     {
       "id": "workflow.template",
@@ -940,13 +1249,26 @@
       "owner": "workflow",
       "semantics": "Canonical mutable Workflow template metadata, revision, entry node, and settings; not the draft graph body.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/workflow/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/workflow/infrastructure/repository.py", "code:backend/app/modules/workflow/application/service.py"],
+      "writers": [
+        "code:backend/app/modules/workflow/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/workflow/infrastructure/repository.py",
+        "code:backend/app/modules/workflow/application/service.py"
+      ],
       "lifecycle": "draft metadata with explicit publication",
       "retention_policy": "workflow-definition-policy",
       "audit_requirement": "configuration changes are actor-attributed",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["workflow replacement contract"]},
-      "evidence_refs": ["agent-model:Agent workflow templates are persisted"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "workflow replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "agent-model:Agent workflow templates are persisted"
+      ]
     },
     {
       "id": "workflow.legacy_graph_json",
@@ -957,13 +1279,28 @@
       "semantics": "Legacy mutable graph shadow superseded by normalized node and edge rows.",
       "classification": "compatibility_shadow",
       "canonical_source": "agent_workflow_node plus agent_workflow_edge for the template",
-      "writers": ["migration:legacy-only-before-write-cutover"],
-      "readers": ["code:backend/app/shared/schema_consolidation.py"],
+      "writers": [
+        "migration:legacy-only-before-write-cutover"
+      ],
+      "readers": [
+        "code:backend/app/shared/schema_consolidation.py"
+      ],
       "lifecycle": "compatibility backfill input only",
       "retention_policy": "remove only after graph parity and publication tests",
       "audit_requirement": "graph bodies never enter parity evidence",
-      "retirement": {"status": "planned", "earliest_phase": "contract/drop", "gates": ["deterministic graph parity", "zero production readers", "zero production writers", "authorized backup and rollback"]},
-      "evidence_refs": ["change:consolidate-schema-fact-sources-and-retire-legacy-tables"]
+      "retirement": {
+        "status": "planned",
+        "earliest_phase": "contract/drop",
+        "gates": [
+          "deterministic graph parity",
+          "zero production readers",
+          "zero production writers",
+          "authorized backup and rollback"
+        ]
+      },
+      "evidence_refs": [
+        "change:consolidate-schema-fact-sources-and-retire-legacy-tables"
+      ]
     },
     {
       "id": "workflow.nodes",
@@ -972,13 +1309,26 @@
       "owner": "workflow",
       "semantics": "Canonical normalized mutable Workflow draft nodes.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/workflow/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/workflow/infrastructure/repository.py", "code:backend/app/modules/workflow/application/service.py"],
+      "writers": [
+        "code:backend/app/modules/workflow/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/workflow/infrastructure/repository.py",
+        "code:backend/app/modules/workflow/application/service.py"
+      ],
       "lifecycle": "mutable draft",
       "retention_policy": "same-as-workflow-template",
       "audit_requirement": "configuration bodies remain outside migration evidence",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["workflow graph replacement contract"]},
-      "evidence_refs": ["agent-model:Workflow nodes and edges support drag-and-drop graph editing"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "workflow graph replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "agent-model:Workflow nodes and edges support drag-and-drop graph editing"
+      ]
     },
     {
       "id": "workflow.edges",
@@ -987,13 +1337,26 @@
       "owner": "workflow",
       "semantics": "Canonical normalized mutable Workflow draft edges.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/workflow/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/workflow/infrastructure/repository.py", "code:backend/app/modules/workflow/application/service.py"],
+      "writers": [
+        "code:backend/app/modules/workflow/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/workflow/infrastructure/repository.py",
+        "code:backend/app/modules/workflow/application/service.py"
+      ],
       "lifecycle": "mutable draft",
       "retention_policy": "same-as-workflow-template",
       "audit_requirement": "configuration bodies remain outside migration evidence",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["workflow graph replacement contract"]},
-      "evidence_refs": ["agent-model:Workflow nodes and edges support drag-and-drop graph editing"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "workflow graph replacement contract"
+        ]
+      },
+      "evidence_refs": [
+        "agent-model:Workflow nodes and edges support drag-and-drop graph editing"
+      ]
     },
     {
       "id": "workflow.publication",
@@ -1003,13 +1366,26 @@
       "semantics": "Immutable published Workflow graph snapshot and hash.",
       "classification": "immutable_snapshot",
       "source_contract": "Deterministic snapshot of one validated normalized draft revision at publication time.",
-      "writers": ["code:backend/app/modules/workflow/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/workflow/infrastructure/repository.py", "code:backend/app/modules/workflow/application/service.py"],
+      "writers": [
+        "code:backend/app/modules/workflow/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/workflow/infrastructure/repository.py",
+        "code:backend/app/modules/workflow/application/service.py"
+      ],
       "lifecycle": "append-only publication history",
       "retention_policy": "immutable-publication-history",
       "audit_requirement": "retain revision, hash, publisher, and timestamp",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["published-runtime replacement contract preserving historical replay"]},
-      "evidence_refs": ["agent-model:Workflow publication creates immutable snapshots"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "published-runtime replacement contract preserving historical replay"
+        ]
+      },
+      "evidence_refs": [
+        "agent-model:Workflow publication creates immutable snapshots"
+      ]
     },
     {
       "id": "outbox.webhook",
@@ -1018,13 +1394,25 @@
       "owner": "webhook",
       "semantics": "Reliable dispatch fact from accepted Webhook inbox to Channel/Job processing.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/modules/webhook/infrastructure/event_repository.py"],
-      "readers": ["code:backend/app/workers/webhook_dispatch_worker.py"],
+      "writers": [
+        "code:backend/app/modules/webhook/infrastructure/event_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/workers/webhook_dispatch_worker.py"
+      ],
       "lifecycle": "pending to published or failed under Webhook transaction boundary",
       "retention_policy": "outbox-operational-history",
       "audit_requirement": "payload remains bounded and excludes raw webhook bodies",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["complete Webhook transaction-boundary replacement"]},
-      "evidence_refs": ["channel-conversation:接收成功后通过持久化 Inbox 异步分发"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "complete Webhook transaction-boundary replacement"
+        ]
+      },
+      "evidence_refs": [
+        "channel-conversation:接收成功后通过持久化 Inbox 异步分发"
+      ]
     },
     {
       "id": "outbox.channel_ingress",
@@ -1033,13 +1421,25 @@
       "owner": "managed-channel",
       "semantics": "Reliable publication fact from durable managed-channel ingress to asynchronous Job creation.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/modules/managed_channel/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/managed_channel/infrastructure/repository.py"],
+      "writers": [
+        "code:backend/app/modules/managed_channel/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/managed_channel/infrastructure/repository.py"
+      ],
       "lifecycle": "pending to published or failed under Channel ingress transaction boundary",
       "retention_policy": "outbox-operational-history",
       "audit_requirement": "retain event identifiers and safe errors only",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["complete Channel ingress transaction-boundary replacement"]},
-      "evidence_refs": ["channel-conversation:DingTalk Stream acknowledgement follows durable ingress persistence"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "complete Channel ingress transaction-boundary replacement"
+        ]
+      },
+      "evidence_refs": [
+        "channel-conversation:DingTalk Stream acknowledgement follows durable ingress persistence"
+      ]
     },
     {
       "id": "outbox.job_dispatch",
@@ -1048,13 +1448,25 @@
       "owner": "job-message-bus",
       "semantics": "Atomic reliable publication fact from persisted Job to RabbitMQ.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/dispatch_repository.py"],
-      "readers": ["code:backend/app/modules/job/application/job_dispatch_service.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/dispatch_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/application/job_dispatch_service.py"
+      ],
       "lifecycle": "pending to published or failed under Job transaction boundary",
       "retention_policy": "outbox-operational-history",
       "audit_requirement": "message carries stable IDs rather than prompts or secrets",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["complete Job dispatch transaction-boundary replacement"]},
-      "evidence_refs": ["execution-delivery:Job 与 Dispatch Outbox 原子提交"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "complete Job dispatch transaction-boundary replacement"
+        ]
+      },
+      "evidence_refs": [
+        "execution-delivery:Job 与 Dispatch Outbox 原子提交"
+      ]
     },
     {
       "id": "outbox.delivery",
@@ -1063,13 +1475,26 @@
       "owner": "delivery",
       "semantics": "Independent reliable result-delivery state after Agent execution.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/modules/delivery/infrastructure/repository.py", "code:backend/app/modules/delivery/application/delivery_operations.py"],
-      "readers": ["code:backend/app/modules/delivery/application/delivery_operations.py"],
+      "writers": [
+        "code:backend/app/modules/delivery/infrastructure/repository.py",
+        "code:backend/app/modules/delivery/application/delivery_operations.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/delivery/application/delivery_operations.py"
+      ],
       "lifecycle": "pending through delivery terminal state independently of Job execution",
       "retention_policy": "delivery-operational-history",
       "audit_requirement": "retain safe route references and bounded errors",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["complete Delivery transaction-boundary replacement"]},
-      "evidence_refs": ["execution-delivery:Delivery 使用独立状态机"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "complete Delivery transaction-boundary replacement"
+        ]
+      },
+      "evidence_refs": [
+        "execution-delivery:Delivery 使用独立状态机"
+      ]
     },
     {
       "id": "runtime.event",
@@ -1078,13 +1503,28 @@
       "owner": "agent-runtime",
       "semantics": "Platform-owned bounded Runtime execution event history.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/run_audit_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/run_audit_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/run_audit_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/run_audit_repository.py"
+      ],
       "lifecycle": "append-only bounded runtime history",
       "retention_policy": "runtime-operational-history",
       "audit_requirement": "exclude prompts, raw model responses, credentials, and private reasoning",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["runtime protocol replacement with equivalent audit"]},
-      "evidence_refs": ["execution-delivery:Claude 错误诊断元数据必须有界、脱敏且可关联", "change:add-agent-job-context-audit", "schema:125_expand_runtime_audit_chunk_event_projection", "schema:145_contract_python_runtime_invocation_claim"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "runtime protocol replacement with equivalent audit"
+        ]
+      },
+      "evidence_refs": [
+        "execution-delivery:Claude 错误诊断元数据必须有界、脱敏且可关联",
+        "change:add-agent-job-context-audit",
+        "schema:125_expand_runtime_audit_chunk_event_projection",
+        "schema:145_contract_python_runtime_invocation_claim"
+      ]
     },
     {
       "id": "runtime.terminal_ledger",
@@ -1093,13 +1533,26 @@
       "owner": "agent-runtime",
       "semantics": "Idempotent terminal result ledger for Runtime retry and recovery.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/python_runtime/invocations.py"],
-      "readers": ["code:backend/app/python_runtime/invocations.py"],
+      "writers": [
+        "code:backend/app/python_runtime/invocations.py"
+      ],
+      "readers": [
+        "code:backend/app/python_runtime/invocations.py"
+      ],
       "lifecycle": "expiring idempotency ledger",
       "retention_policy": "runtime-retry-window",
       "audit_requirement": "store bounded terminal events without credentials",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["all Runtime implementations replace terminal replay semantics"]},
-      "evidence_refs": ["runtime:python-v1-invocation-protocol", "schema:145_contract_python_runtime_invocation_claim"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "all Runtime implementations replace terminal replay semantics"
+        ]
+      },
+      "evidence_refs": [
+        "runtime:python-v1-invocation-protocol",
+        "schema:145_contract_python_runtime_invocation_claim"
+      ]
     },
     {
       "id": "runtime.invocation_claim",
@@ -1108,13 +1561,26 @@
       "owner": "agent-runtime",
       "semantics": "Legacy pre-pool claim retained for inspection; no active Runtime reads or writes.",
       "classification": "operational_coordination_fact",
-      "writers": ["schema:145_contract_python_runtime_invocation_claim; retired by 147"],
-      "readers": ["maintenance:read-only historical inspection"],
+      "writers": [
+        "schema:145_contract_python_runtime_invocation_claim; retired by 147"
+      ],
+      "readers": [
+        "maintenance:read-only historical inspection"
+      ],
       "lifecycle": "retired from execution ownership; agent_runtime_invocation is authoritative",
       "retention_policy": "runtime-claim-window",
       "audit_requirement": "retain invocation identifiers and lease facts only",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["all Runtime implementations replace claim ownership semantics"]},
-      "evidence_refs": ["runtime:python-v1-invocation-protocol", "schema:145_contract_python_runtime_invocation_claim"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "all Runtime implementations replace claim ownership semantics"
+        ]
+      },
+      "evidence_refs": [
+        "runtime:python-v1-invocation-protocol",
+        "schema:145_contract_python_runtime_invocation_claim"
+      ]
     },
     {
       "id": "runtime.invocation_event",
@@ -1123,13 +1589,25 @@
       "owner": "agent-runtime",
       "semantics": "Bounded in-progress Runtime event replay fact.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/python_runtime/invocations.py"],
-      "readers": ["code:backend/app/python_runtime/invocations.py"],
+      "writers": [
+        "code:backend/app/python_runtime/invocations.py"
+      ],
+      "readers": [
+        "code:backend/app/python_runtime/invocations.py"
+      ],
       "lifecycle": "temporary replay stream tied to invocation claim",
       "retention_policy": "runtime-retry-window",
       "audit_requirement": "exclude secrets and private reasoning from events",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["all Runtime implementations replace event replay semantics"]},
-      "evidence_refs": ["runtime:python-v1-invocation-protocol"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "all Runtime implementations replace event replay semantics"
+        ]
+      },
+      "evidence_refs": [
+        "runtime:python-v1-invocation-protocol"
+      ]
     },
     {
       "id": "identity.ones_challenge",
@@ -1138,13 +1616,25 @@
       "owner": "identity-security",
       "semantics": "Short-lived security challenge proving an ONES external identity before binding.",
       "classification": "operational_coordination_fact",
-      "writers": ["code:backend/app/modules/identity/infrastructure/ones_identity_challenges.py"],
-      "readers": ["code:backend/app/modules/identity/infrastructure/ones_identity_challenges.py"],
+      "writers": [
+        "code:backend/app/modules/identity/infrastructure/ones_identity_challenges.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/identity/infrastructure/ones_identity_challenges.py"
+      ],
       "lifecycle": "pending to consumed or expired",
       "retention_policy": "identity-challenge-expiry-policy",
       "audit_requirement": "never expose challenge evidence, teams, or identity payloads in consolidation output",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["identity verification protocol replacement with equivalent replay protection"]},
-      "evidence_refs": ["identity:ones-verification-challenge"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "identity verification protocol replacement with equivalent replay protection"
+        ]
+      },
+      "evidence_refs": [
+        "identity:ones-verification-challenge"
+      ]
     },
     {
       "id": "publication.agent",
@@ -1154,13 +1644,26 @@
       "semantics": "Immutable published Agent configuration snapshot and provenance.",
       "classification": "immutable_snapshot",
       "source_contract": "One validated Agent draft revision frozen at publication with schema version and config hash.",
-      "writers": ["code:backend/app/modules/agent_config/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/agent_config/infrastructure/repository.py", "code:backend/app/modules/job/infrastructure/repositories.py"],
+      "writers": [
+        "code:backend/app/modules/agent_config/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/agent_config/infrastructure/repository.py",
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
       "lifecycle": "append-only publication history",
       "retention_policy": "immutable-publication-history",
       "audit_requirement": "retain publisher, revision, hash, and non-secret snapshot",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["historical execution replay replacement"]},
-      "evidence_refs": ["agent-model:Agent 草稿与发布快照分离"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "historical execution replay replacement"
+        ]
+      },
+      "evidence_refs": [
+        "agent-model:Agent 草稿与发布快照分离"
+      ]
     },
     {
       "id": "publication.business_application",
@@ -1170,13 +1673,26 @@
       "semantics": "Immutable published Business Application configuration and routing provenance.",
       "classification": "immutable_snapshot",
       "source_contract": "One validated Business Application revision frozen at publication with config hash.",
-      "writers": ["code:backend/app/modules/business_application/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/business_application/infrastructure/repository.py", "code:backend/app/modules/job/infrastructure/repositories.py"],
+      "writers": [
+        "code:backend/app/modules/business_application/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/business_application/infrastructure/repository.py",
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
       "lifecycle": "append-only publication history",
       "retention_policy": "immutable-publication-history",
       "audit_requirement": "retain publication provenance without secrets",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["historical application routing replay replacement"]},
-      "evidence_refs": ["business-application:不可变发布与历史归属"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "historical application routing replay replacement"
+        ]
+      },
+      "evidence_refs": [
+        "business-application:不可变发布与历史归属"
+      ]
     },
     {
       "id": "publication.webhook_trigger",
@@ -1186,13 +1702,26 @@
       "semantics": "Immutable published Webhook trigger mapping, auth references, and routing provenance.",
       "classification": "immutable_snapshot",
       "source_contract": "One validated trigger revision frozen at publication with schema version and config hash.",
-      "writers": ["code:backend/app/modules/webhook/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/webhook/infrastructure/repository.py", "code:backend/app/modules/webhook/application/dispatch_service.py"],
+      "writers": [
+        "code:backend/app/modules/webhook/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/webhook/infrastructure/repository.py",
+        "code:backend/app/modules/webhook/application/dispatch_service.py"
+      ],
       "lifecycle": "append-only publication history",
       "retention_policy": "immutable-publication-history",
       "audit_requirement": "secret references remain unresolved and raw payloads remain excluded",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["historical trigger replay replacement"]},
-      "evidence_refs": ["channel-conversation:管理员可以管理 Webhook Trigger 草稿和发布版本"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "historical trigger replay replacement"
+        ]
+      },
+      "evidence_refs": [
+        "channel-conversation:管理员可以管理 Webhook Trigger 草稿和发布版本"
+      ]
     },
     {
       "id": "audit.general",
@@ -1202,13 +1731,26 @@
       "semantics": "Canonical bounded audit history for governed runtime and management actions.",
       "classification": "immutable_snapshot",
       "source_contract": "Actor-attributed event captured at the governed action boundary with safe summaries.",
-      "writers": ["code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/authorization_center/application/service.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/repositories.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py",
+        "code:backend/app/modules/authorization_center/application/service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/repositories.py"
+      ],
       "lifecycle": "append-only audit history",
       "retention_policy": "platform-audit-retention",
       "audit_requirement": "never persist credentials, raw prompts, raw payloads, or private reasoning",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["approved audit-system replacement preserving retention"]},
-      "evidence_refs": ["platform-operations:Platform configuration changes are audited"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "approved audit-system replacement preserving retention"
+        ]
+      },
+      "evidence_refs": [
+        "platform-operations:Platform configuration changes are audited"
+      ]
     },
     {
       "id": "audit.identity_migration",
@@ -1218,13 +1760,25 @@
       "semantics": "Immutable identity migration and bootstrap audit history.",
       "classification": "immutable_snapshot",
       "source_contract": "Identity migration action captured with actor, bounded summary, and timestamp.",
-      "writers": ["code:backend/app/modules/identity/infrastructure/repository.py"],
-      "readers": ["code:backend/app/modules/identity/infrastructure/repository.py"],
+      "writers": [
+        "code:backend/app/modules/identity/infrastructure/repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/identity/infrastructure/repository.py"
+      ],
       "lifecycle": "append-only security audit",
       "retention_policy": "identity-audit-retention",
       "audit_requirement": "retain without credentials or raw external identity payloads",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["approved identity-audit replacement"]},
-      "evidence_refs": ["identity-access:identity migration audit"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "approved identity-audit replacement"
+        ]
+      },
+      "evidence_refs": [
+        "identity-access:identity migration audit"
+      ]
     },
     {
       "id": "audit.platform_config",
@@ -1234,13 +1788,25 @@
       "semantics": "Immutable platform configuration change audit history.",
       "classification": "immutable_snapshot",
       "source_contract": "Configuration mutation captured with actor, revision, and safe before/after summaries.",
-      "writers": ["code:backend/app/modules/platform_config/application/resource_maintenance.py"],
-      "readers": ["code:backend/app/modules/platform_config/application/resource_maintenance.py"],
+      "writers": [
+        "code:backend/app/modules/platform_config/application/resource_maintenance.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/platform_config/application/resource_maintenance.py"
+      ],
       "lifecycle": "append-only platform audit",
       "retention_policy": "platform-audit-retention",
       "audit_requirement": "secret values are excluded from summaries",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["approved platform-audit replacement"]},
-      "evidence_refs": ["platform-operations:Platform configuration changes are audited"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "approved platform-audit replacement"
+        ]
+      },
+      "evidence_refs": [
+        "platform-operations:Platform configuration changes are audited"
+      ]
     },
     {
       "id": "consolidation.checkpoint",
@@ -1249,13 +1815,27 @@
       "owner": "database-operations",
       "semantics": "Content-safe high-water and count evidence for bounded re-runnable schema consolidation backfills.",
       "classification": "one_time_migration_artifact",
-      "writers": ["code:backend/app/shared/schema_consolidation.py"],
-      "readers": ["code:backend/app/shared/schema_consolidation.py"],
+      "writers": [
+        "code:backend/app/shared/schema_consolidation.py"
+      ],
+      "readers": [
+        "code:backend/app/shared/schema_consolidation.py"
+      ],
       "lifecycle": "active only through consolidation backfill, observation, and contract verification",
       "retention_policy": "archive signed evidence before any later retirement",
       "audit_requirement": "store only phase, object, stable high-water ID, counts, timestamps, and digests",
-      "retirement": {"status": "blocked", "earliest_phase": "contract/drop", "gates": ["all target environments complete", "signed evidence archived", "zero active backfill readers and writers"]},
-      "evidence_refs": ["schema:102_schema_consolidation_checkpoint"]
+      "retirement": {
+        "status": "blocked",
+        "earliest_phase": "contract/drop",
+        "gates": [
+          "all target environments complete",
+          "signed evidence archived",
+          "zero active backfill readers and writers"
+        ]
+      },
+      "evidence_refs": [
+        "schema:102_schema_consolidation_checkpoint"
+      ]
     },
     {
       "id": "consolidation.contract_approval",
@@ -1265,13 +1845,26 @@
       "semantics": "Immutable content-safe approval gate for an existing database to execute the schema contract migration.",
       "classification": "immutable_snapshot",
       "source_contract": "Operator records exact head, target label, evidence and backup digests, observation gates, and cross-domain approvals in a separately authorized maintenance workflow.",
-      "writers": ["operator:separately-authorized-maintenance-workflow"],
-      "readers": ["code:backend/app/shared/migrations.py"],
+      "writers": [
+        "operator:separately-authorized-maintenance-workflow"
+      ],
+      "readers": [
+        "code:backend/app/shared/migrations.py"
+      ],
       "lifecycle": "append-only contract authorization evidence",
       "retention_policy": "migration-and-audit-history",
       "audit_requirement": "contains digests and gate booleans only, never paths, credentials, messages, or business payloads",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["migration governance replacement"]},
-      "evidence_refs": ["schema:102_schema_consolidation_checkpoint", "change:consolidate-schema-fact-sources-and-retire-legacy-tables"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "migration governance replacement"
+        ]
+      },
+      "evidence_refs": [
+        "schema:102_schema_consolidation_checkpoint",
+        "change:consolidate-schema-fact-sources-and-retire-legacy-tables"
+      ]
     },
     {
       "id": "cutover.job_dispatch_quarantine",
@@ -1281,13 +1874,34 @@
       "semantics": "One-time quarantine evidence for ambiguous legacy Job dispatch cutover records.",
       "classification": "one_time_migration_artifact",
       "canonical_source": "resolved job_dispatch_outbox disposition plus retained cutover audit evidence",
-      "writers": ["code:backend/app/modules/job/infrastructure/dispatch_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/dispatch_repository.py", "code:backend/app/modules/job/application/job_dispatch_cutover.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/dispatch_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/dispatch_repository.py",
+        "code:backend/app/modules/job/application/job_dispatch_cutover.py"
+      ],
       "lifecycle": "legacy cutover artifact; current retirement decision is blocked",
       "retention_policy": "retain until every environment completes disposition, audit export, and approved retention period",
       "audit_requirement": "export only stable IDs, disposition, and safe reason codes",
-      "retirement": {"status": "blocked", "earliest_phase": "contract/drop", "gates": ["all environment cutovers complete", "zero unresolved rows", "zero production readers", "zero production writers", "retention period complete", "audit export complete", "owner approvals", "verified backup and rollback"]},
-      "evidence_refs": ["change:consolidate-schema-fact-sources-and-retire-legacy-tables", "deployment-gated:all-target-environments"]
+      "retirement": {
+        "status": "blocked",
+        "earliest_phase": "contract/drop",
+        "gates": [
+          "all environment cutovers complete",
+          "zero unresolved rows",
+          "zero production readers",
+          "zero production writers",
+          "retention period complete",
+          "audit export complete",
+          "owner approvals",
+          "verified backup and rollback"
+        ]
+      },
+      "evidence_refs": [
+        "change:consolidate-schema-fact-sources-and-retire-legacy-tables",
+        "deployment-gated:all-target-environments"
+      ]
     },
     {
       "id": "audit.agent_tool_call",
@@ -1296,13 +1910,28 @@
       "owner": "job-runtime-audit",
       "semantics": "Canonical long-lived fact for one Runtime-observed logical Tool Use across MCP, SDK builtin, SDK custom, unknown, success, failure, and denial paths.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/mcp_audit/application.py", "code:backend/app/modules/job/infrastructure/run_audit_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/run_audit_repository.py", "code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "writers": [
+        "code:backend/app/modules/mcp_audit/application.py",
+        "code:backend/app/modules/job/infrastructure/run_audit_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/run_audit_repository.py",
+        "code:backend/app/modules/admin/infrastructure/read_repository.py"
+      ],
       "lifecycle": "STARTED to one terminal status, then retained with the Job after detailed MCP evidence expires",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "retain exact Runtime and MCP identifiers plus bounded safe summaries; never infer links by tool name or time window",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves Runtime Tool history and exact MCP linkage"]},
-      "evidence_refs": ["change:unify-mcp-operation-audit", "schema:105_expand_unified_mcp_operation_audit"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "replacement preserves Runtime Tool history and exact MCP linkage"
+        ]
+      },
+      "evidence_refs": [
+        "change:unify-mcp-operation-audit",
+        "schema:105_expand_unified_mcp_operation_audit"
+      ]
     },
     {
       "id": "audit.mcp_operation",
@@ -1311,13 +1940,26 @@
       "owner": "mcp-governance-audit",
       "semantics": "Detailed one-to-many execution evidence for an MCP Tool root and its authorization, resource, provider, and credential events.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/mcp_audit/application.py"],
-      "readers": ["code:backend/app/modules/identity/api/admin_controller.py"],
+      "writers": [
+        "code:backend/app/modules/mcp_audit/application.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/identity/api/admin_controller.py"
+      ],
       "lifecycle": "TOOL root STARTED before governed external access, followed by child evidence and terminal completion",
       "retention_policy": "MCP_OPERATION_AUDIT_RETENTION_DAYS",
       "audit_requirement": "bounded complete business JSON is allowed, while authentication material is structurally rejected on every path",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves exact mcp_call_id evidence and independent retention"]},
-      "evidence_refs": ["change:unify-mcp-operation-audit", "schema:105_expand_unified_mcp_operation_audit"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "replacement preserves exact mcp_call_id evidence and independent retention"
+        ]
+      },
+      "evidence_refs": [
+        "change:unify-mcp-operation-audit",
+        "schema:105_expand_unified_mcp_operation_audit"
+      ]
     },
     {
       "id": "audit.agent_job_execution_summary",
@@ -1326,13 +1968,27 @@
       "owner": "job-runtime-audit",
       "semantics": "Rebuildable one-to-one Job execution accounting and typed failure projection; never a replacement for agent_job lifecycle state.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/execution_audit_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/execution_audit_repository.py", "code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/execution_audit_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/execution_audit_repository.py",
+        "code:backend/app/modules/admin/infrastructure/read_repository.py"
+      ],
       "lifecycle": "rebuilt from unique Runtime invocation evidence and retained with the Job",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "contains numeric accounting, safe model identifiers, typed failure fields, and bounded summaries only; never Prompt, response, raw SDK message, private thinking, or credentials",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves deterministic Job accounting and typed failure evidence"]},
-      "evidence_refs": ["change:improve-agent-run-audit", "schema:106_expand_agent_run_audit"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "replacement preserves deterministic Job accounting and typed failure evidence"
+        ]
+      },
+      "evidence_refs": [
+        "change:improve-agent-run-audit",
+        "schema:106_expand_agent_run_audit"
+      ]
     },
     {
       "id": "audit.agent_model_call",
@@ -1341,13 +1997,27 @@
       "owner": "job-runtime-audit",
       "semantics": "Canonical safe projection of one SDK-observed model response turn with stable Runtime identity and nullable measurements.",
       "classification": "canonical_mutable_fact",
-      "writers": ["code:backend/app/modules/job/infrastructure/execution_audit_repository.py"],
-      "readers": ["code:backend/app/modules/job/infrastructure/execution_audit_repository.py", "code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/execution_audit_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/job/infrastructure/execution_audit_repository.py",
+        "code:backend/app/modules/admin/infrastructure/read_repository.py"
+      ],
       "lifecycle": "idempotently created from a validated model_call event and retained with the Job",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "stores safe request and message identifiers, bounded error metadata, Token counts, and SDK-observed duration only; content fields are structurally absent",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves stable model-turn identity and unknown-value semantics"]},
-      "evidence_refs": ["change:improve-agent-run-audit", "schema:106_expand_agent_run_audit"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "replacement preserves stable model-turn identity and unknown-value semantics"
+        ]
+      },
+      "evidence_refs": [
+        "change:improve-agent-run-audit",
+        "schema:106_expand_agent_run_audit"
+      ]
     },
     {
       "id": "audit.agent_run_context",
@@ -1357,13 +2027,26 @@
       "semantics": "Immutable complete Runtime invocation context and model-visible I/O snapshot, separate from searchable execution, Tool, MCP, and Delivery facts.",
       "classification": "immutable_snapshot",
       "source_contract": "Validated Runtime protocol 1.5 audit chunks reassembled and digest-verified for one immutable invocation.",
-      "writers": ["code:backend/app/modules/job/infrastructure/run_audit_repository.py"],
-      "readers": ["code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "writers": [
+        "code:backend/app/modules/job/infrastructure/run_audit_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/admin/infrastructure/read_repository.py"
+      ],
       "lifecycle": "created once per validated Runtime 1.5 invocation and retained with the Job",
       "retention_policy": "same-as-agent-job",
       "audit_requirement": "stores complete unredacted model-visible business content by explicit policy; Runtime credentials and authentication headers must not be proactively copied into the snapshot",
-      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves invocation identity, complete content, integrity digest, authorization, and historical readability"]},
-      "evidence_refs": ["change:add-agent-job-context-audit", "schema:124_expand_agent_job_context_audit"]
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "replacement preserves invocation identity, complete content, integrity digest, authorization, and historical readability"
+        ]
+      },
+      "evidence_refs": [
+        "change:add-agent-job-context-audit",
+        "schema:124_expand_agent_job_context_audit"
+      ]
     },
     {
       "id": "agent_runtime_invocation",
@@ -1420,6 +2103,360 @@
       },
       "evidence_refs": [
         "migration:147_expand_runtime_replica_pool"
+      ]
+    },
+    {
+      "id": "knowledge.code_binding",
+      "object_type": "table",
+      "table": "knowledge.code_binding",
+      "owner": "knowledge",
+      "semantics": "受管代码来源配置及开发快照指针",
+      "classification": "canonical_mutable_fact",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_svn_registration.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_collection_controller.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_operations.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ]
+    },
+    {
+      "id": "knowledge.code_source_snapshot",
+      "object_type": "table",
+      "table": "knowledge.code_source_snapshot",
+      "owner": "knowledge",
+      "semantics": "不可变来源清单及真实版本身份",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_baseline.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_svn_registration.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ],
+      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+    },
+    {
+      "id": "knowledge.code_source_file",
+      "object_type": "table",
+      "table": "knowledge.code_source_file",
+      "owner": "knowledge",
+      "semantics": "来源文件的受管表示位置；不保存源正文",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_baseline.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ],
+      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+    },
+    {
+      "id": "knowledge.code_commit",
+      "object_type": "table",
+      "table": "knowledge.code_commit",
+      "owner": "knowledge",
+      "semantics": "固定范围提交账本及未完成分析事实",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_collection_controller.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ]
+    },
+    {
+      "id": "knowledge.code_snapshot",
+      "object_type": "table",
+      "table": "knowledge.code_snapshot",
+      "owner": "knowledge",
+      "semantics": "知识成员版本与索引就绪证据",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ],
+      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+    },
+    {
+      "id": "knowledge.code_build",
+      "object_type": "table",
+      "table": "knowledge.code_build",
+      "owner": "knowledge",
+      "semantics": "固定目标构建及可恢复租约和阶段",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ]
+    },
+    {
+      "id": "knowledge.code_unit",
+      "object_type": "table",
+      "table": "knowledge.code_unit",
+      "owner": "knowledge",
+      "semantics": "有界提取单元与固定 Job 产物关联",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ]
+    },
+    {
+      "id": "knowledge.code_member",
+      "object_type": "table",
+      "table": "knowledge.code_member",
+      "owner": "knowledge",
+      "semantics": "快照指定的文档修订；历史读取唯一成员事实",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ],
+      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+    },
+    {
+      "id": "knowledge.code_relation",
+      "object_type": "table",
+      "table": "knowledge.code_relation",
+      "owner": "knowledge",
+      "semantics": "同快照业务关系及读取时点",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ],
+      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+    },
+    {
+      "id": "knowledge.code_dependency",
+      "object_type": "table",
+      "table": "knowledge.code_dependency",
+      "owner": "knowledge",
+      "semantics": "修订的源码路径和配置反向依赖",
+      "classification": "derived_projection",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ]
+    },
+    {
+      "id": "knowledge.code_history_check",
+      "object_type": "table",
+      "table": "knowledge.code_history_check",
+      "owner": "knowledge",
+      "semantics": "精确规则比较及完整提交区间证明",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_history_bridge.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_collection_controller.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
+      ],
+      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+    },
+    {
+      "id": "knowledge.code_demand",
+      "object_type": "table",
+      "table": "knowledge.code_demand",
+      "owner": "knowledge",
+      "semantics": "有界历史缓存需求，不授予调用者源码权限",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_history_bridge.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_collection_controller.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_operations.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:154_add_versioned_code_knowledge"
       ]
     }
   ]

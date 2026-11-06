@@ -48,7 +48,16 @@ def test_stable_keyset_every_authorized_base_once(directory_fixture, readable_fi
         assert set(page) == {"items", "has_more", "next_cursor"}
         assert len(page["items"]) <= 50
         for item in page["items"]:
-            assert set(item) == {"knowledge_base_id", "code", "name", "status"}
+            assert set(item) == {
+                "knowledge_base_id",
+                "code",
+                "name",
+                "status",
+                "source_kind",
+                "component_roles",
+            }
+            assert item["source_kind"] == "ones"
+            assert item["component_roles"] == []
             assert item["status"] == "AVAILABLE"
         ids.extend(item["knowledge_base_id"] for item in page["items"])
         if not page["has_more"]:

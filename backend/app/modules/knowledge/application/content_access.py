@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from app.modules.knowledge.application.ports import VectorRepository, QdrantPort
 from app.modules.knowledge.domain.governance import SourceItem
+from app.modules.knowledge.application.code_behavior import BehaviorStore
 
 
 class ContentRepository(Protocol):
@@ -29,6 +30,13 @@ class KnowledgeContent:
     records: ContentRepository
     vectors: VectorRepository
     qdrant: QdrantPort | None = None
+    code: "CodeContentRepository | None" = None
+
+
+class CodeContentRepository(BehaviorStore, Protocol):
+    def resolve(self, base_id: str, selector: dict[str, Any] | None) -> dict[str, Any]: ...
+    def snapshot(self, base_id: str, snapshot_id: str, *, ready: bool = True) -> dict[str, Any]: ...
+    def history_facts(self, base_id: str, lower: int, upper: int) -> dict[str, Any]: ...
 
 
 class ContentAccess(Protocol):

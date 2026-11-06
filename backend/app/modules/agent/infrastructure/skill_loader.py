@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 from typing import Any
 
 
@@ -12,6 +13,11 @@ class SkillLoader:
         "loki-log-analysis",
         "ones-query",
     )
+    MANAGED_SKILLS = DEFAULT_SKILLS + (
+        "extract-business-knowledge",
+        "code-business-query",
+    )
+    VERSIONED_SKILLS = frozenset({"extract-business-knowledge", "code-business-query"})
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or Path.cwd() / ".claude" / "skills"
@@ -25,9 +31,34 @@ class SkillLoader:
                 result[name] = path.read_text()
         return result
 
+    def freeze_versioned(self, names: tuple[str, ...]) -> dict[str, dict[str, str]]:
+        selected = tuple(name for name in names if name in self.VERSIONED_SKILLS)
+        content = self.load(selected)
+        if set(content) != set(selected) or any(not text.strip() for text in content.values()):
+            raise ValueError("Versioned skill is unavailable")
+        return {
+            name: {"content": text, "sha256": hashlib.sha256(text.encode()).hexdigest()}
+            for name, text in content.items()
+        }
+
+    def load_publication(self, snapshot: dict[str, Any]) -> dict[str, str]:
+        names = tuple(str(item) for item in snapshot.get("skills") or [])
+        result = self.load(tuple(name for name in names if name not in self.VERSIONED_SKILLS))
+        frozen = snapshot.get("versioned_skills") or {}
+        if set(frozen) != set(names) & self.VERSIONED_SKILLS:
+            raise ValueError("Versioned skill binding is invalid")
+        for name, binding in frozen.items():
+            content = binding.get("content")
+            if not isinstance(content, str) or hashlib.sha256(
+                content.encode()
+            ).hexdigest() != binding.get("sha256"):
+                raise ValueError("Versioned skill digest is invalid")
+            result[name] = content
+        return result
+
     def catalog(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
-        for name in self.DEFAULT_SKILLS:
+        for name in self.MANAGED_SKILLS:
             path = self.root / name / "SKILL.md"
             try:
                 content = path.read_text(encoding="utf-8")

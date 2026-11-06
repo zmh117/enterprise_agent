@@ -2,6 +2,7 @@ from app.modules.identity.application.principal_jwt import PrincipalTokenError
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.shared.exceptions import AppError, NonRetryableExecutionError
 from app.shared.io_deadline import IODeadlineExceeded
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 
 
 def failure(code: str) -> AppError:
@@ -29,6 +30,8 @@ def safe_failure(exc: Exception) -> AppError:
         return failure("knowledge_mcp_authentication_failed")
     if isinstance(exc, KnowledgeGovernanceError):
         return KnowledgeGovernanceError(exc.error_code)
+    if isinstance(exc, CodeKnowledgeError):
+        return KnowledgeGovernanceError(exc.code)
     if isinstance(exc, AppError) and exc.error_code in {
         "knowledge_mcp_authentication_failed",
         "knowledge_mcp_context_invalid",

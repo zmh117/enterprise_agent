@@ -21,6 +21,7 @@ from app.shared.principal_token_contract import MAX_PRINCIPAL_TOKEN_BYTES
 from app.modules.knowledge.application.storage_broker import STORAGE_PATH, StorageConnectionRequest
 from app.modules.knowledge.api.deadline import bounded_knowledge_request
 from app.modules.knowledge.application.principal import PRINCIPAL_REFRESH_PATH
+from app.shared.code_knowledge_tool_contracts import CODE_HISTORY_PATH
 
 
 def _bearer(request: Request, name: str) -> str:
@@ -41,14 +42,21 @@ def build_knowledge_readability_router() -> APIRouter:
     @router.post(BRIDGE_PATH)
     @router.post(STORAGE_PATH)
     @router.post(PRINCIPAL_REFRESH_PATH)
+    @router.post(CODE_HISTORY_PATH)
     @bounded_knowledge_request
     async def check_readability(request: Request) -> JSONResponse:
         runtime = request.app.state.container
-        storage_request = request.url.path == STORAGE_PATH
-        refresh_request = request.url.path == PRINCIPAL_REFRESH_PATH
+        storage_request, refresh_request, code_request = (
+            request.url.path == path
+            for path in (STORAGE_PATH, PRINCIPAL_REFRESH_PATH, CODE_HISTORY_PATH)
+        )
         bridge = getattr(
             runtime,
-            "knowledge_storage_broker" if storage_request else "knowledge_readability_bridge",
+            "code_history_bridge"
+            if code_request
+            else "knowledge_storage_broker"
+            if storage_request
+            else "knowledge_readability_bridge",
             None,
         )
         code, status = "knowledge_bridge_unavailable", 503
@@ -96,7 +104,7 @@ def build_knowledge_readability_router() -> APIRouter:
                     )
                 else:
                     parser = StorageConnectionRequest if storage_request else ReadabilityRequest
-                    body = parser.parse(value)
+                    body = value if code_request else parser.parse(value)
                     status, code = 503, "knowledge_readability_failed"
                     result = await run_in_threadpool(
                         bridge.check,

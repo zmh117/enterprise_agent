@@ -301,6 +301,8 @@ def create_app(  # noqa: PLR0915
     from app.modules.knowledge.api.controller import build_knowledge_router
     from app.modules.knowledge.api.operations_controller import build_knowledge_operations_router
     from app.modules.knowledge.api.readability_controller import build_knowledge_readability_router
+    from app.modules.knowledge.api.code_runtime_controller import build_code_runtime_router
+    from app.modules.knowledge.api.code_operations_controller import build_code_operations_router
     from app.modules.workflow.api import build_workflow_router
     from app.modules.webhook.api import (
         build_public_webhook_router,
@@ -317,6 +319,7 @@ def create_app(  # noqa: PLR0915
     app.include_router(build_service_principal_router())
     app.include_router(build_file_principal_refresh_router())
     app.include_router(build_knowledge_readability_router())
+    app.include_router(build_code_runtime_router())
 
     management_surface_enabled = settings.feature_configuration.web_admin_enabled
     if management_surface_enabled:
@@ -324,6 +327,7 @@ def create_app(  # noqa: PLR0915
         app.include_router(build_platform_config_router())
         app.include_router(build_knowledge_router())
         app.include_router(build_knowledge_operations_router())
+        app.include_router(build_code_operations_router())
         app.include_router(build_workflow_router())
         app.include_router(build_business_application_router())
         app.include_router(build_authorization_center_router())

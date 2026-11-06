@@ -69,6 +69,8 @@ from .executor import (
     PYTHON_RUNTIME_VERSION,
     PythonRuntimeExecutor,
 )
+from .code_extraction import CodeExtractionSandboxes, CodeGrantClient
+from app.shared.service_identity_client import ServicePrincipalTokenClient
 
 
 @dataclass
@@ -556,6 +558,28 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         sandbox_root,
         limits=_sandbox_limits_from_environment(),
     )
+    code_sandbox_factory = None
+    if settings.service_principal.code_runtime_bootstrap_token_file:
+        source_root = Path(os.environ["CODE_SOURCE_SNAPSHOT_ROOT"])
+        artifact_root = Path(os.environ["CODE_EXTRACTION_ARTIFACT_ROOT"])
+        grant_client = CodeGrantClient(
+            ServicePrincipalTokenClient(
+                base_url="http://api-server:8000",
+                allowed_hosts=("api-server",),
+                bootstrap_credential_file=settings.service_principal.code_runtime_bootstrap_token_file,
+            )
+        )
+
+        def make_code_sandbox(request: dict[str, Any]) -> JobSandboxManager:
+            return CodeExtractionSandboxes(
+                sandbox_manager,
+                request,
+                source_root=source_root,
+                artifact_root=artifact_root,
+                grants=grant_client,
+            )
+
+        code_sandbox_factory = make_code_sandbox
     executor = PythonRuntimeExecutor(
         binding_resolver,
         limits=settings.execution,
@@ -589,6 +613,7 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         ),
         fake_provider_mode=_fake_provider_mode(settings.environment),
         sandbox_manager=sandbox_manager,
+        code_sandbox_factory=code_sandbox_factory,
         build_identity=build_identity_from_environment("python-runtime"),
     )
     ledger = PythonTerminalLedger(

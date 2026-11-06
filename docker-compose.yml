@@ -456,6 +456,9 @@ services:
       args: *release-build-args
     restart: unless-stopped
     read_only: true
+    volumes:
+      - ${CODE_SOURCE_SNAPSHOT_HOST_ROOT:-./.local/code-knowledge/sources}:/var/lib/code-knowledge/sources:ro
+      - code-extraction-artifacts:/var/lib/code-knowledge/artifacts
     tmpfs:
       - /tmp/python-agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-1g},mode=0700,uid=10002,gid=10002
     cap_drop: ["ALL"]
@@ -478,6 +481,8 @@ services:
       FILE_PRINCIPAL_REFRESH_TIMEOUT_SECONDS: "5"
       FILE_PRINCIPAL_REFRESH_SKEW_SECONDS: "60"
       PYTHON_AGENT_RUNTIME_SANDBOX_ROOT: /tmp/python-agent-runtime/sandboxes
+      CODE_SOURCE_SNAPSHOT_ROOT: /var/lib/code-knowledge/sources
+      CODE_EXTRACTION_ARTIFACT_ROOT: /var/lib/code-knowledge/artifacts
       PYTHON_AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES: ${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-536870912}
       PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILES: ${AGENT_RUNTIME_SANDBOX_MAX_FILES:-128}
       PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES: ${AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES:-15728640}
@@ -672,8 +677,14 @@ services:
       dockerfile: backend/Dockerfile
       target: agent-worker
     command: ["python", "-m", "app.workers.job_dispatch_worker"]
+    volumes:
+      - ${CODE_SOURCE_SNAPSHOT_HOST_ROOT:-./.local/code-knowledge/sources}:/var/lib/code-knowledge/sources:ro
+      - code-extraction-artifacts:/var/lib/code-knowledge/artifacts:ro
     environment:
       <<: *worker-env
+      CODE_SOURCE_SNAPSHOT_ROOT: /var/lib/code-knowledge/sources
+      CODE_EXTRACTION_ARTIFACT_ROOT: /var/lib/code-knowledge/artifacts
+      CODE_KNOWLEDGE_WORKER_ENABLED: "false"
     secrets:
       - app_config_master_key
     depends_on:
@@ -1502,6 +1513,7 @@ secrets:
     file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/model-probe-auth-token}
 
 volumes:
+  code-extraction-artifacts:
   knowledge-models:
     external: true
     name: ${KNOWLEDGE_MODEL_VOLUME:-${COMPOSE_PROJECT_NAME}_knowledge-models}

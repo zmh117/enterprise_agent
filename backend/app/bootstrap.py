@@ -139,6 +139,10 @@ from app.modules.knowledge.infrastructure.readability_bridge import PlatformOnes
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalTokenVerifier
 from app.modules.identity.application.service_principal import KnowledgeServicePrincipalVerifier
+from app.modules.identity.application.service_principal import CodeRuntimeServicePrincipalVerifier
+from app.modules.knowledge.infrastructure.code_source_grant import CodeSourceGrant
+from app.modules.knowledge.infrastructure.code_history_bridge import CodeHistoryBridge
+from app.modules.knowledge.infrastructure.reader_access import KnowledgePrincipalAccess
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
@@ -267,8 +271,11 @@ class Container:
     external_action_service: ExternalActionService | None
     service_principal_token_issuer: ServicePrincipalTokenIssuer | None = None
     knowledge_readability_bridge: KnowledgeReadabilityBridge | None = None
+    code_source_grant: CodeSourceGrant | None = None
+    code_runtime_verifier: CodeRuntimeServicePrincipalVerifier | None = None
     knowledge_services: KnowledgeServices | None = None
     knowledge_storage_broker: KnowledgeStorageBroker | None = None
+    code_history_bridge: CodeHistoryBridge | None = None
 
 
 ContainerFactory = Callable[[Settings], Container]
@@ -794,12 +801,25 @@ def _build_container(  # noqa: C901, PLR0915
                 settings.service_principal.delivery_worker_bootstrap_token_file
             ),
             knowledge_bootstrap_file=settings.service_principal.knowledge_bootstrap_token_file,
+            code_runtime_bootstrap_file=settings.service_principal.code_runtime_bootstrap_token_file,
             audit_service=audit_service,
             environment=settings.environment,
             ttl_seconds=settings.service_principal.ttl_seconds,
         )
     knowledge_readability_bridge: KnowledgeReadabilityBridge | None = None
     knowledge_storage_broker: KnowledgeStorageBroker | None = None
+    code_history_bridge: CodeHistoryBridge | None = None
+    code_source_grant = CodeSourceGrant(database, business_authorization_service)
+    code_runtime_verifier = None
+    if (
+        service_name == "api-server"
+        and settings.service_principal.code_runtime_bootstrap_token_file
+    ):
+        if service_principal_token_issuer is None:
+            raise ValueError("Code Runtime requires platform service identity")
+        code_runtime_verifier = CodeRuntimeServicePrincipalVerifier(
+            PrincipalJwks.from_dict(service_principal_token_issuer.signing_key.public_jwks())
+        )
 
     def resolve_knowledge_secret(reference: str) -> str:
         return EncryptedDbSecretProvider(
@@ -826,6 +846,18 @@ def _build_container(  # noqa: C901, PLR0915
                     database, mcp_tool_snapshot_service, business_authorization_service
                 ),
                 instance_code=settings.ones_identity.instance_code,
+            ),
+            knowledge_resource_reader,
+            audit_service,
+        )
+        code_history_bridge = CodeHistoryBridge(
+            database,
+            knowledge_readability_bridge.gateway,
+            KnowledgePrincipalAccess(
+                PrincipalTokenVerifier(public_keys, expected_audience="knowledge-mcp"),
+                KnowledgeJobGate(
+                    database, mcp_tool_snapshot_service, business_authorization_service
+                ),
             ),
             knowledge_resource_reader,
             audit_service,
@@ -1205,6 +1237,7 @@ def _build_container(  # noqa: C901, PLR0915
             ),
             agent_config_service=agent_config_service,
             file_manifest_service=file_manifest_service,
+            code_source_grant=code_source_grant.for_job,
             knowledge_job_check=KnowledgeJobGate(
                 database, mcp_tool_snapshot_service, business_authorization_service
             ).check_before_model,
@@ -1250,7 +1283,10 @@ def _build_container(  # noqa: C901, PLR0915
         principal_token_issuer=principal_token_issuer,
         service_principal_token_issuer=service_principal_token_issuer,
         knowledge_readability_bridge=knowledge_readability_bridge,
+        code_source_grant=code_source_grant,
+        code_runtime_verifier=code_runtime_verifier,
         knowledge_storage_broker=knowledge_storage_broker,
+        code_history_bridge=code_history_bridge,
         knowledge_services=KnowledgeServices(
             database,
             permission_service,

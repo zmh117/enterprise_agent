@@ -9,6 +9,24 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_code_build_dispatcher_can_reach_runtime_and_indexing_services() -> None:
+    base = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    overlay = yaml.safe_load(
+        (ROOT / "docker-compose.code-knowledge.yml").read_text(encoding="utf-8")
+    )
+    dispatcher = overlay["services"]["job-dispatch-worker"]
+    reachable = set(dispatcher["networks"])
+    assert dispatcher["environment"]["CODE_KNOWLEDGE_WORKER_ENABLED"] == "true"
+    assert reachable <= {"default", *base["networks"]}
+    for service in (
+        "python-agent-runtime-a",
+        "python-agent-runtime-b",
+        "knowledge-qdrant",
+        "knowledge-embedding",
+    ):
+        assert reachable & set(base["services"][service].get("networks", ["default"]))
+
+
 class _ComposeLoader(yaml.SafeLoader):
     pass
 

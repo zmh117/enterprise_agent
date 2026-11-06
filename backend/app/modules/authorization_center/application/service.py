@@ -15,10 +15,10 @@ from app.modules.identity.application.authorization import AuthorizationEvaluato
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
+from app.modules.knowledge.domain.tool_policy import KNOWLEDGE_TOOL_IDS as _KNOWLEDGE_TOOLS
 
 
 _ROLE_CODE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
-_KNOWLEDGE_TOOLS = frozenset({"knowledge_list_bases", "knowledge_search"})
 _ROLE_AUDIT_LABELS = {
     "authorization.role.created": "创建角色",
     "authorization.role.metadata.updated": "更新基本信息",
