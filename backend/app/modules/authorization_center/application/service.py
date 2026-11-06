@@ -456,6 +456,56 @@ class AuthorizationCenterService:
                 )
         return self.effective_summary(user_id)
 
+    def service_role_catalog(self, *, actor_id: str) -> list[dict[str, Any]]:
+        roles = self.repository.database.execute(
+            "select * from rbac_role where status = 'enabled' order by name, id"
+        )
+        result = []
+        for role in roles:
+            if self._role_has_admin_capabilities(role):
+                continue
+            try:
+                self._require_role_assignment(actor_id, str(role["id"]))
+            except PermissionDenied:
+                continue
+            result.append(self._safe_role_summary(role))
+        return result
+
+    def validate_service_roles(self, *, actor_id: str, role_ids: list[str]) -> None:
+        for role_id in role_ids:
+            role = self.repository.get_role(role_id)
+            self._require_role_assignment(actor_id, role_id)
+            if role["status"] != "enabled" or self._role_has_admin_capabilities(role):
+                self._field_error("role_ids", "请选择启用且不含后台管理权限的业务角色")
+
+    def replace_service_roles(self, *, actor_id: str, user_id: str, role_ids: list[str]) -> None:
+        user = self.identity_repository.get_user(user_id)
+        if user["account_type"] != "service":
+            self._field_error("role_ids", "Webhook 必须使用专用机器身份")
+        current = {
+            str(row["id"])
+            for row in self.identity_repository.list_user_roles(user_id)
+            if row["membership_status"] == "enabled"
+        }
+        selected = set(role_ids)
+        changes = []
+        for role_id in sorted(current | selected):
+            role = self.repository.get_role(role_id)
+            self._require_role_assignment(actor_id, role_id)
+            if role_id in selected and (
+                role["status"] != "enabled" or self._role_has_admin_capabilities(role)
+            ):
+                self._field_error("role_ids", "请选择启用且不含后台管理权限的业务角色")
+            if (role_id in current) != (role_id in selected):
+                changes.append(
+                    {
+                        "role_id": role_id,
+                        "enabled": role_id in selected,
+                        "expected_role_revision": role["membership_revision"],
+                    }
+                )
+        self.update_user_roles(actor_id=actor_id, user_id=user_id, changes=changes, confirmed=False)
+
     def effective_summary(self, user_id: str) -> dict[str, Any]:
         role_rows = self.repository.active_role_rows_for_user(user_id)
         business: dict[str, dict[str, Any]] = {}

@@ -7,7 +7,6 @@ import pytest
 
 from app.modules.webhook.application import TriggerValidator, WebhookMapper, WebhookTriggerService
 from app.modules.webhook.infrastructure import WebhookTriggerRepository
-from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 from backend.tests.helpers import container
 
@@ -86,6 +85,16 @@ def _service(monkeypatch: pytest.MonkeyPatch) -> tuple[object, WebhookTriggerSer
         on conflict(publication_id, direction, connector_id) do nothing
         """
     )
+    role = c.authorization_center_service.create_role(
+        actor_id=ADMIN_ID,
+        code="webhook-synthetic",
+        name="Synthetic business role",
+        description="",
+        purpose_tags=[],
+    )
+    c.database.execute(
+        "update rbac_role set id='role_webhook_synthetic' where id=?", (role["role"]["id"],)
+    )
     repository = WebhookTriggerRepository(c.database)
     validator = TriggerValidator(
         repository=repository,
@@ -100,45 +109,24 @@ def _service(monkeypatch: pytest.MonkeyPatch) -> tuple[object, WebhookTriggerSer
         audit_service=c.audit_service,
         validator=validator,
         mapper=WebhookMapper(),
+        role_service=c.authorization_center_service,
     )
     return c, service
 
 
 def _config() -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "adapter": "grafana_alertmanager_v1",
         "authentication": {
             "type": "bearer_v1",
             "secret_ref": "secret://platform/grafana_orders_webhook_token",
         },
-        "mapping": {
-            "variables": {"summary": "/commonAnnotations/summary"},
-            "message_template": "Diagnose this firing alert: {summary}",
-            "filters": [],
-        },
-        "routing": {
-            "project_code": {"mode": "fixed", "value": "default"},
-            "environment": {"mode": "fixed", "value": "prod"},
-            "base": {"mode": "fixed", "value": "guanlan"},
-            "workshop": {"mode": "fixed", "value": "assembly"},
-            "service": {"mode": "fixed", "value": "order-service"},
-        },
-        "agent": {
-            "code": "default-diagnostic-agent",
-            "publication_id": "agent_publication_default_v1",
-        },
-        "delivery": {
-            "type": "dingtalk_enterprise_robot",
-            "connector_id": "connector-dingtalk-enterprise-default",
-            "target": {"open_conversation_id": "test-alert-group"},
-        },
-        "idempotency": {"cooldown_seconds": 300},
-        "limits": {"requests_per_minute": 60, "max_in_flight": 10, "max_alerts": 20},
+        "role_ids": ["role_webhook_synthetic"],
     }
 
 
-def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
+def test_trigger_lifecycle_assigns_roles_without_agent_or_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     c, service = _service(monkeypatch)
@@ -173,11 +161,7 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
         revision_id=str(draft["id"]),
     )
     assert validated["validation"]["valid"] is True
-    assert validated["validation"]["effective_read_only_tools"] == sorted(
-        identifier
-        for identifier, definition in MCP_TOOL_MANIFEST.items()
-        if definition.server_code == "tool-mcp"
-    )
+    assert validated["validation"]["role_ids"] == ["role_webhook_synthetic"]
 
     before_events = c.agent_repository.count_rows("webhook_event")
     preview = service.preview(
@@ -193,7 +177,7 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
     )
     assert preview["side_effects"] is False
     assert preview["dedup_key"] == "grafana:orders-prod:firing"
-    assert preview["routing"]["base"] == "guanlan"
+    assert preview["routing"] == {}
     assert "Order API" in preview["message"]
     assert c.agent_repository.count_rows("webhook_event") == before_events
 
@@ -202,8 +186,11 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
         code="grafana-orders",
         revision_id=str(draft["id"]),
     )
-    assert publication["agent_publication_id"] == "agent_publication_default_v1"
-    assert publication["agent_config_hash"]
+    assert "agent" not in publication["snapshot"]
+    assert "delivery" not in publication["snapshot"]
+    assert c.identity_repository.role_codes_for_user(service_account["id"]) == (
+        "webhook-synthetic",
+    )
     assert publication["snapshot"]["service_account_id"] == service_account["id"]
     assert "secret_ref" in json.dumps(publication["snapshot"])
     assert "orders-webhook-token-0123456789abcdefABCDEF" not in json.dumps(publication["snapshot"])
@@ -338,35 +325,17 @@ def test_trigger_rejects_secret_values_scripts_and_unbounded_routing(
         )
     assert secret_error.value.error_code == "validation_failed"
 
-    generic = _config()
-    generic["adapter"] = "generic_json_v1"
-    generic["mapping"] = {
-        "variables": {"message": "/message"},
-        "message_template": "{message}",
-        "event_id_pointer": "/event_id",
-        "filters": [{"pointer": "/status", "operator": "javascript", "value": "open"}],
-    }
-    generic["routing"]["base"] = {
-        "mode": "extract",
-        "pointer": "/base",
-        "allowed_values": [],
-    }
-    created = service.create(
-        actor_id=ADMIN_ID,
-        code="bad-mapping",
-        name="Bad Mapping",
-        trigger_type="generic",
-        connector_id="connector-grafana-default",
-        config=generic,
-    )
-    validated = service.validate_revision(
-        actor_id=ADMIN_ID,
-        code="bad-mapping",
-        revision_id=str(created["draft"]["id"]),
-    )
-    fields = {error["field"] for error in validated["validation"]["errors"]}
-    assert "mapping.filters.0.operator" in fields
-    assert "routing.base.allowed_values" in fields
+    for field in ("mapping", "routing", "delivery", "agent", "limits"):
+        generic = {**_config(), field: {}}
+        with pytest.raises(NonRetryableExecutionError):
+            service.create(
+                actor_id=ADMIN_ID,
+                code="bad-mapping",
+                name="Bad mapping",
+                trigger_type="grafana",
+                connector_id="connector-grafana-default",
+                config=generic,
+            )
 
 
 def test_webhook_management_requires_independent_rbac_action(
@@ -378,3 +347,36 @@ def test_webhook_management_requires_independent_rbac_action(
     )
     with pytest.raises(PermissionDenied):
         service.list(actor_id=str(viewer["id"]))
+
+
+def test_roles_are_delegable_non_admin_and_replaced_atomically(monkeypatch):
+    c, service = _service(monkeypatch)
+    catalog = c.authorization_center_service.service_role_catalog(actor_id=ADMIN_ID)
+    assert {row["id"] for row in catalog} == {"role_webhook_synthetic"}
+    created = service.create(
+        actor_id=ADMIN_ID,
+        code="role-webhook",
+        name="Role test",
+        trigger_type="grafana",
+        connector_id="connector-grafana-default",
+        config=_config(),
+    )
+    definition, revision = created["definition"], created["draft"]
+    service.publish(actor_id=ADMIN_ID, code="role-webhook", revision_id=revision["id"])
+    user_id = definition["service_account_id"]
+    role_service = c.authorization_center_service
+    with pytest.raises(NonRetryableExecutionError):
+        role_service.replace_service_roles(
+            actor_id=ADMIN_ID, user_id=user_id, role_ids=["role_platform_admin"]
+        )
+    assert c.identity_repository.role_codes_for_user(user_id) == ("webhook-synthetic",)
+    viewer = c.identity_repository.create_user(
+        username="non-delegating-editor", display_name="Synthetic editor"
+    )
+    assert role_service.service_role_catalog(actor_id=viewer["id"]) == []
+    with pytest.raises(PermissionDenied):
+        role_service.replace_service_roles(
+            actor_id=viewer["id"], user_id=user_id, role_ids=["role_webhook_synthetic"]
+        )
+    role_service.replace_service_roles(actor_id=ADMIN_ID, user_id=user_id, role_ids=[])
+    assert c.identity_repository.role_codes_for_user(user_id) == ()

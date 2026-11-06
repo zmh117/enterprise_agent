@@ -112,9 +112,8 @@ export const revisionSchema = documentProcessingStateSchema
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
       .default("WEEK"),
-    document_processing_profile_code: documentProcessingProfileCodeSchema.default(
-      "NONE"
-    ),
+    document_processing_profile_code:
+      documentProcessingProfileCodeSchema.default("NONE"),
     task_file_features: taskFileFeaturesSchema.default({
       workspace_enabled: false,
       file_mcp_enabled: false,
@@ -151,9 +150,8 @@ export const publicationSchema = runtimeStateSchema
     task_workspace_retention_source: z
       .literal("publication_snapshot")
       .default("publication_snapshot"),
-    document_processing_profile_code: documentProcessingProfileCodeSchema.default(
-      "NONE"
-    ),
+    document_processing_profile_code:
+      documentProcessingProfileCodeSchema.default("NONE"),
     document_processing_profile_version: z.string().default(""),
     document_processing_profile_hash: z.string().default(""),
     document_processing_profile_source: z
@@ -201,9 +199,8 @@ export const applicationSummarySchema = runtimeStateSchema
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
       .default("WEEK"),
-    document_processing_profile_code: documentProcessingProfileCodeSchema.default(
-      "NONE"
-    ),
+    document_processing_profile_code:
+      documentProcessingProfileCodeSchema.default("NONE"),
   })
   .passthrough()
 
@@ -233,9 +230,7 @@ export type SaveDraftInput = {
   agent_publication_id: string
   workflow_publication_id: string
   task_workspace_retention_period: "DAY" | "WEEK" | "MONTH"
-  document_processing_profile_code:
-    | "NONE"
-    | "docling-layout-ocr-v2"
+  document_processing_profile_code: "NONE" | "docling-layout-ocr-v2"
   task_file_features: {
     workspace_enabled: boolean
     file_mcp_enabled: boolean
@@ -273,12 +268,12 @@ export type SaveDraftInput = {
       | "dingtalk_private"
       | "dingtalk_group"
       | "webhook_callback"
-      | "webhook_result"
     connector_id: string
     enabled: boolean
     config: {
       target_reference: string
       reply_mode: string
+      target_user_ids?: string[]
     }
   }>
   mcp_tools: string[]

@@ -36,6 +36,9 @@ def _container(*, webhook_result=False):
         migrate=True,
         seed=True,
     )
+    from backend.tests.support.webhooks import prepare_test_webhook
+
+    prepare_test_webhook(runtime)
     trigger = runtime.database.execute_one(
         """
         select d.id, d.service_account_id
@@ -60,11 +63,11 @@ def _container(*, webhook_result=False):
         service_account_user_id=str(trigger["service_account_id"]),
         ingress_connector_id="connector-grafana-default",
         delivery_connector_id=(
-            "connector-grafana-default"
+            "connector-dingtalk-stream-default"
             if webhook_result
             else "connector-dingtalk-enterprise-default"
         ),
-        delivery_type="webhook_result" if webhook_result else "dingtalk_group",
+        delivery_type="dingtalk_private" if webhook_result else "dingtalk_group",
         delivery_target_reference="" if webhook_result else "test-alert-group",
         capabilities=capabilities,
     )
@@ -107,20 +110,16 @@ def _receive(
     )
 
 
-def test_default_webhook_seed_pins_current_default_agent_publication() -> None:
+def test_webhook_snapshot_does_not_own_agent_or_delivery() -> None:
     c = _container()
-    webhook_publication = c.webhook_trigger_repository.get_publication(
+    snapshot = c.webhook_trigger_repository.get_publication(
         "webhook_trigger_publication_grafana_v1"
-    )
-    agent_publication = c.agent_config_service.publication("agent_publication_default_v1")
-    pinned_agent = webhook_publication["snapshot"]["agent"]
-
-    assert webhook_publication["agent_publication_id"] == agent_publication["id"]
-    assert webhook_publication["agent_revision"] == agent_publication["revision"]
-    assert webhook_publication["agent_config_hash"] == agent_publication["config_hash"]
-    assert pinned_agent["publication_id"] == agent_publication["id"]
-    assert pinned_agent["revision"] == agent_publication["revision"]
-    assert pinned_agent["config_hash"] == agent_publication["config_hash"]
+    )["snapshot"]
+    assert "agent" not in snapshot and "delivery" not in snapshot
+    received = _receive(c, _firing())
+    event = c.webhook_event_repository.get(received.event_id)
+    assert event["agent_publication_id"] == "agent_publication_default_v1"
+    assert event["application_publication_id"]
 
 
 def test_firing_is_persisted_then_dispatches_one_pinned_agent_job() -> None:
@@ -131,12 +130,7 @@ def test_firing_is_persisted_then_dispatches_one_pinned_agent_job() -> None:
     assert len(c.message_bus.webhook_events) == 0
     event = c.webhook_event_repository.get(acknowledgement.event_id)
     assert event["job_id"] is None
-    assert event["normalized_event"]["delivery"] == {
-        "connector_id": "connector-dingtalk-webhook-default",
-        "options": {},
-        "target": {"webhook_id": "grafana-alert"},
-        "type": "dingtalk_webhook_robot",
-    }
+    assert event["normalized_event"]["delivery"] == {"type": "none"}
     assert "attacker.invalid" not in json.dumps(event["normalized_event"])
     assert "run_shell" not in json.dumps(event["normalized_event"])
 
@@ -177,7 +171,7 @@ def test_dispatch_fails_closed_when_pinned_agent_hash_does_not_match() -> None:
         "webhook_trigger_publication_grafana_v1"
     )
     snapshot = publication["snapshot"]
-    snapshot["agent"]["config_hash"] = "0" * 64
+    snapshot["role_ids"] = ["tampered"]
     c.database.execute(
         "update webhook_trigger_publication set snapshot_json = ? where id = ?",
         (json.dumps(snapshot, sort_keys=True), publication["id"]),
@@ -188,7 +182,7 @@ def test_dispatch_fails_closed_when_pinned_agent_hash_does_not_match() -> None:
 
     event = c.webhook_event_repository.get(acknowledgement.event_id)
     assert event["status"] == "DISPATCH_FAILED"
-    assert event["error_summary"] == "Webhook Agent 配置完整性校验失败"
+    assert event["error_summary"] == "Webhook 发布配置已失效"
     assert event["job_id"] is None
     assert c.agent_repository.count_rows("agent_job") == 0
 
@@ -265,10 +259,6 @@ def test_non_bearer_authentication_is_rejected_without_nonce_state() -> None:
         for key, value in snapshot.items()
         if key not in {"service_account_id", "source_connector_id"}
     }
-    revision_config["agent"] = {
-        "code": snapshot["agent"]["code"],
-        "publication_id": snapshot["agent"]["publication_id"],
-    }
     c.database.execute(
         """
         update webhook_trigger_publication
@@ -286,3 +276,54 @@ def test_non_bearer_authentication_is_rejected_without_nonce_state() -> None:
         )
     assert denied.value.error_code == "webhook_auth_failed"
     assert c.agent_repository.count_rows("webhook_replay_nonce") == 0
+
+
+def test_dispatch_rejects_application_version_changed_after_acceptance():
+    from backend.tests.test_webhook_result_recipients import _publish_private, robot
+
+    c = _container()
+    accepted = _receive(c, _firing("pinned-before-change"))
+    _publish_private(c, robot(c), [])
+    c.webhook_outbox_publisher.publish_pending()
+    c.message_bus.consume_webhook_events(c.webhook_dispatcher.handle)
+    event = c.webhook_event_repository.get(accepted.event_id)
+    assert event["status"] == "DISPATCH_FAILED"
+    assert event["error_summary"] == "事件接收后应用发布版本已变更，请重新触发"
+    assert c.agent_repository.count_rows("agent_job") == 0
+
+
+def test_unbound_webhook_cannot_be_saved_by_forging_application_request():
+    from app.shared.exceptions import NonRetryableExecutionError
+
+    c = _container()
+    c.database.execute(
+        "delete from agent_channel_binding where direction='ingress' and connector_id='connector-grafana-default'"
+    )
+    service = c.business_application_service
+    detail = service.detail(actor_id="user_local_admin", code="grafana-strict-runtime")
+    payload = dict(detail["draft"])
+    payload["mcp_tools"] = []
+    payload["triggers"] = [
+        {"trigger_type": "webhook", "connector_id": "connector-grafana-default", "enabled": True}
+    ]
+    payload["deliveries"] = []
+    with pytest.raises(NonRetryableExecutionError) as failure:
+        service.save_draft(
+            actor_id="user_local_admin",
+            code="grafana-strict-runtime",
+            expected_revision=detail["revision"],
+            payload=payload,
+        )
+    assert "入口 Connector" in failure.value.safe_message
+
+
+def test_revoke_role_access_before_dispatch_creates_no_job():
+    c = _container()
+    accepted = _receive(c, _firing("roles-revoked"))
+    c.database.execute(
+        "update rbac_user_role set status='disabled' where user_id='user_webhook_grafana_default'"
+    )
+    c.webhook_outbox_publisher.publish_pending()
+    c.message_bus.consume_webhook_events(c.webhook_dispatcher.handle)
+    assert c.webhook_event_repository.get(accepted.event_id)["status"] == "DISPATCH_FAILED"
+    assert c.agent_repository.count_rows("agent_job") == 0

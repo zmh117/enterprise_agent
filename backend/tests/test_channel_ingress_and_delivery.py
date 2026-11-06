@@ -84,6 +84,9 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
 
         def factory(_: Any):
             c = build_test_container(settings, migrate=True, seed=True)
+            from backend.tests.support.webhooks import prepare_test_webhook
+
+            prepare_test_webhook(c)
             capabilities = tuple(
                 sorted(
                     c.agent_config_service.repository.publication_tools(
@@ -141,14 +144,17 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
             event = c.webhook_event_repository.get(firing.json()["event_id"])
             job = c.agent_repository.get_job(str(event["job_id"]))
             self.assertEqual("grafana_alert", job.source_channel)
-            self.assertEqual("prod", (job.routing_context or {})["environment"])
+            self.assertEqual("", (job.routing_context or {})["environment"])
 
-    def test_grafana_missing_required_label_is_rejected_without_queue_message(self) -> None:
+    def test_grafana_without_active_application_is_rejected_without_queue_message(self) -> None:
         settings = make_settings()
         built = []
 
         def factory(_: Any):
             c = container()
+            from backend.tests.support.webhooks import prepare_test_webhook
+
+            prepare_test_webhook(c)
             built.append(c)
             return c
 
@@ -165,6 +171,10 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
             )
 
             self.assertEqual(400, response.status_code)
+            rejected = c.database.execute_one(
+                "select status, agent_publication_id from webhook_event"
+            )
+            self.assertEqual({"status": "REJECTED", "agent_publication_id": None}, rejected)
             self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
             self.assertIsNotNone(c.message_bus)
             self.assertEqual(0, len(c.message_bus.jobs))
@@ -197,7 +207,7 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
 
     def test_delivery_chunks_long_report_and_none_delivery_is_skipped(self) -> None:
         c = container()
-        c.result_delivery_service.chunker.max_chars = 10
+        c.result_delivery_service.chunker.max_chars = 200
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="chunked-delivery",
@@ -216,7 +226,7 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         )
         status_service = JobStatusService(c.agent_repository)
         self.assertIsNotNone(status_service.claim(job.id, "worker-1"))
-        status_service.succeed(job.id, "abcdefghijklmnopqrstuvwxyz")
+        status_service.succeed(job.id, "abcdefghijklmnopqrstuvwxyz" * 20)
 
         enqueue_job_result_for_delivery(c, job.id)
         dispatch_pending_deliveries(c)

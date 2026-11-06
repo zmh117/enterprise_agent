@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.business_application.application.ports import ComponentReference
 from app.modules.business_application.domain.policies import snapshot_hash
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.workflow.infrastructure import WorkflowRepository
-from app.shared.exceptions import NonRetryableExecutionError, NotFound
+from app.shared.exceptions import AppError, NonRetryableExecutionError, NotFound
 
 
 class AgentPublicationAdapter:
@@ -46,18 +48,22 @@ class AgentPublicationAdapter:
             ),
             config_hash=str(publication["config_hash"]),
             runtime_kind=runtime_kind,
+            ingress_connector_ids=tuple(
+                sorted(self.repository.publication_connectors(publication_id, "ingress"))
+            ),
             runtime_protocol_versions=("1.5",),
             component_type="agent_publication",
         )
 
-    def catalog(self, project_code: str) -> list[ComponentReference]:
+    def catalog(self) -> list[ComponentReference]:
         values: list[ComponentReference] = []
         for definition in self.repository.list_definitions(include_disabled=False):
-            if str(definition["project_code"]) != project_code:
+            publication_id = str(definition.get("current_publication_id") or "")
+            if not publication_id:
                 continue
-            for publication in self.repository.list_publications(str(definition["id"])):
-                if str(publication["status"]) == "active":
-                    values.append(self.resolve(str(publication["id"])))
+            publication = self.resolve(publication_id)
+            if publication.status == "enabled":
+                values.append(publication)
         return values
 
 
@@ -114,6 +120,16 @@ class ChannelConnectorAdapter:
             allowed = allowed and bool(connector.metadata.get(capability, True))
         elif direction == "ingress" and trigger_type == "webhook":
             allowed = allowed and connector.connector_type != "dingtalk_enterprise_stream"
+        if direction == "delivery" and trigger_type == "dingtalk_private":
+            self.registry.require_dingtalk_robot_delivery(connector_id)
+            allowed = True
+        if direction == "delivery" and trigger_type in {"webhook_callback", "dingtalk_group"}:
+            expected = (
+                "webhook" if trigger_type == "webhook_callback" else "dingtalk_enterprise_robot"
+            )
+            allowed = allowed and connector.connector_type == expected
+        if direction == "ingress" and trigger_type == "reply_original":
+            allowed = allowed and connector.connector_type == "dingtalk_enterprise_stream"
         row = self.registry.repository.get_connector(connector_id) or {}
         return ComponentReference(
             id=connector.id,
@@ -125,6 +141,30 @@ class ChannelConnectorAdapter:
             direction=direction,
             component_type=connector.connector_type,
         )
+
+    def webhook_trigger(self, connector_id: str) -> dict[str, Any]:
+        rows = self.registry.repository.database.execute(
+            """select d.id, d.service_account_id from webhook_trigger_definition d
+                 join webhook_trigger_publication p on p.id=d.current_publication_id
+                where d.connector_id=? and d.status='enabled'
+                  and p.status='active' and p.schema_version=2""",
+            (connector_id,),
+        )
+        if len(rows) != 1:
+            raise NonRetryableExecutionError(
+                "Webhook is not enabled and published",
+                safe_message="请选择已发布并启用的 Webhook",
+                error_code="validation_failed",
+            )
+        row = rows[0]
+        return {
+            "trigger_type": "webhook",
+            "connector_id": connector_id,
+            "routing_key": f"webhook:{row['id']}",
+            "actor_policy": "SERVICE_ACCOUNT",
+            "service_account_user_id": str(row["service_account_id"]),
+            "config": {"webhook_definition_id": str(row["id"])},
+        }
 
     def catalog(self) -> list[ComponentReference]:
         rows = self.registry.repository.database.execute(
@@ -142,6 +182,11 @@ class ChannelConnectorAdapter:
                 result.append(self.resolve(connector.id, "ingress"))
             if connector.allow_delivery:
                 result.append(self.resolve(connector.id, "delivery"))
+            elif connector.connector_type == "dingtalk_enterprise_stream":
+                try:
+                    result.append(self.resolve(connector.id, "delivery", "dingtalk_private"))
+                except AppError:
+                    pass
         return result
 
 

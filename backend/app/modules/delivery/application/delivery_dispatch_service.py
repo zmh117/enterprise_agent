@@ -16,6 +16,7 @@ from app.modules.delivery.application.result_delivery_service import (
 from app.modules.delivery.application.report_chunker import ReportChunker
 from app.modules.delivery.domain import DeliveryEvent, DeliveryStatus
 from app.modules.delivery.domain.recipient_routes import ROBOT_MESSAGE_ROUTE, result_routes
+from app.modules.delivery.infrastructure.bound_recipients import require_bound_recipient
 from app.modules.delivery.infrastructure.file_delivery_sender import FileDeliverySender
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.delivery.infrastructure.repository import DeliveryRepository
@@ -234,6 +235,10 @@ class DeliveryOutboxDispatcher:
             registry = self.delivery_service.connector_registry
             if route.type == ROBOT_MESSAGE_ROUTE:
                 connector = registry.require_dingtalk_robot_delivery(route.connector_id)
+                if route.target.get("user_id"):
+                    require_bound_recipient(
+                        self.repository.database, route.connector_id, route.target
+                    )
             else:
                 connector = registry.require_delivery(route.connector_id)
                 registry.assert_host_allowed(connector, registry.endpoint_url(connector))

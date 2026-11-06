@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.modules.delivery.infrastructure.bound_recipients import bound_recipients, freeze_recipients
+
 from typing import Any
 
 from app.modules.knowledge.domain.tool_policy import knowledge_tool_dependency_errors
@@ -54,7 +56,7 @@ from app.modules.business_application.domain.runtime import (
 from app.modules.business_application.infrastructure import BusinessApplicationRepository
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.shared.database import operation_unit_of_work
-from app.shared.exceptions import NonRetryableExecutionError, NotFound
+from app.shared.exceptions import AppError, NonRetryableExecutionError, NotFound
 
 SCHEMA_VERSION = 6
 WRITABLE_AGENT_RUNTIME_KIND = "python-v1"
@@ -228,7 +230,7 @@ class BusinessApplicationService:
         )
         execution_policy = validate_execution_policy(dict(payload.get("execution_policy") or {}))
         triggers = [
-            validate_trigger(dict(value), index)
+            validate_trigger(self._prepare_trigger(dict(value)), index)
             for index, value in enumerate(payload.get("triggers") or [])
         ]
         deliveries = [
@@ -247,6 +249,8 @@ class BusinessApplicationService:
             )
         selected_agent = self.agent_reader.resolve(agent_publication_id)
         _require_python_agent_publication(selected_agent)
+        for trigger in triggers:
+            self._require_agent_webhook(selected_agent, trigger)
         mcp_tools = self.mcp_tool_composition_service.prepare(
             agent_publication_id=agent_publication_id,
             raw_tools=payload.get("mcp_tools") or [],
@@ -618,6 +622,27 @@ class BusinessApplicationService:
             for publication in self.repository.list_publications(str(application["id"]))
         ]
 
+    def _prepare_trigger(self, value: dict[str, Any]) -> dict[str, Any]:
+        if value.get("trigger_type") != "webhook":
+            return value
+        return {
+            **value,
+            **self.connector_reader.webhook_trigger(str(value.get("connector_id") or "")),
+        }
+
+    @staticmethod
+    def _require_agent_webhook(agent: ComponentReference, trigger: dict[str, Any]) -> None:
+        if (
+            trigger["trigger_type"] == "webhook"
+            and trigger["connector_id"] not in agent.ingress_connector_ids
+        ):
+            raise NonRetryableExecutionError(
+                "Webhook is outside the Agent ingress envelope",
+                safe_message="所选 Webhook 未绑定到此 Agent 发布版本的入口 Connector",
+                error_code="validation_failed",
+                field_errors=[{"field": "triggers", "message": "请选择 Agent 已绑定的 Webhook"}],
+            )
+
     def catalog(self, *, actor_id: str, code: str) -> dict[str, Any]:
         application = self.repository.get_by_code(validate_code(code))
         self._require(actor_id, code, "read")
@@ -630,21 +655,31 @@ class BusinessApplicationService:
 
         agents = [
             reference(item)
-            for item in self.agent_reader.catalog(project_code)
+            for item in self.agent_reader.catalog()
             if item.runtime_kind == WRITABLE_AGENT_RUNTIME_KIND
         ]
         mcp_tool_catalog = self.mcp_tool_composition_service.management_catalog(
             agent_publication_ids=[str(item["id"]) for item in agents],
         )
+        connectors = self.connector_reader.catalog()
         return {
+            "recipient_users_by_connector": {
+                item.id: [
+                    {"id": row["user_id"], "name": row["label"]}
+                    for row in bound_recipients(self.repository.database, item.id)
+                ]
+                for item in connectors
+                if item.direction == "delivery"
+                and item.component_type == "dingtalk_enterprise_stream"
+            },
             "agents": agents,
             "workflows": [reference(item) for item in self.workflow_reader.catalog(project_code)],
-            "connectors": [reference(item) for item in self.connector_reader.catalog()],
+            "connectors": [reference(item) for item in connectors],
             "document_processing_profiles": self._document_processing_profile_catalog(),
             **mcp_tool_catalog,
         }
 
-    def _validate_revision(  # noqa: C901
+    def _validate_revision(  # noqa: C901, PLR0915
         self, application: dict[str, Any], revision: dict[str, Any]
     ) -> tuple[list[dict[str, str]], dict[str, Any]]:
         errors: list[dict[str, str]] = []
@@ -658,7 +693,6 @@ class BusinessApplicationService:
         )
         if agent:
             components["agent"] = agent
-            self._validate_component_scope(errors, application, agent, "agent_publication_id")
             if agent.runtime_kind != WRITABLE_AGENT_RUNTIME_KIND:
                 errors.append(
                     {
@@ -693,6 +727,21 @@ class BusinessApplicationService:
             )
             if reference:
                 components["triggers"].append(reference)
+            if str(trigger["trigger_type"]) == "webhook":
+                try:
+                    expected = self._prepare_trigger(trigger)
+                    if any(
+                        expected[key] != trigger[key]
+                        for key in ("routing_key", "service_account_user_id", "config")
+                    ):
+                        raise NonRetryableExecutionError(
+                            "Webhook binding changed",
+                            safe_message="Webhook 绑定已变更，请重新保存应用",
+                        )
+                    if agent:
+                        self._require_agent_webhook(agent, trigger)
+                except AppError as exc:
+                    errors.append({"field": f"triggers.{index}", "message": exc.safe_message})
             if str(trigger["actor_policy"]) == "SERVICE_ACCOUNT":
                 account = self._resolve_component(
                     errors,
@@ -708,19 +757,32 @@ class BusinessApplicationService:
             if not delivery["enabled"]:
                 continue
             direction = (
-                "ingress"
-                if str(delivery["delivery_type"]) in {"reply_original", "webhook_result"}
-                else "delivery"
+                "ingress" if str(delivery["delivery_type"]) in {"reply_original"} else "delivery"
             )
             reference = self._resolve_component(
                 errors,
                 f"deliveries.{index}.connector_id",
                 lambda delivery=delivery, direction=direction: self.connector_reader.resolve(
-                    str(delivery["connector_id"]), direction
+                    str(delivery["connector_id"]), direction, str(delivery["delivery_type"])
                 ),
             )
             if reference:
                 components["deliveries"].append(reference)
+                if delivery["delivery_type"] == "dingtalk_private":
+                    try:
+                        recipients = freeze_recipients(
+                            self.repository.database,
+                            delivery["connector_id"],
+                            list(delivery["config"].get("target_user_ids") or []),
+                        )
+                        components.setdefault("recipients", {})[index] = recipients
+                    except AppError as exc:
+                        errors.append(
+                            {
+                                "field": f"deliveries.{index}.config.target_user_ids",
+                                "message": exc.safe_message,
+                            }
+                        )
         if agent is None and not str(revision.get("agent_publication_id") or ""):
             errors.append({"field": "agent_publication_id", "message": "必须选择 Agent 发布版本"})
         errors.extend(knowledge_tool_dependency_errors(revision.get("mcp_tools") or []))
@@ -891,8 +953,13 @@ class BusinessApplicationService:
                     "connector_id": item["connector_id"],
                     "enabled": item["enabled"],
                     "config": item["config"],
+                    **(
+                        {"resolved_recipients": components.get("recipients", {}).get(index, [])}
+                        if item["delivery_type"] == "dingtalk_private"
+                        else {}
+                    ),
                 }
-                for item in revision["deliveries"]
+                for index, item in enumerate(revision["deliveries"])
             ],
             "mcp_tools": list(revision.get("mcp_tools") or []),
         }

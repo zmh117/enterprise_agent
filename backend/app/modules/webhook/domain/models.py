@@ -47,94 +47,39 @@ WEBHOOK_ERROR_CODES = frozenset(
 
 
 TRIGGER_ACTIONS = frozenset({"read", "edit", "publish", "rotate", "manage_service_account"})
-CONDITION_OPERATORS = frozenset({"exists", "equals", "in", "not_equals"})
-ROUTING_FIELDS = ("project_code", "environment", "base", "workshop", "service")
 PUBLIC_ID_RE = re.compile(r"^wh_[A-Za-z0-9_-]{32,96}$")
 CODE_RE = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
-SERVICE_CODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{0,128}$")
 SECRET_REF_PREFIXES = ("secret://platform/",)
-ALLOWED_CONFIG_KEYS = frozenset(
-    {
-        "schema_version",
-        "adapter",
-        "authentication",
-        "mapping",
-        "routing",
-        "agent",
-        "delivery",
-        "idempotency",
-        "limits",
-    }
-)
+ALLOWED_CONFIG_KEYS = frozenset({"schema_version", "adapter", "authentication", "role_ids"})
+DEFAULT_LIMITS = {"requests_per_minute": 60, "max_in_flight": 10, "max_alerts": 20}
+DEFAULT_COOLDOWN_SECONDS = 300
 
 
 def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
-    """Return the typed, deterministic Trigger configuration persisted in revisions."""
-    adapter = str(config.get("adapter") or "")
+    """The public Webhook contract has no Agent, delivery or custom mapping."""
+    ensure_no_secret_values(config)
     authentication = _object(config.get("authentication"))
-    mapping = _object(config.get("mapping"))
-    routing = _object(config.get("routing"))
-    agent = _object(config.get("agent"))
-    delivery = _object(config.get("delivery"))
-    idempotency = _object(config.get("idempotency"))
-    limits = _object(config.get("limits"))
-    variables = _object(mapping.get("variables"))
-    filters = _list(mapping.get("filters"))
-    normalized_routing: dict[str, dict[str, Any]] = {}
-    for field in ROUTING_FIELDS:
-        rule = _object(routing.get(field))
-        normalized_routing[field] = {
-            "mode": str(rule.get("mode") or "fixed"),
-            "value": str(rule.get("value") or ""),
-            "pointer": str(rule.get("pointer") or ""),
-            "allowed_values": sorted(
-                {str(value) for value in _list(rule.get("allowed_values")) if str(value)}
-            ),
-        }
+    roles = config.get("role_ids", [])
+    if (
+        config.get("schema_version", 2) != 2
+        or not isinstance(roles, list)
+        or len(roles) > 20
+        or any(not isinstance(role, str) or not role.strip() for role in roles)
+        or set(authentication) - {"type", "secret_ref"}
+    ):
+        raise NonRetryableExecutionError(
+            "Invalid Webhook configuration",
+            safe_message="请使用简化 Webhook 配置重新保存",
+            error_code="validation_failed",
+        )
     return {
-        "schema_version": int(config.get("schema_version") or 1),
-        "adapter": adapter,
+        "schema_version": 2,
+        "adapter": str(config.get("adapter") or ""),
         "authentication": {
             "type": str(authentication.get("type") or ""),
             "secret_ref": str(authentication.get("secret_ref") or ""),
         },
-        "mapping": {
-            "variables": {
-                str(name): str(pointer)
-                for name, pointer in sorted(variables.items(), key=lambda item: str(item[0]))
-            },
-            "filters": [
-                {
-                    "pointer": str(_object(item).get("pointer") or ""),
-                    "operator": str(_object(item).get("operator") or ""),
-                    "value": _object(item).get("value"),
-                }
-                for item in filters
-                if isinstance(item, dict)
-            ],
-            "message_template": str(mapping.get("message_template") or "").strip(),
-            "event_id_pointer": str(mapping.get("event_id_pointer") or ""),
-            "status_pointer": str(mapping.get("status_pointer") or ""),
-        },
-        "routing": normalized_routing,
-        "agent": {
-            "code": str(agent.get("code") or "default-diagnostic-agent"),
-            "publication_id": str(agent.get("publication_id") or ""),
-        },
-        "delivery": {
-            "type": str(delivery.get("type") or "none"),
-            "connector_id": str(delivery.get("connector_id") or ""),
-            "target": _object(delivery.get("target")),
-            "options": _object(delivery.get("options")),
-        },
-        "idempotency": {
-            "cooldown_seconds": int(idempotency.get("cooldown_seconds", 300)),
-        },
-        "limits": {
-            "requests_per_minute": int(limits.get("requests_per_minute") or 60),
-            "max_in_flight": int(limits.get("max_in_flight") or 10),
-            "max_alerts": int(limits.get("max_alerts") or 20),
-        },
+        "role_ids": sorted(set(role.strip() for role in roles)),
     }
 
 
@@ -203,7 +148,3 @@ def ensure_no_secret_values(config: dict[str, Any]) -> None:
 
 def _object(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
-
-
-def _list(value: Any) -> list[Any]:
-    return list(value) if isinstance(value, (list, tuple, set)) else []

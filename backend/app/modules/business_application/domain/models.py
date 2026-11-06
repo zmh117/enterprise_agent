@@ -33,7 +33,6 @@ class DeliveryType(StrEnum):
     DINGTALK_PRIVATE = "dingtalk_private"
     DINGTALK_GROUP = "dingtalk_group"
     WEBHOOK_CALLBACK = "webhook_callback"
-    WEBHOOK_RESULT = "webhook_result"
 
 
 @dataclass(frozen=True)

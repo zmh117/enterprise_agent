@@ -33,11 +33,15 @@ const componentReferenceSchema = z.object({
     z.literal("python-v1").optional()
   ),
   runtime_protocol_versions: z.array(z.enum(["1.4", "1.5"])).default([]),
+  ingress_connector_ids: z.array(z.string()).default([]),
   direction: z.string(),
   component_type: z.string(),
 })
 
 export const catalogSchema = z.object({
+  recipient_users_by_connector: z
+    .record(z.string(), z.array(z.object({ id: z.string(), name: z.string() })))
+    .default({}),
   agents: z.array(componentReferenceSchema),
   workflows: z.array(componentReferenceSchema),
   connectors: z.array(componentReferenceSchema),

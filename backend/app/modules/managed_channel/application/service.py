@@ -92,7 +92,7 @@ class ManagedChannelService:
                     "name": str(item["name"]),
                     "code": str(item["code"]),
                     "webhook_trigger_id": str(item["id"]),
-                    "routing_key": str(item["public_id"]),
+                    "routing_key": f"webhook:{item['id']}",
                     "enabled": str(item["status"]) == "enabled",
                     "revision": int(item["revision"]),
                     "runtime": {
@@ -553,7 +553,7 @@ class ManagedChannelService:
                     "name": str(item["name"]),
                     "code": str(item["code"]),
                     "webhook_trigger_id": str(item["id"]),
-                    "routing_key": str(item["public_id"]),
+                    "routing_key": f"webhook:{item['id']}",
                     "enabled": True,
                     "revision": int(item["revision"]),
                 }

@@ -258,7 +258,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             """
         ) == {"count": 133}
         assert comments["table_count"] == 173
-        assert comments["column_count"] == 2189
+        assert comments["column_count"] == 2187
         assert not [
             name
             for name, comment in {**comments["tables"], **comments["columns"]}.items()
@@ -311,7 +311,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         assert result.head == current_schema_head()
         assert result.applied == deployable_schema_versions()
         assert comments["table_count"] == 173
-        assert comments["column_count"] == 2189
+        assert comments["column_count"] == 2187
         assert {
             "dingding_conversation_id",
             "dingding_user_id",

@@ -6,12 +6,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.modules.channel.domain.channel_event import safe_payload_summary
-from app.modules.webhook.domain.models import CONDITION_OPERATORS, ROUTING_FIELDS
+from app.modules.webhook.domain.models import DEFAULT_LIMITS
 from app.shared.exceptions import NonRetryableExecutionError
 
 
-_VARIABLE_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _SENSITIVE_KEY_RE = re.compile(
     r"token|secret|password|signature|authorization|cookie|credential|webhook|url",
     re.IGNORECASE,
@@ -46,6 +44,12 @@ class WebhookMapper:
         self.max_summary_chars = max_summary_chars
 
     def map(self, *, config: dict[str, Any], payload: dict[str, Any]) -> MappingResult:
+        if config.get("schema_version") != 2:
+            raise NonRetryableExecutionError(
+                "Legacy Webhook config",
+                safe_message="请重新保存简化 Webhook 配置",
+                error_code="webhook_mapping_failed",
+            )
         adapter = str(config.get("adapter") or "")
         if adapter == "grafana_alertmanager_v1":
             return self._grafana(config=config, payload=payload)
@@ -71,181 +75,62 @@ class WebhookMapper:
         }
 
     def _grafana(self, *, config: dict[str, Any], payload: dict[str, Any]) -> MappingResult:
+        alerts = payload.get("alerts", [])
+        if (
+            payload.get("status") not in {"firing", "resolved"}
+            or not isinstance(alerts, list)
+            or len(alerts) > DEFAULT_LIMITS["max_alerts"]
+            or any(not isinstance(alert, dict) for alert in alerts)
+        ):
+            raise NonRetryableExecutionError(
+                "Invalid Grafana payload",
+                safe_message="请使用 Grafana 标准告警报文，单次最多20条告警",
+                error_code="webhook_mapping_failed",
+            )
         status = str(payload.get("status") or "").lower()
         event_id = _grafana_event_id(payload)
-        variables = self._extract_variables(config, payload)
-        summary = _grafana_summary(payload, max_alerts=int(config["limits"]["max_alerts"]))
-        if status != "firing":
-            return MappingResult(
-                ignored=True,
-                reason="not_firing",
-                external_event_id=event_id,
-                dedup_key=f"grafana:{event_id}:{status or 'unknown'}",
-                message="",
-                variables=variables,
-                routing={
-                    field: str(config["routing"][field].get("value") or "")
-                    if config["routing"][field].get("mode") == "fixed"
-                    else ""
-                    for field in ROUTING_FIELDS
-                },
-                safe_summary=summary,
-            )
-        message = self._render_message(config, variables, fallback=_grafana_message(payload))
-        routing = self._routing(config, payload)
+        summary = _grafana_summary(payload, max_alerts=DEFAULT_LIMITS["max_alerts"])
+        ignored = status != "firing"
+        message = "" if ignored else _grafana_message(payload)[: self.max_message_chars]
         return MappingResult(
-            ignored=False,
-            reason="",
+            ignored=ignored,
+            reason="not_firing" if ignored else "",
             external_event_id=event_id,
-            dedup_key=f"grafana:{event_id}:firing",
+            dedup_key=f"grafana:{event_id}:{status or 'unknown'}",
             message=message,
-            variables=variables,
-            routing=routing,
+            variables={},
+            routing={},
             safe_summary=summary,
         )
 
     def _generic(self, *, config: dict[str, Any], payload: dict[str, Any]) -> MappingResult:
-        mapping = config["mapping"]
-        variables = self._extract_variables(config, payload)
-        event_pointer = str(mapping.get("event_id_pointer") or "")
-        event_id = str(json_pointer(payload, event_pointer) if event_pointer else "").strip()
-        if not event_id:
+        event_id = payload.get("id")
+        message = payload.get("message")
+        if (
+            set(payload) != {"id", "message"}
+            or not isinstance(event_id, str)
+            or not event_id.strip()
+            or len(event_id) > 512
+            or not isinstance(message, str)
+            or not message.strip()
+            or len(message) > self.max_message_chars
+        ):
             raise NonRetryableExecutionError(
-                "Generic Webhook event ID is missing",
-                safe_message="缺少 Webhook 事件 ID",
-                error_code="webhook_mapping_failed",
-                field_errors=[{"field": "mapping.event_id_pointer", "message": "缺少字段值"}],
-            )
-        if not self._filters_match(mapping.get("filters") or [], payload):
-            return MappingResult(
-                ignored=True,
-                reason="filter_not_matched",
-                external_event_id=event_id,
-                dedup_key=f"generic:{event_id}:ignored",
-                message="",
-                variables=variables,
-                routing=self._routing(config, payload),
-                safe_summary=safe_payload_summary(_mask(payload), max_chars=self.max_summary_chars),
-            )
-        message = self._render_message(config, variables, fallback="")
-        if not message:
-            raise NonRetryableExecutionError(
-                "Generic Webhook message is empty",
-                safe_message="Webhook 消息为空",
+                "Invalid generic Webhook payload",
+                safe_message=f"通用 JSON 只接受非空字符串 id（最多512字符）和 message（最多{self.max_message_chars}字符）",
                 error_code="webhook_mapping_failed",
             )
+        event_id = event_id.strip()
         return MappingResult(
             ignored=False,
             reason="",
             external_event_id=event_id,
             dedup_key=f"generic:{event_id}",
             message=message,
-            variables=variables,
-            routing=self._routing(config, payload),
-            safe_summary=safe_payload_summary(_mask(payload), max_chars=self.max_summary_chars),
+            variables={},
+            routing={},
+            safe_summary={"event_id": event_id, "message_chars": len(message)},
         )
-
-    def _extract_variables(self, config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-        return {
-            name: _bounded_scalar(json_pointer(payload, pointer))
-            for name, pointer in config["mapping"]["variables"].items()
-        }
-
-    def _filters_match(self, filters: list[Any], payload: dict[str, Any]) -> bool:
-        for condition in filters:
-            if not isinstance(condition, dict):
-                return False
-            pointer = str(condition.get("pointer") or "")
-            operator = str(condition.get("operator") or "")
-            if operator not in CONDITION_OPERATORS:
-                return False
-            exists, actual = try_json_pointer(payload, pointer)
-            expected = condition.get("value")
-            if operator == "exists" and exists is not bool(
-                expected if expected is not None else True
-            ):
-                return False
-            if operator == "equals" and actual != expected:
-                return False
-            if operator == "not_equals" and actual == expected:
-                return False
-            if operator == "in" and (not isinstance(expected, list) or actual not in expected):
-                return False
-        return True
-
-    def _routing(self, config: dict[str, Any], payload: dict[str, Any]) -> dict[str, str]:
-        result: dict[str, str] = {}
-        for field in ROUTING_FIELDS:
-            rule = config["routing"][field]
-            mode = str(rule.get("mode") or "fixed")
-            if mode == "fixed":
-                value = str(rule.get("value") or "")
-            else:
-                value = str(json_pointer(payload, str(rule.get("pointer") or "")) or "")
-                if value not in set(rule.get("allowed_values") or []):
-                    raise NonRetryableExecutionError(
-                        f"Webhook routing value is not allowed for {field}",
-                        safe_message="不允许使用此 Webhook 路由值",
-                        error_code="webhook_scope_denied",
-                        field_errors=[
-                            {"field": f"routing.{field}", "message": "字段值不在允许列表中"}
-                        ],
-                    )
-            result[field] = value
-        if not result["project_code"]:
-            raise NonRetryableExecutionError(
-                "Webhook project routing is empty",
-                safe_message="必须配置 Webhook 项目路由",
-                error_code="webhook_scope_denied",
-            )
-        return result
-
-    def _render_message(
-        self, config: dict[str, Any], variables: dict[str, Any], *, fallback: str
-    ) -> str:
-        template = str(config["mapping"].get("message_template") or "")
-        if not template:
-            return fallback[: self.max_message_chars]
-        rendered = _VARIABLE_RE.sub(lambda match: str(variables.get(match.group(1), "")), template)
-        return rendered[: self.max_message_chars]
-
-
-def validate_pointer(pointer: str) -> bool:
-    if pointer == "":
-        return True
-    if not pointer.startswith("/") or len(pointer) > 512:
-        return False
-    parts = pointer[1:].split("/")
-    return len(parts) <= 32 and all(len(part) <= 128 for part in parts)
-
-
-def json_pointer(value: Any, pointer: str) -> Any:
-    exists, result = try_json_pointer(value, pointer)
-    if not exists:
-        return None
-    return result
-
-
-def try_json_pointer(value: Any, pointer: str) -> tuple[bool, Any]:
-    if not validate_pointer(pointer):
-        return False, None
-    if pointer == "":
-        return True, value
-    current = value
-    for raw_part in pointer[1:].split("/"):
-        part = raw_part.replace("~1", "/").replace("~0", "~")
-        if isinstance(current, dict):
-            if part not in current:
-                return False, None
-            current = current[part]
-        elif isinstance(current, list) and part.isdigit():
-            index = int(part)
-            if index >= len(current):
-                return False, None
-            current = current[index]
-        else:
-            return False, None
-    return True, current
 
 
 def _grafana_event_id(payload: dict[str, Any]) -> str:
@@ -310,12 +195,6 @@ def _grafana_summary(payload: dict[str, Any], *, max_alerts: int) -> dict[str, A
         "alert_count": len(alerts),
         "alerts_truncated": len(alerts) > len(bounded_alerts),
     }
-
-
-def _bounded_scalar(value: Any, max_chars: int = 1000) -> Any:
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return str(value)[:max_chars] if isinstance(value, str) else value
-    return json.dumps(_mask(value), ensure_ascii=False, sort_keys=True, default=str)[:max_chars]
 
 
 def _mask(value: Any) -> Any:

@@ -7,10 +7,17 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
 
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.business_application.application.service import BusinessApplicationResolver
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.webhook.application.authentication import WebhookAuthenticator
 from app.modules.webhook.application.mapping import WebhookMapper
-from app.modules.webhook.domain.models import PUBLIC_ID_RE, WebhookEventStatus, config_hash
+from app.modules.webhook.domain.models import (
+    DEFAULT_COOLDOWN_SECONDS,
+    DEFAULT_LIMITS,
+    PUBLIC_ID_RE,
+    WebhookEventStatus,
+    config_hash,
+)
 from app.modules.webhook.infrastructure import WebhookEventRepository, WebhookTriggerRepository
 from app.shared.config import WebhookSettings
 from app.shared.exceptions import AppError, NonRetryableExecutionError, NotFound, PermissionDenied
@@ -39,6 +46,7 @@ class WebhookIngressService:
         mapper: WebhookMapper,
         audit_service: AuditService,
         settings: WebhookSettings,
+        application_resolver: BusinessApplicationResolver,
     ) -> None:
         self.trigger_repository = trigger_repository
         self.event_repository = event_repository
@@ -47,8 +55,9 @@ class WebhookIngressService:
         self.mapper = mapper
         self.audit_service = audit_service
         self.settings = settings
+        self.application_resolver = application_resolver
 
-    def receive(  # noqa: PLR0915
+    def receive(  # noqa: C901, PLR0915
         self,
         *,
         public_id: str,
@@ -99,7 +108,9 @@ class WebhookIngressService:
                 error_code="webhook_not_published",
             ) from exc
         snapshot = publication["snapshot"]
-        if config_hash(_revision_config(snapshot)) != str(publication["config_hash"]):
+        if snapshot.get("schema_version") != 2 or config_hash(_revision_config(snapshot)) != str(
+            publication["config_hash"]
+        ):
             raise PermissionDenied(
                 "Webhook Trigger publication hash mismatch",
                 safe_message="Webhook 端点配置完整性校验失败",
@@ -179,7 +190,7 @@ class WebhookIngressService:
             trigger_id=str(definition["id"]),
             since=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
         )
-        limits = snapshot["limits"]
+        limits = DEFAULT_LIMITS
         if request_count >= int(limits["requests_per_minute"]) or in_flight >= int(
             limits["max_in_flight"]
         ):
@@ -214,31 +225,57 @@ class WebhookIngressService:
             )
             raise
         status = WebhookEventStatus.IGNORED if mapped.ignored else WebhookEventStatus.ACCEPTED
-        normalized = mapped.normalized_event(delivery=snapshot["delivery"])
-        cooldown_seconds = int(snapshot.get("idempotency", {}).get("cooldown_seconds") or 0)
+        normalized = mapped.normalized_event(delivery={"type": "none"})
+        cooldown_seconds = DEFAULT_COOLDOWN_SECONDS
         dedup_key = mapped.dedup_key
         if cooldown_seconds > 0:
             import time
 
             dedup_key = f"{dedup_key}:window:{int(time.time()) // cooldown_seconds}"
-        with self.event_repository.database.unit_of_work():
-            event, created = self.event_repository.receive(
-                trigger_id=str(definition["id"]),
-                trigger_publication_id=str(publication["id"]),
-                agent_publication_id=str(publication["agent_publication_id"]),
-                service_account_id=str(definition["service_account_id"]),
-                external_event_id=mapped.external_event_id,
-                dedup_key=dedup_key,
+        try:
+            with self.event_repository.database.unit_of_work():
+                application_publication_id = agent_publication_id = ""
+                if not mapped.ignored:
+                    runtime = self.application_resolver.resolve_trigger(
+                        "local",
+                        "webhook",
+                        str(definition["connector_id"]),
+                        f"webhook:{definition['id']}",
+                    )
+                    app_publication = runtime["publication"]
+                    application_publication_id = str(app_publication["id"])
+                    agent_publication_id = str(app_publication["snapshot"]["agent"]["id"])
+                    normalized["routing"] = {"project_code": runtime["application"]["project_code"]}
+                event, created = self.event_repository.receive(
+                    trigger_id=str(definition["id"]),
+                    trigger_publication_id=str(publication["id"]),
+                    agent_publication_id=agent_publication_id,
+                    application_publication_id=application_publication_id,
+                    service_account_id=str(definition["service_account_id"]),
+                    external_event_id=mapped.external_event_id,
+                    dedup_key=dedup_key,
+                    payload_hash=payload_hash,
+                    request_bytes=len(raw_body),
+                    safe_summary=mapped.safe_summary,
+                    normalized_event=normalized,
+                    correlation_id=correlation_id,
+                    status=status,
+                    auth_result=auth_result,
+                    filter_result=mapped.reason or "matched",
+                    enqueue=not mapped.ignored,
+                )
+        except AppError as exc:
+            self._record_rejection(
+                definition=definition,
+                publication=publication,
                 payload_hash=payload_hash,
                 request_bytes=len(raw_body),
-                safe_summary=mapped.safe_summary,
-                normalized_event=normalized,
                 correlation_id=correlation_id,
-                status=status,
-                auth_result=auth_result,
-                filter_result=mapped.reason or "matched",
-                enqueue=not mapped.ignored,
+                status=WebhookEventStatus.REJECTED,
+                error=exc,
+                remote_address=remote_address,
             )
+            raise
         self.audit_service.record(
             "webhook.event.received",
             status="SKIPPED" if mapped.ignored else "SUCCEEDED",
@@ -281,7 +318,7 @@ class WebhookIngressService:
         event, _ = self.event_repository.receive(
             trigger_id=str(definition["id"]),
             trigger_publication_id=str(publication["id"]),
-            agent_publication_id=str(publication["agent_publication_id"]),
+            agent_publication_id="",
             service_account_id=str(definition["service_account_id"]),
             external_event_id="",
             dedup_key=None,
@@ -317,11 +354,6 @@ def _revision_config(snapshot: dict[str, Any]) -> dict[str, Any]:
         key: value
         for key, value in snapshot.items()
         if key not in {"service_account_id", "source_connector_id"}
-    } | {
-        "agent": {
-            "code": snapshot.get("agent", {}).get("code", ""),
-            "publication_id": snapshot.get("agent", {}).get("publication_id", ""),
-        }
     }
 
 

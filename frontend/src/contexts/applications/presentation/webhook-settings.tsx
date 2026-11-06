@@ -13,8 +13,6 @@ import {
 } from "@/components/ui/sheet"
 import {
   initialWebhookConfig,
-  type WebhookConfig,
-  type WebhookRecipient,
   type WebhookDetail,
 } from "@/contexts/applications/domain/webhook"
 import {
@@ -68,7 +66,8 @@ export function WebhookSettings({
         <SheetHeader>
           <SheetTitle>配置 Webhook</SheetTitle>
           <SheetDescription>
-            保存草稿后校验、预览并发布，再启用接收。业务执行还需绑定业务应用并授权服务账号。
+            选择凭据和业务角色，发布并启用后即可在 Agent
+            入口中绑定。投递目标在应用中配置。
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-5 px-4 pb-8">
@@ -93,20 +92,12 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
   })
   const secrets = usePlatformSecrets()
   const [detail, setDetail] = useState(initial)
-  const [config, setConfig] = useState(
-    () =>
-      initial.draft?.config ??
-      initialWebhookConfig(initial.definition.trigger_type)
+  const [config, setConfig] = useState(() =>
+    initial.draft?.config.schema_version === 2
+      ? initial.draft.config
+      : initialWebhookConfig(initial.definition.trigger_type)
   )
-  const [variables, setVariables] = useState(() =>
-    pretty(config.mapping.variables)
-  )
-  const [filters, setFilters] = useState(() => pretty(config.mapping.filters))
-  const [target, setTarget] = useState(() => pretty(config.delivery.target))
-  const [options, setOptions] = useState(() => pretty(config.delivery.options))
-  const [baseline, setBaseline] = useState(() =>
-    pretty([config, variables, filters, target, options])
-  )
+  const [baseline, setBaseline] = useState(() => pretty(config))
   const [sample, setSample] = useState(
     initial.definition.trigger_type === "generic"
       ? '{"id":"synthetic-001","message":"合成测试消息"}'
@@ -114,8 +105,7 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
   )
   const [preview, setPreview] = useState<unknown>(null)
   const [notice, setNotice] = useState("")
-  const dirty =
-    baseline !== pretty([config, variables, filters, target, options])
+  const dirty = baseline !== pretty(config)
   const definition = detail.definition
   const mutation = useMutation({
     mutationFn: async (
@@ -124,41 +114,10 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
       setNotice("")
       setPreview(null)
       if (action === "save") {
-        const parsedVariables = objectJson(variables, "变量映射")
-        if (
-          Object.values(parsedVariables).some(
-            (value) => typeof value !== "string"
-          )
-        )
-          throw validationError("变量映射的值必须是 JSON Pointer 字符串")
-        let parsedFilters: unknown
-        try {
-          parsedFilters = JSON.parse(filters)
-        } catch {
-          throw validationError("过滤条件必须是合法 JSON 数组")
-        }
-        if (!Array.isArray(parsedFilters))
-          throw validationError("过滤条件必须是 JSON 数组")
-        const next = {
-          ...config,
-          mapping: {
-            ...config.mapping,
-            variables: parsedVariables as Record<string, string>,
-            filters: parsedFilters,
-          },
-          delivery: {
-            ...config.delivery,
-            target:
-              config.delivery.type === "dingtalk_recipients"
-                ? config.delivery.target
-                : objectJson(target, "投递目标"),
-            options: objectJson(options, "投递选项"),
-          },
-        }
         const result = await saveWebhookDraft(
           definition.code,
           detail.draft?.revision ?? 0,
-          next
+          config
         )
         return {
           action,
@@ -187,19 +146,7 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
       if (result.saved) {
         const saved = result.saved
         setConfig(saved)
-        setVariables(pretty(saved.mapping.variables))
-        setFilters(pretty(saved.mapping.filters))
-        setTarget(pretty(saved.delivery.target))
-        setOptions(pretty(saved.delivery.options))
-        setBaseline(
-          pretty([
-            saved,
-            pretty(saved.mapping.variables),
-            pretty(saved.mapping.filters),
-            pretty(saved.delivery.target),
-            pretty(saved.delivery.options),
-          ])
-        )
+        setBaseline(pretty(saved))
       }
       if (result.preview) setPreview(result.preview)
       setNotice(
@@ -210,7 +157,7 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
             : "校验未通过，请处理下面的字段错误。",
           preview: "预览完成，未创建业务任务。",
           publish:
-            "发布成功；启用后可接收请求，业务执行仍需应用绑定和服务账号授权。",
+            "发布成功；启用后可在 Agent 入口中选择，再由应用绑定触发和投递。",
           toggle: "启停状态已更新。",
         }[result.action]
       )
@@ -219,39 +166,8 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
     },
   })
   const busy = mutation.isPending
-  const savedActionsDisabled = busy || dirty || !detail.draft
-  const mapping = (patch: Partial<WebhookConfig["mapping"]>) =>
-    setConfig({ ...config, mapping: { ...config.mapping, ...patch } })
-  const destinations =
-    catalog.data?.connectors.filter(
-      (item) =>
-        item.allow_delivery &&
-        ![
-          "managed_webhook",
-          "grafana_alert",
-          "debug_api",
-          "dingtalk_enterprise_stream",
-        ].includes(item.connector_type)
-    ) ?? []
-  const recipients = (config.delivery.target.recipients ??
-    []) as WebhookRecipient[]
-  const robots =
-    catalog.data?.connectors.filter((item) => item.supports_robot_delivery) ??
-    []
-  const updateRecipients = (rows: WebhookRecipient[]) =>
-    setConfig({
-      ...config,
-      delivery: {
-        type: "dingtalk_recipients",
-        connector_id: "",
-        target: { recipients: rows },
-        options: {},
-      },
-    })
-  const updateRecipient = (index: number, patch: Partial<WebhookRecipient>) =>
-    updateRecipients(
-      recipients.map((row, i) => (i === index ? { ...row, ...patch } : row))
-    )
+  const savedActionsDisabled =
+    busy || dirty || !detail.draft || detail.draft.config.schema_version !== 2
   return (
     <div className="space-y-5">
       <section className="space-y-2 rounded-lg border p-3 text-sm">
@@ -269,35 +185,6 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
         <p className="break-all">
           接收路径：/webhooks/v1/{definition.public_id}
         </p>
-        <p>
-          服务账号：
-          <a
-            className="underline"
-            href={`/users/${encodeURIComponent(definition.service_account_id)}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {definition.service_account_username}
-          </a>
-          （
-          {definition.service_account_status === "enabled"
-            ? "已启用"
-            : "已停用"}
-          ）
-        </p>
-        <p className="text-muted-foreground">
-          先在 Agent 配置中分配“Webhook · {definition.code}”入口并发布
-          Agent，再选择该版本。发布后在业务应用中绑定此
-          Webhook，为服务账号分配业务角色与范围。
-        </p>
-        <a
-          className="underline"
-          href="/agent-profiles"
-          target="_blank"
-          rel="noreferrer"
-        >
-          打开 Agent 配置
-        </a>
         <Button
           type="button"
           variant="outline"
@@ -313,6 +200,11 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
           {definition.status === "enabled" ? "停用 Webhook" : "启用 Webhook"}
         </Button>
       </section>
+      {detail.draft && detail.draft.config.schema_version !== 2 && (
+        <p role="status" className="rounded-md bg-muted p-3 text-sm">
+          此 Webhook 使用旧配置，请选择凭据和业务角色后重新保存、发布并启用。
+        </p>
+      )}
       <MutationError error={catalog.error} />
       <fieldset disabled={busy} className="space-y-4">
         <Field label="Bearer 凭据引用" id="wh-secret">
@@ -354,386 +246,78 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
           </p>
           <MutationError error={secrets.error} />
         </Field>
-        <Field label="Agent 发布版本" id="wh-agent">
-          <select
-            id="wh-agent"
-            className={inputClass}
-            value={config.agent.publication_id}
-            onChange={(event) => {
-              const selected = catalog.data?.agents.find(
-                (item) => item.publication_id === event.target.value
-              )
-              setConfig({
-                ...config,
-                agent: {
-                  code: selected?.code ?? "",
-                  publication_id: selected?.publication_id ?? "",
-                },
-              })
-            }}
-          >
-            <option value="">请选择已发布 Agent</option>
-            {catalog.data?.agents.map((item) => (
-              <option key={item.publication_id} value={item.publication_id}>
-                {item.name} · {item.code} · r{item.revision}
-              </option>
-            ))}
-          </select>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              void catalog.refetch()
-              void secrets.refetch()
-            }}
-          >
-            刷新配置目录
-          </Button>
-        </Field>
-        <h3 className="font-medium">消息映射</h3>
-        {config.adapter === "generic_json_v1" ? (
-          <Field label="事件 ID 路径" id="wh-event">
-            <Input
-              id="wh-event"
-              value={config.mapping.event_id_pointer}
-              onChange={(event) =>
-                mapping({ event_id_pointer: event.target.value })
-              }
-            />
-          </Field>
-        ) : (
+        <fieldset className="space-y-3">
+          <legend className="font-medium">业务角色</legend>
           <p className="text-sm text-muted-foreground">
-            Grafana 仅处理 firing 告警组，使用 groupKey 或指纹去重。
+            Webhook
+            使用所选角色的应用、工具和数据资源权限。选择角色后无需关联人员。
           </p>
-        )}
-        <Field label="变量映射（JSON Pointer）" id="wh-variables">
-          <textarea
-            id="wh-variables"
-            className={inputClass}
-            rows={4}
-            maxLength={30000}
-            value={variables}
-            onChange={(event) => setVariables(event.target.value)}
-          />
-        </Field>
-        <Field label="消息模板" id="wh-message">
-          <textarea
-            id="wh-message"
-            className={inputClass}
-            rows={3}
-            maxLength={10000}
-            value={config.mapping.message_template}
-            onChange={(event) =>
-              mapping({ message_template: event.target.value })
-            }
-          />
-        </Field>
-        <Field label="过滤条件（JSON 数组）" id="wh-filters">
-          <textarea
-            id="wh-filters"
-            className={inputClass}
-            rows={2}
-            maxLength={30000}
-            value={filters}
-            onChange={(event) => setFilters(event.target.value)}
-          />
-        </Field>
-        <h3 className="font-medium">业务路由</h3>
-        <p className="text-xs text-muted-foreground">
-          提取模式必须填写允许值，使用英文逗号分隔；报文不能扩大授权范围。
-        </p>
-        {Object.entries({
-          project_code: "项目编码",
-          environment: "环境",
-          base: "基地",
-          workshop: "车间",
-          service: "服务",
-        }).map(([key, label]) => {
-          const rule = config.routing[key]
-          const update = (patch: Partial<typeof rule>) =>
-            setConfig({
-              ...config,
-              routing: { ...config.routing, [key]: { ...rule, ...patch } },
-            })
-          return (
-            <div key={key} className="grid gap-2 sm:grid-cols-3">
-              <Field label={`${label}模式`} id={`wh-${key}-mode`}>
-                <select
-                  id={`wh-${key}-mode`}
-                  className={inputClass}
-                  value={rule.mode}
-                  onChange={(event) =>
-                    update({ mode: event.target.value as "fixed" | "extract" })
-                  }
-                >
-                  <option value="fixed">固定</option>
-                  <option value="extract">从报文提取</option>
-                </select>
-              </Field>
-              <Field
-                label={`${label}${rule.mode === "fixed" ? "值" : "路径"}`}
-                id={`wh-${key}-value`}
-              >
-                <Input
-                  id={`wh-${key}-value`}
-                  value={rule.mode === "fixed" ? rule.value : rule.pointer}
-                  onChange={(event) =>
-                    update(
-                      rule.mode === "fixed"
-                        ? { value: event.target.value }
-                        : { pointer: event.target.value }
-                    )
-                  }
-                />
-              </Field>
-              {rule.mode === "extract" ? (
-                <Field label={`${label}允许值`} id={`wh-${key}-allowed`}>
-                  <Input
-                    id={`wh-${key}-allowed`}
-                    value={rule.allowed_values.join(",")}
-                    onChange={(event) =>
-                      update({ allowed_values: event.target.value.split(",") })
-                    }
-                  />
-                </Field>
-              ) : null}
-            </div>
-          )
-        })}
-        <Field label="结果投递" id="wh-delivery">
-          <select
-            id="wh-delivery"
-            className={inputClass}
-            value={
-              config.delivery.type === "dingtalk_recipients"
-                ? "dingtalk_recipients"
-                : config.delivery.connector_id
-            }
-            onChange={(event) => {
-              if (event.target.value === "dingtalk_recipients") {
-                updateRecipients([
-                  {
-                    connector_id: robots[0]?.id ?? "",
-                    kind: "group",
-                    target_id: "",
-                    label: "",
-                  },
-                ])
-                setTarget("{}")
-                setOptions("{}")
-                return
-              }
-              const selected = destinations.find(
-                (item) => item.id === event.target.value
-              )
-              setConfig({
-                ...config,
-                delivery: {
-                  type: selected?.connector_type ?? "none",
-                  connector_id: selected?.id ?? "",
-                  target: {},
-                  options: {},
-                },
-              })
-              setTarget("{}")
-              setOptions("{}")
-            }}
-          >
-            <option value="">不投递结果</option>
-            <option value="dingtalk_recipients">
-              钉钉机器人（多个接收人）
-            </option>
-            {destinations.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name} · {item.connector_type}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {config.delivery.type === "dingtalk_recipients" ? (
-          <section className="space-y-3" aria-label="钉钉结果接收人">
-            <p className="text-sm text-muted-foreground">
-              Agent 执行完成后发送结果，最多 20 个接收人。群填写
-              openConversationId，用户填写该机器人企业内的 userId。 请先在 Agent
-              配置中分配这些机器人的投递权限并发布；业务应用的投递绑定选择“使用
-              Webhook 配置的接收人”，连接器选择本 Webhook 入口。
-            </p>
-            {robots.length === 0 ? (
-              <p role="status">
-                没有可用的钉钉应用机器人，请先在渠道页面创建并启用机器人。
-              </p>
-            ) : null}
-            {recipients.map((row, index) => (
-              <div key={index} className="space-y-2 rounded-lg border p-3">
-                <Field
-                  label={`接收人 ${index + 1} 机器人`}
-                  id={`wh-recipient-${index}-robot`}
-                >
-                  <select
-                    id={`wh-recipient-${index}-robot`}
-                    className={inputClass}
-                    value={row.connector_id}
-                    onChange={(event) =>
-                      updateRecipient(index, {
-                        connector_id: event.target.value,
-                      })
-                    }
-                  >
-                    <option value="">请选择钉钉机器人</option>
-                    {robots.map((robot) => (
-                      <option key={robot.id} value={robot.id}>
-                        {robot.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field
-                  label={`接收人 ${index + 1} 类型`}
-                  id={`wh-recipient-${index}-kind`}
-                >
-                  <select
-                    id={`wh-recipient-${index}-kind`}
-                    className={inputClass}
-                    value={row.kind}
-                    onChange={(event) =>
-                      updateRecipient(index, {
-                        kind: event.target.value as "group" | "user",
-                        target_id: "",
-                      })
-                    }
-                  >
-                    <option value="group">钉钉群</option>
-                    <option value="user">钉钉用户</option>
-                  </select>
-                </Field>
-                <Field
-                  label={`接收人 ${index + 1} 目标 ID`}
-                  id={`wh-recipient-${index}-target`}
-                >
-                  <Input
-                    id={`wh-recipient-${index}-target`}
-                    value={row.target_id}
-                    maxLength={256}
-                    placeholder={
-                      row.kind === "group" ? "openConversationId" : "userId"
-                    }
-                    onChange={(event) =>
-                      updateRecipient(index, { target_id: event.target.value })
-                    }
-                  />
-                </Field>
-                <Field
-                  label={`接收人 ${index + 1} 备注`}
-                  id={`wh-recipient-${index}-label`}
-                >
-                  <Input
-                    id={`wh-recipient-${index}-label`}
-                    value={row.label}
-                    maxLength={80}
-                    onChange={(event) =>
-                      updateRecipient(index, { label: event.target.value })
-                    }
-                  />
-                </Field>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() =>
-                    updateRecipients(recipients.filter((_, i) => i !== index))
-                  }
-                >
-                  删除接收人 {index + 1}
-                </Button>
-              </div>
-            ))}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={recipients.length >= 20}
-              onClick={() =>
-                updateRecipients([
-                  ...recipients,
-                  {
-                    connector_id: robots[0]?.id ?? "",
-                    kind: "group",
-                    target_id: "",
-                    label: "",
-                  },
-                ])
-              }
+          {catalog.data?.roles.map((role) => (
+            <label
+              key={role.id}
+              className="flex items-center gap-2 rounded-md border p-3"
             >
-              添加接收人
-            </Button>
-          </section>
-        ) : null}
-        {config.delivery.connector_id ? (
-          <>
-            <Field label="投递目标（JSON）" id="wh-target">
-              <textarea
-                id="wh-target"
-                className={inputClass}
-                rows={3}
-                maxLength={10000}
-                value={target}
-                onChange={(event) => setTarget(event.target.value)}
-              />
-            </Field>
-            <Field label="投递选项（JSON）" id="wh-options">
-              <textarea
-                id="wh-options"
-                className={inputClass}
-                rows={2}
-                maxLength={10000}
-                value={options}
-                onChange={(event) => setOptions(event.target.value)}
-              />
-            </Field>
-          </>
-        ) : null}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="去重冷却秒数" id="wh-cooldown">
-            <Input
-              id="wh-cooldown"
-              type="number"
-              min={0}
-              max={86400}
-              value={config.idempotency.cooldown_seconds}
-              onChange={(event) =>
-                setConfig({
-                  ...config,
-                  idempotency: { cooldown_seconds: Number(event.target.value) },
-                })
-              }
-            />
-          </Field>
-          {(
-            [
-              ["requests_per_minute", "每分钟请求数", 10000],
-              ["max_in_flight", "最大在途数", 1000],
-              ["max_alerts", "单次最大告警数", 100],
-            ] as const
-          ).map(([key, label, max]) => (
-            <Field key={key} label={label} id={`wh-${key}`}>
-              <Input
-                id={`wh-${key}`}
-                type="number"
-                min={1}
-                max={max}
-                value={config.limits[key]}
+              <input
+                type="checkbox"
+                checked={config.role_ids.includes(role.id)}
                 onChange={(event) =>
                   setConfig({
                     ...config,
-                    limits: {
-                      ...config.limits,
-                      [key]: Number(event.target.value),
-                    },
+                    role_ids: event.target.checked
+                      ? [...config.role_ids, role.id]
+                      : config.role_ids.filter((id) => id !== role.id),
                   })
                 }
               />
-            </Field>
+              <span>
+                {role.name}{" "}
+                <span className="text-xs text-muted-foreground">
+                  {role.code}
+                </span>
+              </span>
+            </label>
           ))}
-        </div>
+          {catalog.data?.roles.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              暂无可分配的业务角色，请在角色与授权中创建并授权。
+            </p>
+          )}
+          {config.role_ids
+            .filter((id) => !catalog.data?.roles.some((role) => role.id === id))
+            .map((id) => (
+              <label
+                key={id}
+                className="flex items-center gap-2 text-sm text-destructive"
+              >
+                <input
+                  type="checkbox"
+                  checked
+                  onChange={() =>
+                    setConfig({
+                      ...config,
+                      role_ids: config.role_ids.filter((value) => value !== id),
+                    })
+                  }
+                />
+                不可用角色 · {id}（取消选择后重新发布）
+              </label>
+            ))}
+        </fieldset>
+        <section className="space-y-2 rounded-lg bg-muted p-3 text-sm">
+          <p className="font-medium">
+            {definition.trigger_type === "generic"
+              ? "通用 JSON"
+              : "Grafana 标准告警"}
+          </p>
+          <p>
+            {definition.trigger_type === "generic"
+              ? '固定接收 {"id":"唯一事件 ID","message":"任务内容"}。'
+              : "接收 Grafana Alertmanager 标准报文，仅 firing 告警触发任务。"}
+          </p>
+          <p className="text-muted-foreground">
+            平台统一处理去重、限流和报文大小限制。
+          </p>
+        </section>
       </fieldset>
       {dirty ? (
         <p role="status" className="text-sm text-amber-700">
@@ -791,11 +375,11 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
         disabled={savedActionsDisabled}
         onClick={() => mutation.mutate("preview")}
       >
-        预览映射
+        预览报文
       </Button>
       {preview ? (
         <pre
-          aria-label="映射预览"
+          aria-label="报文预览"
           className="max-h-64 overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre-wrap"
         >
           {pretty(preview)}

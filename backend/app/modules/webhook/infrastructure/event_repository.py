@@ -34,6 +34,7 @@ class WebhookEventRepository:
         error_code: str = "",
         error_summary: str = "",
         enqueue: bool = False,
+        application_publication_id: str = "",
     ) -> tuple[dict[str, Any], bool]:
         event_id = new_id("webhook_event")
         timestamp = now_iso()
@@ -44,8 +45,8 @@ class WebhookEventRepository:
                service_account_id, external_event_id, dedup_key, payload_hash,
                request_bytes, safe_summary_json, normalized_event_json,
                correlation_id, status, auth_result, filter_result, error_code,
-               error_summary, received_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               error_summary, received_at, application_publication_id)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(trigger_id, dedup_key) do nothing
             returning id
             """,
@@ -53,7 +54,7 @@ class WebhookEventRepository:
                 event_id,
                 trigger_id,
                 trigger_publication_id,
-                agent_publication_id,
+                agent_publication_id or None,
                 service_account_id,
                 external_event_id,
                 dedup_key,
@@ -68,6 +69,7 @@ class WebhookEventRepository:
                 error_code,
                 error_summary[:500],
                 timestamp,
+                application_publication_id or None,
             ),
         )
         created = bool(rows)

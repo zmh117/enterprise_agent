@@ -199,11 +199,13 @@ class ComponentReferenceResponse(BaseModel):
     config_hash: str
     runtime_kind: Literal["python-v1"] | None = None
     runtime_protocol_versions: list[Literal["1.5"]] | None = None
+    ingress_connector_ids: list[str] = Field(default_factory=list)
     direction: str = ""
     component_type: str = ""
 
 
 class CatalogResponse(BaseModel):
+    recipient_users_by_connector: dict[str, list[dict[str, str]]] = Field(default_factory=dict)
     agents: list[ComponentReferenceResponse]
     workflows: list[ComponentReferenceResponse]
     connectors: list[ComponentReferenceResponse]

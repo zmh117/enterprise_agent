@@ -1,27 +1,21 @@
 from __future__ import annotations
 
 import hmac
-import re
 from typing import Any
 
-from app.modules.delivery.domain.recipient_routes import RECIPIENTS_ROUTE, normalized_recipients
 
 from app.modules.agent_config.application.service import AgentConfigService
-from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.modules.authorization_center.application.service import AuthorizationCenterService
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.platform_config.application.validation import validate_secret_ref
-from app.modules.webhook.application.mapping import WebhookMapper, validate_pointer
+from app.modules.webhook.application.mapping import WebhookMapper
 from app.modules.webhook.domain.models import (
     AuthenticationType,
     CODE_RE,
-    CONDITION_OPERATORS,
-    ROUTING_FIELDS,
     SECRET_REF_PREFIXES,
-    SERVICE_CODE_RE,
     TriggerSchema,
     config_hash,
     ensure_no_secret_values,
@@ -30,15 +24,7 @@ from app.modules.webhook.domain.models import (
 )
 from app.modules.webhook.infrastructure import WebhookTriggerRepository
 from app.shared.database import operation_unit_of_work
-from app.shared.exceptions import NonRetryableExecutionError
-
-
-_TEMPLATE_VARIABLE_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
-_SAFE_TARGET_KEYS = frozenset(
-    {"webhook_id", "open_conversation_id", "robot_code", "conversation_id"}
-)
+from app.shared.exceptions import AppError, NonRetryableExecutionError
 
 
 class TriggerValidator:
@@ -55,12 +41,12 @@ class TriggerValidator:
         self.connector_registry = connector_registry
         self.agent_config_service = agent_config_service
 
-    def validate(  # noqa: C901, PLR0915
+    def validate(  # noqa: C901
         self, *, definition: dict[str, Any], config: dict[str, Any]
     ) -> tuple[list[dict[str, str]], dict[str, Any]]:
         errors: list[dict[str, str]] = []
-        if int(config.get("schema_version") or 0) != 1:
-            errors.append({"field": "schema_version", "message": "仅支持结构版本 1"})
+        if int(config.get("schema_version") or 0) != 2:
+            errors.append({"field": "schema_version", "message": "请重新保存简化 Webhook 配置"})
         if str(config.get("adapter") or "") not in {item.value for item in TriggerSchema}:
             errors.append({"field": "adapter", "message": "不支持此适配器"})
         expected_adapter = {
@@ -80,7 +66,7 @@ class TriggerValidator:
         if str(account.get("status")) != "enabled":
             errors.append({"field": "service_account", "message": "服务账号已停用"})
         try:
-            source = self.connector_registry.require_ingress(str(definition["connector_id"]))
+            self.connector_registry.require_ingress(str(definition["connector_id"]))
         except Exception as exc:
             errors.append(
                 {
@@ -88,7 +74,6 @@ class TriggerValidator:
                     "message": getattr(exc, "safe_message", "接入连接器不可用"),
                 }
             )
-            source = None
 
         auth = config.get("authentication") or {}
         auth_type = str(auth.get("type") or "")
@@ -156,202 +141,9 @@ class TriggerValidator:
                         )
                         break
 
-        mapping = config.get("mapping") or {}
-        variables = mapping.get("variables") or {}
-        if not isinstance(variables, dict) or len(variables) > 50:
-            errors.append({"field": "mapping.variables", "message": "最多允许配置 50 个变量"})
-            variables = {}
-        for name, pointer in variables.items():
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", str(name)):
-                errors.append({"field": "mapping.variables", "message": "变量名无效"})
-            if not validate_pointer(str(pointer)):
-                errors.append(
-                    {"field": f"mapping.variables.{name}", "message": "JSON Pointer 无效"}
-                )
-        template = str(mapping.get("message_template") or "")
-        unknown_variables = sorted(set(_TEMPLATE_VARIABLE_RE.findall(template)) - set(variables))
-        if unknown_variables:
-            errors.append(
-                {
-                    "field": "mapping.message_template",
-                    "message": f"存在未知变量：{', '.join(unknown_variables)}",
-                }
-            )
-        for index, condition in enumerate(mapping.get("filters") or []):
-            if not isinstance(condition, dict):
-                errors.append({"field": f"mapping.filters.{index}", "message": "条件必须是对象"})
-                continue
-            if str(condition.get("operator") or "") not in CONDITION_OPERATORS:
-                errors.append(
-                    {"field": f"mapping.filters.{index}.operator", "message": "不允许使用此操作符"}
-                )
-            if not validate_pointer(str(condition.get("pointer") or "")):
-                errors.append(
-                    {"field": f"mapping.filters.{index}.pointer", "message": "JSON Pointer 无效"}
-                )
-        if config.get("adapter") == TriggerSchema.GENERIC_JSON_V1 and not validate_pointer(
-            str(mapping.get("event_id_pointer") or "")
-        ):
-            errors.append({"field": "mapping.event_id_pointer", "message": "JSON Pointer 无效"})
-
-        for field in ROUTING_FIELDS:
-            rule = (config.get("routing") or {}).get(field) or {}
-            mode = str(rule.get("mode") or "")
-            if mode not in {"fixed", "extract"}:
-                errors.append(
-                    {"field": f"routing.{field}.mode", "message": "模式必须为 fixed 或 extract"}
-                )
-                continue
-            if mode == "fixed" and field == "project_code" and not str(rule.get("value") or ""):
-                errors.append({"field": f"routing.{field}.value", "message": "必须填写项目编码"})
-            if mode == "extract":
-                if not validate_pointer(str(rule.get("pointer") or "")):
-                    errors.append(
-                        {"field": f"routing.{field}.pointer", "message": "JSON Pointer 无效"}
-                    )
-                if not rule.get("allowed_values"):
-                    errors.append(
-                        {
-                            "field": f"routing.{field}.allowed_values",
-                            "message": "提取路由必须配置允许列表",
-                        }
-                    )
-            if field == "service":
-                for value in [
-                    str(rule.get("value") or ""),
-                    *[str(item) for item in rule.get("allowed_values") or []],
-                ]:
-                    if value and not SERVICE_CODE_RE.fullmatch(value):
-                        errors.append({"field": "routing.service", "message": "服务编码无效"})
-
-        limits = config.get("limits") or {}
-        for limit_name, minimum, maximum in (
-            ("requests_per_minute", 1, 10000),
-            ("max_in_flight", 1, 1000),
-            ("max_alerts", 1, 100),
-        ):
-            limit_value = int(limits.get(limit_name) or 0)
-            if not minimum <= limit_value <= maximum:
-                errors.append(
-                    {
-                        "field": f"limits.{limit_name}",
-                        "message": f"必须在 {minimum} 到 {maximum} 之间",
-                    }
-                )
-
-        delivery = config.get("delivery") or {}
-        delivery_id = str(delivery.get("connector_id") or "")
-        recipient_connectors: list[tuple[str, str]] = []
-        if delivery.get("type") == RECIPIENTS_ROUTE:
-            try:
-                recipients = normalized_recipients(delivery)
-            except NonRetryableExecutionError as exc:
-                errors.extend(exc.field_errors)
-                recipients = []
-            for index, recipient in enumerate(recipients):
-                field = f"delivery.target.recipients.{index}.connector_id"
-                recipient_connectors.append((field, recipient["connector_id"]))
-                try:
-                    self.connector_registry.require_dingtalk_robot_delivery(
-                        recipient["connector_id"]
-                    )
-                except Exception as exc:
-                    errors.append(
-                        {"field": field, "message": getattr(exc, "safe_message", "机器人不可用")}
-                    )
-        elif str(delivery.get("type")) == "none" and not delivery_id:
-            if delivery.get("target") or delivery.get("options"):
-                errors.append({"field": "delivery", "message": "不投递结果时不能配置目标或选项"})
-        else:
-            try:
-                destination = self.connector_registry.require_delivery(delivery_id)
-                if destination.connector_type != str(delivery.get("type")):
-                    errors.append({"field": "delivery.type", "message": "投递类型与连接器不匹配"})
-            except Exception as exc:
-                errors.append(
-                    {
-                        "field": "delivery.connector_id",
-                        "message": getattr(exc, "safe_message", "投递连接器不可用"),
-                    }
-                )
-        target = delivery.get("target") or {}
-        if delivery.get("type") != RECIPIENTS_ROUTE and (
-            not isinstance(target, dict) or set(target) - _SAFE_TARGET_KEYS
-        ):
-            errors.append({"field": "delivery.target", "message": "投递目标包含不支持的字段"})
-
-        agent = config.get("agent") or {}
-        agent_code = str(agent.get("code") or "")
-        agent_publication_id = str(agent.get("publication_id") or "")
-        agent_publication: dict[str, Any] | None = None
-        try:
-            agent_publication = self.agent_config_service.publication(agent_publication_id)
-            agent_definition = self.agent_config_service.repository.get_definition_by_id(
-                str(agent_publication["agent_id"])
-            )
-            if str(agent_definition["code"]) != agent_code:
-                errors.append({"field": "agent", "message": "Agent 发布版本与 Agent 编码不匹配"})
-            if source and not self.agent_config_service.connector_allowed(
-                publication_id=agent_publication_id,
-                direction="ingress",
-                connector_id=source.id,
-            ):
-                errors.append(
-                    {"field": "connector_id", "message": "Agent 发布版本未分配此接入连接器"}
-                )
-            if delivery_id and not self.agent_config_service.connector_allowed(
-                publication_id=agent_publication_id,
-                direction="delivery",
-                connector_id=delivery_id,
-            ):
-                errors.append(
-                    {
-                        "field": "delivery.connector_id",
-                        "message": "Agent 发布版本未分配此投递连接器",
-                    }
-                )
-            for field, recipient_connector in recipient_connectors:
-                if not self.agent_config_service.connector_allowed(
-                    publication_id=agent_publication_id,
-                    direction="delivery",
-                    connector_id=recipient_connector,
-                ):
-                    errors.append(
-                        {"field": field, "message": "Agent 发布版本未分配此机器人用于结果投递"}
-                    )
-        except Exception as exc:
-            errors.append(
-                {
-                    "field": "agent.publication_id",
-                    "message": getattr(exc, "safe_message", "Agent 发布版本不可用"),
-                }
-            )
-
-        assigned_tools = (
-            sorted(self.agent_config_service.repository.publication_tools(agent_publication_id))
-            if agent_publication
-            else []
-        )
-        enabled_read_only_tools = set(MCP_TOOL_MANIFEST) & ToolRegistry.READONLY_TOOLS
-        invalid_tools = sorted(set(assigned_tools) - enabled_read_only_tools)
-        if invalid_tools:
-            errors.append(
-                {
-                    "field": "agent.publication_id",
-                    "message": f"Agent 发布版本包含无效工具：{', '.join(invalid_tools)}",
-                }
-            )
-        allowed_tools = [
-            tool_name for tool_name in assigned_tools if tool_name in enabled_read_only_tools
-        ]
-        summary = {
-            "agent_publication_id": agent_publication_id,
-            "agent_revision": int(agent_publication["revision"]) if agent_publication else 0,
-            "agent_config_hash": str(agent_publication["config_hash"]) if agent_publication else "",
-            "assigned_read_only_tools": assigned_tools,
-            "effective_read_only_tools": allowed_tools,
-        }
-        return errors, summary
+        if not config.get("role_ids"):
+            errors.append({"field": "role_ids", "message": "请至少选择一个业务角色"})
+        return errors, {"role_ids": config.get("role_ids", [])}
 
 
 class WebhookTriggerService:
@@ -364,6 +156,7 @@ class WebhookTriggerService:
         audit_service: AuditService,
         validator: TriggerValidator,
         mapper: WebhookMapper,
+        role_service: AuthorizationCenterService,
     ) -> None:
         self.repository = repository
         self.identity_repository = identity_repository
@@ -371,6 +164,7 @@ class WebhookTriggerService:
         self.audit_service = audit_service
         self.validator = validator
         self.mapper = mapper
+        self.role_service = role_service
 
     def list(self, *, actor_id: str) -> list[dict[str, Any]]:
         self._require(actor_id, "read")
@@ -487,6 +281,12 @@ class WebhookTriggerService:
         revision = self.repository.get_revision(revision_id)
         self._assert_revision_owner(definition, revision)
         errors, summary = self.validator.validate(definition=definition, config=revision["config"])
+        try:
+            self.role_service.validate_service_roles(
+                actor_id=actor_id, role_ids=revision["config"].get("role_ids", [])
+            )
+        except AppError as exc:
+            errors.append({"field": "role_ids", "message": exc.safe_message})
         result = self.repository.set_validation(revision_id, errors=errors, summary=summary)
         self._audit(
             "webhook.trigger.validated",
@@ -510,6 +310,12 @@ class WebhookTriggerService:
         revision = self.repository.get_revision(revision_id)
         self._assert_revision_owner(definition, revision)
         errors, summary = self.validator.validate(definition=definition, config=revision["config"])
+        try:
+            self.role_service.validate_service_roles(
+                actor_id=actor_id, role_ids=revision["config"].get("role_ids", [])
+            )
+        except AppError as exc:
+            errors.append({"field": "role_ids", "message": exc.safe_message})
         if errors:
             raise NonRetryableExecutionError(
                 "Webhook Trigger validation failed",
@@ -519,8 +325,7 @@ class WebhookTriggerService:
             )
         return {
             **self.mapper.preview(config=revision["config"], payload=sample_payload),
-            "agent": summary,
-            "delivery": revision["config"]["delivery"],
+            "authorization": summary,
             "side_effects": False,
         }
 
@@ -531,6 +336,12 @@ class WebhookTriggerService:
         revision = self.repository.get_revision(revision_id)
         self._assert_revision_owner(definition, revision)
         errors, summary = self.validator.validate(definition=definition, config=revision["config"])
+        try:
+            self.role_service.validate_service_roles(
+                actor_id=actor_id, role_ids=revision["config"].get("role_ids", [])
+            )
+        except AppError as exc:
+            errors.append({"field": "role_ids", "message": exc.safe_message})
         if errors:
             self.repository.set_validation(revision_id, errors=errors, summary=summary)
             raise NonRetryableExecutionError(
@@ -539,19 +350,15 @@ class WebhookTriggerService:
                 error_code="validation_failed",
                 field_errors=errors,
             )
-        agent_publication = self.validator.agent_config_service.publication(
-            str(revision["config"]["agent"]["publication_id"])
+        self.role_service.replace_service_roles(
+            actor_id=actor_id,
+            user_id=str(definition["service_account_id"]),
+            role_ids=revision["config"]["role_ids"],
         )
         snapshot = {
             **revision["config"],
             "service_account_id": definition["service_account_id"],
             "source_connector_id": definition["connector_id"],
-            "agent": {
-                **revision["config"]["agent"],
-                "revision": agent_publication["revision"],
-                "config_hash": agent_publication["config_hash"],
-                "read_only_tools": summary["effective_read_only_tools"],
-            },
         }
         with self.repository.database.unit_of_work():
             self.repository.set_validation(revision_id, errors=[], summary=summary)
@@ -561,7 +368,6 @@ class WebhookTriggerService:
                 revision=int(revision["revision"]),
                 snapshot=snapshot,
                 config_hash=config_hash(revision["config"]),
-                agent_publication=agent_publication,
                 actor_id=actor_id,
             )
         self._audit(
@@ -634,6 +440,26 @@ class WebhookTriggerService:
     ) -> dict[str, Any]:
         self._require(actor_id, "publish", code)
         before = self.repository.get_definition(code)
+        selected = self.repository.get_publication(publication_id)
+        config = {
+            k: v
+            for k, v in selected["snapshot"].items()
+            if k not in {"service_account_id", "source_connector_id"}
+        }
+        self._normalize(config)
+        errors, _ = self.validator.validate(definition=before, config=config)
+        if errors or str(selected["trigger_id"]) != str(before["id"]):
+            raise NonRetryableExecutionError(
+                "Invalid rollback",
+                safe_message="该版本无法回滚",
+                error_code="validation_failed",
+                field_errors=errors,
+            )
+        self.role_service.replace_service_roles(
+            actor_id=actor_id,
+            user_id=str(before["service_account_id"]),
+            role_ids=config["role_ids"],
+        )
         publication = self.repository.set_current_publication(
             code=code,
             publication_id=publication_id,
@@ -695,10 +521,6 @@ class WebhookTriggerService:
     def _normalize(self, config: dict[str, Any]) -> dict[str, Any]:
         ensure_no_secret_values(config)
         normalized = normalize_config(config)
-        if normalized["delivery"]["type"] == RECIPIENTS_ROUTE:
-            normalized["delivery"]["target"] = {
-                "recipients": normalized_recipients(normalized["delivery"])
-            }
         secret_ref = str((normalized.get("authentication") or {}).get("secret_ref") or "")
         try:
             validate_secret_ref(secret_ref)

@@ -556,7 +556,12 @@ class AgentConfigRepository:  # noqa: PLR0904
                    case when connector_type = 'dingtalk_enterprise_stream'
                         then 1 else 0 end as supports_robot_delivery
             from integration_connector
-            where enabled = 1
+            where enabled = 1 and deleted = 0
+              and (connector_type not in ('managed_webhook', 'grafana_alert') or exists (
+                select 1 from webhook_trigger_definition d
+                join webhook_trigger_publication p on p.id=d.current_publication_id
+                where d.connector_id=integration_connector.id and d.status='enabled'
+                  and p.status='active' and p.schema_version=2))
             order by name, id
             """
         )

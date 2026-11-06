@@ -16,6 +16,8 @@ from app.modules.message_bus.application.message_publisher import (
     MessagePublisher,
     WebhookEventMessage,
 )
+from app.modules.webhook.application.ingress_service import _revision_config
+from app.modules.webhook.domain.models import config_hash
 from app.modules.webhook.infrastructure import WebhookEventRepository, WebhookTriggerRepository
 from app.shared.config import WebhookSettings
 from app.shared.exceptions import AppError, NonRetryableExecutionError
@@ -144,16 +146,19 @@ class WebhookDispatcher:
             agent_publication = self.agent_config_service.publication(
                 str(event["agent_publication_id"])
             )
-            agent = snapshot.get("agent") or {}
             if (
-                str(agent_publication["id"]) != str(agent.get("publication_id") or "")
-                or int(agent_publication["revision"]) != int(agent.get("revision") or 0)
-                or str(agent_publication["config_hash"]) != str(agent.get("config_hash") or "")
+                snapshot.get("schema_version") != 2
+                or publication["status"] != "active"
+                or config_hash(_revision_config(snapshot)) != publication["config_hash"]
+                or not event.get("application_publication_id")
             ):
                 raise NonRetryableExecutionError(
-                    "Webhook event pinned Agent publication mismatch",
-                    safe_message="Webhook Agent 配置完整性校验失败",
+                    "Webhook publication is unavailable",
+                    safe_message="Webhook 发布配置已失效",
                 )
+            agent_definition = self.agent_config_service.repository.get_definition_by_id(
+                str(agent_publication["agent_id"])
+            )
             normalized = event["normalized_event"]
             channel_event = ChannelEvent(
                 source=ChannelSource(
@@ -171,13 +176,14 @@ class WebhookDispatcher:
                         "trigger_code": definition["code"],
                     },
                 ),
-                delivery=ReplyRoute.from_dict(snapshot["delivery"]),
+                delivery=ReplyRoute(type="none"),
                 routing=RoutingContext.from_dict(normalized["routing"]),
                 message=str(normalized["message"]),
                 raw_payload_summary=event["safe_summary"],
                 idempotency_key=f"webhook:{event['trigger_id']}:{event['dedup_key']}",
                 correlation_id=str(event["correlation_id"]),
-                agent_code=str(agent["code"]),
+                agent_code=str(agent_definition["code"]),
+                business_application_publication_id=str(event["application_publication_id"]),
                 agent_publication_id=str(agent_publication["id"]),
                 agent_revision=int(agent_publication["revision"]),
                 agent_config_hash=str(agent_publication["config_hash"]),

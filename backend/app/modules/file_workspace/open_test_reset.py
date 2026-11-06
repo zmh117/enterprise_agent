@@ -194,7 +194,6 @@ class OpenTestFileDomainResetService:
                 ("agent_channel_binding", "publication_id"),
                 ("agent_publication_mcp_tool", "agent_publication_id"),
                 ("agent_skill_binding", "publication_id"),
-                ("webhook_trigger_publication", "agent_publication_id"),
                 ("business_application_revision_mcp_tool", "agent_publication_id"),
                 ("business_application_publication_mcp_tool", "agent_publication_id"),
             ):

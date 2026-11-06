@@ -285,7 +285,9 @@ def activate_webhook_test_application(
                         "reply_mode": "fixed",
                     },
                 }
-            ],
+            ]
+            if delivery_type
+            else [],
             "mcp_tools": list(ensure_agent_publication_mcp_tools(container, capabilities)),
         },
     )

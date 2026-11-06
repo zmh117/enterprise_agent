@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,7 @@ class ComponentReference:
     config_hash: str
     runtime_kind: str | None = None
     runtime_protocol_versions: tuple[str, ...] = ()
+    ingress_connector_ids: tuple[str, ...] = ()
     direction: str = ""
     component_type: str = ""
 
@@ -21,7 +22,7 @@ class ComponentReference:
 class AgentPublicationReader(Protocol):
     def resolve(self, publication_id: str) -> ComponentReference: ...
 
-    def catalog(self, project_code: str) -> list[ComponentReference]: ...
+    def catalog(self) -> list[ComponentReference]: ...
 
 
 class WorkflowPublicationReader(Protocol):
@@ -31,6 +32,8 @@ class WorkflowPublicationReader(Protocol):
 
 
 class ChannelConnectorReader(Protocol):
+    def webhook_trigger(self, connector_id: str) -> dict[str, Any]: ...
+
     def resolve(
         self, connector_id: str, direction: str, trigger_type: str = ""
     ) -> ComponentReference: ...

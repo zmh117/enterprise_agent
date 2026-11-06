@@ -108,3 +108,62 @@ def test_service_account_has_no_password_session_or_external_identity() -> None:
             username=str(service["username"]),
             password="not-a-login-password",
         )
+
+
+def test_simplification_migration_revokes_old_webhooks_and_preserves_events(tmp_path, monkeypatch):
+    from backend.tests.test_dingtalk_enterprise_migration import _catalog_through
+    from app.modules.webhook.domain.models import WebhookEventStatus
+
+    old = _catalog_through(tmp_path, 156)
+    current = default_migrations_dir()
+    with monkeypatch.context() as patch:
+        patch.setattr("app.bootstrap.default_migrations_dir", lambda: old)
+        patch.setattr("app.shared.runtime_config_loader.default_migrations_dir", lambda: old)
+        c = container()
+    try:
+        c.database.execute("""insert into webhook_trigger_revision
+          (id,trigger_id,revision,status,schema_version,config_json,config_hash,validation_json,created_by,created_at,updated_at)
+          values ('old-webhook-revision','webhook_trigger_grafana_default',1,'published',1,'{}','hash','{}','user_local_admin',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)""")
+        c.database.execute("""insert into webhook_trigger_publication
+          (id,trigger_id,revision_id,revision,schema_version,snapshot_json,config_hash,agent_publication_id,agent_revision,agent_config_hash,status,published_by,published_at)
+          values ('old-webhook-publication','webhook_trigger_grafana_default','old-webhook-revision',1,1,'{}','hash','agent_publication_default_v1',1,'hash','active','user_local_admin',CURRENT_TIMESTAMP)""")
+        c.database.execute(
+            "update webhook_trigger_definition set status='enabled',current_publication_id='old-webhook-publication'"
+        )
+        # Use the pre-upgrade shape explicitly to exercise the table rebuild and its FK dependants.
+        c.database.execute("""insert into webhook_event
+          (id,trigger_id,trigger_publication_id,agent_publication_id,service_account_id,payload_hash,correlation_id,status,received_at)
+          values ('old-event','webhook_trigger_grafana_default','old-webhook-publication','agent_publication_default_v1','user_webhook_grafana_default','hash','synthetic', 'ACCEPTED',CURRENT_TIMESTAMP)""")
+        Migrator(c.database, current, migrator_build="webhook-v2-upgrade").run()
+        assert (
+            c.webhook_trigger_repository.get_definition("grafana-default")["status"] == "disabled"
+        )
+        assert (
+            c.webhook_trigger_repository.get_publication("old-webhook-publication")["status"]
+            == "revoked"
+        )
+        assert (
+            c.webhook_event_repository.get("old-event")["agent_publication_id"]
+            == "agent_publication_default_v1"
+        )
+        rejected, _ = c.webhook_event_repository.receive(
+            trigger_id="webhook_trigger_grafana_default",
+            trigger_publication_id="old-webhook-publication",
+            agent_publication_id="",
+            service_account_id="user_webhook_grafana_default",
+            external_event_id="",
+            dedup_key=None,
+            payload_hash="hash",
+            request_bytes=1,
+            safe_summary={},
+            normalized_event={},
+            correlation_id="rejected",
+            status=WebhookEventStatus.REJECTED_AUTH,
+            auth_result="failed",
+            filter_result="rejected",
+        )
+        assert rejected["agent_publication_id"] is None
+        assert c.database.execute("pragma foreign_key_check") == []
+        assert Migrator(c.database, current, migrator_build="repeat").run().applied == ()
+    finally:
+        c.database.close()

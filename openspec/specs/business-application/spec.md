@@ -180,6 +180,13 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **THEN** 系统创建新的应用草稿 revision 并保存各组件的稳定引用
 - **AND** 先前 revision 的内容保持不变
 
+#### Scenario: 从全部已发布 Agent 配置中选择当前版本
+- **WHEN** 用户打开应用组成配置的 Agent 发布版本列表
+- **THEN** 系统列出所有已启用且具有有效当前 Publication 的 Agent，每个配置只显示当前发布指针指向的一个版本，不按应用项目编码筛选
+- **AND** 尚未发布、已停用及历史非当前版本不作为新选择候选；Agent 显式回滚后使用回滚后的当前版本
+- **AND** 应用可以保存、校验和发布不同项目编码的 Agent 引用，继续执行 Publication 完整性、Runtime 兼容和 MCP Tool 子集校验
+- **AND** 保存和发布固定精确 Publication，后续 Agent 发布或回滚不会自动替换应用引用，也不会扩大运行用户的工具或数据授权
+
 #### Scenario: 尝试引用组件草稿
 - **WHEN** 用户提交 Agent Revision 或 Workflow 草稿而不是 Publication
 - **THEN** 系统拒绝该引用并返回对应字段错误

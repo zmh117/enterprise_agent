@@ -16,6 +16,9 @@ class FailingWebhookPublisher:
 
 
 def _accepted_event(c: object, suffix: str) -> dict[str, object]:
+    from backend.tests.support.webhooks import prepare_test_webhook
+
+    prepare_test_webhook(c)
     repository: WebhookEventRepository = c.webhook_event_repository
     event, created = repository.receive(
         trigger_id="webhook_trigger_grafana_default",

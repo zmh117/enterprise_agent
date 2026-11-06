@@ -17,67 +17,11 @@ class AuthenticationRequest(StrictRequest):
     secret_ref: str = Field(min_length=1, max_length=500)
 
 
-class FilterRequest(StrictRequest):
-    pointer: str = Field(max_length=512)
-    operator: Literal["exists", "equals", "in", "not_equals"]
-    value: Any = None
-
-
-class MappingRequest(StrictRequest):
-    variables: dict[str, str] = Field(default_factory=dict)
-    filters: list[FilterRequest] = Field(default_factory=list, max_length=50)
-    message_template: str = Field(default="", max_length=10000)
-    event_id_pointer: str = Field(default="", max_length=512)
-    status_pointer: str = Field(default="", max_length=512)
-
-
-class RoutingRuleRequest(StrictRequest):
-    mode: Literal["fixed", "extract"]
-    value: str = Field(default="", max_length=200)
-    pointer: str = Field(default="", max_length=512)
-    allowed_values: list[str] = Field(default_factory=list, max_length=500)
-
-
-class RoutingRequest(StrictRequest):
-    project_code: RoutingRuleRequest
-    environment: RoutingRuleRequest
-    base: RoutingRuleRequest
-    workshop: RoutingRuleRequest
-    service: RoutingRuleRequest
-
-
-class AgentRequest(StrictRequest):
-    code: str = Field(default="default-diagnostic-agent", max_length=120)
-    publication_id: str = Field(min_length=1, max_length=200)
-
-
-class DeliveryRequest(StrictRequest):
-    type: str = Field(min_length=1, max_length=120)
-    connector_id: str = Field(default="", max_length=200)
-    target: dict[str, Any] = Field(default_factory=dict)
-    options: dict[str, Any] = Field(default_factory=dict)
-
-
-class IdempotencyRequest(StrictRequest):
-    cooldown_seconds: int = Field(default=300, ge=0, le=86400)
-
-
-class LimitsRequest(StrictRequest):
-    requests_per_minute: int = Field(default=60, ge=1, le=10000)
-    max_in_flight: int = Field(default=10, ge=1, le=1000)
-    max_alerts: int = Field(default=20, ge=1, le=100)
-
-
 class TriggerConfigRequest(StrictRequest):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     adapter: Literal["grafana_alertmanager_v1", "generic_json_v1"]
     authentication: AuthenticationRequest
-    mapping: MappingRequest
-    routing: RoutingRequest
-    agent: AgentRequest
-    delivery: DeliveryRequest
-    idempotency: IdempotencyRequest = Field(default_factory=IdempotencyRequest)
-    limits: LimitsRequest = Field(default_factory=LimitsRequest)
+    role_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 class CreateTriggerRequest(StrictRequest):
@@ -138,34 +82,17 @@ def build_webhook_admin_router() -> APIRouter:  # noqa: C901, PLR0915
 
     @router.get("/webhook-triggers/catalog")
     def catalog(request: Request) -> dict[str, Any]:
-        require_action(request, resource_type="webhook_trigger", resource_code="*", action="read")
-        c = container(request)
+        principal = require_action(
+            request, resource_type="webhook_trigger", resource_code="*", action="read"
+        )
         try:
-            repository = c.agent_config_service.repository
-            default_definition = repository.find_definition(c.settings.identity.default_agent_code)
-            default_publication_id = (default_definition or {}).get("current_publication_id")
-            agents = [
-                {
-                    "code": definition["code"],
-                    "name": definition["name"],
-                    "publication_id": publication["id"],
-                    "revision": publication["revision"],
-                    "config_hash": publication["config_hash"],
-                    "read_only_tools": sorted(repository.publication_tools(str(publication["id"]))),
-                }
-                for definition in repository.list_definitions(include_disabled=False)
-                for publication in repository.list_publications(str(definition["id"]))
-            ]
+            return {
+                "roles": container(request).authorization_center_service.service_role_catalog(
+                    actor_id=principal.user_id
+                )
+            }
         except Exception as exc:
             raise handle_exception(exc) from exc
-        return {
-            "agent": next(
-                (item for item in agents if item["publication_id"] == default_publication_id),
-                None,
-            ),
-            "agents": agents,
-            "connectors": c.agent_config_service.repository.connector_catalog(),
-        }
 
     @router.post("/webhook-triggers")
     def create_trigger(request: Request, payload: CreateTriggerRequest) -> dict[str, Any]:

@@ -140,35 +140,9 @@ INSERT INTO webhook_trigger_definition
 VALUES
   ('webhook_trigger_grafana_default', 'grafana-default', '默认 Grafana 告警',
    'grafana', 'wh_local_grafana_default_00000000000000000001',
-   'connector-grafana-default', 'user_webhook_grafana_default', 'enabled',
-   'webhook_trigger_publication_grafana_v1', 1, 'user_local_admin',
+   'connector-grafana-default', 'user_webhook_grafana_default', 'disabled',
+   NULL, 1, 'user_local_admin',
    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO webhook_trigger_revision
-  (id, trigger_id, revision, status, schema_version, config_json, config_hash,
-   validation_json, created_by, created_at, updated_at)
-VALUES
-  ('webhook_trigger_revision_grafana_v1', 'webhook_trigger_grafana_default', 1,
-   'published', 1,
-   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1"},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1}',
-   'fc5f064e955301b104fe7577f1a1c52c9656890e622de40514fa5fdc3d6313de',
-   '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
-   CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO webhook_trigger_publication
-  (id, trigger_id, revision_id, revision, schema_version, snapshot_json,
-   config_hash, agent_publication_id, agent_revision, agent_config_hash,
-   status, published_by, published_at)
-VALUES
-  ('webhook_trigger_publication_grafana_v1', 'webhook_trigger_grafana_default',
-   'webhook_trigger_revision_grafana_v1', 1, 1,
-   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"2eadbde7f8f9d7086133bc529da10c6f818b58e5693520abf9b5946f806db6ac","read_only_tools":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_schema_directory","list_available_tool_resources","query_database","query_loki","query_redis_get","query_redis_scan"]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
-   'fc5f064e955301b104fe7577f1a1c52c9656890e622de40514fa5fdc3d6313de',
-   'agent_publication_default_v1', 1,
-   '2eadbde7f8f9d7086133bc529da10c6f818b58e5693520abf9b5946f806db6ac',
-   'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO platform_secret_reference

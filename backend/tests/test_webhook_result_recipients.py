@@ -13,7 +13,6 @@ from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.support.channels import ensure_active_dingtalk_test_enterprise
 from backend.tests.support.runtime import container
 from backend.tests.test_dingtalk_delivery import FakeDingTalkTransport
-from backend.tests.test_webhook_trigger_service import _config, _service
 
 
 def robot(runtime):
@@ -220,77 +219,109 @@ def test_fanout_rolls_back_if_second_event_cannot_be_persisted(monkeypatch):
         runtime.database.close()
 
 
-def test_publish_requires_agent_delivery_assignment(monkeypatch):
-    runtime, service = _service(monkeypatch)
+def _bound_person(runtime, connector_id, suffix):
+    from app.modules.job.infrastructure.persistence_values import now_iso
+
+    user = runtime.identity_repository.create_user(
+        username=f"recipient-{suffix}", display_name=f"Synthetic {suffix}"
+    )
+    connector = runtime.database.execute_one(
+        "select dingtalk_enterprise_id from integration_connector where id=?", (connector_id,)
+    )
+    runtime.identity_repository.bind_dingtalk_identity(
+        user_id=user["id"],
+        dingtalk_enterprise_id=connector["dingtalk_enterprise_id"],
+        external_subject_id=f"synthetic-{suffix}",
+        display_name=user["display_name"],
+        source_connector_id=connector_id,
+        source_ingress_event_id="",
+        observed_at=now_iso(),
+        replace_current=False,
+    )
+    return user["id"]
+
+
+def _publish_private(runtime, connector_id, user_ids):
+    service = runtime.business_application_service
+    code = "grafana-strict-runtime"
+    detail = service.detail(actor_id="user_local_admin", code=code)
+    payload = dict(detail["draft"])
+    payload["triggers"] = [
+        {
+            key: row[key]
+            for key in (
+                "trigger_type",
+                "connector_id",
+                "routing_key",
+                "actor_policy",
+                "service_account_user_id",
+                "enabled",
+                "config",
+            )
+        }
+        for row in payload["triggers"]
+    ]
+    payload["mcp_tools"] = [item["tool_identifier"] for item in payload["mcp_tools"]]
+    payload["deliveries"] = [
+        {
+            "delivery_type": "dingtalk_private",
+            "connector_id": connector_id,
+            "enabled": True,
+            "config": {"target_user_ids": user_ids},
+        }
+    ]
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code=code,
+        expected_revision=detail["revision"],
+        payload=payload,
+    )
+    publication = service.publish(
+        actor_id="user_local_admin", code=code, revision_id=revision["id"]
+    )
+    service.activate(
+        actor_id="user_local_admin",
+        code=code,
+        environment="local",
+        publication_id=publication["id"],
+        expected_revision=detail["deployments"][0]["revision"],
+    )
+    return publication
+
+
+def _dispatch_webhook(runtime):
+    from backend.tests.test_webhook_ingress_dispatch import _receive, _firing
+
+    received = _receive(runtime, _firing("synthetic-recipients"))
+    runtime.webhook_outbox_publisher.publish_pending()
+    runtime.message_bus.consume_webhook_events(runtime.webhook_dispatcher.handle)
+    event = runtime.webhook_event_repository.get(received.event_id)
+    assert event["status"] == "JOB_CREATED", event["error_summary"]
+    return runtime.agent_repository.get_job(event["job_id"])
+
+
+def test_application_owns_frozen_people_and_sends_each_result_independently():
+    from backend.tests.test_webhook_ingress_dispatch import _container
+
+    runtime = _container()
     try:
         connector_id = robot(runtime)
-        config = _config()
-        config["delivery"] = route(connector_id)
-        created = service.create(
-            actor_id="user_local_admin",
-            code="recipients",
-            name="Synthetic recipients",
-            trigger_type="grafana",
-            connector_id="connector-grafana-default",
-            config=config,
+        people = [_bound_person(runtime, connector_id, suffix) for suffix in ("one", "two")]
+        publication = _publish_private(runtime, connector_id, people)
+        frozen = publication["snapshot"]["deliveries"][0]["resolved_recipients"]
+        assert [row["user_id"] for row in frozen] == people
+        catalog = runtime.business_application_service.catalog(
+            actor_id="user_local_admin", code="grafana-strict-runtime"
         )
-        errors, _ = service.validator.validate(
-            definition=created["definition"], config=created["draft"]["config"]
+        assert {row["id"] for row in catalog["recipient_users_by_connector"][connector_id]} >= set(
+            people
         )
-        assert any("delivery" in error["field"] for error in errors)
-        runtime.database.execute(
-            "insert into agent_channel_binding (id, publication_id, direction, connector_id, config_json, created_at) values ('synthetic-recipient-binding','agent_publication_default_v1','delivery',?,'{}',CURRENT_TIMESTAMP)",
-            (connector_id,),
+        assert all(
+            set(row) == {"id", "name"}
+            for row in catalog["recipient_users_by_connector"][connector_id]
         )
-        errors, _ = service.validator.validate(
-            definition=created["definition"], config=created["draft"]["config"]
-        )
-        assert errors == []
-        assert any(
-            x["id"] == connector_id and x["supports_robot_delivery"]
-            for x in runtime.agent_config_service.repository.connector_catalog()
-        )
-        with pytest.raises(NonRetryableExecutionError):
-            runtime.connector_registry.require_delivery(connector_id)
-    finally:
-        runtime.database.close()
-
-
-def test_webhook_application_preserves_frozen_recipients_through_agent_result():
-    from backend.tests.test_webhook_ingress_dispatch import _container, _receive, _firing
-    from app.modules.webhook.domain.models import config_hash
-    from app.modules.webhook.application.ingress_service import _revision_config
-
-    runtime = _container(webhook_result=True)
-    try:
-        connector_id = robot(runtime)
-        publication = runtime.webhook_trigger_repository.get_publication(
-            "webhook_trigger_publication_grafana_v1"
-        )
-        snapshot = publication["snapshot"]
-        snapshot["delivery"] = route(connector_id)
-        runtime.database.execute(
-            "update webhook_trigger_publication set snapshot_json=?, config_hash=? where id=?",
-            (json.dumps(snapshot), config_hash(_revision_config(snapshot)), publication["id"]),
-        )
-        runtime.database.execute(
-            "insert into agent_channel_binding (id, publication_id, direction, connector_id, config_json, created_at) values ('synthetic-runtime-binding','agent_publication_default_v1','delivery',?,'{}',CURRENT_TIMESTAMP)",
-            (connector_id,),
-        )
-        received = _receive(runtime, _firing("synthetic-recipients"))
-        assert received.accepted
-        runtime.webhook_outbox_publisher.publish_pending()
-        runtime.message_bus.consume_webhook_events(runtime.webhook_dispatcher.handle)
-        event = runtime.webhook_event_repository.get(received.event_id)
-        assert event["status"] == "JOB_CREATED"
-        job = runtime.agent_repository.get_job(event["job_id"])
-        assert job.reply_route == route(connector_id)
-        # Later configuration cannot replace the accepted event / Job recipients.
-        snapshot["delivery"]["target"]["recipients"][0]["target_id"] = "later-config-group"
-        runtime.database.execute(
-            "update webhook_trigger_publication set snapshot_json=?, config_hash=? where id=?",
-            (json.dumps(snapshot), config_hash(_revision_config(snapshot)), publication["id"]),
-        )
+        job = _dispatch_webhook(runtime)
+        assert job.reply_route["target"]["recipients"] == frozen
         transport = FakeDingTalkTransport()
         runtime.result_delivery_service.adapters["dingtalk_robot_message"] = (
             DingTalkRobotResultDeliveryAdapter(
@@ -300,11 +331,77 @@ def test_webhook_application_preserves_frozen_recipients_through_agent_result():
         runtime.agent_executor.execute(
             job.id, worker_id="synthetic-worker", correlation_id="synthetic-recipients"
         )
-        completed = runtime.agent_repository.get_job(job.id)
-        assert completed.status.value == "SUCCEEDED"
+        assert runtime.agent_repository.get_job(job.id).status.value == "SUCCEEDED"
         assert runtime.delivery_dispatcher.dispatch_pending(limit=10).succeeded == 2
-        group_call = next(x for x in transport.calls if x["url"].endswith("groupMessages/send"))
-        assert group_call["payload"]["openConversationId"] == "synthetic-group"
+        sends = [call for call in transport.calls if call["url"].endswith("oToMessages/batchSend")]
+        assert len(sends) == 2
+        assert {call["payload"]["userIds"][0] for call in sends} == {
+            "synthetic-one",
+            "synthetic-two",
+        }
+    finally:
+        runtime.database.close()
+
+
+def test_empty_people_runs_and_saves_result_without_sending():
+    from backend.tests.test_webhook_ingress_dispatch import _container
+
+    runtime = _container()
+    try:
+        connector_id = robot(runtime)
+        _publish_private(runtime, connector_id, [])
+        job = _dispatch_webhook(runtime)
+        assert job.reply_route["type"] == "none"
+        runtime.agent_executor.execute(
+            job.id, worker_id="synthetic-worker", correlation_id="synthetic-none"
+        )
+        assert runtime.agent_repository.get_job(job.id).status.value == "SUCCEEDED"
+        result = runtime.delivery_dispatcher.dispatch_pending(limit=10)
+        assert result.succeeded == 0
+    finally:
+        runtime.database.close()
+
+
+def test_disabled_recipient_fails_only_its_delivery_after_job_finishes():
+    from backend.tests.test_webhook_ingress_dispatch import _container
+
+    runtime = _container()
+    try:
+        connector_id = robot(runtime)
+        people = [_bound_person(runtime, connector_id, suffix) for suffix in ("one", "two")]
+        _publish_private(runtime, connector_id, people)
+        job = _dispatch_webhook(runtime)
+        transport = FakeDingTalkTransport()
+        runtime.result_delivery_service.adapters["dingtalk_robot_message"] = (
+            DingTalkRobotResultDeliveryAdapter(
+                connector_registry=runtime.connector_registry, transport=transport
+            )
+        )
+        runtime.agent_executor.execute(
+            job.id, worker_id="synthetic-worker", correlation_id="synthetic-disabled"
+        )
+        runtime.database.execute(
+            "update user_external_identity set status='disabled' where user_id=?", (people[0],)
+        )
+        result = runtime.delivery_dispatcher.dispatch_pending(limit=10)
+        assert result.succeeded == 1 and result.failed == 1
+        sends = [call for call in transport.calls if call["url"].endswith("oToMessages/batchSend")]
+        assert len(sends) == 1 and sends[0]["payload"]["userIds"] == ["synthetic-two"]
+    finally:
+        runtime.database.close()
+
+
+def test_cross_enterprise_or_unbound_people_cannot_be_published():
+    from backend.tests.test_webhook_ingress_dispatch import _container
+
+    runtime = _container()
+    try:
+        connector_id = robot(runtime)
+        unbound = runtime.identity_repository.create_user(
+            username="unbound-target", display_name="Unbound"
+        )
+        with pytest.raises(NonRetryableExecutionError):
+            _publish_private(runtime, connector_id, [unbound["id"]])
     finally:
         runtime.database.close()
 
@@ -344,7 +441,7 @@ def test_sqlite_upgrade_preserves_existing_delivery_and_binding(tmp_path, monkey
         _insert_event(runtime, job.id, artifact)
         before = runtime.database.execute("select * from delivery_outbox")
         result = Migrator(runtime.database, current, migrator_build="recipient-upgrade-test").run()
-        assert result.applied == ("148", "149")
+        assert result.applied[:2] == ("148", "149")
         after = runtime.database.execute("select * from delivery_outbox")
         assert [{k: v for k, v in row.items() if k != "recipient_key"} for row in after] == before
         assert all(row["recipient_key"] == "" for row in after)
@@ -354,8 +451,8 @@ def test_sqlite_upgrade_preserves_existing_delivery_and_binding(tmp_path, monkey
         runtime.database.close()
 
 
-@pytest.mark.parametrize("variant", ["valid", "other_source", "duplicate"])
-def test_application_webhook_result_binding_is_explicit_and_unique(variant):
+@pytest.mark.parametrize("variant", ["valid", "legacy", "duplicate", "none"])
+def test_application_private_binding_is_explicit_and_optional(variant):
     from types import SimpleNamespace
     from app.modules.business_application.domain.runtime import (
         RuntimeReadinessEvaluator,
@@ -371,8 +468,9 @@ def test_application_webhook_result_binding_is_explicit_and_unique(variant):
 
     source = "synthetic-ingress"
     binding = {
-        "delivery_type": "webhook_result",
-        "connector_id": source if variant != "other_source" else "wrong-source",
+        "delivery_type": "webhook_result" if variant == "legacy" else "dingtalk_private",
+        "connector_id": "synthetic-robot",
+        "resolved_recipients": route("synthetic-robot")["target"]["recipients"],
         "enabled": True,
         "config": {},
     }
@@ -389,7 +487,7 @@ def test_application_webhook_result_binding_is_explicit_and_unique(variant):
                 "config": {"webhook_definition_id": "synthetic"},
             }
         ],
-        "deliveries": [binding] * (2 if variant == "duplicate" else 1),
+        "deliveries": [] if variant == "none" else [binding] * (2 if variant == "duplicate" else 1),
     }
     readiness = RuntimeReadinessEvaluator(
         data_plane_enabled=True, runtime_environment="local"
@@ -406,7 +504,13 @@ def test_application_webhook_result_binding_is_explicit_and_unique(variant):
         webhook_trigger_id="synthetic",
     )
     resolution = SimpleNamespace(outcome=RouteResolutionOutcome.MATCHED)
-    if variant == "valid":
+    if variant == "none":
+        assert readiness.components["delivery"].status.value == "wired"
+        assert (
+            ChannelIngressService._application_reply_route(event, resolution, snapshot)["type"]
+            == "none"
+        )
+    elif variant == "valid":
         assert readiness.components["delivery"].status.value == "wired"
         assert (
             ChannelIngressService._application_reply_route(event, resolution, snapshot)

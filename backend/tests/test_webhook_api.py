@@ -33,7 +33,9 @@ def _payload() -> dict[str, object]:
 
 
 def test_public_webhook_returns_202_and_stable_safe_errors() -> None:
-    c = unified_container()
+    from backend.tests.test_webhook_ingress_dispatch import _container
+
+    c = _container()
     with TestClient(create_app(unified_settings(), container_factory=lambda _: c)) as client:
         accepted = client.post(
             f"/webhooks/v1/{PUBLIC_ID}",
@@ -89,6 +91,9 @@ def test_public_webhook_returns_202_and_stable_safe_errors() -> None:
 
 def test_webhook_admin_api_enforces_session_csrf_actions_and_redaction() -> None:
     c = unified_container()
+    from backend.tests.support.webhooks import prepare_test_webhook
+
+    prepare_test_webhook(c)
     with TestClient(create_app(unified_settings(), container_factory=lambda _: c)) as client:
         csrf = login(client)
         values = client.get("/api/admin/webhook-triggers")
@@ -177,17 +182,18 @@ def test_first_webhook_creates_independent_ingress_and_completes_configuration()
         assert premature.json()["detail"]["code"] == "webhook_not_published"
         catalog = client.get("/api/admin/webhook-triggers/catalog")
         assert catalog.status_code == 200
-        assert catalog.json()["agents"][0]["publication_id"]
+        assert "agents" not in catalog.json()
+        role = c.authorization_center_service.create_role(
+            actor_id="user_local_admin",
+            code="first-webhook-role",
+            name="Synthetic role",
+            description="",
+            purpose_tags=[],
+        )
         config = _config()
         config["adapter"] = "generic_json_v1"
         config["authentication"]["secret_ref"] = "secret://platform/synthetic-first-webhook"
-        config["mapping"] = {
-            "variables": {"message": "/message"},
-            "message_template": "{message}",
-            "event_id_pointer": "/id",
-        }
-        config["delivery"] = {"type": "none", "connector_id": "", "target": {}, "options": {}}
-        config["idempotency"] = {"cooldown_seconds": 0}
+        config["role_ids"] = [role["role"]["id"]]
         saved = client.post(
             path + "/revisions",
             headers=csrf_headers(csrf),
@@ -195,27 +201,9 @@ def test_first_webhook_creates_independent_ingress_and_completes_configuration()
         )
         assert saved.status_code == 200, saved.text
         revision = saved.json()["revision"]
-        assert revision["config"]["idempotency"]["cooldown_seconds"] == 0
+        assert revision["config"]["schema_version"] == 2
         revision_path = path + "/revisions/" + revision["id"]
-        invalid = client.post(revision_path + "/validate", headers=csrf_headers(csrf), json={})
-        assert invalid.status_code == 200
-        assert invalid.json()["revision"]["validation"]["valid"] is False
-        assert any(
-            item["field"] == "connector_id"
-            for item in invalid.json()["revision"]["validation"]["errors"]
-        )
-        assert (
-            client.post(revision_path + "/publish", headers=csrf_headers(csrf), json={}).status_code
-            == 400
-        )
-        # Explicit fixture authorization; product creation must not add this grant.
-        c.database.execute(
-            """insert into agent_channel_binding
-            (id, publication_id, direction, connector_id, config_json, created_at)
-            values ('synthetic-new-ingress-binding', 'agent_publication_default_v1',
-                    'ingress', ?, '{}', CURRENT_TIMESTAMP)""",
-            (source_id,),
-        )
+        # Publishing an ingress no longer depends on any Agent or delivery.
         valid = client.post(revision_path + "/validate", headers=csrf_headers(csrf), json={})
         assert valid.json()["revision"]["validation"]["valid"] is True, valid.text
         before_jobs = c.agent_repository.count_rows("agent_job")
@@ -244,6 +232,24 @@ def test_first_webhook_creates_independent_ingress_and_completes_configuration()
         assert enabled.status_code == 200, enabled.text
         public_path = "/webhooks/v1/" + definition["public_id"]
         assert client.post(public_path, json=sample).status_code == 401
+        from backend.tests.support.applications import activate_webhook_test_application
+
+        c.database.execute(
+            """insert into agent_channel_binding
+            (id,publication_id,direction,connector_id,config_json,created_at)
+            values ('first-webhook-binding','agent_publication_default_v1','ingress',?,'{}',CURRENT_TIMESTAMP)""",
+            (source_id,),
+        )
+        activate_webhook_test_application(
+            c,
+            code="first-webhook-app",
+            webhook_definition_id=definition["id"],
+            service_account_user_id=definition["service_account_id"],
+            ingress_connector_id=source_id,
+            delivery_connector_id="",
+            delivery_target_reference="",
+            delivery_type="",
+        )
         accepted = client.post(
             public_path,
             json=sample,
@@ -293,5 +299,4 @@ def test_webhook_catalog_does_not_require_a_default_agent() -> None:
         login(client)
         result = client.get("/api/admin/webhook-triggers/catalog")
         assert result.status_code == 200, result.text
-        assert result.json()["agents"] == []
-        assert result.json()["agent"] is None
+        assert result.json() == {"roles": []}

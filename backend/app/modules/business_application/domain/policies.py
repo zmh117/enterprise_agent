@@ -53,7 +53,7 @@ SESSION_POLICY_FIELDS = {
 }
 EXECUTION_POLICY_FIELDS = {"max_turns", "timeout_seconds", "max_tool_calls"}
 TRIGGER_CONFIG_FIELDS = {"conversation_type", "require_mention", "webhook_definition_id"}
-DELIVERY_CONFIG_FIELDS = {"target_reference", "reply_mode"}
+DELIVERY_CONFIG_FIELDS = {"target_reference", "reply_mode", "target_user_ids"}
 FORBIDDEN_KEYS = {
     "url",
     "base_url",
@@ -395,8 +395,30 @@ def validate_delivery(value: dict[str, Any], index: int) -> dict[str, Any]:
     config = dict(value.get("config") or {})
     _reject_unknown(config, DELIVERY_CONFIG_FIELDS, f"deliveries.{index}.config")
     reject_dangerous_content(config, field=f"deliveries.{index}.config")
-    if delivery_type == "webhook_result" and config.get("target_reference"):
-        raise validation_error(f"deliveries.{index}.config", "接收人须在 Webhook 中配置")
+    if delivery_type == "webhook_callback":
+        target = config.get("target_reference", "")
+        if not isinstance(target, str) or "://" in target or len(target) > 240:
+            raise validation_error(
+                f"deliveries.{index}.config.target_reference", "请填写安全目标标识，不能填写 URL"
+            )
+    user_ids = config.get("target_user_ids", [])
+    if (
+        not isinstance(user_ids, list)
+        or len(user_ids) > 20
+        or any(not isinstance(value, str) or not value.strip() for value in user_ids)
+        or len(set(user_ids)) != len(user_ids)
+    ):
+        raise validation_error(
+            f"deliveries.{index}.config.target_user_ids", "请选择最多20位不重复的目标人员"
+        )
+    if delivery_type == "dingtalk_private":
+        if config.get("target_reference"):
+            raise validation_error(
+                f"deliveries.{index}.config", "钉钉私聊请选择人员，不能填写目标地址"
+            )
+        config["target_user_ids"] = user_ids
+    elif user_ids:
+        raise validation_error(f"deliveries.{index}.config", "仅钉钉私聊支持目标人员")
     return {
         "delivery_type": delivery_type,
         "connector_id": connector_id,

@@ -12,6 +12,7 @@ from app.shared.exceptions import NonRetryableExecutionError
 RECIPIENTS_ROUTE = "dingtalk_recipients"
 ROBOT_MESSAGE_ROUTE = "dingtalk_robot_message"
 MAX_RECIPIENTS = 20
+BOUND_FIELDS = ("user_id", "external_identity_id", "enterprise_id")
 
 
 def normalized_recipients(delivery: dict[str, Any]) -> list[dict[str, str]]:
@@ -30,7 +31,13 @@ def normalized_recipients(delivery: dict[str, Any]) -> list[dict[str, str]]:
     seen: set[str] = set()
     for index, row in enumerate(rows):
         field = f"delivery.target.recipients.{index}"
-        if not isinstance(row, dict) or set(row) - {"connector_id", "kind", "target_id", "label"}:
+        if not isinstance(row, dict) or set(row) - {
+            "connector_id",
+            "kind",
+            "target_id",
+            "label",
+            *BOUND_FIELDS,
+        }:
             raise _invalid("接收人包含不支持的字段", field)
         if any(
             not isinstance(row.get(k, ""), str)
@@ -51,6 +58,12 @@ def normalized_recipients(delivery: dict[str, Any]) -> list[dict[str, str]]:
             or any(c.isspace() or ord(c) < 32 for c in value["target_id"])
         ):
             raise _invalid("请选择机器人、群或用户，并填写有效目标 ID（不能使用 URL）", field)
+        if any(key in row for key in BOUND_FIELDS):
+            if value["kind"] != "user" or any(
+                not isinstance(row.get(key), str) or not row[key] for key in BOUND_FIELDS
+            ):
+                raise _invalid("目标人员绑定信息不完整", field)
+            value.update({key: row[key] for key in BOUND_FIELDS})
         key = recipient_key(value)
         if key in seen:
             raise _invalid("同一机器人下的接收人不能重复", field)
@@ -73,7 +86,11 @@ def result_routes(payload: dict[str, Any]) -> list[tuple[str, ReplyRoute]]:
             ReplyRoute(
                 type=ROBOT_MESSAGE_ROUTE,
                 connector_id=row["connector_id"],
-                target={"kind": row["kind"], "target_id": row["target_id"]},
+                target={
+                    "kind": row["kind"],
+                    "target_id": row["target_id"],
+                    **{key: row[key] for key in BOUND_FIELDS if key in row},
+                },
             ),
         )
         for row in normalized_recipients(payload)

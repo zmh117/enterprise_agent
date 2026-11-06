@@ -7,7 +7,7 @@ import type {
   WebhookDetail,
 } from "@/contexts/applications/domain/webhook"
 
-function setup(enabled = false) {
+function setup(enabled = false, legacy = false) {
   let detail: WebhookDetail = {
     definition: {
       id: "trigger-1",
@@ -26,7 +26,14 @@ function setup(enabled = false) {
     current_publication: null,
   }
   const writes: Array<{ url: string; body: Record<string, unknown> }> = []
-  let created = enabled
+  if (legacy)
+    detail.draft = {
+      id: "legacy",
+      revision: 1,
+      validation: { valid: true },
+      config: { schema_version: 1 } as unknown as WebhookConfig,
+    }
+  let created = enabled || legacy
   let conflict = false
   const reply = (body: unknown, status = 200) =>
     Promise.resolve(
@@ -66,23 +73,7 @@ function setup(enabled = false) {
     }
     if (url.endsWith("/webhook-triggers/catalog"))
       return reply({
-        agents: [
-          {
-            code: "synthetic-agent",
-            name: "合成 Agent",
-            publication_id: "agent-pub-1",
-            revision: 2,
-          },
-        ],
-        connectors: [
-          {
-            id: "robot-1",
-            name: "合成机器人",
-            connector_type: "dingtalk_enterprise_stream",
-            allow_delivery: false,
-            supports_robot_delivery: true,
-          },
-        ],
+        roles: [{ id: "role-1", name: "合成业务角色", code: "synthetic-role" }],
       })
     if (url.endsWith("/platform/secrets"))
       return reply({
@@ -195,70 +186,34 @@ async function fillDraft() {
   fireEvent.change(screen.getByLabelText("Bearer 凭据引用"), {
     target: { value: "secret://platform/synthetic" },
   })
-  await screen.findByRole("option", {
-    name: "合成 Agent · synthetic-agent · r2",
-  })
-  fireEvent.change(screen.getByLabelText("Agent 发布版本"), {
-    target: { value: "agent-pub-1" },
-  })
-  fireEvent.change(screen.getByLabelText("项目编码值"), {
-    target: { value: "synthetic" },
-  })
+  fireEvent.click(await screen.findByRole("checkbox", { name: /合成业务角色/ }))
 }
 
 describe("Webhook first-use configuration", () => {
-  it("saves and reopens multiple group and user recipients", async () => {
+  it("saves roles without Agent, people, mappings or delivery and reopens them", async () => {
     const { writes } = setup()
     await createWebhook()
     await fillDraft()
-    fireEvent.change(screen.getByLabelText("结果投递"), {
-      target: { value: "dingtalk_recipients" },
-    })
-    fireEvent.change(screen.getByLabelText("接收人 1 目标 ID"), {
-      target: { value: "synthetic-group" },
-    })
-    fireEvent.click(screen.getByRole("button", { name: "添加接收人" }))
-    fireEvent.change(screen.getByLabelText("接收人 2 类型"), {
-      target: { value: "user" },
-    })
-    fireEvent.change(screen.getByLabelText("接收人 2 目标 ID"), {
-      target: { value: "synthetic-user" },
-    })
-    fireEvent.change(screen.getByLabelText("接收人 2 备注"), {
-      target: { value: "合成用户" },
-    })
+    expect(screen.queryByLabelText("Agent 发布版本")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("结果投递")).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
     await screen.findByText("草稿已保存，当前运行版本保持不变。")
-    const config = writes.find((item) => item.url.endsWith("/revisions"))!.body
-      .config as WebhookConfig
-    expect(config.delivery).toMatchObject({
-      type: "dingtalk_recipients",
-      connector_id: "",
-      target: {
-        recipients: [
-          {
-            connector_id: "robot-1",
-            kind: "group",
-            target_id: "synthetic-group",
-          },
-          {
-            connector_id: "robot-1",
-            kind: "user",
-            target_id: "synthetic-user",
-            label: "合成用户",
-          },
-        ],
+    expect(
+      writes.find((item) => item.url.endsWith("/revisions"))!.body.config
+    ).toEqual({
+      schema_version: 2,
+      adapter: "generic_json_v1",
+      authentication: {
+        type: "bearer_v1",
+        secret_ref: "secret://platform/synthetic",
       },
+      role_ids: ["role-1"],
     })
     fireEvent.click(screen.getByRole("button", { name: "关闭" }))
     fireEvent.click(await screen.findByRole("button", { name: "配置 Webhook" }))
-    expect(await screen.findByLabelText("接收人 2 目标 ID")).toHaveValue(
-      "synthetic-user"
-    )
-    fireEvent.click(screen.getByRole("button", { name: "删除接收人 1" }))
-    expect(screen.getByLabelText("接收人 1 目标 ID")).toHaveValue(
-      "synthetic-user"
-    )
+    expect(
+      await screen.findByRole("checkbox", { name: /合成业务角色/ })
+    ).toBeChecked()
   })
   it("stops directly from the channel card", async () => {
     const { writes } = setup(true)
@@ -285,26 +240,21 @@ describe("Webhook first-use configuration", () => {
     await screen.findByText("草稿已保存，当前运行版本保持不变。")
     const save = writes.find((item) => item.url.endsWith("/revisions"))!
     expect(save.body.expected_revision).toBe(0)
-    expect((save.body.config as WebhookConfig).delivery).toEqual({
-      type: "none",
-      connector_id: "",
-      target: {},
-      options: {},
-    })
+    expect((save.body.config as WebhookConfig).role_ids).toEqual(["role-1"])
     expect(screen.getByRole("button", { name: "发布草稿" })).toBeDisabled()
     fireEvent.click(screen.getByRole("button", { name: "校验草稿" }))
     await screen.findByText("校验通过，可以预览或发布。")
-    fireEvent.click(screen.getByRole("button", { name: "预览映射" }))
-    expect(await screen.findByLabelText("映射预览")).toHaveTextContent(
+    fireEvent.click(screen.getByRole("button", { name: "预览报文" }))
+    expect(await screen.findByLabelText("报文预览")).toHaveTextContent(
       '"side_effects": false'
     )
-    fireEvent.change(screen.getByLabelText("消息模板"), {
-      target: { value: "修改 {message}" },
+    fireEvent.change(screen.getByLabelText("Bearer 凭据引用"), {
+      target: { value: "secret://platform/changed" },
     })
     expect(screen.getByRole("button", { name: "发布草稿" })).toBeDisabled()
-    expect(screen.getByRole("button", { name: "预览映射" })).toBeDisabled()
-    fireEvent.change(screen.getByLabelText("消息模板"), {
-      target: { value: "{message}" },
+    expect(screen.getByRole("button", { name: "预览报文" })).toBeDisabled()
+    fireEvent.change(screen.getByLabelText("Bearer 凭据引用"), {
+      target: { value: "secret://platform/synthetic" },
     })
     fireEvent.click(screen.getByRole("button", { name: "发布草稿" }))
     await screen.findByText(/发布成功；启用后/)
@@ -318,32 +268,36 @@ describe("Webhook first-use configuration", () => {
     expect(writes.some((item) => item.url.endsWith("/source-1/test"))).toBe(
       false
     )
-    fireEvent.change(screen.getByLabelText("消息模板"), {
-      target: { value: "未保存 {message}" },
+    fireEvent.change(screen.getByLabelText("Bearer 凭据引用"), {
+      target: { value: "secret://platform/unsaved" },
     })
     fireEvent.click(screen.getByRole("button", { name: "停用 Webhook" }))
     await waitFor(() => expect(writes.at(-1)?.body.status).toBe("disabled"))
-    expect(screen.getByLabelText("消息模板")).toHaveValue("未保存 {message}")
+    expect(screen.getByLabelText("Bearer 凭据引用")).toHaveValue(
+      "secret://platform/unsaved"
+    )
   })
-  it("preserves unsaved input on revision conflicts and rejects malformed mapping JSON locally", async () => {
-    const { writes, conflict } = setup()
+  it("preserves unsaved roles and credential reference on revision conflicts", async () => {
+    const { conflict } = setup()
     await createWebhook()
     await fillDraft()
-    fireEvent.change(screen.getByLabelText("变量映射（JSON Pointer）"), {
-      target: { value: "invalid-json" },
-    })
-    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
-    await screen.findByText("变量映射必须是合法 JSON")
-    expect(
-      writes.filter((item) => item.url.endsWith("/revisions"))
-    ).toHaveLength(0)
-    fireEvent.change(screen.getByLabelText("变量映射（JSON Pointer）"), {
-      target: { value: '{"message":"/message"}' },
-    })
     conflict()
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
     await screen.findByText("Webhook 触发器草稿已发生变化，请刷新后重试")
-    expect(screen.getByLabelText("项目编码值")).toHaveValue("synthetic")
+    expect(screen.getByLabelText("Bearer 凭据引用")).toHaveValue(
+      "secret://platform/synthetic"
+    )
+    expect(screen.getByRole("checkbox", { name: /合成业务角色/ })).toBeChecked()
     expect(screen.getByRole("button", { name: "发布草稿" })).toBeDisabled()
   })
+})
+
+it("requires saving old Webhook configuration before preview or publication", async () => {
+  setup(false, true)
+  fireEvent.click(await screen.findByRole("button", { name: "配置 Webhook" }))
+  await screen.findByText(/此 Webhook 使用旧配置/)
+  expect(screen.getByRole("button", { name: "发布草稿" })).toBeDisabled()
+  expect(screen.getByRole("button", { name: "预览报文" })).toBeDisabled()
+  expect(screen.getByRole("button", { name: "校验草稿" })).toBeDisabled()
+  expect(screen.getByRole("button", { name: "保存草稿" })).toBeEnabled()
 })

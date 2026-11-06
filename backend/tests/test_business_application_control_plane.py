@@ -1614,6 +1614,124 @@ def test_ones_mutation_preserves_contract_through_application_and_job_snapshot()
     assert drift.value.error_code == "mcp_tool_schema_drift"
 
 
+def test_agent_catalog_lists_current_publications_across_projects() -> None:
+    settings = control_plane_settings()
+    container = build_test_container(settings, migrate=True, seed=True)
+    agents = container.agent_config_service
+    # This catalog contract uses synthetic publications without a live model connection.
+    agents.model_connection_service = None
+    application = container.business_application_service.create(
+        actor_id="user_local_admin",
+        code="cross-project-catalog",
+        name="Cross Project Catalog",
+        description="",
+        project_code="application-project",
+        owner_user_id="user_local_admin",
+    )
+    created = agents.create_agent(
+        actor_id="user_local_admin",
+        code="other-project-agent",
+        name="Other Project Agent",
+        description="",
+        project_code="agent-project",
+        runtime_kind="python-v1",
+    )
+    first = agents.publish(
+        actor_id="user_local_admin",
+        agent_code="other-project-agent",
+        revision_id=created["draft"]["id"],
+    )
+    draft = agents.save_draft(
+        actor_id="user_local_admin",
+        agent_code="other-project-agent",
+        expected_revision=created["draft"]["revision"],
+        config=created["draft"]["config"],
+    )
+    latest = agents.publish(
+        actor_id="user_local_admin",
+        agent_code="other-project-agent",
+        revision_id=draft["id"],
+    )
+    agents.save_draft(
+        actor_id="user_local_admin",
+        agent_code="other-project-agent",
+        expected_revision=draft["revision"],
+        config=draft["config"],
+    )
+    for code in ("unpublished-agent", "disabled-agent"):
+        created = agents.create_agent(
+            actor_id="user_local_admin",
+            code=code,
+            name=code,
+            description="",
+            project_code="agent-project",
+            runtime_kind="python-v1",
+        )
+        if code == "disabled-agent":
+            agents.publish(
+                actor_id="user_local_admin", agent_code=code, revision_id=created["draft"]["id"]
+            )
+            container.database.execute(
+                "update agent_definition set status = 'disabled' where id = ?",
+                (created["definition"]["id"],),
+            )
+    app = create_app(settings, container_factory=lambda _: container)
+    with TestClient(app) as client:
+        login(client)
+        response = client.get(f"/api/admin/business-applications/{application['code']}/catalog")
+        agents.rollback(
+            actor_id="user_local_admin",
+            agent_code="other-project-agent",
+            publication_id=first["id"],
+        )
+        rolled_back = client.get(
+            f"/api/admin/business-applications/{application['code']}/catalog"
+        ).json()
+    assert response.status_code == 200
+    catalog = response.json()
+    assert [(item["code"], item["id"]) for item in catalog["agents"]] == [
+        ("default-diagnostic-agent", "agent_publication_default_v1"),
+        ("other-project-agent", latest["id"]),
+    ]
+    assert set(catalog["mcp_tools_by_agent_publication"]) == {
+        "agent_publication_default_v1",
+        latest["id"],
+    }
+    assert [item["id"] for item in rolled_back["agents"]] == [
+        "agent_publication_default_v1",
+        first["id"],
+    ]
+
+
+def test_application_can_publish_cross_project_agent_without_changing_its_project() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="cross-project-application",
+        name="Cross Project Application",
+        description="",
+        project_code="different-project",
+        owner_user_id="user_local_admin",
+    )
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code=application["code"],
+        expected_revision=application["revision"],
+        payload=draft_payload(),
+    )
+    validated = service.validate(
+        actor_id="user_local_admin", code=application["code"], revision_id=revision["id"]
+    )
+    assert validated["validation"]["valid"] is True
+    publication = service.publish(
+        actor_id="user_local_admin", code=application["code"], revision_id=revision["id"]
+    )
+    assert publication["snapshot"]["application"]["project_code"] == "different-project"
+    assert publication["snapshot"]["agent"]["project_code"] == "default"
+    assert publication["snapshot"]["agent"]["id"] == "agent_publication_default_v1"
+
+
 def test_catalog_http_contract_exposes_runtime_compatibility_only_for_agents() -> None:
     settings = control_plane_settings()
     container = build_test_container(settings, migrate=True, seed=True)

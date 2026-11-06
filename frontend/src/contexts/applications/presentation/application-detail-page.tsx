@@ -323,6 +323,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
             <select
               id="draft-agent"
               className={selectClass}
+              aria-describedby="draft-agent-help"
               required
               value={form.agent_publication_id}
               onChange={(event) => {
@@ -357,6 +358,10 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
                   </option>
                 ))}
             </select>
+            <p id="draft-agent-help" className="text-xs text-muted-foreground">
+              可选择所有已发布且启用的 Agent
+              当前版本，不限项目；保存后固定到所选版本。
+            </p>
           </Field>
           <Field label="工作流发布版本（可选）" htmlFor="draft-workflow">
             <select
@@ -930,12 +935,13 @@ function BindingsEditor({
                             ? "bot:"
                             : type === "dingtalk_group"
                               ? "conversation:"
-                              : trigger.routing_key,
+                              : "",
                         actor_policy:
                           type === "webhook"
                             ? "SERVICE_ACCOUNT"
                             : "CURRENT_SENDER",
                         connector_id: "",
+                        service_account_user_id: "",
                         config: {
                           ...trigger.config,
                           conversation_type:
@@ -959,65 +965,62 @@ function BindingsEditor({
                   <EligibleChannelSelect
                     id={`trigger-connector-${index}`}
                     trigger={trigger}
+                    allowedWebhookConnectors={
+                      catalog?.agents.find(
+                        (agent) => agent.id === form.agent_publication_id
+                      )?.ingress_connector_ids ?? []
+                    }
                     onChange={(change) =>
                       changeTrigger(form, setForm, index, change)
                     }
                   />
                 </Field>
-                <Field
-                  label="路由键（Routing Key）"
-                  htmlFor={`trigger-route-${index}`}
-                >
-                  <Input
-                    id={`trigger-route-${index}`}
-                    required
-                    maxLength={240}
-                    value={trigger.routing_key}
-                    onChange={(event) =>
-                      changeTrigger(form, setForm, index, {
-                        routing_key: event.target.value,
-                      })
-                    }
-                  />
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    {trigger.trigger_type === "dingtalk_private"
-                      ? "私聊使用 bot:<robot identity>；同一机器人下所有用户共享入口匹配，但权限仍按当前发送人。"
-                      : trigger.trigger_type === "dingtalk_group"
-                        ? "群聊使用 conversation:<open conversation id>；不要填写用户 ID 或消息内容。"
-                        : "Webhook 路由由对应触发器定义控制。"}
-                    {isLegacyRoutingKey(
-                      trigger.trigger_type,
-                      trigger.routing_key
-                    )
-                      ? " 当前是旧路由键，必须改为带命名空间的新值并重新发布。"
-                      : ""}
-                  </p>
-                </Field>
-                <Field label="主体策略" htmlFor={`trigger-actor-${index}`}>
-                  <Input
-                    id={`trigger-actor-${index}`}
-                    readOnly
-                    value={trigger.actor_policy}
-                  />
-                </Field>
-                {trigger.actor_policy === "SERVICE_ACCOUNT" ? (
+                {trigger.trigger_type !== "webhook" && (
                   <Field
-                    label="服务账号用户 ID"
-                    htmlFor={`trigger-service-${index}`}
+                    label="路由键（Routing Key）"
+                    htmlFor={`trigger-route-${index}`}
                   >
                     <Input
-                      id={`trigger-service-${index}`}
+                      id={`trigger-route-${index}`}
                       required
-                      maxLength={200}
-                      value={trigger.service_account_user_id}
+                      maxLength={240}
+                      value={trigger.routing_key}
                       onChange={(event) =>
                         changeTrigger(form, setForm, index, {
-                          service_account_user_id: event.target.value,
+                          routing_key: event.target.value,
                         })
                       }
                     />
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {trigger.trigger_type === "dingtalk_private"
+                        ? "私聊使用 bot:<robot identity>；同一机器人下所有用户共享入口匹配，但权限仍按当前发送人。"
+                        : trigger.trigger_type === "dingtalk_group"
+                          ? "群聊使用 conversation:<open conversation id>；不要填写用户 ID 或消息内容。"
+                          : "Webhook 路由由对应触发器定义控制。"}
+                      {isLegacyRoutingKey(
+                        trigger.trigger_type,
+                        trigger.routing_key
+                      )
+                        ? " 当前是旧路由键，必须改为带命名空间的新值并重新发布。"
+                        : ""}
+                    </p>
                   </Field>
-                ) : null}
+                )}
+                {trigger.trigger_type !== "webhook" && (
+                  <Field label="主体策略" htmlFor={`trigger-actor-${index}`}>
+                    <Input
+                      id={`trigger-actor-${index}`}
+                      readOnly
+                      value={trigger.actor_policy}
+                    />
+                  </Field>
+                )}
+                {trigger.trigger_type === "webhook" && (
+                  <p className="text-xs text-muted-foreground sm:col-span-2">
+                    仅显示所选 Agent 发布版本已绑定的启用 Webhook。执行权限来自
+                    Webhook 的业务角色。
+                  </p>
+                )}
               </div>
               <Button
                 type="button"
@@ -1051,9 +1054,13 @@ function BindingsEditor({
                   ...form.deliveries,
                   {
                     delivery_type: "dingtalk_private",
-                    connector_id: delivery[0]?.id ?? "",
+                    connector_id: "",
                     enabled: true,
-                    config: { target_reference: "", reply_mode: "configured" },
+                    config: {
+                      target_reference: "",
+                      reply_mode: "configured",
+                      target_user_ids: [],
+                    },
                   },
                 ],
               })
@@ -1064,8 +1071,40 @@ function BindingsEditor({
         </CardHeader>
         <CardContent className="space-y-4">
           {form.deliveries.length === 0 ? (
-            <EmptyBinding text="尚未配置投递；发布不会改变现有结果投递链。" />
+            <EmptyBinding text="Webhook 未配置投递时，只执行并保存结果。" />
           ) : null}
+          <details className="rounded-lg border p-3 text-sm">
+            <summary className="cursor-pointer font-medium">
+              高级投递设置
+            </summary>
+            <p className="my-2 text-muted-foreground">
+              HTTP 回调将 Agent 结果发送给外部系统，使用平台托管的 HTTP 连接器。
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setForm({
+                  ...form,
+                  deliveries: [
+                    ...form.deliveries,
+                    {
+                      delivery_type: "webhook_callback",
+                      connector_id: "",
+                      enabled: true,
+                      config: {
+                        target_reference: "",
+                        reply_mode: "configured",
+                      },
+                    },
+                  ],
+                })
+              }
+            >
+              添加 HTTP 回调
+            </Button>
+          </details>
           {form.deliveries.map((binding, index) => (
             <div key={index} className="space-y-3 rounded-lg border p-3">
               <Field
@@ -1080,16 +1119,21 @@ function BindingsEditor({
                     changeDelivery(form, setForm, index, {
                       delivery_type: event.target
                         .value as SaveDraftInput["deliveries"][number]["delivery_type"],
+                      connector_id: "",
+                      config: {
+                        target_reference: "",
+                        reply_mode: "configured",
+                        target_user_ids: [],
+                      },
                     })
                   }
                 >
                   <option value="reply_original">回复原会话</option>
                   <option value="dingtalk_private">钉钉私聊</option>
                   <option value="dingtalk_group">钉钉群聊</option>
-                  <option value="webhook_callback">Webhook 回调</option>
-                  <option value="webhook_result">
-                    使用 Webhook 配置的接收人
-                  </option>
+                  {binding.delivery_type === "webhook_callback" && (
+                    <option value="webhook_callback">HTTP 回调（高级）</option>
+                  )}
                 </select>
               </Field>
               <Field label="投递连接器" htmlFor={`delivery-connector-${index}`}>
@@ -1100,26 +1144,28 @@ function BindingsEditor({
                   onChange={(event) =>
                     changeDelivery(form, setForm, index, {
                       connector_id: event.target.value,
+                      config: { ...binding.config, target_user_ids: [] },
                     })
                   }
                 >
-                  <option value="">请选择投递 Connector</option>
-                  {(["reply_original", "webhook_result"].includes(
-                    binding.delivery_type
-                  )
+                  <option value="">请选择启用的投递连接器</option>
+                  {(binding.delivery_type === "reply_original"
                     ? uniqueConnectors(
                         catalog?.connectors.filter(
                           (item) =>
                             item.direction === "ingress" &&
-                            (binding.delivery_type !== "webhook_result" ||
-                              form.triggers.some(
-                                (trigger) =>
-                                  trigger.trigger_type === "webhook" &&
-                                  trigger.connector_id === item.id
-                              ))
+                            item.component_type === "dingtalk_enterprise_stream"
                         ) ?? []
                       )
-                    : delivery
+                    : delivery.filter((item) =>
+                        binding.delivery_type === "dingtalk_private"
+                          ? item.component_type === "dingtalk_enterprise_stream"
+                          : binding.delivery_type === "webhook_callback"
+                            ? item.component_type === "http" ||
+                              item.component_type === "webhook"
+                            : item.component_type ===
+                              "dingtalk_enterprise_robot"
+                      )
                   ).map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.code} · {item.component_type}
@@ -1127,6 +1173,108 @@ function BindingsEditor({
                   ))}
                 </select>
               </Field>
+              {binding.delivery_type === "dingtalk_private" && (
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium">
+                    目标人员（可选，多选）
+                  </legend>
+                  <p className="text-xs text-muted-foreground">
+                    最多选择 20
+                    人，仅显示已启用且绑定机器人所属企业钉钉身份的人员。留空只保存结果，不发送消息。
+                  </p>
+                  <div className="max-h-52 space-y-2 overflow-auto">
+                    {(
+                      catalog?.recipient_users_by_connector[
+                        binding.connector_id
+                      ] ?? []
+                    ).map((person) => (
+                      <label
+                        key={person.id}
+                        className="flex items-center gap-2 rounded border p-2 text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={(
+                            binding.config.target_user_ids ?? []
+                          ).includes(person.id)}
+                          onChange={(event) =>
+                            changeDelivery(form, setForm, index, {
+                              config: {
+                                ...binding.config,
+                                target_user_ids: event.target.checked
+                                  ? [
+                                      ...(binding.config.target_user_ids ?? []),
+                                      person.id,
+                                    ]
+                                  : (
+                                      binding.config.target_user_ids ?? []
+                                    ).filter((id) => id !== person.id),
+                              },
+                            })
+                          }
+                        />
+                        {person.name}
+                      </label>
+                    ))}
+                    {(binding.config.target_user_ids ?? [])
+                      .filter(
+                        (id) =>
+                          !(
+                            catalog?.recipient_users_by_connector[
+                              binding.connector_id
+                            ] ?? []
+                          ).some((person) => person.id === id)
+                      )
+                      .map((id) => (
+                        <label
+                          key={id}
+                          className="flex gap-2 text-sm text-destructive"
+                        >
+                          <input
+                            type="checkbox"
+                            checked
+                            onChange={() =>
+                              changeDelivery(form, setForm, index, {
+                                config: {
+                                  ...binding.config,
+                                  target_user_ids: (
+                                    binding.config.target_user_ids ?? []
+                                  ).filter((value) => value !== id),
+                                },
+                              })
+                            }
+                          />
+                          已失效人员 · {id}（取消选择）
+                        </label>
+                      ))}
+                  </div>
+                </fieldset>
+              )}
+              {["webhook_callback", "dingtalk_group"].includes(
+                binding.delivery_type
+              ) && (
+                <Field
+                  label={
+                    binding.delivery_type === "webhook_callback"
+                      ? "外部系统目标标识"
+                      : "目标群会话 ID"
+                  }
+                  htmlFor={`delivery-target-${index}`}
+                >
+                  <Input
+                    id={`delivery-target-${index}`}
+                    value={binding.config.target_reference}
+                    onChange={(event) =>
+                      changeDelivery(form, setForm, index, {
+                        config: {
+                          ...binding.config,
+                          target_reference: event.target.value,
+                        },
+                      })
+                    }
+                  />
+                </Field>
+              )}
               <Button
                 type="button"
                 variant="ghost"
@@ -1153,14 +1301,20 @@ function BindingsEditor({
 function EligibleChannelSelect({
   id,
   trigger,
+  allowedWebhookConnectors,
   onChange,
 }: {
   id: string
   trigger: SaveDraftInput["triggers"][number]
+  allowedWebhookConnectors: string[]
   onChange: (patch: Partial<SaveDraftInput["triggers"][number]>) => void
 }) {
   const query = useEligibleChannels(trigger.trigger_type)
-  const items = query.data ?? []
+  const items = (query.data ?? []).filter(
+    (item) =>
+      trigger.trigger_type !== "webhook" ||
+      allowedWebhookConnectors.includes(item.id)
+  )
   const current = items.find(
     (item) =>
       (trigger.config.webhook_definition_id &&
@@ -1763,6 +1917,9 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
         config: {
           target_reference: String(item.config.target_reference ?? ""),
           reply_mode: String(item.config.reply_mode ?? ""),
+          target_user_ids: Array.isArray(item.config.target_user_ids)
+            ? item.config.target_user_ids.map(String)
+            : [],
         },
       })) ?? [],
     mcp_tools: draft?.mcp_tools.map((tool) => tool.tool_identifier) ?? [],

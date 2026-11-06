@@ -464,7 +464,7 @@ class RuntimeReadinessEvaluator:
             value
             for value in deliveries
             if str(value.get("delivery_type") or "")
-            in {"dingtalk_group", "webhook_callback", "webhook_result"}
+            in {"dingtalk_private", "dingtalk_group", "webhook_callback"}
         ]
         delivery_blocked = False
         if supported_triggers:
@@ -514,17 +514,22 @@ class RuntimeReadinessEvaluator:
                         )
                     )
         if webhook_triggers:
-            if len(webhook_deliveries) != 1:
+            unsupported_delivery = any(
+                value.get("delivery_type")
+                not in {"dingtalk_private", "dingtalk_group", "webhook_callback", "reply_original"}
+                for value in deliveries
+            )
+            if unsupported_delivery or len(webhook_deliveries) > 1:
                 delivery_blocked = True
                 reason = (
-                    RuntimeReason.MISSING_DELIVERY_BINDING
-                    if not webhook_deliveries
+                    RuntimeReason.UNSUPPORTED_DELIVERY
+                    if unsupported_delivery
                     else RuntimeReason.DUPLICATE_DELIVERY_BINDING
                 )
                 components["delivery"] = RuntimeComponentStatus(
                     RuntimeComponentState.BLOCKED,
                     reason.value,
-                    "Webhook 必须且只能配置一个受支持的结果投递",
+                    "Webhook 最多配置一个结果投递",
                 )
                 blockers.append(
                     (
@@ -532,17 +537,13 @@ class RuntimeReadinessEvaluator:
                         "Webhook 业务应用结果投递配置无效",
                     )
                 )
-            else:
+            elif webhook_deliveries:
                 config = webhook_deliveries[0].get("config") or {}
                 target_reference = (
                     str(config.get("target_reference") or "") if isinstance(config, dict) else ""
                 )
-                frozen_result = webhook_deliveries[0].get("delivery_type") == "webhook_result"
-                invalid_source = frozen_result and any(
-                    trigger.get("connector_id") != webhook_deliveries[0].get("connector_id")
-                    for trigger in webhook_triggers
-                )
-                if invalid_source or (not frozen_result and not target_reference):
+                private = webhook_deliveries[0].get("delivery_type") == "dingtalk_private"
+                if not private and not target_reference:
                     delivery_blocked = True
                     components["delivery"] = RuntimeComponentStatus(
                         RuntimeComponentState.BLOCKED,

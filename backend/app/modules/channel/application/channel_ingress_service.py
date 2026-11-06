@@ -12,7 +12,7 @@ from app.modules.business_application.domain import (
 from app.modules.business_application.domain.policies import (
     publication_document_processing_profile,
 )
-from app.modules.channel.domain.channel_event import ChannelEvent
+from app.modules.channel.domain.channel_event import ChannelEvent, ReplyRoute
 from app.modules.document_processing import document_processing_profile_snapshot
 from app.modules.identity.application import IdentityService
 from app.modules.job.application.create_agent_job_service import (
@@ -350,6 +350,15 @@ class ChannelIngressService:
     ) -> None:
         if resolution is None or resolution.outcome != RouteResolutionOutcome.MATCHED:
             return
+        if event.business_application_publication_id and (
+            event.business_application_publication_id
+            != str((resolution.publication or {}).get("id") or "")
+        ):
+            raise NonRetryableExecutionError(
+                "Application changed after Webhook acceptance",
+                safe_message="事件接收后应用发布版本已变更，请重新触发",
+                error_code="webhook_application_changed",
+            )
         conflicts = (
             (bool(event.agent_code) and event.agent_code != str(agent.get("code") or ""))
             or (
@@ -384,14 +393,28 @@ class ChannelIngressService:
         deliveries = raw_deliveries if isinstance(raw_deliveries, list) else []
         trigger_type = _trigger_type(event)
         if trigger_type == "webhook":
+            if any(
+                isinstance(value, dict)
+                and value.get("enabled", True)
+                and value.get("delivery_type")
+                not in {"dingtalk_private", "dingtalk_group", "webhook_callback", "reply_original"}
+                for value in deliveries
+            ):
+                raise NonRetryableExecutionError(
+                    "Unsupported Webhook delivery",
+                    safe_message="请重新配置应用投递",
+                    error_code="unsupported_delivery",
+                )
             supported = [
                 value
                 for value in deliveries
                 if isinstance(value, dict)
                 and bool(value.get("enabled", True))
                 and str(value.get("delivery_type") or "")
-                in {"dingtalk_group", "webhook_callback", "webhook_result"}
+                in {"dingtalk_private", "dingtalk_group", "webhook_callback"}
             ]
+            if not supported:
+                return ReplyRoute(type="none").to_dict()
             if len(supported) != 1:
                 raise NonRetryableExecutionError(
                     "Business Application Webhook delivery is invalid",
@@ -399,18 +422,17 @@ class ChannelIngressService:
                     error_code=RuntimeReason.MISSING_DELIVERY_BINDING.value,
                 )
             binding = supported[0]
-            if binding.get("delivery_type") == "webhook_result":
-                if str(binding.get("connector_id") or "") != event.source.connector_id:
-                    raise NonRetryableExecutionError(
-                        "Webhook result source mismatch",
-                        safe_message="结果绑定与 Webhook 入口不一致",
-                        error_code=RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
-                    )
-                return event.delivery.to_dict()
             config = binding.get("config") or {}
             if not isinstance(config, dict):
                 config = {}
             delivery_type = str(binding.get("delivery_type") or "")
+            if delivery_type == "dingtalk_private":
+                recipients = binding.get("resolved_recipients") or []
+                if not recipients:
+                    return ReplyRoute(type="none").to_dict()
+                return ReplyRoute(
+                    type="dingtalk_recipients", target={"recipients": recipients}
+                ).to_dict()
             target_reference = str(config.get("target_reference") or "")
             if not target_reference:
                 raise NonRetryableExecutionError(

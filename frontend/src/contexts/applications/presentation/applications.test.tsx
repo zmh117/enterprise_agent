@@ -367,7 +367,7 @@ describe("Business Application workbench", () => {
     ).toHaveClass("sm:col-span-2")
   })
 
-  it("lists the selected Agent publication MCP tools and saves an explicit subset", async () => {
+  it("selects published Agents across projects and saves their explicit MCP tool subset", async () => {
     let savedBody: Record<string, unknown> | undefined
     const draft = {
       id: "revision_mcp_1",
@@ -409,9 +409,9 @@ describe("Business Application workbench", () => {
             },
             {
               id: "agent_publication_default_v2",
-              code: "default-diagnostic-agent",
+              code: "other-project-agent",
               revision: 30,
-              project_code: "default",
+              project_code: "other-project",
               status: "enabled",
               config_hash: "agent-hash-v2",
               runtime_kind: "python-v1",
@@ -596,6 +596,15 @@ describe("Business Application workbench", () => {
         name: "default-diagnostic-agent · r29 · Python Runtime",
       })
     ).toBeInTheDocument()
+    expect(
+      within(agentSelector).getByRole("option", {
+        name: "other-project-agent · r30 · Python Runtime",
+      })
+    ).toBeInTheDocument()
+    expect(within(agentSelector).getAllByRole("option")).toHaveLength(3)
+    expect(agentSelector).toHaveAccessibleDescription(
+      "可选择所有已发布且启用的 Agent 当前版本，不限项目；保存后固定到所选版本。"
+    )
     expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
     const continuousConversation = screen.getByLabelText("连续会话")
     expect(continuousConversation).toBeChecked()
@@ -757,4 +766,179 @@ describe("Business Application workbench", () => {
       message: "服务器内部错误，请稍后重试。",
     } satisfies Partial<ApiError>)
   })
+})
+
+it("binds only the Agent's Webhooks and saves optional DingTalk people in the application", async () => {
+  let saved: Record<string, unknown> | undefined
+  const draft = {
+    id: "draft",
+    application_id: "app",
+    revision: 1,
+    status: "draft",
+    agent_publication_id: "agent-pub",
+    session_policy: {},
+    execution_policy: {},
+    triggers: [],
+    deliveries: [],
+    mcp_tools: [],
+  }
+  const component = {
+    revision: 1,
+    project_code: "default",
+    status: "enabled",
+    config_hash: "hash",
+    direction: "",
+    component_type: "agent_publication",
+  }
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = String(input)
+    if (url.includes("/eligible?"))
+      return response({
+        items: [
+          {
+            id: "bound-hook",
+            name: "已绑定入口",
+            code: "bound-hook",
+            kind: "WEBHOOK",
+            webhook_trigger_id: "hook-one",
+            routing_key: "webhook:hook-one",
+            enabled: true,
+            revision: 1,
+          },
+          {
+            id: "other-hook",
+            name: "其他入口",
+            code: "other-hook",
+            kind: "WEBHOOK",
+            webhook_trigger_id: "hook-two",
+            routing_key: "webhook:hook-two",
+            enabled: true,
+            revision: 1,
+          },
+        ],
+      })
+    if (url.endsWith("/catalog"))
+      return response({
+        agents: [
+          {
+            ...component,
+            id: "agent-pub",
+            code: "Agent",
+            runtime_kind: "python-v1",
+            ingress_connector_ids: ["bound-hook"],
+          },
+        ],
+        workflows: [],
+        connectors: [
+          {
+            ...component,
+            id: "robot",
+            code: "已启用机器人",
+            direction: "delivery",
+            component_type: "dingtalk_enterprise_stream",
+          },
+        ],
+        recipient_users_by_connector: {
+          robot: [
+            { id: "person-one", name: "张三" },
+            { id: "person-two", name: "李四" },
+          ],
+        },
+      })
+    if (url.endsWith("/draft") && init?.method === "PUT") {
+      saved = JSON.parse(String(init.body))
+      return response({ revision: { ...draft, ...saved } })
+    }
+    return response({
+      application: {
+        id: "app",
+        code: "routing-app",
+        name: "Webhook 应用",
+        description: "",
+        project_code: "default",
+        owner_user_id: "",
+        status: "enabled",
+        revision: 1,
+        draft,
+        publications: [],
+        deployments: [],
+      },
+    })
+  })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({
+          defaultOptions: {
+            queries: { retry: false },
+            mutations: { retry: false },
+          },
+        })
+      }
+    >
+      <MemoryRouter initialEntries={["/applications/routing-app"]}>
+        <Routes>
+          <Route
+            path="/applications/:code"
+            element={<ApplicationDetailPage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
+  )
+  fireEvent.click(await screen.findByRole("tab", { name: "组成配置" }))
+  fireEvent.click(screen.getByRole("button", { name: "添加触发器" }))
+  fireEvent.change(screen.getByLabelText("触发器 1 类型"), {
+    target: { value: "webhook" },
+  })
+  const entrance = screen.getByLabelText("入口渠道")
+  expect(
+    await within(entrance).findByRole("option", { name: /已绑定入口/ })
+  ).toBeInTheDocument()
+  expect(
+    within(entrance).queryByRole("option", { name: /其他入口/ })
+  ).not.toBeInTheDocument()
+  expect(screen.queryByLabelText("服务账号用户 ID")).not.toBeInTheDocument()
+  expect(
+    screen.queryByLabelText("路由键（Routing Key）")
+  ).not.toBeInTheDocument()
+  fireEvent.change(entrance, { target: { value: "hook-one" } })
+  fireEvent.click(screen.getByRole("button", { name: "添加投递" }))
+  expect(
+    screen.queryByRole("option", { name: "使用 Webhook 配置的接收人" })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole("option", { name: /HTTP 回调/ })
+  ).not.toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText("投递连接器"), {
+    target: { value: "robot" },
+  })
+  fireEvent.click(await screen.findByRole("checkbox", { name: "张三" }))
+  fireEvent.click(screen.getByRole("checkbox", { name: "李四" }))
+  fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+  await waitFor(() =>
+    expect(saved).toMatchObject({
+      triggers: [
+        { connector_id: "bound-hook", routing_key: "webhook:hook-one" },
+      ],
+      deliveries: [
+        {
+          delivery_type: "dingtalk_private",
+          connector_id: "robot",
+          config: { target_user_ids: ["person-one", "person-two"] },
+        },
+      ],
+    })
+  )
+  fireEvent.click(screen.getByRole("checkbox", { name: "张三" }))
+  fireEvent.click(screen.getByRole("checkbox", { name: "李四" }))
+  fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+  await waitFor(() =>
+    expect(saved).toMatchObject({
+      deliveries: [{ config: { target_user_ids: [] } }],
+    })
+  )
+  fireEvent.click(screen.getByText("高级投递设置"))
+  fireEvent.click(screen.getByRole("button", { name: "添加 HTTP 回调" }))
+  expect(screen.getByLabelText("外部系统目标标识")).toBeInTheDocument()
 })

@@ -21,7 +21,6 @@ class WebhookTriggerRepository:
                    u.display_name as service_account_display_name,
                    u.status as service_account_status,
                    p.revision as publication_revision,
-                   p.agent_publication_id,
                    (select e.status from webhook_event e
                     where e.trigger_id = d.id
                     order by e.received_at desc, e.id desc limit 1) as recent_event_status,
@@ -253,7 +252,7 @@ class WebhookTriggerRepository:
             insert into webhook_trigger_revision
               (id, trigger_id, revision, status, schema_version, config_json,
                config_hash, validation_json, created_by, created_at, updated_at)
-            values (?, ?, ?, 'draft', 1, ?, ?, '{}', ?, ?, ?)
+            values (?, ?, ?, 'draft', 2, ?, ?, '{}', ?, ?, ?)
             """,
             (
                 revision_id,
@@ -299,7 +298,6 @@ class WebhookTriggerRepository:
         revision: int,
         snapshot: dict[str, Any],
         config_hash: str,
-        agent_publication: dict[str, Any],
         actor_id: str,
     ) -> dict[str, Any]:
         publication_id = new_id("webhook_trigger_publication")
@@ -308,9 +306,8 @@ class WebhookTriggerRepository:
             """
             insert into webhook_trigger_publication
               (id, trigger_id, revision_id, revision, schema_version, snapshot_json,
-               config_hash, agent_publication_id, agent_revision, agent_config_hash,
-               status, published_by, published_at)
-            values (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'active', ?, ?)
+               config_hash, status, published_by, published_at)
+            values (?, ?, ?, ?, 2, ?, ?, 'active', ?, ?)
             """,
             (
                 publication_id,
@@ -319,9 +316,6 @@ class WebhookTriggerRepository:
                 revision,
                 json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
                 config_hash,
-                agent_publication["id"],
-                agent_publication["revision"],
-                agent_publication["config_hash"],
                 actor_id,
                 timestamp,
             ),
@@ -447,7 +441,6 @@ class WebhookTriggerRepository:
             **row,
             "revision": int(row["revision"]),
             "schema_version": int(row["schema_version"]),
-            "agent_revision": int(row["agent_revision"]),
             "snapshot": _json(str(row.get("snapshot_json") or "{}")),
         }
 
