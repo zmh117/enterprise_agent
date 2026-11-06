@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
 import json
 
 import pytest
@@ -12,6 +13,39 @@ from backend.tests.helpers import container
 
 
 ADMIN_ID = "user_local_admin"
+
+
+def test_concurrent_repeated_publication_creates_one_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c, service = _service(monkeypatch)
+    created = service.create(
+        actor_id=ADMIN_ID,
+        code="publish-once",
+        name="Synthetic concurrent publish",
+        trigger_type="grafana",
+        connector_id="connector-grafana-default",
+        config=_config(),
+    )
+
+    def publish(_):
+        return service.publish(
+            actor_id=ADMIN_ID, code="publish-once", revision_id=created["draft"]["id"]
+        )["id"]
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        publication_ids = list(pool.map(publish, range(4)))
+    assert len(set(publication_ids)) == 1
+    detail = service.get(actor_id=ADMIN_ID, code="publish-once")
+    assert len(detail["publications"]) == 1
+    assert detail["definition"]["revision"] == created["definition"]["revision"] + 1
+    assert detail["definition"]["current_publication_id"] == publication_ids[0]
+    assert (
+        c.database.execute_one(
+            "select count(*) as total from audit_event where event_type='webhook.trigger.published'"
+        )["total"]
+        == 1
+    )
 
 
 def test_stop_unavailable_webhook_preserves_revision_guard(monkeypatch: pytest.MonkeyPatch) -> None:

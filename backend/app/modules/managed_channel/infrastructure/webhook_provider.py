@@ -4,8 +4,9 @@ from typing import Any
 
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.webhook.application import WebhookTriggerService
-from app.modules.webhook.domain.models import is_strong_bearer_token
+from app.modules.webhook.application.authentication import WebhookAuthenticator
 from app.modules.webhook.infrastructure import WebhookTriggerRepository
+from app.shared.exceptions import AppError, PermissionDenied
 
 
 class ManagedWebhookProviderAdapter:
@@ -21,6 +22,7 @@ class ManagedWebhookProviderAdapter:
         self.repository = repository
         self.service = service
         self.connector_registry = connector_registry
+        self.authenticator = WebhookAuthenticator(connector_registry=connector_registry)
 
     def list_channels(self) -> list[dict[str, Any]]:
         return [self._with_runtime_status(item) for item in self.repository.list_definitions()]
@@ -51,21 +53,26 @@ class ManagedWebhookProviderAdapter:
                 "last_error_summary": "",
             }
         try:
+            if item.get("service_account_status") != "enabled":
+                raise PermissionDenied(
+                    "Webhook service account is disabled",
+                    safe_message="Webhook 服务账号已停用",
+                    error_code="webhook_disabled",
+                )
             self.connector_registry.require_ingress(str(item["connector_id"]))
             publication = self.repository.current_publication(str(item["id"]))
-            authentication = publication["snapshot"].get("authentication") or {}
-            secret = self.connector_registry.resolve_reference(authentication.get("secret_ref"))
-            if str(authentication.get("type") or "") != "bearer_v1" or not is_strong_bearer_token(
-                secret
-            ):
-                raise ValueError("Webhook Bearer credential is unavailable")
-        except Exception:
+            self.authenticator.resolve_bearer_credential(config=publication["snapshot"])
+        except Exception as exc:
+            if isinstance(exc, AppError) and exc.error_code == "webhook_auth_failed":
+                message = "Webhook 凭据缺失、已停用或无法解析，请重新绑定并重新发布后测试"
+            elif isinstance(exc, AppError):
+                message = exc.safe_message
+            else:
+                message = "Webhook 入口配置不可用，请检查发布版本、连接器和服务账号"
             return {
                 **item,
                 "runtime_status": "MISCONFIGURED",
-                "last_error_summary": (
-                    "Webhook 凭据缺失、已停用或无法解析，请重新绑定并重新发布后测试"
-                ),
+                "last_error_summary": message,
             }
         return {
             **item,

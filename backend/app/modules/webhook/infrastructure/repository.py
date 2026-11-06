@@ -55,7 +55,8 @@ class WebhookTriggerRepository:
             from webhook_trigger_definition d
             join app_user u on u.id = d.service_account_id
             where d.code = ?
-            """ + lock,
+            """
+            + lock,
             (code,),
         )
         if not row:
