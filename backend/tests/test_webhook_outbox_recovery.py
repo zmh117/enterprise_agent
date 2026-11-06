@@ -24,7 +24,7 @@ def _accepted_event(c: object, suffix: str) -> dict[str, object]:
         trigger_id="webhook_trigger_grafana_default",
         trigger_publication_id="webhook_trigger_publication_grafana_v1",
         agent_publication_id="agent_publication_default_v1",
-        service_account_id="user_webhook_grafana_default",
+        execution_user_id="user_webhook_grafana_default",
         external_event_id=f"outbox-{suffix}",
         dedup_key=f"outbox:{suffix}",
         payload_hash="0" * 64,

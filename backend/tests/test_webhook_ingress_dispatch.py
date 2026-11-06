@@ -41,7 +41,7 @@ def _container(*, webhook_result=False):
     prepare_test_webhook(runtime)
     trigger = runtime.database.execute_one(
         """
-        select d.id, d.service_account_id
+        select d.id, d.execution_user_id
           from webhook_trigger_publication p
           join webhook_trigger_definition d on d.id = p.trigger_id
          where p.id = ?
@@ -60,7 +60,7 @@ def _container(*, webhook_result=False):
         runtime,
         code="grafana-strict-runtime",
         webhook_definition_id=str(trigger["id"]),
-        service_account_user_id=str(trigger["service_account_id"]),
+        execution_user_id=str(trigger["execution_user_id"]),
         ingress_connector_id="connector-grafana-default",
         delivery_connector_id=(
             "connector-dingtalk-stream-default"
@@ -122,6 +122,36 @@ def test_webhook_snapshot_does_not_own_agent_or_delivery() -> None:
     assert event["application_publication_id"]
 
 
+@pytest.mark.parametrize("after_accept", [False, True])
+def test_disabled_execution_user_cannot_accept_or_dispatch(after_accept):
+    c = _container()
+    if after_accept:
+        ack = _receive(c, _firing("disable-user"))
+        c.webhook_outbox_publisher.publish_pending()
+    c.database.execute(
+        "update app_user set status='disabled' where id='user_webhook_grafana_default'"
+    )
+    if after_accept:
+        c.message_bus.consume_webhook_events(c.webhook_dispatcher.handle)
+        assert c.webhook_event_repository.get(ack.event_id)["status"] == "DISPATCH_FAILED"
+    else:
+        with pytest.raises(PermissionDenied):
+            _receive(c, _firing("disable-user"))
+    assert c.agent_repository.count_rows("agent_job") == 0
+
+
+def test_event_user_must_match_frozen_publication():
+    c = _container()
+    ack = _receive(c, _firing("event-user-tamper"))
+    c.database.execute(
+        "update webhook_event set execution_user_id='user_local_admin' where id=?", (ack.event_id,)
+    )
+    c.webhook_outbox_publisher.publish_pending()
+    c.message_bus.consume_webhook_events(c.webhook_dispatcher.handle)
+    assert c.webhook_event_repository.get(ack.event_id)["status"] == "DISPATCH_FAILED"
+    assert c.agent_repository.count_rows("agent_job") == 0
+
+
 def test_firing_is_persisted_then_dispatches_one_pinned_agent_job() -> None:
     c = _container()
     acknowledgement = _receive(c, _firing())
@@ -171,7 +201,7 @@ def test_dispatch_fails_closed_when_pinned_agent_hash_does_not_match() -> None:
         "webhook_trigger_publication_grafana_v1"
     )
     snapshot = publication["snapshot"]
-    snapshot["role_ids"] = ["tampered"]
+    snapshot["execution_user_id"] = "tampered"
     c.database.execute(
         "update webhook_trigger_publication set snapshot_json = ? where id = ?",
         (json.dumps(snapshot, sort_keys=True), publication["id"]),
@@ -211,6 +241,27 @@ def test_resolved_is_recorded_as_ignored_without_outbox_or_job() -> None:
     assert acknowledgement.ignored is True
     assert acknowledgement.reason == "not_firing"
     assert c.agent_repository.count_rows("webhook_outbox") == 0
+    assert c.agent_repository.count_rows("agent_job") == 0
+
+
+def test_rebound_execution_user_requires_matching_application_publication() -> None:
+    c = _container()
+    service = c.webhook_trigger_service
+    definition = c.webhook_trigger_repository.get_definition("grafana-default")
+    previous = c.webhook_trigger_repository.latest_revision(definition["id"])
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="grafana-default",
+        expected_revision=previous["revision"],
+        config={**previous["config"], "execution_user_id": "user_local_admin"},
+    )
+    service.publish(actor_id="user_local_admin", code="grafana-default", revision_id=revision["id"])
+    acknowledgement = _receive(c, _firing("rebound-user"))
+    c.webhook_outbox_publisher.publish_pending()
+    c.message_bus.consume_webhook_events(c.webhook_dispatcher.handle)
+    event = c.webhook_event_repository.get(acknowledgement.event_id)
+    assert event["status"] == "DISPATCH_FAILED"
+    assert "重新保存并发布应用" in event["error_summary"]
     assert c.agent_repository.count_rows("agent_job") == 0
 
 
@@ -255,9 +306,7 @@ def test_non_bearer_authentication_is_rejected_without_nonce_state() -> None:
         "type": "hmac_sha256_v1",
     }
     revision_config = {
-        key: value
-        for key, value in snapshot.items()
-        if key not in {"service_account_id", "source_connector_id"}
+        key: value for key, value in snapshot.items() if key != "source_connector_id"
     }
     c.database.execute(
         """

@@ -126,21 +126,13 @@ VALUES
    'connector-dingtalk-webhook-default', '{}', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
-INSERT INTO app_user
-  (id, username, display_name, email, status, account_type, revision, created_at, updated_at)
-VALUES
-  ('user_webhook_grafana_default', 'svc-webhook-grafana-default',
-   'Webhook: 默认 Grafana 告警', '', 'enabled', 'service', 1,
-   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
 INSERT INTO webhook_trigger_definition
-  (id, code, name, trigger_type, public_id, connector_id, service_account_id,
+  (id, code, name, trigger_type, public_id, connector_id, execution_user_id,
    status, current_publication_id, revision, created_by, created_at, updated_at)
 VALUES
   ('webhook_trigger_grafana_default', 'grafana-default', '默认 Grafana 告警',
    'grafana', 'wh_local_grafana_default_00000000000000000001',
-   'connector-grafana-default', 'user_webhook_grafana_default', 'disabled',
+   'connector-grafana-default', NULL, 'disabled',
    NULL, 1, 'user_local_admin',
    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;

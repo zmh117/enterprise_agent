@@ -44,7 +44,7 @@ class WebhookMapper:
         self.max_summary_chars = max_summary_chars
 
     def map(self, *, config: dict[str, Any], payload: dict[str, Any]) -> MappingResult:
-        if config.get("schema_version") != 2:
+        if config.get("schema_version") != 3:
             raise NonRetryableExecutionError(
                 "Legacy Webhook config",
                 safe_message="请重新保存简化 Webhook 配置",

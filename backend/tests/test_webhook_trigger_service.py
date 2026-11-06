@@ -146,24 +146,23 @@ def _service(monkeypatch: pytest.MonkeyPatch) -> tuple[object, WebhookTriggerSer
         audit_service=c.audit_service,
         validator=validator,
         mapper=WebhookMapper(),
-        role_service=c.authorization_center_service,
     )
     return c, service
 
 
 def _config() -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "adapter": "grafana_alertmanager_v1",
         "authentication": {
             "type": "bearer_v1",
             "secret_ref": "secret://platform/grafana_orders_webhook_token",
         },
-        "role_ids": ["role_webhook_synthetic"],
+        "execution_user_id": ADMIN_ID,
     }
 
 
-def test_trigger_lifecycle_assigns_roles_without_agent_or_delivery(
+def test_trigger_lifecycle_binds_user_without_creating_account_or_changing_roles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     c, service = _service(monkeypatch)
@@ -178,10 +177,9 @@ def test_trigger_lifecycle_assigns_roles_without_agent_or_delivery(
     )
     definition = created["definition"]
     draft = created["draft"]
-    service_account = created["service_account"]
-    assert c.agent_repository.count_rows("app_user") == before_users + 1
-    assert service_account["account_type"] == "service"
-    assert service_account["username"] == "svc-webhook-grafana-orders"
+    assert "service_account" not in created
+    assert c.agent_repository.count_rows("app_user") == before_users
+    roles_before_publish = c.identity_repository.role_codes_for_user(ADMIN_ID)
     assert (
         c.database.execute_one(
             """
@@ -198,7 +196,7 @@ def test_trigger_lifecycle_assigns_roles_without_agent_or_delivery(
         revision_id=str(draft["id"]),
     )
     assert validated["validation"]["valid"] is True
-    assert validated["validation"]["role_ids"] == ["role_webhook_synthetic"]
+    assert validated["validation"]["execution_user_id"] == ADMIN_ID
 
     before_events = c.agent_repository.count_rows("webhook_event")
     preview = service.preview(
@@ -225,10 +223,8 @@ def test_trigger_lifecycle_assigns_roles_without_agent_or_delivery(
     )
     assert "agent" not in publication["snapshot"]
     assert "delivery" not in publication["snapshot"]
-    assert c.identity_repository.role_codes_for_user(service_account["id"]) == (
-        "webhook-synthetic",
-    )
-    assert publication["snapshot"]["service_account_id"] == service_account["id"]
+    assert c.identity_repository.role_codes_for_user(ADMIN_ID) == roles_before_publish
+    assert publication["snapshot"]["execution_user_id"] == ADMIN_ID
     assert "secret_ref" in json.dumps(publication["snapshot"])
     assert "orders-webhook-token-0123456789abcdefABCDEF" not in json.dumps(publication["snapshot"])
 
@@ -386,34 +382,65 @@ def test_webhook_management_requires_independent_rbac_action(
         service.list(actor_id=str(viewer["id"]))
 
 
-def test_roles_are_delegable_non_admin_and_replaced_atomically(monkeypatch):
+@pytest.mark.parametrize("kind,status", [("service", "enabled"), ("human", "disabled")])
+def test_execution_user_must_be_enabled_human(monkeypatch, kind, status):
     c, service = _service(monkeypatch)
-    catalog = c.authorization_center_service.service_role_catalog(actor_id=ADMIN_ID)
-    assert {row["id"] for row in catalog} == {"role_webhook_synthetic"}
+    user = c.identity_repository.create_user(
+        username="invalid-executor", display_name="Synthetic", account_type=kind
+    )
+    c.database.execute("update app_user set status=? where id=?", (status, user["id"]))
+    config = {**_config(), "execution_user_id": user["id"]}
     created = service.create(
         actor_id=ADMIN_ID,
-        code="role-webhook",
-        name="Role test",
+        code="user-webhook",
+        name="User test",
+        trigger_type="grafana",
+        connector_id="connector-grafana-default",
+        config=config,
+    )
+    catalog = service.execution_user_catalog(actor_id=ADMIN_ID)
+    assert user["id"] not in {item["id"] for item in catalog}
+    with pytest.raises(NonRetryableExecutionError) as error:
+        service.publish(actor_id=ADMIN_ID, code="user-webhook", revision_id=created["draft"]["id"])
+    assert error.value.field_errors[0]["field"] == "execution_user_id"
+
+
+def test_execution_user_changes_only_on_publish_and_rollback(monkeypatch):
+    c, service = _service(monkeypatch)
+    other = c.identity_repository.create_user(username="other-executor", display_name="Other")
+    created = service.create(
+        actor_id=ADMIN_ID,
+        code="user-switch",
+        name="Switch",
         trigger_type="grafana",
         connector_id="connector-grafana-default",
         config=_config(),
     )
-    definition, revision = created["definition"], created["draft"]
-    service.publish(actor_id=ADMIN_ID, code="role-webhook", revision_id=revision["id"])
-    user_id = definition["service_account_id"]
-    role_service = c.authorization_center_service
-    with pytest.raises(NonRetryableExecutionError):
-        role_service.replace_service_roles(
-            actor_id=ADMIN_ID, user_id=user_id, role_ids=["role_platform_admin"]
-        )
-    assert c.identity_repository.role_codes_for_user(user_id) == ("webhook-synthetic",)
-    viewer = c.identity_repository.create_user(
-        username="non-delegating-editor", display_name="Synthetic editor"
+    first = service.publish(
+        actor_id=ADMIN_ID, code="user-switch", revision_id=created["draft"]["id"]
     )
-    assert role_service.service_role_catalog(actor_id=viewer["id"]) == []
-    with pytest.raises(PermissionDenied):
-        role_service.replace_service_roles(
-            actor_id=viewer["id"], user_id=user_id, role_ids=["role_webhook_synthetic"]
-        )
-    role_service.replace_service_roles(actor_id=ADMIN_ID, user_id=user_id, role_ids=[])
-    assert c.identity_repository.role_codes_for_user(user_id) == ()
+    draft = service.save_draft(
+        actor_id=ADMIN_ID,
+        code="user-switch",
+        expected_revision=1,
+        config={**_config(), "execution_user_id": other["id"]},
+    )
+    assert service.repository.get_definition("user-switch")["execution_user_id"] == ADMIN_ID
+    second = service.publish(actor_id=ADMIN_ID, code="user-switch", revision_id=draft["id"])
+    assert second["snapshot"]["execution_user_id"] == other["id"]
+    assert (
+        service.repository.get_publication(first["id"])["snapshot"]["execution_user_id"] == ADMIN_ID
+    )
+    current = service.repository.get_definition("user-switch")
+    service.rollback(
+        actor_id=ADMIN_ID,
+        code="user-switch",
+        publication_id=first["id"],
+        expected_revision=current["revision"],
+    )
+    assert service.repository.get_definition("user-switch")["execution_user_id"] == ADMIN_ID
+    assert c.identity_repository.role_codes_for_user(other["id"]) == ()
+    assert all(
+        set(row) == {"id", "username", "display_name"}
+        for row in service.execution_user_catalog(actor_id=ADMIN_ID)
+    )

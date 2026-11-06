@@ -225,7 +225,7 @@ def draft_payload(*, route: str = "", mcp_tools: list[str] | None = None) -> dic
                 "connector_id": "connector-dingtalk-stream-default",
                 "routing_key": route,
                 "actor_policy": "CURRENT_SENDER",
-                "service_account_user_id": "",
+                "execution_user_id": "",
                 "enabled": True,
                 "config": {
                     "conversation_type": "private",
@@ -381,7 +381,7 @@ def test_workspace_retention_is_frozen_in_revision_publication_hash_and_audit() 
         code="workspace-retention-policy",
         revision_id=str(revision["id"]),
     )
-    assert publication["schema_version"] == 7
+    assert publication["schema_version"] == 8
     assert publication["task_file_features"] == {
         "default_file_delivery_enabled": False,
         "file_mcp_enabled": False,
@@ -606,7 +606,7 @@ def test_document_processing_profile_is_strict_and_frozen() -> None:
         "version": "2",
         "hash": DOCLING_LAYOUT_OCR_V2.profile_hash,
     }
-    assert publication["schema_version"] == 7
+    assert publication["schema_version"] == 8
     assert publication["snapshot"]["document_processing_profile"] == expected_profile
     assert publication["document_processing_profile_code"] == "docling-layout-ocr-v2"
     assert publication["document_processing_profile_version"] == "2"
@@ -615,7 +615,7 @@ def test_document_processing_profile_is_strict_and_frozen() -> None:
     assert snapshot_hash(publication["snapshot"]) == publication["config_hash"]
     assert verify_publication_snapshot(
         publication["snapshot"],
-        schema_version=7,
+        schema_version=8,
         expected_hash=publication["config_hash"],
     )
 
@@ -638,7 +638,7 @@ def test_document_processing_profile_is_strict_and_frozen() -> None:
     }
     assert not verify_publication_snapshot(
         tampered,
-        schema_version=7,
+        schema_version=8,
         expected_hash=snapshot_hash(tampered),
     )
 
@@ -1004,7 +1004,7 @@ def test_repository_is_append_only_and_enforces_revision_conflicts() -> None:
             "connector_id": "connector-dingtalk-stream-default",
             "routing_key": route,
             "actor_policy": "CURRENT_SENDER",
-            "service_account_user_id": "",
+            "execution_user_id": "",
             "enabled": True,
             "config": {
                 "conversation_type": "private",

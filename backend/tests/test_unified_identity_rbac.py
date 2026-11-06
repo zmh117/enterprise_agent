@@ -88,7 +88,6 @@ def test_web_auth_uses_hashed_sessions_csrf_and_rejects_forged_headers() -> None
             "webhook_edit": True,
             "webhook_publish": True,
             "webhook_rotate": True,
-            "webhook_manage_service_account": True,
         }
         session_token = client.cookies.get("enterprise_agent_session")
         assert session_token

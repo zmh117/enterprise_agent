@@ -254,7 +254,7 @@ def _publish_private(runtime, connector_id, user_ids):
                 "connector_id",
                 "routing_key",
                 "actor_policy",
-                "service_account_user_id",
+                "execution_user_id",
                 "enabled",
                 "config",
             )
@@ -421,6 +421,9 @@ def test_sqlite_upgrade_preserves_existing_delivery_and_binding(tmp_path, monkey
     current = default_migrations_dir()
     old = _catalog_through(tmp_path, 147)
     with monkeypatch.context() as patch:
+        from backend.tests.support.migrations import seed_before_execution_user_migration
+
+        patch.setattr("app.bootstrap.local_seed_sql", seed_before_execution_user_migration)
         patch.setattr("app.bootstrap.default_migrations_dir", lambda: old)
         patch.setattr("app.shared.runtime_config_loader.default_migrations_dir", lambda: old)
         runtime = container()
@@ -487,8 +490,8 @@ def test_application_private_binding_is_explicit_and_optional(variant):
                 "trigger_type": "webhook",
                 "connector_id": source,
                 "enabled": True,
-                "actor_policy": "SERVICE_ACCOUNT",
-                "service_account_user_id": "synthetic-service",
+                "actor_policy": "BOUND_USER",
+                "execution_user_id": "synthetic-service",
                 "routing_key": "webhook:synthetic",
                 "config": {"webhook_definition_id": "synthetic"},
             }
@@ -595,7 +598,7 @@ def test_http_application_draft_saves_recipients_with_explicit_trigger():
                     "connector_id",
                     "routing_key",
                     "actor_policy",
-                    "service_account_user_id",
+                    "execution_user_id",
                     "enabled",
                     "config",
                 )
@@ -668,8 +671,8 @@ def test_each_webhook_uses_only_its_own_delivery_independent_of_order():
             {
                 **source(name),
                 "enabled": True,
-                "actor_policy": "SERVICE_ACCOUNT",
-                "service_account_user_id": "synthetic-service",
+                "actor_policy": "BOUND_USER",
+                "execution_user_id": "synthetic-service",
             }
             for name in ("one", "two", "no-delivery")
         ],

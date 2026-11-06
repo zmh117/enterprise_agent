@@ -17,9 +17,10 @@ class WebhookTriggerRepository:
         where = "" if include_disabled else "where d.status = 'enabled'"
         rows = self.database.execute(
             f"""
-            select d.*, u.username as service_account_username,
-                   u.display_name as service_account_display_name,
-                   u.status as service_account_status,
+            select d.*, u.username as execution_username,
+                   u.display_name as execution_display_name,
+                   u.status as execution_user_status,
+                   u.account_type as execution_user_type,
                    p.revision as publication_revision,
                    (select e.status from webhook_event e
                     where e.trigger_id = d.id
@@ -36,7 +37,7 @@ class WebhookTriggerRepository:
                     where e.trigger_id = d.id
                       and e.status = 'DISPATCH_FAILED') as failed_event_count
             from webhook_trigger_definition d
-            join app_user u on u.id = d.service_account_id
+            left join app_user u on u.id = d.execution_user_id
             left join webhook_trigger_publication p on p.id = d.current_publication_id
             {where}
             order by d.code
@@ -48,12 +49,12 @@ class WebhookTriggerRepository:
         lock = " for update of d" if for_update and self.database.engine == "postgres" else ""
         row = self.database.execute_one(
             """
-            select d.*, u.username as service_account_username,
-                   u.display_name as service_account_display_name,
-                   u.status as service_account_status,
-                   u.account_type as service_account_type
+            select d.*, u.username as execution_username,
+                   u.display_name as execution_display_name,
+                   u.status as execution_user_status,
+                   u.account_type as execution_user_type
             from webhook_trigger_definition d
-            join app_user u on u.id = d.service_account_id
+            left join app_user u on u.id = d.execution_user_id
             where d.code = ?
             """
             + lock,
@@ -66,12 +67,12 @@ class WebhookTriggerRepository:
     def get_definition_by_public_id(self, public_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             """
-            select d.*, u.username as service_account_username,
-                   u.display_name as service_account_display_name,
-                   u.status as service_account_status,
-                   u.account_type as service_account_type
+            select d.*, u.username as execution_username,
+                   u.display_name as execution_display_name,
+                   u.status as execution_user_status,
+                   u.account_type as execution_user_type
             from webhook_trigger_definition d
-            join app_user u on u.id = d.service_account_id
+            left join app_user u on u.id = d.execution_user_id
             where d.public_id = ?
             """,
             (public_id,),
@@ -81,12 +82,12 @@ class WebhookTriggerRepository:
     def get_enabled_grafana_by_connector(self, connector_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             """
-            select d.*, u.username as service_account_username,
-                   u.display_name as service_account_display_name,
-                   u.status as service_account_status,
-                   u.account_type as service_account_type
+            select d.*, u.username as execution_username,
+                   u.display_name as execution_display_name,
+                   u.status as execution_user_status,
+                   u.account_type as execution_user_type
             from webhook_trigger_definition d
-            join app_user u on u.id = d.service_account_id
+            left join app_user u on u.id = d.execution_user_id
             where d.connector_id = ? and d.trigger_type = 'grafana'
               and d.status = 'enabled'
             order by d.created_at, d.id limit 1
@@ -137,7 +138,6 @@ class WebhookTriggerRepository:
         name: str,
         trigger_type: str,
         connector_id: str,
-        service_account_id: str,
         actor_id: str,
         public_id: str | None = None,
     ) -> dict[str, Any]:
@@ -147,8 +147,8 @@ class WebhookTriggerRepository:
             """
             insert into webhook_trigger_definition
               (id, code, name, trigger_type, public_id, connector_id,
-               service_account_id, status, revision, created_by, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, 'disabled', 1, ?, ?, ?)
+               status, revision, created_by, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, 'disabled', 1, ?, ?, ?)
             """,
             (
                 trigger_id,
@@ -157,7 +157,6 @@ class WebhookTriggerRepository:
                 trigger_type,
                 public_id or generate_public_id(),
                 connector_id,
-                service_account_id,
                 actor_id,
                 timestamp,
                 timestamp,
@@ -183,33 +182,6 @@ class WebhookTriggerRepository:
             returning id
             """,
             (name, connector_id, status, now_iso(), code, expected_revision),
-        )
-        self._require_changed(rows, code)
-        return self.get_definition(code)
-
-    def set_service_account_status(
-        self,
-        *,
-        code: str,
-        expected_revision: int,
-        enabled: bool,
-    ) -> dict[str, Any]:
-        definition = self.get_definition(code)
-        self.database.execute(
-            """
-            update app_user
-            set status = ?, revision = revision + 1, updated_at = ?
-            where id = ? and account_type = 'service'
-            """,
-            ("enabled" if enabled else "disabled", now_iso(), definition["service_account_id"]),
-        )
-        rows = self.database.execute(
-            """
-            update webhook_trigger_definition
-            set revision = revision + 1, updated_at = ?
-            where code = ? and revision = ? returning id
-            """,
-            (now_iso(), code, expected_revision),
         )
         self._require_changed(rows, code)
         return self.get_definition(code)
@@ -256,7 +228,7 @@ class WebhookTriggerRepository:
             insert into webhook_trigger_revision
               (id, trigger_id, revision, status, schema_version, config_json,
                config_hash, validation_json, created_by, created_at, updated_at)
-            values (?, ?, ?, 'draft', 2, ?, ?, '{}', ?, ?, ?)
+            values (?, ?, ?, 'draft', 3, ?, ?, '{}', ?, ?, ?)
             """,
             (
                 revision_id,
@@ -311,7 +283,7 @@ class WebhookTriggerRepository:
             insert into webhook_trigger_publication
               (id, trigger_id, revision_id, revision, schema_version, snapshot_json,
                config_hash, status, published_by, published_at)
-            values (?, ?, ?, ?, 2, ?, ?, 'active', ?, ?)
+            values (?, ?, ?, ?, 3, ?, ?, 'active', ?, ?)
             """,
             (
                 publication_id,
@@ -334,10 +306,10 @@ class WebhookTriggerRepository:
         self.database.execute(
             """
             update webhook_trigger_definition
-            set current_publication_id = ?, revision = revision + 1, updated_at = ?
+            set current_publication_id = ?, execution_user_id = ?, revision = revision + 1, updated_at = ?
             where id = ?
             """,
-            (publication_id, timestamp, trigger_id),
+            (publication_id, snapshot["execution_user_id"], timestamp, trigger_id),
         )
         return self.get_publication(publication_id)
 
@@ -399,10 +371,16 @@ class WebhookTriggerRepository:
         rows = self.database.execute(
             """
             update webhook_trigger_definition
-            set current_publication_id = ?, revision = revision + 1, updated_at = ?
+            set current_publication_id = ?, execution_user_id = ?, revision = revision + 1, updated_at = ?
             where code = ? and revision = ? returning id
             """,
-            (publication_id, now_iso(), code, expected_revision),
+            (
+                publication_id,
+                publication["snapshot"]["execution_user_id"],
+                now_iso(),
+                code,
+                expected_revision,
+            ),
         )
         self._require_changed(rows, code)
         return publication

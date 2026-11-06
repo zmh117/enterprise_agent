@@ -53,10 +53,13 @@ class ManagedWebhookProviderAdapter:
                 "last_error_summary": "",
             }
         try:
-            if item.get("service_account_status") != "enabled":
+            if (
+                item.get("execution_user_status") != "enabled"
+                or item.get("execution_user_type") != "human"
+            ):
                 raise PermissionDenied(
-                    "Webhook service account is disabled",
-                    safe_message="Webhook 服务账号已停用",
+                    "Webhook execution user is disabled",
+                    safe_message="Webhook 执行用户已停用",
                     error_code="webhook_disabled",
                 )
             self.connector_registry.require_ingress(str(item["connector_id"]))
@@ -68,7 +71,7 @@ class ManagedWebhookProviderAdapter:
             elif isinstance(exc, AppError):
                 message = exc.safe_message
             else:
-                message = "Webhook 入口配置不可用，请检查发布版本、连接器和服务账号"
+                message = "Webhook 入口配置不可用，请检查发布版本、连接器和执行用户"
             return {
                 **item,
                 "runtime_status": "MISCONFIGURED",

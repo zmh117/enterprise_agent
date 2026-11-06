@@ -136,7 +136,7 @@ def activate_dingtalk_test_application(
             "connector_id": "connector-dingtalk-stream-default",
             "routing_key": f"bot:{robot_code}",
             "actor_policy": "CURRENT_SENDER",
-            "service_account_user_id": "",
+            "execution_user_id": "",
             "enabled": True,
             "config": {
                 "conversation_type": "private",
@@ -151,7 +151,7 @@ def activate_dingtalk_test_application(
             "connector_id": "connector-dingtalk-stream-default",
             "routing_key": f"conversation:{conversation_id}",
             "actor_policy": "CURRENT_SENDER",
-            "service_account_user_id": "",
+            "execution_user_id": "",
             "enabled": True,
             "config": {
                 "conversation_type": "group",
@@ -174,8 +174,8 @@ def activate_dingtalk_test_application(
         triggers.append(
             {
                 **source,
-                "actor_policy": "SERVICE_ACCOUNT",
-                "service_account_user_id": "user_webhook_grafana_default",
+                "actor_policy": "BOUND_USER",
+                "execution_user_id": "user_webhook_grafana_default",
                 "enabled": True,
                 "config": {},
             }
@@ -257,7 +257,7 @@ def activate_webhook_test_application(
     *,
     code: str,
     webhook_definition_id: str,
-    service_account_user_id: str,
+    execution_user_id: str,
     ingress_connector_id: str,
     delivery_connector_id: str,
     delivery_target_reference: str,
@@ -299,8 +299,8 @@ def activate_webhook_test_application(
                     "trigger_type": "webhook",
                     "connector_id": ingress_connector_id,
                     "routing_key": f"webhook:{webhook_definition_id}",
-                    "actor_policy": "SERVICE_ACCOUNT",
-                    "service_account_user_id": service_account_user_id,
+                    "actor_policy": "BOUND_USER",
+                    "execution_user_id": execution_user_id,
                     "enabled": True,
                     "config": {
                         "conversation_type": "event",
@@ -377,7 +377,7 @@ def activate_webhook_test_application(
         container,
         application_id=str(application["id"]),
         role_code=f"{code}-runtime",
-        user_id=service_account_user_id,
+        user_id=execution_user_id,
         capabilities=capabilities,
         scopes=(
             {

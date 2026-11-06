@@ -179,7 +179,7 @@ def _activate_application(
                     "connector_id": connector_id,
                     "routing_key": f"bot:{robot_code}",
                     "actor_policy": "CURRENT_SENDER",
-                    "service_account_user_id": "",
+                    "execution_user_id": "",
                     "enabled": True,
                     "config": {
                         "conversation_type": "private",

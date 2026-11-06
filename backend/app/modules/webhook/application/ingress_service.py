@@ -83,11 +83,11 @@ class WebhookIngressService:
             )
         if (
             str(definition["status"]) != "enabled"
-            or str(definition.get("service_account_status") or "") != "enabled"
-            or str(definition.get("service_account_type") or "") != "service"
+            or str(definition.get("execution_user_status") or "") != "enabled"
+            or str(definition.get("execution_user_type") or "") != "human"
         ):
             raise PermissionDenied(
-                "Webhook Trigger or service account is disabled",
+                "Webhook Trigger or execution user is disabled",
                 safe_message="Webhook 端点不可用",
                 error_code="webhook_disabled",
             )
@@ -108,8 +108,10 @@ class WebhookIngressService:
                 error_code="webhook_not_published",
             ) from exc
         snapshot = publication["snapshot"]
-        if snapshot.get("schema_version") != 2 or config_hash(_revision_config(snapshot)) != str(
-            publication["config_hash"]
+        if (
+            snapshot.get("execution_user_id") != definition.get("execution_user_id")
+            or snapshot.get("schema_version") != 3
+            or config_hash(_revision_config(snapshot)) != str(publication["config_hash"])
         ):
             raise PermissionDenied(
                 "Webhook Trigger publication hash mismatch",
@@ -251,7 +253,7 @@ class WebhookIngressService:
                     trigger_publication_id=str(publication["id"]),
                     agent_publication_id=agent_publication_id,
                     application_publication_id=application_publication_id,
-                    service_account_id=str(definition["service_account_id"]),
+                    execution_user_id=str(definition["execution_user_id"]),
                     external_event_id=mapped.external_event_id,
                     dedup_key=dedup_key,
                     payload_hash=payload_hash,
@@ -280,7 +282,7 @@ class WebhookIngressService:
             "webhook.event.received",
             status="SKIPPED" if mapped.ignored else "SUCCEEDED",
             summary="Webhook event persisted",
-            actor_id=str(definition["service_account_id"]),
+            actor_id=str(definition["execution_user_id"]),
             payload={
                 "event_id": event["id"],
                 "trigger_id": definition["id"],
@@ -319,7 +321,7 @@ class WebhookIngressService:
             trigger_id=str(definition["id"]),
             trigger_publication_id=str(publication["id"]),
             agent_publication_id="",
-            service_account_id=str(definition["service_account_id"]),
+            execution_user_id=str(definition["execution_user_id"]),
             external_event_id="",
             dedup_key=None,
             payload_hash=payload_hash,
@@ -337,7 +339,7 @@ class WebhookIngressService:
             "webhook.event.rejected",
             status="DENIED",
             summary=error.safe_message,
-            actor_id=str(definition["service_account_id"]),
+            actor_id=str(definition["execution_user_id"]),
             payload={
                 "event_id": event["id"],
                 "trigger_id": definition["id"],
@@ -350,11 +352,7 @@ class WebhookIngressService:
 
 
 def _revision_config(snapshot: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in snapshot.items()
-        if key not in {"service_account_id", "source_connector_id"}
-    }
+    return {key: value for key, value in snapshot.items() if key != "source_connector_id"}
 
 
 def _within_json_limits(value: Any, *, max_depth: int, max_items: int) -> bool:

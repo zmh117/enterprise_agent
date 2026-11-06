@@ -77,6 +77,16 @@ def test_persisted_business_job_gate_and_return_recheck(job_fixture):
         )
 
 
+def test_webhook_bound_human_uses_existing_knowledge_permissions(job_fixture):
+    f = job_fixture
+    f["runtime"].database.execute(
+        "update agent_job set source_channel='managed_webhook' where id=?", (f["job"].id,)
+    )
+    access = resolve(f)
+    assert access.actor_id == "user_local_admin"
+    assert access.knowledge_base_ids == ("kb-test",)
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -246,8 +256,7 @@ def test_knowledge_principal_uses_gate_and_exact_audience_scope(job_fixture):
     )
     assert claims["sub"] == "user_local_admin"
     assert set(claims["scope"]) == {
-        mcp_server_policy.mcp_invoke_scope("knowledge-mcp", name)
-        for name in KNOWLEDGE_TOOLS
+        mcp_server_policy.mcp_invoke_scope("knowledge-mcp", name) for name in KNOWLEDGE_TOOLS
     }
     with pytest.raises(AppError):
         verifier.verify_for_running_job(

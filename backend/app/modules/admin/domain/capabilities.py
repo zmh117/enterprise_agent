@@ -150,15 +150,6 @@ ADMIN_CAPABILITIES: tuple[CapabilityDefinition, ...] = (
         risk_level="high",
         dependencies=("webhooks.read",),
     ),
-    _capability(
-        "webhooks.service_accounts",
-        "channels",
-        "webhook_trigger",
-        "manage_service_account",
-        "管理 Webhook 服务账号",
-        risk_level="high",
-        dependencies=("webhooks.read", "users.read"),
-    ),
     _capability("agents.read", "agents", "agent", "read", "查看 Agent 配置"),
     _capability(
         "agents.edit",

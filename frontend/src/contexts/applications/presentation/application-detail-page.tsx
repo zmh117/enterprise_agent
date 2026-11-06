@@ -943,7 +943,7 @@ function BindingsEditor({
                     connector_id: "",
                     routing_key: "bot:",
                     actor_policy: "CURRENT_SENDER",
-                    service_account_user_id: "",
+                    execution_user_id: "",
                     enabled: true,
                     config: {
                       conversation_type: "private",
@@ -959,7 +959,7 @@ function BindingsEditor({
                     connector_id: "",
                     routing_key: "bot:",
                     actor_policy: "CURRENT_SENDER",
-                    service_account_user_id: "",
+                    execution_user_id: "",
                     enabled: true,
                     config: {
                       conversation_type: "private",
@@ -1001,11 +1001,9 @@ function BindingsEditor({
                               ? "conversation:"
                               : "",
                         actor_policy:
-                          type === "webhook"
-                            ? "SERVICE_ACCOUNT"
-                            : "CURRENT_SENDER",
+                          type === "webhook" ? "BOUND_USER" : "CURRENT_SENDER",
                         connector_id: "",
-                        service_account_user_id: "",
+                        execution_user_id: "",
                         config: {
                           ...trigger.config,
                           conversation_type:
@@ -2143,7 +2141,7 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
         routing_key: item.routing_key,
         actor_policy:
           item.actor_policy as SaveDraftInput["triggers"][number]["actor_policy"],
-        service_account_user_id: item.service_account_user_id,
+        execution_user_id: item.execution_user_id,
         enabled: item.enabled,
         config: {
           conversation_type: String(item.config.conversation_type ?? ""),

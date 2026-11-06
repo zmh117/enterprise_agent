@@ -363,6 +363,26 @@ class ChannelIngressService:
                 safe_message="事件接收后应用发布版本已变更，请重新触发",
                 error_code="webhook_application_changed",
             )
+        if event.webhook_trigger_id:
+            triggers = (resolution.publication or {}).get("snapshot", {}).get("triggers", [])
+            matching = [
+                trigger
+                for trigger in triggers
+                if trigger.get("trigger_type") == "webhook"
+                and trigger.get("connector_id") == event.source.connector_id
+                and trigger.get("config", {}).get("webhook_definition_id")
+                == event.webhook_trigger_id
+                and trigger.get("enabled", True)
+            ]
+            if len(matching) != 1 or (
+                matching[0].get("actor_policy") != "BOUND_USER"
+                or matching[0].get("execution_user_id") != event.source.actor_id
+            ):
+                raise NonRetryableExecutionError(
+                    "Webhook execution user differs from application publication",
+                    safe_message="Webhook 执行用户已变更，请重新保存并发布应用后触发",
+                    error_code="webhook_execution_user_changed",
+                )
         conflicts = (
             (bool(event.agent_code) and event.agent_code != str(agent.get("code") or ""))
             or (

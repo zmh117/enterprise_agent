@@ -275,7 +275,7 @@ class BusinessApplicationRepository:  # noqa: PLR0904
                     insert into business_application_revision_trigger
                       (id, revision_id, binding_order, trigger_type, connector_id,
                        routing_key, normalized_routing_key, actor_policy,
-                       service_account_user_id, enabled, config_json, created_at)
+                       execution_user_id, enabled, config_json, created_at)
                     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
@@ -287,7 +287,7 @@ class BusinessApplicationRepository:  # noqa: PLR0904
                         trigger["routing_key"],
                         trigger["normalized_routing_key"],
                         trigger["actor_policy"],
-                        trigger["service_account_user_id"] or None,
+                        trigger["execution_user_id"] or None,
                         int(bool(trigger["enabled"])),
                         json_text(trigger["config"]),
                         timestamp,
@@ -740,7 +740,7 @@ class BusinessApplicationRepository:  # noqa: PLR0904
                     **item,
                     "binding_order": int(item["binding_order"]),
                     "enabled": bool(item["enabled"]),
-                    "service_account_user_id": str(item.get("service_account_user_id") or ""),
+                    "execution_user_id": str(item.get("execution_user_id") or ""),
                     "config": json_value(item.get("config_json"), {}),
                 }
                 for item in triggers

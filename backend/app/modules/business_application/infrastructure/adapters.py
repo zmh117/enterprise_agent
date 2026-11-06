@@ -144,10 +144,10 @@ class ChannelConnectorAdapter:
 
     def webhook_trigger(self, connector_id: str) -> dict[str, Any]:
         rows = self.registry.repository.database.execute(
-            """select d.id, d.service_account_id from webhook_trigger_definition d
+            """select d.id, d.execution_user_id from webhook_trigger_definition d
                  join webhook_trigger_publication p on p.id=d.current_publication_id
                 where d.connector_id=? and d.status='enabled'
-                  and p.status='active' and p.schema_version=2""",
+                  and p.status='active' and p.schema_version=3""",
             (connector_id,),
         )
         if len(rows) != 1:
@@ -161,8 +161,8 @@ class ChannelConnectorAdapter:
             "trigger_type": "webhook",
             "connector_id": connector_id,
             "routing_key": f"webhook:{row['id']}",
-            "actor_policy": "SERVICE_ACCOUNT",
-            "service_account_user_id": str(row["service_account_id"]),
+            "actor_policy": "BOUND_USER",
+            "execution_user_id": str(row["execution_user_id"]),
             "config": {"webhook_definition_id": str(row["id"])},
         }
 
@@ -194,11 +194,11 @@ class IdentitySubjectAdapter:
     def __init__(self, repository: IdentityRepository) -> None:
         self.repository = repository
 
-    def resolve_service_account(self, user_id: str) -> ComponentReference:
+    def resolve_execution_user(self, user_id: str) -> ComponentReference:
         user = self.repository.get_user(user_id)
         status = (
             "enabled"
-            if str(user["status"]) == "enabled" and str(user["account_type"]) == "service"
+            if str(user["status"]) == "enabled" and str(user["account_type"]) == "human"
             else "disabled"
         )
         return ComponentReference(
@@ -208,5 +208,5 @@ class IdentitySubjectAdapter:
             project_code="",
             status=status,
             config_hash="",
-            component_type="service_account",
+            component_type="execution_user",
         )

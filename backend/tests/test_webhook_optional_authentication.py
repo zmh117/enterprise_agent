@@ -47,7 +47,8 @@ def test_channel_readiness_uses_the_published_authentication_mode(
             "id": "synthetic-hook",
             "connector_id": "synthetic-source",
             "status": "enabled",
-            "service_account_status": "enabled",
+            "execution_user_type": "human",
+            "execution_user_status": "enabled",
         }
     ]
     repository.current_publication.return_value = {"snapshot": {"authentication": authentication}}
@@ -76,7 +77,8 @@ def test_channel_readiness_does_not_mislabel_disabled_dependencies_as_credential
             "id": "synthetic-hook",
             "connector_id": "synthetic-source",
             "status": "enabled",
-            "service_account_status": "disabled" if unavailable == "service_account" else "enabled",
+            "execution_user_type": "human",
+            "execution_user_status": "disabled" if unavailable == "service_account" else "enabled",
         }
     ]
     registry = Mock()

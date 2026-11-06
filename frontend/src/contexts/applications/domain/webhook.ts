@@ -1,8 +1,8 @@
 export type WebhookConfig = {
-  schema_version: 2
+  schema_version: 3
   adapter: "generic_json_v1" | "grafana_alertmanager_v1"
   authentication: { type: "none" | "bearer_v1"; secret_ref: string }
-  role_ids: string[]
+  execution_user_id: string
 }
 export type WebhookDefinition = {
   id: string
@@ -13,9 +13,6 @@ export type WebhookDefinition = {
   public_id: string
   revision: number
   status: "enabled" | "disabled"
-  service_account_id: string
-  service_account_username: string
-  service_account_status: string
 }
 export type WebhookRevision = {
   id: string
@@ -33,15 +30,15 @@ export type WebhookDetail = {
   current_publication: { id: string; revision: number } | null
 }
 export type WebhookCatalog = {
-  roles: Array<{ id: string; name: string; code: string }>
+  users: Array<{ id: string; display_name: string; username: string }>
 }
 export function initialWebhookConfig(
   type: "generic" | "grafana"
 ): WebhookConfig {
   return {
-    schema_version: 2,
+    schema_version: 3,
     adapter: type === "grafana" ? "grafana_alertmanager_v1" : "generic_json_v1",
     authentication: { type: "none", secret_ref: "" },
-    role_ids: [],
+    execution_user_id: "",
   }
 }

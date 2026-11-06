@@ -450,7 +450,7 @@ describe("Managed channels", () => {
                 connector_id: "connector-dingtalk-a",
                 routing_key: "conversation:cid-a",
                 actor_policy: "CURRENT_SENDER",
-                service_account_user_id: "",
+                execution_user_id: "",
                 enabled: true,
                 config: {
                   conversation_type: "group",

@@ -62,7 +62,7 @@ from app.modules.identity.application.authorization import AuthorizationEvaluato
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import AppError, NonRetryableExecutionError, NotFound
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 WRITABLE_AGENT_RUNTIME_KIND = "python-v1"
 
 
@@ -753,7 +753,7 @@ class BusinessApplicationService:
                     expected = self._prepare_trigger(trigger)
                     if any(
                         expected[key] != trigger[key]
-                        for key in ("routing_key", "service_account_user_id", "config")
+                        for key in ("routing_key", "execution_user_id", "config")
                     ):
                         raise NonRetryableExecutionError(
                             "Webhook binding changed",
@@ -763,12 +763,12 @@ class BusinessApplicationService:
                         self._require_agent_webhook(agent, trigger)
                 except AppError as exc:
                     errors.append({"field": f"triggers.{index}", "message": exc.safe_message})
-            if str(trigger["actor_policy"]) == "SERVICE_ACCOUNT":
+            if str(trigger["actor_policy"]) == "BOUND_USER":
                 account = self._resolve_component(
                     errors,
-                    f"triggers.{index}.service_account_user_id",
-                    lambda trigger=trigger: self.identity_reader.resolve_service_account(
-                        str(trigger["service_account_user_id"])
+                    f"triggers.{index}.execution_user_id",
+                    lambda trigger=trigger: self.identity_reader.resolve_execution_user(
+                        str(trigger["execution_user_id"])
                     ),
                 )
                 if account:
@@ -964,7 +964,7 @@ class BusinessApplicationService:
                     "routing_key": item["routing_key"],
                     "normalized_routing_key": item["normalized_routing_key"],
                     "actor_policy": item["actor_policy"],
-                    "service_account_user_id": item["service_account_user_id"],
+                    "execution_user_id": item["execution_user_id"],
                     "enabled": item["enabled"],
                     "config": item["config"],
                 }

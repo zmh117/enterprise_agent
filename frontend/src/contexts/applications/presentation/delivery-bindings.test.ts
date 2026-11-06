@@ -15,8 +15,8 @@ const hook = (key: string): Trigger => ({
   trigger_type: "webhook",
   connector_id: key,
   routing_key: `webhook:${key}`,
-  actor_policy: "SERVICE_ACCOUNT",
-  service_account_user_id: "",
+  actor_policy: "BOUND_USER",
+  execution_user_id: "",
   enabled: true,
   config: {
     conversation_type: "webhook",

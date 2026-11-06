@@ -8,6 +8,29 @@ from app.shared.migrations import (
 )
 
 
+def seed_before_execution_user_migration() -> str:
+    """Historical Webhook seed shape for tests upgrading databases through 157."""
+    from app.cli.apply_local_seed import local_seed_sql
+
+    seed = local_seed_sql()
+    start = seed.index("INSERT INTO webhook_trigger_definition")
+    end = seed.index("ON CONFLICT(id) DO NOTHING;", start) + len("ON CONFLICT(id) DO NOTHING;")
+    old_definition = (
+        seed[start:end]
+        .replace("execution_user_id", "service_account_id")
+        .replace(
+            "'connector-grafana-default', NULL",
+            "'connector-grafana-default', 'user_webhook_grafana_default'",
+        )
+    )
+    old_user = """
+INSERT INTO app_user (id, username, display_name, status, account_type, revision, created_at, updated_at)
+VALUES ('user_webhook_grafana_default', 'svc-grafana-default', 'Historical test service',
+        'enabled', 'service', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+"""
+    return seed[:start] + old_user + old_definition + seed[end:]
+
+
 def deployable_schema_versions() -> tuple[str, ...]:
     catalog = deployable_migration_catalog(load_migration_catalog(default_migrations_dir()))
     return tuple(artifact.version for artifact in catalog)

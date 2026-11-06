@@ -418,7 +418,7 @@ class RuntimeReadinessEvaluator:
                         "接入路由使用了不受支持的路由键",
                     )
                 )
-            expected_actor = "SERVICE_ACCOUNT" if trigger_type == "webhook" else "CURRENT_SENDER"
+            expected_actor = "BOUND_USER" if trigger_type == "webhook" else "CURRENT_SENDER"
             if str(trigger.get("actor_policy") or "") != expected_actor:
                 trigger_blocked = True
                 blockers.append(

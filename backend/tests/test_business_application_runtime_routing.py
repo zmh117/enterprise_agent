@@ -205,7 +205,7 @@ def _trigger(
         "connector_id": connector_id,
         "routing_key": routing_key,
         "actor_policy": "CURRENT_SENDER",
-        "service_account_user_id": "",
+        "execution_user_id": "",
         "enabled": True,
         "config": {
             "conversation_type": ("group" if trigger_type == "dingtalk_group" else "private"),

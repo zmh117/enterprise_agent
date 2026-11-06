@@ -22,9 +22,6 @@ function setup(
       public_id: "wh_synthetic",
       revision: 1,
       status: enabled ? "enabled" : "disabled",
-      service_account_id: "service-1",
-      service_account_username: "svc-webhook-synthetic-hook",
-      service_account_status: "enabled",
     },
     draft: null,
     current_publication: null,
@@ -77,7 +74,13 @@ function setup(
     }
     if (url.endsWith("/webhook-triggers/catalog"))
       return reply({
-        roles: [{ id: "role-1", name: "合成业务角色", code: "synthetic-role" }],
+        users: [
+          {
+            id: "user-1",
+            display_name: "合成执行用户",
+            username: "synthetic-user",
+          },
+        ],
       })
     if (url.endsWith("/platform/secrets"))
       return reply({
@@ -194,10 +197,20 @@ async function fillDraft() {
   fireEvent.change(screen.getByLabelText("Bearer 凭据引用（可选）"), {
     target: { value: "secret://platform/synthetic" },
   })
-  fireEvent.click(await screen.findByRole("checkbox", { name: /合成业务角色/ }))
+  fireEvent.change(await screen.findByLabelText("执行用户"), {
+    target: { value: "user-1" },
+  })
 }
 
 describe("Webhook first-use configuration", () => {
+  it("requires an execution user before saving and does not expose separate role assignment", async () => {
+    const { writes } = setup()
+    await createWebhook()
+    expect(screen.queryByText("业务角色")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("请选择已启用人员作为执行用户")
+    expect(writes.some((item) => item.url.endsWith("/revisions"))).toBe(false)
+  })
   it("saves without credentials and copies the matching public HTTP example", async () => {
     const { writes } = setup()
     const writeText = vi.fn().mockResolvedValue(undefined)
@@ -224,9 +237,9 @@ describe("Webhook first-use configuration", () => {
     fireEvent.click(screen.getByRole("button", { name: "复制调用示例" }))
     await screen.findByText("调用示例已复制")
     expect(writeText).toHaveBeenCalledWith(example.textContent)
-    fireEvent.click(
-      await screen.findByRole("checkbox", { name: /合成业务角色/ })
-    )
+    fireEvent.change(await screen.findByLabelText("执行用户"), {
+      target: { value: "user-1" },
+    })
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
     await screen.findByText("草稿已保存，当前运行版本保持不变。")
     expect(
@@ -246,7 +259,7 @@ describe("Webhook first-use configuration", () => {
     expect(example).toHaveTextContent('"commonAnnotations"')
     expect(example).not.toHaveTextContent('"message"')
   })
-  it("saves roles without Agent, people, mappings or delivery and reopens them", async () => {
+  it("saves the execution user without separate roles or delivery and reopens it", async () => {
     const { writes } = setup()
     await createWebhook()
     await fillDraft()
@@ -257,19 +270,17 @@ describe("Webhook first-use configuration", () => {
     expect(
       writes.find((item) => item.url.endsWith("/revisions"))!.body.config
     ).toEqual({
-      schema_version: 2,
+      schema_version: 3,
       adapter: "generic_json_v1",
       authentication: {
         type: "bearer_v1",
         secret_ref: "secret://platform/synthetic",
       },
-      role_ids: ["role-1"],
+      execution_user_id: "user-1",
     })
     fireEvent.click(screen.getByRole("button", { name: "关闭" }))
     fireEvent.click(await screen.findByRole("button", { name: "配置 Webhook" }))
-    expect(
-      await screen.findByRole("checkbox", { name: /合成业务角色/ })
-    ).toBeChecked()
+    expect(await screen.findByLabelText("执行用户")).toHaveValue("user-1")
   })
   it("stops directly from the channel card", async () => {
     const { writes } = setup(true)
@@ -296,7 +307,9 @@ describe("Webhook first-use configuration", () => {
     await screen.findByText("草稿已保存，当前运行版本保持不变。")
     const save = writes.find((item) => item.url.endsWith("/revisions"))!
     expect(save.body.expected_revision).toBe(0)
-    expect((save.body.config as WebhookConfig).role_ids).toEqual(["role-1"])
+    expect((save.body.config as WebhookConfig).execution_user_id).toEqual(
+      "user-1"
+    )
     expect(screen.getByRole("button", { name: "发布草稿" })).toBeDisabled()
     fireEvent.click(screen.getByRole("button", { name: "校验草稿" }))
     await screen.findByText("校验通过，可以预览或发布。")
@@ -346,7 +359,7 @@ describe("Webhook first-use configuration", () => {
     await screen.findByText("校验通过，可以预览或发布。")
     expect(screen.getByRole("button", { name: "发布草稿" })).toBeEnabled()
   })
-  it("preserves unsaved roles and credential reference on revision conflicts", async () => {
+  it("preserves the unsaved execution user and credential reference on revision conflicts", async () => {
     const { conflict } = setup()
     await createWebhook()
     await fillDraft()
@@ -356,7 +369,7 @@ describe("Webhook first-use configuration", () => {
     expect(screen.getByLabelText("Bearer 凭据引用（可选）")).toHaveValue(
       "secret://platform/synthetic"
     )
-    expect(screen.getByRole("checkbox", { name: /合成业务角色/ })).toBeChecked()
+    expect(screen.getByLabelText("执行用户")).toHaveValue("user-1")
     expect(screen.getByRole("button", { name: "发布草稿" })).toBeDisabled()
   })
 })

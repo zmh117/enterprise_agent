@@ -64,7 +64,7 @@ class TriggerResponse(BaseModel):
     routing_key: str
     normalized_routing_key: str = ""
     actor_policy: str
-    service_account_user_id: str = ""
+    execution_user_id: str = ""
     enabled: bool
     config: dict[str, Any] = Field(default_factory=dict)
 
@@ -266,8 +266,8 @@ class TriggerRequest(StrictRequest):
     trigger_type: Literal["dingtalk_private", "dingtalk_group", "webhook"]
     connector_id: str = Field(min_length=1, max_length=200)
     routing_key: str = Field(min_length=1, max_length=240)
-    actor_policy: Literal["CURRENT_SENDER", "SERVICE_ACCOUNT"]
-    service_account_user_id: str = Field(default="", max_length=200)
+    actor_policy: Literal["CURRENT_SENDER", "BOUND_USER"]
+    execution_user_id: str = Field(default="", max_length=200)
     enabled: bool = True
     config: TriggerConfigRequest = Field(default_factory=TriggerConfigRequest)
 

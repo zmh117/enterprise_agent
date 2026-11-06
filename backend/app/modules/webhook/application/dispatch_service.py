@@ -125,14 +125,14 @@ class WebhookDispatcher:
                     "Webhook Trigger is disabled before dispatch",
                     safe_message="Webhook 触发器已停用",
                 )
-            service_account = self.identity_repository.get_user(str(event["service_account_id"]))
+            execution_user = self.identity_repository.get_user(str(event["execution_user_id"]))
             if (
-                str(service_account["status"]) != "enabled"
-                or str(service_account["account_type"]) != "service"
+                str(execution_user["status"]) != "enabled"
+                or str(execution_user["account_type"]) != "human"
             ):
                 raise NonRetryableExecutionError(
-                    "Webhook service account is disabled before dispatch",
-                    safe_message="Webhook 服务账号已停用",
+                    "Webhook execution user is disabled before dispatch",
+                    safe_message="Webhook 执行用户已停用",
                 )
             publication = self.trigger_repository.get_publication(
                 str(event["trigger_publication_id"])
@@ -147,7 +147,8 @@ class WebhookDispatcher:
                 str(event["agent_publication_id"])
             )
             if (
-                snapshot.get("schema_version") != 2
+                snapshot.get("schema_version") != 3
+                or snapshot.get("execution_user_id") != event["execution_user_id"]
                 or publication["status"] != "active"
                 or config_hash(_revision_config(snapshot)) != publication["config_hash"]
                 or not event.get("application_publication_id")
@@ -169,10 +170,10 @@ class WebhookDispatcher:
                     ),
                     connector_id=str(snapshot["source_connector_id"]),
                     event_id=str(event["external_event_id"]),
-                    actor_id=str(service_account["id"]),
+                    actor_id=str(execution_user["id"]),
                     conversation_id=f"webhook:{event['trigger_id']}",
                     metadata={
-                        "display_name": service_account["display_name"],
+                        "display_name": execution_user["display_name"],
                         "trigger_code": definition["code"],
                     },
                 ),
@@ -204,7 +205,7 @@ class WebhookDispatcher:
                 status="SUCCEEDED",
                 summary="Webhook event dispatched to Agent job",
                 job_id=job.id,
-                actor_id=str(service_account["id"]),
+                actor_id=str(execution_user["id"]),
                 payload={
                     "event_id": event["id"],
                     "trigger_publication_id": event["trigger_publication_id"],
@@ -220,6 +221,6 @@ class WebhookDispatcher:
                 "webhook.event.dispatch_failed",
                 status="FAILED",
                 summary=exc.safe_message,
-                actor_id=str(event["service_account_id"]),
+                actor_id=str(event["execution_user_id"]),
                 payload={"event_id": event["id"], "error_code": exc.error_code},
             )

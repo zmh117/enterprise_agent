@@ -117,6 +117,9 @@ def test_simplification_migration_revokes_old_webhooks_and_preserves_events(tmp_
     old = _catalog_through(tmp_path, 156)
     current = default_migrations_dir()
     with monkeypatch.context() as patch:
+        from backend.tests.support.migrations import seed_before_execution_user_migration
+
+        patch.setattr("app.bootstrap.local_seed_sql", seed_before_execution_user_migration)
         patch.setattr("app.bootstrap.default_migrations_dir", lambda: old)
         patch.setattr("app.shared.runtime_config_loader.default_migrations_dir", lambda: old)
         c = container()
@@ -150,7 +153,7 @@ def test_simplification_migration_revokes_old_webhooks_and_preserves_events(tmp_
             trigger_id="webhook_trigger_grafana_default",
             trigger_publication_id="old-webhook-publication",
             agent_publication_id="",
-            service_account_id="user_webhook_grafana_default",
+            execution_user_id="user_webhook_grafana_default",
             external_event_id="",
             dedup_key=None,
             payload_hash="hash",

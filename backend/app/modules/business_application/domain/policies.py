@@ -250,9 +250,9 @@ def verify_publication_snapshot(
     schema_version: int,
     expected_hash: str,
 ) -> bool:
-    if schema_version not in {6, 7} or snapshot.get("schema_version") != schema_version:
+    if schema_version not in {6, 7, 8} or snapshot.get("schema_version") != schema_version:
         return False
-    if schema_version == 7 and snapshot.get("delivery_binding_mode") != "per_trigger":
+    if schema_version >= 7 and snapshot.get("delivery_binding_mode") != "per_trigger":
         return False
     if not verify_snapshot(snapshot, expected_hash):
         return False
@@ -285,9 +285,9 @@ def verify_historical_document_profile_snapshot(
     expected_hash: str,
 ) -> bool:
     """Recognize an intact immutable snapshot whose only drift is Profile hash."""
-    if schema_version not in {6, 7} or snapshot.get("schema_version") != schema_version:
+    if schema_version not in {6, 7, 8} or snapshot.get("schema_version") != schema_version:
         return False
-    if schema_version == 7 and snapshot.get("delivery_binding_mode") != "per_trigger":
+    if schema_version >= 7 and snapshot.get("delivery_binding_mode") != "per_trigger":
         return False
     if not verify_snapshot(snapshot, expected_hash):
         return False
@@ -340,7 +340,7 @@ def validate_trigger(value: dict[str, Any], index: int) -> dict[str, Any]:
         "connector_id",
         "routing_key",
         "actor_policy",
-        "service_account_user_id",
+        "execution_user_id",
         "enabled",
         "config",
     }
@@ -350,23 +350,23 @@ def validate_trigger(value: dict[str, Any], index: int) -> dict[str, Any]:
         actor_policy = ActorPolicy(str(value.get("actor_policy") or "")).value
     except ValueError as exc:
         raise validation_error(f"triggers.{index}", "触发器或主体策略无效") from exc
-    service_account = str(value.get("service_account_user_id") or "").strip()
-    if trigger_type == TriggerType.WEBHOOK and actor_policy != ActorPolicy.SERVICE_ACCOUNT:
+    execution_user = str(value.get("execution_user_id") or "").strip()
+    if trigger_type == TriggerType.WEBHOOK and actor_policy != ActorPolicy.BOUND_USER:
         raise validation_error(
             f"triggers.{index}.actor_policy",
-            "Webhook 必须使用 SERVICE_ACCOUNT",
+            "Webhook 必须使用 BOUND_USER",
         )
     if trigger_type != TriggerType.WEBHOOK and actor_policy != ActorPolicy.CURRENT_SENDER:
         raise validation_error(
             f"triggers.{index}.actor_policy",
             "钉钉必须使用 CURRENT_SENDER",
         )
-    if actor_policy == ActorPolicy.SERVICE_ACCOUNT and not service_account:
-        raise validation_error(f"triggers.{index}.service_account_user_id", "必须选择服务账号")
-    if actor_policy == ActorPolicy.CURRENT_SENDER and service_account:
+    if actor_policy == ActorPolicy.BOUND_USER and not execution_user:
+        raise validation_error(f"triggers.{index}.execution_user_id", "必须绑定执行用户")
+    if actor_policy == ActorPolicy.CURRENT_SENDER and execution_user:
         raise validation_error(
-            f"triggers.{index}.service_account_user_id",
-            "当前发送人触发器不能设置服务账号",
+            f"triggers.{index}.execution_user_id",
+            "当前发送人触发器不能设置固定执行用户",
         )
     config = dict(value.get("config") or {})
     _reject_unknown(config, TRIGGER_CONFIG_FIELDS, f"triggers.{index}.config")
@@ -380,7 +380,7 @@ def validate_trigger(value: dict[str, Any], index: int) -> dict[str, Any]:
         "routing_key": str(value.get("routing_key") or "").strip(),
         "normalized_routing_key": normalize_routing_key(str(value.get("routing_key") or "")),
         "actor_policy": actor_policy,
-        "service_account_user_id": service_account,
+        "execution_user_id": execution_user,
         "enabled": bool(value.get("enabled", True)),
         "config": config,
     }

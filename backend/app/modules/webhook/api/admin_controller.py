@@ -18,10 +18,10 @@ class AuthenticationRequest(StrictRequest):
 
 
 class TriggerConfigRequest(StrictRequest):
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     adapter: Literal["grafana_alertmanager_v1", "generic_json_v1"]
     authentication: AuthenticationRequest
-    role_ids: list[str] = Field(default_factory=list, max_length=20)
+    execution_user_id: str = Field(min_length=1, max_length=200)
 
 
 class CreateTriggerRequest(StrictRequest):
@@ -58,11 +58,6 @@ class RotateRequest(StrictRequest):
     confirm: bool
 
 
-class ServiceAccountStatusRequest(StrictRequest):
-    expected_revision: int = Field(ge=1)
-    enabled: bool
-
-
 def build_webhook_admin_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/admin", tags=["webhook-administration"])
 
@@ -87,7 +82,7 @@ def build_webhook_admin_router() -> APIRouter:  # noqa: C901, PLR0915
         )
         try:
             return {
-                "roles": container(request).authorization_center_service.service_role_catalog(
+                "users": container(request).webhook_trigger_service.execution_user_catalog(
                     actor_id=principal.user_id
                 )
             }
@@ -281,28 +276,6 @@ def build_webhook_admin_router() -> APIRouter:  # noqa: C901, PLR0915
             "definition": definition,
             "ingress_path": f"/webhooks/v1/{definition['public_id']}",
         }
-
-    @router.put("/webhook-triggers/{code}/service-account")
-    def service_account_status(
-        request: Request, code: str, payload: ServiceAccountStatusRequest
-    ) -> dict[str, Any]:
-        principal = require_action(
-            request,
-            resource_type="webhook_trigger",
-            resource_code=code,
-            action="manage_service_account",
-            csrf=True,
-        )
-        try:
-            definition = container(request).webhook_trigger_service.set_service_account_enabled(
-                actor_id=principal.user_id,
-                code=code,
-                expected_revision=payload.expected_revision,
-                enabled=payload.enabled,
-            )
-        except Exception as exc:
-            raise handle_exception(exc) from exc
-        return {"definition": definition}
 
     @router.get("/webhook-triggers/{code}/events")
     def events(

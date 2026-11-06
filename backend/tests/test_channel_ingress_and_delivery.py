@@ -98,7 +98,7 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
                 c,
                 code="grafana-channel-ingress",
                 webhook_definition_id=("webhook_trigger_grafana_default"),
-                service_account_user_id=("user_webhook_grafana_default"),
+                execution_user_id=("user_webhook_grafana_default"),
                 ingress_connector_id="connector-grafana-default",
                 delivery_connector_id=("connector-dingtalk-enterprise-default"),
                 delivery_target_reference="test-alert-group",

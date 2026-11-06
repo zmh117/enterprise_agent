@@ -183,17 +183,10 @@ def test_first_webhook_creates_independent_ingress_and_completes_configuration()
         catalog = client.get("/api/admin/webhook-triggers/catalog")
         assert catalog.status_code == 200
         assert "agents" not in catalog.json()
-        role = c.authorization_center_service.create_role(
-            actor_id="user_local_admin",
-            code="first-webhook-role",
-            name="Synthetic role",
-            description="",
-            purpose_tags=[],
-        )
         config = _config()
         config["adapter"] = "generic_json_v1"
         config["authentication"]["secret_ref"] = "secret://platform/synthetic-first-webhook"
-        config["role_ids"] = [role["role"]["id"]]
+        config["execution_user_id"] = "user_local_admin"
         saved = client.post(
             path + "/revisions",
             headers=csrf_headers(csrf),
@@ -201,7 +194,7 @@ def test_first_webhook_creates_independent_ingress_and_completes_configuration()
         )
         assert saved.status_code == 200, saved.text
         revision = saved.json()["revision"]
-        assert revision["config"]["schema_version"] == 2
+        assert revision["config"]["schema_version"] == 3
         revision_path = path + "/revisions/" + revision["id"]
         # Publishing an ingress no longer depends on any Agent or delivery.
         valid = client.post(revision_path + "/validate", headers=csrf_headers(csrf), json={})
@@ -244,7 +237,7 @@ def test_first_webhook_creates_independent_ingress_and_completes_configuration()
             c,
             code="first-webhook-app",
             webhook_definition_id=definition["id"],
-            service_account_user_id=definition["service_account_id"],
+            execution_user_id=current["definition"]["execution_user_id"],
             ingress_connector_id=source_id,
             delivery_connector_id="",
             delivery_target_reference="",
@@ -299,4 +292,12 @@ def test_webhook_catalog_does_not_require_a_default_agent() -> None:
         login(client)
         result = client.get("/api/admin/webhook-triggers/catalog")
         assert result.status_code == 200, result.text
-        assert result.json() == {"roles": []}
+        assert result.json() == {
+            "users": [
+                {
+                    "id": "user_local_admin",
+                    "username": "admin",
+                    "display_name": "Administrator",
+                }
+            ]
+        }

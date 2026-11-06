@@ -5,7 +5,6 @@ from typing import Any
 
 
 from app.modules.agent_config.application.service import AgentConfigService
-from app.modules.authorization_center.application.service import AuthorizationCenterService
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.application.authorization import AuthorizationEvaluator
@@ -45,7 +44,7 @@ class TriggerValidator:
         self, *, definition: dict[str, Any], config: dict[str, Any]
     ) -> tuple[list[dict[str, str]], dict[str, Any]]:
         errors: list[dict[str, str]] = []
-        if int(config.get("schema_version") or 0) != 2:
+        if int(config.get("schema_version") or 0) != 3:
             errors.append({"field": "schema_version", "message": "请重新保存简化 Webhook 配置"})
         if str(config.get("adapter") or "") not in {item.value for item in TriggerSchema}:
             errors.append({"field": "adapter", "message": "不支持此适配器"})
@@ -60,11 +59,15 @@ class TriggerValidator:
                     "message": "适配器与触发器类型不匹配",
                 }
             )
-        account = self.identity_repository.get_user(str(definition["service_account_id"]))
-        if str(account.get("account_type")) != "service":
-            errors.append({"field": "service_account", "message": "必须选择服务账号"})
-        if str(account.get("status")) != "enabled":
-            errors.append({"field": "service_account", "message": "服务账号已停用"})
+        execution_user_id = str(config.get("execution_user_id") or "")
+        try:
+            account = self.identity_repository.get_user(execution_user_id)
+            if account["account_type"] != "human" or account["status"] != "enabled":
+                errors.append(
+                    {"field": "execution_user_id", "message": "请选择已启用的人员作为执行用户"}
+                )
+        except AppError:
+            errors.append({"field": "execution_user_id", "message": "执行用户不存在，请重新选择"})
         try:
             self.connector_registry.require_ingress(str(definition["connector_id"]))
         except Exception as exc:
@@ -77,9 +80,7 @@ class TriggerValidator:
 
         errors.extend(self._validate_authentication(definition=definition, config=config))
 
-        if not config.get("role_ids"):
-            errors.append({"field": "role_ids", "message": "请至少选择一个业务角色"})
-        return errors, {"role_ids": config.get("role_ids", [])}
+        return errors, {"execution_user_id": execution_user_id}
 
     def _validate_authentication(
         self, *, definition: dict[str, Any], config: dict[str, Any]
@@ -165,7 +166,6 @@ class WebhookTriggerService:
         audit_service: AuditService,
         validator: TriggerValidator,
         mapper: WebhookMapper,
-        role_service: AuthorizationCenterService,
     ) -> None:
         self.repository = repository
         self.identity_repository = identity_repository
@@ -173,7 +173,13 @@ class WebhookTriggerService:
         self.audit_service = audit_service
         self.validator = validator
         self.mapper = mapper
-        self.role_service = role_service
+
+    def execution_user_catalog(self, *, actor_id: str) -> list[dict[str, Any]]:
+        self._require(actor_id, "read")
+        return self.repository.database.execute(
+            "select id,username,display_name from app_user "
+            "where status='enabled' and account_type='human' order by username limit 1000"
+        )
 
     def list(self, *, actor_id: str) -> list[dict[str, Any]]:
         self._require(actor_id, "read")
@@ -223,17 +229,11 @@ class WebhookTriggerService:
             )
         self.validator.connector_registry.require_ingress(connector_id)
         with self.repository.database.unit_of_work():
-            service = self.identity_repository.create_user(
-                username=f"svc-webhook-{code}",
-                display_name=f"Webhook: {name}",
-                account_type="service",
-            )
             definition = self.repository.create_definition(
                 code=code,
                 name=name.strip(),
                 trigger_type=trigger_type,
                 connector_id=connector_id,
-                service_account_id=str(service["id"]),
                 actor_id=actor_id,
             )
             draft = None
@@ -251,9 +251,9 @@ class WebhookTriggerService:
             actor_id=actor_id,
             code=code,
             after_hash=config_hash(draft["config"]) if draft else "",
-            extra={"service_account_id": service["id"]},
+            extra={},
         )
-        return {"definition": definition, "draft": draft, "service_account": service}
+        return {"definition": definition, "draft": draft}
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def save_draft(
@@ -290,12 +290,6 @@ class WebhookTriggerService:
         revision = self.repository.get_revision(revision_id)
         self._assert_revision_owner(definition, revision)
         errors, summary = self.validator.validate(definition=definition, config=revision["config"])
-        try:
-            self.role_service.validate_service_roles(
-                actor_id=actor_id, role_ids=revision["config"].get("role_ids", [])
-            )
-        except AppError as exc:
-            errors.append({"field": "role_ids", "message": exc.safe_message})
         result = self.repository.set_validation(revision_id, errors=errors, summary=summary)
         self._audit(
             "webhook.trigger.validated",
@@ -319,12 +313,6 @@ class WebhookTriggerService:
         revision = self.repository.get_revision(revision_id)
         self._assert_revision_owner(definition, revision)
         errors, summary = self.validator.validate(definition=definition, config=revision["config"])
-        try:
-            self.role_service.validate_service_roles(
-                actor_id=actor_id, role_ids=revision["config"].get("role_ids", [])
-            )
-        except AppError as exc:
-            errors.append({"field": "role_ids", "message": exc.safe_message})
         if errors:
             raise NonRetryableExecutionError(
                 "Webhook Trigger validation failed",
@@ -359,12 +347,6 @@ class WebhookTriggerService:
                 error_code="revision_already_published",
             )
         errors, summary = self.validator.validate(definition=definition, config=revision["config"])
-        try:
-            self.role_service.validate_service_roles(
-                actor_id=actor_id, role_ids=revision["config"].get("role_ids", [])
-            )
-        except AppError as exc:
-            errors.append({"field": "role_ids", "message": exc.safe_message})
         if errors:
             self.repository.set_validation(revision_id, errors=errors, summary=summary)
             raise NonRetryableExecutionError(
@@ -373,14 +355,8 @@ class WebhookTriggerService:
                 error_code="validation_failed",
                 field_errors=errors,
             )
-        self.role_service.replace_service_roles(
-            actor_id=actor_id,
-            user_id=str(definition["service_account_id"]),
-            role_ids=revision["config"]["role_ids"],
-        )
         snapshot = {
             **revision["config"],
-            "service_account_id": definition["service_account_id"],
             "source_connector_id": definition["connector_id"],
         }
         with self.repository.database.unit_of_work():
@@ -464,11 +440,7 @@ class WebhookTriggerService:
         self._require(actor_id, "publish", code)
         before = self.repository.get_definition(code)
         selected = self.repository.get_publication(publication_id)
-        config = {
-            k: v
-            for k, v in selected["snapshot"].items()
-            if k not in {"service_account_id", "source_connector_id"}
-        }
+        config = {k: v for k, v in selected["snapshot"].items() if k != "source_connector_id"}
         self._normalize(config)
         errors, _ = self.validator.validate(definition=before, config=config)
         if errors or str(selected["trigger_id"]) != str(before["id"]):
@@ -478,11 +450,6 @@ class WebhookTriggerService:
                 error_code="validation_failed",
                 field_errors=errors,
             )
-        self.role_service.replace_service_roles(
-            actor_id=actor_id,
-            user_id=str(before["service_account_id"]),
-            role_ids=config["role_ids"],
-        )
         publication = self.repository.set_current_publication(
             code=code,
             publication_id=publication_id,
@@ -516,28 +483,6 @@ class WebhookTriggerService:
             code=code,
             before_hash=config_hash({"public_id": before["public_id"]}),
             after_hash=config_hash({"public_id": updated["public_id"]}),
-        )
-        return updated
-
-    @operation_unit_of_work(lambda service: service.repository.database)
-    def set_service_account_enabled(
-        self,
-        *,
-        actor_id: str,
-        code: str,
-        expected_revision: int,
-        enabled: bool,
-    ) -> dict[str, Any]:
-        self._require(actor_id, "manage_service_account", code)
-        updated = self.repository.set_service_account_status(
-            code=code, expected_revision=expected_revision, enabled=enabled
-        )
-        self._audit(
-            "webhook.trigger.service_account_status_changed",
-            actor_id=actor_id,
-            code=code,
-            after_hash=config_hash({"enabled": enabled}),
-            extra={"service_account_id": updated["service_account_id"]},
         )
         return updated
 

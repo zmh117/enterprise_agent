@@ -47,11 +47,13 @@ WEBHOOK_ERROR_CODES = frozenset(
 )
 
 
-TRIGGER_ACTIONS = frozenset({"read", "edit", "publish", "rotate", "manage_service_account"})
+TRIGGER_ACTIONS = frozenset({"read", "edit", "publish", "rotate"})
 PUBLIC_ID_RE = re.compile(r"^wh_[A-Za-z0-9_-]{32,96}$")
 CODE_RE = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
 SECRET_REF_PREFIXES = ("secret://platform/",)
-ALLOWED_CONFIG_KEYS = frozenset({"schema_version", "adapter", "authentication", "role_ids"})
+ALLOWED_CONFIG_KEYS = frozenset(
+    {"schema_version", "adapter", "authentication", "execution_user_id"}
+)
 DEFAULT_LIMITS = {"requests_per_minute": 60, "max_in_flight": 10, "max_alerts": 20}
 DEFAULT_COOLDOWN_SECONDS = 300
 
@@ -60,12 +62,12 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     """The public Webhook contract has no Agent, delivery or custom mapping."""
     ensure_no_secret_values(config)
     authentication = _object(config.get("authentication"))
-    roles = config.get("role_ids", [])
+    execution_user_id = config.get("execution_user_id", "")
     if (
-        config.get("schema_version", 2) != 2
-        or not isinstance(roles, list)
-        or len(roles) > 20
-        or any(not isinstance(role, str) or not role.strip() for role in roles)
+        config.get("schema_version", 3) != 3
+        or not isinstance(execution_user_id, str)
+        or not execution_user_id.strip()
+        or len(execution_user_id) > 200
         or set(authentication) - {"type", "secret_ref"}
     ):
         raise NonRetryableExecutionError(
@@ -87,13 +89,13 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     if auth_type == AuthenticationType.BEARER_V1.value and not secret_ref:
         auth_type = AuthenticationType.NONE.value
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "adapter": str(config.get("adapter") or ""),
         "authentication": {
             "type": auth_type,
             "secret_ref": secret_ref,
         },
-        "role_ids": sorted(set(role.strip() for role in roles)),
+        "execution_user_id": execution_user_id.strip(),
     }
 
 

@@ -67,7 +67,7 @@ export function WebhookSettings({
         <SheetHeader>
           <SheetTitle>配置 Webhook</SheetTitle>
           <SheetDescription>
-            选择业务角色，可按需填写 Bearer 凭据；发布并启用后即可在 Agent
+            选择执行用户，可按需填写 Bearer 凭据；发布并启用后即可在 Agent
             入口中绑定。投递目标在应用中配置。
           </SheetDescription>
         </SheetHeader>
@@ -94,7 +94,7 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
   const secrets = usePlatformSecrets()
   const [detail, setDetail] = useState(initial)
   const [config, setConfig] = useState(() =>
-    initial.draft?.config.schema_version === 2
+    initial.draft?.config.schema_version === 3
       ? initial.draft.config
       : initialWebhookConfig(initial.definition.trigger_type)
   )
@@ -115,6 +115,13 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
       setNotice("")
       setPreview(null)
       if (action === "save") {
+        if (
+          !config.execution_user_id ||
+          !catalog.data?.users.some(
+            (user) => user.id === config.execution_user_id
+          )
+        )
+          throw validationError("请选择已启用人员作为执行用户")
         const result = await saveWebhookDraft(
           definition.code,
           detail.draft?.revision ?? 0,
@@ -170,7 +177,7 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
   })
   const busy = mutation.isPending
   const savedActionsDisabled =
-    busy || dirty || !detail.draft || detail.draft.config.schema_version !== 2
+    busy || dirty || !detail.draft || detail.draft.config.schema_version !== 3
   const draftPublished =
     detail.draft?.status === "published" ||
     (detail.draft != null &&
@@ -207,10 +214,10 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
           {definition.status === "enabled" ? "停用 Webhook" : "启用 Webhook"}
         </Button>
       </section>
-      {detail.draft && detail.draft.config.schema_version !== 2 && (
+      {detail.draft && detail.draft.config.schema_version !== 3 && (
         <p role="status" className="rounded-md bg-muted p-3 text-sm">
           此 Webhook
-          使用旧配置，请选择业务角色并按需填写凭据后重新保存、发布并启用。
+          使用旧配置，请重新选择执行用户并按需填写凭据后重新保存、发布并启用。
         </p>
       )}
       <MutationError error={catalog.error} />
@@ -255,63 +262,43 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
           </p>
           <MutationError error={secrets.error} />
         </Field>
-        <fieldset className="space-y-3">
-          <legend className="font-medium">业务角色</legend>
+        <Field label="执行用户" id="wh-execution-user">
+          <select
+            id="wh-execution-user"
+            className={inputClass}
+            value={config.execution_user_id}
+            disabled={catalog.isLoading}
+            onChange={(event) =>
+              setConfig({ ...config, execution_user_id: event.target.value })
+            }
+          >
+            <option value="">请选择已启用人员</option>
+            {config.execution_user_id &&
+              !catalog.data?.users.some(
+                (user) => user.id === config.execution_user_id
+              ) && (
+                <option value={config.execution_user_id}>
+                  当前用户已停用或不可用，请重新选择
+                </option>
+              )}
+            {catalog.data?.users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.display_name}（{user.username}）
+              </option>
+            ))}
+          </select>
           <p className="text-sm text-muted-foreground">
-            Webhook
-            使用所选角色的应用、工具和数据资源权限。选择角色后无需关联人员。
+            Webhook 使用该用户已有的角色权限、知识库范围和已绑定的外部身份执行。
+            用户停用或权限撤销后将停止授权；各工具仍须满足自身的入口和本人确认要求。
+            接收结果的人员在应用投递中单独配置，选择此用户不会改变收件人。
+            更换执行用户后，请重新保存、发布并激活引用此 Webhook 的应用。
           </p>
-          {catalog.data?.roles.map((role) => (
-            <label
-              key={role.id}
-              className="flex items-center gap-2 rounded-md border p-3"
-            >
-              <input
-                type="checkbox"
-                checked={config.role_ids.includes(role.id)}
-                onChange={(event) =>
-                  setConfig({
-                    ...config,
-                    role_ids: event.target.checked
-                      ? [...config.role_ids, role.id]
-                      : config.role_ids.filter((id) => id !== role.id),
-                  })
-                }
-              />
-              <span>
-                {role.name}{" "}
-                <span className="text-xs text-muted-foreground">
-                  {role.code}
-                </span>
-              </span>
-            </label>
-          ))}
-          {catalog.data?.roles.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              暂无可分配的业务角色，请在角色与授权中创建并授权。
+          {catalog.data?.users.length === 0 && (
+            <p className="text-sm text-destructive">
+              暂无已启用人员，请先在人员管理中配置。
             </p>
           )}
-          {config.role_ids
-            .filter((id) => !catalog.data?.roles.some((role) => role.id === id))
-            .map((id) => (
-              <label
-                key={id}
-                className="flex items-center gap-2 text-sm text-destructive"
-              >
-                <input
-                  type="checkbox"
-                  checked
-                  onChange={() =>
-                    setConfig({
-                      ...config,
-                      role_ids: config.role_ids.filter((value) => value !== id),
-                    })
-                  }
-                />
-                不可用角色 · {id}（取消选择后重新发布）
-              </label>
-            ))}
-        </fieldset>
+        </Field>
         <section className="space-y-2 rounded-lg bg-muted p-3 text-sm">
           <p className="font-medium">
             {definition.trigger_type === "generic"

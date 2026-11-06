@@ -19,7 +19,7 @@ class RevisionStatus(StrEnum):
 
 class ActorPolicy(StrEnum):
     CURRENT_SENDER = "CURRENT_SENDER"
-    SERVICE_ACCOUNT = "SERVICE_ACCOUNT"
+    BOUND_USER = "BOUND_USER"
 
 
 class TriggerType(StrEnum):
@@ -41,7 +41,7 @@ class TriggerBinding:
     connector_id: str
     routing_key: str
     actor_policy: str
-    service_account_user_id: str = ""
+    execution_user_id: str = ""
     enabled: bool = True
     config: dict[str, Any] = field(default_factory=dict)
 

@@ -17,7 +17,7 @@ PUBLIC_ID = "wh_local_grafana_default_00000000000000000001"
 
 
 def _generic_config() -> dict[str, object]:
-    return {"schema_version": 2, "adapter": "generic_json_v1"}
+    return {"schema_version": 3, "adapter": "generic_json_v1"}
 
 
 def test_fixed_generic_json_is_bounded_and_has_no_configuration_overrides() -> None:

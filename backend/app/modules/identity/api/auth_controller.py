@@ -156,11 +156,6 @@ def _principal_payload(principal: Any, authorization: Any) -> dict[str, Any]:
         "webhook_edit": ("webhook_trigger", "*", "edit"),
         "webhook_publish": ("webhook_trigger", "*", "publish"),
         "webhook_rotate": ("webhook_trigger", "*", "rotate"),
-        "webhook_manage_service_account": (
-            "webhook_trigger",
-            "*",
-            "manage_service_account",
-        ),
     }
     return {
         "id": principal.user_id,

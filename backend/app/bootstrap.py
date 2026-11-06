@@ -933,7 +933,6 @@ def _build_container(  # noqa: C901, PLR0915
         audit_service=audit_service,
         validator=webhook_validator,
         mapper=webhook_mapper,
-        role_service=authorization_center_service,
     )
     webhook_ingress_service = WebhookIngressService(
         trigger_repository=webhook_trigger_repository,

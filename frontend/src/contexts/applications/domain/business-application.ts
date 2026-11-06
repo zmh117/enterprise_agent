@@ -55,7 +55,7 @@ const triggerSchema = z
     routing_key: z.string(),
     normalized_routing_key: z.string().optional(),
     actor_policy: z.string(),
-    service_account_user_id: z
+    execution_user_id: z
       .string()
       .nullish()
       .transform((value) => value ?? ""),
@@ -253,8 +253,8 @@ export type SaveDraftInput = {
     trigger_type: "dingtalk_private" | "dingtalk_group" | "webhook"
     connector_id: string
     routing_key: string
-    actor_policy: "CURRENT_SENDER" | "SERVICE_ACCOUNT"
-    service_account_user_id: string
+    actor_policy: "CURRENT_SENDER" | "BOUND_USER"
+    execution_user_id: string
     enabled: boolean
     config: {
       conversation_type: string

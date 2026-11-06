@@ -20,7 +20,7 @@ class WebhookEventRepository:
         trigger_id: str,
         trigger_publication_id: str,
         agent_publication_id: str,
-        service_account_id: str,
+        execution_user_id: str,
         external_event_id: str,
         dedup_key: str | None,
         payload_hash: str,
@@ -42,7 +42,7 @@ class WebhookEventRepository:
             """
             insert into webhook_event
               (id, trigger_id, trigger_publication_id, agent_publication_id,
-               service_account_id, external_event_id, dedup_key, payload_hash,
+               execution_user_id, external_event_id, dedup_key, payload_hash,
                request_bytes, safe_summary_json, normalized_event_json,
                correlation_id, status, auth_result, filter_result, error_code,
                error_summary, received_at, application_publication_id)
@@ -55,7 +55,7 @@ class WebhookEventRepository:
                 trigger_id,
                 trigger_publication_id,
                 agent_publication_id or None,
-                service_account_id,
+                execution_user_id,
                 external_event_id,
                 dedup_key,
                 payload_hash,

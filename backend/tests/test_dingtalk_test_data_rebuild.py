@@ -86,7 +86,7 @@ def _runtime_with_targets() -> tuple[Container, dict[str, str]]:
                     "connector_id": connector["id"],
                     "routing_key": "bot:rebuild-test-client",
                     "actor_policy": "CURRENT_SENDER",
-                    "service_account_user_id": "",
+                    "execution_user_id": "",
                     "enabled": True,
                     "config": {
                         "conversation_type": "private",
