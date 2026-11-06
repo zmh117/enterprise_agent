@@ -1,6 +1,7 @@
 """Seal data-only model authoring into the canonical envelope from verified source bytes."""
 
 from typing import Any
+from collections.abc import Sequence
 
 from app.modules.knowledge.domain.code_contracts import (
     AUTHORING,
@@ -25,6 +26,7 @@ def seal_candidate(
     expected: dict[str, Any],
     *,
     expected_entries: set[str] | None = None,
+    known_states: Sequence[dict[str, Any]] = (),
 ) -> bytes:
     if len(raw) > MAX_PACKAGE_BYTES:
         raise CodeKnowledgeError("code_package_invalid_size_or_text")
@@ -64,5 +66,6 @@ def seal_candidate(
             expected_manifest=expected,
             sources=sources,
             expected_entries=expected_entries,
+            known_states=known_states,
         )
     return encode_package(package)

@@ -967,6 +967,8 @@ def _permission_snapshot(
 
     return {
         "effective_tools": list(context.effective_tool_names),
+        "sdk_version": claude_sdk_version(),
+        "cli_version": claude_cli_version(),
         "tools": option("tools", []),
         "allowed_tools": option("allowed_tools", []),
         "disallowed_tools": option("disallowed_tools", []),

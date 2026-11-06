@@ -29,6 +29,7 @@ from app.modules.knowledge.infrastructure.code_job_binding import extraction_uni
 from app.modules.knowledge.infrastructure.code_repository import CodeRepository, decoded
 from app.modules.knowledge.infrastructure.code_source import _read_beneath
 from app.modules.knowledge.infrastructure.storage import table
+from app.modules.knowledge.infrastructure.code_fsm_repository import CodeStateMachineRepository
 from app.shared.database import Database
 
 
@@ -51,6 +52,24 @@ class CodeExtractionJobs:
         )
         if not agent or not application:
             raise CodeKnowledgeError("code_extraction_configuration_unavailable")
+        with self.database.unit_of_work():
+            current = extraction_unit(self.database, unit_id, lease, lock=True)
+            if not current["job_id"]:
+                build = self.database.execute_one(
+                    f"select snapshot_id from {table(self.database, 'code_build')} where id=?",
+                    (current["build_id"],),
+                )
+                assert build is not None
+                scope = decoded(current["scope_json"])
+                scope["known_states"] = CodeStateMachineRepository(self.database).known_states(
+                    build["snapshot_id"]
+                )
+                if len(canonical_json(scope).encode("utf-8")) > 96 * 1024:
+                    raise CodeKnowledgeError("code_scope_limit")
+                self.database.execute(
+                    f"update {table(self.database, 'code_unit')} set scope_json=? where id=?",
+                    (canonical_json(scope), unit_id),
+                )
         snapshot = decoded(application["snapshot_json"])
         command = CreateAgentJobCommand(
             idempotency_key="code-unit:" + unit_id,
@@ -108,6 +127,7 @@ class CodeArtifactCollector:
             expected_manifest=grant["candidate_manifest"],
             sources=evidence_sources,
             expected_entries=set(entry_ids),
+            known_states=scope.get("known_states", []),
         )
         with self.database.unit_of_work():
             current = extraction_unit(self.database, unit_id, lease, completed=True, lock=True)

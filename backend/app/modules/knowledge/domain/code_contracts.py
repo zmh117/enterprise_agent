@@ -9,12 +9,12 @@ from jsonschema import Draft202012Validator
 
 from app.modules.knowledge.domain.normalization import canonical_json
 
-CONTRACT_VERSION = "code-business/v1"
+CONTRACT_VERSION = "code-business/v2"
 CODE_SOURCE_GRANT_PATH = "/api/internal/code-knowledge/source-grant"
 CODE_INTERNAL_CONNECTOR_ID = "internal-code-knowledge"
 ROLES = ("backend", "factory_frontend", "group_frontend")
 COMPONENTS = dict(zip(ROLES, ("set_server", "set_web/EBR", "set_web/JTH"), strict=True))
-KINDS = ("object", "state_machine", "state", "operation", "rule")
+KINDS = ("object", "transition", "rule")
 MAX_PACKAGE_BYTES = 15 * 1024 * 1024
 MAX_RESPONSE_BYTES = 512 * 1024
 
@@ -150,28 +150,93 @@ GUARD = {
     },
     "$ref": "#/$defs/guard",
 }
-# Embed only the root reference, with one shared definition at the record root.
+STATE_RESULT = obj(
+    {
+        "mode": {"enum": ["state", "unchanged", "unknown"]},
+        "state_key": {"type": ["string", "null"], "maxLength": 200},
+        "description": TEXT,
+        "evidence_ids": EVIDENCE_IDS,
+    }
+)
+STATE_RESULT["allOf"] = [
+    {
+        "if": {"properties": {"mode": {"const": "state"}}},
+        "then": {"properties": {"state_key": ID}},
+        "else": {"properties": {"state_key": {"type": "null"}}},
+    }
+]
+STATE_SELECTION = obj(
+    {
+        "mode": {"enum": ["states", "any", "unresolved"]},
+        "state_keys": {**array(ID, 100), "uniqueItems": True},
+        "description": TEXT,
+        "evidence_ids": EVIDENCE_IDS,
+    }
+)
+STATE_SELECTION["allOf"] = [
+    {
+        "if": {"properties": {"mode": {"const": "states"}}},
+        "then": {"properties": {"state_keys": {"minItems": 1}}},
+        "else": {"properties": {"state_keys": {"maxItems": 0}}},
+    }
+]
+ACTION = obj({"key": ID, **FACT["properties"]})
+FAILURE_STATE_RESULT = deepcopy(STATE_RESULT)
+FAILURE_STATE_RESULT["properties"]["mode"]["enum"].append("indeterminate")
+FAILURE = obj(
+    {
+        "key": ID,
+        "condition": {"$ref": "#/$defs/guard"},
+        "phase": FACT["properties"]["phase"],
+        "outcome": {"enum": ["rejected", "failed", "partial", "unknown"]},
+        "state_after": FAILURE_STATE_RESULT,
+        "retained_action_keys": {**array(ID, 100), "uniqueItems": True},
+        "description": TEXT,
+        "evidence_ids": EVIDENCE_IDS,
+    }
+)
+TRANSITION = obj(
+    {
+        "machine_key": ID,
+        "event_key": ID,
+        "from_state": STATE_SELECTION,
+        "to_state": STATE_RESULT,
+        "actions": array(ACTION, 100, 1),
+        "failures": array(FAILURE, 100, 1),
+    }
+)
+# Shared guard definitions belong to the complete record/envelope root.
 KNOWLEDGE = obj(
     {
         "business_key": ID,
+        "object_key": ID,
         "identity_state": {"enum": ["confirmed", "unresolved"]},
         "kind": {"enum": list(KINDS)},
         "role": ROLE,
         "title": TEXT,
         "fact_class": {
-            "enum": ["backend_behavior", "frontend_constraint", "requirement", "observation"]
+            "enum": [
+                "backend_behavior",
+                "frontend_constraint",
+                "requirement",
+                "observation",
+                "identity",
+            ]
         },
         "summary": TEXT,
         "object_version": {"type": ["string", "null"], "maxLength": 200},
-        "states": array(obj({"name": TEXT, "raw_value": TEXT, "evidence_ids": EVIDENCE_IDS})),
+        "states": array(
+            obj({"key": ID, "name": TEXT, "raw_value": TEXT, "evidence_ids": EVIDENCE_IDS})
+        ),
         "trigger": {"type": ["string", "null"], "maxLength": 8000},
         "guard": {"oneOf": [{"$ref": "#/$defs/guard"}, {"type": "null"}]},
+        "transition": {"oneOf": [TRANSITION, {"type": "null"}]},
         "check_order": array(FACT),
         "effects": array(FACT),
         "outcomes": array(FACT),
-        "success_boundary": FACT,
+        "success_boundary": obj({**FACT["properties"], "evidence_ids": array(ID, 100)}),
         "configuration": array(FACT),
-        "evidence_ids": EVIDENCE_IDS,
+        "evidence_ids": array(ID, 100),
         "required_runtime_facts": array(obj({"field": TEXT, "relation_path": TEXT, "time": TEXT})),
         "coverage": {"enum": ["analyzed", "partial", "not_analyzed"]},
         "unknowns": array(UNKNOWN),
@@ -180,9 +245,27 @@ KNOWLEDGE = obj(
 KNOWLEDGE["$defs"] = GUARD["$defs"]
 KNOWLEDGE["allOf"] = [
     {
-        "if": {"properties": {"kind": {"enum": ["operation", "rule"]}}},
-        "then": {"properties": {"guard": {"$ref": "#/$defs/guard"}}},
-    }
+        "if": {"properties": {"kind": {"enum": ["transition", "rule"]}}},
+        "then": {
+            "properties": {
+                "guard": {"$ref": "#/$defs/guard"},
+                "evidence_ids": EVIDENCE_IDS,
+                "success_boundary": FACT,
+            }
+        },
+    },
+    {
+        "if": {"properties": {"kind": {"const": "transition"}}},
+        "then": {
+            "properties": {
+                "transition": TRANSITION,
+                "guard": {"$ref": "#/$defs/guard"},
+                "effects": {"maxItems": 0},
+                "outcomes": {"maxItems": 0},
+            }
+        },
+        "else": {"properties": {"transition": {"type": "null"}, "states": {"maxItems": 0}}},
+    },
 ]
 RELATION = obj(
     {

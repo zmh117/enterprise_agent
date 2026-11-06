@@ -408,8 +408,9 @@ function CandidateReview({
 }
 
 const labels: Record<string, string> = {
+  object_key: "统一对象标识",
   role: "业务端",
-  states: "来源状态",
+  states: "状态定义",
   trigger: "触发操作",
   guard: "完整条件",
   check_order: "校验顺序",
@@ -434,10 +435,81 @@ function describe(value: unknown): string {
     .join("；")
 }
 function BusinessRecord({ record }: { record: CodeDetail["records"][number] }) {
+  const transition = record.knowledge.transition
+  function stateName(key: string) {
+    const state = record.knowledge.states.find((item) => item.key === key)
+    return state ? `${state.name}（${state.raw_value}）` : key
+  }
+  function target(value: { mode: string; state_key: string | null }) {
+    return value.mode === "state"
+      ? stateName(value.state_key!)
+      : value.mode === "unchanged"
+        ? "保持原状态"
+        : value.mode === "indeterminate"
+          ? "最终状态需现场核验"
+          : "结果状态未核实"
+  }
   return (
     <article className="space-y-2 rounded border bg-background p-3">
       <h4 className="font-semibold">{record.knowledge.title}</h4>
       <p className="text-sm">{record.knowledge.summary}</p>
+      {transition && (
+        <div
+          className="space-y-2 rounded border p-3 text-sm"
+          aria-label="状态迁移"
+        >
+          <p>状态机：{transition.machine_key}</p>
+          <p>
+            起始状态：
+            {transition.from_state.mode === "states"
+              ? transition.from_state.state_keys.map(stateName).join("、")
+              : transition.from_state.mode === "any"
+                ? "无状态限制（见证据）"
+                : "起始状态未核实"}
+          </p>
+          <p>触发事件：{transition.event_key}</p>
+          <p>迁移条件：{describe(record.knowledge.guard)}</p>
+          <ol className="list-decimal space-y-1 pl-5" aria-label="执行动作">
+            {transition.actions.map((action) => (
+              <li key={action.key}>
+                {action.description} · {action.phase}
+              </li>
+            ))}
+          </ol>
+          <p>
+            目标状态：{target(transition.to_state)} ·{" "}
+            {transition.to_state.description}
+          </p>
+          {transition.failures.map((failure) => (
+            <div
+              key={failure.key}
+              className="rounded border p-2"
+              aria-label="失败结果"
+            >
+              <p>
+                {failure.description} · {failure.phase} · {failure.outcome}
+              </p>
+              <p>失败条件：{describe(failure.condition)}</p>
+              <p>
+                失败后状态：{target(failure.state_after)} ·{" "}
+                {failure.state_after.description}
+              </p>
+              <p>
+                已保留动作：
+                {failure.retained_action_keys.length
+                  ? failure.retained_action_keys
+                      .map(
+                        (key) =>
+                          transition.actions.find((a) => a.key === key)
+                            ?.description ?? key
+                      )
+                      .join("；")
+                  : "无"}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
       <dl className="grid gap-2 text-sm">
         {Object.entries(labels).map(([field, label]) => (
           <div key={field}>

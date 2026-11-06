@@ -42,6 +42,16 @@ Worker 控制租约允许接管；已经 RUNNING 的 Invocation 执行归属不�
 
 ## 排空与替换节点
 
+### SDK 0.2.178 与代码知识提取
+
+Runtime 的 SDK 固定在 `pyproject.toml` 的 `python-runtime` 依赖组，当前为 `claude-agent-sdk==0.2.178`，随包 CLI 为 2.1.318。升级必须重建 Runtime 镜像；仅重启旧容器不会改变依赖。源码提取保持五个文件工具、宿主注入冻结 Skill、无 MCP/Bash；`PreToolUse` 配置 `on_failure="block"`，授权内部意外异常返回固定拒绝，不输出异常正文。
+
+提取审计的 `init_snapshot` 只记录 SDK 实际报告的工具/原生 Skill/MCP 名称与状态，并附实际 SDK/CLI 版本。字段缺失为 `null`，非法或超限项导致 `metadata_complete=false`；没有收到 init 时保持空快照。它不等于平台注入 Skill 清单，也不包含整个 SDK 消息。普通任务的完整审计沿用原行为。
+
+不调用模型的镜像初始化检查：将 `backend/tests/support/claude_sdk_init_smoke.py` 经 stdin 传入目标 Runtime 镜像的 `python -`，设置 `--network none --read-only --tmpfs /tmp:rw,size=256m,mode=1777`，不挂载凭据或源码。该检查只建立控制握手，不发送 query/prompt；通过只能证明 SDK/CLI 接受 hook 注册，不能替代真实工具循环或业务提取验收。
+
+替换两个节点前，核实代码来源 `enabled=0`、`demand_enabled=0`、无活动提取 Job，分别排空并核实停止证据。替换后检查两节点 `/version`、`/ready`、相同镜像与代码摘要、SDK/CLI 版本及 `code_identity_catalog.CATALOG_HASH`；目录版本/摘要应与当前控制面一致。本次 SDK 修复保持池协议不变，不应为版本验证开启来源计划、重跑旧构建或改写冻结 Publication。
+
 先写节点自己的排空标记：
 
 ```sh

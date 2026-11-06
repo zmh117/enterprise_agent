@@ -36,6 +36,8 @@ unit = [
 
 contract = [
   "test_code_knowledge.py",
+  "test_code_state_machines.py",
+  "test_code_curated_import.py",
   "test_code_collection.py",
   "test_code_history_bridge.py",
   "test_code_indexing.py",

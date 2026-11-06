@@ -58,3 +58,19 @@ Agent SHALL 在本 Job 限定输出目录写入候选知识包及报告；Runtim
 #### Scenario: 提取模型阅读源码并生成候选
 - **WHEN** Read 返回源码或 Write 写入候选 JSON
 - **THEN** 普通运行审计只保留有界运行元数据，不重复保存源码和候选正文
+
+#### Scenario: SDK 初始化提取会话
+- **WHEN** 受管提取收到 SDK system/init 消息
+- **THEN** 仅保存有界工具名、原生 Skill 名、MCP 名称/状态及实际 SDK/CLI 版本；缺失或过滤的数据明确为未知/不完整，不以配置推断初始化结果
+- **AND** 不保存 init 的其他字段或完整 SDK 消息，普通 Job 审计保持原行为
+
+### Requirement: 代码提取权限检查失败必须阻断调用
+Runtime SHALL 对所有提取工具调用注册无 matcher 限制的 PreToolUse 检查，并设置 SDK 支持的 `on_failure="block"`。未授权工具、路径/范围/预算不符或意外授权异常 MUST 返回拒绝；回调抛错或返回非法结果 MUST 阻断调用。不能支持此策略的 SDK/CLI MUST 拒绝启动该会话，不得静默降级。错误反馈 MUST NOT 包含异常正文、源码、候选值或认证材料。
+
+#### Scenario: 来源授权出现意外文件系统异常
+- **WHEN** hook 的读取范围或路径校验抛出未预期异常
+- **THEN** 工具调用被拒绝，只返回固定安全原因，不进入普通自动批准流程
+
+#### Scenario: SDK 回调结果无效
+- **WHEN** 权限 hook 抛错、没有返回结果或返回值被 CLI 拒绝
+- **THEN** CLI 按失败阻断策略拒绝该调用，不把检查失败解释为没有意见

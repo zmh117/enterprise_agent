@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from typing import Any
+from collections.abc import Sequence
 
 from app.modules.knowledge.domain.code_contracts import (
     CONTRACT_VERSION,
@@ -16,6 +17,8 @@ from app.modules.knowledge.domain.code_contracts import (
     validate,
 )
 from app.modules.knowledge.domain.normalization import canonical_json
+from app.modules.knowledge.domain.code_fsm import validate_state_machines
+from app.modules.knowledge.domain.code_identity_catalog import OBJECTS
 
 
 def sha256(data: bytes) -> str:
@@ -150,10 +153,17 @@ def verify_candidate(
     expected_manifest: dict[str, Any],
     sources: dict[str, EvidenceSource],
     expected_entries: set[str],
+    known_states: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """Machine proof of binding, references and bytes; NOT proof of business truth."""
     if package["manifest.json"] != expected_manifest:
         raise CodeKnowledgeError("code_candidate_binding_mismatch")
+    # Importers and Runtime authoring both validate the same v2 shapes.
+    from app.modules.knowledge.domain.code_contracts import LOGICAL_SCHEMAS
+
+    for name, value in package.items():
+        for item in value if name.endswith(".jsonl") else [value]:
+            validate(item, LOGICAL_SCHEMAS[name])
     knowledge = _identities(package["knowledge.jsonl"], "business_key")
     evidence = _identities(package["evidence.jsonl"], "id")
     relations = _identities(package["relations.jsonl"], "id")
@@ -163,8 +173,9 @@ def verify_candidate(
         _verify_evidence(row, sources.get(row["file_id"]))
     if not _evidence_references(package) <= evidence.keys():
         raise CodeKnowledgeError("code_evidence_reference_missing")
+    endpoints = knowledge.keys() | OBJECTS.keys()
     for relation in relations.values():
-        if relation["from_key"] not in knowledge or relation["to_key"] not in knowledge:
+        if relation["from_key"] not in endpoints or relation["to_key"] not in endpoints:
             raise CodeKnowledgeError("code_relation_endpoint_missing")
     entries = _identities(package["coverage.json"]["entries"], "entry_id")
     if set(entries) != expected_entries:
@@ -174,6 +185,13 @@ def verify_candidate(
             raise CodeKnowledgeError("code_coverage_identity_missing")
         if entry["status"] == "analyzed" and not entry["knowledge_keys"]:
             raise CodeKnowledgeError("code_analyzed_entry_empty")
+        if entry["status"] == "analyzed" and not any(
+            knowledge[key]["kind"] == "transition" for key in entry["knowledge_keys"]
+        ):
+            raise CodeKnowledgeError("code_analyzed_entry_has_no_transition", entry["entry_id"])
+    fsm_blocked = validate_state_machines(
+        list(knowledge.values()), expected_entries, known_states=known_states
+    )
     removals = _identities(package["changes.json"]["removed_keys"], "business_key")
     if removals.keys() & knowledge.keys():
         raise CodeKnowledgeError("code_removed_identity_still_present")
@@ -181,9 +199,10 @@ def verify_candidate(
         item for row in [*knowledge.values(), *entries.values()] for item in row["unknowns"]
     ]
     blocked = (
-        bool(package["coverage.json"].get("dependency_requests"))
+        fsm_blocked
+        or bool(package["coverage.json"].get("dependency_requests"))
         or any(item["critical"] for item in unknowns)
-        or any(_unknown_guard(row["guard"]) for row in knowledge.values())
+        or any(_unknown_guard(row) for row in knowledge.values())
         or any(row["identity_state"] != "confirmed" for row in knowledge.values())
         or any(row["status"] != "analyzed" for row in entries.values())
         or any(row["coverage"] != "analyzed" for row in knowledge.values())

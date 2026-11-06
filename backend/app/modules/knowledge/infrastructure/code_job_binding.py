@@ -8,7 +8,9 @@ from typing import Any
 from app.modules.knowledge.domain.code_contracts import (
     CodeKnowledgeError,
     CODE_INTERNAL_CONNECTOR_ID,
+    CONTRACT_VERSION,
 )
+from app.modules.knowledge.domain.code_identity_catalog import CATALOG_HASH
 from app.modules.knowledge.domain.identity import now
 from app.modules.knowledge.infrastructure.code_repository import decoded
 from app.modules.knowledge.infrastructure.storage import table
@@ -58,6 +60,11 @@ def validate_internal_command(
     if unit["job_id"] and unit["execution_lease_version"] != lease:
         raise CodeKnowledgeError("code_unit_execution_lease_changed")
     config = decoded(unit["configuration_json"])
+    if (
+        config.get("contract_version") != CONTRACT_VERSION
+        or config.get("identity_catalog_hash") != CATALOG_HASH
+    ):
+        raise CodeKnowledgeError("code_extraction_contract_changed")
     expected = {
         "requester_id": "service_account_id",
         "fixed_agent_publication_id": "agent_publication_id",

@@ -17,6 +17,7 @@ from app.modules.knowledge.infrastructure.code_repository import decoded
 from app.modules.knowledge.infrastructure.code_source import relative_path
 from app.modules.knowledge.infrastructure.storage import table
 from app.shared.database import Database
+from app.modules.knowledge.domain.code_identity_catalog import CATALOG_HASH, identity_catalog
 
 
 class CurrentAuthorization(Protocol):
@@ -43,6 +44,11 @@ class CodeSourceGrant:
         if not unit["execution_lease_version"]:
             raise CodeKnowledgeError("code_unit_execution_lease_changed")
         config = decoded(unit["configuration_json"])
+        if (
+            config.get("contract_version") != CONTRACT_VERSION
+            or config.get("identity_catalog_hash") != CATALOG_HASH
+        ):
+            raise CodeKnowledgeError("code_extraction_contract_changed")
         job = db.execute_one("select * from agent_job where id=?", (job_id,))
         if (
             not job
@@ -108,6 +114,8 @@ class CodeSourceGrant:
             "manifest_hash": source["manifest_hash"],
             "allowed_prefixes": prefixes,
             "scope": scope,
+            "identity_catalog": identity_catalog(),
+            "identity_catalog_hash": CATALOG_HASH,
             "source_exclusions": {
                 "items": exclusions[:100],
                 "total": len(exclusions),

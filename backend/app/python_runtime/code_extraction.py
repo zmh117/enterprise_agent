@@ -102,6 +102,8 @@ class CodeExtractionSandboxes(JobSandboxManager):
                 {
                     "schema": AUTHORING,
                     "fixed_manifest": self.grant["candidate_manifest"],
+                    "identity_catalog": self.grant["identity_catalog"],
+                    "known_states": self.grant["scope"].get("known_states", []),
                     "instructions": "Write one JSON object matching schema to outputs/candidate.txt. "
                     "Set every excerpt_hash to null; Runtime calculates checksums from verified evidence lines.",
                     "source_access": {
@@ -134,6 +136,7 @@ class CodeExtractionSandboxes(JobSandboxManager):
             sandbox.source_mount,
             self.grant["candidate_manifest"],
             expected_entries=set(self.grant["scope"]["entry_ids"]),
+            known_states=self.grant["scope"].get("known_states", []),
         )
         self._recheck()
         self.artifacts.publish(

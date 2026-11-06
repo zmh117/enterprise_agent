@@ -6,7 +6,7 @@ from app.modules.knowledge.domain.identity import stable_id
 from app.modules.knowledge.domain.normalization import canonical_json, digest
 
 SEGMENT_CHARS = 1000
-PROJECTION = {"kind": "code-business-search/v1", "segment_chars": SEGMENT_CHARS}
+PROJECTION = {"kind": "code-business-search/v2", "segment_chars": SEGMENT_CHARS}
 PROJECTION_HASH = digest(PROJECTION)
 MAX_POINTS = 20_000
 
@@ -16,8 +16,14 @@ def projection_text(record: dict[str, Any]) -> str:
         [
             record["title"],
             record["summary"],
+            "对象：" + record["object_key"],
             "角色：" + record["role"],
             "条件：" + canonical_json(record["guard"]),
+            *(
+                ["状态迁移：" + canonical_json(record["transition"])]
+                if record["transition"]
+                else []
+            ),
             *[
                 fact["description"]
                 for name in ("check_order", "effects", "outcomes", "configuration")

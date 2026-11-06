@@ -2165,7 +2165,7 @@
       "evidence_refs": [
         "migration:154_add_versioned_code_knowledge"
       ],
-      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
     {
       "id": "knowledge.code_source_file",
@@ -2195,7 +2195,7 @@
       "evidence_refs": [
         "migration:154_add_versioned_code_knowledge"
       ],
-      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
     {
       "id": "knowledge.code_commit",
@@ -2253,7 +2253,7 @@
       "evidence_refs": [
         "migration:154_add_versioned_code_knowledge"
       ],
-      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
     {
       "id": "knowledge.code_build",
@@ -2338,7 +2338,7 @@
       "evidence_refs": [
         "migration:154_add_versioned_code_knowledge"
       ],
-      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
     {
       "id": "knowledge.code_relation",
@@ -2367,7 +2367,7 @@
       "evidence_refs": [
         "migration:154_add_versioned_code_knowledge"
       ],
-      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
     {
       "id": "knowledge.code_dependency",
@@ -2426,7 +2426,7 @@
       "evidence_refs": [
         "migration:154_add_versioned_code_knowledge"
       ],
-      "source_contract": "code-business/v1 固定来源、修订、成员及证据合同"
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
     {
       "id": "knowledge.code_demand",
@@ -2458,6 +2458,1651 @@
       "evidence_refs": [
         "migration:154_add_versioned_code_knowledge"
       ]
+    },
+    {
+      "id": "knowledge.code_object",
+      "object_type": "table",
+      "table": "knowledge.code_object",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
+    },
+    {
+      "id": "knowledge.code_object.snapshot_id",
+      "object_type": "column",
+      "table": "knowledge.code_object",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：snapshot_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "snapshot_id"
+    },
+    {
+      "id": "knowledge.code_object.object_key",
+      "object_type": "column",
+      "table": "knowledge.code_object",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：object_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "object_key"
+    },
+    {
+      "id": "knowledge.code_object.document_id",
+      "object_type": "column",
+      "table": "knowledge.code_object",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：document_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "document_id"
+    },
+    {
+      "id": "knowledge.code_object.display_name",
+      "object_type": "column",
+      "table": "knowledge.code_object",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：display_name",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "display_name"
+    },
+    {
+      "id": "knowledge.code_object.catalog_hash",
+      "object_type": "column",
+      "table": "knowledge.code_object",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：catalog_hash",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "catalog_hash"
+    },
+    {
+      "id": "knowledge.code_machine",
+      "object_type": "table",
+      "table": "knowledge.code_machine",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
+    },
+    {
+      "id": "knowledge.code_machine.snapshot_id",
+      "object_type": "column",
+      "table": "knowledge.code_machine",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：snapshot_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "snapshot_id"
+    },
+    {
+      "id": "knowledge.code_machine.machine_key",
+      "object_type": "column",
+      "table": "knowledge.code_machine",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：machine_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "machine_key"
+    },
+    {
+      "id": "knowledge.code_machine.object_key",
+      "object_type": "column",
+      "table": "knowledge.code_machine",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：object_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "object_key"
+    },
+    {
+      "id": "knowledge.code_machine.dimension",
+      "object_type": "column",
+      "table": "knowledge.code_machine",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：dimension",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "dimension"
+    },
+    {
+      "id": "knowledge.code_event",
+      "object_type": "table",
+      "table": "knowledge.code_event",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
+    },
+    {
+      "id": "knowledge.code_event.snapshot_id",
+      "object_type": "column",
+      "table": "knowledge.code_event",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：snapshot_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "snapshot_id"
+    },
+    {
+      "id": "knowledge.code_event.event_key",
+      "object_type": "column",
+      "table": "knowledge.code_event",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：event_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "event_key"
+    },
+    {
+      "id": "knowledge.code_event.object_key",
+      "object_type": "column",
+      "table": "knowledge.code_event",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：object_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "object_key"
+    },
+    {
+      "id": "knowledge.code_event.display_name",
+      "object_type": "column",
+      "table": "knowledge.code_event",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：display_name",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "display_name"
+    },
+    {
+      "id": "knowledge.code_state",
+      "object_type": "table",
+      "table": "knowledge.code_state",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
+    },
+    {
+      "id": "knowledge.code_state.snapshot_id",
+      "object_type": "column",
+      "table": "knowledge.code_state",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：snapshot_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "snapshot_id"
+    },
+    {
+      "id": "knowledge.code_state.machine_key",
+      "object_type": "column",
+      "table": "knowledge.code_state",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：machine_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "machine_key"
+    },
+    {
+      "id": "knowledge.code_state.state_key",
+      "object_type": "column",
+      "table": "knowledge.code_state",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：state_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "state_key"
+    },
+    {
+      "id": "knowledge.code_state.raw_value",
+      "object_type": "column",
+      "table": "knowledge.code_state",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：raw_value",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "raw_value"
+    },
+    {
+      "id": "knowledge.code_state.display_name",
+      "object_type": "column",
+      "table": "knowledge.code_state",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：display_name",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "display_name"
+    },
+    {
+      "id": "knowledge.code_state.evidence_json",
+      "object_type": "column",
+      "table": "knowledge.code_state",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：evidence_json",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "evidence_json"
+    },
+    {
+      "id": "knowledge.code_transition",
+      "object_type": "table",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
+    },
+    {
+      "id": "knowledge.code_transition.snapshot_id",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：snapshot_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "snapshot_id"
+    },
+    {
+      "id": "knowledge.code_transition.business_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：business_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "business_key"
+    },
+    {
+      "id": "knowledge.code_transition.document_id",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：document_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "document_id"
+    },
+    {
+      "id": "knowledge.code_transition.revision_id",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：revision_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "revision_id"
+    },
+    {
+      "id": "knowledge.code_transition.object_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：object_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "object_key"
+    },
+    {
+      "id": "knowledge.code_transition.machine_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：machine_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "machine_key"
+    },
+    {
+      "id": "knowledge.code_transition.event_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：event_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "event_key"
+    },
+    {
+      "id": "knowledge.code_transition.source_mode",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：source_mode",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "source_mode"
+    },
+    {
+      "id": "knowledge.code_transition.source_json",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：source_json",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "source_json"
+    },
+    {
+      "id": "knowledge.code_transition.target_mode",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：target_mode",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "target_mode"
+    },
+    {
+      "id": "knowledge.code_transition.target_state_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：target_state_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "target_state_key"
+    },
+    {
+      "id": "knowledge.code_transition.target_json",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：target_json",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "target_json"
+    },
+    {
+      "id": "knowledge.code_transition.guard_json",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：guard_json",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "guard_json"
+    },
+    {
+      "id": "knowledge.code_transition.actions_json",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：actions_json",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "actions_json"
+    },
+    {
+      "id": "knowledge.code_transition.success_boundary_json",
+      "object_type": "column",
+      "table": "knowledge.code_transition",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：success_boundary_json",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "success_boundary_json"
+    },
+    {
+      "id": "knowledge.code_transition_source",
+      "object_type": "table",
+      "table": "knowledge.code_transition_source",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
+    },
+    {
+      "id": "knowledge.code_transition_source.snapshot_id",
+      "object_type": "column",
+      "table": "knowledge.code_transition_source",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：snapshot_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "snapshot_id"
+    },
+    {
+      "id": "knowledge.code_transition_source.business_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition_source",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：business_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "business_key"
+    },
+    {
+      "id": "knowledge.code_transition_source.machine_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition_source",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：machine_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "machine_key"
+    },
+    {
+      "id": "knowledge.code_transition_source.state_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition_source",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：state_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "state_key"
+    },
+    {
+      "id": "knowledge.code_transition_failure",
+      "object_type": "table",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines",
+        "migration:156_add_code_indeterminate_failure"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
+    },
+    {
+      "id": "knowledge.code_transition_failure.snapshot_id",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：snapshot_id",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "snapshot_id"
+    },
+    {
+      "id": "knowledge.code_transition_failure.business_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：business_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "business_key"
+    },
+    {
+      "id": "knowledge.code_transition_failure.failure_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：failure_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "failure_key"
+    },
+    {
+      "id": "knowledge.code_transition_failure.ordinal",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：ordinal",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "ordinal"
+    },
+    {
+      "id": "knowledge.code_transition_failure.machine_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：machine_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "machine_key"
+    },
+    {
+      "id": "knowledge.code_transition_failure.outcome",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：outcome",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "outcome"
+    },
+    {
+      "id": "knowledge.code_transition_failure.phase",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：phase",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "phase"
+    },
+    {
+      "id": "knowledge.code_transition_failure.state_mode",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：state_mode",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines",
+        "migration:156_add_code_indeterminate_failure"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "state_mode"
+    },
+    {
+      "id": "knowledge.code_transition_failure.state_key",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：state_key",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "state_key"
+    },
+    {
+      "id": "knowledge.code_transition_failure.failure_json",
+      "object_type": "column",
+      "table": "knowledge.code_transition_failure",
+      "owner": "knowledge",
+      "semantics": "固定快照中状态机结构及绑定事实：failure_json",
+      "classification": "immutable_snapshot",
+      "canonical_source": "受管代码来源、候选验证与指定版本事实",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+      ],
+      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
+      "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:155_add_code_state_machines"
+      ],
+      "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
+      "column": "failure_json"
     }
   ]
 }

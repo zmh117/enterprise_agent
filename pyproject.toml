@@ -42,7 +42,7 @@ database = [
 ]
 python-runtime = [
   # Dependabot updates this exact pin daily; Runtime contract CI gates promotion.
-  "claude-agent-sdk==0.2.144",
+  "claude-agent-sdk==0.2.178",
   "mcp==2.0.0",
 ]
 # Governed MCP servers use the stateless MCP v2 HTTP transport in isolated images.

@@ -73,7 +73,7 @@ def test_index_reuses_content_hash_but_isolates_every_snapshot(database):
     embedding, qdrant = SyntheticEmbedding(), SnapshotQdrant()
     indexer = CodeSnapshotIndexer(database, embedding, qdrant)
     point_sets = []
-    for revision, expected_embeddings in ((100, 1), (101, 2), (102, 2)):
+    for revision, expected_embeddings in ((100, 2), (101, 3), (102, 3)):
         ids, build, lease = candidate(database, revision)
         assert not indexer.index(build["build_id"], lease)
         assert (
@@ -92,8 +92,8 @@ def test_index_reuses_content_hash_but_isolates_every_snapshot(database):
                 if value["payload"].get("snapshot_id") == build["snapshot_id"]
             }
         )
-    assert all(len(points) == 1 for points in point_sets)
-    assert len(set.union(*point_sets)) == 3
+    assert all(len(points) == 2 for points in point_sets)
+    assert len(set.union(*point_sets)) == 6
     assert CodeRepository(database).binding(ids["source_id"])["active_snapshot_id"] is None
 
 
@@ -104,7 +104,9 @@ def test_partial_write_recovers_same_candidate_without_duplicate_embedding(datab
     original = qdrant.upsert
 
     def partial(index, points):
-        qdrant.points[points[0]["id"]] = deepcopy(points[0])
+        for point in points:
+            if point["payload"]["point_kind"] == "code_embedding_cache":
+                qdrant.points[point["id"]] = deepcopy(point)
         raise OSError("synthetic interrupted write")
 
     monkeypatch.setattr(qdrant, "upsert", partial)
@@ -118,7 +120,7 @@ def test_partial_write_recovers_same_candidate_without_duplicate_embedding(datab
     )
     monkeypatch.setattr(qdrant, "upsert", original)
     assert not indexer.index(build["build_id"], lease)
-    assert embedding.encoded == 1
+    assert embedding.encoded == 2
     assert indexer.index(build["build_id"], lease)
 
 

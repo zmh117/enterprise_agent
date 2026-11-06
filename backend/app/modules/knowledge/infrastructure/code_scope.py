@@ -19,46 +19,120 @@ from app.shared.database import Database
 FACTORY = "set_web/EBR/src/"
 GROUP = "set_web/JTH/src/"
 BACKEND = "set_server/mes_business/"
+WORKFLOW = "set_server/mes_core_mod/MDWorkflowRun/src/WorkflowEngine/"
 ENTRY_STARTS = {
     "factory.work_order.publish": (
-        FACTORY + "view/production/workOrderPublish.vue",
         BACKEND + "MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
+        BACKEND + "MDEBRCache/src/CachedWorkOrder.cpp",
+        FACTORY + "view/production/workOrderPublish.vue",
     ),
     "factory.work_order.start": (
+        BACKEND + "MDWORun/src/Logic/WOKernel.cpp",
+        WORKFLOW + "WorkflowEngine.cpp",
+        WORKFLOW + "Workflow.cpp",
+        BACKEND + "MDEBRCache/src/CachedWorkOrder.cpp",
         FACTORY + "view/execute/WoList.vue",
         FACTORY + "view/execute/Layout.vue",
         FACTORY + "api/api-worun.js",
-        BACKEND + "MDWORun/src/Logic/WOKernel.cpp",
     ),
     "factory.work_order.report": (
+        BACKEND + "MDMat/src/Logic/EBRMatOpr.cpp",
+        "set_server/mes_public/DataAcc/src/DataAccAPI/CachedMat.cpp",
+        "set_server/pubclass/WMSDataHelper.cpp",
+        "set_server/include/SafeDBTransaction.hpp",
+        "set_server/include/ErrorDefine.h",
+        BACKEND + "MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
         FACTORY + "view/production/workOrderConfirm.vue",
         FACTORY + "api/api-wo.js",
         FACTORY + "api/api-mat.js",
-        BACKEND + "MDWOCfg/src/Logic/EBRWoSetOpr.cpp",
     ),
     "group.application.enable": (
+        BACKEND + "MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
+        BACKEND + "MDComponents/DatabaseComponent/GroupAppAuthorize.cpp",
         GROUP + "view/mgt/app/index.vue",
         GROUP + "api/mgt/api-app.js",
         BACKEND + "MDGrouping/GroupingBasic/Logic/GroupingKernel.cpp",
-        BACKEND + "MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
     ),
     "group.application.disable": (
+        BACKEND + "MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
+        BACKEND + "MDComponents/DatabaseComponent/GroupAppAuthorize.cpp",
         GROUP + "view/mgt/app/index.vue",
         GROUP + "api/mgt/api-app.js",
         BACKEND + "MDGrouping/GroupingBasic/Logic/GroupingKernel.cpp",
-        BACKEND + "MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
     ),
     "group.application.authorization": (
+        BACKEND + "MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
+        BACKEND + "MDComponents/DatabaseComponent/GroupAppAuthorize.cpp",
+        BACKEND + "MDComponents/DatabaseComponent/GroupBuRelation.cpp",
+        BACKEND + "MDComponents/DatabaseComponent/GroupSyncInfo.cpp",
+        "set_server/include/SafeDBTransaction.hpp",
         GROUP + "view/mgt/app/index.vue",
         GROUP + "view/mgt/service/app.vue",
         GROUP + "view/mgt/service/auth.vue",
         GROUP + "api/mgt/api-app.js",
         BACKEND + "MDGrouping/GroupingBasic/Logic/GroupingKernel.cpp",
-        BACKEND + "MDGrouping/GroupingBasic/Logic/GroupingApplication.cpp",
     ),
+}
+FOCUS_SYMBOLS = {
+    "factory.work_order.publish": [
+        "SaveAndPublishWo",
+        "_PublishWo",
+        "_CheckRelatedStatus",
+        "CheckPIRelevance",
+        "CheckValidity",
+        "_UpdateWoPublish",
+        "_transToWoRun",
+        "_AddWoByType",
+        "_AddWo",
+        "_UpdateWo",
+        "CachedWorkOrder::Publish",
+        "CachedWorkOrder::ClearPublishInfo",
+    ],
+    "factory.work_order.start": [
+        "wo_execute",
+        "WoRun",
+        "CheckWOHandleRun",
+        "WfRun",
+        "AddWorkflowInsRun",
+        "CreateWorkflowIns",
+        "SetStatus",
+        "onWOStatusChanged",
+        "UpdateStatusByWO",
+    ],
+    "factory.work_order.report": [
+        "DeclAck",
+        "_UpdateWoStatusToDecl",
+        "AddManuDecl",
+        "_CheckBatch",
+        "APIWOReporting",
+        "_calcDeviation",
+        "SafeDBTransaction",
+        "WMSDataHelper::CheckPoses",
+        "WMSDataHelper::_CheckPoses",
+        "WMSDataHelper::CheckMatStorage",
+    ],
+    "group.application.enable": [
+        "ChangeApplicationStatus",
+        "GroupGroupAppAuthorize::Update",
+        "AddSyncInfo",
+    ],
+    "group.application.disable": [
+        "ChangeApplicationStatus",
+        "GroupGroupAppAuthorize::Update",
+        "AddSyncInfo",
+    ],
+    "group.application.authorization": [
+        "ChangeApplicationScope",
+        "GroupGroupAppAuthorize::Update",
+        "AddSyncInfo",
+    ],
 }
 COMMON_PREFIXES = (
     "set_server/include",
+    "set_server/mes_public/DataAcc/src/DataAccAPI/CachedMat.cpp",
+    "set_server/mes_public/DataAcc/src/DataAccAPI/CachedMat.h",
+    "set_server/pubclass/WMSDataHelper.cpp",
+    "set_server/pubclass/WMSDataHelper.h",
     BACKEND + "MDComponents",
     BACKEND + "MDFormula",
     BACKEND + "MDMat",
@@ -88,8 +162,12 @@ class CodeScopePlanner:
                     FACTORY + "view/execute",
                     FACTORY + "components/execute",
                     FACTORY + "api",
+                    FACTORY + "libs/enum.js",
+                    FACTORY + "libs/status.js",
+                    FACTORY + "libs/mixin-confirm-event.js",
                     BACKEND + "MDWORun",
                     BACKEND + "MDWOCfg",
+                    WORKFLOW.rstrip("/"),
                 )
                 if key.startswith("factory.")
                 else (
@@ -97,12 +175,16 @@ class CodeScopePlanner:
                     GROUP + "view/mgt/service",
                     GROUP + "api/mgt",
                     GROUP + "enums",
+                    GROUP + "libs/enum.js",
+                    GROUP + "mixins/page.js",
                     BACKEND + "MDGrouping",
                 )
             )
             hints, references, unknowns = [], [], []
             scan_paths = sorted(
-                path for path in files if any(path.startswith(prefix + "/") for prefix in prefixes)
+                path
+                for path in files
+                if any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
             )
             for path in [*starts, *(path for path in scan_paths if path not in starts)]:
                 if path not in files:
@@ -122,6 +204,7 @@ class CodeScopePlanner:
                         "entry_ids": [key],
                         "allowed_prefixes": sorted(set(prefixes)),
                         "start_files": list(starts),
+                        "focus_symbols": FOCUS_SYMBOLS[key],
                         "entry_scan": {
                             "strategy": "full_first_scope_rebuild",
                             "files_scanned": len(set(starts) & files.keys())
@@ -130,7 +213,12 @@ class CodeScopePlanner:
                         # Definitions in the entry files must not be displaced by
                         # hundreds of status/config occurrences before a callee.
                         "locations": sorted(
-                            hints, key=lambda item: item["kind"] != "symbol_candidate"
+                            hints,
+                            key=lambda item: (
+                                item.get("symbol", "").rsplit("::", 1)[-1]
+                                not in {s.rsplit("::", 1)[-1] for s in FOCUS_SYMBOLS[key]},
+                                item["kind"] != "symbol_candidate",
+                            ),
                         )[:200],
                         "references": references[:100],
                         "locations_truncated": len(hints) > 200,
@@ -217,7 +305,10 @@ class CodeScopePlanner:
                     or (
                         row["relative_path"]
                         and any(
-                            row["relative_path"].startswith(prefix + "/")
+                            (
+                                row["relative_path"] == prefix
+                                or row["relative_path"].startswith(prefix + "/")
+                            )
                             for prefix in scope["allowed_prefixes"]
                         )
                     )

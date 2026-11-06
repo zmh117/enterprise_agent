@@ -113,6 +113,37 @@ export const codeKnowledgeSchema = z.object({
     })
   ),
 })
+const stateResult = z.object({
+  mode: z.enum(["state", "unchanged", "unknown"]),
+  state_key: z.string().nullable(),
+  description: z.string(),
+})
+const transition = z.object({
+  machine_key: z.string(),
+  event_key: z.string(),
+  from_state: z.object({
+    mode: z.enum(["states", "any", "unresolved"]),
+    state_keys: z.array(z.string()),
+    description: z.string(),
+  }),
+  to_state: stateResult,
+  actions: z.array(
+    z.object({ key: z.string(), description: z.string(), phase: z.string() })
+  ),
+  failures: z.array(
+    z.object({
+      key: z.string(),
+      condition: z.unknown(),
+      phase: z.string(),
+      outcome: z.string(),
+      state_after: stateResult.extend({
+        mode: z.enum(["state", "unchanged", "unknown", "indeterminate"]),
+      }),
+      retained_action_keys: z.array(z.string()),
+      description: z.string(),
+    })
+  ),
+})
 export const codeDetailSchema = z.object({
   review_digest: z.string(),
   build_id: z.string(),
@@ -168,6 +199,15 @@ export const codeDetailSchema = z.object({
       knowledge: z
         .object({
           title: z.string(),
+          object_key: z.string(),
+          transition: transition.nullable(),
+          states: z.array(
+            z.object({
+              key: z.string(),
+              name: z.string(),
+              raw_value: z.string(),
+            })
+          ),
           summary: z.string(),
           role: z.string(),
           coverage: z.string(),

@@ -242,9 +242,11 @@ class CodeBuildController:
         complete = bool(source and decoded(source["manifest_json"]).get("scan_complete"))
         if not build["parent_snapshot_id"]:
             return {"complete": complete, "missing_keys": [], "confirmed_absences": []}
+        # Controller-owned identity anchors carry no source-derived business fact;
+        # their presence follows surviving relations, not model deletion claims.
         missing = self.db.execute(
             f"select d.external_id from {table(self.db, 'code_member')} old join {table(self.db, 'document')} d on d.id=old.document_id "
-            f"where old.snapshot_id=? and not exists(select 1 from {table(self.db, 'code_member')} fresh where fresh.snapshot_id=? and fresh.document_id=old.document_id) order by d.external_id limit 1001",
+            f"where old.snapshot_id=? and d.document_kind<>'object' and not exists(select 1 from {table(self.db, 'code_member')} fresh where fresh.snapshot_id=? and fresh.document_id=old.document_id) order by d.external_id limit 1001",
             (build["parent_snapshot_id"], build["snapshot_id"]),
         )
         absent = {row["external_id"] for row in missing}

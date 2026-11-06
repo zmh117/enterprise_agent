@@ -10,11 +10,16 @@ from app.modules.knowledge.domain.code_contracts import (
     CONTRACT_VERSION,
     SOURCE_REF,
     VERSION_SELECTOR,
+    KNOWLEDGE,
     CodeKnowledgeError,
     validate,
 )
 from app.modules.knowledge.domain.identity import now, stable_id
 from app.modules.knowledge.domain.normalization import digest
+from app.modules.knowledge.domain.code_projection import projection_text
+from app.modules.knowledge.domain.code_identity_catalog import OBJECTS, object_record
+from app.modules.knowledge.domain.code_fsm import validate_state_machines
+from app.modules.knowledge.infrastructure.code_fsm_repository import CodeStateMachineRepository
 from app.modules.knowledge.infrastructure.storage import insert, source_lock, table
 from app.shared.database import Database
 
@@ -29,19 +34,7 @@ def knowledge_id(source_id: str, business_key: str) -> str:
 
 def search_text(record: dict[str, Any]) -> str:
     """Deterministic search projection; structured record remains the authority."""
-    return "\n".join(
-        [
-            record["title"],
-            record["summary"],
-            "角色：" + record["role"],
-            *[
-                fact["description"]
-                for name in ("check_order", "effects", "outcomes", "configuration")
-                for fact in record[name]
-            ],
-            "成功边界：" + record["success_boundary"]["description"],
-        ]
-    )
+    return projection_text(record)
 
 
 class CodeRepository:
@@ -260,6 +253,14 @@ class CodeRepository:
 
     def store_candidate(self, snapshot_id: str, package: dict[str, Any]) -> None:
         """Internal validated importer; never mutate a ready snapshot or current_revision_id."""
+        if package["manifest.json"]["contract_version"] != CONTRACT_VERSION:
+            raise CodeKnowledgeError("code_contract_version_retired")
+        for record in package["knowledge.jsonl"]:
+            validate(record, KNOWLEDGE)
+        validate_state_machines(
+            package["knowledge.jsonl"],
+            {entry["entry_id"] for entry in package["coverage.json"]["entries"]},
+        )
         row = self.database.execute_one(
             f"select * from {self._table('code_snapshot')} where id=?", (snapshot_id,)
         )
@@ -272,8 +273,32 @@ class CodeRepository:
             if package["manifest.json"]["source_snapshot_id"] != snapshot["source_snapshot_id"]:
                 raise CodeKnowledgeError("code_candidate_binding_mismatch")
             run_id = self._import_run(snapshot, package)
+            objects = {r["object_key"] for r in package["knowledge.jsonl"]}
+            objects.update(
+                key
+                for edge in package["relations.jsonl"]
+                for key in (edge["from_key"], edge["to_key"])
+                if key in OBJECTS
+            )
+            machines = CodeStateMachineRepository(self.database)
+            for key in sorted(objects):
+                self._store_record(snapshot, run_id, object_record(key), [])
+                machines.bind_object(snapshot_id, key, knowledge_id(snapshot["source_id"], key))
             for record in package["knowledge.jsonl"]:
                 self._store_record(snapshot, run_id, record, package["evidence.jsonl"])
+                self._store_relation(
+                    snapshot,
+                    dict(
+                        id=stable_id("code_object_member", record["business_key"]),
+                        from_key=record["object_key"],
+                        to_key=record["business_key"],
+                        kind="contains",
+                        reading_mode="fixed_version",
+                        read_at="固定代码知识快照",
+                        required=True,
+                        evidence_ids=record["evidence_ids"],
+                    ),
+                )
             for relation in package["relations.jsonl"]:
                 self._store_relation(snapshot, relation)
 
@@ -364,6 +389,14 @@ class CodeRepository:
             ),
             conflict="on conflict(knowledge_base_id,document_id) do nothing",
         )
+        if record["kind"] == "transition":
+            CodeStateMachineRepository(self.database).store(
+                snapshot["id"],
+                document_id,
+                revision_id,
+                record,
+                evidence,
+            )
 
     def _insert_revision(
         self,
@@ -444,6 +477,16 @@ class CodeRepository:
         )
         if not row:
             raise CodeKnowledgeError("code_knowledge_unavailable")
+        attributes = decoded(row["attributes"])
+        if attributes["contract_version"] != CONTRACT_VERSION:
+            raise CodeKnowledgeError("code_contract_version_retired")
+        if attributes["knowledge"]["kind"] == "transition":
+            attributes["knowledge"] = CodeStateMachineRepository(self.database).read(
+                snapshot_id,
+                document_id,
+                row["id"],
+                attributes["knowledge"],
+            )
         return {
             "knowledge_id": document_id,
             "revision_id": row["id"],
@@ -451,7 +494,7 @@ class CodeRepository:
             "source_evidence_status": "retired"
             if snapshot["retired_at"] is not None
             else "retained",
-            **decoded(row["attributes"]),
+            **attributes,
         }
 
     def resolve(self, base_id: str, selector: dict[str, Any] | None) -> dict[str, Any]:

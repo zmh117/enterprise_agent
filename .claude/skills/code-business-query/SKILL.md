@@ -9,9 +9,9 @@ description: 按明确本地基线或 SVN 版本解释 MES 业务操作条件，
 
 代码版本必须明确。优先复用已核实的当前会话 SVN 版本或可信现场绑定，并在回答中显示。没有版本时询问 SVN revision，也可让用户明确选择本地基线。仅当用户明确要求最新时使用 latest_verified；解析到 snapshot_id 后，后续详情都固定此快照。本地基线可以查询，但必须显示 SVN 版本未确认。区分源码 revision、工单/处方业务版本、知识修订和知识快照。
 
-使用 `knowledge_search` 定位知识，再调用 `knowledge_get_behavior` 取得完整操作、必要规则和依赖。对象操作清单按结构化关系分页读取；Top-K 不能代表所有操作。保留条件树、配置例外、检查时点、前后端层次、受理与成功边界。关系循环、未展开依赖、coverage 或 unknown 必须影响结论措辞，不能省略后给出无条件允许结论。
+使用 `knowledge_search` 定位知识，再调用 `knowledge_get_behavior` 取得完整状态机迁移、必要规则和依赖。按 object_key 合并同一对象，逐条解释起始状态、event_key、guard、按序 actions、to_state 和 failures（包括失败后的状态与已保留动作）。unchanged 是有证据的不变，unknown/unresolved 是未核实；indeterminate 是源码已确认失败后最终状态需要现场核验。三者不能互换。请求受理迁移不能作为后台完成证明。对象操作清单按结构化关系分页读取；Top-K 不能代表所有操作。保留条件树、配置例外、检查时点、前后端层次、受理与成功边界。关系循环、未展开依赖、coverage 或 unknown 必须影响结论措辞，不能省略后给出无条件允许结论。
 
-问“两个版本有什么变化”使用 `knowledge_compare_behavior` 的 compare 模式；问“什么时候改的”使用 history 模式。r100 拒绝、r101 允许、r102 又拒绝是合法历史，两个端点相同不能推出中间没变。只有工具提供连续相关提交核验和两侧源码证据时才说精确变化 revision；否则回答已验证范围和未决区间。只取消 a 非空校验不代表其他发布条件也满足。
+版本变化也要比较迁移起点、事件、目标、动作及失败结果，不能只比较文字摘要或 guard。问“两个版本有什么变化”使用 `knowledge_compare_behavior` 的 compare 模式；问“什么时候改的”使用 history 模式。r100 拒绝、r101 允许、r102 又拒绝是合法历史，两个端点相同不能推出中间没变。只有工具提供连续相关提交核验和两侧源码证据时才说精确变化 revision；否则回答已验证范围和未决区间。只取消 a 非空校验不代表其他发布条件也满足。
 
 VERSION_REQUIRED 请求版本；BUILD_REQUIRED/PENDING 说明指定版本尚未就绪及安全需求标识；VERSION_UNAVAILABLE/BASELINE_UNMAPPED 说明不可用边界。不得换成最近版本或开发最新版本，也不无限轮询、延长原任务或自行启用后台计划。已授权的自动历史构建由服务器按配置和预算处理。
 

@@ -207,10 +207,10 @@ def _code_source_hook_options(
                 "permissionDecisionReason": "Tool is not authorized for this code extraction Job",
             }
         }
-        tool_name = event.get("tool_name")
-        if tool_name not in ALLOWED_FILE_TOOLS or tool_name not in context.effective_tool_names:
-            return denied
         try:
+            tool_name = event.get("tool_name")
+            if tool_name not in ALLOWED_FILE_TOOLS or tool_name not in context.effective_tool_names:
+                return denied
             budget.consume()
             authorized = sandbox.authorize_tool(tool_name, event.get("tool_input"))
             if (
@@ -227,6 +227,7 @@ def _code_source_hook_options(
                     sandbox.source_mount,
                     grant["candidate_manifest"],
                     expected_entries=set(grant["scope"]["entry_ids"]),
+                    known_states=grant["scope"].get("known_states", []),
                 )
         except JobSandboxError as exc:
             denied["hookSpecificOutput"]["permissionDecisionReason"] = (
@@ -249,6 +250,10 @@ def _code_source_hook_options(
                 "must match scope.entry_ids once each, and all references must exist."
             )
             return denied
+        except Exception:
+            # An authorization failure must never fall through to native read
+            # auto-approval. Exception text may contain paths or source content.
+            return denied
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -257,7 +262,11 @@ def _code_source_hook_options(
             }
         }
 
-    return {"hooks": {"PreToolUse": [sdk.hook_matcher(hooks=[authorize_source_tool])]}}
+    return {
+        "hooks": {
+            "PreToolUse": [sdk.hook_matcher(hooks=[authorize_source_tool], on_failure="block")]
+        }
+    }
 
 
 class FixedMcpClaudeSdkClient(ClaudeSdkClient):

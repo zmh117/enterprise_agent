@@ -45,6 +45,13 @@ TABLES = frozenset(
         "code_dependency",
         "code_history_check",
         "code_demand",
+        "code_object",
+        "code_machine",
+        "code_event",
+        "code_state",
+        "code_transition",
+        "code_transition_source",
+        "code_transition_failure",
     }
 )
 _SQLITE_LOCK = threading.RLock()

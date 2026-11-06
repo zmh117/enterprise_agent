@@ -150,7 +150,7 @@ COPY backend/app/modules/mcp_tool_runtime/__init__.py backend/app/modules/mcp_to
 COPY backend/app/modules/file_workspace/contracts.py backend/app/modules/file_workspace/domain.py backend/app/modules/file_workspace/text_format_policy.py /app/backend/app/modules/file_workspace/
 # Runtime reads immutable mounted source and writes invocation artifacts; no knowledge repository/SQL.
 COPY backend/app/modules/knowledge/__init__.py /app/backend/app/modules/knowledge/
-COPY backend/app/modules/knowledge/domain/__init__.py backend/app/modules/knowledge/domain/code_contracts.py backend/app/modules/knowledge/domain/code_package.py backend/app/modules/knowledge/domain/normalization.py backend/app/modules/knowledge/domain/identity.py /app/backend/app/modules/knowledge/domain/
+COPY backend/app/modules/knowledge/domain/__init__.py backend/app/modules/knowledge/domain/code_contracts.py backend/app/modules/knowledge/domain/code_package.py backend/app/modules/knowledge/domain/code_fsm.py backend/app/modules/knowledge/domain/code_identity_catalog.py backend/app/modules/knowledge/domain/normalization.py backend/app/modules/knowledge/domain/identity.py /app/backend/app/modules/knowledge/domain/
 COPY backend/app/modules/knowledge/infrastructure/__init__.py backend/app/modules/knowledge/infrastructure/code_source.py backend/app/modules/knowledge/infrastructure/code_snapshot_directory.py backend/app/modules/knowledge/infrastructure/code_artifact_directory.py /app/backend/app/modules/knowledge/infrastructure/
 COPY backend/app/modules/model_connection/__init__.py /app/backend/app/modules/model_connection/
 COPY backend/app/modules/model_connection/domain /app/backend/app/modules/model_connection/domain

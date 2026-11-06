@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 
@@ -43,6 +44,91 @@ def _context(marker: str) -> AgentExecutionContext:
             ),
         ),
     )
+
+
+@pytest.mark.parametrize("shape", ["flat", "nested", "sdk"])
+def test_extraction_init_projects_observed_metadata_without_message_body(tmp_path, shape):
+    from claude_agent_sdk import SystemMessage
+    from app.python_runtime.claude_client import _permission_snapshot
+
+    context = replace(_context("synthetic"), retrieved_context={"code_source": {"job_id": "job"}})
+    permissions = _permission_snapshot(context)
+    assert permissions["sdk_version"] != "unknown"
+    assert permissions["cli_version"] not in {"unknown", "unavailable"}
+    recorder = RunAuditRecorder(
+        context, system_prompt="synthetic", raw_api_dir=tmp_path, permission_snapshot=permissions
+    )
+    data = {
+        "tools": ["Read", "Glob", "Grep", "Write", "Edit", "UnexpectedTool"],
+        "skills": ["bundled-skill"],
+        "mcp_servers": [{"name": "unexpected-mcp", "status": "connected", "token": "DO_NOT_COPY"}],
+        "cwd": "/DO_NOT_COPY/private",
+        "apiKeySource": "DO_NOT_COPY",
+        "system_prompt": "DO_NOT_COPY source code",
+        "extra": {"body": "DO_NOT_COPY"},
+    }
+    message = (
+        SystemMessage(subtype="init", data=data)
+        if shape == "sdk"
+        else {
+            "type": "system",
+            "subtype": "init",
+            **({"data": data} if shape == "nested" else data),
+        }
+    )
+    recorder.observe_message(message)
+    result = recorder.finalize(status="SUCCEEDED")
+    snapshot = result["init_snapshot"]
+    assert snapshot["data"] == {
+        "tools": data["tools"],
+        "skills": ["bundled-skill"],
+        "mcp_servers": [{"name": "unexpected-mcp", "status": "connected"}],
+        "metadata_complete": True,
+    }
+    assert snapshot["sdk_version"] == permissions["sdk_version"]
+    assert snapshot["cli_version"] == permissions["cli_version"]
+    assert result["summary"]["registered_tool_count"] == 6
+    assert result["sdk_messages"] == result["api_requests"] == result["api_responses"] == []
+    assert "DO_NOT_COPY" not in json.dumps(result)
+    digest, chunks = encode_audit_chunks(result)
+    # The existing invocation transport must preserve the restricted init snapshot.
+    restored = decode_audit_chunks(chunks, expected_sha256=digest, expected_count=len(chunks))
+    assert restored["init_snapshot"] == snapshot
+
+
+def test_extraction_init_is_bounded_and_does_not_invent_missing_lists(tmp_path):
+    context = replace(_context("synthetic"), retrieved_context={"code_source": {"job_id": "job"}})
+    recorder = RunAuditRecorder(
+        context, system_prompt="synthetic", raw_api_dir=tmp_path, permission_snapshot={}
+    )
+    assert recorder.audit["init_snapshot"] == {}
+    recorder.observe_message({"type": "system", "subtype": "init", "data": {}})
+    assert recorder.audit["init_snapshot"]["data"] == {
+        "tools": None,
+        "skills": None,
+        "mcp_servers": None,
+        "metadata_complete": False,
+    }
+    recorder.observe_message(
+        {
+            "type": "system",
+            "subtype": "init",
+            "data": {
+                "tools": ["Read"] * 300,
+                "skills": ["safe-skill", "/private/path", "DO_NOT_COPY secret", {}, "x" * 129],
+                "mcp_servers": [
+                    {"name": "safe", "status": "DO_NOT_COPY"},
+                    {"name": "/DO_NOT_COPY", "status": "connected"},
+                ],
+            },
+        }
+    )
+    snapshot = recorder.audit["init_snapshot"]
+    assert len(snapshot["data"]["tools"]) == 256
+    assert snapshot["data"]["skills"] == ["safe-skill"]
+    assert snapshot["data"]["mcp_servers"] == [{"name": "safe", "status": "unknown"}]
+    assert snapshot["data"]["metadata_complete"] is False
+    assert "DO_NOT_COPY" not in json.dumps(snapshot)
 
 
 def test_recorder_keeps_complete_model_visible_content_and_raw_bodies(

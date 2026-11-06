@@ -49,8 +49,9 @@ def validation_candidate(f):
 def test_review_reads_whole_candidate_and_requires_exact_units_and_processing(code_job_runtime):
     ops, controller, build = validation_candidate(code_job_runtime)
     page = ops.details(build["id"])
-    assert page["records"][0]["knowledge"]["guard"]["expression"] == "a is not empty"
-    assert page["records"][0]["evidence"] and not page["has_more"]
+    record = next(row for row in page["records"] if row["knowledge"]["kind"] == "transition")
+    assert record["knowledge"]["guard"]["expression"] == "a is not empty"
+    assert record["evidence"] and not page["has_more"]
     processing = digest(json.loads(build["configuration_json"]))
     inputs = dict(
         actor_id="user_local_admin",
@@ -124,7 +125,7 @@ def test_start_uses_registered_ids_and_frozen_application(code_job_runtime):
     config = json.loads(ops.builds.get(first["build_id"])["configuration_json"])
     assert (
         config["application_publication_id"] == app_pub["id"]
-        and config["contract_version"] == "code-business/v1"
+        and config["contract_version"] == "code-business/v2"
     )
 
 
@@ -175,7 +176,19 @@ def test_missing_parent_knowledge_cannot_be_silently_dropped_or_reviewed(code_jo
         configuration={"synthetic": "parent"},
     )
     package, _ = fixture(source_snapshot_id=build["source_snapshot_id"])
-    package["knowledge.jsonl"][0]["business_key"] = "factory.work_order.old_rule"
+    package["knowledge.jsonl"][0]["business_key"] = "factory.work_order.publish.old_rule"
+    package["relations.jsonl"].append(
+        dict(
+            id="old-formula",
+            from_key="factory.work_order.publish.old_rule",
+            to_key="factory.formula",
+            kind="references",
+            reading_mode="current_record",
+            read_at="request",
+            required=True,
+            evidence_ids=["ev"],
+        )
+    )
     ops.repo.store_candidate(parent["snapshot_id"], package)
     db.execute(
         f"update {table(db, 'code_build')} set parent_snapshot_id=? where id=?",
@@ -185,7 +198,9 @@ def test_missing_parent_knowledge_cannot_be_silently_dropped_or_reviewed(code_jo
     current = ops.snapshot()["builds"]
     target = next(row for row in current if row["id"] == build["id"])
     assert target["validation"]["activation_blocked"]
-    assert target["validation"]["continuity"]["missing_keys"] == ["factory.work_order.old_rule"]
+    assert target["validation"]["continuity"]["missing_keys"] == [
+        "factory.work_order.publish.old_rule"
+    ]
     with pytest.raises(CodeKnowledgeError, match="validation_incomplete"):
         ops.review(
             actor_id="user_local_admin",

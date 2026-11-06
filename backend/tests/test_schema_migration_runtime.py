@@ -102,6 +102,8 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("152", "152_add_knowledge_operations.sql"),
         ("153", "153_change_knowledge_sync_interval.sql"),
         ("154", "154_add_versioned_code_knowledge.sql"),
+        ("155", "155_add_code_state_machines.sql"),
+        ("156", "156_add_code_indeterminate_failure.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -160,6 +162,8 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "152",
         "153",
         "154",
+        "155",
+        "156",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -1433,7 +1437,7 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert (
         len({column for column in owned_columns if not column[0].startswith("knowledge.")}) == 1778
     )
-    assert len({table for table in owned_tables if table.startswith("knowledge.")}) == 33
+    assert len({table for table in owned_tables if table.startswith("knowledge.")}) == 40
     database.close()
 
 

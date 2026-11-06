@@ -59,18 +59,47 @@ def fixture(revision=100, source_snapshot_id="source-snapshot"):
     record = dict(
         business_key="factory.work_order.publish",
         identity_state="confirmed",
-        kind="operation",
+        kind="transition",
+        object_key="factory.work_order",
         role="backend",
         title="工单发布",
         fact_class="backend_behavior",
         summary="合成规则",
         object_version=None,
-        states=[],
+        states=[dict(key="created", name="已创建", raw_value="10", evidence_ids=["ev"])],
         trigger="publish",
         guard=guard,
+        transition=dict(
+            machine_key="factory.work_order.configuration",
+            event_key="factory.work_order.publish.request",
+            from_state=dict(
+                mode="states", state_keys=["created"], description="创建状态", evidence_ids=["ev"]
+            ),
+            to_state=dict(
+                mode="unchanged", state_key=None, description="仅受理", evidence_ids=["ev"]
+            ),
+            actions=[dict(key="enqueue", **fact)],
+            failures=[
+                dict(
+                    key="rejected",
+                    condition={**guard, "expression": "validation rejected"},
+                    phase="request",
+                    outcome="rejected",
+                    state_after=dict(
+                        mode="unchanged",
+                        state_key=None,
+                        description="拒绝且未修改",
+                        evidence_ids=["ev"],
+                    ),
+                    retained_action_keys=[],
+                    description="校验拒绝",
+                    evidence_ids=["ev"],
+                )
+            ],
+        ),
         check_order=[],
         effects=[],
-        outcomes=[fact],
+        outcomes=[],
         success_boundary=fact,
         configuration=[],
         evidence_ids=["ev"],
@@ -101,7 +130,7 @@ def fixture(revision=100, source_snapshot_id="source-snapshot"):
         "coverage.json": {
             "entries": [
                 dict(
-                    entry_id="publish",
+                    entry_id="factory.work_order.publish",
                     role="backend",
                     status="analyzed",
                     knowledge_keys=[record["business_key"]],
@@ -128,7 +157,7 @@ def test_envelope_roundtrip_and_independent_reversal():
             candidate,
             expected_manifest=package["manifest.json"],
             sources=sources,
-            expected_entries={"publish"},
+            expected_entries={"factory.work_order.publish"},
         )
         assert result == dict(
             machine_valid=True,
@@ -198,7 +227,10 @@ def test_candidate_rejects_tampering(mutation, code):
     mutation(package)
     with pytest.raises(CodeKnowledgeError, match=code):
         verify_candidate(
-            package, expected_manifest=expected, sources=sources, expected_entries={"publish"}
+            package,
+            expected_manifest=expected,
+            sources=sources,
+            expected_entries={"factory.work_order.publish"},
         )
 
 
@@ -214,7 +246,7 @@ def test_unknown_is_not_permission_and_schema_is_closed():
         package,
         expected_manifest=package["manifest.json"],
         sources=sources,
-        expected_entries={"publish"},
+        expected_entries={"factory.work_order.publish"},
     )["activation_blocked"]
     record["activate"] = True
     with pytest.raises(CodeKnowledgeError):
@@ -271,7 +303,7 @@ def test_repository_history_uses_members_and_preserves_identity(database):
     with pytest.raises(CodeKnowledgeError, match="immutable"):
         repo.store_candidate(snapshots[0], package)
     assert (
-        database.execute_one(f"select count(*) as n from {table(database, 'document')}")["n"] == 1
+        database.execute_one(f"select count(*) as n from {table(database, 'document')}")["n"] == 2
     )
     assert (
         database.execute_one(f"select current_revision_id from {table(database, 'document')}")[
@@ -465,8 +497,10 @@ def test_behavior_pages_preserve_root_and_detect_revocation(database):
         root = package["knowledge.jsonl"][0]
         for index in range(55):
             node = deepcopy(root)
-            node["business_key"] = f"factory.recipe.rule{index}"
+            node["business_key"] = f"factory.work_order.publish.rule{index}"
             node["kind"] = "rule"
+            node["transition"] = None
+            node["states"] = []
             package["knowledge.jsonl"].append(node)
             package["relations.jsonl"].append(
                 dict(
@@ -517,7 +551,7 @@ def test_upgrade_153_retains_ones_document_and_revision(tmp_path):
     prior = tmp_path / "migrations"
     prior.mkdir()
     for path in default_migrations_dir().iterdir():
-        if path.is_file() and not path.name.startswith("154_"):
+        if path.is_file() and not path.name.startswith(("154_", "155_", "156_")):
             shutil.copyfile(path, prior / path.name)
     db = Database("sqlite:///:memory:")
     try:
@@ -565,6 +599,7 @@ def _assert_source_hook(extraction, active):
         SimpleNamespace(effective_tool_names=("Read", "Write")),
         ToolCallBudget(maximum=3),
     )
+    assert hooks["hooks"]["PreToolUse"][0].on_failure == "block"
     hook = hooks["hooks"]["PreToolUse"][0].hooks[0]
     hook_event = {
         "tool_name": "Read",
@@ -796,7 +831,11 @@ def code_job_runtime(tmp_path):
             user_id=svc["id"],
         )
         pub = db.execute_one("select * from agent_publication where id=?", (pub_id,))
+        from app.modules.knowledge.domain.code_identity_catalog import CATALOG_HASH
+
         config = dict(
+            contract_version=CONTRACT_VERSION,
+            identity_catalog_hash=CATALOG_HASH,
             service_account_id=svc["id"],
             agent_publication_id=pub_id,
             agent_config_hash=pub["config_hash"],
@@ -819,7 +858,10 @@ def code_job_runtime(tmp_path):
                 id="code-unit-test",
                 build_id=build["build_id"],
                 unit_key="publish",
-                scope_json={"allowed_prefixes": ["set_server"], "entry_ids": ["publish"]},
+                scope_json={
+                    "allowed_prefixes": ["set_server"],
+                    "entry_ids": ["factory.work_order.publish"],
+                },
                 state="QUEUED",
                 created_at=now(),
                 updated_at=now(),
@@ -936,7 +978,10 @@ def test_runtime_mount_authoring_sealing_and_cleanup_lifecycle(tmp_path):
     snapshots.publish("runtime-snapshot", frozen, collector)
     package["evidence.jsonl"][0]["file_id"] = frozen.manifest["files"][0]["file_id"]
     package["manifest.json"]["source_ref"] = frozen.source_ref
+    from app.modules.knowledge.domain.code_identity_catalog import identity_catalog
+
     grant = dict(
+        identity_catalog=identity_catalog(),
         candidate_manifest=package["manifest.json"],
         manifest_hash=frozen.source_ref["manifest_hash"],
         allowed_prefixes=["set_server"],
@@ -1047,6 +1092,39 @@ def test_runtime_mount_authoring_sealing_and_cleanup_lifecycle(tmp_path):
     assert not (
         manager.artifacts.root / manager.artifacts.key({**manager.identity, "grant": grant})
     ).exists()
+
+
+@pytest.mark.parametrize("error_type", [OSError, RuntimeError, TypeError])
+def test_source_hook_unexpected_failure_denies_without_exception_body(error_type):
+    import asyncio
+    from types import SimpleNamespace
+    from claude_agent_sdk import HookMatcher
+    from app.modules.agent.domain.runtime import ToolCallBudget
+    from app.python_runtime.mcp_config import _code_source_hook_options
+
+    def fail_authorization(*_args):
+        raise error_type("SYNTHETIC_PRIVATE_SOURCE_AND_CREDENTIAL")
+
+    sandbox = SimpleNamespace(source_mount=object(), authorize_tool=fail_authorization)
+    options = _code_source_hook_options(
+        SimpleNamespace(hook_matcher=HookMatcher),
+        sandbox,
+        SimpleNamespace(effective_tool_names=("Read", "Write")),
+        ToolCallBudget(maximum=5),
+    )
+    matcher = options["hooks"]["PreToolUse"][0]
+    assert matcher.matcher is None
+    assert matcher.on_failure == "block"
+    for event in (
+        {"tool_name": "Read", "tool_input": {"file_path": "source/file.cpp"}},
+        {"tool_name": "Write", "tool_input": {"file_path": "outputs/report.md"}},
+        {"tool_name": ["malformed"]},
+        None,
+    ):
+        result = asyncio.run(matcher.hooks[0](event, "synthetic-call", None))
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "updatedInput" not in result["hookSpecificOutput"]
+        assert "SYNTHETIC_PRIVATE" not in str(result)
 
 
 def test_extraction_audit_retains_usage_without_source_bodies(tmp_path):
@@ -1277,7 +1355,7 @@ def _assert_candidate_import_idempotent(db, collector, lease):
     result = collector.collect("code-unit-test", lease)
     assert result["machine_valid"] and not result["business_verified"]
     assert collector.collect("code-unit-test", lease) == result
-    assert db.execute_one(f"select count(*) as n from {table(db, 'code_member')}")["n"] == 1
+    assert db.execute_one(f"select count(*) as n from {table(db, 'code_member')}")["n"] == 2
     assert (
         db.execute_one(f"select state from {table(db, 'code_unit')} where id='code-unit-test'")[
             "state"
@@ -1474,7 +1552,7 @@ def test_dependency_expansion_uses_only_admitted_approved_paths(database, tmp_pa
     for stage in ("QUEUED", "SOURCE_READY"):
         builds.advance(build["build_id"], lease, stage)
     request = {
-        "entry_id": "publish",
+        "entry_id": "factory.work_order.publish",
         "path": "set_server/work_order.cpp",
         "reason": "Referenced implementation outside this unit",
     }
@@ -1486,7 +1564,10 @@ def test_dependency_expansion_uses_only_admitted_approved_paths(database, tmp_pa
             build_id=build["build_id"],
             unit_key="publish",
             state="VALIDATED",
-            scope_json={"entry_ids": ["publish"], "allowed_prefixes": ["set_server/include"]},
+            scope_json={
+                "entry_ids": ["factory.work_order.publish"],
+                "allowed_prefixes": ["set_server/include"],
+            },
             result_json={"dependency_requests": [request]},
             created_at=now(),
             updated_at=now(),

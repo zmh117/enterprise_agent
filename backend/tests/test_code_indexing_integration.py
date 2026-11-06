@@ -33,12 +33,12 @@ def test_real_qdrant_snapshot_visibility_and_content_cache(database):
             assert indexer.index(build["build_id"], lease)
             CodeBuildRepository(database).finish_history(build["build_id"], lease)
             snapshots[revision] = build["snapshot_id"]
-        assert embedding.encoded == 2
+        assert embedding.encoded == 3
         index = CodeIndexStore(database).ensure(ids["source_id"])
         for revision, snapshot_id in snapshots.items():
-            assert qdrant.code_count(index, snapshot_id) == 1
+            assert qdrant.code_count(index, snapshot_id) == 2
             points = qdrant.code_search(index, snapshot_id, VECTOR, 10)
-            assert len(points) == 1
+            assert len(points) == 2
             assert points[0]["payload"]["snapshot_id"] == snapshot_id
             assert points[0]["payload"]["point_kind"] == "code_knowledge"
             result = search_code(
@@ -54,7 +54,7 @@ def test_real_qdrant_snapshot_visibility_and_content_cache(database):
                 check=lambda: None,
             )
             assert result["documents"][0]["snapshot_id"] == snapshot_id
-            assert result["documents"][0]["evidence"]
+            assert any(row["evidence"] for row in result["documents"])
     finally:
         if index is not None:
             qdrant.http.request("DELETE", qdrant.path(index))

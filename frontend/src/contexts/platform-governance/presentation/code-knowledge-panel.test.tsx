@@ -83,6 +83,40 @@ const detail = {
       revision_id: "revision",
       knowledge: {
         title: "发布工单",
+        object_key: "factory.work_order",
+        states: [{ key: "created", name: "已创建", raw_value: "10" }],
+        transition: {
+          machine_key: "factory.work_order.configuration",
+          event_key: "factory.work_order.publish.request",
+          from_state: {
+            mode: "states",
+            state_keys: ["created"],
+            description: "允许创建状态",
+          },
+          to_state: {
+            mode: "unchanged",
+            state_key: null,
+            description: "请求已受理",
+          },
+          actions: [
+            { key: "enqueue", description: "排入后台队列", phase: "accepted" },
+          ],
+          failures: [
+            {
+              key: "reject",
+              condition: { expression: "a 为空" },
+              phase: "request",
+              outcome: "rejected",
+              state_after: {
+                mode: "unchanged",
+                state_key: null,
+                description: "校验拒绝",
+              },
+              retained_action_keys: [],
+              description: "发布被拒绝",
+            },
+          ],
+        },
         summary: "字段 a 不能为空",
         role: "backend",
         coverage: "analyzed",
@@ -221,6 +255,9 @@ describe("代码知识管理", () => {
       await screen.findByRole("button", { name: "查看候选与进度" })
     )
     await screen.findByText("发布工单")
+    expect(screen.getByLabelText("状态迁移")).toHaveTextContent("起始状态：已创建（10）")
+    expect(screen.getByLabelText("失败结果")).toHaveTextContent("失败后状态：保持原状态")
+    expect(screen.getByLabelText("执行动作")).toHaveTextContent("排入后台队列")
     expect(
       screen.queryByRole("button", { name: "记录核验通过并继续构建" })
     ).not.toBeInTheDocument()

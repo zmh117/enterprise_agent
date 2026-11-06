@@ -18,6 +18,7 @@ from app.modules.knowledge.domain.normalization import canonical_json, digest
 from app.modules.knowledge.infrastructure.code_build_repository import CodeBuildRepository
 from app.modules.knowledge.infrastructure.code_repository import CodeRepository, decoded
 from app.modules.knowledge.infrastructure.storage import source_lock, table
+from app.modules.knowledge.domain.code_identity_catalog import CATALOG_HASH
 from app.shared.database import Database
 
 
@@ -287,9 +288,14 @@ class CodeKnowledgeOperations:
             service_account_id=account_id,
             skill_hash=digest(skill),
             contract_version=CONTRACT_VERSION,
+            identity_catalog_hash=CATALOG_HASH,
         )
 
     def details(self, build_id: str, *, after: str = "") -> dict[str, Any]:
+        from app.modules.knowledge.infrastructure.code_fsm_repository import (
+            CodeStateMachineRepository,
+        )
+
         checked_identifier(build_id)
         if after:
             checked_identifier(after)
@@ -317,20 +323,28 @@ class CodeKnowledgeOperations:
         )
         if len(relations) > 1000:
             raise CodeKnowledgeError("code_review_relations_limit")
+        records = []
+        for row in rows[:10]:
+            attributes = decoded(row["attributes"])
+            if attributes["contract_version"] != CONTRACT_VERSION:
+                raise CodeKnowledgeError("code_contract_version_retired")
+            if attributes["knowledge"]["kind"] == "transition":
+                attributes["knowledge"] = CodeStateMachineRepository(self.db).read(
+                    build["snapshot_id"],
+                    row["document_id"],
+                    row["revision_id"],
+                    attributes["knowledge"],
+                )
+            records.append(
+                dict(knowledge_id=row["document_id"], revision_id=row["revision_id"], **attributes)
+            )
         result = dict(
             build_id=build_id,
             snapshot_id=build["snapshot_id"],
             units=units,
             review_digest=candidate_digest,
             relations=[decoded(row["relation_json"]) for row in relations],
-            records=[
-                dict(
-                    knowledge_id=row["document_id"],
-                    revision_id=row["revision_id"],
-                    **decoded(row["attributes"]),
-                )
-                for row in rows[:10]
-            ],
+            records=records,
             has_more=len(rows) > 10,
             next_cursor=rows[9]["document_id"] if len(rows) > 10 else None,
         )
@@ -411,6 +425,12 @@ class CodeKnowledgeOperations:
         with source_lock(self.db, build["source_id"]), self.db.unit_of_work():
             self.admin.require_admin(actor_id)
             build = self.builds.get(build_id)
+            configuration = decoded(build["configuration_json"])
+            if (
+                configuration.get("contract_version") != CONTRACT_VERSION
+                or configuration.get("identity_catalog_hash") != CATALOG_HASH
+            ):
+                raise CodeKnowledgeError("code_contract_version_retired")
             if (
                 build["stage"] not in {"FAILED", "INTERRUPTED"}
                 or build["config_hash"] != self.repo.binding(build["source_id"])["config_hash"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -68,6 +69,10 @@ class RunAuditRecorder:
     def observe_message(self, message: Any) -> None:
         if self._code_extraction:
             # Source and candidate bodies belong only to their controlled volumes.
+            if sdk_message_type(message) == "system" and sdk_value(message, "subtype") == "init":
+                self.audit["init_snapshot"] = _extraction_init_snapshot(
+                    message, self.audit["permission_snapshot"]
+                )
             self._observe_model_usage(message, sdk_message_type(message))
             return
         self.drain_raw_api_bodies()
@@ -463,6 +468,61 @@ def _finalize_summary(audit: dict[str, Any]) -> None:
         "tool_call_count": len(audit.get("tool_executions") or []),
         "distinct_tool_count": len(tool_names),
     }
+
+
+def _extraction_init_snapshot(message: Any, permissions: dict[str, Any]) -> dict[str, Any]:
+    """Project metadata directly; never serialize an extraction init message wholesale."""
+    nested = sdk_value(message, "data")
+    source = nested if isinstance(nested, dict) else message
+    complete = True
+
+    def names(field: str, maximum: int) -> list[str] | None:
+        nonlocal complete
+        raw = sdk_value(source, field)
+        if not isinstance(raw, list):
+            complete = False
+            return None
+        result = [item for item in raw[:maximum] if _init_identifier(item)]
+        complete = complete and len(result) == len(raw)
+        return result
+
+    tools = names("tools", 256)
+    skills = names("skills", 128)
+    raw_servers = sdk_value(source, "mcp_servers")
+    servers: list[dict[str, str]] | None = None
+    if isinstance(raw_servers, list):
+        servers = []
+        for item in raw_servers[:32]:
+            if not isinstance(item, dict) or not _init_identifier(item.get("name")):
+                complete = False
+                continue
+            status = item.get("status")
+            if status not in ("connected", "failed", "pending", "needs-auth", "disabled"):
+                status = "unknown"
+                complete = False
+            servers.append({"name": item["name"], "status": status})
+        complete = complete and len(servers) == len(raw_servers)
+    else:
+        complete = False
+    return {
+        "type": "system",
+        "subtype": "init",
+        "data": {
+            "tools": tools,
+            "skills": skills,
+            "mcp_servers": servers,
+            "metadata_complete": complete,
+        },
+        "sdk_version": permissions.get("sdk_version", "unknown"),
+        "cli_version": permissions.get("cli_version", "unknown"),
+    }
+
+
+def _init_identifier(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}", value) is not None
+    )
 
 
 def _request_context_tokens(usage: dict[str, Any]) -> int:
