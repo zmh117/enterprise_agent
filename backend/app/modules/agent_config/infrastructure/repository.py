@@ -552,17 +552,23 @@ class AgentConfigRepository:  # noqa: PLR0904
     def connector_catalog(self) -> list[dict[str, Any]]:
         return self.database.execute(
             """
-            select id, connector_type, name, enabled, allow_ingress, allow_delivery,
-                   case when connector_type = 'dingtalk_enterprise_stream'
+            select c.id, c.connector_type, coalesce(w.name, c.name) as name,
+                   c.enabled, c.allow_ingress, c.allow_delivery,
+                   case when c.connector_type = 'dingtalk_enterprise_stream'
                         then 1 else 0 end as supports_robot_delivery
-            from integration_connector
-            where enabled = 1 and deleted = 0
-              and (connector_type not in ('managed_webhook', 'grafana_alert') or exists (
-                select 1 from webhook_trigger_definition d
+            from integration_connector c
+            left join (
+                select d.connector_id, min(d.name) as name
+                from webhook_trigger_definition d
                 join webhook_trigger_publication p on p.id=d.current_publication_id
-                where d.connector_id=integration_connector.id and d.status='enabled'
-                  and p.status='active' and p.schema_version=2))
-            order by name, id
+                where d.status='enabled' and p.status='active' and p.schema_version=3
+                group by d.connector_id having count(*)=1
+            ) w on w.connector_id=c.id
+                and c.connector_type in ('managed_webhook', 'grafana_alert')
+            where c.enabled = 1 and c.deleted = 0
+              and (c.connector_type not in ('managed_webhook', 'grafana_alert')
+                   or w.connector_id is not null)
+            order by name, c.id
             """
         )
 

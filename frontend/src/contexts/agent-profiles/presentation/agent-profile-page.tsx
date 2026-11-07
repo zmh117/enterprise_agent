@@ -1679,7 +1679,8 @@ function ConnectorChecklist({
                   {connectorId}
                 </span>
                 <span className="mt-1 block text-xs text-destructive">
-                  Connector 已停用或删除，请取消选择后保存草稿。
+                  此 Connector
+                  当前不可选，请检查渠道的启用、发布状态和用途，或取消选择后保存草稿。
                 </span>
               </span>
             </label>

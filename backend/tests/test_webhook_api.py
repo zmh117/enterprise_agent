@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -14,6 +15,37 @@ from backend.tests.test_unified_identity_rbac import (
 
 
 PUBLIC_ID = "wh_local_grafana_default_00000000000000000001"
+
+
+@pytest.mark.parametrize("unavailable", ["disabled", "revoked", "unpublished", "old_schema"])
+def test_agent_catalog_uses_webhook_name_and_current_publication(unavailable) -> None:
+    from backend.tests.support.webhooks import prepare_test_webhook
+
+    c = unified_container()
+    prepare_test_webhook(c)
+    c.database.execute(
+        "update webhook_trigger_definition set name='合成诊断告警入口' where code='grafana-default'"
+    )
+    with TestClient(create_app(unified_settings(), container_factory=lambda _: c)) as client:
+        login(client)
+
+        def connectors():
+            result = client.get("/api/admin/agents/default-diagnostic-agent")
+            assert result.status_code == 200
+            return {item["id"]: item for item in result.json()["agent"]["catalog"]["connectors"]}
+
+        entry = connectors()["connector-grafana-default"]
+        assert entry["name"] == "合成诊断告警入口"
+        assert entry["allow_ingress"]
+        if unavailable == "disabled":
+            c.database.execute("update webhook_trigger_definition set status='disabled'")
+        elif unavailable == "revoked":
+            c.database.execute("update webhook_trigger_publication set status='revoked'")
+        elif unavailable == "unpublished":
+            c.database.execute("update webhook_trigger_definition set current_publication_id=null")
+        else:
+            c.database.execute("update webhook_trigger_publication set schema_version=2")
+        assert "connector-grafana-default" not in connectors()
 
 
 def _payload() -> dict[str, object]:
@@ -157,6 +189,10 @@ def test_first_webhook_creates_independent_ingress_and_completes_configuration()
         assert connector.allow_ingress and not connector.allow_delivery
         assert connector.secret_ref == "" and connector.base_url == ""
         assert definition["status"] == "disabled"
+        agent_path = "/api/admin/agents/default-diagnostic-agent"
+        assert source_id not in {
+            item["id"] for item in client.get(agent_path).json()["agent"]["catalog"]["connectors"]
+        }
         counts = {
             table: c.agent_repository.count_rows(table)
             for table in ("integration_connector", "app_user", "webhook_trigger_definition")
@@ -223,6 +259,10 @@ def test_first_webhook_creates_independent_ingress_and_completes_configuration()
             },
         )
         assert enabled.status_code == 200, enabled.text
+        agent_catalog = client.get(agent_path).json()["agent"]["catalog"]["connectors"]
+        assert (
+            next(item for item in agent_catalog if item["id"] == source_id)["name"] == body["name"]
+        )
         public_path = "/webhooks/v1/" + definition["public_id"]
         assert client.post(public_path, json=sample).status_code == 401
         from backend.tests.support.applications import activate_webhook_test_application

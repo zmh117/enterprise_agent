@@ -1334,6 +1334,43 @@ describe("Agent Profile management", () => {
     ).toBe(false)
   })
 
+  it("shows a selected Webhook by its configured name without an unavailable warning", async () => {
+    const webhook = {
+      id: "connector-webhook-diagnostic",
+      connector_type: "managed_webhook",
+      name: "诊断告警 Webhook",
+      enabled: 1,
+      allow_ingress: 1,
+      allow_delivery: 0,
+    }
+    const payload = agentPayload({}, [webhook])
+    payload.agent.draft.config = {
+      ...config,
+      channels: { ingress: [webhook.id], delivery: [] },
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      response(
+        String(input).includes("/model-connections/")
+          ? { connection: modelConnection }
+          : payload
+      )
+    )
+    renderWithQuery(<AgentProfilePage />)
+
+    expect(await screen.findByText(webhook.name)).toBeInTheDocument()
+    const ingress = screen.getByRole("group", { name: "入口 Connector" })
+    expect(
+      within(ingress).getByRole("checkbox", { name: /诊断告警 Webhook/ })
+    ).toBeChecked()
+    expect(within(ingress).queryByText(/当前不可选/)).not.toBeInTheDocument()
+    expect(within(ingress).queryByText(/已停用或删除/)).not.toBeInTheDocument()
+    expect(
+      within(screen.getByRole("group", { name: "投递 Connector" })).queryByRole(
+        "checkbox"
+      )
+    ).not.toBeInTheDocument()
+  })
+
   it("shows unavailable selected Connectors and blocks validation until changes are saved", async () => {
     const replacementConnector = {
       id: "connector_97d62ac3cdc343ebbd0559dfeef3c031",
@@ -1399,7 +1436,7 @@ describe("Agent Profile management", () => {
     expect(replacement).not.toBeChecked()
     expect(
       within(ingress).getByText(
-        "Connector 已停用或删除，请取消选择后保存草稿。"
+        "此 Connector 当前不可选，请检查渠道的启用、发布状态和用途，或取消选择后保存草稿。"
       )
     ).toBeInTheDocument()
 
