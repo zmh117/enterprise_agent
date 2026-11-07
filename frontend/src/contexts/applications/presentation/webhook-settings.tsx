@@ -249,7 +249,7 @@ function WebhookForm({ initial }: { initial: WebhookDetail }) {
           </datalist>
           <p className="text-xs text-muted-foreground">
             留空时无需 Authorization 请求头。填写后，请求须携带对应的 Bearer
-            Token；Token 至少包含 32 个高熵字符。
+            Token。
             <a
               href="/platform/secrets"
               target="_blank"

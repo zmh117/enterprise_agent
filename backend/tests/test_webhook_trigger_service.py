@@ -249,7 +249,7 @@ def test_trigger_lifecycle_binds_user_without_creating_account_or_changing_roles
     assert service.repository.get_definition_by_public_id(old_public_id) is None
 
 
-def test_trigger_requires_unique_strong_bearer_tokens(
+def test_trigger_requires_unique_valid_bearer_tokens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     c, service = _service(monkeypatch)
@@ -294,29 +294,29 @@ def test_trigger_requires_unique_strong_bearer_tokens(
     } == {"每个 Webhook binding 必须使用唯一 Bearer Token"}
 
     c.platform_config_service.secret_provider.create_secret(
-        code="weak_webhook_token",
-        value="too-short",
+        code="malformed_webhook_token",
+        value="contains space",
         actor_id=ADMIN_ID,
     )
-    weak_config = deepcopy(_config())
-    weak_config["authentication"]["secret_ref"] = "secret://platform/weak_webhook_token"
-    weak = service.create(
+    malformed_config = deepcopy(_config())
+    malformed_config["authentication"]["secret_ref"] = "secret://platform/malformed_webhook_token"
+    malformed = service.create(
         actor_id=ADMIN_ID,
-        code="grafana-weak-token",
-        name="Grafana Weak Token",
+        code="grafana-malformed-token",
+        name="Grafana Malformed Token",
         trigger_type="grafana",
         connector_id="connector-grafana-default",
-        config=weak_config,
+        config=malformed_config,
     )
-    weak_validation = service.validate_revision(
+    malformed_validation = service.validate_revision(
         actor_id=ADMIN_ID,
-        code="grafana-weak-token",
-        revision_id=str(weak["draft"]["id"]),
+        code="grafana-malformed-token",
+        revision_id=str(malformed["draft"]["id"]),
     )
-    assert weak_validation["validation"]["valid"] is False
+    assert malformed_validation["validation"]["valid"] is False
     assert any(
-        item["field"] == "authentication.secret_ref" and "至少包含 32" in item["message"]
-        for item in weak_validation["validation"]["errors"]
+        item["field"] == "authentication.secret_ref" and "不含空白" in item["message"]
+        for item in malformed_validation["validation"]["errors"]
     )
 
     unsupported_config = deepcopy(_config())

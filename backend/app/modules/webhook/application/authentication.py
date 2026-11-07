@@ -4,7 +4,7 @@ import hmac
 from typing import Any, Mapping
 
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
-from app.modules.webhook.domain.models import is_strong_bearer_token
+from app.modules.webhook.domain.models import is_valid_bearer_token
 from app.shared.exceptions import PermissionDenied
 
 
@@ -52,9 +52,9 @@ class WebhookAuthenticator:
                 safe_message="Webhook 身份验证失败",
                 error_code="webhook_auth_failed",
             ) from exc
-        if not is_strong_bearer_token(secret):
+        if not is_valid_bearer_token(secret):
             raise PermissionDenied(
-                "Webhook bearer credential is missing or weak",
+                "Webhook bearer credential is missing or malformed",
                 safe_message="Webhook 身份验证失败",
                 error_code="webhook_auth_failed",
             )

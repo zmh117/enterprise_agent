@@ -28,7 +28,17 @@ from backend.tests.test_webhook_ingress_dispatch import PUBLIC_ID, _container
         ),
         (
             {"type": "bearer_v1", "secret_ref": "secret://platform/synthetic"},
-            "weak",
+            "short",
+            "READY",
+        ),
+        (
+            {"type": "bearer_v1", "secret_ref": "secret://platform/synthetic"},
+            "",
+            "MISCONFIGURED",
+        ),
+        (
+            {"type": "bearer_v1", "secret_ref": "secret://platform/synthetic"},
+            "contains space",
             "MISCONFIGURED",
         ),
         (
@@ -121,8 +131,12 @@ def test_only_explicit_published_none_skips_bearer(authentication) -> None:
     registry.resolve_reference.assert_not_called()
 
 
-@pytest.mark.parametrize("secret", ["", "weak", RuntimeError("unavailable")])
-def test_configured_bearer_does_not_fall_back_when_secret_is_unavailable(secret) -> None:
+@pytest.mark.parametrize(
+    "secret",
+    ["", "contains space", "trailing\n", "tab\there", "\x7f", "中文", "s" * 4097, RuntimeError("unavailable")],
+    ids=["empty", "space", "newline", "tab", "control", "non-ascii", "oversized", "unavailable"],
+)
+def test_configured_bearer_rejects_invalid_credentials_even_when_matching(secret) -> None:
     registry = Mock()
     if isinstance(secret, Exception):
         registry.resolve_reference.side_effect = secret
@@ -137,8 +151,55 @@ def test_configured_bearer_does_not_fall_back_when_secret_is_unavailable(secret)
                     "secret_ref": "secret://platform/synthetic",
                 }
             },
-            headers={},
+            headers={"Authorization": f"Bearer {secret}" if isinstance(secret, str) else "Bearer x"},
         )
+
+
+@pytest.mark.parametrize("token_length", [1, 31, 4096])
+def test_valid_bearer_lengths_publish_and_authenticate(token_length) -> None:
+    c = _container()
+    c.settings = replace(c.settings, identity=unified_settings().identity)
+    token = "7" * token_length
+    c.platform_config_service.secret_provider.create_secret(
+        code="synthetic_bearer_length",
+        value=token,
+        actor_id="user_local_admin",
+    )
+    path = "/api/admin/webhook-triggers/grafana-default"
+    public_path = f"/webhooks/v1/{PUBLIC_ID}"
+    with TestClient(create_app(unified_settings(), container_factory=lambda _: c)) as client:
+        headers = csrf_headers(login(client))
+        detail = client.get(path).json()["trigger"]
+        config = deepcopy(detail["draft"]["config"])
+        config["authentication"]["secret_ref"] = "secret://platform/synthetic_bearer_length"
+        saved = client.post(
+            path + "/revisions",
+            headers=headers,
+            json={"expected_revision": detail["draft"]["revision"], "config": config},
+        )
+        assert saved.status_code == 200, saved.text
+        revision_path = path + "/revisions/" + saved.json()["revision"]["id"]
+        valid = client.post(revision_path + "/validate", headers=headers, json={})
+        assert valid.json()["revision"]["validation"]["valid"] is True, valid.text
+        published = client.post(revision_path + "/publish", headers=headers, json={})
+        assert published.status_code == 200, published.text
+        assert published.json()["publication"]["snapshot"]["authentication"] == config["authentication"]
+        channel = next(
+            item
+            for item in client.get("/api/admin/managed-channels").json()["items"]
+            if item.get("code") == "grafana-default"
+        )
+        assert channel["runtime"]["status"] == "READY", channel["runtime"]
+        payload = {"status": "firing", "groupKey": "synthetic-bearer-length"}
+        for request_headers in ({}, {"Authorization": "Bearer wrong"}):
+            rejected = client.post(public_path, json=payload, headers=request_headers)
+            assert rejected.status_code == 401
+            assert rejected.json()["error"]["code"] == "webhook_auth_failed"
+        accepted = client.post(
+            public_path, json=payload, headers={"Authorization": f"Bearer {token}"}
+        )
+        assert accepted.status_code == 202, accepted.text
+        assert accepted.json()["accepted"] is True
 
 
 @pytest.mark.parametrize(

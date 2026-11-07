@@ -99,10 +99,10 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def is_strong_bearer_token(value: str) -> bool:
+def is_valid_bearer_token(value: str) -> bool:
     encoded = value.encode("utf-8")
     return (
-        32 <= len(encoded) <= 4096
+        1 <= len(encoded) <= 4096
         and value == value.strip()
         and all(33 <= ord(character) <= 126 for character in value)
     )

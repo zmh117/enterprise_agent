@@ -18,7 +18,7 @@ from app.modules.webhook.domain.models import (
     TriggerSchema,
     config_hash,
     ensure_no_secret_values,
-    is_strong_bearer_token,
+    is_valid_bearer_token,
     normalize_config,
 )
 from app.modules.webhook.infrastructure import WebhookTriggerRepository
@@ -123,11 +123,11 @@ class TriggerValidator:
                         "message": "无法解析凭据引用",
                     }
                 )
-            elif not is_strong_bearer_token(secret):
+            elif not is_valid_bearer_token(secret):
                 errors.append(
                     {
                         "field": "authentication.secret_ref",
-                        "message": "Bearer Token 必须至少包含 32 个高熵字符",
+                        "message": "Bearer Token 仅支持不含空白的可打印 ASCII 字符，且不能超过 4096 字节",
                     }
                 )
             else:
