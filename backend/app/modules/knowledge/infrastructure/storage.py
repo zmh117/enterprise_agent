@@ -12,6 +12,7 @@ from app.shared.database import Database
 
 TABLES = frozenset(
     {
+        "code_checkout_job",
         "source",
         "document",
         "document_revision",

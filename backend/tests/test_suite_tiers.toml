@@ -38,6 +38,7 @@ contract = [
   "test_code_knowledge.py",
   "test_code_state_machines.py",
   "test_code_curated_import.py",
+  "test_code_checkout.py",
   "test_code_collection.py",
   "test_code_history_bridge.py",
   "test_code_indexing.py",
@@ -224,6 +225,7 @@ contract = [
 integration = [
   "test_knowledge_incremental_postgres.py",
   "test_code_svn_integration.py",
+  "test_code_checkout_svn_integration.py",
   "test_code_indexing_integration.py",
   "test_runtime_replica_pool_postgres.py",
   "test_knowledge_database_recovery_postgres.py",

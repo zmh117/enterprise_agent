@@ -31,7 +31,17 @@ def test_sync_is_managed_default_worker_with_shared_platform_database():
     assert service["volumes"] == [
         "knowledge-qdrant:/qdrant/storage:ro",
         "knowledge-operation-state:/state",
+        "${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration:/etc/code-svn:ro",
+        "${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/client:/run/code-svn-auth:ro",
+        "${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}:/var/lib/code-svn/checkout",
     ]
+    assert service["environment"]["CODE_CHECKOUT_ENABLED"] == "${CODE_CHECKOUT_ENABLED:-false}"
+    api = config["services"]["api-server"]
+    assert (
+        api["environment"]["CODE_CHECKOUT_ENABLED"]
+        == service["environment"]["CODE_CHECKOUT_ENABLED"]
+    )
+    assert api["volumes"] == [service["volumes"][2]]
     assert service["depends_on"]["migrator"]["condition"] == "service_completed_successfully"
     assert service["depends_on"]["knowledge-embedding"]["condition"] == "service_healthy"
 

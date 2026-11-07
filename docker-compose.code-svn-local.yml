@@ -1,0 +1,37 @@
+# Optional local SVN and full working copies. Model extraction is not enabled here.
+services:
+  code-svn:
+    profiles: [code-svn-local]
+    build:
+      context: .
+      dockerfile: services/code_svn/Dockerfile
+    image: enterprise-agent/code-svn:local
+    ports:
+      - "127.0.0.1:18443:8443"
+    volumes:
+      - ${CODE_SVN_LOCAL_STATE_ROOT:-./.local/code-svn/state}:/state:ro
+    networks: [knowledge-managed, code-svn-local]
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import ssl,urllib.request; urllib.request.urlopen('https://localhost:8443/repos/mes/trunk',context=ssl.create_default_context(cafile='/state/tls/server.crt'),timeout=5).close()"]
+      interval: 15s
+      timeout: 8s
+      retries: 3
+  code-svn-admin:
+    profiles: [code-svn-tools]
+    image: enterprise-agent/code-svn:local
+    command: [info]
+    volumes:
+      - ${CODE_SVN_LOCAL_STATE_ROOT:-./.local/code-svn/state}:/state
+      - ${CODE_SVN_IMPORT_ROOT:-./ones知识库/项目代码}:/input:ro
+    network_mode: none
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+networks:
+  code-svn-local: {}

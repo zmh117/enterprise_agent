@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { CodeSourcePlan } from "./code-source-plan"
+import { CodeCheckoutPanel } from "./code-checkout-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -79,6 +80,7 @@ export function CodeKnowledgePanel({
         </p>
       </div>
       <KnowledgeError error={query.error || command.error} />
+      {canManage && <CodeCheckoutPanel />}
       {data?.sources.map((source) => (
         <CodeSourcePlan
           key={source.source_id}

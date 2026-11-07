@@ -7,6 +7,7 @@ from threading import Event
 
 from app.cli.knowledge_database_recovery import stop_signals
 from app.cli.code_collection_worker import start_code_collection
+from app.cli.code_checkout_worker import start_code_checkout
 from app.modules.knowledge.infrastructure.operations_scheduler import KnowledgeSyncScheduler
 from app.modules.knowledge.infrastructure.operations_process import exclusive_process, run_process
 from app.modules.knowledge.infrastructure.operations_repository import OperationsRepository
@@ -59,6 +60,7 @@ def main() -> int:
         exclusive_process(Path(os.environ.get("KNOWLEDGE_STATE_DIR", "/state")) / "sync.lock"),
     ):
         code_worker = start_code_collection(stop)
+        checkout_worker = start_code_checkout(stop)
         while not stop.is_set():
             database = None
             try:
@@ -75,6 +77,8 @@ def main() -> int:
                     database.close()
         if code_worker is not None:
             code_worker.join(timeout=65)
+        if checkout_worker is not None:
+            checkout_worker.join(timeout=65)
     return 0
 
 

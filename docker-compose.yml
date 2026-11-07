@@ -547,6 +547,10 @@ services:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       <<: *api-env
+      CODE_CHECKOUT_ENABLED: ${CODE_CHECKOUT_ENABLED:-false}
+      CODE_CHECKOUT_REGISTRY_FILE: /etc/code-svn/checkout.json
+    volumes:
+      - ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration:/etc/code-svn:ro
     secrets:
       - knowledge_bootstrap_token
       - dingtalk_runtime_auth_token
@@ -1281,11 +1285,18 @@ services:
       ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL: ${ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL:-true}
       KNOWLEDGE_SYNC_ENABLED: 'true'
       KNOWLEDGE_STATE_DIR: /state
+      CODE_CHECKOUT_ENABLED: ${CODE_CHECKOUT_ENABLED:-false}
+      CODE_CHECKOUT_REGISTRY_FILE: /etc/code-svn/checkout.json
+      CODE_SVN_AUTH_ROOT: /run/code-svn-auth
+      CODE_CHECKOUT_ROOT: /var/lib/code-svn/checkout
     secrets:
     - app_config_master_key
     volumes:
     - knowledge-qdrant:/qdrant/storage:ro
     - knowledge-operation-state:/state
+    - ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration:/etc/code-svn:ro
+    - ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/client:/run/code-svn-auth:ro
+    - ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}:/var/lib/code-svn/checkout
     networks:
     - knowledge-managed
     - provider-egress

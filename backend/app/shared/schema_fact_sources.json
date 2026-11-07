@@ -4103,6 +4103,35 @@
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "failure_json"
+    },
+    {
+      "id": "knowledge.code_checkout_job",
+      "object_type": "table",
+      "table": "knowledge.code_checkout_job",
+      "owner": "knowledge",
+      "semantics": "管理员完整 SVN 工作副本任务，不触发模型或知识发布",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "登记连接、固定版本目录选择及实际检出结果",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_checkout_jobs.py",
+        "code:backend/app/cli/code_checkout_worker.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/api/code_operations_controller.py"
+      ],
+      "lifecycle": "排队、执行、成功、失败或中断；成功目录不被后续任务覆盖",
+      "retention_policy": "保留任务元数据，工程内容只在部署工作副本目录",
+      "audit_requirement": "仅操作身份、版本、路径和安全错误码，不记录文件正文或凭据",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代存储须显式迁移"
+        ]
+      },
+      "evidence_refs": [
+        "migration:159_add_code_checkout_jobs"
+      ]
     }
   ]
 }

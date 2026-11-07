@@ -10,6 +10,32 @@ from app.modules.knowledge.api.controller import actor, invoke, payload, service
 def build_code_operations_router() -> APIRouter:
     router = APIRouter(prefix="/api/platform/knowledge/code", tags=["knowledge"])
 
+    @router.get("/checkouts")
+    async def checkout_snapshot(request: Request) -> Any:
+        require_action(request, resource_type="platform_config", resource_code="*", action="manage")
+        return await invoke(services(request).code_checkouts().snapshot)
+
+    @router.get("/checkouts/{job_id}")
+    async def checkout_detail(job_id: str, request: Request) -> Any:
+        require_action(request, resource_type="platform_config", resource_code="*", action="manage")
+        return await invoke(services(request).code_checkouts().get, job_id=job_id)
+
+    @router.post("/checkouts/browse", status_code=202)
+    async def browse_svn(request: Request) -> Any:
+        user = actor(request)
+        value = await payload(request, {"url", "revision", "request_key"})
+        return await invoke(
+            services(request).code_checkouts().submit_browse, actor_id=user, **value
+        )
+
+    @router.post("/checkouts", status_code=202)
+    async def checkout_svn(request: Request) -> Any:
+        user = actor(request)
+        value = await payload(request, {"browse_job_id", "paths", "folder", "request_key"})
+        return await invoke(
+            services(request).code_checkouts().submit_checkout, actor_id=user, **value
+        )
+
     @router.post("/sources/{source_id}/plan")
     async def plan(source_id: str, request: Request) -> Any:
         user = actor(request)

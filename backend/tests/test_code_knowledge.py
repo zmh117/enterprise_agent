@@ -551,7 +551,7 @@ def test_upgrade_153_retains_ones_document_and_revision(tmp_path):
     prior = tmp_path / "migrations"
     prior.mkdir()
     for path in default_migrations_dir().iterdir():
-        if path.is_file() and not path.name.startswith(("154_", "155_", "156_")):
+        if path.is_file() and not (path.name[:3].isdigit() and int(path.name[:3]) >= 154):
             shutil.copyfile(path, prior / path.name)
     db = Database("sqlite:///:memory:")
     try:
