@@ -69,7 +69,7 @@ from .executor import (
     PYTHON_RUNTIME_VERSION,
     PythonRuntimeExecutor,
 )
-from .code_extraction import CodeExtractionSandboxes, CodeGrantClient
+from .code_analysis import CodeAnalysisSandboxes, CodeGrantClient
 from app.shared.service_identity_client import ServicePrincipalTokenClient
 
 
@@ -560,8 +560,7 @@ def _default_dependencies() -> PythonRuntimeDependencies:
     )
     code_sandbox_factory = None
     if settings.service_principal.code_runtime_bootstrap_token_file:
-        source_root = Path(os.environ["CODE_SOURCE_SNAPSHOT_ROOT"])
-        artifact_root = Path(os.environ["CODE_EXTRACTION_ARTIFACT_ROOT"])
+        source_root = Path(os.environ["CODE_CHECKOUT_ROOT"])
         grant_client = CodeGrantClient(
             ServicePrincipalTokenClient(
                 base_url="http://api-server:8000",
@@ -571,11 +570,10 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         )
 
         def make_code_sandbox(request: dict[str, Any]) -> JobSandboxManager:
-            return CodeExtractionSandboxes(
+            return CodeAnalysisSandboxes(
                 sandbox_manager,
                 request,
                 source_root=source_root,
-                artifact_root=artifact_root,
                 grants=grant_client,
             )
 

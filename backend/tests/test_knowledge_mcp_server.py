@@ -176,7 +176,9 @@ def test_initialize_list_call_and_safe_audit(mcp_fixture, caplog, mode):
     assert {t["name"] for t in catalog} == set(KNOWLEDGE_TOOL_CONTRACTS)
     for tool in catalog:
         assert tool["inputSchema"] == KNOWLEDGE_TOOL_CONTRACTS[tool["name"]].input_schema
-        assert tool["annotations"]["readOnlyHint"] is True
+        assert (
+            tool["annotations"]["readOnlyHint"] is KNOWLEDGE_TOOL_CONTRACTS[tool["name"]].read_only
+        )
     directory = rpc(f, params={"name": "knowledge_list_bases", "arguments": {}})
     assert not directory.json()["result"]["isError"]
     response = rpc(f)
@@ -616,3 +618,89 @@ def test_bootstrap_has_no_platform_container_or_credential_loading(search_fixtur
         "ExternalIdentityCredentialRepository(",
     ):
         assert forbidden not in source
+
+
+def test_code_search_receipt_is_host_bound_and_never_in_model_output(mcp_fixture, monkeypatch):
+    from dataclasses import replace
+    from app.modules.knowledge.domain.code_answers import code_authorization_hash
+    from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+    from app.modules.knowledge.infrastructure.code_search_receipts import CodeSearchReceipts
+
+    f = mcp_fixture
+    access = f["search"].access.authenticate(f["knowledge_token"], "knowledge_search")
+    pin = f["search"].resources.resolve(f["body"]["knowledge_base_id"])
+
+    def code_search(*, token, arguments, search_id):
+        return dict(
+            source_kind="code",
+            knowledge_base_id=pin.knowledge_base_id,
+            resource_revision_id=pin.revision_id,
+            index_id=pin.index_id,
+            search_id=search_id,
+            source_id=pin.source_id,
+            checkout_id="synthetic-checkout",
+            requested_revision=100,
+            matched_revision=None,
+            match_kind="exact",
+            requires_verification=False,
+            documents=[],
+            content_scope="matched_chunks_with_conditions",
+            access_mode="source_permissions",
+            ranking_method="cross_encoder",
+            ranking_profile_hash="f" * 64,
+            partial=False,
+            partial_reason=None,
+            _code_receipt=dict(
+                contract="code-search-receipt/v1",
+                search_id=search_id,
+                knowledge_base_id=pin.knowledge_base_id,
+                resource_revision_id=pin.revision_id,
+                resource_fingerprint=pin.fingerprint,
+                source_id=pin.source_id,
+                index_id=pin.index_id,
+                authorization_hash=code_authorization_hash(access),
+                question_hash="a" * 64,
+                requested_revision=100,
+                matches=[],
+                version_mode="exact",
+            ),
+        )
+
+    monkeypatch.setattr(f["search"], "search", code_search)
+    result = rpc(f).json()["result"]
+    assert not result["isError"]
+    content = result["structuredContent"]
+    assert "_code_receipt" not in json.dumps(result)
+    receipts = CodeSearchReceipts(f["runtime"].database)
+    receipt = receipts.read(content["search_id"], access=access, pin=pin)
+    assert receipt["requested_revision"] == 100 and receipt["matches"] == []
+    with pytest.raises(CodeKnowledgeError, match="CODE_SEARCH_CONTEXT_CHANGED"):
+        receipts.read(
+            content["search_id"],
+            access=replace(access, current_authorization_hash="z" * 64),
+            pin=pin,
+        )
+    f["runtime"].database.execute(
+        "UPDATE mcp_operation_audit SET response_truncated=1 WHERE id=?", (content["search_id"],)
+    )
+    with pytest.raises(CodeKnowledgeError, match="CODE_SUCCESSFUL_SEARCH_REQUIRED"):
+        receipts.read(content["search_id"], access=access, pin=pin)
+
+
+def test_rejected_code_response_cannot_create_successful_receipt(mcp_fixture, monkeypatch):
+    f = mcp_fixture
+    monkeypatch.setattr(
+        f["search"],
+        "search",
+        lambda **kw: {
+            "_code_receipt": {"search_id": kw["search_id"]},
+            "invalid": True,
+        },
+    )
+    result = rpc(f).json()["result"]
+    assert result["isError"]
+    rows = f["runtime"].database.execute(
+        "SELECT status,business_response_json FROM mcp_operation_audit WHERE parent_audit_id IS NULL"
+    )
+    assert rows and all(row["status"] != "SUCCEEDED" for row in rows)
+    assert all("code_search" not in row["business_response_json"] for row in rows)

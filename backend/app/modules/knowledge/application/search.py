@@ -8,12 +8,19 @@ from dataclasses import dataclass
 from datetime import datetime
 import threading
 from typing import Any, cast
-from app.modules.knowledge.application.code_search import CodeSearchQdrant, search_code
-from app.modules.knowledge.domain.code_contracts import (
-    CodeKnowledgeError,
-    VERSION_SELECTOR,
-    validate,
+from app.modules.knowledge.application.code_answer_search import (
+    CodeAnswerQdrant,
+    CodeAnswerReranker,
+    CodeSearchReceiptPort,
+    search_code_answers,
 )
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+from app.modules.knowledge.domain.code_answers import (
+    svn_revision,
+    normalized_question,
+    code_authorization_hash,
+)
+from app.modules.knowledge.domain.normalization import digest
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.knowledge.application.candidates import (
@@ -59,14 +66,26 @@ class SearchRequest:
     knowledge_base_id: str
     query: str
     top_k: int
-    version: dict[str, Any] | None = None
+    svn_revision: int | None = None
+    version_mode: str = "exact"
+    exact_search_id: str | None = None
+    reason: str | None = None
 
     @classmethod
     def parse(cls, value: Any) -> "SearchRequest":
         if (
             not isinstance(value, dict)
             or not {"knowledge_base_id", "query"} <= set(value)
-            or not set(value) <= {"knowledge_base_id", "query", "top_k", "version"}
+            or not set(value)
+            <= {
+                "knowledge_base_id",
+                "query",
+                "top_k",
+                "svn_revision",
+                "version_mode",
+                "exact_search_id",
+                "reason",
+            }
         ):
             raise KnowledgeGovernanceError("knowledge_input_invalid")
         query, top_k = value["query"], value.get("top_k", 10)
@@ -82,10 +101,28 @@ class SearchRequest:
             query.encode("utf-8", errors="strict")
         except UnicodeError:
             raise KnowledgeGovernanceError("knowledge_input_invalid") from None
-        if "version" in value:
-            validate(value["version"], VERSION_SELECTOR)
+        if "svn_revision" in value:
+            svn_revision(value["svn_revision"])
+        mode = value.get("version_mode", "exact")
+        if mode not in {"exact", "next_higher_hint"}:
+            raise KnowledgeGovernanceError("knowledge_input_invalid")
+        if mode == "next_higher_hint":
+            checked_identifier(value.get("exact_search_id"))
+            if (
+                not isinstance(value.get("reason"), str)
+                or not 1 <= len(value["reason"].strip()) <= 2000
+            ):
+                raise KnowledgeGovernanceError("knowledge_input_invalid")
+        elif "exact_search_id" in value or "reason" in value:
+            raise KnowledgeGovernanceError("knowledge_input_invalid")
         return cls(
-            checked_identifier(value["knowledge_base_id"]), query, top_k, value.get("version")
+            checked_identifier(value["knowledge_base_id"]),
+            query,
+            top_k,
+            value.get("svn_revision"),
+            mode,
+            value.get("exact_search_id"),
+            value.get("reason"),
         )
 
 
@@ -102,12 +139,14 @@ class KnowledgeSearch:
         access_mode: KnowledgeAccessMode = KnowledgeAccessMode.ONLINE,
         readability: ReadabilityPort | None = None,
         code_history: CodeHistoryPort | None = None,
+        code_receipts: CodeSearchReceiptPort | None = None,
     ) -> None:
         self.access_mode = KnowledgeAccessMode(access_mode)
         if self.access_mode is KnowledgeAccessMode.ONLINE and readability is None:
             raise ValueError("在线知识检索必须装配 ONES 可读性检查")
         self.readability = readability
         self.code_history = code_history
+        self.code_receipts = code_receipts
         self.access, self.resources = access, resources
         self.embedding, self.qdrant = embedding, qdrant
         self.audit = audit
@@ -115,7 +154,9 @@ class KnowledgeSearch:
         self._slots = threading.BoundedSemaphore(4)
 
     @knowledge_entry
-    def search(self, *, token: PrincipalToken, arguments: Any) -> dict[str, Any]:
+    def search(
+        self, *, token: PrincipalToken, arguments: Any, search_id: str = ""
+    ) -> dict[str, Any]:
         access, acquired = None, False
         try:
             request = SearchRequest.parse(arguments)
@@ -128,7 +169,7 @@ class KnowledgeSearch:
                 raise KnowledgeGovernanceError("knowledge_search_busy")
             budget = self.access.budget(access.job_id)
             with budget.activate():
-                return self._search(token, request, access, budget)
+                return self._search(token, request, access, budget, search_id=search_id)
         except KnowledgeGovernanceError as exc:
             failure = exc
         except CodeKnowledgeError as exc:
@@ -180,14 +221,19 @@ class KnowledgeSearch:
         request: SearchRequest,
         access: KnowledgeJobAccess,
         budget: RetrievalBudget,
+        *,
+        search_id: str = "",
     ) -> dict[str, Any]:
         with ExitStack() as stack:
             with stage("resource"):
                 pin = self.resources.resolve(request.knowledge_base_id)
                 content = stack.enter_context(self.resources.content_for(pin))
-            if content.records.get("source", pin.source_id)["source_system"] == "code":
-                return self._search_code(token, request, access, budget, pin, content)
-            if request.version is not None:
+            kind = content.records.get("source", pin.source_id)["source_system"]
+            if kind == "svn":
+                return self._search_code(token, request, access, budget, pin, content, search_id)
+            if kind == "code":
+                raise CodeKnowledgeError("CODE_SOURCE_RETIRED")
+            if request.svn_revision is not None or request.version_mode != "exact":
                 raise KnowledgeGovernanceError("knowledge_input_invalid")
             return self._search_content(token, request, access, budget, pin, content)
 
@@ -199,11 +245,32 @@ class KnowledgeSearch:
         budget: RetrievalBudget,
         pin: PinnedKnowledgeResource,
         content: KnowledgeContent,
+        search_id: str,
     ) -> dict[str, Any]:
-        index = content.vectors.get(pin.index_code)
-        store = content.code
-        if store is None or index is None:
-            raise CodeKnowledgeError("code_source_unavailable")
+        revision = svn_revision(request.svn_revision)
+        checked_identifier(search_id)
+        index, store = content.vectors.get(pin.index_code), content.answers
+        if (
+            store is None
+            or index is None
+            or self.code_history is None
+            or self.code_receipts is None
+        ):
+            raise CodeKnowledgeError("CODE_SOURCE_UNAVAILABLE")
+        config = self.resources.store.code_configuration(pin.revision_id)
+        question_hash = digest(normalized_question(request.query))
+        chain_deadline = budget.deadline_ms
+        if request.version_mode == "next_higher_hint":
+            previous = self.code_receipts.read(
+                request.exact_search_id or "", access=access, pin=pin
+            )
+            if (
+                previous["version_mode"] != "exact"
+                or previous["requested_revision"] != revision
+                or previous["question_hash"] != question_hash
+            ):
+                raise CodeKnowledgeError("CODE_SUCCESSFUL_SEARCH_REQUIRED")
+            chain_deadline = min(chain_deadline, previous["deadline_ms"])
 
         def check() -> None:
             budget.check()
@@ -211,54 +278,68 @@ class KnowledgeSearch:
                 raise KnowledgeGovernanceError("knowledge_authorization_changed")
             self.resources.recheck(pin)
 
-        def retrieve() -> dict[str, Any]:
-            return search_code(
+        chain = self.access.budget(access.job_id, deadline_ms=chain_deadline)
+        with chain.activate():
+            # Only the control plane may inspect the private user request to confirm
+            # that this numeric version was explicitly supplied. Never infer HEAD/BASE.
+            declared = self.code_history.code_history(
+                token=token,
+                request={
+                    "action": "search_context",
+                    "knowledge_base_id": pin.knowledge_base_id,
+                    "resource_revision_id": pin.revision_id,
+                    "requested_revision": revision,
+                },
+            )
+            if (
+                declared.get("requested_revision") != revision
+                or declared.get("source_id") != pin.source_id
+                or declared.get("checkout_id") != config["checkout_id"]
+            ):
+                raise CodeKnowledgeError("CODE_SEARCH_CONTEXT_CHANGED")
+            check()
+            result = search_code_answers(
                 store=store,
                 index=index,
-                version=request.version,
+                revision=revision,
+                mode=request.version_mode,
+                allowed_paths=config["allowed_paths_json"],
                 query=request.query,
                 top_k=request.top_k,
                 resource_revision_id=pin.revision_id,
                 embedding=self.embedding,
-                qdrant=cast(CodeSearchQdrant, content.qdrant or self.qdrant),
-                reranker=self.reranker,
+                qdrant=cast(CodeAnswerQdrant, content.qdrant or self.qdrant),
+                reranker=cast(CodeAnswerReranker, self.reranker),
                 check=check,
             )
-
-        result = retrieve()
-        if (
-            result["version"]["status"] == "BUILD_REQUIRED"
-            and request.version is not None
-            and request.version["kind"] == "svn"
-            and self.code_history is not None
-        ):
-            result["version"] = self.code_history.code_history(
-                token=token,
-                request={
-                    "action": "version",
-                    "knowledge_base_id": request.knowledge_base_id,
-                    "resource_revision_id": pin.revision_id,
-                    "revision": request.version["revision"],
-                },
+            result.update(
+                search_id=search_id, source_id=pin.source_id, checkout_id=config["checkout_id"]
             )
-            check()
-            if result["version"]["status"] == "READY":
-                # The exact snapshot can finish between the read and cache request.
-                # Return its verified contents rather than READY with a stale empty result.
-                result = retrieve()
-        self.audit.record(
-            "knowledge.search.completed",
-            status="success",
-            summary="已返回指定版本代码知识定位结果",
-            actor_id=access.actor_id,
-            job_id=access.job_id,
-            payload={
+            # The MCP adapter persists this metadata only when the complete tool call
+            # succeeds. No query or source text is written to the operation audit.
+            result["_code_receipt"] = {
+                "contract": "code-search-receipt/v1",
+                "search_id": search_id,
                 "knowledge_base_id": pin.knowledge_base_id,
-                "returned": len(result["documents"]),
-                "version_status": result["version"]["status"],
-            },
-        )
-        return result
+                "resource_revision_id": pin.revision_id,
+                "resource_fingerprint": pin.fingerprint,
+                "source_id": pin.source_id,
+                "index_id": pin.index_id,
+                "checkout_id": config["checkout_id"],
+                "question_hash": question_hash,
+                "authorization_hash": code_authorization_hash(access),
+                "deadline_ms": chain.deadline_ms,
+                "requested_revision": revision,
+                "version_mode": request.version_mode,
+                "exact_search_id": request.exact_search_id,
+                "matched_revision": result["matched_revision"],
+                "matches": [
+                    {k: item[k] for k in ("document_id", "revision_id", "svn_revision")}
+                    for item in result["documents"]
+                ],
+            }
+            check()
+            return result
 
     def _search_content(
         self,

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher, PermissionResultDeny
 
 from app.modules.agent.domain.runtime import ToolCallBudget
-from app.modules.knowledge.domain.code_identity_catalog import CATALOG_HASH, identity_catalog
+from app.python_runtime.code_source_mount import CodeSourceMount
 from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version
 from app.python_runtime.mcp_config import _code_source_hook_options
 
@@ -21,10 +21,15 @@ async def main() -> None:
         return PermissionResultDeny(message="No tools execute in the initialization smoke")
 
     with tempfile.TemporaryDirectory(prefix="sdk-init-") as directory:
-        tools = ["Read", "Glob", "Grep", "Write", "Edit"]
+        tools = ["Read", "Glob", "Grep"]
+        mount = CodeSourceMount(
+            root=Path(directory).resolve(),
+            capability={"contract": "code-source-capability/v2"},
+            check=lambda _: {},
+        )
         hooks = _code_source_hook_options(
             SimpleNamespace(hook_matcher=HookMatcher),
-            SimpleNamespace(source_mount=object()),
+            SimpleNamespace(source_mount=mount),
             SimpleNamespace(effective_tool_names=tuple(tools)),
             ToolCallBudget(maximum=1),
         )
@@ -42,6 +47,7 @@ async def main() -> None:
                 "ANTHROPIC_API_KEY": "synthetic-unused",
                 "ANTHROPIC_BASE_URL": "http://127.0.0.1:1",
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                "CLAUDE_CODE_SKIP_PROMPT_HISTORY": "1",
                 "CLAUDE_CONFIG_DIR": str(Path(directory) / "config"),
             },
             **hooks,
@@ -56,8 +62,8 @@ async def main() -> None:
                     "sdk_version": claude_sdk_version(),
                     "cli_version": claude_cli_version(),
                     "hook_on_failure": hooks["hooks"]["PreToolUse"][0].on_failure,
-                    "identity_catalog_version": identity_catalog()["version"],
-                    "identity_catalog_hash": CATALOG_HASH,
+                    "source_capability": "code-source-capability/v2",
+                    "native_tools": tools,
                     "prompts_sent": 0,
                 }
             )

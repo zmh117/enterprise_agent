@@ -86,10 +86,8 @@ class KnowledgeDirectory:
                 "code": base["code"],
                 "name": resource["name"],
                 "status": "AVAILABLE",
-                "source_kind": "code" if source["source_system"] == "code" else "ones",
-                "component_roles": ["backend", "factory_frontend", "group_frontend"]
-                if source["source_system"] == "code"
-                else [],
+                "source_kind": "code" if source["source_system"] == "svn" else "ones",
+                "component_roles": [],
             }
             items.append(item)
             facts.append({"resource": asdict(pin), "view": item})

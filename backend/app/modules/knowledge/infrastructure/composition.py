@@ -19,8 +19,8 @@ from app.modules.knowledge.infrastructure.ones_verifier import OnesSourceVerifie
 from app.shared.database import Database
 from app.modules.knowledge.application.content_access import ContentAccess
 from app.modules.knowledge.application.operations import KnowledgeOperations
-from app.modules.knowledge.infrastructure.code_operations import CodeKnowledgeOperations
 from app.modules.knowledge.infrastructure.code_checkout_jobs import CodeCheckoutJobs
+from app.modules.knowledge.infrastructure.code_resource_service import CodeResourceService
 from app.modules.knowledge.infrastructure.operations_store import OperationsStore
 
 
@@ -70,11 +70,26 @@ class KnowledgeServices:
     def operations(self) -> KnowledgeOperations:
         return KnowledgeOperations(self.sources(), OperationsStore(self.database))
 
-    def code_operations(self) -> CodeKnowledgeOperations:
-        return CodeKnowledgeOperations(self.database, self.sources())
-
     def code_checkouts(self) -> CodeCheckoutJobs:
         return CodeCheckoutJobs(self.database, self.sources())
+
+    def code_resources(self) -> CodeResourceService:
+        return CodeResourceService(
+            self.sources(), VectorRepository(self.database), content_access=self.content_access
+        )
+
+    def initialize_code_index(self, **arguments: Any) -> dict[str, Any]:
+        with ExitStack() as cleanup:
+            embedding, qdrant = EmbeddingClient(), QdrantClient()
+            cleanup.callback(embedding.http.close)
+            cleanup.callback(qdrant.http.close)
+            return CodeResourceService(
+                self.sources(),
+                VectorRepository(self.database),
+                embedding=embedding,
+                qdrant=qdrant,
+                content_access=self.content_access,
+            ).initialize_index(**arguments)
 
     def verify_resource(self, **arguments: Any) -> dict[str, Any]:
         with ExitStack() as cleanup:

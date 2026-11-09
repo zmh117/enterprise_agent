@@ -32,12 +32,15 @@ class RerankerClient:
             )
             raise VectorError(code) from None
 
-    def rank(self, query: str, documents: list[list[str]]) -> dict[str, Any]:
-        request = {"profile_hash": self.profile_hash, "query": query, "documents": documents}
-        checked_request(request, self.profile_hash)
+    def check(self) -> None:
         observed = self._request("GET", "/profile")
         if observed != {"profile": self.profile, "profile_hash": self.profile_hash}:
             raise VectorError("knowledge_rerank_profile_mismatch")
+
+    def rank(self, query: str, documents: list[list[str]]) -> dict[str, Any]:
+        request = {"profile_hash": self.profile_hash, "query": query, "documents": documents}
+        checked_request(request, self.profile_hash)
+        self.check()
         return checked_result(
             self._request("POST", "/rerank", request),
             profile_hash=self.profile_hash,

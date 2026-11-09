@@ -1,140 +1,114 @@
-"""Code-knowledge management: registered IDs only, existing admin and CSRF boundaries."""
+"""Code-library checkout management; removed pre-extraction/snapshot/build endpoints."""
 
 from typing import Any
 from fastapi import APIRouter, Request
 
-from app.modules.identity.api.dependencies import require_action
-from app.modules.knowledge.api.controller import actor, invoke, payload, services
+from app.modules.identity.api.dependencies import require_action, current_principal
+from app.modules.knowledge.api.controller import actor, invoke, payload, services, container
+from app.modules.knowledge.domain.code_answers import utc_time
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+from app.modules.knowledge.infrastructure.code_result_authorizer import CodeResultAuthorizer
+from app.modules.knowledge.infrastructure.code_result_client import CodeResultClient
+from app.modules.agent.infrastructure.runtime_pool_store import database_now
 
 
 def build_code_operations_router() -> APIRouter:
     router = APIRouter(prefix="/api/platform/knowledge/code", tags=["knowledge"])
 
-    @router.get("/checkouts")
-    async def checkout_snapshot(request: Request) -> Any:
+    @router.get("/resources/{resource_id}/index-status")
+    async def index_status(resource_id: str, request: Request) -> Any:
         require_action(request, resource_type="platform_config", resource_code="*", action="manage")
-        return await invoke(services(request).code_checkouts().snapshot)
+        return await invoke(
+            services(request).code_resources().indexing_status,
+            actor_id=current_principal(request).user_id,
+            resource_id=resource_id,
+        )
 
-    @router.get("/checkouts/{job_id}")
-    async def checkout_detail(job_id: str, request: Request) -> Any:
+    @router.post("/resources/{resource_id}/indexing")
+    async def change_indexing(resource_id: str, request: Request) -> Any:
+        user = actor(request)
+        value = await payload(request, {"paused"})
+        return await invoke(
+            services(request).code_resources().set_indexing,
+            actor_id=user,
+            resource_id=resource_id,
+            **value,
+        )
+
+    @router.post("/resources/{resource_id}/index-tasks/{task_id}/retry")
+    async def retry_indexing(resource_id: str, task_id: str, request: Request) -> Any:
+        user = actor(request)
+        await payload(request, set())
+        return await invoke(
+            services(request).code_resources().retry_indexing,
+            actor_id=user,
+            resource_id=resource_id,
+            task_id=task_id,
+        )
+
+    @router.get("/resources/{resource_id}/checkouts")
+    async def checkout_snapshot(resource_id: str, request: Request) -> Any:
         require_action(request, resource_type="platform_config", resource_code="*", action="manage")
-        return await invoke(services(request).code_checkouts().get, job_id=job_id)
+        return await invoke(services(request).code_checkouts().snapshot, resource_id=resource_id)
 
-    @router.post("/checkouts/browse", status_code=202)
-    async def browse_svn(request: Request) -> Any:
+    @router.get("/operations/{operation_id}")
+    async def checkout_detail(operation_id: str, request: Request) -> Any:
+        require_action(request, resource_type="platform_config", resource_code="*", action="manage")
+        user = current_principal(request).user_id
+
+        def read() -> dict[str, Any]:
+            jobs = services(request).code_checkouts()
+            jobs.admin.require_admin(user)
+            operation = jobs.get(operation_id)
+            if operation["operation_kind"] != "browse" or operation["state"] != "succeeded":
+                return operation
+            if utc_time(operation["deadline_at"]) <= database_now(jobs.db):
+                return {**operation, "result_expired": True}
+            issuer = container(request).service_principal_token_issuer
+            if issuer is None:
+                raise CodeKnowledgeError("CODE_RESULT_UNAVAILABLE")
+            gate = CodeResultAuthorizer(jobs.db, jobs)
+            before = gate.authorize(operation_id, operation["claim_version"])
+            try:
+                result = CodeResultClient(lambda: issuer.issue_code_control().access_token).read(
+                    operation_id,
+                    operation["claim_version"],
+                    result_hash=before["result_hash"],
+                    is_directory_preview=True,
+                    remaining=(
+                        utc_time(operation["deadline_at"]) - database_now(jobs.db)
+                    ).total_seconds(),
+                )
+            except CodeKnowledgeError as exc:
+                if exc.code != "CODE_RESULT_EXPIRED":
+                    raise
+                return {**operation, "result_expired": True}
+            jobs.admin.require_admin(user)
+            if gate.authorize(operation_id, operation["claim_version"]) != before:
+                raise CodeKnowledgeError("CODE_RESULT_DENIED")
+            return {**operation, "result": {**operation["result"], **result}}
+
+        return await invoke(read)
+
+    @router.post("/resources/{resource_id}/browse", status_code=202)
+    async def browse_svn(resource_id: str, request: Request) -> Any:
         user = actor(request)
         value = await payload(request, {"url", "revision", "request_key"})
         return await invoke(
-            services(request).code_checkouts().submit_browse, actor_id=user, **value
+            services(request).code_checkouts().submit_browse,
+            actor_id=user,
+            resource_id=resource_id,
+            **value,
         )
 
-    @router.post("/checkouts", status_code=202)
-    async def checkout_svn(request: Request) -> Any:
+    @router.post("/resources/{resource_id}/checkouts", status_code=202)
+    async def checkout_svn(resource_id: str, request: Request) -> Any:
         user = actor(request)
         value = await payload(request, {"browse_job_id", "paths", "folder", "request_key"})
         return await invoke(
-            services(request).code_checkouts().submit_checkout, actor_id=user, **value
-        )
-
-    @router.post("/sources/{source_id}/plan")
-    async def plan(source_id: str, request: Request) -> Any:
-        user = actor(request)
-        value = await payload(
-            request,
-            {
-                "expected_plan_revision",
-                "application_publication_id",
-                "service_account_id",
-                "schedule_enabled",
-                "demand_enabled",
-                "local_time",
-                "timezone",
-            },
-        )
-        return await invoke(
-            services(request).code_operations().configure_plan,
+            services(request).code_checkouts().submit_checkout,
             actor_id=user,
-            source_id=source_id,
-            **value,
-        )
-
-    @router.post("/sources/{source_id}/versions", status_code=202)
-    async def version(source_id: str, request: Request) -> Any:
-        user = actor(request)
-        value = await payload(request, {"revision"})
-        return await invoke(
-            services(request).code_operations().request_version,
-            actor_id=user,
-            source_id=source_id,
-            **value,
-        )
-
-    @router.post("/sources/{source_id}/sites")
-    async def site(source_id: str, request: Request) -> Any:
-        user = actor(request)
-        value = await payload(request, {"site_id", "snapshot_id", "expected_plan_revision"})
-        return await invoke(
-            services(request).code_operations().bind_site,
-            actor_id=user,
-            source_id=source_id,
-            **value,
-        )
-
-    @router.post("/sources/{source_id}/retry", status_code=202)
-    async def retry_source(source_id: str, request: Request) -> Any:
-        user = actor(request)
-        await payload(request, set())
-        return await invoke(
-            services(request).code_operations().retry_collection, actor_id=user, source_id=source_id
-        )
-
-    @router.get("")
-    def snapshot(request: Request) -> dict[str, Any]:
-        require_action(request, resource_type="platform_config", resource_code="*", action="read")
-        return services(request).code_operations().snapshot()
-
-    @router.get("/builds/{build_id}")
-    async def detail(build_id: str, request: Request, after: str = "") -> Any:
-        require_action(request, resource_type="platform_config", resource_code="*", action="manage")
-        return await invoke(
-            services(request).code_operations().details, build_id=build_id, after=after
-        )
-
-    @router.post("/builds", status_code=202)
-    async def start(request: Request) -> Any:
-        user = actor(request)
-        value = await payload(
-            request,
-            {"source_id", "source_snapshot_id", "application_publication_id", "service_account_id"},
-        )
-        return await invoke(services(request).code_operations().start, actor_id=user, **value)
-
-    @router.post("/builds/{build_id}/review")
-    async def review(build_id: str, request: Request) -> Any:
-        user = actor(request)
-        value = await payload(
-            request, {"review_reference", "processing_hash", "candidate_digest", "checked_unit_ids"}
-        )
-        return await invoke(
-            services(request).code_operations().review, actor_id=user, build_id=build_id, **value
-        )
-
-    @router.post("/builds/{build_id}/retry", status_code=202)
-    async def retry(build_id: str, request: Request) -> Any:
-        user = actor(request)
-        await payload(request, set())
-        return await invoke(
-            services(request).code_operations().retry, actor_id=user, build_id=build_id
-        )
-
-    @router.post("/sources/{source_id}/rollback")
-    async def rollback(source_id: str, request: Request) -> Any:
-        user = actor(request)
-        value = await payload(request, {"snapshot_id", "expected_current"})
-        return await invoke(
-            services(request).code_operations().rollback,
-            actor_id=user,
-            source_id=source_id,
+            resource_id=resource_id,
             **value,
         )
 

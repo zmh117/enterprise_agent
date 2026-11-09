@@ -154,3 +154,15 @@ def test_manifest_rejects_missing_declared_code_path(tmp_path: Path) -> None:
 def test_manifest_schema_file_itself_is_loaded_from_repository() -> None:
     assert default_fact_source_manifest_path().is_file()
     assert default_fact_source_schema_path().is_file()
+
+
+def test_operational_retirement_requires_completed_migration_contract(tmp_path: Path) -> None:
+    manifest = copy.deepcopy(load_fact_source_manifest())
+    entry = next(e for e in manifest["entries"] if e["id"] == "runtime.invocation_claim")
+    entry["retirement"] = {"status": "retired", "earliest_phase": "observation", "gates": ["test"]}
+    with pytest.raises(FactSourceManifestError, match="Operational fact"):
+        load_fact_source_manifest(_write_manifest(tmp_path, manifest))
+    entry["retirement"]["earliest_phase"] = "complete"
+    entry["evidence_refs"] = ["documented-intent-only"]
+    with pytest.raises(FactSourceManifestError, match="Operational fact"):
+        load_fact_source_manifest(_write_manifest(tmp_path, manifest))

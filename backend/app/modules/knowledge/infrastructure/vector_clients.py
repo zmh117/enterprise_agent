@@ -291,8 +291,14 @@ class QdrantClient:
     def path(index: dict[str, Any]) -> str:
         # collection 不从任意输入拼接路径：仅由索引 UUID 派生。
         import uuid
+        from app.modules.knowledge.domain.code_configuration import CODE_CHUNK_PROFILE
 
-        expected = "knowledge_" + uuid.UUID(index["id"]).hex
+        prefix = (
+            "code_answers_"
+            if index.get("chunk_profile_hash") == CODE_CHUNK_PROFILE.fingerprint
+            else "knowledge_"
+        )
+        expected = prefix + uuid.UUID(index["id"]).hex
         if index["collection_name"] != expected:
             raise VectorError("knowledge_collection_conflict")
         return "/collections/" + expected
@@ -300,11 +306,17 @@ class QdrantClient:
     def ensure(self, index: dict[str, Any]) -> None:
         self.check(index, create=True)
         path = self.path(index)
-        from app.modules.knowledge.domain.code_projection import PROJECTION_HASH
+        fields: tuple[str, ...] = ("index_id", "knowledge_base_id")
+        from app.modules.knowledge.domain.code_configuration import CODE_CHUNK_PROFILE
 
-        fields = ("index_id", "knowledge_base_id")
-        if index.get("chunk_profile_hash") == PROJECTION_HASH:
-            fields += ("snapshot_id", "point_kind")
+        if index.get("chunk_profile_hash") == CODE_CHUNK_PROFILE.fingerprint:
+            fields += ("source_id", "document_id", "index_task_id", "index_generation_key")
+            for field in ("svn_revision", "index_generation"):
+                self.http.request(
+                    "PUT",
+                    path + "/index?wait=true",
+                    {"field_name": field, "field_schema": "integer"},
+                )
         for field in fields:
             self.http.request(
                 "PUT", path + "/index?wait=true", {"field_name": field, "field_schema": "keyword"}
@@ -421,63 +433,6 @@ class QdrantClient:
             raise VectorError("knowledge_vector_response_invalid")
         return count
 
-    @staticmethod
-    def _code_scope(index: dict[str, Any], snapshot_id: str) -> dict[str, Any]:
-        from app.modules.knowledge.domain.code_projection import PROJECTION_HASH
-
-        if index.get("chunk_profile_hash") != PROJECTION_HASH or not snapshot_id:
-            raise VectorError("knowledge_code_index_invalid")
-        return {
-            "must": [
-                {"key": key, "match": {"value": value}}
-                for key, value in (
-                    ("index_id", index["id"]),
-                    ("knowledge_base_id", index["knowledge_base_id"]),
-                    ("snapshot_id", snapshot_id),
-                    ("point_kind", "code_knowledge"),
-                )
-            ]
-        }
-
-    def code_count(self, index: dict[str, Any], snapshot_id: str) -> int:
-        result = (
-            self.http.request(
-                "POST",
-                self.path(index) + "/points/count",
-                {
-                    "exact": True,
-                    "filter": self._code_scope(index, snapshot_id),
-                },
-            )
-            .get("result", {})
-            .get("count")
-        )
-        if type(result) is not int or result < 0:
-            raise VectorError("knowledge_vector_response_invalid")
-        return int(result)
-
-    def code_search(
-        self, index: dict[str, Any], snapshot_id: str, vector: list[float], limit: int
-    ) -> list[dict[str, Any]]:
-        if type(limit) is not int or not 1 <= limit <= 100:
-            raise VectorError("knowledge_vector_batch_invalid")
-        validate_vector(vector)
-        response = self.http.request(
-            "POST",
-            self.path(index) + "/points/query",
-            {
-                "query": vector,
-                "limit": limit,
-                "with_payload": True,
-                "with_vector": False,
-                "filter": self._code_scope(index, snapshot_id),
-            },
-        )
-        result = response.get("result", {}).get("points")
-        if not isinstance(result, list) or len(result) > limit:
-            raise VectorError("knowledge_vector_response_invalid")
-        return result
-
     def set_searchable(self, index: dict[str, Any], ids: list[str], value: bool) -> None:
         if index.get("incremental") != 1 or not ids or len(ids) > 32:
             raise VectorError("knowledge_vector_batch_invalid")
@@ -488,6 +443,92 @@ class QdrantClient:
         )
         if result.get("result", {}).get("status") != "completed":
             raise VectorError("knowledge_vector_write_unconfirmed")
+
+    def code_answer_search(
+        self,
+        index: dict[str, Any],
+        revision: int,
+        document_ids: list[str],
+        generation_keys: list[str],
+        vector: list[float],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        from app.modules.knowledge.domain.code_configuration import CODE_CHUNK_PROFILE
+
+        if (
+            index.get("chunk_profile_hash") != CODE_CHUNK_PROFILE.fingerprint
+            or index.get("incremental") != 1
+            or type(revision) is not int
+            or not 0 <= revision <= 2**63 - 1
+            or not 1 <= len(document_ids) <= 2000
+            or len(generation_keys) != len(document_ids)
+            or type(limit) is not int
+            or not 1 <= limit <= 100
+        ):
+            raise VectorError("knowledge_code_index_invalid")
+        validate_vector(vector)
+        response = self.http.request(
+            "POST",
+            self.path(index) + "/points/query",
+            {
+                "query": vector,
+                "limit": limit,
+                "with_payload": True,
+                "with_vector": False,
+                "filter": {
+                    "must": [
+                        {"key": key, "match": {"value": value}}
+                        for key, value in (
+                            ("index_id", index["id"]),
+                            ("knowledge_base_id", index["knowledge_base_id"]),
+                            ("source_id", index["source_id"]),
+                            ("svn_revision", revision),
+                            ("searchable", True),
+                            ("support_status", "supported"),
+                        )
+                    ]
+                    + [
+                        {"key": "document_id", "match": {"any": document_ids}},
+                        {"key": "index_generation_key", "match": {"any": generation_keys}},
+                    ]
+                },
+            },
+        )
+        points = response.get("result", {}).get("points")
+        if not isinstance(points, list) or len(points) > limit:
+            raise VectorError("knowledge_vector_response_invalid")
+        return points
+
+    def delete_code_generations(self, index: dict[str, Any], task_id: str, maximum: int) -> None:
+        from app.modules.knowledge.domain.code_configuration import CODE_CHUNK_PROFILE
+
+        if (
+            index.get("chunk_profile_hash") != CODE_CHUNK_PROFILE.fingerprint
+            or index.get("incremental") != 1
+            or type(maximum) is not int
+            or maximum < 0
+        ):
+            raise VectorError("knowledge_code_index_invalid")
+        result = self.http.request(
+            "POST",
+            self.path(index) + "/points/delete?wait=true",
+            {
+                "filter": {
+                    "must": [
+                        {"key": key, "match": {"value": value}}
+                        for key, value in (
+                            ("index_id", index["id"]),
+                            ("source_id", index["source_id"]),
+                            ("index_task_id", task_id),
+                            ("chunk_kind", "business_answer"),
+                        )
+                    ]
+                    + [{"key": "index_generation", "range": {"lte": maximum}}]
+                }
+            },
+        )
+        if result.get("result", {}).get("status") != "completed":
+            raise VectorError("knowledge_vector_delete_unconfirmed")
 
     def delete_points(self, index: dict[str, Any], ids: list[str]) -> None:
         if index.get("incremental") != 1 or not ids or len(ids) > 32:

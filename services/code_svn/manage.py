@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from typing import Any
 
 STATE = Path("/state")
 REPOSITORY = STATE / "repos/mes"
@@ -22,8 +23,8 @@ def run(*args: str) -> str:
     return result.stdout.decode().strip()
 
 
-def inventory(root: Path) -> dict:
-    rows = []
+def inventory(root: Path) -> dict[str, Any]:
+    rows: list[list[Any]] = []
     size = 0
     for directory, dirs, files in os.walk(root, followlinks=False):
         for name in sorted(dirs + files):
@@ -32,6 +33,7 @@ def inventory(root: Path) -> dict:
             if name == ".svn":
                 raise ValueError("svn_reserved_metadata_in_source")
             mode = entry.lstat().st_mode
+            value: list[Any]
             if stat.S_ISLNK(mode):
                 value = ["link", relative, os.readlink(entry)]
             elif stat.S_ISDIR(mode):
@@ -54,7 +56,7 @@ def inventory(root: Path) -> dict:
     }
 
 
-def initialize() -> dict:
+def initialize() -> dict[str, Any]:
     tls = STATE / "tls"
     tls.mkdir(parents=True, exist_ok=True)
     certificate, key = tls / "server.crt", tls / "server.key"
@@ -134,7 +136,7 @@ def initialize() -> dict:
     }
 
 
-def import_project(root: Path) -> dict:
+def import_project(root: Path) -> dict[str, Any]:
     proof = STATE / "import-proof.json"
     if proof.exists() or int(run("svnlook", "youngest", str(REPOSITORY))) != 1:
         raise ValueError("svn_initial_import_already_done")
@@ -164,7 +166,7 @@ def import_project(root: Path) -> dict:
         for component in COMPONENTS:
             if inventory(root / component) != before[component]:
                 raise ValueError("svn_source_changed_during_import")
-        result = {
+        result: dict[str, Any] = {
             "revision": int(run("svnlook", "youngest", str(REPOSITORY))),
             "components": before,
             "inventory": inventory(stage),

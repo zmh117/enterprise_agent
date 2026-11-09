@@ -68,6 +68,7 @@ class KnowledgeMcpAuth:
             server_code=KNOWLEDGE_MCP_SERVER_CODE,
             tool_identifier=tool,
             tool_schema_hash=MCP_TOOL_MANIFEST[tool].schema_hash,
+            operation=MCP_TOOL_MANIFEST[tool].effect,
             agent_publication_id=job["agent_publication_id"],
             application_publication_id=access.application_publication_id,
         )

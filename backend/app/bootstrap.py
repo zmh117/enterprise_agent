@@ -141,7 +141,9 @@ from app.modules.identity.application.principal_jwt import PrincipalJwks, Princi
 from app.modules.identity.application.service_principal import KnowledgeServicePrincipalVerifier
 from app.modules.identity.application.service_principal import CodeRuntimeServicePrincipalVerifier
 from app.modules.knowledge.infrastructure.code_source_grant import CodeSourceGrant
+from app.modules.knowledge.infrastructure.code_result_recorder import CodeResultRecorder
 from app.modules.knowledge.infrastructure.code_history_bridge import CodeHistoryBridge
+from app.modules.knowledge.infrastructure.code_result_client import CodeResultClient
 from app.modules.knowledge.infrastructure.reader_access import KnowledgePrincipalAccess
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
@@ -809,7 +811,6 @@ def _build_container(  # noqa: C901, PLR0915
     knowledge_readability_bridge: KnowledgeReadabilityBridge | None = None
     knowledge_storage_broker: KnowledgeStorageBroker | None = None
     code_history_bridge: CodeHistoryBridge | None = None
-    code_source_grant = CodeSourceGrant(database, business_authorization_service)
     code_runtime_verifier = None
     if (
         service_name == "api-server"
@@ -828,15 +829,18 @@ def _build_container(  # noqa: C901, PLR0915
 
     knowledge_credentials = PlatformStorageCredentials(resolve_knowledge_secret)
     knowledge_content_access = ManagedContentAccess(database, knowledge_credentials)
+    knowledge_resource_reader = KnowledgeResourceReader(
+        GovernanceStore(database),
+        VectorRepository(database),
+        content_access=knowledge_content_access,
+    )
+    code_source_grant = CodeSourceGrant(
+        database, business_authorization_service, knowledge_resource_reader
+    )
     if service_name == "api-server" and settings.service_principal.knowledge_bootstrap_token_file:
         if principal_token_issuer is None or service_principal_token_issuer is None:
             raise ValueError("Knowledge readability requires platform identity issuers")
         public_keys = PrincipalJwks.from_dict(principal_token_issuer.signing_key.public_jwks())
-        knowledge_resource_reader = KnowledgeResourceReader(
-            GovernanceStore(database),
-            VectorRepository(database),
-            content_access=knowledge_content_access,
-        )
         knowledge_readability_bridge = KnowledgeReadabilityBridge(
             PlatformOnesReadabilityGateway(
                 KnowledgeServicePrincipalVerifier(public_keys),
@@ -861,6 +865,11 @@ def _build_container(  # noqa: C901, PLR0915
             ),
             knowledge_resource_reader,
             audit_service,
+            results=CodeResultClient(
+                lambda: service_principal_token_issuer.issue_code_control().access_token
+            )
+            if service_principal_token_issuer is not None
+            else None,
         )
         knowledge_storage_broker = KnowledgeStorageBroker(
             knowledge_readability_bridge.gateway,
@@ -1245,7 +1254,11 @@ def _build_container(  # noqa: C901, PLR0915
         ),
         runtime_client=runtime_client,
         tool_registry=tool_registry,
-        result_service=AgentResultService(agent_repository, session_repository),
+        result_service=AgentResultService(
+            agent_repository,
+            session_repository,
+            code_result_recorder=CodeResultRecorder(database).record,
+        ),
         delivery_service=result_delivery_service,
         business_authorization_service=business_authorization_service,
         mcp_tool_snapshot_service=mcp_tool_snapshot_service,

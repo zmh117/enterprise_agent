@@ -23,6 +23,7 @@ from app.shared.knowledge_limits import (
     MAX_RETRIEVAL_SECONDS,
 )
 from app.shared.knowledge_tool_contracts import KNOWLEDGE_TOOL_CONTRACTS
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.shared.principal_token_contract import MAX_PRINCIPAL_TOKEN_BYTES
 from app.shared.tool_contract import tool_schema_hash
 from app.python_runtime.file_mcp_bridge import call_tool_result, safe_meta
@@ -55,6 +56,7 @@ class KnowledgeMcpBridge:
         timeout: float,
         cancellation_event: threading.Event | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        source_guard: Any | None = None,
     ) -> None:
         self.url, self.headers, self.frozen = (
             url,
@@ -63,6 +65,7 @@ class KnowledgeMcpBridge:
         )
         self.deadline = time.monotonic() + timeout
         self.cancellation_event = cancellation_event
+        self.source_guard = source_guard
         self._closed = False
         self._lock = asyncio.Lock()
         self._pending: set[asyncio.Task[Any]] = set()
@@ -205,6 +208,8 @@ class KnowledgeMcpBridge:
         async def dispatch() -> types.CallToolResult:
             async with self._lock:
                 self._check()
+                if self.source_guard is not None:
+                    await self.source_guard.before_mcp(name, arguments)
                 payload = await self._rpc(
                     "tools/call",
                     {"name": name, "arguments": arguments},
@@ -213,6 +218,15 @@ class KnowledgeMcpBridge:
                 if "transport_error" in payload:
                     return _error(payload["transport_error"])
                 result = types.CallToolResult.model_validate(payload)
+                if self.source_guard is not None:
+                    result = await self.source_guard.after_mcp(name, result)
+                    if isinstance(result.structured_content, dict):
+                        result.content = [
+                            types.TextContent(
+                                type="text",
+                                text=json.dumps(result.structured_content, ensure_ascii=False),
+                            )
+                        ]
                 return call_tool_result(
                     content=result.content,
                     structured_content=result.structured_content,
@@ -222,6 +236,8 @@ class KnowledgeMcpBridge:
 
         try:
             return await self._bounded(dispatch())
+        except CodeKnowledgeError as exc:
+            return _error(exc.code)
         except _Stopped as exc:
             return _error(exc.code)
         except (TimeoutError, httpx.TimeoutException):

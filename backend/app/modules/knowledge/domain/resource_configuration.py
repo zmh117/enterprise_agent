@@ -17,13 +17,28 @@ def configuration_values(
     members: list[dict[str, Any]],
     storage: dict[str, Any] | None,
     version: int,
+    code_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if type(version) is not int or version not in {0, 2, 3, 4}:
+    if type(version) is not int or version not in {0, 2, 3, 4, 5}:
         raise KnowledgeGovernanceError("knowledge_resource_config_unsupported")
     effective = (3 if storage is not None else 2) if version == 0 else version
-    if effective != 4 and effective != (3 if storage is not None else 2):
+    if effective not in {4, 5} and effective != (3 if storage is not None else 2):
         raise KnowledgeGovernanceError("knowledge_resource_config_unsupported")
     incremental = index.get("incremental") == 1
+    if effective == 5:
+        from app.modules.knowledge.domain.code_configuration import (
+            code_storage,
+            source_configuration,
+        )
+
+        if not incremental or code_config is None:
+            raise KnowledgeGovernanceError("knowledge_resource_config_unsupported")
+        code_storage(storage)
+        code_config = source_configuration(code_config)
+        if code_config["source_id"] != source_id:
+            raise KnowledgeGovernanceError("knowledge_source_changed")
+    elif code_config is not None:
+        raise KnowledgeGovernanceError("knowledge_resource_config_unsupported")
     values = {
         "binding_id": None,
         "index_id": index["id"],
@@ -35,6 +50,7 @@ def configuration_values(
         "knowledge_base_id": base_id,
         "configuration_version": effective,
         "source_id": source_id,
+        **({"code_configuration": code_config} if effective == 5 else {}),
         **(
             {"content_contract": "incremental/v1"}
             if incremental

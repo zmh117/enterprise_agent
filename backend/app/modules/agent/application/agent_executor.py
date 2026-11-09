@@ -568,7 +568,7 @@ def _guard_confirmation_claim(
         for tool_name in allowed_tools
         if (definition := MCP_TOOL_MANIFEST.get(tool_name)) is not None
         and definition.effect == "mutation"
-        and definition.confirmation_policy != "none"
+        and definition.confirmation_policy not in {"none", "code_analysis_intent"}
     }
     claims_current_confirmation = "confirmation_required" in final_answer and any(
         phrase in final_answer for phrase in _CONFIRMATION_CLAIM_PHRASES

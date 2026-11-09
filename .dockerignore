@@ -10,6 +10,8 @@
 !backend/app/**
 !backend/migrations/
 !backend/migrations/**
+!backend/maintenance/
+!backend/maintenance/**
 !backend/seeds/
 !backend/seeds/**
 !backend/vendor/

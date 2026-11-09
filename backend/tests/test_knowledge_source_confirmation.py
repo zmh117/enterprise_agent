@@ -305,6 +305,14 @@ def assert_confirmation_migration_preserves_history(db, tmp_path):  # noqa: PLR0
         assert row.pop("sync_run_id") is None
         assert row.pop("source_id") is None
         assert row.pop("unreferenced_at") is None
+    for row in after_content["knowledge_base"]:
+        assert row.pop("kind") == "ones"
+        assert row.pop("code_indexing_paused") in (False, 0)
+    for row in after_content["document_revision"]:
+        assert row.pop("code_analysis_id") is None
+        assert row.pop("origin_kind") == "import"
+    for row in after_content["document_chunk"]:
+        assert row.pop("context_json") in ({}, "{}")
     assert after_content == content
     migrated_history = {name: db.execute(f"select * from {table(db, name)}") for name in history}
     for row in migrated_history["retrieval_revision"]:

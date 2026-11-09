@@ -24,6 +24,12 @@ def json_value(value: Any) -> Any:
 
 
 class ChunkRepository:
+    value_columns: tuple[str, ...] = CHUNK_VALUE_COLUMNS
+    json_columns: tuple[str, ...] = ("quality_flags",)
+
+    def validate(self, prepared: PreparedChunks) -> None:
+        validate_chunks(prepared, self.profile)
+
     def __init__(self, database: Database, *, profile: ChunkProfile = DEFAULT_PROFILE) -> None:
         profile.validate()
         self.database = database
@@ -91,11 +97,12 @@ class ChunkRepository:
         self, found: dict[str, Any], record: dict[str, Any], prepared: PreparedChunks
     ) -> None:
         chunks = self.database.execute(
-            f"select {','.join(CHUNK_VALUE_COLUMNS)} from {table(self.database, 'document_chunk')} where chunk_set_id=? order by ordinal",
+            f"select {','.join(self.value_columns)} from {table(self.database, 'document_chunk')} where chunk_set_id=? order by ordinal",
             (found["id"],),
         )
         for chunk in chunks:
-            chunk["quality_flags"] = json_value(chunk["quality_flags"])
+            for field in self.json_columns:
+                chunk[field] = json_value(chunk[field])
         if (
             found["document_id"] != record["document_id"]
             or found["document_revision_id"] != record["revision_id"]
@@ -119,7 +126,7 @@ class ChunkRepository:
         if found is None:
             return None
         rows = self.database.execute(
-            f"select id,{','.join(CHUNK_VALUE_COLUMNS)} from {table(self.database, 'document_chunk')} "
+            f"select id,{','.join(self.value_columns)} from {table(self.database, 'document_chunk')} "
             "where chunk_set_id=? order by ordinal",
             (set_id,),
         )
@@ -127,7 +134,8 @@ class ChunkRepository:
         for ordinal, row in enumerate(rows):
             if row.pop("id") != stable_id("chunk", set_id, str(ordinal)):
                 raise ExportValidationError("knowledge_chunk_stored_result_conflict")
-            row["quality_flags"] = json_value(row["quality_flags"])
+            for field in self.json_columns:
+                row[field] = json_value(row[field])
             chunks.append(row)
         prepared = PreparedChunks(
             json_value(found["normalized_fields"]), json_value(found["quality"]), tuple(chunks)
@@ -143,7 +151,7 @@ class ChunkRepository:
             or found["chunk_count"] != len(chunks)
         ):
             raise ExportValidationError("knowledge_chunk_stored_result_conflict")
-        validate_chunks(prepared, self.profile)
+        self.validate(prepared)
         return prepared
 
     def save(

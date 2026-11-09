@@ -20,7 +20,10 @@ CONTROLLER_MOUNTS = {
     "/deployment-secrets/app-config-master-key": "APP_CONFIG_MASTER_KEY_FILE",
     "/deployment-secrets/principal-jwks.json": "PRINCIPAL_JWKS_FILE",
     "/deployment-secrets/knowledge-bootstrap-token": "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE",
+    "/deployment-code/checkout": "CODE_SVN_CHECKOUT_HOST_ROOT",
+    "/deployment-code/state": "CODE_SVN_LOCAL_STATE_ROOT",
 }
+DIRECTORY_MOUNTS = {"/deployment", "/deployment-code/checkout", "/deployment-code/state"}
 
 
 def docker_environment() -> dict[str, str]:
@@ -72,7 +75,9 @@ def controller_environment(project: str) -> dict[str, str]:
         raise invalid("knowledge_ops_mount_invalid")
     for target in CONTROLLER_MOUNTS:
         path = Path(target)
-        if path.is_symlink() or not (path.is_dir() if target == "/deployment" else path.is_file()):
+        if path.is_symlink() or not (
+            path.is_dir() if target in DIRECTORY_MOUNTS else path.is_file()
+        ):
             raise invalid("knowledge_ops_mount_invalid")
     if (
         not Path("/deployment/docker-compose.yml").is_file()

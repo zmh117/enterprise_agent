@@ -17,6 +17,11 @@ from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.normalization import digest
 from app.modules.knowledge.infrastructure.code_source import _read_beneath, relative_path
 from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource, xml_document
+from app.modules.knowledge.infrastructure.code_executor_lock import inherited_execution_fds
+from app.modules.knowledge.infrastructure.code_working_copy import (
+    preflight_checkout_space,
+    require_checkout_space,
+)
 
 FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
@@ -63,7 +68,8 @@ def registry(path: Path) -> dict[str, dict[str, str]]:
                 raise ValueError
             if not FOLDER.fullmatch(entry["auth_ref"]):
                 raise ValueError
-            relative_path(entry["branch_path"].lstrip("/"))
+            if entry["branch_path"] != "/":
+                relative_path(entry["branch_path"].lstrip("/"))
             for field in ("public_url", "branch_url"):
                 url = urlsplit(entry[field])
                 if (
@@ -142,7 +148,7 @@ class WorkingCopyClient:
             "registration_hash": digest(self.entry),
         }
 
-    def _checkout_command(self, args: list[str]) -> None:
+    def _checkout_command(self, args: list[str], *, root: Path) -> None:
         command = [
             "svn",
             *args,
@@ -152,11 +158,16 @@ class WorkingCopyClient:
             str(self.source.config_directory),
         ]
         with subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            pass_fds=inherited_execution_fds(),
         ) as process:
             try:
                 deadline = time.monotonic() + 1800
                 while process.poll() is None:
+                    require_checkout_space(root)
                     if self.cancelled():
                         raise CodeKnowledgeError("code_checkout_interrupted")
                     if time.monotonic() > deadline:
@@ -204,6 +215,7 @@ class WorkingCopyClient:
             kinds[path] = node.get("kind")
         if self.source.external_declarations(revision)["declarations"]:
             raise CodeKnowledgeError("code_checkout_externals_unsupported")
+        preflight_checkout_space(self.source, root, paths, revision)
         target = self.source._target(revision)
         try:
             self._checkout_command(
@@ -216,7 +228,8 @@ class WorkingCopyClient:
                     str(revision),
                     target,
                     str(temporary),
-                ]
+                ],
+                root=root,
             )
             prepared = set()
             for path in paths:
@@ -234,7 +247,8 @@ class WorkingCopyClient:
                                 "-r",
                                 str(revision),
                                 str(temporary / ancestor) + "@",
-                            ]
+                            ],
+                            root=root,
                         )
                         prepared.add(ancestor)
                 self._checkout_command(
@@ -245,7 +259,8 @@ class WorkingCopyClient:
                         "-r",
                         str(revision),
                         str(temporary / path) + "@",
-                    ]
+                    ],
+                    root=root,
                 )
             if self.cancelled():
                 raise CodeKnowledgeError("code_checkout_interrupted")

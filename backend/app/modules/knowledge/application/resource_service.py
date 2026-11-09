@@ -4,6 +4,7 @@ from typing import Any
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, nullcontext, contextmanager
 import uuid
+import json
 
 from app.modules.knowledge.application.content_access import ContentAccess, KnowledgeContent
 from app.modules.knowledge.domain.storage_connection import storage_config, stored_config
@@ -108,6 +109,17 @@ class KnowledgeResourceReader:
             raise KnowledgeGovernanceError("knowledge_index_unavailable")
         if index.get("incremental") == 1:
             source = content.records.get("source", index["source_id"])
+            code_config = (
+                self.store.code_configuration(revision_id=resource.get("config_revision_id", ""))
+                if version == 5
+                else None
+            )
+            if version == 5 and (
+                base.get("kind") != "code"
+                or source["source_system"] != "svn"
+                or source["origin_state"] != "verified"
+            ):
+                raise KnowledgeGovernanceError("knowledge_source_unavailable")
             values = configuration_values(
                 resource_id=resource["id"],
                 base_id=base["id"],
@@ -117,6 +129,7 @@ class KnowledgeResourceReader:
                 members=[],
                 storage=storage,
                 version=version,
+                code_config=code_config,
             )
             return values, source, index
         members = content.records.members(base["id"])
@@ -160,7 +173,7 @@ class KnowledgeResourceReader:
         resource = resources[0]
         revision = self.store.get("retrieval_revision", resource["published_revision_id"])
         config, source, index = self._configuration(
-            resource,
+            {**resource, "config_revision_id": revision["id"]},
             revision["index_id"],
             storage=stored_config(revision.get("storage_config_json")),
             revision_id=revision["id"],
@@ -395,14 +408,36 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
             raise KnowledgeGovernanceError("knowledge_resource_unavailable")
         return self.store.get("retrieval_revision", resource["draft_revision_id"])
 
-    @staticmethod
     def _draft_index(
-        resource: dict[str, Any], draft: dict[str, Any], content: KnowledgeContent
+        self, resource: dict[str, Any], draft: dict[str, Any], content: KnowledgeContent
     ) -> dict[str, Any]:
         """管理连接检查只读固定元数据；不把动态语料扫描放入交互请求。"""
-        if draft["configuration_version"] not in {0, 2, 3, 4} or draft["binding_id"]:
+        if draft["configuration_version"] not in {0, 2, 3, 4, 5} or draft["binding_id"]:
             raise KnowledgeGovernanceError("knowledge_resource_config_unsupported")
         base = content.records.get("knowledge_base", resource["knowledge_base_id"])
+        if draft["configuration_version"] == 5:
+            from app.modules.knowledge.domain.code_configuration import (
+                source_configuration,
+                code_storage,
+                CODE_CHUNK_PROFILE,
+            )
+            from app.modules.knowledge.domain.code_answers import path_in_scope
+
+            config = source_configuration(self.store.code_configuration(draft["id"]))
+            code_storage(stored_config(draft.get("storage_config_json")))
+            checkout = content.records.get("code_checkout", config["checkout_id"])
+            selected_paths = checkout["selected_paths_json"]
+            selected_paths = (
+                json.loads(selected_paths) if isinstance(selected_paths, str) else selected_paths
+            )
+            if (
+                base.get("kind") != "code"
+                or checkout["source_id"] != config["source_id"]
+                or checkout["state"] != "ready"
+                or checkout["physical_key"] is None
+                or any(not path_in_scope(p, selected_paths) for p in config["allowed_paths_json"])
+            ):
+                raise KnowledgeGovernanceError("knowledge_source_unavailable")
         raw_index = content.records.get("vector_index", draft["index_id"])
         index = content.vectors.get(raw_index["code"])
         if (
@@ -415,6 +450,12 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
             or index["profile_hash"] != fingerprint(content.vectors.profile)
             or index["profile_hash"] != draft["profile_hash"]
             or index["corpus_hash"] != draft["corpus_hash"]
+        ):
+            raise KnowledgeGovernanceError("knowledge_index_unavailable")
+        if draft["configuration_version"] == 5 and (
+            index.get("incremental") != 1
+            or index["source_id"] != config["source_id"]
+            or index["chunk_profile_hash"] != CODE_CHUNK_PROFILE.fingerprint
         ):
             raise KnowledgeGovernanceError("knowledge_index_unavailable")
         return index
@@ -435,6 +476,8 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         with self.store.unit_of_work():
             resource = self._write_resource(resource_id, expected_revision)
             draft = self._draft(resource)
+            if draft["configuration_version"] == 5:
+                self.store.assert_code_idle(resource["knowledge_base_id"])
         failure: str | None = None
         try:
             selected = stored_config(draft.get("storage_config_json"))
@@ -539,6 +582,8 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
                 raise KnowledgeGovernanceError("knowledge_revision_conflict")
             draft = self._draft(resource)
             proof = self._verification(draft["id"])
+            if draft["configuration_version"] == 5:
+                self.store.assert_code_idle(resource["knowledge_base_id"])
             if (
                 resource["status"] != "enabled"
                 or not proof
@@ -587,8 +632,16 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
             if resource["published_revision_id"]
             else None
         )
+        for selected_revision in (draft, published):
+            if selected_revision and selected_revision["configuration_version"] == 5:
+                selected_revision["code_configuration"] = self.store.code_configuration(
+                    selected_revision["id"]
+                )
         return {
             **resource,
+            "kind": self.store.get("knowledge_base", resource["knowledge_base_id"]).get(
+                "kind", "ones"
+            ),
             "draft": {**draft, "storage": stored_config(draft["storage_config_json"])}
             if draft and draft.get("storage_config_json")
             else draft,

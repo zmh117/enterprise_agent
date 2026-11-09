@@ -125,7 +125,7 @@ class AgentContextBuilder:
             )
         conversation = self.conversation_service.build(job) if self.conversation_service else None
         code_source = None
-        if job.source_channel == "code_knowledge":
+        if "knowledge_svn_update" in allowed_tools:
             if self.code_source_grant is None:
                 raise NonRetryableExecutionError(
                     "Code source authorization is unavailable",
@@ -410,7 +410,7 @@ def _tool_restrictions(
         for tool_name in assigned
         if (definition := MCP_TOOL_MANIFEST.get(tool_name)) is not None
         and definition.effect == "mutation"
-        and definition.confirmation_policy != "none"
+        and definition.confirmation_policy not in {"none", "code_analysis_intent"}
     }
     if confirmation_gated:
         restrictions.extend(

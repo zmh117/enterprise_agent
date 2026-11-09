@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import re
 from typing import Any
 from app.shared.exceptions import NonRetryableExecutionError
+from app.modules.knowledge.domain.code_operation_errors import CODE_OPERATION_MESSAGES
 
 
 class KnowledgeGovernanceError(NonRetryableExecutionError):
@@ -10,6 +11,7 @@ class KnowledgeGovernanceError(NonRetryableExecutionError):
             code,
             error_code=code,
             safe_message={
+                **CODE_OPERATION_MESSAGES,
                 "knowledge_ops_input_invalid": "运维参数无效，请检查操作类型、计划及日期",
                 "knowledge_ops_not_found": "运维任务不存在，请刷新任务记录",
                 "knowledge_ops_busy": "已有构建或启停任务，请等待其完成",

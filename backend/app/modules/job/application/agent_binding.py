@@ -181,7 +181,7 @@ def _require_connectors_assigned(
     reply_route: dict[str, Any],
 ) -> None:
     if (
-        source_channel not in {"debug_api", "code_knowledge"}
+        source_channel != "debug_api"
         and source_connector_id
         and not agent_config_service.connector_allowed(
             publication_id=publication_id,

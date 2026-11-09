@@ -36,7 +36,7 @@ class RunAuditRecorder:
         permission_snapshot: dict[str, Any],
     ) -> None:
         self.raw_api_dir = raw_api_dir
-        self._code_extraction = bool(context.retrieved_context.get("code_source"))
+        self._code_analysis = bool(context.retrieved_context.get("code_source"))
         self._seen_model_messages: set[str] = set()
         self._tool_call_index: dict[str, int] = {}
         self._raw_api_files: set[str] = set()
@@ -67,8 +67,8 @@ class RunAuditRecorder:
         }
 
     def observe_message(self, message: Any) -> None:
-        if self._code_extraction:
-            # Source and candidate bodies belong only to their controlled volumes.
+        if self._code_analysis:
+            # Raw source and SVN responses must not enter the general run audit.
             if sdk_message_type(message) == "system" and sdk_value(message, "subtype") == "init":
                 self.audit["init_snapshot"] = _extraction_init_snapshot(
                     message, self.audit["permission_snapshot"]
@@ -123,7 +123,7 @@ class RunAuditRecorder:
     def drain_raw_api_bodies(self, *, accept_incomplete: bool = False) -> None:
         """Absorb completed OTel raw bodies without accumulating Sandbox tmp files."""
 
-        if self._code_extraction:
+        if self._code_analysis:
             self.audit["raw_api_capture_status"] = "unavailable"
             return
         with self._raw_api_lock:

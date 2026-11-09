@@ -58,6 +58,7 @@ export const knowledgeCatalogSchema = z.object({
       code: z.string(),
       display_name: z.string(),
       state: z.string(),
+      kind: z.enum(["ones", "code"]).default("ones"),
       source_ids: z.array(identifier),
     })
   ),
@@ -76,13 +77,23 @@ const resourceRevision = z.object({
   id: identifier,
   revision,
   binding_id: identifier.nullable(),
-  index_id: identifier,
+  index_id: identifier.nullable(),
+  configuration_version: z.number().optional(),
+  code_configuration: z
+    .object({
+      source_id: identifier.nullable(),
+      checkout_id: identifier.nullable(),
+      svn_access_ref: z.string().nullable(),
+      allowed_paths_json: z.array(z.string()),
+    })
+    .optional(),
   config_hash: hash,
   storage: knowledgeStorageSchema.nullable().optional(),
 })
 export const knowledgeResourceSchema = z.object({
   id: identifier,
   knowledge_base_id: identifier,
+  kind: z.enum(["ones", "code"]).default("ones"),
   code: z.string(),
   name: z.string(),
   revision,
@@ -112,6 +123,23 @@ export const newKnowledgeResourceSchema = z
   })
   .strict()
 export type KnowledgeCommand =
+  | { kind: "create-code"; input: { code: string; name: string } }
+  | {
+      kind: "code-draft"
+      id: string
+      input: {
+        expected_revision: number
+        checkout_id: string
+        svn_access_ref: string
+        allowed_paths: string[]
+        index_id?: string
+      }
+    }
+  | {
+      kind: "initialize-index"
+      id: string
+      input: { expected_revision: number }
+    }
   | { kind: "create"; input: z.infer<typeof newKnowledgeResourceSchema> }
   | {
       kind: "draft"
@@ -137,6 +165,7 @@ export function canPublishKnowledge(resource: KnowledgeResource) {
   return (
     resource.status === "enabled" &&
     resource.draft !== null &&
+    resource.draft.index_id !== null &&
     resource.draft.binding_id === null &&
     resource.verification?.status === "VERIFIED" &&
     resource.verification.config_hash === resource.draft.config_hash

@@ -126,6 +126,11 @@ for _knowledge_contract in KNOWLEDGE_TOOL_CONTRACTS.values():
         input_schema=_knowledge_contract.input_schema,
         schema_hash=mcp_tool_schema_hash(_knowledge_contract.input_schema),
         required_scope=_knowledge_contract.required_scope,
+        read_only=_knowledge_contract.read_only,
+        effect=_knowledge_contract.effect,
+        confirmation_policy=_knowledge_contract.confirmation_policy,
+        target_policy=_knowledge_contract.target_policy,
+        idempotent=not _knowledge_contract.read_only,
     )
 
 for _identifier, _file_tool in FILE_TOOL_MANIFEST.items():
@@ -173,8 +178,14 @@ def validate_mcp_tool_manifest(
             DINGTALK_CONFIRMATION_POLICY,
             ONES_CONFIRMATION_POLICY,
             "file_workspace_intent",
+            "code_analysis_intent",
         }:
             raise ValueError("Mutation MCP Tool requires a supported confirmation policy")
+        if definition.confirmation_policy == "code_analysis_intent" and (
+            definition.server_code != KNOWLEDGE_MCP_SERVER_CODE
+            or identifier not in {"knowledge_svn_update", "knowledge_save_code_answer"}
+        ):
+            raise ValueError("Code analysis intent is restricted to registered code tools")
         if definition.server_code == DINGTALK_MCP_SERVER_CODE:
             contract = DINGTALK_TOOL_CONTRACTS.get(identifier)
             if (
@@ -210,13 +221,14 @@ def validate_mcp_tool_manifest(
                 or definition.schema_hash != mcp_tool_schema_hash(knowledge_contract.input_schema)
                 or definition.description != knowledge_contract.description
                 or definition.required_scope != knowledge_contract.required_scope
-                or definition.effect != "read"
+                or definition.effect != knowledge_contract.effect
+                or definition.confirmation_policy != knowledge_contract.confirmation_policy
                 or definition.resource_kind
                 or definition.operation_code
-                or definition.target_policy
+                or definition.target_policy != knowledge_contract.target_policy
                 or definition.risk_level != "low"
                 or definition.destructive
-                or definition.idempotent
+                or definition.idempotent != (not knowledge_contract.read_only)
                 or definition.open_world
             ):
                 raise ValueError("Knowledge MCP Tool execution metadata is inconsistent")

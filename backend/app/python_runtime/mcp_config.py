@@ -65,7 +65,6 @@ from app.python_runtime.knowledge_mcp_bridge import KnowledgeMcpBridge
 from app.shared.query_result_contract import QUERY_RESULT_TOOLS
 from app.shared.ones_tool_contracts import ONES_COLLECTED_LIST_FIELDS
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
-from app.python_runtime.code_candidate import seal_candidate
 from app.python_runtime.code_source_mount import CodeSourceMount
 
 
@@ -190,82 +189,93 @@ def _code_source_hook_options(
 ) -> dict[str, Any]:
     if sandbox.source_mount is None:
         return {}
-    if sdk.hook_matcher is None:
+    if sdk.hook_matcher is None or not isinstance(sandbox.source_mount, CodeSourceMount):
         raise NonRetryableExecutionError(
-            "Code extraction SDK hook support is unavailable",
-            safe_message="源码提取所需的 SDK 授权钩子不可用",
+            "Code source hook unavailable",
+            safe_message="源码分析权限钩子不可用",
             error_code="code_source_hook_unavailable",
         )
+    mount = sandbox.source_mount
+    exact = set(context.effective_tool_names) - set(FILE_TOOL_NAMES)
+    sandbox_calls: set[str] = set()
 
-    async def authorize_source_tool(
-        event: dict[str, Any], _tool_use_id: str | None, _context: Any
+    async def before(
+        event: dict[str, Any], tool_use_id: str | None, _context: Any
     ) -> dict[str, Any]:
-        denied = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": "Tool is not authorized for this code extraction Job",
-            }
-        }
+        name = event.get("tool_name")
+        args = event.get("tool_input")
         try:
-            tool_name = event.get("tool_name")
-            if tool_name not in ALLOWED_FILE_TOOLS or tool_name not in context.effective_tool_names:
-                return denied
             budget.consume()
-            authorized = sandbox.authorize_tool(tool_name, event.get("tool_input"))
-            if (
-                tool_name in {"Write", "Edit"}
-                and authorized.get("file_path") == "outputs/candidate.txt"
-            ):
-                if tool_name != "Write":
-                    raise CodeKnowledgeError("code_candidate_write_complete_object")
-                grant = context.retrieved_context["code_source"]
-                if not isinstance(sandbox.source_mount, CodeSourceMount):
-                    raise CodeKnowledgeError("code_mount_unavailable")
-                seal_candidate(
-                    str(authorized["content"]).encode("utf-8"),
-                    sandbox.source_mount,
-                    grant["candidate_manifest"],
-                    expected_entries=set(grant["scope"]["entry_ids"]),
-                    known_states=grant["scope"].get("known_states", []),
-                )
-        except JobSandboxError as exc:
-            denied["hookSpecificOutput"]["permissionDecisionReason"] = (
-                "Source/sandbox validation failed: "
-                + exc.code
-                + ". Use source_access.read_root and approved scope. Source Read accepts "
-                "file_path/offset/limit; Grep accepts path/pattern/output_mode; Glob accepts path/pattern."
-            )
-            return denied
-        except ExecutionPolicyExceeded:
-            return denied
-        except CodeKnowledgeError as exc:
-            # Stable contract diagnostics only; never include source snippets or
-            # candidate values. The model can repair its own candidate in this Job.
-            denied["hookSpecificOutput"]["permissionDecisionReason"] = (
-                "Candidate validation failed: "
-                + exc.code
-                + (" at " + exc.location[:200] if exc.location else "")
-                + ". Write one complete object; all identities must be unique, coverage.entry_id "
-                "must match scope.entry_ids once each, and all references must exist."
-            )
-            return denied
-        except Exception:
-            # An authorization failure must never fall through to native read
-            # auto-approval. Exception text may contain paths or source content.
-            return denied
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "updatedInput": authorized,
+            if not isinstance(args, dict):
+                raise CodeKnowledgeError("CODE_SOURCE_INPUT_INVALID")
+            if name in exact:
+                updated = args  # Frozen MCP bridge independently validates schema and principal.
+            elif name in ALLOWED_FILE_TOOLS and name in context.effective_tool_names:
+                call_id = str(tool_use_id or event.get("tool_use_id") or "")
+                if not call_id:
+                    raise CodeKnowledgeError("CODE_SOURCE_CALL_ID_REQUIRED")
+                field = "path" if name in {"Glob", "Grep"} else "file_path"
+                args = sandbox.normalize_source_alias(str(name), args)
+                if mount.owns_path(args.get(field)):
+                    updated = await mount.before_native(str(name), args, call_id)
+                else:
+                    updated = sandbox.authorize_tool(str(name), args)
+                    sandbox_calls.add(call_id)
+            else:
+                raise CodeKnowledgeError("CODE_SOURCE_TOOL_DENIED")
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "updatedInput": updated,
+                }
             }
-        }
+        except Exception as exc:
+            code = exc.code if isinstance(exc, CodeKnowledgeError) else "CODE_SOURCE_TOOL_DENIED"
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": code,
+                }
+            }
+
+    async def after(
+        event: dict[str, Any], tool_use_id: str | None, _context: Any
+    ) -> dict[str, Any]:
+        call_id = tool_use_id or event.get("tool_use_id", "")
+        if call_id in sandbox_calls:
+            sandbox_calls.discard(call_id)
+            return {}
+        if event.get("tool_name") not in {"Read", "Glob", "Grep"}:
+            return {}
+        try:
+            return await mount.after_native(
+                tool_use_id or event.get("tool_use_id", ""), event.get("tool_response")
+            )
+        except Exception:
+            # Never fall through to the original, potentially mis-decoded source output.
+            return {
+                "continue_": False,
+                "decision": "block",
+                "stopReason": "CODE_SOURCE_EVIDENCE_UNVERIFIED",
+            }
+
+    async def failed(
+        event: dict[str, Any], tool_use_id: str | None, _context: Any
+    ) -> dict[str, Any]:
+        call_id = tool_use_id or event.get("tool_use_id", "")
+        sandbox_calls.discard(call_id)
+        await mount.failed(call_id)
+        return {}
 
     return {
+        "extra_args": {"no-session-persistence": None},
         "hooks": {
-            "PreToolUse": [sdk.hook_matcher(hooks=[authorize_source_tool], on_failure="block")]
-        }
+            "PreToolUse": [sdk.hook_matcher(hooks=[before], on_failure="block")],
+            "PostToolUse": [sdk.hook_matcher(hooks=[after], on_failure="block")],
+            "PostToolUseFailure": [sdk.hook_matcher(hooks=[failed], on_failure="block")],
+        },
     }
 
 
@@ -639,6 +649,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             return servers
         alias = mcp_sdk_server_alias(KNOWLEDGE_MCP_SERVER_CODE)
         remote = servers[alias]
+        sandbox = self._sandbox.get()
         bridge = self._knowledge_bridge_factory(
             sdk=sdk,
             url=remote["url"],
@@ -646,6 +657,11 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             frozen=bindings,
             timeout=float(request.context.timeout_seconds),
             cancellation_event=self.cancellation_event,
+            **(
+                {"source_guard": sandbox.source_mount}
+                if sandbox is not None and sandbox.source_mount is not None
+                else {}
+            ),
         )
         self._knowledge_bridge = bridge
         try:
@@ -920,7 +936,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             if sandbox.source_mount is not None:
                 # Source Jobs require the unconditional PreToolUse hook below.
                 # A permission callback alone is skipped for SDK auto-allowed reads.
-                return deny(message="Code extraction requires its source authorization hook")
+                return deny(message="Code analysis requires its source authorization hook")
             audit_recorder = getattr(self, "_run_audit_recorder", None)
             drain_raw_api_bodies = getattr(audit_recorder, "drain_raw_api_bodies", None)
             if callable(drain_raw_api_bodies):
@@ -977,6 +993,9 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             cwd=sandbox.path,
             setting_sources=[],
             skills=[],
+            env={"CLAUDE_CODE_SKIP_PROMPT_HISTORY": "1"}
+            if sandbox.source_mount is not None
+            else {},
             can_use_tool=can_use_tool,
             **hook_options,
             stderr=lambda line: append_cli_stderr(

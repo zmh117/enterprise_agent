@@ -189,7 +189,7 @@ class GovernanceStore:  # noqa: PLR0904
 
     def catalog(self) -> dict[str, Any]:
         bases = self.database.execute(
-            f"select id,code,display_name,state from {self.t('knowledge_base')} order by id"
+            f"select id,code,display_name,state,kind,code_indexing_paused from {self.t('knowledge_base')} order by id"
         )
         memberships = self.database.execute(
             f"select distinct m.knowledge_base_id,d.source_id from {self.t('knowledge_base_document')} m "
@@ -224,6 +224,29 @@ class GovernanceStore:  # noqa: PLR0904
         if not row:
             raise KnowledgeGovernanceError("knowledge_resource_unavailable")
         return row
+
+    def code_configuration(self, revision_id: str) -> dict[str, Any]:
+        from app.modules.knowledge.infrastructure.code_checkout_store import json_value
+
+        row = self.database.execute_one(
+            f"SELECT * FROM {self.t('code_resource_config')} WHERE revision_id=?", (revision_id,)
+        )
+        if not row:
+            raise KnowledgeGovernanceError("knowledge_resource_config_unsupported")
+        return {**row, "allowed_paths_json": json_value(row["allowed_paths_json"])}
+
+    def assert_code_idle(self, base_id: str) -> None:
+        analysis = self.database.execute_one(
+            f"SELECT id FROM {self.t('code_analysis')} WHERE knowledge_base_id=? AND closed_at IS NULL LIMIT 1",
+            (base_id,),
+        )
+        operation = self.database.execute_one(
+            f"SELECT o.id FROM {self.t('code_svn_operation')} o JOIN {self.t('retrieval_revision')} v ON v.id=o.config_revision_id "
+            f"JOIN {self.t('retrieval_resource')} r ON r.id=v.resource_id WHERE r.knowledge_base_id=? AND o.state IN ('queued','running') LIMIT 1",
+            (base_id,),
+        )
+        if analysis or operation:
+            raise KnowledgeGovernanceError("knowledge_resource_busy")
 
     def source_items(self, source_id: str) -> tuple[SourceItem, ...]:
         source = self.get("source", source_id)

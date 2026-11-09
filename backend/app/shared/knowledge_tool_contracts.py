@@ -4,15 +4,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.shared.mcp_server_policy import KNOWLEDGE_MCP_SERVER_CODE, mcp_invoke_scope
-from app.shared.code_knowledge_tool_contracts import (
+from app.shared.code_answer_tool_contracts import (
     CODE_USAGE,
+    CODE_TOOL_SCHEMAS,
+    CODE_DERIVED_TOOLS,
+    REVISION,
     SEARCH_RESULT,
-    GET_INPUT,
-    GET_OUTPUT,
-    COMPARE_INPUT,
-    COMPARE_RESULT,
-    VERSION_SELECTOR,
 )
+
 
 KNOWLEDGE_USAGE_INSTRUCTIONS = (
     "知识检索流程：先调用 knowledge_list_bases 发现当前应用获准的知识库，"
@@ -50,6 +49,25 @@ class KnowledgeToolContract:
     description: str
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
+
+    @property
+    def read_only(self) -> bool:
+        return self.identifier not in CODE_DERIVED_TOOLS
+
+    @property
+    def effect(self) -> str:
+        return "read" if self.read_only else "mutation"
+
+    @property
+    def confirmation_policy(self) -> str:
+        return "none" if self.read_only else "code_analysis_intent"
+
+    @property
+    def target_policy(self) -> str:
+        return {
+            "knowledge_svn_update": "registered_checkout",
+            "knowledge_save_code_answer": "current_code_analysis",
+        }.get(self.identifier, "")
 
     @property
     def required_scope(self) -> str:
@@ -161,7 +179,7 @@ KNOWLEDGE_TOOL_CONTRACTS = {
             + KNOWLEDGE_USAGE_INSTRUCTIONS
         ),
         input_schema={
-            "$comment": "knowledge-search-contract/v5-versioned-code",
+            "$comment": "knowledge-search-contract/v6-on-demand-code",
             **_object(
                 {
                     "knowledge_base_id": _ID,
@@ -172,7 +190,10 @@ KNOWLEDGE_TOOL_CONTRACTS = {
                         "pattern": r"\S",
                     },
                     "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
-                    "version": VERSION_SELECTOR,
+                    "svn_revision": REVISION,
+                    "version_mode": {"enum": ["exact", "next_higher_hint"], "default": "exact"},
+                    "exact_search_id": _ID,
+                    "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
                 },
                 ["knowledge_base_id", "query"],
             ),
@@ -199,26 +220,13 @@ KNOWLEDGE_TOOL_CONTRACTS = {
 _ones_search = KNOWLEDGE_TOOL_CONTRACTS["knowledge_search"]
 KNOWLEDGE_TOOL_CONTRACTS["knowledge_search"] = KnowledgeToolContract(
     _ones_search.identifier,
-    _ones_search.description
-    + "代码来源启用按需策略时，缺失的确切 SVN 版本可幂等登记受限后台缓存构建；不激活版本或修改业务数据。",
+    _ones_search.description,
     _ones_search.input_schema,
     {"type": "object", "oneOf": [_ones_search.output_schema, SEARCH_RESULT]},
 )
 KNOWLEDGE_TOOL_CONTRACTS.update(
     {
-        "knowledge_get_behavior": KnowledgeToolContract(
-            "knowledge_get_behavior",
-            "读取确切知识快照内的完整业务操作或规则，并有界展开同版本依赖；对象节点列出关联操作。"
-            + CODE_USAGE,
-            GET_INPUT,
-            GET_OUTPUT,
-        ),
-        "knowledge_compare_behavior": KnowledgeToolContract(
-            "knowledge_compare_behavior",
-            "比较同一业务知识的两个明确版本；history 模式核验相关提交并报告连续检查缺口，不能从两端推测变化时点。已启用策略可登记受限后台历史缓存需求，检查进度持久保存。"
-            + CODE_USAGE,
-            COMPARE_INPUT,
-            COMPARE_RESULT,
-        ),
+        name: KnowledgeToolContract(name, description + CODE_USAGE, input_schema, output_schema)
+        for name, (input_schema, output_schema, description) in CODE_TOOL_SCHEMAS.items()
     }
 )

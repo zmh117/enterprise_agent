@@ -18,12 +18,9 @@ from app.shared.database import Database
 from app.modules.knowledge.domain.models import KnowledgeJobAccess
 
 
-KNOWLEDGE_TOOLS = (
-    "knowledge_list_bases",
-    "knowledge_search",
-    "knowledge_get_behavior",
-    "knowledge_compare_behavior",
-)
+from app.shared.knowledge_tool_contracts import KNOWLEDGE_TOOL_CONTRACTS
+
+KNOWLEDGE_TOOLS = tuple(KNOWLEDGE_TOOL_CONTRACTS)
 KNOWLEDGE_SERVER = "knowledge-mcp"
 
 

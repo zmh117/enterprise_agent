@@ -186,8 +186,9 @@ def test_image_copy_whitelist_can_import_boundary_without_expanding_runtime_busi
                     shutil.copy2(source, destination / source.name)
     command = (
         "import app.python_runtime.service; "
-        "import sys; assert not any(name.startswith(('app.modules.knowledge', 'app.modules.authorization_center', "
-        "'app.modules.identity', 'app.modules.job')) for name in sys.modules)"
+        "import sys; assert not any(name.startswith(('app.modules.authorization_center', "
+        "'app.modules.identity', 'app.modules.job')) for name in sys.modules); "
+        "assert not any(name.startswith('app.modules.knowledge.infrastructure.') and name != 'app.modules.knowledge.infrastructure.code_source' for name in sys.modules)"
     )
     if component == "worker":
         command = "import app.bootstrap; import app.workers.agent_job_worker"

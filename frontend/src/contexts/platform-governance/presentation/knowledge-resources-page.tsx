@@ -5,7 +5,7 @@ import { ApiError } from "@/shared/api/api-client"
 import { KnowledgeStorageFields } from "./knowledge-storage-fields"
 import { KnowledgeResourceTable } from "./knowledge-resource-table"
 import { KnowledgeOperationsPanel } from "./knowledge-operations-panel"
-import { CodeKnowledgePanel } from "./code-knowledge-panel"
+import { CodeResourceEditor, CreateCodeResource } from "./code-resource-editor"
 import { useKnowledgeOperations } from "../application/knowledge-operations-query"
 import { useKnowledgeStorage } from "@/contexts/platform-governance/application/knowledge-storage-query"
 import {
@@ -179,7 +179,7 @@ export function KnowledgeResourcesPage() {
         <div>
           <h1 className="text-2xl font-semibold">工具资源 · 知识库</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            选择已有知识库与已就绪索引，来源由导入记录提供。
+            支持 ONES 知识库和按 SVN 版本保存答案的代码知识库。
             草稿验证后才可发布；角色仍在各业务应用下选择允许使用的知识库。
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -203,7 +203,7 @@ export function KnowledgeResourcesPage() {
                 setEditing(null)
               }}
             >
-              新建知识资源
+              新建知识库
             </Button>
           )}
         </div>
@@ -228,7 +228,6 @@ export function KnowledgeResourcesPage() {
         canManage={canManage}
         onRefresh={() => void operations.refetch()}
       />
-      <CodeKnowledgePanel canRead={canRead} canManage={canManage} />
       {inventory.isPending && <p role="status">正在加载知识资源…</p>}
       {data && (
         <>
@@ -284,15 +283,24 @@ export function KnowledgeResourcesPage() {
             <SheetContent className="overflow-y-auto sm:max-w-xl">
               <SheetHeader>
                 <SheetTitle>
-                  {editing ? "知识资源详情与草稿" : "新建知识资源"}
+                  {editing ? "知识资源详情与草稿" : "新建知识库"}
                 </SheetTitle>
                 <SheetDescription>
-                  当前存储与向量身份保持不变。只保存明确选择，不自动发布或授权。
+                  根据知识库类型配置来源和索引，验证后发布。
                 </SheetDescription>
               </SheetHeader>
               <div className="grid gap-4 px-4 pb-6">
                 <KnowledgeError error={mutation.error} />
-                {editing ? (
+                {editing?.kind === "code" ? (
+                  <CodeResourceEditor
+                    key={`${editing.id}:${editorGeneration}`}
+                    resource={editing}
+                    canManage={canManage}
+                    pending={pending}
+                    execute={execute}
+                    reload={reloadEditor}
+                  />
+                ) : editing ? (
                   <KnowledgeResourceEditor
                     key={`${editing.id}:${editorGeneration}`}
                     resource={editing}
@@ -571,7 +579,7 @@ function KnowledgeResourceEditor({
   )
 }
 
-function CreateKnowledgeResource({
+function CreateOnesKnowledgeResource({
   data,
   pending,
   execute,
@@ -693,5 +701,34 @@ function CreateKnowledgeResource({
         </Button>
       </fieldset>
     </form>
+  )
+}
+
+function CreateKnowledgeResource(props: {
+  data: KnowledgeInventory
+  pending: boolean
+  execute: EditorProps["execute"]
+}) {
+  const [kind, setKind] = useState<"ones" | "code">("ones")
+  return (
+    <div className="grid gap-4">
+      <KnowledgeField label="知识库类型">
+        <select
+          className={knowledgeInputClass}
+          value={kind}
+          disabled={props.pending}
+          onChange={(event) => setKind(event.target.value as "ones" | "code")}
+          data-testid="knowledge-create-kind"
+        >
+          <option value="ones">ONES 知识库</option>
+          <option value="code">代码知识库</option>
+        </select>
+      </KnowledgeField>
+      {kind === "code" ? (
+        <CreateCodeResource pending={props.pending} execute={props.execute} />
+      ) : (
+        <CreateOnesKnowledgeResource {...props} />
+      )}
+    </div>
   )
 }

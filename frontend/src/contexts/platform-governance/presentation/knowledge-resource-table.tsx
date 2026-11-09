@@ -23,7 +23,8 @@ export function KnowledgeResourceTable(props: TableProps) {
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-left text-sm">
         <caption className="p-3 text-left text-muted-foreground">
-          入库、索引和发布是不同状态；发布也不能替代 KB＋本人 ONES 双重授权。
+          入库、索引和发布是不同状态；发布不能替代知识库和来源授权；ONES
+          另需本人工作项权限。
         </caption>
         <thead className="border-b bg-muted/40">
           <tr>
@@ -98,6 +99,7 @@ function KnowledgeResourceRow({
       <td className="p-3">
         <p>{resource.name}</p>
         <p className="text-xs text-muted-foreground">
+          {resource.kind === "code" ? "代码知识库" : "ONES 知识库"} ·{" "}
           {resource.code} · {knowledgeStatus(resource.status)}
         </p>
       </td>
@@ -123,14 +125,23 @@ function KnowledgeResourceRow({
         ) : !base ? (
           "未找到知识库"
         ) : (
-          sourceNames || "无已收录数据"
+          sourceNames ||
+          (resource.kind === "code"
+            ? revision?.code_configuration?.source_id
+              ? "SVN 来源已绑定"
+              : "待绑定 SVN 来源"
+            : "无已收录数据")
         )}
       </td>
       <td className="p-3">
-        {revision ? `已绑定 ${revision.index_id}` : "未选择"}
+        {revision?.index_id
+          ? `已绑定 ${revision.index_id}`
+          : "未初始化 / 未选择"}
       </td>
       <td className="p-3">
-        {plan ? (
+        {resource.kind === "code" ? (
+          "问答后增量索引"
+        ) : plan ? (
           <>
             <a className="underline" href={`#knowledge-plan-${plan.id}`}>
               {plan.code}

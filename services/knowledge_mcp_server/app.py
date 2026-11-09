@@ -86,9 +86,9 @@ def create_server(tools: KnowledgeMcpTools, calls: BoundedCalls) -> Server:
                         input_schema=KNOWLEDGE_TOOL_CONTRACTS[name].input_schema,
                         output_schema=KNOWLEDGE_TOOL_CONTRACTS[name].output_schema,
                         annotations=types.ToolAnnotations(
-                            read_only_hint=True,
+                            read_only_hint=KNOWLEDGE_TOOL_CONTRACTS[name].read_only,
                             destructive_hint=False,
-                            idempotent_hint=False,
+                            idempotent_hint=not KNOWLEDGE_TOOL_CONTRACTS[name].read_only,
                             open_world_hint=False,
                         ),
                     )

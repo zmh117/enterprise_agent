@@ -13,11 +13,8 @@ class SkillLoader:
         "loki-log-analysis",
         "ones-query",
     )
-    MANAGED_SKILLS = DEFAULT_SKILLS + (
-        "extract-business-knowledge",
-        "code-business-query",
-    )
-    VERSIONED_SKILLS = frozenset({"extract-business-knowledge", "code-business-query"})
+    MANAGED_SKILLS = DEFAULT_SKILLS + ("code-business-query",)
+    VERSIONED_SKILLS = frozenset({"code-business-query"})
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or Path.cwd() / ".claude" / "skills"

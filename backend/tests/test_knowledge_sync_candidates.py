@@ -467,6 +467,11 @@ def assert_upgrade_preserves_content_and_vector_references(database, tmp_path):
         assert row.pop("sync_run_id") is None
         assert row.pop("source_id") is None
         assert row.pop("unreferenced_at") is None
+    for row in after["document_revision"]:
+        assert row.pop("code_analysis_id") is None
+        assert row.pop("origin_kind") == "import"
+    for row in after["document_chunk"]:
+        assert row.pop("context_json") in ({}, "{}")
     assert after == before
     assert (
         not Migrator(database, default_migrations_dir(), migrator_build="sync-replay").run().applied

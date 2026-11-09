@@ -32,6 +32,7 @@ from services.knowledge_mcp_server.auth import KnowledgeMcpAuth
 from services.knowledge_mcp_server.tools import KnowledgeMcpTools
 from services.knowledge_mcp_server.storage_credentials import BrokerStorageCredentials
 from app.modules.knowledge.infrastructure.content_access import ManagedContentAccess
+from app.modules.knowledge.infrastructure.code_search_receipts import CodeSearchReceipts
 
 
 def configured_access_mode() -> KnowledgeAccessMode:
@@ -87,10 +88,13 @@ def build_tools(
             access_mode=access_mode,
             readability=bridge,
             code_history=bridge,
+            code_receipts=CodeSearchReceipts(database),
         ),
         McpAuditCoordinator(database, max_payload_bytes=16 * 1024, audit_service=audit),
         principal_client=bridge,
-        code=CodeKnowledgeQuery(access, resources, history=bridge),
+        code=CodeKnowledgeQuery(
+            access, resources, history=bridge, receipts=CodeSearchReceipts(database)
+        ),
     )
 
 

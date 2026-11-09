@@ -51,8 +51,8 @@ describe("SVN 工程检出", () => {
         const data = path.endsWith("/browse-id")
           ? {
               id: "browse-id",
-              kind: "browse",
-              state: "SUCCEEDED",
+              operation_kind: "browse",
+              state: "succeeded",
               error_code: null,
               result: {
                 revision: 2,
@@ -65,7 +65,7 @@ describe("SVN 工程检出", () => {
                 ],
               },
             }
-          : { enabled: true, urls: [url], jobs: [] }
+          : { enabled: true, registrations: [{ id: "test-svn", url }], jobs: [], checkouts: [] }
         return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } })
       })
     )
@@ -75,7 +75,7 @@ describe("SVN 工程检出", () => {
           new QueryClient({ defaultOptions: { queries: { retry: false } } })
         }
       >
-        <CodeCheckoutPanel />
+        <CodeCheckoutPanel resourceId="code-library" />
       </QueryClientProvider>
     )
     await waitFor(() =>
@@ -98,7 +98,7 @@ describe("SVN 工程检出", () => {
       folder: "factory-r2",
     })
     expect(
-      requests.every((request) => request.path.includes("/checkouts"))
+      requests.every((request) => request.path.startsWith("/api/platform/knowledge/code/resources/code-library/"))
     ).toBe(true)
     fireEvent.change(screen.getByLabelText("SVN 仓库地址"), {
       target: { value: "https://other.test/" },

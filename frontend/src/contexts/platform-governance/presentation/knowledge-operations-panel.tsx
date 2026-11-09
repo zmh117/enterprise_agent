@@ -120,7 +120,7 @@ export function KnowledgeOperationsPanel({
           <div>
             <h2 className="font-semibold">知识库服务</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              三个知识库共享部署服务；停止服务会影响它们的在线检索。
+              ONES 与代码知识库共享这些服务；停止服务会影响使用它们的在线检索。
             </p>
           </div>
           <span role="status" className="text-sm">

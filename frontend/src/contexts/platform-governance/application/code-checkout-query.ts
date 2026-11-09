@@ -1,0 +1,51 @@
+import { useQuery } from "@tanstack/react-query"
+import { z } from "zod"
+import { apiRequest } from "@/shared/api/api-client"
+
+export const codeOperationSchema = z.object({
+  id: z.string(),
+  operation_kind: z.string(),
+  state: z.string(),
+  error_code: z.string().nullable(),
+  result_expired: z.boolean().optional(),
+  result: z.object({
+    revision: z.number().optional(),
+    operative_revision: z.number().optional(),
+    directories: z.array(z.string()).optional(),
+    files: z.array(z.string()).optional(),
+    relative_dir: z.string().optional(),
+    checkout_id: z.string().optional(),
+  }),
+})
+const snapshotSchema = z.object({
+  enabled: z.boolean(),
+  registrations: z.array(z.object({ id: z.string(), url: z.string() })),
+  jobs: z.array(codeOperationSchema),
+  checkouts: z.array(
+    z.object({
+      id: z.string(),
+      source_id: z.string(),
+      relative_dir: z.string(),
+      state: z.string(),
+      verified_revision: z.number().nullable(),
+      generation: z.number(),
+      writer_operation_id: z.string().nullable(),
+      selected_paths: z.array(z.string()),
+      readers: z.number(),
+    })
+  ),
+})
+export function useCodeCheckouts(resourceId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["code-checkouts", resourceId],
+    enabled,
+    retry: false,
+    refetchInterval: 3000,
+    queryFn: async () =>
+      snapshotSchema.parse(
+        await apiRequest(
+          `/api/platform/knowledge/code/resources/${encodeURIComponent(resourceId)}/checkouts`
+        )
+      ),
+  })
+}

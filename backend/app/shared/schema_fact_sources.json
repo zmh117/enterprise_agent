@@ -209,7 +209,8 @@
       "evidence_refs": [
         "migration:137_expand_knowledge_retrieval_governance",
         "migration:140_expand_knowledge_storage_connections",
-        "migration:144_expand_knowledge_configuration_version"
+        "migration:144_expand_knowledge_configuration_version",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -301,7 +302,8 @@
       "evidence_refs": [
         "migration:134_expand_knowledge_vector_indexes",
         "migration:143_expand_knowledge_vector_generations",
-        "platform-operations:本机知识向量索引必须绑定固定语料和模型版本"
+        "platform-operations:本机知识向量索引必须绑定固定语料和模型版本",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -390,7 +392,8 @@
       },
       "evidence_refs": [
         "migration:133_expand_knowledge_chunks",
-        "platform-operations:知识清洗分块必须作为来源版本的可追溯派生结果"
+        "platform-operations:知识清洗分块必须作为来源版本的可追溯派生结果",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -448,7 +451,8 @@
       },
       "evidence_refs": [
         "migration:131_expand_knowledge_text_storage",
-        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -508,7 +512,8 @@
       "evidence_refs": [
         "migration:131_expand_knowledge_text_storage",
         "migration:142_expand_knowledge_sync_candidates",
-        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -518,9 +523,10 @@
       "owner": "knowledge",
       "semantics": "受限来源快照和规范化内容的不可变版本；不含可访问 URL 或认证信息",
       "classification": "immutable_snapshot",
-      "source_contract": "ones-offline-text/v1 或 ones-work-item-text/v1：安全清洗的离线详情/list 快照，保留真实子类型；候选版本不代表已激活或已授权在线事实",
+      "source_contract": "ones-offline-text/v1 或 ones-work-item-text/v1：安全清洗的离线详情/list 快照，保留真实子类型；候选版本不代表已激活或已授权在线事实；code-answer/v1 通过 code_analysis_id 标识代码来源，与 import_run_id 互斥，不伪造 ONES import",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/revision_store.py"
+        "code:backend/app/modules/knowledge/infrastructure/revision_store.py",
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
       ],
       "readers": [
         "code:backend/app/modules/knowledge/infrastructure/import_repository.py",
@@ -541,7 +547,8 @@
       },
       "evidence_refs": [
         "migration:131_expand_knowledge_text_storage",
-        "platform-operations:知识存储通过统一来源身份和独立收录关系管理"
+        "platform-operations:知识存储通过统一来源身份和独立收录关系管理",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -2114,26 +2121,24 @@
       "classification": "canonical_mutable_fact",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_svn_registration.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_collection_controller.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_operations.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -2145,25 +2150,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_baseline.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_svn_registration.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2176,24 +2180,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_baseline.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2206,24 +2210,24 @@
       "classification": "operational_coordination_fact",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_collection_controller.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -2235,23 +2239,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2264,23 +2269,24 @@
       "classification": "operational_coordination_fact",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -2292,23 +2298,24 @@
       "classification": "operational_coordination_fact",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -2320,23 +2327,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2349,23 +2357,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2378,23 +2387,24 @@
       "classification": "derived_projection",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -2406,25 +2416,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_history_bridge.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_collection_controller.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2437,26 +2446,24 @@
       "classification": "operational_coordination_fact",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_history_bridge.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_collection_controller.py",
-        "code:backend/app/modules/knowledge/infrastructure/code_operations.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:154_add_versioned_code_knowledge"
+        "migration:154_add_versioned_code_knowledge",
+        "migration:160_replace_code_preextraction"
       ]
     },
     {
@@ -2468,23 +2475,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2497,23 +2505,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "snapshot_id"
@@ -2527,23 +2536,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "object_key"
@@ -2557,23 +2567,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "document_id"
@@ -2587,23 +2598,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "display_name"
@@ -2617,23 +2629,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "catalog_hash"
@@ -2647,23 +2660,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2676,23 +2690,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "snapshot_id"
@@ -2706,23 +2721,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "machine_key"
@@ -2736,23 +2752,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "object_key"
@@ -2766,23 +2783,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "dimension"
@@ -2796,23 +2814,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2825,23 +2844,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "snapshot_id"
@@ -2855,23 +2875,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "event_key"
@@ -2885,23 +2906,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "object_key"
@@ -2915,23 +2937,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "display_name"
@@ -2945,23 +2968,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -2974,23 +2998,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "snapshot_id"
@@ -3004,23 +3029,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "machine_key"
@@ -3034,23 +3060,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "state_key"
@@ -3064,23 +3091,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "raw_value"
@@ -3094,23 +3122,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "display_name"
@@ -3124,23 +3153,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "evidence_json"
@@ -3154,23 +3184,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -3183,23 +3214,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "snapshot_id"
@@ -3213,23 +3245,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "business_key"
@@ -3243,23 +3276,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "document_id"
@@ -3273,23 +3307,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "revision_id"
@@ -3303,23 +3338,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "object_key"
@@ -3333,23 +3369,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "machine_key"
@@ -3363,23 +3400,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "event_key"
@@ -3393,23 +3431,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "source_mode"
@@ -3423,23 +3462,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "source_json"
@@ -3453,23 +3493,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "target_mode"
@@ -3483,23 +3524,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "target_state_key"
@@ -3513,23 +3555,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "target_json"
@@ -3543,23 +3586,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "guard_json"
@@ -3573,23 +3617,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "actions_json"
@@ -3603,23 +3648,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "success_boundary_json"
@@ -3633,23 +3679,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -3662,23 +3709,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "snapshot_id"
@@ -3692,23 +3740,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "business_key"
@@ -3722,23 +3771,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "machine_key"
@@ -3752,23 +3802,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "state_key"
@@ -3782,24 +3833,25 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
         "migration:155_add_code_state_machines",
-        "migration:156_add_code_indeterminate_failure"
+        "migration:156_add_code_indeterminate_failure",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同"
     },
@@ -3812,23 +3864,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "snapshot_id"
@@ -3842,23 +3895,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "business_key"
@@ -3872,23 +3926,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "failure_key"
@@ -3902,23 +3957,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "ordinal"
@@ -3932,23 +3988,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "machine_key"
@@ -3962,23 +4019,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "outcome"
@@ -3992,23 +4050,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "phase"
@@ -4022,24 +4081,25 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
         "migration:155_add_code_state_machines",
-        "migration:156_add_code_indeterminate_failure"
+        "migration:156_add_code_indeterminate_failure",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "state_mode"
@@ -4053,23 +4113,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "state_key"
@@ -4083,23 +4144,24 @@
       "classification": "immutable_snapshot",
       "canonical_source": "受管代码来源、候选验证与指定版本事实",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_fsm_repository.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "候选经验证就绪后可读取；固定快照不覆盖历史修订",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留已支持历史；只清理明确失败且无引用的候选",
       "audit_requirement": "仅身份、版本、计数和安全错误码，不记录源码或凭据",
       "retirement": {
-        "status": "retained",
-        "earliest_phase": "never",
+        "status": "retired",
+        "earliest_phase": "complete",
         "gates": [
-          "替代存储须显式迁移"
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
         ]
       },
       "evidence_refs": [
-        "migration:155_add_code_state_machines"
+        "migration:155_add_code_state_machines",
+        "migration:160_replace_code_preextraction"
       ],
       "source_contract": "code-business/v2 固定来源、统一对象、显式状态迁移、修订及证据合同",
       "column": "failure_json"
@@ -4113,24 +4175,308 @@
       "classification": "operational_coordination_fact",
       "canonical_source": "登记连接、固定版本目录选择及实际检出结果",
       "writers": [
-        "code:backend/app/modules/knowledge/infrastructure/code_checkout_jobs.py",
-        "code:backend/app/cli/code_checkout_worker.py"
+        "migration:160_replace_code_preextraction"
       ],
       "readers": [
-        "code:backend/app/modules/knowledge/api/code_operations_controller.py"
+        "code:backend/app/modules/knowledge/infrastructure/code_retirement_inventory.py"
       ],
-      "lifecycle": "排队、执行、成功、失败或中断；成功目录不被后续任务覆盖",
+      "lifecycle": "迁移 160 后删除；仅作为不可变历史目录记录，不是当前运行事实",
       "retention_policy": "保留任务元数据，工程内容只在部署工作副本目录",
       "audit_requirement": "仅操作身份、版本、路径和安全错误码，不记录文件正文或凭据",
+      "retirement": {
+        "status": "retired",
+        "earliest_phase": "complete",
+        "gates": [
+          "迁移 160 仅在显式清理和停止旧写者后执行；保留 ONES、Job 审计和检出文件"
+        ]
+      },
+      "evidence_refs": [
+        "migration:159_add_code_checkout_jobs",
+        "migration:160_replace_code_preextraction"
+      ]
+    },
+    {
+      "id": "knowledge.code_repository",
+      "object_type": "table",
+      "table": "knowledge.code_repository",
+      "owner": "knowledge",
+      "semantics": "已核实 SVN 仓库 UUID 与分支的稳定身份",
+      "classification": "canonical_mutable_fact",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_checkout_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_checkout_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
       "retirement": {
         "status": "retained",
         "earliest_phase": "never",
         "gates": [
-          "替代存储须显式迁移"
+          "替代须经明确规范变更及数据核验"
         ]
       },
       "evidence_refs": [
-        "migration:159_add_code_checkout_jobs"
+        "migration:160_replace_code_preextraction"
+      ]
+    },
+    {
+      "id": "knowledge.code_resource_config",
+      "object_type": "table",
+      "table": "knowledge.code_resource_config",
+      "owner": "knowledge",
+      "semantics": "代码资源配置修订的来源与工作副本绑定",
+      "classification": "immutable_snapshot",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_checkout_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_checkout_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代须经明确规范变更及数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:160_replace_code_preextraction"
+      ],
+      "source_contract": "code-answer/v1；经宿主验证的原 Job 来源、版本和证据；正文只在共享 document_revision"
+    },
+    {
+      "id": "knowledge.code_checkout",
+      "object_type": "table",
+      "table": "knowledge.code_checkout",
+      "owner": "knowledge",
+      "semantics": "受管真实工作副本的唯一修改权与固定版本",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_checkout_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_checkout_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代须经明确规范变更及数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:160_replace_code_preextraction"
+      ]
+    },
+    {
+      "id": "knowledge.code_svn_operation",
+      "object_type": "table",
+      "table": "knowledge.code_svn_operation",
+      "owner": "knowledge",
+      "semantics": "有界 SVN 操作与子进程停止证明",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_analysis_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_analysis_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代须经明确规范变更及数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:160_replace_code_preextraction"
+      ]
+    },
+    {
+      "id": "knowledge.code_analysis",
+      "object_type": "table",
+      "table": "knowledge.code_analysis",
+      "owner": "knowledge",
+      "semantics": "原问答 Job 的一次代码分析与共享读占用",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_analysis_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_analysis_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代须经明确规范变更及数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:160_replace_code_preextraction"
+      ]
+    },
+    {
+      "id": "knowledge.code_evidence",
+      "object_type": "table",
+      "table": "knowledge.code_evidence",
+      "owner": "knowledge",
+      "semantics": "实际代码读取或 SVN 历史的可追溯证据元数据",
+      "classification": "immutable_snapshot",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代须经明确规范变更及数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:160_replace_code_preextraction"
+      ],
+      "source_contract": "code-answer/v1；经宿主验证的原 Job 来源、版本和证据；正文只在共享 document_revision"
+    },
+    {
+      "id": "knowledge.code_answer",
+      "object_type": "table",
+      "table": "knowledge.code_answer",
+      "owner": "knowledge",
+      "semantics": "仓库分支 SVN 版本问题条件可见范围的答案身份",
+      "classification": "canonical_mutable_fact",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代须经明确规范变更及数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:160_replace_code_preextraction"
+      ]
+    },
+    {
+      "id": "knowledge.code_answer_revision",
+      "object_type": "table",
+      "table": "knowledge.code_answer_revision",
+      "owner": "knowledge",
+      "semantics": "有证据支持的不可变答案修订扩展",
+      "classification": "immutable_snapshot",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代须经明确规范变更及数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:160_replace_code_preextraction"
+      ],
+      "source_contract": "code-answer/v1；经宿主验证的原 Job 来源、版本和证据；正文只在共享 document_revision"
+    },
+    {
+      "id": "knowledge.code_qa_record",
+      "object_type": "table",
+      "table": "knowledge.code_qa_record",
+      "owner": "knowledge",
+      "semantics": "每次有效版本问答的受限最终结果",
+      "classification": "immutable_snapshot",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代须经明确规范变更及数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:160_replace_code_preextraction"
+      ],
+      "source_contract": "code-answer/v1；经宿主验证的原 Job 来源、版本和证据；正文只在共享 document_revision"
+    },
+    {
+      "id": "knowledge.code_index_task",
+      "object_type": "table",
+      "table": "knowledge.code_index_task",
+      "owner": "knowledge",
+      "semantics": "答案内容同事务入队的增量索引任务",
+      "classification": "operational_coordination_fact",
+      "canonical_source": "code-answer/v1；原 Job、已核实 SVN 来源及受管共享检出目录",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_answer_store.py"
+      ],
+      "lifecycle": "以迁移 160 的外键、状态、版本和占用约束为准；未集成路径不视为已上线",
+      "retention_policy": "受限内容和证据按知识保留策略管理；不能仅凭租约过期释放占用或删除审计",
+      "audit_requirement": "仅身份、修订、计数、摘要及固定错误码；不持久化源码、凭据或原始业务消息",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "替代须经明确规范变更及数据核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:160_replace_code_preextraction"
       ]
     }
   ]

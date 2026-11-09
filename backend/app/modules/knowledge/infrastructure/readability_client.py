@@ -4,6 +4,8 @@ from app.modules.knowledge.application.principal import PrincipalToken, current_
 
 from dataclasses import asdict
 import json
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+from app.modules.knowledge.domain.code_operation_errors import CODE_OPERATION_MESSAGES
 from typing import Any
 
 import httpx
@@ -20,7 +22,7 @@ from app.modules.knowledge.application.retrieval_budget import (
 from app.shared.database import assert_external_io_allowed
 from app.shared.bounded_read_http import request_bytes
 from app.modules.knowledge.application.storage_broker import STORAGE_PATH
-from app.shared.code_knowledge_tool_contracts import CODE_HISTORY_PATH
+from app.shared.code_answer_tool_contracts import CODE_HISTORY_PATH
 
 
 class KnowledgeReadabilityClient:
@@ -72,8 +74,7 @@ class KnowledgeReadabilityClient:
                     max_bytes=512 * 1024 if path == CODE_HISTORY_PATH else 64 * 1024,
                 )
                 io_timeout(MAX_RETRIEVAL_SECONDS)
-                if status != 200:
-                    raise ValueError
+                self._status(status, raw_body, path)
                 value = json.loads(raw_body, object_pairs_hook=strict_object)
                 if not isinstance(value, dict):
                     raise ValueError
@@ -95,20 +96,30 @@ class KnowledgeReadabilityClient:
                         **(budget.headers() if budget is not None else {}),
                     },
                 ) as response:
-                    if response.status_code != 200:
-                        raise ValueError
                     raw = bytearray()
                     for part in response.iter_bytes():
                         io_timeout(MAX_RETRIEVAL_SECONDS)
                         raw.extend(part)
                         if len(raw) > (512 * 1024 if path == CODE_HISTORY_PATH else 64 * 1024):
                             raise ValueError
+            self._status(response.status_code, bytes(raw), path)
             value = json.loads(raw, object_pairs_hook=strict_object)
             if not isinstance(value, dict):
                 raise ValueError
             return value
-        except KnowledgeGovernanceError:
+        except (KnowledgeGovernanceError, CodeKnowledgeError):
             raise
         except Exception:
             io_timeout(MAX_RETRIEVAL_SECONDS)
             raise KnowledgeGovernanceError("knowledge_readability_failed") from None
+
+    @staticmethod
+    def _status(status: int, raw: bytes, path: str) -> None:
+        if status == 200:
+            return
+        if path == CODE_HISTORY_PATH and status == 409:
+            value = json.loads(raw, object_pairs_hook=strict_object)
+            code = value.get("error_code") if isinstance(value, dict) else None
+            if code in CODE_OPERATION_MESSAGES:
+                raise CodeKnowledgeError(code)
+        raise ValueError

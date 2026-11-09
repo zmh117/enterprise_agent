@@ -13,7 +13,7 @@ from app.modules.knowledge.application.retrieval_budget import io_timeout
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.domain.storage_connection import storage_config
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
-from app.modules.knowledge.infrastructure.code_repository import CodeRepository
+from app.modules.knowledge.infrastructure.code_answer_reader import CodeAnswerReader
 from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
 from app.modules.knowledge.infrastructure.vector_clients import QdrantClient
 from app.shared.database import Database, assert_external_io_allowed
@@ -68,7 +68,7 @@ class ManagedContentAccess:
                     yield KnowledgeContent(
                         GovernanceStore(self.platform_database),
                         VectorRepository(self.platform_database),
-                        code=CodeRepository(self.platform_database),
+                        answers=CodeAnswerReader(self.platform_database),
                     )
                 except (sqlite3.DatabaseError, PostgresError) as exc:
                     raise KnowledgeGovernanceError("knowledge_storage_unavailable") from exc
@@ -112,7 +112,7 @@ class ManagedContentAccess:
                     GovernanceStore(database),
                     VectorRepository(database),
                     qdrant,
-                    CodeRepository(database),
+                    answers=CodeAnswerReader(database) if pg["mode"] == "platform" else None,
                 )
             except (KnowledgeGovernanceError, IODeadlineExceeded):
                 raise

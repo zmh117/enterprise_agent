@@ -35,6 +35,25 @@ export async function getKnowledgeInventory(): Promise<KnowledgeInventory> {
 }
 
 export async function changeKnowledgeResource(command: KnowledgeCommand) {
+  if (command.kind === "create-code") {
+    return knowledgeResourceSchema.parse(
+      await apiRequest(`${base}/code-resources`, {
+        method: "POST",
+        body: command.input,
+      })
+    )
+  }
+  if (command.kind === "code-draft" || command.kind === "initialize-index") {
+    return knowledgeResourceSchema.parse(
+      await apiRequest(
+        `${base}/code-resources/${encodeURIComponent(command.id)}/${command.kind === "code-draft" ? "draft" : "initialize-index"}`,
+        {
+          method: command.kind === "code-draft" ? "PUT" : "POST",
+          body: command.input,
+        }
+      )
+    )
+  }
   if (command.kind === "create") {
     return knowledgeResourceSchema.parse(
       await apiRequest(`${base}/resources`, {

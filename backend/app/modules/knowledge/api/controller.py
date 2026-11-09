@@ -156,6 +156,8 @@ def build_knowledge_router() -> APIRouter:
         )
         return await invoke(services(request).resources().create, actor_id=user_id, **value)
 
+    _register_code_routes(router)
+
     @router.put("/resources/{resource_id}/draft")
     async def draft_resource(resource_id: str, request: Request) -> Any:
         user_id = actor(request)
@@ -201,3 +203,39 @@ def build_knowledge_router() -> APIRouter:
         )
 
     return router
+
+
+def _register_code_routes(router: APIRouter) -> None:
+    @router.post("/code-resources")
+    async def create_code_resource(request: Request) -> Any:
+        user_id = actor(request)
+        value = await payload(request, {"code", "name"}, frozenset({"storage"}))
+        return await invoke(
+            services(request).code_resources().create_code, actor_id=user_id, **value
+        )
+
+    @router.put("/code-resources/{resource_id}/draft")
+    async def code_draft(resource_id: str, request: Request) -> Any:
+        user_id = actor(request)
+        value = await payload(
+            request,
+            {"expected_revision", "checkout_id", "svn_access_ref", "allowed_paths"},
+            frozenset({"storage", "index_id"}),
+        )
+        return await invoke(
+            services(request).code_resources().save_code_draft,
+            actor_id=user_id,
+            resource_id=resource_id,
+            **value,
+        )
+
+    @router.post("/code-resources/{resource_id}/initialize-index")
+    async def initialize_code_index(resource_id: str, request: Request) -> Any:
+        user_id = actor(request)
+        value = await payload(request, {"expected_revision"})
+        return await invoke(
+            services(request).initialize_code_index,
+            actor_id=user_id,
+            resource_id=resource_id,
+            **value,
+        )

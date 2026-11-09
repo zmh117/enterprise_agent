@@ -1,0 +1,293 @@
+"""Empty code libraries and resource-scoped checkout admission; synthetic providers."""
+
+from contextlib import contextmanager
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from app.modules.knowledge.application.content_access import KnowledgeContent
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+from app.modules.knowledge.domain.normalization import digest
+from app.modules.knowledge.domain.models import KnowledgeJobAccess
+from app.modules.knowledge.infrastructure.code_checkout_jobs import CodeCheckoutJobs
+from app.modules.knowledge.infrastructure.code_resource_service import CodeResourceService
+from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
+from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
+from backend.tests.support.code_answers import code_configuration, analysis_context, confirm
+from backend.tests.support.runtime import container
+
+
+class Models:
+    def __init__(self):
+        self.checked = 0
+
+    def check(self):
+        self.checked += 1
+
+
+class Vectors:
+    def __init__(self):
+        self.collections = {}
+
+    def ensure(self, index):
+        self.collections.setdefault(index["collection_name"], digest(index["profile"]))
+
+    def check(self, index):
+        assert self.collections[index["collection_name"]] == index["profile_hash"]
+
+
+class Content:
+    def __init__(self, store, vectors, qdrant):
+        self.store, self.vectors, self.qdrant = store, vectors, qdrant
+
+    @contextmanager
+    def open(self, config, *, knowledge_base_id, revision_id=""):
+        yield KnowledgeContent(self.store, self.vectors, self.qdrant)
+
+
+@pytest.fixture
+def setup(tmp_path, monkeypatch):
+    runtime = container()
+    try:
+        _, source, checkout, root = code_configuration(runtime, tmp_path)
+        entry = {
+            "public_url": "https://svn.invalid/repository/trunk",
+            "branch_url": "https://svn.invalid/repository/trunk",
+            "repository_uuid": "00000000-0000-0000-0000-000000000001",
+            "branch_path": "/trunk",
+            "auth_ref": "synthetic",
+        }
+        registry = (tmp_path / "registry.json").resolve()
+        registry.write_text(json.dumps({"synthetic": entry}))
+        monkeypatch.setenv("CODE_CHECKOUT_REGISTRY_FILE", str(registry))
+        monkeypatch.setenv("CODE_CHECKOUT_ENABLED", "true")
+        admin = runtime.knowledge_services.sources()
+        vectors = VectorRepository(runtime.database)
+        qdrant, embedding = Vectors(), Models()
+        service = CodeResourceService(
+            admin,
+            vectors,
+            embedding=embedding,
+            qdrant=qdrant,
+            content_access=Content(GovernanceStore(runtime.database), vectors, qdrant),
+        )
+        yield runtime, source, checkout, root, service, registry
+    finally:
+        runtime.database.close()
+
+
+def create(service):
+    return service.create_code(
+        actor_id="user_local_admin", code="new-code-kb", name="Synthetic code library"
+    )
+
+
+def bind(service, resource, checkout):
+    return service.save_code_draft(
+        actor_id="user_local_admin",
+        resource_id=resource["id"],
+        expected_revision=resource["revision"],
+        checkout_id=checkout["id"],
+        svn_access_ref="synthetic",
+        allowed_paths=["set_server"],
+    )
+
+
+def test_index_controls_do_not_change_published_configuration(setup):
+    _, _, _, _, service, _ = setup
+    created = create(service)
+    assert service.indexing_status(actor_id="user_local_admin", resource_id=created["id"]) == {
+        "paused": False,
+        "indexes": [],
+    }
+    assert (
+        service.set_indexing(actor_id="user_local_admin", resource_id=created["id"], paused=True)[
+            "paused"
+        ]
+        is True
+    )
+    assert service.view(created["id"])["revision"] == created["revision"]
+    assert (
+        service.set_indexing(actor_id="user_local_admin", resource_id=created["id"], paused=False)[
+            "paused"
+        ]
+        is False
+    )
+    with pytest.raises(CodeKnowledgeError):
+        service.set_indexing(actor_id="user_local_admin", resource_id=created["id"], paused=1)
+
+
+@pytest.mark.parametrize(
+    "field,value", [("collection_name", "ones_collection"), ("state", "RETIRED")]
+)
+def test_initialize_never_retargets_an_existing_index(setup, field, value):
+    runtime, _, checkout, _, service, _ = setup
+    bound = bind(service, create(service), checkout)
+    initialized = service.initialize_index(
+        actor_id="user_local_admin", resource_id=bound["id"], expected_revision=bound["revision"]
+    )
+    runtime.database.execute(
+        f"UPDATE {service.store.t('vector_index')} SET {field}=? WHERE id=?",
+        (value, initialized["draft"]["index_id"]),
+    )
+    before = dict(service.qdrant.collections)
+    with pytest.raises(CodeKnowledgeError, match="CODE_INDEX_CONFIGURATION_INVALID"):
+        service.initialize_index(
+            actor_id="user_local_admin",
+            resource_id=bound["id"],
+            expected_revision=initialized["revision"],
+        )
+    assert service.qdrant.collections == before
+
+
+def test_empty_library_has_its_own_initialization_and_publication(setup):
+    runtime, source, checkout, _, service, _ = setup
+    created = create(service)
+    assert created["kind"] == "code" and created["published"] is None
+    assert created["draft"]["index_id"] is None
+    assert created["draft"]["code_configuration"]["source_id"] is None
+    bound = bind(service, created, checkout)
+    initialized = service.initialize_index(
+        actor_id="user_local_admin", resource_id=bound["id"], expected_revision=bound["revision"]
+    )
+    index_id = initialized["draft"]["index_id"]
+    repeated = service.initialize_index(
+        actor_id="user_local_admin",
+        resource_id=bound["id"],
+        expected_revision=initialized["revision"],
+    )
+    assert repeated["draft"]["index_id"] == index_id and len(service.qdrant.collections) == 1
+    verified = service.verify_draft(
+        actor_id="user_local_admin", resource_id=bound["id"], expected_revision=repeated["revision"]
+    )
+    published = service.publish(
+        actor_id="user_local_admin", resource_id=bound["id"], expected_revision=verified["revision"]
+    )
+    pin = service.resolve(created["knowledge_base_id"])
+    assert pin.source_id == source and pin.index_id == index_id
+    assert published["published"]["configuration_version"] == 5
+    assert runtime.database.execute_one('SELECT count(*) AS n FROM "knowledge.document"')["n"] == 0
+    assert (
+        runtime.database.execute_one('SELECT count(*) AS n FROM "knowledge.code_index_task"')["n"]
+        == 0
+    )
+    assert next(iter(service.qdrant.collections)).startswith("code_answers_")
+    # The Runtime's production composition must resolve this managed storage
+    # configuration, not only test fixtures whose storage_config_json is null.
+    ctx = analysis_context(runtime, source, checkout)
+    grant = runtime.code_source_grant
+    assert grant is not None
+    grant.gate = SimpleNamespace(
+        resolve=lambda **kw: KnowledgeJobAccess(
+            ctx.job_id,
+            ctx.actor_id,
+            "app",
+            "pub",
+            "a" * 64,
+            "b" * 64,
+            (created["knowledge_base_id"],),
+            "c" * 64,
+        ),
+        snapshots=SimpleNamespace(
+            verify=lambda job: {
+                "snapshot": {"tools": [{"tool_identifier": "knowledge_svn_update"}]}
+            }
+        ),
+    )
+    capability = grant.for_job(ctx.job_id)
+    assert capability["sources"][0]["resource_fingerprint"] == pin.fingerprint
+    assert capability["sources"][0]["checkout_id"] == checkout["id"]
+
+
+def test_source_binding_rejects_wrong_repository_scope_and_active_analysis(setup):
+    runtime, source, checkout, _, service, registry = setup
+    created = create(service)
+    entries = json.loads(registry.read_text())
+    entries["synthetic"]["repository_uuid"] = "00000000-0000-0000-0000-000000000002"
+    registry.write_text(json.dumps(entries))
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_BINDING_INVALID"):
+        bind(service, created, checkout)
+    with pytest.raises(CodeKnowledgeError, match="CODE_MANAGED_STORAGE_REQUIRED"):
+        service.create_code(
+            actor_id="user_local_admin",
+            code="wrong-target",
+            name="Wrong",
+            storage={
+                "postgres": {"mode": "platform"},
+                "qdrant": {"url": "http://other.invalid:6333", "api_key_ref": ""},
+            },
+        )
+    # The original synthetic publication is in use; expiry alone never permits rebinding.
+    store = CodeCheckoutJobs(runtime.database, runtime.knowledge_services.sources())
+    store.authorize_context = lambda context: None
+    ctx = analysis_context(runtime, source, checkout)
+    analysis = confirm(store, ctx, store.begin(ctx, "active"))
+    from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
+
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_busy"):
+        service.store.assert_code_idle(ctx.knowledge_base_id)
+    assert store.row("code_analysis", analysis["id"])["read_released_at"] is None
+
+
+def test_management_initial_browse_has_no_invented_source_and_checkout_reserves_directory(setup):
+    runtime, source, _, root, service, registry = setup
+    resource = create(service)
+    jobs = CodeCheckoutJobs(runtime.database, runtime.knowledge_services.sources(), registry)
+    browse = jobs.submit_browse(
+        actor_id="user_local_admin",
+        resource_id=resource["id"],
+        url="https://svn.invalid/repository/trunk",
+        revision=100,
+        request_key="browse",
+    )
+    assert browse["source_id"] is None and browse["analysis_id"] is None
+    assert (
+        jobs.submit_browse(
+            actor_id="user_local_admin",
+            resource_id=resource["id"],
+            url="https://svn.invalid/repository/trunk",
+            revision=100,
+            request_key="browse",
+        )["id"]
+        == browse["id"]
+    )
+    claim = jobs.claim_management(browse["id"], owner="synthetic-worker")
+    with jobs.db.unit_of_work():
+        jobs.finish_management(
+            browse["id"],
+            owner="synthetic-worker",
+            claim=claim["claim_version"],
+            source_id=source,
+            metadata={"revision": 100},
+            result_hash="f" * 64,
+        )
+    pending = jobs.submit_checkout(
+        actor_id="user_local_admin",
+        resource_id=resource["id"],
+        browse_job_id=browse["id"],
+        paths=["set_server/a.cpp", "set_web/JTH"],
+        folder="chosen",
+        request_key="checkout",
+    )
+    reserved = jobs.row("code_checkout", pending["checkout_id"])
+    assert reserved["physical_key"] is None and reserved["state"] == "preparing"
+    assert reserved["writer_operation_id"] == pending["id"] and not (root / "chosen").exists()
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_OVERLAP"):
+        jobs.submit_checkout(
+            actor_id="user_local_admin",
+            resource_id=resource["id"],
+            browse_job_id=browse["id"],
+            paths=["set_server"],
+            folder="chosen",
+            request_key="other",
+        )
+    with pytest.raises(CodeKnowledgeError, match="CODE_SCOPE_INVALID"):
+        jobs.submit_checkout(
+            actor_id="user_local_admin",
+            resource_id=resource["id"],
+            browse_job_id=browse["id"],
+            paths=["set_server", "set_server/a.cpp"],
+            folder="overlap",
+            request_key="overlap",
+        )

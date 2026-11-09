@@ -1,158 +1,237 @@
-"""Current authorization for one internal extraction Job, never a model-selected mount."""
+"""Frozen code capability and current original-Job source occupancy; metadata only."""
 
-from __future__ import annotations
+from datetime import timedelta
+from typing import Any
 
-from datetime import UTC, datetime
-from typing import Any, Protocol
-
+from app.modules.agent.infrastructure.runtime_pool_store import (
+    RuntimePoolStore,
+    database_now,
+    timestamp,
+)
+from app.modules.authorization_center.application.service import BusinessAuthorizationService
+from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
+from app.modules.knowledge.domain.code_answers import (
+    CodeAnalysisContext,
+    code_authorization_hash,
+    utc_time,
+)
 from app.modules.knowledge.domain.code_contracts import (
-    CONTRACT_VERSION,
     CodeKnowledgeError,
-    COMPONENTS,
     CODE_SOURCE_GRANT_PATH as CODE_SOURCE_GRANT_PATH,
 )
 from app.modules.knowledge.domain.normalization import digest
-from app.modules.knowledge.infrastructure.code_job_binding import extraction_unit
-from app.modules.knowledge.infrastructure.code_repository import decoded
-from app.modules.knowledge.infrastructure.code_source import relative_path
-from app.modules.knowledge.infrastructure.storage import table
+from app.modules.knowledge.infrastructure.code_answer_store import CodeAnswerStore
+from app.modules.knowledge.infrastructure.code_checkout_store import json_value
+from app.modules.knowledge.infrastructure.job_access import KnowledgeJobGate
+from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
 from app.shared.database import Database
-from app.modules.knowledge.domain.code_identity_catalog import CATALOG_HASH, identity_catalog
-
-
-class CurrentAuthorization(Protocol):
-    def require(self, **kwargs: Any) -> dict[str, Any]: ...
 
 
 class CodeSourceGrant:
-    def __init__(self, database: Database, authorization: CurrentAuthorization) -> None:
+    def __init__(
+        self,
+        database: Database,
+        authorization: BusinessAuthorizationService,
+        resources: KnowledgeResourceReader,
+    ) -> None:
         self.database = database
-        self.authorization = authorization
+        self.gate = KnowledgeJobGate(database, JobMcpToolSnapshotService(database), authorization)
+        self.resources = resources
+        self.store = CodeAnswerStore(database)
 
-    def for_job(self, job_id: str, *, completed: bool = False) -> dict[str, Any]:
-        db = self.database
-        row = db.execute_one(
-            f"select u.id,b.lease_version from {table(db, 'code_unit')} u "
-            f"join {table(db, 'code_build')} b on b.id=u.build_id where u.job_id=?",
-            (job_id,),
+    def for_job(self, job_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            "SELECT internal_user_id FROM agent_job WHERE id=?", (job_id,)
         )
         if not row:
-            raise CodeKnowledgeError("code_job_unbound")
-        unit = extraction_unit(db, row["id"], row["lease_version"], completed=completed)
-        # The controller lease may be reclaimed. The original Job remains the only
-        # execution for this unit; its artifact binding never changes on takeover.
-        if not unit["execution_lease_version"]:
-            raise CodeKnowledgeError("code_unit_execution_lease_changed")
-        config = decoded(unit["configuration_json"])
-        if (
-            config.get("contract_version") != CONTRACT_VERSION
-            or config.get("identity_catalog_hash") != CATALOG_HASH
-        ):
-            raise CodeKnowledgeError("code_extraction_contract_changed")
-        job = db.execute_one("select * from agent_job where id=?", (job_id,))
-        if (
-            not job
-            or job["source_channel"] != "code_knowledge"
-            or job["status"] != ("SUCCEEDED" if completed else "RUNNING")
-        ):
-            raise CodeKnowledgeError("code_job_inactive")
-        bindings = {
-            "internal_user_id": "service_account_id",
-            "agent_publication_id": "agent_publication_id",
-            "agent_config_hash": "agent_config_hash",
-            "business_application_id": "application_id",
-            "business_application_publication_id": "application_publication_id",
-            "business_application_config_hash": "application_config_hash",
-        }
-        if any(not config.get(c) or job.get(j) != config[c] for j, c in bindings.items()):
-            raise CodeKnowledgeError("code_job_binding_changed")
-        user = db.execute_one(
-            "select id from app_user where id=? and status='enabled' and account_type='service'",
-            (job["internal_user_id"],),
-        )
-        if not user:
-            raise CodeKnowledgeError("code_execution_identity_unavailable")
-        self.authorization.require(
-            user_id=job["internal_user_id"], application_id=job["business_application_id"]
-        )
-        scope = decoded(unit["scope_json"])
-        prefixes = scope.get("allowed_prefixes")
-        if not isinstance(prefixes, list) or not 1 <= len(prefixes) <= 100:
-            raise CodeKnowledgeError("code_mount_scope_invalid")
-        for prefix in prefixes:
-            relative_path(prefix)
-            if not any(
-                prefix == root or prefix.startswith(root + "/") for root in COMPONENTS.values()
-            ):
-                raise CodeKnowledgeError("code_mount_scope_invalid")
-        source = db.execute_one(
-            f"select * from {table(db, 'code_source_snapshot')} where id=? and source_id=?",
-            (unit["source_snapshot_id"], unit["source_id"]),
-        )
-        if (
-            not source
-            or source["retired_at"] is not None
-            or source["config_hash"] != unit["config_hash"]
-        ):
-            raise CodeKnowledgeError("code_source_unavailable")
-        exclusions = [
-            entry
-            for entry in decoded(source["manifest_json"]).get("excluded", [])
-            if any(
-                entry["path"] == prefix or entry["path"].startswith(prefix + "/")
-                for prefix in prefixes
+            raise CodeKnowledgeError("CODE_EXECUTION_MISMATCH")
+        access = self.gate.resolve(job_id=job_id, actor_id=row["internal_user_id"])
+        frozen = self.gate.snapshots.verify(job_id)["snapshot"]["tools"]
+        if "knowledge_svn_update" not in {item["tool_identifier"] for item in frozen}:
+            raise CodeKnowledgeError("CODE_SOURCE_CAPABILITY_DENIED")
+        sources = []
+        for base_id in sorted(access.knowledge_base_ids):
+            base = self.resources.store.get("knowledge_base", base_id)
+            if base.get("kind") != "code":
+                continue
+            pin = self.resources.resolve(base_id)
+            config = self.resources.store.code_configuration(pin.revision_id)
+            sources.append(
+                dict(
+                    knowledge_base_id=base_id,
+                    config_revision_id=pin.revision_id,
+                    source_id=pin.source_id,
+                    checkout_id=config["checkout_id"],
+                    resource_fingerprint=pin.fingerprint,
+                    allowed_paths=config["allowed_paths_json"],
+                )
             )
-        ]
-        return {
-            "job_id": job_id,
-            "execution_identity": {
-                "app_user_id": job["internal_user_id"],
-                "agent_publication_id": job["agent_publication_id"],
-                "application_publication_id": job["business_application_publication_id"],
-            },
-            "lease_version": unit["execution_lease_version"],
-            "manifest_hash": source["manifest_hash"],
-            "allowed_prefixes": prefixes,
-            "scope": scope,
-            "identity_catalog": identity_catalog(),
-            "identity_catalog_hash": CATALOG_HASH,
-            "source_exclusions": {
-                "items": exclusions[:100],
-                "total": len(exclusions),
-                "truncated": len(exclusions) > 100,
-            },
-            "candidate_manifest": {
-                "contract_version": CONTRACT_VERSION,
-                "build_id": unit["build_id"],
-                "work_unit_id": unit["id"],
-                "source_snapshot_id": source["id"],
-                "source_ref": decoded(source["source_ref"]),
-                "scope_hash": digest(scope),
-                "config_hash": unit["config_hash"],
-            },
-        }
+            if len(sources) > 50:
+                raise CodeKnowledgeError("CODE_SOURCE_CAPABILITY_LIMIT")
+        value = dict(
+            contract="code-source-capability/v2",
+            job_id=job_id,
+            actor_id=access.actor_id,
+            authorization_hash=code_authorization_hash(access),
+            sources=sources,
+            native_tools=["Read", "Glob", "Grep"],
+        )
+        return {**value, "capability_hash": digest(value)}
+
+    def _invocation(self, value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        identity = {k: value.get(k) for k in ("job_id", "invocation_id", "request_digest")}
+        if any(not isinstance(v, str) or not 1 <= len(v) <= 200 for v in identity.values()):
+            raise CodeKnowledgeError("CODE_GRANT_REQUEST_INVALID")
+        typed_identity = {k: str(v) for k, v in identity.items()}
+        pool = RuntimePoolStore(self.database)
+        invocation = pool.require(typed_identity["invocation_id"], typed_identity["request_digest"])
+        current = database_now(self.database)
+        if (
+            invocation["job_id"] != typed_identity["job_id"]
+            or invocation["state"] != "RUNNING"
+            or invocation["cancel_requested_at"] is not None
+            or invocation["execution_quiesced_at"] is not None
+            or any(
+                utc_time(invocation[field]) <= current
+                for field in ("lease_until", "execution_deadline_at")
+            )
+        ):
+            raise CodeKnowledgeError("CODE_EXECUTION_ENDED")
+        # Frozen request is authenticated by its digest and never returned as a whole.
+        request = pool.request(typed_identity["invocation_id"])
+        frozen = request["prompt"]["retrieved_context"].get("code_source")
+        capability = self.for_job(typed_identity["job_id"])
+        if frozen != capability:
+            raise CodeKnowledgeError("CODE_SOURCE_CAPABILITY_CHANGED")
+        return invocation, capability
 
     def check_invocation(self, value: dict[str, Any]) -> dict[str, Any]:
-        if set(value) != {"job_id", "invocation_id", "request_digest"} or any(
-            not isinstance(item, str) or not 1 <= len(item) <= 200 for item in value.values()
+        if not isinstance(value, dict) or set(value) - {
+            "job_id",
+            "invocation_id",
+            "request_digest",
+            "action",
+            "analysis_id",
+            "evidence",
+        }:
+            raise CodeKnowledgeError("CODE_GRANT_REQUEST_INVALID")
+        invocation, capability = self._invocation(value)
+        action = value.get("action", "capability")
+        if action == "capability" and set(value) <= {
+            "job_id",
+            "invocation_id",
+            "request_digest",
+            "action",
+        }:
+            return capability
+        if action not in {"grant", "heartbeat", "quiesce", "evidence"} or not isinstance(
+            value.get("analysis_id"), str
         ):
-            raise CodeKnowledgeError("code_grant_request_invalid")
-        invocation = self.database.execute_one(
-            "select * from agent_runtime_invocation where invocation_id=? and job_id=? "
-            "and request_digest=? and state='RUNNING' and cancel_requested_at is null "
-            "and execution_quiesced_at is null",
-            (value["invocation_id"], value["job_id"], value["request_digest"]),
+            raise CodeKnowledgeError("CODE_GRANT_REQUEST_INVALID")
+        analysis = self.store.row("code_analysis", value["analysis_id"])
+        if (
+            analysis["invocation_id"] != invocation["invocation_id"]
+            or analysis["owner_instance_id"] != invocation["instance_id"]
+            or analysis["job_id"] != invocation["job_id"]
+        ):
+            raise CodeKnowledgeError("CODE_EXECUTION_MISMATCH")
+        sources = [
+            s
+            for s in capability["sources"]
+            if all(
+                analysis[k] == s[k]
+                for k in ("knowledge_base_id", "config_revision_id", "source_id", "checkout_id")
+            )
+        ]
+        if len(sources) != 1:
+            raise CodeKnowledgeError("CODE_SOURCE_CAPABILITY_CHANGED")
+        context = CodeAnalysisContext(
+            **{
+                key: analysis[key]
+                for key in (
+                    "job_id",
+                    "invocation_id",
+                    "owner_instance_id",
+                    "knowledge_base_id",
+                    "config_revision_id",
+                    "source_id",
+                    "checkout_id",
+                    "exact_search_id",
+                    "question_hash",
+                    "authorization_hash",
+                )
+            },
+            actor_id=invocation["app_user_id"],
+            revision=analysis["requested_revision"],
+            deadline_at=utc_time(analysis["deadline_at"]).isoformat(),
         )
-        if not invocation:
-            raise CodeKnowledgeError("code_invocation_inactive")
-        for field in ("lease_until", "execution_deadline_at"):
-            timestamp = invocation[field]
-            expiry = datetime.fromisoformat(timestamp) if isinstance(timestamp, str) else timestamp
-            if not expiry or expiry <= datetime.now(UTC):
-                raise CodeKnowledgeError("code_invocation_expired")
-        grant = self.for_job(value["job_id"])
-        if any(
-            invocation[field] != expected for field, expected in grant["execution_identity"].items()
-        ):
-            raise CodeKnowledgeError("code_invocation_binding_mismatch")
-        return grant
+        if action == "heartbeat":
+            with self.database.unit_of_work():
+                self.store._owner(context)
+                self.store._configuration(context)
+                self.store.row("code_checkout", context.checkout_id, lock=True)
+                current_analysis = self.store.row("code_analysis", analysis["id"], lock=True)
+                self.store._bound(context, current_analysis)
+                current = database_now(self.database)
+                if (
+                    current_analysis["state"] not in {"reading", "validating"}
+                    or current_analysis["read_released_at"] is not None
+                    or current_analysis["lease_until"] is None
+                    or utc_time(current_analysis["lease_until"]) <= current
+                ):
+                    raise CodeKnowledgeError("CODE_READ_GRANT_EXPIRED")
+                if current_analysis["state"] == "reading":
+                    self.store.require_reader(context, analysis["id"])
+                self.database.execute(
+                    f"UPDATE {self.store.t('code_analysis')} SET lease_until=?,updated_at=? WHERE id=?",
+                    (
+                        timestamp(
+                            min(current + timedelta(seconds=30), utc_time(context.deadline_at))
+                        ),
+                        timestamp(current),
+                        analysis["id"],
+                    ),
+                )
+                return {"renewed": True, "analysis_id": analysis["id"]}
+        if action == "quiesce":
+            stopped = self.store.finalizing(context, analysis["id"])
+            return {"analysis_id": analysis["id"], "state": stopped["state"]}
+        with self.database.unit_of_work():
+            reader = self.store.require_reader(context, analysis["id"])
+            current = database_now(self.database)
+            self.database.execute(
+                f"UPDATE {self.store.t('code_analysis')} SET lease_until=?,updated_at=? WHERE id=?",
+                (
+                    timestamp(min(current + timedelta(seconds=30), utc_time(context.deadline_at))),
+                    timestamp(current),
+                    analysis["id"],
+                ),
+            )
+            if action == "evidence":
+                from app.modules.knowledge.infrastructure.code_evidence_store import (
+                    record_runtime_evidence,
+                )
+
+                return record_runtime_evidence(self.store, context, analysis, value.get("evidence"))
+            checkout = self.store.row("code_checkout", context.checkout_id)
+            repository = self.database.execute_one(
+                f"SELECT repository_uuid,branch_path FROM {self.store.t('code_repository')} WHERE source_id=?",
+                (context.source_id,),
+            )
+            assert repository is not None
+            repository["repository_uuid"] = str(repository["repository_uuid"])
+            return dict(
+                contract="code-source-grant/v2",
+                capability_hash=capability["capability_hash"],
+                analysis_id=analysis["id"],
+                source_id=context.source_id,
+                checkout_id=context.checkout_id,
+                revision=context.revision,
+                generation=reader["generation"],
+                directory=checkout["relative_dir"],
+                physical_key=checkout["physical_key"],
+                selected_paths=json_value(checkout["selected_paths_json"]),
+                allowed_paths=sources[0]["allowed_paths"],
+                deadline_at=context.deadline_at,
+                **repository,
+            )

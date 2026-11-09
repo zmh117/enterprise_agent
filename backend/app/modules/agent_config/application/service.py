@@ -853,7 +853,7 @@ class AgentConfigService:
                 errors.append(
                     {
                         "field": "mcp_tool_ids",
-                        "message": "代码业务问答 Skill 必须配置目录、检索、业务详情和版本比较四个知识工具",
+                        "message": "代码业务问答 Skill 必须配置目录、版本检索、答案详情、SVN 核验和保存的完整知识工具组",
                     }
                 )
         for skill_code in config.get("skills") or []:

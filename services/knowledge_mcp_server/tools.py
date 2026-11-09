@@ -100,13 +100,21 @@ class KnowledgeMcpTools:
                 if name == "knowledge_list_bases":
                     result = self.directory.list_bases(token=principal.current, arguments=arguments)
                 elif name == "knowledge_search":
-                    result = self.search.search(token=principal.current, arguments=arguments)
+                    result = self.search.search(
+                        token=principal.current, arguments=arguments, search_id=handle.root_audit_id
+                    )
                 elif self.code is not None:
                     result = self.code.invoke(
                         tool=name, token=principal.current, arguments=arguments
                     )
                 else:
                     raise failure("knowledge_mcp_unavailable")
+                # Host-only receipt metadata never enters the model-facing result.
+                receipt = result.pop("_code_receipt", None)
+                if receipt is not None and (
+                    name != "knowledge_search" or receipt.get("search_id") != handle.root_audit_id
+                ):
+                    raise failure("knowledge_mcp_result_invalid")
                 if not Draft202012Validator(contract.output_schema).is_valid(result):
                     raise failure("knowledge_mcp_result_invalid")
                 encoded = json.dumps(result, ensure_ascii=False, allow_nan=False).encode()
@@ -114,27 +122,7 @@ class KnowledgeMcpTools:
                     raise failure("knowledge_mcp_result_invalid")
                 control.check()
                 self.auth.resolve(principal.current, name, headers)
-            # 不保存 query、cursor、库名称、命中/拒绝 ID 或正文，只记录授权后版本与计数。
-            summary = (
-                {
-                    "mode": result.get("mode", "behavior"),
-                    "partial": result.get("partial", not result.get("complete", False)),
-                }
-                if name in {"knowledge_get_behavior", "knowledge_compare_behavior"}
-                else {"returned": len(result["items"]), "has_more": result["has_more"]}
-                if name == "knowledge_list_bases"
-                else {
-                    key: result[key]
-                    for key in (
-                        "knowledge_base_id",
-                        "resource_revision_id",
-                        "index_id",
-                        "partial",
-                        "access_mode",
-                    )
-                }
-                | {"returned": len(result["documents"])}
-            )
+            summary = self._summary(name, result, receipt)
             control.check()
             self.audit.complete(
                 handle,
@@ -167,3 +155,51 @@ class KnowledgeMcpTools:
                 error = failure("knowledge_mcp_unavailable")
                 setattr(error, "mcp_audit_handle", handle)
             raise error from None
+
+    @staticmethod
+    def _summary(name: str, result: dict[str, Any], receipt: Any) -> dict[str, Any]:
+        # No query/source/diff text in the ordinary tool audit.
+        if name == "knowledge_list_bases":
+            return {"returned": len(result["items"]), "has_more": result["has_more"]}
+        if name == "knowledge_search":
+            summary = {
+                key: result[key]
+                for key in (
+                    "knowledge_base_id",
+                    "resource_revision_id",
+                    "index_id",
+                    "partial",
+                    "access_mode",
+                )
+            } | {"returned": len(result["documents"])}
+            if receipt is not None:
+                summary["code_search"] = receipt
+            return summary
+        if name == "knowledge_get_code_answer":
+            return {
+                "code_answer_read": {
+                    key: result[key]
+                    for key in (
+                        "knowledge_base_id",
+                        "source_id",
+                        "document_id",
+                        "revision_id",
+                        "requested_revision",
+                        "matched_revision",
+                        "match_kind",
+                        "requires_verification",
+                    )
+                }
+            }
+        return {
+            key: result[key]
+            for key in (
+                "analysis_id",
+                "operation_id",
+                "state",
+                "svn_revision",
+                "support_status",
+                "saved",
+            )
+            if key in result
+        }

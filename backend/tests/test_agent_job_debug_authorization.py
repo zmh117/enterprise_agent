@@ -241,6 +241,46 @@ def test_debug_create_projects_current_task_file_contract_into_job() -> None:
     }
 
 
+def test_local_deployment_uses_authorized_business_environment() -> None:
+    runtime = _container()
+    selection = prepare_debug_application_access(
+        runtime,
+        application_code="debug-business-environment",
+        role_code="debug-business-environment-role",
+    )
+    runtime.database.execute(
+        "UPDATE platform_environment SET code=? WHERE id=?",
+        ("factory-test", selection["environment_id"]),
+    )
+    options = runtime.debug_job_access_service.available_options(
+        user_id=ADMIN_ID, environment="local"
+    )
+    selected = next(x for x in options["applications"] if x["id"] == selection["application_id"])
+    assert len(selected["execution_scopes"]) == 1
+    assert selected["execution_scopes"][0]["environment_code"] == "factory-test"
+    assert selected["execution_scopes"][0]["id"] == selection["execution_scope_id"]
+    job, _ = runtime.debug_job_access_service.create_job(
+        user_id=ADMIN_ID,
+        display_name="Administrator",
+        message="验证既有业务环境范围",
+        application_id=selection["application_id"],
+        execution_scope_id=selection["execution_scope_id"],
+        idempotency_key="business-environment",
+        correlation_id="business-environment",
+        environment="local",
+    )
+    assert job.routing_context["environment"] == "factory-test"
+    assert job.reply_route["type"] == "none"
+    runtime.database.execute(
+        "DELETE FROM rbac_role_application_scope WHERE environment_id=?",
+        (selection["environment_id"],),
+    )
+    after_revoke = runtime.debug_job_access_service.available_options(
+        user_id=ADMIN_ID, environment="local"
+    )
+    assert not any(x["id"] == selection["application_id"] for x in after_revoke["applications"])
+
+
 def test_debug_create_requires_agent_debug_execute_capability() -> None:
     runtime = _container()
     runtime.identity_repository.create_user(

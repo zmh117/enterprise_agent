@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import threading
 from typing import Any
@@ -12,6 +13,16 @@ from app.shared.database import Database
 
 TABLES = frozenset(
     {
+        "code_repository",
+        "code_resource_config",
+        "code_checkout",
+        "code_svn_operation",
+        "code_analysis",
+        "code_evidence",
+        "code_answer",
+        "code_answer_revision",
+        "code_qa_record",
+        "code_index_task",
         "code_checkout_job",
         "source",
         "document",
@@ -56,6 +67,9 @@ TABLES = frozenset(
     }
 )
 _SQLITE_LOCK = threading.RLock()
+_HELD_SOURCES: ContextVar[frozenset[tuple[int, str]]] = ContextVar(
+    "knowledge_held_sources", default=frozenset()
+)
 
 
 def table(database: Database, name: str) -> str:
@@ -73,6 +87,20 @@ def insert(database: Database, name: str, values: dict[str, Any], *, conflict: s
 
 @contextmanager
 def source_lock(database: Database, source_id: str) -> Iterator[None]:
+    identity = (id(database), source_id)
+    held = _HELD_SOURCES.get()
+    if identity in held:
+        raise ExportValidationError("knowledge_source_import_busy")
+    token = _HELD_SOURCES.set(held | {identity})
+    try:
+        with _source_lock(database, source_id):
+            yield
+    finally:
+        _HELD_SOURCES.reset(token)
+
+
+@contextmanager
+def _source_lock(database: Database, source_id: str) -> Iterator[None]:
     with database.session():
         if database.engine == "postgres":
             key = int.from_bytes(

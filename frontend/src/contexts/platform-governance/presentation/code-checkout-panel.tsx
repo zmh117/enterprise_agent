@@ -8,32 +8,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { KnowledgeError, KnowledgeField } from "./knowledge-resource-ui"
 
-const base = "/api/platform/knowledge/code/checkouts"
-const resultSchema = z.object({
-  revision: z.number().optional(),
-  directories: z.array(z.string()).optional(),
-  files: z.array(z.string()).optional(),
-  folder: z.string().optional(),
-  container_directory: z.string().optional(),
-})
-const jobSchema = z.object({
-  id: z.string(),
-  kind: z.string(),
-  state: z.string(),
-  error_code: z.string().nullable(),
-  result: resultSchema,
-})
-const snapshotSchema = z.object({
-  enabled: z.boolean(),
-  urls: z.array(z.string()),
-  jobs: z.array(jobSchema),
-})
+import {
+  codeOperationSchema as jobSchema,
+  useCodeCheckouts,
+} from "../application/code-checkout-query"
+const base = "/api/platform/knowledge/code"
 const states: Record<string, string> = {
-  QUEUED: "等待执行",
-  RUNNING: "正在执行",
-  SUCCEEDED: "已完成",
-  FAILED: "失败",
-  INTERRUPTED: "已中断",
+  queued: "等待执行",
+  running: "正在执行",
+  succeeded: "已完成",
+  failed: "失败",
+  interrupted: "已中断",
 }
 const errors: Record<string, string> = {
   code_checkout_destination_exists:
@@ -45,7 +30,7 @@ const errors: Record<string, string> = {
   code_checkout_registration_changed: "仓库登记已变更，请重新浏览目录。",
 }
 
-export function CodeCheckoutPanel() {
+export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
   const cache = useQueryClient()
   const [urlInput, setUrl] = useState<string>()
   const [revision, setRevision] = useState("")
@@ -53,45 +38,45 @@ export function CodeCheckoutPanel() {
   const [selected, setSelected] = useState<string[]>([])
   const [folder, setFolder] = useState("mes")
   const [notice, setNotice] = useState("")
-  const snapshot = useQuery({
-    queryKey: ["code-checkouts"],
-    refetchInterval: 3000,
-    queryFn: async () => snapshotSchema.parse(await apiRequest(base)),
-  })
-  const url = urlInput ?? snapshot.data?.urls[0] ?? ""
+  const snapshot = useCodeCheckouts(resourceId)
+  const url = urlInput ?? snapshot.data?.registrations[0]?.url ?? ""
   const browse = useQuery({
     queryKey: ["code-checkout-browse", browseId],
     enabled: Boolean(browseId),
+    refetchOnWindowFocus: false,
     refetchInterval: (query) =>
-      ["SUCCEEDED", "FAILED", "INTERRUPTED"].includes(
+      ["succeeded", "failed", "interrupted"].includes(
         query.state.data?.state ?? ""
       )
         ? false
         : 1000,
     queryFn: async () =>
       jobSchema.parse(
-        await apiRequest(`${base}/${encodeURIComponent(browseId!)}`)
+        await apiRequest(`${base}/operations/${encodeURIComponent(browseId!)}`)
       ),
   })
   const submit = useMutation({
     mutationFn: async (kind: "browse" | "checkout") =>
       z.object({ id: z.string() }).parse(
-        await apiRequest(kind === "browse" ? `${base}/browse` : base, {
-          method: "POST",
-          body:
-            kind === "browse"
-              ? {
-                  url: url.trim(),
-                  revision: revision ? Number(revision) : null,
-                  request_key: createRequestKey(),
-                }
-              : {
-                  browse_job_id: browseId,
-                  paths: selected,
-                  folder,
-                  request_key: createRequestKey(),
-                },
-        })
+        await apiRequest(
+          `${base}/resources/${encodeURIComponent(resourceId)}/${kind === "browse" ? "browse" : "checkouts"}`,
+          {
+            method: "POST",
+            body:
+              kind === "browse"
+                ? {
+                    url: url.trim(),
+                    revision: revision ? Number(revision) : null,
+                    request_key: createRequestKey(),
+                  }
+                : {
+                    browse_job_id: browseId,
+                    paths: selected,
+                    folder,
+                    request_key: createRequestKey(),
+                  },
+          }
+        )
       ),
     onSuccess: (job, kind) => {
       if (kind === "browse") {
@@ -105,7 +90,8 @@ export function CodeCheckoutPanel() {
     setBrowseId(undefined)
     setSelected([])
   }
-  const ready = browse.data?.state === "SUCCEEDED"
+  const ready =
+    browse.data?.state === "succeeded" && !browse.data.result_expired
   return (
     <section
       className="space-y-4 rounded-lg border p-4"
@@ -115,7 +101,8 @@ export function CodeCheckoutPanel() {
       <div>
         <h3 className="font-medium">SVN 工程检出</h3>
         <p className="text-sm text-muted-foreground">
-          从 SVN 多选文件或目录，由 Docker 检出完整工程。此操作不启动知识提取。
+          从 SVN 多选文件或目录，由 Docker 检出完整工程。问答时按用户指定的 SVN
+          版本核验。
         </p>
       </div>
       <KnowledgeError error={snapshot.error || browse.error || submit.error} />
@@ -176,6 +163,9 @@ export function CodeCheckoutPanel() {
                 ` · ${errors[browse.data.error_code] ?? browse.data.error_code}`}
             </p>
           )}
+          {browse.data?.result_expired && (
+            <p role="status">目录预览已过期，请重新浏览。</p>
+          )}
           {ready && (
             <>
               <p>
@@ -233,16 +223,18 @@ export function CodeCheckoutPanel() {
       {Boolean(snapshot.data?.jobs.length) && (
         <ul className="space-y-2" aria-label="SVN 检出任务">
           {snapshot
-            .data!.jobs.filter((job) => job.kind === "checkout")
+            .data!.jobs.filter((job) => job.operation_kind === "checkout")
             .map((job) => (
               <li key={job.id} className="rounded border p-3 text-sm">
                 <span>
                   {states[job.state] ?? job.state}
-                  {job.result.revision ? ` · SVN r${job.result.revision}` : ""}
+                  {job.result.operative_revision !== undefined
+                    ? ` · SVN r${job.result.operative_revision}`
+                    : ""}
                 </span>
-                {job.result.container_directory && (
+                {job.result.relative_dir && (
                   <p className="break-all">
-                    容器目录：{job.result.container_directory}
+                    检出目录：{job.result.relative_dir}
                   </p>
                 )}
                 {job.error_code && (
@@ -273,7 +265,9 @@ export function DirectoryChoices({
   const fileChildren = useMemo(() => {
     const result = new Map<string, string[]>()
     for (const path of files) {
-      const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ""
+      const parent = path.includes("/")
+        ? path.slice(0, path.lastIndexOf("/"))
+        : ""
       const siblings = result.get(parent) ?? []
       siblings.push(path)
       result.set(parent, siblings)
@@ -300,7 +294,7 @@ export function DirectoryChoices({
           return (
             <li key={path}>
               <div className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 text-sm">
-                {(children.has(path) || fileChildren.has(path)) ? (
+                {children.has(path) || fileChildren.has(path) ? (
                   <button
                     type="button"
                     className="flex h-5 w-4 items-center justify-center"
@@ -339,8 +333,13 @@ export function DirectoryChoices({
                       )
                     }
                   />
-                  <Folder aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 break-all">{path.split("/").at(-1)}</span>
+                  <Folder
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-muted-foreground"
+                  />
+                  <span className="min-w-0 break-all">
+                    {path.split("/").at(-1)}
+                  </span>
                 </label>
               </div>
               {expanded.includes(path) && rows(path)}
@@ -348,18 +347,38 @@ export function DirectoryChoices({
           )
         })}
         {(fileChildren.get(parent) ?? []).map((path) => (
-          <li key={path} title={path} className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 text-sm">
+          <li
+            key={path}
+            title={path}
+            className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 text-sm"
+          >
             <span aria-hidden="true" className="h-5 w-4" />
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
                 className="size-4 shrink-0"
                 aria-label={`选择 ${path}`}
-                checked={selected.some((value) => value === "" || value === path || path.startsWith(value + "/"))}
-                disabled={selected.some((value) => value === "" || path.startsWith(value + "/"))}
-                onChange={(e) => onChange(e.target.checked ? [...selected, path] : selected.filter((value) => value !== path))}
+                checked={selected.some(
+                  (value) =>
+                    value === "" ||
+                    value === path ||
+                    path.startsWith(value + "/")
+                )}
+                disabled={selected.some(
+                  (value) => value === "" || path.startsWith(value + "/")
+                )}
+                onChange={(e) =>
+                  onChange(
+                    e.target.checked
+                      ? [...selected, path]
+                      : selected.filter((value) => value !== path)
+                  )
+                }
               />
-              <File aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+              <File
+                aria-hidden="true"
+                className="size-4 shrink-0 text-muted-foreground"
+              />
               <span className="break-all">{path.split("/").at(-1)}</span>
             </label>
           </li>

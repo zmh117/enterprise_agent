@@ -157,26 +157,22 @@ class JobSandbox:
     _runtime_artifacts: dict[str, _RuntimeArtifact] = field(default_factory=dict, repr=False)
 
     def cleanup(self) -> None:
+        close_source = getattr(self.source_mount, "close", None)
+        if callable(close_source):
+            close_source()
         shutil.rmtree(self.path, ignore_errors=True)
 
     def authorize_tool(self, tool_name: str, raw_input: object) -> dict[str, object]:
         if tool_name not in ALLOWED_FILE_TOOLS or not isinstance(raw_input, dict):
             self._deny("sandbox_tool_denied", "tool is not allowed in the Job Sandbox")
-        value = dict(raw_input)
+        value = self.normalize_source_alias(tool_name, dict(raw_input))
         if self.source_mount is not None:
-            path_field = "path" if tool_name in {"Glob", "Grep"} else "file_path"
-            source_path = value.get(path_field)
-            # Claude Code can resolve source/... against cwd before invoking a
-            # hook. Normalize only this Job's virtual source alias, never other roots.
-            if isinstance(source_path, str) and source_path.startswith(
-                str(self.path.resolve(strict=True)) + "/source/"
-            ):
-                value[path_field] = self._sdk_relative_path(source_path, allow_root=False)
             try:
                 mounted = self.source_mount.authorize(tool_name, value)
             except ValueError as exc:
                 self._deny(
-                    getattr(exc, "code", "sandbox_source_denied"), "source snapshot access is denied"
+                    getattr(exc, "code", "sandbox_source_denied"),
+                    "source snapshot access is denied",
                 )
             if mounted is not None:
                 return mounted
@@ -237,11 +233,19 @@ class JobSandbox:
         value[path_field] = relative
         return value
 
+    def normalize_source_alias(self, tool_name: str, value: dict[str, Any]) -> dict[str, Any]:
+        # SDK may resolve the virtual source alias against cwd before the hook.
+        # Only normalize this Job's alias; ordinary sandbox authorization follows.
+        field = "path" if tool_name in {"Glob", "Grep"} else "file_path"
+        path = value.get(field)
+        alias = str(self.path.resolve(strict=True)) + "/source/"
+        if self.source_mount is not None and isinstance(path, str) and path.startswith(alias):
+            return {**value, field: "source/" + path[len(alias) :]}
+        return value
+
     def _authorize_write(self, tool_name: str, target: Path, value: Mapping[str, object]) -> None:
         relative = target.relative_to(self.path.resolve(strict=True)).as_posix()
         top_level = PurePosixPath(relative).parts[0]
-        if self.source_mount is not None and top_level != "outputs":
-            self._deny("sandbox_source_output_denied", "extraction writes require outputs/")
         if relative in self._runtime_artifacts:
             self._deny(
                 "sandbox_file_read_only",

@@ -1,4 +1,4 @@
-"""Pinned, read-only SVN collector. No model-provided commands, URLs or credentials."""
+"""Bounded read-only SVN commands. No model-provided commands, URLs or credentials."""
 
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ import xml.etree.ElementTree as ET
 
 from app.modules.knowledge.domain.code_contracts import (
     CodeKnowledgeError,
-    COMPONENTS,
-    MAX_PACKAGE_BYTES,
+    MAX_SOURCE_BYTES,
 )
-from app.modules.knowledge.domain.code_package import sha256
+from app.modules.knowledge.domain.code_json import sha256
 from app.modules.knowledge.infrastructure.code_source import relative_path
+from app.modules.knowledge.infrastructure.code_executor_lock import inherited_execution_fds
 
 MAX_XML_BYTES = 8 * 1024 * 1024
 
@@ -31,46 +31,6 @@ def xml_document(data: bytes) -> ET.Element:
         return ET.fromstring(data)
     except ET.ParseError:
         raise CodeKnowledgeError("code_svn_response_invalid") from None
-
-
-def parse_log(data: bytes, *, lower: int, upper: int, branch_path: str) -> list[dict[str, Any]]:
-    root = xml_document(data)
-    if root.tag != "log":
-        raise CodeKnowledgeError("code_svn_log_invalid")
-    result = []
-    for entry in root.findall("logentry"):
-        try:
-            revision = int(entry.attrib["revision"])
-            if not lower < revision <= upper:
-                raise ValueError
-            paths = []
-            for item in entry.findall("./paths/path"):
-                path = item.text or ""
-                if not (path == branch_path or path.startswith(branch_path.rstrip("/") + "/")):
-                    continue
-                action = item.attrib.get("action")
-                if action not in {"A", "M", "D", "R"}:
-                    raise ValueError
-                paths.append(
-                    dict(
-                        path=path,
-                        action=action,
-                        kind=item.attrib.get("kind", "unknown"),
-                        text_modified=item.attrib.get("text-mods", "unknown"),
-                        properties_modified=item.attrib.get("prop-mods", "unknown"),
-                        copy_from_path=item.attrib.get("copyfrom-path"),
-                        copy_from_revision=int(item.attrib["copyfrom-rev"])
-                        if "copyfrom-rev" in item.attrib
-                        else None,
-                    )
-                )
-            if paths:
-                result.append({"revision": revision, "paths": paths})
-        except (KeyError, ValueError):
-            raise CodeKnowledgeError("code_svn_log_invalid") from None
-    if len({item["revision"] for item in result}) != len(result):
-        raise CodeKnowledgeError("code_svn_log_duplicate")
-    return sorted(result, key=lambda item: item["revision"])
 
 
 class SvnCodeSource:
@@ -98,7 +58,8 @@ class SvnCodeSource:
             or not branch_path.startswith("/")
         ):
             raise CodeKnowledgeError("code_svn_binding_invalid")
-        relative_path(branch_path.lstrip("/"))
+        if branch_path != "/":
+            relative_path(branch_path.lstrip("/"))
         if not config_directory.is_absolute() or config_directory.is_symlink():
             raise CodeKnowledgeError("code_svn_auth_reference_invalid")
         self.branch_url, self.expected_uuid, self.branch_path = (
@@ -112,7 +73,7 @@ class SvnCodeSource:
     def _run(self, operation: str, args: list[str]) -> bytes:
         if self.cancelled():
             raise CodeKnowledgeError("code_collection_interrupted")
-        if operation not in {"info", "log", "cat", "diff", "propget", "list"}:
+        if operation not in {"info", "log", "cat", "diff", "propget", "list", "blame", "status"}:
             raise CodeKnowledgeError("code_svn_operation_denied")
         command = [
             self.executable,
@@ -129,12 +90,13 @@ class SvnCodeSource:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                pass_fds=inherited_execution_fds(),
             ) as process:
                 try:
                     return _bounded_output(
                         process,
                         timeout=60,
-                        limit=MAX_PACKAGE_BYTES if operation == "cat" else MAX_XML_BYTES,
+                        limit=MAX_SOURCE_BYTES if operation == "cat" else MAX_XML_BYTES,
                         cancelled=self.cancelled,
                     )
                 finally:
@@ -150,7 +112,7 @@ class SvnCodeSource:
         entry = root.find("entry")
         if entry is None or entry.findtext("repository/uuid") != self.expected_uuid:
             raise CodeKnowledgeError("code_svn_repository_mismatch")
-        if unquote(entry.findtext("relative-url") or "") != "^" + self.branch_path:
+        if unquote(entry.findtext("relative-url") or "") != "^" + (self.branch_path or "/"):
             raise CodeKnowledgeError("code_svn_branch_mismatch")
         if entry.get("revision") != str(revision):
             raise CodeKnowledgeError("code_svn_revision_mismatch")
@@ -158,6 +120,7 @@ class SvnCodeSource:
             "repository_uuid": self.expected_uuid,
             "branch_path": self.branch_path,
             "revision": revision,
+            "repository_root_url": entry.findtext("repository/root"),
         }
 
     def head(self) -> int:
@@ -166,7 +129,7 @@ class SvnCodeSource:
         if (
             entry is None
             or entry.findtext("repository/uuid") != self.expected_uuid
-            or unquote(entry.findtext("relative-url") or "") != "^" + self.branch_path
+            or unquote(entry.findtext("relative-url") or "") != "^" + (self.branch_path or "/")
         ):
             raise CodeKnowledgeError("code_svn_repository_mismatch")
         try:
@@ -176,56 +139,11 @@ class SvnCodeSource:
         self.preflight(revision)
         return revision
 
-    def preflight_components(self, revision: int, mapping: dict[str, str]) -> None:
-        if set(mapping) != set(COMPONENTS) or len(set(mapping.values())) != 3:
-            raise CodeKnowledgeError("code_svn_components_invalid")
-        self.preflight(revision)
-        for path in mapping.values():
-            relative_path(path)
-            root = xml_document(
-                self._run("info", ["--xml", "-r", str(revision), self._target(revision, path)])
-            )
-            entry = root.find("entry")
-            if (
-                entry is None
-                or entry.get("kind") != "dir"
-                or entry.findtext("repository/uuid") != self.expected_uuid
-                or unquote(entry.findtext("relative-url") or "")
-                != "^" + self.branch_path + "/" + path
-                or entry.get("revision") != str(revision)
-            ):
-                raise CodeKnowledgeError("code_svn_components_invalid")
-
     def _target(self, revision: int, path: str = "") -> str:
         if type(revision) is not int or revision < 0:
             raise CodeKnowledgeError("code_svn_revision_invalid")
         suffix = "/" + quote(relative_path(path), safe="/") if path else ""
         return f"{self.branch_url}{suffix}@{revision}"
-
-    def commits(
-        self, *, after: int, target: int, through: int | None = None
-    ) -> list[dict[str, Any]]:
-        through = target if through is None else through
-        if after < 0 or not after <= through <= target:
-            raise CodeKnowledgeError("code_svn_range_invalid")
-        self.preflight(target)
-        commits = []
-        # Bound every request; retain each relevant revision, even if endpoint files are equal.
-        for lower in range(after, through, 100):
-            upper = min(lower + 100, through)
-            data = self._run(
-                "log",
-                [
-                    "--xml",
-                    "--verbose",
-                    "--with-no-revprops",
-                    "-r",
-                    f"{lower + 1}:{upper}",
-                    self._target(target),
-                ],
-            )
-            commits.extend(parse_log(data, lower=lower, upper=upper, branch_path=self.branch_path))
-        return commits
 
     def content(self, path: str, revision: int) -> bytes:
         return self._run("cat", ["-r", str(revision), self._target(revision, path)])

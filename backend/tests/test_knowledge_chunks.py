@@ -230,7 +230,7 @@ def run(
     )
 
 
-def source_fingerprint(database, *, include_observation=True):
+def source_fingerprint(database, *, include_observation=True, include_code_extensions=True):
     data = {}
     for name in (
         "source",
@@ -245,6 +245,14 @@ def source_fingerprint(database, *, include_observation=True):
         if name == "document" and not include_observation:
             for row in rows:
                 assert row.pop("source_observed_stamp_raw", None) is None
+        if not include_code_extensions:
+            for row in rows:
+                if name == "knowledge_base":
+                    assert row.pop("kind", "ones") == "ones"
+                    assert row.pop("code_indexing_paused", False) in (False, 0)
+                if name == "document_revision":
+                    assert row.pop("origin_kind", "import") == "import"
+                    assert row.pop("code_analysis_id", None) is None
         data[name] = sorted(rows, key=lambda r: json.dumps(r, sort_keys=True, default=str))
     return digest(data)
 

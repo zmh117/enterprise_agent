@@ -122,7 +122,12 @@ def _validate_semantics(manifest: dict[str, Any]) -> None:  # noqa: C901
                 f"Immutable snapshot {identifier} requires source_contract"
             )
         if classification == "operational_coordination_fact":
-            if retirement["status"] != "retained":
+            retired_by_migration = (
+                retirement["status"] == "retired"
+                and retirement["earliest_phase"] == "complete"
+                and any(str(ref).startswith("migration:") for ref in entry["evidence_refs"])
+            )
+            if retirement["status"] != "retained" and not retired_by_migration:
                 raise FactSourceManifestError(f"Operational fact {identifier} must remain retained")
         if classification == "one_time_migration_artifact":
             if retirement["status"] != "blocked" or not retirement["gates"]:

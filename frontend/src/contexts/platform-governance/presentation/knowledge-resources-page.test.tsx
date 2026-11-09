@@ -454,9 +454,9 @@ describe("知识资源管理", () => {
     const f = setup({ populated: false })
     f.render()
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "新建知识资源" })).toBeEnabled()
+      expect(screen.getByRole("button", { name: "新建知识库" })).toBeEnabled()
     )
-    fireEvent.click(screen.getByRole("button", { name: "新建知识资源" }))
+    fireEvent.click(screen.getByRole("button", { name: "新建知识库" }))
     await selectExternalStorage()
     fireEvent.change(screen.getByLabelText("已有知识库"), {
       target: { value: "kb" },
@@ -568,9 +568,9 @@ describe("知识资源管理", () => {
     const f = setup({ populated: false })
     f.render()
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "新建知识资源" })).toBeEnabled()
+      expect(screen.getByRole("button", { name: "新建知识库" })).toBeEnabled()
     )
-    fireEvent.click(await screen.findByRole("button", { name: "新建知识资源" }))
+    fireEvent.click(await screen.findByRole("button", { name: "新建知识库" }))
     fireEvent.change(screen.getByLabelText("已有知识库"), {
       target: { value: "kb" },
     })
@@ -838,7 +838,7 @@ describe("知识资源管理", () => {
     f.render()
     const dialog = await openResource()
     expect(
-      screen.queryByRole("button", { name: "新建知识资源" })
+      screen.queryByRole("button", { name: "新建知识库" })
     ).not.toBeInTheDocument()
     expect(
       within(dialog).getByRole("group", { name: "数据来源（只读）" })

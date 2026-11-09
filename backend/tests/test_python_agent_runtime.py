@@ -1186,7 +1186,7 @@ def test_detail_completeness_rules_are_platform_wide_not_skill_dependent(
         "\n\nReport structure:", 1
     )[0]
 
-    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v12"
+    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v13"
     assert "every matching record" in detail_rules
     assert "requested identifier and full title" in detail_rules
     assert "summary, examples, or the first N records" in detail_rules
@@ -3361,6 +3361,68 @@ def test_python_runtime_classifies_local_file_selector_as_sdk_custom() -> None:
     assert normalized[0]["tool_origin"] == "sdk_custom"
     assert normalized[0]["server_code"] is None
     assert normalized[0]["tool_name"] == "select_sandbox_output"
+
+
+def test_code_question_returns_business_answer_without_persisting_raw_source() -> None:
+    answer = "SVN r100：字段 A 为空时拒绝发布。code-answer:document@revision"
+
+    async def query(**_kwargs: Any) -> Any:
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "read-1",
+                    "name": "Read",
+                    "input": {"file_path": "source/Order.cpp"},
+                }
+            ],
+        }
+        yield {
+            "type": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "read-1",
+                    "content": "synthetic-private-source",
+                }
+            ],
+        }
+        yield {"type": "result", "subtype": "success", "is_error": False, "result": answer}
+
+    client = ClaudeSdkClient(
+        model="safe-model",
+        limits=build_settings().execution,
+        api_key="runtime-model-key-value",
+        sdk_loader=lambda: ClaudeSdk(
+            query=query,
+            options=lambda **kwargs: kwargs,
+            tool=cast(Any, None),
+            create_sdk_mcp_server=cast(Any, None),
+            tool_annotations=None,
+        ),
+    )
+    context = replace(
+        _tool_budget_test_context(1),
+        model_runtime_binding=None,
+        allowed_tools=[],
+        mcp_bindings=(),
+        effective_tool_names=(),
+        retrieved_context={"code_source": {"contract": "code-source-capability/v2"}},
+    )
+    result = client.run(
+        AgentRunRequest(
+            job_id="job-code-business-answer",
+            user_id="user-code-business-answer",
+            project_code="project-1",
+            context=context,
+        )
+    )
+    assert result.final_answer == answer
+    assert result.tool_events and "synthetic-private-source" not in json.dumps(result.tool_events)
+    assert client.last_run_audit["sdk_messages"] == []
+    assert client.last_run_audit["api_responses"] == []
+    assert client.last_run_audit["usage"]["final_answer_character_count"] == len(answer)
 
 
 def test_python_runtime_local_wall_clock_timeout_is_structured() -> None:

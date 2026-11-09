@@ -147,10 +147,10 @@ def test_http_library_logs_do_not_expose_candidate_urls_or_auth(caplog):
 
 
 def identity_client(monkeypatch, exchange):
-    from app.modules.identity.application import service_principal
+    from app.shared import service_identity_client
 
     monkeypatch.setattr(
-        service_principal, "_read_bootstrap_credential", lambda *a, **k: "synthetic-only"
+        service_identity_client, "_read_bootstrap_credential", lambda *a, **k: "synthetic-only"
     )
     return ServicePrincipalTokenClient(
         base_url="http://api-server:8000",

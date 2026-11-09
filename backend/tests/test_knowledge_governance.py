@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from app.cli.apply_local_seed import local_seed_sql
+from backend.tests.support.migrations import seed_before_execution_user_migration
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.infrastructure.repositories import AuditRepository
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
@@ -122,7 +122,7 @@ def test_forward_migration_is_empty_replayable_and_does_not_modify_old_tables(tm
             source_code="synthetic_source",
             knowledge_base_code="synthetic_base",
         )
-        db.execute_script(local_seed_sql())
+        db.execute_script(seed_before_execution_user_migration())
         publication_tables = (
             "agent_publication_mcp_tool",
             "business_application_revision_mcp_tool",
@@ -131,12 +131,15 @@ def test_forward_migration_is_empty_replayable_and_does_not_modify_old_tables(tm
         publications_before = {
             name: db.execute(f"select * from {name} order by 1,2,3") for name in publication_tables
         }
-        before = source_fingerprint(db, include_observation=False)
+        before = source_fingerprint(db, include_observation=False, include_code_extensions=False)
         result = Migrator(
             db, default_migrations_dir(), migrator_build="knowledge-governance-after"
         ).run()
         assert result.applied == schema_versions_after("136")
-        assert source_fingerprint(db, include_observation=False) == before
+        assert (
+            source_fingerprint(db, include_observation=False, include_code_extensions=False)
+            == before
+        )
         assert {
             name: db.execute(f"select * from {name} order by 1,2,3") for name in publication_tables
         } == publications_before

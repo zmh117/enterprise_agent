@@ -222,38 +222,74 @@ def test_content_admin_can_read_but_its_managed_sessions_cannot_write(isolated_p
         assert_reader_role(admin)
 
 
-def test_code_snapshot_queries_use_only_granted_columns(isolated_policy_database):
-    from app.modules.knowledge.application.code_behavior import CodeBehaviorReader
-    from app.modules.knowledge.infrastructure.code_indexing import CodeSnapshotIndexer
-    from app.modules.knowledge.infrastructure.code_build_repository import CodeBuildRepository
-    from app.modules.knowledge.infrastructure.code_repository import CodeRepository, knowledge_id
-    from backend.tests.test_code_indexing import candidate, SnapshotQdrant
+def test_code_answer_queries_use_only_granted_columns(isolated_policy_database, tmp_path):
+    from dataclasses import replace
+    from app.bootstrap import build_test_container
+    from app.modules.knowledge.infrastructure.code_answer_store import CodeAnswerStore
+    from app.modules.knowledge.infrastructure.code_answer_reader import CodeAnswerReader
+    from app.modules.knowledge.infrastructure.code_index_store import CodeIndexStore
+    from app.modules.knowledge.infrastructure.code_index_executor import CodeIndexExecutor
+    from backend.tests.support.runtime import test_settings, direct_job_permission_service_factory
+    from backend.tests.support.code_answers import code_configuration, CODE_INDEX_ID
+    from backend.tests.test_code_answer_store import prepared, save
     from backend.tests.test_knowledge_vectors import SyntheticEmbedding
+    from backend.tests.test_knowledge_incremental_sync import IncrementalMemory
 
     admin, reader = isolated_policy_database
-    ids, build, lease = candidate(admin, 100)
-    indexer = CodeSnapshotIndexer(admin, SyntheticEmbedding(), SnapshotQdrant())
-    assert not indexer.index(build["build_id"], lease)
-    assert indexer.index(build["build_id"], lease)
-    CodeBuildRepository(admin).finish_history(build["build_id"], lease)
-    repo = CodeRepository(reader)
-    key = knowledge_id(ids["source_id"], "factory.work_order.publish")
-    assert repo.resolve(ids["knowledge_base_id"], None)["status"] == "VERSION_REQUIRED"
-    assert (
-        repo.resolve(ids["knowledge_base_id"], {"kind": "svn", "revision": 100})["snapshot_id"]
-        == build["snapshot_id"]
+    runtime = build_test_container(
+        replace(test_settings(), database_dsn=admin.dsn),
+        migrate=False,
+        seed=True,
+        configure_seed_secrets=True,
+        permission_service_factory=direct_job_permission_service_factory,
     )
-    value = CodeBehaviorReader(repo, lambda *a: "synthetic-authorized").get(
-        ids["knowledge_base_id"], build["snapshot_id"], key
-    )
-    assert value["root"]["knowledge"]["guard"]["expression"] == "a is not empty"
-    assert not repo.history_facts(ids["knowledge_base_id"], 100, 102)["ledger_complete"]
-    for statement in (
-        "select config_json from knowledge.code_binding",
-        "select manifest_json from knowledge.code_source_snapshot",
-        "select * from knowledge.code_source_file",
-        "select * from knowledge.code_unit",
-        "update knowledge.code_binding set enabled=1",
-    ):
-        with pytest.raises(InsufficientPrivilege):
-            reader.execute(statement)
+    try:
+        runtime.create_agent_job_service.published_agent_runtime_enabled = True
+        runtime.create_agent_job_service.runtime_readiness_guard = None
+        _, source, checkout, _ = code_configuration(runtime, tmp_path)
+        answers = CodeAnswerStore(runtime.database, authorize=lambda context: None)
+        workspace = (runtime, answers, source, checkout)
+        ctx, analysis, result = prepared(workspace)
+        saved = save(answers, ctx, analysis, result)
+        index_store = CodeIndexStore(runtime.database)
+        vectors = IncrementalMemory()
+        executor = CodeIndexExecutor(
+            index_store,
+            SyntheticEmbedding(),
+            vectors,
+            owner="pg-test",
+            execution_root=tmp_path.resolve(),
+        )
+        task = runtime.database.execute_one("SELECT id FROM knowledge.code_index_task")
+        assert executor.execute(task["id"])
+        assert index_store.row("code_index_task", task["id"])["state"] == "succeeded"
+        store = CodeAnswerReader(reader)
+        args = dict(
+            base_id="code-kb",
+            source_id=source,
+            index_id=CODE_INDEX_ID,
+            allowed_paths=["set_server"],
+        )
+        assert store.select_version(**args, revision=100, mode="exact")["document_ids"] == [
+            saved["document_id"]
+        ]
+        answer = store.get(
+            **args, document_id=saved["document_id"], revision_id=saved["revision_id"]
+        )
+        assert answer["svn_revision"] == 100 and answer["support_status"] == "supported"
+        index = runtime.database.execute_one(
+            "SELECT * FROM knowledge.vector_index WHERE id=?", (CODE_INDEX_ID,)
+        )
+        for point in vectors.points.values():
+            assert store.chunk(index=index, point=point, allowed_paths=["set_server"])
+        for statement in (
+            "SELECT * FROM knowledge.code_evidence",
+            "SELECT * FROM knowledge.code_qa_record",
+            "SELECT * FROM knowledge.code_analysis",
+            "SELECT * FROM knowledge.code_checkout",
+            "UPDATE knowledge.code_answer SET svn_revision=101 WHERE false",
+        ):
+            with pytest.raises(InsufficientPrivilege):
+                reader.execute(statement)
+    finally:
+        runtime.database.close()

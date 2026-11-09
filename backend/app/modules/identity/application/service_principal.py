@@ -53,6 +53,8 @@ KNOWLEDGE_AUTHORIZED_PARTY = "knowledge-mcp"
 KNOWLEDGE_BRIDGE_AUDIENCE = "knowledge-readability-bridge"
 CODE_RUNTIME_AUTHORIZED_PARTY = "code-knowledge-runtime"
 CODE_RUNTIME_AUDIENCE = "code-knowledge-control"
+CODE_CONTROL_AUTHORIZED_PARTY = "code-knowledge-control-plane"
+CODE_SYNC_AUDIENCE = "code-svn-result"
 KNOWLEDGE_BRIDGE_SCOPES = frozenset(
     {
         "internal:knowledge:work-item:readability",
@@ -104,6 +106,11 @@ SERVICE_PRINCIPAL_GRANTS[CODE_RUNTIME_AUTHORIZED_PARTY] = ServicePrincipalGrant(
     audience=CODE_RUNTIME_AUDIENCE,
     scopes=frozenset({"internal:code-knowledge:source-grant"}),
 )
+SERVICE_PRINCIPAL_GRANTS[CODE_CONTROL_AUTHORIZED_PARTY] = ServicePrincipalGrant(
+    subject=CODE_CONTROL_AUTHORIZED_PARTY,
+    audience=CODE_SYNC_AUDIENCE,
+    scopes=frozenset({"internal:code-svn:result:read"}),
+)
 
 
 def _authorization_hash(grant: ServicePrincipalGrant) -> str:
@@ -135,7 +142,7 @@ class ServicePrincipalTokenIssuer:
         if not (
             REQUIRED_SERVICE_PRINCIPAL_ROLES
             <= set(bootstrap_credentials)
-            <= set(SERVICE_PRINCIPAL_GRANTS)
+            <= set(SERVICE_PRINCIPAL_GRANTS) - {CODE_CONTROL_AUTHORIZED_PARTY}
         ):
             raise ValueError("Service Principal bootstrap roles are incomplete")
         values = tuple(bootstrap_credentials.values())
@@ -222,7 +229,17 @@ class ServicePrincipalTokenIssuer:
                 error_code="service_principal_bootstrap_invalid",
             )
 
-        grant = SERVICE_PRINCIPAL_GRANTS[matched_role]
+        return self._issue(SERVICE_PRINCIPAL_GRANTS[matched_role])
+
+    def issue_code_control(self) -> IssuedServicePrincipalToken:
+        """API-local identity: only this signer owns the platform private key.
+
+        No bootstrap exchange or HTTP endpoint accepts a caller-selected role.
+        Workers and Runtimes receive only the existing public verification keys.
+        """
+        return self._issue(SERVICE_PRINCIPAL_GRANTS[CODE_CONTROL_AUTHORIZED_PARTY])
+
+    def _issue(self, grant: ServicePrincipalGrant) -> IssuedServicePrincipalToken:
         issued_at = self._now()
         jti = self._jti_factory()
         claims = {
@@ -241,11 +258,11 @@ class ServicePrincipalTokenIssuer:
         self.audit_service.record(
             "service_principal_token_issued",
             status="success",
-            summary=f"Issued short-lived Service Principal token for {matched_role}",
-            actor_id=matched_role,
+            summary=f"Issued short-lived Service Principal token for {grant.subject}",
+            actor_id=grant.subject,
             payload={
                 "audience": grant.audience,
-                "authorized_party": matched_role,
+                "authorized_party": grant.subject,
                 "jti": jti,
                 "kid": self.signing_key.kid,
                 "scopes": sorted(grant.scopes),
@@ -349,3 +366,10 @@ class CodeRuntimeServicePrincipalVerifier(_FixedServicePrincipalVerifier):
 
     authorized_party = CODE_RUNTIME_AUTHORIZED_PARTY
     error_code = "code_runtime_identity_invalid"
+
+
+class CodeControlServicePrincipalVerifier(_FixedServicePrincipalVerifier):
+    """Only the API signer can read transient SVN responses; grants no user scope."""
+
+    authorized_party = CODE_CONTROL_AUTHORIZED_PARTY
+    error_code = "code_control_identity_invalid"

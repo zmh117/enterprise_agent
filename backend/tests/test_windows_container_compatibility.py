@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT = ROOT / "backend/docker/normalize_secrets_entrypoint.sh"
 DOCKERFILE = ROOT / "backend/Dockerfile"
 SECRET_FILE_VARIABLES = {
+    "CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE",
     "APP_CONFIG_MASTER_KEY_FILE",
     "DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE",
     "DINGTALK_RUNTIME_AUTH_TOKEN_FILE",

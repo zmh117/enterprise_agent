@@ -9,22 +9,32 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_code_build_dispatcher_can_reach_runtime_and_indexing_services() -> None:
-    base = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
-    overlay = yaml.safe_load(
-        (ROOT / "docker-compose.code-knowledge.yml").read_text(encoding="utf-8")
+def test_on_demand_code_shares_one_checkout_with_readonly_runtimes() -> None:
+    base = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    overlay = yaml.safe_load((ROOT / "docker-compose.code-knowledge.yml").read_text())
+    assert "job-dispatch-worker" not in overlay["services"]
+    source = None
+    for name in ("knowledge-sync", "python-agent-runtime-a", "python-agent-runtime-b"):
+        service = base["services"][name]
+        mount = next(
+            m
+            for m in service["volumes"]
+            if isinstance(m, dict) and m.get("target") == "/var/lib/code-svn/checkout"
+        )
+        source = source or mount["source"]
+        assert mount["source"] == source
+        assert bool(mount.get("read_only")) == (name != "knowledge-sync")
+        assert "CODE_SOURCE_SNAPSHOT_ROOT" not in service["environment"]
+        if name != "knowledge-sync":
+            assert "code_runtime_bootstrap_token" in overlay["services"][name]["secrets"]
+    assert "ports" not in base["services"]["knowledge-sync"]
+    assert "code-extraction-artifacts" not in base.get("volumes", {})
+    controller = base["services"]["knowledge-ops-controller"]
+    assert any(
+        m.get("source") == source and m.get("read_only") is True
+        for m in controller["volumes"]
+        if isinstance(m, dict)
     )
-    dispatcher = overlay["services"]["job-dispatch-worker"]
-    reachable = set(dispatcher["networks"])
-    assert dispatcher["environment"]["CODE_KNOWLEDGE_WORKER_ENABLED"] == "true"
-    assert reachable <= {"default", *base["networks"]}
-    for service in (
-        "python-agent-runtime-a",
-        "python-agent-runtime-b",
-        "knowledge-qdrant",
-        "knowledge-embedding",
-    ):
-        assert reachable & set(base["services"][service].get("networks", ["default"]))
 
 
 class _ComposeLoader(yaml.SafeLoader):

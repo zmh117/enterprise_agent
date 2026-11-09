@@ -35,15 +35,19 @@ unit = [
 ]
 
 contract = [
-  "test_code_knowledge.py",
-  "test_code_state_machines.py",
-  "test_code_curated_import.py",
+  "test_code_analysis_store.py",
+  "test_code_answer_store.py",
+  "test_code_svn_history.py",
+  "test_code_result_transport.py",
+  "test_code_operations_store.py",
+  "test_code_resources.py",
+  "test_code_answer_indexing.py",
+  "test_code_answer_search.py",
+  "test_code_on_demand_bridge.py",
+  "test_code_source_runtime_v2.py",
+  "test_code_result_recorder.py",
+  "test_code_executor_lock.py",
   "test_code_checkout.py",
-  "test_code_collection.py",
-  "test_code_history_bridge.py",
-  "test_code_indexing.py",
-  "test_code_queries.py",
-  "test_code_operations.py",
   "test_knowledge_operations.py",
   "test_knowledge_incremental_sync.py",
   "test_knowledge_sync_backfill.py",
@@ -223,10 +227,9 @@ contract = [
 ]
 
 integration = [
+  "test_code_postgres_integration.py",
   "test_knowledge_incremental_postgres.py",
-  "test_code_svn_integration.py",
   "test_code_checkout_svn_integration.py",
-  "test_code_indexing_integration.py",
   "test_runtime_replica_pool_postgres.py",
   "test_knowledge_database_recovery_postgres.py",
   "test_knowledge_container_acceptance.py",
@@ -262,6 +265,8 @@ acceptance = [
 ]
 
 migration = [
+  "test_code_on_demand_schema.py",
+  "test_code_retirement_inventory.py",
   "test_compose_migrator_gate.py",
   "test_dingtalk_enterprise_migration.py",
   "test_docling_processing_concurrency_migration.py",

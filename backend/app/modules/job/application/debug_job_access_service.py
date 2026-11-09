@@ -76,7 +76,7 @@ class DebugJobAccessService:
                 user_id=user_id,
                 application_id=str(deployment["id"]),
             )
-            scopes = self._execution_scopes(accesses, environment=environment)
+            scopes = self._execution_scopes(accesses)
             if not scopes:
                 continue
             snapshot = self._verified_snapshot(deployment)
@@ -454,15 +454,12 @@ class DebugJobAccessService:
     def _execution_scopes(
         cls,
         accesses: list[dict[str, Any]],
-        *,
-        environment: str,
     ) -> list[dict[str, Any]]:
+        # Deployment locality does not restrict the user's business data scopes.
         merged: dict[tuple[str, str, str], dict[str, Any]] = {}
         for access in accesses:
             role_code = str(access["role_code"])
             for scope in access["scopes"]:
-                if str(scope["environment_code"]) != environment:
-                    continue
                 key = (
                     str(scope["environment_id"]),
                     str(scope.get("base_id") or ""),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.infrastructure.repositories import AgentRepository
@@ -9,12 +10,23 @@ from app.shared.database import require_shared_database
 
 
 class AgentResultService:
-    def __init__(self, repository: AgentRepository, session_repository: SessionRepository) -> None:
+    def __init__(
+        self,
+        repository: AgentRepository,
+        session_repository: SessionRepository,
+        *,
+        code_result_recorder: Callable[[AgentJob, str], None] | None = None,
+    ) -> None:
         require_shared_database(repository, session_repository)
         self.repository = repository
         self.session_repository = session_repository
+        self.code_result_recorder = code_result_recorder
 
     def save_result(self, job: AgentJob, final_answer: str) -> str:
+        if self.code_result_recorder is not None:
+            # Same transaction as the standard result. Recovery observes the existing
+            # completed invocation; it does not ask the model to regenerate an answer.
+            self.code_result_recorder(job, final_answer)
         self.session_repository.add_message(
             session_id=job.session_id,
             job_id=job.id,

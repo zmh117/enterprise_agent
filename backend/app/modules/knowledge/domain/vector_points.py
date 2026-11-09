@@ -17,7 +17,10 @@ def batches(rows: Iterator[dict[str, Any]], size: int) -> Iterator[list[dict[str
 
 
 def point_id(index: dict[str, Any], row: dict[str, Any]) -> str:
-    return str(uuid.uuid5(uuid.UUID(index["id"]), row["id"]))
+    identity = row["id"]
+    if row.get("chunk_kind") == "business_answer":
+        identity += ":" + row["code_payload"]["index_generation_key"]
+    return str(uuid.uuid5(uuid.UUID(index["id"]), identity))
 
 
 def payload(index: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
@@ -30,5 +33,6 @@ def payload(index: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
         "profile_hash": index["profile_hash"],
         "embedding_hash": row["embedding_hash"],
         "chunk_kind": row["chunk_kind"],
+        **(row["code_payload"] if row.get("chunk_kind") == "business_answer" else {}),
         **({"searchable": True} if index.get("incremental") == 1 else {}),
     }

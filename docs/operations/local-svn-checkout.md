@@ -2,7 +2,7 @@
 
 ## 当前可用入口
 
-- 管理页面：`http://localhost:8080/platform/resources` → **知识库 → SVN 工程检出**。
+- 管理页面：`http://localhost:8080/platform/resources` → **知识库 → 新建代码知识库（或打开已有代码知识库）→ SVN 工程检出**。
 - Mac 访问地址：`https://localhost:18443/repos/mes/trunk`。
 - 项目 Docker 网络内地址：`https://code-svn:8443/repos/mes/trunk`。
 - 本次完整工程版本：**r2**，包含 `set_server`、`set_web/EBR`、`set_web/JTH`。r1 只有空主干。
@@ -60,7 +60,7 @@ python3 scripts/local_svn.py info
 
 首次导入固定为此前确认的三个工程，不包含其他 EBR 副本。导入命令拒绝重复导入；不执行同步、覆盖或删除。初始化会生成本机证书、连接登记和客户端配置；不要把它当成日常配置更新命令。
 
-完整工程检出功能由 `.env` 中 `CODE_CHECKOUT_ENABLED=true` 启用。首次启用时需要通过既有迁移流程升级数据库，并构建、更新 API、knowledge-sync、前端及要求当前 schema head 的服务。主 `docker-compose.yml` 保留 API/worker 接线，可选 `docker-compose.code-svn-local.yml` 负责本地 SVN 服务。功能开关与代码知识采集、模型提取开关互相独立。
+完整工程检出功能由 `.env` 中 `CODE_CHECKOUT_ENABLED=true` 启用。首次启用时需要通过既有迁移流程升级数据库，并构建、更新 API、knowledge-sync、前端及要求当前 schema head 的服务。主 `docker-compose.yml` 保留 API/worker 接线，可选 `docker-compose.code-svn-local.yml` 负责本地 SVN 服务。检出不会启动模型。问答按需访问代码的部署步骤见 [按需代码知识库](code-knowledge-on-demand.md)。
 
 日常启停本地 SVN：
 
@@ -73,14 +73,15 @@ python3 scripts/local_svn.py start
 
 部署目录变量：`CODE_SVN_LOCAL_STATE_ROOT` 指定 SVN 状态目录，`CODE_SVN_CHECKOUT_HOST_ROOT` 指定工作副本根目录。主 Compose 默认基于 `KNOWLEDGE_DEPLOY_ROOT`，本机未设置时使用项目目录；运维控制器继续使用它已有的宿主路径解析。`scripts/local_svn.py` 是当前项目默认目录、默认网络的本机工具；自定义部署路径应通过 Compose 管理并同步登记配置。
 
-## 访问及知识提取边界
+## 访问与按需分析边界
 
 - 服务仅发布 `127.0.0.1:18443`，供本机和已接入项目网络的容器读取；没有对局域网开放。
 - 网络 SVN 为只读。本次不提供从工作副本 `svn commit` 的写入账号；初始化与首次导入使用离线部署容器。
 - 新 SVN 地址先在部署端登记 `checkout.json`，填写公开地址、内部 HTTPS 地址、仓库 UUID、分支及认证配置引用；页面不能临时输入密码或绕过登记访问任意地址。
 - 第一版发现分支存在 `svn:externals` 时明确拒绝检出，不会静默跳过后声称完整。
 - 工程内容、私钥、密码不会通过 API 或日志返回；仓库和工作副本目录均不进入 Git 或构建上下文。
-- 本次没有启动模型提取、自动知识采集或知识版本切换。完整工作副本没有直接挂到提取 Runtime，也不通过 File Service 上传。
-- 生成的 `sources.json` 可供后续显式登记知识源码使用；本次没有将既有 MES 本地知识基线伪装成已核验的 SVN r2，也没有修改 ONES 知识索引。
+- 新流程把同一检出根只读挂给两个 Runtime，可写挂给 knowledge-sync。分析使用原问答 Job；update/log/diff/blame 经现有 Knowledge MCP 由 knowledge-sync 执行。同版本可并发读，更新必须等所有读者实际停止。
+- 旧版本的 `sources.json` 不再是运行依赖。已有目录通过 `app.cli.register_code_checkout` 只读核实后登记，再在代码知识库配置中绑定；不会复制源码，也不会把未知本地版本当成 SVN r2。
+- 下述 r2 和目录记录是 2026-11-07 的历史验收，按需问答改造的部署与真实模型验收状态以当前变更证据为准。
 
 本次验收记录见 [OpenSpec evidence](../../openspec/changes/add-local-svn-source-checkout/evidence/local-svn-20261107.md)。

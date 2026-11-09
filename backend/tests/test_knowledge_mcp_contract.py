@@ -62,8 +62,8 @@ def test_real_catalogs_and_frozen_application_contracts(job_fixture):
         definition = MCP_TOOL_MANIFEST[name]
         assert agent_catalog[name]["server_code"] == tools[name]["server_code"] == "knowledge-mcp"
         assert frozen[name]["schema_hash"] == definition.schema_hash
-        assert frozen[name]["effect"] == "read"
-        assert frozen[name]["confirmation_policy"] == "none"
+        assert frozen[name]["effect"] == definition.effect
+        assert frozen[name]["confirmation_policy"] == definition.confirmation_policy
         assert frozen[name]["resource_kind"] == ""
         assert role_tools[name]["display_name_zh"] != "MCP Tool"
 
@@ -319,7 +319,7 @@ def test_versioned_code_marker_changes_frozen_hash_and_old_publication_is_denied
 
     f = job_fixture
     schema = KNOWLEDGE_TOOL_CONTRACTS["knowledge_search"].input_schema
-    assert schema["$comment"] == "knowledge-search-contract/v5-versioned-code"
+    assert schema["$comment"] == "knowledge-search-contract/v6-on-demand-code"
     old = {**schema, "$comment": "knowledge-search-contract/v4-access-mode"}
     assert tool_schema_hash(old) != MCP_TOOL_MANIFEST["knowledge_search"].schema_hash
     f["runtime"].database.execute(
@@ -336,12 +336,14 @@ def test_knowledge_tool_selection_does_not_require_ones_detail():
     assert knowledge_tool_dependency_errors(KNOWLEDGE_TOOL_CONTRACTS) == []
 
 
-def test_query_skill_requires_all_four_tools(job_fixture):
+def test_query_skill_requires_full_code_workflow(job_fixture):
     service = job_fixture["runtime"].agent_config_service
     config = {
         "skills": ["code-business-query"],
         "mcp_tool_ids": ["knowledge_list_bases", "knowledge_search"],
     }
-    assert any("四个知识工具" in error["message"] for error in service._validate_config(config))
+    assert any("完整知识工具组" in error["message"] for error in service._validate_config(config))
     config["mcp_tool_ids"] = list(KNOWLEDGE_TOOL_CONTRACTS)
-    assert not any("四个知识工具" in error["message"] for error in service._validate_config(config))
+    assert not any(
+        "完整知识工具组" in error["message"] for error in service._validate_config(config)
+    )
