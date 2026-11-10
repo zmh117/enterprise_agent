@@ -1629,15 +1629,21 @@ function ConnectorChecklist({
   selected: string[]
   onToggle: (value: string) => void
 }) {
-  const available = connectors.filter((connector) =>
-    Boolean(
-      direction === "ingress"
-        ? connector.allow_ingress
-        : connector.allow_delivery || connector.supports_robot_delivery
-    )
+  // Platform debugging is authorized separately from Agent channel assignments.
+  const debugConnectorId = "connector-debug-api"
+  const available = connectors.filter(
+    (connector) =>
+      connector.id !== debugConnectorId &&
+      Boolean(
+        direction === "ingress"
+          ? connector.allow_ingress
+          : connector.allow_delivery || connector.supports_robot_delivery
+      )
   )
   const availableIds = new Set(available.map((connector) => connector.id))
-  const unavailableSelected = selected.filter((id) => !availableIds.has(id))
+  const unavailableSelected = selected.filter(
+    (id) => id !== debugConnectorId && !availableIds.has(id)
+  )
 
   return (
     <fieldset className="rounded-lg border p-4">
