@@ -77,7 +77,7 @@ class CodeManagementExecutor:
                 entry, self.auth_root, cancelled, factory=WorkingCopyClient
             ) as client:
                 if row["operation_kind"] == "browse":
-                    if entry.get("secret_ref"):
+                    if entry.get("resource_id"):
                         access.pin(
                             request["registration"],
                             resource,

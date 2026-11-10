@@ -53,5 +53,31 @@ config = (
 """
     + config[end:]
 )
+config = config.replace(
+    "</VirtualHost>",
+    f"""    <Location /public/fixture>
+        DAV svn
+        SVNPath {root / "repo"}
+        Require all granted
+    </Location>
+</VirtualHost>""",
+)
+# Expose the same isolated fixture over HTTP and svn:// for protocol acceptance.
+http_host = config[config.index("<VirtualHost") :].replace("*:8443", "*:8080")
+http_host = "\n".join(line for line in http_host.splitlines() if not line.strip().startswith("SSL"))
+config += "\nListen 8080\n" + http_host + "\n"
+(root / "repo/conf/svnserve.conf").write_text(
+    "[general]\nanon-access = read\nauth-access = read\npassword-db = passwd\nrealm = synthetic-fixture\n"
+)
+(root / "repo/conf/passwd").write_text("[users]\nsynthetic-user = synthetic-password\n")
+run("svnadmin", "hotcopy", str(root / "repo"), str(root / "repo-auth"))
+(root / "repo-auth/conf/svnserve.conf").write_text(
+    (root / "repo/conf/svnserve.conf")
+    .read_text()
+    .replace("anon-access = read", "anon-access = none")
+)
+subprocess.Popen(
+    ["svnserve", "--daemon", "--foreground", "--root", str(root), "--listen-port", "3690"]
+)
 (root / "apache.conf").write_text(config)
 os.execvp("apache2", ["apache2", "-f", str(root / "apache.conf"), "-DFOREGROUND"])

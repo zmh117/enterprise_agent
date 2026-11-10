@@ -14,6 +14,12 @@ from app.modules.knowledge.infrastructure.code_checkout_jobs import CodeCheckout
 from app.modules.knowledge.infrastructure.code_resource_service import CodeResourceService
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
 from app.modules.knowledge.infrastructure.vector_repository import VectorRepository
+from app.modules.knowledge.infrastructure.storage import insert
+from app.modules.knowledge.domain.identity import now
+from app.modules.knowledge.infrastructure.code_svn_access import (
+    CodeSvnAccess,
+    connection_fingerprint,
+)
 from backend.tests.support.code_answers import code_configuration, analysis_context, confirm
 from backend.tests.support.runtime import container
 
@@ -60,6 +66,29 @@ def setup(tmp_path, monkeypatch):
         }
         registry = (tmp_path / "registry.json").resolve()
         registry.write_text(json.dumps({"synthetic": entry}))
+        insert(
+            runtime.database,
+            "code_svn_operation",
+            dict(
+                id="synthetic-original-checkout",
+                source_id=source,
+                checkout_id=checkout["id"],
+                actor_id="user_local_admin",
+                config_revision_id="code-config",
+                operation_kind="checkout",
+                request_key="synthetic-original-checkout",
+                request_hash="0" * 64,
+                state="succeeded",
+                target_revision=100,
+                request_json={
+                    "registration": "synthetic",
+                    "registration_hash": connection_fingerprint(entry),
+                },
+                deadline_at=now(),
+                created_at=now(),
+                updated_at=now(),
+            ),
+        )
         monkeypatch.setenv("CODE_CHECKOUT_REGISTRY_FILE", str(registry))
         monkeypatch.setenv("CODE_CHECKOUT_ENABLED", "true")
         admin = runtime.knowledge_services.sources()
@@ -89,9 +118,99 @@ def bind(service, resource, checkout):
         resource_id=resource["id"],
         expected_revision=resource["revision"],
         checkout_id=checkout["id"],
-        svn_access_ref="synthetic",
         allowed_paths=["set_server"],
     )
+
+
+def test_binding_uses_original_connection_not_same_url_or_newer_account(setup):
+    runtime, _, checkout, _, service, registry = setup
+    resource = create(service)
+    access = CodeSvnAccess(runtime.database, registry)
+    args = dict(
+        resource_id=resource["id"],
+        url="https://svn.invalid/repository/trunk",
+        username="synthetic-user",
+        password="synthetic-password",
+        actor_id="user_local_admin",
+        platform_config=runtime.platform_config_service,
+    )
+    original = access.create(**args)
+    newer = access.create(**args)
+    access.pin(
+        original["id"],
+        resource["id"],
+        repository_uuid="00000000-0000-0000-0000-000000000001",
+        branch_path="/trunk",
+    )
+    runtime.database.execute(
+        f"UPDATE {service.store.t('code_svn_operation')} SET config_revision_id=?,request_json=? WHERE id=?",
+        (
+            resource["draft"]["id"],
+            json.dumps(
+                {
+                    "registration": original["id"],
+                    "registration_hash": connection_fingerprint(
+                        access.entry(original["id"], resource["id"])
+                    ),
+                }
+            ),
+            "synthetic-original-checkout",
+        ),
+    )
+    saved = bind(service, resource, checkout)
+    assert saved["draft"]["code_configuration"]["svn_access_ref"] == original["id"]
+    assert original["id"] != newer["id"]
+    summary = CodeCheckoutJobs(
+        runtime.database, runtime.knowledge_services.sources(), registry
+    ).snapshot(resource["id"])["checkouts"][0]["connection"]
+    assert summary == {"id": original["id"], "url": args["url"], "kind": "account"}
+    other = service.create_code(actor_id="user_local_admin", code="other-code", name="Other")
+    with pytest.raises(CodeKnowledgeError, match="CODE_REGISTRATION_CHANGED"):
+        bind(service, other, checkout)
+    denied = CodeCheckoutJobs(
+        runtime.database, runtime.knowledge_services.sources(), registry
+    ).snapshot(other["id"])["checkouts"][0]
+    assert denied["connection"] is None
+    assert denied["connection_error"] == "CODE_REGISTRATION_CHANGED"
+    # Pinning is excluded from the connection fingerprint; source identity is still checked.
+    runtime.database.execute(
+        f"UPDATE {service.store.t('code_svn_connection')} SET repository_uuid=? WHERE id=?",
+        ("00000000-0000-0000-0000-000000000002", original["id"]),
+    )
+    with pytest.raises(CodeKnowledgeError, match="CODE_REGISTRATION_CHANGED"):
+        bind(service, saved, checkout)
+
+
+@pytest.mark.parametrize("state", ["failed", "missing", "ambiguous"])
+def test_binding_refuses_missing_or_ambiguous_checkout_provenance(setup, state):
+    runtime, _, checkout, _, service, _ = setup
+    resource = create(service)
+    table = service.store.t("code_svn_operation")
+    if state == "missing":
+        runtime.database.execute(f"DELETE FROM {table} WHERE id='synthetic-original-checkout'")
+    elif state == "failed":
+        runtime.database.execute(
+            f"UPDATE {table} SET state='failed' WHERE id='synthetic-original-checkout'"
+        )
+    else:
+        original = runtime.database.execute_one(
+            f"SELECT * FROM {table} WHERE id='synthetic-original-checkout'"
+        )
+        original.update(id="second-checkout", request_key="second-checkout")
+        insert(runtime.database, "code_svn_operation", original)
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_CONNECTION_UNAVAILABLE"):
+        bind(service, resource, checkout)
+    assert service.view(resource["id"])["draft"]["code_configuration"]["checkout_id"] is None
+
+
+def test_binding_refuses_changed_deployment_connection(setup):
+    _, _, checkout, _, service, registry = setup
+    resource = create(service)
+    data = json.loads(registry.read_text())
+    data["synthetic"]["auth_ref"] = "changed-configuration"
+    registry.write_text(json.dumps(data))
+    with pytest.raises(CodeKnowledgeError, match="CODE_REGISTRATION_CHANGED"):
+        bind(service, resource, checkout)
 
 
 def test_code_library_can_bind_multiple_existing_environments(setup):
@@ -109,7 +228,6 @@ def test_code_library_can_bind_multiple_existing_environments(setup):
         resource_id=resource["id"],
         expected_revision=resource["revision"],
         checkout_id=checkout["id"],
-        svn_access_ref="synthetic",
         allowed_paths=["set_server"],
         environment_ids=ids,
     )
@@ -123,7 +241,6 @@ def test_code_library_can_bind_multiple_existing_environments(setup):
             resource_id=resource["id"],
             expected_revision=saved["revision"],
             checkout_id=checkout["id"],
-            svn_access_ref="synthetic",
             allowed_paths=["set_server"],
             environment_ids=["missing-environment"],
         )
@@ -241,7 +358,7 @@ def test_source_binding_rejects_wrong_repository_scope_and_active_analysis(setup
     entries = json.loads(registry.read_text())
     entries["synthetic"]["repository_uuid"] = "00000000-0000-0000-0000-000000000002"
     registry.write_text(json.dumps(entries))
-    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_BINDING_INVALID"):
+    with pytest.raises(CodeKnowledgeError, match="CODE_REGISTRATION_CHANGED"):
         bind(service, created, checkout)
     with pytest.raises(CodeKnowledgeError, match="CODE_MANAGED_STORAGE_REQUIRED"):
         service.create_code(

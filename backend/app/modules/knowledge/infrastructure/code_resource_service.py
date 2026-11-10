@@ -139,7 +139,6 @@ class CodeResourceService(KnowledgeResourceService):
         resource_id: str,
         expected_revision: int,
         checkout_id: str,
-        svn_access_ref: str,
         allowed_paths: list[str],
         storage: dict[str, Any] | None = None,
         index_id: str | None = None,
@@ -149,12 +148,6 @@ class CodeResourceService(KnowledgeResourceService):
         selected = code_storage(storage)
         paths = checkout_scope(allowed_paths)
         assert isinstance(self.store, GovernanceStore)
-        entry = CodeSvnAccess(
-            self.store.database,
-            Path(os.environ.get("CODE_CHECKOUT_REGISTRY_FILE", "/etc/code-svn/checkout.json")),
-        ).entry(svn_access_ref, resource_id)
-        if not entry:
-            raise CodeKnowledgeError("CODE_REGISTRATION_CHANGED")
         with self.store.unit_of_work():
             self.require_admin(actor_id)
             resource = self._write_resource(resource_id, expected_revision)
@@ -183,16 +176,17 @@ class CodeResourceService(KnowledgeResourceService):
                     raise CodeKnowledgeError("CODE_ENVIRONMENT_INVALID")
             self.store.assert_code_idle(resource["knowledge_base_id"])
             checkout = self.store.get("code_checkout", checkout_id, lock=True)
+            connection = CodeSvnAccess(
+                self.store.database,
+                Path(os.environ.get("CODE_CHECKOUT_REGISTRY_FILE", "/etc/code-svn/checkout.json")),
+            ).checkout_connection(checkout_id, resource_id)
             source = self.store.get("source", checkout["source_id"])
-            metadata = json_value(source["identity_metadata"])
             if (
                 checkout["state"] != "ready"
                 or checkout["writer_operation_id"] is not None
                 or checkout["physical_key"] is None
                 or source["source_system"] != "svn"
                 or source["origin_state"] != "verified"
-                or metadata["repository_uuid"] != entry["repository_uuid"]
-                or metadata["branch_path"] != entry["branch_path"].strip("/")
                 or any(
                     not path_in_scope(path, json_value(checkout["selected_paths_json"]))
                     for path in paths
@@ -220,7 +214,7 @@ class CodeResourceService(KnowledgeResourceService):
                 dict(
                     source_id=source["id"],
                     checkout_id=checkout_id,
-                    svn_access_ref=svn_access_ref,
+                    svn_access_ref=connection["id"],
                     allowed_paths_json=paths,
                     **({"environment_ids": sorted(environment_ids)} if environment_ids else {}),
                 ),

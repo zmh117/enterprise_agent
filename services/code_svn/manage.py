@@ -99,6 +99,9 @@ def initialize() -> dict[str, Any]:
     auth = STATE / "client/mes-local"
     auth.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(certificate, auth / "server.crt")
+    trusted = STATE / "client/trusted-ca"
+    trusted.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(certificate, trusted / "local-svn.crt")
     (auth / "servers").write_text(
         "[global]\nssl-authority-files = /run/code-svn-auth/mes-local/server.crt\nstore-passwords = no\nstore-auth-creds = no\n"
     )

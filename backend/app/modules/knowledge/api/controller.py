@@ -219,7 +219,7 @@ def _register_code_routes(router: APIRouter) -> None:
         user_id = actor(request)
         value = await payload(
             request,
-            {"expected_revision", "checkout_id", "svn_access_ref", "allowed_paths"},
+            {"expected_revision", "checkout_id", "allowed_paths"},
             frozenset({"storage", "index_id", "environment_ids"}),
         )
         return await invoke(

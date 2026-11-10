@@ -94,7 +94,6 @@ export function CodeResourceEditor({
   )
   const checkouts = useCodeCheckouts(resource.id, canManage)
   const [selected, setSelected] = useState(config?.checkout_id ?? "")
-  const [access, setAccess] = useState(config?.svn_access_ref ?? "")
   const [paths, setPaths] = useState(
     config?.allowed_paths_json.map((path) => path || "/").join("\n") ?? ""
   )
@@ -102,10 +101,11 @@ export function CodeResourceEditor({
     (item) => item.id === selected
   )
   const ready =
-    selectedCheckout?.state === "ready" && !selectedCheckout.writer_operation_id
+    selectedCheckout?.state === "ready" &&
+    !selectedCheckout.writer_operation_id &&
+    Boolean(selectedCheckout.connection)
   const writable = canManage && resource.status !== "archived"
   const input = { expected_revision: resource.revision }
-  const chosenAccess = access || checkouts.data?.registrations[0]?.id || ""
   return (
     <div className="grid gap-4" data-testid="code-resource-editor">
       <div className="text-sm">
@@ -148,7 +148,6 @@ export function CodeResourceEditor({
             input: {
               ...input,
               checkout_id: selected,
-              svn_access_ref: chosenAccess,
               environment_ids: environmentIds,
               allowed_paths: paths
                 .split("\n")
@@ -197,20 +196,36 @@ export function CodeResourceEditor({
               ))}
             </select>
           </KnowledgeField>
-          <KnowledgeField label="SVN 访问登记">
-            <select
-              className={knowledgeInputClass}
-              value={chosenAccess}
-              onChange={(event) => setAccess(event.target.value)}
+          {selectedCheckout?.connection ? (
+            <div
+              className="space-y-2 text-sm"
+              data-testid="code-kb-checkout-connection"
             >
-              <option value="">请选择登记项</option>
-              {checkouts.data?.registrations.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.url} · {item.id}
-                </option>
-              ))}
-            </select>
-          </KnowledgeField>
+              <dl className="grid gap-1">
+                <dt className="font-medium">关联的 SVN 地址</dt>
+                <dd className="break-all">{selectedCheckout.connection.url}</dd>
+                <dt className="font-medium">认证方式</dt>
+                <dd>
+                  {selectedCheckout.connection.kind === "account"
+                    ? "用户名密码（已保存）"
+                    : selectedCheckout.connection.kind === "anonymous"
+                      ? "无需认证"
+                      : "部署配置"}
+                </dd>
+              </dl>
+              <p className="text-muted-foreground">
+                自动使用该目录检出时的连接。需要更换连接时，在上方配置并检出后选择新目录。
+              </p>
+            </div>
+          ) : selectedCheckout ? (
+            <p role="alert" className="text-sm text-destructive">
+              该目录的原始 SVN 连接不可用，请在当前知识库重新检出后再绑定。
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              选择检出目录后，自动关联其 SVN 地址和认证方式。
+            </p>
+          )}
           <fieldset className="space-y-2" aria-label="关联环境">
             <legend className="font-medium">关联环境（可多选）</legend>
             <p className="text-sm text-muted-foreground">
@@ -249,10 +264,7 @@ export function CodeResourceEditor({
             />
           </KnowledgeField>
           {writable && (
-            <Button
-              type="submit"
-              disabled={!ready || !chosenAccess || !paths.trim()}
-            >
+            <Button type="submit" disabled={!ready || !paths.trim()}>
               保存源码配置
             </Button>
           )}

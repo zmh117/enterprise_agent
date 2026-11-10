@@ -37,6 +37,14 @@ const errors: Record<string, string> = {
   code_checkout_registration_changed: "仓库登记已变更，请重新浏览目录。",
 }
 
+function isLoopback(value: string) {
+  try {
+    return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(value).hostname)
+  } catch {
+    return false
+  }
+}
+
 export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
   const cache = useQueryClient()
   const [urlInput, setUrl] = useState<string>()
@@ -45,12 +53,23 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
   const [selected, setSelected] = useState<string[]>([])
   const [folder, setFolder] = useState("mes")
   const [notice, setNotice] = useState("")
-  const [authentication, setAuthentication] = useState("existing")
-  const [connectionId, setConnectionId] = useState("")
+  const [authentication, setAuthentication] = useState("anonymous")
+  const [savedConnection, setSavedConnection] = useState<{
+    id: string
+    url: string
+    authentication: string
+    username: string
+  }>()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const snapshot = useCodeCheckouts(resourceId)
   const url = urlInput ?? snapshot.data?.registrations[0]?.url ?? ""
+  const reuseSaved =
+    savedConnection?.url === url.trim() &&
+    savedConnection.authentication === authentication &&
+    (authentication === "anonymous" || savedConnection.username === username) &&
+    !password
+  const selectedConnection = reuseSaved ? savedConnection.id : undefined
   const browse = useQuery({
     queryKey: ["code-checkout-browse", browseId],
     enabled: Boolean(browseId),
@@ -68,26 +87,31 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
   })
   const submit = useMutation({
     mutationFn: async (kind: "browse" | "checkout") => {
-      let selectedConnection =
-        connectionId ||
-        snapshot.data?.registrations.find((item) => item.url === url)?.id ||
-        ""
-      if (kind === "browse" && authentication === "account") {
+      let connectionId = selectedConnection
+      if (kind === "browse" && !connectionId) {
         try {
-          const connection = z
-            .object({ id: z.string() })
-            .parse(
-              await apiRequest(
-                `${base}/resources/${encodeURIComponent(resourceId)}/connections`,
-                {
-                  method: "POST",
-                  body: { url: url.trim(), username, password },
-                }
-              )
+          const connection = z.object({ id: z.string() }).parse(
+            await apiRequest(
+              `${base}/resources/${encodeURIComponent(resourceId)}/connections`,
+              {
+                method: "POST",
+                body: {
+                  url: url.trim(),
+                  authentication,
+                  ...(authentication === "account"
+                    ? { username, password }
+                    : {}),
+                },
+              }
             )
-          selectedConnection = connection.id
-          setConnectionId(connection.id)
-          setAuthentication("existing")
+          )
+          connectionId = connection.id
+          setSavedConnection({
+            id: connection.id,
+            url: url.trim(),
+            authentication,
+            username,
+          })
           void cache.invalidateQueries({ queryKey: ["code-checkouts"] })
         } finally {
           setPassword("")
@@ -104,9 +128,7 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                     url: url.trim(),
                     revision: revision ? Number(revision) : null,
                     request_key: createRequestKey(),
-                    ...(selectedConnection
-                      ? { connection_id: selectedConnection }
-                      : {}),
+                    ...(connectionId ? { connection_id: connectionId } : {}),
                   }
                 : {
                     browse_job_id: browseId,
@@ -165,8 +187,7 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                 value={url}
                 onChange={(e) => {
                   setUrl(e.target.value)
-                  setConnectionId("")
-                  setAuthentication("account")
+                  setSavedConnection(undefined)
                   resetBrowse()
                 }}
                 className="min-w-80"
@@ -180,44 +201,16 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                 disabled={submit.isPending}
                 onChange={(event) => {
                   setAuthentication(event.target.value)
+                  setSavedConnection(undefined)
+                  setPassword("")
                   resetBrowse()
                 }}
               >
-                <option value="existing">使用已保存连接</option>
-                <option value="account">配置用户名和密码</option>
+                <option value="anonymous">无需认证</option>
+                <option value="account">配置用户名密码</option>
               </select>
             </KnowledgeField>
-            {authentication === "existing" ? (
-              <KnowledgeField label="已保存 SVN 连接">
-                <select
-                  aria-label="已保存 SVN 连接"
-                  className="h-9 max-w-96 rounded border px-2"
-                  value={
-                    connectionId ||
-                    snapshot.data?.registrations.find(
-                      (item) => item.url === url
-                    )?.id ||
-                    ""
-                  }
-                  disabled={submit.isPending}
-                  onChange={(event) => {
-                    const entry = snapshot.data?.registrations.find(
-                      (item) => item.id === event.target.value
-                    )
-                    setConnectionId(event.target.value)
-                    if (entry) setUrl(entry.url)
-                    resetBrowse()
-                  }}
-                >
-                  <option value="">请选择连接</option>
-                  {snapshot.data?.registrations.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.url}
-                    </option>
-                  ))}
-                </select>
-              </KnowledgeField>
-            ) : (
+            {authentication === "account" && (
               <>
                 <KnowledgeField label="SVN 用户名">
                   <Input
@@ -229,6 +222,7 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                     required
                     onChange={(event) => {
                       setUsername(event.target.value)
+                      setSavedConnection(undefined)
                       resetBrowse()
                     }}
                   />
@@ -241,7 +235,10 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                     value={password}
                     disabled={submit.isPending}
                     maxLength={4096}
-                    required
+                    required={!reuseSaved}
+                    placeholder={
+                      reuseSaved ? "已保存；留空复用，输入新密码可更换" : ""
+                    }
                     onChange={(event) => {
                       setPassword(event.target.value)
                       resetBrowse()
@@ -271,21 +268,35 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                 submit.isPending ||
                 !snapshot.data?.enabled ||
                 (authentication === "account" &&
-                  (!username.trim() || !password))
+                  (!username.trim() || (!password && !reuseSaved)))
               }
             >
-              {authentication === "account" ? "保存连接并浏览" : "浏览目录"}
+              {authentication === "account" && !reuseSaved
+                ? "保存连接并浏览"
+                : "浏览目录"}
             </Button>
           </form>
+          {authentication === "account" && reuseSaved && (
+            <p role="status" className="text-sm text-muted-foreground">
+              账号凭据已保存，再次浏览无需重复填写密码。
+            </p>
+          )}
+          {isLoopback(url) && (
+            <p role="alert" className="text-sm">
+              此地址指向执行容器自身。访问宿主机
+              SVN，请填写容器可访问的实际地址。系统按填写地址直接连接，不自动替换地址。
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
-            使用 HTTPS 仓库地址；账号密码加密保存到凭据中心，不会提供给
+            支持 http://、https://、svn://
+            仓库地址。账号密码加密保存到凭据中心，不会提供给
             Agent。企业自签证书需由部署人员配置受信任的 CA。
           </p>
           {browse.data && (
             <p role="status">
               目录浏览：{states[browse.data.state] ?? browse.data.state}
               {browse.data.error_code &&
-                ` · ${errors[browse.data.error_code] ?? browse.data.error_code}`}
+                ` · ${authentication === "anonymous" && browse.data.error_code === "CODE_SVN_AUTH_FAILED" ? "该仓库需要账号认证，请选择配置用户名和密码。" : (errors[browse.data.error_code] ?? browse.data.error_code)}`}
             </p>
           )}
           {browse.data?.result_expired && (

@@ -19,7 +19,13 @@ export const codeOperationSchema = z.object({
 })
 const snapshotSchema = z.object({
   enabled: z.boolean(),
-  registrations: z.array(z.object({ id: z.string(), url: z.string() })),
+  registrations: z.array(
+    z.object({
+      id: z.string(),
+      url: z.string(),
+      kind: z.enum(["deployment", "account", "anonymous"]),
+    })
+  ),
   jobs: z.array(codeOperationSchema),
   checkouts: z.array(
     z.object({
@@ -32,6 +38,14 @@ const snapshotSchema = z.object({
       writer_operation_id: z.string().nullable(),
       selected_paths: z.array(z.string()),
       readers: z.number(),
+      connection: z
+        .object({
+          id: z.string(),
+          url: z.string(),
+          kind: z.enum(["deployment", "account", "anonymous"]),
+        })
+        .nullable(),
+      connection_error: z.string().nullable(),
     })
   ),
 })

@@ -212,6 +212,7 @@ def test_existing_checkout_registration_is_read_only_and_refuses_active_readers(
     from app.modules.knowledge.infrastructure.code_analysis_store import CodeAnalysisStore
 
     runtime, source, checkout, root, _, registry_file = setup
+    prior_operations = runtime.database.execute('SELECT id FROM "knowledge.code_svn_operation"')
     entry = json.loads(registry_file.read_text())["synthetic"]
     inspected = []
 
@@ -262,7 +263,10 @@ def test_existing_checkout_registration_is_read_only_and_refuses_active_readers(
     # Idempotent restart after an identity marker has already been persisted.
     register_existing(runtime.database, **args)
     assert len(inspected) == 2
-    assert runtime.database.execute('SELECT id FROM "knowledge.code_svn_operation"') == []
+    assert (
+        runtime.database.execute('SELECT id FROM "knowledge.code_svn_operation"')
+        == prior_operations
+    )
     store = CodeAnalysisStore(runtime.database, authorize=lambda context: None)
     ctx = analysis_context(runtime, source, checkout)
     pending = store.begin(ctx, "active")

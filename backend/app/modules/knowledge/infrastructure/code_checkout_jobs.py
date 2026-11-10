@@ -76,11 +76,27 @@ class CodeCheckoutJobs(CodeOperationStore):
                 (checkout["id"],),
             )
             checkout["readers"] = readers["n"] if readers else 0
+            try:
+                checkout["connection"] = CodeSvnAccess(
+                    self.db, self.registry_file
+                ).checkout_connection(checkout["id"], resource_id)
+                checkout["connection_error"] = None
+            except CodeKnowledgeError as exc:
+                checkout["connection"] = None
+                checkout["connection_error"] = exc.code
         enabled = os.environ.get("CODE_CHECKOUT_ENABLED") == "true"
         return {
             "enabled": enabled,
             "registrations": [
-                {"id": key, "url": entry["public_url"]}
+                {
+                    "id": key,
+                    "url": entry["public_url"],
+                    "kind": "account"
+                    if entry.get("secret_ref")
+                    else "anonymous"
+                    if entry.get("resource_id")
+                    else "deployment",
+                }
                 for key, entry in CodeSvnAccess(self.db, self.registry_file)
                 .entries(resource_id)
                 .items()

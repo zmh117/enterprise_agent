@@ -128,7 +128,7 @@ async def _create_svn_connection(resource_id: str, request: Request) -> Any:
     from app.modules.knowledge.infrastructure.code_svn_access import CodeSvnAccess
 
     user = actor(request)
-    value = await payload(request, {"url", "username", "password"})
+    value = await payload(request, {"url"}, frozenset({"authentication", "username", "password"}))
 
     def create() -> dict[str, Any]:
         jobs = services(request).code_checkouts()

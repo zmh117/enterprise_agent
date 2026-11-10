@@ -82,7 +82,16 @@ describe("代码知识库配置", () => {
                   : {
                       enabled: true,
                       registrations: [
-                        { id: "local-svn", url: "https://svn.invalid/trunk" },
+                        {
+                          id: "local-svn",
+                          url: "https://svn.invalid/trunk",
+                          kind: "deployment",
+                        },
+                        {
+                          id: "duplicate-account",
+                          url: "https://svn.invalid/trunk",
+                          kind: "account",
+                        },
                       ],
                       jobs: [],
                       checkouts: [
@@ -96,6 +105,29 @@ describe("代码知识库配置", () => {
                           writer_operation_id: null,
                           readers: 2,
                           selected_paths: ["set_server", "set_web/JTH"],
+                          connection: {
+                            id: "local-svn",
+                            url: "https://original.invalid/trunk",
+                            kind: "account",
+                          },
+                          connection_error: null,
+                        },
+                        {
+                          id: "other-checkout",
+                          source_id: "other-source",
+                          relative_dir: "other-project",
+                          state: "ready",
+                          verified_revision: 2,
+                          generation: 1,
+                          writer_operation_id: null,
+                          readers: 0,
+                          selected_paths: [""],
+                          connection: {
+                            id: "anonymous-svn",
+                            url: "https://other.invalid/trunk",
+                            kind: "anonymous",
+                          },
+                          connection_error: null,
                         },
                       ],
                     }
@@ -137,19 +169,99 @@ describe("代码知识库配置", () => {
         input: {
           expected_revision: 2,
           checkout_id: "checkout",
-          svn_access_ref: "local-svn",
           environment_ids: ["env-one", "env-two"],
           allowed_paths: ["set_server", "set_web/JTH"],
         },
       })
     )
     expect(screen.getByRole("button", { name: "验证草稿" })).toBeDisabled()
+    expect(screen.queryByLabelText("SVN 访问登记")).toBeNull()
+    expect(screen.getByTestId("code-kb-checkout-connection")).toHaveTextContent(
+      "https://original.invalid/trunk"
+    )
+    expect(screen.getByTestId("code-kb-checkout-connection")).toHaveTextContent(
+      "用户名密码（已保存）"
+    )
     expect(
       screen.getByRole("button", { name: "发布代码知识库" })
     ).toBeDisabled()
     expect(
       screen.queryByText(/已登记源码快照|基线提取|提取应用|执行服务账号/)
     ).toBeNull()
+    fireEvent.change(screen.getByTestId("code-kb-checkout"), {
+      target: { value: "other-checkout" },
+    })
+    expect(screen.getByTestId("code-kb-checkout-connection")).toHaveTextContent(
+      "https://other.invalid/trunk"
+    )
+    expect(screen.getByTestId("code-kb-checkout-connection")).toHaveTextContent(
+      "无需认证"
+    )
+    expect(
+      screen.getByTestId("code-kb-checkout-connection")
+    ).not.toHaveTextContent("https://original.invalid/trunk")
+  })
+
+  it("目录来源连接不可用时显示原因并阻止绑定", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (input) =>
+          new Response(
+            JSON.stringify(
+              String(input).includes("/api/platform/environments")
+                ? { environments: [] }
+                : String(input).endsWith("/index-status")
+                  ? { paused: false, indexes: [] }
+                  : {
+                      enabled: true,
+                      registrations: [],
+                      jobs: [],
+                      checkouts: [
+                        {
+                          id: "missing-connection",
+                          source_id: "source",
+                          relative_dir: "legacy",
+                          state: "ready",
+                          verified_revision: 2,
+                          generation: 1,
+                          writer_operation_id: null,
+                          readers: 0,
+                          selected_paths: [""],
+                          connection: null,
+                          connection_error:
+                            "CODE_CHECKOUT_CONNECTION_UNAVAILABLE",
+                        },
+                      ],
+                    }
+            ),
+            { headers: { "Content-Type": "application/json" } }
+          )
+      )
+    )
+    const execute = vi.fn(async () => true)
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <CodeResourceEditor
+          resource={resource}
+          canManage
+          pending={false}
+          execute={execute}
+          reload={async () => {}}
+        />
+      </QueryClientProvider>
+    )
+    await screen.findByRole("option", { name: /legacy · SVN r2/ })
+    fireEvent.change(screen.getByTestId("code-kb-checkout"), {
+      target: { value: "missing-connection" },
+    })
+    expect(screen.getByText(/原始 SVN 连接不可用/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "保存源码配置" })).toBeDisabled()
+    expect(execute).not.toHaveBeenCalled()
   })
 
   it("代码创建使用独立类型端点，空索引 ID 可解析", async () => {

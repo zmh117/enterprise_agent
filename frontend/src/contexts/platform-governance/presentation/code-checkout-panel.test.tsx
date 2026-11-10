@@ -7,6 +7,80 @@ const url = "https://localhost:18443/repos/mes/trunk"
 afterEach(() => vi.unstubAllGlobals())
 
 describe("SVN 工程检出", () => {
+  it("无需认证按输入地址直连，不使用同 URL 的部署映射或账号", async () => {
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input, init) => {
+        const path = String(input)
+        let data: unknown = {
+          enabled: true,
+          registrations: [
+            { id: "mes-local", url, kind: "deployment" },
+            { id: "saved-account", url, kind: "account" },
+          ],
+          jobs: [],
+          checkouts: [],
+        }
+        if (init?.method === "POST") {
+          const body = JSON.parse(String(init.body))
+          requests.push({ path, body })
+          data = {
+            id: path.endsWith("/connections")
+              ? "direct-anonymous"
+              : "direct-browse",
+          }
+        } else if (path.endsWith("/direct-browse")) {
+          data = {
+            id: "direct-browse",
+            operation_kind: "browse",
+            state: "succeeded",
+            error_code: null,
+            result: {
+              revision: 2,
+              directories: ["set_server"],
+              files: ["README.md"],
+            },
+          }
+        }
+        return new Response(JSON.stringify(data), {
+          headers: { "Content-Type": "application/json" },
+        })
+      })
+    )
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <CodeCheckoutPanel resourceId="code-library" />
+      </QueryClientProvider>
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText("SVN 仓库地址")).toHaveValue(url)
+    )
+    expect(screen.queryByLabelText("已保存 SVN 连接")).toBeNull()
+    expect(screen.queryByLabelText("SVN 用户名")).toBeNull()
+    expect(screen.getByLabelText("SVN 认证方式")).toHaveValue("anonymous")
+    expect(screen.getByRole("option", { name: "无需认证" })).toBeInTheDocument()
+    expect(screen.getByRole("alert")).toHaveTextContent("不自动替换地址")
+    fireEvent.click(screen.getByRole("button", { name: "浏览目录" }))
+    await screen.findByText(/已固定 SVN r2/)
+    expect(requests[0].path).toMatch(/\/connections$/)
+    expect(requests[0].body).toEqual({ url, authentication: "anonymous" })
+    expect(requests[1].body).toMatchObject({
+      url,
+      connection_id: "direct-anonymous",
+    })
+    fireEvent.click(screen.getByRole("button", { name: "浏览目录" }))
+    await waitFor(() => expect(requests).toHaveLength(3))
+    expect(requests[2].body.connection_id).toBe("direct-anonymous")
+    expect(
+      requests.filter((item) => item.path.endsWith("/connections"))
+    ).toHaveLength(1)
+  })
+
   it("保存账号密码后只用连接标识浏览，页面不保留密码", async () => {
     const requests: { path: string; body: Record<string, unknown> }[] = []
     vi.stubGlobal(
@@ -52,6 +126,10 @@ describe("SVN 工程检出", () => {
     fireEvent.change(await screen.findByLabelText("SVN 仓库地址"), {
       target: { value: "https://svn.invalid/project/trunk" },
     })
+    expect(screen.getByLabelText("SVN 认证方式")).toHaveValue("anonymous")
+    fireEvent.change(screen.getByLabelText("SVN 认证方式"), {
+      target: { value: "account" },
+    })
     fireEvent.change(screen.getByLabelText("SVN 用户名"), {
       target: { value: "synthetic-user" },
     })
@@ -67,6 +145,7 @@ describe("SVN 工程检出", () => {
     await waitFor(() => expect(requests).toHaveLength(2))
     expect(requests[0].body).toEqual({
       url: "https://svn.invalid/project/trunk",
+      authentication: "account",
       username: "synthetic-user",
       password: "synthetic-password",
     })
@@ -77,10 +156,45 @@ describe("SVN 工程检出", () => {
     expect(
       await screen.findByText(/SVN 用户名或密码不正确/)
     ).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText("SVN 认证方式"), {
-      target: { value: "account" },
-    })
+    expect(screen.getByLabelText("SVN 认证方式")).toHaveValue("account")
     expect(screen.getByLabelText("SVN 密码")).toHaveValue("")
+    expect(screen.getByText(/账号凭据已保存/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "浏览目录" }))
+    await waitFor(() => expect(requests).toHaveLength(3))
+    expect(
+      requests.filter((item) => item.path.endsWith("/connections"))
+    ).toHaveLength(1)
+    expect(requests[2].body.connection_id).toBe("saved-connection")
+    fireEvent.change(screen.getByLabelText("SVN 用户名"), {
+      target: { value: "changed-user" },
+    })
+    expect(
+      screen.getByRole("button", { name: "保存连接并浏览" })
+    ).toBeDisabled()
+    fireEvent.change(screen.getByLabelText("SVN 密码"), {
+      target: { value: "replacement-synthetic" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "保存连接并浏览" }))
+    await waitFor(() => expect(requests).toHaveLength(5))
+    expect(requests[3].body.username).toBe("changed-user")
+    expect(screen.getByLabelText("SVN 认证方式")).toHaveValue("account")
+    fireEvent.change(screen.getByLabelText("SVN 仓库地址"), {
+      target: { value: "https://svn.invalid/another/trunk" },
+    })
+    expect(screen.getByLabelText("SVN 认证方式")).toHaveValue("account")
+    expect(
+      screen.getByRole("button", { name: "保存连接并浏览" })
+    ).toBeDisabled()
+    fireEvent.change(screen.getByLabelText("SVN 认证方式"), {
+      target: { value: "anonymous" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "浏览目录" }))
+    await waitFor(() => expect(requests).toHaveLength(7))
+    expect(requests[5].body).toEqual({
+      url: "https://svn.invalid/another/trunk",
+      authentication: "anonymous",
+    })
+    expect(screen.getByLabelText("SVN 认证方式")).toHaveValue("anonymous")
   })
   it("展开目录并多选，父目录选择会移除重复子目录", () => {
     const change = vi.fn()
@@ -120,7 +234,11 @@ describe("SVN 工程检出", () => {
           requests.push({ path, body: JSON.parse(String(init.body)) })
           return new Response(
             JSON.stringify({
-              id: path.endsWith("/browse") ? "browse-id" : "checkout-id",
+              id: path.endsWith("/connections")
+                ? "direct-anonymous"
+                : path.endsWith("/browse")
+                  ? "browse-id"
+                  : "checkout-id",
             }),
             { status: 202, headers: { "Content-Type": "application/json" } }
           )
@@ -144,7 +262,7 @@ describe("SVN 工程检出", () => {
             }
           : {
               enabled: true,
-              registrations: [{ id: "test-svn", url }],
+              registrations: [{ id: "test-svn", url, kind: "deployment" }],
               jobs: [],
               checkouts: [],
             }
@@ -176,8 +294,8 @@ describe("SVN 工程检出", () => {
       target: { value: "factory-r2" },
     })
     fireEvent.click(screen.getByRole("button", { name: "检出所选内容" }))
-    await waitFor(() => expect(requests).toHaveLength(2))
-    expect(requests[1].body).toMatchObject({
+    await waitFor(() => expect(requests).toHaveLength(3))
+    expect(requests[2].body).toMatchObject({
       browse_job_id: "browse-id",
       paths: ["set_web/EBR", "set_web/JTH", "README.md"],
       folder: "factory-r2",

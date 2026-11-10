@@ -134,7 +134,8 @@ class WorkingCopyClient:
             config_directory=config,
             cancelled=cancelled,
             credentials=credentials,
-            discover=bool(entry.get("secret_ref")) and not entry["repository_uuid"],
+            discover=bool(entry.get("resource_id") or entry.get("secret_ref"))
+            and not entry["repository_uuid"],
         )
         if not entry["repository_uuid"]:
             self.source.discover()

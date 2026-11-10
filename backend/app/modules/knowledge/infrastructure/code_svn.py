@@ -50,9 +50,10 @@ class SvnCodeSource:
         discover: bool = False,
     ) -> None:
         parsed = urlsplit(branch_url)
-        schemes = {"https"} | ({"file"} if allow_local_test else set())
+        schemes = {"http", "https", "svn"} | ({"file"} if allow_local_test else set())
         if (
             parsed.scheme not in schemes
+            or (parsed.scheme != "file" and not parsed.hostname)
             or parsed.username
             or parsed.password
             or parsed.query
@@ -381,7 +382,9 @@ def parse_external(line: str) -> tuple[str, str, int | None]:
         raise CodeKnowledgeError("code_svn_external_invalid")
 
     def is_url(value: str) -> bool:
-        return value.startswith(("https://", "file://", "^/", "../", "//", "/"))
+        return value.startswith(
+            ("http://", "https://", "svn://", "file://", "^/", "../", "//", "/")
+        )
 
     url, local = tokens if is_url(tokens[0]) else (tokens[1], tokens[0])
     if not is_url(url) or is_url(local):

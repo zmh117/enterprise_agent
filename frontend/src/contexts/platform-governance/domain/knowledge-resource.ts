@@ -131,7 +131,6 @@ export type KnowledgeCommand =
       input: {
         expected_revision: number
         checkout_id: string
-        svn_access_ref: string
         allowed_paths: string[]
         environment_ids?: string[]
         index_id?: string

@@ -56,7 +56,7 @@ class CodeCheckoutStore:
             identity = str(uuid.UUID(repository_uuid))
             url = urlsplit(root_url)
             if (
-                url.scheme != "https"
+                url.scheme not in {"http", "https", "svn"}
                 or not url.hostname
                 or url.username
                 or url.password

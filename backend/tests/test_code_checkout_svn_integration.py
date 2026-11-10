@@ -18,6 +18,134 @@ from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource
 
 @unittest.skipUnless(os.environ.get("CODE_AUTH_SVN_URL"), "isolated authenticated fixture required")
 class AuthenticatedWorkingCopyAcceptance(unittest.TestCase):
+    def test_page_connections_use_deployment_ca_without_reusing_auth_configuration(self):
+        from unittest.mock import patch
+        from app.modules.knowledge.infrastructure.code_svn_access import CodeSvnAccess
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            access = CodeSvnAccess(None, root / "unused-registry.json")
+            public_url = os.environ["CODE_AUTH_SVN_URL"].replace(
+                "/repos/fixture/", "/public/fixture/"
+            )
+            entry = dict(
+                public_url=public_url,
+                branch_url=public_url,
+                repository_uuid="",
+                branch_path="/",
+                resource_id="synthetic-resource",
+                secret_ref="",
+            )
+            # No configured CA must keep rejecting the self-signed server.
+            with self.assertRaisesRegex(CodeKnowledgeError, "CODE_SVN_CERTIFICATE_INVALID"):
+                with access.client(entry, root, lambda: False):
+                    self.fail("untrusted connection was accepted")
+            trusted = root / "trusted-ca"
+            trusted.mkdir()
+            shutil.copyfile(os.environ["CODE_AUTH_SVN_CA"], trusted / "synthetic.crt")
+            # Auth material elsewhere under the auth root must not be inherited.
+            (root / "servers").write_text("this is not a usable SVN configuration")
+            with access.client(entry, root, lambda: False) as client:
+                assert client.source._credentials is None
+                assert client.source.branch_url == public_url
+                assert client.browse(2)["revision"] == 2
+                config = client.source.config_directory
+                assert (config / "trusted-ca.pem").is_file()
+                assert not any(p.is_file() for p in (config / "auth").rglob("*"))
+            assert not config.exists()
+            private_url = os.environ["CODE_AUTH_SVN_URL"]
+            entry.update(
+                public_url=private_url, branch_url=private_url, secret_ref="synthetic-reference"
+            )
+            with patch.object(
+                access, "_credentials", return_value=("synthetic-user", "synthetic-password")
+            ):
+                with access.client(entry, root, lambda: False) as client:
+                    assert client.browse(2)["revision"] == 2
+
+    @unittest.skipUnless(
+        os.environ.get("CODE_HTTP_SVN_URL") and os.environ.get("CODE_SVN_PROTOCOL_URL"),
+        "network protocol fixture required",
+    )
+    def test_network_protocols_browse_checkout_and_update(self):
+        from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+        from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+
+        public_urls = (os.environ["CODE_HTTP_SVN_URL"], os.environ["CODE_SVN_PROTOCOL_URL"])
+        cases = [(url, None) for url in public_urls] + [
+            (
+                url.replace("/public/", "/repos/").replace("/repo/", "/repo-auth/"),
+                ("synthetic-user", "synthetic-password"),
+            )
+            for url in public_urls
+        ]
+        for url, credentials in cases:
+            with (
+                self.subTest(scheme=url.split(":")[0], authenticated=bool(credentials)),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary).resolve()
+                config = root / "config"
+                config.mkdir()
+                entry = dict(
+                    public_url=url,
+                    branch_url=url,
+                    repository_uuid="",
+                    branch_path="/",
+                    resource_id="synthetic-resource",
+                    secret_ref="",
+                )
+                if credentials:
+                    with self.assertRaisesRegex(CodeKnowledgeError, "CODE_SVN_AUTH_FAILED"):
+                        WorkingCopyClient(entry, root, config_directory=config)
+                client = WorkingCopyClient(
+                    entry, root, config_directory=config, credentials=credentials
+                )
+                assert client.source.branch_url == url
+                assert client.browse(None)["revision"] == 2
+                client.checkout(
+                    root=root,
+                    folder="checkout",
+                    job_id="protocol-test",
+                    revision=2,
+                    paths=["module"],
+                )
+                key = persistent_identity(root / "checkout", create=True)
+                copy = SvnWorkingCopy(
+                    client.source, root / "checkout", ["module"], physical_key=key
+                )
+                assert copy.inspect(2)["operative_revision"] == 2
+                assert copy.update(1, timeout=30)["operative_revision"] == 1
+                assert not any(path.is_file() for path in (config / "auth").rglob("*"))
+
+    def test_anonymous_connection_discovers_without_account_or_cached_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary).resolve()
+            (config / "servers").write_text(
+                "[global]\nssl-authority-files = " + os.environ["CODE_AUTH_SVN_CA"] + "\n"
+            )
+            url = os.environ["CODE_AUTH_SVN_URL"].replace("/repos/fixture/", "/public/fixture/")
+            entry = dict(
+                public_url=url,
+                branch_url=url,
+                repository_uuid="",
+                branch_path="/",
+                resource_id="synthetic-resource",
+                secret_ref="",
+            )
+            client = WorkingCopyClient(entry, config, config_directory=config)
+            assert client.source._credentials is None
+            assert client.browse(None)["revision"] == 2
+            assert client.source.branch_path == "/trunk"
+            assert client.source.expected_uuid
+            assert not any(path.is_file() for path in (config / "auth").rglob("*"))
+            entry.update(
+                public_url=os.environ["CODE_AUTH_SVN_URL"],
+                branch_url=os.environ["CODE_AUTH_SVN_URL"],
+            )
+            with self.assertRaisesRegex(CodeKnowledgeError, "CODE_SVN_AUTH_FAILED"):
+                WorkingCopyClient(entry, config, config_directory=config)
+
     def test_authenticated_browse_checkout_history_update_and_read(self):
         from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
         from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
