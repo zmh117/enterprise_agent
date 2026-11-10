@@ -31,6 +31,25 @@ def sdk_value(source: Any, key: str) -> Any:
     return getattr(source, key, None)
 
 
+def is_max_turns_failure(source: Any) -> bool:
+    """Use SDK terminal facts, never text from assistant or tool messages."""
+    data = getattr(source, "data", None) if isinstance(source, Exception) else None
+    payload = data if isinstance(data, dict) else source
+    is_result = (
+        sdk_value(payload, "type") == "result"
+        or type(payload).__name__ == "ResultMessage"
+        or (type(source).__name__ == "ResultError" and isinstance(data, dict))
+    )
+    return (
+        is_result
+        and sdk_value(payload, "is_error") is True
+        and (
+            sdk_value(payload, "subtype") == "error_max_turns"
+            or sdk_value(payload, "terminal_reason") == "max_turns"
+        )
+    )
+
+
 def model_access_failure(source: Any) -> tuple[str, str] | None:
     """Classify model-boundary failures, never ordinary assistant/tool content."""
     is_exception = isinstance(source, Exception)

@@ -745,6 +745,7 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
         tool_annotations=real_sdk.tool_annotations,
         permission_allow=real_sdk.permission_allow,
         permission_deny=real_sdk.permission_deny,
+        hook_matcher=real_sdk.hook_matcher,
     )
 
     def bridge_factory(**kwargs: Any) -> ClaudePythonFileBridge:

@@ -90,6 +90,7 @@ from app.modules.agent.infrastructure.runtime_pool_store import (
     timestamp,
 )
 from app.shared.exceptions import (
+    DiagnosticLoopExhausted,
     ExecutionPolicyExceeded,
     ExecutionTimeout,
     NonRetryableExecutionError,
@@ -849,7 +850,10 @@ def test_runtime_deadline_commits_protocol_failure_and_replays_without_execution
             database.execute(
                 "update agent_runtime_invocation set execution_deadline_at = ? "
                 "where invocation_id = ?",
-                (timestamp(database_now(database) - timedelta(seconds=1)), request["invocation_id"]),
+                (
+                    timestamp(database_now(database) - timedelta(seconds=1)),
+                    request["invocation_id"],
+                ),
             )
             return outcome
 
@@ -872,7 +876,9 @@ def test_runtime_deadline_commits_protocol_failure_and_replays_without_execution
     assert ledger.load(request["invocation_id"]).events == tuple(events)
 
     replacement = FakePythonExecutor()
-    recovered = PythonInvocationRegistry(replacement, PythonTerminalLedger(database)).acquire(request)
+    recovered = PythonInvocationRegistry(replacement, PythonTerminalLedger(database)).acquire(
+        request
+    )
     assert list(recovered.stream()) == events
     assert len(executor.requests) == 1
     assert replacement.requests == []
@@ -2040,6 +2046,13 @@ def test_python_runtime_normalizes_tool_budget_exhaustion_across_sdk_paths(
             ],
             model="safe-model",
         )
+        before = options["hooks"]["PreToolUse"][0].hooks[0]
+        assert (
+            await before(
+                {"tool_name": "mcp__tool_mcp__query_database"}, "sdk-tool-before-budget-1", None
+            )
+            == {}
+        )
         assert (
             await options["can_use_tool"](
                 "mcp__tool_mcp__query_database",
@@ -2047,13 +2060,11 @@ def test_python_runtime_normalizes_tool_budget_exhaustion_across_sdk_paths(
                 object(),
             )
         )["behavior"] == "allow"
-        denied = await options["can_use_tool"](
-            "mcp__tool_mcp__query_database",
-            {"query": "select 2"},
-            object(),
+        denied = await before(
+            {"tool_name": "mcp__tool_mcp__query_database"}, "sdk-tool-over-budget", None
         )
-        assert denied["behavior"] == "deny"
-        assert denied["interrupt"] is True
+        assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert denied["continue_"] is False
         if sdk_completion == "propagated":
             raise ExecutionPolicyExceeded("SDK propagated permission interrupt")
         if sdk_completion == "wrapped":
@@ -2071,6 +2082,7 @@ def test_python_runtime_normalizes_tool_budget_exhaustion_across_sdk_paths(
         tool=cast(Any, None),
         create_sdk_mcp_server=cast(Any, None),
         tool_annotations=None,
+        hook_matcher=lambda **kwargs: SimpleNamespace(**kwargs),
         permission_allow=lambda *, updated_input: {
             "behavior": "allow",
             "updated_input": updated_input,
@@ -2720,6 +2732,7 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
         tool=cast(Any, None),
         create_sdk_mcp_server=cast(Any, None),
         tool_annotations=None,
+        hook_matcher=lambda **kwargs: SimpleNamespace(**kwargs),
     )
     binding = ModelRuntimeBinding(
         protocol="anthropic_compatible",
@@ -3565,6 +3578,7 @@ def test_python_runtime_provider_timeout_remains_retryable() -> None:
 @pytest.mark.parametrize(
     ("failure_type", "error_code", "retry_class"),
     [
+        (DiagnosticLoopExhausted, "max_turns_exhausted", "NEVER"),
         (ExecutionPolicyExceeded, "execution_policy_max_tool_calls_exhausted", "NEVER"),
         (ExecutionTimeout, "runtime_timeout", "NEVER"),
         (NonRetryableExecutionError, "runtime_model_authentication", "CONFIGURATION"),
@@ -4238,3 +4252,213 @@ def test_pool_http_recovery_after_body_cleanup_never_reexecutes(tmp_path: Path) 
     replay = client.post("/internal/v1/executions", json=request, headers=headers)
     assert replay.status_code == 410 and replay.json()["code"] == "runtime_recovery_expired"
     assert len(executor.requests) == 1
+
+
+@pytest.mark.parametrize("flow", ["job", "probe"])
+@pytest.mark.parametrize("shape", ["dict", "typed", "exception"])
+@pytest.mark.parametrize("marker", ["subtype", "terminal_reason"])
+def test_sdk_turn_limit_stops_before_generic_retry_classification(flow, shape, marker):
+    payload = dict(
+        subtype="error_max_turns" if marker == "subtype" else "success",
+        terminal_reason="max_turns" if marker == "terminal_reason" else None,
+        is_error=True,
+        num_turns=101,
+        duration_ms=1234,
+        duration_api_ms=1200,
+        session_id="synthetic-private-session",
+        result="synthetic-private-result",
+    )
+    consumed = []
+
+    async def query(**_kwargs):
+        consumed.append("terminal")
+        if shape == "exception":
+            raise ResultError("synthetic-private-error", data=payload, exit_code=1)
+        yield ResultMessage(**payload) if shape == "typed" else {"type": "result", **payload}
+        consumed.append("must-not-continue")
+        yield {"type": "result", "subtype": "success", "is_error": False, "result": "late"}
+
+    client = ClaudeSdkClient(
+        model="synthetic-model",
+        limits=build_settings().execution,
+        api_key="synthetic-model-key",
+        sdk_loader=lambda: ClaudeSdk(
+            query=query,
+            options=lambda **kwargs: kwargs,
+            tool=cast(Any, None),
+            create_sdk_mcp_server=cast(Any, None),
+            tool_annotations=None,
+        ),
+    )
+    context = replace(
+        _tool_budget_test_context(1),
+        model_runtime_binding=None,
+        allowed_tools=[],
+        mcp_bindings=(),
+        effective_tool_names=(),
+    )
+    with pytest.raises(DiagnosticLoopExhausted) as captured:
+        if flow == "job":
+            client.run(
+                AgentRunRequest(
+                    job_id="job-turn-limit",
+                    user_id="user-limit",
+                    project_code="project-1",
+                    context=context,
+                )
+            )
+        else:
+            binding = _tool_budget_test_context(1).model_runtime_binding
+            client.test_connection(binding, "synthetic-model-key", 5)
+    assert consumed == ["terminal"]
+    assert captured.value.error_code == "max_turns_exhausted"
+    assert "不会自动重试" in captured.value.safe_message
+    assert "synthetic-private" not in str(captured.value)
+    assert "synthetic-private" not in json.dumps(captured.value.diagnostics)
+    metadata = captured.value.diagnostics["sdk_result"]
+    assert metadata["num_turns"] == 101 and metadata["is_error"] is True
+    assert metadata[marker] == ("error_max_turns" if marker == "subtype" else "max_turns")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"type": "assistant", "is_error": True, "subtype": "error_max_turns"},
+        {"type": "tool_result", "is_error": True, "terminal_reason": "max_turns"},
+        {"type": "result", "is_error": False, "subtype": "error_max_turns"},
+        {"type": "result", "is_error": True, "result": "error_max_turns", "num_turns": 101},
+    ],
+)
+def test_turn_limit_classification_requires_sdk_terminal_facts(message):
+    from app.python_runtime.error_mapper import is_max_turns_failure
+
+    assert not is_max_turns_failure(message)
+
+
+def test_read_only_turns_keep_tool_and_model_audit_without_spending_turn_budget():
+    class BudgetBridge:
+        server = {}
+
+        async def connect(self):
+            pass
+
+        async def close(self):
+            pass
+
+    async def query(*, options, **_kwargs):
+        assert options["max_turns"] == 11
+        before = options["hooks"]["PreToolUse"][0].hooks[0]
+        for index, name in enumerate(("Glob", "Grep", "Read")):
+            call = f"file-call-{index}"
+            yield AssistantMessage(
+                model="synthetic",
+                message_id=f"msg-{index}",
+                usage={"input_tokens": 10, "output_tokens": 1},
+                content=[ToolUseBlock(id=call, name=name, input={})],
+            )
+            assert await before({"tool_name": name, "tool_input": {}}, call, None) == {}
+            yield UserMessage(
+                content=[
+                    ToolResultBlock(
+                        tool_use_id=call,
+                        content="synthetic tool output",
+                        is_error=index == 1,
+                    )
+                ]
+            )
+        yield AssistantMessage(
+            model="synthetic",
+            message_id="msg-final",
+            content=[TextBlock(text="done")],
+            usage={"input_tokens": 10, "output_tokens": 1},
+        )
+        yield {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "num_turns": 4,
+            "result": "done",
+        }
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kw: kw,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+        hook_matcher=lambda **kw: SimpleNamespace(**kw),
+    )
+    client = FixedMcpClaudeSdkClient(
+        tool_result_bridge_factory=lambda **kw: BudgetBridge(),
+        limits=build_settings().execution,
+        api_key="synthetic-key",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        runtime_build_identity=BuildIdentity(
+            "python-runtime", "test-revision", "test-build", "linux/amd64"
+        ),
+    )
+    client.sdk_loader = lambda: sdk
+    result = client.run(
+        AgentRunRequest(
+            job_id="job-free-reads",
+            invocation_id="job-free-reads.attempt-0",
+            user_id="user-free-reads",
+            project_code="project-1",
+            context=replace(_tool_budget_test_context(10), max_turns=1),
+        )
+    )
+    assert result.final_answer == "done"
+    budget = result.run_audit["usage"]["turn_budget"]
+    assert (budget["observed"], budget["charged"], budget["exempt"]) == (4, 1, 3)
+    assert result.run_audit["summary"]["model_request_count"] == 4
+    assert [e["status"] for e in result.tool_events].count("STARTED") == 3
+    assert [e["status"] for e in result.tool_events].count("FAILED") == 1
+
+
+def test_host_turn_exhaustion_closes_sdk_generator_before_returning_failure():
+    closed = []
+
+    async def query(**_kwargs):
+        try:
+            for index in range(2):
+                yield AssistantMessage(
+                    model="synthetic",
+                    message_id=f"message-{index}",
+                    content=[ToolUseBlock(id=f"tool-{index}", name="mcp__tool__query", input={})],
+                )
+            pytest.fail("must stop before continuing the query")
+        finally:
+            closed.append(True)
+
+    client = ClaudeSdkClient(
+        model="synthetic",
+        limits=build_settings().execution,
+        api_key="synthetic-key",
+        sdk_loader=lambda: ClaudeSdk(
+            query=query,
+            options=lambda **kw: kw,
+            tool=cast(Any, None),
+            create_sdk_mcp_server=cast(Any, None),
+            tool_annotations=None,
+        ),
+    )
+    context = replace(
+        _tool_budget_test_context(10),
+        max_turns=1,
+        model_runtime_binding=None,
+        allowed_tools=[],
+        mcp_bindings=(),
+        effective_tool_names=("Read",),
+    )
+    with pytest.raises(DiagnosticLoopExhausted) as captured:
+        client.run(
+            AgentRunRequest(
+                job_id="job-close-on-limit",
+                user_id="user-limit",
+                project_code="project-1",
+                context=context,
+            )
+        )
+    assert closed == [True]
+    assert len(captured.value.tool_events) == 2
+    assert captured.value.error_code == "max_turns_exhausted"

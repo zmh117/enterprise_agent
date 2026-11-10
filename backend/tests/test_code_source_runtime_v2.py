@@ -299,3 +299,61 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
         assert {t["tool_name"] for t in _builtin_tools(context, False)} == {"Read", "Glob", "Grep"}
     finally:
         sandbox.cleanup()
+
+
+@pytest.mark.parametrize(
+    "code,expected_hint",
+    [
+        ("CODE_SOURCE_READ_LIMIT", "1–400"),
+        ("CODE_CHECKOUT_SOURCE_MISMATCH", "单个文件"),
+        ("CODE_CHECKOUT_PERMISSION_DENIED", "权限"),
+        ("CODE_SOURCE_SENSITIVE", "敏感内容"),
+        ("synthetic-private-error", "不允许"),
+    ],
+)
+def test_source_hook_keeps_safe_denial_reason_through_tool_audit(
+    mount, tmp_path, code, expected_hint
+):
+    from app.modules.agent.domain.runtime import ToolCallBudget
+    from app.python_runtime.job_sandbox import JobSandboxManager
+    from app.python_runtime.mcp_config import _code_source_hook_options
+    from app.python_runtime.tool_policy import normalize_tool_events
+
+    source, _ = mount
+    sandbox = JobSandboxManager(tmp_path / "denial-sandbox").create("denial-job")
+    sandbox.source_mount = source
+    context = SimpleNamespace(effective_tool_names=("Read", "Glob", "Grep"), mcp_bindings=())
+    sdk = SimpleNamespace(hook_matcher=lambda **kwargs: SimpleNamespace(**kwargs))
+    before = _code_source_hook_options(sdk, sandbox, context, ToolCallBudget(10))["hooks"][
+        "PreToolUse"
+    ][0].hooks[0]
+
+    def reject(*args):
+        raise CodeKnowledgeError(code)
+
+    source.reader.read = reject
+    try:
+        result = asyncio.run(
+            before(
+                {"tool_name": "Read", "tool_input": {"file_path": str(source.root / "Order.cpp")}},
+                "denied-read",
+                None,
+            )
+        )
+        decision = result["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
+        assert expected_hint in decision["permissionDecisionReason"]
+        assert "synthetic-private" not in str(result)
+        events = [{"tool_name": "Read", "tool_call_id": "denied-read", "status": "FAILED"}]
+        source.apply_denials(events)
+        audited = normalize_tool_events(
+            events, request={"protocol_version": "1.5", "mcp_servers": []}
+        )[0]
+        assert audited["status"] == "DENIED"
+        failure = audited["failure"]
+        assert failure["code"] == (
+            code if code != "synthetic-private-error" else "CODE_SOURCE_TOOL_DENIED"
+        )
+        assert failure["retry_class"] == "NEVER" and expected_hint in failure["safe_message"]
+    finally:
+        sandbox.cleanup()

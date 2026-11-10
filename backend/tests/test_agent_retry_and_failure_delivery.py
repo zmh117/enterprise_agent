@@ -407,6 +407,43 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         self.assertEqual(job.max_retry_count, event_types.count("job.retry.scheduled"))
         self.assertIn("job.dead.persisted", event_types)
 
+    def test_exhausted_turns_never_rearm_dispatch_even_when_runtime_marks_transient(self):
+        from app.shared.exceptions import DiagnosticLoopExhausted
+
+        failures = [
+            DiagnosticLoopExhausted("exhausted", error_code="max_turns_exhausted"),
+            RetryableExecutionError("wrong retry class", error_code="max_turns_exhausted"),
+            RetryableExecutionError(
+                "older runtime",
+                error_code="claude_error_result",
+                diagnostics={"sdk_result": {"is_error": True, "subtype": "error_max_turns"}},
+            ),
+            RetryableExecutionError(
+                "older runtime",
+                error_code="claude_inconsistent_result",
+                diagnostics={"sdk_result": {"is_error": True, "terminal_reason": "max_turns"}},
+            ),
+        ]
+        for index, failure in enumerate(failures):
+            with self.subTest(index=index):
+                c = container()
+                try:
+                    job = self._create_job(c, f"turn-limit-{index}")
+                    claimed = c.agent_repository.claim_job(job.id, "worker")
+                    action = c.retry_service.handle_failure(claimed, failure, "corr-turn-limit")
+                    persisted = c.agent_repository.get_job(job.id)
+                    self.assertEqual("dead", action)
+                    self.assertEqual(JobStatus.FAILED, persisted.status)
+                    self.assertEqual(0, persisted.retry_count)
+                    self.assertIsNone(persisted.next_retry_at)
+                    self.assertIsNone(c.agent_repository.claim_job(job.id, "worker-again"))
+                    self.assertNotIn(
+                        "job.retry.scheduled",
+                        {row["event_type"] for row in c.audit_repository.list_for_job(job.id)},
+                    )
+                finally:
+                    c.database.close()
+
 
 if __name__ == "__main__":
     unittest.main()

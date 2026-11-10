@@ -66,6 +66,8 @@ from app.shared.query_result_contract import QUERY_RESULT_TOOLS
 from app.shared.ones_tool_contracts import ONES_COLLECTED_LIST_FIELDS
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.python_runtime.code_source_mount import CodeSourceMount
+from app.python_runtime.code_tool_errors import code_tool_failure
+from app.python_runtime.turn_budget import TurnBudget
 
 
 _OPAQUE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -185,7 +187,11 @@ def _declared_mcp_input_fields(
 
 
 def _code_source_hook_options(
-    sdk: Any, sandbox: JobSandbox, context: AgentExecutionContext, budget: ToolCallBudget
+    sdk: Any,
+    sandbox: JobSandbox,
+    context: AgentExecutionContext,
+    budget: ToolCallBudget,
+    turn_budget: TurnBudget | None = None,
 ) -> dict[str, Any]:
     if sandbox.source_mount is None:
         return {}
@@ -204,8 +210,10 @@ def _code_source_hook_options(
     ) -> dict[str, Any]:
         name = event.get("tool_name")
         args = event.get("tool_input")
+        stopped = await _check_tool_budgets(budget, turn_budget, event, tool_use_id)
+        if stopped is not None:
+            return stopped
         try:
-            budget.consume()
             if not isinstance(args, dict):
                 raise CodeKnowledgeError("CODE_SOURCE_INPUT_INVALID")
             if name in exact:
@@ -231,37 +239,12 @@ def _code_source_hook_options(
                 }
             }
         except Exception as exc:
-            code = exc.code if isinstance(exc, CodeKnowledgeError) else "CODE_SOURCE_TOOL_DENIED"
-            call_id = str(tool_use_id or event.get("tool_use_id") or "")
-            mount.record_denial(call_id, code)
-            return {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": code,
-                }
-            }
+            return _source_tool_denial(mount, tool_use_id or event.get("tool_use_id", ""), exc)
 
     async def after(
         event: dict[str, Any], tool_use_id: str | None, _context: Any
     ) -> dict[str, Any]:
-        call_id = tool_use_id or event.get("tool_use_id", "")
-        if call_id in sandbox_calls:
-            sandbox_calls.discard(call_id)
-            return {}
-        if event.get("tool_name") not in {"Read", "Glob", "Grep"}:
-            return {}
-        try:
-            return await mount.after_native(
-                tool_use_id or event.get("tool_use_id", ""), event.get("tool_response")
-            )
-        except Exception:
-            # Never fall through to the original, potentially mis-decoded source output.
-            return {
-                "continue_": False,
-                "decision": "block",
-                "stopReason": "CODE_SOURCE_EVIDENCE_UNVERIFIED",
-            }
+        return await _source_post_tool(mount, sandbox_calls, event, tool_use_id)
 
     async def failed(
         event: dict[str, Any], tool_use_id: str | None, _context: Any
@@ -279,6 +262,89 @@ def _code_source_hook_options(
             "PostToolUseFailure": [sdk.hook_matcher(hooks=[failed], on_failure="block")],
         },
     }
+
+
+async def _source_post_tool(
+    mount: CodeSourceMount,
+    sandbox_calls: set[str],
+    event: dict[str, Any],
+    tool_use_id: str | None,
+) -> dict[str, Any]:
+    call_id = tool_use_id or event.get("tool_use_id", "")
+    if call_id in sandbox_calls:
+        sandbox_calls.discard(call_id)
+        return {}
+    if event.get("tool_name") not in {"Read", "Glob", "Grep"}:
+        return {}
+    try:
+        return await mount.after_native(
+            tool_use_id or event.get("tool_use_id", ""), event.get("tool_response")
+        )
+    except Exception:
+        # Never fall through to the original, potentially mis-decoded source output.
+        return {
+            "continue_": False,
+            "decision": "block",
+            "stopReason": "CODE_SOURCE_EVIDENCE_UNVERIFIED",
+        }
+
+
+def _source_tool_denial(mount: CodeSourceMount, call_id: str, exc: Exception) -> dict[str, Any]:
+    code = exc.code if isinstance(exc, CodeKnowledgeError) else "CODE_SOURCE_TOOL_DENIED"
+    failure = code_tool_failure(code)
+    mount.record_denial(call_id, failure["code"])
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"{failure['code']}: {failure['safe_message']}",
+        }
+    }
+
+
+def _stop_for_budget(exc: ExecutionPolicyExceeded | NonRetryableExecutionError) -> dict[str, Any]:
+    return {
+        "continue_": False,
+        "stopReason": exc.safe_message,
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": exc.error_code,
+        },
+    }
+
+
+def _file_turn_budget_hooks(sdk: Any, budget: ToolCallBudget, turns: TurnBudget) -> dict[str, Any]:
+    if sdk.hook_matcher is None:
+        raise NonRetryableExecutionError(
+            "Turn budget hook unavailable",
+            safe_message="文件工具轮次预算守卫不可用，请管理员检查 Runtime。",
+            error_code="runtime_turn_budget_unverifiable",
+        )
+
+    async def before(
+        event: dict[str, Any], tool_use_id: str | None, _context: Any
+    ) -> dict[str, Any]:
+        return await _check_tool_budgets(budget, turns, event, tool_use_id) or {}
+
+    return {"hooks": {"PreToolUse": [sdk.hook_matcher(hooks=[before], on_failure="block")]}}
+
+
+async def _check_tool_budgets(
+    budget: ToolCallBudget,
+    turns: TurnBudget | None,
+    event: dict[str, Any],
+    tool_use_id: str | None,
+) -> dict[str, Any] | None:
+    try:
+        budget.consume()
+        if turns is not None and turns.exempt_tools:
+            await turns.before_tool(
+                str(event.get("tool_name")), tool_use_id or event.get("tool_use_id")
+            )
+    except (ExecutionPolicyExceeded, NonRetryableExecutionError) as exc:
+        return _stop_for_budget(exc)
+    return None
 
 
 class FixedMcpClaudeSdkClient(ClaudeSdkClient):
@@ -891,6 +957,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         binding: Any,
         *,
         tool_call_budget: ToolCallBudget | None = None,
+        turn_budget: TurnBudget | None = None,
     ) -> Any:
         exact_tool_set = frozenset(
             name for name in context.effective_tool_names if name not in FILE_TOOL_NAMES
@@ -944,7 +1011,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             if callable(drain_raw_api_bodies):
                 drain_raw_api_bodies()
             try:
-                budget.consume()
+                if turn_budget is None or not turn_budget.exempt_tools:
+                    budget.consume()
             except ExecutionPolicyExceeded as exc:
                 return deny(message=exc.safe_message, interrupt=True)
             if tool_name in exact_tool_set:
@@ -967,7 +1035,9 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                     return deny()
             return deny()
 
-        hook_options = _code_source_hook_options(sdk, sandbox, context, budget)
+        hook_options = _code_source_hook_options(sdk, sandbox, context, budget, turn_budget)
+        if sandbox.source_mount is None and turn_budget is not None and turn_budget.exempt_tools:
+            hook_options = _file_turn_budget_hooks(sdk, budget, turn_budget)
 
         return sdk.options(
             model=binding.model,
@@ -990,7 +1060,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 if tool not in context.effective_tool_names or tool not in ALLOWED_FILE_TOOLS
             ],
             permission_mode="default",
-            max_turns=context.max_turns,
+            max_turns=turn_budget.sdk_maximum if turn_budget is not None else context.max_turns,
             max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES,
             cwd=sandbox.path,
             setting_sources=[],

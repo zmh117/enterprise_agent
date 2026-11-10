@@ -9,8 +9,8 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
+from contextlib import aclosing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache
@@ -31,6 +31,7 @@ from app.python_runtime.error_mapper import (
     append_cli_stderr,
     bounded_safe_diagnostic,
     compact_error_detail,
+    is_max_turns_failure,
     looks_inconsistent_result,
     looks_invalid_model,
     looks_max_turns_exhausted,
@@ -59,10 +60,12 @@ from app.python_runtime.sdk_event_normalizer import (
     extract_result_text,
     extract_text_blocks,
     extract_tool_events,
+    sdk_message_type,
     sdk_value,
     unavailable_accounting,
 )
 from app.python_runtime.run_audit import RunAuditRecorder
+from app.python_runtime.turn_budget import TurnBudget
 
 FINAL_RESPONSE_RELEVANCE_INSTRUCTIONS = """Current task and response relevance:
 Identify the task from the user's actual request in this turn, using the allowed conversation
@@ -113,7 +116,7 @@ class _LocalExecutionTimeout(Exception):
 
 @dataclass(frozen=True)
 class ClaudeSdk:
-    query: Callable[..., AsyncIterator[Any]]
+    query: Callable[..., AsyncGenerator[Any, None]]
     options: Any
     tool: Callable[..., Any]
     create_sdk_mcp_server: Callable[..., Any]
@@ -254,6 +257,11 @@ class ClaudeSdkClient:
         cli_stderr: list[str] = []
         runtime_context = await self._prepare_context(request.context)
         tool_call_budget = ToolCallBudget(maximum=runtime_context.max_tool_calls)
+        turn_budget = TurnBudget(
+            runtime_context.max_turns,
+            runtime_context.max_tool_calls,
+            runtime_context.effective_tool_names,
+        )
         options = self._build_options(
             sdk,
             runtime_context,
@@ -261,6 +269,7 @@ class ClaudeSdkClient:
             cli_stderr,
             binding,
             tool_call_budget=tool_call_budget,
+            turn_budget=turn_budget,
         )
         run_audit_recorder = RunAuditRecorder(
             runtime_context,
@@ -280,42 +289,51 @@ class ClaudeSdkClient:
 
         async def consume() -> None:
             nonlocal final_answer
-            async for message in sdk.query(prompt=prompt, options=options):
-                audit.consume(message)
-                run_audit_recorder.observe_message(message)
-                self.last_runtime_events = list(audit.events)
-                self.last_accounting = dict(audit.accounting)
-                self._raise_model_access_failure(message, cli_stderr, tool_events, binding)
-                error_result = result_error_details(message)
-                if error_result is not None:
-                    detail, inconsistent = error_result
-                    error_code = (
-                        "claude_inconsistent_result" if inconsistent else "claude_error_result"
+            async with aclosing(sdk.query(prompt=prompt, options=options)) as messages:
+                async for message in messages:
+                    audit.consume(message)
+                    run_audit_recorder.observe_message(message)
+                    self.last_runtime_events = list(audit.events)
+                    self.last_accounting = dict(audit.accounting)
+                    events = extract_tool_events(message, self.limits, parsed_tool_calls)
+                    if sandbox.source_mount is not None:
+                        sandbox.source_mount.apply_denials(events)
+                    _omit_extraction_bodies(
+                        events, bool(request.context.retrieved_context.get("code_source"))
                     )
-                    raise RetryableExecutionError(
-                        detail,
-                        safe_message=(
-                            "模型运行返回了不一致的失败结果，系统将按重试策略处理。"
-                            if inconsistent
-                            else "模型运行失败，系统将按重试策略处理。"
-                        ),
-                        tool_events=tool_events,
-                        error_code=error_code,
-                        diagnostics=self._safe_runtime_diagnostics(
-                            RuntimeError(detail), cli_stderr, binding, result_message=message
-                        ),
-                    )
-                assistant_texts.extend(extract_text_blocks(message))
-                events = extract_tool_events(message, self.limits, parsed_tool_calls)
-                if sandbox.source_mount is not None:
-                    sandbox.source_mount.apply_denials(events)
-                _omit_extraction_bodies(
-                    events, bool(request.context.retrieved_context.get("code_source"))
-                )
-                tool_events.extend(events)
-                result_text = extract_result_text(message)
-                if result_text:
-                    final_answer = result_text
+                    tool_events.extend(events)
+                    self._raise_model_access_failure(message, cli_stderr, tool_events, binding)
+                    try:
+                        turn_budget.observe(message)
+                    finally:
+                        if turn_budget.exempt_tools:
+                            run_audit_recorder.audit["usage"]["turn_budget"] = (
+                                turn_budget.snapshot()
+                            )
+                    self._raise_turn_limit_failure(message, cli_stderr, tool_events, binding)
+                    error_result = result_error_details(message)
+                    if error_result is not None:
+                        detail, inconsistent = error_result
+                        error_code = (
+                            "claude_inconsistent_result" if inconsistent else "claude_error_result"
+                        )
+                        raise RetryableExecutionError(
+                            detail,
+                            safe_message=(
+                                "模型运行返回了不一致的失败结果，系统将按重试策略处理。"
+                                if inconsistent
+                                else "模型运行失败，系统将按重试策略处理。"
+                            ),
+                            tool_events=tool_events,
+                            error_code=error_code,
+                            diagnostics=self._safe_runtime_diagnostics(
+                                RuntimeError(detail), cli_stderr, binding, result_message=message
+                            ),
+                        )
+                    assistant_texts.extend(extract_text_blocks(message))
+                    result_text = extract_result_text(message)
+                    if result_text:
+                        final_answer = result_text
 
         try:
             with _temporary_claude_env(
@@ -331,6 +349,7 @@ class ClaudeSdkClient:
                 )
             if tool_call_budget.exhausted:
                 raise tool_call_budget.exhaustion_error(tool_events=tool_events)
+            turn_budget.raise_if_failed()
         except _LocalExecutionTimeout as exc:
             if tool_call_budget.exhausted:
                 raise tool_call_budget.exhaustion_error(tool_events=tool_events) from exc
@@ -343,6 +362,7 @@ class ClaudeSdkClient:
         except Exception as exc:
             if tool_call_budget.exhausted:
                 raise tool_call_budget.exhaustion_error(tool_events=tool_events) from exc
+            turn_budget.raise_if_failed(tool_events=tool_events)
             self._raise_mapped_sdk_error(exc, cli_stderr, tool_events, binding)
 
         if not final_answer:
@@ -477,17 +497,19 @@ class ClaudeSdkClient:
 
                 async def consume() -> None:
                     nonlocal received
-                    async for message in sdk.query(prompt="Reply OK.", options=options):
-                        self._raise_model_access_failure(message, stderr, [], binding)
-                        error_result = result_error_details(message)
-                        if error_result is not None:
-                            raise RetryableExecutionError(
-                                "Model provider rejected connection probe",
-                                safe_message="模型提供方拒绝了连接测试",
-                                error_code="model_connection_provider_rejected",
-                            )
-                        if extract_result_text(message) or extract_text_blocks(message):
-                            received = True
+                    async with aclosing(sdk.query(prompt="Reply OK.", options=options)) as messages:
+                        async for message in messages:
+                            self._raise_model_access_failure(message, stderr, [], binding)
+                            self._raise_turn_limit_failure(message, stderr, [], binding)
+                            error_result = result_error_details(message)
+                            if error_result is not None:
+                                raise RetryableExecutionError(
+                                    "Model provider rejected connection probe",
+                                    safe_message="模型提供方拒绝了连接测试",
+                                    error_code="model_connection_provider_rejected",
+                                )
+                            if extract_result_text(message) or extract_text_blocks(message):
+                                received = True
 
                 try:
                     with _temporary_claude_env(api_key, binding):
@@ -595,6 +617,7 @@ class ClaudeSdkClient:
         binding: ModelRuntimeBinding,
         *,
         tool_call_budget: ToolCallBudget | None = None,
+        turn_budget: TurnBudget | None = None,
     ) -> Any:
         del tool_call_budget
         exact_tools = [f"mcp__tool_mcp__{tool_name}" for tool_name in context.allowed_tools]
@@ -621,7 +644,7 @@ class ClaudeSdkClient:
                 "NotebookEdit",
             ],
             permission_mode="dontAsk",
-            max_turns=context.max_turns,
+            max_turns=turn_budget.sdk_maximum if turn_budget is not None else context.max_turns,
             max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE_BYTES,
             cwd=sandbox.path,
             setting_sources=[],
@@ -657,6 +680,28 @@ class ClaudeSdkClient:
             ),
         )
 
+    def _raise_turn_limit_failure(
+        self,
+        source: Any,
+        cli_stderr: list[str],
+        tool_events: list[dict[str, Any]],
+        binding: ModelRuntimeBinding | None,
+    ) -> None:
+        if not is_max_turns_failure(source):
+            return
+        raise DiagnosticLoopExhausted(
+            "SDK maximum turns exhausted",
+            safe_message="任务已达到最大分析轮数，尚未完成回答；本次执行已停止，不会自动重试。",
+            tool_events=tool_events,
+            error_code="max_turns_exhausted",
+            diagnostics=self._safe_runtime_diagnostics(
+                source if isinstance(source, Exception) else RuntimeError("max_turns_exhausted"),
+                cli_stderr,
+                binding,
+                result_message=None if isinstance(source, Exception) else source,
+            ),
+        )
+
     def _raise_mapped_sdk_error(
         self,
         exc: Exception,
@@ -675,6 +720,7 @@ class ClaudeSdkClient:
                 error_code="tool_policy_error",
             ) from exc
         self._raise_model_access_failure(exc, cli_stderr, tool_events, binding)
+        self._raise_turn_limit_failure(exc, cli_stderr, tool_events, binding)
         name = exc.__class__.__name__
         message = sdk_error_message(exc, cli_stderr)
         diagnostics = self._safe_runtime_diagnostics(exc, cli_stderr, binding)
@@ -689,7 +735,7 @@ class ClaudeSdkClient:
         if looks_max_turns_exhausted(message):
             raise DiagnosticLoopExhausted(
                 message,
-                safe_message=safe_sdk_error_message("Claude 运行失败", message),
+                safe_message="任务已达到最大分析轮数，尚未完成回答；本次执行已停止，不会自动重试。",
                 tool_events=tool_events,
                 error_code="max_turns_exhausted",
                 diagnostics=diagnostics,
@@ -769,6 +815,27 @@ class ClaudeSdkClient:
         }
 
 
+async def managed_sdk_query(
+    client_type: Any, *, prompt: Any, options: Any
+) -> AsyncGenerator[Any, None]:
+    # Own the public SDK client explicitly: closing query()'s outer generator
+    # alone does not synchronously close its nested iterator in SDK 0.2.178.
+    async with client_type(options=options) as client:
+        finished = False
+        try:
+            await client.query(prompt)
+            async for message in client.receive_response():
+                finished = sdk_message_type(message) == "result"
+                yield message
+        finally:
+            if not finished:
+                try:
+                    await asyncio.wait_for(client.interrupt(), timeout=2)
+                except Exception:
+                    # disconnect still runs and reaps the owned CLI process.
+                    pass
+
+
 def load_claude_agent_sdk() -> ClaudeSdk:
     try:
         sdk_module: Any = importlib.import_module("claude_agent_sdk")
@@ -776,7 +843,7 @@ def load_claude_agent_sdk() -> ClaudeSdk:
         sdk_module = importlib.import_module("claude_code_sdk")
 
     return ClaudeSdk(
-        query=sdk_module.query,
+        query=lambda **kwargs: managed_sdk_query(sdk_module.ClaudeSDKClient, **kwargs),
         options=sdk_module.ClaudeAgentOptions,
         tool=sdk_module.tool,
         create_sdk_mcp_server=sdk_module.create_sdk_mcp_server,

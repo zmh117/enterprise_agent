@@ -25,6 +25,7 @@ unit = [
   "test_principal_jwt.py",
   "test_provider_contract_registry.py",
   "test_python_runtime_internal_architecture.py",
+  "test_runtime_turn_budget.py",
   "test_retired_legacy_platform_contract.py",
   "test_sdk_failure_metadata.py",
   "test_test_suite_governance.py",

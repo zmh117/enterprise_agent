@@ -276,6 +276,7 @@ class PythonRuntimeExecutor:
                 retry_class = "TRANSIENT"
             elif (
                 isinstance(exc, ExecutionTimeout)
+                or failure_code == "max_turns_exhausted"
                 or failure_code == "execution_policy_max_tool_calls_exhausted"
                 or failure_code.startswith("runtime_tool_contract_")
             ):

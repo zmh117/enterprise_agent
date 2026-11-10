@@ -50,12 +50,23 @@ class JobRetryService:
 
     def is_retryable(self, exc: Exception) -> bool:
         if getattr(exc, "error_code", "") in {
+            "max_turns_exhausted",
             "runtime_timeout",
             "runtime_admission_timeout",
             "runtime_cancelled",
             "runtime_invocation_outcome_unknown",
             "runtime_recovery_expired",
         }:
+            return False
+        diagnostics = getattr(exc, "diagnostics", {})
+        metadata = safe_sdk_failure_metadata(
+            diagnostics.get("sdk_result") if isinstance(diagnostics, dict) else None
+        )
+        # Also reject a misclassified terminal from a Runtime not yet upgraded.
+        if metadata.get("is_error") is True and (
+            metadata.get("subtype") == "error_max_turns"
+            or metadata.get("terminal_reason") == "max_turns"
+        ):
             return False
         if isinstance(
             exc,
