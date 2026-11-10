@@ -202,6 +202,10 @@ def _code_source_hook_options(
             error_code="code_source_hook_unavailable",
         )
     mount = sandbox.source_mount
+    mount.sandbox = sandbox
+    sandbox.code_notes_only = not any(
+        item.server_code == FILE_MCP_SERVER_CODE for item in context.mcp_bindings
+    )
     exact = set(context.effective_tool_names) - set(FILE_TOOL_NAMES)
     sandbox_calls: set[str] = set()
 
@@ -290,7 +294,11 @@ async def _source_post_tool(
 
 
 def _source_tool_denial(mount: CodeSourceMount, call_id: str, exc: Exception) -> dict[str, Any]:
-    code = exc.code if isinstance(exc, CodeKnowledgeError) else "CODE_SOURCE_TOOL_DENIED"
+    code = (
+        exc.code
+        if isinstance(exc, (CodeKnowledgeError, JobSandboxError))
+        else "CODE_SOURCE_TOOL_DENIED"
+    )
     failure = code_tool_failure(code)
     mount.record_denial(call_id, failure["code"])
     return {

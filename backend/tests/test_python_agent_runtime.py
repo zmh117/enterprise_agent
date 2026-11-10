@@ -3463,7 +3463,7 @@ def test_code_question_returns_business_answer_without_persisting_raw_source() -
         allowed_tools=[],
         mcp_bindings=(),
         effective_tool_names=(),
-        retrieved_context={"code_source": {"contract": "code-source-capability/v2"}},
+        retrieved_context={"code_source": {"contract": "code-source-capability/v3"}},
     )
     result = client.run(
         AgentRunRequest(
@@ -3658,7 +3658,7 @@ def test_code_runtime_missing_configuration_is_terminal_before_sdk_start(
     )
     request = _current_request()
     request["prompt"]["retrieved_context"]["code_source"] = {
-        "contract": "code-source-capability/v2"
+        "contract": "code-source-capability/v3"
     }
     outcome = executor.execute(request, threading.Event())
     assert outcome.status == "FAILED"

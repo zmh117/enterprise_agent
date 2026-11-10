@@ -338,6 +338,40 @@ class SvnHistoryTest(unittest.TestCase):
         with self.assertRaises(CodeKnowledgeError):
             reader.read("代码 目录/规则.cpp", 1, 2)
 
+    def test_runtime_search_prepares_only_versioned_normalized_text_and_cleans_cache(self):
+        from app.python_runtime.code_checkout_reader import CodeCheckoutReader
+        from app.python_runtime.code_source_search import SourceSearchBatch, search_options
+        from app.python_runtime.job_sandbox import JobSandboxManager
+        from app.modules.knowledge.domain.normalization import digest
+
+        self.file.write_bytes("// 发布失败\nreturn reject;\n".encode("gb18030"))
+        self.commit()
+        (self.wc / "代码 目录/untracked.cpp").write_text("must not search")
+        info = self.wc.stat()
+        reader = CodeCheckoutReader(
+            self.root,
+            dict(
+                directory=self.wc.name,
+                physical_key=digest([info.st_dev, info.st_ino]),
+                allowed_paths=["代码 目录"],
+                revision=5,
+                branch_path="trunk",
+                repository_uuid=self.source.expected_uuid,
+            ),
+        )
+        self.assertEqual(reader.search_candidates("代码 目录", "*.cpp"), ["代码 目录/规则.cpp"])
+        sandbox = JobSandboxManager(self.root / "jobs").create("synthetic-search")
+        batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "发布失败"}))
+        try:
+            batch.prepare("代码 目录")
+            relative = next(iter(batch.paths))
+            self.assertEqual((sandbox.path / relative).read_text(), "// 发布失败\nreturn reject;\n")
+            self.assertEqual(sandbox.usage()[0], 1)
+            batch.close()
+            self.assertEqual(sandbox.usage(), (0, 0))
+        finally:
+            sandbox.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

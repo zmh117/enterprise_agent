@@ -57,7 +57,7 @@ class CodeResultRecorder:
         capability = request["prompt"]["retrieved_context"].get("code_source")
         if (
             not isinstance(capability, dict)
-            or capability.get("contract") != "code-source-capability/v2"
+            or capability.get("contract") != "code-source-capability/v3"
         ):
             return
         try:

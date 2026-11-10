@@ -56,7 +56,7 @@ class CodeAnalysisSandboxes(JobSandboxManager):
         super().__init__(base.root, limits=base.limits)
         self.capability = request["prompt"]["retrieved_context"]["code_source"]
         self.identity = {key: request[key] for key in ("job_id", "invocation_id", "request_digest")}
-        if self.capability.get("contract") != "code-source-capability/v2":
+        if self.capability.get("contract") != "code-source-capability/v3":
             raise CodeKnowledgeError("CODE_SOURCE_CAPABILITY_CHANGED")
         self.source_root, self.grants = source_root, grants
 

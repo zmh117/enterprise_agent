@@ -20,6 +20,12 @@
 
 ## 容器与目录
 
+代码问答可用 Write 在当前执行的 `work/notes/` 保存 Markdown/TXT 分析笔记（版本、证据引用、已查范围、未知项），其他目录及源码继续按原权限限制。笔记仅作临时推理，不是源码证据，不自动入库；Write 仍计轮次，Read/Glob/Grep 保留审计并免计任务轮次。SDK 停止后统一清理，异常残留使用已有恢复扫描。
+
+源码 Grep 支持授权目录和 `glob` 文件模式，最多 64 文件/32 MiB；目录候选枚举最多 10000 项。`output_mode=content` 返回原路径行号，`-A/-B/-C` 各为 0–5、`head_limit` 为 1–200。Runtime 只从已核验的受管源码生成本次调用的 UTF-8 只读搜索输入，共享 Job 沙盒配额，调用结束即删除；Agent 不能访问内部缓存目录。敏感或非文本跳过会标记不完整，超限要求缩小范围。命中仍须 Read 原文件取得正式证据，Read 单次上限 400 行保持不变。这些缓存不是长期源码快照，不跨任务复用。
+
+上述权限派生使用 `code-source-capability/v3`，与本次业务回复规则共同使用 Prompt v16。API、Worker、Runtime 与 knowledge-mcp 需协调构建更新；不要改写已冻结的历史 Job。已有 Skill 发布内容需按平台发布流程更新，单独修改磁盘 Skill 不覆盖旧发布。
+
 - `code-svn` 是可选的本机 SVN 服务，真实部署也可以连接现有 SVN。
 - `knowledge-sync` 含 SVN CLI，负责浏览、检出、update/log/diff/blame 和代码答案增量索引；新增结果端点仅容器内网络的 8096 端口，不发布宿主端口。
 - 两个 Runtime 都只读挂载 `/var/lib/code-svn/checkout`，没有 SVN 凭据和源码写权限；源码只允许经过路径守卫的 Read/Glob/Grep，SVN 操作通过已有 MCP。混合文件任务的 Write/Edit 只能作用于原文件沙箱授权区域，不能写源码。

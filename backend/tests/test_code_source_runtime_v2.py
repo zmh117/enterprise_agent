@@ -229,7 +229,7 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
     context = SimpleNamespace(
         effective_tool_names=("Read", "Glob", "Grep", "Write", "Edit"),
         retrieved_context={"code_source": {}},
-        mcp_bindings=(),
+        mcp_bindings=(SimpleNamespace(server_code="file-service"),),
     )
     sdk = SimpleNamespace(hook_matcher=lambda **kwargs: SimpleNamespace(**kwargs))
     options = _code_source_hook_options(sdk, sandbox, context, ToolCallBudget(20))
@@ -288,7 +288,7 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
 
     try:
         asyncio.run(run())
-        context.retrieved_context = {"code_source": {"contract": "code-source-capability/v2"}}
+        context.retrieved_context = {"code_source": {"contract": "code-source-capability/v3"}}
         assert {t["tool_name"] for t in _builtin_tools(context, True)} == {
             "Read",
             "Glob",
@@ -296,7 +296,12 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
             "Write",
             "Edit",
         }
-        assert {t["tool_name"] for t in _builtin_tools(context, False)} == {"Read", "Glob", "Grep"}
+        assert {t["tool_name"] for t in _builtin_tools(context, False)} == {
+            "Read",
+            "Glob",
+            "Grep",
+            "Write",
+        }
     finally:
         sandbox.cleanup()
 
@@ -305,7 +310,7 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
     "code,expected_hint",
     [
         ("CODE_SOURCE_READ_LIMIT", "1–400"),
-        ("CODE_CHECKOUT_SOURCE_MISMATCH", "单个文件"),
+        ("CODE_CHECKOUT_SOURCE_MISMATCH", "授权目录或文件"),
         ("CODE_CHECKOUT_PERMISSION_DENIED", "权限"),
         ("CODE_SOURCE_SENSITIVE", "敏感内容"),
         ("synthetic-private-error", "不允许"),

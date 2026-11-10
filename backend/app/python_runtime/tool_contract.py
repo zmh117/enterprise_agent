@@ -222,11 +222,19 @@ def _builtin_tools(context: AgentExecutionContext, file_job: bool) -> list[dict[
     )
     code_job = bool(context.retrieved_context.get("code_source"))
     if file_job or ones_result_job or resource_result_job or code_job:
-        for name in FILE_TOOL_NAMES if file_job else ("Read", "Glob", "Grep"):
+        names = (
+            FILE_TOOL_NAMES
+            if file_job
+            else (("Read", "Glob", "Grep", "Write") if code_job else ("Read", "Glob", "Grep"))
+        )
+        for name in names:
+            source_policy = code_job and (
+                name in {"Read", "Glob", "Grep"} or (name == "Write" and not file_job)
+            )
             result.append(
                 {
                     "server_code": "code-source"
-                    if code_job and name in {"Read", "Glob", "Grep"}
+                    if source_policy
                     else FILE_MCP_SERVER_CODE
                     if file_job
                     else ("ones-mcp" if ones_result_job else "tool-mcp"),
@@ -234,8 +242,8 @@ def _builtin_tools(context: AgentExecutionContext, file_job: bool) -> list[dict[
                     "sdk_tool_name": name,
                     "origin": "sdk_builtin",
                     "schema_hash": tool_schema_hash(
-                        {"type": "object", "runtime_policy": f"code-source-v2/{name}"}
-                        if code_job and name in {"Read", "Glob", "Grep"}
+                        {"type": "object", "runtime_policy": f"code-source-v3/{name}"}
+                        if source_policy
                         else _SDK_BUILTIN_SCHEMAS[name]
                     ),
                     "authorization_status": "ALLOWED",

@@ -69,12 +69,12 @@ class CodeSourceGrant:
             if len(sources) > 50:
                 raise CodeKnowledgeError("CODE_SOURCE_CAPABILITY_LIMIT")
         value = dict(
-            contract="code-source-capability/v2",
+            contract="code-source-capability/v3",
             job_id=job_id,
             actor_id=access.actor_id,
             authorization_hash=code_authorization_hash(access),
             sources=sources,
-            native_tools=["Read", "Glob", "Grep"],
+            native_tools=["Read", "Glob", "Grep", "Write"],
         )
         return {**value, "capability_hash": digest(value)}
 

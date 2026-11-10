@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from threading import Event, Thread
 from app.modules.knowledge.domain.normalization import digest
 from app.python_runtime.file_mcp_bridge import safe_meta
@@ -12,6 +12,10 @@ from app.python_runtime.file_mcp_bridge import safe_meta
 from app.modules.knowledge.domain.code_answers import code_path
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.python_runtime.code_checkout_reader import CodeCheckoutReader
+from app.python_runtime.code_source_search import SourceSearchBatch, search_options
+
+if TYPE_CHECKING:
+    from app.python_runtime.job_sandbox import JobSandbox
 
 
 class CodeSourceMount:
@@ -34,6 +38,9 @@ class CodeSourceMount:
         self.saved_analysis_id: str | None = None
         self._stop = Event()
         self._monitor: Thread | None = None
+        self.sandbox: JobSandbox | None = None
+        self.search_lock = asyncio.Lock()
+        self.searches: dict[str, SourceSearchBatch] = {}
 
     def start_monitor(self) -> None:
         def heartbeat() -> None:
@@ -99,7 +106,9 @@ class CodeSourceMount:
         value = arguments.get(field)
         if not isinstance(value, str):
             raise CodeKnowledgeError("CODE_SOURCE_PATH_DENIED")
-        if value.startswith("source/"):
+        if value == "source":
+            path = ""
+        elif value.startswith("source/"):
             path = value.removeprefix("source/")
         elif value == str(self.root):
             path = ""
@@ -107,30 +116,20 @@ class CodeSourceMount:
             path = value[len(str(self.root)) + 1 :]
         else:
             raise CodeKnowledgeError("CODE_SOURCE_PATH_DENIED")
-        path = code_path(path, root=tool == "Glob")
+        path = code_path(path, root=tool in {"Glob", "Grep"})
         if tool == "Read":
             if set(arguments) - {"file_path", "offset", "limit"}:
                 raise CodeKnowledgeError("CODE_SOURCE_READ_INVALID")
             start, limit = arguments.get("offset", 1), arguments.get("limit", 400)
             self.reader.read(path, start, limit)
             return {"file_path": str(self.root / path), "offset": start, "limit": limit}
+        if tool == "Grep":
+            return search_options(arguments) | {"path": path}
         if set(arguments) - {"path", "pattern", "output_mode"}:
             raise CodeKnowledgeError("CODE_SOURCE_SEARCH_INVALID")
         pattern = arguments.get("pattern")
         if not isinstance(pattern, str) or not 1 <= len(pattern) <= 1024:
             raise CodeKnowledgeError("CODE_SOURCE_SEARCH_INVALID")
-        if tool == "Grep":
-            # A directory search can include untracked files/.svn. Glob first,
-            # then search a verified file. Read is the evidence-producing operation.
-            self.reader.read(path, 1, 1)
-            if arguments.get("output_mode", "files_with_matches") != "files_with_matches":
-                raise CodeKnowledgeError("CODE_SOURCE_GREP_FILENAMES_ONLY")
-            return {
-                "path": str(self.root / path),
-                "pattern": pattern,
-                "output_mode": "files_with_matches",
-                "head_limit": 1,
-            }
         if (
             pattern.startswith(("/", "-"))
             or "\\" in pattern
@@ -168,6 +167,8 @@ class CodeSourceMount:
             if authorized is None:
                 raise CodeKnowledgeError("CODE_SOURCE_PATH_DENIED")
             observed: dict[str, Any] = {"tool": name, "arguments": authorized}
+            if name == "Grep":
+                authorized = await self._prepare_search(authorized, call_id)
             if name == "Read":
                 assert self.reader is not None
                 path = str(Path(authorized["file_path"]).relative_to(self.root))
@@ -188,9 +189,32 @@ class CodeSourceMount:
             raise
 
     async def failed(self, call_id: str) -> None:
+        batch = self.searches.pop(call_id, None)
+        if batch is not None:
+            try:
+                batch.close()
+            finally:
+                self.search_lock.release()
         async with self.condition:
             self.pending.pop(call_id, None)
             self.condition.notify_all()
+
+    async def _prepare_search(self, args: dict[str, Any], call_id: str) -> dict[str, Any]:
+        if self.sandbox is None or self.reader is None:
+            raise CodeKnowledgeError("CODE_SOURCE_SEARCH_UNAVAILABLE")
+        await self.search_lock.acquire()
+        batch = SourceSearchBatch(self.sandbox, self.reader, args)
+        self.searches[call_id] = batch
+        # Cancellation must not delete a cache while its preparation thread writes it.
+        task = asyncio.create_task(asyncio.to_thread(batch.prepare, args["path"]))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                await task
+            except Exception:
+                pass
+            raise
 
     async def after_native(self, call_id: str, response: Any) -> dict[str, Any]:
         observed = self.pending.get(call_id)
@@ -200,6 +224,9 @@ class CodeSourceMount:
             await asyncio.to_thread(self._recheck)
             assert self.reader is not None and self.grant is not None
             name = observed["tool"]
+            if name == "Grep":
+                self.reader.identity.check()
+                return self.searches[call_id].render(response)
             if name == "Read":
                 # Only the real SDK text-Read output structure is accepted. A shape
                 # mismatch raises and is blocked by the fail-closed PostToolUse hook.

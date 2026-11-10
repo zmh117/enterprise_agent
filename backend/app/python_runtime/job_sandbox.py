@@ -149,6 +149,7 @@ class JobSandbox:
     path: Path
     limits: JobSandboxLimits
     source_mount: SourceMountPolicy | None = field(default=None, repr=False)
+    code_notes_only: bool = False
     _budget_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _pending: dict[str, _PendingReservation] = field(default_factory=dict, repr=False)
     _input_tokens: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
@@ -213,6 +214,7 @@ class JobSandbox:
                 write=tool_name in {"Write", "Edit"},
             )
         )
+        self._authorize_code_workspace(tool_name, relative)
         target = self._target(relative, allow_root=directory_tool)
         self._reject_symlinks(target)
         if tool_name in {"Read", "Glob", "Grep"}:
@@ -234,6 +236,23 @@ class JobSandbox:
             self._authorize_write(tool_name, target, value)
         value[path_field] = relative
         return value
+
+    def _authorize_code_workspace(self, tool: str, relative: str) -> None:
+        if self.source_mount is not None and relative == ".":
+            self._deny(
+                "sandbox_path_invalid", "Choose inputs, work/notes or outputs, not the sandbox root"
+            )
+        if self.code_notes_only and tool in {"Write", "Edit"}:
+            path = PurePosixPath(relative)
+            if (
+                tool != "Write"
+                or path.parts[:2] != ("work", "notes")
+                or path.suffix.casefold() not in {".md", ".txt"}
+            ):
+                self._deny(
+                    "code_notes_path_denied",
+                    "Code notes may only be written under work/notes as Markdown or TXT",
+                )
 
     def normalize_source_alias(self, tool_name: str, value: dict[str, Any]) -> dict[str, Any]:
         # SDK may resolve the virtual source alias against cwd before the hook.
@@ -432,7 +451,7 @@ class JobSandbox:
             path.is_absolute()
             or str(path) != relative_path
             or not path.parts
-            or path.parts[0] not in {"work", "outputs"}
+            or path.parts[0] not in {"work", "outputs", ".code-search"}
             or "." in path.parts
             or ".." in path.parts
             or path.suffix.casefold() != ".md"
@@ -536,6 +555,16 @@ class JobSandbox:
             if pending is not None:
                 (self.path / reservation.staging_relative_path).unlink(missing_ok=True)
                 self._pending.pop(reservation.token, None)
+
+    def discard_runtime_artifact(self, relative_path: str) -> None:
+        """Remove only a host-registered artifact; model paths cannot invoke this."""
+        with self._budget_lock:
+            artifact = self._runtime_artifacts.get(relative_path)
+            if artifact is not None:
+                target = self.path / relative_path
+                self._reject_symlinks(target)
+                target.unlink(missing_ok=True)
+                self._runtime_artifacts.pop(relative_path, None)
 
     def runtime_artifact(
         self, *, relative_path: str, request_digest: str

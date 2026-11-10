@@ -151,6 +151,13 @@ class AgentContextBuilder:
                         "file only through an explicitly frozen File MCP commit tool."
                     )
                     if file_job
+                    else (
+                        "Do not modify source code, databases, Redis, services, or deployments. "
+                        "You may use Write only for temporary Markdown/TXT analysis notes under "
+                        "this invocation's work/notes directory; notes are not source evidence "
+                        "and are deleted when execution ends."
+                    )
+                    if code_source
                     else "Do not modify code, databases, Redis, services, deployments, or files."
                 ),
                 "Every conclusion must cite evidence or state uncertainty.",

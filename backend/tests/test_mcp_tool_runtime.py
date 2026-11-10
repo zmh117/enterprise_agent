@@ -181,6 +181,9 @@ class _SkillLoader:
     def load(self, *_: Any) -> dict[str, str]:
         return {}
 
+    def load_publication(self, *_: Any) -> dict[str, str]:
+        return {}
+
 
 class _ConversationService:
     def build(self, _: Any) -> ConversationContext:
@@ -318,6 +321,13 @@ def test_code_owned_mcp_manifest_has_stable_unique_tool_contracts() -> None:
                     "single_existing_defect",
                     "single_new_defect",
                 }
+        elif definition.server_code == "knowledge-mcp":
+            assert definition.read_only is (definition.effect == "read")
+            assert definition.confirmation_policy == (
+                "none" if definition.read_only else "code_analysis_intent"
+            )
+            if not definition.read_only:
+                assert identifier in {"knowledge_svn_update", "knowledge_save_code_answer"}
         else:
             assert definition.read_only is True
         assert require_mcp_tool(identifier) is definition

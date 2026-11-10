@@ -24,7 +24,7 @@ async def main() -> None:
         tools = ["Read", "Glob", "Grep"]
         mount = CodeSourceMount(
             root=Path(directory).resolve(),
-            capability={"contract": "code-source-capability/v2"},
+            capability={"contract": "code-source-capability/v3"},
             check=lambda _: {},
         )
         hooks = _code_source_hook_options(
@@ -62,7 +62,7 @@ async def main() -> None:
                     "sdk_version": claude_sdk_version(),
                     "cli_version": claude_cli_version(),
                     "hook_on_failure": hooks["hooks"]["PreToolUse"][0].on_failure,
-                    "source_capability": "code-source-capability/v2",
+                    "source_capability": "code-source-capability/v3",
                     "native_tools": tools,
                     "prompts_sent": 0,
                 }

@@ -47,6 +47,7 @@ contract = [
   "test_code_answer_search.py",
   "test_code_on_demand_bridge.py",
   "test_code_source_runtime_v2.py",
+  "test_code_source_search.py",
   "test_code_result_recorder.py",
   "test_code_executor_lock.py",
   "test_code_checkout.py",

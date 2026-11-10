@@ -162,7 +162,7 @@ def normalize_tool_events(
             }
             if derived_tool == "scan_log_evidence" and status == "FAILED":
                 item["failure"] = log_evidence_failure(event.get("error_code"))
-            if tool_name in {"Read", "Glob", "Grep"} and status == "DENIED":
+            if tool_name in {"Read", "Glob", "Grep", "Write", "Edit"} and status == "DENIED":
                 from app.python_runtime.code_tool_errors import MESSAGES, code_tool_failure
 
                 if event.get("error_code") in MESSAGES:

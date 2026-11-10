@@ -25,7 +25,7 @@ def frozen_job(workspace, *, key="cache"):
     ctx = analysis_context(runtime, source, checkout, key=key)
     request = RuntimePoolStore(runtime.database).request(ctx.invocation_id)
     request["prompt"]["retrieved_context"]["code_source"] = {
-        "contract": "code-source-capability/v2",
+        "contract": "code-source-capability/v3",
         "sources": [
             {
                 "knowledge_base_id": "code-kb",

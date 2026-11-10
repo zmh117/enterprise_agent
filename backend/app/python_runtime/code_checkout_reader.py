@@ -1,14 +1,14 @@
 """Bounded host-only SVN working-copy metadata and pristine reads, without SVN CLI.
 
 Runtime supports the installed SVN working-copy format 31. Unknown formats fail
-closed. No full inventory, source copy or model-accessible .svn path is created.
+closed. Only bounded candidates and validated text reach invocation-local search.
 """
 
 from contextlib import contextmanager
 from collections.abc import Iterator
 from hashlib import sha1, sha256
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sqlite3
 import stat
@@ -191,6 +191,49 @@ class CodeCheckoutReader:
     def read(self, path: str, start: int, limit: int) -> dict[str, Any]:
         if type(start) is not int or type(limit) is not int or start < 1 or not 1 <= limit <= 400:
             raise CodeKnowledgeError("CODE_SOURCE_READ_LIMIT")
+        data = self.verified_text(path)
+        lines = data.pop("text").splitlines(keepends=True)
+        selected = lines[start - 1 : start - 1 + limit]
+        excerpt = "".join(selected)
+        if not selected or len(excerpt.encode()) > 64 * 1024:
+            raise CodeKnowledgeError("CODE_SOURCE_READ_LIMIT")
+        return dict(
+            **data,
+            text=excerpt,
+            line_start=start,
+            line_end=start + len(selected) - 1,
+            read_content_hash=sha256(excerpt.encode()).hexdigest(),
+        )
+
+    def search_candidates(self, path: str, pattern: str) -> list[str]:
+        """Enumerate metadata, never walk untracked files or expose metadata to SDK."""
+        path = code_path(path, root=True)
+        self.tracked(path, directory=(self.root / path).is_dir())
+        prefix = path + "/" if path else ""
+        with self._metadata() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT local_relpath FROM NODES WHERE kind='file' AND "
+                "(local_relpath=? OR substr(local_relpath,1,?)=?) ORDER BY local_relpath LIMIT 10001",
+                (path, len(prefix), prefix),
+            ).fetchall()
+        if len(rows) > 10000:
+            raise CodeKnowledgeError("CODE_SOURCE_SEARCH_LIMIT")
+        result = []
+        for row in rows:
+            candidate = row[0]
+            relative = (
+                candidate[len(prefix) :] if candidate.startswith(prefix) else Path(candidate).name
+            )
+            matches = PurePosixPath(relative).match(pattern) or (
+                pattern.startswith("**/") and PurePosixPath(relative).match(pattern[3:])
+            )
+            if path_in_scope(candidate, self.grant["allowed_paths"]) and matches:
+                result.append(candidate)
+                if len(result) > 64:
+                    raise CodeKnowledgeError("CODE_SOURCE_SEARCH_LIMIT")
+        return result
+
+    def verified_text(self, path: str) -> dict[str, Any]:
         row = self.tracked(path)
         if SENSITIVE_NAME.search(Path(path).name):
             raise CodeKnowledgeError("CODE_SOURCE_SENSITIVE")
@@ -241,17 +284,9 @@ class CodeCheckoutReader:
         text = text.replace("\r\n", "\n").replace("\r", "\n")
         if SENSITIVE_CONTENT.search(text):
             raise CodeKnowledgeError("CODE_SOURCE_SENSITIVE")
-        lines = text.splitlines(keepends=True)
-        selected = lines[start - 1 : start - 1 + limit]
-        excerpt = "".join(selected)
-        if not selected or len(excerpt.encode()) > 64 * 1024:
-            raise CodeKnowledgeError("CODE_SOURCE_READ_LIMIT")
         return dict(
-            text=excerpt,
-            line_start=start,
-            line_end=start + len(selected) - 1,
+            text=text,
             repository_content_hash=sha256(pristine).hexdigest(),
-            read_content_hash=sha256(excerpt.encode()).hexdigest(),
             representation=dict(
                 source_encoding=encoding,
                 newline="LF",
