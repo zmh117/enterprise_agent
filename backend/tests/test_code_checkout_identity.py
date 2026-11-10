@@ -62,3 +62,27 @@ def test_creation_is_idempotent_and_rejects_metadata_symlink(working, tmp_path):
     (working / ".svn").symlink_to(tmp_path / "metadata", target_is_directory=True)
     with pytest.raises(CodeKnowledgeError):
         identities.CheckoutIdentity(working, key)
+
+
+def test_identity_marker_is_group_readable_even_under_private_umask(working):
+    previous = os.umask(0o077)
+    try:
+        identities.persistent_identity(working, create=True)
+    finally:
+        os.umask(previous)
+    assert (working / ".svn" / identities.MARKER).stat().st_mode & 0o777 == 0o640
+
+
+@pytest.mark.parametrize("denied", ["root", ".svn", identities.MARKER])
+def test_permission_failure_does_not_claim_identity_changed(working, monkeypatch, denied):
+    identities.persistent_identity(working, create=True)
+    original = os.open
+
+    def guarded(path, *args, **kwargs):
+        if path == (working if denied == "root" else denied):
+            raise PermissionError("synthetic protected path")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", guarded)
+    with pytest.raises(CodeKnowledgeError, match="^CODE_CHECKOUT_PERMISSION_DENIED$"):
+        identities.persistent_identity(working)

@@ -105,11 +105,12 @@ class CodeCheckoutReader:
     @contextmanager
     def _metadata(self) -> Iterator[sqlite3.Connection]:
         self._identity()
-        directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory = None
         metadata = None
         descriptor = None
         connection = None
         try:
+            directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             metadata = os.open(
                 ".svn", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
             )
@@ -139,6 +140,8 @@ class CodeCheckoutReader:
                 after.st_mtime_ns,
             ):
                 raise CodeKnowledgeError("CODE_CHECKOUT_CHANGED")
+        except PermissionError:
+            raise CodeKnowledgeError("CODE_CHECKOUT_PERMISSION_DENIED") from None
         except (OSError, sqlite3.Error):
             raise CodeKnowledgeError("CODE_CHECKOUT_METADATA_INVALID") from None
         finally:
@@ -148,7 +151,8 @@ class CodeCheckoutReader:
                 os.close(descriptor)
             if metadata is not None:
                 os.close(metadata)
-            os.close(directory)
+            if directory is not None:
+                os.close(directory)
 
     def tracked(self, path: str, *, directory: bool = False) -> dict[str, Any]:
         path = code_path(path, root=directory)

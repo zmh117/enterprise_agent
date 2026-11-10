@@ -120,15 +120,18 @@ def test_begin_pins_original_invocation_and_rejects_unstated_version(bridge):
         handler._begin(access, pin, config, {**args, "revision": 101})
 
 
-def test_failed_identity_is_not_retried_under_a_new_request_key(bridge):
+@pytest.mark.parametrize(
+    "error_code", ["CODE_CHECKOUT_IDENTITY_CHANGED", "CODE_CHECKOUT_PERMISSION_DENIED"]
+)
+def test_failed_identity_is_not_retried_under_a_new_request_key(bridge, error_code):
     handler, _, access, pin, config, args = bridge
     first = handler._begin(access, pin, config, args)
     handler.db.execute(
         f"UPDATE {handler.operations.t('code_svn_operation')} SET state='failed',"
-        "error_code='CODE_CHECKOUT_IDENTITY_CHANGED' WHERE id=?",
-        (first["operation_id"],),
+        "error_code=? WHERE id=?",
+        (error_code, first["operation_id"]),
     )
-    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_IDENTITY_CHANGED"):
+    with pytest.raises(CodeKnowledgeError, match=error_code):
         handler._begin(access, pin, config, {**args, "request_key": "retry"})
     rows = handler.db.execute(f"SELECT id FROM {handler.operations.t('code_svn_operation')}")
     assert len(rows) == 1

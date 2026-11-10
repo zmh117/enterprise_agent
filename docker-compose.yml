@@ -447,6 +447,8 @@ services:
       - agent-runtime-control
 
   python-agent-runtime-a: &python-runtime-node
+    # Shared source readers; the checkout bind remains read-only.
+    group_add: ["10010"]
     container_name: ${COMPOSE_PROJECT_NAME:-enterprise-agent}-runtime-a
     stop_grace_period: 70m
     build:
@@ -557,7 +559,12 @@ services:
       CODE_CHECKOUT_REGISTRY_FILE: /etc/code-svn/checkout.json
       CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE: /run/secrets/code_runtime_bootstrap_token
     volumes:
-      - ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration:/etc/code-svn:ro
+      - type: bind
+        source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration
+        target: /etc/code-svn
+        read_only: true
+        bind:
+          create_host_path: false
     secrets:
       - knowledge_bootstrap_token
       - code_runtime_bootstrap_token
@@ -1267,6 +1274,8 @@ services:
       knowledge-qdrant:
         condition: service_started
   knowledge-sync:
+    user: "10003:10010"
+    group_add: ["10010"]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -1298,8 +1307,18 @@ services:
     volumes:
     - knowledge-qdrant:/qdrant/storage:ro
     - knowledge-operation-state:/state
-    - ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration:/etc/code-svn:ro
-    - ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/client:/run/code-svn-auth:ro
+    - type: bind
+      source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration
+      target: /etc/code-svn
+      read_only: true
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/client
+      target: /run/code-svn-auth
+      read_only: true
+      bind:
+        create_host_path: false
     - type: bind
       source: ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}
       target: /var/lib/code-svn/checkout

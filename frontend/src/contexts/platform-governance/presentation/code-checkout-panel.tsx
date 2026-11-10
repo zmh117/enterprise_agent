@@ -28,6 +28,8 @@ const errors: Record<string, string> = {
   CODE_SVN_CONNECTION_FAILED: "无法连接 SVN，请检查地址和容器网络。",
   CODE_SVN_CREDENTIAL_UNAVAILABLE: "SVN 凭据缺失或已停用，请重新配置连接。",
   CODE_CHECKOUT_IDENTITY_CHANGED: "检出目录身份异常，需要维护核验后再使用。",
+  CODE_CHECKOUT_PERMISSION_DENIED:
+    "检出目录权限不足，请检查执行器与 Runtime 的共享读取权限。",
   code_checkout_destination_exists:
     "目标目录已存在，请填写新的子目录名。已有内容未覆盖。",
   code_checkout_externals_unsupported:

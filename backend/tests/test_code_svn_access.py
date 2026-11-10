@@ -141,10 +141,12 @@ def test_password_is_piped_not_in_process_arguments_or_cache(tmp_path):
     script = tmp_path / "fake-svn"
     script.write_text("""#!/usr/bin/env python3
 import sys
+import os
 assert 'synthetic-password' not in sys.argv
 assert '--no-auth-cache' in sys.argv
 assert '--password-from-stdin' in sys.argv
 assert sys.stdin.readline() == 'synthetic-password\\n'
+assert os.umask(0o077) == 0o027
 print('verified')
 """)
     script.chmod(0o700)

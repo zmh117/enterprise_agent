@@ -2230,7 +2230,9 @@ function formatToolResponseSummary(
     const reason =
       errorCode === "CODE_CHECKOUT_IDENTITY_CHANGED"
         ? "检出目录身份异常，需维护核验后再使用"
-        : error
+        : errorCode === "CODE_CHECKOUT_PERMISSION_DENIED"
+          ? "检出目录权限不足，需检查共享读取权限"
+          : error
     return [operationLabels[operationState], reason, errorCode]
       .filter(Boolean)
       .join(" · ")

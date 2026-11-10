@@ -1295,6 +1295,16 @@ describe("runtime provenance records", () => {
       summary: {
         operation_state: "failed",
         operation_kind: "info",
+        error_code: "CODE_CHECKOUT_PERMISSION_DENIED",
+      },
+      expected:
+        "后台 SVN 操作失败 · 检出目录权限不足，需检查共享读取权限 · CODE_CHECKOUT_PERMISSION_DENIED",
+    },
+    {
+      name: "knowledge_get_source_operation",
+      summary: {
+        operation_state: "failed",
+        operation_kind: "info",
         error_code: "CODE_CHECKOUT_IDENTITY_CHANGED",
       },
       expected:

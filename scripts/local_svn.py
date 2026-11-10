@@ -33,8 +33,8 @@ def main() -> int:
     ]
     if args.command in {"init", "import", "info"}:
         if args.command == "init":
-            STATE.mkdir(parents=True, exist_ok=True)
-            (ROOT / ".local/code-svn/checkout").mkdir(parents=True, exist_ok=True)
+            if not STATE.is_dir() or not (ROOT / ".local/code-svn/checkout").is_dir():
+                parser.error("请先用 deployment_check.py init-code-directories 初始化源码与状态根目录")
             subprocess.run([*compose, "build", "code-svn"], check=True, cwd=ROOT, env=env)
         command = [*compose, "run", "--rm", "--no-deps", "code-svn-admin", args.command]
     elif args.command in {"start", "stop"}:
@@ -48,7 +48,8 @@ def main() -> int:
         if destination.exists() or destination.is_symlink():
             if args.command == "checkout":
                 parser.error("目标目录已存在，请选择新目录")
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.parent.is_dir():
+            parser.error("目标父目录未初始化，请先用 deployment_check.py init-code-directories 准备")
         command = [
             "docker",
             "run",
@@ -56,6 +57,10 @@ def main() -> int:
             "--network",
             "enterprise_agent_knowledge_managed",
             "--read-only",
+            "--user",
+            "10003:10010",
+            "--group-add",
+            "10010",
             "--tmpfs",
             "/tmp:rw,size=128m,mode=1777",
         ]

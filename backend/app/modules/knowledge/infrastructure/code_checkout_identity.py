@@ -24,6 +24,8 @@ def local_identity(directory: Path) -> tuple[int, int]:
         if not stat.S_ISDIR(info.st_mode):
             raise ValueError
         return info.st_dev, info.st_ino
+    except PermissionError:
+        raise CodeKnowledgeError("CODE_CHECKOUT_PERMISSION_DENIED") from None
     except (OSError, ValueError):
         raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED") from None
 
@@ -36,6 +38,8 @@ def _metadata_directory(directory: Path) -> Iterator[int]:
         root = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         metadata = os.open(".svn", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
         yield metadata
+    except PermissionError:
+        raise CodeKnowledgeError("CODE_CHECKOUT_PERMISSION_DENIED") from None
     except OSError:
         raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED") from None
     finally:
@@ -80,6 +84,9 @@ def persistent_identity(directory: Path, *, create: bool = False) -> str:
             )
             try:
                 os.write(descriptor, (value + "\n").encode())
+                # The caller retains umask 077 for credentials; only this public
+                # identity marker must be readable by the shared source group.
+                os.fchmod(descriptor, 0o640)
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)

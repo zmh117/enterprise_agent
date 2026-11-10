@@ -17,6 +17,177 @@ from app.modules.knowledge.infrastructure.deployment_paths import (
 )
 from scripts import deployment_check
 
+
+@pytest.fixture
+def code_deployment(tmp_path, monkeypatch):
+    checkout, state = tmp_path.resolve() / "checkout", tmp_path.resolve() / "state"
+    for path in deployment_check.code_directory_layout(checkout, state):
+        path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(deployment_check.platform, "system", lambda: "Linux")
+    # Cross-UID filesystem behavior is covered by the real Linux container probe.
+    monkeypatch.setattr(deployment_check, "directory_matches", lambda info, desired: True)
+
+    def mount(source, target, readonly):
+        return dict(
+            type="bind",
+            source=str(source),
+            target=target,
+            read_only=readonly,
+            bind={"create_host_path": False},
+        )
+
+    services = {
+        "knowledge-sync": dict(
+            user="10003:10010",
+            environment={"CODE_CHECKOUT_ENABLED": "true"},
+            group_add=["10010"],
+            volumes=[
+                mount(checkout, "/var/lib/code-svn/checkout", False),
+                mount(state / "client", "/run/code-svn-auth", True),
+                mount(state / "configuration", "/etc/code-svn", True),
+            ],
+        ),
+        "knowledge-ops-controller": dict(
+            volumes=[
+                mount(checkout, "/deployment-code/checkout", True),
+                mount(state, "/deployment-code/state", True),
+            ]
+        ),
+        "api-server": dict(volumes=[mount(state / "configuration", "/etc/code-svn", True)]),
+    }
+    for node in ("a", "b"):
+        services["python-agent-runtime-" + node] = dict(
+            group_add=[10010], volumes=[mount(checkout, "/var/lib/code-svn/checkout", True)]
+        )
+    return {"services": services}, checkout, state
+
+
+def test_code_preflight_accepts_matching_mounts_and_reports_disabled_executor(code_deployment):
+    config, _, _ = code_deployment
+    assert deployment_check.validate_code_config(config, require_code=True)
+    config["services"]["knowledge-sync"]["environment"].clear()
+    assert deployment_check.validate_code_config(config) is False
+    with pytest.raises(deployment_check.CheckError, match="code_checkout_not_enabled"):
+        deployment_check.validate_code_config(config, require_code=True)
+    config["services"]["knowledge-sync"]["environment"]["CODE_CHECKOUT_ENABLED"] = "TRUE"
+    with pytest.raises(deployment_check.CheckError, match="code_checkout_not_enabled"):
+        deployment_check.validate_code_config(config, require_code=True)
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("missing", "code_directory_missing_or_invalid"),
+        ("writeable_reader", "code_mount_invalid"),
+        ("autocreate", "code_mount_invalid"),
+        ("different_root", "code_mount_source_mismatch"),
+        ("different_state", "code_mount_source_mismatch"),
+        ("missing_group", "code_reader_group_missing"),
+        ("wrong_writer", "code_executor_identity_invalid"),
+        ("bad_permissions", "code_directory_permissions_invalid"),
+    ],
+)
+def test_code_preflight_rejects_unusable_shared_mounts(
+    code_deployment, monkeypatch, change, expected
+):
+    config, checkout, state = code_deployment
+    reader = config["services"]["python-agent-runtime-b"]
+    if change == "missing":
+        checkout.rmdir()
+    elif change == "writeable_reader":
+        reader["volumes"][0]["read_only"] = False
+    elif change == "autocreate":
+        reader["volumes"][0]["bind"]["create_host_path"] = True
+    elif change == "different_root":
+        reader["volumes"][0]["source"] = str(state)
+    elif change == "different_state":
+        config["services"]["api-server"]["volumes"][0]["source"] = str(state)
+    elif change == "missing_group":
+        reader["group_add"] = []
+    elif change == "wrong_writer":
+        config["services"]["knowledge-sync"]["user"] = "10003:10003"
+    else:
+        monkeypatch.setattr(deployment_check, "directory_matches", lambda info, desired: False)
+    with pytest.raises(deployment_check.CheckError, match=expected):
+        deployment_check.validate_code_config(config)
+
+
+def test_code_directory_initialization_is_idempotent_and_preserves_children(tmp_path, monkeypatch):
+    original = deployment_check.code_directory_layout
+
+    def own_layout(checkout, state):
+        return {
+            path: (os.getuid(), os.getgid(), mode)
+            for path, (_, _, mode) in original(checkout, state).items()
+        }
+
+    monkeypatch.setattr(deployment_check, "code_directory_layout", own_layout)
+    checkout, state = tmp_path.resolve() / "checkout", tmp_path.resolve() / "state"
+    deployment_check.initialize_code_directories(checkout, state)
+    sentinel = checkout / "existing-file"
+    sentinel.write_bytes(b"synthetic preserved data")
+    sentinel.chmod(0o600)
+    before = sentinel.stat()
+    deployment_check.initialize_code_directories(checkout, state)
+    assert sentinel.read_bytes() == b"synthetic preserved data"
+    after = sentinel.stat()
+    assert (after.st_ino, after.st_mode, after.st_mtime_ns) == (
+        before.st_ino,
+        before.st_mode,
+        before.st_mtime_ns,
+    )
+    assert stat.S_IMODE(checkout.stat().st_mode) == 0o750
+
+
+def test_code_initialization_checks_all_targets_before_mutating(tmp_path):
+    checkout, state = tmp_path.resolve() / "checkout", tmp_path.resolve() / "state"
+    state.mkdir(mode=0o700)
+    sentinel = state / "preserve"
+    sentinel.write_text("synthetic")
+    with pytest.raises(
+        deployment_check.CheckError,
+        match="existing_data_requires_maintenance",
+    ):
+        deployment_check.initialize_code_directories(checkout, state)
+    assert not checkout.exists()
+    assert sentinel.read_text() == "synthetic"
+
+
+@pytest.mark.parametrize(
+    "kind", ["same", "nested", "symlink", "parent_symlink", "file", "parent_file"]
+)
+def test_code_initialization_rejects_aliased_or_invalid_targets(tmp_path, kind):
+    checkout, state = tmp_path.resolve() / "checkout", tmp_path.resolve() / "state"
+    if kind == "same":
+        state = checkout
+    elif kind == "nested":
+        state = checkout / "state"
+    elif kind == "symlink":
+        checkout.symlink_to(state, target_is_directory=True)
+    elif kind == "parent_symlink":
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+        checkout = alias / "checkout"
+    elif kind == "parent_file":
+        parent = tmp_path / "parent"
+        parent.write_text("synthetic")
+        checkout = parent / "checkout"
+    else:
+        checkout.write_text("synthetic")
+    with pytest.raises(deployment_check.CheckError):
+        deployment_check.initialize_code_directories(checkout, state)
+    assert not state.exists()
+
+
+def test_compose_assigns_source_group_and_explicit_code_configuration():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    for name in ("knowledge-sync", "python-agent-runtime-a", "python-agent-runtime-b"):
+        assert "10010" in compose["services"][name]["group_add"]
+    example = (ROOT / ".env.example").read_text()
+    assert "CODE_CHECKOUT_ENABLED=true" in example
+    assert "CODE_SVN_CHECKOUT_HOST_ROOT=" in example
+
+
 ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT = ROOT / "backend/docker/normalize_secrets_entrypoint.sh"
 DOCKERFILE = ROOT / "backend/Dockerfile"

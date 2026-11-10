@@ -27,12 +27,26 @@ def test_sync_is_managed_default_worker_with_shared_platform_database():
     assert set(service["networks"]) == {"knowledge-managed", "provider-egress"}
     assert service["secrets"] == ["app_config_master_key", "principal_jwks"]
     assert service["read_only"] and service["cap_drop"] == ["ALL"]
+    assert service["user"] == "10003:10010"
+    assert service["group_add"] == ["10010"]
     assert not service.get("ports")
     assert service["volumes"] == [
         "knowledge-qdrant:/qdrant/storage:ro",
         "knowledge-operation-state:/state",
-        "${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration:/etc/code-svn:ro",
-        "${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/client:/run/code-svn-auth:ro",
+        {
+            "type": "bind",
+            "source": "${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration",
+            "target": "/etc/code-svn",
+            "read_only": True,
+            "bind": {"create_host_path": False},
+        },
+        {
+            "type": "bind",
+            "source": "${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/client",
+            "target": "/run/code-svn-auth",
+            "read_only": True,
+            "bind": {"create_host_path": False},
+        },
         {
             "type": "bind",
             "source": "${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}",

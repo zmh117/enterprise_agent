@@ -240,7 +240,8 @@ class CodeHistoryBridge:
             "WHERE o.job_id=? AND o.invocation_id=? AND o.config_revision_id=? "
             "AND o.checkout_id=? AND o.target_revision=? AND o.checkout_generation=c.generation "
             "AND o.state='failed' AND o.error_code IN "
-            "('CODE_CHECKOUT_IDENTITY_CHANGED','CODE_CHECKOUT_SOURCE_MISMATCH',"
+            "('CODE_CHECKOUT_IDENTITY_CHANGED','CODE_CHECKOUT_PERMISSION_DENIED',"
+            "'CODE_CHECKOUT_SOURCE_MISMATCH',"
             "'CODE_CHECKOUT_SCOPE_CHANGED','CODE_SVN_AUTH_FAILED','CODE_SVN_CERTIFICATE_INVALID') LIMIT 1",
             (
                 context.job_id,

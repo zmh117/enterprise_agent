@@ -144,6 +144,9 @@ class SvnCodeSource:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 pass_fds=inherited_execution_fds(),
+                # The executor's primary group shares source with Runtime readers.
+                # Never change the multithreaded worker's private credential umask.
+                umask=0o027,
             ) as process:
                 try:
                     if self._credentials and process.stdin is not None:

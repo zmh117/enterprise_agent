@@ -19,6 +19,10 @@
 - 两个 Runtime 都只读挂载 `/var/lib/code-svn/checkout`，没有 SVN 凭据和源码写权限；源码只允许经过路径守卫的 Read/Glob/Grep，SVN 操作通过已有 MCP。混合文件任务的 Write/Edit 只能作用于原文件沙箱授权区域，不能写源码。
 - `CODE_SVN_CHECKOUT_HOST_ROOT` 为 Docker daemon 实际看到的目录；`CODE_SVN_LOCAL_STATE_ROOT` 提供受管登记和 SVN 客户端认证配置。运维控制器通过实际挂载解析 Windows/WSL2 路径，不能把 PowerShell 的 `C:\...` 拼进 Linux 容器命令。
 - 部署前创建这两个根目录；Compose 的 `create_host_path: false` 拒绝拼错路径后自动创建空目录。保留各自现有凭据文件，只传文件引用，不输出内容。
+- 根目录按 `deployment_check.py init-code-directories` 显式初始化，并运行 `check --require-code`。
+  执行器为 10003:10010，A/B 通过 supplementary group 10010 只读访问。SVN 子进程使用
+  0027 创建掩码，身份标记为 0640，凭据入口的私有掩码不变。旧目录权限不符合时保留数据并
+  按部署手册处理；权限错误为 `CODE_CHECKOUT_PERMISSION_DENIED`，不再误报身份变化。
 
 三个宿主系统均运行 Linux 容器和同一套 SVN CLI；无需把 TortoiseSVN 安装到 Runtime。当前真实 CLI 验证是在 Mac Docker 的 Linux 容器中完成，不代表另外两种宿主已经通过。
 
