@@ -120,6 +120,20 @@ def test_begin_pins_original_invocation_and_rejects_unstated_version(bridge):
         handler._begin(access, pin, config, {**args, "revision": 101})
 
 
+def test_failed_identity_is_not_retried_under_a_new_request_key(bridge):
+    handler, _, access, pin, config, args = bridge
+    first = handler._begin(access, pin, config, args)
+    handler.db.execute(
+        f"UPDATE {handler.operations.t('code_svn_operation')} SET state='failed',"
+        "error_code='CODE_CHECKOUT_IDENTITY_CHANGED' WHERE id=?",
+        (first["operation_id"],),
+    )
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_IDENTITY_CHANGED"):
+        handler._begin(access, pin, config, {**args, "request_key": "retry"})
+    rows = handler.db.execute(f"SELECT id FROM {handler.operations.t('code_svn_operation')}")
+    assert len(rows) == 1
+
+
 def test_operation_poll_uses_published_schema_and_checks_job_ownership(bridge):
     handler, ctx, analysis, first = begin_reading(bridge)
     access, pin, config = bridge[2:5]

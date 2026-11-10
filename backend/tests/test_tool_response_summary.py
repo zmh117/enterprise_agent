@@ -7,6 +7,22 @@ import pytest
 from app.shared.tool_response_summary import MAX_TOOL_SUMMARY_SOURCE_CHARS, tool_response_summary
 
 
+def test_async_svn_failure_is_not_transport_success():
+    assert tool_response_summary(
+        {
+            "operation_id": "synthetic",
+            "operation_kind": "info",
+            "state": "failed",
+            "error_code": "CODE_CHECKOUT_IDENTITY_CHANGED",
+            "source_access": {"private": "omitted"},
+        }
+    ) == {
+        "operation_state": "failed",
+        "operation_kind": "info",
+        "error_code": "CODE_CHECKOUT_IDENTITY_CHANGED",
+    }
+
+
 @pytest.mark.parametrize(
     "wrapper",
     [

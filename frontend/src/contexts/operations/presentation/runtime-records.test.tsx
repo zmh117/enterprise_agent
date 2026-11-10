@@ -1291,6 +1291,16 @@ describe("runtime provenance records", () => {
 
   it.each([
     {
+      name: "knowledge_get_source_operation",
+      summary: {
+        operation_state: "failed",
+        operation_kind: "info",
+        error_code: "CODE_CHECKOUT_IDENTITY_CHANGED",
+      },
+      expected:
+        "后台 SVN 操作失败 · 检出目录身份异常，需维护核验后再使用 · CODE_CHECKOUT_IDENTITY_CHANGED",
+    },
+    {
       name: "ones_query_work_items",
       summary: {
         payload: JSON.stringify({

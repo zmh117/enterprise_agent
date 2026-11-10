@@ -28,6 +28,7 @@ class CodeSourceMount:
         self.grant: dict[str, Any] | None = None
         self.reader: CodeCheckoutReader | None = None
         self.pending: dict[str, dict[str, Any]] = {}
+        self.tool_denials: dict[str, str] = {}
         self.condition = asyncio.Condition()
         self.closing = False
         self.saved_analysis_id: str | None = None
@@ -48,6 +49,19 @@ class CodeSourceMount:
 
         self._monitor = Thread(target=heartbeat, name="code-read-lease", daemon=True)
         self._monitor.start()
+
+    def record_denial(self, call_id: str, code: str) -> None:
+        from app.python_runtime.code_tool_errors import code_tool_failure
+
+        if call_id:
+            self.tool_denials[call_id] = code_tool_failure(code)["code"]
+
+    def apply_denials(self, events: list[dict[str, Any]]) -> None:
+        for event in events:
+            if event.get("status") == "FAILED":
+                code = self.tool_denials.pop(event["tool_call_id"], None)
+                if code:
+                    event.update(status="DENIED", error_code=code)
 
     def close(self) -> None:
         # Actual release is owned by the worker after invocation quiescence.

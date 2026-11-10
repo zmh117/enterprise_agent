@@ -85,6 +85,7 @@ const resourceRevision = z.object({
       checkout_id: identifier.nullable(),
       svn_access_ref: z.string().nullable(),
       allowed_paths_json: z.array(z.string()),
+      environment_ids: z.array(z.string()).default([]),
     })
     .optional(),
   config_hash: hash,
@@ -132,6 +133,7 @@ export type KnowledgeCommand =
         checkout_id: string
         svn_access_ref: string
         allowed_paths: string[]
+        environment_ids?: string[]
         index_id?: string
       }
     }

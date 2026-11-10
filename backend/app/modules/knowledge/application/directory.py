@@ -89,6 +89,8 @@ class KnowledgeDirectory:
                 "source_kind": "code" if source["source_system"] == "svn" else "ones",
                 "component_roles": [],
             }
+            if source["source_system"] == "svn":
+                item["environments"] = self.resources.store.code_environments(pin.revision_id)
             items.append(item)
             facts.append({"resource": asdict(pin), "view": item})
         items.sort(key=lambda item: item["knowledge_base_id"])

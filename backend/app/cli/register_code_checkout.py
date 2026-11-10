@@ -10,6 +10,14 @@ from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.infrastructure.code_checkout_client import WorkingCopyClient, registry
 from app.modules.knowledge.infrastructure.code_checkout_store import CodeCheckoutStore
 from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+from app.modules.knowledge.infrastructure.code_checkout_identity import (
+    PREFIX,
+    local_identity,
+    persistent_identity,
+)
+from app.modules.knowledge.domain.normalization import digest
+from app.modules.knowledge.domain.identity import stable_id
+from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.agent.infrastructure.runtime_pool_store import database_now, timestamp
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
@@ -24,6 +32,7 @@ def register_existing(
     auth_root: Path,
     directory: str,
     paths: list[str],
+    repair_identity: bool = False,
 ) -> dict[str, Any]:
     from app.modules.knowledge.domain.code_answers import code_path
     from app.modules.knowledge.infrastructure.code_checkout_store import checkout_scope
@@ -39,7 +48,11 @@ def register_existing(
     source = store.register_repository(
         entry["repository_uuid"], entry["branch_path"], info["repository_root_url"]
     )
-    checkout = store.register_checkout(
+    existing = db.execute_one(
+        f"SELECT * FROM {store.t('code_checkout')} WHERE id=?",
+        (stable_id("checkout", "code-svn-checkout", directory),),
+    )
+    checkout = existing or store.register_checkout(
         source_id=source,
         root_key="code-svn-checkout",
         root=root,
@@ -48,18 +61,44 @@ def register_existing(
     )
     with db.unit_of_work():
         current = store.row("code_checkout", checkout["id"], lock=True)
-        if current["writer_operation_id"] or db.execute_one(
-            f"SELECT id FROM {store.t('code_analysis')} WHERE checkout_id=? AND closed_at IS NULL LIMIT 1",
-            (checkout["id"],),
+        if current["source_id"] != source or json_value(current["selected_paths_json"]) != paths:
+            raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
+        if (
+            current["writer_operation_id"]
+            or db.execute_one(
+                f"SELECT id FROM {store.t('code_analysis')} WHERE checkout_id=? AND "
+                "(closed_at IS NULL OR (read_acquired_at IS NOT NULL AND read_released_at IS NULL)) LIMIT 1",
+                (checkout["id"],),
+            )
+            or db.execute_one(
+                f"SELECT id FROM {store.t('code_svn_operation')} WHERE checkout_id=? AND "
+                "(state IN ('queued','running') OR (started_at IS NOT NULL AND quiesced_at IS NULL)) LIMIT 1",
+                (checkout["id"],),
+            )
         ):
             raise CodeKnowledgeError("WORKSPACE_BUSY")
-        verified = SvnWorkingCopy(
-            client.source, candidate, paths, physical_key=checkout["physical_key"]
-        ).inspect()
+        before = local_identity(candidate)
+        key = current["physical_key"]
+        if repair_identity and not key.startswith(PREFIX):
+            key = digest(list(before))
+        verified = SvnWorkingCopy(client.source, candidate, paths, physical_key=key).inspect(
+            current["verified_revision"]
+        )
+        if local_identity(candidate) != before:
+            raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
+        durable = persistent_identity(candidate, create=not key.startswith(PREFIX))
         stamp = timestamp(database_now(db))
         db.execute(
-            f"UPDATE {store.t('code_checkout')} SET state='ready',verified_revision=?,verified_at=?,invalid_reason=NULL,updated_at=? WHERE id=?",
-            (verified["operative_revision"], stamp, stamp, checkout["id"]),
+            f"UPDATE {store.t('code_checkout')} SET state='ready',physical_key=?,generation=generation+?,"
+            "verified_revision=?,verified_at=?,invalid_reason=NULL,updated_at=? WHERE id=?",
+            (
+                durable,
+                int(durable != current["physical_key"]),
+                verified["operative_revision"],
+                stamp,
+                stamp,
+                checkout["id"],
+            ),
         )
         return {
             "checkout_id": checkout["id"],
@@ -75,6 +114,11 @@ def main() -> int:
     parser.add_argument("--registration", required=True)
     parser.add_argument("--directory", required=True)
     parser.add_argument("--select", action="append", default=[])
+    parser.add_argument(
+        "--repair-identity",
+        action="store_true",
+        help="Exclusively verify and upgrade a legacy physical identity",
+    )
     args = parser.parse_args()
     database = None
     try:
@@ -88,6 +132,7 @@ def main() -> int:
             auth_root=Path(os.environ["CODE_SVN_AUTH_ROOT"]),
             directory=args.directory,
             paths=args.select or [""],
+            repair_identity=args.repair_identity,
         )
         print(json.dumps(result, ensure_ascii=False))
         return 0

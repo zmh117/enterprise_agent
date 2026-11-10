@@ -34,6 +34,8 @@ ALLOWED_TOP_LEVEL = frozenset({"inputs", "work", "outputs", "tmp"})
 
 
 class SourceMountPolicy(Protocol):
+    def apply_denials(self, events: list[dict[str, Any]]) -> None: ...
+
     def authorize(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any] | None: ...
 
 

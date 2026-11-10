@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import os
 
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.infrastructure.code_checkout_client import (
@@ -13,6 +14,83 @@ from app.modules.knowledge.infrastructure.code_checkout_client import (
     publish_directory,
 )
 from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource
+
+
+@unittest.skipUnless(os.environ.get("CODE_AUTH_SVN_URL"), "isolated authenticated fixture required")
+class AuthenticatedWorkingCopyAcceptance(unittest.TestCase):
+    def test_authenticated_browse_checkout_history_update_and_read(self):
+        from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+        from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+        from app.python_runtime.code_checkout_reader import CodeCheckoutReader
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            config = root / "config"
+            config.mkdir()
+            (config / "servers").write_text(
+                "[global]\nssl-authority-files = " + os.environ["CODE_AUTH_SVN_CA"] + "\n"
+            )
+            entry = dict(
+                public_url=os.environ["CODE_AUTH_SVN_URL"],
+                branch_url=os.environ["CODE_AUTH_SVN_URL"],
+                repository_uuid="",
+                branch_path="/",
+                secret_ref="synthetic-only",
+            )
+            with self.assertRaisesRegex(CodeKnowledgeError, "CODE_SVN_AUTH_FAILED"):
+                WorkingCopyClient(
+                    entry,
+                    root,
+                    credentials=("synthetic-user", "incorrect"),
+                    config_directory=config,
+                )
+            client = WorkingCopyClient(
+                entry,
+                root,
+                credentials=("synthetic-user", "synthetic-password"),
+                config_directory=config,
+            )
+            self.assertEqual(client.browse(None)["revision"], 2)
+            client.checkout(
+                root=root, folder="checkout", job_id="auth-test", revision=2, paths=["module"]
+            )
+            key = persistent_identity(root / "checkout", create=True)
+            copy = SvnWorkingCopy(client.source, root / "checkout", ["module"], physical_key=key)
+            self.assertEqual(copy.inspect(2)["operative_revision"], 2)
+            self.assertIn(
+                b"synthetic rule change",
+                client.source._run("log", ["--xml", "-v", "-r", "2:1", client.source._target(2)]),
+            )
+            self.assertIn(
+                b"release_allowed",
+                client.source._run(
+                    "diff", ["-r", "1:2", client.source._target(2, "module/rule.cpp")]
+                ),
+            )
+            self.assertEqual(copy.update(1, timeout=30)["operative_revision"], 1)
+            reader = CodeCheckoutReader(
+                root,
+                dict(
+                    directory="checkout",
+                    physical_key=key,
+                    allowed_paths=["module"],
+                    branch_path="trunk",
+                    repository_uuid=client.source.expected_uuid,
+                    revision=1,
+                ),
+            )
+            self.assertEqual(reader.tracked("module/rule.cpp")["revision"], 1)
+            self.assertEqual(persistent_identity(root / "checkout"), key)
+            self.assertFalse(any(path.is_file() for path in (config / "auth").rglob("*")))
+            untrusted = root / "untrusted"
+            untrusted.mkdir()
+            with self.assertRaisesRegex(CodeKnowledgeError, "CODE_SVN_CERTIFICATE_INVALID"):
+                WorkingCopyClient(
+                    entry,
+                    root,
+                    credentials=("synthetic-user", "synthetic-password"),
+                    config_directory=untrusted,
+                )
 
 
 @unittest.skipUnless(

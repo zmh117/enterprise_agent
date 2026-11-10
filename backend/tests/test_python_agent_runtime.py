@@ -1186,7 +1186,7 @@ def test_detail_completeness_rules_are_platform_wide_not_skill_dependent(
         "\n\nReport structure:", 1
     )[0]
 
-    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v13"
+    assert context.prompt_template_version == PROMPT_TEMPLATE_VERSION == "agent-system-prompt-v14"
     assert "every matching record" in detail_rules
     assert "requested identifier and full title" in detail_rules
     assert "summary, examples, or the first N records" in detail_rules

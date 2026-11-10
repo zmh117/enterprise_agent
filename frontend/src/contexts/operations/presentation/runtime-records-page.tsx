@@ -2216,6 +2216,25 @@ function formatToolResponseSummary(
     typeof summary.error_code === "string"
       ? summary.error_code.slice(0, 128)
       : ""
+  const operationState =
+    typeof summary.operation_state === "string" ? summary.operation_state : ""
+  const operationLabels: Record<string, string> = {
+    queued: "后台 SVN 操作已排队",
+    running: "后台 SVN 操作执行中",
+    succeeded: "后台 SVN 操作已完成",
+    failed: "后台 SVN 操作失败",
+    cancelled: "后台 SVN 操作已取消",
+    interrupted: "后台 SVN 操作已中断",
+  }
+  if (operationLabels[operationState]) {
+    const reason =
+      errorCode === "CODE_CHECKOUT_IDENTITY_CHANGED"
+        ? "检出目录身份异常，需维护核验后再使用"
+        : error
+    return [operationLabels[operationState], reason, errorCode]
+      .filter(Boolean)
+      .join(" · ")
+  }
   if (error || errorCode)
     return [error || "工具调用失败", errorCode].filter(Boolean).join(" · ")
   if (status === "FAILED" || status === "DENIED" || summary.is_error === true)

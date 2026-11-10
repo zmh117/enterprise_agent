@@ -152,6 +152,13 @@ KNOWLEDGE_TOOL_CONTRACTS = {
                             "name": {"type": "string"},
                             "status": {"const": "AVAILABLE"},
                             "source_kind": {"enum": ["ones", "code"]},
+                            "environments": {
+                                "type": "array",
+                                "maxItems": 100,
+                                "items": _object(
+                                    {"code": {"type": "string"}, "name": {"type": "string"}}
+                                ),
+                            },
                             "component_roles": {
                                 "type": "array",
                                 "maxItems": 3,
@@ -160,7 +167,15 @@ KNOWLEDGE_TOOL_CONTRACTS = {
                                     "enum": ["backend", "factory_frontend", "group_frontend"]
                                 },
                             },
-                        }
+                        },
+                        [
+                            "knowledge_base_id",
+                            "code",
+                            "name",
+                            "status",
+                            "source_kind",
+                            "component_roles",
+                        ],
                     ),
                 },
                 "has_more": {"type": "boolean"},

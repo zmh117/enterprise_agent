@@ -234,6 +234,24 @@ class CodeHistoryBridge:
             authorization_hash=code_authorization_hash(access),
             deadline_at=deadline.isoformat(),
         )
+        previous = self.db.execute_one(
+            f"SELECT o.error_code FROM {self.operations.t('code_svn_operation')} o "
+            f"JOIN {self.operations.t('code_checkout')} c ON c.id=o.checkout_id "
+            "WHERE o.job_id=? AND o.invocation_id=? AND o.config_revision_id=? "
+            "AND o.checkout_id=? AND o.target_revision=? AND o.checkout_generation=c.generation "
+            "AND o.state='failed' AND o.error_code IN "
+            "('CODE_CHECKOUT_IDENTITY_CHANGED','CODE_CHECKOUT_SOURCE_MISMATCH',"
+            "'CODE_CHECKOUT_SCOPE_CHANGED','CODE_SVN_AUTH_FAILED','CODE_SVN_CERTIFICATE_INVALID') LIMIT 1",
+            (
+                context.job_id,
+                context.invocation_id,
+                context.config_revision_id,
+                context.checkout_id,
+                context.revision,
+            ),
+        )
+        if previous:
+            raise CodeKnowledgeError(previous["error_code"])
         analysis = self.operations.begin(context, args["request_key"])
         operation = self.db.execute_one(
             f"SELECT * FROM {self.operations.t('code_svn_operation')} WHERE analysis_id=? AND request_key=?",

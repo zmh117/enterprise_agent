@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Any
+from app.modules.knowledge.infrastructure.code_svn_access import CodeSvnAccess
 import uuid
 import os
 
@@ -12,7 +13,6 @@ from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.governance import checked_identifier, KnowledgeGovernanceError
 from app.modules.knowledge.domain.identity import now, stable_id
 from app.modules.knowledge.domain.normalization import canonical_json, digest
-from app.modules.knowledge.infrastructure.code_checkout_client import registry
 from app.modules.knowledge.infrastructure.code_checkout_store import checkout_scope, json_value
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
 from app.modules.knowledge.infrastructure.storage import insert
@@ -117,7 +117,18 @@ class CodeResourceService(KnowledgeResourceService):
                 created_at=now(),
             ),
         )
-        self.store.add("code_resource_config", dict(revision_id=identifier, **source))
+        self.store.add(
+            "code_resource_config",
+            dict(
+                revision_id=identifier,
+                **{k: v for k, v in source.items() if k != "environment_ids"},
+            ),
+        )
+        for environment in source.get("environment_ids", []):
+            self.store.add(
+                "code_resource_environment",
+                dict(revision_id=identifier, environment_id=environment),
+            )
         self.store.save_draft(resource["id"], identifier)
         return identifier
 
@@ -132,20 +143,44 @@ class CodeResourceService(KnowledgeResourceService):
         allowed_paths: list[str],
         storage: dict[str, Any] | None = None,
         index_id: str | None = None,
+        environment_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         selected = code_storage(storage)
         paths = checkout_scope(allowed_paths)
-        entries = registry(
-            Path(os.environ.get("CODE_CHECKOUT_REGISTRY_FILE", "/etc/code-svn/checkout.json"))
-        )
-        entry = entries.get(svn_access_ref)
+        assert isinstance(self.store, GovernanceStore)
+        entry = CodeSvnAccess(
+            self.store.database,
+            Path(os.environ.get("CODE_CHECKOUT_REGISTRY_FILE", "/etc/code-svn/checkout.json")),
+        ).entry(svn_access_ref, resource_id)
         if not entry:
             raise CodeKnowledgeError("CODE_REGISTRATION_CHANGED")
         with self.store.unit_of_work():
             self.require_admin(actor_id)
             resource = self._write_resource(resource_id, expected_revision)
             self._code_base(resource)
+            if environment_ids is None:
+                existing = resource.get("draft_revision_id") or resource.get(
+                    "published_revision_id"
+                )
+                environment_ids = (
+                    self.store.code_configuration(existing).get("environment_ids", [])
+                    if existing
+                    else []
+                )
+            if (
+                not isinstance(environment_ids, list)
+                or len(environment_ids) > 100
+                or any(not isinstance(item, str) for item in environment_ids)
+                or len(set(environment_ids)) != len(environment_ids)
+            ):
+                raise CodeKnowledgeError("CODE_ENVIRONMENT_INVALID")
+            for environment in environment_ids:
+                if not self.store.database.execute_one(
+                    "SELECT id FROM platform_environment WHERE id=? AND status='enabled'",
+                    (environment,),
+                ):
+                    raise CodeKnowledgeError("CODE_ENVIRONMENT_INVALID")
             self.store.assert_code_idle(resource["knowledge_base_id"])
             checkout = self.store.get("code_checkout", checkout_id, lock=True)
             source = self.store.get("source", checkout["source_id"])
@@ -187,6 +222,7 @@ class CodeResourceService(KnowledgeResourceService):
                     checkout_id=checkout_id,
                     svn_access_ref=svn_access_ref,
                     allowed_paths_json=paths,
+                    **({"environment_ids": sorted(environment_ids)} if environment_ids else {}),
                 ),
                 index,
             )

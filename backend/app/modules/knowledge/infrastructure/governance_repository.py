@@ -233,7 +233,23 @@ class GovernanceStore:  # noqa: PLR0904
         )
         if not row:
             raise KnowledgeGovernanceError("knowledge_resource_config_unsupported")
-        return {**row, "allowed_paths_json": json_value(row["allowed_paths_json"])}
+        environments = self.database.execute(
+            f"SELECT environment_id FROM {self.t('code_resource_environment')} WHERE revision_id=? ORDER BY environment_id",
+            (revision_id,),
+        )
+        return {
+            **row,
+            "allowed_paths_json": json_value(row["allowed_paths_json"]),
+            "environment_ids": [item["environment_id"] for item in environments],
+        }
+
+    def code_environments(self, revision_id: str) -> list[dict[str, Any]]:
+        return self.database.execute(
+            f"SELECT e.code,e.display_name AS name FROM {self.t('code_resource_environment')} b "
+            "JOIN platform_environment e ON e.id=b.environment_id "
+            "WHERE b.revision_id=? AND e.status='enabled' ORDER BY e.code",
+            (revision_id,),
+        )
 
     def assert_code_idle(self, base_id: str) -> None:
         analysis = self.database.execute_one(

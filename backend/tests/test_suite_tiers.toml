@@ -48,6 +48,8 @@ contract = [
   "test_code_result_recorder.py",
   "test_code_executor_lock.py",
   "test_code_checkout.py",
+  "test_code_checkout_identity.py",
+  "test_code_svn_access.py",
   "test_knowledge_operations.py",
   "test_knowledge_incremental_sync.py",
   "test_knowledge_sync_backfill.py",

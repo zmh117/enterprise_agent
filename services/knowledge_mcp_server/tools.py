@@ -196,7 +196,9 @@ class KnowledgeMcpTools:
             for key in (
                 "analysis_id",
                 "operation_id",
+                "operation_kind",
                 "state",
+                "error_code",
                 "svn_revision",
                 "support_status",
                 "saved",

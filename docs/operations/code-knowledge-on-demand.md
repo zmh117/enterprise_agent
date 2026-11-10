@@ -60,6 +60,33 @@ Windows PowerShell 同样使用上述 `-f` 参数；凭据宿主路径根据该�
 
 ## 并发与恢复
 
+### 页面连接真实 SVN
+
+在具体代码知识库的「SVN 工程检出」中填写 HTTPS 仓库/分支地址，选择「配置用户名和密码」，点击「保存连接并浏览」。操作者需要知识管理和凭据创建权限。账号密码保存到既有加密凭据中心，浏览、检出和后续问答只引用连接 ID；可在凭据中心查看使用关系、停用或轮换。后续可选「使用已保存连接」。修改地址或账号会产生新连接，旧发布继续固定原连接；重新浏览、检出/绑定、验证和发布后启用新连接。
+
+首次连接自动识别并固定仓库 UUID 和分支。只支持 HTTPS，不在 URL 中嵌入密码，不提供跳过证书验证选项。企业自签 CA 需要安装到 knowledge-sync 的系统信任链。SVN 使用 `--password-from-stdin` 和 `--no-auth-cache`，密码不进入命令行、工作副本或 Agent。认证、证书和网络失败会分别提示；修复配置后再重试。
+
+「关联环境」复用工具资源中的环境，可以多选；同一代码知识库可服务多个环境。环境归属随源码配置修订保存并发布，知识目录返回环境编码和名称；关联不增加知识库授权或数据库访问权限。
+
+### 从旧设备号登记升级
+
+新检出将持久身份标记保存在 `.svn/enterprise-agent-identity` 中，正常重挂载不会改变该身份；Runtime 在每次分析期间仍检查本地设备号/inode，检测执行中的目录替换。不要删除、复制或修改身份标记来绕过保护。
+
+先更新 API、knowledge-sync 和两个 Runtime，确认目录没有未释放读占用或未停止 SVN 操作，再在 knowledge-sync 的部署上下文中执行：
+
+```sh
+python -m app.cli.register_code_checkout --registration <已有部署登记键> --directory <既有检出子目录> --select set_server --select set_web/EBR --select set_web/JTH --repair-identity
+```
+
+命令持有目录行锁，完整核验 SVN 来源、范围、干净状态和原 revision，再升级旧身份并递增代次；不检出、不更新、不回滚源文件。新协议的标记不匹配仍拒绝，不能自动重建。`WORKSPACE_BUSY` 时先等待真实执行停止，不能改数据库强行释放。
+
+迁移 161 新增连接元数据和环境关联表。升级已有 knowledge-mcp_reader 账号时，在受信管理连接执行以下固定列授权；新建账号使用更新后的 `services.knowledge_mcp_server.database_policy` 即可。不授予连接表或 Secret 读取权限：
+
+```sql
+GRANT SELECT (revision_id, environment_id) ON knowledge.code_resource_environment TO knowledge_mcp_reader;
+GRANT SELECT (display_name, status) ON platform_environment TO knowledge_mcp_reader;
+```
+
 同一目录同版本可多个读者并行；修改独占，更新后原子转为当前 Job 的读占用。读者到期、Job 结束或网络失联不代表读取停止。只有 Runtime 实际停止工具/SDK，并记下对应 invocation 的停止证明后才释放。取消一个 Job 不释放其他 Job 的占用。
 
 SVN 子进程继承 `.executor-locks` 中对应操作的 OS 文件锁。Worker 重启仅在锁已释放且 owner/claim 与数据库一致时确认旧执行结束；update 不自动重放。未知或损坏的停止证明需要维护核查，不能删除锁文件强行放行。该机制面向同一 Docker daemon 上的共享文件系统，不支持未经验证的多宿主网络盘。

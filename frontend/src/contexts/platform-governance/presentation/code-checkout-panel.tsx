@@ -21,6 +21,13 @@ const states: Record<string, string> = {
   interrupted: "已中断",
 }
 const errors: Record<string, string> = {
+  CODE_SVN_AUTH_FAILED: "SVN 用户名或密码不正确，请更新连接后重试。",
+  CODE_SVN_ACCESS_DENIED: "SVN 账号没有访问所选仓库或路径的权限。",
+  CODE_SVN_CERTIFICATE_INVALID:
+    "SVN 证书校验失败，请部署人员配置受信任的证书。",
+  CODE_SVN_CONNECTION_FAILED: "无法连接 SVN，请检查地址和容器网络。",
+  CODE_SVN_CREDENTIAL_UNAVAILABLE: "SVN 凭据缺失或已停用，请重新配置连接。",
+  CODE_CHECKOUT_IDENTITY_CHANGED: "检出目录身份异常，需要维护核验后再使用。",
   code_checkout_destination_exists:
     "目标目录已存在，请填写新的子目录名。已有内容未覆盖。",
   code_checkout_externals_unsupported:
@@ -38,6 +45,10 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
   const [selected, setSelected] = useState<string[]>([])
   const [folder, setFolder] = useState("mes")
   const [notice, setNotice] = useState("")
+  const [authentication, setAuthentication] = useState("existing")
+  const [connectionId, setConnectionId] = useState("")
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
   const snapshot = useCodeCheckouts(resourceId)
   const url = urlInput ?? snapshot.data?.registrations[0]?.url ?? ""
   const browse = useQuery({
@@ -56,8 +67,33 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
       ),
   })
   const submit = useMutation({
-    mutationFn: async (kind: "browse" | "checkout") =>
-      z.object({ id: z.string() }).parse(
+    mutationFn: async (kind: "browse" | "checkout") => {
+      let selectedConnection =
+        connectionId ||
+        snapshot.data?.registrations.find((item) => item.url === url)?.id ||
+        ""
+      if (kind === "browse" && authentication === "account") {
+        try {
+          const connection = z
+            .object({ id: z.string() })
+            .parse(
+              await apiRequest(
+                `${base}/resources/${encodeURIComponent(resourceId)}/connections`,
+                {
+                  method: "POST",
+                  body: { url: url.trim(), username, password },
+                }
+              )
+            )
+          selectedConnection = connection.id
+          setConnectionId(connection.id)
+          setAuthentication("existing")
+          void cache.invalidateQueries({ queryKey: ["code-checkouts"] })
+        } finally {
+          setPassword("")
+        }
+      }
+      return z.object({ id: z.string() }).parse(
         await apiRequest(
           `${base}/resources/${encodeURIComponent(resourceId)}/${kind === "browse" ? "browse" : "checkouts"}`,
           {
@@ -68,6 +104,9 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                     url: url.trim(),
                     revision: revision ? Number(revision) : null,
                     request_key: createRequestKey(),
+                    ...(selectedConnection
+                      ? { connection_id: selectedConnection }
+                      : {}),
                   }
                 : {
                     browse_job_id: browseId,
@@ -77,7 +116,8 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                   },
           }
         )
-      ),
+      )
+    },
     onSuccess: (job, kind) => {
       if (kind === "browse") {
         setBrowseId(job.id)
@@ -125,11 +165,91 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                 value={url}
                 onChange={(e) => {
                   setUrl(e.target.value)
+                  setConnectionId("")
+                  setAuthentication("account")
                   resetBrowse()
                 }}
                 className="min-w-80"
               />
             </KnowledgeField>
+            <KnowledgeField label="SVN 认证方式">
+              <select
+                aria-label="SVN 认证方式"
+                className="h-9 rounded border px-2"
+                value={authentication}
+                disabled={submit.isPending}
+                onChange={(event) => {
+                  setAuthentication(event.target.value)
+                  resetBrowse()
+                }}
+              >
+                <option value="existing">使用已保存连接</option>
+                <option value="account">配置用户名和密码</option>
+              </select>
+            </KnowledgeField>
+            {authentication === "existing" ? (
+              <KnowledgeField label="已保存 SVN 连接">
+                <select
+                  aria-label="已保存 SVN 连接"
+                  className="h-9 max-w-96 rounded border px-2"
+                  value={
+                    connectionId ||
+                    snapshot.data?.registrations.find(
+                      (item) => item.url === url
+                    )?.id ||
+                    ""
+                  }
+                  disabled={submit.isPending}
+                  onChange={(event) => {
+                    const entry = snapshot.data?.registrations.find(
+                      (item) => item.id === event.target.value
+                    )
+                    setConnectionId(event.target.value)
+                    if (entry) setUrl(entry.url)
+                    resetBrowse()
+                  }}
+                >
+                  <option value="">请选择连接</option>
+                  {snapshot.data?.registrations.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.url}
+                    </option>
+                  ))}
+                </select>
+              </KnowledgeField>
+            ) : (
+              <>
+                <KnowledgeField label="SVN 用户名">
+                  <Input
+                    aria-label="SVN 用户名"
+                    autoComplete="username"
+                    value={username}
+                    disabled={submit.isPending}
+                    maxLength={256}
+                    required
+                    onChange={(event) => {
+                      setUsername(event.target.value)
+                      resetBrowse()
+                    }}
+                  />
+                </KnowledgeField>
+                <KnowledgeField label="SVN 密码">
+                  <Input
+                    aria-label="SVN 密码"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    disabled={submit.isPending}
+                    maxLength={4096}
+                    required
+                    onChange={(event) => {
+                      setPassword(event.target.value)
+                      resetBrowse()
+                    }}
+                  />
+                </KnowledgeField>
+              </>
+            )}
             <KnowledgeField label="SVN 版本（留空为最新）">
               <Input
                 aria-label="SVN 版本"
@@ -147,14 +267,19 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
             <Button
               type="submit"
               disabled={
-                !url.trim() || submit.isPending || !snapshot.data?.enabled
+                !url.trim() ||
+                submit.isPending ||
+                !snapshot.data?.enabled ||
+                (authentication === "account" &&
+                  (!username.trim() || !password))
               }
             >
-              浏览目录
+              {authentication === "account" ? "保存连接并浏览" : "浏览目录"}
             </Button>
           </form>
           <p className="text-xs text-muted-foreground">
-            地址须由部署人员登记；不要在地址中填写账号或密码。
+            使用 HTTPS 仓库地址；账号密码加密保存到凭据中心，不会提供给
+            Agent。企业自签证书需由部署人员配置受信任的 CA。
           </p>
           {browse.data && (
             <p role="status">

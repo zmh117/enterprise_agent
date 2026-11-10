@@ -253,6 +253,28 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
             == "allow"
         )
         assert await call("Read", {"file_path": "source/Order.cpp"}, "source-read") == "deny"
+        assert source.tool_denials["source-read"] == "CODE_READ_GRANT_REQUIRED"
+        assert (
+            await call("Glob", {"path": "source/set_server", "pattern": "*.cpp"}, "source-glob")
+            == "deny"
+        )
+        assert source.tool_denials["source-glob"] == "CODE_READ_GRANT_REQUIRED"
+        from app.python_runtime.tool_policy import normalize_tool_events
+
+        event = normalize_tool_events(
+            [
+                {
+                    "tool_name": "Glob",
+                    "tool_call_id": "source-glob",
+                    "status": "DENIED",
+                    "error_code": source.tool_denials["source-glob"],
+                }
+            ],
+            request={"protocol_version": "1.5", "mcp_servers": []},
+        )[0]
+        assert event["status"] == "DENIED"
+        assert event["failure"]["retry_class"] == "NEVER"
+        assert event["failure"]["code"] == "CODE_READ_GRANT_REQUIRED"
         assert (
             await call("Write", {"file_path": "source/Order.cpp", "content": "x"}, "source-write")
             == "deny"

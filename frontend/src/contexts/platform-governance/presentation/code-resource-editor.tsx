@@ -1,4 +1,6 @@
 import { useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { listEnvironments } from "../infrastructure/platform-governance-api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -82,6 +84,14 @@ export function CodeResourceEditor({
 }) {
   const initial = resource.draft ?? resource.published
   const config = initial?.code_configuration
+  const environments = useQuery({
+    queryKey: ["platform-governance", "environments"],
+    queryFn: listEnvironments,
+    enabled: canManage,
+  })
+  const [environmentIds, setEnvironmentIds] = useState<string[]>(
+    config?.environment_ids ?? []
+  )
   const checkouts = useCodeCheckouts(resource.id, canManage)
   const [selected, setSelected] = useState(config?.checkout_id ?? "")
   const [access, setAccess] = useState(config?.svn_access_ref ?? "")
@@ -139,6 +149,7 @@ export function CodeResourceEditor({
               ...input,
               checkout_id: selected,
               svn_access_ref: chosenAccess,
+              environment_ids: environmentIds,
               allowed_paths: paths
                 .split("\n")
                 .map((path) => path.trim())
@@ -200,6 +211,34 @@ export function CodeResourceEditor({
               ))}
             </select>
           </KnowledgeField>
+          <fieldset className="space-y-2" aria-label="关联环境">
+            <legend className="font-medium">关联环境（可多选）</legend>
+            <p className="text-sm text-muted-foreground">
+              复用工具资源的环境作为项目归属，同一代码知识库可供多个环境使用。
+            </p>
+            <KnowledgeError error={environments.error} />
+            {environments.data?.map((environment) => (
+              <label key={environment.id} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={environmentIds.includes(environment.id)}
+                  data-testid={`code-kb-environment-${environment.code}`}
+                  onChange={(event) =>
+                    setEnvironmentIds((ids) =>
+                      event.target.checked
+                        ? [...ids, environment.id]
+                        : ids.filter((id) => id !== environment.id)
+                    )
+                  }
+                />
+                {environment.display_name || environment.code} ·{" "}
+                {environment.code}
+              </label>
+            ))}
+            {environments.data?.length === 0 && (
+              <p className="text-sm">请先在工具资源中创建环境。</p>
+            )}
+          </fieldset>
           <KnowledgeField label="允许分析的路径（每行一个，/ 表示整个仓库）">
             <textarea
               className={`${knowledgeInputClass} h-auto min-h-24`}

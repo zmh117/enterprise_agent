@@ -21,6 +21,7 @@ class PlatformSecretUsageService:
         dependencies: list[dict[str, Any]] = []
         dependencies.extend(self._resource_dependencies(secret_ref))
         dependencies.extend(self._knowledge_dependencies(secret_ref))
+        dependencies.extend(self._svn_dependencies(secret_ref))
         dependencies.extend(self._runtime_config_dependencies(secret_ref))
         dependencies.extend(self._reference_dependencies(secret_ref))
         dependencies.extend(self._connector_dependencies(secret_ref))
@@ -110,6 +111,27 @@ class PlatformSecretUsageService:
                 )
             )
         return result
+
+    def _svn_dependencies(self, secret_ref: str) -> list[dict[str, Any]]:
+        from app.modules.knowledge.infrastructure.storage import table
+
+        database = self.repository.database
+        rows = database.execute(
+            f"SELECT c.id,r.code,r.status FROM {table(database, 'code_svn_connection')} c "
+            f"JOIN {table(database, 'retrieval_resource')} r ON r.id=c.resource_id WHERE c.secret_ref=?",
+            (secret_ref,),
+        )
+        return [
+            _dependency(
+                dependency_type="knowledge_svn_connection",
+                row=row,
+                code=str(row["code"]),
+                status=str(row["status"]),
+                field_paths=["secret_ref"],
+                metadata={},
+            )
+            for row in rows
+        ]
 
     def _runtime_config_dependencies(
         self,

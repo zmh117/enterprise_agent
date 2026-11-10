@@ -36,6 +36,10 @@ Agent 的稳定身份、追加式草稿和不可变发布。新 Definition 固�
 
 角色在业务应用内获得的明确 environment、可选 base 和 workshop 集合。用户消息可以不完整或变化；Agent 根据消息和 Skill 选择 Tool Call 参数，服务端在每次调用时实时复核授权范围和唯一资源。
 
+**环境与代码知识库**
+
+环境也是代码知识库的项目归属目录。一个代码知识库可以关联多个环境，供共用同一套源码的环境使用；关联不自动授予知识库或业务数据权限。代码知识库保存指定源码版本下的知识，环境确定用户正在询问的业务范围。
+
 **Agent Job**
 
 一次异步执行请求。Job 冻结用户主体、应用/Agent Publication、Runtime kind、MCP Tool Schema 与授权摘要，但不把某次自然语言推断出的 environment/base/workshop 固化为不可变路由目标。

@@ -151,7 +151,7 @@ COPY backend/app/modules/file_workspace/contracts.py backend/app/modules/file_wo
 # Runtime reads the shared checkout through a readonly grant; no knowledge repository or SVN CLI.
 COPY backend/app/modules/knowledge/__init__.py /app/backend/app/modules/knowledge/
 COPY backend/app/modules/knowledge/domain/__init__.py backend/app/modules/knowledge/domain/code_contracts.py backend/app/modules/knowledge/domain/code_json.py backend/app/modules/knowledge/domain/code_answers.py backend/app/modules/knowledge/domain/code_text.py backend/app/modules/knowledge/domain/models.py backend/app/modules/knowledge/domain/normalization.py backend/app/modules/knowledge/domain/identity.py /app/backend/app/modules/knowledge/domain/
-COPY backend/app/modules/knowledge/infrastructure/__init__.py backend/app/modules/knowledge/infrastructure/code_source.py /app/backend/app/modules/knowledge/infrastructure/
+COPY backend/app/modules/knowledge/infrastructure/__init__.py backend/app/modules/knowledge/infrastructure/code_source.py backend/app/modules/knowledge/infrastructure/code_checkout_identity.py /app/backend/app/modules/knowledge/infrastructure/
 COPY backend/app/modules/model_connection/__init__.py /app/backend/app/modules/model_connection/
 COPY backend/app/modules/model_connection/domain /app/backend/app/modules/model_connection/domain
 COPY backend/app/modules/model_connection/infrastructure/__init__.py backend/app/modules/model_connection/infrastructure/repository.py /app/backend/app/modules/model_connection/infrastructure/
@@ -163,7 +163,7 @@ COPY contracts/agent-runtime/v1.4 /app/contracts/agent-runtime/v1.4
 COPY contracts/agent-runtime/v1.5 /app/contracts/agent-runtime/v1.5
 RUN groupadd --system --gid 10002 python-runtime \
     && useradd --system --uid 10002 --gid 10002 --no-create-home python-runtime \
-    && python -c "import app.python_runtime; import app.python_runtime.file_principal; import app.python_runtime.file_transfer_http; import app.modules.agent.infrastructure.runtime_protocol; from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST; from mcp import types; from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version; from app.python_runtime.file_mcp_bridge import _mcp_list_tools_next_cursor, _mcp_tool_input_schema; assert MCP_TOOL_MANIFEST; assert claude_sdk_version() != 'unknown'; assert claude_cli_version() not in {'unknown', 'unavailable'}; assert _mcp_tool_input_schema(types.Tool(name='probe', inputSchema={})) == {}; assert _mcp_list_tools_next_cursor(types.ListToolsResult(tools=[])) == ''"
+    && python -c "import app.python_runtime; import app.python_runtime.file_principal; import app.python_runtime.file_transfer_http; import app.python_runtime.code_source_mount; import app.modules.agent.infrastructure.runtime_protocol; from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST; from mcp import types; from app.python_runtime.claude_client import claude_cli_version, claude_sdk_version; from app.python_runtime.file_mcp_bridge import _mcp_list_tools_next_cursor, _mcp_tool_input_schema; assert MCP_TOOL_MANIFEST; assert claude_sdk_version() != 'unknown'; assert claude_cli_version() not in {'unknown', 'unavailable'}; assert _mcp_tool_input_schema(types.Tool(name='probe', inputSchema={})) == {}; assert _mcp_list_tools_next_cursor(types.ListToolsResult(tools=[])) == ''"
 USER 10002:10002
 CMD ["python", "-m", "uvicorn", "app.python_runtime.service:create_app", "--factory", "--workers", "1", "--host", "0.0.0.0", "--port", "8091"]
 

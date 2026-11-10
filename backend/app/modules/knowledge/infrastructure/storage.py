@@ -16,6 +16,8 @@ TABLES = frozenset(
         "code_repository",
         "code_resource_config",
         "code_checkout",
+        "code_svn_connection",
+        "code_resource_environment",
         "code_svn_operation",
         "code_analysis",
         "code_evidence",

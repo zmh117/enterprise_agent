@@ -48,6 +48,25 @@ def tool_response_summary(value: object) -> dict[str, Any]:
     if source is None:
         return {"available": False}
     result: dict[str, Any] = {}
+    if source.get("operation_id") and source.get("state") in {
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "interrupted",
+    }:
+        result["operation_state"] = source["state"]
+        if source.get("operation_kind") in {
+            "browse",
+            "checkout",
+            "info",
+            "update",
+            "log",
+            "diff",
+            "blame",
+        }:
+            result["operation_kind"] = source["operation_kind"]
     for field in _COUNTS:
         number = source.get(field)
         if type(number) is int and 0 <= number <= 9_007_199_254_740_991:

@@ -8,7 +8,12 @@ import time
 
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.normalization import digest
-from app.modules.knowledge.infrastructure.code_checkout_client import WorkingCopyClient, registry
+from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+from app.modules.knowledge.infrastructure.code_svn_access import (
+    CodeSvnAccess,
+    connection_fingerprint,
+)
+from app.modules.knowledge.infrastructure.code_checkout_client import WorkingCopyClient
 from app.modules.knowledge.infrastructure.code_checkout_jobs import CodeCheckoutJobs
 from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBuffer
@@ -57,14 +62,31 @@ class CodeManagementExecutor:
 
         try:
             request = json_value(row["request_json"])
-            entry = registry(self.store.registry_file).get(request["registration"])
-            if not entry or digest(entry) != request["registration_hash"]:
+            revision = self.store.db.execute_one(
+                f"SELECT resource_id FROM {self.store.t('retrieval_revision')} WHERE id=?",
+                (row["config_revision_id"],),
+            )
+            if not revision:
+                raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
+            resource = revision["resource_id"]
+            access = CodeSvnAccess(self.store.db, self.store.registry_file)
+            entry = access.entry(request["registration"], resource)
+            if connection_fingerprint(entry) != request["registration_hash"]:
                 raise CodeKnowledgeError("CODE_REGISTRATION_CHANGED")
-            client = WorkingCopyClient(entry, self.auth_root, cancelled)
-            if row["operation_kind"] == "browse":
-                self._browse(row, request, client)
-            else:
-                self._checkout(row, request, client)
+            with access.client(
+                entry, self.auth_root, cancelled, factory=WorkingCopyClient
+            ) as client:
+                if row["operation_kind"] == "browse":
+                    if entry.get("secret_ref"):
+                        access.pin(
+                            request["registration"],
+                            resource,
+                            repository_uuid=client.source.expected_uuid,
+                            branch_path=client.source.branch_path or "/",
+                        )
+                    self._browse(row, request, client)
+                else:
+                    self._checkout(row, request, client)
         except Exception as exc:
             self.buffer.discard(identifier)
             error = (
@@ -123,8 +145,7 @@ class CodeManagementExecutor:
         )
         # The directory remains preparing and exclusively owned while it is checked.
         path = self.checkout_root / checkout["relative_dir"]
-        stat = path.stat()
-        physical = digest([stat.st_dev, stat.st_ino])
+        physical = persistent_identity(path, create=True)
         verified = SvnWorkingCopy(
             client.source, path, request["paths"], physical_key=physical
         ).inspect(row["target_revision"])

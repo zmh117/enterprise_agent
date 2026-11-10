@@ -93,13 +93,22 @@ def build_code_operations_router() -> APIRouter:
     @router.post("/resources/{resource_id}/browse", status_code=202)
     async def browse_svn(resource_id: str, request: Request) -> Any:
         user = actor(request)
-        value = await payload(request, {"url", "revision", "request_key"})
+        value = await payload(
+            request, {"url", "revision", "request_key"}, frozenset({"connection_id"})
+        )
         return await invoke(
             services(request).code_checkouts().submit_browse,
             actor_id=user,
             resource_id=resource_id,
             **value,
         )
+
+    router.add_api_route(
+        "/resources/{resource_id}/connections",
+        _create_svn_connection,
+        methods=["POST"],
+        status_code=201,
+    )
 
     @router.post("/resources/{resource_id}/checkouts", status_code=202)
     async def checkout_svn(resource_id: str, request: Request) -> Any:
@@ -113,3 +122,26 @@ def build_code_operations_router() -> APIRouter:
         )
 
     return router
+
+
+async def _create_svn_connection(resource_id: str, request: Request) -> Any:
+    from app.modules.knowledge.infrastructure.code_svn_access import CodeSvnAccess
+
+    user = actor(request)
+    value = await payload(request, {"url", "username", "password"})
+
+    def create() -> dict[str, Any]:
+        jobs = services(request).code_checkouts()
+        jobs.admin.require_admin(user)
+        jobs.draft(resource_id)
+        return CodeSvnAccess(jobs.db, jobs.registry_file).create(
+            resource_id=resource_id,
+            actor_id=user,
+            platform_config=container(request).platform_config_service,
+            **value,
+        )
+
+    try:
+        return await invoke(create)
+    finally:
+        value.clear()

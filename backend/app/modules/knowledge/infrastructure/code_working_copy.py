@@ -1,18 +1,15 @@
 """Inspect/update one already-owned SVN working copy. The caller holds its DB claim."""
 
 from pathlib import Path
-import subprocess
 import shutil
-from app.modules.knowledge.infrastructure.code_executor_lock import inherited_execution_fds
 from typing import Any
 from urllib.parse import unquote
 
 from app.modules.knowledge.domain.code_answers import code_path, path_in_scope, svn_revision
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
-from app.modules.knowledge.domain.normalization import digest
+from app.modules.knowledge.infrastructure.code_checkout_identity import CheckoutIdentity
 from app.modules.knowledge.infrastructure.code_svn import (
     SvnCodeSource,
-    _bounded_output,
     xml_document,
 )
 
@@ -57,14 +54,11 @@ class SvnWorkingCopy:
         if not self.paths:
             raise CodeKnowledgeError("CODE_SCOPE_INVALID")
         self.physical_key = physical_key
+        self.identity = CheckoutIdentity(directory, physical_key)
         self._identity()
 
     def _identity(self) -> None:
-        if self.directory.resolve(strict=True) != self.directory:
-            raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
-        stat = self.directory.stat()
-        if digest([stat.st_dev, stat.st_ino]) != self.physical_key:
-            raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
+        self.identity.check()
 
     def inspect(self, revision: int | None = None) -> dict[str, Any]:
         self._identity()
@@ -162,41 +156,20 @@ class SvnWorkingCopy:
             raise CodeKnowledgeError("CODE_CHECKOUT_EXTERNALS_UNSUPPORTED")
         preflight_checkout_space(self.source, self.directory, self.paths, revision)
         self._identity()
-        command = [
-            self.source.executable,
+        self.source.execute(
             "update",
-            "--non-interactive",
-            "--no-auth-cache",
-            "--config-dir",
-            str(self.source.config_directory),
-            "--ignore-externals",
-            "--accept",
-            "postpone",
-            "-r",
-            str(revision),
-            str(self.directory) + "@",
-        ]
-        try:
-            with subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                pass_fds=inherited_execution_fds(),
-            ) as process:
-                try:
-                    _bounded_output(
-                        process,
-                        timeout=timeout,
-                        limit=8 * 1024 * 1024,
-                        cancelled=self._cancelled_with_space_check,
-                    )
-                finally:
-                    if process.poll() is None:
-                        process.kill()
-                    process.wait()
-        except (OSError, subprocess.TimeoutExpired):
-            raise CodeKnowledgeError("CODE_CHECKOUT_UPDATE_FAILED") from None
+            [
+                "--ignore-externals",
+                "--accept",
+                "postpone",
+                "-r",
+                str(revision),
+                str(self.directory) + "@",
+            ],
+            timeout=timeout,
+            limit=8 * 1024 * 1024,
+            cancelled=self._cancelled_with_space_check,
+        )
         return self.inspect(revision)
 
     def _cancelled_with_space_check(self) -> bool:

@@ -94,6 +94,41 @@ def bind(service, resource, checkout):
     )
 
 
+def test_code_library_can_bind_multiple_existing_environments(setup):
+    runtime, _, checkout, _, service, _ = setup
+    environments = [
+        runtime.platform_config_service.upsert_environment(
+            {"code": code, "display_name": code}, actor_id="user_local_admin"
+        )
+        for code in ("code-env-one", "code-env-two")
+    ]
+    resource = create(service)
+    ids = sorted(item["id"] for item in environments)
+    saved = service.save_code_draft(
+        actor_id="user_local_admin",
+        resource_id=resource["id"],
+        expected_revision=resource["revision"],
+        checkout_id=checkout["id"],
+        svn_access_ref="synthetic",
+        allowed_paths=["set_server"],
+        environment_ids=ids,
+    )
+    assert saved["draft"]["code_configuration"]["environment_ids"] == ids
+    assert service.store.code_environments(saved["draft"]["id"]) == [
+        {"code": code, "name": code} for code in ("code-env-one", "code-env-two")
+    ]
+    with pytest.raises(CodeKnowledgeError, match="CODE_ENVIRONMENT_INVALID"):
+        service.save_code_draft(
+            actor_id="user_local_admin",
+            resource_id=resource["id"],
+            expected_revision=saved["revision"],
+            checkout_id=checkout["id"],
+            svn_access_ref="synthetic",
+            allowed_paths=["set_server"],
+            environment_ids=["missing-environment"],
+        )
+
+
 def test_index_controls_do_not_change_published_configuration(setup):
     _, _, _, _, service, _ = setup
     created = create(service)

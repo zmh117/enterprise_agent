@@ -58,28 +58,47 @@ describe("代码知识库配置", () => {
         async (input) =>
           new Response(
             JSON.stringify(
-              String(input).endsWith("/index-status")
-                ? { paused: false, indexes: [] }
-                : {
-                    enabled: true,
-                    registrations: [
-                      { id: "local-svn", url: "https://svn.invalid/trunk" },
-                    ],
-                    jobs: [],
-                    checkouts: [
+              String(input).includes("/api/platform/environments")
+                ? {
+                    environments: [
                       {
-                        id: "checkout",
-                        source_id: "source",
-                        relative_dir: "mes",
-                        state: "ready",
-                        verified_revision: 100,
-                        generation: 2,
-                        writer_operation_id: null,
-                        readers: 2,
-                        selected_paths: ["set_server", "set_web/JTH"],
+                        id: "env-one",
+                        code: "one",
+                        display_name: "环境一",
+                        status: "enabled",
+                        revision: 1,
+                      },
+                      {
+                        id: "env-two",
+                        code: "two",
+                        display_name: "环境二",
+                        status: "enabled",
+                        revision: 1,
                       },
                     ],
                   }
+                : String(input).endsWith("/index-status")
+                  ? { paused: false, indexes: [] }
+                  : {
+                      enabled: true,
+                      registrations: [
+                        { id: "local-svn", url: "https://svn.invalid/trunk" },
+                      ],
+                      jobs: [],
+                      checkouts: [
+                        {
+                          id: "checkout",
+                          source_id: "source",
+                          relative_dir: "mes",
+                          state: "ready",
+                          verified_revision: 100,
+                          generation: 2,
+                          writer_operation_id: null,
+                          readers: 2,
+                          selected_paths: ["set_server", "set_web/JTH"],
+                        },
+                      ],
+                    }
             ),
             { headers: { "Content-Type": "application/json" } }
           )
@@ -108,6 +127,8 @@ describe("代码知识库配置", () => {
     expect(screen.getByTestId("code-kb-paths")).toHaveValue(
       "set_server\nset_web/JTH"
     )
+    fireEvent.click(await screen.findByTestId("code-kb-environment-one"))
+    fireEvent.click(screen.getByTestId("code-kb-environment-two"))
     fireEvent.click(screen.getByRole("button", { name: "保存源码配置" }))
     await waitFor(() =>
       expect(execute).toHaveBeenCalledWith({
@@ -117,6 +138,7 @@ describe("代码知识库配置", () => {
           expected_revision: 2,
           checkout_id: "checkout",
           svn_access_ref: "local-svn",
+          environment_ids: ["env-one", "env-two"],
           allowed_paths: ["set_server", "set_web/JTH"],
         },
       })

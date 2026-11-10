@@ -14,10 +14,13 @@ from app.modules.knowledge.domain.normalization import digest
 from app.modules.knowledge.infrastructure.code_checkout_client import (
     FOLDER,
     registered_url,
-    registry,
 )
 from app.modules.knowledge.infrastructure.code_checkout_store import checkout_scope, json_value
 from app.modules.knowledge.infrastructure.code_operation_store import CodeOperationStore
+from app.modules.knowledge.infrastructure.code_svn_access import (
+    CodeSvnAccess,
+    connection_fingerprint,
+)
 from app.modules.knowledge.infrastructure.storage import insert, source_lock
 from app.shared.database import Database
 
@@ -78,7 +81,9 @@ class CodeCheckoutJobs(CodeOperationStore):
             "enabled": enabled,
             "registrations": [
                 {"id": key, "url": entry["public_url"]}
-                for key, entry in registry(self.registry_file).items()
+                for key, entry in CodeSvnAccess(self.db, self.registry_file)
+                .entries(resource_id)
+                .items()
             ]
             if enabled
             else [],
@@ -87,10 +92,23 @@ class CodeCheckoutJobs(CodeOperationStore):
         }
 
     def submit_browse(
-        self, *, actor_id: str, resource_id: str, url: str, revision: int | None, request_key: str
+        self,
+        *,
+        actor_id: str,
+        resource_id: str,
+        url: str,
+        revision: int | None,
+        request_key: str,
+        connection_id: str | None = None,
     ) -> dict[str, Any]:
         self.admin.require_admin(actor_id)
-        key, entry = registered_url(self.registry_file, url)
+        if connection_id:
+            key = connection_id
+            entry = CodeSvnAccess(self.db, self.registry_file).entry(key, resource_id)
+            if url.rstrip("/") != entry["public_url"].rstrip("/"):
+                raise CodeKnowledgeError("CODE_REGISTRATION_CHANGED")
+        else:
+            key, entry = registered_url(self.registry_file, url)
         if revision is not None:
             svn_revision(revision)
         return self._submit(
@@ -100,7 +118,7 @@ class CodeCheckoutJobs(CodeOperationStore):
             "browse",
             {
                 "registration": key,
-                "registration_hash": digest(entry),
+                "registration_hash": connection_fingerprint(entry),
                 "revision": revision,
                 "public_url": entry["public_url"],
             },

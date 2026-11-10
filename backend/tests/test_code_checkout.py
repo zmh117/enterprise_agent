@@ -48,6 +48,7 @@ def management(setup, monkeypatch):
                 raise CodeKnowledgeError("CODE_SYNTHETIC_FAILURE")
             directory = root / folder
             directory.mkdir()
+            (directory / ".svn").mkdir()
             (directory / "README.md").write_text("synthetic complete file")
 
     class Copy:
@@ -202,7 +203,10 @@ def test_worker_recovery_requires_matching_actual_stop_proof(management):
     assert state["calls"] == 1  # Only browse, never automatic checkout/update replay.
 
 
-def test_existing_checkout_registration_is_read_only_and_refuses_active_readers(setup, monkeypatch):
+@pytest.mark.parametrize("stale_registration", [False, True])
+def test_existing_checkout_registration_is_read_only_and_refuses_active_readers(
+    setup, monkeypatch, stale_registration
+):
     from app.cli.register_code_checkout import register_existing
     from backend.tests.support.code_answers import analysis_context, confirm
     from app.modules.knowledge.infrastructure.code_analysis_store import CodeAnalysisStore
@@ -222,22 +226,52 @@ def test_existing_checkout_registration_is_read_only_and_refuses_active_readers(
         def __init__(self, source, directory, paths, physical_key):
             inspected.append((directory, paths, physical_key))
 
-        def inspect(self):
+        def inspect(self, revision=None):
             return {"operative_revision": 100}
 
     monkeypatch.setattr("app.cli.register_code_checkout.WorkingCopyClient", ExistingClient)
     monkeypatch.setattr("app.cli.register_code_checkout.SvnWorkingCopy", ExistingCopy)
     args = dict(entry=entry, root=root, auth_root=root, directory="mes", paths=[""])
+    (root / "mes" / ".svn").mkdir()
+    if stale_registration:
+        runtime.database.execute(
+            'UPDATE "knowledge.code_checkout" SET physical_key=? WHERE id=?',
+            ("f" * 64, checkout["id"]),
+        )
+        args["repair_identity"] = True
+        from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+
+        def interrupted(directory, *, create):
+            persistent_identity(directory, create=create)
+            raise CodeKnowledgeError("CODE_SYNTHETIC_INTERRUPTION")
+
+        with monkeypatch.context() as patch:
+            patch.setattr("app.cli.register_code_checkout.persistent_identity", interrupted)
+            with pytest.raises(CodeKnowledgeError, match="CODE_SYNTHETIC_INTERRUPTION"):
+                register_existing(runtime.database, **args)
+        inspected.clear()
     result = register_existing(runtime.database, **args)
     assert result["checkout_id"] == checkout["id"] and result["source_id"] == source
     assert len(inspected) == 1
+    from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+
+    saved = runtime.database.execute_one(
+        'SELECT physical_key FROM "knowledge.code_checkout" WHERE id=?', (checkout["id"],)
+    )
+    assert saved["physical_key"] == persistent_identity(root / "mes")
+    # Idempotent restart after an identity marker has already been persisted.
+    register_existing(runtime.database, **args)
+    assert len(inspected) == 2
     assert runtime.database.execute('SELECT id FROM "knowledge.code_svn_operation"') == []
     store = CodeAnalysisStore(runtime.database, authorize=lambda context: None)
     ctx = analysis_context(runtime, source, checkout)
-    confirm(store, ctx, store.begin(ctx, "active"))
+    pending = store.begin(ctx, "active")
     with pytest.raises(CodeKnowledgeError, match="WORKSPACE_BUSY"):
         register_existing(runtime.database, **args)
-    assert len(inspected) == 1
+    confirm(store, ctx, pending)
+    with pytest.raises(CodeKnowledgeError, match="WORKSPACE_BUSY"):
+        register_existing(runtime.database, **args)
+    assert len(inspected) == 2
 
 
 def test_checkout_space_is_bounded_before_subprocess(tmp_path, monkeypatch):

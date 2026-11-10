@@ -220,7 +220,7 @@ def _register_code_routes(router: APIRouter) -> None:
         value = await payload(
             request,
             {"expected_revision", "checkout_id", "svn_access_ref", "allowed_paths"},
-            frozenset({"storage", "index_id"}),
+            frozenset({"storage", "index_id", "environment_ids"}),
         )
         return await invoke(
             services(request).code_resources().save_code_draft,

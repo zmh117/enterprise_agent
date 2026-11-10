@@ -10,6 +10,7 @@ from app.modules.knowledge.domain.code_answers import code_path
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.identity import now, stable_id
 from app.modules.knowledge.domain.normalization import digest
+from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
 from app.modules.knowledge.infrastructure.storage import insert, source_lock, table
 from app.shared.database import Database
 
@@ -202,8 +203,7 @@ class CodeCheckoutStore:
         path = root / code_path(row["relative_dir"])
         if path.resolve(strict=True) != path or not path.is_dir():
             raise CodeKnowledgeError("CODE_CHECKOUT_PATH_INVALID")
-        stat = path.stat()
-        physical = digest([stat.st_dev, stat.st_ino])
+        physical = persistent_identity(path)
         other = self.db.execute_one(
             f"SELECT id FROM {self.t('code_checkout')} WHERE physical_key=? AND id<>?",
             (physical, identifier),

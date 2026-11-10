@@ -4478,6 +4478,62 @@
       "evidence_refs": [
         "migration:160_replace_code_preextraction"
       ]
+    },
+    {
+      "id": "knowledge.code_svn_connection",
+      "object_type": "table",
+      "table": "knowledge.code_svn_connection",
+      "owner": "knowledge",
+      "semantics": "代码资源归属的 SVN 连接及加密凭据引用",
+      "classification": "canonical_mutable_fact",
+      "canonical_source": "管理员在具体代码知识资源中保存的配置",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_svn_access.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_svn_access.py"
+      ],
+      "lifecycle": "随代码知识资源配置保留，不改写已发布配置",
+      "retention_policy": "保留被配置修订或 SVN 操作引用的连接与归属",
+      "audit_requirement": "只保存安全身份和状态；不保存认证值或源码",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "明确规范变更与引用核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:161_add_code_svn_connections"
+      ]
+    },
+    {
+      "id": "knowledge.code_resource_environment",
+      "object_type": "table",
+      "table": "knowledge.code_resource_environment",
+      "owner": "knowledge",
+      "semantics": "代码知识库配置与环境的多对多归属",
+      "classification": "canonical_mutable_fact",
+      "canonical_source": "管理员在具体代码知识资源中保存的配置",
+      "writers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_resource_service.py"
+      ],
+      "readers": [
+        "code:backend/app/modules/knowledge/infrastructure/code_resource_service.py"
+      ],
+      "lifecycle": "随代码知识资源配置保留，不改写已发布配置",
+      "retention_policy": "保留被配置修订或 SVN 操作引用的连接与归属",
+      "audit_requirement": "只保存安全身份和状态；不保存认证值或源码",
+      "retirement": {
+        "status": "retained",
+        "earliest_phase": "never",
+        "gates": [
+          "明确规范变更与引用核验"
+        ]
+      },
+      "evidence_refs": [
+        "migration:161_add_code_svn_connections"
+      ]
     }
   ]
 }

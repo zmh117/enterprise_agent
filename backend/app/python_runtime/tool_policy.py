@@ -125,6 +125,7 @@ def normalize_tool_events(
         raw_status = str(event.get("status") or "FAILED").upper()
         status = {
             "REJECTED": "DENIED",
+            "DENIED": "DENIED",
             "STARTED": "STARTED",
             "SUCCEEDED": "SUCCEEDED",
             "FAILED": "FAILED",
@@ -161,6 +162,11 @@ def normalize_tool_events(
             }
             if derived_tool == "scan_log_evidence" and status == "FAILED":
                 item["failure"] = log_evidence_failure(event.get("error_code"))
+            if tool_name in {"Read", "Glob", "Grep"} and status == "DENIED":
+                from app.python_runtime.code_tool_errors import MESSAGES, code_tool_failure
+
+                if event.get("error_code") in MESSAGES:
+                    item["failure"] = code_tool_failure(event["error_code"])
         normalized.append(item)
     return tuple(normalized)
 

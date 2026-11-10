@@ -232,6 +232,8 @@ def _code_source_hook_options(
             }
         except Exception as exc:
             code = exc.code if isinstance(exc, CodeKnowledgeError) else "CODE_SOURCE_TOOL_DENIED"
+            call_id = str(tool_use_id or event.get("tool_use_id") or "")
+            mount.record_denial(call_id, code)
             return {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",

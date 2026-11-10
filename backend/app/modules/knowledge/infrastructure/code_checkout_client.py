@@ -8,16 +8,12 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
-import time
 from typing import Any
 from urllib.parse import urlsplit
 
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
-from app.modules.knowledge.domain.normalization import digest
 from app.modules.knowledge.infrastructure.code_source import _read_beneath, relative_path
 from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource, xml_document
-from app.modules.knowledge.infrastructure.code_executor_lock import inherited_execution_fds
 from app.modules.knowledge.infrastructure.code_working_copy import (
     preflight_checkout_space,
     require_checkout_space,
@@ -119,10 +115,16 @@ def selection(paths: Any, entries: list[str]) -> list[str]:
 
 class WorkingCopyClient:
     def __init__(
-        self, entry: dict[str, str], auth_root: Path, cancelled: Callable[[], bool] = lambda: False
+        self,
+        entry: dict[str, str],
+        auth_root: Path,
+        cancelled: Callable[[], bool] = lambda: False,
+        *,
+        credentials: tuple[str, str] | None = None,
+        config_directory: Path | None = None,
     ):
-        self.entry, self.cancelled = entry, cancelled
-        config = auth_root / entry["auth_ref"]
+        self.entry, self.cancelled = dict(entry), cancelled
+        config = config_directory or auth_root / entry["auth_ref"]
         if not config.is_dir() or config.resolve() != config:
             raise CodeKnowledgeError("code_svn_auth_reference_invalid")
         self.source = SvnCodeSource(
@@ -131,7 +133,15 @@ class WorkingCopyClient:
             branch_path=entry["branch_path"],
             config_directory=config,
             cancelled=cancelled,
+            credentials=credentials,
+            discover=bool(entry.get("secret_ref")) and not entry["repository_uuid"],
         )
+        if not entry["repository_uuid"]:
+            self.source.discover()
+            self.entry.update(
+                repository_uuid=self.source.expected_uuid,
+                branch_path=self.source.branch_path or "/",
+            )
 
     def browse(self, revision: int | None) -> dict[str, Any]:
         revision = self.source.head() if revision is None else revision
@@ -140,49 +150,24 @@ class WorkingCopyClient:
         directories = [e["path"] for e in entries if e["kind"] == "dir"]
         if len(directories) > 5000:
             raise CodeKnowledgeError("code_checkout_directory_limit")
+        from app.modules.knowledge.infrastructure.code_svn_access import connection_fingerprint
+
         return {
             "revision": revision,
             "repository_uuid": self.entry["repository_uuid"],
             "directories": sorted(directories),
             "files": sorted(e["path"] for e in entries if e["kind"] == "file"),
-            "registration_hash": digest(self.entry),
+            "registration_hash": connection_fingerprint(self.entry),
         }
 
     def _checkout_command(self, args: list[str], *, root: Path) -> None:
-        command = [
-            "svn",
-            *args,
-            "--non-interactive",
-            "--no-auth-cache",
-            "--config-dir",
-            str(self.source.config_directory),
-        ]
-        with subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            pass_fds=inherited_execution_fds(),
-        ) as process:
-            try:
-                deadline = time.monotonic() + 1800
-                while process.poll() is None:
-                    require_checkout_space(root)
-                    if self.cancelled():
-                        raise CodeKnowledgeError("code_checkout_interrupted")
-                    if time.monotonic() > deadline:
-                        raise CodeKnowledgeError("code_checkout_timeout")
-                    time.sleep(0.1)
-                if process.returncode:
-                    raise CodeKnowledgeError("code_checkout_svn_failed")
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                process.wait()
+        def cancelled() -> bool:
+            require_checkout_space(root)
+            return self.cancelled()
+
+        self.source.execute(
+            args[0], args[1:], timeout=1800, limit=8 * 1024 * 1024, cancelled=cancelled
+        )
 
     def checkout(
         self, *, root: Path, folder: str, job_id: str, revision: int, paths: list[str]

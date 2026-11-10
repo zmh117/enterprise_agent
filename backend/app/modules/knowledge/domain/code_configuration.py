@@ -33,4 +33,7 @@ def source_configuration(value: dict[str, Any]) -> dict[str, Any]:
     canonical = sorted({code_path(p, root=True) for p in paths})
     if len(canonical) != len(paths):
         raise CodeKnowledgeError("CODE_SCOPE_INVALID")
-    return {key: canonical if key == "allowed_paths_json" else value[key] for key in fields}
+    result = {key: canonical if key == "allowed_paths_json" else value[key] for key in fields}
+    if value.get("environment_ids"):
+        result["environment_ids"] = sorted(value["environment_ids"])
+    return result

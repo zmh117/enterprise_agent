@@ -5,12 +5,14 @@ from pathlib import Path
 import re
 import time
 from typing import Any
+from contextlib import ExitStack
+from app.modules.knowledge.infrastructure.code_svn_access import CodeSvnAccess
 
 from app.modules.agent.infrastructure.runtime_pool_store import database_now
 from app.modules.knowledge.domain.code_answers import utc_time
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.normalization import canonical_json
-from app.modules.knowledge.infrastructure.code_checkout_client import WorkingCopyClient, registry
+from app.modules.knowledge.infrastructure.code_checkout_client import WorkingCopyClient
 from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.knowledge.infrastructure.code_operation_store import CodeOperationStore
 from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBuffer
@@ -65,10 +67,11 @@ class CodeOperationExecutor:
                 last_heartbeat = time.monotonic()
             return False
 
+        cleanup = ExitStack()
         try:
             if cancelled():
                 raise CodeKnowledgeError("CODE_OPERATION_CANCELLED")
-            client = self._client(operation, cancelled)
+            client = cleanup.enter_context(self._client(operation, cancelled))
             source = client.source
             source.preflight(context.revision)
             arguments = json_value(operation["request_json"])
@@ -128,10 +131,10 @@ class CodeOperationExecutor:
             # Every CLI helper waits for its child before raising. If DB ownership
             # was lost, retain the durable claim rather than clearing another owner.
             store.stopped(operation_id, owner=self.owner, claim=claim, error_code=error)
+        finally:
+            cleanup.close()
 
-    def _client(
-        self, operation: dict[str, Any], cancelled: Callable[[], bool]
-    ) -> WorkingCopyClient:
+    def _client(self, operation: dict[str, Any], cancelled: Callable[[], bool]) -> Any:
         store = self.store
         row = store.db.execute_one(
             f"SELECT c.svn_access_ref,r.repository_uuid,r.branch_path FROM {store.t('code_resource_config')} c JOIN {store.t('code_repository')} r ON r.source_id=c.source_id WHERE c.revision_id=? AND c.source_id=?",
@@ -139,14 +142,22 @@ class CodeOperationExecutor:
         )
         if not row:
             raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
-        entry = registry(self.registry_file).get(row["svn_access_ref"])
+        revision = store.db.execute_one(
+            f"SELECT resource_id FROM {store.t('retrieval_revision')} WHERE id=?",
+            (operation["config_revision_id"],),
+        )
+        if not revision:
+            raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
+        resource = revision["resource_id"]
+        access = CodeSvnAccess(store.db, self.registry_file)
+        entry = access.entry(row["svn_access_ref"], resource)
         if (
             not entry
             or str(row["repository_uuid"]) != entry["repository_uuid"]
             or row["branch_path"] != entry["branch_path"].strip("/")
         ):
             raise CodeKnowledgeError("CODE_REPOSITORY_CHANGED")
-        return WorkingCopyClient(entry, self.auth_root, cancelled)
+        return access.client(entry, self.auth_root, cancelled, factory=WorkingCopyClient)
 
     def _history(
         self, operation: dict[str, Any], source: Any, arguments: dict[str, Any], context: Any

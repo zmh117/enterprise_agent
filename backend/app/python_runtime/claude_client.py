@@ -307,6 +307,8 @@ class ClaudeSdkClient:
                     )
                 assistant_texts.extend(extract_text_blocks(message))
                 events = extract_tool_events(message, self.limits, parsed_tool_calls)
+                if sandbox.source_mount is not None:
+                    sandbox.source_mount.apply_denials(events)
                 _omit_extraction_bodies(
                     events, bool(request.context.retrieved_context.get("code_source"))
                 )
@@ -837,6 +839,10 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
                 "do not generate a knowledge package or launch another Agent. "
                 "Cite actually used answers as code-answer:<document_id>@<revision_id> in the final business answer. "
                 "Use IDs returned by full-answer reads or successful saves; higher revisions remain hints."
+                " When a source operation reports a checkout identity/source/scope failure or authentication "
+                "failure, stop retrying svn_update in this Job, do not call Read/Glob/Grep without a grant, "
+                "and report that administrator repair is needed. Use the knowledge directory's environments "
+                "to locate the user's project; ask for the code library if that remains ambiguous."
                 if code_job
                 else ""
             ),

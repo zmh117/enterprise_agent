@@ -7,6 +7,8 @@ import os
 import subprocess
 import selectors
 import time
+import re
+import uuid
 from typing import Any
 from collections.abc import Callable
 from urllib.parse import urlsplit, quote, unquote, urljoin
@@ -44,6 +46,8 @@ class SvnCodeSource:
         executable: str = "svn",
         allow_local_test: bool = False,
         cancelled: Callable[[], bool] | None = None,
+        credentials: tuple[str, str] | None = None,
+        discover: bool = False,
     ) -> None:
         parsed = urlsplit(branch_url)
         schemes = {"https"} | ({"file"} if allow_local_test else set())
@@ -54,7 +58,7 @@ class SvnCodeSource:
             or parsed.query
             or parsed.fragment
             or "@" in parsed.path
-            or not expected_uuid
+            or (not expected_uuid and not discover)
             or not branch_path.startswith("/")
         ):
             raise CodeKnowledgeError("code_svn_binding_invalid")
@@ -69,11 +73,57 @@ class SvnCodeSource:
         )
         self.config_directory, self.executable = config_directory, executable
         self.cancelled = cancelled or (lambda: False)
+        self._credentials = credentials
+
+    def discover(self) -> None:
+        entry = xml_document(self._run("info", ["--xml", self.branch_url + "@HEAD"])).find("entry")
+        try:
+            if entry is None:
+                raise ValueError
+            identity = str(uuid.UUID(entry.findtext("repository/uuid") or ""))
+            relative = unquote(entry.findtext("relative-url") or "")
+            if not relative.startswith("^/"):
+                raise ValueError
+            branch = relative[1:].rstrip("/")
+            if branch:
+                relative_path(branch.lstrip("/"))
+            self.expected_uuid, self.branch_path = identity, branch
+        except ValueError:
+            raise CodeKnowledgeError("code_svn_repository_mismatch") from None
 
     def _run(self, operation: str, args: list[str]) -> bytes:
         if self.cancelled():
             raise CodeKnowledgeError("code_collection_interrupted")
         if operation not in {"info", "log", "cat", "diff", "propget", "list", "blame", "status"}:
+            raise CodeKnowledgeError("code_svn_operation_denied")
+        return self.execute(
+            operation,
+            args,
+            timeout=60,
+            limit=MAX_SOURCE_BYTES if operation == "cat" else MAX_XML_BYTES,
+        )
+
+    def execute(
+        self,
+        operation: str,
+        args: list[str],
+        *,
+        timeout: float,
+        limit: int,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> bytes:
+        if operation not in {
+            "info",
+            "log",
+            "cat",
+            "diff",
+            "propget",
+            "list",
+            "blame",
+            "status",
+            "checkout",
+            "update",
+        }:
             raise CodeKnowledgeError("code_svn_operation_denied")
         command = [
             self.executable,
@@ -84,20 +134,28 @@ class SvnCodeSource:
             str(self.config_directory),
             *args,
         ]
+        if self._credentials:
+            command += ["--username", self._credentials[0], "--password-from-stdin"]
         try:
             with subprocess.Popen(
                 command,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE if self._credentials else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 pass_fds=inherited_execution_fds(),
             ) as process:
                 try:
+                    if self._credentials and process.stdin is not None:
+                        try:
+                            process.stdin.write((self._credentials[1] + "\n").encode())
+                            process.stdin.close()
+                        except BrokenPipeError:
+                            pass
                     return _bounded_output(
                         process,
-                        timeout=60,
-                        limit=MAX_SOURCE_BYTES if operation == "cat" else MAX_XML_BYTES,
-                        cancelled=self.cancelled,
+                        timeout=timeout,
+                        limit=limit,
+                        cancelled=cancelled or self.cancelled,
                     )
                 finally:
                     if process.poll() is None:
@@ -345,26 +403,45 @@ def _bounded_output(
     limit: int,
     cancelled: Callable[[], bool] = lambda: False,
 ) -> bytes:
-    """Bound memory while the child is running; never retain or log SVN stderr."""
+    """Bound stdout; retain only fixed numeric SVN error codes from stderr."""
     assert process.stdout is not None
     deadline = time.monotonic() + timeout
     output = bytearray()
+    error_codes: set[bytes] = set()
+    error_tail, error_size = b"", 0
     with selectors.DefaultSelector() as selector:
         selector.register(process.stdout, selectors.EVENT_READ)
-        while True:
+        if process.stderr is not None:
+            selector.register(process.stderr, selectors.EVENT_READ)
+        while selector.get_map():
             if cancelled():
                 raise CodeKnowledgeError("code_collection_interrupted")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise CodeKnowledgeError("code_svn_unavailable")
-            if not selector.select(min(1, remaining)):
-                continue
-            block = os.read(process.stdout.fileno(), min(65536, limit + 1 - len(output)))
-            if not block:
-                break
-            output.extend(block)
-            if len(output) > limit:
-                raise CodeKnowledgeError("code_svn_response_too_large")
+            for key, _ in selector.select(min(1, remaining)):
+                block = os.read(key.fd, 65536)
+                if not block:
+                    selector.unregister(key.fileobj)
+                    continue
+                if key.fileobj is process.stderr:
+                    error_size += len(block)
+                    error_codes.update(re.findall(rb"E[0-9]{6}", error_tail + block))
+                    error_tail = block[-7:]
+                    if error_size > 65536:
+                        raise CodeKnowledgeError("code_svn_response_too_large")
+                else:
+                    output.extend(block)
+                    if len(output) > limit:
+                        raise CodeKnowledgeError("code_svn_response_too_large")
     if process.wait(timeout=max(0.001, deadline - time.monotonic())):
+        for codes, error in [
+            ({b"E215004", b"E170001"}, "CODE_SVN_AUTH_FAILED"),
+            ({b"E230001"}, "CODE_SVN_CERTIFICATE_INVALID"),
+            ({b"E175013", b"E220004"}, "CODE_SVN_ACCESS_DENIED"),
+            ({b"E170013", b"E175002", b"E670002"}, "CODE_SVN_CONNECTION_FAILED"),
+        ]:
+            if error_codes & codes:
+                raise CodeKnowledgeError(error)
         raise CodeKnowledgeError("code_svn_request_failed")
     return bytes(output)

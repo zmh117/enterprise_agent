@@ -18,7 +18,7 @@ from urllib.parse import quote
 from app.modules.knowledge.domain.code_text import decode_source
 from app.modules.knowledge.domain.code_answers import code_path, path_in_scope
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
-from app.modules.knowledge.domain.normalization import digest
+from app.modules.knowledge.infrastructure.code_checkout_identity import CheckoutIdentity
 from app.modules.knowledge.infrastructure.code_source import (
     _read_beneath,
     SENSITIVE_CONTENT,
@@ -96,14 +96,11 @@ class CodeCheckoutReader:
     def __init__(self, root: Path, grant: dict[str, Any]) -> None:
         self.grant = grant
         self.root = root / code_path(grant["directory"])
+        self.identity = CheckoutIdentity(self.root, grant["physical_key"])
         self._identity()
 
     def _identity(self) -> None:
-        if self.root.resolve(strict=True) != self.root or self.root.is_symlink():
-            raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
-        info = self.root.stat()
-        if digest([info.st_dev, info.st_ino]) != self.grant["physical_key"]:
-            raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
+        self.identity.check()
 
     @contextmanager
     def _metadata(self) -> Iterator[sqlite3.Connection]:
