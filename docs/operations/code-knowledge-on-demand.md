@@ -22,13 +22,15 @@
 
 三个宿主系统均运行 Linux 容器和同一套 SVN CLI；无需把 TortoiseSVN 安装到 Runtime。当前真实 CLI 验证是在 Mac Docker 的 Linux 容器中完成，不代表另外两种宿主已经通过。
 
-代码问答需要显式加载 `docker-compose.code-knowledge.yml`。在部署环境设置 `CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE` 为已有专用凭据文件路径；该文件同时挂给 API 和两个 Runtime。仅使用主 Compose 会保留只读目录，但缺少源码授权身份，不能运行代码分析。后续更新这三个服务也须使用同样的 Compose 文件组合：
+代码问答已纳入唯一主入口 `docker-compose.yml`，不再使用额外的代码知识库 overlay。主文件同时给 API 和两个 Runtime 挂载专用凭据与固定环境配置。`CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE` 可指定已有专用凭据文件；留空使用 `${HOME}/.config/enterprise-agent/code-runtime-bootstrap-token`。新环境使用 `scripts/bootstrap_agent_runtime_secrets.sh` 幂等生成此文件，已有环境继续使用原文件，不轮换或复用 ONES 凭据。后续构建、更新只使用主文件：
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.code-knowledge.yml up -d --no-deps api-server python-agent-runtime-a python-agent-runtime-b
+docker compose -f docker-compose.yml up -d --build --no-deps api-server python-agent-runtime-a python-agent-runtime-b
 ```
 
 Windows PowerShell 同样使用上述 `-f` 参数；凭据宿主路径根据该机器配置。不要把凭据值放进命令或日志，也不要复用 ONES 的凭据。
+
+缺少代码分析运行配置的 Job 应直接返回 `code_runtime_unavailable` 与明确中文提示，不自动重试；恢复部署后通过新的 Job 验证，不改写历史失败记录。
 
 ## 从 schema 159 切换
 

@@ -486,6 +486,8 @@ services:
       FILE_PRINCIPAL_REFRESH_SKEW_SECONDS: "60"
       PYTHON_AGENT_RUNTIME_SANDBOX_ROOT: /tmp/python-agent-runtime/sandboxes
       CODE_CHECKOUT_ROOT: /var/lib/code-svn/checkout
+      SERVICE_PRINCIPAL_ENABLED: "true"
+      CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE: /run/secrets/code_runtime_bootstrap_token
       PYTHON_AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES: ${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-536870912}
       PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILES: ${AGENT_RUNTIME_SANDBOX_MAX_FILES:-128}
       PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES: ${AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES:-15728640}
@@ -499,6 +501,7 @@ services:
       - app_config_master_key
       - runtime_grant_public_key
       - model_probe_auth_token
+      - code_runtime_bootstrap_token
     expose:
       - "8091"
     depends_on:
@@ -552,10 +555,12 @@ services:
       <<: *api-env
       CODE_CHECKOUT_ENABLED: ${CODE_CHECKOUT_ENABLED:-false}
       CODE_CHECKOUT_REGISTRY_FILE: /etc/code-svn/checkout.json
+      CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE: /run/secrets/code_runtime_bootstrap_token
     volumes:
       - ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration:/etc/code-svn:ro
     secrets:
       - knowledge_bootstrap_token
+      - code_runtime_bootstrap_token
       - dingtalk_runtime_auth_token
       - app_config_master_key
       - model_probe_auth_token
@@ -1509,6 +1514,8 @@ services:
       start_period: 30s
 
 secrets:
+  code_runtime_bootstrap_token:
+    file: ${CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE:-${HOME}/.config/enterprise-agent/code-runtime-bootstrap-token}
   knowledge_bootstrap_token:
     file: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}
   app_config_master_key:

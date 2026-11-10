@@ -3586,6 +3586,75 @@ def test_python_runtime_projects_non_retryable_failures(
     assert outcome.tool_contract_observation == {"status": "MATCH"}
 
 
+def test_code_runtime_missing_configuration_is_terminal_before_sdk_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.python_runtime.executor.FixedMcpClaudeSdkClient",
+        lambda **kwargs: pytest.fail("Missing code configuration must not start the SDK"),
+    )
+    executor = PythonRuntimeExecutor(
+        cast(PythonModelBindingResolver, FakePythonBindingResolver()),
+        limits=build_settings().execution,
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        sdk_version="test-sdk",
+        cli_version="test-cli",
+    )
+    request = _current_request()
+    request["prompt"]["retrieved_context"]["code_source"] = {
+        "contract": "code-source-capability/v2"
+    }
+    outcome = executor.execute(request, threading.Event())
+    assert outcome.status == "FAILED"
+    assert outcome.failure == {
+        "code": "code_runtime_unavailable",
+        "retry_class": "CONFIGURATION",
+        "safe_message": "代码分析运行配置缺失，请管理员检查 API 与 Runtime 的专用凭据挂载和源码目录配置",
+    }
+    assert outcome.runtime_events == ()
+    assert outcome.tool_events == ()
+
+
+@pytest.mark.parametrize("stage", ["binding", "code_sandbox", "sdk_client"])
+@pytest.mark.parametrize(
+    ("failure_type", "retry_class"),
+    [(NonRetryableExecutionError, "CONFIGURATION"), (RetryableExecutionError, "TRANSIENT")],
+)
+def test_runtime_preserves_initialization_error_classification(
+    monkeypatch: pytest.MonkeyPatch, stage: str, failure_type: Any, retry_class: str
+) -> None:
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise failure_type(
+            "sensitive-internal-initialization-detail",
+            safe_message="运行配置校验失败",
+            error_code="runtime_setup_failed",
+        )
+
+    resolver = FakePythonBindingResolver()
+    executor = PythonRuntimeExecutor(
+        cast(PythonModelBindingResolver, resolver),
+        limits=build_settings().execution,
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        sdk_version="test-sdk",
+        cli_version="test-cli",
+        code_sandbox_factory=fail,
+    )
+    request = _current_request()
+    if stage == "binding":
+        monkeypatch.setattr(resolver, "resolve", fail)
+    elif stage == "code_sandbox":
+        request["prompt"]["retrieved_context"]["code_source"] = {}
+    monkeypatch.setattr("app.python_runtime.executor.FixedMcpClaudeSdkClient", fail)
+    outcome = executor.execute(request, threading.Event())
+    assert outcome.failure == {
+        "code": "runtime_setup_failed",
+        "retry_class": retry_class,
+        "safe_message": "运行配置校验失败",
+    }
+    assert outcome.runtime_events == outcome.tool_events == ()
+    assert "sensitive-internal" not in json.dumps(outcome.__dict__)
+
+
 def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> None:
     resolver = FakePythonBindingResolver()
     executor = PythonRuntimeExecutor(

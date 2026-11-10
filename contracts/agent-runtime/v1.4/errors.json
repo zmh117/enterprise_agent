@@ -54,6 +54,10 @@
       "retry_class": "CONFIGURATION"
     },
     {
+      "code": "code_runtime_unavailable",
+      "retry_class": "CONFIGURATION"
+    },
+    {
       "code": "runtime_model_permission_denied",
       "retry_class": "CONFIGURATION"
     },

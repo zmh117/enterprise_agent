@@ -84,6 +84,8 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
 保留原 `.env`、Master Key、数据库、模型、向量、进度卷和项目名。先核对备份和当前任务，
 安排维护窗口，再按当前版本构建/重建相关服务。使用原密钥目录运行 bootstrap 并带
 `--docker-acl` 补齐所需角色身份材料及读取权限；已有管理员沿用原初始化行为。
+代码分析身份也由主 Compose 统一挂载：保留现有 `CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE`
+路径，或使用 bootstrap 生成的 `code-runtime-bootstrap-token`，无需叠加代码知识库配置文件。
 不要对已有安装执行 `init-volumes --fresh`。
 
 `external_volume_missing` 时先核对 `KNOWLEDGE_*_VOLUME` 和实际 Docker context；若是版本

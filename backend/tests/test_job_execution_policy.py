@@ -355,6 +355,41 @@ def test_executor_persists_attempt_usage_and_exhaustion_separately_from_context_
     assert persisted.execution_policy_exhausted is True
 
 
+def test_worker_does_not_retry_missing_code_runtime_configuration() -> None:
+    c = container()
+    job = c.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="missing-code-runtime",
+            external_conversation_id="missing-code-runtime",
+            requester_id="local-user",
+            user_message="synthetic code configuration check",
+        )
+    )
+    calls: list[object] = []
+
+    class UnconfiguredRuntime:
+        def run(self, request: object) -> object:
+            calls.append(request)
+            raise NonRetryableExecutionError(
+                "private initialization detail",
+                safe_message="代码分析运行配置缺失，请管理员检查专用凭据挂载",
+                error_code="code_runtime_unavailable",
+            )
+
+    c.agent_executor.runtime_client = UnconfiguredRuntime()
+    worker = AgentJobWorker(c.settings, container=c)
+    message = persisted_agent_job_message(c, job.id)
+    worker.handle(message)
+    worker.handle(message)
+    persisted = c.agent_repository.get_job(job.id)
+    assert persisted.status == JobStatus.FAILED
+    assert persisted.retry_count == 0
+    assert persisted.next_retry_at is None
+    assert persisted.last_error_code == "code_runtime_unavailable"
+    assert len(calls) == 1
+    assert "private initialization" not in (persisted.error_message or "")
+
+
 def test_worker_delivers_safe_non_retryable_tool_budget_failure_once() -> None:
     c = container()
     adapter = _CaptureFailureDeliveryAdapter()

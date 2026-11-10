@@ -321,8 +321,8 @@ def test_ones_query_dictionary_is_a_minimal_scoped_runtime_asset() -> None:
     context_builder = (
         REPOSITORY_ROOT / "backend/app/modules/agent/application/agent_context_builder.py"
     ).read_text(encoding="utf-8")
-    assert 'snapshot.get("skills")' in context_builder
-    assert "self.skill_loader.load(skill_names) if publication" in context_builder
+    # Published Skills are frozen in the publication, not reloaded by name.
+    assert "self.skill_loader.load_publication(snapshot)" in context_builder
     assert "COPY .claude/skills /app/.claude/skills" in dockerfile
 
 
@@ -481,6 +481,7 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     processing_worker_bootstrap = tmp_path / "file-processing-worker-bootstrap-token"
     delivery_worker_bootstrap = tmp_path / "delivery-worker-bootstrap-token"
     knowledge_bootstrap = tmp_path / "knowledge-bootstrap-token"
+    code_bootstrap = tmp_path / "code-runtime-bootstrap-token"
     docling_api_key = tmp_path / "docling-api-key"
     assert not (tmp_path / "service-principal-private.pem").exists()
     assert not (tmp_path / "service-principal-jwks.json").exists()
@@ -488,6 +489,8 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     assert stat.S_IMODE(processing_worker_bootstrap.stat().st_mode) == 0o400
     assert stat.S_IMODE(delivery_worker_bootstrap.stat().st_mode) == 0o400
     assert stat.S_IMODE(knowledge_bootstrap.stat().st_mode) == 0o400
+    assert stat.S_IMODE(code_bootstrap.stat().st_mode) == 0o400
+    assert code_bootstrap.read_bytes() != knowledge_bootstrap.read_bytes()
     assert stat.S_IMODE(docling_api_key.stat().st_mode) == 0o400
     assert file_worker_bootstrap.read_bytes() != delivery_worker_bootstrap.read_bytes()
     assert processing_worker_bootstrap.read_bytes() not in {
@@ -508,6 +511,7 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     processing_worker_loaded = processing_worker_bootstrap.read_bytes()
     docling_api_key_loaded = docling_api_key.read_bytes()
     knowledge_loaded = knowledge_bootstrap.read_bytes()
+    code_loaded = code_bootstrap.read_bytes()
     subprocess.run([str(script), str(tmp_path)], check=True, capture_output=True, text=True)
     assert principal_private_key.read_bytes() == loaded
     assert file_worker_bootstrap.read_bytes() == file_worker_loaded
@@ -515,6 +519,7 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     assert processing_worker_bootstrap.read_bytes() == processing_worker_loaded
     assert docling_api_key.read_bytes() == docling_api_key_loaded
     assert knowledge_bootstrap.read_bytes() == knowledge_loaded
+    assert code_bootstrap.read_bytes() == code_loaded
     assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
 
 

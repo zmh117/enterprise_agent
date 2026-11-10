@@ -313,6 +313,7 @@ def test_docker_acl_only_grants_each_secret_to_its_container_consumers(tmp_path:
     assert grants["app-config-master-key"] == {0, 10001, 10002, 10003, 10005, 10007}
     assert grants["principal-jwt-private.pem"] == {0}
     assert grants["knowledge-bootstrap-token"] == {0, 10008}
+    assert grants["code-runtime-bootstrap-token"] == {0, 10002}
     assert grants["docling-api-key"] == {1001, 10006}
     assert grants["runtime-grant-public.pem"] == {10002}
 

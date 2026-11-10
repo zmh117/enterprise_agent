@@ -11,8 +11,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_on_demand_code_shares_one_checkout_with_readonly_runtimes() -> None:
     base = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
-    overlay = yaml.safe_load((ROOT / "docker-compose.code-knowledge.yml").read_text())
-    assert "job-dispatch-worker" not in overlay["services"]
     source = None
     for name in ("knowledge-sync", "python-agent-runtime-a", "python-agent-runtime-b"):
         service = base["services"][name]
@@ -26,7 +24,7 @@ def test_on_demand_code_shares_one_checkout_with_readonly_runtimes() -> None:
         assert bool(mount.get("read_only")) == (name != "knowledge-sync")
         assert "CODE_SOURCE_SNAPSHOT_ROOT" not in service["environment"]
         if name != "knowledge-sync":
-            assert "code_runtime_bootstrap_token" in overlay["services"][name]["secrets"]
+            assert "code_runtime_bootstrap_token" in service["secrets"]
     assert "ports" not in base["services"]["knowledge-sync"]
     assert "code-extraction-artifacts" not in base.get("volumes", {})
     controller = base["services"]["knowledge-ops-controller"]
@@ -34,6 +32,22 @@ def test_on_demand_code_shares_one_checkout_with_readonly_runtimes() -> None:
         m.get("source") == source and m.get("read_only") is True
         for m in controller["volumes"]
         if isinstance(m, dict)
+    )
+
+
+def test_default_compose_includes_code_identity_for_api_and_both_runtimes() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    consumers = {"api-server", "python-agent-runtime-a", "python-agent-runtime-b"}
+    for name, service in compose["services"].items():
+        assert ("code_runtime_bootstrap_token" in service.get("secrets", [])) == (name in consumers)
+        if name in consumers:
+            assert service["environment"]["CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE"] == (
+                "/run/secrets/code_runtime_bootstrap_token"
+            )
+            assert service["environment"]["SERVICE_PRINCIPAL_ENABLED"] == "true"
+    assert compose["secrets"]["code_runtime_bootstrap_token"]["file"] == (
+        "${CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE:-${HOME}/.config/enterprise-agent/"
+        "code-runtime-bootstrap-token}"
     )
 
 

@@ -172,54 +172,58 @@ class PythonRuntimeExecutor:
         secret_context: InvocationSecretContextPort | None = None,
         tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> PythonExecutionOutcome:
-        resolved = self._bindings.resolve(
-            str(request["model_connection"]["revision_id"]),
-            str(request["model_connection"]["config_hash"]),
-        )
         provenance = self._provenance(request)
         if cancel_event.is_set():
             return self._cancelled(provenance)
-        run_request = agent_request_from_runtime_request(request, resolved.binding)
-        sandbox_manager = self._sandbox_manager
-        if run_request.context.retrieved_context.get("code_source") is not None:
-            if self._code_sandbox_factory is None or self._fake_provider_mode:
-                raise NonRetryableExecutionError(
-                    "Code extraction Runtime is unavailable",
-                    safe_message="代码提取运行时不可用",
-                    error_code="code_runtime_unavailable",
-                )
-            sandbox_manager = self._code_sandbox_factory(request)
-        file_principal_token = secret_context.file_principal_token if secret_context else ""
-        file_principal_token_provider = (
-            FilePrincipalTokenClient(
-                base_url=self._file_principal_refresh_base_url,
-                allowed_hosts=self._file_principal_refresh_allowed_hosts,
-                initial_token=file_principal_token,
-                job_id=str(request["job_id"]),
-                timeout_seconds=self._file_principal_refresh_timeout_seconds,
-                refresh_skew_seconds=self._file_principal_refresh_skew_seconds,
-            )
-            if file_principal_token and self._file_principal_refresh_base_url
-            else None
-        )
-        client = FixedMcpClaudeSdkClient(
-            limits=self._limits,
-            api_key=resolved.api_key,
-            mcp_server_url=self._mcp_server_url,
-            business_mcp_server_urls=self._business_mcp_server_urls,
-            mcp_principal_tokens=(secret_context.mcp_principal_tokens if secret_context else {}),
-            file_mcp_server_url=self._file_mcp_server_url,
-            file_principal_token=file_principal_token,
-            file_principal_token_provider=file_principal_token_provider,
-            server_policies=self._server_policies,
-            sandbox_manager=sandbox_manager,
-            cancellation_event=cancel_event,
-            runtime_build_identity=self._build_identity,
-            tool_contract_observer=tool_contract_observer,
-        )
-        if file_principal_token_provider is not None:
-            file_principal_token_provider.start()
+        client: FixedMcpClaudeSdkClient | None = None
+        file_principal_token_provider: FilePrincipalTokenClient | None = None
         try:
+            resolved = self._bindings.resolve(
+                str(request["model_connection"]["revision_id"]),
+                str(request["model_connection"]["config_hash"]),
+            )
+            run_request = agent_request_from_runtime_request(request, resolved.binding)
+            sandbox_manager = self._sandbox_manager
+            if run_request.context.retrieved_context.get("code_source") is not None:
+                if self._code_sandbox_factory is None or self._fake_provider_mode:
+                    raise NonRetryableExecutionError(
+                        "Code analysis Runtime is unavailable",
+                        safe_message="代码分析运行配置缺失，请管理员检查 API 与 Runtime 的专用凭据挂载和源码目录配置",
+                        error_code="code_runtime_unavailable",
+                    )
+                sandbox_manager = self._code_sandbox_factory(request)
+            file_principal_token = secret_context.file_principal_token if secret_context else ""
+            file_principal_token_provider = (
+                FilePrincipalTokenClient(
+                    base_url=self._file_principal_refresh_base_url,
+                    allowed_hosts=self._file_principal_refresh_allowed_hosts,
+                    initial_token=file_principal_token,
+                    job_id=str(request["job_id"]),
+                    timeout_seconds=self._file_principal_refresh_timeout_seconds,
+                    refresh_skew_seconds=self._file_principal_refresh_skew_seconds,
+                )
+                if file_principal_token and self._file_principal_refresh_base_url
+                else None
+            )
+            client = FixedMcpClaudeSdkClient(
+                limits=self._limits,
+                api_key=resolved.api_key,
+                mcp_server_url=self._mcp_server_url,
+                business_mcp_server_urls=self._business_mcp_server_urls,
+                mcp_principal_tokens=(
+                    secret_context.mcp_principal_tokens if secret_context else {}
+                ),
+                file_mcp_server_url=self._file_mcp_server_url,
+                file_principal_token=file_principal_token,
+                file_principal_token_provider=file_principal_token_provider,
+                server_policies=self._server_policies,
+                sandbox_manager=sandbox_manager,
+                cancellation_event=cancel_event,
+                runtime_build_identity=self._build_identity,
+                tool_contract_observer=tool_contract_observer,
+            )
+            if file_principal_token_provider is not None:
+                file_principal_token_provider.start()
             if self._fake_provider_mode:
                 client.observe_tool_contract(run_request)
                 return replace(
@@ -229,7 +233,9 @@ class PythonRuntimeExecutor:
                         provenance,
                         secret_context,
                     ),
-                    tool_contract_observation=dict(client.last_tool_contract_observation),
+                    tool_contract_observation=dict(
+                        getattr(client, "last_tool_contract_observation", {})
+                    ),
                     run_audit=_with_runtime_identity(_fake_run_audit(run_request), request),
                 )
             result = client.run(run_request)
@@ -239,8 +245,8 @@ class PythonRuntimeExecutor:
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
-                runtime_events=tuple(client.last_runtime_events),
-                accounting=dict(client.last_accounting),
+                runtime_events=tuple(getattr(client, "last_runtime_events", ())),
+                accounting=dict(getattr(client, "last_accounting", {})),
                 run_audit=_with_runtime_identity(run_audit, request),
                 tool_events=normalize_tool_events(
                     exc.tool_events,
@@ -252,7 +258,9 @@ class PythonRuntimeExecutor:
                     "retry_class": "TRANSIENT",
                     "safe_message": str(exc.safe_message or "模型运行暂时失败"),
                 },
-                tool_contract_observation=dict(client.last_tool_contract_observation),
+                tool_contract_observation=dict(
+                    getattr(client, "last_tool_contract_observation", {})
+                ),
             )
         except (ExecutionTimeout, NonRetryableExecutionError) as exc:
             if str(exc.error_code or "") == "runtime_cancelled":
@@ -278,8 +286,8 @@ class PythonRuntimeExecutor:
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
-                runtime_events=tuple(client.last_runtime_events),
-                accounting=dict(client.last_accounting),
+                runtime_events=tuple(getattr(client, "last_runtime_events", ())),
+                accounting=dict(getattr(client, "last_accounting", {})),
                 run_audit=_with_runtime_identity(
                     _finalize_client_run_audit(client, status="FAILED", error=exc),
                     request,
@@ -294,15 +302,17 @@ class PythonRuntimeExecutor:
                     "retry_class": retry_class,
                     "safe_message": str(exc.safe_message or "模型运行配置不可用"),
                 },
-                tool_contract_observation=dict(client.last_tool_contract_observation),
+                tool_contract_observation=dict(
+                    getattr(client, "last_tool_contract_observation", {})
+                ),
             )
         except Exception as exc:
             return PythonExecutionOutcome(
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
-                runtime_events=tuple(client.last_runtime_events),
-                accounting=dict(client.last_accounting),
+                runtime_events=tuple(getattr(client, "last_runtime_events", ())),
+                accounting=dict(getattr(client, "last_accounting", {})),
                 run_audit=_with_runtime_identity(
                     _finalize_client_run_audit(client, status="FAILED", error=exc),
                     request,
@@ -312,7 +322,9 @@ class PythonRuntimeExecutor:
                     "retry_class": "TRANSIENT",
                     "safe_message": "Python Agent Runtime 暂时不可用",
                 },
-                tool_contract_observation=dict(client.last_tool_contract_observation),
+                tool_contract_observation=dict(
+                    getattr(client, "last_tool_contract_observation", {})
+                ),
             )
         finally:
             if file_principal_token_provider is not None:
@@ -330,15 +342,15 @@ class PythonRuntimeExecutor:
             final_answer=result.final_answer,
             usage={"input_tokens": 0, "output_tokens": 0},
             runtime_provenance=provenance,
-            runtime_events=tuple(client.last_runtime_events),
-            accounting=dict(client.last_accounting),
+            runtime_events=tuple(getattr(client, "last_runtime_events", ())),
+            accounting=dict(getattr(client, "last_accounting", {})),
             run_audit=_with_runtime_identity(result.run_audit, request),
             tool_events=normalize_tool_events(
                 result.tool_events,
                 request,
                 server_policies=self._server_policies,
             ),
-            tool_contract_observation=dict(client.last_tool_contract_observation),
+            tool_contract_observation=dict(getattr(client, "last_tool_contract_observation", {})),
         )
 
     def probe(self, request: dict[str, Any]) -> dict[str, Any]:

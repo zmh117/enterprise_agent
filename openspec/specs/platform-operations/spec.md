@@ -1969,6 +1969,11 @@ File Service SHALL 接收每个Processing Worker使用不透明实例ID提交的
 - **WHEN** 正常构建并启动 Compose
 - **THEN** 两个固定节点及两个 Worker 按同一发布工作，业务只需现有统一 API，无需选择物理 Runtime
 
+#### Scenario: 主入口包含代码分析配置
+- **WHEN** 已初始化专用凭据后，仅通过主 `docker-compose.yml` 构建、启动或更新 API 和两个 Runtime
+- **THEN** API 与两个 Runtime 获得同一代码分析专用凭据的只读挂载及固定配置，无需额外代码知识库 overlay
+- **AND** 凭据初始化脚本仅补齐缺失文件，不轮换已有材料，不复用 ONES 凭据，不向其他服务挂载代码分析凭据
+
 #### Scenario: 增加第三节点验收
 - **WHEN** 部署映射新增第三个唯一节点并增加第三个 Worker
 - **THEN** 三个不同 Session 可并行占用三个节点，不需要修改 Agent/Application Publication 或业务请求

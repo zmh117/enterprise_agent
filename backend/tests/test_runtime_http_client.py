@@ -1230,10 +1230,11 @@ def test_worker_maps_runtime_failure_and_preserves_prior_tool_events() -> None:
 
 
 @pytest.mark.parametrize(
-    "code", ["runtime_model_authentication", "runtime_model_permission_denied"]
+    "code",
+    ["runtime_model_authentication", "runtime_model_permission_denied", "code_runtime_unavailable"],
 )
-def test_worker_preserves_model_access_failure_without_retry(code: str) -> None:
-    safe_message = "模型服务认证失败，请管理员检查模型连接的 API Key。"
+def test_worker_preserves_configuration_failure_without_retry(code: str) -> None:
+    safe_message = "运行配置校验失败，请管理员检查部署。"
     client, _ = _client(
         GoldenTransport(
             terminal_status="FAILED",

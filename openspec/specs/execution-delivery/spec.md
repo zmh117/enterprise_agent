@@ -137,6 +137,11 @@ API MUST 只在创建事务写 Job Dispatch Outbox，不直接发布 RabbitMQ。
 - **WHEN** 瞬时错误达到 Job 重试上限
 - **THEN** Job 为 FAILED，持久化根因与 retry_exhausted，最多创建一次安全失败 Delivery
 
+#### Scenario: Runtime 初始化配置失败
+- **WHEN** 模型绑定、源码分析沙箱或 SDK 客户端初始化产生已知的不可重试配置异常
+- **THEN** Runtime 保留该异常的安全错误码和中文提示，以 CONFIGURATION 终态返回，Worker 不安排自动重试
+- **AND** 缺少代码分析运行配置时返回 `code_runtime_unavailable`，不转换为通用 `runtime_internal_error`，不伪造模型或工具调用
+
 #### Scenario: 业务重试已提交
 - **WHEN** Worker 保存重试事实并正常返回 consumer
 - **THEN** consumer 确认原消息，不再基于 Broker delivery 增加重试

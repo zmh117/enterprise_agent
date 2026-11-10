@@ -34,6 +34,7 @@ file_worker_bootstrap_token="$target_dir/file-worker-bootstrap-token"
 file_processing_worker_bootstrap_token="$target_dir/file-processing-worker-bootstrap-token"
 delivery_worker_bootstrap_token="$target_dir/delivery-worker-bootstrap-token"
 knowledge_bootstrap_token="$target_dir/knowledge-bootstrap-token"
+code_runtime_bootstrap_token="$target_dir/code-runtime-bootstrap-token"
 docling_api_key="$target_dir/docling-api-key"
 master_key="$target_dir/app-config-master-key"
 
@@ -41,7 +42,7 @@ master_key="$target_dir/app-config-master-key"
 for existing_file in "$private_key" "$public_key" "$probe_token" \
   "$principal_private_key" "$principal_jwks" "$file_worker_bootstrap_token" \
   "$file_processing_worker_bootstrap_token" "$delivery_worker_bootstrap_token" \
-  "$knowledge_bootstrap_token" "$docling_api_key" "$master_key"; do
+  "$knowledge_bootstrap_token" "$code_runtime_bootstrap_token" "$docling_api_key" "$master_key"; do
   if [ -L "$existing_file" ] || { [ -e "$existing_file" ] && { [ ! -f "$existing_file" ] || [ ! -s "$existing_file" ]; }; }; then
     echo "existing secret must be a nonempty regular file; initialization refused" >&2
     exit 1
@@ -118,6 +119,10 @@ if [ ! -e "$knowledge_bootstrap_token" ]; then
   openssl rand -base64 48 | tr -d '\n' > "$knowledge_bootstrap_token"
 fi
 
+if [ ! -e "$code_runtime_bootstrap_token" ]; then
+  openssl rand -base64 48 | tr -d '\n' > "$code_runtime_bootstrap_token"
+fi
+
 if [ ! -e "$docling_api_key" ]; then
   openssl rand -base64 48 | tr -d '\n' > "$docling_api_key"
 fi
@@ -143,6 +148,7 @@ chmod 0400 \
   "$file_processing_worker_bootstrap_token" \
   "$delivery_worker_bootstrap_token" \
   "$knowledge_bootstrap_token" \
+  "$code_runtime_bootstrap_token" \
   "$docling_api_key" \
   "$master_key"
 chmod 0644 "$principal_jwks"
@@ -158,6 +164,7 @@ if [ "$docker_acl" = "--docker-acl" ]; then
   setfacl --set u::r,g::---,o::---,u:0:r,u:10002:r "$probe_token"
   setfacl --set u::r,g::---,o::---,u:0:r,u:10006:r "$file_processing_worker_bootstrap_token"
   setfacl --set u::r,g::---,o::---,u:0:r,u:10008:r "$knowledge_bootstrap_token"
+  setfacl --set u::r,g::---,o::---,u:0:r,u:10002:r "$code_runtime_bootstrap_token"
   setfacl --set u::r,g::---,o::---,u:1001:r,u:10006:r "$docling_api_key"
 fi
 
