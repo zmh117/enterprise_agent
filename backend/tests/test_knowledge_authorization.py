@@ -44,7 +44,29 @@ def add_base(c, key):
     )
 
 
-def add_resource(c, base_id, *, key=None, name=None, status="enabled"):
+def add_resource_revision(c, resource_id, *, revision=1, published=False):
+    revision_id = f"{resource_id}-v{revision}"
+    insert(
+        c.database,
+        "retrieval_revision",
+        {
+            "id": revision_id,
+            "resource_id": resource_id,
+            "revision": revision,
+            "index_id": f"synthetic-index-{resource_id}",
+            "profile_hash": "a" * 64,
+            "corpus_hash": "b" * 64,
+            "config_hash": "c" * 64,
+            "created_by": ADMIN_ID,
+            "created_at": now(),
+            "published_by": ADMIN_ID if published else None,
+            "published_at": now() if published else None,
+        },
+    )
+    return revision_id
+
+
+def add_resource(c, base_id, *, key=None, name=None, status="enabled", published=True):
     key = key or f"resource-{base_id}"
     insert(
         c.database,
@@ -60,6 +82,12 @@ def add_resource(c, base_id, *, key=None, name=None, status="enabled"):
             "updated_at": now(),
         },
     )
+    if published:
+        revision_id = add_resource_revision(c, key, published=True)
+        c.database.execute(
+            'update "knowledge.retrieval_resource" set published_revision_id=? where id=?',
+            (revision_id, key),
+        )
 
 
 def access(app, ids=(), *, tools=(TOOL,), **extra):
@@ -281,6 +309,85 @@ def test_enabled_replacement_resource_uses_current_name_without_changing_base_id
         }
 
 
+@pytest.mark.parametrize(
+    "state", ["new", "draft", "verified", "history_only", "unpublished_pointer"]
+)
+def test_unpublished_resource_is_not_listed_selected_by_all_or_grantable_via_api(fixture, state):
+    c, apps, _, role = fixture
+    base_id = "kb-unpublished"
+    resource_id = "resource-kb-unpublished"
+    add_base(c, base_id)
+    add_resource(c, base_id, name="test测试", published=False)
+    if state != "new":
+        revision_id = add_resource_revision(c, resource_id, published=state == "history_only")
+        c.database.execute(
+            'update "knowledge.retrieval_resource" set draft_revision_id=?,published_revision_id=? '
+            "where id=?",
+            (
+                revision_id if state in {"draft", "verified"} else None,
+                revision_id if state == "unpublished_pointer" else None,
+                resource_id,
+            ),
+        )
+        if state == "verified":
+            insert(
+                c.database,
+                "retrieval_verification",
+                {
+                    "id": "synthetic-verification",
+                    "resource_id": resource_id,
+                    "resource_revision": 1,
+                    "revision_id": revision_id,
+                    "config_hash": "c" * 64,
+                    "status": "VERIFIED",
+                    "evidence_hash": "d" * 64,
+                    "created_by": ADMIN_ID,
+                    "created_at": now(),
+                },
+            )
+    app = create_app(c.settings, container_factory=lambda _: c)
+    app.state.container = c
+    client = TestClient(app)
+    catalog = client.get("/api/admin/authorization/assignable-catalog", headers=_admin_headers())
+    assert catalog.status_code == 200
+    assert all(
+        [base["id"] for base in application["knowledge_bases"]] == ["kb-ones", "kb-ops"]
+        for application in catalog.json()["applications"]
+    )
+    result = save(c, role, [access(apps[1], knowledge_current_all=True)])
+    assert result["applications"][0]["knowledge_base_ids"] == ["kb-ones", "kb-ops"]
+    before = c.authorization_center_repository.list_business_access(role["id"])
+    response = client.put(
+        f"/api/admin/authorization/roles/{role['id']}/business-access",
+        headers=_admin_headers(),
+        json={
+            "expected_revision": 3,
+            "applications": [access(apps[1], [base_id])],
+            "confirmed": True,
+            "reason": "未发布知识库不得新增授权",
+        },
+    )
+    assert response.status_code == 400
+    assert c.authorization_center_repository.list_business_access(role["id"]) == before
+
+
+def test_published_resource_with_new_draft_remains_grantable(fixture):
+    c, apps, _, role = fixture
+    resource_id = "resource-kb-ones"
+    revision_id = add_resource_revision(c, resource_id, revision=2)
+    c.database.execute(
+        'update "knowledge.retrieval_resource" set draft_revision_id=? where id=?',
+        (revision_id, resource_id),
+    )
+    catalog = c.authorization_center_service.assignable_catalog(actor_id=ADMIN_ID)
+    assert all(
+        [base["id"] for base in app["knowledge_bases"]] == ["kb-ones", "kb-ops"]
+        for app in catalog["applications"]
+    )
+    result = save(c, role, [access(apps[1], ["kb-ones"])])
+    assert result["applications"][0]["knowledge_base_ids"] == ["kb-ones"]
+
+
 def test_api_rejects_archived_resource_grant_without_modifying_existing_access(fixture):
     c, apps, _, role = fixture
     c.database.execute(
@@ -311,13 +418,20 @@ def test_api_rejects_archived_resource_grant_without_modifying_existing_access(f
     assert c.authorization_center_repository.list_business_access(role["id"]) == before
 
 
-@pytest.mark.parametrize("status", ["archived", "disabled"])
+@pytest.mark.parametrize("status", ["archived", "disabled", "unpublished"])
 def test_inactive_grant_can_be_retained_or_revoked_but_not_extended_or_copied(fixture, status):
     c, apps, _, role = fixture
-    c.database.execute(
-        'update "knowledge.retrieval_resource" set status=? where knowledge_base_id=?',
-        (status, "kb-ones"),
-    )
+    if status == "unpublished":
+        c.database.execute(
+            'update "knowledge.retrieval_resource" set published_revision_id=null '
+            "where knowledge_base_id=?",
+            ("kb-ones",),
+        )
+    else:
+        c.database.execute(
+            'update "knowledge.retrieval_resource" set status=? where knowledge_base_id=?',
+            (status, "kb-ones"),
+        )
     result = save(c, role, [access(apps[0], ["kb-ones", "kb-ops"])])
     assert result["applications"][0]["knowledge_base_ids"] == ["kb-ones", "kb-ops"]
     before = c.authorization_center_repository.list_business_access(role["id"])

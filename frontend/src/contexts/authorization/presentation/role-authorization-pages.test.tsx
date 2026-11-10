@@ -327,7 +327,7 @@ describe("角色授权中心", () => {
         })
       ).not.toHaveAttribute("data-checked")
       expect(screen.getByLabelText("app1 历史知识库授权")).toHaveTextContent(
-        "资源已归档、停用或当前不在可授权范围"
+        "资源尚未发布、已归档、停用或当前不在可授权范围"
       )
       expect(
         screen.queryByRole("checkbox", { name: /^app1 知识库 .*kb-archived/ })

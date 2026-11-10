@@ -544,7 +544,10 @@ class AuthorizationCenterRepository:  # noqa: PLR0904
             "select k.id,r.code,r.name as display_name "
             f"from {knowledge_table(self.database, 'knowledge_base')} k "
             f"join {knowledge_table(self.database, 'retrieval_resource')} r on r.knowledge_base_id=k.id "
-            "where k.state='storage_only' and r.status='enabled' order by k.id"
+            f"join {knowledge_table(self.database, 'retrieval_revision')} v "
+            "on v.resource_id=r.id and v.id=r.published_revision_id "
+            "where k.state='storage_only' and r.status='enabled' "
+            "and v.published_at is not null order by k.id"
         )
 
     def application_catalog(self) -> list[dict[str, Any]]:

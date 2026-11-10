@@ -1064,7 +1064,7 @@ function BusinessApplicationCard({
           <div>
             <h3 className="text-sm font-medium">知识库使用范围</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              仅列出“工具资源”中启用的知识资源，名称与工具资源一致；已归档、停用或尚未配置资源的知识库不能新增授权。勾选只对当前应用生效；实际检索还需本应用的工具授权、有效发布资源和本人
+              仅列出“工具资源”中已发布且启用的知识资源，名称与工具资源一致；尚未发布、已归档、停用或尚未配置资源的知识库不能新增授权。勾选只对当前应用生效；实际检索还需本应用的工具授权、有效发布资源和本人
               ONES 可读权限。
             </p>
             {application.knowledge_bases.length > 0 ? (
@@ -1136,7 +1136,7 @@ function BusinessApplicationCard({
                       }}
                     />
                     <span className="break-all">
-                      {id}：历史授权，资源已归档、停用或当前不在可授权范围。
+                      {id}：历史授权，资源尚未发布、已归档、停用或当前不在可授权范围。
                     </span>
                   </label>
                 ))}
