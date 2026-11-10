@@ -14,7 +14,7 @@
 
 业务答案正文与详细证据分开保存。模型只对实际采用且本次成功读取/保存的答案，在回复末尾逐条附 `<!-- code-answer:<document_id>@<revision_id> -->` 内部标记；结果收尾核验同任务、环境、来源与版本后写入私有问答的结构化引用，在会话、报告、Job 结果和投递前移除标记。标记本身不授权、不证明答案有效，无 ID 时不得编造；已有源码证据记录保留路径、行号和校验信息，不为追溯额外保存源码全文。
 
-本回答约束使用 Prompt v16。更新 API/Worker、knowledge-mcp 与 Runtime，使 Prompt 版本及工具说明一致；`code-business-query` 内容冻结在 Agent Publication 中，需保存新草稿并发布 Agent，再由业务应用更新绑定并重新发布，以新 Job 验证。修改 Skill 文件不会覆盖既有发布或历史任务。此次调整不需要数据库迁移或重建知识索引。
+本回答约束使用 Prompt v16。更新 API、Agent Worker、Job Dispatcher、Channel Dispatcher、Webhook Worker、knowledge-mcp 与两个 Runtime，使 Prompt 版本及工具说明一致；`code-business-query` 内容冻结在 Agent Publication 中，需保存新草稿并发布 Agent，再由业务应用更新绑定并重新发布，以新 Job 验证。修改 Skill 文件不会覆盖既有发布或历史任务。此次调整不需要数据库迁移或重建知识索引。
 
 同版本纠错先读取完整原答案，再用它的 `question_text` 重新 exact 检索，并以这次检索申请源码授权。保存时沿用原问题和身份条件，带实际读取的 `expected_current_revision_id`；新的用户纠错说明不能直接替代原问题身份。已准入的分析不能中途换题，冲突时不要移除 CAS 字段后另建文档冒充纠错。真正不同的业务条件应作为独立问题记录，并明确原答案是否仍适用。
 
@@ -41,10 +41,12 @@
 代码问答已纳入唯一主入口 `docker-compose.yml`，不再使用额外的代码知识库 overlay。主文件同时给 API 和两个 Runtime 挂载专用凭据与固定环境配置。`CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE` 可指定已有专用凭据文件；留空使用 `${HOME}/.config/enterprise-agent/code-runtime-bootstrap-token`。新环境使用 `scripts/bootstrap_agent_runtime_secrets.sh` 幂等生成此文件，已有环境继续使用原文件，不轮换或复用 ONES 凭据。后续构建、更新只使用主文件：
 
 ```sh
-docker compose -f docker-compose.yml up -d --build --no-deps api-server python-agent-runtime-a python-agent-runtime-b
+docker compose -f docker-compose.yml up -d --build --no-deps api-server agent-worker job-dispatch-worker channel-dispatch-worker webhook-worker knowledge-mcp python-agent-runtime-a python-agent-runtime-b
 ```
 
 Windows PowerShell 同样使用上述 `-f` 参数；凭据宿主路径根据该机器配置。不要把凭据值放进命令或日志，也不要复用 ONES 的凭据。
+
+涉及 Prompt 或工具合同升级时，先在维护窗口暂停新请求并等待现有执行退出，再更新上述服务。`channel-dispatch-worker` 接收钉钉任务，`webhook-worker` 接收 Webhook 任务；两者创建 Job 时也会检查 Runtime Prompt 版本，不能漏更。仅更新 API 和 Runtime 会造成页面能激活应用、钉钉请求却报“所选 Agent Runtime 当前未就绪”。更新后分别从 API、Channel Dispatcher、Webhook Worker 核对被动 Runtime 检查结果为 READY、Prompt MATCH；容器 heartbeat healthy 不能代替这项检查。修复后发送新请求验证，不重放已拒绝消息。
 
 缺少代码分析运行配置的 Job 应直接返回 `code_runtime_unavailable` 与明确中文提示，不自动重试；恢复部署后通过新的 Job 验证，不改写历史失败记录。
 
