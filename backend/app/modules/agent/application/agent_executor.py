@@ -31,6 +31,7 @@ from app.modules.job.infrastructure.execution_control import JobExecutionControl
 from app.modules.agent.infrastructure.runtime_pool_store import RENEW_SECONDS
 from app.shared.exceptions import PermissionDenied, RetryableExecutionError
 from app.shared.tool_contract import canonical_json_sha256
+from app.shared.code_answer_presentation import strip_code_answer_references
 
 
 class AgentExecutor:
@@ -329,7 +330,7 @@ class AgentExecutor:
                     title="Model execution completed",
                     content="Claude runtime returned a final diagnostic report.",
                 )
-                self._persist_success(
+                final_answer = self._persist_success(
                     job=job,
                     final_answer=final_answer,
                     worker_id=worker_id,
@@ -448,8 +449,9 @@ class AgentExecutor:
         final_answer: str,
         worker_id: str,
         correlation_id: str,
-    ) -> None:
+    ) -> str:
         artifact_id = self.result_service.save_result(job, final_answer)
+        final_answer = strip_code_answer_references(final_answer)
         self.status_service.succeed(job.id, final_answer)
         JobExecutionControl(self.repository.database).wake_session(job.session_id)
         delivery_id = self.delivery_service.enqueue_job_result(
@@ -469,6 +471,7 @@ class AgentExecutor:
                 **_business_application_context(job),
             },
         )
+        return final_answer
 
     def _persist_tool_events(self, job_id: str, tool_events: list[dict[str, object]]) -> None:
         job = self.repository.get_job(job_id)

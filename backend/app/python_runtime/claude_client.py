@@ -44,6 +44,7 @@ from app.python_runtime.error_mapper import (
     sdk_error_message,
 )
 from app.shared.config import ExecutionSettings
+from app.shared.code_answer_tool_contracts import CODE_ANSWER_PRESENTATION_INSTRUCTIONS
 from app.shared.knowledge_tool_contracts import KNOWLEDGE_USAGE_INSTRUCTIONS
 from app.shared.database import assert_external_io_allowed
 from app.shared.sdk_failure_metadata import safe_sdk_failure_metadata
@@ -907,8 +908,7 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
                 "Separately authorized Job file tools remain restricted to the Job Sandbox and do not grant source writes. "
                 "knowledge_save_code_answer drains this Job's source reads and saves its verified answer; "
                 "do not generate a knowledge package or launch another Agent. "
-                "Cite actually used answers as code-answer:<document_id>@<revision_id> in the final business answer. "
-                "Use IDs returned by full-answer reads or successful saves; higher revisions remain hints."
+                "Keep host-verified evidence and answer references in backend records; higher revisions remain hints."
                 " When a source operation reports a checkout identity/source/scope failure or authentication "
                 "failure, stop retrying svn_update in this Job, do not call Read/Glob/Grep without a grant, "
                 "and report that administrator repair is needed. Use the knowledge directory's environments "
@@ -916,6 +916,7 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
                 if code_job
                 else ""
             ),
+            CODE_ANSWER_PRESENTATION_INSTRUCTIONS if code_job else "",
             FINAL_RESPONSE_RELEVANCE_INSTRUCTIONS,
             (
                 KNOWLEDGE_USAGE_INSTRUCTIONS
@@ -993,8 +994,8 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
             "Report structure:\n"
             + _numbered(
                 [
-                    "Conclusion with likely root cause.",
-                    "Evidence summary citing tool results.",
+                    "Conclusion grounded in verified rules or facts; code alone does not establish a production root cause.",
+                    "Summarize the verified basis in business terms; code evidence locations and internal references stay in backend records.",
                     "Uncertainty or limitations when evidence is incomplete.",
                     (
                         "For file Jobs, modify only writable sandbox text files allowed by the "

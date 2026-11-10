@@ -17,6 +17,16 @@ ENVIRONMENT = {
     "description": "用户明确指定的环境编码，所有代码调用保持一致。",
 }
 ENVIRONMENT_FIELDS = {"environment": ENVIRONMENT, "environment_id": ID}
+CODE_ANSWER_PRESENTATION_INSTRUCTIONS = (
+    "代码问答默认使用业务语言，按结论、触发条件、操作影响和必要待确认项组织，注明环境、SVN 版本及适用业务端。"
+    "正文不展示代码、路径、行号、函数名、内部字段/枚举、接口/工具名、原始错误码、hash 或内部 ID。"
+    "保留影响结论的条件、例外和未知项，不猜状态中文名称，不把静态规则说成已核实的现场根因。"
+    "不主动汇报检索、编码、工具回执、保存或索引过程；失败影响结论时只解释业务影响，用户要求保存却失败时如实说明。"
+    "旧知识答案也须重述为业务解释，不照搬技术细节；保存的标题、正文和结论同样使用业务语言，详细证据保留在后台结构中。"
+    "仅在用户明确要求且当前授权允许时展开技术证据，不扩大权限或披露凭据。"
+    "实际采用的答案引用只在回复末尾逐条附内部标记 <!-- code-answer:<document_id>@<revision_id> -->，"
+    "ID 必须来自本次成功读取或保存；平台核验关联后在用户可见回复中移除标记。无有效 ID 时省略，不编造或解释内部 ID 缺失。"
+)
 CODE_USAGE = (
     "用户必须明确指定环境，例如 环境：prod。先 knowledge_list_bases(source_kind=code, environment=环境编码) 选库；"
     "同环境有多个知识库时请用户选择。所有检索、源码操作、保存及读取传同一 environment，禁止跨环境复用答案或凭证。"
@@ -29,7 +39,7 @@ CODE_USAGE = (
     "update 只改受管本地工作副本，save 只保存经验证的派生答案；二者按已发布来源授权自动执行，"
     "不需要业务修改确认卡，也不提供 SVN commit/merge/revert/switch、任意 Shell 或 SQL。"
     "单次 MCP 调用总预算最多 360 秒，并受原任务剩余时间限制；后台操作也不得延长原任务截止。"
-    "目录忙立即报告，不新建模型任务。每次回答注明用户 SVN 版本、证据和未知项。"
+    "目录忙说明暂时无法核验，不新建模型任务。" + CODE_ANSWER_PRESENTATION_INSTRUCTIONS
 )
 
 CLAIM = obj(
@@ -393,7 +403,7 @@ CODE_TOOL_SCHEMAS = {
     "knowledge_get_code_answer": (
         GET_INPUT,
         GET_OUTPUT,
-        "读取本次成功检索中的完整代码业务答案及全部适用条件。",
+        "读取本次成功检索中的完整代码业务答案及全部适用条件；对用户按业务语言重述，技术证据保留在后台。",
     ),
     "knowledge_svn_update": (
         UPDATE_INPUT,
@@ -428,7 +438,7 @@ CODE_TOOL_SCHEMAS = {
     "knowledge_save_code_answer": (
         SAVE_INPUT,
         SAVE_OUTPUT,
-        "核验本 Job 实际代码证据后保存业务答案及 SVN 版本，只释放自己的读取占用。",
+        "核验本 Job 实际代码证据后保存业务答案及 SVN 版本，只释放自己的读取占用。标题、正文和结论使用业务语言，完整条件及详细证据分别保留在结构化字段中。",
     ),
 }
 CODE_DERIVED_TOOLS = frozenset({"knowledge_svn_update", "knowledge_save_code_answer"})

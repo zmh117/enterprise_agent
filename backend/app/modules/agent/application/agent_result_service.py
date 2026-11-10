@@ -7,6 +7,7 @@ from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.job.infrastructure.session_repository import SessionRepository
 from app.shared.database import require_shared_database
+from app.shared.code_answer_presentation import strip_code_answer_references
 
 
 class AgentResultService:
@@ -27,6 +28,7 @@ class AgentResultService:
             # Same transaction as the standard result. Recovery observes the existing
             # completed invocation; it does not ask the model to regenerate an answer.
             self.code_result_recorder(job, final_answer)
+        final_answer = strip_code_answer_references(final_answer)
         self.session_repository.add_message(
             session_id=job.session_id,
             job_id=job.id,

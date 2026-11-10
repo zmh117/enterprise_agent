@@ -36,6 +36,7 @@ unit = [
 ]
 
 contract = [
+  "test_code_answer_presentation.py",
   "test_code_analysis_store.py",
   "test_code_answer_store.py",
   "test_code_svn_history.py",

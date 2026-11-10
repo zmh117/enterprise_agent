@@ -16,11 +16,12 @@ from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.knowledge.infrastructure.code_qa_store import CodeQaStore
 from app.shared.database import Database
 from app.shared.secret_redaction import redact_sensitive_text
+from app.shared.code_answer_presentation import strip_code_answer_references
 
 _CITATION = re.compile(r"code-answer:([A-Za-z0-9_-]{1,200})@([A-Za-z0-9_-]{1,200})")
 
 
-def business_text(text: str, limit: int) -> str:
+def business_text(text: str, limit: int | None) -> str:
     """Bounded private prose only; omit quoted input, source blocks and credentials."""
     lines: list[str] = []
     fence: str | None = None
@@ -35,7 +36,11 @@ def business_text(text: str, limit: int) -> str:
         if clean:
             lines.append(clean)
     result = redact_sensitive_text("\n".join(lines))
-    return result[: limit - 12] + "\n[内容已截断]" if len(result) > limit else result
+    return (
+        result[: limit - 12] + "\n[内容已截断]"
+        if limit is not None and len(result) > limit
+        else result
+    )
 
 
 class CodeResultRecorder:
@@ -61,11 +66,14 @@ class CodeResultRecorder:
         except CodeKnowledgeError:
             return  # A request for the missing version is not a versioned business answer.
         question = business_text(job.input_message or "", 2000)
-        answer = business_text(final_answer, 64000)
+        # Read the reference footer before bounding stored prose; long answers must
+        # not lose their selected references or leave a partially truncated marker.
+        internal_answer = business_text(final_answer, None)
+        answer = business_text(strip_code_answer_references(internal_answer), 64000)
         if not question or not answer:
             return
-        # References must occur in final prose AND have been read/saved in this invocation.
-        citations = set(_CITATION.findall(answer))
+        # Internal references must be selected by the model AND read/saved in this invocation.
+        citations = set(_CITATION.findall(internal_answer))
         observed, touched = self._read_references(job.id, invocation, environment["id"])
         analyses = self.db.execute(
             f"SELECT a.knowledge_base_id,a.source_id,a.requested_revision,a.state,"

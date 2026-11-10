@@ -81,7 +81,10 @@ def observe(workspace, job, saved, *, kind="read", requested=100, status="SUCCEE
 
 
 def answer(saved):
-    return f"SVN r100：A 字段为空时不能发布。\n依据 code-answer:{saved['document_id']}@{saved['revision_id']}"
+    return (
+        "环境 env-a，SVN r100：未填写工单名称时不能发布。\n\n"
+        f"<!-- code-answer:{saved['document_id']}@{saved['revision_id']} -->"
+    )
 
 
 def fixture_answer(workspace, revision=100):
@@ -107,6 +110,19 @@ def test_standard_result_records_each_cache_hit_once_without_indexing(workspace)
     assert len(rows) == 1 and rows[0]["answer_origin"] == "cache"
     assert rows[0]["support_status"] == "supported"
     assert rows[0]["requested_revisions"] == [100]
+    assert rows[0]["answer_text"] == "环境 env-a，SVN r100：未填写工单名称时不能发布。"
+    assert rows[0]["references_json"][0]["document_id"] == saved["document_id"]
+    assert rows[0]["references_json"][0]["revision_id"] == saved["revision_id"]
+    assert (
+        runtime.database.execute_one(
+            "SELECT content FROM agent_artifact WHERE job_id=? AND artifact_type='report'",
+            (job.id,),
+        )["content"]
+        == rows[0]["answer_text"]
+    )
+    assert store.db.execute_one(
+        f"SELECT relative_path,line_start,line_end FROM {store.t('code_evidence')} LIMIT 1"
+    ) == {"relative_path": "set_server/Order.cpp", "line_start": 10, "line_end": 20}
     assert len(runtime.database.execute(f"SELECT id FROM {store.t('code_index_task')}")) == 1
     assert (
         runtime.database.execute_one(
@@ -133,6 +149,28 @@ def test_candidates_failures_and_uncited_answers_are_not_actual_references(
     recorder.record(job, answer(saved) if cited else "SVN r100：还需核实。")
     row = recorder.qa.for_job(job.id, job.requester_id)[0]
     assert row["references_json"] == [] and row["support_status"] == "unverified"
+
+
+def test_internal_reference_does_not_authorize_an_unread_answer(workspace):
+    saved, job = fixture_answer(workspace), frozen_job(workspace)
+    recorder = CodeResultRecorder(workspace[0].database)
+    recorder.record(job, answer(saved))
+    row = recorder.qa.for_job(job.id, job.requester_id)[0]
+    assert row["references_json"] == [] and row["support_status"] == "unverified"
+    assert "code-answer:" not in row["answer_text"]
+
+
+def test_long_answer_keeps_references_when_private_history_is_truncated(workspace):
+    saved, job = fixture_answer(workspace), frozen_job(workspace)
+    observe(workspace, job, saved)
+    recorder = CodeResultRecorder(workspace[0].database)
+    recorder.record(job, "业务条件。" * 13000 + "\n" + answer(saved))
+    row = recorder.qa.for_job(job.id, job.requester_id)[0]
+    assert row["support_status"] == "supported"
+    assert row["references_json"][0]["document_id"] == saved["document_id"]
+    assert len(row["answer_text"]) <= 64000
+    assert row["answer_text"].endswith("[内容已截断]")
+    assert "code-answer:" not in row["answer_text"]
 
 
 def test_higher_version_stays_a_hint_and_comparison_needs_both_versions(workspace):

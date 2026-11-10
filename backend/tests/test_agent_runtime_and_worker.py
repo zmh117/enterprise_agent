@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from app.modules.agent.application.agent_executor import _guard_confirmation_claim
 from app.modules.agent.domain.runtime import AgentRunResult
@@ -220,6 +221,40 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertIsNotNone(dispatch)
         self.assertEqual("RETRY_WAIT", dispatch.status.value)
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
+
+    def test_internal_code_references_stay_out_of_job_chat_and_delivery_report(self) -> None:
+        c = _runtime_container()
+        job = c.create_agent_job_service.execute(
+            CreateAgentJobCommand(
+                idempotency_key="business-code-answer",
+                external_conversation_id="conversation-1",
+                requester_id="local-user",
+                user_message="环境 prod，SVN r100：为什么不能发布工单？",
+                project_code="default",
+            )
+        )
+        visible = "环境 prod，SVN r100：未填写工单名称时不能发布。"
+        internal = visible + "\n\n<!-- code-answer:document@revision -->"
+        recorded = []
+        c.agent_executor.runtime_client = SimpleNamespace(  # type: ignore[assignment]
+            run=lambda request: AgentRunResult(final_answer=internal, tool_events=[])
+        )
+        c.agent_executor.result_service.code_result_recorder = lambda job, answer: recorded.append(
+            answer
+        )
+
+        self.assertEqual(visible, c.agent_executor.execute(job.id))
+        self.assertEqual([internal], recorded)
+        self.assertEqual(visible, c.agent_repository.get_job(job.id).result)
+        report = c.database.execute_one(
+            "SELECT content FROM agent_artifact WHERE job_id=? AND artifact_type='report'",
+            (job.id,),
+        )
+        self.assertEqual(visible, report["content"])
+        message = c.database.execute_one(
+            "SELECT content FROM agent_message WHERE job_id=? AND role='assistant'", (job.id,)
+        )
+        self.assertEqual(visible, message["content"])
 
     def test_retry_pending_job_keeps_failure_tool_events(self) -> None:
         c = _runtime_container()
