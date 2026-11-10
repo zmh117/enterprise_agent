@@ -51,10 +51,10 @@ svn checkout -r 2 \
 
 当前 Mac 已初始化、导入并启动，**无需重新初始化或导入**。首次部署到空目录的流程如下：
 
-先按 [部署手册](docker-deployment.md) 执行 `init-code-directories`，明确源码和状态根的权限。
+先按 [部署手册](docker-deployment.md) 执行 `docker compose run --build --rm --no-deps code-storage-init`，准备配置中的源码和状态根。
 本地辅助脚本不再自动创建未经初始化的根目录。使用 `--destination` 指定其他父目录时，也要
-先初始化该源码根；脚本的检出进程使用 10003:10010，与页面执行器一致。Mac 原生目录初始化
-使用宿主的 sudo；目标宿主的实际只读共享行为仍需验证。
+先初始化该源码根；脚本的检出进程使用 10003:10010，与页面执行器一致。容器初始化不需要
+宿主 sudo；目标宿主的实际只读共享行为仍需验证。
 
 ```bash
 python3 scripts/local_svn.py init

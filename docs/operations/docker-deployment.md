@@ -1,7 +1,7 @@
-# Windows WSL2 与 x86 Linux Docker 部署
+# Windows、macOS 与 Linux Docker 部署
 
 所有服务仍只使用根 `docker-compose.yml` 启动。本手册覆盖 Windows 10/11 + Docker
-Desktop（WSL2、Linux 容器）和 Linux x86-64 虚拟机；不覆盖 Windows 原生容器。
+Desktop（WSL2 后端、Linux 容器）、macOS Docker Desktop 和 Linux x86-64 虚拟机；不覆盖 Windows 原生容器。
 代码兼容、容器健康和真实业务验收分别记录，不能互相代替。
 
 ## 主机准备
@@ -14,8 +14,10 @@ Desktop（WSL2、Linux 容器）和 Linux x86-64 虚拟机；不覆盖 Windows �
 | 架构 | `docker version --format '{{.Server.Os}}/{{.Server.Arch}}'` 应为 `linux/amd64` | 同左；x86 指 64 位，不支持 32 位容器 |
 | Compose | 2.24.0 或更新版本；预检支持 Compose 5 的版本号 | 同左 |
 
-Windows 在 WSL 内执行本页命令，不混用 PowerShell 的 `$env:`、`C:\...` 和 Linux
-环境变量写法。推荐把仓库放在 WSL Linux 文件系统中，而非 `/mnt/c`；这是
+普通 `docker compose up -d --build` 可在 Windows CMD / PowerShell、macOS 和 Linux 运行。
+本页标记 `sh` 的首次密钥生成命令须在 Linux/WSL 终端执行，不混用终端语法。
+预检和验收脚本可由已安装的 Python 执行；Windows 使用 `python` 替代 `python3`。
+推荐把仓库放在 WSL Linux 文件系统中，而非 `/mnt/c`；这是
 [Docker 的 WSL 性能建议](https://docs.docker.com/desktop/features/wsl/best-practices/)。
 PowerShell 可用来检查 `wsl --list --verbose`，确认目标发行版为版本 2。
 不要为此另起一个与 Docker Desktop 不同的 daemon；预检和实际部署必须使用同一个 context。
@@ -38,8 +40,8 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
    chmod 600 .env
    ```
 
-   默认文件路径已经与脚本一致。自定义目录时，必须同时修改 `.env` 中所有对应 `*_FILE`
-   宿主机路径。管理员初始化沿用[既有初始化流程](schema-baseline-bootstrap.md)。
+   默认凭据目录为 HOME（Linux/macOS）或 USERPROFILE（Windows）下的 `.config/enterprise-agent`。
+   自定义已有目录可设 `PLATFORM_SECRETS_DIR`，非空单文件 `*_FILE` 优先。管理员初始化沿用[既有初始化流程](schema-baseline-bootstrap.md)。
    备份 Master Key；已有环境不能改用新目录生成另一份 Key。
 
    `--docker-acl` 用 Linux `setfacl` 只给该文件的固定容器消费者 UID 加读取 ACL，目录仍为
@@ -58,22 +60,27 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
    发布用 `BUILD_SOURCE_REVISION`、`BUILD_ID` 也写入根 `.env`，API、Worker、Runtime、File
    Service 使用同一次发布的值。不要只在 shell 中临时 export 配置，否则网页控制器无法复现。
 
-3. 显式初始化源码与状态目录，再准备知识外部卷。以下使用默认目录；自定义路径应与
-   `.env` 中 `CODE_SVN_CHECKOUT_HOST_ROOT`、`CODE_SVN_LOCAL_STATE_ROOT` 完全一致：
+3. 主 Compose 自动准备源码与状态目录。`code-storage-init` 是一次性初始化容器；
+   普通 `up` 会等待它成功，再启动 API、两个 Runtime、knowledge-sync 和运维控制器。
+   首次安装若要在 `up` 前运行只读预检，可先单独初始化：
 
    ```sh
-   sudo python3 scripts/deployment_check.py init-code-directories \
-     --checkout-root "$(pwd -P)/.local/code-svn/checkout" \
-     --state-root "$(pwd -P)/.local/code-svn/state"
+   docker compose run --build --rm --no-deps code-storage-init
    ```
 
-   初始化不读取 `.env` 或凭据，也不连接 Docker。源码根为 UID 10003、GID 10010、0750；
-   状态、登记、客户端和公开 CA 目录为 10003:10003、0755。凭据文件、私钥和执行锁仍保持
-   独立的私有权限。只有明确指定的空目录会被调整，非空且权限不符时全部预检后拒绝，
-   不递归修改已有工作副本。该入口在 Linux/WSL2 使用 root 完成固定 UID/GID 初始化。
+   该命令无需宿主 sudo 或 Python，可在 Windows CMD / PowerShell、macOS 和 Linux 使用。
+   初始化无网络、不挂载 Secret，只处理 `.env` 配置的两个根：
+   `CODE_SVN_CHECKOUT_HOST_ROOT` 和 `CODE_SVN_LOCAL_STATE_ROOT`，留空使用部署根下
+   `.local/code-svn/checkout`、`.local/code-svn/state`。
+   Linux 源码根设为 10003:10010/0750；状态及 configuration、client、trusted-ca
+   四个目录设为 10003:10003/0755。只调整这五个目录的元数据，不递归修改子文件；
+   凭据、已有源码与 SVN 身份标记均保留。实际以执行器 UID 写合成临时文件、Runtime UID
+   读取后清理；权限探测失败会阻断消费者。Desktop 若转换 Unix 元数据，明确记录
+   `translated_access_verified`，仍要求实际访问通过。
 
-   代码知识部署设置 `CODE_CHECKOUT_ENABLED=true`；只使用 ONES 时可显式关闭并省略
-   以下 `--require-code`。即使关闭，Compose 挂载的空根目录仍须存在。
+   代码知识部署设置 `CODE_CHECKOUT_ENABLED=true`；只使用 ONES 时可关闭并省略
+   `--require-code`。即使关闭，空挂载目录仍由初始化准备。严格的手动
+   `init-code-directories` 保留为 Linux/WSL 维护工具，不再是普通启动前置步骤。
 
    ```sh
    python3 scripts/deployment_check.py init-volumes --fresh
@@ -105,9 +112,9 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
 
 执行器现在以 `10003:10010` 运行，两个 Runtime 加入只读者组 10010，必须重新创建相关容器，
 仅 restart 不会应用身份/组/挂载变化。已有工作副本不能在分析过程中递归 chmod/chown。
-若预检指出旧源码根权限不符，保留原目录，使用新的空源码根完成初始化、重新检出，并在
-知识库页面绑定新目录后再恢复分析；状态根若含已有配置，应由部署人员停机维护，保留原
-登记、CA 和凭据，不用空目录替换原状态。初始化脚本不会替换既有数据库或身份材料。
+启动初始化仅修正固定根目录权限。若旧工作副本内部文件权限不符，保留原目录，使用新的
+空源码根重新检出并在知识库页面绑定后恢复分析；不递归 chmod/chown，也不用空目录
+替换已有状态、登记、CA 或凭据。
 
 `external_volume_missing` 时先核对 `KNOWLEDGE_*_VOLUME` 和实际 Docker context；若是版本
 升级新增的空模型缓存卷，由部署人员确认用途后单独创建该卷，不自动补建向量或进度卷。
@@ -119,6 +126,34 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
 镜像。[Docker bind mount 使用 daemon 主机路径](https://docs.docker.com/engine/storage/bind-mounts/)，
 不能把 `C:\...` 或某个 WSL 别名直接当成嵌套 Compose 的 Linux 源路径。
 
+### Windows CMD 中更新后启动
+
+更新代码后在项目根执行（无需先 down，不删除卷）：
+
+```bat
+cd /d D:\enterprise_agent
+docker compose up -d --build
+docker compose ps -a code-storage-init
+```
+
+`code-storage-init` 显示 `Exited (0)` 是正常成功。源码和状态 bind 允许创建缺失目录；
+平台凭据 bind、主部署目录和四个知识外部卷保持原来的严格规则。初始化镜像只含标准库脚本，
+不会拉取 SVN 或触发模型提取。查看初始化固定状态可用 `docker compose logs code-storage-init`。
+
+若已有 `.env` 仍手写 `XXX_FILE=${HOME}/...`，Compose 会在解析旧文件时产生 HOME 警告，
+需要保留原文件位置并把这些路径改成实际路径，或改用统一目录、将对应文件级配置留空：
+
+```dotenv
+# 此处仅为路径示例，必须替换为原有凭据目录；使用 / 避免反斜杠转义。
+PLATFORM_SECRETS_DIR=D:/enterprise-agent-secrets
+APP_CONFIG_MASTER_KEY_FILE=
+```
+
+单文件覆盖优先于统一目录；不重建 Master Key，不覆盖原 `.env`，不把密钥放到源码目录。
+新配置无需设置 HOME；默认使用 Windows 的 USERPROFILE。若 HOME / USERPROFILE / 显式
+路径均缺失，Compose 明确报错。代码 Runtime 的单文件配置为
+`CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE`。这些修复不替代目标 Windows 实机的网络、认证及业务验收。
+
 ## 实际验收
 
 `check` 检查 Linux Engine/架构、Compose 版本、LF、根目录与文件型 Secret 元数据、四个外部卷、
@@ -126,7 +161,7 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
 `--require-code` 额外要求执行器启用。Mac 宿主的权限映射不凭宿主 stat 断言，输出
 `code_ownership_check=target_probe_required`，需实际容器验证。
 不会读取 Secret 内容，也不会证明服务能启动。`accept` 进一步核对全部默认常驻服务的状态和
-健康检查、四个一次性初始化任务的退出码，并在真实控制器内执行路径和 Compose 配置检查。
+健康检查、五个一次性初始化任务的退出码，并在真实控制器内执行路径和 Compose 配置检查。
 输出只有状态、平台和固定错误码，始终保留 `business_acceptance=not_checked`。
 
 代码权限隔离验收可在目标机器用已经构建且包含 SVN 的 `knowledge-sync` 镜像执行：
@@ -162,12 +197,14 @@ Rocky Linux 开启 SELinux 时另外核验目录和 socket 标签；不自动关
 
 | 错误码 | 处理 |
 | --- | --- |
-| `use_wsl2_linux_terminal` | 在启用 Docker 集成的 WSL2 发行版里运行 |
+| `use_compose_code_storage_init` | Windows 使用 `docker compose run --build --rm --no-deps code-storage-init` |
+| `code_directory_initialization_gate_missing` | 使用同版本主 Compose，消费者必须等待初始化成功 |
+| `code_directory_init_failed` / `code_directory_access_probe_failed` | 检查配置路径、Docker 文件共享及权限；不输出凭据内容 |
 | `code_directory_initialization_requires_root` | 仅对显式目录初始化命令使用 sudo，普通检查无需读取凭据内容 |
 | `code_directory_missing_or_invalid` | 先初始化正确根目录，拒绝符号链接和错误路径 |
 | `code_directory_permissions_invalid` | 核对源码 10003:10010/0750、公开状态目录 10003:10003/0755；旧目录先维护 |
 | `code_directory_existing_data_requires_maintenance` | 保留旧数据，不自动递归修复；使用新源码根检出或停机维护状态目录 |
-| `code_mount_source_mismatch` / `code_mount_invalid` | 核对 A/B 只读、执行器可写及控制器挂载源一致，禁用缺失目录自动创建 |
+| `code_mount_source_mismatch` / `code_mount_invalid` | 核对 A/B 只读、执行器可写及初始化/控制器挂载源一致，仅源码和状态目录允许创建 |
 | `code_executor_identity_invalid` / `code_reader_group_missing` | 应用同版本 Compose 并重新创建执行器和两个 Runtime |
 | `code_checkout_not_enabled` | 在根 .env 显式设置 CODE_CHECKOUT_ENABLED=true 后重新创建执行器 |
 | `deployment_root_mismatch` | `KNOWLEDGE_DEPLOY_ROOT` 指回当前主 Compose 根目录 |

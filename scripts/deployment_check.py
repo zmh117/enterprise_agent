@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deployment checks for WSL2/Linux. Output contains statuses, never resolved config.
+"""Deployment checks for Docker Desktop/Linux. Output statuses, never resolved config.
 
 check [--require-code]: read-only preflight; init-volumes --fresh: empty-install volumes;
 init-code-directories: initialize only explicit empty checkout/state roots;
@@ -25,7 +25,13 @@ KNOWLEDGE_VOLUMES = (
     "knowledge-operation-state",
 )
 BOOTSTRAP_LABEL = "io.enterprise-agent.fresh-project"
-ONESHOTS = {"migrator", "minio-init", "knowledge-model-prepare", "knowledge-reranker-prepare"}
+ONESHOTS = {
+    "migrator",
+    "minio-init",
+    "knowledge-model-prepare",
+    "knowledge-reranker-prepare",
+    "code-storage-init",
+}
 CODE_EXECUTOR_UID = 10003
 CODE_READER_GID = 10010
 
@@ -36,7 +42,9 @@ class CheckError(Exception):
 
 def run(command: list[str], *, allow_failure: bool = False) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60, cwd=ROOT)
+        result = subprocess.run(
+            command, capture_output=True, encoding="utf-8", errors="replace", timeout=60, cwd=ROOT
+        )
     except (OSError, subprocess.SubprocessError):
         raise CheckError("command_unavailable_or_timeout") from None
     if result.returncode and not allow_failure:
@@ -128,13 +136,34 @@ def _bind(service: dict, target: str, *, readonly: bool) -> Path:
     if (
         mount.get("type") != "bind"
         or bool(mount.get("read_only", False)) != readonly
-        or mount.get("bind", {}).get("create_host_path") is not False
+        or mount.get("bind", {}).get("create_host_path") is not True
     ):
         raise CheckError("code_mount_invalid")
     path = Path(mount["source"])
     if not path.is_absolute() or path.resolve() != path or not path.is_dir():
         raise CheckError("code_directory_missing_or_invalid")
     return path
+
+
+def validate_code_initialization(services: dict, checkout: Path, state: Path) -> None:
+    initializer = services.get("code-storage-init", {})
+    if (
+        _bind(initializer, "/storage/checkout", readonly=False) != checkout
+        or _bind(initializer, "/storage/state", readonly=False) != state
+    ):
+        raise CheckError("code_mount_source_mismatch")
+    for name in (
+        "api-server",
+        "knowledge-sync",
+        "knowledge-ops-controller",
+        "python-agent-runtime-a",
+        "python-agent-runtime-b",
+    ):
+        if (
+            services[name].get("depends_on", {}).get("code-storage-init", {}).get("condition")
+            != "service_completed_successfully"
+        ):
+            raise CheckError("code_directory_initialization_gate_missing")
 
 
 def validate_code_config(config: dict, *, require_code: bool = False) -> bool:
@@ -150,6 +179,7 @@ def validate_code_config(config: dict, *, require_code: bool = False) -> bool:
     if _bind(controller, "/deployment-code/checkout", readonly=True) != checkout:
         raise CheckError("code_mount_source_mismatch")
     state = _bind(controller, "/deployment-code/state", readonly=True)
+    validate_code_initialization(services, checkout, state)
     for name in ("python-agent-runtime-a", "python-agent-runtime-b"):
         if _bind(services[name], "/var/lib/code-svn/checkout", readonly=True) != checkout:
             raise CheckError("code_mount_source_mismatch")
@@ -195,7 +225,7 @@ def validate_config(config: dict, *, require_code: bool = False) -> None:
         if target == "/deployment":
             if source.resolve() != ROOT.resolve():
                 raise CheckError("deployment_root_mismatch")
-        elif str(source) != config["secrets"][secret]["file"]:
+        elif source != Path(config["secrets"][secret]["file"]):
             raise CheckError("controller_secret_path_mismatch")
     for name, secret in config["secrets"].items():
         if "file" not in secret:
@@ -323,9 +353,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        if platform.system() == "Windows":
-            raise CheckError("use_wsl2_linux_terminal")
         if args.command == "init-code-directories":
+            if platform.system() == "Windows":
+                raise CheckError("use_compose_code_storage_init")
             if args.checkout_root is None or args.state_root is None:
                 raise CheckError("code_directory_arguments_required")
             initialize_code_directories(args.checkout_root, args.state_root)

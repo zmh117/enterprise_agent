@@ -2,6 +2,10 @@
 
 FROM docker:28.5.2-cli AS knowledge-docker-cli
 
+FROM python:3.12-slim AS code-storage-init
+COPY backend/docker/initialize_code_storage.py /usr/local/bin/initialize-code-storage.py
+ENTRYPOINT ["python", "-B", "/usr/local/bin/initialize-code-storage.py"]
+
 FROM python:3.12-slim AS python-deps
 ARG BUILD_SOURCE_REVISION=local-dev
 ARG BUILD_ID=local-dev

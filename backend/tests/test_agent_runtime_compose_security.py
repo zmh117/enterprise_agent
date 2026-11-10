@@ -46,7 +46,9 @@ def test_default_compose_includes_code_identity_for_api_and_both_runtimes() -> N
             )
             assert service["environment"]["SERVICE_PRINCIPAL_ENABLED"] == "true"
     assert compose["secrets"]["code_runtime_bootstrap_token"]["file"] == (
-        "${CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE:-${HOME}/.config/enterprise-agent/"
+        "${CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE:-${PLATFORM_SECRETS_DIR:-"
+        "${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}"
+        "/.config/enterprise-agent}/"
         "code-runtime-bootstrap-token}"
     )
 

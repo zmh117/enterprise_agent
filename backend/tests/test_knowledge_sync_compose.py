@@ -38,20 +38,20 @@ def test_sync_is_managed_default_worker_with_shared_platform_database():
             "source": "${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration",
             "target": "/etc/code-svn",
             "read_only": True,
-            "bind": {"create_host_path": False},
+            "bind": {"create_host_path": True},
         },
         {
             "type": "bind",
             "source": "${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/client",
             "target": "/run/code-svn-auth",
             "read_only": True,
-            "bind": {"create_host_path": False},
+            "bind": {"create_host_path": True},
         },
         {
             "type": "bind",
             "source": "${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}",
             "target": "/var/lib/code-svn/checkout",
-            "bind": {"create_host_path": False},
+            "bind": {"create_host_path": True},
         },
     ]
     assert service["environment"]["CODE_CHECKOUT_ENABLED"] == "${CODE_CHECKOUT_ENABLED:-false}"

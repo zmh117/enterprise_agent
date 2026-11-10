@@ -446,6 +446,36 @@ services:
       - default
       - agent-runtime-control
 
+  # No network, credentials, database access, or recurring worker.
+  code-storage-init:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: code-storage-init
+    restart: "no"
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER", "DAC_OVERRIDE", "SETUID", "SETGID"]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 0.5
+    mem_limit: 64m
+    environment:
+      CODE_INIT_CHECKOUT_HOST_PATH: ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}
+      CODE_INIT_STATE_HOST_PATH: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}
+    volumes:
+      - type: bind
+        source: ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}
+        target: /storage/checkout
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}
+        target: /storage/state
+        bind:
+          create_host_path: true
+
   python-agent-runtime-a: &python-runtime-node
     # Shared source readers; the checkout bind remains read-only.
     group_add: ["10010"]
@@ -464,7 +494,7 @@ services:
         target: /var/lib/code-svn/checkout
         read_only: true
         bind:
-          create_host_path: false
+          create_host_path: true
     tmpfs:
       - /tmp/python-agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-1g},mode=0700,uid=10002,gid=10002
     cap_drop: ["ALL"]
@@ -507,6 +537,8 @@ services:
     expose:
       - "8091"
     depends_on:
+      code-storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       migrator:
@@ -564,7 +596,7 @@ services:
         target: /etc/code-svn
         read_only: true
         bind:
-          create_host_path: false
+          create_host_path: true
     secrets:
       - knowledge_bootstrap_token
       - code_runtime_bootstrap_token
@@ -578,6 +610,8 @@ services:
     ports:
       - "8000:8000"
     depends_on:
+      code-storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       rabbitmq:
@@ -1312,18 +1346,18 @@ services:
       target: /etc/code-svn
       read_only: true
       bind:
-        create_host_path: false
+        create_host_path: true
     - type: bind
       source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/client
       target: /run/code-svn-auth
       read_only: true
       bind:
-        create_host_path: false
+        create_host_path: true
     - type: bind
       source: ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}
       target: /var/lib/code-svn/checkout
       bind:
-        create_host_path: false
+        create_host_path: true
     networks:
     - knowledge-managed
     - provider-egress
@@ -1355,6 +1389,8 @@ services:
       start_period: 30s
     image: enterprise-agent/knowledge-sync:local
     depends_on:
+      code-storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       migrator:
@@ -1464,19 +1500,19 @@ services:
       bind:
         create_host_path: false
     - type: bind
-      source: ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}
+      source: ${APP_CONFIG_MASTER_KEY_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/app-config-master-key}
       target: /deployment-secrets/app-config-master-key
       read_only: true
       bind:
         create_host_path: false
     - type: bind
-      source: ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}
+      source: ${PRINCIPAL_JWKS_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/principal-jwks.json}
       target: /deployment-secrets/principal-jwks.json
       read_only: true
       bind:
         create_host_path: false
     - type: bind
-      source: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}
+      source: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/knowledge-bootstrap-token}
       target: /deployment-secrets/knowledge-bootstrap-token
       read_only: true
       bind:
@@ -1486,13 +1522,13 @@ services:
       target: /deployment-code/checkout
       read_only: true
       bind:
-        create_host_path: false
+        create_host_path: true
     - type: bind
       source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}
       target: /deployment-code/state
       read_only: true
       bind:
-        create_host_path: false
+        create_host_path: true
     - knowledge-operation-state:/state
     entrypoint:
     - /usr/local/bin/knowledge-ops-entrypoint
@@ -1514,6 +1550,8 @@ services:
     mem_limit: 512m
     stop_grace_period: 300s
     depends_on:
+      code-storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       migrator:
@@ -1534,35 +1572,35 @@ services:
 
 secrets:
   code_runtime_bootstrap_token:
-    file: ${CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE:-${HOME}/.config/enterprise-agent/code-runtime-bootstrap-token}
+    file: ${CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/code-runtime-bootstrap-token}
   knowledge_bootstrap_token:
-    file: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/knowledge-bootstrap-token}
+    file: ${KNOWLEDGE_BOOTSTRAP_TOKEN_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/knowledge-bootstrap-token}
   app_config_master_key:
-    file: ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}
+    file: ${APP_CONFIG_MASTER_KEY_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/app-config-master-key}
   dingtalk_runtime_auth_token:
     environment: DINGTALK_RUNTIME_AUTH_TOKEN
   runtime_grant_private_key:
-    file: ${RUNTIME_GRANT_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/runtime-grant-private.pem}
+    file: ${RUNTIME_GRANT_PRIVATE_KEY_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/runtime-grant-private.pem}
   runtime_grant_public_key:
-    file: ${RUNTIME_GRANT_PUBLIC_KEY_FILE:-${HOME}/.config/enterprise-agent/runtime-grant-public.pem}
+    file: ${RUNTIME_GRANT_PUBLIC_KEY_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/runtime-grant-public.pem}
   principal_jwt_private_key:
-    file: ${PRINCIPAL_JWT_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/principal-jwt-private.pem}
+    file: ${PRINCIPAL_JWT_PRIVATE_KEY_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/principal-jwt-private.pem}
   principal_jwks:
-    file: ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}
+    file: ${PRINCIPAL_JWKS_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/principal-jwks.json}
   file_worker_bootstrap_token:
-    file: ${FILE_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/file-worker-bootstrap-token}
+    file: ${FILE_WORKER_BOOTSTRAP_TOKEN_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/file-worker-bootstrap-token}
   file_processing_worker_bootstrap_token:
-    file: ${FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/file-processing-worker-bootstrap-token}
+    file: ${FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/file-processing-worker-bootstrap-token}
   delivery_worker_bootstrap_token:
-    file: ${DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/delivery-worker-bootstrap-token}
+    file: ${DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/delivery-worker-bootstrap-token}
   docling_api_key:
-    file: ${DOCLING_SERVE_API_KEY_FILE:-${HOME}/.config/enterprise-agent/docling-api-key}
+    file: ${DOCLING_SERVE_API_KEY_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/docling-api-key}
   file_storage_bootstrap_access_key:
     environment: MINIO_ROOT_USER
   file_storage_bootstrap_secret_key:
     environment: MINIO_ROOT_PASSWORD
   model_probe_auth_token:
-    file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/model-probe-auth-token}
+    file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/model-probe-auth-token}
 
 volumes:
   knowledge-models:

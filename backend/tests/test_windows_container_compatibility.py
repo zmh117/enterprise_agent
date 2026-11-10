@@ -33,7 +33,7 @@ def code_deployment(tmp_path, monkeypatch):
             source=str(source),
             target=target,
             read_only=readonly,
-            bind={"create_host_path": False},
+            bind={"create_host_path": True},
         )
 
     services = {
@@ -59,6 +59,13 @@ def code_deployment(tmp_path, monkeypatch):
         services["python-agent-runtime-" + node] = dict(
             group_add=[10010], volumes=[mount(checkout, "/var/lib/code-svn/checkout", True)]
         )
+    for service in services.values():
+        service["depends_on"] = {
+            "code-storage-init": {"condition": "service_completed_successfully"}
+        }
+    services["code-storage-init"] = dict(
+        volumes=[mount(checkout, "/storage/checkout", False), mount(state, "/storage/state", False)]
+    )
     return {"services": services}, checkout, state
 
 
@@ -79,7 +86,8 @@ def test_code_preflight_accepts_matching_mounts_and_reports_disabled_executor(co
     [
         ("missing", "code_directory_missing_or_invalid"),
         ("writeable_reader", "code_mount_invalid"),
-        ("autocreate", "code_mount_invalid"),
+        ("no_autocreate", "code_mount_invalid"),
+        ("missing_init_gate", "code_directory_initialization_gate_missing"),
         ("different_root", "code_mount_source_mismatch"),
         ("different_state", "code_mount_source_mismatch"),
         ("missing_group", "code_reader_group_missing"),
@@ -96,8 +104,10 @@ def test_code_preflight_rejects_unusable_shared_mounts(
         checkout.rmdir()
     elif change == "writeable_reader":
         reader["volumes"][0]["read_only"] = False
-    elif change == "autocreate":
-        reader["volumes"][0]["bind"]["create_host_path"] = True
+    elif change == "no_autocreate":
+        reader["volumes"][0]["bind"]["create_host_path"] = False
+    elif change == "missing_init_gate":
+        reader["depends_on"] = {}
     elif change == "different_root":
         reader["volumes"][0]["source"] = str(state)
     elif change == "different_state":
@@ -250,6 +260,10 @@ def test_compose_secret_file_variables_and_read_only_tmpfs_are_covered() -> None
             if name.endswith("_FILE") and "/run/secrets/" in str(value)
         )
         build = service.get("build", {})
+        if build.get("target") == "code-storage-init":
+            # Standalone Python initializer does not inherit secret normalization.
+            assert not service.get("secrets")
+            continue
         if not (
             service.get("read_only") is True
             and isinstance(build, dict)
