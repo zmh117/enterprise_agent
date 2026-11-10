@@ -831,7 +831,11 @@ class AgentRuntimeHttpClient:
             }:
                 raise NonRetryableExecutionError(
                     "Runtime lifecycle ended",
-                    safe_message="Runtime 执行已结束",
+                    safe_message=(
+                        "Agent 执行已取消"
+                        if row["terminal_code"] == "runtime_cancelled"
+                        else "Runtime 执行中断，未能确认最终结果；为避免重复调用，本次不自动重试"
+                    ),
                     error_code=row["terminal_code"],
                 )
             if row["state"] == "RUNNING" and row["node_id"] != node_id:

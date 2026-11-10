@@ -288,6 +288,34 @@ def _private_key() -> tuple[bytes, bytes]:
     return private_pem, public_pem
 
 
+@pytest.mark.parametrize(
+    "code,message",
+    [
+        ("runtime_cancelled", "Agent 执行已取消"),
+        (
+            "runtime_invocation_outcome_unknown",
+            "Runtime 执行中断，未能确认最终结果；为避免重复调用，本次不自动重试",
+        ),
+    ],
+)
+def test_pool_terminal_failure_explains_cancellation_or_unknown_without_reinvoking(
+    monkeypatch: pytest.MonkeyPatch, code: str, message: str
+) -> None:
+    client, _ = _client(GoldenTransport())
+    run_request = _request()
+    frozen = client._execution_request(run_request)
+    client.pool = SimpleNamespace(require=lambda *_: {"state": "TERMINAL", "terminal_code": code})
+    monkeypatch.setattr(client, "_frozen_request", lambda _: frozen)
+    monkeypatch.setattr(
+        "app.modules.agent.infrastructure.runtime_http_client.probe_runtime_readiness",
+        lambda *args, **kwargs: pytest.fail("terminal invocation must not contact a Runtime"),
+    )
+    with pytest.raises(NonRetryableExecutionError) as caught:
+        client._run_pool(run_request)
+    assert caught.value.error_code == code
+    assert caught.value.safe_message == message
+
+
 @pytest.mark.parametrize("state", ["PREPARED", "RUNNING", "TERMINAL"])
 def test_pool_selects_frozen_prompt_for_new_calls_and_preserves_recovery(
     monkeypatch: pytest.MonkeyPatch,

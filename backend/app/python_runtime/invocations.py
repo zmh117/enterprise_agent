@@ -582,7 +582,9 @@ class PythonInvocationRegistry:
                 }
             elif row["execution_deadline_at"] <= timestamp(database_now(self.pool.database)):
                 terminal.pop("final_answer", None)
-                terminal["status"] = "TIMEOUT"
+                # TIMEOUT is a Job state, not a protocol 1.4/1.5 terminal status.
+                # The Worker maps runtime_timeout to its TIMEOUT business state.
+                terminal["status"] = "FAILED"
                 terminal["failure"] = {
                     "code": "runtime_timeout",
                     "retry_class": "NEVER",

@@ -837,6 +837,48 @@ def test_python_runtime_cancel_wins_once_and_ledger_recovers_after_restart(
 
 
 @pytest.mark.parametrize("version", ["1.4", "1.5"])
+def test_runtime_deadline_commits_protocol_failure_and_replays_without_execution(
+    tmp_path: Path, version: str
+) -> None:
+    database = _database(tmp_path)
+
+    class DeadlineExecutor(FakePythonExecutor):
+        def execute(self, request, *args, **kwargs):
+            outcome = super().execute(request, *args, **kwargs)
+            # Model cleanup has returned, but the wall-clock budget is exhausted.
+            database.execute(
+                "update agent_runtime_invocation set execution_deadline_at = ? "
+                "where invocation_id = ?",
+                (timestamp(database_now(database) - timedelta(seconds=1)), request["invocation_id"]),
+            )
+            return outcome
+
+    executor = DeadlineExecutor()
+    ledger = PythonTerminalLedger(database)
+    registry = PythonInvocationRegistry(executor, ledger)
+    request = _request_for_version(version)
+    _prepare(database, request)
+    invocation = registry.acquire(request)
+    events = list(invocation.stream())
+    terminal = events[-1]["payload"]
+    assert terminal["status"] == "FAILED"
+    assert terminal["failure"]["code"] == "runtime_timeout"
+    assert terminal["failure"]["retry_class"] == "NEVER"
+    assert "final_answer" not in terminal
+    row = registry.pool.get(request["invocation_id"])
+    assert row["state"] == "TERMINAL"
+    assert row["terminal_code"] == "runtime_timeout"
+    assert row["execution_quiesced_at"] is not None
+    assert ledger.load(request["invocation_id"]).events == tuple(events)
+
+    replacement = FakePythonExecutor()
+    recovered = PythonInvocationRegistry(replacement, PythonTerminalLedger(database)).acquire(request)
+    assert list(recovered.stream()) == events
+    assert len(executor.requests) == 1
+    assert replacement.requests == []
+
+
+@pytest.mark.parametrize("version", ["1.4", "1.5"])
 def test_runtime_rejects_old_prompt_before_slot_admission_or_executor(
     tmp_path: Path,
     version: str,
