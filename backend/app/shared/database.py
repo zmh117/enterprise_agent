@@ -678,6 +678,10 @@ class Database:
         return sql
 
     def _split_statements(self, script: str) -> list[str]:
+        # Opt-in boundaries for migrations containing trigger/function bodies.
+        # Keep the historical simple format unchanged for all existing migrations.
+        if script.startswith("-- explicit-statements\n"):
+            return [part.strip() for part in script.split("\n-- statement-end\n") if part.strip()]
         return [statement.strip() for statement in script.split(";") if statement.strip()]
 
     def _is_ignorable_migration_error(

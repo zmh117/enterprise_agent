@@ -266,6 +266,7 @@ def test_code_answer_queries_use_only_granted_columns(isolated_policy_database, 
         store = CodeAnswerReader(reader)
         args = dict(
             base_id="code-kb",
+            environment_id="code-env-a",
             source_id=source,
             index_id=CODE_INDEX_ID,
             allowed_paths=["set_server"],
@@ -281,7 +282,9 @@ def test_code_answer_queries_use_only_granted_columns(isolated_policy_database, 
             "SELECT * FROM knowledge.vector_index WHERE id=?", (CODE_INDEX_ID,)
         )
         for point in vectors.points.values():
-            assert store.chunk(index=index, point=point, allowed_paths=["set_server"])
+            assert store.chunk(
+                index=index, point=point, allowed_paths=["set_server"], environment_id="code-env-a"
+            )
         for statement in (
             "SELECT * FROM knowledge.code_evidence",
             "SELECT * FROM knowledge.code_qa_record",

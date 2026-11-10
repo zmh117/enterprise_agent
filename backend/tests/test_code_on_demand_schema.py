@@ -20,6 +20,8 @@ NEW_TABLES = {
     "code_answer_revision",
     "code_qa_record",
     "code_index_task",
+    "code_svn_connection",
+    "code_resource_environment",
 }
 
 

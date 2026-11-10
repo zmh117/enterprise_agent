@@ -233,7 +233,7 @@ def test_code_library_can_bind_multiple_existing_environments(setup):
     )
     assert saved["draft"]["code_configuration"]["environment_ids"] == ids
     assert service.store.code_environments(saved["draft"]["id"]) == [
-        {"code": code, "name": code} for code in ("code-env-one", "code-env-two")
+        {"id": row["id"], "code": row["code"], "name": row["code"]} for row in environments
     ]
     with pytest.raises(CodeKnowledgeError, match="CODE_ENVIRONMENT_INVALID"):
         service.save_code_draft(

@@ -245,7 +245,7 @@ class GovernanceStore:  # noqa: PLR0904
 
     def code_environments(self, revision_id: str) -> list[dict[str, Any]]:
         return self.database.execute(
-            f"SELECT e.code,e.display_name AS name FROM {self.t('code_resource_environment')} b "
+            f"SELECT e.id,e.code,e.display_name AS name FROM {self.t('code_resource_environment')} b "
             "JOIN platform_environment e ON e.id=b.environment_id "
             "WHERE b.revision_id=? AND e.status='enabled' ORDER BY e.code",
             (revision_id,),

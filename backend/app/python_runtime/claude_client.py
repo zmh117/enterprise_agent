@@ -827,7 +827,10 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
             "Safety rules:\n" + _numbered(context.safety_rules),
             "Tool restrictions:\n" + _numbered(context.tool_restrictions),
             (
-                "Code analysis uses the original Job. First search the knowledge base at the user's explicit "
+                "Code analysis uses the original Job. Require an explicit environment (e.g. 环境：prod) and numeric SVN revision from the user; ask if missing. "
+                "First use knowledge_list_bases(source_kind=code, environment=<code>); select only its matching libraries, ask if ambiguous. "
+                "Pass the same environment to every code search, full-answer read, SVN operation and save. Never reuse another environment's answer or receipt. "
+                "First search the selected knowledge base at the user's explicit "
                 "numeric SVN revision. Use knowledge_svn_update only when applicable evidence is missing. "
                 "After it succeeds, source_access.directory is the container-local read-only checkout root. "
                 "Read/Glob/Grep are restricted to its authorized paths; no source access exists before that grant. "

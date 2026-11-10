@@ -47,6 +47,7 @@ class CodeResultAuthorizer(CodeAnalysisStore):
             config_revision_id=analysis["config_revision_id"],
             source_id=analysis["source_id"],
             checkout_id=analysis["checkout_id"],
+            environment_id=analysis["environment_id"],
             revision=analysis["requested_revision"],
             exact_search_id=analysis["exact_search_id"],
             question_hash=analysis["question_hash"],

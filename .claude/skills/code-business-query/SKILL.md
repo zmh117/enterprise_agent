@@ -1,17 +1,17 @@
 ---
 name: code-business-query
-description: 先检索用户明确 SVN 版本的业务答案，证据不足时在原问答任务中只读核验代码，再保存带版本和证据的结论。
+description: 先检索用户明确环境和 SVN 版本的业务答案，证据不足时在原问答任务中只读核验代码，再保存带版本和证据的结论。
 ---
 
-# 按 SVN 版本核验业务问题
+# 按环境和 SVN 版本核验业务问题
 
-本 Skill 用于代码知识库的业务规则与版本核验。纯 ONES 需求、缺陷和工单资料查询沿用原有查询流程，不要求 SVN 号；只有转向代码知识库时才要求用户明确版本。不得因为本 Skill 已加载就把所有问题转为源码分析。
+本 Skill 用于代码知识库的业务规则与版本核验。纯 ONES 需求、缺陷和工单资料查询沿用原有查询流程，不要求 SVN 号；只有转向代码知识库时才要求用户明确环境和版本。不得因为本 Skill 已加载就把所有问题转为源码分析。
 
-1. 用户本次问题必须明确提供数字 SVN 版本，例如 `SVN r100`。没有版本先询问；不要从 HEAD、工作副本当前版本、本地基线、业务单据版本或自己的猜测补版本。比较问题可以明确两个数字版本。先用 `knowledge_list_bases` 选择当前获准代码知识库；来源或业务端有歧义时澄清。set_server 是公共后端，EBR 是工厂前端，JTH 是集团前端；具体目录和权限以当前知识库为准。
+1. 用户本次问题必须明确指定一个环境和数字 SVN 版本，例如 `环境：prod，SVN r100`。缺少环境或版本时先询问；多个环境要求拆分提问或选择一个环境，不从历史会话、应用默认或其他资源推断。环境可用编码或明确且无歧义的名称表达，工具一律传精确环境编码；不要从 HEAD、工作副本当前版本、本地基线、业务单据版本或自己的猜测补版本。比较问题可以明确两个数字版本。先用 `knowledge_list_bases(source_kind="code", environment=环境编码)` 选择当前环境已发布且获准的代码知识库；同环境有多个库时请用户选择，不取第一个。后续所有代码工具都传同一 `environment`，凭证、答案、源码分析和保存不可跨环境复用。来源或业务端有歧义时澄清。set_server 是公共后端，EBR 是工厂前端，JTH 是集团前端；具体目录和权限以当前知识库为准。
 
-2. 用 `knowledge_search(knowledge_base_id, query, svn_revision, version_mode="exact")` 保留用户原始对象、症状和条件。先读同版本候选和完整条件；需要完整结论时用成功返回的 `search_id`、`document_id`、`revision_id` 调用 `knowledge_get_code_answer`。分数是排序分，不是可信度；检索故障或预算耗尽不等于未命中。空库和有界零命中也不证明整个业务不存在规则。
+2. 用 `knowledge_search(knowledge_base_id, environment, query, svn_revision, version_mode="exact")` 保留用户原始对象、症状和条件。先读同版本候选和完整条件；需要完整结论时用成功返回的 `search_id`、`document_id`、`revision_id` 调用 `knowledge_get_code_answer`。分数是排序分，不是可信度；检索故障或预算耗尽不等于未命中。空库和有界零命中也不证明整个业务不存在规则。
 
-3. 同版本证据不足时，可引用该次成功 `search_id` 调用 `knowledge_search(version_mode="next_higher_hint", exact_search_id=..., reason=...)`，保持同一问题和用户版本。服务端只返回最近一个有权限且索引就绪的更高版本。它始终是线索，详情也保留 `requires_verification=true`；不得把其规则直接当作用户版本的事实。
+3. 同版本证据不足时，可引用该次成功 `search_id` 调用 `knowledge_search(version_mode="next_higher_hint", exact_search_id=..., reason=...)`，保持同一环境、问题和用户版本。服务端只返回最近一个有权限且索引就绪的更高版本。它始终是线索，详情也保留 `requires_verification=true`；不得把其规则直接当作用户版本的事实。
 
 4. 仍需源码核验时，引用成功检索返回的来源、checkout 和 `search_id` 调用 `knowledge_svn_update`，revision 必须是用户版本。请求只操作受管检出目录。立即返回忙时如实说明；queued/running 用 `knowledge_get_source_operation` 在原预算内查看。成功后 `source_access.directory` 是当前容器可读目录，授权只属于原 Job。不要创建独立 Agent、子 Job、预提取包或额外源码副本。
 
@@ -25,4 +25,4 @@ description: 先检索用户明确 SVN 版本的业务答案，证据不足时�
 
    保存时原样复制取得本次源码授权的 exact 检索 `query` 到 `question`，不要改用最终标题、缩写后的问题或其他检索词。未知项逐条明确 `critical` 布尔值，例如 `{"item":"界面提示文案未核验","critical":false,"reason":"结论只说明已核验的后端错误符号，不声称界面文案"}`。省略 `critical` 会按关键未知处理。判断关键与否以本次 claim 为准：如果未知实现或配置可能改变该 claim，必须标为 true，保留 partial；如果只是不属于已明确限定范围的后续流程、文案或现场数据，且结论没有对其作出断言，可标为 false。局部规则可用 supported，但须在 conditions/coverage 中明确范围，不能把“这一项校验通过”推导成“整个业务操作成功”。不得为了入库将真正的关键依赖改标为 false。
 
-9. 回答注明用户 SVN 版本、适用业务端、结论、条件和例外、证据位置与未知项。实际采用的完整知识或成功保存的答案须引用 `code-answer:<document_id>@<revision_id>`，ID 必须来自本次工具返回；没有实际采用的不引用。较高版本引用说明仅作线索，不改标目标版本。普通用户看到业务解释及必要引用，不展示源码全文。静态代码只能说明可能触发路径和需要核验的现场数据，不能声称已检查具体工单或确定生产根因。命中已有知识时直接回答，无需重复保存文档或编码；平台负责记录本次问答。缓存写入/索引失败也不重新派发模型，并如实报告失败边界。
+9. 回答注明用户环境和 SVN 版本、适用业务端、结论、条件和例外、证据位置与未知项。实际采用的完整知识或成功保存的答案须引用 `code-answer:<document_id>@<revision_id>`，ID 必须来自本次工具返回；没有实际采用的不引用。较高版本引用说明仅作线索，不改标目标版本。普通用户看到业务解释及必要引用，不展示源码全文。静态代码只能说明可能触发路径和需要核验的现场数据，不能声称已检查具体工单或确定生产根因。命中已有知识时直接回答，无需重复保存文档或编码；平台负责记录本次问答。缓存写入/索引失败也不重新派发模型，并如实报告失败边界。

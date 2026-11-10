@@ -14,7 +14,12 @@ class CodeSearchReceipts:
         self.db = database
 
     def read(
-        self, identifier: str, *, access: KnowledgeJobAccess, pin: PinnedKnowledgeResource
+        self,
+        identifier: str,
+        *,
+        access: KnowledgeJobAccess,
+        pin: PinnedKnowledgeResource,
+        environment_id: str,
     ) -> dict[str, Any]:
         row = self.db.execute_one(
             "SELECT m.job_id,m.actor_user_id,m.invocation_id,m.business_response_json,"
@@ -37,7 +42,9 @@ class CodeSearchReceipts:
         receipt = response.get("code_search") if isinstance(response, dict) else None
         if (
             not isinstance(receipt, dict)
-            or receipt.get("contract") != "code-search-receipt/v1"
+            or receipt.get("contract") != "code-search-receipt/v2-environment"
+            or receipt.get("environment_id") != environment_id
+            or not environment_id
             or receipt.get("search_id") != identifier
             or receipt.get("authorization_hash") != code_authorization_hash(access)
             or receipt.get("knowledge_base_id") != pin.knowledge_base_id

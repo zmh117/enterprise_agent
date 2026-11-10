@@ -15,6 +15,7 @@ from app.modules.knowledge.application.code_answer_search import (
     search_code_answers,
 )
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+from app.modules.knowledge.domain.code_environment import selected_environment
 from app.modules.knowledge.domain.code_answers import (
     svn_revision,
     normalized_question,
@@ -70,6 +71,7 @@ class SearchRequest:
     version_mode: str = "exact"
     exact_search_id: str | None = None
     reason: str | None = None
+    environment: str | None = None
 
     @classmethod
     def parse(cls, value: Any) -> "SearchRequest":
@@ -85,6 +87,7 @@ class SearchRequest:
                 "version_mode",
                 "exact_search_id",
                 "reason",
+                "environment",
             }
         ):
             raise KnowledgeGovernanceError("knowledge_input_invalid")
@@ -123,6 +126,7 @@ class SearchRequest:
             mode,
             value.get("exact_search_id"),
             value.get("reason"),
+            value.get("environment"),
         )
 
 
@@ -233,7 +237,11 @@ class KnowledgeSearch:
                 return self._search_code(token, request, access, budget, pin, content, search_id)
             if kind == "code":
                 raise CodeKnowledgeError("CODE_SOURCE_RETIRED")
-            if request.svn_revision is not None or request.version_mode != "exact":
+            if (
+                request.svn_revision is not None
+                or request.version_mode != "exact"
+                or request.environment is not None
+            ):
                 raise KnowledgeGovernanceError("knowledge_input_invalid")
             return self._search_content(token, request, access, budget, pin, content)
 
@@ -258,11 +266,17 @@ class KnowledgeSearch:
         ):
             raise CodeKnowledgeError("CODE_SOURCE_UNAVAILABLE")
         config = self.resources.store.code_configuration(pin.revision_id)
+        environment = selected_environment(
+            request.environment, self.resources.store.code_environments(pin.revision_id)
+        )
         question_hash = digest(normalized_question(request.query))
         chain_deadline = budget.deadline_ms
         if request.version_mode == "next_higher_hint":
             previous = self.code_receipts.read(
-                request.exact_search_id or "", access=access, pin=pin
+                request.exact_search_id or "",
+                access=access,
+                pin=pin,
+                environment_id=environment["id"],
             )
             if (
                 previous["version_mode"] != "exact"
@@ -277,6 +291,11 @@ class KnowledgeSearch:
             if self.access.authenticate(token, "knowledge_search") != access:
                 raise KnowledgeGovernanceError("knowledge_authorization_changed")
             self.resources.recheck(pin)
+            current = selected_environment(
+                request.environment, self.resources.store.code_environments(pin.revision_id)
+            )
+            if current["id"] != environment["id"]:
+                raise CodeKnowledgeError("CODE_ENVIRONMENT_MISMATCH")
 
         chain = self.access.budget(access.job_id, deadline_ms=chain_deadline)
         with chain.activate():
@@ -286,13 +305,15 @@ class KnowledgeSearch:
                 token=token,
                 request={
                     "action": "search_context",
+                    "environment": environment["code"],
                     "knowledge_base_id": pin.knowledge_base_id,
                     "resource_revision_id": pin.revision_id,
                     "requested_revision": revision,
                 },
             )
             if (
-                declared.get("requested_revision") != revision
+                declared.get("environment_id") != environment["id"]
+                or declared.get("requested_revision") != revision
                 or declared.get("source_id") != pin.source_id
                 or declared.get("checkout_id") != config["checkout_id"]
             ):
@@ -300,6 +321,7 @@ class KnowledgeSearch:
             check()
             result = search_code_answers(
                 store=store,
+                environment_id=environment["id"],
                 index=index,
                 revision=revision,
                 mode=request.version_mode,
@@ -313,12 +335,17 @@ class KnowledgeSearch:
                 check=check,
             )
             result.update(
-                search_id=search_id, source_id=pin.source_id, checkout_id=config["checkout_id"]
+                search_id=search_id,
+                source_id=pin.source_id,
+                checkout_id=config["checkout_id"],
+                environment=environment["code"],
+                environment_id=environment["id"],
             )
             # The MCP adapter persists this metadata only when the complete tool call
             # succeeds. No query or source text is written to the operation audit.
             result["_code_receipt"] = {
-                "contract": "code-search-receipt/v1",
+                "contract": "code-search-receipt/v2-environment",
+                "environment_id": environment["id"],
                 "search_id": search_id,
                 "knowledge_base_id": pin.knowledge_base_id,
                 "resource_revision_id": pin.revision_id,

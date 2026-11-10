@@ -181,6 +181,7 @@ class KnowledgeMcpTools:
                     key: result[key]
                     for key in (
                         "knowledge_base_id",
+                        "environment_id",
                         "source_id",
                         "document_id",
                         "revision_id",

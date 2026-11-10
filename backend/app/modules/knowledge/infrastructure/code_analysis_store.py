@@ -9,6 +9,7 @@ from app.modules.knowledge.infrastructure.code_analysis_authorization import (
 from typing import Any
 
 from app.modules.agent.infrastructure.runtime_pool_store import database_now, timestamp
+from app.modules.knowledge.infrastructure.code_environment import require_environment
 from app.modules.knowledge.domain.code_answers import CodeAnalysisContext, svn_revision, utc_time
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.identity import stable_id
@@ -57,6 +58,7 @@ class CodeAnalysisStore(CodeCheckoutStore):
         return invocation
 
     def _configuration(self, context: CodeAnalysisContext) -> None:
+        require_environment(self.db, context.config_revision_id, context.environment_id)
         suffix = (
             " FOR SHARE OF p"
             if self.db.engine == "postgres" and self.db.current_unit_of_work is not None
@@ -89,6 +91,7 @@ class CodeAnalysisStore(CodeCheckoutStore):
             "authorization_hash",
             "question_hash",
             "exact_search_id",
+            "environment_id",
         )
         if (
             any(analysis[k] != getattr(context, k) for k in fields)

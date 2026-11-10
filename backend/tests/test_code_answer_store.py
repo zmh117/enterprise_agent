@@ -33,9 +33,11 @@ def workspace(tmp_path):
         runtime.database.close()
 
 
-def prepared(workspace, key="one", revision=100):
+def prepared(workspace, key="one", revision=100, environment_id="code-env-a"):
     runtime, store, source, checkout = workspace
-    ctx = analysis_context(runtime, source, checkout, key=key, revision=revision)
+    ctx = analysis_context(
+        runtime, source, checkout, key=key, revision=revision, environment_id=environment_id
+    )
     analysis = confirm(store, ctx, store.begin(ctx, key))
     evidence_id = "evidence-" + key
     insert(
@@ -186,6 +188,7 @@ def test_each_cache_hit_gets_private_record_without_another_index_task(workspace
         job_id=ctx.job_id,
         result_revision=1,
         base_id=ctx.knowledge_base_id,
+        environment_id=ctx.environment_id,
         actor_id=ctx.actor_id,
         source_id=source,
         requested_revisions=[100],
@@ -250,6 +253,7 @@ def test_version_selection_filters_permissions_membership_and_readiness_before_h
     reader = CodeAnswerReader(store.db)
     args = dict(
         base_id="code-kb",
+        environment_id="code-env-a",
         source_id=source,
         index_id=CODE_INDEX_ID,
         revision=100,
@@ -268,6 +272,7 @@ def test_version_selection_filters_permissions_membership_and_readiness_before_h
     assert exact["matched_revision"] == 100
     answer = reader.get(
         base_id="code-kb",
+        environment_id="code-env-a",
         source_id=source,
         index_id=CODE_INDEX_ID,
         document_id=exact["document_ids"][0],
@@ -291,6 +296,7 @@ def test_correction_pending_index_does_not_fall_back_to_obsolete_answer(workspac
     assert (
         reader.select_version(
             base_id="code-kb",
+            environment_id="code-env-a",
             source_id=source,
             index_id=CODE_INDEX_ID,
             revision=100,
@@ -299,3 +305,53 @@ def test_correction_pending_index_does_not_fall_back_to_obsolete_answer(workspac
         )["matched_revision"]
         is None
     )
+
+
+def test_database_rejects_unscoped_answers_and_environment_rebinding(workspace):
+    import sqlite3
+
+    _, store, _, _ = workspace
+    ctx, analysis, result = prepared(workspace)
+    saved = save(store, ctx, analysis, result)
+    with pytest.raises(sqlite3.IntegrityError, match="CODE_ENVIRONMENT_REQUIRED"):
+        store.db.execute(f"INSERT INTO {store.t('code_answer')} (document_id) VALUES ('unscoped')")
+    for table, key, identifier in (
+        ("code_answer", "document_id", saved["document_id"]),
+        ("code_analysis", "id", analysis["id"]),
+    ):
+        with pytest.raises(sqlite3.IntegrityError, match="CODE_ENVIRONMENT_IMMUTABLE"):
+            store.db.execute(
+                f"UPDATE {store.t(table)} SET environment_id='code-env-b' WHERE {key}=?",
+                (identifier,),
+            )
+    with pytest.raises(sqlite3.IntegrityError, match="CODE_ENVIRONMENT_REQUIRED"):
+        store.db.execute(f"INSERT INTO {store.t('code_qa_record')} (id) VALUES ('unscoped')")
+
+
+def test_legacy_environmentless_answer_is_never_reused(workspace):
+    from pathlib import Path
+    from app.modules.knowledge.infrastructure.code_answer_reader import CodeAnswerReader
+
+    _, store, source, _ = workspace
+    ctx, analysis, result = prepared(workspace)
+    saved = save(store, ctx, analysis, result)
+    indexed(store, saved["revision_id"])
+    # Simulate a pre-162 row; reapply the new insert/update guards without assigning it an environment.
+    store.db.execute("DROP TRIGGER code_answer_environment_update")
+    store.db.execute("DROP TRIGGER code_answer_environment_immutable")
+    store.db.execute(f"UPDATE {store.t('code_answer')} SET environment_id=NULL")
+    store.db.execute_script(
+        Path("backend/migrations/162_isolate_code_knowledge_environment.sql").read_text()
+    )
+    reader = CodeAnswerReader(store.db)
+    for environment in ("code-env-a", "code-env-b"):
+        args = dict(
+            base_id="code-kb",
+            source_id=source,
+            index_id=CODE_INDEX_ID,
+            allowed_paths=["set_server"],
+            environment_id=environment,
+        )
+        assert reader.select_version(**args, revision=100, mode="exact")["document_ids"] == []
+        with pytest.raises(CodeKnowledgeError, match="CODE_ANSWER_UNAVAILABLE"):
+            reader.get(**args, document_id=saved["document_id"], revision_id=saved["revision_id"])

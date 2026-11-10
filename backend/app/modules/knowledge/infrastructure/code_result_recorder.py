@@ -7,6 +7,10 @@ from typing import Any
 from app.modules.agent.infrastructure.runtime_pool_store import RuntimePoolStore
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+from app.modules.knowledge.infrastructure.code_environment import (
+    declared_environment,
+    require_environment,
+)
 from app.modules.knowledge.domain.code_user_revision import user_svn_revisions
 from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.knowledge.infrastructure.code_qa_store import CodeQaStore
@@ -52,6 +56,7 @@ class CodeResultRecorder:
         ):
             return
         try:
+            environment = declared_environment(self.db, job.input_message or "")
             versions = user_svn_revisions(job.input_message or "")
         except CodeKnowledgeError:
             return  # A request for the missing version is not a versioned business answer.
@@ -61,13 +66,13 @@ class CodeResultRecorder:
             return
         # References must occur in final prose AND have been read/saved in this invocation.
         citations = set(_CITATION.findall(answer))
-        observed, touched = self._read_references(job.id, invocation)
+        observed, touched = self._read_references(job.id, invocation, environment["id"])
         analyses = self.db.execute(
             f"SELECT a.knowledge_base_id,a.source_id,a.requested_revision,a.state,"
             "a.saved_revision_id,r.document_id "
             f"FROM {self.qa.t('code_analysis')} a LEFT JOIN {self.qa.t('code_answer_revision')} r "
-            "ON r.revision_id=a.saved_revision_id WHERE a.job_id=? AND a.invocation_id=?",
-            (job.id, invocation),
+            "ON r.revision_id=a.saved_revision_id WHERE a.job_id=? AND a.invocation_id=? AND a.environment_id=?",
+            (job.id, invocation, environment["id"]),
         )
         for analysis in analyses:
             touched.add(analysis["knowledge_base_id"])
@@ -86,6 +91,10 @@ class CodeResultRecorder:
         sources = capability.get("sources", [])
         for source in sources:
             base, source_id = source["knowledge_base_id"], source["source_id"]
+            try:
+                require_environment(self.db, source["config_revision_id"], environment["id"])
+            except CodeKnowledgeError:
+                continue
             if base not in touched and len(sources) != 1:
                 continue
             refs = {}
@@ -136,6 +145,7 @@ class CodeResultRecorder:
                 base_id=base,
                 actor_id=job.requester_id,
                 source_id=source_id,
+                environment_id=environment["id"],
                 requested_revisions=list(versions),
                 question=question,
                 answer=answer,
@@ -144,7 +154,9 @@ class CodeResultRecorder:
                 references=references,
             )
 
-    def _read_references(self, job: str, invocation: str) -> tuple[list[dict[str, Any]], set[str]]:
+    def _read_references(
+        self, job: str, invocation: str, environment_id: str
+    ) -> tuple[list[dict[str, Any]], set[str]]:
         rows = self.db.execute(
             "SELECT m.business_response_json FROM mcp_operation_audit m "
             "JOIN agent_tool_call t ON t.id=m.agent_tool_call_id "
@@ -161,9 +173,9 @@ class CodeResultRecorder:
             if not isinstance(response, dict):
                 continue
             receipt, read = response.get("code_search"), response.get("code_answer_read")
-            if isinstance(receipt, dict):
+            if isinstance(receipt, dict) and receipt.get("environment_id") == environment_id:
                 touched.add(receipt["knowledge_base_id"])
-            if isinstance(read, dict):
+            if isinstance(read, dict) and read.get("environment_id") == environment_id:
                 touched.add(read["knowledge_base_id"])
                 observed.append(read)
         return observed, touched

@@ -10,7 +10,16 @@ TEXT = {"type": "string", "maxLength": 64000}
 NULL_TEXT = {"type": ["string", "null"], "maxLength": 8192}
 JSON_OBJECT = {"type": "object"}
 CURSOR = {"type": "string", "minLength": 1, "maxLength": 16000}
+ENVIRONMENT = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 100,
+    "description": "用户明确指定的环境编码，所有代码调用保持一致。",
+}
+ENVIRONMENT_FIELDS = {"environment": ENVIRONMENT, "environment_id": ID}
 CODE_USAGE = (
+    "用户必须明确指定环境，例如 环境：prod。先 knowledge_list_bases(source_kind=code, environment=环境编码) 选库；"
+    "同环境有多个知识库时请用户选择。所有检索、源码操作、保存及读取传同一 environment，禁止跨环境复用答案或凭证。"
     "代码问答必须由用户明确提供 SVN 数字版本。先 knowledge_search(version_mode=exact)，"
     "缺适用证据时才用成功的 search_id 查 next_higher_hint；最近更高版本只能当线索，"
     "必须核验用户请求版本的源码，不用 HEAD、工作副本版本或近似版本替代。"
@@ -62,6 +71,7 @@ CHUNK = obj(
 SEARCH_RESULT = obj(
     {
         "source_kind": {"const": "code"},
+        **ENVIRONMENT_FIELDS,
         "knowledge_base_id": ID,
         "resource_revision_id": ID,
         "index_id": ID,
@@ -88,11 +98,20 @@ SEARCH_RESULT = obj(
         "partial_reason": {"enum": [None, "bounded_search"]},
     }
 )
-GET_INPUT = obj({"knowledge_base_id": ID, "search_id": ID, "document_id": ID, "revision_id": ID})
+GET_INPUT = obj(
+    {
+        "environment": ENVIRONMENT,
+        "knowledge_base_id": ID,
+        "search_id": ID,
+        "document_id": ID,
+        "revision_id": ID,
+    }
+)
 GET_OUTPUT = obj(
     {
         **ANSWER_FIELDS,
         **VERSION_FIELDS,
+        **ENVIRONMENT_FIELDS,
         "knowledge_base_id": ID,
         "search_id": ID,
         "body_text": TEXT,
@@ -129,9 +148,15 @@ DIFF_SELECTOR = {
         obj({"kind": {"const": "range"}, "from_revision": REVISION, "to_revision": REVISION}),
     ]
 }
-ANALYSIS = {"knowledge_base_id": ID, "analysis_id": ID, "request_key": ID}
+ANALYSIS = {
+    "environment": ENVIRONMENT,
+    "knowledge_base_id": ID,
+    "analysis_id": ID,
+    "request_key": ID,
+}
 UPDATE_INPUT = obj(
     {
+        "environment": ENVIRONMENT,
         "knowledge_base_id": ID,
         "source_id": ID,
         "checkout_id": ID,
@@ -184,7 +209,7 @@ BLAME_INPUT = obj(
     },
     ("peg_revision",),
 )
-OPERATION_INPUT = obj({"knowledge_base_id": ID, "operation_id": ID})
+OPERATION_INPUT = obj({"environment": ENVIRONMENT, "knowledge_base_id": ID, "operation_id": ID})
 
 LOG_PATH = obj(
     {

@@ -16,6 +16,7 @@ class CodeAnswerContent(Protocol):
         self,
         *,
         base_id: str,
+        environment_id: str,
         source_id: str,
         index_id: str,
         revision: int,
@@ -26,6 +27,7 @@ class CodeAnswerContent(Protocol):
         self,
         *,
         base_id: str,
+        environment_id: str,
         source_id: str,
         index_id: str,
         document_id: str,
@@ -33,13 +35,23 @@ class CodeAnswerContent(Protocol):
         allowed_paths: list[str],
     ) -> dict[str, Any]: ...
     def chunk(
-        self, *, index: dict[str, Any], point: dict[str, Any], allowed_paths: list[str]
+        self,
+        *,
+        index: dict[str, Any],
+        point: dict[str, Any],
+        allowed_paths: list[str],
+        environment_id: str,
     ) -> dict[str, Any] | None: ...
 
 
 class CodeSearchReceiptPort(Protocol):
     def read(
-        self, identifier: str, *, access: KnowledgeJobAccess, pin: PinnedKnowledgeResource
+        self,
+        identifier: str,
+        *,
+        access: KnowledgeJobAccess,
+        pin: PinnedKnowledgeResource,
+        environment_id: str,
     ) -> dict[str, Any]: ...
 
 
@@ -69,6 +81,7 @@ def search_code_answers(
     query: str,
     top_k: int,
     resource_revision_id: str,
+    environment_id: str,
     embedding: EmbeddingPort,
     qdrant: CodeAnswerQdrant,
     reranker: CodeAnswerReranker,
@@ -79,6 +92,7 @@ def search_code_answers(
     check()
     selected = store.select_version(
         base_id=index["knowledge_base_id"],
+        environment_id=environment_id,
         source_id=index["source_id"],
         index_id=index["id"],
         revision=revision,
@@ -134,7 +148,9 @@ def search_code_answers(
         ):
             raise CodeKnowledgeError("CODE_SEARCH_CANDIDATE_INVALID")
         seen.add(point.get("id"))
-        selected_point = store.chunk(index=index, point=point, allowed_paths=allowed_paths)
+        selected_point = store.chunk(
+            index=index, point=point, allowed_paths=allowed_paths, environment_id=environment_id
+        )
         if selected_point is None:
             continue
         answer, chunk = selected_point["answer"], selected_point["chunk"]
@@ -189,6 +205,7 @@ def search_code_answers(
     for item in result["documents"]:
         store.get(
             base_id=index["knowledge_base_id"],
+            environment_id=environment_id,
             source_id=index["source_id"],
             index_id=index["id"],
             document_id=item["document_id"],

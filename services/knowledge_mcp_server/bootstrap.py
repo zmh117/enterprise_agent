@@ -77,7 +77,7 @@ def build_tools(
     )
     return KnowledgeMcpTools(
         KnowledgeMcpAuth(database, access),
-        KnowledgeDirectory(access, resources, audit),
+        KnowledgeDirectory(access, resources, audit, history=bridge),
         KnowledgeSearch(
             access,
             resources,

@@ -120,15 +120,27 @@ def code_configuration(runtime, tmp_path):
         f"UPDATE {store.t('code_checkout')} SET state='ready',verified_revision=100,verified_at=? WHERE id=?",
         (stamp, checkout["id"]),
     )
+    for name in ("a", "b"):
+        runtime.database.execute(
+            "INSERT INTO platform_environment (id,code,display_name,created_at,updated_at) VALUES (?,?,?,?,?)",
+            ("code-env-" + name, "env-" + name, "代码环境" + name, stamp, stamp),
+        )
+        insert(
+            runtime.database,
+            "code_resource_environment",
+            dict(revision_id="code-config", environment_id="code-env-" + name),
+        )
     return store, source, checkout, root
 
 
-def analysis_context(runtime, source, checkout, *, key="one", revision=100):
+def analysis_context(
+    runtime, source, checkout, *, key="one", revision=100, environment_id="code-env-a"
+):
     job = runtime.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key="code-" + key,
             requester_id="user_local_admin",
-            user_message="Synthetic code question r100",
+            user_message=f"环境：env-{environment_id[-1]} Synthetic code question r100",
             source_channel="debug_api",
         )
     )
@@ -165,6 +177,7 @@ def analysis_context(runtime, source, checkout, *, key="one", revision=100):
         digest("Synthetic code question"),
         "b" * 64,
         invocation["execution_deadline_at"],
+        environment_id,
     )
 
 

@@ -16,6 +16,11 @@ from app.modules.knowledge.domain.code_answers import (
 )
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError, ID, obj, validate
 from app.modules.knowledge.domain.code_svn_requests import history_request
+from app.modules.knowledge.infrastructure.code_environment import (
+    declared_environment,
+    require_environment,
+)
+from app.modules.knowledge.domain.code_environment import environment_code
 from app.modules.knowledge.domain.code_user_revision import user_svn_revisions
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.domain.normalization import canonical_json, digest
@@ -24,17 +29,19 @@ from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.knowledge.infrastructure.code_operation_store import CodeOperationStore
 from app.modules.knowledge.infrastructure.code_result_client import CodeResultClient
 from app.modules.knowledge.infrastructure.code_search_receipts import CodeSearchReceipts
-from app.shared.code_answer_tool_contracts import CODE_TOOL_SCHEMAS, REVISION
+from app.shared.code_answer_tool_contracts import CODE_TOOL_SCHEMAS, REVISION, ENVIRONMENT
 from app.shared.database import Database
 
 SEARCH_CONTEXT = obj(
     {
         "action": {"const": "search_context"},
+        "environment": ENVIRONMENT,
         "knowledge_base_id": ID,
         "resource_revision_id": ID,
         "requested_revision": REVISION,
     }
 )
+DIRECTORY_CONTEXT = obj({"action": {"const": "directory_context"}, "environment": ENVIRONMENT})
 TOOL_REQUEST = obj(
     {
         "action": {"const": "tool"},
@@ -70,7 +77,7 @@ class CodeHistoryBridge:
     def authenticate(self, service_token: str, knowledge_token: str) -> Any:
         return self.gateway.authenticate(service_token, knowledge_token)
 
-    def _user_version(self, access: Any, revision: int) -> None:
+    def _user_input(self, access: Any) -> str:
         # Only this control-plane path can inspect the private input; it never returns,
         # logs or copies message text to code knowledge/audit records.
         row = self.db.execute_one(
@@ -79,8 +86,19 @@ class CodeHistoryBridge:
             "WHERE j.id=? AND j.internal_user_id=? AND j.status='RUNNING'",
             (access.job_id, access.actor_id),
         )
-        if not row or revision not in user_svn_revisions(row["content"]):
+        if not row:
+            raise CodeKnowledgeError("CODE_ENVIRONMENT_REQUIRED")
+        return str(row["content"])
+
+    def _user_version(self, access: Any, revision: int) -> None:
+        if revision not in user_svn_revisions(self._user_input(access)):
             raise CodeKnowledgeError("SVN_REVISION_REQUIRED")
+
+    def _environment(self, access: Any, code: Any) -> dict[str, Any]:
+        environment = declared_environment(self.db, self._user_input(access))
+        if environment["code"] != environment_code(code):
+            raise CodeKnowledgeError("CODE_ENVIRONMENT_MISMATCH")
+        return environment
 
     @knowledge_entry
     def check(
@@ -91,15 +109,26 @@ class CodeHistoryBridge:
         request: dict[str, Any],
         deadline_ms: int | None = None,
     ) -> dict[str, Any]:
-        validate(request, {"oneOf": [SEARCH_CONTEXT, TOOL_REQUEST]})
+        validate(request, {"oneOf": [SEARCH_CONTEXT, TOOL_REQUEST, DIRECTORY_CONTEXT]})
         search = request["action"] == "search_context"
-        tool = "knowledge_search" if search else request["tool"]
-        if not search:
+        directory = request["action"] == "directory_context"
+        tool = (
+            "knowledge_list_bases"
+            if directory
+            else "knowledge_search"
+            if search
+            else request["tool"]
+        )
+        if not search and not directory:
             validate(request["arguments"], CODE_TOOL_SCHEMAS[tool][0])
         access = self.authenticate(service_token, knowledge_token)
         if self.access.authenticate(knowledge_token, tool) != access:
             raise KnowledgeGovernanceError("knowledge_authorization_changed")
-        base = request["knowledge_base_id"] if search else request["arguments"]["knowledge_base_id"]
+        args = request if search or directory else request["arguments"]
+        environment = self._environment(access, args["environment"])
+        if directory:
+            return {"environment": environment["code"], "environment_id": environment["id"]}
+        base = args["knowledge_base_id"]
         if base not in access.knowledge_base_ids:
             raise KnowledgeGovernanceError("knowledge_job_denied")
         budget = self.gateway.budget(access.job_id, deadline_ms=deadline_ms)
@@ -110,30 +139,19 @@ class CodeHistoryBridge:
             config = self.resources.store.code_configuration(pin.revision_id)
             if not config or config["source_id"] != pin.source_id:
                 raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
+            require_environment(self.db, pin.revision_id, environment["id"])
             if search:
-                self._user_version(access, request["requested_revision"])
-                result = {
-                    "requested_revision": request["requested_revision"],
-                    "source_id": pin.source_id,
-                    "checkout_id": config["checkout_id"],
-                }
+                result = self._search_context(access, request, pin, config, environment["id"])
             elif tool == "knowledge_svn_update":
-                result = self._begin(access, pin, config, request["arguments"])
+                result = self._begin(access, pin, config, request["arguments"], environment["id"])
             elif tool == "knowledge_get_code_answer":
                 raise CodeKnowledgeError("CODE_QUERY_TOOL_INVALID")
             elif tool == "knowledge_get_source_operation":
-                operation = self.operations.row(
-                    "code_svn_operation", request["arguments"]["operation_id"]
-                )
-                if not operation["analysis_id"] or operation["job_id"] != access.job_id:
-                    raise CodeKnowledgeError("CODE_OPERATION_MISMATCH")
-                analysis = self.operations.row("code_analysis", operation["analysis_id"])
-                context = self._context(access, pin, config, analysis)
-                result = self._view(context, analysis, config, operation)
+                result = self._poll(access, pin, config, args["operation_id"], environment["id"])
             else:
                 args = request["arguments"]
                 analysis = self.operations.row("code_analysis", args["analysis_id"])
-                context = self._context(access, pin, config, analysis)
+                context = self._context(access, pin, config, analysis, environment["id"])
                 if tool == "knowledge_save_code_answer":
                     # Runtime must have stopped new native reads and drained in-flight
                     # calls via its authenticated host endpoint before this mutation.
@@ -155,13 +173,46 @@ class CodeHistoryBridge:
             ):
                 raise KnowledgeGovernanceError("knowledge_authorization_changed")
             self.resources.recheck(pin)
+            require_environment(self.db, pin.revision_id, environment["id"])
             return result
 
+    def _poll(
+        self, access: Any, pin: Any, config: dict[str, Any], operation_id: str, environment_id: str
+    ) -> dict[str, Any]:
+        operation = self.operations.row("code_svn_operation", operation_id)
+        if not operation["analysis_id"] or operation["job_id"] != access.job_id:
+            raise CodeKnowledgeError("CODE_OPERATION_MISMATCH")
+        analysis = self.operations.row("code_analysis", operation["analysis_id"])
+        context = self._context(access, pin, config, analysis, environment_id)
+        return self._view(context, analysis, config, operation)
+
+    def _search_context(
+        self,
+        access: Any,
+        request: dict[str, Any],
+        pin: Any,
+        config: dict[str, Any],
+        environment_id: str,
+    ) -> dict[str, Any]:
+        self._user_version(access, request["requested_revision"])
+        return {
+            "requested_revision": request["requested_revision"],
+            "environment_id": environment_id,
+            "source_id": pin.source_id,
+            "checkout_id": config["checkout_id"],
+        }
+
     def _context(
-        self, access: Any, pin: Any, config: dict[str, Any], analysis: dict[str, Any]
+        self,
+        access: Any,
+        pin: Any,
+        config: dict[str, Any],
+        analysis: dict[str, Any],
+        environment_id: str,
     ) -> CodeAnalysisContext:
         if (
-            analysis["job_id"] != access.job_id
+            analysis["environment_id"] != environment_id
+            or analysis["job_id"] != access.job_id
             or analysis["knowledge_base_id"] != pin.knowledge_base_id
             or analysis["config_revision_id"] != pin.revision_id
             or analysis["source_id"] != pin.source_id
@@ -170,6 +221,7 @@ class CodeHistoryBridge:
         ):
             raise CodeKnowledgeError("CODE_ANALYSIS_MISMATCH")
         context = CodeAnalysisContext(
+            environment_id=environment_id,
             job_id=access.job_id,
             actor_id=access.actor_id,
             invocation_id=analysis["invocation_id"],
@@ -189,9 +241,16 @@ class CodeHistoryBridge:
         return context
 
     def _begin(
-        self, access: Any, pin: Any, config: dict[str, Any], args: dict[str, Any]
+        self,
+        access: Any,
+        pin: Any,
+        config: dict[str, Any],
+        args: dict[str, Any],
+        environment_id: str,
     ) -> dict[str, Any]:
-        receipt = self.receipts.read(args["search_id"], access=access, pin=pin)
+        receipt = self.receipts.read(
+            args["search_id"], access=access, pin=pin, environment_id=environment_id
+        )
         if (
             args["source_id"] != pin.source_id
             or args["checkout_id"] != config["checkout_id"]
@@ -200,7 +259,9 @@ class CodeHistoryBridge:
             raise CodeKnowledgeError("CODE_SEARCH_CONTEXT_CHANGED")
         exact = receipt
         if receipt["version_mode"] != "exact":
-            exact = self.receipts.read(receipt["exact_search_id"], access=access, pin=pin)
+            exact = self.receipts.read(
+                receipt["exact_search_id"], access=access, pin=pin, environment_id=environment_id
+            )
         if (
             exact["version_mode"] != "exact"
             or exact["requested_revision"] != args["revision"]
@@ -220,6 +281,7 @@ class CodeHistoryBridge:
             datetime.fromtimestamp(min(receipt["deadline_ms"], exact["deadline_ms"]) / 1000, UTC),
         )
         context = CodeAnalysisContext(
+            environment_id=environment_id,
             job_id=access.job_id,
             actor_id=access.actor_id,
             invocation_id=receipt["invocation_id"],
@@ -276,6 +338,7 @@ class CodeHistoryBridge:
             if k
             not in {
                 "knowledge_base_id",
+                "environment",
                 "analysis_id",
                 "request_key",
                 "cursor",

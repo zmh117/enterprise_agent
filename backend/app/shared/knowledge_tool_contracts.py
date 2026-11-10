@@ -6,6 +6,7 @@ from typing import Any
 from app.shared.mcp_server_policy import KNOWLEDGE_MCP_SERVER_CODE, mcp_invoke_scope
 from app.shared.code_answer_tool_contracts import (
     CODE_USAGE,
+    ENVIRONMENT,
     CODE_TOOL_SCHEMAS,
     CODE_DERIVED_TOOLS,
     REVISION,
@@ -137,8 +138,25 @@ KNOWLEDGE_TOOL_CONTRACTS = {
             + KNOWLEDGE_USAGE_INSTRUCTIONS
         ),
         input_schema={
-            "$comment": "knowledge-directory-contract/v4-code-source",
-            **_object({"cursor": {"type": "string", "minLength": 1, "maxLength": 4096}}, []),
+            "$comment": "knowledge-directory-contract/v5-environment",
+            **_object(
+                {
+                    "cursor": {"type": "string", "minLength": 1, "maxLength": 4096},
+                    "source_kind": {"enum": ["ones", "code"], "default": "ones"},
+                    "environment": ENVIRONMENT,
+                },
+                [],
+            ),
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"source_kind": {"const": "code"}},
+                        "required": ["source_kind"],
+                    },
+                    "then": {"required": ["environment"]},
+                    "else": {"not": {"required": ["environment"]}},
+                }
+            ],
         },
         output_schema=_object(
             {
@@ -194,7 +212,7 @@ KNOWLEDGE_TOOL_CONTRACTS = {
             + KNOWLEDGE_USAGE_INSTRUCTIONS
         ),
         input_schema={
-            "$comment": "knowledge-search-contract/v6-on-demand-code",
+            "$comment": "knowledge-search-contract/v7-environment",
             **_object(
                 {
                     "knowledge_base_id": _ID,
@@ -206,6 +224,7 @@ KNOWLEDGE_TOOL_CONTRACTS = {
                     },
                     "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
                     "svn_revision": REVISION,
+                    "environment": ENVIRONMENT,
                     "version_mode": {"enum": ["exact", "next_higher_hint"], "default": "exact"},
                     "exact_search_id": _ID,
                     "reason": {"type": "string", "minLength": 1, "maxLength": 2000},

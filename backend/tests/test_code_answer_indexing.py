@@ -148,6 +148,7 @@ def test_expired_claim_is_not_takeover_and_corrected_answer_is_not_visible(index
     assert executor.execute(next_work["id"])
     selected = CodeAnswerReader(store.db).select_version(
         base_id=ctx.knowledge_base_id,
+        environment_id=ctx.environment_id,
         source_id=ctx.source_id,
         index_id=CODE_INDEX_ID,
         revision=100,
@@ -211,7 +212,12 @@ def test_late_upsert_cannot_replace_new_ready_generation(indexing, monkeypatch):
     assert len(search(indexing)["documents"]) == 1
     reader = CodeAnswerReader(store.db)
     old = delayed[0][1][0]
-    assert reader.chunk(index=index, point=old, allowed_paths=["set_server"]) is None
+    assert (
+        reader.chunk(
+            index=index, point=old, allowed_paths=["set_server"], environment_id=ctx.environment_id
+        )
+        is None
+    )
 
 
 def test_late_remove_cannot_delete_reincluded_generation(indexing, monkeypatch):

@@ -353,6 +353,7 @@ def test_real_qdrant_lost_response_version_filter_and_reinclude(workspace, tmp_p
         )
         return search_code_answers(
             store=CodeAnswerReader(db),
+            environment_id="code-env-a",
             index=index,
             revision=revision,
             mode=mode,
@@ -397,3 +398,27 @@ def test_real_qdrant_lost_response_version_filter_and_reinclude(workspace, tmp_p
         assert [x["svn_revision"] for x in search(100)["documents"]] == [100]
     finally:
         qdrant.http.close()
+
+
+def test_postgres_same_question_isolated_by_environment(indexing):
+    search_cases.test_same_source_version_and_question_have_separate_environment_answers(indexing)
+    search_cases.test_higher_hint_never_uses_another_environments_nearer_version(indexing)
+
+
+def test_postgres_environment_constraints_reject_empty_or_rebinding(workspace):
+    _, store, _, _ = workspace
+    ctx, analysis, result = prepared(workspace)
+    saved = save(store, ctx, analysis, result)
+    for table, key, identifier in (
+        ("code_answer", "document_id", saved["document_id"]),
+        ("code_analysis", "id", analysis["id"]),
+    ):
+        with pytest.raises(psycopg.errors.CheckViolation, match="CODE_ENVIRONMENT_IMMUTABLE"):
+            store.db.execute(
+                f"UPDATE {store.t(table)} SET environment_id='code-env-b' WHERE {key}=?",
+                (identifier,),
+            )
+    for table in ("code_answer", "code_analysis", "code_qa_record"):
+        with pytest.raises(psycopg.errors.CheckViolation, match="CODE_ENVIRONMENT_REQUIRED"):
+            key = "document_id" if table == "code_answer" else "id"
+            store.db.execute(f"INSERT INTO {store.t(table)} ({key}) VALUES ('unscoped')")

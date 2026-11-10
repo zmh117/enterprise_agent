@@ -88,22 +88,22 @@ def test_ambiguous_or_invalid_user_version_rejected(text):
 
 def begin_reading(f):
     handler, ctx, access, pin, config, args = f
-    first = handler._begin(access, pin, config, args)
+    first = handler._begin(access, pin, config, args, "code-env-a")
     analysis = handler.operations.row("code_analysis", first["analysis_id"])
-    ctx = handler._context(access, pin, config, analysis)
+    ctx = handler._context(access, pin, config, analysis, "code-env-a")
     confirm(handler.operations, ctx, analysis)
     return handler, ctx, handler.operations.row("code_analysis", analysis["id"]), first
 
 
 def test_begin_pins_original_invocation_and_rejects_unstated_version(bridge):
     handler, ctx, access, pin, config, args = bridge
-    first = handler._begin(access, pin, config, args)
+    first = handler._begin(access, pin, config, args, "code-env-a")
     assert Draft202012Validator(CODE_TOOL_SCHEMAS["knowledge_svn_update"][1]).is_valid(first)
-    assert handler._begin(access, pin, config, args) == first
+    assert handler._begin(access, pin, config, args, "code-env-a") == first
     analysis = handler.operations.row("code_analysis", first["analysis_id"])
     assert analysis["job_id"] == ctx.job_id and analysis["invocation_id"] == ctx.invocation_id
     with pytest.raises(CodeKnowledgeError, match="CODE_SEARCH_CONTEXT_CHANGED"):
-        handler._begin(access, pin, config, {**args, "revision": 101})
+        handler._begin(access, pin, config, {**args, "revision": 101}, "code-env-a")
 
     # A model-selected revision is not authorization, even with a forged success receipt.
     handler.receipts = SimpleNamespace(
@@ -117,7 +117,7 @@ def test_begin_pins_original_invocation_and_rejects_unstated_version(bridge):
         )
     )
     with pytest.raises(CodeKnowledgeError, match="SVN_REVISION_REQUIRED"):
-        handler._begin(access, pin, config, {**args, "revision": 101})
+        handler._begin(access, pin, config, {**args, "revision": 101}, "code-env-a")
 
 
 @pytest.mark.parametrize(
@@ -125,14 +125,14 @@ def test_begin_pins_original_invocation_and_rejects_unstated_version(bridge):
 )
 def test_failed_identity_is_not_retried_under_a_new_request_key(bridge, error_code):
     handler, _, access, pin, config, args = bridge
-    first = handler._begin(access, pin, config, args)
+    first = handler._begin(access, pin, config, args, "code-env-a")
     handler.db.execute(
         f"UPDATE {handler.operations.t('code_svn_operation')} SET state='failed',"
         "error_code=? WHERE id=?",
         (error_code, first["operation_id"]),
     )
     with pytest.raises(CodeKnowledgeError, match=error_code):
-        handler._begin(access, pin, config, {**args, "request_key": "retry"})
+        handler._begin(access, pin, config, {**args, "request_key": "retry"}, "code-env-a")
     rows = handler.db.execute(f"SELECT id FROM {handler.operations.t('code_svn_operation')}")
     assert len(rows) == 1
 
@@ -150,7 +150,11 @@ def test_operation_poll_uses_published_schema_and_checks_job_ownership(bridge):
         recheck=lambda value: None,
         store=SimpleNamespace(code_configuration=lambda revision: config),
     )
-    args = {"knowledge_base_id": "code-kb", "operation_id": first["operation_id"]}
+    args = {
+        "environment": "env-a",
+        "knowledge_base_id": "code-kb",
+        "operation_id": first["operation_id"],
+    }
     Draft202012Validator(CODE_TOOL_SCHEMAS["knowledge_get_source_operation"][0]).validate(args)
     request = dict(
         action="tool",
@@ -164,7 +168,7 @@ def test_operation_poll_uses_published_schema_and_checks_job_ownership(bridge):
     other_access = replace(access, job_id="another-job")
     handler.gateway.authenticate = lambda *args: other_access
     handler.access.authenticate = lambda *args: other_access
-    with pytest.raises(CodeKnowledgeError, match="CODE_OPERATION_MISMATCH"):
+    with pytest.raises(CodeKnowledgeError, match="CODE_ENVIRONMENT_REQUIRED"):
         handler.check(service_token="synthetic", knowledge_token="synthetic", request=request)
 
 
@@ -173,7 +177,11 @@ def test_current_authorization_cannot_be_replaced_by_old_analysis(bridge):
     _, _, access, pin, config, _ = bridge
     with pytest.raises(CodeKnowledgeError, match="CODE_ANALYSIS_MISMATCH"):
         handler._context(
-            replace(access, current_authorization_hash="e" * 64), pin, config, analysis
+            replace(access, current_authorization_hash="e" * 64),
+            pin,
+            config,
+            analysis,
+            "code-env-a",
         )
 
 
@@ -264,3 +272,121 @@ def test_deadline_expiry_never_replays_update(bridge):
     op = handler.operations.row("code_svn_operation", first["operation_id"])
     with pytest.raises(CodeKnowledgeError, match="CODE_OPERATION_REPLAY_DENIED"):
         handler.operations.replay_history(ctx, op["id"])
+
+
+def configure_bridge(f):
+    handler, _, access, pin, config, _ = f
+    handler.gateway = SimpleNamespace(
+        authenticate=lambda *a: access,
+        budget=lambda *a, **kw: SimpleNamespace(activate=nullcontext, check=lambda: None),
+    )
+    handler.access = SimpleNamespace(authenticate=lambda *a: access)
+    handler.resources = SimpleNamespace(
+        resolve=lambda base: pin,
+        recheck=lambda value: None,
+        store=SimpleNamespace(code_configuration=lambda revision: config),
+    )
+    return handler
+
+
+def test_directory_and_search_require_the_users_environment(bridge):
+    handler = configure_bridge(bridge)
+
+    def call(request):
+        return handler.check(
+            service_token="synthetic", knowledge_token="synthetic", request=request
+        )
+
+    directory = dict(action="directory_context", environment="env-a")
+    assert call(directory)["environment_id"] == "code-env-a"
+    with pytest.raises(CodeKnowledgeError, match="CODE_ENVIRONMENT_MISMATCH"):
+        call({**directory, "environment": "env-b"})
+    request = dict(
+        action="search_context",
+        environment="env-a",
+        knowledge_base_id="code-kb",
+        resource_revision_id="code-config",
+        requested_revision=100,
+    )
+    assert call(request)["environment_id"] == "code-env-a"
+    handler.db.execute(
+        'DELETE FROM "knowledge.code_resource_environment" WHERE environment_id=?', ("code-env-a",)
+    )
+    with pytest.raises(CodeKnowledgeError, match="CODE_ENVIRONMENT_UNAVAILABLE"):
+        call(request)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "SVN r100",
+        "环境：env-a 和 env-b环境 SVN r100",
+        "环境：不存在 SVN r100",
+        "环境：env-a，环境：不存在 SVN r100",
+        "环境：env-a/env-b SVN r100",
+        "环境：env-a、env-b SVN r100",
+        "环境：env-a / env-b SVN r100",
+        "env-a和env-b环境 SVN r100",
+        "环境：env-a，env-b SVN r100",
+    ],
+)
+def test_missing_unknown_or_multiple_environments_are_not_inferred(bridge, message):
+    handler = configure_bridge(bridge)
+    handler.db.execute(
+        "UPDATE agent_message SET content=? WHERE job_id=? AND role='user'",
+        (message, bridge[1].job_id),
+    )
+    with pytest.raises(CodeKnowledgeError, match="CODE_ENVIRONMENT_REQUIRED"):
+        handler.check(
+            service_token="synthetic",
+            knowledge_token="synthetic",
+            request=dict(action="directory_context", environment="env-a"),
+        )
+
+
+def test_analysis_environment_cannot_be_switched_and_disable_revokes_reads(bridge):
+    handler, ctx, analysis, _ = begin_reading(bridge)
+    with pytest.raises(CodeKnowledgeError, match="CODE_ANALYSIS_MISMATCH"):
+        handler._context(bridge[2], bridge[3], bridge[4], analysis, "code-env-b")
+    handler.db.execute(
+        "UPDATE platform_environment SET status='disabled' WHERE id=?", (ctx.environment_id,)
+    )
+    with pytest.raises(CodeKnowledgeError, match="CODE_ENVIRONMENT_UNAVAILABLE"):
+        handler.operations.require_reader(ctx, analysis["id"])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "环境：env-a SVN r100",
+        "env-a环境 SVN r100",
+        "代码环境a环境 SVN r100",
+        "环境：代码环境a，SVN r100",
+    ],
+)
+def test_explicit_environment_code_and_unique_name(bridge, text):
+    from app.modules.knowledge.infrastructure.code_environment import declared_environment
+
+    assert declared_environment(bridge[0].db, text)["id"] == "code-env-a"
+
+
+def test_empty_or_ambiguous_environment_names_do_not_select_a_default(bridge):
+    from app.modules.knowledge.infrastructure.code_environment import declared_environment
+
+    db = bridge[0].db
+    db.execute("UPDATE platform_environment SET display_name='' WHERE id='code-env-b'")
+    assert declared_environment(db, "环境：env-a SVN r100")["id"] == "code-env-a"
+    db.execute(
+        "UPDATE platform_environment SET display_name='同名环境' WHERE id IN ('code-env-a','code-env-b')"
+    )
+    with pytest.raises(CodeKnowledgeError, match="CODE_ENVIRONMENT_REQUIRED"):
+        declared_environment(db, "环境：同名环境 SVN r100")
+    assert declared_environment(db, "环境：env-a SVN r100")["id"] == "code-env-a"
+
+
+def test_environment_name_already_ending_in_environment_is_explicit(bridge):
+    from app.modules.knowledge.infrastructure.code_environment import declared_environment
+
+    db = bridge[0].db
+    db.execute("UPDATE platform_environment SET display_name='生产环境' WHERE id='code-env-a'")
+    assert declared_environment(db, "在生产环境下查询 SVN r100")["id"] == "code-env-a"

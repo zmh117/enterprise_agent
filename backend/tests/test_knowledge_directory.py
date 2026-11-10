@@ -213,3 +213,44 @@ def test_offline_cursor_survives_ones_identity_changes(directory_fixture):
     )
     assert len(listing(f, {"cursor": cursor})["items"]) == 1
     assert not f["calls"] and not f["exchanges"]
+
+
+def test_code_directory_filters_environment_and_binds_pagination(directory_fixture, monkeypatch):
+    from types import SimpleNamespace
+    from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+
+    f = directory_fixture
+    calls = []
+    f["directory"].history = SimpleNamespace(code_history=lambda **kw: calls.append(kw["request"]))
+    items = [
+        dict(
+            knowledge_base_id=f"code-{n:03d}",
+            source_kind="code",
+            environments=[{"code": "env-a", "name": "A"}],
+        )
+        for n in range(51)
+    ]
+    items += [
+        dict(
+            knowledge_base_id="only-b",
+            source_kind="code",
+            environments=[{"code": "env-b", "name": "B"}],
+        ),
+        dict(knowledge_base_id="ones", source_kind="ones"),
+    ]
+    monkeypatch.setattr(f["directory"], "_catalog", lambda access: (items, "stable-state"))
+    with pytest.raises(CodeKnowledgeError, match="CODE_ENVIRONMENT_REQUIRED"):
+        listing(f, {"source_kind": "code"})
+    args = {"source_kind": "code", "environment": "env-a"}
+    first = listing(f, args)
+    assert len(first["items"]) == 50 and first["has_more"]
+    second = listing(f, {**args, "cursor": first["next_cursor"]})
+    assert [item["knowledge_base_id"] for item in second["items"]] == ["code-050"]
+    assert not second["has_more"]
+    assert calls[0] == {"action": "directory_context", "environment": "env-a"}
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_cursor_invalid"):
+        listing(f, {**args, "environment": "env-b", "cursor": first["next_cursor"]})
+    assert [
+        item["knowledge_base_id"] for item in listing(f, {**args, "environment": "env-b"})["items"]
+    ] == ["only-b"]
+    assert listing(f)["items"] == [items[-1]]

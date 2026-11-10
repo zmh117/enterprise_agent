@@ -319,7 +319,7 @@ def test_versioned_code_marker_changes_frozen_hash_and_old_publication_is_denied
 
     f = job_fixture
     schema = KNOWLEDGE_TOOL_CONTRACTS["knowledge_search"].input_schema
-    assert schema["$comment"] == "knowledge-search-contract/v6-on-demand-code"
+    assert schema["$comment"] == "knowledge-search-contract/v7-environment"
     old = {**schema, "$comment": "knowledge-search-contract/v4-access-mode"}
     assert tool_schema_hash(old) != MCP_TOOL_MANIFEST["knowledge_search"].schema_hash
     f["runtime"].database.execute(

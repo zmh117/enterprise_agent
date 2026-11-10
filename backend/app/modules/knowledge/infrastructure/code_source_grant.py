@@ -156,6 +156,7 @@ class CodeSourceGrant:
                     "config_revision_id",
                     "source_id",
                     "checkout_id",
+                    "environment_id",
                     "exact_search_id",
                     "question_hash",
                     "authorization_hash",

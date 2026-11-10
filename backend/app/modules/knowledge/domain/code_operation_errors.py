@@ -3,6 +3,9 @@
 CODE_OPERATION_MESSAGES = {
     "CODE_AUTHORIZATION_CHANGED": "当前权限已变化，不能继续读取或保存源码结论",
     "SVN_REVISION_REQUIRED": "请在问题中明确提供 SVN 数字版本，例如 SVN r100",
+    "CODE_ENVIRONMENT_REQUIRED": "请在问题中明确指定一个环境，例如 环境：prod；不能省略或同时指定多个环境",
+    "CODE_ENVIRONMENT_UNAVAILABLE": "环境未启用或不在当前已发布代码知识库的关联范围内",
+    "CODE_ENVIRONMENT_MISMATCH": "工具环境与用户明确指定的环境不一致，请使用用户指定的环境",
     "WORKSPACE_BUSY": "检出目录正被其他版本分析或更新占用，请稍后重试",
     "CODE_OPERATION_BUSY": "本任务的源码操作已达到并发上限",
     "CODE_OPERATION_EXPIRED": "源码操作已超过截止时间，请重新发起查询",

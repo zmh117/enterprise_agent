@@ -26,7 +26,13 @@ def frozen_job(workspace, *, key="cache"):
     request = RuntimePoolStore(runtime.database).request(ctx.invocation_id)
     request["prompt"]["retrieved_context"]["code_source"] = {
         "contract": "code-source-capability/v2",
-        "sources": [{"knowledge_base_id": "code-kb", "source_id": source}],
+        "sources": [
+            {
+                "knowledge_base_id": "code-kb",
+                "source_id": source,
+                "config_revision_id": "code-config",
+            }
+        ],
     }
     request["request_digest"] = canonical_request_digest(request)
     runtime.database.execute(
@@ -57,6 +63,7 @@ def observe(workspace, job, saved, *, kind="read", requested=100, status="SUCCEE
     )
     ref = dict(
         knowledge_base_id="code-kb",
+        environment_id="code-env-a",
         source_id=source,
         document_id=saved["document_id"],
         revision_id=saved["revision_id"],
@@ -138,7 +145,7 @@ def test_higher_version_stays_a_hint_and_comparison_needs_both_versions(workspac
     assert row["references_json"][0]["svn_revision"] == 101
     assert row["references_json"][0]["version_mode"] == "next_higher_hint"
     other = frozen_job(workspace, key="compare")
-    other = replace(other, input_message="比较 SVN r100 与 r101")
+    other = replace(other, input_message="环境：env-a 比较 SVN r100 与 r101")
     observe(workspace, other, saved, requested=101)
     recorder.record(other, answer(saved))
     assert recorder.qa.for_job(other.id, other.requester_id)[0]["support_status"] == "partial"
@@ -174,3 +181,45 @@ def test_business_normalization_omits_source_blocks_quotes_and_credentials():
     assert "RAW_CODE" not in result and "ORIGINAL_INPUT" not in result
     assert "synthetic-only" not in result and "[REDACTED]" in result
     assert len(business_text("长" * 65000, 64000)) <= 64000
+
+
+def test_qa_refuses_another_environments_answer_and_history_keeps_environment(workspace):
+    from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+
+    saved = fixture_answer(workspace)
+    job = frozen_job(workspace)
+    observe(workspace, job, saved)
+    recorder = CodeResultRecorder(workspace[0].database)
+    recorder.record(job, answer(saved))
+    row = recorder.qa.for_job(job.id, job.requester_id)[0]
+    assert row["environment_id"] == "code-env-a"
+    with pytest.raises(CodeKnowledgeError, match="CODE_QA_REFERENCE_INVALID"):
+        recorder.qa.record(
+            job_id=job.id,
+            result_revision=2,
+            base_id="code-kb",
+            actor_id=job.requester_id,
+            source_id=row["source_id"],
+            environment_id="code-env-b",
+            requested_revisions=[100],
+            question="Synthetic code question",
+            answer="synthetic",
+            support_status="supported",
+            answer_origin="cache",
+            references=row["references_json"],
+        )
+    other = frozen_job(workspace, key="other-environment")
+    other = replace(other, input_message="环境：env-b SVN r100 Synthetic code question")
+    observe(workspace, other, saved)  # A read receipt from A cannot support a B answer.
+    recorder.record(other, answer(saved))
+    isolated = recorder.qa.for_job(other.id, other.requester_id)[0]
+    assert isolated["environment_id"] == "code-env-b"
+    assert isolated["references_json"] == [] and isolated["support_status"] == "unverified"
+
+
+@pytest.mark.parametrize("question", ["SVN r100", "环境：env-a，env-b环境 SVN r100"])
+def test_no_environment_specific_qa_for_missing_or_ambiguous_environment(workspace, question):
+    job = replace(frozen_job(workspace), input_message=question)
+    recorder = CodeResultRecorder(workspace[0].database)
+    recorder.record(job, "请指定一个环境")
+    assert recorder.qa.for_job(job.id, job.requester_id) == []

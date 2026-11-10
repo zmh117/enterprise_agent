@@ -47,7 +47,7 @@ READ_COLUMNS = {
         "knowledge.code_repository": "source_id repository_uuid branch_path repository_root_url verified_at created_at",
         "knowledge.code_resource_config": "revision_id source_id checkout_id allowed_paths_json svn_access_ref",
         "knowledge.code_resource_environment": "revision_id environment_id",
-        "knowledge.code_answer": "document_id svn_revision question_text conditions_json visibility_scope_json",
+        "knowledge.code_answer": "document_id environment_id svn_revision question_text conditions_json visibility_scope_json",
         "knowledge.code_answer_revision": "revision_id claims_json coverage_json unknowns_json",
         "knowledge.code_index_task": "id claim_version index_id document_id revision_id action state ready_at expected_chunks completed_chunks config_hash",
     }.items()

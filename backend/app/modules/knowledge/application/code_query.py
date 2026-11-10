@@ -7,6 +7,7 @@ from app.modules.knowledge.application.ports import PrincipalAccess, CodeHistory
 from app.modules.knowledge.application.principal import PrincipalToken
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.application.retrieval_budget import knowledge_entry
+from app.modules.knowledge.domain.code_environment import selected_environment
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError, validate
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.shared.code_answer_tool_contracts import CODE_TOOL_SCHEMAS, ANSWER_FIELDS
@@ -36,12 +37,21 @@ class CodeKnowledgeQuery:
         budget = self.access.budget(access.job_id)
         with budget.activate():
             pin = self.resources.resolve(base)
+            environment = selected_environment(
+                arguments["environment"], self.resources.store.code_environments(pin.revision_id)
+            )
 
             def check() -> None:
                 budget.check()
                 if self.access.authenticate(token, tool) != access:
                     raise KnowledgeGovernanceError("knowledge_authorization_changed")
                 self.resources.recheck(pin)
+                current = selected_environment(
+                    arguments["environment"],
+                    self.resources.store.code_environments(pin.revision_id),
+                )
+                if current["id"] != environment["id"]:
+                    raise CodeKnowledgeError("CODE_ENVIRONMENT_MISMATCH")
 
             check()
             if tool != "knowledge_get_code_answer":
@@ -59,7 +69,9 @@ class CodeKnowledgeQuery:
             else:
                 if self.receipts is None:
                     raise CodeKnowledgeError("CODE_SUCCESSFUL_SEARCH_REQUIRED")
-                receipt = self.receipts.read(arguments["search_id"], access=access, pin=pin)
+                receipt = self.receipts.read(
+                    arguments["search_id"], access=access, pin=pin, environment_id=environment["id"]
+                )
                 matches = [
                     m
                     for m in receipt["matches"]
@@ -77,6 +89,7 @@ class CodeKnowledgeQuery:
                         raise CodeKnowledgeError("CODE_SOURCE_UNAVAILABLE")
                     answer = content.answers.get(
                         base_id=base,
+                        environment_id=environment["id"],
                         source_id=pin.source_id,
                         index_id=pin.index_id,
                         document_id=arguments["document_id"],
@@ -90,6 +103,8 @@ class CodeKnowledgeQuery:
                         **{k: answer[k] for k in ANSWER_FIELDS},
                         **{k: answer[k] for k in ("body_text", "content_hash", "visibility_scope")},
                         "knowledge_base_id": base,
+                        "environment": environment["code"],
+                        "environment_id": environment["id"],
                         "search_id": arguments["search_id"],
                         "requested_revision": receipt["requested_revision"],
                         "matched_revision": receipt["matched_revision"],

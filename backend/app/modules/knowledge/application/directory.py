@@ -17,7 +17,9 @@ from app.modules.knowledge.domain.governance import (
     strict_object,
 )
 from app.modules.knowledge.domain.models import KnowledgeJobAccess
-from app.modules.knowledge.application.ports import PrincipalAccess
+from app.modules.knowledge.application.ports import PrincipalAccess, CodeHistoryPort
+from app.modules.knowledge.domain.code_environment import environment_code
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.application.resource_service import KnowledgeResourceReader
 from app.modules.knowledge.domain.vector_contract import fingerprint
 from app.modules.knowledge.application.retrieval_budget import knowledge_entry
@@ -44,10 +46,12 @@ class KnowledgeDirectory:
         audit: AuditService,
         *,
         clock: Callable[[], int] | None = None,
+        history: CodeHistoryPort | None = None,
     ) -> None:
         self.access = access
         self.resources = resources
         self.audit = audit
+        self.history = history
         self._clock = clock or (lambda: int(time.time()))
         # 独立进程内临时密钥；重启后旧游标失效，从首页恢复，不新增共享 Secret 或游标表。
         self._cursors = Fernet(Fernet.generate_key())
@@ -90,7 +94,10 @@ class KnowledgeDirectory:
                 "component_roles": [],
             }
             if source["source_system"] == "svn":
-                item["environments"] = self.resources.store.code_environments(pin.revision_id)
+                item["environments"] = [
+                    {k: row[k] for k in ("code", "name")}
+                    for row in self.resources.store.code_environments(pin.revision_id)
+                ]
             items.append(item)
             facts.append({"resource": asdict(pin), "view": item})
         items.sort(key=lambda item: item["knowledge_base_id"])
@@ -126,8 +133,27 @@ class KnowledgeDirectory:
 
     @knowledge_entry
     def list_bases(self, *, token: PrincipalToken, arguments: Any) -> dict[str, Any]:
-        if not isinstance(arguments, dict) or not set(arguments) <= {"cursor"}:
+        if not isinstance(arguments, dict) or not set(arguments) <= {
+            "cursor",
+            "source_kind",
+            "environment",
+        }:
             raise KnowledgeGovernanceError("knowledge_input_invalid")
+        kind = arguments.get("source_kind", "ones")
+        if (
+            not isinstance(kind, str)
+            or kind not in {"ones", "code"}
+            or (kind == "ones" and "environment" in arguments)
+        ):
+            raise KnowledgeGovernanceError("knowledge_input_invalid")
+        environment = None
+        if kind == "code":
+            environment = environment_code(arguments.get("environment"))
+            if self.history is None:
+                raise CodeKnowledgeError("CODE_SOURCE_UNAVAILABLE")
+            self.history.code_history(
+                token=token, request={"action": "directory_context", "environment": environment}
+            )
         cursor = arguments.get("cursor")
         if "cursor" in arguments and (
             not isinstance(cursor, str) or not 1 <= len(cursor) <= MAX_CURSOR_CHARS
@@ -135,7 +161,13 @@ class KnowledgeDirectory:
             raise KnowledgeGovernanceError("knowledge_cursor_invalid")
         access = self.access.authenticate(token, "knowledge_list_bases")
         items, state = self._catalog(access)
-        binding = self._binding(access)
+        items = [
+            item
+            for item in items
+            if item["source_kind"] == kind
+            and (kind != "code" or any(e["code"] == environment for e in item["environments"]))
+        ]
+        binding = fingerprint([self._binding(access), kind, environment])
         after = self._position(cursor, binding, state) if cursor else ""
         if after and not any(item["knowledge_base_id"] == after for item in items):
             raise KnowledgeGovernanceError("knowledge_cursor_invalid")

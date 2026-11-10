@@ -40,3 +40,9 @@ Supported ledger shapes are:
 
 Partial legacy heads, checksum drift, unknown generations, non-empty schemas
 without a ledger, or forged adoption metadata fail closed.
+
+Migrations with function or trigger bodies use `-- explicit-statements` as the
+first line and `-- statement-end` on its own line between complete statements.
+This preserves semicolons inside bodies. Each statement still carries its own
+`-- postgres-only` or `-- sqlite-only` marker. Existing migrations retain their
+original semicolon-delimited format and checksums.

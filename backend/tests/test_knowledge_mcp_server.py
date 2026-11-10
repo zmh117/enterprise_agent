@@ -633,6 +633,8 @@ def test_code_search_receipt_is_host_bound_and_never_in_model_output(mcp_fixture
     def code_search(*, token, arguments, search_id):
         return dict(
             source_kind="code",
+            environment="env-a",
+            environment_id="code-env-a",
             knowledge_base_id=pin.knowledge_base_id,
             resource_revision_id=pin.revision_id,
             index_id=pin.index_id,
@@ -651,7 +653,8 @@ def test_code_search_receipt_is_host_bound_and_never_in_model_output(mcp_fixture
             partial=False,
             partial_reason=None,
             _code_receipt=dict(
-                contract="code-search-receipt/v1",
+                contract="code-search-receipt/v2-environment",
+                environment_id="code-env-a",
                 search_id=search_id,
                 knowledge_base_id=pin.knowledge_base_id,
                 resource_revision_id=pin.revision_id,
@@ -672,11 +675,16 @@ def test_code_search_receipt_is_host_bound_and_never_in_model_output(mcp_fixture
     content = result["structuredContent"]
     assert "_code_receipt" not in json.dumps(result)
     receipts = CodeSearchReceipts(f["runtime"].database)
-    receipt = receipts.read(content["search_id"], access=access, pin=pin)
+    receipt = receipts.read(
+        content["search_id"], access=access, pin=pin, environment_id="code-env-a"
+    )
     assert receipt["requested_revision"] == 100 and receipt["matches"] == []
+    with pytest.raises(CodeKnowledgeError, match="CODE_SEARCH_CONTEXT_CHANGED"):
+        receipts.read(content["search_id"], access=access, pin=pin, environment_id="code-env-b")
     with pytest.raises(CodeKnowledgeError, match="CODE_SEARCH_CONTEXT_CHANGED"):
         receipts.read(
             content["search_id"],
+            environment_id="code-env-a",
             access=replace(access, current_authorization_hash="z" * 64),
             pin=pin,
         )
@@ -684,7 +692,7 @@ def test_code_search_receipt_is_host_bound_and_never_in_model_output(mcp_fixture
         "UPDATE mcp_operation_audit SET response_truncated=1 WHERE id=?", (content["search_id"],)
     )
     with pytest.raises(CodeKnowledgeError, match="CODE_SUCCESSFUL_SEARCH_REQUIRED"):
-        receipts.read(content["search_id"], access=access, pin=pin)
+        receipts.read(content["search_id"], access=access, pin=pin, environment_id="code-env-a")
 
 
 def test_rejected_code_response_cannot_create_successful_receipt(mcp_fixture, monkeypatch):

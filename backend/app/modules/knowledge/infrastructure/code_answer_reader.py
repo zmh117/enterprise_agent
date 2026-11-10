@@ -17,7 +17,7 @@ class CodeAnswerReader(CodeCheckoutStore):
         if not metadata_only:
             columns = (
                 "d.id AS document_id,d.source_id,d.current_revision_id AS revision_id,"
-                "a.svn_revision,a.question_text,a.conditions_json,a.visibility_scope_json,"
+                "a.environment_id,a.svn_revision,a.question_text,a.conditions_json,a.visibility_scope_json,"
                 "r.title,r.body_text,r.content_hash,x.claims_json,x.coverage_json,x.unknowns_json"
             )
         return (
@@ -32,7 +32,7 @@ class CodeAnswerReader(CodeCheckoutStore):
             "WHERE m.knowledge_base_id=? AND d.source_id=? AND i.id=? AND i.source_id=d.source_id "
             "AND d.lifecycle_state='active' AND m.state='included' AND i.state='READY' "
             "AND i.incremental=1 AND t.action='upsert' AND t.state='succeeded' AND t.ready_at IS NOT NULL "
-            "AND t.expected_chunks>0 AND t.expected_chunks=t.completed_chunks AND t.config_hash=? "
+            "AND t.expected_chunks>0 AND t.expected_chunks=t.completed_chunks AND t.config_hash=? AND a.environment_id=? "
         )
 
     def _config_hash(self, index_id: str) -> str:
@@ -62,6 +62,7 @@ class CodeAnswerReader(CodeCheckoutStore):
         self,
         *,
         base_id: str,
+        environment_id: str,
         source_id: str,
         index_id: str,
         revision: int,
@@ -81,7 +82,7 @@ class CodeAnswerReader(CodeCheckoutStore):
         rows = self.db.execute(
             self._query(metadata_only=True)
             + f"AND a.svn_revision{operator}? ORDER BY a.svn_revision,d.id LIMIT 2001",
-            (base_id, source_id, index_id, self._config_hash(index_id), revision),
+            (base_id, source_id, index_id, self._config_hash(index_id), environment_id, revision),
         )
         visible = [row for row in rows[:2000] if self._visible(row, paths)]
         selected = visible[0]["svn_revision"] if visible else None
@@ -104,6 +105,7 @@ class CodeAnswerReader(CodeCheckoutStore):
         self,
         *,
         base_id: str,
+        environment_id: str,
         source_id: str,
         index_id: str,
         document_id: str,
@@ -112,7 +114,15 @@ class CodeAnswerReader(CodeCheckoutStore):
     ) -> dict[str, Any]:
         rows = self.db.execute(
             self._query() + "AND d.id=? AND d.current_revision_id=?",
-            (base_id, source_id, index_id, self._config_hash(index_id), document_id, revision_id),
+            (
+                base_id,
+                source_id,
+                index_id,
+                self._config_hash(index_id),
+                environment_id,
+                document_id,
+                revision_id,
+            ),
         )
         if len(rows) != 1 or not self._visible(rows[0], self._scope(allowed_paths)):
             raise CodeKnowledgeError("CODE_ANSWER_UNAVAILABLE")
@@ -128,7 +138,12 @@ class CodeAnswerReader(CodeCheckoutStore):
         return {**result, "content_scope": "full_answer", "support_status": "supported"}
 
     def chunk(
-        self, *, index: dict[str, Any], point: dict[str, Any], allowed_paths: list[str]
+        self,
+        *,
+        index: dict[str, Any],
+        point: dict[str, Any],
+        allowed_paths: list[str],
+        environment_id: str,
     ) -> dict[str, Any] | None:
         received = point.get("payload", {})
         if not isinstance(received, dict) or not isinstance(received.get("chunk_id"), str):
@@ -164,6 +179,7 @@ class CodeAnswerReader(CodeCheckoutStore):
         try:
             answer = self.get(
                 base_id=index["knowledge_base_id"],
+                environment_id=environment_id,
                 source_id=index["source_id"],
                 index_id=index["id"],
                 document_id=row["document_id"],

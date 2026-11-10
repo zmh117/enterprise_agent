@@ -1,6 +1,7 @@
 """History operation admission/replay and transient delivery, without production SVN."""
 
 import json
+from contextlib import nullcontext
 from datetime import UTC, datetime
 
 import pytest
@@ -164,8 +165,10 @@ def test_executor_delivers_transient_payload_and_replay_never_reexecutes_update(
 
     def client(operation, cancelled):
         assert not cancelled()
-        return SimpleNamespace(
-            source=SimpleNamespace(preflight=lambda revision: calls.append(revision))
+        return nullcontext(
+            SimpleNamespace(
+                source=SimpleNamespace(preflight=lambda revision: calls.append(revision))
+            )
         )
 
     class History:

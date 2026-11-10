@@ -23,6 +23,7 @@ class CodeQaStore(CodeCheckoutStore):
         base_id: str,
         actor_id: str,
         source_id: str,
+        environment_id: str,
         requested_revisions: list[int],
         question: str,
         answer: str,
@@ -33,7 +34,9 @@ class CodeQaStore(CodeCheckoutStore):
         """Idempotent finalization, including cache hits; never queues indexing."""
         question = normalized_question(question)
         if (
-            type(result_revision) is not int
+            not isinstance(environment_id, str)
+            or not environment_id
+            or type(result_revision) is not int
             or result_revision < 1
             or not isinstance(answer, str)
             or not 1 <= len(answer.strip()) <= 64000
@@ -49,13 +52,14 @@ class CodeQaStore(CodeCheckoutStore):
         bounded_json(references, expected=list)
         if len(references) > 100:
             raise CodeKnowledgeError("CODE_QA_INVALID")
-        identifier = stable_id("code-qa", job_id, str(result_revision), base_id)
+        identifier = stable_id("code-qa", job_id, str(result_revision), base_id, environment_id)
         values = dict(
             job_id=job_id,
             result_revision=result_revision,
             knowledge_base_id=base_id,
             actor_id=actor_id,
             source_id=source_id,
+            environment_id=environment_id,
             requested_revisions=revisions,
             question_text=question,
             answer_text=answer,
@@ -68,7 +72,7 @@ class CodeQaStore(CodeCheckoutStore):
             job = self.db.execute_one("SELECT requester_id FROM agent_job WHERE id=?", (job_id,))
             if not job or job["requester_id"] != actor_id:
                 raise CodeKnowledgeError("CODE_QA_OWNER_MISMATCH")
-            self._references(source_id, revisions, support_status, references)
+            self._references(source_id, environment_id, revisions, support_status, references)
             parameters = [
                 revisions
                 if k == "requested_revisions" and self.db.engine == "postgres"
@@ -78,7 +82,7 @@ class CodeQaStore(CodeCheckoutStore):
                 for k, v in values.items()
             ]
             self.db.execute(
-                f"INSERT INTO {self.t('code_qa_record')} (id,{','.join(values)},answer_hash,created_at) VALUES ({','.join('?' for _ in range(len(values) + 3))}) ON CONFLICT(job_id,result_revision,knowledge_base_id) DO NOTHING",
+                f"INSERT INTO {self.t('code_qa_record')} (id,{','.join(values)},answer_hash,created_at) VALUES ({','.join('?' for _ in range(len(values) + 3))}) ON CONFLICT(id) DO NOTHING",
                 (identifier, *parameters, answer_hash, timestamp(database_now(self.db))),
             )
             previous = self.db.execute_one(
@@ -89,7 +93,12 @@ class CodeQaStore(CodeCheckoutStore):
         return identifier
 
     def _references(
-        self, source: str, requested: list[int], status: str, references: list[dict[str, Any]]
+        self,
+        source: str,
+        environment_id: str,
+        requested: list[int],
+        status: str,
+        references: list[dict[str, Any]],
     ) -> None:
         for ref in references:
             if (
@@ -99,11 +108,12 @@ class CodeQaStore(CodeCheckoutStore):
             ):
                 raise CodeKnowledgeError("CODE_QA_REFERENCE_INVALID")
             row = self.db.execute_one(
-                f"SELECT a.source_id,a.svn_revision FROM {self.t('code_answer')} a JOIN {self.t('code_answer_revision')} r ON r.document_id=a.document_id WHERE a.document_id=? AND r.revision_id=?",
+                f"SELECT a.source_id,a.svn_revision,a.environment_id FROM {self.t('code_answer')} a JOIN {self.t('code_answer_revision')} r ON r.document_id=a.document_id WHERE a.document_id=? AND r.revision_id=?",
                 (ref["document_id"], ref["revision_id"]),
             )
             if (
                 not row
+                or row["environment_id"] != environment_id
                 or row["source_id"] != source
                 or row["svn_revision"] != svn_revision(ref["svn_revision"])
             ):
@@ -120,7 +130,7 @@ class CodeQaStore(CodeCheckoutStore):
     def for_job(self, job_id: str, actor_id: str) -> list[dict[str, Any]]:
         """Never exposes private histories across actors or through knowledge search."""
         rows = self.db.execute(
-            f"SELECT * FROM {self.t('code_qa_record')} WHERE job_id=? AND actor_id=? ORDER BY result_revision,id",
+            f"SELECT * FROM {self.t('code_qa_record')} WHERE job_id=? AND actor_id=? AND environment_id IS NOT NULL ORDER BY result_revision,id",
             (job_id, actor_id),
         )
         return [

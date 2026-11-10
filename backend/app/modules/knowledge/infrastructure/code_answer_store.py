@@ -217,7 +217,7 @@ class CodeAnswerStore(CodeAnalysisStore):
         result: dict[str, Any],
         evidence: dict[str, Any],
     ) -> str:
-        identity = answer_identity(question, result["conditions"], scope)
+        identity = answer_identity(question, result["conditions"], scope, context.environment_id)
         document_id = stable_id(
             "code-answer", context.source_id, str(context.revision), identity["identity_hash"]
         )

@@ -11,7 +11,7 @@ from app.modules.knowledge.domain.normalization import canonical_json, digest
 from app.modules.knowledge.domain.models import KnowledgeJobAccess
 
 
-CODE_ANSWER_CONTRACT = "code-answer/v1"
+CODE_ANSWER_CONTRACT = "code-answer/v2-environment"
 MAX_RESPONSE_BYTES = 512 * 1024
 
 
@@ -75,12 +75,15 @@ def utc_time(value: Any) -> datetime:
 
 
 def answer_identity(
-    question: str, conditions: dict[str, Any], scope: dict[str, Any]
+    question: str, conditions: dict[str, Any], scope: dict[str, Any], environment_id: str
 ) -> dict[str, Any]:
+    if not isinstance(environment_id, str) or not environment_id:
+        raise CodeKnowledgeError("CODE_ENVIRONMENT_REQUIRED")
     normalized = normalized_question(question)
     bounded_json(conditions, expected=dict)
     bounded_json(scope, expected=dict)
     values = dict(
+        environment_id=environment_id,
         question_hash=digest(normalized),
         conditions_hash=digest(conditions),
         visibility_scope_hash=digest(scope),
@@ -111,6 +114,7 @@ class CodeAnalysisContext:
     question_hash: str
     authorization_hash: str
     deadline_at: str
+    environment_id: str
 
     def fingerprint(self) -> str:
         return digest(
