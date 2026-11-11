@@ -11,7 +11,7 @@ import os
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.infrastructure.code_checkout_client import (
     WorkingCopyClient,
-    publish_directory,
+    checkout_directory,
 )
 from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource
 
@@ -345,14 +345,65 @@ class WorkingCopyAcceptance(unittest.TestCase):
         )
         self.assertFalse((self.root / "single/first").exists())
 
-    def test_atomic_publish_refuses_even_an_empty_racing_directory(self):
-        source, target = self.root / "partial", self.root / "destination"
-        source.mkdir()
+    def test_reservation_refuses_even_an_empty_racing_directory(self):
+        target = self.root / "destination"
         target.mkdir()
         with self.assertRaisesRegex(CodeKnowledgeError, "destination_exists"):
-            publish_directory(source, target)
-        self.assertTrue(source.is_dir())
+            with checkout_directory(target):
+                self.fail("an existing directory must never be reused")
         self.assertTrue(target.is_dir())
+
+    def test_checkout_does_not_require_noreplace_or_plain_rename(self):
+        import ctypes
+        import errno
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        def unsupported(*args):
+            ctypes.set_errno(errno.EINVAL)
+            return -1
+
+        noreplace = Mock(side_effect=unsupported)
+        root = self.root / "Windows 绑定盘"
+        root.mkdir()
+        with (
+            patch("ctypes.CDLL", return_value=SimpleNamespace(renameat2=noreplace)),
+            patch("os.rename", side_effect=AssertionError("unsafe rename fallback")),
+            patch("os.replace", side_effect=AssertionError("unsafe replace fallback")),
+        ):
+            result = self.client.checkout(
+                root=root,
+                folder="sanjiu_mes1",
+                job_id="no-noreplace",
+                revision=2,
+                paths=["first", "second/nested/rule.cpp"],
+            )
+        output = root / "sanjiu_mes1"
+        self.assertEqual(result["container_directory"], str(output))
+        self.assertEqual((output / "second/nested/rule.cpp").read_text(), "original rule\n")
+        self.assertTrue((output / "first/link").is_symlink())
+        self.assertEqual(self.svn("status", str(output)), "")
+        self.assertEqual(self.svn("info", "--show-item", "revision", str(output)), "2")
+        noreplace.assert_not_called()
+
+    def test_download_failure_removes_only_reserved_directory(self):
+        from unittest.mock import patch
+
+        original_command = self.client._checkout_command
+
+        def download(args, *, root):
+            if args[0] == "update":
+                self.assertTrue((root / "failed/.svn/wc.db").is_file())
+                raise CodeKnowledgeError("CODE_SVN_UPDATE_TIMEOUT")
+            original_command(args, root=root)
+
+        with patch.object(self.client, "_checkout_command", side_effect=download):
+            with self.assertRaisesRegex(CodeKnowledgeError, "CODE_SVN_UPDATE_TIMEOUT"):
+                self.client.checkout(
+                    root=self.root, folder="failed", job_id="failed", revision=2, paths=["first"]
+                )
+        self.assertFalse((self.root / "failed").exists())
+        self.assertTrue((self.root / "repo").is_dir())
 
     def test_whole_directory_and_two_sibling_children_without_parent_selection(self):
         for kind in ("file", "directory"):
@@ -469,7 +520,7 @@ class WorkingCopyAcceptance(unittest.TestCase):
         self.assertEqual(working.inspect(2)["operative_revision"], 2)
         self.assertTrue((output / paths[0]).is_file())
 
-    def test_failure_cleans_only_own_temporary_directory(self):
+    def test_invalid_selection_preserves_unrelated_directory(self):
         kept = self.root / "manual"
         kept.mkdir()
         (kept / "keep.txt").write_text("keep")

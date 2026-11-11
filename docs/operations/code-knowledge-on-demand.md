@@ -38,6 +38,10 @@
 
 三个宿主系统均运行 Linux 容器和同一套 SVN CLI；无需把 TortoiseSVN 安装到 Runtime。当前真实 CLI 验证是在 Mac Docker 的 Linux 容器中完成，不代表另外两种宿主已经通过。
 
+首次检出通过 `mkdir` 独占创建最终目录，保留数据库 `preparing` 状态和写占用；SVN 下载、版本/范围/身份核验全部成功后，才在事务中标为 `ready` 并允许绑定、分析。目录在宿主盘上出现不代表任务已完成。此流程不依赖 `renameat2(RENAME_NOREPLACE)`，不使用“检查不存在后普通 rename”的覆盖风险回退，也不额外复制整份工程，适用于不支持该改名标志的 Windows Docker Desktop 9p 绑定盘。已有文件、空目录、符号链接及并发任务占用的同名目标均拒绝复用。
+
+检出下载失败或取消时仅清理本次持有的目录；目录被替换、清理失败或进程异常退出时保留残留并保持不可分析，不自动覆盖或续接。旧版 `code_checkout_publish_failed` / `code_checkout_atomic_publish_unavailable` 记录不会因升级变成成功；如果旧 `.partial-*` 已清理，需要重新发起检出。失败记录仍保留目录名预留，新任务应填写新的子目录名，避免 `CODE_CHECKOUT_OVERLAP`；不要手工删除数据库记录来冒充成功。更新前等待现有 SVN 操作结束，然后执行 `docker compose up -d --build --no-deps knowledge-sync`；提示文案随 `admin-web` 更新。本修复不需要数据库迁移，不需要重建 Runtime 或重新发布 Agent。Windows 9p 的真实验收仍须在目标机器用新任务完成；本地真实 SVN 加禁用改名的故障注入不能代替现场证据。
+
 代码问答已纳入唯一主入口 `docker-compose.yml`，不再使用额外的代码知识库 overlay。主文件同时给 API 和两个 Runtime 挂载专用凭据与固定环境配置。`CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE` 可指定已有专用凭据文件；留空使用 `${HOME}/.config/enterprise-agent/code-runtime-bootstrap-token`。新环境使用 `scripts/bootstrap_agent_runtime_secrets.sh` 幂等生成此文件，已有环境继续使用原文件，不轮换或复用 ONES 凭据。后续构建、更新只使用主文件：
 
 ```sh

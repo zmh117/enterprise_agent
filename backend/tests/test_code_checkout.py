@@ -6,13 +6,133 @@ from types import SimpleNamespace
 import pytest
 
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
-from app.modules.knowledge.infrastructure.code_checkout_client import registered_url, selection
+from app.modules.knowledge.infrastructure.code_checkout_client import (
+    checkout_directory,
+    registered_url,
+    selection,
+)
 from app.modules.knowledge.infrastructure.code_checkout_jobs import CodeCheckoutJobs
 from app.modules.knowledge.infrastructure.code_management_executor import CodeManagementExecutor
 from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBuffer
 from backend.tests.test_code_resources import setup as setup_fixture, create
 
 setup = setup_fixture
+
+
+@pytest.mark.parametrize("kind", ["empty", "directory", "file", "symlink", "dangling"])
+def test_checkout_reservation_never_reuses_existing_target(tmp_path, kind):
+    target = tmp_path / "checkout"
+    if kind in {"empty", "directory"}:
+        target.mkdir()
+        if kind == "directory":
+            (target / "keep").write_text("untouched")
+    elif kind == "file":
+        target.write_text("untouched")
+    else:
+        original = tmp_path / "original"
+        if kind == "symlink":
+            original.mkdir()
+            (original / "keep").write_text("untouched")
+        target.symlink_to(original, target_is_directory=True)
+    identity = target.lstat()
+    with pytest.raises(CodeKnowledgeError, match="^code_checkout_destination_exists$"):
+        with checkout_directory(target):
+            pytest.fail("must reject before writing")
+    assert target.lstat() == identity
+    if kind in {"directory", "symlink"}:
+        assert (target / "keep").read_text() == "untouched"
+
+
+def test_concurrent_checkout_reservations_have_only_one_owner(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Event
+
+    target = tmp_path / "checkout"
+    start, rejected = Barrier(2), Event()
+
+    def attempt():
+        start.wait(timeout=5)
+        try:
+            with checkout_directory(target):
+                (target / "owned").write_text("complete")
+                assert rejected.wait(timeout=5)
+            return "success"
+        except CodeKnowledgeError as exc:
+            rejected.set()
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: attempt(), range(2)))
+    assert sorted(outcomes) == ["code_checkout_destination_exists", "success"]
+    assert (target / "owned").read_text() == "complete"
+
+
+def test_failed_checkout_cleans_own_directory_and_preserves_failure(tmp_path):
+    target, kept = tmp_path / "checkout", tmp_path / "keep"
+    kept.mkdir()
+    (kept / "file").write_text("untouched")
+    with pytest.raises(CodeKnowledgeError, match="^CODE_SVN_UPDATE_TIMEOUT$"):
+        with checkout_directory(target):
+            (target / "partial").write_text("unfinished")
+            (target / "external").symlink_to(kept, target_is_directory=True)
+            raise CodeKnowledgeError("CODE_SVN_UPDATE_TIMEOUT")
+    assert not target.exists()
+    assert (kept / "file").read_text() == "untouched"
+
+
+@pytest.mark.parametrize("fail", [True, False])
+def test_replaced_checkout_is_never_cleaned_or_reported_complete(tmp_path, fail):
+    target, original = tmp_path / "checkout", tmp_path / "original"
+    expected = "CODE_SVN_UPDATE_TIMEOUT" if fail else "CODE_CHECKOUT_IDENTITY_CHANGED"
+    with pytest.raises(CodeKnowledgeError, match=f"^{expected}$"):
+        with checkout_directory(target):
+            (target / "partial").write_text("unfinished")
+            target.rename(original)
+            target.mkdir()
+            (target / "keep").write_text("untouched")
+            if fail:
+                raise CodeKnowledgeError(expected)
+    assert (target / "keep").read_text() == "untouched"
+    assert (original / "partial").read_text() == "unfinished"
+
+
+def test_cleanup_failure_does_not_hide_checkout_failure(tmp_path, monkeypatch):
+    def denied(*args, **kwargs):
+        raise PermissionError("synthetic cleanup denied")
+
+    monkeypatch.setattr(
+        "app.modules.knowledge.infrastructure.code_checkout_client.shutil.rmtree", denied
+    )
+    with pytest.raises(CodeKnowledgeError, match="^CODE_SVN_UPDATE_TIMEOUT$"):
+        with checkout_directory(tmp_path / "checkout"):
+            raise CodeKnowledgeError("CODE_SVN_UPDATE_TIMEOUT")
+    assert (tmp_path / "checkout").is_dir()
+
+
+def test_checkout_directory_is_group_readable_without_changing_private_umask(tmp_path):
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import os, stat, sys
+from pathlib import Path
+from app.modules.knowledge.infrastructure.code_checkout_client import checkout_directory
+os.umask(0o077)
+path = Path(sys.argv[1])
+with checkout_directory(path):
+    assert stat.S_IMODE(path.stat().st_mode) == 0o750
+    private = path.parent / 'private-config'
+    private.write_text('synthetic')
+    assert stat.S_IMODE(private.stat().st_mode) == 0o600
+""",
+            str(tmp_path / "checkout"),
+        ],
+        check=True,
+    )
 
 
 @pytest.fixture
@@ -296,6 +416,31 @@ def test_failed_checkout_marks_invalid_without_replaying_or_stealing_writer(mana
     assert row["state"] == "failed" and row["quiesced_at"]
     checkout = jobs.row("code_checkout", operation["checkout_id"])
     assert checkout["state"] == "invalid" and checkout["writer_operation_id"] is None
+
+
+@pytest.mark.parametrize("fail", [True, False])
+def test_visible_checkout_remains_preparing_until_final_verification(management, monkeypatch, fail):
+    from app.modules.knowledge.infrastructure import code_management_executor as execution
+
+    jobs, _, executor, _, _, root = management
+    operation = submit(management, browse(management))
+    inspect = execution.SvnWorkingCopy.inspect
+
+    def verify(copy, revision):
+        assert (root / "selected/README.md").is_file()
+        checkout = jobs.row("code_checkout", operation["checkout_id"])
+        assert checkout["state"] == "preparing"
+        assert checkout["writer_operation_id"] == operation["id"]
+        if fail:
+            raise CodeKnowledgeError("code_checkout_verification_failed")
+        return inspect(copy, revision)
+
+    monkeypatch.setattr(execution.SvnWorkingCopy, "inspect", verify)
+    executor.execute(operation["id"])
+    checkout = jobs.row("code_checkout", operation["checkout_id"])
+    assert checkout["state"] == ("invalid" if fail else "ready")
+    assert jobs.get(operation["id"])["state"] == ("failed" if fail else "succeeded")
+    assert checkout["writer_operation_id"] is None
 
 
 def test_expired_running_management_is_never_reclaimed_as_stopped(management):

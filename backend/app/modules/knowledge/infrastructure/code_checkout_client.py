@@ -1,8 +1,7 @@
 """部署登记的 SVN 目录浏览与完整工作副本；不执行知识准入过滤。"""
 
-from collections.abc import Callable
-import ctypes
-import errno
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -22,28 +21,48 @@ from app.modules.knowledge.infrastructure.code_working_copy import (
 FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
 
-def publish_directory(source: Path, destination: Path) -> None:
-    # Linux container primitive: even an empty destination created concurrently
-    # must survive. A check followed by os.rename is not exclusive.
-    library = ctypes.CDLL(None, use_errno=True)
-    function = getattr(library, "renameat2", None)
-    if function is None:
-        raise CodeKnowledgeError("code_checkout_atomic_publish_unavailable")
-    function.argtypes = [
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_uint,
-    ]
-    function.restype = ctypes.c_int
-    if function(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
-        code = ctypes.get_errno()
-        raise CodeKnowledgeError(
-            "code_checkout_destination_exists"
-            if code == errno.EEXIST
-            else "code_checkout_publish_failed"
-        )
+def _same_directory(path: Path, descriptor: int) -> bool:
+    try:
+        return os.path.samestat(os.fstat(descriptor), path.lstat())
+    except OSError:
+        return False
+
+
+@contextmanager
+def checkout_directory(destination: Path) -> Iterator[Path]:
+    # mkdir is exclusive even for empty directories and dangling symlinks, and
+    # works on Desktop bind mounts that reject renameat2(RENAME_NOREPLACE).
+    # The existing DB writer owns this path in preparing state until the executor
+    # finishes verification; filesystem visibility does not grant Runtime access.
+    try:
+        destination.mkdir(mode=0o750)
+    except FileExistsError:
+        raise CodeKnowledgeError("code_checkout_destination_exists") from None
+    except OSError:
+        raise CodeKnowledgeError("code_checkout_create_failed") from None
+    descriptor = None
+    completed = False
+    try:
+        descriptor = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        # The worker keeps umask 077 for credentials. Only this owned source
+        # directory is group-readable; never change the process-wide umask.
+        os.fchmod(descriptor, 0o750)
+        yield destination
+        if not _same_directory(destination, descriptor):
+            raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
+        completed = True
+    except OSError:
+        raise CodeKnowledgeError("CODE_SVN_LOCAL_IO_FAILED") from None
+    finally:
+        if descriptor is not None:
+            if not completed and _same_directory(destination, descriptor):
+                try:
+                    shutil.rmtree(destination)
+                except OSError:
+                    # Keep the original failure; an uncleared directory remains
+                    # invalid and can never be reused or overwritten implicitly.
+                    pass
+            os.close(descriptor)
 
 
 def registry(path: Path) -> dict[str, dict[str, str]]:
@@ -183,8 +202,7 @@ class WorkingCopyClient:
         ):
             raise CodeKnowledgeError("code_checkout_destination_invalid")
         destination = root / folder
-        temporary = root / (".partial-" + job_id)
-        if os.path.lexists(destination) or os.path.lexists(temporary):
+        if os.path.lexists(destination):
             raise CodeKnowledgeError("code_checkout_destination_exists")
         self.source.preflight(revision)
         kinds = {}
@@ -209,7 +227,7 @@ class WorkingCopyClient:
                 raise CodeKnowledgeError("code_checkout_externals_unsupported")
         preflight_checkout_space(self.source, root, paths, revision)
         target = self.source._target(revision)
-        try:
+        with checkout_directory(destination):
             self._checkout_command(
                 [
                     "checkout",
@@ -219,7 +237,7 @@ class WorkingCopyClient:
                     "-r",
                     str(revision),
                     target,
-                    str(temporary),
+                    str(destination),
                 ],
                 root=root,
             )
@@ -238,7 +256,7 @@ class WorkingCopyClient:
                                 "--ignore-externals",
                                 "-r",
                                 str(revision),
-                                str(temporary / ancestor) + "@",
+                                str(destination / ancestor) + "@",
                             ],
                             root=root,
                         )
@@ -250,7 +268,7 @@ class WorkingCopyClient:
                         "--ignore-externals",
                         "-r",
                         str(revision),
-                        str(temporary / path) + "@",
+                        str(destination / path) + "@",
                     ],
                     root=root,
                 )
@@ -258,7 +276,7 @@ class WorkingCopyClient:
                 raise CodeKnowledgeError("code_checkout_interrupted")
             for path in paths:
                 node = xml_document(
-                    self.source._run("info", ["--xml", str(temporary / path) + "@"]).strip()
+                    self.source._run("info", ["--xml", str(destination / path) + "@"]).strip()
                 ).find("entry")
                 if (
                     node is None
@@ -267,10 +285,6 @@ class WorkingCopyClient:
                     or node.findtext("repository/uuid") != self.entry["repository_uuid"]
                 ):
                     raise CodeKnowledgeError("code_checkout_verification_failed")
-            if os.path.lexists(destination):
-                raise CodeKnowledgeError("code_checkout_destination_exists")
-            # A UUID-specific temporary directory is never used as an existing working copy.
-            publish_directory(temporary, destination)
             return {
                 "revision": revision,
                 "repository_uuid": self.entry["repository_uuid"],
@@ -278,6 +292,3 @@ class WorkingCopyClient:
                 "folder": folder,
                 "container_directory": str(destination),
             }
-        finally:
-            if temporary.is_dir() and not temporary.is_symlink():
-                shutil.rmtree(temporary)

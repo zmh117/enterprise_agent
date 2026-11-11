@@ -46,6 +46,12 @@ export const codeCheckoutErrors: Record<string, string> = {
     "检出目录权限不足，请检查执行器与 Runtime 的共享读取权限。",
   code_checkout_destination_exists:
     "目标目录已存在，请填写新的子目录名。已有内容未覆盖。",
+  code_checkout_create_failed:
+    "无法创建检出目录，请检查挂载目录权限、可用空间和磁盘状态。",
+  code_checkout_publish_failed:
+    "检出目录发布失败。旧版服务在 Windows 共享盘上可能不支持目录改名，请更新 knowledge-sync 后重新检出。",
+  code_checkout_atomic_publish_unavailable:
+    "旧版服务缺少目录发布所需的文件系统能力，请更新 knowledge-sync 后重新检出。",
   code_checkout_externals_unsupported:
     "仓库含有 SVN 外部引用，本次未检出。请由部署人员确认外部依赖范围。",
   code_checkout_interrupted: "后台执行已中断，请重新发起任务。",
