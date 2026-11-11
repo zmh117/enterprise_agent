@@ -8,6 +8,7 @@ import { codeOperationSchema } from "../application/code-checkout-query"
 import { KnowledgeError } from "./knowledge-resource-ui"
 import { DirectoryChoices } from "./code-directory-choices"
 import { codeCheckoutErrors } from "./code-checkout-errors"
+import { CodeSvnFailureDetails } from "./code-svn-failure-details"
 
 type Props = {
   resourceId: string
@@ -26,17 +27,15 @@ export function CodeBrowseDirectory(props: Props) {
     retry: false,
     staleTime: Infinity,
     queryFn: async () =>
-      z
-        .object({ id: z.string() })
-        .parse(
-          await apiRequest(
-            `/api/platform/knowledge/code/resources/${encodeURIComponent(resourceId)}/browse-children`,
-            {
-              method: "POST",
-              body: { browse_job_id: browseId, path, request_key: requestKey },
-            }
-          )
-        ),
+      z.object({ id: z.string() }).parse(
+        await apiRequest(
+          `/api/platform/knowledge/code/resources/${encodeURIComponent(resourceId)}/browse-children`,
+          {
+            method: "POST",
+            body: { browse_job_id: browseId, path, request_key: requestKey },
+          }
+        )
+      ),
   })
   const operation = useQuery({
     queryKey: ["code-directory-result", submission.data?.id],
@@ -80,6 +79,12 @@ export function CodeBrowseDirectory(props: Props) {
             ? (codeCheckoutErrors[terminalError] ?? "子目录加载失败，请重试。")
             : "子目录加载失败，请重试或重新浏览仓库。"}
         </p>
+        {data?.error_code && (
+          <CodeSvnFailureDetails
+            operationId={data.id}
+            diagnostic={data.result.diagnostic}
+          />
+        )}
         <Button
           type="button"
           variant="outline"

@@ -418,6 +418,34 @@ def test_failed_checkout_marks_invalid_without_replaying_or_stealing_writer(mana
     assert checkout["state"] == "invalid" and checkout["writer_operation_id"] is None
 
 
+def test_svn_failure_diagnostic_survives_worker_and_management_reload(management, monkeypatch):
+    from app.modules.knowledge.infrastructure import code_management_executor as execution
+    from app.modules.knowledge.infrastructure.code_svn import SvnCommandFailure
+
+    jobs, resource, executor, _, _, _ = management
+    operation = submit(management, browse(management))
+
+    def fail(*args, **kwargs):
+        raise SvnCommandFailure(
+            "code_svn_request_failed",
+            operation="update",
+            returncode=1,
+            error_codes={b"E000022", b"E200030", b"synthetic private detail"},
+        )
+
+    monkeypatch.setattr(execution.WorkingCopyClient, "checkout", fail)
+    executor.execute(operation["id"])
+    expected = {"operation": "update", "exit_code": 1, "svn_error_codes": ["E000022", "E200030"]}
+    row = jobs.get(operation["id"])
+    assert row["state"] == "failed" and row["error_code"] == "code_svn_request_failed"
+    assert row["result"] == {"diagnostic": expected}
+    reloaded = next(job for job in jobs.snapshot(resource["id"])["jobs"] if job["id"] == row["id"])
+    assert reloaded["result"] == {"diagnostic": expected}
+    assert "private" not in json.dumps(reloaded)
+    checkout = jobs.row("code_checkout", operation["checkout_id"])
+    assert checkout["state"] == "invalid" and checkout["writer_operation_id"] is None
+
+
 @pytest.mark.parametrize("fail", [True, False])
 def test_visible_checkout_remains_preparing_until_final_verification(management, monkeypatch, fail):
     from app.modules.knowledge.infrastructure import code_management_executor as execution

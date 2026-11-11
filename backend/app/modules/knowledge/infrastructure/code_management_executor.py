@@ -18,6 +18,7 @@ from app.modules.knowledge.infrastructure.code_checkout_jobs import CodeCheckout
 from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBuffer
 from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+from app.modules.knowledge.infrastructure.code_svn import SvnCommandFailure
 from app.modules.agent.infrastructure.runtime_pool_store import database_now, timestamp
 
 
@@ -95,7 +96,13 @@ class CodeManagementExecutor:
                 and re.fullmatch(r"[A-Za-z0-9_]{1,96}", exc.code)
                 else "CODE_CHECKOUT_FAILED"
             )
-            self.store.fail_management(identifier, owner=self.owner, claim=claim, error=error)
+            self.store.fail_management(
+                identifier,
+                owner=self.owner,
+                claim=claim,
+                error=error,
+                diagnostic=exc.diagnostic if isinstance(exc, SvnCommandFailure) else None,
+            )
 
     def _browse(
         self, row: dict[str, Any], request: dict[str, Any], client: WorkingCopyClient

@@ -17,6 +17,25 @@ export const codeOperationSchema = z.object({
     depth: z.literal("immediates").optional(),
     relative_dir: z.string().optional(),
     checkout_id: z.string().optional(),
+    diagnostic: z
+      .object({
+        operation: z.enum([
+          "info",
+          "log",
+          "cat",
+          "diff",
+          "propget",
+          "list",
+          "blame",
+          "status",
+          "checkout",
+          "update",
+          "unknown",
+        ]),
+        exit_code: z.number().int().min(-255).max(255).nullable(),
+        svn_error_codes: z.array(z.string().regex(/^E[0-9]{6}$/)).max(8),
+      })
+      .optional(),
   }),
 })
 const snapshotSchema = z.object({

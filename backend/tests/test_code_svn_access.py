@@ -186,6 +186,11 @@ def test_svn_errors_expose_codes_not_raw_stderr(tmp_path, number, expected):
     with pytest.raises(CodeKnowledgeError, match=expected) as exc:
         source._run("info", [])
     assert "private" not in str(exc.value)
+    assert exc.value.diagnostic == {
+        "operation": "info",
+        "exit_code": 1,
+        "svn_error_codes": [number],
+    }
 
 
 def test_multiline_password_is_rejected():

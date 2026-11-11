@@ -14,6 +14,7 @@ describe("SVN 工程检出", () => {
     ["CODE_SVN_EXECUTABLE_NOT_FOUND", "检出服务容器中找不到 SVN 命令"],
     ["CODE_SVN_LOCAL_IO_FAILED", "SVN 执行期间发生本地读写错误"],
     ["code_svn_unavailable", "旧错误记录无法区分超时与容器执行异常"],
+    ["code_svn_request_failed", "SVN 命令执行失败"],
   ])("检出失败 %s 显示可区分的中文原因", async (code, message) => {
     vi.stubGlobal(
       "fetch",
@@ -50,6 +51,65 @@ describe("SVN 工程检出", () => {
     expect(await screen.findByText(new RegExp(message))).toBeInTheDocument()
     expect(screen.queryByText(`检出未完成：${code}`)).toBeNull()
   })
+
+  it.each([
+    [1, ["E000022", "E200030"], "E000022、E200030"],
+    [-9, [], "未提供"],
+  ])(
+    "检出失败保留安全执行详情（退出码 %s）",
+    async (exitCode, codes, expected) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                enabled: true,
+                registrations: [],
+                checkouts: [],
+                jobs: [
+                  {
+                    id: "diagnostic-checkout",
+                    operation_kind: "checkout",
+                    state: "failed",
+                    error_code: "code_svn_request_failed",
+                    result: {
+                      diagnostic: {
+                        operation: "update",
+                        exit_code: exitCode,
+                        svn_error_codes: codes,
+                        stderr: "synthetic private text must not be rendered",
+                      },
+                    },
+                  },
+                ],
+              }),
+              { headers: { "Content-Type": "application/json" } }
+            )
+        )
+      )
+      render(
+        <QueryClientProvider
+          client={
+            new QueryClient({
+              defaultOptions: { queries: { retry: false } },
+            })
+          }
+        >
+          <CodeCheckoutPanel resourceId="code-library" />
+        </QueryClientProvider>
+      )
+      expect(
+        await screen.findByText(/任务 ID：diagnostic-checkout/)
+      ).toBeInTheDocument()
+      const diagnostic = screen.getByText(
+        /失败步骤：下载文件或更新版本（update）/
+      )
+      expect(diagnostic).toHaveTextContent(`SVN 错误号：${expected}`)
+      expect(diagnostic).toHaveTextContent(`退出码：${exitCode}`)
+      expect(screen.queryByText(/synthetic private/)).toBeNull()
+    }
+  )
 
   it("子目录超限显示中文提示，局部重试保留选择且不传新版本或凭据", async () => {
     const requests: Record<string, unknown>[] = []

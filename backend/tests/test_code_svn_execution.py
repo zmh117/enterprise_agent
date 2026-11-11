@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
-from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource
+from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource, SvnCommandFailure
 
 
 def source_for(tmp_path, executable):
@@ -19,6 +19,54 @@ def source_for(tmp_path, executable):
         config_directory=tmp_path,
         executable=str(executable),
     )
+
+
+@pytest.mark.parametrize("operation", ["info", "propget", "list", "checkout", "update", "status"])
+def test_unclassified_svn_failure_preserves_only_operation_exit_and_numeric_codes(
+    tmp_path, operation
+):
+    executable = tmp_path / "failing-svn"
+    executable.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "print('synthetic source text')\n"
+        "print('svn: E200030: private synthetic path and username', file=sys.stderr)\n"
+        "print('svn: E000022: private synthetic connection detail', file=sys.stderr)\n"
+        "sys.exit(1)\n"
+    )
+    executable.chmod(0o700)
+    with pytest.raises(SvnCommandFailure, match="^code_svn_request_failed$") as failure:
+        source_for(tmp_path, executable).execute(operation, [], timeout=10, limit=1024)
+    assert failure.value.diagnostic == {
+        "operation": operation,
+        "exit_code": 1,
+        "svn_error_codes": ["E000022", "E200030"],
+    }
+    assert "private" not in str(vars(failure.value))
+    assert "synthetic source" not in str(vars(failure.value))
+
+
+def test_nonzero_exit_without_svn_codes_does_not_invent_a_reason(tmp_path):
+    executable = tmp_path / "failing-svn"
+    executable.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(2)\n")
+    executable.chmod(0o700)
+    with pytest.raises(SvnCommandFailure) as failure:
+        source_for(tmp_path, executable)._run("info", [])
+    assert failure.value.diagnostic == {"operation": "info", "exit_code": 2, "svn_error_codes": []}
+
+
+def test_svn_diagnostic_is_bounded_and_rejects_non_code_content():
+    failure = SvnCommandFailure(
+        "code_svn_request_failed",
+        operation="arbitrary synthetic command",
+        returncode=1000,
+        error_codes={f"E{n:06}".encode() for n in range(20)}
+        | {b"E000001 private detail", b"unknown", b"E1234567"},
+    )
+    assert failure.diagnostic == {
+        "operation": "unknown",
+        "exit_code": None,
+        "svn_error_codes": [f"E{n:06}" for n in range(8)],
+    }
 
 
 @pytest.mark.parametrize("operation", ["info", "list", "propget", "checkout", "update"])

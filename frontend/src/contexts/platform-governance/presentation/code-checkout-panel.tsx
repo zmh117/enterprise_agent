@@ -15,6 +15,7 @@ export { DirectoryChoices } from "./code-directory-choices"
 import { DirectoryChoices } from "./code-directory-choices"
 import { CodeBrowseDirectory } from "./code-browse-directory"
 import { codeCheckoutErrors as errors } from "./code-checkout-errors"
+import { CodeSvnFailureDetails } from "./code-svn-failure-details"
 
 const base = "/api/platform/knowledge/code"
 const states: Record<string, string> = {
@@ -290,6 +291,12 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
           {browse.data?.result_expired && (
             <p role="status">目录预览已过期，请重新浏览。</p>
           )}
+          {browse.data?.error_code && (
+            <CodeSvnFailureDetails
+              operationId={browse.data.id}
+              diagnostic={browse.data.result.diagnostic}
+            />
+          )}
           {ready && (
             <>
               <p>
@@ -373,9 +380,16 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                   </p>
                 )}
                 {job.error_code && (
-                  <p role="alert">
-                    {errors[job.error_code] ?? `检出未完成：${job.error_code}`}
-                  </p>
+                  <>
+                    <p role="alert">
+                      {errors[job.error_code] ??
+                        `检出未完成：${job.error_code}`}
+                    </p>
+                    <CodeSvnFailureDetails
+                      operationId={job.id}
+                      diagnostic={job.result.diagnostic}
+                    />
+                  </>
                 )}
               </li>
             ))}

@@ -25,6 +25,25 @@ from app.modules.knowledge.infrastructure.code_executor_lock import inherited_ex
 
 MAX_XML_BYTES = 8 * 1024 * 1024
 BULK_METADATA_TIMEOUT = 300
+SVN_OPERATIONS = frozenset(
+    {"info", "log", "cat", "diff", "propget", "list", "blame", "status", "checkout", "update"}
+)
+
+
+class SvnCommandFailure(CodeKnowledgeError):
+    """A failed process with bounded, data-only diagnostics; no argv or stderr."""
+
+    def __init__(
+        self, code: str, *, operation: str, returncode: int, error_codes: set[bytes]
+    ) -> None:
+        super().__init__(code)
+        self.diagnostic = {
+            "operation": operation if operation in SVN_OPERATIONS else "unknown",
+            "exit_code": returncode if -255 <= returncode <= 255 else None,
+            "svn_error_codes": sorted(
+                code.decode("ascii") for code in error_codes if re.fullmatch(rb"E[0-9]{6}", code)
+            )[:8],
+        }
 
 
 def xml_document(data: bytes) -> ET.Element:
@@ -114,18 +133,7 @@ class SvnCodeSource:
         limit: int,
         cancelled: Callable[[], bool] | None = None,
     ) -> bytes:
-        if operation not in {
-            "info",
-            "log",
-            "cat",
-            "diff",
-            "propget",
-            "list",
-            "blame",
-            "status",
-            "checkout",
-            "update",
-        }:
+        if operation not in SVN_OPERATIONS:
             raise CodeKnowledgeError("code_svn_operation_denied")
         command = [
             self.executable,
@@ -164,6 +172,7 @@ class SvnCodeSource:
                         limit=limit,
                         cancelled=cancelled or self.cancelled,
                         timeout_error=timeout_error,
+                        operation=operation,
                     )
                 finally:
                     if process.poll() is None:
@@ -456,6 +465,7 @@ def _bounded_output(
     limit: int,
     cancelled: Callable[[], bool] = lambda: False,
     timeout_error: str = "CODE_SVN_TIMEOUT",
+    operation: str = "unknown",
 ) -> bytes:
     """Bound stdout; retain only fixed numeric SVN error codes from stderr."""
     assert process.stdout is not None
@@ -488,7 +498,8 @@ def _bounded_output(
                     output.extend(block)
                     if len(output) > limit:
                         raise CodeKnowledgeError("code_svn_response_too_large")
-    if process.wait(timeout=max(0.001, deadline - time.monotonic())):
+    returncode = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+    if returncode:
         for codes, error in [
             ({b"E215004", b"E170001"}, "CODE_SVN_AUTH_FAILED"),
             ({b"E230001"}, "CODE_SVN_CERTIFICATE_INVALID"),
@@ -496,6 +507,13 @@ def _bounded_output(
             ({b"E170013", b"E175002", b"E670002"}, "CODE_SVN_CONNECTION_FAILED"),
         ]:
             if error_codes & codes:
-                raise CodeKnowledgeError(error)
-        raise CodeKnowledgeError("code_svn_request_failed")
+                raise SvnCommandFailure(
+                    error, operation=operation, returncode=returncode, error_codes=error_codes
+                )
+        raise SvnCommandFailure(
+            "code_svn_request_failed",
+            operation=operation,
+            returncode=returncode,
+            error_codes=error_codes,
+        )
     return bytes(output)

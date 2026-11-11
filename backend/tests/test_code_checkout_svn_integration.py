@@ -13,7 +13,7 @@ from app.modules.knowledge.infrastructure.code_checkout_client import (
     WorkingCopyClient,
     checkout_directory,
 )
-from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource
+from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource, SvnCommandFailure
 
 
 @unittest.skipUnless(os.environ.get("CODE_AUTH_SVN_URL"), "isolated authenticated fixture required")
@@ -352,6 +352,20 @@ class WorkingCopyAcceptance(unittest.TestCase):
             with checkout_directory(target):
                 self.fail("an existing directory must never be reused")
         self.assertTrue(target.is_dir())
+
+    def test_real_svn_failure_preserves_numeric_diagnostic_without_path(self):
+        with self.assertRaises(SvnCommandFailure) as caught:
+            self.client.source._run(
+                "info", ["--xml", self.url + "/synthetic-private-missing-file@2"]
+            )
+        diagnostic = caught.exception.diagnostic
+        self.assertEqual(diagnostic["operation"], "info")
+        self.assertEqual(diagnostic["exit_code"], 1)
+        self.assertTrue(diagnostic["svn_error_codes"])
+        for code in diagnostic["svn_error_codes"]:
+            self.assertRegex(code, r"^E[0-9]{6}$")
+        self.assertNotIn("private", str(diagnostic))
+        self.assertNotIn(self.url, str(diagnostic))
 
     def test_checkout_does_not_require_noreplace_or_plain_rename(self):
         import ctypes

@@ -1,4 +1,6 @@
 export const codeCheckoutErrors: Record<string, string> = {
+  code_svn_request_failed:
+    "SVN 命令执行失败，需结合执行步骤和 SVN 错误号确定原因。",
   CODE_CHECKOUT_CONNECTION_UNAVAILABLE:
     "无法确认该目录的原始 SVN 连接，请核对检出记录与连接配置。",
   CODE_REGISTRATION_CHANGED:

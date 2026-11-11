@@ -10,7 +10,7 @@ from app.modules.knowledge.application.source_service import KnowledgeAdministra
 from app.modules.knowledge.domain.code_answers import svn_revision
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.identity import stable_id
-from app.modules.knowledge.domain.normalization import digest
+from app.modules.knowledge.domain.normalization import canonical_json, digest
 from app.modules.knowledge.infrastructure.code_checkout_client import (
     FOLDER,
     registered_url,
@@ -357,7 +357,15 @@ class CodeCheckoutJobs(CodeOperationStore):
                 ),
             )
 
-    def fail_management(self, identifier: str, *, owner: str, claim: int, error: str) -> None:
+    def fail_management(
+        self,
+        identifier: str,
+        *,
+        owner: str,
+        claim: int,
+        error: str,
+        diagnostic: dict[str, Any] | None = None,
+    ) -> None:
         # Called only by this claim after every child process has been waited on.
         observed = self.get(identifier)
         with self.db.unit_of_work():
@@ -372,8 +380,15 @@ class CodeCheckoutJobs(CodeOperationStore):
                 raise CodeKnowledgeError("CODE_OPERATION_LEASE_LOST")
             stamp = timestamp(database_now(self.db))
             self.db.execute(
-                f"UPDATE {self.t('code_svn_operation')} SET state='failed',quiesced_at=?,finished_at=?,updated_at=?,error_code=? WHERE id=?",
-                (stamp, stamp, stamp, error, identifier),
+                f"UPDATE {self.t('code_svn_operation')} SET state='failed',quiesced_at=?,finished_at=?,updated_at=?,error_code=?,result_json=? WHERE id=?",
+                (
+                    stamp,
+                    stamp,
+                    stamp,
+                    error,
+                    canonical_json({"diagnostic": diagnostic} if diagnostic else {}),
+                    identifier,
+                ),
             )
             if row["checkout_id"]:
                 self.db.execute(
