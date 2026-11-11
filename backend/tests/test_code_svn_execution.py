@@ -54,6 +54,28 @@ def test_nonzero_exit_without_svn_codes_does_not_invent_a_reason(tmp_path):
     assert failure.value.diagnostic == {"operation": "info", "exit_code": 2, "svn_error_codes": []}
 
 
+def test_incomplete_working_copy_takes_precedence_without_automatic_cleanup_or_retry(tmp_path):
+    executable = tmp_path / "svn"
+    executable.write_text(
+        f"#!{sys.executable}\nimport pathlib, sys\n"
+        "with pathlib.Path(__file__).with_suffix('.calls').open('a') as calls:\n"
+        "    calls.write(sys.argv[1] + '\\n')\n"
+        "print('svn: E170013: synthetic wrapper', file=sys.stderr)\n"
+        "print('svn: E155004: synthetic lock', file=sys.stderr)\n"
+        "print('svn: E155037: synthetic pending work', file=sys.stderr)\n"
+        "sys.exit(1)\n"
+    )
+    executable.chmod(0o700)
+    with pytest.raises(SvnCommandFailure, match="^CODE_SVN_WC_CLEANUP_REQUIRED$") as failure:
+        source_for(tmp_path, executable).execute("update", [], timeout=10, limit=1024)
+    assert failure.value.diagnostic == {
+        "operation": "update",
+        "exit_code": 1,
+        "svn_error_codes": ["E155004", "E155037", "E170013"],
+    }
+    assert executable.with_suffix(".calls").read_text() == "update\n"
+
+
 def test_svn_diagnostic_is_bounded_and_rejects_non_code_content():
     failure = SvnCommandFailure(
         "code_svn_request_failed",

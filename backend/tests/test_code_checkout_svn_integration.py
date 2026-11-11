@@ -367,6 +367,47 @@ class WorkingCopyAcceptance(unittest.TestCase):
         self.assertNotIn("private", str(diagnostic))
         self.assertNotIn(self.url, str(diagnostic))
 
+    def test_real_pending_work_and_wc_lock_are_classified_without_repair(self):
+        import sqlite3
+
+        for folder, table, statement, native, classification in [
+            (
+                "pending",
+                "WORK_QUEUE",
+                "INSERT INTO WORK_QUEUE (work) VALUES (X'2873796E74686574696329')",
+                "E155037",
+                "CODE_SVN_WC_CLEANUP_REQUIRED",
+            ),
+            (
+                "locked",
+                "WC_LOCK",
+                "INSERT INTO WC_LOCK (wc_id, local_dir_relpath, locked_levels) "
+                "SELECT id, '', -1 FROM WCROOT",
+                "E155004",
+                "CODE_SVN_WC_LOCKED",
+            ),
+        ]:
+            with self.subTest(state=folder):
+                self.client.checkout(
+                    root=self.root, folder=folder, job_id=folder, revision=2, paths=["first"]
+                )
+                directory = self.root / folder
+                # Only this isolated synthetic fixture's SVN metadata is altered.
+                # A deterministic pending queue/lock models an interrupted operation.
+                with sqlite3.connect(directory / ".svn/wc.db") as database:
+                    database.execute(statement)
+                with self.assertRaises(SvnCommandFailure) as caught:
+                    self.client.source.execute(
+                        "update", ["-r", "2", str(directory) + "@"], timeout=10, limit=1024**2
+                    )
+                self.assertEqual(caught.exception.code, classification)
+                self.assertIn(native, caught.exception.diagnostic["svn_error_codes"])
+                self.assertEqual(caught.exception.diagnostic["operation"], "update")
+                with sqlite3.connect(directory / ".svn/wc.db") as database:
+                    self.assertEqual(
+                        database.execute(f"SELECT count(*) FROM {table}").fetchone()[0], 1
+                    )
+
     def test_checkout_does_not_require_noreplace_or_plain_rename(self):
         import ctypes
         import errno

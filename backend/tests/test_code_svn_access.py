@@ -168,6 +168,9 @@ print('verified')
         ("E215004", "CODE_SVN_AUTH_FAILED"),
         ("E230001", "CODE_SVN_CERTIFICATE_INVALID"),
         ("E170013", "CODE_SVN_CONNECTION_FAILED"),
+        ("E155037", "CODE_SVN_WC_CLEANUP_REQUIRED"),
+        ("E155004", "CODE_SVN_WC_LOCKED"),
+        ("E155032", "CODE_SVN_WC_DB_FAILED"),
     ],
 )
 def test_svn_errors_expose_codes_not_raw_stderr(tmp_path, number, expected):

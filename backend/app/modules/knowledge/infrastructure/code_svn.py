@@ -504,6 +504,11 @@ def _bounded_output(
             ({b"E215004", b"E170001"}, "CODE_SVN_AUTH_FAILED"),
             ({b"E230001"}, "CODE_SVN_CERTIFICATE_INVALID"),
             ({b"E175013", b"E220004"}, "CODE_SVN_ACCESS_DENIED"),
+            # Native WC state is actionable even when wrapped in a more generic
+            # transport error. Classification never authorizes cleanup or retry.
+            ({b"E155037"}, "CODE_SVN_WC_CLEANUP_REQUIRED"),
+            ({b"E155004"}, "CODE_SVN_WC_LOCKED"),
+            ({b"E155032"}, "CODE_SVN_WC_DB_FAILED"),
             ({b"E170013", b"E175002", b"E670002"}, "CODE_SVN_CONNECTION_FAILED"),
         ]:
             if error_codes & codes:

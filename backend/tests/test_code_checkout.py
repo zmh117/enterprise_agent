@@ -418,7 +418,18 @@ def test_failed_checkout_marks_invalid_without_replaying_or_stealing_writer(mana
     assert checkout["state"] == "invalid" and checkout["writer_operation_id"] is None
 
 
-def test_svn_failure_diagnostic_survives_worker_and_management_reload(management, monkeypatch):
+@pytest.mark.parametrize(
+    ("classification", "native_codes"),
+    [
+        ("code_svn_request_failed", ["E000022", "E200030"]),
+        ("CODE_SVN_WC_CLEANUP_REQUIRED", ["E155037"]),
+        ("CODE_SVN_WC_LOCKED", ["E155004"]),
+        ("CODE_SVN_WC_DB_FAILED", ["E155032"]),
+    ],
+)
+def test_svn_failure_diagnostic_survives_worker_and_management_reload(
+    management, monkeypatch, classification, native_codes
+):
     from app.modules.knowledge.infrastructure import code_management_executor as execution
     from app.modules.knowledge.infrastructure.code_svn import SvnCommandFailure
 
@@ -427,17 +438,17 @@ def test_svn_failure_diagnostic_survives_worker_and_management_reload(management
 
     def fail(*args, **kwargs):
         raise SvnCommandFailure(
-            "code_svn_request_failed",
+            classification,
             operation="update",
             returncode=1,
-            error_codes={b"E000022", b"E200030", b"synthetic private detail"},
+            error_codes={code.encode() for code in native_codes} | {b"synthetic private detail"},
         )
 
     monkeypatch.setattr(execution.WorkingCopyClient, "checkout", fail)
     executor.execute(operation["id"])
-    expected = {"operation": "update", "exit_code": 1, "svn_error_codes": ["E000022", "E200030"]}
+    expected = {"operation": "update", "exit_code": 1, "svn_error_codes": native_codes}
     row = jobs.get(operation["id"])
-    assert row["state"] == "failed" and row["error_code"] == "code_svn_request_failed"
+    assert row["state"] == "failed" and row["error_code"] == classification
     assert row["result"] == {"diagnostic": expected}
     reloaded = next(job for job in jobs.snapshot(resource["id"])["jobs"] if job["id"] == row["id"])
     assert reloaded["result"] == {"diagnostic": expected}

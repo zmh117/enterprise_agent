@@ -15,6 +15,9 @@ describe("SVN 工程检出", () => {
     ["CODE_SVN_LOCAL_IO_FAILED", "SVN 执行期间发生本地读写错误"],
     ["code_svn_unavailable", "旧错误记录无法区分超时与容器执行异常"],
     ["code_svn_request_failed", "SVN 命令执行失败"],
+    ["CODE_SVN_WC_CLEANUP_REQUIRED", "SVN 工作副本上一次操作尚未完成"],
+    ["CODE_SVN_WC_LOCKED", "SVN 工作副本被锁定"],
+    ["CODE_SVN_WC_DB_FAILED", "SVN 工作副本元数据数据库异常"],
   ])("检出失败 %s 显示可区分的中文原因", async (code, message) => {
     vi.stubGlobal(
       "fetch",

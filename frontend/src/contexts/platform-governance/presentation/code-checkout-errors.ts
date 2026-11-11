@@ -42,6 +42,12 @@ export const codeCheckoutErrors: Record<string, string> = {
   CODE_SVN_CERTIFICATE_INVALID:
     "SVN 证书校验失败，请部署人员配置受信任的证书。",
   CODE_SVN_CONNECTION_FAILED: "无法连接 SVN，请检查地址和容器网络。",
+  CODE_SVN_WC_CLEANUP_REQUIRED:
+    "SVN 工作副本上一次操作尚未完成，请确认原进程已停止后进行维护核验。系统不会自动清理或续拉。",
+  CODE_SVN_WC_LOCKED:
+    "SVN 工作副本被锁定，请核对是否仍有操作运行或存在中断遗留锁。",
+  CODE_SVN_WC_DB_FAILED:
+    "SVN 工作副本元数据数据库异常，请结合 SVN 原始错误号检查磁盘、挂载和工作副本状态。",
   CODE_SVN_CREDENTIAL_UNAVAILABLE: "SVN 凭据缺失或已停用，请重新配置连接。",
   CODE_CHECKOUT_IDENTITY_CHANGED: "检出目录身份异常，需要维护核验后再使用。",
   CODE_CHECKOUT_PERMISSION_DENIED:
