@@ -201,8 +201,12 @@ class WorkingCopyClient:
             ):
                 raise CodeKnowledgeError("code_checkout_selection_invalid")
             kinds[path] = node.get("kind")
-        if self.source.external_declarations(revision)["declarations"]:
-            raise CodeKnowledgeError("code_checkout_externals_unsupported")
+        for path, kind in kinds.items():
+            if (
+                kind == "dir"
+                and self.source.external_declarations(revision, path=path)["declarations"]
+            ):
+                raise CodeKnowledgeError("code_checkout_externals_unsupported")
         preflight_checkout_space(self.source, root, paths, revision)
         target = self.source._target(revision)
         try:

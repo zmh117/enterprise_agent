@@ -24,6 +24,7 @@ from app.modules.knowledge.infrastructure.code_source import relative_path
 from app.modules.knowledge.infrastructure.code_executor_lock import inherited_execution_fds
 
 MAX_XML_BYTES = 8 * 1024 * 1024
+BULK_METADATA_TIMEOUT = 300
 
 
 def xml_document(data: bytes) -> ET.Element:
@@ -92,7 +93,7 @@ class SvnCodeSource:
         except ValueError:
             raise CodeKnowledgeError("code_svn_repository_mismatch") from None
 
-    def _run(self, operation: str, args: list[str]) -> bytes:
+    def _run(self, operation: str, args: list[str], *, timeout: float = 60) -> bytes:
         if self.cancelled():
             raise CodeKnowledgeError("code_collection_interrupted")
         if operation not in {"info", "log", "cat", "diff", "propget", "list", "blame", "status"}:
@@ -100,7 +101,7 @@ class SvnCodeSource:
         return self.execute(
             operation,
             args,
-            timeout=60,
+            timeout=timeout,
             limit=MAX_SOURCE_BYTES if operation == "cat" else MAX_XML_BYTES,
         )
 
@@ -137,6 +138,8 @@ class SvnCodeSource:
         ]
         if self._credentials:
             command += ["--username", self._credentials[0], "--password-from-stdin"]
+        timeout_error = f"CODE_SVN_{operation.upper()}_TIMEOUT"
+        process = None
         try:
             with subprocess.Popen(
                 command,
@@ -160,13 +163,24 @@ class SvnCodeSource:
                         timeout=timeout,
                         limit=limit,
                         cancelled=cancelled or self.cancelled,
+                        timeout_error=timeout_error,
                     )
                 finally:
                     if process.poll() is None:
                         process.kill()
                     process.wait()
-        except (OSError, subprocess.TimeoutExpired):
-            raise CodeKnowledgeError("code_svn_unavailable") from None
+        except subprocess.TimeoutExpired:
+            raise CodeKnowledgeError(timeout_error) from None
+        except OSError as exc:
+            if process is not None:
+                error = "CODE_SVN_LOCAL_IO_FAILED"
+            elif isinstance(exc, FileNotFoundError):
+                error = "CODE_SVN_EXECUTABLE_NOT_FOUND"
+            elif isinstance(exc, PermissionError):
+                error = "CODE_SVN_EXECUTION_DENIED"
+            else:
+                error = "CODE_SVN_START_FAILED"
+            raise CodeKnowledgeError(error) from None
 
     def preflight(self, revision: int) -> dict[str, Any]:
         target = self._target(revision)
@@ -236,6 +250,7 @@ class SvnCodeSource:
                     str(revision),
                     self._target(revision, path),
                 ],
+                timeout=BULK_METADATA_TIMEOUT if recursive else 60,
             )
         )
         result: list[dict[str, Any]] = []
@@ -297,12 +312,21 @@ class SvnCodeSource:
         self,
         revision: int,
         *,
+        path: str = "",
         approved: dict[str, "SvnCodeSource"] | None = None,
         capture_floating: bool = False,
     ) -> dict[str, Any]:
         data = self._run(
             "propget",
-            ["--xml", "--recursive", "-r", str(revision), "svn:externals", self._target(revision)],
+            [
+                "--xml",
+                "--recursive",
+                "-r",
+                str(revision),
+                "svn:externals",
+                self._target(revision, path),
+            ],
+            timeout=BULK_METADATA_TIMEOUT,
         )
         document = xml_document(data)
         if document.tag != "properties":
@@ -431,6 +455,7 @@ def _bounded_output(
     timeout: float,
     limit: int,
     cancelled: Callable[[], bool] = lambda: False,
+    timeout_error: str = "CODE_SVN_TIMEOUT",
 ) -> bytes:
     """Bound stdout; retain only fixed numeric SVN error codes from stderr."""
     assert process.stdout is not None
@@ -447,7 +472,7 @@ def _bounded_output(
                 raise CodeKnowledgeError("code_collection_interrupted")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise CodeKnowledgeError("code_svn_unavailable")
+                raise CodeKnowledgeError(timeout_error)
             for key, _ in selector.select(min(1, remaining)):
                 block = os.read(key.fd, 65536)
                 if not block:

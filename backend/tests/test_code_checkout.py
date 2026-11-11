@@ -223,7 +223,7 @@ def test_large_recursive_inventory_is_not_loaded_for_directory_preview(tmp_path,
     )
     assert len(large) > MAX_XML_BYTES
 
-    def run(operation, args):
+    def run(operation, args, *, timeout=60):
         calls.append((operation, args))
         if operation == "info":
             return b'<info><entry kind="dir" revision="2"><relative-url>^/trunk</relative-url><repository><uuid>synthetic-uuid</uuid></repository></entry></info>'
@@ -255,7 +255,7 @@ def test_directory_preview_rejects_nested_response_and_files(tmp_path, monkeypat
     with pytest.raises(CodeKnowledgeError, match="CODE_BROWSE_DIRECTORY_REQUIRED"):
         source.directory_entries("file.cpp", 2)
 
-    def run(op, args):
+    def run(op, args, *, timeout=60):
         return (
             b'<info><entry kind="dir" /></info>'
             if op == "info"

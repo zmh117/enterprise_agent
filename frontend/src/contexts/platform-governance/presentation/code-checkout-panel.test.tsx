@@ -8,6 +8,49 @@ const url = "https://localhost:18443/repos/mes/trunk"
 afterEach(() => vi.unstubAllGlobals())
 
 describe("SVN 工程检出", () => {
+  it.each([
+    ["CODE_SVN_PROPGET_TIMEOUT", "SVN 外部引用检查超时"],
+    ["CODE_SVN_UPDATE_TIMEOUT", "SVN 文件下载或版本更新超时"],
+    ["CODE_SVN_EXECUTABLE_NOT_FOUND", "检出服务容器中找不到 SVN 命令"],
+    ["CODE_SVN_LOCAL_IO_FAILED", "SVN 执行期间发生本地读写错误"],
+    ["code_svn_unavailable", "旧错误记录无法区分超时与容器执行异常"],
+  ])("检出失败 %s 显示可区分的中文原因", async (code, message) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              enabled: true,
+              registrations: [],
+              checkouts: [],
+              jobs: [
+                {
+                  id: "failed-checkout",
+                  operation_kind: "checkout",
+                  state: "failed",
+                  error_code: code,
+                  result: {},
+                },
+              ],
+            }),
+            { headers: { "Content-Type": "application/json" } }
+          )
+      )
+    )
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <CodeCheckoutPanel resourceId="code-library" />
+      </QueryClientProvider>
+    )
+    expect(await screen.findByText(new RegExp(message))).toBeInTheDocument()
+    expect(screen.queryByText(`检出未完成：${code}`)).toBeNull()
+  })
+
   it("子目录超限显示中文提示，局部重试保留选择且不传新版本或凭据", async () => {
     const requests: Record<string, unknown>[] = []
     const change = vi.fn()

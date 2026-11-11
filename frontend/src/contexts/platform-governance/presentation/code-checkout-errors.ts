@@ -1,4 +1,26 @@
 export const codeCheckoutErrors: Record<string, string> = {
+  code_svn_unavailable:
+    "SVN 执行未完成。旧错误记录无法区分超时与容器执行异常，请更新服务后重新发起操作获取具体原因。",
+  CODE_SVN_EXECUTABLE_NOT_FOUND:
+    "检出服务容器中找不到 SVN 命令，请重新构建并更新 knowledge-sync。",
+  CODE_SVN_EXECUTION_DENIED:
+    "检出服务容器无权运行 SVN 命令，请检查容器执行权限。",
+  CODE_SVN_START_FAILED:
+    "检出服务无法启动 SVN 命令，请检查容器资源和运行状态。",
+  CODE_SVN_LOCAL_IO_FAILED:
+    "SVN 执行期间发生本地读写错误，请检查容器挂载、磁盘和权限。",
+  CODE_SVN_INFO_TIMEOUT: "SVN 仓库或工作副本信息检查超时。",
+  CODE_SVN_LIST_TIMEOUT:
+    "SVN 文件清单读取超时，请缩小选择范围或检查仓库响应速度。",
+  CODE_SVN_PROPGET_TIMEOUT: "SVN 外部引用检查超时，请检查仓库规模与响应速度。",
+  CODE_SVN_CHECKOUT_TIMEOUT: "SVN 工作副本创建超时，请检查网络和目标磁盘性能。",
+  CODE_SVN_UPDATE_TIMEOUT:
+    "SVN 文件下载或版本更新超时，请缩小选择范围，检查网络和目标磁盘性能。",
+  CODE_SVN_STATUS_TIMEOUT: "SVN 工作副本状态核验超时，请检查目标磁盘性能。",
+  CODE_SVN_LOG_TIMEOUT: "SVN 提交记录查询超时，请缩小查询范围。",
+  CODE_SVN_DIFF_TIMEOUT: "SVN 差异查询超时，请缩小查询范围。",
+  CODE_SVN_BLAME_TIMEOUT: "SVN 行历史查询超时，请缩小查询范围。",
+  CODE_SVN_CAT_TIMEOUT: "SVN 文件内容读取超时，请检查仓库响应速度。",
   code_svn_response_too_large:
     "SVN 返回的数据超过单次处理上限，请将仓库地址缩小到需要的子目录后重试。",
   code_source_inventory_limit: "目录条目超过处理上限，请缩小检出范围。",

@@ -136,6 +136,29 @@ docker compose up -d --no-deps api-server knowledge-sync admin-web
 
 刷新浏览器并重新点击「浏览目录」，验证根目录、两层子目录、文件选择和固定 SVN 修订。三个服务需一起更新，否则前端子目录请求可能找不到新接口，或仍从旧执行器拿到递归清单。以上命令适用于 Windows CMD/PowerShell 与 macOS/Linux Shell；本次已通过本机合成仓库的真实 SVN CLI 验证，真实 Windows 仓库尚待现场验收。验证范围见 [按层浏览修复记录](../../openspec/changes/fix-large-svn-directory-browse/evidence.md)。
 
+### 检出执行失败分类
+
+旧错误 `code_svn_unavailable` 同时包含命令超时、命令启动失败和本地读写异常，不能据此判断服务器离线、账号错误或证书问题。历史记录无法还原被丢弃的分类，不修改原失败结果；新实现用固定错误码区分原因，不保存原始命令、密码、路径或标准错误文本。
+
+| 错误码 | 含义与排查方向 |
+| --- | --- |
+| `CODE_SVN_INFO_TIMEOUT` | 仓库或工作副本信息检查超时 |
+| `CODE_SVN_LIST_TIMEOUT` | 文件清单读取超时，检查所选范围与仓库响应 |
+| `CODE_SVN_PROPGET_TIMEOUT` | 外部引用检查超时；仅检查选中的目录及其后代 |
+| `CODE_SVN_CHECKOUT_TIMEOUT` | 初始工作副本创建超时 |
+| `CODE_SVN_UPDATE_TIMEOUT` | 稀疏检出的文件下载、目录展开或版本更新超时 |
+| `CODE_SVN_STATUS_TIMEOUT` | 工作副本状态核验超时，检查挂载磁盘性能 |
+| `CODE_SVN_EXECUTABLE_NOT_FOUND` / `CODE_SVN_EXECUTION_DENIED` | 容器缺少 SVN 可执行程序或没有执行权限 |
+| `CODE_SVN_START_FAILED` / `CODE_SVN_LOCAL_IO_FAILED` | 容器无法启动进程或执行期间发生本地 I/O 异常 |
+
+普通 SVN 信息与历史查询、按层目录浏览保持单命令 60 秒限制。递归文件清单、外部引用查询和工作副本整体 status/info 检查使用单命令最多 300 秒；工作副本创建与下载命令最多 1800 秒，仍受整个管理操作原有 1800 秒截止及取消检查约束，不能因新命令开始而重置总预算。问答来源操作继续使用其原有截止。所有字节、文件数与磁盘容量限制保持不变；超时后先终止并等待 SVN 进程退出，不自动重试写操作。旧错误码需要结合耗时判断，或更新代码后发起新操作取得具体分类。
+
+此前约一分钟失败与旧批量命令 60 秒时限吻合，但历史错误无法证明具体是哪条命令。修复后的外部引用检查只递归查询选中的目录，所选文件和必要祖先不触发未选子树扫描；检出及后续固定版本更新保持一致。所选范围包含外部引用仍拒绝，所有写命令继续忽略自动外部检出。单个选中目录仍可能超过 300 秒或容量上限，此时需缩小选择范围并按具体错误排查。
+
+`A` 全选与 `B/d`、`B/e` 单独选择可以同时使用，无需选中 `B`；系统会创建必要父目录。2026-11-11 已在隔离合成 SVN 仓库分别验证 d/e 为文件与目录，确认 A 全部存在、B 只包含 d/e，未选择的 f 不检出。这不证明 Windows 现场连接、性能或磁盘状态正常。
+
+若前一节的按层浏览已部署，本次预检范围、预算与错误分类修复只需构建并更新 `knowledge-sync` 与 `admin-web`，无需迁移或 Runtime 发布；等待现有 SVN 写操作结束后更新。现场仍须以新操作结果验证是否恢复，不采集原始标准错误或凭据。本机验证及部署步骤见 [检出预检修复记录](../../openspec/changes/fix-svn-checkout-preflight-timeout/evidence.md)。
+
 
 已有本地 SVN 升级 CA 信任时，无需重新生成证书或导入仓库：只把 `.local/code-svn/state/client/mes-local/server.crt` 复制到 `.local/code-svn/state/client/trusted-ca/local-svn.crt`，再更新 knowledge-sync 镜像。页面填写 `https://code-svn:8443/repos/mes/trunk` 并选择“无需认证”。地址不会自动替换，证书链、主机名和有效期仍由 SVN 校验。
 

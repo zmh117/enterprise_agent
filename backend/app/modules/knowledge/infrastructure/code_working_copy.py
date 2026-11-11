@@ -9,6 +9,7 @@ from app.modules.knowledge.domain.code_answers import code_path, path_in_scope, 
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.infrastructure.code_checkout_identity import CheckoutIdentity
 from app.modules.knowledge.infrastructure.code_svn import (
+    BULK_METADATA_TIMEOUT,
     SvnCodeSource,
     xml_document,
 )
@@ -65,7 +66,9 @@ class SvnWorkingCopy:
         target = str(self.directory) + "@"
         status = xml_document(
             self.source._run(
-                "status", ["--xml", "--verbose", "--no-ignore", "--ignore-externals", target]
+                "status",
+                ["--xml", "--verbose", "--no-ignore", "--ignore-externals", target],
+                timeout=BULK_METADATA_TIMEOUT,
             )
         )
         for node in status.findall("./target/entry/wc-status"):
@@ -77,7 +80,11 @@ class SvnWorkingCopy:
                 or node.get("file-external") == "true"
             ):
                 raise CodeKnowledgeError("CODE_CHECKOUT_DIRTY")
-        info = xml_document(self.source._run("info", ["--xml", "--depth", "infinity", target]))
+        info = xml_document(
+            self.source._run(
+                "info", ["--xml", "--depth", "infinity", target], timeout=BULK_METADATA_TIMEOUT
+            )
+        )
         if status.tag != "status" or info.tag != "info":
             raise CodeKnowledgeError("CODE_CHECKOUT_INFO_INVALID")
         rows = info.findall("entry")
@@ -152,8 +159,25 @@ class SvnWorkingCopy:
         self.source.preflight(revision)
         if before["operative_revision"] == revision:
             return before
-        if self.source.external_declarations(revision)["declarations"]:
-            raise CodeKnowledgeError("CODE_CHECKOUT_EXTERNALS_UNSUPPORTED")
+        for path in self.paths:
+            # A selected file can be replaced by a directory at the target revision.
+            # Inspect the target kind, not the current local working-copy kind.
+            node = xml_document(
+                self.source._run(
+                    "info", ["--xml", "-r", str(revision), self.source._target(revision, path)]
+                )
+            ).find("entry")
+            if (
+                node is None
+                or node.get("kind") not in {"dir", "file"}
+                or node.findtext("repository/uuid") != self.source.expected_uuid
+            ):
+                raise CodeKnowledgeError("CODE_CHECKOUT_INFO_INVALID")
+            if (
+                node.get("kind") == "dir"
+                and self.source.external_declarations(revision, path=path)["declarations"]
+            ):
+                raise CodeKnowledgeError("CODE_CHECKOUT_EXTERNALS_UNSUPPORTED")
         preflight_checkout_space(self.source, self.directory, self.paths, revision)
         self._identity()
         self.source.execute(

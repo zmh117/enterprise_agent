@@ -354,6 +354,121 @@ class WorkingCopyAcceptance(unittest.TestCase):
         self.assertTrue(source.is_dir())
         self.assertTrue(target.is_dir())
 
+    def test_whole_directory_and_two_sibling_children_without_parent_selection(self):
+        for kind in ("file", "directory"):
+            with self.subTest(kind=kind):
+                fixture = self.root / ("selection-" + kind)
+                (fixture / "A").mkdir(parents=True)
+                (fixture / "B").mkdir()
+                for name in ("a", "b", "c"):
+                    (fixture / "A" / name).write_text("synthetic complete A")
+                for name in ("d", "e", "f"):
+                    child = fixture / "B" / name
+                    if kind == "directory":
+                        child.mkdir()
+                        child = child / "file.cpp"
+                    child.write_text("synthetic selected child")
+                self.svn("import", str(fixture), self.url + "/" + kind, "-m", "selection fixture")
+                revision = int(self.svn("info", "--show-item", "revision", self.url))
+                self.client.checkout(
+                    root=self.root,
+                    folder="selected-" + kind,
+                    job_id="selected-" + kind,
+                    revision=revision,
+                    paths=[kind + "/A", kind + "/B/d", kind + "/B/e"],
+                )
+                output = self.root / ("selected-" + kind) / kind
+                self.assertEqual(sorted(p.name for p in (output / "A").iterdir()), ["a", "b", "c"])
+                self.assertEqual(sorted(p.name for p in (output / "B").iterdir()), ["d", "e"])
+                self.assertEqual(self.svn("status", str(output)), "")
+
+    def test_externals_precheck_covers_only_selected_directories_for_checkout_and_update(self):
+        from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+        from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+
+        writer = self.root / "writer"
+        self.svn("checkout", self.url, str(writer))
+        for path in (writer, writer / "first", writer / "second"):
+            self.svn("propset", "svn:externals", "^/unselected-do-not-fetch external", str(path))
+        self.svn("commit", str(writer), "-m", "unselected external declarations")
+        original_run = self.client.source._run
+        checked = []
+        budgets = []
+
+        def run(operation, args, *, timeout=60):
+            budgets.append((operation, timeout))
+            if operation == "propget":
+                checked.append(args[-1])
+            return original_run(operation, args, timeout=timeout)
+
+        self.client.source._run = run
+        paths = ["first/config", "second/nested/rule.cpp"]
+        self.client.checkout(
+            root=self.root, folder="scoped", job_id="scoped", revision=3, paths=paths
+        )
+        output = self.root / "scoped"
+        working = SvnWorkingCopy(
+            self.client.source,
+            output,
+            paths,
+            physical_key=persistent_identity(output, create=True),
+        )
+        (writer / "second/nested/rule.cpp").write_text("updated selected rule\n")
+        self.svn("commit", str(writer), "-m", "selected update")
+        self.assertEqual(working.update(4, timeout=30)["operative_revision"], 4)
+        self.assertEqual(checked, [self.url + "/first/config@3", self.url + "/first/config@4"])
+        self.assertTrue(
+            all(timeout == 300 for op, timeout in budgets if op in {"status", "propget", "list"})
+        )
+        self.assertIn(("info", 300), budgets)
+        self.assertFalse((output / "first/library.bin").exists())
+        self.assertFalse((output / "external").exists())
+
+        self.svn(
+            "propset",
+            "svn:externals",
+            "^/selected-do-not-fetch external",
+            str(writer / "first/config"),
+        )
+        self.svn("commit", str(writer), "-m", "selected external declaration")
+        with self.assertRaisesRegex(CodeKnowledgeError, "CODE_CHECKOUT_EXTERNALS_UNSUPPORTED"):
+            working.update(5, timeout=30)
+        self.assertEqual(working.inspect(4)["operative_revision"], 4)
+        with self.assertRaisesRegex(CodeKnowledgeError, "code_checkout_externals_unsupported"):
+            self.client.checkout(
+                root=self.root, folder="blocked", job_id="blocked", revision=5, paths=paths
+            )
+        self.assertFalse((self.root / "blocked").exists())
+
+    def test_update_checks_externals_when_selected_file_becomes_directory(self):
+        from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+        from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+
+        paths = ["second/nested/rule.cpp"]
+        self.client.checkout(
+            root=self.root, folder="kind-change", job_id="kind-change", revision=2, paths=paths
+        )
+        output = self.root / "kind-change"
+        working = SvnWorkingCopy(
+            self.client.source,
+            output,
+            paths,
+            physical_key=persistent_identity(output, create=True),
+        )
+        writer = self.root / "writer"
+        self.svn("checkout", self.url, str(writer))
+        replaced = writer / paths[0]
+        self.svn("delete", str(replaced))
+        replaced.mkdir()
+        (replaced / "rule.cpp").write_text("synthetic replacement")
+        self.svn("add", str(replaced))
+        self.svn("propset", "svn:externals", "^/do-not-fetch external", str(replaced))
+        self.svn("commit", str(writer), "-m", "file becomes directory with external")
+        with self.assertRaisesRegex(CodeKnowledgeError, "CODE_CHECKOUT_EXTERNALS_UNSUPPORTED"):
+            working.update(3, timeout=30)
+        self.assertEqual(working.inspect(2)["operative_revision"], 2)
+        self.assertTrue((output / paths[0]).is_file())
+
     def test_failure_cleans_only_own_temporary_directory(self):
         kept = self.root / "manual"
         kept.mkdir()
