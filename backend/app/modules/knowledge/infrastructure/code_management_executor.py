@@ -100,7 +100,7 @@ class CodeManagementExecutor:
     def _browse(
         self, row: dict[str, Any], request: dict[str, Any], client: WorkingCopyClient
     ) -> None:
-        result = client.browse(request["revision"])
+        result = client.browse(request["revision"], path=request.get("path", ""))
         verified = client.source.preflight(result["revision"])
         result_hash = self.buffer.put(
             row["id"],
@@ -126,6 +126,8 @@ class CodeManagementExecutor:
                     "source_id": source,
                     "directory_count": len(result["directories"]),
                     "file_count": len(result["files"]),
+                    "directory_path": request.get("path", ""),
+                    "depth": "immediates",
                 },
                 result_hash=result_hash,
             )

@@ -212,14 +212,37 @@ class SvnCodeSource:
 
     def inventory(self, path: str, revision: int) -> list[dict[str, Any]]:
         """List a pinned subtree; directory entries and special files remain explicit."""
+        return self._list_entries(path, revision, recursive=True)
+
+    def directory_entries(self, path: str, revision: int) -> list[dict[str, Any]]:
+        """Preview one directory without fetching any descendant inventory."""
+        if path:
+            relative_path(path)
+        node = xml_document(
+            self._run("info", ["--xml", "-r", str(revision), self._target(revision, path)])
+        ).find("entry")
+        if node is None or node.get("kind") != "dir":
+            raise CodeKnowledgeError("CODE_BROWSE_DIRECTORY_REQUIRED")
+        return self._list_entries(path, revision, recursive=False)
+
+    def _list_entries(self, path: str, revision: int, *, recursive: bool) -> list[dict[str, Any]]:
         root = xml_document(
             self._run(
-                "list", ["--xml", "--recursive", "-r", str(revision), self._target(revision, path)]
+                "list",
+                [
+                    "--xml",
+                    *(["--recursive"] if recursive else ["--depth", "immediates"]),
+                    "-r",
+                    str(revision),
+                    self._target(revision, path),
+                ],
             )
         )
         result: list[dict[str, Any]] = []
         for entry in root.findall("./list/entry"):
             name = relative_path(entry.findtext("name") or "")
+            if not recursive and "/" in name:
+                raise CodeKnowledgeError("code_svn_response_invalid")
             kind = entry.get("kind")
             if kind not in {"file", "dir"} or len(result) >= 30_000:
                 raise CodeKnowledgeError("code_source_inventory_limit")

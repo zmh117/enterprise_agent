@@ -283,20 +283,18 @@ class WorkingCopyAcceptance(unittest.TestCase):
     def test_complete_files_multiple_selection_and_pinned_revision(self):
         browse = self.client.browse(None)
         self.assertEqual(browse["revision"], 2)
-        self.assertEqual(
-            browse["files"],
-            [
-                "first/.env",
-                "first/config/settings.json",
-                "first/library.bin",
-                "first/link",
-                "second/nested/rule.cpp",
-            ],
-        )
+        self.assertEqual(browse["files"], [])
+        self.assertEqual(browse["directories"], ["first", "second"])
+        first = self.client.browse(browse["revision"], path="first")
+        self.assertEqual(first["directories"], ["first/config"])
+        self.assertEqual(first["files"], ["first/.env", "first/library.bin", "first/link"])
         writer = self.root / "writer"
         self.svn("checkout", self.url, str(writer))
         (writer / "second/nested/rule.cpp").write_text("new rule\n")
         self.svn("commit", str(writer), "-m", "synthetic r3")
+        child = self.client.browse(browse["revision"], path="second/nested")
+        self.assertEqual(child["revision"], 2)
+        self.assertEqual(child["files"], ["second/nested/rule.cpp"])
         result = self.client.checkout(
             root=self.root,
             folder="copy",

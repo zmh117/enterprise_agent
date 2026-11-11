@@ -104,6 +104,13 @@ def build_code_operations_router() -> APIRouter:
         )
 
     router.add_api_route(
+        "/resources/{resource_id}/browse-children",
+        _browse_svn_children,
+        methods=["POST"],
+        status_code=202,
+    )
+
+    router.add_api_route(
         "/resources/{resource_id}/connections",
         _create_svn_connection,
         methods=["POST"],
@@ -145,3 +152,14 @@ async def _create_svn_connection(resource_id: str, request: Request) -> Any:
         return await invoke(create)
     finally:
         value.clear()
+
+
+async def _browse_svn_children(resource_id: str, request: Request) -> Any:
+    user = actor(request)
+    value = await payload(request, {"browse_job_id", "path", "request_key"})
+    return await invoke(
+        services(request).code_checkouts().submit_browse_children,
+        actor_id=user,
+        resource_id=resource_id,
+        **value,
+    )

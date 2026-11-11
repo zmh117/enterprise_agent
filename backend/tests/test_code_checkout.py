@@ -21,7 +21,7 @@ def management(setup, monkeypatch):
     resource = create(service)
     jobs = CodeCheckoutJobs(runtime.database, runtime.knowledge_services.sources(), registry)
     buffer = CodeResultBuffer()
-    state = {"revision": 2, "fail": False, "calls": 0}
+    state = {"revision": 2, "fail": False, "calls": 0, "browse_calls": []}
     info = {
         "repository_uuid": "00000000-0000-0000-0000-000000000001",
         "branch_path": "/trunk",
@@ -32,8 +32,9 @@ def management(setup, monkeypatch):
         def __init__(self, entry, auth, cancelled):
             self.source = SimpleNamespace(preflight=lambda revision: info)
 
-        def browse(self, revision):
+        def browse(self, revision, *, path=""):
             state["calls"] += 1
+            state["browse_calls"].append((revision, path))
             return {
                 "revision": revision if revision is not None else state["revision"],
                 "repository_uuid": info["repository_uuid"],
@@ -122,6 +123,148 @@ def test_browse_has_files_and_directories_but_persists_only_bounded_metadata(man
     assert buffer.get(
         operation["id"], operation["claim_version"], expected_hash=operation["result_hash"]
     )["files"] == ["README.md", "set_server/Order.cpp"]
+
+
+def test_child_browse_inherits_root_identity_and_revision(management):
+    jobs, resource, executor, _, state, _ = management
+    root = browse(management)
+    state["revision"] = 3
+    args = dict(
+        actor_id="user_local_admin",
+        resource_id=resource["id"],
+        browse_job_id=root["id"],
+        path="set_server",
+        request_key="child",
+    )
+    child = jobs.submit_browse_children(**args)
+    assert jobs.submit_browse_children(**args)["id"] == child["id"]
+    assert child["request"]["revision"] == 2
+    assert child["source_id"] == root["source_id"]
+    assert child["request"]["registration_hash"] == root["request"]["registration_hash"]
+    executor.execute(child["id"])
+    assert state["browse_calls"][-1] == (2, "set_server")
+    child = jobs.get(child["id"])
+    assert child["state"] == "succeeded"
+    assert child["result"]["directory_path"] == "set_server"
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_BROWSE_REQUIRED"):
+        jobs.submit_browse_children(
+            **{**args, "browse_job_id": child["id"], "request_key": "nested"}
+        )
+
+
+@pytest.mark.parametrize("path", ["", "../outside", "/root", ".svn", "a/../b", "a\\b"])
+def test_child_browse_rejects_invalid_path_without_enqueue(management, path):
+    jobs, resource, _, _, state, _ = management
+    root = browse(management)
+    with pytest.raises(CodeKnowledgeError, match="CODE_PATH_INVALID"):
+        jobs.submit_browse_children(
+            actor_id="user_local_admin",
+            resource_id=resource["id"],
+            browse_job_id=root["id"],
+            path=path,
+            request_key="child",
+        )
+    assert state["calls"] == 1
+
+
+@pytest.mark.parametrize("mismatch", ["actor", "resource", "failed", "draft_race"])
+def test_child_browse_rejects_unrelated_root_or_changed_draft(management, monkeypatch, mismatch):
+    jobs, resource, _, _, state, _ = management
+    root = browse(management)
+    if mismatch == "actor":
+        original_get = jobs.get
+        monkeypatch.setattr(
+            jobs, "get", lambda identifier: {**original_get(identifier), "actor_id": "other"}
+        )
+    if mismatch == "failed":
+        jobs.db.execute(
+            f"UPDATE {jobs.t('code_svn_operation')} SET state='failed' WHERE id=?", (root["id"],)
+        )
+    original = jobs.draft
+
+    def draft(resource_id, *, lock=False):
+        result = original(resource_id, lock=lock)
+        if mismatch == "resource" or (mismatch == "draft_race" and lock):
+            return {**result, "revision_id": "another-revision"}
+        return result
+
+    monkeypatch.setattr(jobs, "draft", draft)
+    with pytest.raises(
+        CodeKnowledgeError, match="CODE_CHECKOUT_BROWSE_REQUIRED|CODE_CONFIGURATION_CHANGED"
+    ):
+        jobs.submit_browse_children(
+            actor_id="user_local_admin",
+            resource_id=resource["id"],
+            browse_job_id=root["id"],
+            path="set_server",
+            request_key="child",
+        )
+    assert state["calls"] == 1
+
+
+def test_large_recursive_inventory_is_not_loaded_for_directory_preview(tmp_path, monkeypatch):
+    from app.modules.knowledge.infrastructure.code_checkout_client import WorkingCopyClient
+    from app.modules.knowledge.infrastructure.code_svn import MAX_XML_BYTES, SvnCodeSource
+
+    client = WorkingCopyClient.__new__(WorkingCopyClient)
+    client.entry = {"repository_uuid": "synthetic-uuid"}
+    client.source = SvnCodeSource(
+        branch_url="https://svn.invalid/trunk",
+        expected_uuid="synthetic-uuid",
+        branch_path="/trunk",
+        config_directory=tmp_path,
+    )
+    calls = []
+    # The old recursive preview would exceed the exact existing XML cap.
+    large = (
+        b"<lists><list>"
+        + b'<entry kind="file"><name>module/long-name.cpp</name></entry>' * 160000
+        + b"</list></lists>"
+    )
+    assert len(large) > MAX_XML_BYTES
+
+    def run(operation, args):
+        calls.append((operation, args))
+        if operation == "info":
+            return b'<info><entry kind="dir" revision="2"><relative-url>^/trunk</relative-url><repository><uuid>synthetic-uuid</uuid></repository></entry></info>'
+        if "--recursive" in args:
+            return large
+        if args[-1].endswith("/module@2"):
+            return b'<lists><list><entry kind="file"><name>rule.cpp</name><size>12</size></entry></list></lists>'
+        return b'<lists><list><entry kind="dir"><name>module</name></entry><entry kind="file"><name>README.md</name><size>10</size></entry></list></lists>'
+
+    monkeypatch.setattr(client.source, "_run", run)
+    assert client.browse(2)["directories"] == ["module"]
+    assert client.browse(2, path="module")["files"] == ["module/rule.cpp"]
+    assert all("--recursive" not in args for _, args in calls)
+    assert all(
+        args[args.index("--depth") + 1] == "immediates" for op, args in calls if op == "list"
+    )
+
+
+def test_directory_preview_rejects_nested_response_and_files(tmp_path, monkeypatch):
+    from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource
+
+    source = SvnCodeSource(
+        branch_url="https://svn.invalid/trunk",
+        expected_uuid="uuid",
+        branch_path="/trunk",
+        config_directory=tmp_path,
+    )
+    monkeypatch.setattr(source, "_run", lambda op, args: b'<info><entry kind="file" /></info>')
+    with pytest.raises(CodeKnowledgeError, match="CODE_BROWSE_DIRECTORY_REQUIRED"):
+        source.directory_entries("file.cpp", 2)
+
+    def run(op, args):
+        return (
+            b'<info><entry kind="dir" /></info>'
+            if op == "info"
+            else b'<lists><list><entry kind="file"><name>unrequested/deep.cpp</name></entry></list></lists>'
+        )
+
+    monkeypatch.setattr(source, "_run", run)
+    with pytest.raises(CodeKnowledgeError, match="code_svn_response_invalid"):
+        source.directory_entries("module", 2)
 
 
 def test_checkout_selection_is_pinned_and_atomic_writer_is_released_after_verification(management):

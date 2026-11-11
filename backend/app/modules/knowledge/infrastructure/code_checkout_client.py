@@ -144,10 +144,12 @@ class WorkingCopyClient:
                 branch_path=self.source.branch_path or "/",
             )
 
-    def browse(self, revision: int | None) -> dict[str, Any]:
+    def browse(self, revision: int | None, *, path: str = "") -> dict[str, Any]:
         revision = self.source.head() if revision is None else revision
         self.source.preflight(revision)
-        entries = self.source.inventory("", revision)
+        entries = self.source.directory_entries(path, revision)
+        if path:
+            entries = [{**e, "path": path + "/" + e["path"]} for e in entries]
         directories = [e["path"] for e in entries if e["kind"] == "dir"]
         if len(directories) > 5000:
             raise CodeKnowledgeError("code_checkout_directory_limit")

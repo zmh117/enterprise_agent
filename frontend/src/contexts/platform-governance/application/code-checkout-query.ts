@@ -13,6 +13,8 @@ export const codeOperationSchema = z.object({
     operative_revision: z.number().optional(),
     directories: z.array(z.string()).optional(),
     files: z.array(z.string()).optional(),
+    directory_path: z.string().optional(),
+    depth: z.literal("immediates").optional(),
     relative_dir: z.string().optional(),
     checkout_id: z.string().optional(),
   }),

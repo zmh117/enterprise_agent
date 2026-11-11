@@ -178,6 +178,46 @@ class CodeCheckoutJobs(CodeOperationStore):
             source_id=browse["source_id"],
         )
 
+    def submit_browse_children(
+        self,
+        *,
+        actor_id: str,
+        resource_id: str,
+        browse_job_id: str,
+        path: str,
+        request_key: str,
+    ) -> dict[str, Any]:
+        from app.modules.knowledge.domain.code_answers import code_path
+
+        self.admin.require_admin(actor_id)
+        path = code_path(path)
+        browse = self.get(browse_job_id)
+        draft = self.draft(resource_id)
+        if (
+            browse["actor_id"] != actor_id
+            or browse["operation_kind"] != "browse"
+            or browse["state"] != "succeeded"
+            or not browse["source_id"]
+            or browse["config_revision_id"] != draft["revision_id"]
+            or browse["request"].get("path")
+            or browse["request"].get("root_browse_job_id")
+        ):
+            raise CodeKnowledgeError("CODE_CHECKOUT_BROWSE_REQUIRED")
+        return self._submit(
+            actor_id,
+            resource_id,
+            request_key,
+            "browse",
+            {
+                **browse["request"],
+                "revision": browse["result"]["revision"],
+                "path": path,
+                "root_browse_job_id": browse_job_id,
+            },
+            source_id=browse["source_id"],
+            expected_config_revision_id=browse["config_revision_id"],
+        )
+
     def _submit(
         self,
         actor: str,
@@ -187,6 +227,7 @@ class CodeCheckoutJobs(CodeOperationStore):
         request: dict[str, Any],
         *,
         source_id: str | None = None,
+        expected_config_revision_id: str | None = None,
     ) -> dict[str, Any]:
         if os.environ.get("CODE_CHECKOUT_ENABLED") != "true":
             raise CodeKnowledgeError("CODE_CHECKOUT_DISABLED")
@@ -195,6 +236,11 @@ class CodeCheckoutJobs(CodeOperationStore):
         with source_lock(self.db, "code-management-submit"), self.db.unit_of_work():
             self.admin.require_admin(actor)
             draft = self.draft(resource, lock=True)
+            if (
+                expected_config_revision_id is not None
+                and draft["revision_id"] != expected_config_revision_id
+            ):
+                raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
             request_hash = digest([actor, resource, draft["revision_id"], kind, request])
             request_key = stable_id("code-management-request", actor, key)
             prior = self.db.execute_one(

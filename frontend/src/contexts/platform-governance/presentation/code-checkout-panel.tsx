@@ -1,7 +1,6 @@
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { z } from "zod"
-import { File, Folder } from "lucide-react"
 import { apiRequest } from "@/shared/api/api-client"
 import { createRequestKey } from "@/lib/request-key"
 import { Button } from "@/components/ui/button"
@@ -12,6 +11,11 @@ import {
   codeOperationSchema as jobSchema,
   useCodeCheckouts,
 } from "../application/code-checkout-query"
+export { DirectoryChoices } from "./code-directory-choices"
+import { DirectoryChoices } from "./code-directory-choices"
+import { CodeBrowseDirectory } from "./code-browse-directory"
+import { codeCheckoutErrors as errors } from "./code-checkout-errors"
+
 const base = "/api/platform/knowledge/code"
 const states: Record<string, string> = {
   queued: "等待执行",
@@ -19,24 +23,6 @@ const states: Record<string, string> = {
   succeeded: "已完成",
   failed: "失败",
   interrupted: "已中断",
-}
-const errors: Record<string, string> = {
-  CODE_SVN_AUTH_FAILED: "SVN 用户名或密码不正确，请更新连接后重试。",
-  CODE_SVN_ACCESS_DENIED: "SVN 账号没有访问所选仓库或路径的权限。",
-  CODE_SVN_CERTIFICATE_INVALID:
-    "SVN 证书校验失败，请部署人员配置受信任的证书。",
-  CODE_SVN_CONNECTION_FAILED: "无法连接 SVN，请检查地址和容器网络。",
-  CODE_SVN_CREDENTIAL_UNAVAILABLE: "SVN 凭据缺失或已停用，请重新配置连接。",
-  CODE_CHECKOUT_IDENTITY_CHANGED: "检出目录身份异常，需要维护核验后再使用。",
-  CODE_CHECKOUT_PERMISSION_DENIED:
-    "检出目录权限不足，请检查执行器与 Runtime 的共享读取权限。",
-  code_checkout_destination_exists:
-    "目标目录已存在，请填写新的子目录名。已有内容未覆盖。",
-  code_checkout_externals_unsupported:
-    "仓库含有 SVN 外部引用，本次未检出。请由部署人员确认外部依赖范围。",
-  code_checkout_interrupted: "后台执行已中断，请重新发起任务。",
-  code_checkout_access_denied: "执行时管理员权限已失效。",
-  code_checkout_registration_changed: "仓库登记已变更，请重新浏览目录。",
 }
 
 function isLoopback(value: string) {
@@ -320,6 +306,17 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                 检出整个仓库
               </label>
               <DirectoryChoices
+                key={browseId}
+                renderDirectory={(path) => (
+                  <CodeBrowseDirectory
+                    resourceId={resourceId}
+                    browseId={browseId!}
+                    path={path}
+                    revision={browse.data!.result.revision!}
+                    selected={selected}
+                    onChange={setSelected}
+                  />
+                )}
                 directories={browse.data!.result.directories ?? []}
                 files={browse.data!.result.files ?? []}
                 selected={selected}
@@ -385,151 +382,5 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
         </ul>
       )}
     </section>
-  )
-}
-
-export function DirectoryChoices({
-  directories,
-  files,
-  selected,
-  onChange,
-}: {
-  directories: string[]
-  files: string[]
-  selected: string[]
-  onChange: (value: string[]) => void
-}) {
-  const [expanded, setExpanded] = useState<string[]>([])
-  const fileChildren = useMemo(() => {
-    const result = new Map<string, string[]>()
-    for (const path of files) {
-      const parent = path.includes("/")
-        ? path.slice(0, path.lastIndexOf("/"))
-        : ""
-      const siblings = result.get(parent) ?? []
-      siblings.push(path)
-      result.set(parent, siblings)
-    }
-    return result
-  }, [files])
-  const children = useMemo(() => {
-    const result = new Map<string, string[]>()
-    for (const path of directories) {
-      const parent = path.includes("/")
-        ? path.slice(0, path.lastIndexOf("/"))
-        : ""
-      result.set(parent, [...(result.get(parent) ?? []), path])
-    }
-    return result
-  }, [directories])
-  function rows(parent: string): React.ReactNode {
-    return (
-      <ul className="space-y-1 pl-4">
-        {(children.get(parent) ?? []).map((path) => {
-          const inherited = selected.some(
-            (value) => value === "" || path.startsWith(value + "/")
-          )
-          return (
-            <li key={path}>
-              <div className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 text-sm">
-                {children.has(path) || fileChildren.has(path) ? (
-                  <button
-                    type="button"
-                    className="flex h-5 w-4 items-center justify-center"
-                    aria-label={`展开 ${path}`}
-                    aria-expanded={expanded.includes(path)}
-                    onClick={() =>
-                      setExpanded(
-                        expanded.includes(path)
-                          ? expanded.filter((p) => p !== path)
-                          : [...expanded, path]
-                      )
-                    }
-                  >
-                    {expanded.includes(path) ? "−" : "+"}
-                  </button>
-                ) : (
-                  <span aria-hidden="true" className="h-5 w-4" />
-                )}
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="size-4 shrink-0"
-                    aria-label={`选择 ${path}`}
-                    disabled={inherited}
-                    checked={inherited || selected.includes(path)}
-                    onChange={(e) =>
-                      onChange(
-                        e.target.checked
-                          ? [
-                              ...selected.filter(
-                                (p) => !p.startsWith(path + "/")
-                              ),
-                              path,
-                            ]
-                          : selected.filter((p) => p !== path)
-                      )
-                    }
-                  />
-                  <Folder
-                    aria-hidden="true"
-                    className="size-4 shrink-0 text-muted-foreground"
-                  />
-                  <span className="min-w-0 break-all">
-                    {path.split("/").at(-1)}
-                  </span>
-                </label>
-              </div>
-              {expanded.includes(path) && rows(path)}
-            </li>
-          )
-        })}
-        {(fileChildren.get(parent) ?? []).map((path) => (
-          <li
-            key={path}
-            title={path}
-            className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 text-sm"
-          >
-            <span aria-hidden="true" className="h-5 w-4" />
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                className="size-4 shrink-0"
-                aria-label={`选择 ${path}`}
-                checked={selected.some(
-                  (value) =>
-                    value === "" ||
-                    value === path ||
-                    path.startsWith(value + "/")
-                )}
-                disabled={selected.some(
-                  (value) => value === "" || path.startsWith(value + "/")
-                )}
-                onChange={(e) =>
-                  onChange(
-                    e.target.checked
-                      ? [...selected, path]
-                      : selected.filter((value) => value !== path)
-                  )
-                }
-              />
-              <File
-                aria-hidden="true"
-                className="size-4 shrink-0 text-muted-foreground"
-              />
-              <span className="break-all">{path.split("/").at(-1)}</span>
-            </label>
-          </li>
-        ))}
-      </ul>
-    )
-  }
-  return (
-    <div
-      className="max-h-96 overflow-auto rounded border p-3"
-      aria-label="SVN 目录多选"
-    >
-      {rows("")}
-    </div>
   )
 }

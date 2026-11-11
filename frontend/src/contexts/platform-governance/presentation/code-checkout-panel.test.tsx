@@ -2,11 +2,75 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { CodeCheckoutPanel, DirectoryChoices } from "./code-checkout-panel"
+import { CodeBrowseDirectory } from "./code-browse-directory"
 
 const url = "https://localhost:18443/repos/mes/trunk"
 afterEach(() => vi.unstubAllGlobals())
 
 describe("SVN 工程检出", () => {
+  it("子目录超限显示中文提示，局部重试保留选择且不传新版本或凭据", async () => {
+    const requests: Record<string, unknown>[] = []
+    const change = vi.fn()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input, init) => {
+        let data: unknown
+        if (init?.method === "POST") {
+          requests.push(JSON.parse(String(init.body)))
+          data = { id: `child-${requests.length}` }
+        } else {
+          const failed = String(input).endsWith("child-1")
+          data = {
+            id: failed ? "child-1" : "child-2",
+            operation_kind: "browse",
+            state: failed ? "failed" : "succeeded",
+            error_code: failed ? "code_svn_response_too_large" : null,
+            result: failed
+              ? {}
+              : {
+                  revision: 2,
+                  directory_path: "module",
+                  directories: [],
+                  files: ["module/rule.cpp"],
+                },
+          }
+        }
+        return new Response(JSON.stringify(data), {
+          headers: { "Content-Type": "application/json" },
+        })
+      })
+    )
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <CodeBrowseDirectory
+          resourceId="code-library"
+          browseId="root-r2"
+          path="module"
+          revision={2}
+          selected={["README.md"]}
+          onChange={change}
+        />
+      </QueryClientProvider>
+    )
+    expect(
+      await screen.findByText(/SVN 返回的数据超过单次处理上限/)
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText("重试加载 module"))
+    fireEvent.click(await screen.findByLabelText("选择 module/rule.cpp"))
+    expect(change).toHaveBeenCalledWith(["README.md", "module/rule.cpp"])
+    expect(requests).toHaveLength(2)
+    expect(requests[0]).toEqual({
+      browse_job_id: "root-r2",
+      path: "module",
+      request_key: expect.any(String),
+    })
+    expect(requests[1].request_key).not.toEqual(requests[0].request_key)
+  })
+
   it("无需认证按输入地址直连，不使用同 URL 的部署映射或账号", async () => {
     const requests: Array<{ path: string; body: Record<string, unknown> }> = []
     vi.stubGlobal(
@@ -236,36 +300,46 @@ describe("SVN 工程检出", () => {
             JSON.stringify({
               id: path.endsWith("/connections")
                 ? "direct-anonymous"
-                : path.endsWith("/browse")
-                  ? "browse-id"
-                  : "checkout-id",
+                : path.endsWith("/browse-children")
+                  ? "child-id"
+                  : path.endsWith("/browse")
+                    ? "browse-id"
+                    : "checkout-id",
             }),
             { status: 202, headers: { "Content-Type": "application/json" } }
           )
         }
-        const data = path.endsWith("/browse-id")
+        const data = path.endsWith("/child-id")
           ? {
-              id: "browse-id",
+              id: "child-id",
               operation_kind: "browse",
               state: "succeeded",
               error_code: null,
               result: {
                 revision: 2,
-                files: ["README.md"],
-                directories: [
-                  "set_server",
-                  "set_web",
-                  "set_web/EBR",
-                  "set_web/JTH",
-                ],
+                directory_path: "set_web",
+                directories: ["set_web/EBR", "set_web/JTH"],
+                files: ["set_web/README.md"],
               },
             }
-          : {
-              enabled: true,
-              registrations: [{ id: "test-svn", url, kind: "deployment" }],
-              jobs: [],
-              checkouts: [],
-            }
+          : path.endsWith("/browse-id")
+            ? {
+                id: "browse-id",
+                operation_kind: "browse",
+                state: "succeeded",
+                error_code: null,
+                result: {
+                  revision: 2,
+                  files: ["README.md"],
+                  directories: ["set_server", "set_web"],
+                },
+              }
+            : {
+                enabled: true,
+                registrations: [{ id: "test-svn", url, kind: "deployment" }],
+                jobs: [],
+                checkouts: [],
+              }
         return new Response(JSON.stringify(data), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -286,7 +360,18 @@ describe("SVN 工程检出", () => {
     )
     fireEvent.click(screen.getByRole("button", { name: "浏览目录" }))
     await screen.findByText(/已固定 SVN r2/)
+    expect(requests).toHaveLength(2)
+    expect(screen.queryByLabelText("选择 set_web/EBR")).toBeNull()
     fireEvent.click(screen.getByRole("button", { name: "展开 set_web" }))
+    await screen.findByLabelText("选择 set_web/EBR")
+    expect(requests[2].body).toMatchObject({
+      browse_job_id: "browse-id",
+      path: "set_web",
+    })
+    expect(requests[2].body).not.toHaveProperty("revision")
+    fireEvent.click(screen.getByRole("button", { name: "展开 set_web" }))
+    fireEvent.click(screen.getByRole("button", { name: "展开 set_web" }))
+    expect(requests).toHaveLength(3)
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 set_web/EBR" }))
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 set_web/JTH" }))
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 README.md" }))
@@ -294,8 +379,8 @@ describe("SVN 工程检出", () => {
       target: { value: "factory-r2" },
     })
     fireEvent.click(screen.getByRole("button", { name: "检出所选内容" }))
-    await waitFor(() => expect(requests).toHaveLength(3))
-    expect(requests[2].body).toMatchObject({
+    await waitFor(() => expect(requests).toHaveLength(4))
+    expect(requests[3].body).toMatchObject({
       browse_job_id: "browse-id",
       paths: ["set_web/EBR", "set_web/JTH", "README.md"],
       folder: "factory-r2",

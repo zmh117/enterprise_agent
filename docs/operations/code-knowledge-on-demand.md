@@ -121,6 +121,21 @@ SVN diff/提交说明只在有界内存保留，单响应不超过 512 KiB，总
 
 管理页面的目录预览不含源码或提交正文，允许最多 2 MiB 的固定字段路径清单，仍受总内存 8 MiB、60 秒过期和管理员权限约束。只有管理 browse 分支启用该限额；问答 SVN 原文维持单响应 512 KiB。两端校验目录预览结构，不能以该标记传递 diff 或任意正文。
 
+### 大仓库目录预览
+
+目录预览首次只查询所填地址的直接文件和文件夹，展开文件夹时才加载该层。服务端使用 `svn list --xml --depth immediates`，每次携带首次浏览固定的数字 SVN 修订；后续新提交不会改变这棵浏览树或提交检出的版本。文件、目录均可勾选，选择父目录会覆盖尚未展开的子项。折叠不清空已加载内容和选择，单个子目录失败可局部重试；修改地址、认证配置、版本或重新浏览会重置旧浏览树。
+
+`code_svn_response_too_large` 表示 SVN 输出超过容量上限，并不等同于认证失败。旧实现为显示目录递归列出整个分支，大工程可能超过 8 MiB XML 上限；按层查询避免了这一需求。单层预览仍有容量限制，不静默截断，也不自动放大缓冲。如果单层仍超限，可以将 SVN 地址缩小到所需子目录后重试。完整检出的清单、磁盘与执行时间检查仍独立生效；按层预览不代表任意规模工程都可一次检出。
+
+本次修复无需数据库迁移、Runtime/Agent 重新发布或模型调用。在目标机器更新到本次代码后，先构建，等待现有 SVN 检出/更新操作结束，再更新这三个服务：
+
+```sh
+docker compose build api-server knowledge-sync admin-web
+docker compose up -d --no-deps api-server knowledge-sync admin-web
+```
+
+刷新浏览器并重新点击「浏览目录」，验证根目录、两层子目录、文件选择和固定 SVN 修订。三个服务需一起更新，否则前端子目录请求可能找不到新接口，或仍从旧执行器拿到递归清单。以上命令适用于 Windows CMD/PowerShell 与 macOS/Linux Shell；本次已通过本机合成仓库的真实 SVN CLI 验证，真实 Windows 仓库尚待现场验收。验证范围见 [按层浏览修复记录](../../openspec/changes/fix-large-svn-directory-browse/evidence.md)。
+
 
 已有本地 SVN 升级 CA 信任时，无需重新生成证书或导入仓库：只把 `.local/code-svn/state/client/mes-local/server.crt` 复制到 `.local/code-svn/state/client/trusted-ca/local-svn.crt`，再更新 knowledge-sync 镜像。页面填写 `https://code-svn:8443/repos/mes/trunk` 并选择“无需认证”。地址不会自动替换，证书链、主机名和有效期仍由 SVN 校验。
 
