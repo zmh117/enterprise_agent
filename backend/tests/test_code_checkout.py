@@ -433,11 +433,11 @@ def test_failed_checkout_marks_invalid_without_replaying_or_stealing_writer(mana
 def test_interruption_preserves_cause_and_waits_for_child_before_releasing_writer(
     management, monkeypatch, cause, expected
 ):
-    import itertools
     import subprocess
     import sys
 
     from app.modules.knowledge.infrastructure import code_management_executor as execution
+    from app.modules.knowledge.infrastructure import code_operation_heartbeat as monitoring
     from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource
     from app.shared.exceptions import PermissionDenied
 
@@ -452,8 +452,7 @@ def test_interruption_preserves_cause_and_waits_for_child_before_releasing_write
         jobs.fail_management,
     )
     launched = []
-    clock = itertools.count(step=4)
-    monkeypatch.setattr(execution, "time", SimpleNamespace(monotonic=lambda: next(clock) + 4))
+    monkeypatch.setattr(monitoring, "HEARTBEAT_INTERVAL", 0.02)
 
     def popen(*args, **kwargs):
         process = real_popen(*args, **kwargs)
@@ -518,6 +517,76 @@ def test_stopping_executor_does_not_start_checkout(management):
     executor.execute(operation["id"])
     assert jobs.get(operation["id"])["error_code"] == "CODE_EXECUTOR_STOPPING"
     assert state["calls"] == 1  # Only the earlier browse, no checkout or retry.
+
+
+def test_heartbeat_failure_kills_child_while_disk_check_blocks_but_keeps_writer(
+    management, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import subprocess
+    import sys
+
+    from app.modules.knowledge.infrastructure import code_management_executor as execution
+    from app.modules.knowledge.infrastructure import code_operation_heartbeat as monitoring
+    from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource
+
+    jobs, _, executor, _, _, root = management
+    operation = submit(management, browse(management))
+    executable = root / "synthetic-svn"
+    executable.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(60)\n")
+    executable.chmod(0o700)
+    blocked, release = Event(), Event()
+    real_popen, real_heartbeat = subprocess.Popen, jobs.heartbeat_management
+    launched = []
+    monkeypatch.setattr(monitoring, "HEARTBEAT_INTERVAL", 0.02)
+
+    def popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        launched.append(process)
+        return process
+
+    def heartbeat(*args, **kwargs):
+        if blocked.is_set():
+            raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
+        return real_heartbeat(*args, **kwargs)
+
+    def download(client, **kwargs):
+        def blocked_disk_check():
+            blocked.set()
+            assert release.wait(timeout=5)
+            return client.cancelled()
+
+        source = SvnCodeSource(
+            branch_url="https://svn.invalid/trunk",
+            expected_uuid="synthetic",
+            branch_path="/trunk",
+            config_directory=root,
+            executable=str(executable),
+        )
+        source.execute("update", [], timeout=10, limit=1024, cancelled=blocked_disk_check)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(jobs, "heartbeat_management", heartbeat)
+    monkeypatch.setattr(execution.WorkingCopyClient, "checkout", download)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(executor.execute, operation["id"])
+        try:
+            assert blocked.wait(timeout=3)
+            assert len(launched) == 1 and launched[0].wait(timeout=3) != 0
+            assert jobs.get(operation["id"])["state"] == "running"
+            assert (
+                jobs.row("code_checkout", operation["checkout_id"])["writer_operation_id"]
+                == operation["id"]
+            )
+            assert not future.done()  # Cancellation cannot release outstanding filesystem work.
+        finally:
+            release.set()
+        future.result(timeout=3)
+    row = jobs.get(operation["id"])
+    assert row["state"] == "failed" and row["error_code"] == "CODE_CONFIGURATION_CHANGED"
+    assert row["quiesced_at"]
+    assert jobs.row("code_checkout", operation["checkout_id"])["writer_operation_id"] is None
 
 
 @pytest.mark.parametrize(

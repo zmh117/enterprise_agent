@@ -42,6 +42,7 @@ contract = [
   "test_code_svn_history.py",
   "test_code_result_transport.py",
   "test_code_operations_store.py",
+  "test_code_operation_heartbeat.py",
   "test_code_resources.py",
   "test_code_answer_indexing.py",
   "test_code_answer_search.py",

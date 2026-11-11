@@ -22,6 +22,7 @@ from app.modules.knowledge.domain.code_contracts import (
 from app.modules.knowledge.domain.code_json import sha256
 from app.modules.knowledge.infrastructure.code_source import relative_path
 from app.modules.knowledge.infrastructure.code_executor_lock import inherited_execution_fds
+from app.modules.knowledge.infrastructure.code_operation_heartbeat import watch_svn_process
 
 MAX_XML_BYTES = 8 * 1024 * 1024
 BULK_METADATA_TIMEOUT = 300
@@ -135,6 +136,8 @@ class SvnCodeSource:
     ) -> bytes:
         if operation not in SVN_OPERATIONS:
             raise CodeKnowledgeError("code_svn_operation_denied")
+        if self.cancelled():
+            raise CodeKnowledgeError("code_collection_interrupted")
         command = [
             self.executable,
             operation,
@@ -160,20 +163,21 @@ class SvnCodeSource:
                 umask=0o027,
             ) as process:
                 try:
-                    if self._credentials and process.stdin is not None:
-                        try:
-                            process.stdin.write((self._credentials[1] + "\n").encode())
-                            process.stdin.close()
-                        except BrokenPipeError:
-                            pass
-                    return _bounded_output(
-                        process,
-                        timeout=timeout,
-                        limit=limit,
-                        cancelled=cancelled or self.cancelled,
-                        timeout_error=timeout_error,
-                        operation=operation,
-                    )
+                    with watch_svn_process(process):
+                        if self._credentials and process.stdin is not None:
+                            try:
+                                process.stdin.write((self._credentials[1] + "\n").encode())
+                                process.stdin.close()
+                            except BrokenPipeError:
+                                pass
+                        return _bounded_output(
+                            process,
+                            timeout=timeout,
+                            limit=limit,
+                            cancelled=cancelled or self.cancelled,
+                            timeout_error=timeout_error,
+                            operation=operation,
+                        )
                 finally:
                     if process.poll() is None:
                         process.kill()

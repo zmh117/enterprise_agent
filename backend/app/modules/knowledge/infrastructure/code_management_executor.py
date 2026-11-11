@@ -4,7 +4,6 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 import re
-import time
 
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.normalization import digest
@@ -20,7 +19,8 @@ from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBu
 from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
 from app.modules.knowledge.infrastructure.code_svn import SvnCommandFailure
 from app.modules.agent.infrastructure.runtime_pool_store import database_now, timestamp
-from app.shared.exceptions import PermissionDenied
+from app.modules.knowledge.infrastructure.code_operation_heartbeat import CodeOperationHeartbeat
+from app.modules.knowledge.infrastructure.code_executor_lock import ExecutorLock
 
 
 class CodeManagementExecutor:
@@ -42,60 +42,50 @@ class CodeManagementExecutor:
 
         with execution_lock(self.checkout_root, "svn", identifier) as proof:
             row = self.store.claim_management(identifier, owner=self.owner)
-            proof.bind(row)
-            self._execute_claimed(row)
+            self._execute_claimed(row, proof)
 
-    def _execute_claimed(self, row: dict[str, Any]) -> None:
+    def _execute_claimed(self, row: dict[str, Any], proof: ExecutorLock) -> None:
         identifier = row["id"]
         claim = row["claim_version"]
-        last = 0.0
-
-        def cancelled() -> bool:
-            nonlocal last
-            if self.stopping():
-                raise CodeKnowledgeError("CODE_EXECUTOR_STOPPING")
-            if time.monotonic() - last >= 3:
-                try:
-                    self.store.heartbeat_management(identifier, owner=self.owner, claim=claim)
-                except CodeKnowledgeError:
-                    raise
-                except PermissionDenied:
-                    raise CodeKnowledgeError("code_checkout_access_denied") from None
-                except Exception:
-                    # Stop the child on a failed check, preserving the reason.
-                    # Exception text may contain database or credential details.
-                    raise CodeKnowledgeError("CODE_OPERATION_HEARTBEAT_FAILED") from None
-                last = time.monotonic()
-            return False
+        heartbeat = CodeOperationHeartbeat(
+            operation_id=identifier,
+            renew=lambda: self.store.heartbeat_management(
+                identifier, owner=self.owner, claim=claim
+            ),
+            stopped=self.stopping,
+            permission_error="code_checkout_access_denied",
+        )
 
         try:
-            cancelled()
-            request = json_value(row["request_json"])
-            revision = self.store.db.execute_one(
-                f"SELECT resource_id FROM {self.store.t('retrieval_revision')} WHERE id=?",
-                (row["config_revision_id"],),
-            )
-            if not revision:
-                raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
-            resource = revision["resource_id"]
-            access = CodeSvnAccess(self.store.db, self.store.registry_file)
-            entry = access.entry(request["registration"], resource)
-            if connection_fingerprint(entry) != request["registration_hash"]:
-                raise CodeKnowledgeError("CODE_REGISTRATION_CHANGED")
-            with access.client(
-                entry, self.auth_root, cancelled, factory=WorkingCopyClient
-            ) as client:
-                if row["operation_kind"] == "browse":
-                    if entry.get("resource_id"):
-                        access.pin(
-                            request["registration"],
-                            resource,
-                            repository_uuid=client.source.expected_uuid,
-                            branch_path=client.source.branch_path or "/",
-                        )
-                    self._browse(row, request, client)
-                else:
-                    self._checkout(row, request, client)
+            with heartbeat:
+                proof.bind(row)
+                heartbeat.check()
+                request = json_value(row["request_json"])
+                revision = self.store.db.execute_one(
+                    f"SELECT resource_id FROM {self.store.t('retrieval_revision')} WHERE id=?",
+                    (row["config_revision_id"],),
+                )
+                if not revision:
+                    raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
+                resource = revision["resource_id"]
+                access = CodeSvnAccess(self.store.db, self.store.registry_file)
+                entry = access.entry(request["registration"], resource)
+                if connection_fingerprint(entry) != request["registration_hash"]:
+                    raise CodeKnowledgeError("CODE_REGISTRATION_CHANGED")
+                with access.client(
+                    entry, self.auth_root, heartbeat.check, factory=WorkingCopyClient
+                ) as client:
+                    if row["operation_kind"] == "browse":
+                        if entry.get("resource_id"):
+                            access.pin(
+                                request["registration"],
+                                resource,
+                                repository_uuid=client.source.expected_uuid,
+                                branch_path=client.source.branch_path or "/",
+                            )
+                        self._browse(row, request, client, heartbeat)
+                    else:
+                        self._checkout(row, request, client, heartbeat)
         except Exception as exc:
             self.buffer.discard(identifier)
             error = (
@@ -113,7 +103,11 @@ class CodeManagementExecutor:
             )
 
     def _browse(
-        self, row: dict[str, Any], request: dict[str, Any], client: WorkingCopyClient
+        self,
+        row: dict[str, Any],
+        request: dict[str, Any],
+        client: WorkingCopyClient,
+        heartbeat: CodeOperationHeartbeat,
     ) -> None:
         result = client.browse(request["revision"], path=request.get("path", ""))
         verified = client.source.preflight(result["revision"])
@@ -124,6 +118,7 @@ class CodeManagementExecutor:
             deadline_at=row["deadline_at"],
             is_directory_preview=True,
         )
+        heartbeat.finish()
         with self.store.db.unit_of_work():
             self.store.require_management(row)
             source = self.store.register_repository(
@@ -148,7 +143,11 @@ class CodeManagementExecutor:
             )
 
     def _checkout(
-        self, row: dict[str, Any], request: dict[str, Any], client: WorkingCopyClient
+        self,
+        row: dict[str, Any],
+        request: dict[str, Any],
+        client: WorkingCopyClient,
+        heartbeat: CodeOperationHeartbeat,
     ) -> None:
         checkout = self.store.row("code_checkout", row["checkout_id"])
         if checkout["writer_operation_id"] != row["id"]:
@@ -171,6 +170,7 @@ class CodeManagementExecutor:
             "checkout_id": checkout["id"],
             "relative_dir": checkout["relative_dir"],
         }
+        heartbeat.finish()
         with self.store.db.unit_of_work():
             self.store.row("code_checkout", checkout["id"], lock=True)
             self.store.check_claim(row["id"], owner=self.owner, claim=row["claim_version"])

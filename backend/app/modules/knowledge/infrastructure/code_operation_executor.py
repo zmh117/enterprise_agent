@@ -3,7 +3,6 @@
 from collections.abc import Callable
 from pathlib import Path
 import re
-import time
 from typing import Any
 from contextlib import ExitStack
 from app.modules.knowledge.infrastructure.code_svn_access import CodeSvnAccess
@@ -18,7 +17,8 @@ from app.modules.knowledge.infrastructure.code_operation_store import CodeOperat
 from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBuffer
 from app.modules.knowledge.infrastructure.code_svn_history import SvnCodeHistory
 from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
-from app.shared.exceptions import PermissionDenied
+from app.modules.knowledge.infrastructure.code_operation_heartbeat import CodeOperationHeartbeat
+from app.modules.knowledge.infrastructure.code_executor_lock import ExecutorLock
 
 
 class CodeOperationExecutor:
@@ -46,36 +46,26 @@ class CodeOperationExecutor:
 
         with execution_lock(self.checkout_root, "svn", operation_id) as proof:
             operation = self.store.claim(operation_id, owner=self.owner)
-            proof.bind(operation)
-            self._execute_claimed(operation)
+            self._execute_claimed(operation, proof)
 
-    def _execute_claimed(self, operation: dict[str, Any]) -> None:
+    def _execute_claimed(self, operation: dict[str, Any], proof: ExecutorLock) -> None:
         store = self.store
         operation_id = operation["id"]
         claim = operation["claim_version"]
         context = store.context_for(operation)
-        last_heartbeat = 0.0
-
-        def cancelled() -> bool:
-            nonlocal last_heartbeat
-            if self.stopping():
-                raise CodeKnowledgeError("CODE_EXECUTOR_STOPPING")
-            if time.monotonic() - last_heartbeat >= 3:
-                try:
-                    store.heartbeat(context, operation_id, owner=self.owner, claim=claim)
-                except CodeKnowledgeError:
-                    raise
-                except PermissionDenied:
-                    raise CodeKnowledgeError("CODE_AUTHORIZATION_CHANGED") from None
-                except Exception:
-                    raise CodeKnowledgeError("CODE_OPERATION_HEARTBEAT_FAILED") from None
-                last_heartbeat = time.monotonic()
-            return False
+        heartbeat = CodeOperationHeartbeat(
+            operation_id=operation_id,
+            renew=lambda: store.heartbeat(context, operation_id, owner=self.owner, claim=claim),
+            stopped=self.stopping,
+            permission_error="CODE_AUTHORIZATION_CHANGED",
+        )
 
         cleanup = ExitStack()
         try:
-            cancelled()
-            client = cleanup.enter_context(self._client(operation, cancelled))
+            cleanup.enter_context(heartbeat)
+            proof.bind(operation)
+            heartbeat.check()
+            client = cleanup.enter_context(self._client(operation, heartbeat.check))
             source = client.source
             source.preflight(context.revision)
             arguments = json_value(operation["request_json"])
@@ -100,12 +90,13 @@ class CodeOperationExecutor:
                     if operation["operation_kind"] == "update"
                     else working.inspect(context.revision)
                 )
+                heartbeat.finish()
                 store.confirm_reading(
                     context, operation_id, owner=self.owner, claim=claim, metadata=result
                 )
                 return
             result = self._history(operation, source, arguments, context)
-            cancelled()
+            heartbeat.check()
             result_hash = self.buffer.put(
                 operation_id, claim, result, deadline_at=operation["deadline_at"]
             )
@@ -115,6 +106,7 @@ class CodeOperationExecutor:
                 has_more=bool(result.get("has_more")),
                 count=len(result.get("entries", result.get("paths", result.get("lines", [])))),
             )
+            heartbeat.finish()
             store.complete_history(
                 context,
                 operation_id,
@@ -124,6 +116,7 @@ class CodeOperationExecutor:
                 metadata=metadata,
             )
         except Exception as exc:
+            heartbeat.close()
             self.buffer.discard(operation_id)
             error = (
                 exc.code

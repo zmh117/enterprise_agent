@@ -93,6 +93,73 @@ def concurrent(function, values):
         return list(pool.map(run, values))
 
 
+def test_svn_heartbeat_renews_postgres_writer_during_blocked_io(workspace):
+    from datetime import timedelta
+    from threading import Event
+    from app.modules.agent.infrastructure.runtime_pool_store import database_now, timestamp
+    from app.modules.knowledge.domain.code_answers import utc_time
+    from app.modules.knowledge.infrastructure.code_operation_store import CodeOperationStore
+    from app.modules.knowledge.infrastructure.code_operation_heartbeat import CodeOperationHeartbeat
+
+    runtime, _, source, checkout = workspace
+    store = CodeOperationStore(runtime.database, authorize=lambda context: None)
+    context = analysis_context(runtime, source, checkout, revision=101)
+    # The Runtime's own liveness is independent of this SVN writer under test.
+    runtime.database.execute(
+        "UPDATE agent_runtime_invocation SET lease_until=? WHERE invocation_id=?",
+        (timestamp(database_now(store.db) + timedelta(minutes=5)), context.invocation_id),
+    )
+    analysis = store.begin(context, "blocked-writer")
+    operation = store.db.execute_one(
+        f"SELECT id FROM {store.t('code_svn_operation')} WHERE analysis_id=?", (analysis["id"],)
+    )
+    row = store.claim(operation["id"], owner="blocked-worker")
+    initial_expiry = utc_time(row["lease_until"])
+    with CodeOperationHeartbeat(
+        operation_id=row["id"],
+        stopped=lambda: False,
+        permission_error="CODE_AUTHORIZATION_CHANGED",
+        renew=lambda: store.heartbeat(
+            context, row["id"], owner="blocked-worker", claim=row["claim_version"]
+        ),
+    ) as heartbeat:
+        Event().wait(31.5)  # Real time exceeds the original 30-second database lease.
+        heartbeat.check()
+        current = database_now(store.db)
+        assert initial_expiry < current
+        actual = store.check_claim(row["id"], owner="blocked-worker", claim=row["claim_version"])
+        assert utc_time(actual["lease_until"]) > current
+        assert store.row("code_checkout", checkout["id"])["writer_operation_id"] == row["id"]
+        heartbeat.finish()
+    # No actual source inspection occurred; release as a synthetic failure, never ready.
+    store.stopped(
+        row["id"],
+        owner="blocked-worker",
+        claim=row["claim_version"],
+        error_code="CODE_SYNTHETIC_TEST_FINISHED",
+    )
+    assert store.row("code_checkout", checkout["id"])["state"] == "invalid"
+
+
+def test_svn_heartbeat_postgres_io_is_bounded(database, monkeypatch):
+    import time
+    from app.modules.knowledge.infrastructure import code_operation_heartbeat as monitoring
+
+    database.execute("SELECT 1")
+    monkeypatch.setattr(monitoring, "HEARTBEAT_IO_TIMEOUT", 0.2)
+    started = time.monotonic()
+    with pytest.raises(CodeKnowledgeError, match="^CODE_OPERATION_HEARTBEAT_FAILED$"):
+        with monitoring.CodeOperationHeartbeat(
+            operation_id="synthetic-slow-db",
+            stopped=lambda: False,
+            permission_error="CODE_AUTHORIZATION_CHANGED",
+            renew=lambda: database.execute("SELECT pg_sleep(10)"),
+        ):
+            pytest.fail("failed initial renewal admitted work")
+    assert time.monotonic() - started < 3
+    assert database.execute_one("SELECT 1 AS alive")["alive"] == 1
+
+
 def test_postgres_schema_comments_and_cross_source_constraints(workspace):
     from backend.tests.test_code_on_demand_schema import NEW_TABLES
 
