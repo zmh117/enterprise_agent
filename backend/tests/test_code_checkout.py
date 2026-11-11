@@ -150,6 +150,7 @@ def management(setup, monkeypatch):
 
     class Client:
         def __init__(self, entry, auth, cancelled):
+            self.cancelled = cancelled
             self.source = SimpleNamespace(preflight=lambda revision: info)
 
         def browse(self, revision, *, path=""):
@@ -416,6 +417,107 @@ def test_failed_checkout_marks_invalid_without_replaying_or_stealing_writer(mana
     assert row["state"] == "failed" and row["quiesced_at"]
     checkout = jobs.row("code_checkout", operation["checkout_id"])
     assert checkout["state"] == "invalid" and checkout["writer_operation_id"] is None
+
+
+@pytest.mark.parametrize(
+    ("cause", "expected"),
+    [
+        ("deadline", "CODE_OPERATION_EXPIRED"),
+        ("lease", "CODE_OPERATION_LEASE_LOST"),
+        ("configuration", "CODE_CONFIGURATION_CHANGED"),
+        ("permission", "code_checkout_access_denied"),
+        ("heartbeat", "CODE_OPERATION_HEARTBEAT_FAILED"),
+        ("stopping", "CODE_EXECUTOR_STOPPING"),
+    ],
+)
+def test_interruption_preserves_cause_and_waits_for_child_before_releasing_writer(
+    management, monkeypatch, cause, expected
+):
+    import itertools
+    import subprocess
+    import sys
+
+    from app.modules.knowledge.infrastructure import code_management_executor as execution
+    from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource
+    from app.shared.exceptions import PermissionDenied
+
+    jobs, resource, executor, _, _, root = management
+    operation = submit(management, browse(management))
+    executable = root / "synthetic-svn"
+    executable.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(60)\n")
+    executable.chmod(0o700)
+    real_popen, real_heartbeat, real_fail = (
+        subprocess.Popen,
+        jobs.heartbeat_management,
+        jobs.fail_management,
+    )
+    launched = []
+    clock = itertools.count(step=4)
+    monkeypatch.setattr(execution, "time", SimpleNamespace(monotonic=lambda: next(clock) + 4))
+
+    def popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        launched.append(process)
+        return process
+
+    def heartbeat(*args, **kwargs):
+        if launched:
+            if cause in {"deadline", "lease"}:
+                field = "deadline_at" if cause == "deadline" else "lease_until"
+                jobs.db.execute(
+                    f"UPDATE {jobs.t('code_svn_operation')} SET {field}=? WHERE id=?",
+                    ("2000-01-01T00:00:00+00:00", operation["id"]),
+                )
+            elif cause == "configuration":
+                raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
+            elif cause == "permission":
+                raise PermissionDenied("synthetic private authorization detail")
+            elif cause == "heartbeat":
+                raise RuntimeError("synthetic private database detail")
+        return real_heartbeat(*args, **kwargs)
+
+    def download(client, **kwargs):
+        source = SvnCodeSource(
+            branch_url="https://svn.invalid/trunk",
+            expected_uuid="synthetic",
+            branch_path="/trunk",
+            config_directory=root,
+            executable=str(executable),
+            cancelled=client.cancelled,
+        )
+        source.execute("update", [], timeout=10, limit=1024)
+
+    def fail(*args, **kwargs):
+        assert len(launched) == 1 and launched[0].poll() is not None
+        assert (
+            jobs.row("code_checkout", operation["checkout_id"])["writer_operation_id"]
+            == operation["id"]
+        )
+        return real_fail(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(jobs, "heartbeat_management", heartbeat)
+    monkeypatch.setattr(jobs, "fail_management", fail)
+    monkeypatch.setattr(execution.WorkingCopyClient, "checkout", download)
+    executor.stopping = lambda: cause == "stopping" and bool(launched)
+    executor.execute(operation["id"])
+    row = jobs.get(operation["id"])
+    assert row["state"] == "failed" and row["error_code"] == expected
+    assert row["quiesced_at"]
+    reloaded = next(job for job in jobs.snapshot(resource["id"])["jobs"] if job["id"] == row["id"])
+    assert reloaded["error_code"] == expected
+    assert "private" not in json.dumps(reloaded)
+    checkout = jobs.row("code_checkout", operation["checkout_id"])
+    assert checkout["state"] == "invalid" and checkout["writer_operation_id"] is None
+
+
+def test_stopping_executor_does_not_start_checkout(management):
+    jobs, _, executor, _, state, _ = management
+    operation = submit(management, browse(management))
+    executor.stopping = lambda: True
+    executor.execute(operation["id"])
+    assert jobs.get(operation["id"])["error_code"] == "CODE_EXECUTOR_STOPPING"
+    assert state["calls"] == 1  # Only the earlier browse, no checkout or retry.
 
 
 @pytest.mark.parametrize(

@@ -244,5 +244,48 @@ def test_executor_cancellation_waits_before_releasing_only_its_own_operation(
     executor.execute(operation["id"])
     stopped = store.row("code_svn_operation", operation["id"])
     assert stopped["state"] == "failed" and stopped["quiesced_at"]
-    assert stopped["error_code"] == "CODE_OPERATION_CANCELLED"
+    assert stopped["error_code"] == "CODE_EXECUTOR_STOPPING"
+    assert store.require_reader(ctx, analysis["id"])["read_released_at"] is None
+
+
+@pytest.mark.parametrize("cause", ["configuration", "heartbeat"])
+def test_analysis_executor_preserves_failed_heartbeat_reason(
+    operation_setup, tmp_path, monkeypatch, cause
+):
+    from app.modules.knowledge.infrastructure.code_operation_executor import CodeOperationExecutor
+
+    store, ctx, analysis = operation_setup
+    operation = store.submit_history(
+        ctx,
+        analysis["id"],
+        kind="log",
+        request={"path": "", "selector": {"kind": "latest"}},
+        request_key="failed-heartbeat",
+    )
+    executor = CodeOperationExecutor(
+        store,
+        CodeResultBuffer(),
+        owner="worker",
+        registry_file=tmp_path / "unused.json",
+        auth_root=tmp_path,
+        checkout_root=tmp_path,
+        stopped=lambda: False,
+    )
+
+    def heartbeat(*args, **kwargs):
+        if cause == "configuration":
+            raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
+        raise RuntimeError("synthetic private database detail")
+
+    monkeypatch.setattr(store, "heartbeat", heartbeat)
+    monkeypatch.setattr(executor, "_client", lambda *args: pytest.fail("failed check launched SVN"))
+    executor.execute(operation["id"])
+    stopped = store.row("code_svn_operation", operation["id"])
+    expected = (
+        "CODE_CONFIGURATION_CHANGED"
+        if cause == "configuration"
+        else "CODE_OPERATION_HEARTBEAT_FAILED"
+    )
+    assert stopped["state"] == "failed" and stopped["error_code"] == expected
+    assert "private" not in str(stopped)
     assert store.require_reader(ctx, analysis["id"])["read_released_at"] is None

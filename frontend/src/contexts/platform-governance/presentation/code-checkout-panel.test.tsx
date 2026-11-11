@@ -18,6 +18,12 @@ describe("SVN 工程检出", () => {
     ["CODE_SVN_WC_CLEANUP_REQUIRED", "SVN 工作副本上一次操作尚未完成"],
     ["CODE_SVN_WC_LOCKED", "SVN 工作副本被锁定"],
     ["CODE_SVN_WC_DB_FAILED", "SVN 工作副本元数据数据库异常"],
+    ["code_collection_interrupted", "旧记录未保存具体原因"],
+    ["CODE_OPERATION_EXPIRED", "任务已超过总执行期限"],
+    ["CODE_OPERATION_LEASE_LOST", "任务执行权已失效"],
+    ["CODE_OPERATION_HEARTBEAT_FAILED", "任务状态或心跳检查失败"],
+    ["CODE_EXECUTOR_STOPPING", "源码执行器正在停止或重建"],
+    ["CODE_EXECUTOR_STOPPED", "已确认原源码执行进程停止"],
   ])("检出失败 %s 显示可区分的中文原因", async (code, message) => {
     vi.stubGlobal(
       "fetch",

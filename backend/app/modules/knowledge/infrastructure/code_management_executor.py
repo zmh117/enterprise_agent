@@ -20,6 +20,7 @@ from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBu
 from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
 from app.modules.knowledge.infrastructure.code_svn import SvnCommandFailure
 from app.modules.agent.infrastructure.runtime_pool_store import database_now, timestamp
+from app.shared.exceptions import PermissionDenied
 
 
 class CodeManagementExecutor:
@@ -52,16 +53,23 @@ class CodeManagementExecutor:
         def cancelled() -> bool:
             nonlocal last
             if self.stopping():
-                return True
+                raise CodeKnowledgeError("CODE_EXECUTOR_STOPPING")
             if time.monotonic() - last >= 3:
                 try:
                     self.store.heartbeat_management(identifier, owner=self.owner, claim=claim)
+                except CodeKnowledgeError:
+                    raise
+                except PermissionDenied:
+                    raise CodeKnowledgeError("code_checkout_access_denied") from None
                 except Exception:
-                    return True
+                    # Stop the child on a failed check, preserving the reason.
+                    # Exception text may contain database or credential details.
+                    raise CodeKnowledgeError("CODE_OPERATION_HEARTBEAT_FAILED") from None
                 last = time.monotonic()
             return False
 
         try:
+            cancelled()
             request = json_value(row["request_json"])
             revision = self.store.db.execute_one(
                 f"SELECT resource_id FROM {self.store.t('retrieval_revision')} WHERE id=?",

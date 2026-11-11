@@ -122,10 +122,12 @@ class CodeOperationStore(CodeAnalysisStore):
             operation["state"] != "running"
             or operation["owner_instance_id"] != owner
             or operation["claim_version"] != claim
-            or operation["lease_until"] is None
-            or utc_time(operation["lease_until"]) <= database_now(self.db)
-            or utc_time(operation["deadline_at"]) <= database_now(self.db)
         ):
+            raise CodeKnowledgeError("CODE_OPERATION_LEASE_LOST")
+        current = database_now(self.db)
+        if utc_time(operation["deadline_at"]) <= current:
+            raise CodeKnowledgeError("CODE_OPERATION_EXPIRED")
+        if operation["lease_until"] is None or utc_time(operation["lease_until"]) <= current:
             raise CodeKnowledgeError("CODE_OPERATION_LEASE_LOST")
         return operation
 

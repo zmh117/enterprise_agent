@@ -61,7 +61,12 @@ class SvnWorkingCopy:
     def _identity(self) -> None:
         self.identity.check()
 
+    def _check_cancelled(self) -> None:
+        if self.source.cancelled():
+            raise CodeKnowledgeError("code_collection_interrupted")
+
     def inspect(self, revision: int | None = None) -> dict[str, Any]:
+        self._check_cancelled()
         self._identity()
         target = str(self.directory) + "@"
         status = xml_document(
@@ -72,6 +77,7 @@ class SvnWorkingCopy:
             )
         )
         for node in status.findall("./target/entry/wc-status"):
+            self._check_cancelled()
             if (
                 node.get("item") != "normal"
                 or node.get("props") not in {"none", "normal"}
@@ -94,6 +100,9 @@ class SvnWorkingCopy:
         selected = set()
         file_count, total_bytes = 0, 0
         for node in rows:
+            # On a large Desktop bind mount these filesystem checks can outlive
+            # the lease even after svn info exits. Keep checking the same owner.
+            self._check_cancelled()
             relative = self._entry(node)
             try:
                 n = svn_revision(int(node.attrib["revision"]))
@@ -117,6 +126,7 @@ class SvnWorkingCopy:
         if total_bytes > 20 * 1024**3:
             raise CodeKnowledgeError("CODE_CHECKOUT_DISK_LIMIT")
         self._identity()
+        self._check_cancelled()
         return dict(
             repository_uuid=self.source.expected_uuid,
             branch_path=self.source.branch_path,

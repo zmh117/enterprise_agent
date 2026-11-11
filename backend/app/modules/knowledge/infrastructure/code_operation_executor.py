@@ -18,6 +18,7 @@ from app.modules.knowledge.infrastructure.code_operation_store import CodeOperat
 from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBuffer
 from app.modules.knowledge.infrastructure.code_svn_history import SvnCodeHistory
 from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+from app.shared.exceptions import PermissionDenied
 
 
 class CodeOperationExecutor:
@@ -58,19 +59,22 @@ class CodeOperationExecutor:
         def cancelled() -> bool:
             nonlocal last_heartbeat
             if self.stopping():
-                return True
+                raise CodeKnowledgeError("CODE_EXECUTOR_STOPPING")
             if time.monotonic() - last_heartbeat >= 3:
                 try:
                     store.heartbeat(context, operation_id, owner=self.owner, claim=claim)
+                except CodeKnowledgeError:
+                    raise
+                except PermissionDenied:
+                    raise CodeKnowledgeError("CODE_AUTHORIZATION_CHANGED") from None
                 except Exception:
-                    return True
+                    raise CodeKnowledgeError("CODE_OPERATION_HEARTBEAT_FAILED") from None
                 last_heartbeat = time.monotonic()
             return False
 
         cleanup = ExitStack()
         try:
-            if cancelled():
-                raise CodeKnowledgeError("CODE_OPERATION_CANCELLED")
+            cancelled()
             client = cleanup.enter_context(self._client(operation, cancelled))
             source = client.source
             source.preflight(context.revision)
@@ -101,8 +105,7 @@ class CodeOperationExecutor:
                 )
                 return
             result = self._history(operation, source, arguments, context)
-            if cancelled():
-                raise CodeKnowledgeError("CODE_OPERATION_CANCELLED")
+            cancelled()
             result_hash = self.buffer.put(
                 operation_id, claim, result, deadline_at=operation["deadline_at"]
             )

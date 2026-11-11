@@ -3,6 +3,7 @@
 from concurrent.futures import Future, ThreadPoolExecutor
 import logging
 import os
+import re
 from pathlib import Path
 from threading import Event, Thread
 import uuid
@@ -23,6 +24,7 @@ from app.modules.knowledge.infrastructure.code_result_authorizer import CodeResu
 from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBuffer
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import SchemaHeadValidator
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +87,7 @@ def _cycle(
         try:
             while not stop.is_set():
                 if not healthy():
-                    raise RuntimeError("Code result endpoint stopped")
+                    raise CodeKnowledgeError("CODE_RESULT_ENDPOINT_STOPPED")
                 for identifier, future in list(active.items()):
                     if future.done():
                         try:
@@ -205,8 +207,16 @@ def _loop(stop: Event) -> None:
             )
             server, server_thread = _serve(database, buffer, management.store)
             _cycle(executor, management, stop, generation_stop, server_thread.is_alive)
-        except Exception:
-            logger.warning("Code source worker unavailable")
+        except Exception as exc:
+            # A worker generation can stop without a container restart. Keep a
+            # bounded category for diagnosis; never log DB/SVN exception text.
+            code = (
+                exc.code
+                if isinstance(exc, CodeKnowledgeError)
+                and re.fullmatch(r"[A-Za-z0-9_]{1,96}", exc.code)
+                else "CODE_WORKER_CYCLE_FAILED"
+            )
+            logger.warning("Code source worker unavailable: %s (%s)", code, type(exc).__name__)
             stop.wait(10)
         finally:
             if server is not None:

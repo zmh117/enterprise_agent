@@ -546,6 +546,57 @@ class WorkingCopyAcceptance(unittest.TestCase):
             )
         self.assertFalse((self.root / "blocked").exists())
 
+    def test_slow_local_inspection_renews_claim_and_still_honors_revocation(self):
+        from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+        from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+
+        self.client.checkout(
+            root=self.root,
+            folder="slow-inspection",
+            job_id="slow-inspection",
+            revision=2,
+            paths=["first/config"],
+        )
+        output = self.root / "slow-inspection"
+        working = SvnWorkingCopy(
+            self.client.source,
+            output,
+            ["first/config"],
+            physical_key=persistent_identity(output, create=True),
+        )
+        original_entry = working._entry
+        elapsed, renewed, denied = 0, 0, False
+
+        def check():
+            nonlocal renewed
+            if denied:
+                raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
+            if elapsed - renewed >= 30:
+                raise CodeKnowledgeError("CODE_OPERATION_LEASE_LOST")
+            renewed = elapsed
+            return False
+
+        def slow_entry(node):
+            nonlocal elapsed
+            # Virtual time models slow filesystem metadata without a timed sleep.
+            elapsed += 12
+            return original_entry(node)
+
+        self.client.source.cancelled = check
+        working._entry = slow_entry
+        self.assertEqual(working.inspect(2)["operative_revision"], 2)
+        self.assertGreater(elapsed, 30)
+        self.assertEqual(renewed, elapsed)
+
+        def revoked_entry(node):
+            nonlocal denied
+            denied = True
+            return original_entry(node)
+
+        working._entry = revoked_entry
+        with self.assertRaisesRegex(CodeKnowledgeError, "CODE_CONFIGURATION_CHANGED"):
+            working.inspect(2)
+
     def test_update_checks_externals_when_selected_file_becomes_directory(self):
         from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
         from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy

@@ -62,7 +62,20 @@ export const codeCheckoutErrors: Record<string, string> = {
     "旧版服务缺少目录发布所需的文件系统能力，请更新 knowledge-sync 后重新检出。",
   code_checkout_externals_unsupported:
     "仓库含有 SVN 外部引用，本次未检出。请由部署人员确认外部依赖范围。",
-  code_checkout_interrupted: "后台执行已中断，请重新发起任务。",
+  code_collection_interrupted:
+    "后台任务被中断；旧记录未保存具体原因，需核对任务截止时间、配置变更及服务和数据库状态。",
+  code_checkout_interrupted:
+    "后台任务被中断；旧记录未保存具体原因，需核对任务截止时间、配置变更及服务和数据库状态。",
+  CODE_OPERATION_EXPIRED:
+    "任务已超过总执行期限。检出任务从提交起限时 30 分钟（含排队与校验），目录浏览限时 2 分钟。",
+  CODE_OPERATION_LEASE_LOST:
+    "任务执行权已失效，已停止执行。请核对服务暂停、数据库响应及任务归属。",
+  CODE_OPERATION_HEARTBEAT_FAILED:
+    "任务状态或心跳检查失败，已停止执行。请检查 knowledge-sync 与 PostgreSQL 的运行状态。",
+  CODE_EXECUTOR_STOPPING:
+    "源码执行器正在停止或重建，本次任务已中断。请核对 knowledge-sync 的重启与运行状态。",
+  CODE_EXECUTOR_STOPPED:
+    "已确认原源码执行进程停止，本次任务未完成。请核对 knowledge-sync 的重启与运行状态。",
   code_checkout_access_denied: "执行时管理员权限已失效。",
   code_checkout_registration_changed: "仓库登记已变更，请重新浏览目录。",
 }
