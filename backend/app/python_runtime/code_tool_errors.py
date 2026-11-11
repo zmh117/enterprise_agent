@@ -16,13 +16,16 @@ MESSAGES = {
     "CODE_SOURCE_READS_CLOSED": "本次源码分析已结束，不能继续读取",
     "CODE_SOURCE_PATH_DENIED": "所选源码路径不在本次授权范围内",
     "CODE_SOURCE_GLOB_DIRECTORY_REQUIRED": "Glob 请指定授权的源码子目录，或以明确的顶层目录名开头的 pattern；不能直接遍历源码根目录",
-    "CODE_SOURCE_SEARCH_INVALID": "Grep 支持 path、pattern、glob、output_mode(content/files_with_matches)、-i、-n、-A/-B/-C(0–5)、head_limit(1–200)；glob 使用 *、**、?、[]，不支持花括号；请缩小授权路径或文件模式",
+    "CODE_SOURCE_SEARCH_INVALID": "请按字段提示修正 Grep 参数；支持 path、pattern、glob、type、output_mode(content/files_with_matches)、-i、-n、-A/-B/-C、head_limit",
     "CODE_SOURCE_READ_INVALID": "Read 仅接受 file_path、offset、limit；请指定单个源码文件",
     "CODE_SOURCE_READ_LIMIT": "Read 的 offset 须为正整数，limit 为 1–400；读取范围不能为空且内容不能超过 64 KiB，请缩小有效行范围",
     "CODE_SOURCE_SENSITIVE": "源码文件包含受限文件名或敏感内容，不能读取或搜索",
+    "code_source_file_size_or_type": "该源码文件超过单文件容量限制或不是普通文件，不能直接读取；搜索可跳过该项并标记覆盖不完整",
+    "code_source_changed": "读取期间源文件发生变化，请重新核验指定版本",
+    "code_source_unreadable_or_link": "源码文件不可读取或存在不允许的链接，请管理员核验检出目录",
     "CODE_SOURCE_KEYWORDS_UNSUPPORTED": "源码文件使用了尚不支持核验的 SVN 关键字展开，不能作为证据读取",
     "CODE_SOURCE_SEARCH_OUTPUT_UNSUPPORTED": "搜索结果格式无法核验，请检查 Runtime 与 SDK 的兼容性",
-    "CODE_SOURCE_SEARCH_LIMIT": "搜索超出限制：Grep 最多 64 个候选文件、32 MiB，目录枚举最多 10000 项；Glob 最多返回 100 项。请缩小目录或 glob",
+    "CODE_SOURCE_SEARCH_LIMIT": "Glob 最多返回 100 项，请缩小目录或文件模式；源码 Grep 会自动分批，扫描预算或命中容量用尽时返回不完整标记",
     "CODE_SOURCE_SEARCH_UNAVAILABLE": "本次源码搜索工作区不可用",
     "code_notes_path_denied": "代码分析笔记只能用 Write 保存到当前 Job 的 work/notes/ 下 .md 或 .txt 文件",
     "sandbox_file_limit_exceeded": "临时文件超过单文件上限，请缩小搜索范围或笔记内容",
@@ -37,6 +40,27 @@ MESSAGES = {
 }
 
 
-def code_tool_failure(code: str) -> dict[str, str]:
+SEARCH_HINTS = {
+    "fields": "包含不支持的字段。仅使用 path、pattern、glob、type、output_mode、-i、-n、-A/-B/-C、head_limit；offset 仅支持 0，multiline 仅支持 false。",
+    "pattern": "pattern 须为 1–1024 字符的无 NUL 正则表达式。",
+    "regex": "pattern 正则语法无效或使用了不支持的特性；请简化表达式，字面括号等元字符需要转义。",
+    "glob": "glob 使用相对文件模式，如 **/*.cpp 或 *.{cpp,h}；仅支持一组 2–8 个简单花括号选项，禁止上级路径、反斜杠和 .svn。",
+    "type": "type 可用 cpp、c、vue、js、ts、json、xml、java、py、cs、sql；其他扩展名请用 glob。",
+    "output_mode": "output_mode 仅支持 content 或 files_with_matches，不支持 count。",
+    "multiline": "源码搜索不支持 multiline=true；先用单行关键词定位，再 Read 函数上下文。",
+    "offset": "源码搜索不支持非零 offset；请用返回的原始路径缩小范围。",
+    "head_limit": "head_limit 须为非负整数，0 或大于 200 时收紧为 200。",
+    "-A": "-A 须为非负整数，超过 5 时收紧为 5。",
+    "-B": "-B 须为非负整数，超过 5 时收紧为 5。",
+    "-C": "-C 须为非负整数，超过 5 时收紧为 5。",
+    "-i": "-i 须为布尔值 true/false。",
+    "-n": "-n 须为布尔值；源码结果固定保留行号。",
+}
+
+
+def code_tool_failure(code: str, location: str = "") -> dict[str, str]:
     code = code if code in MESSAGES else "CODE_SOURCE_TOOL_DENIED"
-    return {"code": code, "retry_class": "NEVER", "safe_message": MESSAGES[code]}
+    message = MESSAGES[code]
+    if code == "CODE_SOURCE_SEARCH_INVALID" and location in SEARCH_HINTS:
+        message = SEARCH_HINTS[location]
+    return {"code": code, "retry_class": "NEVER", "safe_message": message}

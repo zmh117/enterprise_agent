@@ -154,9 +154,20 @@ class CodeCheckoutReader:
             if directory is not None:
                 os.close(directory)
 
-    def tracked(self, path: str, *, directory: bool = False) -> dict[str, Any]:
+    def tracked(
+        self, path: str, *, directory: bool = False, search_parent: bool = False
+    ) -> dict[str, Any]:
         path = code_path(path, root=directory)
-        if not path_in_scope(path, self.grant["allowed_paths"]):
+        in_scope = path_in_scope(path, self.grant["allowed_paths"])
+        parent = (
+            directory
+            and search_parent
+            and any(
+                not path or allowed.startswith(path + "/")
+                for allowed in self.grant["allowed_paths"]
+            )
+        )
+        if not in_scope and not parent:
             raise CodeKnowledgeError("CODE_SOURCE_PATH_DENIED")
         with self._metadata() as conn:
             rows = conn.execute(
@@ -205,33 +216,54 @@ class CodeCheckoutReader:
             read_content_hash=sha256(excerpt.encode()).hexdigest(),
         )
 
-    def search_candidates(self, path: str, pattern: str) -> list[str]:
-        """Enumerate metadata, never walk untracked files or expose metadata to SDK."""
+    def search_candidates(
+        self, path: str, patterns: str | tuple[str, ...], *, type_patterns: tuple[str, ...] = ("*",)
+    ) -> Iterator[str | None]:
+        """Page scoped SVN metadata. None means a scoped filename did not match.
+
+        Filtering before the caller's scan budget avoids the former 10001-row
+        failure, while yielding nonmatches lets the caller bound enumeration time.
+        No filesystem walk, untracked item, or unauthorized sibling is returned.
+        """
         path = code_path(path, root=True)
-        self.tracked(path, directory=(self.root / path).is_dir())
+        self.tracked(path, directory=(self.root / path).is_dir(), search_parent=True)
+        patterns = (patterns,) if isinstance(patterns, str) else patterns
         prefix = path + "/" if path else ""
-        with self._metadata() as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT local_relpath FROM NODES WHERE kind='file' AND "
-                "(local_relpath=? OR substr(local_relpath,1,?)=?) ORDER BY local_relpath LIMIT 10001",
-                (path, len(prefix), prefix),
-            ).fetchall()
-        if len(rows) > 10000:
-            raise CodeKnowledgeError("CODE_SOURCE_SEARCH_LIMIT")
-        result = []
-        for row in rows:
-            candidate = row[0]
-            relative = (
-                candidate[len(prefix) :] if candidate.startswith(prefix) else Path(candidate).name
-            )
-            matches = PurePosixPath(relative).match(pattern) or (
-                pattern.startswith("**/") and PurePosixPath(relative).match(pattern[3:])
-            )
-            if path_in_scope(candidate, self.grant["allowed_paths"]) and matches:
-                result.append(candidate)
-                if len(result) > 64:
-                    raise CodeKnowledgeError("CODE_SOURCE_SEARCH_LIMIT")
-        return result
+        scopes, scope_args = [], []
+        for allowed in self.grant["allowed_paths"]:
+            subtree = allowed + "/" if allowed else ""
+            scopes.append("(local_relpath=? OR (local_relpath>=? AND local_relpath<?))")
+            scope_args.extend((allowed, subtree, subtree + chr(0x10FFFF)))
+        cursor = ""
+        while True:
+            with self._metadata() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT local_relpath FROM NODES WHERE kind='file' "
+                    "AND local_relpath>? AND (local_relpath=? OR "
+                    "(local_relpath>=? AND local_relpath<?)) AND (" + " OR ".join(scopes) + ") "
+                    "ORDER BY local_relpath LIMIT 512",
+                    (cursor, path, prefix, prefix + chr(0x10FFFF), *scope_args),
+                ).fetchall()
+            if not rows:
+                return
+            for row in rows:
+                candidate = row[0]
+                relative = (
+                    candidate[len(prefix) :]
+                    if candidate.startswith(prefix)
+                    else Path(candidate).name
+                )
+                matches = any(
+                    PurePosixPath(relative).match(pattern)
+                    or (pattern.startswith("**/") and PurePosixPath(relative).match(pattern[3:]))
+                    for pattern in patterns
+                )
+                yield (
+                    candidate
+                    if matches and any(PurePosixPath(relative).match(p) for p in type_patterns)
+                    else None
+                )
+            cursor = rows[-1][0]
 
     def verified_text(self, path: str) -> dict[str, Any]:
         row = self.tracked(path)

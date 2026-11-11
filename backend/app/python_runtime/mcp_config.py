@@ -299,7 +299,7 @@ def _source_tool_denial(mount: CodeSourceMount, call_id: str, exc: Exception) ->
         if isinstance(exc, (CodeKnowledgeError, JobSandboxError))
         else "CODE_SOURCE_TOOL_DENIED"
     )
-    failure = code_tool_failure(code)
+    failure = code_tool_failure(code, getattr(exc, "location", ""))
     mount.record_denial(call_id, failure["code"])
     return {
         "hookSpecificOutput": {

@@ -141,6 +141,8 @@ USER 10006:10006
 CMD ["python", "-m", "app.workers.file_processing_worker"]
 
 FROM claude-runtime AS python-agent-runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ripgrep \
+    && rm -rf /var/lib/apt/lists/*
 COPY backend/app/__init__.py /app/backend/app/
 COPY backend/app/python_runtime /app/backend/app/python_runtime
 COPY backend/app/shared /app/backend/app/shared

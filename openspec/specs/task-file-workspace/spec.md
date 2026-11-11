@@ -864,3 +864,29 @@ picture asset、item staging、OCR Layout JSON、Docling JSON和布局增强Mark
 对应测试包括 `backend/tests/test_agent_job_file_admission.py`、`test_file_context_resolver.py`、`test_file_workspace_core.py`、`test_file_workspace_contracts.py`、`test_file_workspace_repository.py`、`test_task_workspace_retention.py`、`test_log_evidence_scanner.py` 和 `test_task_file_workspace_group_acceptance.py`。本次依据代码与测试定义修正规格，未运行真实文件服务、对象存储、SDK/CLI、渠道传输或群聊 E2E；代码存在、Mock 与规格校验均不能替代这些环境验收。
 
 实现差异：工作区按 Session 查找当前 ACTIVE 实例。群文件 owner 边界不等于跨不同 Session 自动共享同一工作区；同群跨成员共享必须以实际 Session 与当前授权验证，不得仅据群标识宣称已实现。
+
+### Requirement: 授权源码搜索必须由宿主自动分批并报告覆盖范围
+Runtime SHALL 在一个源码 Grep 调用内分页枚举授权且受 SVN 跟踪的文件，并在有界批次中验证、规范化和筛选，不能因第 65 个候选或过滤前第 10001 个目录项而直接拒绝整个查询。原生 Grep 只访问一次性授权的规范化命中文件。宿主 MUST 保持读取 grant、文件完整性、敏感文件阻断、Sandbox 配额和真实停止后清理。扫描字节、时间、枚举和命中容量 SHALL 有硬边界；达到边界时返回部分命中与明确不完整标记，不能声称没有相关规则。源码根或授权子目录的祖先只允许枚举已授权子集，不获得其他内容读取权。
+
+#### Scenario: 相关代码位于原候选上限之后
+- **WHEN** 授权目录包含超过 64 个符合过滤条件的文件，或超过 10000 个目录项后仍有匹配文件
+- **THEN** 在预算内自动继续批次并返回相关命中，不要求模型逐次猜测子目录
+
+#### Scenario: 敏感项或预算截断
+- **WHEN** 有敏感/非文本/超单文件容量的文件被跳过或扫描预算耗尽
+- **THEN** 明确覆盖不完整，隐藏受限正文和路径，不以零命中证明规则不存在
+
+#### Scenario: 取消和来源变化
+- **WHEN** 原 Job 取消、授权关闭或源文件身份/版本/hash 变化
+- **THEN** 停止批次处理，不继续读取；清理临时副本及配额，不发布未核验片段
+
+### Requirement: 源码搜索参数必须可纠正且不扩大授权
+Runtime SHALL 对支持的文件类型、简单扩展名花括号和超上限输出/context 参数进行有界归一化并告知实际限制。对于未知字段、歧义参数和非法正则 MUST 返回固定字段级原因及允许写法；不得猜测关键词、扩展路径权限或回显敏感输入。安全拒绝不能通过参数纠错降级。
+
+#### Scenario: 常见参数写法
+- **WHEN** 模型使用 cpp 类型或 *.{cpp,h} 文件模式及超过上限的上下文数
+- **THEN** 保留查询语义、展开有限模式，并仅收紧上下文输出，不整次拒绝搜索
+
+#### Scenario: 无法安全纠正
+- **WHEN** 模型提交未知字段、父级路径或不受支持的搜索模式
+- **THEN** 返回具体允许字段的固定提示，禁止执行有歧义的命令

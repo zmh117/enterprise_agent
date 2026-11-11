@@ -14,7 +14,7 @@
 
 业务答案正文与详细证据分开保存。模型只对实际采用且本次成功读取/保存的答案，在回复末尾逐条附 `<!-- code-answer:<document_id>@<revision_id> -->` 内部标记；结果收尾核验同任务、环境、来源与版本后写入私有问答的结构化引用，在会话、报告、Job 结果和投递前移除标记。标记本身不授权、不证明答案有效，无 ID 时不得编造；已有源码证据记录保留路径、行号和校验信息，不为追溯额外保存源码全文。
 
-本回答约束使用 Prompt v16。更新 API、Agent Worker、Job Dispatcher、Channel Dispatcher、Webhook Worker、knowledge-mcp 与两个 Runtime，使 Prompt 版本及工具说明一致；`code-business-query` 内容冻结在 Agent Publication 中，需保存新草稿并发布 Agent，再由业务应用更新绑定并重新发布，以新 Job 验证。修改 Skill 文件不会覆盖既有发布或历史任务。此次调整不需要数据库迁移或重建知识索引。
+本回答约束现使用 Prompt v17（包含下述自动分批搜索与业务追踪）。更新 API、Agent Worker、Job Dispatcher、Channel Dispatcher、Webhook Worker、knowledge-mcp 与两个 Runtime，使 Prompt 版本及工具说明一致；`code-business-query` 内容冻结在 Agent Publication 中，需保存新草稿并发布 Agent，再由业务应用更新绑定并重新发布，以新 Job 验证。修改 Skill 文件不会覆盖既有发布或历史任务。此次调整不需要数据库迁移或重建知识索引。
 
 同版本纠错先读取完整原答案，再用它的 `question_text` 重新 exact 检索，并以这次检索申请源码授权。保存时沿用原问题和身份条件，带实际读取的 `expected_current_revision_id`；新的用户纠错说明不能直接替代原问题身份。已准入的分析不能中途换题，冲突时不要移除 CAS 字段后另建文档冒充纠错。真正不同的业务条件应作为独立问题记录，并明确原答案是否仍适用。
 
@@ -22,9 +22,11 @@
 
 代码问答可用 Write 在当前执行的 `work/notes/` 保存 Markdown/TXT 分析笔记（版本、证据引用、已查范围、未知项），其他目录及源码继续按原权限限制。笔记仅作临时推理，不是源码证据，不自动入库；Write 仍计轮次，Read/Glob/Grep 保留审计并免计任务轮次。SDK 停止后统一清理，异常残留使用已有恢复扫描。
 
-源码 Grep 支持授权目录和 `glob` 文件模式，最多 64 文件/32 MiB；目录候选枚举最多 10000 项。`output_mode=content` 返回原路径行号，`-A/-B/-C` 各为 0–5、`head_limit` 为 1–200。Runtime 只从已核验的受管源码生成本次调用的 UTF-8 只读搜索输入，共享 Job 沙盒配额，调用结束即删除；Agent 不能访问内部缓存目录。敏感或非文本跳过会标记不完整，超限要求缩小范围。命中仍须 Read 原文件取得正式证据，Read 单次上限 400 行保持不变。这些缓存不是长期源码快照，不跨任务复用。
+源码 Grep 在一次模型调用内自动分页枚举 SVN 已跟踪的授权文件，以最多 32 文件/8 MiB 为批次筛选（单个已验证文件沿用原有 15 MiB 上限）。无命中副本即时删除，只保留最多 32 个/32 MiB 的命中文件供原生 Grep 输出。总扫描预算为 256 MiB、100000 个授权目录项、30 秒；预算耗尽、敏感/非文本/超单文件容量跳过、输出截断均显式标记不完整，不能据此断言规则不存在。源码根搜索只覆盖 grant 授权子集。Runtime 镜像安装 ripgrep，由宿主固定参数执行；Agent 不获得 Bash。
 
-上述权限派生使用 `code-source-capability/v3`，与本次业务回复规则共同使用 Prompt v16。API、Worker、Runtime 与 knowledge-mcp 需协调构建更新；不要改写已冻结的历史 Job。已有 Skill 发布内容需按平台发布流程更新，单独修改磁盘 Skill 不覆盖旧发布。
+支持 `type=cpp` 等常见类型以及 `*.{cpp,h}` 简单扩展名组合。上下文超过 5、head_limit 超过 200 或设为 0 时收紧并反馈实际值；未知字段、非法模式返回固定字段提示，不回显输入。缓存仍共享 Job 沙盒配额、不可由模型直接访问，调用结束或失败清理；取消时停止准备线程后再清理。命中仍须 Read 原文件取得证据，Read 上限 400 行。
+
+业务报错解释遵循“提示文案→错误符号→实际抛错分支→状态/配置→动作顺序和入口”。仅定位文案不能证明业务触发条件、事务回滚或前端展示链；缺失关键链时保存 partial。新规则使用 Prompt v17，能力仍为 `code-source-capability/v3`。API、Worker、两个 Runtime 与相关执行入口需协调构建更新；不改写历史 Job。版本化 Skill 必须重新发布，并显式切换获授权应用；修改磁盘不会替换旧发布。
 
 - `code-svn` 是可选的本机 SVN 服务，真实部署也可以连接现有 SVN。
 - `knowledge-sync` 含 SVN CLI，负责浏览、检出、update/log/diff/blame 和代码答案增量索引；新增结果端点仅容器内网络的 8096 端口，不发布宿主端口。

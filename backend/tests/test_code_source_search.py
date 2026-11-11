@@ -28,10 +28,10 @@ def setup(tmp_path):
 
 def test_search_only_tracked_scoped_files_and_normalizes_chinese(setup):
     reader, sandbox, _ = setup
-    assert reader.search_candidates("src", "*.cpp") == ["src/Review.cpp", "src/订单.cpp"]
-    assert reader.search_candidates("src", "**/*订单*.cpp") == ["src/订单.cpp"]
+    assert list(reader.search_candidates("src", "*.cpp")) == ["src/Review.cpp", "src/订单.cpp"]
+    assert [p for p in reader.search_candidates("src", "**/*订单*.cpp") if p] == ["src/订单.cpp"]
     with pytest.raises(CodeKnowledgeError, match="PATH_DENIED"):
-        reader.search_candidates("other", "*")
+        list(reader.search_candidates("other", "*"))
     batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "发布", "-C": 1}))
     args = batch.prepare("src")
     assert args["glob"] == "*.md" and len(batch.paths) == 2
@@ -82,9 +82,8 @@ def test_candidate_and_sandbox_capacity_limits_never_return_false_no_matches(set
     reader, sandbox, mount = setup
     for n in range(63):
         add_file(reader, f"src/f{n}.cpp", b"needle")
-    with pytest.raises(CodeKnowledgeError, match="SEARCH_LIMIT"):
-        reader.search_candidates("src", "*")
-    assert reader.search_candidates("src", "*Review*") == ["src/Review.cpp"]
+    assert len(list(reader.search_candidates("src", "*"))) == 65
+    assert [p for p in reader.search_candidates("src", "*Review*") if p] == ["src/Review.cpp"]
     sandbox.limits = JobSandboxLimits(capacity_bytes=10, max_file_bytes=10)
 
     async def run():
@@ -100,8 +99,8 @@ def test_candidate_and_sandbox_capacity_limits_never_return_false_no_matches(set
 @pytest.mark.parametrize(
     "args",
     [
-        {"head_limit": 0},
-        {"-C": 6},
+        {"head_limit": -1},
+        {"-C": -1},
         {"glob": "../*.cpp"},
         {"output_mode": "count"},
         {"multiline": True},
@@ -116,7 +115,7 @@ def test_unknown_output_and_tool_failure_clean_search_cache(setup):
     _, sandbox, mount = setup
 
     async def run():
-        args = {"path": "source/src", "pattern": "needle"}
+        args = {"path": "source/src", "pattern": "发布"}
         await mount.before_native("Grep", args, "bad")
         with pytest.raises(CodeKnowledgeError):
             await mount.after_native("bad", {"content": "/outside:1:injected"})
@@ -132,7 +131,7 @@ def test_concurrent_searches_are_serial_and_cancel_waiter_is_clean(setup):
     _, sandbox, mount = setup
 
     async def run():
-        args = {"path": "source/src", "pattern": "needle"}
+        args = {"path": "source/src", "pattern": "发布"}
         await mount.before_native("Grep", args, "first")
         next_search = asyncio.create_task(mount.before_native("Grep", args, "second"))
         await asyncio.sleep(0.01)
@@ -221,7 +220,7 @@ def test_notes_only_write_and_cleanup_do_not_expand_source_or_other_job_access(s
             "permissionDecision"
         ] == "deny"
         (sandbox.path / "work/notes/link.md").unlink()
-        await mount.before_native("Grep", {"path": "source/src", "pattern": "x"}, "search")
+        await mount.before_native("Grep", {"path": "source/src", "pattern": "发布"}, "search")
         for name, args in (
             ("Read", {"file_path": next(iter(mount.searches["search"].paths))}),
             ("Glob", {"path": ".", "pattern": "**/*.md"}),
@@ -236,3 +235,255 @@ def test_notes_only_write_and_cleanup_do_not_expand_source_or_other_job_access(s
         assert not sandbox.path.exists() and other.path.exists()
     finally:
         other.cleanup()
+
+
+def test_automatic_batches_find_business_reference_after_old_candidate_limit(setup):
+    reader, sandbox, _ = setup
+    for n in range(80):
+        add_file(reader, f"src/F{n:03}.cpp", b"// unrelated business logic\n")
+    add_file(reader, "src/ZSplit.cpp", b"throw ERR_SPLIT_QUALITY;\n")
+    batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "ERR_SPLIT_QUALITY"}))
+    try:
+        batch.prepare("src")
+        assert batch.scanned == 83 and batch.batches >= 3
+        assert list(batch.paths.values()) == [str(reader.root / "src/ZSplit.cpp")]
+        assert not batch.stopped_reason
+        assert sandbox.usage()[0] == 1
+    finally:
+        batch.close()
+    assert sandbox.usage() == (0, 0)
+
+
+def test_filtering_pages_beyond_10000_metadata_entries_without_exposing_siblings(setup):
+    import sqlite3
+
+    reader, sandbox, _ = setup
+    with sqlite3.connect(reader.root / ".svn/wc.db") as conn:
+        conn.executemany(
+            "INSERT INTO NODES(local_relpath,kind) VALUES(?,'file')",
+            [(f"src/A{n:05}.txt",) for n in range(10005)],
+        )
+    batch = SourceSearchBatch(
+        sandbox, reader, search_options({"pattern": "发布", "glob": "*.{cpp,h}", "type": "cpp"})
+    )
+    try:
+        batch.prepare("")  # parent of the grant is a search anchor, never a read permission
+        assert batch.enumerated == 10007 and batch.scanned == 2
+        assert len(batch.paths) == 2 and not batch.stopped_reason
+        assert all("/src/" in path for path in batch.paths.values())
+        with pytest.raises(CodeKnowledgeError, match="PATH_DENIED"):
+            reader.read("other/hidden.cpp", 1, 20)
+    finally:
+        batch.close()
+
+
+def test_high_match_rate_returns_partial_and_bounds_live_artifacts(setup):
+    reader, sandbox, _ = setup
+    for n in range(80):
+        add_file(reader, f"src/F{n:03}.cpp", b"needle\n")
+    batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "needle"}))
+    try:
+        batch.prepare("src")
+        assert len(batch.paths) == 32 and batch.stopped_reason == "match_capacity"
+        context = batch.render({"filenames": [], "content": ""})["hookSpecificOutput"][
+            "additionalContext"
+        ]
+        assert "complete=false" in context and "match_capacity" in context
+        assert sandbox.usage()[0] == 32
+    finally:
+        batch.close()
+
+
+def test_native_search_settings_are_safely_corrected_without_guessing_query():
+    args = search_options(
+        {
+            "pattern": "ERR_SPLIT_QUALITY",
+            "glob": "*.{cpp,h}",
+            "type": "cpp",
+            "-C": 20,
+            "head_limit": 1000,
+            "-n": False,
+            "multiline": False,
+        }
+    )
+    assert args["pattern"] == "ERR_SPLIT_QUALITY"
+    assert args["glob"] == ("*.cpp", "*.h")
+    assert args["head_limit"] == 200 and args["-C"] == 5 and args["-n"] is True
+    assert args["corrections"]
+    for glob in ("{..,src}/*.cpp", "*.{cpp,{h,hpp}}", "../*.cpp"):
+        with pytest.raises(CodeKnowledgeError):
+            search_options({"pattern": "x", "glob": glob})
+
+
+def test_parameter_refusal_has_field_specific_hint_without_echoing_values(setup):
+    reader, sandbox, mount = setup
+    hooks = _code_source_hook_options(
+        SimpleNamespace(hook_matcher=lambda **k: SimpleNamespace(**k)),
+        sandbox,
+        SimpleNamespace(effective_tool_names=("Read", "Glob", "Grep"), mcp_bindings=()),
+        ToolCallBudget(20),
+    )
+    before = hooks["hooks"]["PreToolUse"][0].hooks[0]
+
+    async def run():
+        result = await before(
+            {
+                "tool_name": "Grep",
+                "tool_input": {
+                    "path": "source/src",
+                    "pattern": "synthetic private pattern",
+                    "output_mode": "count",
+                },
+            },
+            "bad",
+            None,
+        )
+        reason = result["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "output_mode" in reason and "count" in reason
+        assert "synthetic private" not in reason
+
+    asyncio.run(run())
+
+
+def test_invalid_regex_is_actionable_and_cleans_temporary_files(setup):
+    _, sandbox, mount = setup
+
+    async def run():
+        with pytest.raises(CodeKnowledgeError) as failure:
+            await mount.before_native("Grep", {"path": "source/src", "pattern": "("}, "regex")
+        assert failure.value.location == "regex"
+        assert sandbox.usage() == (0, 0) and not mount.search_lock.locked()
+
+    asyncio.run(run())
+
+
+def test_sensitive_content_never_reaches_batch_search_or_read(setup):
+    reader, sandbox, _ = setup
+    add_file(
+        reader,
+        "src/Split.cpp",
+        b'const char *password = "synthetic-fixture-only";\nERR_SPLIT_QUALITY;\n',
+    )
+    batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "ERR_SPLIT_QUALITY"}))
+    try:
+        batch.prepare("src")
+        assert batch.skipped == 1 and not batch.paths
+        rendered = str(batch.render({"filenames": [], "content": ""}))
+        assert "complete=false" in rendered
+        assert "fixture-only" not in rendered and "Split.cpp" not in rendered
+        with pytest.raises(CodeKnowledgeError, match="SENSITIVE"):
+            reader.read("src/Split.cpp", 2, 1)
+    finally:
+        batch.close()
+
+
+def test_closed_grant_stops_later_batches_and_cleans_every_file(setup, monkeypatch):
+    reader, sandbox, mount = setup
+    for n in range(80):
+        add_file(reader, f"src/F{n:03}.cpp", b"irrelevant\n")
+    original = SourceSearchBatch._filter
+
+    def filter_then_revoke(batch, pending, deadline):
+        original(batch, pending, deadline)
+        mount.closing = True
+
+    monkeypatch.setattr(SourceSearchBatch, "_filter", filter_then_revoke)
+
+    async def run():
+        with pytest.raises(CodeKnowledgeError, match="READS_CLOSED"):
+            await mount.before_native(
+                "Grep", {"path": "source/src", "pattern": "missing"}, "cancel"
+            )
+        assert sandbox.usage() == (0, 0) and not mount.pending and not mount.search_lock.locked()
+
+    asyncio.run(run())
+
+
+def test_split_error_trace_reaches_condition_and_state_definition(setup):
+    reader, sandbox, _ = setup
+    for n in range(70):
+        add_file(reader, f"src/A{n:03}.cpp", b"// unrelated\n")
+    add_file(reader, "src/Errors.h", 'ERR_SPLIT_QUALITY = "批次质量状态不允许拆批";\n'.encode())
+    add_file(
+        reader,
+        "src/Quality.h",
+        "enum Quality { Pending, Released, RiskReleased }; // 待检、放行、风险放行\n".encode(),
+    )
+    add_file(
+        reader,
+        "src/Split.cpp",
+        b"void split(Quality quality) {\n if (quality != Released && quality != RiskReleased)\n  throw ERR_SPLIT_QUALITY;\n createChildBatch();\n}\n",
+    )
+    found = []
+    for pattern in ("批次质量状态不允许拆批", "ERR_SPLIT_QUALITY", "enum Quality"):
+        batch = SourceSearchBatch(
+            sandbox, reader, search_options({"pattern": pattern, "glob": "*.{cpp,h}"})
+        )
+        try:
+            batch.prepare("src")
+            assert not batch.stopped_reason
+            found.append({str(p).rsplit("/", 1)[-1] for p in batch.paths.values()})
+        finally:
+            batch.close()
+    assert found == [{"Errors.h"}, {"Errors.h", "Split.cpp"}, {"Quality.h"}]
+    branch = reader.read("src/Split.cpp", 1, 20)
+    assert "quality != Released && quality != RiskReleased" in branch["text"]
+    assert branch["text"].index("throw ERR_SPLIT_QUALITY") < branch["text"].index(
+        "createChildBatch"
+    )
+    assert reader.read("src/Quality.h", 1, 20)["repository_content_hash"]
+
+
+@pytest.mark.parametrize(
+    "bound,value,reason",
+    [
+        ("MAX_SCAN_BYTES", 1, "byte_budget"),
+        ("MAX_ENUMERATED", 1, "enumeration_budget"),
+        ("MAX_SEARCH_SECONDS", 0, "time_budget"),
+    ],
+)
+def test_scan_budgets_return_explicit_incomplete_and_release_cache(
+    setup, monkeypatch, bound, value, reason
+):
+    import app.python_runtime.code_source_search as search
+
+    reader, sandbox, _ = setup
+    monkeypatch.setattr(search, bound, value)
+    batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "发布"}))
+    try:
+        batch.prepare("src")
+        context = batch.render({"filenames": [], "content": ""})["hookSpecificOutput"][
+            "additionalContext"
+        ]
+        assert f"stopped_reason={reason}" in context
+        assert "complete=false" in context
+    finally:
+        batch.close()
+    assert sandbox.usage() == (0, 0)
+
+
+def test_oversized_dependency_does_not_abort_search_or_weaken_direct_read(setup, monkeypatch):
+    import app.python_runtime.code_checkout_reader as reader_module
+    from app.python_runtime.code_tool_errors import code_tool_failure
+
+    reader, sandbox, _ = setup
+    add_file(reader, "src/A-large.lib", b"x" * 2000)
+    add_file(reader, "src/Z-rule.cpp", b"ERR_SPLIT_QUALITY\n")
+    monkeypatch.setattr(reader_module, "MAX_FILE", 1024)
+    batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "ERR_SPLIT_QUALITY"}))
+    try:
+        batch.prepare("src")
+        assert len(batch.paths) == 1 and batch.skipped == 1
+        context = batch.render({"filenames": [], "content": ""})["hookSpecificOutput"][
+            "additionalContext"
+        ]
+        assert "complete=false" in context and "A-large.lib" not in context
+        with pytest.raises(CodeKnowledgeError, match="code_source_file_size_or_type"):
+            reader.read("src/A-large.lib", 1, 1)
+        assert (
+            code_tool_failure("code_source_file_size_or_type")["code"]
+            == "code_source_file_size_or_type"
+        )
+    finally:
+        batch.close()
+    assert sandbox.usage() == (0, 0)

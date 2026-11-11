@@ -203,13 +203,20 @@ class CodeSourceMount:
         if self.sandbox is None or self.reader is None:
             raise CodeKnowledgeError("CODE_SOURCE_SEARCH_UNAVAILABLE")
         await self.search_lock.acquire()
-        batch = SourceSearchBatch(self.sandbox, self.reader, args)
+        cancelled = Event()
+
+        def check_active() -> None:
+            if self.closing or cancelled.is_set():
+                raise CodeKnowledgeError("CODE_SOURCE_READS_CLOSED")
+
+        batch = SourceSearchBatch(self.sandbox, self.reader, args, check=check_active)
         self.searches[call_id] = batch
         # Cancellation must not delete a cache while its preparation thread writes it.
         task = asyncio.create_task(asyncio.to_thread(batch.prepare, args["path"]))
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
+            cancelled.set()
             try:
                 await task
             except Exception:
