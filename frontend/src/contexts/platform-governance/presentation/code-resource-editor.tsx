@@ -9,6 +9,7 @@ import {
   knowledgeInputClass,
 } from "./knowledge-resource-ui"
 import { CodeCheckoutPanel } from "./code-checkout-panel"
+import { codeCheckoutErrors } from "./code-checkout-errors"
 import { CodeIndexStatus } from "./code-index-status"
 import { useCodeCheckouts } from "../application/code-checkout-query"
 import {
@@ -186,12 +187,15 @@ export function CodeResourceEditor({
                   key={item.id}
                   value={item.id}
                   disabled={
-                    item.state !== "ready" || Boolean(item.writer_operation_id)
+                    item.state !== "ready" ||
+                    Boolean(item.writer_operation_id) ||
+                    !item.connection
                   }
                 >
                   {item.relative_dir} · SVN r
                   {item.verified_revision ?? "未核实"} · {item.readers}{" "}
                   个读取任务{item.writer_operation_id ? " · 更新中" : ""}
+                  {!item.connection ? " · 当前知识库不可用" : ""}
                 </option>
               ))}
             </select>
@@ -219,11 +223,13 @@ export function CodeResourceEditor({
             </div>
           ) : selectedCheckout ? (
             <p role="alert" className="text-sm text-destructive">
-              该目录的原始 SVN 连接不可用，请在当前知识库重新检出后再绑定。
+              {codeCheckoutErrors[selectedCheckout.connection_error ?? ""] ??
+                "当前知识库无法使用该目录的原始 SVN 连接，请核对目录归属和连接配置。"}
             </p>
           ) : (
             <p className="text-sm text-muted-foreground">
-              选择检出目录后，自动关联其 SVN 地址和认证方式。
+              仅可选择当前知识库可用的检出目录，自动关联检出时的 SVN
+              地址和认证方式。
             </p>
           )}
           <fieldset className="space-y-2" aria-label="关联环境">

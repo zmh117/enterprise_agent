@@ -1,4 +1,8 @@
 export const codeCheckoutErrors: Record<string, string> = {
+  CODE_CHECKOUT_CONNECTION_UNAVAILABLE:
+    "无法确认该目录的原始 SVN 连接，请核对检出记录与连接配置。",
+  CODE_REGISTRATION_CHANGED:
+    "该目录的 SVN 连接不属于当前知识库，或连接信息已变更。请核对目录所属知识库和原始连接。",
   code_svn_unavailable:
     "SVN 执行未完成。旧错误记录无法区分超时与容器执行异常，请更新服务后重新发起操作获取具体原因。",
   CODE_SVN_EXECUTABLE_NOT_FOUND:

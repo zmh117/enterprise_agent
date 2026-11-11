@@ -202,71 +202,88 @@ describe("代码知识库配置", () => {
     ).not.toHaveTextContent("https://original.invalid/trunk")
   })
 
-  it("目录来源连接不可用时显示原因并阻止绑定", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async (input) =>
-          new Response(
-            JSON.stringify(
-              String(input).includes("/api/platform/environments")
-                ? { environments: [] }
-                : String(input).endsWith("/index-status")
-                  ? { paused: false, indexes: [] }
-                  : {
-                      enabled: true,
-                      registrations: [],
-                      jobs: [],
-                      checkouts: [
-                        {
-                          id: "missing-connection",
-                          source_id: "source",
-                          relative_dir: "legacy",
-                          state: "ready",
-                          verified_revision: 2,
-                          generation: 1,
-                          writer_operation_id: null,
-                          readers: 0,
-                          selected_paths: [""],
-                          connection: null,
-                          connection_error:
-                            "CODE_CHECKOUT_CONNECTION_UNAVAILABLE",
-                        },
-                      ],
-                    }
-            ),
-            { headers: { "Content-Type": "application/json" } }
-          )
+  it.each([
+    ["CODE_CHECKOUT_CONNECTION_UNAVAILABLE", /无法确认该目录的原始 SVN 连接/],
+    ["CODE_REGISTRATION_CHANGED", /SVN 连接不属于当前知识库/],
+  ])(
+    "目录连接 %s 时禁选，既有绑定显示原因且阻止保存",
+    async (code, message) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async (input) =>
+            new Response(
+              JSON.stringify(
+                String(input).includes("/api/platform/environments")
+                  ? { environments: [] }
+                  : String(input).endsWith("/index-status")
+                    ? { paused: false, indexes: [] }
+                    : {
+                        enabled: true,
+                        registrations: [],
+                        jobs: [],
+                        checkouts: [
+                          {
+                            id: "missing-connection",
+                            source_id: "source",
+                            relative_dir: "legacy",
+                            state: "ready",
+                            verified_revision: 2,
+                            generation: 1,
+                            writer_operation_id: null,
+                            readers: 0,
+                            selected_paths: [""],
+                            connection: null,
+                            connection_error: code,
+                          },
+                        ],
+                      }
+              ),
+              { headers: { "Content-Type": "application/json" } }
+            )
+        )
       )
-    )
-    const execute = vi.fn(async () => true)
-    render(
-      <QueryClientProvider
-        client={
-          new QueryClient({ defaultOptions: { queries: { retry: false } } })
-        }
-      >
-        <CodeResourceEditor
-          resource={resource}
-          canManage
-          pending={false}
-          execute={execute}
-          reload={async () => {}}
-        />
-      </QueryClientProvider>
-    )
-    await screen.findByRole("option", { name: /legacy · SVN r2/ })
-    fireEvent.change(screen.getByTestId("code-kb-checkout"), {
-      target: { value: "missing-connection" },
-    })
-    expect(screen.getByText(/原始 SVN 连接不可用/)).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "保存源码配置" })).toBeDisabled()
-    expect(execute).not.toHaveBeenCalled()
-  })
+      const execute = vi.fn(async () => true)
+      render(
+        <QueryClientProvider
+          client={
+            new QueryClient({ defaultOptions: { queries: { retry: false } } })
+          }
+        >
+          <CodeResourceEditor
+            resource={{
+              ...resource,
+              draft: {
+                ...resource.draft!,
+                code_configuration: {
+                  ...resource.draft!.code_configuration!,
+                  checkout_id: "missing-connection",
+                },
+              },
+            }}
+            canManage
+            pending={false}
+            execute={execute}
+            reload={async () => {}}
+          />
+        </QueryClientProvider>
+      )
+      expect(
+        await screen.findByRole("option", {
+          name: /legacy · SVN r2.*当前知识库不可用/,
+        })
+      ).toBeDisabled()
+      expect(screen.getByText(message)).toBeInTheDocument()
+      expect(
+        screen.getByRole("button", { name: "保存源码配置" })
+      ).toBeDisabled()
+      expect(execute).not.toHaveBeenCalled()
+    }
+  )
 
   it("代码创建使用独立类型端点，空索引 ID 可解析", async () => {
-    const fetch = vi.fn(
-      async (_input: RequestInfo | URL) =>
+    const fetch = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(
+      async () =>
         new Response(JSON.stringify(resource), {
           headers: { "Content-Type": "application/json" },
         })

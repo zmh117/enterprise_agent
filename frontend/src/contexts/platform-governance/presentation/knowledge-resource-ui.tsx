@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import { ApiError } from "@/shared/api/api-client"
+import { codeCheckoutErrors } from "./code-checkout-errors"
 
 export const knowledgeInputClass =
   "h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
@@ -26,9 +27,8 @@ export function KnowledgeError({ error }: { error: unknown }) {
         "配置已被其他操作修改。本地输入已保留，请重新载入最新配置后再保存。",
       knowledge_input_invalid: "知识配置参数无效，请检查输入。",
       CODE_CHECKOUT_CONNECTION_UNAVAILABLE:
-        "无法确认该目录的原始 SVN 连接，请在当前知识库重新检出后再绑定。",
-      CODE_REGISTRATION_CHANGED:
-        "该目录的 SVN 连接已变更或不属于当前知识库，请重新检出后再绑定。",
+        codeCheckoutErrors.CODE_CHECKOUT_CONNECTION_UNAVAILABLE,
+      CODE_REGISTRATION_CHANGED: codeCheckoutErrors.CODE_REGISTRATION_CHANGED,
       knowledge_storage_config_invalid:
         "知识存储配置无效，请检查地址并选择凭据中心引用，不要填写密码或 DSN。",
       knowledge_storage_unavailable:
