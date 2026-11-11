@@ -145,10 +145,25 @@ def _bind(service: dict, target: str, *, readonly: bool) -> Path:
     return path
 
 
-def validate_code_initialization(services: dict, checkout: Path, state: Path) -> None:
+def _checkout_volume(service: dict, target: str, *, readonly: bool) -> str:
+    matches = [m for m in service.get("volumes", []) if m.get("target") == target]
+    if len(matches) != 1:
+        raise CheckError("code_mount_invalid")
+    mount = matches[0]
+    if (
+        mount.get("type") != "volume"
+        or bool(mount.get("read_only", False)) != readonly
+        or mount.get("volume", {}).get("nocopy") is not True
+        or mount.get("source") != "code-svn-checkout"
+    ):
+        raise CheckError("code_mount_invalid")
+    return mount["source"]
+
+
+def validate_code_initialization(services: dict, checkout: str, state: Path) -> None:
     initializer = services.get("code-storage-init", {})
     if (
-        _bind(initializer, "/storage/checkout", readonly=False) != checkout
+        _checkout_volume(initializer, "/storage/checkout", readonly=False) != checkout
         or _bind(initializer, "/storage/state", readonly=False) != state
     ):
         raise CheckError("code_mount_source_mismatch")
@@ -174,14 +189,24 @@ def validate_code_config(config: dict, *, require_code: bool = False) -> bool:
         raise CheckError("code_checkout_not_enabled")
     if str(sync.get("user", "")) != f"{CODE_EXECUTOR_UID}:{CODE_READER_GID}":
         raise CheckError("code_executor_identity_invalid")
-    checkout = _bind(sync, "/var/lib/code-svn/checkout", readonly=False)
+    checkout = _checkout_volume(sync, "/var/lib/code-svn/checkout", readonly=False)
+    volume = config.get("volumes", {}).get(checkout, {})
+    if (
+        not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}", volume.get("name", ""))
+        or volume.get("driver", "local") != "local"
+        or volume.get("driver_opts")
+    ):
+        raise CheckError("code_volume_invalid")
     controller = services["knowledge-ops-controller"]
-    if _bind(controller, "/deployment-code/checkout", readonly=True) != checkout:
+    if _checkout_volume(controller, "/deployment-code/checkout", readonly=True) != checkout:
         raise CheckError("code_mount_source_mismatch")
     state = _bind(controller, "/deployment-code/state", readonly=True)
     validate_code_initialization(services, checkout, state)
     for name in ("python-agent-runtime-a", "python-agent-runtime-b"):
-        if _bind(services[name], "/var/lib/code-svn/checkout", readonly=True) != checkout:
+        if (
+            _checkout_volume(services[name], "/var/lib/code-svn/checkout", readonly=True)
+            != checkout
+        ):
             raise CheckError("code_mount_source_mismatch")
     for name in ("knowledge-sync", "python-agent-runtime-a", "python-agent-runtime-b"):
         if str(CODE_READER_GID) not in {str(g) for g in services[name].get("group_add", [])}:
@@ -193,7 +218,10 @@ def validate_code_config(config: dict, *, require_code: bool = False) -> bool:
     ):
         if _bind(services[name], target, readonly=True) != expected:
             raise CheckError("code_mount_source_mismatch")
-    for path, desired in code_directory_layout(checkout, state).items():
+    # The Docker-managed source volume has no portable host filesystem path.
+    # Its permissions are tested by code-storage-init inside Linux containers.
+    for path in (state, state / "configuration", state / "client", state / "client/trusted-ca"):
+        desired = (CODE_EXECUTOR_UID, CODE_EXECUTOR_UID, 0o755)
         if path.resolve() != path or not path.is_dir():
             raise CheckError("code_directory_missing_or_invalid")
         # Desktop host ownership may be translated; Linux/WSL local filesystems
@@ -203,7 +231,9 @@ def validate_code_config(config: dict, *, require_code: bool = False) -> bool:
     return enabled
 
 
-def validate_config(config: dict, *, require_code: bool = False) -> None:
+def validate_config(
+    config: dict, *, require_code: bool = False, initialized_code: bool = True
+) -> None:
     project = config.get("name", "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", project):
         raise CheckError("compose_project_invalid")
@@ -243,7 +273,8 @@ def validate_config(config: dict, *, require_code: bool = False) -> None:
             r"[a-zA-Z0-9][a-zA-Z0-9_.-]+", volume["name"]
         ):
             raise CheckError("knowledge_volume_invalid")
-    validate_code_config(config, require_code=require_code)
+    if initialized_code:
+        validate_code_config(config, require_code=require_code)
 
 
 def volume_exists(name: str) -> bool:
@@ -258,6 +289,64 @@ def check_volumes(config: dict) -> None:
     ]
     if missing:
         raise CheckError("external_volume_missing:" + ",".join(missing))
+
+
+def check_code_volume(config: dict) -> None:
+    name = config["volumes"]["code-svn-checkout"]["name"]
+    if not volume_exists(name):
+        raise CheckError("code_volume_missing_run_storage_init")
+    raw = run(
+        [
+            "docker",
+            "volume",
+            "inspect",
+            "--format",
+            '{"Driver":{{json .Driver}},"Options":{{json .Options}}}',
+            name,
+        ]
+    ).stdout
+    try:
+        volume = json.loads(raw)
+        if volume.get("Driver") != "local" or volume.get("Options") not in (None, {}):
+            raise ValueError
+    except (ValueError, AttributeError):
+        raise CheckError("code_volume_invalid") from None
+
+
+def check_running_code_mounts(config: dict) -> None:
+    """Inspect only labels and mounts; never container environments or secrets."""
+    expected_name = config["volumes"]["code-svn-checkout"]["name"]
+    for service, target, readonly in (
+        ("knowledge-sync", "/var/lib/code-svn/checkout", False),
+        ("python-agent-runtime-a", "/var/lib/code-svn/checkout", True),
+        ("python-agent-runtime-b", "/var/lib/code-svn/checkout", True),
+        ("knowledge-ops-controller", "/deployment-code/checkout", True),
+    ):
+        identifiers = run(compose("ps", "-q", service)).stdout.split()
+        if len(identifiers) != 1 or not re.fullmatch(r"[0-9a-f]{12,64}", identifiers[0]):
+            raise CheckError("code_mount_invalid")
+        template = (
+            '{"project":{{json (index .Config.Labels "com.docker.compose.project")}},'
+            '"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
+            '"mounts":{{json .Mounts}}}'
+        )
+        try:
+            metadata = json.loads(
+                run(["docker", "inspect", "--format", template, identifiers[0]]).stdout
+            )
+            mounts = [m for m in metadata["mounts"] if m.get("Destination") == target]
+            if (
+                metadata["project"] != config["name"]
+                or metadata["service"] != service
+                or len(mounts) != 1
+                or mounts[0].get("Type") != "volume"
+                or mounts[0].get("Name") != expected_name
+                or mounts[0].get("Driver") != "local"
+                or mounts[0].get("RW") is not (not readonly)
+            ):
+                raise ValueError
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise CheckError("code_mount_invalid") from None
 
 
 def initialize_volumes(config: dict) -> None:
@@ -372,11 +461,14 @@ def main(argv: list[str] | None = None) -> int:
                 raise CheckError("shell_crlf_detected")
         engine, version = docker_versions()
         config = json.loads(run(compose("config", "--format", "json")).stdout)
-        validate_config(config, require_code=args.require_code)
+        validate_config(
+            config, require_code=args.require_code, initialized_code=args.command != "init-volumes"
+        )
         if args.command == "init-volumes":
             initialize_volumes(config)
         else:
             check_volumes(config)
+            check_code_volume(config)
         if args.command == "accept":
             raw = run(compose("ps", "--all", "--format", "json")).stdout.strip()
             rows = (
@@ -387,6 +479,7 @@ def main(argv: list[str] | None = None) -> int:
             failures = service_failures(config, rows)
             if failures:
                 raise CheckError("services_not_ready:" + ",".join(failures))
+            check_running_code_mounts(config)
             run(
                 compose(
                     "exec",
@@ -409,8 +502,8 @@ def main(argv: list[str] | None = None) -> int:
                         "environment"
                     ].get("CODE_CHECKOUT_ENABLED")
                     == "true",
-                    "code_ownership_check": "passed"
-                    if platform.system() == "Linux"
+                    "code_ownership_check": "startup_probe_passed"
+                    if args.command == "accept"
                     else "target_probe_required",
                     "business_acceptance": "not_checked",
                 },

@@ -512,7 +512,7 @@ def _bounded_output(
             # transport error. Classification never authorizes cleanup or retry.
             ({b"E155037"}, "CODE_SVN_WC_CLEANUP_REQUIRED"),
             ({b"E155004"}, "CODE_SVN_WC_LOCKED"),
-            ({b"E155032"}, "CODE_SVN_WC_DB_FAILED"),
+            ({b"E155032", b"E200030"}, "CODE_SVN_WC_DB_FAILED"),
             ({b"E170013", b"E175002", b"E670002"}, "CODE_SVN_CONNECTION_FAILED"),
         ]:
             if error_codes & codes:

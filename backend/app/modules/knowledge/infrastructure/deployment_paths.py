@@ -20,7 +20,7 @@ CONTROLLER_MOUNTS = {
     "/deployment-secrets/app-config-master-key": "APP_CONFIG_MASTER_KEY_FILE",
     "/deployment-secrets/principal-jwks.json": "PRINCIPAL_JWKS_FILE",
     "/deployment-secrets/knowledge-bootstrap-token": "KNOWLEDGE_BOOTSTRAP_TOKEN_FILE",
-    "/deployment-code/checkout": "CODE_SVN_CHECKOUT_HOST_ROOT",
+    "/deployment-code/checkout": "CODE_SVN_CHECKOUT_VOLUME",
     "/deployment-code/state": "CODE_SVN_LOCAL_STATE_ROOT",
 }
 DIRECTORY_MOUNTS = {"/deployment", "/deployment-code/checkout", "/deployment-code/state"}
@@ -53,6 +53,18 @@ def mount_environment(metadata: Any, project: str) -> dict[str, str]:
         if len(matches) != 1:
             raise invalid("knowledge_ops_mount_invalid")
         row = matches[0]
+        if target == "/deployment-code/checkout":
+            name = row.get("Name")
+            if (
+                row.get("Type") != "volume"
+                or row.get("Driver") != "local"
+                or row.get("RW") is not False
+                or not isinstance(name, str)
+                or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}", name)
+            ):
+                raise invalid("knowledge_ops_mount_invalid")
+            result[variable] = name
+            continue
         source = row.get("Source")
         if (
             row.get("Type") != "bind"
@@ -101,6 +113,31 @@ def controller_environment(project: str) -> dict[str, str]:
         if result.returncode or len(result.stdout) > 128_000:
             raise ValueError
         paths = mount_environment(json.loads(result.stdout), project)
+        # Never turn a volume's private Mountpoint into a host bind. Also reject
+        # local driver options that disguise a Windows/NFS bind as a named volume.
+        result = subprocess.run(
+            [
+                "docker",
+                "volume",
+                "inspect",
+                "--format",
+                '{"Driver":{{json .Driver}},"Options":{{json .Options}}}',
+                paths["CODE_SVN_CHECKOUT_VOLUME"],
+            ],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=15,
+            env=env,
+        )
+        if result.returncode or len(result.stdout) > 16_384:
+            raise ValueError
+        volume = json.loads(result.stdout)
+        if (
+            not isinstance(volume, dict)
+            or volume.get("Driver") != "local"
+            or volume.get("Options") not in (None, {})
+        ):
+            raise ValueError
     except (OSError, ValueError, subprocess.SubprocessError):
         raise invalid("knowledge_ops_mount_invalid") from None
     # Compose resolves build contexts in /deployment (client side), but bind sources

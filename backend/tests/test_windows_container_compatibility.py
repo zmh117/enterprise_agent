@@ -28,6 +28,14 @@ def code_deployment(tmp_path, monkeypatch):
     monkeypatch.setattr(deployment_check, "directory_matches", lambda info, desired: True)
 
     def mount(source, target, readonly):
+        if source == checkout:
+            return dict(
+                type="volume",
+                source="code-svn-checkout",
+                target=target,
+                read_only=readonly,
+                volume={"nocopy": True},
+            )
         return dict(
             type="bind",
             source=str(source),
@@ -66,7 +74,14 @@ def code_deployment(tmp_path, monkeypatch):
     services["code-storage-init"] = dict(
         volumes=[mount(checkout, "/storage/checkout", False), mount(state, "/storage/state", False)]
     )
-    return {"services": services}, checkout, state
+    return (
+        {
+            "services": services,
+            "volumes": {"code-svn-checkout": {"name": "synthetic-code", "driver": "local"}},
+        },
+        checkout,
+        state,
+    )
 
 
 def test_code_preflight_accepts_matching_mounts_and_reports_disabled_executor(code_deployment):
@@ -88,7 +103,7 @@ def test_code_preflight_accepts_matching_mounts_and_reports_disabled_executor(co
         ("writeable_reader", "code_mount_invalid"),
         ("no_autocreate", "code_mount_invalid"),
         ("missing_init_gate", "code_directory_initialization_gate_missing"),
-        ("different_root", "code_mount_source_mismatch"),
+        ("different_root", "code_mount_invalid"),
         ("different_state", "code_mount_source_mismatch"),
         ("missing_group", "code_reader_group_missing"),
         ("wrong_writer", "code_executor_identity_invalid"),
@@ -101,11 +116,11 @@ def test_code_preflight_rejects_unusable_shared_mounts(
     config, checkout, state = code_deployment
     reader = config["services"]["python-agent-runtime-b"]
     if change == "missing":
-        checkout.rmdir()
+        (state / "client/trusted-ca").rmdir()
     elif change == "writeable_reader":
         reader["volumes"][0]["read_only"] = False
     elif change == "no_autocreate":
-        reader["volumes"][0]["bind"]["create_host_path"] = False
+        reader["volumes"][0]["volume"]["nocopy"] = False
     elif change == "missing_init_gate":
         reader["depends_on"] = {}
     elif change == "different_root":
@@ -195,7 +210,7 @@ def test_compose_assigns_source_group_and_explicit_code_configuration():
         assert "10010" in compose["services"][name]["group_add"]
     example = (ROOT / ".env.example").read_text()
     assert "CODE_CHECKOUT_ENABLED=true" in example
-    assert "CODE_SVN_CHECKOUT_HOST_ROOT=" in example
+    assert "CODE_SVN_CHECKOUT_VOLUME=" in example
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -391,7 +406,23 @@ def _mount_metadata(prefix: str) -> dict:
         "project": "synthetic-project",
         "service": "knowledge-ops-controller",
         "mounts": [
-            {"Destination": target, "Source": f"{prefix}/{index}", "RW": False, "Type": "bind"}
+            (
+                {
+                    "Destination": target,
+                    "Name": "synthetic_code",
+                    "Driver": "local",
+                    "Source": "/var/lib/docker/volumes/synthetic_code/_data",
+                    "RW": False,
+                    "Type": "volume",
+                }
+                if target == "/deployment-code/checkout"
+                else {
+                    "Destination": target,
+                    "Source": f"{prefix}/{index}",
+                    "RW": False,
+                    "Type": "bind",
+                }
+            )
             for index, target in enumerate(CONTROLLER_MOUNTS)
         ],
     }
@@ -408,7 +439,8 @@ def _mount_metadata(prefix: str) -> dict:
 def test_controller_uses_actual_daemon_mount_sources(prefix: str) -> None:
     env = mount_environment(_mount_metadata(prefix), "synthetic-project")
     assert env == {
-        value: f"{prefix}/{index}" for index, value in enumerate(CONTROLLER_MOUNTS.values())
+        value: ("synthetic_code" if value == "CODE_SVN_CHECKOUT_VOLUME" else f"{prefix}/{index}")
+        for index, value in enumerate(CONTROLLER_MOUNTS.values())
     }
 
 
@@ -581,3 +613,162 @@ def test_acceptance_requires_both_resident_health_and_successful_initialization(
 def test_acceptance_does_not_require_maintenance_profile_jobs_to_be_running() -> None:
     config = {"services": {"knowledge-check": {"profiles": ["maintenance"]}}}
     assert deployment_check.service_failures(config, []) == []
+
+
+@pytest.mark.parametrize("change", ["bind", "writable", "bad_name", "driver"])
+def test_controller_rejects_checkout_volume_aliases(change):
+    metadata = _mount_metadata("/synthetic")
+    checkout = next(
+        m for m in metadata["mounts"] if m["Destination"] == "/deployment-code/checkout"
+    )
+    if change == "bind":
+        checkout["Type"] = "bind"
+    elif change == "writable":
+        checkout["RW"] = True
+    elif change == "driver":
+        checkout["Driver"] = "network-plugin"
+    else:
+        checkout["Name"] = "/var/lib/docker/volumes/incorrect/_data"
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_ops_mount_invalid"):
+        mount_environment(metadata, "synthetic-project")
+
+
+@pytest.mark.parametrize(
+    "options", [{"type": "none", "o": "bind", "device": "/host"}, {"type": "nfs"}]
+)
+def test_preflight_refuses_network_or_host_backed_named_volume(
+    code_deployment, monkeypatch, options
+):
+    import json
+    from types import SimpleNamespace
+
+    config, _, _ = code_deployment
+    monkeypatch.setattr(deployment_check, "volume_exists", lambda name: True)
+    monkeypatch.setattr(
+        deployment_check,
+        "run",
+        lambda *a, **kw: SimpleNamespace(
+            stdout=json.dumps({"Driver": "local", "Options": options})
+        ),
+    )
+    with pytest.raises(deployment_check.CheckError, match="code_volume_invalid"):
+        deployment_check.check_code_volume(config)
+
+
+def test_preflight_checks_volume_metadata_without_host_mountpoint(code_deployment, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    config, _, _ = code_deployment
+    monkeypatch.setattr(deployment_check, "volume_exists", lambda name: True)
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        return SimpleNamespace(stdout=json.dumps({"Driver": "local", "Options": None}))
+
+    monkeypatch.setattr(deployment_check, "run", run)
+    deployment_check.check_code_volume(config)
+    assert commands[0][-1] == "synthetic-code"
+    assert "Mountpoint" not in str(commands)
+    monkeypatch.setattr(deployment_check, "volume_exists", lambda name: False)
+    with pytest.raises(deployment_check.CheckError, match="code_volume_missing_run_storage_init"):
+        deployment_check.check_code_volume(config)
+
+
+@pytest.mark.parametrize("bad", [None, "old_bind", "other_volume", "writable", "wrong_project"])
+def test_accept_checks_actual_mounts_of_every_code_consumer(code_deployment, monkeypatch, bad):
+    import json
+    from types import SimpleNamespace
+
+    config, _, _ = code_deployment
+    config["name"] = "synthetic-project"
+    observed = []
+    current = None
+
+    def run(command):
+        nonlocal current
+        if command[:2] == ["docker", "compose"]:
+            current = command[-1]
+            observed.append(current)
+            return SimpleNamespace(stdout="a" * 64)
+        assert command[:3] == ["docker", "inspect", "--format"]
+        target = (
+            "/deployment-code/checkout"
+            if current == "knowledge-ops-controller"
+            else "/var/lib/code-svn/checkout"
+        )
+        mount = {
+            "Destination": target,
+            "Type": "volume",
+            "Driver": "local",
+            "Name": "synthetic-code",
+            "RW": current == "knowledge-sync",
+        }
+        metadata = {"project": config["name"], "service": current, "mounts": [mount]}
+        if current == "python-agent-runtime-b":
+            if bad == "old_bind":
+                mount["Type"] = "bind"
+            elif bad == "other_volume":
+                mount["Name"] = "old-volume"
+            elif bad == "writable":
+                mount["RW"] = True
+            elif bad == "wrong_project":
+                metadata["project"] = "other"
+        return SimpleNamespace(stdout=json.dumps(metadata))
+
+    monkeypatch.setattr(deployment_check, "run", run)
+    if bad:
+        with pytest.raises(deployment_check.CheckError, match="code_mount_invalid"):
+            deployment_check.check_running_code_mounts(config)
+    else:
+        deployment_check.check_running_code_mounts(config)
+        assert observed == [
+            "knowledge-sync",
+            "python-agent-runtime-a",
+            "python-agent-runtime-b",
+            "knowledge-ops-controller",
+        ]
+
+
+@pytest.mark.parametrize("options", [None, {}, {"o": "bind", "device": "/host"}])
+def test_controller_passes_actual_volume_name_and_checks_driver_options(monkeypatch, options):
+    import json
+    from types import SimpleNamespace
+    from app.modules.knowledge.infrastructure import deployment_paths
+
+    class MountedPath:
+        def __init__(self, path):
+            pass
+
+        def is_symlink(self):
+            return False
+
+        def is_dir(self):
+            return True
+
+        def is_file(self):
+            return True
+
+    monkeypatch.setattr(deployment_paths, "Path", MountedPath)
+    monkeypatch.setattr(deployment_paths.socket, "gethostname", lambda: "a" * 12)
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        data = (
+            _mount_metadata("/synthetic")
+            if len(commands) == 1
+            else {"Driver": "local", "Options": options}
+        )
+        return SimpleNamespace(returncode=0, stdout=json.dumps(data).encode())
+
+    monkeypatch.setattr(deployment_paths.subprocess, "run", run)
+    if options:
+        with pytest.raises(KnowledgeGovernanceError, match="knowledge_ops_mount_invalid"):
+            deployment_paths.controller_environment("synthetic-project")
+    else:
+        env = deployment_paths.controller_environment("synthetic-project")
+        assert env["CODE_SVN_CHECKOUT_VOLUME"] == "synthetic_code"
+        assert commands[1][-1] == "synthetic_code"
+        assert not any("/_data" in str(item) for item in commands)

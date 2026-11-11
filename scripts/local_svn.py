@@ -16,7 +16,9 @@ def main() -> int:
         "command", choices=["init", "import", "start", "stop", "info", "browse", "checkout"]
     )
     parser.add_argument("--source-root", type=Path, default=ROOT / "ones知识库/项目代码")
-    parser.add_argument("--destination", type=Path, default=ROOT / ".local/code-svn/checkout/mes")
+    parser.add_argument(
+        "--destination", type=Path, help="独立维护检出的宿主目录；系统检出请使用知识库页面"
+    )
     parser.add_argument("--revision", type=int)
     parser.add_argument(
         "--select", action="append", help="相对 SVN 文件或目录，可重复指定；省略为整个仓库"
@@ -33,8 +35,8 @@ def main() -> int:
     ]
     if args.command in {"init", "import", "info"}:
         if args.command == "init":
-            if not STATE.is_dir() or not (ROOT / ".local/code-svn/checkout").is_dir():
-                parser.error("请先用 deployment_check.py init-code-directories 初始化源码与状态根目录")
+            if not STATE.is_dir():
+                parser.error("请先运行 docker compose run --build --rm --no-deps code-storage-init")
             subprocess.run([*compose, "build", "code-svn"], check=True, cwd=ROOT, env=env)
         command = [*compose, "run", "--rm", "--no-deps", "code-svn-admin", args.command]
     elif args.command in {"start", "stop"}:
@@ -44,12 +46,18 @@ def main() -> int:
             else [*compose, "stop", "code-svn"]
         )
     else:
+        if args.destination is None:
+            parser.error(
+                "此命令仅供显式宿主目录维护；系统命名卷检出请使用知识库页面，或指定 --destination"
+            )
         destination = args.destination.absolute()
         if destination.exists() or destination.is_symlink():
             if args.command == "checkout":
                 parser.error("目标目录已存在，请选择新目录")
         if not destination.parent.is_dir():
-            parser.error("目标父目录未初始化，请先用 deployment_check.py init-code-directories 准备")
+            parser.error(
+                "目标父目录未初始化，请先用 deployment_check.py init-code-directories 准备"
+            )
         command = [
             "docker",
             "run",

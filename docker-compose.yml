@@ -462,14 +462,13 @@ services:
     cpus: 0.5
     mem_limit: 64m
     environment:
-      CODE_INIT_CHECKOUT_HOST_PATH: ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}
       CODE_INIT_STATE_HOST_PATH: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}
     volumes:
-      - type: bind
-        source: ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}
+      - type: volume
+        source: code-svn-checkout
         target: /storage/checkout
-        bind:
-          create_host_path: true
+        volume:
+          nocopy: true
       - type: bind
         source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}
         target: /storage/state
@@ -477,7 +476,7 @@ services:
           create_host_path: true
 
   python-agent-runtime-a: &python-runtime-node
-    # Shared source readers; the checkout bind remains read-only.
+    # Shared source readers; the checkout volume remains read-only.
     group_add: ["10010"]
     container_name: ${COMPOSE_PROJECT_NAME:-enterprise-agent}-runtime-a
     stop_grace_period: 70m
@@ -489,12 +488,12 @@ services:
     restart: unless-stopped
     read_only: true
     volumes:
-      - type: bind
-        source: ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}
+      - type: volume
+        source: code-svn-checkout
         target: /var/lib/code-svn/checkout
         read_only: true
-        bind:
-          create_host_path: true
+        volume:
+          nocopy: true
     tmpfs:
       - /tmp/python-agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-1g},mode=0700,uid=10002,gid=10002
     cap_drop: ["ALL"]
@@ -1353,11 +1352,11 @@ services:
       read_only: true
       bind:
         create_host_path: true
-    - type: bind
-      source: ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}
+    - type: volume
+      source: code-svn-checkout
       target: /var/lib/code-svn/checkout
-      bind:
-        create_host_path: true
+      volume:
+        nocopy: true
     networks:
     - knowledge-managed
     - provider-egress
@@ -1517,12 +1516,12 @@ services:
       read_only: true
       bind:
         create_host_path: false
-    - type: bind
-      source: ${CODE_SVN_CHECKOUT_HOST_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/checkout}
+    - type: volume
+      source: code-svn-checkout
       target: /deployment-code/checkout
       read_only: true
-      bind:
-        create_host_path: true
+      volume:
+        nocopy: true
     - type: bind
       source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}
       target: /deployment-code/state
@@ -1603,6 +1602,9 @@ secrets:
     file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/model-probe-auth-token}
 
 volumes:
+  code-svn-checkout:
+    name: ${CODE_SVN_CHECKOUT_VOLUME:-${COMPOSE_PROJECT_NAME:-enterprise_agent}_code-svn-checkout}
+    driver: local
   knowledge-models:
     external: true
     name: ${KNOWLEDGE_MODEL_VOLUME:-${COMPOSE_PROJECT_NAME}_knowledge-models}

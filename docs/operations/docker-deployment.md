@@ -60,7 +60,15 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
    发布用 `BUILD_SOURCE_REVISION`、`BUILD_ID` 也写入根 `.env`，API、Worker、Runtime、File
    Service 使用同一次发布的值。不要只在 shell 中临时 export 配置，否则网页控制器无法复现。
 
-3. 主 Compose 自动准备源码与状态目录。`code-storage-init` 是一次性初始化容器；
+3. 全新空安装先创建知识外部卷（已有环境不要执行）：
+
+   ```sh
+   python3 scripts/deployment_check.py init-volumes --fresh
+   ```
+
+   该步骤必须在创建源码卷或启动容器之前执行；只创建知识外部卷，不要求已初始化源码存储。
+
+   主 Compose 自动准备源码卷与状态目录。`code-storage-init` 是一次性初始化容器；
    普通 `up` 会等待它成功，再启动 API、两个 Runtime、knowledge-sync 和运维控制器。
    首次安装若要在 `up` 前运行只读预检，可先单独初始化：
 
@@ -69,9 +77,10 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
    ```
 
    该命令无需宿主 sudo 或 Python，可在 Windows CMD / PowerShell、macOS 和 Linux 使用。
-   初始化无网络、不挂载 Secret，只处理 `.env` 配置的两个根：
-   `CODE_SVN_CHECKOUT_HOST_ROOT` 和 `CODE_SVN_LOCAL_STATE_ROOT`，留空使用部署根下
-   `.local/code-svn/checkout`、`.local/code-svn/state`。
+   初始化无网络、不挂载 Secret。源码存放在 Docker local 命名卷，
+   `CODE_SVN_CHECKOUT_VOLUME` 留空为 `<项目名>_code-svn-checkout`；状态仍由
+   `CODE_SVN_LOCAL_STATE_ROOT` 指定，留空为部署根下 `.local/code-svn/state`。
+   源码卷不使用 driver_opts，也不映射 Windows D 盘、NFS 或 SMB 路径。
    Linux 源码根设为 10003:10010/0750；状态及 configuration、client、trusted-ca
    四个目录设为 10003:10003/0755。只调整这五个目录的元数据，不递归修改子文件；
    凭据、已有源码与 SVN 身份标记均保留。实际以执行器 UID 写合成临时文件、Runtime UID
@@ -83,11 +92,10 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
    `init-code-directories` 保留为 Linux/WSL 维护工具，不再是普通启动前置步骤。
 
    ```sh
-   python3 scripts/deployment_check.py init-volumes --fresh
    python3 scripts/deployment_check.py check --require-code
    ```
 
-   初始化先核对项目容器、平台数据卷和全部目标知识卷；发现已有部署或未标记的已有卷时拒绝。
+   `init-volumes --fresh` 先核对项目容器、平台数据卷和全部目标知识卷；发现已有部署或未标记的已有卷时拒绝。
    只有该命令先前创建的同项目卷允许幂等续跑。它不会删除、覆盖、清空卷，不拉取模型；普通
    `check` 和 `up` 不会自动创建缺失的知识外部卷。卷已创建但尚未启动时可安全重复初始化。
 
@@ -122,9 +130,46 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
 
 本次控制器挂载布局有变化，需要重新创建 `knowledge-ops-controller`；仅重启旧容器不会
 更换挂载。Compose 与镜像必须来自同一发布。控制器固定读取 `/deployment/.env`，只检查自身
-项目标签和六个只读 bind mount 的元数据，以 daemon 源路径启动知识容器，以容器内路径构建
+项目标签、五个只读 bind 和一个只读源码卷的元数据，以 daemon bind 源路径及实际源码卷 Name 启动知识容器，以容器内路径构建
 镜像。[Docker bind mount 使用 daemon 主机路径](https://docs.docker.com/engine/storage/bind-mounts/)，
 不能把 `C:\...` 或某个 WSL 别名直接当成嵌套 Compose 的 Linux 源路径。
+
+### SVN 工作副本从 Windows 共享盘切换到 Docker 卷
+
+本版本主 Compose 已改为命名卷；`CODE_SVN_CHECKOUT_HOST_ROOT` 不再生效。保留原项目名、
+状态目录、CA、Master Key 和其他凭据。可在 `.env` 设置 `CODE_SVN_CHECKOUT_VOLUME` 为
+固定卷名，留空使用 `<项目名>_code-svn-checkout`；之后不要随意修改项目名或卷名。
+
+确认没有运行中的 SVN 操作和源码分析任务后，在维护窗口执行（CMD/PowerShell/Linux/macOS 相同）：
+
+```sh
+docker compose build code-storage-init knowledge-sync knowledge-ops-controller
+docker compose stop knowledge-sync python-agent-runtime-a python-agent-runtime-b knowledge-ops-controller
+docker compose run --rm --no-deps code-storage-init
+docker compose up -d --no-deps --force-recreate knowledge-sync python-agent-runtime-a python-agent-runtime-b knowledge-ops-controller
+```
+
+这次仅改这四个服务的挂载/相关镜像，API 和数据库无需迁移。只 restart 不会改变挂载。
+初始化必须成功再执行最后一条命令；中途失败应保持维护状态并检查固定错误码。
+
+旧 `.local/code-svn/checkout` 保留，不复制或清理；旧数据库记录也不自动变为新卷里的有效目录。
+打开代码知识库，在 SVN 工程检出中输入**新的目标子目录名**（例如 `sanjiu_volume_1`），
+重新检出指定数字版本。成功后选择新完成目录，保存源码配置、验证并发布，再恢复问答。
+未重新绑定的旧知识库暂不能访问代码；不要选历史已完成目录冒充新检出。
+
+可使用下面的只读检查确认正在运行的三个消费者均使用同一个 Type=volume/Name，
+执行器 RW=true，两个 Runtime RW=false（输出不含环境变量或凭据）：
+
+```sh
+python3 scripts/deployment_check.py accept --require-code
+```
+
+`accept` 核对全部服务及控制器接线；如需人工核对实际挂载，可在 Docker Desktop 的容器挂载视图
+比较 knowledge-sync 与 Runtime A/B 的源码卷名及只读属性。卷数据在重建容器后保留；不要执行
+`docker compose down -v` 或删除源码卷。备份需在无读写任务的维护窗口进行。
+
+当前 E200030 仅证明 SQLite 层错误，E200042 是附加错误标记；切换消除了 Windows 共享盘这一层，
+不证明全部失败原因已消除。完成一次真实仓库长检出及指定版本问答才算目标环境验收。
 
 ### Windows CMD 中更新后启动
 
@@ -136,7 +181,7 @@ docker compose up -d --build
 docker compose ps -a code-storage-init
 ```
 
-`code-storage-init` 显示 `Exited (0)` 是正常成功。源码和状态 bind 允许创建缺失目录；
+`code-storage-init` 显示 `Exited (0)` 是正常成功。源码命名卷由 Compose 创建，状态 bind 允许创建缺失目录；
 平台凭据 bind、主部署目录和四个知识外部卷保持原来的严格规则。初始化镜像只含标准库脚本，
 不会拉取 SVN 或触发模型提取。查看初始化固定状态可用 `docker compose logs code-storage-init`。
 
@@ -157,9 +202,9 @@ APP_CONFIG_MASTER_KEY_FILE=
 ## 实际验收
 
 `check` 检查 Linux Engine/架构、Compose 版本、LF、根目录与文件型 Secret 元数据、四个外部卷、
-源码及状态目录存在性、Linux UID/GID/权限，以及执行器/A/B/控制器挂载一致性与共享组；
-`--require-code` 额外要求执行器启用。Mac 宿主的权限映射不凭宿主 stat 断言，输出
-`code_ownership_check=target_probe_required`，需实际容器验证。
+源码卷 local 驱动及无 Options、状态目录存在性与权限，以及执行器/A/B/控制器卷名、只读属性与共享组；
+`--require-code` 额外要求执行器启用。预检不访问 Linux 卷 Mountpoint，输出
+`code_ownership_check=target_probe_required`，跨 UID 权限由初始化容器实际验证。
 不会读取 Secret 内容，也不会证明服务能启动。`accept` 进一步核对全部默认常驻服务的状态和
 健康检查、五个一次性初始化任务的退出码，并在真实控制器内执行路径和 Compose 配置检查。
 输出只有状态、平台和固定错误码，始终保留 `business_acceptance=not_checked`。
@@ -204,7 +249,8 @@ Rocky Linux 开启 SELinux 时另外核验目录和 socket 标签；不自动关
 | `code_directory_missing_or_invalid` | 先初始化正确根目录，拒绝符号链接和错误路径 |
 | `code_directory_permissions_invalid` | 核对源码 10003:10010/0750、公开状态目录 10003:10003/0755；旧目录先维护 |
 | `code_directory_existing_data_requires_maintenance` | 保留旧数据，不自动递归修复；使用新源码根检出或停机维护状态目录 |
-| `code_mount_source_mismatch` / `code_mount_invalid` | 核对 A/B 只读、执行器可写及初始化/控制器挂载源一致，仅源码和状态目录允许创建 |
+| `code_mount_source_mismatch` / `code_mount_invalid` | 核对 A/B 只读、执行器可写，初始化/控制器均使用同一源码卷；状态目录仍为 bind |
+| `code_volume_missing_run_storage_init` / `code_volume_invalid` | 先运行 code-storage-init；核对源码卷为 local 驱动且无 Options，不把共享盘包装为卷 |
 | `code_executor_identity_invalid` / `code_reader_group_missing` | 应用同版本 Compose 并重新创建执行器和两个 Runtime |
 | `code_checkout_not_enabled` | 在根 .env 显式设置 CODE_CHECKOUT_ENABLED=true 后重新创建执行器 |
 | `deployment_root_mismatch` | `KNOWLEDGE_DEPLOY_ROOT` 指回当前主 Compose 根目录 |

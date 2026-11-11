@@ -171,6 +171,7 @@ print('verified')
         ("E155037", "CODE_SVN_WC_CLEANUP_REQUIRED"),
         ("E155004", "CODE_SVN_WC_LOCKED"),
         ("E155032", "CODE_SVN_WC_DB_FAILED"),
+        ("E200030", "CODE_SVN_WC_DB_FAILED"),
     ],
 )
 def test_svn_errors_expose_codes_not_raw_stderr(tmp_path, number, expected):

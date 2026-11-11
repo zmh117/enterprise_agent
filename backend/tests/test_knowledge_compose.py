@@ -213,3 +213,22 @@ def test_model_endpoint_only_reaches_prepare_jobs(compose_cli):
         assert "HF_ENDPOINT" not in service["environment"]
         assert service["environment"]["HF_HUB_OFFLINE"] == "1"
         assert set(service["networks"]) == {"knowledge-managed"}
+
+
+@pytest.mark.parametrize("name", ["", "existing-code-volume"])
+def test_code_volume_name_is_shared_across_host_and_controller_rendering(compose_cli, name):
+    config = render(
+        compose_cli, CODE_SVN_CHECKOUT_VOLUME=name, CODE_SVN_CHECKOUT_HOST_ROOT="D:/legacy-checkout"
+    )
+    expected = name or "knowledge-compose-contract_code-svn-checkout"
+    assert config["volumes"]["code-svn-checkout"] == {"name": expected, "driver": "local"}
+    for service, target in (
+        ("code-storage-init", "/storage/checkout"),
+        ("knowledge-sync", "/var/lib/code-svn/checkout"),
+        ("python-agent-runtime-a", "/var/lib/code-svn/checkout"),
+        ("python-agent-runtime-b", "/var/lib/code-svn/checkout"),
+        ("knowledge-ops-controller", "/deployment-code/checkout"),
+    ):
+        mount = next(m for m in config["services"][service]["volumes"] if m["target"] == target)
+        assert mount["type"] == "volume" and mount["source"] == "code-svn-checkout"
+        assert "bind" not in mount

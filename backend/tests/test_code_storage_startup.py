@@ -48,6 +48,28 @@ def test_storage_init_is_a_bounded_gate_and_only_code_directories_autocreate():
                 assert mount["read_only"]
 
 
+def test_checkout_volume_is_shared_without_host_binds_or_image_copy():
+    config = yaml.safe_load(COMPOSE.read_text())
+    assert config["volumes"]["code-svn-checkout"]["driver"] == "local"
+    for name, target, readonly in (
+        ("code-storage-init", "/storage/checkout", False),
+        ("knowledge-sync", "/var/lib/code-svn/checkout", False),
+        ("python-agent-runtime-a", "/var/lib/code-svn/checkout", True),
+        ("python-agent-runtime-b", "/var/lib/code-svn/checkout", True),
+        ("knowledge-ops-controller", "/deployment-code/checkout", True),
+    ):
+        mount = next(
+            m
+            for m in config["services"][name]["volumes"]
+            if isinstance(m, dict) and m.get("target") == target
+        )
+        assert mount["type"] == "volume" and mount["source"] == "code-svn-checkout"
+        assert mount["volume"] == {"nocopy": True}
+        assert bool(mount.get("read_only")) == readonly
+        assert "bind" not in mount
+    assert "CODE_SVN_CHECKOUT_HOST_ROOT" not in COMPOSE.read_text()
+
+
 @pytest.mark.parametrize(
     "values,expected",
     [
@@ -109,25 +131,15 @@ def test_secret_paths_render_without_home_warning(tmp_path, values, expected):
         )
 
 
-@pytest.mark.parametrize(
-    "checkout,state",
-    [
-        ("D:/workspace/code", "d:/workspace/code/state"),
-        ("/data/code", "/data/code"),
-        ("./.local/code-svn/checkout", "./.local/code-svn/checkout/state"),
-        ("/data/code/../x", "/srv/state"),
-        ("", "/srv/state"),
-        ("/etc", "/srv/state"),
-    ],
-)
-def test_initializer_rejects_unsafe_root_pairs(checkout, state):
+@pytest.mark.parametrize("state", ["/data/code/../x", "", "/etc", "D:/"])
+def test_initializer_rejects_unsafe_state_root(state):
     with pytest.raises(storage.InitializationError):
-        storage.validate_host_roots(checkout, state)
+        storage.validate_state_root(state)
 
 
 def test_initializer_accepts_default_and_native_windows_paths():
-    storage.validate_host_roots("./.local/code-svn/checkout", "./.local/code-svn/state")
-    storage.validate_host_roots(r"D:\企业项目\checkout", r"D:\企业项目\state")
+    storage.validate_state_root("./.local/code-svn/state")
+    storage.validate_state_root(r"D:\企业项目\state")
 
 
 def test_initializer_refuses_symlink_before_changing_directory_metadata(tmp_path):
@@ -206,11 +218,11 @@ def test_real_compose_missing_directories_restart_and_failure_gate(tmp_path, inv
     initializer.pop("build")
     initializer["image"] = "enterprise-agent/code-storage-init:compat-check"
     initializer["environment"] = {
-        "CODE_INIT_CHECKOUT_HOST_PATH": str(checkout),
         "CODE_INIT_STATE_HOST_PATH": str(state),
     }
     for mount, source in zip(initializer["volumes"], (checkout, state), strict=True):
-        mount["source"] = str(source)
+        mount.update(type="bind", source=str(source), bind={"create_host_path": True})
+        mount.pop("volume", None)
     reader = {
         "image": initializer["image"],
         "entrypoint": ["python", "-c"],
@@ -279,3 +291,92 @@ def test_real_compose_missing_directories_restart_and_failure_gate(tmp_path, inv
         assert not list(checkout.glob(".ea-storage-check-*"))
     finally:
         assert compose("down", "--timeout", "5").returncode == 0
+
+
+@pytest.mark.skipif(
+    os.environ.get("RUN_CODE_STORAGE_CONTAINER_TESTS") != "1",
+    reason="requires the locally built code-storage-init:compat-check image and Docker",
+)
+def test_real_compose_named_volume_initializer_readers_and_recreation(tmp_path):
+    project = "ea-volume-test-" + uuid4().hex[:10]
+    state = tmp_path / "状态 state"
+    initializer = copy.deepcopy(
+        yaml.safe_load(COMPOSE.read_text())["services"]["code-storage-init"]
+    )
+    initializer.pop("build")
+    initializer["image"] = "enterprise-agent/code-storage-init:compat-check"
+    initializer["environment"] = {"CODE_INIT_STATE_HOST_PATH": str(state)}
+    initializer["volumes"][1]["source"] = str(state)
+    services = {"code-storage-init": initializer}
+    writer = {
+        "image": initializer["image"],
+        "entrypoint": ["python", "-c"],
+        "command": [
+            "import os; from pathlib import Path; os.umask(0o027); "
+            "p=Path('/input/保留 source.txt'); "
+            "p.write_text('synthetic preserved content') if not p.exists() else "
+            "None; assert p.read_text() == 'synthetic preserved content'"
+        ],
+        "user": "10003:10010",
+        "group_add": ["10010"],
+        "network_mode": "none",
+        "read_only": True,
+        "cap_drop": ["ALL"],
+        "depends_on": {"code-storage-init": {"condition": "service_completed_successfully"}},
+        "volumes": [
+            {
+                "type": "volume",
+                "source": "code-svn-checkout",
+                "target": "/input",
+                "volume": {"nocopy": True},
+            }
+        ],
+    }
+    services["writer"] = writer
+    for name in ("reader-a", "reader-b"):
+        reader = copy.deepcopy(writer)
+        reader["user"] = "10002:10002"
+        reader["volumes"][0]["read_only"] = True
+        reader["depends_on"] = {"writer": {"condition": "service_completed_successfully"}}
+        reader["command"] = [
+            "import os; from pathlib import Path; "
+            "assert os.statvfs('/input').f_flag & os.ST_RDONLY; "
+            "assert Path('/input/保留 source.txt').read_text() == 'synthetic preserved content'"
+        ]
+        services[name] = reader
+    file = tmp_path / "compose.json"
+    file.write_text(
+        json.dumps({"services": services, "volumes": {"code-svn-checkout": {"driver": "local"}}})
+    )
+    command = ["docker", "compose", "--env-file", os.devnull, "-p", project, "-f", str(file)]
+
+    def compose(*args):
+        return subprocess.run(command + list(args), capture_output=True, text=True, timeout=60)
+
+    try:
+        for iteration in range(2):
+            result = compose("up", "-d")
+            assert result.returncode == 0, result.stderr
+            assert compose("wait", "reader-a", "reader-b").returncode == 0
+            rows = [
+                json.loads(line)
+                for line in compose("ps", "-a", "--format", "json").stdout.splitlines()
+            ]
+            assert len(rows) == 4 and all(row["ExitCode"] == 0 for row in rows)
+            if iteration == 0:
+                # Remove containers, preserve the volume; next startup must retain source content.
+                assert compose("down", "--timeout", "5").returncode == 0
+                writer["command"] = [
+                    "from pathlib import Path; assert Path('/input/保留 source.txt').read_text() == 'synthetic preserved content'"
+                ]
+                file.write_text(
+                    json.dumps(
+                        {
+                            "services": services,
+                            "volumes": {"code-svn-checkout": {"driver": "local"}},
+                        }
+                    )
+                )
+    finally:
+        # Disposable project only; no production mounts or volumes are touched.
+        assert compose("down", "--volumes", "--timeout", "5").returncode == 0

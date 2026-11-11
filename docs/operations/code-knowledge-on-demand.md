@@ -29,8 +29,8 @@
 - `code-svn` 是可选的本机 SVN 服务，真实部署也可以连接现有 SVN。
 - `knowledge-sync` 含 SVN CLI，负责浏览、检出、update/log/diff/blame 和代码答案增量索引；新增结果端点仅容器内网络的 8096 端口，不发布宿主端口。
 - 两个 Runtime 都只读挂载 `/var/lib/code-svn/checkout`，没有 SVN 凭据和源码写权限；源码只允许经过路径守卫的 Read/Glob/Grep，SVN 操作通过已有 MCP。混合文件任务的 Write/Edit 只能作用于原文件沙箱授权区域，不能写源码。
-- `CODE_SVN_CHECKOUT_HOST_ROOT` 为 Docker daemon 实际看到的目录；`CODE_SVN_LOCAL_STATE_ROOT` 提供受管登记和 SVN 客户端认证配置。运维控制器通过实际挂载解析 Windows/WSL2 路径，不能把 PowerShell 的 `C:\...` 拼进 Linux 容器命令。
-- 主 Compose 的 `code-storage-init` 一次性准备这两个根目录；仅源码与 SVN 状态目录允许自动创建，消费者等待实际权限探测成功。保留现有凭据文件，只传文件引用，不输出内容。
+- `CODE_SVN_CHECKOUT_VOLUME` 为 Docker local 命名卷，默认 `<项目名>_code-svn-checkout`；`CODE_SVN_LOCAL_STATE_ROOT` 提供受管登记和 SVN 客户端认证配置。运维控制器从实际挂载的 Name 复用源码卷；状态 bind 使用 daemon 路径，不能把 PowerShell 的 `C:\...` 拼进 Linux 容器命令。
+- 主 Compose 的 `code-storage-init` 一次性准备源码卷根和状态目录；仅源码与 SVN 状态目录允许自动创建，消费者等待实际权限探测成功。保留现有凭据文件，只传文件引用，不输出内容。
 - 启动前需单独预检时，先运行 `docker compose run --build --rm --no-deps code-storage-init`，再运行 `deployment_check.py check --require-code`；普通 `up -d --build` 已包含目录初始化。
   执行器为 10003:10010，A/B 通过 supplementary group 10010 只读访问。SVN 子进程使用
   0027 创建掩码，身份标记为 0640，凭据入口的私有掩码不变。旧目录权限不符合时保留数据并

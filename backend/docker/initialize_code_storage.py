@@ -13,18 +13,13 @@ class InitializationError(Exception):
     pass
 
 
-def validate_host_roots(checkout: str, state: str) -> None:
-    paths = []
-    for value in (checkout, state):
-        if not value or any(ord(char) < 32 for char in value):
-            raise InitializationError("code_directory_path_invalid")
-        path_type = PureWindowsPath if PureWindowsPath(value).drive else PurePosixPath
-        path = path_type(value)
-        if len(path.parts) < 3 or ".." in path.parts:
-            raise InitializationError("code_directory_path_invalid")
-        paths.append(path)
-    if paths[0].is_relative_to(paths[1]) or paths[1].is_relative_to(paths[0]):
-        raise InitializationError("code_directory_overlap")
+def validate_state_root(value: str) -> None:
+    if not value or any(ord(char) < 32 for char in value):
+        raise InitializationError("code_directory_path_invalid")
+    path_type = PureWindowsPath if PureWindowsPath(value).drive else PurePosixPath
+    path = path_type(value)
+    if len(path.parts) < 3 or ".." in path.parts:
+        raise InitializationError("code_directory_path_invalid")
 
 
 def open_directories(checkout: Path, state: Path) -> list[tuple[int, int, int, int]]:
@@ -123,10 +118,7 @@ def initialize(checkout: Path, state: Path) -> str:
 
 def main() -> int:
     try:
-        validate_host_roots(
-            os.environ.get("CODE_INIT_CHECKOUT_HOST_PATH", ""),
-            os.environ.get("CODE_INIT_STATE_HOST_PATH", ""),
-        )
+        validate_state_root(os.environ.get("CODE_INIT_STATE_HOST_PATH", ""))
         mode = initialize(Path("/storage/checkout"), Path("/storage/state"))
     except (OSError, InitializationError) as exc:
         code = str(exc) if isinstance(exc, InitializationError) else "code_directory_init_failed"

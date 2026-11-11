@@ -6,9 +6,9 @@
 - Mac 访问地址：`https://localhost:18443/repos/mes/trunk`。
 - 项目 Docker 网络内地址：`https://code-svn:8443/repos/mes/trunk`。
 - 本次完整工程版本：**r2**，包含 `set_server`、`set_web/EBR`、`set_web/JTH`。r1 只有空主干。
-- 容器检出根目录：`/var/lib/code-svn/checkout`；本机对应项目下的 `.local/code-svn/checkout`。
+- 容器检出根目录：`/var/lib/code-svn/checkout`；由 Docker 命名卷 `<项目名>_code-svn-checkout` 保存，不再对应 Windows D 盘或 Mac 项目目录。
 
-当前已保留两份验证用工作副本：`mes-r2` 包含三个工程，`ui-selected-r2` 只包含 EBR、JTH。完整导入和检出没有按扩展名或知识准入规则过滤文件。
+2026-11-07 的旧宿主目录曾保留两份验证用工作副本（切换后不自动迁移）：`mes-r2` 包含三个工程，`ui-selected-r2` 只包含 EBR、JTH。完整导入和检出没有按扩展名或知识准入规则过滤文件。
 
 ## 在管理页面多选检出
 
@@ -51,7 +51,7 @@ svn checkout -r 2 \
 
 当前 Mac 已初始化、导入并启动，**无需重新初始化或导入**。首次部署到空目录的流程如下：
 
-先按 [部署手册](docker-deployment.md) 执行 `docker compose run --build --rm --no-deps code-storage-init`，准备配置中的源码和状态根。
+先按 [部署手册](docker-deployment.md) 执行 `docker compose run --build --rm --no-deps code-storage-init`，准备源码卷和配置中的状态根。
 本地辅助脚本不再自动创建未经初始化的根目录。使用 `--destination` 指定其他父目录时，也要
 先初始化该源码根；脚本的检出进程使用 10003:10010，与页面执行器一致。容器初始化不需要
 宿主 sudo；目标宿主的实际只读共享行为仍需验证。
@@ -76,7 +76,7 @@ python3 scripts/local_svn.py start
 
 仓库数据、TLS 材料和任务结果都持久保存；停止不会清空目录。若停用检出功能，将其开关设为 false 后更新 API 和 knowledge-sync。不要在检出执行中手动移动或修改输出目录。
 
-部署目录变量：`CODE_SVN_LOCAL_STATE_ROOT` 指定 SVN 状态目录，`CODE_SVN_CHECKOUT_HOST_ROOT` 指定工作副本根目录。主 Compose 默认基于 `KNOWLEDGE_DEPLOY_ROOT`，本机未设置时使用项目目录；运维控制器继续使用它已有的宿主路径解析。`scripts/local_svn.py` 是当前项目默认目录、默认网络的本机工具；自定义部署路径应通过 Compose 管理并同步登记配置。
+部署变量：`CODE_SVN_LOCAL_STATE_ROOT` 指定 SVN 状态目录，`CODE_SVN_CHECKOUT_VOLUME` 指定实际源码卷名；旧 `CODE_SVN_CHECKOUT_HOST_ROOT` 不再生效。主 Compose 默认基于 `KNOWLEDGE_DEPLOY_ROOT`，本机未设置时使用项目目录；运维控制器继续使用它已有的宿主路径解析。`scripts/local_svn.py` 的 checkout/browse 必须显式提供 `--destination`，仅用于独立宿主维护目录；系统内检出使用页面，不能借此修改受管源码卷。该脚本使用当前项目默认状态目录、默认网络；自定义部署路径应通过 Compose 管理并同步登记配置。
 
 ## 访问与按需分析边界
 

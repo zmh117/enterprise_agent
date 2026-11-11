@@ -29,7 +29,7 @@ def test_unclassified_svn_failure_preserves_only_operation_exit_and_numeric_code
     executable.write_text(
         f"#!{sys.executable}\nimport sys\n"
         "print('synthetic source text')\n"
-        "print('svn: E200030: private synthetic path and username', file=sys.stderr)\n"
+        "print('svn: E299999: private synthetic path and username', file=sys.stderr)\n"
         "print('svn: E000022: private synthetic connection detail', file=sys.stderr)\n"
         "sys.exit(1)\n"
     )
@@ -39,7 +39,7 @@ def test_unclassified_svn_failure_preserves_only_operation_exit_and_numeric_code
     assert failure.value.diagnostic == {
         "operation": operation,
         "exit_code": 1,
-        "svn_error_codes": ["E000022", "E200030"],
+        "svn_error_codes": ["E000022", "E299999"],
     }
     assert "private" not in str(vars(failure.value))
     assert "synthetic source" not in str(vars(failure.value))
@@ -218,3 +218,22 @@ def test_bulk_check_still_stops_when_operation_is_cancelled(tmp_path, monkeypatc
     with pytest.raises(CodeKnowledgeError, match="^code_collection_interrupted$"):
         source.inventory("A", 2)
     assert launched[0].poll() is not None
+
+
+def test_sqlite_failure_with_composed_error_is_classified_without_raw_text(tmp_path):
+    executable = tmp_path / "svn"
+    executable.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "print('svn: E200030: sqlite[S10]: synthetic private detail', file=sys.stderr)\n"
+        "print('svn: E200042: Additional errors:', file=sys.stderr)\n"
+        "sys.exit(1)\n"
+    )
+    executable.chmod(0o700)
+    with pytest.raises(SvnCommandFailure, match="^CODE_SVN_WC_DB_FAILED$") as failure:
+        source_for(tmp_path, executable).execute("update", [], timeout=10, limit=1024)
+    assert failure.value.diagnostic == {
+        "operation": "update",
+        "exit_code": 1,
+        "svn_error_codes": ["E200030", "E200042"],
+    }
+    assert "private" not in str(vars(failure.value))
