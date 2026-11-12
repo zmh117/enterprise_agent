@@ -303,6 +303,7 @@ class ClaudeSdkClient:
                         events, bool(request.context.retrieved_context.get("code_source"))
                     )
                     tool_events.extend(events)
+                    run_audit_recorder.observe_code_tool_events(events)
                     self._raise_model_access_failure(message, cli_stderr, tool_events, binding)
                     try:
                         turn_budget.observe(message)
@@ -372,6 +373,7 @@ class ClaudeSdkClient:
             raise RetryableExecutionError(
                 "Claude Agent SDK completed without a final answer",
                 safe_message="Claude 运行结束，但没有生成最终回答",
+                tool_events=tool_events,
             )
         self.last_run_audit = self.finalize_run_audit(
             status="SUCCEEDED",
@@ -712,6 +714,10 @@ class ClaudeSdkClient:
     ) -> None:
         tool_events = tool_events or []
         if isinstance(exc, (RetryableExecutionError, NonRetryableExecutionError)):
+            # Cancellation may originate outside the SDK message loop. Preserve
+            # the already sanitized observations before passing that error on.
+            if not exc.tool_events:
+                exc.tool_events = list(tool_events)
             raise exc
         if isinstance(exc, ToolPolicyError):
             raise NonRetryableExecutionError(

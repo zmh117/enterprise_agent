@@ -1138,6 +1138,8 @@ MCP 根 Tool Call 新写入及受授权的管理/Debug 读取 MUST 输出有界�
 #### Scenario: 失败或超时 invocation
 - **WHEN** Runtime 在产生部分 SDK 消息或工具结果后失败或超时
 - **THEN** 系统在失败或重试处理前保存已经产生的完整审计
+- **AND** 显式取消、总时限触发的停止信号及 SDK 完成后的取消竞争均保留已观测的原生工具事件；已完成结果不得因 Job 失败而改写，只有开始事件的调用不得推断为成功
+- **AND** 代码分析审计仅保存工具身份、状态和安全错误码等元数据并据此统计调用次数；源码、搜索词、工具输入输出正文继续省略，不得以隐藏正文为由丢弃调用记录
 
 #### Scenario: Provider 隐藏 reasoning
 - **WHEN** SDK/Provider 未返回 hidden reasoning 正文

@@ -92,6 +92,31 @@ class RunAuditRecorder:
         self._observe_model_usage(message, message_type)
         self._observe_tool_blocks(message)
 
+    def observe_code_tool_events(self, events: list[dict[str, Any]]) -> None:
+        """Retain code-tool activity without copying any input or response body."""
+        if not self._code_analysis:
+            return
+        for event in events:
+            call_id = str(event["tool_call_id"])
+            index = self._tool_call_index.get(call_id)
+            if index is None:
+                index = len(self.audit["tool_executions"])
+                self._tool_call_index[call_id] = index
+                self.audit["tool_executions"].append(
+                    {
+                        "tool_call_id": call_id,
+                        "tool_name": str(event["tool_name"]),
+                        "input": None,
+                        "output": None,
+                        "content_status": "OMITTED",
+                    }
+                )
+            item = self.audit["tool_executions"][index]
+            item["status"] = str(event["status"])
+            item["observed_at"] = _now_iso()
+            if event.get("error_code"):
+                item["error_code"] = str(event["error_code"])
+
     def finalize(
         self,
         *,

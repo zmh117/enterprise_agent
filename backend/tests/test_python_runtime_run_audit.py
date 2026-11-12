@@ -46,6 +46,45 @@ def _context(marker: str) -> AgentExecutionContext:
     )
 
 
+def test_code_tool_audit_keeps_denial_and_pending_status_without_source_bodies(tmp_path):
+    context = replace(_context("synthetic"), retrieved_context={"code_source": {"job_id": "job"}})
+    recorder = RunAuditRecorder(
+        context, system_prompt="synthetic", raw_api_dir=tmp_path, permission_snapshot={}
+    )
+    recorder.observe_code_tool_events(
+        [
+            {
+                "tool_call_id": "read-1",
+                "tool_name": "Read",
+                "status": "STARTED",
+                "request_payload": {"file_path": "DO_NOT_COPY/private.cpp"},
+            },
+            {
+                "tool_call_id": "read-1",
+                "tool_name": "Read",
+                "status": "DENIED",
+                "error_code": "CODE_SOURCE_SENSITIVE",
+                "response_summary": {"text": "DO_NOT_COPY"},
+            },
+            {
+                "tool_call_id": "glob-2",
+                "tool_name": "Glob",
+                "status": "STARTED",
+                "request_payload": {"pattern": "DO_NOT_COPY"},
+            },
+        ]
+    )
+    audit = recorder.finalize(status="FAILED")
+    assert [(item["tool_name"], item["status"]) for item in audit["tool_executions"]] == [
+        ("Read", "DENIED"),
+        ("Glob", "STARTED"),
+    ]
+    assert audit["tool_executions"][0]["error_code"] == "CODE_SOURCE_SENSITIVE"
+    assert audit["summary"]["tool_call_count"] == 2
+    assert "DO_NOT_COPY" not in json.dumps(audit)
+    assert audit["sdk_messages"] == []
+
+
 @pytest.mark.parametrize("shape", ["flat", "nested", "sdk"])
 def test_extraction_init_projects_observed_metadata_without_message_body(tmp_path, shape):
     from claude_agent_sdk import SystemMessage

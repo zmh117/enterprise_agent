@@ -263,19 +263,13 @@ class PythonRuntimeExecutor:
                 ),
             )
         except (ExecutionTimeout, NonRetryableExecutionError) as exc:
-            if str(exc.error_code or "") == "runtime_cancelled":
-                return self._cancelled(
-                    provenance,
-                    run_audit=_with_runtime_identity(
-                        _finalize_client_run_audit(client, status="CANCELLED", error=exc),
-                        request,
-                    ),
-                )
             failure_code = str(exc.error_code or "runtime_configuration_error")
+            status = "CANCELLED" if failure_code == "runtime_cancelled" else "FAILED"
             if failure_code == "runtime_tool_contract_remote_not_observed":
                 retry_class = "TRANSIENT"
             elif (
                 isinstance(exc, ExecutionTimeout)
+                or failure_code == "runtime_cancelled"
                 or failure_code == "max_turns_exhausted"
                 or failure_code == "execution_policy_max_tool_calls_exhausted"
                 or failure_code.startswith("runtime_tool_contract_")
@@ -284,13 +278,13 @@ class PythonRuntimeExecutor:
             else:
                 retry_class = "CONFIGURATION"
             return PythonExecutionOutcome(
-                status="FAILED",
+                status=status,
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
                 runtime_events=tuple(getattr(client, "last_runtime_events", ())),
                 accounting=dict(getattr(client, "last_accounting", {})),
                 run_audit=_with_runtime_identity(
-                    _finalize_client_run_audit(client, status="FAILED", error=exc),
+                    _finalize_client_run_audit(client, status=status, error=exc),
                     request,
                 ),
                 tool_events=normalize_tool_events(
@@ -330,15 +324,7 @@ class PythonRuntimeExecutor:
         finally:
             if file_principal_token_provider is not None:
                 file_principal_token_provider.close()
-        if cancel_event.is_set():
-            return self._cancelled(
-                provenance,
-                run_audit=_with_runtime_identity(
-                    _finalize_client_run_audit(client, status="CANCELLED"),
-                    request,
-                ),
-            )
-        return PythonExecutionOutcome(
+        outcome = PythonExecutionOutcome(
             status="SUCCEEDED",
             final_answer=result.final_answer,
             usage={"input_tokens": 0, "output_tokens": 0},
@@ -353,6 +339,15 @@ class PythonRuntimeExecutor:
             ),
             tool_contract_observation=dict(getattr(client, "last_tool_contract_observation", {})),
         )
+        if cancel_event.is_set():
+            return self._cancelled(
+                provenance,
+                observed=outcome,
+                run_audit=_with_runtime_identity(
+                    _finalize_client_run_audit(client, status="CANCELLED"), request
+                ),
+            )
+        return outcome
 
     def probe(self, request: dict[str, Any]) -> dict[str, Any]:
         resolved = self._bindings.resolve(
@@ -764,11 +759,17 @@ class PythonRuntimeExecutor:
         provenance: dict[str, Any],
         *,
         run_audit: dict[str, Any] | None = None,
+        observed: PythonExecutionOutcome | None = None,
     ) -> PythonExecutionOutcome:
-        return PythonExecutionOutcome(
+        outcome = observed or PythonExecutionOutcome(
             status="CANCELLED",
-            usage={"input_tokens": 0, "output_tokens": 0},
             runtime_provenance=provenance,
+            usage={"input_tokens": 0, "output_tokens": 0},
+        )
+        return replace(
+            outcome,
+            status="CANCELLED",
+            final_answer="",
             run_audit=run_audit,
             failure={
                 "code": "runtime_cancelled",

@@ -258,9 +258,26 @@ describe("角色授权中心", () => {
     }
   )
 
-  it.each([false, true])(
-    "不可新增的知识库单独展示历史记录，全选不误删，显式撤销=%s",
-    async (revoke) => {
+  it.each([
+    { reason: "disabled", label: "MES代码知识库已停用", revoke: false },
+    { reason: "disabled", label: "MES代码知识库已停用", revoke: true },
+    { reason: "archived", label: "MES代码知识库已归档", revoke: false },
+    { reason: "unpublished", label: "MES代码知识库尚未发布", revoke: false },
+    {
+      reason: "resource_missing",
+      label: "MES代码知识库尚未配置检索资源",
+      revoke: false,
+    },
+    {
+      reason: "publication_invalid",
+      label: "MES代码知识库的发布记录无效",
+      revoke: false,
+    },
+    { reason: null, label: "MES代码知识库不在你的可授权范围内", revoke: false },
+    { reason: undefined, label: "知识库信息暂不可用", revoke: false },
+  ])(
+    "历史知识库显示名称和实际原因 $reason，全选不误删，显式撤销=$revoke",
+    async ({ reason, label, revoke }) => {
       let submitted: Record<string, unknown> | undefined
       const app = {
         id: "app1",
@@ -305,6 +322,17 @@ describe("角色授权中心", () => {
                   tool_identifiers: [],
                   scopes: [],
                   knowledge_base_ids: ["kb-archived"],
+                  knowledge_base_details:
+                    reason === undefined
+                      ? []
+                      : [
+                          {
+                            id: "kb-archived",
+                            code: "mes-code-answers",
+                            display_name: "MES代码知识库",
+                            unavailable_reason: reason,
+                          },
+                        ],
                 },
               ],
             },
@@ -327,8 +355,14 @@ describe("角色授权中心", () => {
         })
       ).not.toHaveAttribute("data-checked")
       expect(screen.getByLabelText("app1 历史知识库授权")).toHaveTextContent(
-        "资源尚未发布、已归档、停用或当前不在可授权范围"
+        label
       )
+      expect(screen.getByLabelText("app1 历史知识库授权")).toHaveTextContent(
+        "ID：kb-archived"
+      )
+      expect(
+        screen.getByLabelText("app1 历史知识库授权")
+      ).not.toHaveTextContent("资源尚未发布、已归档、停用或当前不在可授权范围")
       expect(
         screen.queryByRole("checkbox", { name: /^app1 知识库 .*kb-archived/ })
       ).not.toBeInTheDocument()

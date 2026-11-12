@@ -5,6 +5,18 @@ from app.shared.exceptions import NonRetryableExecutionError
 from app.modules.knowledge.domain.code_operation_errors import CODE_OPERATION_MESSAGES
 
 
+# These resources cannot enter a current catalog or a new source capability.
+# Authentication, storage failures and unknown errors must still propagate.
+UNAVAILABLE_RESOURCE_CODES = frozenset(
+    {
+        "knowledge_resource_unavailable",
+        "knowledge_source_unavailable",
+        "knowledge_source_changed",
+        "knowledge_index_unavailable",
+    }
+)
+
+
 class KnowledgeGovernanceError(NonRetryableExecutionError):
     def __init__(self, code: str) -> None:
         super().__init__(

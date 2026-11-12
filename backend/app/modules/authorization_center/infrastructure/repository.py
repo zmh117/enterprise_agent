@@ -550,6 +550,36 @@ class AuthorizationCenterRepository:  # noqa: PLR0904
             "and v.published_at is not null order by k.id"
         )
 
+    def knowledge_base_grant_details(self, access_id: str) -> list[dict[str, Any]]:
+        # Display metadata is restricted to existing grants, never the assignable catalog.
+        # A base may have several retired resources; prefer its enabled resource,
+        # otherwise the most recently changed non-archived resource.
+        resource_table = knowledge_table(self.database, "retrieval_resource")
+        return self.database.execute(
+            "select g.knowledge_base_id as id, "
+            "coalesce(nullif(trim(r.code),''),k.code,'') as code, "
+            "coalesce(nullif(trim(r.name),''),k.display_name,'') as display_name, "
+            "case when k.id is null then 'missing' "
+            "when k.state='archived' or r.status='archived' then 'archived' "
+            "when r.id is null then 'resource_missing' "
+            "when r.status='disabled' then 'disabled' "
+            "when r.published_revision_id is null then 'unpublished' "
+            "when v.id is null or v.published_at is null then 'publication_invalid' "
+            "else null end as unavailable_reason "
+            "from rbac_role_application_knowledge_base g "
+            f"left join {knowledge_table(self.database, 'knowledge_base')} k "
+            "on k.id=g.knowledge_base_id "
+            f"left join {resource_table} r on r.id=("
+            f"select candidate.id from {resource_table} candidate "
+            "where candidate.knowledge_base_id=k.id "
+            "order by case candidate.status when 'enabled' then 0 "
+            "when 'disabled' then 1 else 2 end, candidate.updated_at desc, candidate.id limit 1) "
+            f"left join {knowledge_table(self.database, 'retrieval_revision')} v "
+            "on v.resource_id=r.id and v.id=r.published_revision_id "
+            "where g.application_access_id=? order by g.knowledge_base_id",
+            (access_id,),
+        )
+
     def application_catalog(self) -> list[dict[str, Any]]:
         applications = self.database.execute(
             """

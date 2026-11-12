@@ -73,6 +73,11 @@ class AuthorizationCenterService:
     def role_detail(self, *, actor_id: str, role_id: str) -> dict[str, Any]:
         self._require_catalog(actor_id, "authorization.read")
         role = self.repository.get_role(role_id)
+        applications = self.repository.list_business_access(role_id)
+        for application in applications:
+            application["knowledge_base_details"] = self.repository.knowledge_base_grant_details(
+                str(application["id"])
+            )
         return {
             "role": role,
             "admin": {
@@ -82,7 +87,7 @@ class AuthorizationCenterService:
             },
             "business": {
                 "revision": role["business_revision"],
-                "applications": self.repository.list_business_access(role_id),
+                "applications": applications,
             },
             "membership": {
                 "revision": role["membership_revision"],

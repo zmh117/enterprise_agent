@@ -11,6 +11,7 @@ from app.modules.agent.infrastructure.runtime_pool_store import RuntimePoolStore
 from app.modules.agent.infrastructure.runtime_protocol import canonical_request_digest
 from app.modules.knowledge.domain.code_answers import code_authorization_hash
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.domain.models import KnowledgeJobAccess
 from app.modules.knowledge.domain.normalization import canonical_json
 from app.modules.knowledge.infrastructure.governance_repository import GovernanceStore
@@ -125,6 +126,48 @@ def test_capability_change_never_expands_running_job(source_grant):
     )
     with pytest.raises(CodeKnowledgeError, match="CODE_SOURCE_CAPABILITY_CHANGED"):
         grant.check_invocation(binding)
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "knowledge_resource_unavailable",
+        "knowledge_source_unavailable",
+        "knowledge_source_changed",
+        "knowledge_index_unavailable",
+    ],
+)
+def test_unavailable_source_is_omitted_but_running_grant_is_rejected(source_grant, error_code):
+    grant, ctx, analysis, _, binding = source_grant
+
+    def unavailable(base_id):
+        raise KnowledgeGovernanceError(error_code)
+
+    grant.resources.resolve = unavailable
+    assert grant.for_job(ctx.job_id)["sources"] == []
+    for action in ("capability", "grant", "heartbeat"):
+        request = {**binding, "action": action}
+        if action != "capability":
+            request["analysis_id"] = analysis["id"]
+        with pytest.raises(CodeKnowledgeError, match="CODE_SOURCE_CAPABILITY_CHANGED"):
+            grant.check_invocation(request)
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    ["knowledge_job_denied", "knowledge_storage_unavailable", "unexpected_resource_error"],
+)
+def test_source_capability_does_not_hide_identity_storage_or_unknown_errors(
+    source_grant, error_code
+):
+    grant, ctx, _, _, _ = source_grant
+
+    def unavailable(base_id):
+        raise KnowledgeGovernanceError(error_code)
+
+    grant.resources.resolve = unavailable
+    with pytest.raises(KnowledgeGovernanceError, match=error_code):
+        grant.for_job(ctx.job_id)
 
 
 @pytest.fixture

@@ -58,6 +58,25 @@ export const roleApplicationAccessSchema = z.object({
   status: z.string(),
   tool_identifiers: z.array(z.string()),
   knowledge_base_ids: z.array(z.string()).default([]),
+  knowledge_base_details: z
+    .array(
+      z.object({
+        id: z.string(),
+        code: z.string(),
+        display_name: z.string(),
+        unavailable_reason: z
+          .enum([
+            "missing",
+            "resource_missing",
+            "archived",
+            "disabled",
+            "unpublished",
+            "publication_invalid",
+          ])
+          .nullable(),
+      })
+    )
+    .default([]),
   scopes: z.array(roleScopeSchema),
 })
 

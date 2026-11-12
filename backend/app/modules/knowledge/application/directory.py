@@ -13,6 +13,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.knowledge.domain.governance import (
     KnowledgeGovernanceError,
+    UNAVAILABLE_RESOURCE_CODES,
     checked_identifier,
     strict_object,
 )
@@ -28,14 +29,6 @@ from app.modules.knowledge.application.retrieval_budget import knowledge_entry
 PAGE_SIZE = 50
 MAX_CURSOR_CHARS = 4096
 CURSOR_TTL_SECONDS = 300
-_UNAVAILABLE = frozenset(
-    {
-        "knowledge_resource_unavailable",
-        "knowledge_source_unavailable",
-        "knowledge_source_changed",
-        "knowledge_index_unavailable",
-    }
-)
 
 
 class KnowledgeDirectory:
@@ -78,7 +71,7 @@ class KnowledgeDirectory:
             try:
                 pin = self.resources.resolve(base_id)
             except KnowledgeGovernanceError as exc:
-                if exc.error_code not in _UNAVAILABLE:
+                if exc.error_code not in UNAVAILABLE_RESOURCE_CODES:
                     raise
                 continue
             base = self.resources.store.get("knowledge_base", base_id)

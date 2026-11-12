@@ -293,7 +293,8 @@ def test_initialize_never_retargets_an_existing_index(setup, field, value):
     assert service.qdrant.collections == before
 
 
-def test_empty_library_has_its_own_initialization_and_publication(setup):
+@pytest.mark.parametrize("historical_state", [None, "disabled", "archived", "unpublished"])
+def test_empty_library_has_its_own_initialization_and_publication(setup, historical_state):
     runtime, source, checkout, _, service, _ = setup
     created = create(service)
     assert created["kind"] == "code" and created["published"] is None
@@ -330,6 +331,19 @@ def test_empty_library_has_its_own_initialization_and_publication(setup):
     ctx = analysis_context(runtime, source, checkout)
     grant = runtime.code_source_grant
     assert grant is not None
+    base_ids = (created["knowledge_base_id"],)
+    if historical_state:
+        if historical_state == "unpublished":
+            runtime.database.execute(
+                'UPDATE "knowledge.retrieval_resource" SET published_revision_id=null '
+                "WHERE id='code-resource'"
+            )
+        else:
+            runtime.database.execute(
+                'UPDATE "knowledge.retrieval_resource" SET status=? WHERE id=?',
+                (historical_state, "code-resource"),
+            )
+        base_ids += ("code-kb",)
     grant.gate = SimpleNamespace(
         resolve=lambda **kw: KnowledgeJobAccess(
             ctx.job_id,
@@ -338,7 +352,7 @@ def test_empty_library_has_its_own_initialization_and_publication(setup):
             "pub",
             "a" * 64,
             "b" * 64,
-            (created["knowledge_base_id"],),
+            base_ids,
             "c" * 64,
         ),
         snapshots=SimpleNamespace(
@@ -348,6 +362,9 @@ def test_empty_library_has_its_own_initialization_and_publication(setup):
         ),
     )
     capability = grant.for_job(ctx.job_id)
+    assert [item["knowledge_base_id"] for item in capability["sources"]] == [
+        created["knowledge_base_id"]
+    ]
     assert capability["sources"][0]["resource_fingerprint"] == pin.fingerprint
     assert capability["sources"][0]["checkout_id"] == checkout["id"]
 

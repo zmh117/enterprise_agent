@@ -432,6 +432,16 @@ def test_inactive_grant_can_be_retained_or_revoked_but_not_extended_or_copied(fi
             'update "knowledge.retrieval_resource" set status=? where knowledge_base_id=?',
             (status, "kb-ones"),
         )
+    detail = c.authorization_center_service.role_detail(actor_id=ADMIN_ID, role_id=role["id"])
+    assert detail["business"]["applications"][0]["knowledge_base_details"] == [
+        {
+            "id": "kb-ones",
+            "code": "resource-kb-ones",
+            "display_name": "合成知识资源 kb-ones",
+            "unavailable_reason": status,
+        }
+    ]
+    assert detail["business"]["applications"][1]["knowledge_base_details"] == []
     result = save(c, role, [access(apps[0], ["kb-ones", "kb-ops"])])
     assert result["applications"][0]["knowledge_base_ids"] == ["kb-ones", "kb-ops"]
     before = c.authorization_center_repository.list_business_access(role["id"])
@@ -453,6 +463,58 @@ def test_inactive_grant_can_be_retained_or_revoked_but_not_extended_or_copied(fi
         save(c, role, [access(apps[0], ["kb-ones", "kb-ops"])], revision=4)
 
 
+@pytest.mark.parametrize("state", ["published", "publication_invalid", "archived"])
+def test_grant_details_use_current_resource_and_distinguish_publication_and_base_state(
+    fixture, state
+):
+    c, _, _, role = fixture
+    # Historical resources must neither duplicate the grant nor override the current name/state.
+    add_resource(c, "kb-ones", key="old-resource", name="旧名称", status="archived")
+    if state == "publication_invalid":
+        c.database.execute(
+            'update "knowledge.retrieval_revision" set published_by=null,published_at=null '
+            "where resource_id=?",
+            ("resource-kb-ones",),
+        )
+    elif state == "archived":
+        c.database.execute(
+            'update "knowledge.knowledge_base" set state=? where id=?', (state, "kb-ones")
+        )
+    detail = c.authorization_center_service.role_detail(actor_id=ADMIN_ID, role_id=role["id"])
+    assert detail["business"]["applications"][0]["knowledge_base_details"] == [
+        {
+            "id": "kb-ones",
+            "code": "resource-kb-ones",
+            "display_name": "合成知识资源 kb-ones",
+            "unavailable_reason": None if state == "published" else state,
+        }
+    ]
+
+
+def test_grant_details_fall_back_to_base_name_when_resource_is_missing(fixture):
+    c, _, _, role = fixture
+    add_base(c, "kb-no-resource")
+    access_id = c.authorization_center_repository.list_business_access(role["id"])[0]["id"]
+    c.database.execute(
+        "insert into rbac_role_application_knowledge_base "
+        "(application_access_id,knowledge_base_id,created_at) values (?,?,?)",
+        (access_id, "kb-no-resource", now()),
+    )
+    detail = c.authorization_center_service.role_detail(actor_id=ADMIN_ID, role_id=role["id"])
+    assert detail["business"]["applications"][0]["knowledge_base_details"][0] == {
+        "id": "kb-no-resource",
+        "code": "kb-no-resource",
+        "display_name": "合成知识库 kb-no-resource",
+        "unavailable_reason": "resource_missing",
+    }
+    assert all(
+        "kb-no-resource" not in {base["id"] for base in app["knowledge_bases"]}
+        for app in c.authorization_center_service.assignable_catalog(actor_id=ADMIN_ID)[
+            "applications"
+        ]
+    )
+
+
 @pytest.mark.parametrize(
     "extra",
     [
@@ -464,6 +526,7 @@ def test_inactive_grant_can_be_retained_or_revoked_but_not_extended_or_copied(fi
         {"knowledge_base_ids": [3]},
         {"knowledge_base_ids": [{"id": "kb-ones"}]},
         {"knowledge_current_all": "true"},
+        {"knowledge_base_details": [{"id": "kb-ones", "unavailable_reason": None}]},
         {"knowledge_base_ids": ["x" * 129]},
     ],
 )

@@ -20,6 +20,10 @@ from app.modules.knowledge.domain.code_contracts import (
     CODE_SOURCE_GRANT_PATH as CODE_SOURCE_GRANT_PATH,
 )
 from app.modules.knowledge.domain.normalization import digest
+from app.modules.knowledge.domain.governance import (
+    KnowledgeGovernanceError,
+    UNAVAILABLE_RESOURCE_CODES,
+)
 from app.modules.knowledge.infrastructure.code_answer_store import CodeAnswerStore
 from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.knowledge.infrastructure.job_access import KnowledgeJobGate
@@ -51,11 +55,19 @@ class CodeSourceGrant:
             raise CodeKnowledgeError("CODE_SOURCE_CAPABILITY_DENIED")
         sources = []
         for base_id in sorted(access.knowledge_base_ids):
-            base = self.resources.store.get("knowledge_base", base_id)
-            if base.get("kind") != "code":
+            try:
+                base = self.resources.store.get("knowledge_base", base_id)
+                if base.get("kind") != "code":
+                    continue
+                pin = self.resources.resolve(base_id)
+                config = self.resources.store.code_configuration(pin.revision_id)
+            except KnowledgeGovernanceError as exc:
+                if exc.error_code not in UNAVAILABLE_RESOURCE_CODES:
+                    raise
+                # Retained historical grants must not block other available libraries.
+                # Omission grants no source access; an in-flight capability change is
+                # still rejected by _invocation before reading or renewing a lease.
                 continue
-            pin = self.resources.resolve(base_id)
-            config = self.resources.store.code_configuration(pin.revision_id)
             sources.append(
                 dict(
                     knowledge_base_id=base_id,

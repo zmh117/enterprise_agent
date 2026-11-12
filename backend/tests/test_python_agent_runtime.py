@@ -884,6 +884,71 @@ def test_runtime_deadline_commits_protocol_failure_and_replays_without_execution
     assert replacement.requests == []
 
 
+@pytest.mark.parametrize("stop_kind", ["timeout", "cancel"])
+def test_terminal_stop_keeps_native_tool_events_in_durable_replay(tmp_path, stop_kind):
+    database = _database(tmp_path)
+    request = _current_request()
+    native_events = normalize_tool_events(
+        [
+            {
+                "tool_call_id": "read-1",
+                "tool_name": "Read",
+                "status": "STARTED",
+                "response_summary": {"code_source_body": "omitted"},
+            },
+            {
+                "tool_call_id": "read-1",
+                "tool_name": "Read",
+                "status": "SUCCEEDED",
+                "response_summary": {"code_source_body": "omitted"},
+            },
+            {
+                "tool_call_id": "grep-2",
+                "tool_name": "Grep",
+                "status": "STARTED",
+                "response_summary": {"code_source_body": "omitted"},
+            },
+        ],
+        request,
+    )
+
+    class StoppedExecutor(FakePythonExecutor):
+        def execute(self, request, *args, **kwargs):
+            outcome = super().execute(request, *args, **kwargs)
+            field = "execution_deadline_at" if stop_kind == "timeout" else "cancel_requested_at"
+            database.execute(
+                f"UPDATE agent_runtime_invocation SET {field}=? WHERE invocation_id=?",
+                (
+                    timestamp(database_now(database) - timedelta(seconds=1)),
+                    request["invocation_id"],
+                ),
+            )
+            return replace(
+                outcome,
+                status="CANCELLED",
+                final_answer="",
+                tool_events=native_events,
+                failure={
+                    "code": "runtime_cancelled",
+                    "retry_class": "NEVER",
+                    "safe_message": "执行已取消",
+                },
+            )
+
+    executor = StoppedExecutor()
+    ledger = PythonTerminalLedger(database)
+    registry = PythonInvocationRegistry(executor, ledger)
+    _prepare(database, request)
+    events = list(registry.acquire(request).stream())
+    assert [e["payload"] for e in events if e["event_type"] == "tool_event"] == list(native_events)
+    assert events[-1]["payload"]["failure"]["code"] == (
+        "runtime_timeout" if stop_kind == "timeout" else "runtime_cancelled"
+    )
+    replacement = FakePythonExecutor()
+    replay = PythonInvocationRegistry(replacement, PythonTerminalLedger(database)).acquire(request)
+    assert list(replay.stream()) == events and replacement.requests == []
+
+
 @pytest.mark.parametrize("version", ["1.4", "1.5"])
 def test_runtime_rejects_old_prompt_before_slot_admission_or_executor(
     tmp_path: Path,
@@ -3528,6 +3593,96 @@ def test_python_runtime_local_wall_clock_timeout_is_structured() -> None:
     assert captured.value.tool_events == []
 
 
+@pytest.mark.parametrize("stop_kind", ["cancel", "timeout"])
+def test_code_runtime_stop_preserves_completed_failed_and_pending_native_tools(stop_kind):
+    cancelled = threading.Event()
+
+    async def query(**_kwargs):
+        for tool, tool_id in (
+            ("Read", "read-ok"),
+            ("Grep", "grep-failed"),
+            ("Glob", "glob-pending"),
+        ):
+            yield {
+                "type": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": tool,
+                        "input": {"path": "source/SYNTHETIC_PRIVATE.cpp"},
+                    }
+                ],
+            }
+            if tool == "Glob":
+                break
+            yield {
+                "type": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "is_error": tool == "Grep",
+                        "content": "SYNTHETIC_PRIVATE_BODY",
+                    }
+                ],
+            }
+        if stop_kind == "cancel":
+            cancelled.set()
+        await asyncio.Event().wait()
+
+    client = ClaudeSdkClient(
+        model="safe-model",
+        limits=build_settings().execution,
+        api_key="synthetic-model-key",
+        cancellation_event=cancelled,
+        sdk_loader=lambda: ClaudeSdk(
+            query=query,
+            options=lambda **kwargs: kwargs,
+            tool=cast(Any, None),
+            create_sdk_mcp_server=cast(Any, None),
+            tool_annotations=None,
+        ),
+    )
+    context = replace(
+        _tool_budget_test_context(100),
+        model_runtime_binding=None,
+        allowed_tools=[],
+        mcp_bindings=(),
+        effective_tool_names=(),
+        timeout_seconds=1,
+        retrieved_context={"code_source": {"contract": "code-source-capability/v3"}},
+    )
+    with pytest.raises((NonRetryableExecutionError, ExecutionTimeout)) as captured:
+        client.run(
+            AgentRunRequest(
+                job_id="job-audit-stop",
+                user_id="user-audit-stop",
+                project_code="project-1",
+                context=context,
+            )
+        )
+    assert captured.value.error_code == (
+        "runtime_cancelled" if stop_kind == "cancel" else "runtime_timeout"
+    )
+    assert [(e["tool_name"], e["status"]) for e in captured.value.tool_events] == [
+        ("Read", "STARTED"),
+        ("Read", "SUCCEEDED"),
+        ("Grep", "STARTED"),
+        ("Grep", "FAILED"),
+        ("Glob", "STARTED"),
+    ]
+    audit = client.finalize_run_audit(status="FAILED", error=captured.value)
+    assert [(e["tool_name"], e["status"]) for e in audit["tool_executions"]] == [
+        ("Read", "SUCCEEDED"),
+        ("Grep", "FAILED"),
+        ("Glob", "STARTED"),
+    ]
+    assert audit["summary"]["tool_call_count"] == 3
+    assert audit["sdk_messages"] == audit["api_requests"] == audit["api_responses"] == []
+    assert "SYNTHETIC_PRIVATE" not in json.dumps([captured.value.tool_events, audit])
+
+
 def test_python_runtime_provider_timeout_remains_retryable() -> None:
     async def query(**_kwargs: Any) -> Any:
         raise asyncio.TimeoutError("provider request timed out")
@@ -3581,6 +3736,7 @@ def test_python_runtime_provider_timeout_remains_retryable() -> None:
         (DiagnosticLoopExhausted, "max_turns_exhausted", "NEVER"),
         (ExecutionPolicyExceeded, "execution_policy_max_tool_calls_exhausted", "NEVER"),
         (ExecutionTimeout, "runtime_timeout", "NEVER"),
+        (NonRetryableExecutionError, "runtime_cancelled", "NEVER"),
         (NonRetryableExecutionError, "runtime_model_authentication", "CONFIGURATION"),
         (NonRetryableExecutionError, "runtime_model_permission_denied", "CONFIGURATION"),
     ],
@@ -3629,7 +3785,7 @@ def test_python_runtime_projects_non_retryable_failures(
 
     outcome = executor.execute(_current_request(), threading.Event())
 
-    assert outcome.status == "FAILED"
+    assert outcome.status == ("CANCELLED" if error_code == "runtime_cancelled" else "FAILED")
     assert outcome.failure == {
         "code": error_code,
         "retry_class": retry_class,
@@ -3639,6 +3795,41 @@ def test_python_runtime_projects_non_retryable_failures(
         ("Read", "STARTED")
     ]
     assert outcome.runtime_events[0]["event_type"] == "model_call"
+    assert outcome.tool_contract_observation == {"status": "MATCH"}
+
+
+def test_runtime_cancel_after_sdk_result_preserves_tool_events(monkeypatch):
+    cancelled = threading.Event()
+
+    class CompletedClient:
+        last_runtime_events = [{"event_type": "model_call", "payload": {"status": "SUCCEEDED"}}]
+        last_accounting = {"status": "PARTIAL"}
+        last_tool_contract_observation = {"status": "MATCH"}
+
+        def __init__(self, **kwargs):
+            pass
+
+        def run(self, request):
+            cancelled.set()
+            return AgentRunResult(
+                final_answer="Must not deliver this late answer",
+                tool_events=[
+                    {"tool_call_id": "read-done", "tool_name": "Read", "status": "SUCCEEDED"}
+                ],
+            )
+
+    monkeypatch.setattr("app.python_runtime.executor.FixedMcpClaudeSdkClient", CompletedClient)
+    executor = PythonRuntimeExecutor(
+        cast(PythonModelBindingResolver, FakePythonBindingResolver()),
+        limits=build_settings().execution,
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        sdk_version="test-sdk",
+        cli_version="test-cli",
+    )
+    outcome = executor.execute(_current_request(), cancelled)
+    assert outcome.status == "CANCELLED" and outcome.final_answer == ""
+    assert [(e["tool_name"], e["status"]) for e in outcome.tool_events] == [("Read", "SUCCEEDED")]
+    assert outcome.runtime_events and outcome.accounting == {"status": "PARTIAL"}
     assert outcome.tool_contract_observation == {"status": "MATCH"}
 
 

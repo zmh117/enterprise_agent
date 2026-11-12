@@ -841,6 +841,25 @@ type ApplicationSelection = {
   knowledgeBaseIds: Set<string>
 }
 
+type KnowledgeBaseGrantDetail =
+  RoleDetail["business"]["applications"][number]["knowledge_base_details"][number]
+
+function historicalKnowledgeBaseLabel(base?: KnowledgeBaseGrantDetail) {
+  if (!base) return "知识库信息暂不可用"
+  const name = base.display_name.trim() || base.code || "知识库"
+  const reasons = {
+    missing: "记录已不存在",
+    resource_missing: "尚未配置检索资源",
+    archived: "已归档",
+    disabled: "已停用",
+    unpublished: "尚未发布",
+    publication_invalid: "的发布记录无效",
+  }
+  return base.unavailable_reason
+    ? `${name}${reasons[base.unavailable_reason]}`
+    : `${name}不在你的可授权范围内`
+}
+
 function BusinessAccessPanel({ detail }: { detail: RoleDetail }) {
   const role = detail.role
   const catalog = useAssignableCatalog()
@@ -908,6 +927,11 @@ function BusinessAccessPanel({ detail }: { detail: RoleDetail }) {
           application={application}
           topology={catalog.data?.topology ?? []}
           selected={selection.get(application.id)}
+          knowledgeBaseDetails={
+            detail.business.applications.find(
+              (access) => access.application_id === application.id
+            )?.knowledge_base_details ?? []
+          }
           onChange={(nextValue) => {
             const next = new Map(selection)
             if (nextValue) next.set(application.id, nextValue)
@@ -938,11 +962,13 @@ function BusinessApplicationCard({
   application,
   topology,
   selected,
+  knowledgeBaseDetails,
   onChange,
 }: {
   application: CatalogApplication
   topology: CatalogEnvironment[]
   selected?: ApplicationSelection
+  knowledgeBaseDetails: KnowledgeBaseGrantDetail[]
   onChange: (selection?: ApplicationSelection) => void
 }) {
   const enabled = Boolean(selected)
@@ -1119,7 +1145,7 @@ function BusinessApplicationCard({
                 aria-label={`${application.name} 历史知识库授权`}
               >
                 <p className="text-xs text-muted-foreground">
-                  以下为已有但当前不可新增的授权记录，不属于可选目录。保存其他配置会保留这些记录；可取消勾选并保存以撤销。
+                  以下知识库已有授权，但当前不能新增授权。保持勾选会保留原授权；取消勾选并保存会撤销本角色的授权，不会删除知识库。
                 </p>
                 {unavailableKnowledgeBaseIds.map((id) => (
                   <label
@@ -1135,8 +1161,13 @@ function BusinessApplicationCard({
                         update({ ...selected, knowledgeBaseIds: ids })
                       }}
                     />
-                    <span className="break-all">
-                      {id}：历史授权，资源尚未发布、已归档、停用或当前不在可授权范围。
+                    <span className="min-w-0 break-words">
+                      {historicalKnowledgeBaseLabel(
+                        knowledgeBaseDetails.find((base) => base.id === id)
+                      )}
+                      <span className="mt-1 block font-mono text-xs break-all text-muted-foreground">
+                        ID：{id}
+                      </span>
                     </span>
                   </label>
                 ))}
