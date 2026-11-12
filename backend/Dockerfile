@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-FROM docker:28.5.2-cli AS knowledge-docker-cli
+# Includes Compose 5.1.3: nested required fallbacks must be evaluated lazily.
+FROM docker:29.4.1-cli AS knowledge-docker-cli
 
 FROM python:3.12-slim AS code-storage-init
 COPY backend/docker/initialize_code_storage.py /usr/local/bin/initialize-code-storage.py

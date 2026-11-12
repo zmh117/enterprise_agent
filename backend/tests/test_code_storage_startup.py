@@ -380,3 +380,77 @@ def test_real_compose_named_volume_initializer_readers_and_recreation(tmp_path):
     finally:
         # Disposable project only; no production mounts or volumes are touched.
         assert compose("down", "--volumes", "--timeout", "5").returncode == 0
+
+
+@pytest.mark.parametrize(
+    "values,expected",
+    [
+        ({"HOME": "/home/deploy"}, "/home/deploy/.config/enterprise-agent"),
+        ({"HOME": "/Users/deploy"}, "/Users/deploy/.config/enterprise-agent"),
+        ({"USERPROFILE": "C:/Users/deploy"}, "C:/Users/deploy/.config/enterprise-agent"),
+        ({"PLATFORM_SECRETS_DIR": "/synthetic/secrets"}, "/synthetic/secrets"),
+        ({}, None),
+    ],
+)
+def test_controller_bundled_compose_secret_fallbacks(values, expected):
+    """Exercise the shipped Linux CLI, not the developer's different host plugin."""
+    image = os.environ.get("CODE_STORAGE_COMPOSE_IMAGE")
+    if not image:
+        pytest.skip("explicit controller-image interpolation acceptance required")
+    for explicit in ({}, {"APP_CONFIG_MASTER_KEY_FILE": "/synthetic/explicit-master"}):
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--entrypoint",
+                "/usr/bin/env",
+                "--mount",
+                f"type=bind,source={COMPOSE},target=/compose.yml,readonly",
+                image,
+                "-i",
+                "PATH=/usr/local/bin:/usr/bin:/bin",
+                *(f"{key}={value}" for key, value in {**values, **explicit}.items()),
+                "docker",
+                "compose",
+                "--env-file",
+                "/dev/null",
+                "-p",
+                "controller-path-test",
+                "-f",
+                "/compose.yml",
+                "config",
+                "--format",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if expected is None:
+            assert result.returncode != 0
+            assert "Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE" in result.stderr
+            continue
+        assert result.returncode == 0, result.stderr
+        assert '"HOME" variable is not set' not in result.stderr
+        config = json.loads(result.stdout)
+        assert config["secrets"]["code_runtime_bootstrap_token"]["file"].endswith(
+            expected + "/code-runtime-bootstrap-token"
+        )
+        master = config["secrets"]["app_config_master_key"]["file"]
+        if explicit:
+            assert master == "/synthetic/explicit-master"
+        else:
+            assert master.endswith(expected + "/app-config-master-key")
+        controller = config["services"]["knowledge-ops-controller"]
+        assert (
+            next(
+                m["source"]
+                for m in controller["volumes"]
+                if m["target"] == "/deployment-secrets/app-config-master-key"
+            )
+            == master
+        )

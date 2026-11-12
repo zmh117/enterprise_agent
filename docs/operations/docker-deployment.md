@@ -259,3 +259,29 @@ Rocky Linux 开启 SELinux 时另外核验目录和 socket 标签；不自动关
 | `knowledge_ops_mount_invalid` | 重新创建匹配版本控制器，核对固定挂载、项目标签和 Docker socket |
 | `docker_command_failed` | 核对 Docker context、权限、服务状态和版本；工具不回显可能含凭据的 stderr |
 | `services_not_ready:*` | 等待初始化或处理指定服务状态，再运行 `accept` |
+
+### 运维控制器的 Compose 版本兼容
+
+`knowledge-ops-controller` 自带 Docker/Compose CLI，版本独立于宿主 Docker Desktop。
+当前从固定 `docker:29.4.1-cli` 镜像复制工具，包含 Compose 5.1.3。
+此前镜像内 Compose 2.40.3 在解析本项目嵌套必填备用路径时，即使已提供 `HOME`
+或显式文件路径，仍会要求 `USERPROFILE`，导致 `compose ps` 失败、控制器 unhealthy，
+页面显示 `knowledge_ops_status_unavailable`；这不代表检索、向量库或 SVN 服务已经停止。
+使用最小合成配置及本项目主 Compose 均已复现，5.1.3 路径矩阵通过。
+[官方插值语义](https://docs.docker.com/reference/compose-file/interpolation/)允许嵌套默认值，
+无需给 Linux 容器伪造 Windows 用户目录或改动真实凭据。
+
+确认没有进行中的网页构建/启停任务后，可只更新控制器：
+
+```sh
+docker compose build knowledge-ops-controller
+docker compose up -d --no-deps knowledge-ops-controller
+docker compose exec -T knowledge-ops-controller docker compose version --short
+docker compose exec -T knowledge-ops-controller python -m app.cli.knowledge_ops health --role controller
+```
+
+预期 Compose 版本为 `5.1.3`，健康命令退出码为 0。刷新页面可重新获得服务状态。
+不要停止整套知识服务或删除数据卷。测试不能只使用宿主较新的 Compose：
+`CODE_STORAGE_COMPOSE_IMAGE=enterprise_agent-knowledge-ops-controller .venv/bin/pytest -q backend/tests/test_code_storage_startup.py -k controller_bundled_compose_secret_fallbacks`
+会在镜像内以无网络、无凭据、只读主配置验证 Linux/macOS/Windows 路径来源、显式覆盖和缺失来源拒绝；
+它不代表三种宿主的完整生产验收。
