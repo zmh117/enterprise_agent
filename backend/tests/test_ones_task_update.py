@@ -123,7 +123,7 @@ _EXISTING_ONES_SCHEMA_HASHES = {
     "ones_list_test_plans": "d746974fa9afd5e951f76f9af38954b0ad7f436f2120dc974da65e5ee39f856f",
     "ones_list_testcase_libraries": "d746974fa9afd5e951f76f9af38954b0ad7f436f2120dc974da65e5ee39f856f",
     "ones_list_testcase_modules": "18efbb53a0ee38e85a4c07941170bb67923e4dbb46f198c6a4b8c6a2c724bf56",
-    "ones_list_work_item_messages": "d58ffbb7041cdf58846ace1c2ed944af82ec3d115abb36972cff2db62d898dfb",
+    "ones_list_work_item_messages": "9e6564274e6ca35e58d30fdaca2e9816e41a9e6cbda1e4432df1081e73c07b7c",
     "ones_query_test_cases": "f513b54c17dd412d48e7e0f48fb15b6aa3aa7fb9b37ed96bee2dbda71989fdd2",
     "ones_query_work_items": "13fed3cbc1b6f6476486865000a63cf8d48e6dfb18285c7a8906610a7f55b3d0",
     "ones_query_work_items_with_custom_options": "9bcd66f2686e65cfd0d98cbf2be0ebb9d659c33184e004cd39b046aa6e0fda97",

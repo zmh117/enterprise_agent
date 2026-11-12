@@ -262,7 +262,18 @@ class BaseOnesQueryService(ABC):
     @staticmethod
     def response_summary(output: dict[str, Any]) -> dict[str, Any]:
         summary: dict[str, Any] = {"result_keys": sorted(output)}
-        for key in ("total", "returned", "truncated"):
+        for key in (
+            "total",
+            "returned",
+            "truncated",
+            "messages_complete",
+            "complete",
+            "text_truncated_count",
+            "incomplete_reasons",
+            "page_count",
+            "description_truncated",
+            "related_items_truncated",
+        ):
             if key in output:
                 summary[key] = output[key]
         return summary

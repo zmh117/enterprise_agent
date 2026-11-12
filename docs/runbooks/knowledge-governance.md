@@ -10,6 +10,12 @@ Runtime 为知识 MCP 显式设置逐服务 `timeout`，避免 SDK 默认 60 秒
 
 ## 数据库和部署边界
 
+知识库故障命中后的 ONES 核验：Agent 对用于结论的相关工单读取 `ones_get_work_item_detail` 和 `ones_list_work_item_messages`，再阅读消息结果文件。消息工具仅接受 `work_item_uuid`，内部依据 [ONES 官方消息协议](https://docs.ones.cn/project/open-api-doc/project/message.html) 使用 count/max 自动读取历史页，最多 1000 条、50 页、90 秒及 8 MiB 规范化结果；短页不表示结束，以 has_next 为准。
+
+消息摘要中的 `messages_complete` 表示是否读到末页，`text_truncated_count` 表示被截断的正文条数，`complete` 同时考虑两者；`total_known=false` 时 total 只是已收集数。即便 complete=true，也不能证明模型已读完文件或附件。详情的 description_truncated/related_items_truncated 分别标记描述及关联摘要截断。回复应说明已核验工单、评论时间范围及未读部分；权限/服务失败时保留历史线索并说明最新来源未核验。
+
+该变更使用 Prompt v19 并改变消息工具输入合同，无数据库迁移；需要同步构建 API、Worker/Dispatcher、所有使用冻结工具合同的 MCP 和两个 Runtime，更新 Skill 后发布 Agent 与对应应用，再检查 Prompt MATCH。更新容器不会替换已有 Job 的冻结合同。offline 仅表示知识库可离线检索，后续 ONES 核验仍需要本人身份与工具授权。
+
 2026-09-20 新增内容连接拆分：平台保留逻辑 KB、授权/发布、Job 和审计；内容 PostgreSQL 的 `knowledge` schema 与 Qdrant 可在 Web 配置。migration 140 增加仅含连接配置/凭据引用的字段并解除平台本地索引外键；旧发布原 hash 和数据保持不变。独立内容库不要求平台身份/Job/迁移账本，也不会自动建立或搬迁。部署及账号要求见[内容存储配置](../../knowledge/README.md#web-配置独立内容存储)。本机已部署平台侧、Web 和在线 Knowledge MCP；真实外部内容库接入仍待验收。用户确认内容账号可以具备管理/写权限，现有外部读取连接仍强制只读事务；配套代码已部署，不代表新增内容编辑能力。
 
 本机已于同日定向更新 API、ONES MCP 和 Web 至 `knowledge-content-admin-20260920`，账号策略已生效；当时 schema 为 140，资源 revision=6 与发布指针未改。刷新 Web 后可使用管理员用户名，但本机未启用 PostgreSQL TLS 时仍须显式选择“不加密（仅受信内网）”。未代用户测试所选真实凭据、保存草稿或发布。
@@ -88,7 +94,7 @@ Web 入口为“工具资源 → 知识库”，与原数据库/Redis/Loki 页�
 
 编码精确匹配且仍需当前应用、角色及知识库授权；未知或未授权编码统一拒绝，不回退其他库。目录 `code` 与资源页面一致。未明确编码时再通过目录选择，名称歧义须澄清。代码知识库仍必须提供环境和 SVN 数字版本，ONES 资料查询不要求这些参数。
 
-此次工具合同为 `knowledge-search-contract/v8-resource-code`，Prompt v18。部署后需按正常流程发布新 Agent，并更新业务应用的 Agent 引用、发布和激活；保留原工具选择、角色授权和执行策略。无需重新发布知识资源或重建索引。
+资源编码工具合同为 `knowledge-search-contract/v8-resource-code`；当前 Prompt v19 已同时包含后续 ONES 详情与评论核验流程。部署后需按正常流程发布新 Agent，并更新业务应用的 Agent 引用、发布和激活；保留原工具选择、角色授权和执行策略。无需重新发布知识资源或重建索引。
 
 目录只返回冻结与当前知识库授权交集内、已发布且本地数据/索引兼容的 KB；不读取本人 ONES 绑定。固定每页 50 项，按稳定 KB ID 续页。cursor 绑定 Job、用户、应用、发布、快照、授权及可见资源，300 秒有效。进程重启或篡改导致 invalid；平台授权或资源变化导致 stale，均须从首页重查。
 

@@ -360,7 +360,6 @@ def test_fixed_rest_operations_execute_against_the_mock_contract() -> None:
     messages = WORK_ITEM_MESSAGES_OPERATION.execute(
         http,  # type: ignore[arg-type]
         work_item_uuid="MOCK-ONES-TASK-900102",
-        limit=10,
         **common,
     )
     assert messages.output["messages"][0]["text"] == "Synthetic timeline message."
@@ -540,6 +539,7 @@ def test_new_tool_validation_and_timeline_projection_fail_closed() -> None:
             "type": "comment",
             "sent_at": "2026-07-22T16:00:00+00:00",
             "text": "See [link omitted] now",
+            "text_truncated": False,
         }
     ]
     _assert_contract("ones_list_work_item_messages", timeline)
@@ -629,7 +629,9 @@ def test_work_item_timeline_resolves_actor_and_worklog_owner_names() -> None:
         def __init__(self) -> None:
             self.user_requests: list[list[str]] = []
 
-        def get_json(self, _path: str, _body: object, *, headers: object) -> dict[str, object]:
+        def get_json(
+            self, _path: str, _body: object, *, headers: object, query: object = None
+        ) -> dict[str, object]:
             del headers
             return {
                 "messages": [
@@ -650,6 +652,7 @@ def test_work_item_timeline_resolves_actor_and_worklog_owner_names() -> None:
                     }
                 ],
                 "count": 1,
+                "has_next": False,
             }
 
         def post_json(
@@ -669,7 +672,7 @@ def test_work_item_timeline_resolves_actor_and_worklog_owner_names() -> None:
     )
     result = service.call_provider(
         principal,  # type: ignore[arg-type]
-        {"work_item_uuid": "TASK-1", "limit": 100},
+        {"work_item_uuid": "TASK-1"},
     )
     message = result.output["messages"][0]
     assert http.user_requests == [["USER-1"]]
@@ -690,7 +693,7 @@ def test_work_item_timeline_resolves_actor_and_worklog_owner_names() -> None:
     unavailable.http = UnavailableUserHttp()  # type: ignore[attr-defined]
     fallback = unavailable.call_provider(
         principal,  # type: ignore[arg-type]
-        {"work_item_uuid": "TASK-1", "limit": 100},
+        {"work_item_uuid": "TASK-1"},
     )
     assert fallback.output["messages"][0]["actor_uuid"] == "USER-1"
     assert "actor" not in fallback.output["messages"][0]

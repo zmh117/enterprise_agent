@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 import re
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Final
 
 from app.shared.secret_redaction import redact_sensitive_text
-from services.ones_mcp_server.errors import invalid_provider_field
+from app.shared.ones_io_budget import ones_io_budget, ones_io_timeout
+from services.ones_mcp_server.errors import invalid_provider_field, invalid_provider_response
 from services.ones_mcp_server.provider.graphql.operations.normalization import (
     bounded_int,
     bounded_string,
@@ -26,6 +28,11 @@ _URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>\"']+", re.IGNORECASE)
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _SCALED_INTEGER = re.compile(r"[0-9]{1,18}\Z")
 _HOURS_SCALE = 100_000
+MESSAGE_PAGE_SIZE = 100
+MAX_MESSAGES = 1000
+MAX_MESSAGE_PAGES = 50
+MAX_MESSAGE_BYTES = 8 * 1024 * 1024
+MAX_MESSAGE_TEXT = 16_000
 
 
 class _TimelineText(HTMLParser):
@@ -51,16 +58,21 @@ class _TimelineText(HTMLParser):
             self.parts.append(data)
 
 
-def _safe_timeline_text(value: object, *, maximum: int = 500) -> str:
+def _safe_timeline_text(
+    value: object, *, maximum: int = 500, truncation: list[bool] | None = None
+) -> str:
     if not isinstance(value, str):
         return ""
     parser = _TimelineText()
-    parser.feed(value[:10_000])
+    parser.feed(value[:100_000])
     parser.close()
     plain = unescape("".join(parser.parts))
     plain = _URL.sub("[link omitted]", plain)
     plain = redact_sensitive_text(plain, parse_json=False)
-    return " ".join(plain.split())[:maximum]
+    plain = " ".join(plain.split())
+    if truncation is not None and (len(value) > 100_000 or len(plain) > maximum):
+        truncation.append(True)
+    return plain[:maximum]
 
 
 def _safe_timeline_id(value: object) -> str:
@@ -153,21 +165,21 @@ def _system_timeline_text(raw: dict[str, Any]) -> str:
     return f"{verb}工作项"
 
 
-def _timeline_message_text(raw: dict[str, Any], *, path: str) -> str:
+def _timeline_message_text(raw: dict[str, Any], *, path: str, truncation: list[bool]) -> str:
     source = raw.get("text")
     if source is not None and not isinstance(source, str):
         raise invalid_provider_field(f"{path}.text", "字符串或 null", source)
     if raw.get("type") == "system":
         summary = _system_timeline_text(raw)
-        original_text = _safe_timeline_text(source, maximum=500)
+        original_text = _safe_timeline_text(source, maximum=MAX_MESSAGE_TEXT, truncation=truncation)
         if original_text and original_text not in summary:
             summary = f"{summary}；{original_text}"
-        return _safe_timeline_text(summary, maximum=2000)
-    text = _safe_timeline_text(source, maximum=2000)
+        return _safe_timeline_text(summary, maximum=MAX_MESSAGE_TEXT, truncation=truncation)
+    text = _safe_timeline_text(source, maximum=MAX_MESSAGE_TEXT, truncation=truncation)
     if text:
         return text
     rich_text = raw.get("rich_text")
-    text = _safe_timeline_text(rich_text, maximum=2000)
+    text = _safe_timeline_text(rich_text, maximum=MAX_MESSAGE_TEXT, truncation=truncation)
     if text:
         return text
     resource = raw.get("resource")
@@ -193,12 +205,21 @@ def enrich_timeline_user_names(output: dict[str, Any], names_by_uuid: dict[str, 
         owner_name = names.get(owner_uuid)
         if owner_name:
             message["worklog_owner"] = {"uuid": owner_uuid, "name": owner_name}
+            truncation: list[bool] = []
             message["text"] = _safe_timeline_text(
                 message["text"].replace(
                     f"登记人 UUID {owner_uuid}", f"登记人 {owner_name}（{owner_uuid}）"
                 ),
-                maximum=2000,
+                maximum=MAX_MESSAGE_TEXT,
+                truncation=truncation,
             )
+            message["text_truncated"] = message["text_truncated"] or bool(truncation)
+    output["text_truncated_count"] = sum(bool(row["text_truncated"]) for row in output["messages"])
+    if output["text_truncated_count"]:
+        if "text_limit" not in output["incomplete_reasons"]:
+            output["incomplete_reasons"].append("text_limit")
+        output["truncated"] = True
+        output["complete"] = False
 
 
 class ProjectSprintsOperation:
@@ -305,6 +326,30 @@ class ProjectSprintsOperation:
         )
 
 
+def _timeline_result(
+    messages: list[dict[str, Any]], *, more: bool, page_count: int, reasons: list[str]
+) -> dict[str, Any]:
+    text_truncated_count = sum(bool(item["text_truncated"]) for item in messages)
+    incomplete = [*reasons, *(["text_limit"] if text_truncated_count else [])]
+    return {
+        "messages": messages,
+        "total": len(messages),
+        "total_known": not more,
+        "returned": len(messages),
+        "cumulative_returned": len(messages),
+        "truncated": bool(incomplete),
+        "pagination_limit_reached": more,
+        "messages_complete": not more,
+        "text_truncated_count": text_truncated_count,
+        "complete": not incomplete,
+        "incomplete_reasons": incomplete,
+        "page_count": page_count,
+        "newest_at": messages[0]["sent_at"] if messages else None,
+        "oldest_at": messages[-1]["sent_at"] if messages else None,
+        "untrusted_data": True,
+    }
+
+
 class WorkItemMessagesOperation:
     code = "work_item_messages"
     method = "GET"
@@ -316,7 +361,6 @@ class WorkItemMessagesOperation:
         *,
         team_uuid: str,
         work_item_uuid: str,
-        limit: int,
         token: str,
         user_id: str,
     ) -> RestExecution:
@@ -324,20 +368,61 @@ class WorkItemMessagesOperation:
             team_uuid=team_uuid,
             work_item_uuid=work_item_uuid,
         )
-        response = http.get_json(
-            path,
-            None,
-            headers=request_headers(http, token=token, user_id=user_id),
-        )
+        messages: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        maximum: int | None = None
+        size = 0
+        more = False
+        with ones_io_budget(90):
+            for page_number in range(1, MAX_MESSAGE_PAGES + 1):
+                ones_io_timeout(90)
+                count = min(MESSAGE_PAGE_SIZE, MAX_MESSAGES - len(messages))
+                query = {"count": str(count)}
+                if maximum is not None:
+                    query["max"] = str(maximum)
+                response = http.get_json(
+                    path,
+                    None,
+                    query=query,
+                    headers=request_headers(http, token=token, user_id=user_id),
+                )
+                raw = require_list(response.get("messages"), path="messages")
+                has_next = response.get("has_next")
+                if type(has_next) is not bool:
+                    raise invalid_provider_field("has_next", "布尔值", has_next)
+                more = has_next
+                if len(raw) > count or bounded_int(response.get("count"), path="count") != len(raw):
+                    raise invalid_provider_response("ones_provider_page_size_invalid")
+                if more and not raw:
+                    raise invalid_provider_response("ones_pagination_cursor_missing")
+                for value in raw:
+                    item = require_mapping(value, path="messages.item")
+                    stamp = bounded_int(item.get("send_time"), minimum=1, path="send_time")
+                    uid = _safe_timeline_id(item.get("uuid"))
+                    if not uid or uid in seen or (maximum is not None and stamp >= maximum):
+                        raise invalid_provider_response("ones_pagination_unstable")
+                    seen.add(uid)
+                    maximum = stamp
+                page = self.parse_response(response, limit=count)["messages"]
+                size += len(json.dumps(page, ensure_ascii=False).encode("utf-8"))
+                if size > MAX_MESSAGE_BYTES:
+                    raise invalid_provider_response("ones_collection_size_exceeded")
+                messages.extend(page)
+                if not more or len(messages) >= MAX_MESSAGES:
+                    break
+        reasons = []
+        if more:
+            reasons.append("item_limit" if len(messages) >= MAX_MESSAGES else "page_limit")
         return RestExecution(
             request={
                 "operation": self.code,
                 "method": self.method,
                 "work_item_uuid": work_item_uuid,
-                "limit": limit,
+                "page_count": page_number,
+                "returned": len(messages),
             },
-            response=response,
-            output=self.parse_response(response, limit=limit),
+            response={},
+            output=_timeline_result(messages, more=more, page_count=page_number, reasons=reasons),
         )
 
     @staticmethod
@@ -348,13 +433,15 @@ class WorkItemMessagesOperation:
             path = f"messages[{index}]"
             raw = require_mapping(value, path=path)
             message_type = bounded_string(raw.get("type"), maximum=80, path=f"{path}.type")
+            truncation: list[bool] = []
             message = {
                 "uuid": bounded_string(raw.get("uuid"), maximum=128, path=f"{path}.uuid"),
                 "type": message_type,
                 "sent_at": timestamp_text(
                     raw.get("send_time"), unit="microseconds", path=f"{path}.send_time"
                 ),
-                "text": _timeline_message_text(raw, path=path),
+                "text": _timeline_message_text(raw, path=path, truncation=truncation),
+                "text_truncated": bool(truncation),
             }
             actor_uuid = _safe_timeline_id(
                 raw.get("subject_id") if message_type == "system" else raw.get("from")
@@ -373,11 +460,9 @@ class WorkItemMessagesOperation:
         has_next = payload.get("has_next", False)
         if type(has_next) is not bool:
             raise invalid_provider_field("has_next", "布尔值", has_next)
-        return normalized_list(
-            "messages",
-            messages,
-            total=total,
-            truncated=has_next or total > len(messages) or len(raw_messages) > limit,
+        more = has_next or total > len(messages) or len(raw_messages) > limit
+        return _timeline_result(
+            messages, more=more, page_count=1, reasons=["item_limit"] if more else []
         )
 
 

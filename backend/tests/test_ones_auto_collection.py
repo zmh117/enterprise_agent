@@ -40,6 +40,7 @@ from tests.test_ones_mcp_runtime import _fixture, _PagingGraphql, _normalized_pr
         ("ones_search_projects", 1000),
         ("ones_query_work_items", 10000),
         ("ones_query_test_cases", 10000),
+        ("ones_list_work_item_messages", 101),
         ("query_database", 10000),
         ("query_loki", 1),
     ],
@@ -89,6 +90,8 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
                         if name == "ones_search_projects"
                         else _work_item_result(count)
                         if name == "ones_query_work_items"
+                        else _message_result(count)
+                        if name == "ones_list_work_item_messages"
                         else {
                             "test_cases": [{"uuid": f"CASE-{i}"} for i in range(count)],
                             "total": count,
@@ -117,6 +120,8 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
         arguments = (
             {"keyword": ""}
             if name in {"ones_search_projects", "ones_query_work_items"}
+            else {"work_item_uuid": "TASK-1"}
+            if name == "ones_list_work_item_messages"
             else {"source": "plan", "source_uuid": "PLAN"}
         )
         result = await captured["bridge"].call_tool(name, arguments)
@@ -129,6 +134,7 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
             "ones_search_projects": "Project 1000",
             "ones_query_work_items": "SYNTHETIC-9999",
             "ones_query_test_cases": "CASE-9999",
+            "ones_list_work_item_messages": "现场未换包",
         }[name]
         assert marker in path.read_text()
         allowed = await options["can_use_tool"]("Read", {"file_path": str(path)}, None)
@@ -151,6 +157,7 @@ def test_runtime_ones_only_job_reads_result_and_cleans_on_every_exit(tmp_path, e
         tool=None,
         create_sdk_mcp_server=lambda **kw: {"instance": object()},
         tool_annotations=None,
+        hook_matcher=lambda **kwargs: SimpleNamespace(**kwargs),
     )
     binding = ModelRuntimeBinding(
         protocol="anthropic_compatible",
@@ -493,6 +500,29 @@ def test_all_graphql_tools_have_no_model_limit_or_cursor():
             correlation_id="reject-cursor",
         )
     assert error.value.error_code == "ones_tool_input_invalid"
+
+
+def _message_result(count):
+    from services.ones_mcp_server.provider.rest.operations.basic_queries import (
+        WORK_ITEM_MESSAGES_OPERATION,
+    )
+
+    return WORK_ITEM_MESSAGES_OPERATION.parse_response(
+        {
+            "messages": [
+                {
+                    "uuid": f"M-{i}",
+                    "type": "discussion",
+                    "send_time": 1784736000000000 - i,
+                    "text": "现场未换包",
+                }
+                for i in range(count)
+            ],
+            "count": count,
+            "has_next": False,
+        },
+        limit=count,
+    )
 
 
 def _project_result(count=1000):

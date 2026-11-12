@@ -4,6 +4,7 @@ from typing import Any
 
 from app.modules.mcp_audit import McpAuditHandle
 from app.shared.exceptions import AppError
+from app.shared.ones_io_budget import ones_io_budget
 from app.shared.ones_tool_contracts import ONES_COLLECTION_LIMITS, ONES_EXTENDED_COLLECTION_TOOLS
 from services.ones_mcp_server.auth.principal import ResolvedOnesPrincipal
 from services.ones_mcp_server.condition_dictionary import QueryConditionDictionary
@@ -421,12 +422,11 @@ class OnesWorkItemMessageListService(RestQueryService):
     def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         value = require_fields(
             arguments,
-            allowed={"work_item_uuid", "limit"},
-            required={"work_item_uuid", "limit"},
+            allowed={"work_item_uuid"},
+            required={"work_item_uuid"},
         )
         return {
             "work_item_uuid": identifier(value["work_item_uuid"]),
-            "limit": integer(value["limit"], minimum=1, maximum=100),
         }
 
     def call_provider(
@@ -434,11 +434,16 @@ class OnesWorkItemMessageListService(RestQueryService):
         principal: ResolvedOnesPrincipal,
         arguments: dict[str, Any],
     ) -> ProviderCall:
+        with ones_io_budget(90):
+            return self._read_timeline(principal, arguments)
+
+    def _read_timeline(
+        self, principal: ResolvedOnesPrincipal, arguments: dict[str, Any]
+    ) -> ProviderCall:
         execution = WORK_ITEM_MESSAGES_OPERATION.execute(
             self.http,
             team_uuid=principal.team_id,
             work_item_uuid=arguments["work_item_uuid"],
-            limit=arguments["limit"],
             token=principal.credential.secrets.token,
             user_id=principal.provider_user_id,
         )

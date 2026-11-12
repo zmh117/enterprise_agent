@@ -47,6 +47,23 @@ def materialize_result(sandbox: JobSandbox, name: str, payload: dict[str, Any]) 
             "read_hint": "使用 Read/Grep 按需读取此 Job 临时文件；Job 结束自动删除。total 是上游报告值。",
         }
     )
+    if name == "ones_list_work_item_messages":
+        for key in (
+            "total_known",
+            "messages_complete",
+            "text_truncated_count",
+            "complete",
+            "incomplete_reasons",
+            "page_count",
+            "newest_at",
+            "oldest_at",
+        ):
+            summary[key] = payload[key]
+        summary["read_hint"] = (
+            "使用 Read/Grep 阅读此 Job 临时文件中的评论和处理时间线，核对根因、方案、版本、换包、回归及重开。"
+            "complete 只表示收集的安全投影完整，不代表已阅读全文或附件。未读完须明确说明工单及范围。"
+            "total 为已收集数；Job 结束自动删除。"
+        )
     return publish_result_file(sandbox, relative, body, summary)
 
 

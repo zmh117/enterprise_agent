@@ -216,6 +216,8 @@ def _detail_response(payload: dict[str, Any], _variables: dict[str, Any]) -> dic
     related = require_list(related_raw, path="data.task.relatedTasks")
     output: dict[str, Any] = {
         "work_item": normalize_work_item(task, path="data.task"),
+        "description_truncated": False,
+        "related_items_truncated": len(related) > 100,
         "related_items": [
             normalize_work_item(item, path=f"data.task.relatedTasks[{index}]")
             for index, item in enumerate(related[:100])
@@ -225,6 +227,7 @@ def _detail_response(payload: dict[str, Any], _variables: dict[str, Any]) -> dic
     description = task.get("descriptionText")
     if isinstance(description, str):
         output["description"] = description[:4000]
+        output["description_truncated"] = len(description) > 4000
     return output
 
 
