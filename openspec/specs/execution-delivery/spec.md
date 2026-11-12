@@ -1625,6 +1625,21 @@ Runtime SHALL 对当前 Job 冻结的知识工具执行串行派发，队列等�
 - **WHEN** 问答 Job 启用了代码分析能力
 - **THEN** 禁用 SDK 会话转录和提示历史落盘，实际工具/权限/版本审计仍保留安全元数据；源码与 SVN 原文只在本次受限执行内传递
 
+### Requirement: 知识工具失败必须保留安全分类
+Runtime SHALL 对知识工具本地拒绝及远端失败提取代码所有的安全错误码、固定中文说明和重试分类，并在工具时间线及审计中保留。参数、权限、证据和状态冲突 MUST NOT 被标记为可自动重试的瞬时错误。未知错误安全降级；不得记录原始工具输入输出、源码、任意异常文本或凭据。
+
+#### Scenario: 本地保存参数校验失败
+- **WHEN** 保存调用在发往 MCP 前被结构校验拒绝
+- **THEN** 时间线保留参数错误分类及受控字段位置；SDK 在进入 MCP 桥前拒绝参数时，也按已声明 schema 投影无值提示，不能仅显示 runtime_tool_failed，也不伪造远端执行记录
+
+#### Scenario: 上游证据校验失败
+- **WHEN** MCP 返回已知的证据、版本或问题不匹配错误
+- **THEN** Agent 和审计保留该代码及固定安全说明，不把服务正文作为说明或再次完整执行任务
+
+#### Scenario: 响应携带未知错误或敏感文本
+- **WHEN** 工具输出未知错误码或任意错误描述
+- **THEN** 不持久化这些内容，只返回固定通用安全分类
+
 ## 实现依据与验证边界
 
 实现依据：`backend/app/modules/job/application/create_agent_job_service.py`、`job_retry_service.py`、`debug_job_access_service.py`、`backend/app/modules/job/domain/{agent_job,execution_policy,job_status}.py`；`backend/app/modules/mcp_tool_runtime/job_snapshot.py`、`services/ones_mcp_server/auth/principal.py`、`services/external_action_worker/ones_adapter.py`；`backend/app/modules/agent/application/agent_executor.py`、`backend/app/modules/agent/infrastructure/runtime_protocol.py`、`runtime_http_client.py`；`backend/app/python_runtime/{executor,mcp_config,tool_contract,tool_policy,run_audit,invocations}.py`；`backend/app/shared/agent_run_audit_codec.py`；`contracts/agent-runtime/v1.4/` 与 `v1.5/`；`backend/app/modules/job/infrastructure/repositories.py`、`backend/app/modules/admin/api/controller.py`；`backend/app/modules/delivery/application/`；`backend/app/modules/external_action/`、`services/external_action_worker/runtime.py`、`services/dingtalk_mcp_server/worker.py`。

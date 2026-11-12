@@ -1,6 +1,5 @@
 """Control-plane authorization for original-Job SVN operations and derived answer writes."""
 
-from datetime import UTC, datetime
 from typing import Any
 
 from cryptography.fernet import Fernet
@@ -276,10 +275,10 @@ class CodeHistoryBridge:
         if not invocation or invocation["instance_id"] is None:
             raise CodeKnowledgeError("CODE_EXECUTION_MISMATCH")
         self._user_version(access, args["revision"])
-        deadline = min(
-            utc_time(invocation["execution_deadline_at"]),
-            datetime.fromtimestamp(min(receipt["deadline_ms"], exact["deadline_ms"]) / 1000, UTC),
-        )
+        # A successful search receipt binds evidence, not the lifetime of later
+        # native reads. Its deadline bounded that one completed MCP request.
+        # Source analysis remains bounded by the original invocation deadline.
+        deadline = utc_time(invocation["execution_deadline_at"])
         context = CodeAnalysisContext(
             environment_id=environment_id,
             job_id=access.job_id,

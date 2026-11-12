@@ -63,6 +63,23 @@ def _result(
 
 
 def create_server(tools: KnowledgeMcpTools, calls: BoundedCalls) -> Server:
+    async def ping(
+        context: ServerRequestContext, params: types.RequestParams | None
+    ) -> types.EmptyResult:
+        request = _request(context)
+        try:
+            await calls.run(
+                lambda: tools.keepalive(
+                    token=request.state.principal,
+                    headers=request.headers,
+                    control=request.state.control,
+                ),
+                request.state.control,
+            )
+            return types.EmptyResult()
+        except Exception:
+            raise ValueError("知识会话身份续期失败") from None
+
     async def list_tools(
         context: ServerRequestContext, params: types.PaginatedRequestParams | None
     ) -> types.ListToolsResult:
@@ -132,6 +149,7 @@ def create_server(tools: KnowledgeMcpTools, calls: BoundedCalls) -> Server:
         instructions=KNOWLEDGE_USAGE_INSTRUCTIONS,
         on_list_tools=list_tools,
         on_call_tool=call_tool,
+        on_ping=ping,
     )
 
 

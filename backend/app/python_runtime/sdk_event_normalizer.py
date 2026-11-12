@@ -10,6 +10,8 @@ from app.python_runtime.error_mapper import redact_sensitive_text
 from app.shared.config import ExecutionSettings
 from app.shared.sandbox_contract import SANDBOX_CAPACITY_BYTES, SANDBOX_INPUT_FILE_LIMIT
 from app.shared.tool_response_summary import tool_response_summary
+from app.shared.knowledge_tool_contracts import KNOWLEDGE_TOOL_CONTRACTS
+from app.shared.knowledge_tool_errors import error_payload as knowledge_error_payload, input_issues
 from app.python_runtime.log_evidence_scanner import (
     LOG_EVIDENCE_SCANNER_VERSION,
     LOG_EVIDENCE_TOOL,
@@ -325,18 +327,45 @@ def extract_tool_events(
             tool_name = str(
                 sdk_value(block, "name") or sdk_value(block, "tool_name") or "unknown_tool"
             )
-            request_payload = safe_file_tool_request(tool_name, sdk_value(block, "input") or {})
+            knowledge_name = tool_name.split("__")[-1]
+            request_payload = (
+                {"available": bool(sdk_value(block, "input"))}
+                if knowledge_name in KNOWLEDGE_TOOL_CONTRACTS
+                else safe_file_tool_request(tool_name, sdk_value(block, "input") or {})
+            )
             call_index[tool_call_id] = {
                 "tool_name": tool_name,
                 "request_payload": request_payload,
             }
+            if knowledge_name in KNOWLEDGE_TOOL_CONTRACTS:
+                # The CLI can reject arguments before the MCP bridge is called.
+                # Retain schema-owned hints only, never the supplied values.
+                call_index[tool_call_id]["knowledge_input_issues"] = input_issues(
+                    knowledge_name, sdk_value(block, "input") or {}
+                )
             status = "STARTED"
         else:
             started = call_index.pop(tool_call_id, {})
             tool_name = str(started.get("tool_name") or "unknown_tool")
             request_payload = started.get("request_payload") or {}
             status = "FAILED" if sdk_value(block, "is_error") is True else "SUCCEEDED"
-        if _is_log_evidence_tool(tool_name):
+        knowledge_name = tool_name.split("__")[-1]
+        knowledge_failed = knowledge_name in KNOWLEDGE_TOOL_CONTRACTS and status == "FAILED"
+        if knowledge_failed:
+            response = knowledge_error_payload(
+                knowledge_name, sdk_value(block, "content") or sdk_value(block, "result") or {}
+            )
+            if response["error_code"] == "knowledge_tool_failed" and started.get(
+                "knowledge_input_issues"
+            ):
+                response = knowledge_error_payload(
+                    knowledge_name,
+                    {
+                        "error_code": "knowledge_input_invalid",
+                        "input_issues": started["knowledge_input_issues"],
+                    },
+                )
+        elif _is_log_evidence_tool(tool_name):
             response = safe_log_evidence_response(
                 sdk_value(block, "content") or sdk_value(block, "result") or {}
             )
@@ -366,14 +395,18 @@ def extract_tool_events(
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "request_payload": bounded_payload(request_payload, limits.max_tool_response_chars),
-                "response_summary": bounded_payload(response, limits.max_tool_response_chars),
+                "response_summary": response
+                if knowledge_failed
+                else bounded_payload(response, limits.max_tool_response_chars),
                 "status": status,
                 "duration_ms": max(0, min(duration_ms, 86_400_000)),
                 "risk_level": risk_level(tool_name),
                 "mcp_call_id": metadata["mcp_call_id"],
                 "persisted_tool_call_id": metadata["persisted_tool_call_id"],
                 **(
-                    {"error_code": log_evidence_failure(response.get("error_code"))["code"]}
+                    {"error_code": response["error_code"]}
+                    if knowledge_failed
+                    else {"error_code": log_evidence_failure(response.get("error_code"))["code"]}
                     if _is_log_evidence_tool(tool_name) and status == "FAILED"
                     else {}
                 ),

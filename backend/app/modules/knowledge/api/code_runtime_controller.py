@@ -8,6 +8,8 @@ from app.modules.knowledge.infrastructure.code_source_grant import CODE_SOURCE_G
 from app.modules.knowledge.domain.code_json import parse_json
 from app.modules.knowledge.api.readability_controller import _bearer
 from app.shared.exceptions import AppError
+from app.shared.knowledge_tool_errors import knowledge_failure
+from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 
 
 def build_code_runtime_router() -> APIRouter:
@@ -42,6 +44,14 @@ def build_code_runtime_router() -> APIRouter:
                 raise ValueError
             result = await run_in_threadpool(grant.check_invocation, value)
             return JSONResponse(result, headers=headers)
+        except CodeKnowledgeError as exc:
+            failure = knowledge_failure(exc.code)
+            code = failure["code"]
+            return JSONResponse(
+                {"error_code": code if code != "knowledge_tool_failed" else "code_source_denied"},
+                403,
+                headers=headers,
+            )
         except (ValueError, AppError):
             return JSONResponse({"error_code": "code_source_denied"}, 403, headers=headers)
         except Exception:

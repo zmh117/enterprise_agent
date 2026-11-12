@@ -44,6 +44,32 @@ __all__ = [
 SCOPE = "mcp:knowledge-mcp:knowledge_search:invoke"
 
 
+def test_idle_ping_renews_before_expiry_without_business_tool_or_deadline_change(
+    mcp_fixture, monkeypatch
+):
+    f = mcp_fixture
+    clock, old = identity_clock(f, monkeypatch)
+    f["tools"].principal_client = local_client(f)
+    clock[0] = old["iat"] + 241
+    headers = {**mcp_headers(f), "X-Knowledge-Principal-Continuation": "1"}
+    response = rpc(f, method="ping", params={}, headers=headers)
+    assert response.json()["result"] == {}
+    fresh = response.headers["X-Knowledge-Principal-Continuation"]
+    new = f["bridge"].gateway.principal.verify(fresh, required_scope=SCOPE)
+    assert stable_claims(new) == stable_claims(old) and new["exp"] == clock[0] + 300
+    assert f["runtime"].database.execute("select id from mcp_operation_audit") == []
+    assert not f["exchanges"]
+    clock[0] = old["exp"] + 1
+    # Expired credentials cannot be rescued by ping; the renewed one remains valid.
+    assert "error" in rpc(f, method="ping", params={}, headers=headers).json()
+    headers["authorization"] = "Bearer " + fresh
+    assert rpc(f, method="ping", params={}, headers=headers).json()["result"] == {}
+    f["runtime"].database.execute(
+        "update agent_job set status='SUCCEEDED' where id=?", (f["job"].id,)
+    )
+    assert "error" in rpc(f, method="ping", params={}, headers=headers).json()
+
+
 def identity_clock(f, monkeypatch):
     gateway = f["bridge"].gateway
     claims = gateway.principal.verify(f["knowledge_token"], required_scope=SCOPE)

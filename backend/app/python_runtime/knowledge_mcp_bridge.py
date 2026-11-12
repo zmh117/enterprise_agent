@@ -11,7 +11,6 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 import httpx
-from jsonschema import Draft202012Validator
 from mcp import types
 from mcp.server import Server
 
@@ -27,8 +26,11 @@ from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.shared.principal_token_contract import MAX_PRINCIPAL_TOKEN_BYTES
 from app.shared.tool_contract import tool_schema_hash
 from app.python_runtime.file_mcp_bridge import call_tool_result, safe_meta
+from app.shared.knowledge_tool_errors import error_payload, input_issues
 
 T = TypeVar("T")
+KEEPALIVE_INTERVAL_SECONDS = 30
+KEEPALIVE_TIMEOUT_SECONDS = 10
 
 
 class _Stopped(Exception):
@@ -36,12 +38,15 @@ class _Stopped(Exception):
         self.code = code
 
 
-def _error(code: str) -> types.CallToolResult:
-    payload = {"error_code": code, "error": "知识工具调用未完成，请根据错误码处理"}
+def _error(
+    code: str, *, name: str = "", issues: Any = None, meta: Any = None
+) -> types.CallToolResult:
+    payload = error_payload(name, {"error_code": code, "input_issues": issues})
     return call_tool_result(
         content=[types.TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
         structured_content=payload,
         is_error=True,
+        meta=meta,
     )
 
 
@@ -69,6 +74,8 @@ class KnowledgeMcpBridge:
         self._closed = False
         self._lock = asyncio.Lock()
         self._pending: set[asyncio.Task[Any]] = set()
+        self._keepalive_task: asyncio.Task[None] | None = None
+        self._principal_failure = ""
         self._client = httpx.AsyncClient(
             transport=transport, trust_env=False, follow_redirects=False
         )
@@ -81,6 +88,8 @@ class KnowledgeMcpBridge:
             raise _Stopped("runtime_cancelled")
         if time.monotonic() >= self.deadline:
             raise _Stopped("runtime_timeout")
+        if self._principal_failure:
+            raise _Stopped(self._principal_failure)
 
     async def _bounded(self, work: Coroutine[Any, Any, T]) -> T:
         task = asyncio.create_task(work)
@@ -101,8 +110,10 @@ class KnowledgeMcpBridge:
         finally:
             task.cancel()
             watcher.cancel()
-            await asyncio.gather(task, watcher, return_exceptions=True)
-            self._pending.discard(task)
+            try:
+                await asyncio.gather(task, watcher, return_exceptions=True)
+            finally:
+                self._pending.discard(task)
 
     async def _rpc(
         self, method: str, params: dict[str, Any], *, wait_ms: int = 0
@@ -138,6 +149,8 @@ class KnowledgeMcpBridge:
                         if len(body) > 600 * 1024:
                             raise ValueError("Knowledge response too large")
                     tokens = response.headers.get_list(KNOWLEDGE_CONTINUATION_HEADER)
+                    if method == "ping" and response.status_code == 200 and not tokens:
+                        raise ValueError("Knowledge continuation missing")
                     if tokens:
                         if (
                             len(tokens) != 1
@@ -186,6 +199,7 @@ class KnowledgeMcpBridge:
 
         try:
             await self._bounded(preflight())
+            self._keepalive_task = asyncio.create_task(self._keepalive())
         except BaseException as exc:
             await self.close()
             if not isinstance(exc, Exception):
@@ -196,13 +210,31 @@ class KnowledgeMcpBridge:
                 error_code="runtime_knowledge_tool_contract_invalid",
             ) from None
 
+    async def _keepalive(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(KEEPALIVE_INTERVAL_SECONDS)
+
+                async def renew() -> None:
+                    # In-flight calls renew on the server. Never race their continuation.
+                    async with self._lock:
+                        self._check()
+                        async with asyncio.timeout(KEEPALIVE_TIMEOUT_SECONDS):
+                            result = await self._rpc("ping", {})
+                        if result != {}:
+                            raise ValueError("Knowledge keepalive failed")
+
+                await self._bounded(renew())
+        except Exception:
+            # No raw protocol error or credential enters logs or the model.
+            self._principal_failure = "knowledge_principal_refresh_failed"
+
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> types.CallToolResult:
         if name not in self.frozen or name not in KNOWLEDGE_TOOL_CONTRACTS:
             return _error("knowledge_job_denied")
-        if not Draft202012Validator(KNOWLEDGE_TOOL_CONTRACTS[name].input_schema).is_valid(
-            arguments
-        ):
-            return _error("knowledge_input_invalid")
+        issues = input_issues(name, arguments)
+        if issues:
+            return _error("knowledge_input_invalid", name=name, issues=issues)
         entered = time.monotonic()
 
         async def dispatch() -> types.CallToolResult:
@@ -218,6 +250,16 @@ class KnowledgeMcpBridge:
                 if "transport_error" in payload:
                     return _error(payload["transport_error"])
                 result = types.CallToolResult.model_validate(payload)
+                if result.is_error:
+                    safe = error_payload(
+                        name, result.structured_content or [c.model_dump() for c in result.content]
+                    )
+                    return _error(
+                        safe["error_code"],
+                        name=name,
+                        issues=safe.get("input_issues"),
+                        meta=safe_meta(result),
+                    )
                 if self.source_guard is not None:
                     result = await self.source_guard.after_mcp(name, result)
                     if isinstance(result.structured_content, dict):
@@ -313,6 +355,10 @@ class KnowledgeMcpBridge:
 
     async def close(self) -> None:
         self._closed = True
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            await asyncio.gather(self._keepalive_task, return_exceptions=True)
+            self._keepalive_task = None
         for task in list(self._pending):
             task.cancel()
         await asyncio.gather(*list(self._pending), return_exceptions=True)

@@ -3,6 +3,7 @@
 from dataclasses import replace
 from contextlib import nullcontext
 from types import SimpleNamespace
+from datetime import timedelta
 import json
 
 import pytest
@@ -118,6 +119,24 @@ def test_begin_pins_original_invocation_and_rejects_unstated_version(bridge):
     )
     with pytest.raises(CodeKnowledgeError, match="SVN_REVISION_REQUIRED"):
         handler._begin(access, pin, config, {**args, "revision": 101}, "code-env-a")
+
+
+def test_analysis_uses_job_deadline_not_completed_search_request_deadline(bridge):
+    handler, ctx, access, pin, config, args = bridge
+    receipt = dict(handler.receipts.read("receipt"))
+    receipt["deadline_ms"] -= 240_000
+    handler.receipts = SimpleNamespace(read=lambda *a, **kw: receipt)
+    first = handler._begin(access, pin, config, args, "code-env-a")
+    analysis = handler.operations.row("code_analysis", first["analysis_id"])
+    assert utc_time(analysis["deadline_at"]) == utc_time(ctx.deadline_at)
+    assert utc_time(analysis["deadline_at"]).timestamp() * 1000 > receipt["deadline_ms"]
+    # The same admission still rejects an invocation whose original budget ended.
+    handler.db.execute(
+        "UPDATE agent_runtime_invocation SET execution_deadline_at=? WHERE invocation_id=?",
+        ((utc_time(ctx.deadline_at) - timedelta(days=1)).isoformat(), ctx.invocation_id),
+    )
+    with pytest.raises(CodeKnowledgeError, match="CODE_EXECUTION_ENDED"):
+        handler._begin(access, pin, config, args, "code-env-a")
 
 
 @pytest.mark.parametrize(

@@ -39,6 +39,18 @@ class KnowledgeMcpTools:
         self.principal_client = principal_client
         self.code = code
 
+    def keepalive(self, *, token: str, headers: Mapping[str, str], control: CallControl) -> None:
+        """Renew only the running Job's existing identity; no business read or tool audit."""
+        context = self.auth.resolve(token, "knowledge_list_bases", headers)
+        with (
+            self.auth.budget(context.job_id, control).activate(),
+            InflightPrincipal(
+                token, "knowledge_list_bases", self.auth.access, self.principal_client, control
+            ) as principal,
+        ):
+            control.check()
+            self.auth.resolve(principal.current, "knowledge_list_bases", headers)
+
     def list_tools(
         self, *, token: str, headers: Mapping[str, str], control: CallControl
     ) -> list[str]:

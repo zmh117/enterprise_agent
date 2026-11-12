@@ -6,6 +6,7 @@ from typing import Any, Protocol
 import httpx
 
 from app.shared.service_identity_client import AccessTokenProvider
+from app.shared.knowledge_tool_errors import knowledge_failure
 from app.modules.knowledge.domain.code_contracts import CODE_SOURCE_GRANT_PATH, CodeKnowledgeError
 from app.modules.knowledge.domain.code_json import parse_json
 from app.python_runtime.code_source_mount import CodeSourceMount
@@ -29,8 +30,6 @@ class CodeGrantClient:
                     headers={"Authorization": "Bearer " + self.tokens.access_token()},
                     json=binding,
                 ) as response:
-                    if response.status_code != 200:
-                        raise ValueError
                     payload = bytearray()
                     for part in response.iter_bytes(chunk_size=8192):
                         if len(payload) + len(part) > 128 * 1024:
@@ -39,7 +38,16 @@ class CodeGrantClient:
             value = parse_json(payload.decode())
             if not isinstance(value, dict):
                 raise ValueError
+            if response.status_code != 200:
+                failure = knowledge_failure(value.get("error_code"))
+                raise CodeKnowledgeError(
+                    failure["code"]
+                    if failure["code"] != "knowledge_tool_failed"
+                    else "CODE_SOURCE_GRANT_DENIED"
+                )
             return value
+        except CodeKnowledgeError:
+            raise
         except Exception:
             raise CodeKnowledgeError("CODE_SOURCE_GRANT_DENIED") from None
 

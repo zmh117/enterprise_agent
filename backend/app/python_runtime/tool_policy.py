@@ -5,6 +5,7 @@ from typing import Any
 
 from app.shared.mcp_server_policy import McpServerPolicy, mcp_sdk_server_alias
 from app.python_runtime.log_evidence_scanner import log_evidence_failure
+from app.shared.knowledge_tool_errors import knowledge_failure, safe_issues
 
 
 SDK_BUILTIN_TOOLS = frozenset(
@@ -160,6 +161,16 @@ def normalize_tool_events(
                 "retry_class": "NEVER" if status == "DENIED" else "TRANSIENT",
                 "safe_message": "工具调用未获授权" if status == "DENIED" else "工具调用失败",
             }
+            if server_code == "knowledge-mcp":
+                item["failure"] = knowledge_failure(event.get("error_code"))
+                response = event.get("response_summary")
+                issues = (
+                    safe_issues(tool_name, response.get("input_issues"))
+                    if isinstance(response, dict)
+                    else []
+                )
+                if issues:
+                    item["response_summary"]["input_issues"] = issues
             if derived_tool == "scan_log_evidence" and status == "FAILED":
                 item["failure"] = log_evidence_failure(event.get("error_code"))
             if tool_name in {"Read", "Glob", "Grep", "Write", "Edit"} and status == "DENIED":
