@@ -128,6 +128,12 @@ def build_code_operations_router() -> APIRouter:
             **value,
         )
 
+    router.add_api_route(
+        "/resources/{resource_id}/operations/{operation_id}/revalidate",
+        _revalidate_checkout,
+        methods=["POST"],
+        status_code=202,
+    )
     return router
 
 
@@ -161,5 +167,17 @@ async def _browse_svn_children(resource_id: str, request: Request) -> Any:
         services(request).code_checkouts().submit_browse_children,
         actor_id=user,
         resource_id=resource_id,
+        **value,
+    )
+
+
+async def _revalidate_checkout(resource_id: str, operation_id: str, request: Request) -> Any:
+    user = actor(request)
+    value = await payload(request, {"request_key"})
+    return await invoke(
+        services(request).code_checkouts().submit_revalidation,
+        actor_id=user,
+        resource_id=resource_id,
+        operation_id=operation_id,
         **value,
     )

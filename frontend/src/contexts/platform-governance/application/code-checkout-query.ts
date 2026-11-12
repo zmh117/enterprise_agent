@@ -7,8 +7,12 @@ export const codeOperationSchema = z.object({
   operation_kind: z.string(),
   state: z.string(),
   error_code: z.string().nullable(),
+  can_revalidate: z.boolean().optional(),
   result_expired: z.boolean().optional(),
   result: z.object({
+    stage: z.string().optional(),
+    directory_retained: z.boolean().optional(),
+    verification_only: z.boolean().optional(),
     revision: z.number().optional(),
     operative_revision: z.number().optional(),
     directories: z.array(z.string()).optional(),
@@ -19,6 +23,10 @@ export const codeOperationSchema = z.object({
     checkout_id: z.string().optional(),
     diagnostic: z
       .object({
+        stage: z.string().optional(),
+        stream: z.enum(["stdout", "stderr"]).optional(),
+        observed_bytes: z.number().nonnegative().optional(),
+        limit_bytes: z.number().nonnegative().optional(),
         operation: z.enum([
           "info",
           "log",

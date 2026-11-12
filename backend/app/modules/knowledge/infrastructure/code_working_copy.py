@@ -1,6 +1,7 @@
 """Inspect/update one already-owned SVN working copy. The caller holds its DB claim."""
 
 from pathlib import Path
+from collections.abc import Callable
 import shutil
 from typing import Any
 from urllib.parse import unquote
@@ -9,10 +10,10 @@ from app.modules.knowledge.domain.code_answers import code_path, path_in_scope, 
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.infrastructure.code_checkout_identity import CheckoutIdentity
 from app.modules.knowledge.infrastructure.code_svn import (
-    BULK_METADATA_TIMEOUT,
     SvnCodeSource,
     xml_document,
 )
+from app.modules.knowledge.infrastructure.code_svn_stream import MAX_METADATA_ENTRIES
 
 
 def require_checkout_space(root: Path, required: int = 512 * 1024**2) -> None:
@@ -23,14 +24,18 @@ def require_checkout_space(root: Path, required: int = 512 * 1024**2) -> None:
 def preflight_checkout_space(
     source: SvnCodeSource, root: Path, paths: list[str], revision: int
 ) -> None:
-    total, files = 0, 0
-    for path in paths:
-        for item in source.inventory(path, revision):
-            if item["kind"] == "file":
-                total += item["size_bytes"]
-                files += 1
-        if total > 20 * 1024**3 or files > 100000:
+    total, entries = 0, 0
+
+    def consume(item: dict[str, Any]) -> None:
+        nonlocal total, entries
+        entries += 1
+        if item["kind"] == "file":
+            total += item["size_bytes"]
+        if total > 20 * 1024**3 or entries > MAX_METADATA_ENTRIES:
             raise CodeKnowledgeError("CODE_CHECKOUT_DISK_LIMIT")
+
+    for path in paths:
+        source.walk_inventory(path, revision, consume)
     # Working files, pristine storage and transient update data all consume space.
     require_checkout_space(root, 3 * total + 512 * 1024**2)
 
@@ -43,6 +48,7 @@ class SvnWorkingCopy:
         selected_paths: list[str],
         *,
         physical_key: str,
+        stage: Callable[[str], None] = lambda value: None,
     ):
         if (
             not directory.is_absolute()
@@ -51,6 +57,7 @@ class SvnWorkingCopy:
         ):
             raise CodeKnowledgeError("CODE_CHECKOUT_PATH_INVALID")
         self.source, self.directory = source, directory
+        self.stage = stage
         self.paths = [code_path(p, root=True) for p in selected_paths]
         if not self.paths:
             raise CodeKnowledgeError("CODE_SCOPE_INVALID")
@@ -68,63 +75,12 @@ class SvnWorkingCopy:
     def inspect(self, revision: int | None = None) -> dict[str, Any]:
         self._check_cancelled()
         self._identity()
-        target = str(self.directory) + "@"
-        status = xml_document(
-            self.source._run(
-                "status",
-                ["--xml", "--verbose", "--no-ignore", "--ignore-externals", target],
-                timeout=BULK_METADATA_TIMEOUT,
-            )
-        )
-        for node in status.findall("./target/entry/wc-status"):
-            self._check_cancelled()
-            if (
-                node.get("item") != "normal"
-                or node.get("props") not in {"none", "normal"}
-                or node.get("switched") == "true"
-                or node.get("tree-conflicted") == "true"
-                or node.get("file-external") == "true"
-            ):
-                raise CodeKnowledgeError("CODE_CHECKOUT_DIRTY")
-        info = xml_document(
-            self.source._run(
-                "info", ["--xml", "--depth", "infinity", target], timeout=BULK_METADATA_TIMEOUT
-            )
-        )
-        if status.tag != "status" or info.tag != "info":
-            raise CodeKnowledgeError("CODE_CHECKOUT_INFO_INVALID")
-        rows = info.findall("entry")
-        if not rows or len(rows) > 100000:
-            raise CodeKnowledgeError("CODE_CHECKOUT_INVENTORY_LIMIT")
-        revisions: set[int] = set()
-        selected = set()
-        file_count, total_bytes = 0, 0
-        for node in rows:
-            # On a large Desktop bind mount these filesystem checks can outlive
-            # the lease even after svn info exits. Keep checking the same owner.
-            self._check_cancelled()
-            relative = self._entry(node)
-            try:
-                n = svn_revision(int(node.attrib["revision"]))
-            except (ValueError, KeyError):
-                raise CodeKnowledgeError("CODE_CHECKOUT_INFO_INVALID") from None
-            revisions.add(n)
-            if relative in self.paths:
-                selected.add(relative)
-            if node.get("kind") == "file":
-                if not path_in_scope(relative, self.paths):
-                    raise CodeKnowledgeError("CODE_CHECKOUT_SCOPE_CHANGED")
-                file_count += 1
-                total_bytes += (self.directory / relative).stat().st_size
-        if len(revisions) != 1:
-            raise CodeKnowledgeError("CODE_CHECKOUT_MIXED")
-        operative = revisions.pop()
-        if selected != set(self.paths) or (
-            revision is not None and operative != svn_revision(revision)
-        ):
-            raise CodeKnowledgeError("CODE_CHECKOUT_VERSION_MISMATCH")
-        if total_bytes > 20 * 1024**3:
-            raise CodeKnowledgeError("CODE_CHECKOUT_DISK_LIMIT")
+        self.stage("verify_status")
+        self._status()
+        self.stage("verify_info")
+        operative, rows, file_count, total_bytes = self._info(revision)
+        self.stage("verify_inventory")
+        self._complete(operative, rows)
         self._identity()
         self._check_cancelled()
         return dict(
@@ -139,6 +95,111 @@ class SvnWorkingCopy:
             bytes=total_bytes,
         )
 
+    def _status(self) -> None:
+        target = str(self.directory) + "@"
+
+        def consume(entry: Any) -> None:
+            self._check_cancelled()
+            node = entry.find("wc-status")
+            if (
+                node is None
+                or node.get("item") != "normal"
+                or node.get("props") not in {"none", "normal"}
+                or node.get("wc-locked") == "true"
+                or node.get("switched") == "true"
+                or node.get("tree-conflicted") == "true"
+                or node.get("file-external") == "true"
+            ):
+                raise CodeKnowledgeError("CODE_CHECKOUT_DIRTY")
+
+        self.source.records(
+            "status",
+            ["--xml", "--verbose", "--no-ignore", "--ignore-externals", target],
+            ("status", "target", "entry"),
+            consume,
+        )
+
+    def _info(self, revision: int | None) -> tuple[int, dict[str, str], int, int]:
+        rows: dict[str, str] = {}
+        revisions: set[int] = set()
+        file_count, total_bytes = 0, 0
+
+        def consume(node: Any) -> None:
+            nonlocal file_count, total_bytes
+            self._check_cancelled()
+            relative = self._entry(node)
+            kind = node.get("kind")
+            if relative in rows or kind not in {"file", "dir"}:
+                raise CodeKnowledgeError("CODE_CHECKOUT_INFO_INVALID")
+            rows[relative] = kind
+            in_scope = path_in_scope(relative, self.paths)
+            if not in_scope and not any(
+                p.startswith(relative + "/") or not relative for p in self.paths
+            ):
+                raise CodeKnowledgeError("CODE_CHECKOUT_SCOPE_CHANGED")
+            if kind == "dir" and in_scope and node.findtext("wc-info/depth") != "infinity":
+                raise CodeKnowledgeError("CODE_CHECKOUT_INCOMPLETE")
+            try:
+                n = svn_revision(int(node.attrib["revision"]))
+            except (ValueError, KeyError):
+                raise CodeKnowledgeError("CODE_CHECKOUT_INFO_INVALID") from None
+            revisions.add(n)
+            if len(revisions) > 1:
+                raise CodeKnowledgeError("CODE_CHECKOUT_MIXED")
+            if kind == "file":
+                if not in_scope:
+                    raise CodeKnowledgeError("CODE_CHECKOUT_SCOPE_CHANGED")
+                path = self.directory / relative
+                if not path.is_file():
+                    raise CodeKnowledgeError("CODE_CHECKOUT_INCOMPLETE")
+                file_count += 1
+                total_bytes += path.stat().st_size
+                if total_bytes > 20 * 1024**3:
+                    raise CodeKnowledgeError("CODE_CHECKOUT_DISK_LIMIT")
+
+        self.source.records(
+            "info",
+            ["--xml", "--depth", "infinity", str(self.directory) + "@"],
+            ("info", "entry"),
+            consume,
+        )
+        if not rows or not revisions:
+            raise CodeKnowledgeError("CODE_CHECKOUT_INFO_INVALID")
+        operative = revisions.pop()
+        if not set(self.paths).issubset(rows) or (
+            revision is not None and operative != svn_revision(revision)
+        ):
+            raise CodeKnowledgeError("CODE_CHECKOUT_VERSION_MISMATCH")
+        return operative, rows, file_count, total_bytes
+
+    def _complete(self, revision: int, rows: dict[str, str]) -> None:
+        self.source.preflight(revision)
+        remaining = {p for p in rows if path_in_scope(p, self.paths)}
+        for path in self.paths:
+            self._check_cancelled()
+            node = xml_document(
+                self.source._run(
+                    "info", ["--xml", "-r", str(revision), self.source._target(revision, path)]
+                )
+            ).find("entry")
+            if node is None or node.get("kind") != rows[path]:
+                raise CodeKnowledgeError("CODE_CHECKOUT_INCOMPLETE")
+            remaining.remove(path)
+            if rows[path] == "file":
+                continue
+            if self.source.external_declarations(revision, path=path)["declarations"]:
+                raise CodeKnowledgeError("CODE_CHECKOUT_EXTERNALS_UNSUPPORTED")
+
+            def consume(item: dict[str, Any]) -> None:
+                relative = path + "/" + item["path"] if path else item["path"]
+                if relative not in remaining or rows[relative] != item["kind"]:
+                    raise CodeKnowledgeError("CODE_CHECKOUT_INCOMPLETE")
+                remaining.remove(relative)
+
+            self.source.walk_inventory(path, revision, consume)
+        if remaining:
+            raise CodeKnowledgeError("CODE_CHECKOUT_INCOMPLETE")
+
     def _entry(self, node: Any) -> str:
         path = Path(node.get("path", ""))
         if not path.is_absolute():
@@ -148,8 +209,11 @@ class SvnWorkingCopy:
         except ValueError:
             raise CodeKnowledgeError("CODE_CHECKOUT_PATH_INVALID") from None
         relative = "" if relative == "." else code_path(relative)
-        if path.resolve(strict=True) != path or path.is_symlink():
-            raise CodeKnowledgeError("CODE_CHECKOUT_PATH_INVALID")
+        try:
+            if path.resolve(strict=True) != path or path.is_symlink():
+                raise CodeKnowledgeError("CODE_CHECKOUT_PATH_INVALID")
+        except FileNotFoundError:
+            raise CodeKnowledgeError("CODE_CHECKOUT_INCOMPLETE") from None
         expected = "^" + (
             self.source.branch_path + "/" + relative if relative else self.source.branch_path or "/"
         )
@@ -193,6 +257,7 @@ class SvnWorkingCopy:
         self.source.execute(
             "update",
             [
+                "--quiet",
                 "--ignore-externals",
                 "--accept",
                 "postpone",
@@ -201,7 +266,7 @@ class SvnWorkingCopy:
                 str(self.directory) + "@",
             ],
             timeout=timeout,
-            limit=8 * 1024 * 1024,
+            limit=None,
             cancelled=self._cancelled_with_space_check,
         )
         return self.inspect(revision)

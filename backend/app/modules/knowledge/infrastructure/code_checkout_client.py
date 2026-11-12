@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -41,7 +40,6 @@ def checkout_directory(destination: Path) -> Iterator[Path]:
     except OSError:
         raise CodeKnowledgeError("code_checkout_create_failed") from None
     descriptor = None
-    completed = False
     try:
         descriptor = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         # The worker keeps umask 077 for credentials. Only this owned source
@@ -50,18 +48,12 @@ def checkout_directory(destination: Path) -> Iterator[Path]:
         yield destination
         if not _same_directory(destination, descriptor):
             raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
-        completed = True
     except OSError:
         raise CodeKnowledgeError("CODE_SVN_LOCAL_IO_FAILED") from None
     finally:
         if descriptor is not None:
-            if not completed and _same_directory(destination, descriptor):
-                try:
-                    shutil.rmtree(destination)
-                except OSError:
-                    # Keep the original failure; an uncleared directory remains
-                    # invalid and can never be reused or overwritten implicitly.
-                    pass
+            # Failed downloads stay invalid but are retained for explicit verification.
+            # Never delete or overwrite a directory after relinquishing this owner.
             os.close(descriptor)
 
 
@@ -143,6 +135,8 @@ class WorkingCopyClient:
         config_directory: Path | None = None,
     ):
         self.entry, self.cancelled = dict(entry), cancelled
+        self.stage: Callable[[str], None] = lambda value: None
+        self.directory_created = False
         config = config_directory or auth_root / entry["auth_ref"]
         if not config.is_dir() or config.resolve() != config:
             raise CodeKnowledgeError("code_svn_auth_reference_invalid")
@@ -188,11 +182,18 @@ class WorkingCopyClient:
             return self.cancelled()
 
         self.source.execute(
-            args[0], args[1:], timeout=1800, limit=8 * 1024 * 1024, cancelled=cancelled
+            args[0], ["--quiet", *args[1:]], timeout=1800, limit=None, cancelled=cancelled
         )
 
     def checkout(
-        self, *, root: Path, folder: str, job_id: str, revision: int, paths: list[str]
+        self,
+        *,
+        root: Path,
+        folder: str,
+        job_id: str,
+        revision: int,
+        paths: list[str],
+        on_prepared: Callable[[], None] = lambda: None,
     ) -> dict[str, Any]:
         if (
             not FOLDER.fullmatch(folder)
@@ -204,6 +205,7 @@ class WorkingCopyClient:
         destination = root / folder
         if os.path.lexists(destination):
             raise CodeKnowledgeError("code_checkout_destination_exists")
+        self.stage("preflight")
         self.source.preflight(revision)
         kinds = {}
         for path in paths:
@@ -228,6 +230,8 @@ class WorkingCopyClient:
         preflight_checkout_space(self.source, root, paths, revision)
         target = self.source._target(revision)
         with checkout_directory(destination):
+            self.directory_created = True
+            self.stage("download")
             self._checkout_command(
                 [
                     "checkout",
@@ -241,6 +245,7 @@ class WorkingCopyClient:
                 ],
                 root=root,
             )
+            on_prepared()
             prepared = set()
             for path in paths:
                 relative_path(path) if path else None
@@ -274,6 +279,7 @@ class WorkingCopyClient:
                 )
             if self.cancelled():
                 raise CodeKnowledgeError("code_checkout_interrupted")
+            self.stage("verify_info")
             for path in paths:
                 node = xml_document(
                     self.source._run("info", ["--xml", str(destination / path) + "@"]).strip()

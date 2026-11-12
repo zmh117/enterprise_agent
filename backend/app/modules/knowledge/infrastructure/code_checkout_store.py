@@ -194,7 +194,7 @@ class CodeCheckoutStore:
             return self.row("code_checkout", identity)
 
     def identify_reserved_checkout(self, identifier: str, *, root: Path, operation_id: str) -> str:
-        """Called after exclusive publication, inside the completion transaction."""
+        """Bind the exclusive working copy early, then verify again at registration."""
         row = self.row("code_checkout", identifier, lock=True)
         if row["state"] != "preparing" or row["writer_operation_id"] != operation_id:
             raise CodeKnowledgeError("CODE_CHECKOUT_CHANGED")
@@ -204,6 +204,8 @@ class CodeCheckoutStore:
         if path.resolve(strict=True) != path or not path.is_dir():
             raise CodeKnowledgeError("CODE_CHECKOUT_PATH_INVALID")
         physical = persistent_identity(path)
+        if row["physical_key"] and row["physical_key"] != physical:
+            raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
         other = self.db.execute_one(
             f"SELECT id FROM {self.t('code_checkout')} WHERE physical_key=? AND id<>?",
             (physical, identifier),

@@ -8,6 +8,72 @@ const url = "https://localhost:18443/repos/mes/trunk"
 afterEach(() => vi.unstubAllGlobals())
 
 describe("SVN 工程检出", () => {
+  it("失败目录显示校验阶段并按原任务重新校验，不提交路径版本或凭据", async () => {
+    const requests: { url: string; body: unknown }[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input, options) => {
+        if (options?.method === "POST") {
+          requests.push({ url: String(input), body: JSON.parse(options.body) })
+          return new Response(JSON.stringify({ id: "revalidate-job" }), {
+            headers: { "Content-Type": "application/json" },
+          })
+        }
+        return new Response(
+          JSON.stringify({
+            enabled: true,
+            registrations: [],
+            checkouts: [],
+            jobs: [
+              {
+                id: "retained-job",
+                operation_kind: "checkout",
+                state: "failed",
+                error_code: "code_svn_response_too_large",
+                can_revalidate: true,
+                result: {
+                  relative_dir: "existing-source",
+                  revision: 2,
+                  directory_retained: true,
+                  diagnostic: {
+                    stage: "verify_info",
+                    operation: "info",
+                    exit_code: null,
+                    svn_error_codes: [],
+                    observed_bytes: 8388609,
+                    limit_bytes: 8388608,
+                  },
+                },
+              },
+            ],
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        )
+      })
+    )
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <CodeCheckoutPanel resourceId="code-library" />
+      </QueryClientProvider>
+    )
+    expect(await screen.findByText(/已保留下载目录/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/失败步骤：校验版本与目录完整性/)
+    ).toBeInTheDocument()
+    expect(screen.getByText(/不是检出文件大小/)).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId("code-checkout-revalidate-retained-job"))
+    expect(await screen.findByText(/重新校验任务已登记/)).toBeInTheDocument()
+    expect(requests).toHaveLength(1)
+    expect(requests[0].url).toContain(
+      "/resources/code-library/operations/retained-job/revalidate"
+    )
+    expect(requests[0].body).toEqual({ request_key: expect.any(String) })
+  })
+
   it.each([
     ["CODE_SVN_PROPGET_TIMEOUT", "SVN 外部引用检查超时"],
     ["CODE_SVN_UPDATE_TIMEOUT", "SVN 文件下载或版本更新超时"],
@@ -169,7 +235,7 @@ describe("SVN 工程检出", () => {
       </QueryClientProvider>
     )
     expect(
-      await screen.findByText(/SVN 返回的数据超过单次处理上限/)
+      await screen.findByText(/SVN 命令输出超过单次处理上限/)
     ).toBeInTheDocument()
     fireEvent.click(screen.getByLabelText("重试加载 module"))
     fireEvent.click(await screen.findByLabelText("选择 module/rule.cpp"))

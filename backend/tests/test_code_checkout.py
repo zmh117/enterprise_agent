@@ -67,7 +67,7 @@ def test_concurrent_checkout_reservations_have_only_one_owner(tmp_path):
     assert (target / "owned").read_text() == "complete"
 
 
-def test_failed_checkout_cleans_own_directory_and_preserves_failure(tmp_path):
+def test_failed_checkout_retains_own_directory_and_preserves_failure(tmp_path):
     target, kept = tmp_path / "checkout", tmp_path / "keep"
     kept.mkdir()
     (kept / "file").write_text("untouched")
@@ -76,7 +76,7 @@ def test_failed_checkout_cleans_own_directory_and_preserves_failure(tmp_path):
             (target / "partial").write_text("unfinished")
             (target / "external").symlink_to(kept, target_is_directory=True)
             raise CodeKnowledgeError("CODE_SVN_UPDATE_TIMEOUT")
-    assert not target.exists()
+    assert (target / "partial").read_text() == "unfinished"
     assert (kept / "file").read_text() == "untouched"
 
 
@@ -100,9 +100,7 @@ def test_cleanup_failure_does_not_hide_checkout_failure(tmp_path, monkeypatch):
     def denied(*args, **kwargs):
         raise PermissionError("synthetic cleanup denied")
 
-    monkeypatch.setattr(
-        "app.modules.knowledge.infrastructure.code_checkout_client.shutil.rmtree", denied
-    )
+    monkeypatch.setattr("shutil.rmtree", denied)
     with pytest.raises(CodeKnowledgeError, match="^CODE_SVN_UPDATE_TIMEOUT$"):
         with checkout_directory(tmp_path / "checkout"):
             raise CodeKnowledgeError("CODE_SVN_UPDATE_TIMEOUT")
@@ -164,17 +162,19 @@ def management(setup, monkeypatch):
                 "files": ["README.md", "set_server/Order.cpp"],
             }
 
-        def checkout(self, *, root, folder, job_id, revision, paths):
+        def checkout(self, *, root, folder, job_id, revision, paths, on_prepared=lambda: None):
             state["calls"] += 1
             if state["fail"]:
                 raise CodeKnowledgeError("CODE_SYNTHETIC_FAILURE")
             directory = root / folder
             directory.mkdir()
             (directory / ".svn").mkdir()
+            self.directory_created = True
+            on_prepared()
             (directory / "README.md").write_text("synthetic complete file")
 
     class Copy:
-        def __init__(self, source, path, paths, physical_key):
+        def __init__(self, source, path, paths, physical_key, stage=lambda value: None):
             self.paths = paths
 
         def inspect(self, revision):
@@ -617,12 +617,17 @@ def test_svn_failure_diagnostic_survives_worker_and_management_reload(
 
     monkeypatch.setattr(execution.WorkingCopyClient, "checkout", fail)
     executor.execute(operation["id"])
-    expected = {"operation": "update", "exit_code": 1, "svn_error_codes": native_codes}
+    expected = {
+        "stage": "connection",
+        "operation": "update",
+        "exit_code": 1,
+        "svn_error_codes": native_codes,
+    }
     row = jobs.get(operation["id"])
     assert row["state"] == "failed" and row["error_code"] == classification
-    assert row["result"] == {"diagnostic": expected}
+    assert row["result"]["diagnostic"] == expected
     reloaded = next(job for job in jobs.snapshot(resource["id"])["jobs"] if job["id"] == row["id"])
-    assert reloaded["result"] == {"diagnostic": expected}
+    assert reloaded["result"]["diagnostic"] == expected
     assert "private" not in json.dumps(reloaded)
     checkout = jobs.row("code_checkout", operation["checkout_id"])
     assert checkout["state"] == "invalid" and checkout["writer_operation_id"] is None
@@ -780,7 +785,7 @@ def test_checkout_space_is_bounded_before_subprocess(tmp_path, monkeypatch):
     from app.modules.knowledge.infrastructure.code_working_copy import preflight_checkout_space
 
     source = SimpleNamespace(
-        inventory=lambda path, revision: [{"kind": "file", "size_bytes": 1024}]
+        walk_inventory=lambda path, revision, consume: consume({"kind": "file", "size_bytes": 1024})
     )
     monkeypatch.setattr(
         "app.modules.knowledge.infrastructure.code_working_copy.shutil.disk_usage",
@@ -788,10 +793,161 @@ def test_checkout_space_is_bounded_before_subprocess(tmp_path, monkeypatch):
     )
     with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_DISK_LIMIT"):
         preflight_checkout_space(source, tmp_path, ["set_server"], 100)
-    source.inventory = lambda path, revision: [{"kind": "file", "size_bytes": 21 * 1024**3}]
+    source.walk_inventory = lambda path, revision, consume: consume(
+        {"kind": "file", "size_bytes": 21 * 1024**3}
+    )
     monkeypatch.setattr(
         "app.modules.knowledge.infrastructure.code_working_copy.shutil.disk_usage",
         lambda root: SimpleNamespace(free=100 * 1024**3),
     )
     with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_DISK_LIMIT"):
         preflight_checkout_space(source, tmp_path, ["set_server"], 100)
+
+
+def failed_verification(management, monkeypatch):
+    from app.modules.knowledge.infrastructure import code_management_executor as execution
+
+    jobs, _, executor, _, _, _ = management
+    operation = submit(management, browse(management))
+    original = execution.SvnWorkingCopy.inspect
+
+    def fail(copy, revision):
+        raise CodeKnowledgeError("CODE_SVN_METADATA_LIMIT")
+
+    monkeypatch.setattr(execution.SvnWorkingCopy, "inspect", fail)
+    executor.execute(operation["id"])
+    monkeypatch.setattr(execution.SvnWorkingCopy, "inspect", original)
+    return jobs.get(operation["id"])
+
+
+def revalidate(management, operation, key="verify-existing"):
+    return management[0].submit_revalidation(
+        actor_id="user_local_admin",
+        resource_id=management[1]["id"],
+        operation_id=operation["id"],
+        request_key=key,
+    )
+
+
+def test_revalidation_retains_directory_and_never_downloads_again(management, monkeypatch):
+    from app.modules.knowledge.infrastructure import code_management_executor as execution
+
+    jobs, resource, executor, _, _, root = management
+    original = failed_verification(management, monkeypatch)
+    assert original["result"]["directory_retained"] is True
+    assert original["result"]["diagnostic"]["stage"] == "verify_status"
+    assert (root / "selected/README.md").is_file()
+    assert next(j for j in jobs.snapshot(resource["id"])["jobs"] if j["id"] == original["id"])[
+        "can_revalidate"
+    ]
+    operation = revalidate(management, original)
+    assert revalidate(management, original)["id"] == operation["id"]
+    assert operation["checkout_generation"] == original["checkout_generation"] + 1
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_REVALIDATION_UNAVAILABLE"):
+        revalidate(management, original, key="second-click")
+
+    def no_download(*args, **kwargs):
+        pytest.fail("revalidation must never download or update")
+
+    monkeypatch.setattr(execution.WorkingCopyClient, "checkout", no_download)
+    executor.execute(operation["id"])
+    assert jobs.get(operation["id"])["state"] == "succeeded"
+    checkout = jobs.row("code_checkout", original["checkout_id"])
+    assert checkout["state"] == "ready" and checkout["verified_revision"] == 2
+    assert checkout["writer_operation_id"] is None
+    connection = next(
+        c for c in jobs.snapshot(resource["id"])["checkouts"] if c["id"] == checkout["id"]
+    )["connection"]
+    assert connection
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_REVALIDATION_UNAVAILABLE"):
+        revalidate(management, operation, key="succeeded")
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["identity", "missing", "scope", "unquiesced", "writer", "other_resource", "connection"],
+)
+def test_revalidation_rejects_changed_identity_or_ownership(management, monkeypatch, change):
+    from app.modules.knowledge.infrastructure.code_checkout_identity import MARKER
+
+    jobs, resource, executor, _, _, root = management
+    original = failed_verification(management, monkeypatch)
+    if change == "identity":
+        (root / "selected/.svn" / MARKER).write_text("checkout-v1:" + "f" * 32 + "\n")
+    elif change == "missing":
+        (root / "selected").rename(root / "original-directory")
+    elif change == "scope":
+        jobs.db.execute(
+            f"UPDATE {jobs.t('code_checkout')} SET selected_paths_json='[\"elsewhere\"]' WHERE id=?",
+            (original["checkout_id"],),
+        )
+    elif change == "unquiesced":
+        jobs.db.execute(
+            f"UPDATE {jobs.t('code_svn_operation')} SET quiesced_at=NULL WHERE id=?",
+            (original["id"],),
+        )
+    elif change == "writer":
+        jobs.db.execute(
+            f"UPDATE {jobs.t('code_checkout')} SET writer_operation_id=? WHERE id=?",
+            (original["id"], original["checkout_id"]),
+        )
+    elif change == "other_resource":
+        jobs.db.execute(
+            f"UPDATE {jobs.t('code_svn_operation')} SET config_revision_id='code-config' WHERE id=?",
+            (original["id"],),
+        )
+    elif change == "connection":
+        registry = json.loads(jobs.registry_file.read_text())
+        registry["synthetic"]["branch_url"] = "https://different.invalid/trunk"
+        jobs.registry_file.write_text(json.dumps(registry))
+    if change in {"identity", "missing"}:
+        operation = revalidate(management, original)
+        executor.execute(operation["id"])
+        assert jobs.get(operation["id"])["error_code"] == "CODE_CHECKOUT_IDENTITY_CHANGED"
+        assert jobs.row("code_checkout", original["checkout_id"])["state"] == "invalid"
+    else:
+        with pytest.raises(CodeKnowledgeError):
+            revalidate(management, original)
+
+
+def test_legacy_failure_requires_full_revalidation_before_identity_binding(management, monkeypatch):
+    from app.modules.knowledge.infrastructure.code_checkout_identity import MARKER
+
+    jobs, _, executor, _, _, root = management
+    original = failed_verification(management, monkeypatch)
+    jobs.db.execute(
+        f"UPDATE {jobs.t('code_checkout')} SET physical_key=NULL WHERE id=?",
+        (original["checkout_id"],),
+    )
+    (root / "selected/.svn" / MARKER).unlink()
+    operation = revalidate(management, original)
+    executor.execute(operation["id"])
+    assert jobs.get(operation["id"])["state"] == "succeeded"
+    assert jobs.row("code_checkout", original["checkout_id"])["physical_key"].startswith(
+        "checkout-v1:"
+    )
+
+
+def test_failure_projection_keeps_safe_output_limits_only():
+    from app.modules.knowledge.infrastructure.code_management_executor import _diagnostic
+
+    error = CodeKnowledgeError("CODE_SVN_METADATA_LIMIT")
+    error.diagnostic = dict(
+        operation="info",
+        exit_code=None,
+        svn_error_codes=["E200030", "private"],
+        output_stream="stdout",
+        observed_bytes=8388610,
+        limit_bytes=8388608,
+        stderr="private",
+        command="private",
+    )
+    assert _diagnostic(error, "verify_info", "unknown") == dict(
+        stage="verify_info",
+        operation="info",
+        exit_code=None,
+        svn_error_codes=["E200030"],
+        stream="stdout",
+        observed_bytes=8388610,
+        limit_bytes=8388608,
+    )

@@ -14,7 +14,10 @@ import {
 export { DirectoryChoices } from "./code-directory-choices"
 import { DirectoryChoices } from "./code-directory-choices"
 import { CodeBrowseDirectory } from "./code-browse-directory"
-import { codeCheckoutErrors as errors } from "./code-checkout-errors"
+import {
+  codeCheckoutErrors as errors,
+  checkoutStages,
+} from "./code-checkout-errors"
 import { CodeSvnFailureDetails } from "./code-svn-failure-details"
 
 const base = "/api/platform/knowledge/code"
@@ -137,6 +140,17 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
       void cache.invalidateQueries({ queryKey: ["code-checkouts"] })
     },
   })
+  const revalidate = useMutation({
+    mutationFn: (operationId: string) =>
+      apiRequest(
+        `${base}/resources/${encodeURIComponent(resourceId)}/operations/${encodeURIComponent(operationId)}/revalidate`,
+        { method: "POST", body: { request_key: createRequestKey() } }
+      ),
+    onSuccess: () => {
+      setNotice("重新校验任务已登记，沿用原目录、版本和所选范围，不重复下载。")
+      void cache.invalidateQueries({ queryKey: ["code-checkouts"] })
+    },
+  })
   function resetBrowse() {
     setBrowseId(undefined)
     setSelected([])
@@ -156,7 +170,11 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
           版本核验。
         </p>
       </div>
-      <KnowledgeError error={snapshot.error || browse.error || submit.error} />
+      <KnowledgeError
+        error={
+          snapshot.error || browse.error || submit.error || revalidate.error
+        }
+      />
       {snapshot.data && !snapshot.data.enabled ? (
         <p>尚未启用 SVN 检出，请由部署人员配置仓库和检出目录。</p>
       ) : (
@@ -374,6 +392,12 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                     ? ` · SVN r${job.result.operative_revision}`
                     : ""}
                 </span>
+                {job.state === "running" && job.result.stage && (
+                  <p>
+                    当前阶段：{checkoutStages[job.result.stage] ?? "正在处理"}
+                  </p>
+                )}
+                {job.result.verification_only && <p>仅校验已有目录</p>}
                 {job.result.relative_dir && (
                   <p className="break-all">
                     检出目录：{job.result.relative_dir}
@@ -385,10 +409,23 @@ export function CodeCheckoutPanel({ resourceId }: { resourceId: string }) {
                       {errors[job.error_code] ??
                         `检出未完成：${job.error_code}`}
                     </p>
+                    {job.result.directory_retained && (
+                      <p>已保留下载目录，校验通过后才能绑定使用。</p>
+                    )}
                     <CodeSvnFailureDetails
                       operationId={job.id}
                       diagnostic={job.result.diagnostic}
                     />
+                    {job.can_revalidate && (
+                      <Button
+                        type="button"
+                        data-testid={`code-checkout-revalidate-${job.id}`}
+                        disabled={revalidate.isPending}
+                        onClick={() => revalidate.mutate(job.id)}
+                      >
+                        重新校验已有目录
+                      </Button>
+                    )}
                   </>
                 )}
               </li>

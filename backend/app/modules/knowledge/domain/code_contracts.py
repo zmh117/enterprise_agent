@@ -16,6 +16,7 @@ class CodeKnowledgeError(ValueError):
         super().__init__(code)
         self.code = code
         self.location = location
+        self.diagnostic: dict[str, Any] | None = None
 
 
 def obj(properties: dict[str, Any], optional: tuple[str, ...] = ()) -> dict[str, Any]:

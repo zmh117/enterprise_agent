@@ -441,7 +441,7 @@ class WorkingCopyAcceptance(unittest.TestCase):
         self.assertEqual(self.svn("info", "--show-item", "revision", str(output)), "2")
         noreplace.assert_not_called()
 
-    def test_download_failure_removes_only_reserved_directory(self):
+    def test_download_failure_retains_reserved_directory(self):
         from unittest.mock import patch
 
         original_command = self.client._checkout_command
@@ -457,7 +457,7 @@ class WorkingCopyAcceptance(unittest.TestCase):
                 self.client.checkout(
                     root=self.root, folder="failed", job_id="failed", revision=2, paths=["first"]
                 )
-        self.assertFalse((self.root / "failed").exists())
+        self.assertTrue((self.root / "failed/.svn/wc.db").is_file())
         self.assertTrue((self.root / "repo").is_dir())
 
     def test_whole_directory_and_two_sibling_children_without_parent_selection(self):
@@ -497,17 +497,17 @@ class WorkingCopyAcceptance(unittest.TestCase):
         for path in (writer, writer / "first", writer / "second"):
             self.svn("propset", "svn:externals", "^/unselected-do-not-fetch external", str(path))
         self.svn("commit", str(writer), "-m", "unselected external declarations")
-        original_run = self.client.source._run
+        original_run = self.client.source.execute
         checked = []
         budgets = []
 
-        def run(operation, args, *, timeout=60):
+        def run(operation, args, *, timeout=60, **kwargs):
             budgets.append((operation, timeout))
             if operation == "propget":
                 checked.append(args[-1])
-            return original_run(operation, args, timeout=timeout)
+            return original_run(operation, args, timeout=timeout, **kwargs)
 
-        self.client.source._run = run
+        self.client.source.execute = run
         paths = ["first/config", "second/nested/rule.cpp"]
         self.client.checkout(
             root=self.root, folder="scoped", job_id="scoped", revision=3, paths=paths
@@ -522,7 +522,7 @@ class WorkingCopyAcceptance(unittest.TestCase):
         (writer / "second/nested/rule.cpp").write_text("updated selected rule\n")
         self.svn("commit", str(writer), "-m", "selected update")
         self.assertEqual(working.update(4, timeout=30)["operative_revision"], 4)
-        self.assertEqual(checked, [self.url + "/first/config@3", self.url + "/first/config@4"])
+        self.assertEqual(set(checked), {self.url + "/first/config@3", self.url + "/first/config@4"})
         self.assertTrue(
             all(timeout == 300 for op, timeout in budgets if op in {"status", "propget", "list"})
         )
@@ -641,3 +641,92 @@ class WorkingCopyAcceptance(unittest.TestCase):
         self.assertFalse((self.root / "failed").exists())
         self.assertFalse((self.root / ".partial-test-bad-path").exists())
         self.assertEqual((kept / "keep.txt").read_text(), "keep")
+
+    def test_complete_retained_checkout_verifies_without_any_download(self):
+        from unittest.mock import patch
+        from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+        from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+
+        self.client.checkout(
+            root=self.root,
+            folder="retained",
+            job_id="retained",
+            revision=2,
+            paths=["first/config", "second/nested/rule.cpp"],
+        )
+        directory = self.root / "retained"
+        working = SvnWorkingCopy(
+            self.client.source,
+            directory,
+            ["first/config", "second/nested/rule.cpp"],
+            physical_key=persistent_identity(directory, create=True),
+        )
+        with patch.object(
+            self.client.source, "records", side_effect=CodeKnowledgeError("CODE_SVN_METADATA_LIMIT")
+        ):
+            with self.assertRaisesRegex(CodeKnowledgeError, "CODE_SVN_METADATA_LIMIT"):
+                working.inspect(2)
+        self.assertTrue((directory / "second/nested/rule.cpp").is_file())
+        original = self.client.source.execute
+
+        def only_read(operation, *args, **kwargs):
+            self.assertNotIn(operation, {"checkout", "update"})
+            return original(operation, *args, **kwargs)
+
+        with patch.object(self.client.source, "execute", side_effect=only_read):
+            self.assertEqual(working.inspect(2)["file_count"], 2)
+        # A syntactically clean sparse copy is not a complete selected directory.
+        self.svn("update", "--set-depth", "empty", str(directory / "first/config"))
+        with self.assertRaisesRegex(CodeKnowledgeError, "CODE_CHECKOUT_INCOMPLETE"):
+            working.inspect(2)
+        self.svn("update", "--set-depth", "infinity", str(directory / "first/config"))
+        self.svn("update", "--set-depth", "exclude", str(directory / "first/config/settings.json"))
+        # A clean parent with infinity depth can still hide an excluded tracked file.
+        with self.assertRaisesRegex(CodeKnowledgeError, "CODE_CHECKOUT_INCOMPLETE"):
+            working.inspect(2)
+
+    @unittest.skipUnless(
+        os.environ.get("CODE_LARGE_SVN_TEST") == "true", "explicit large synthetic fixture"
+    )
+    def test_real_large_xml_exceeds_old_limit_and_streams_all_files(self):
+        from app.modules.knowledge.infrastructure.code_checkout_identity import persistent_identity
+        from app.modules.knowledge.infrastructure.code_working_copy import SvnWorkingCopy
+
+        fixture = self.root / "large-fixture"
+        folder = "long-path-" + "d" * 170
+        files = fixture / folder
+        files.mkdir(parents=True)
+        for number in range(16000):
+            (files / (f"file-{number:05d}-" + "x" * 185 + ".cpp")).write_text("synthetic\n")
+        self.svn(
+            "import",
+            "--quiet",
+            str(fixture),
+            self.url + "/large",
+            "-m",
+            "large synthetic inventory",
+        )
+        self.client.checkout(
+            root=self.root,
+            folder="large-checkout",
+            job_id="large",
+            revision=3,
+            paths=["large/" + folder],
+        )
+        directory = self.root / "large-checkout"
+        for operation, args in (
+            ("info", ["--xml", "--depth", "infinity"]),
+            ("status", ["--xml", "--verbose", "--no-ignore", "--ignore-externals"]),
+        ):
+            with self.assertRaisesRegex(CodeKnowledgeError, "code_svn_response_too_large"):
+                self.client.source.execute(
+                    operation, [*args, str(directory) + "@"], timeout=300, limit=8 * 1024**2
+                )
+        working = SvnWorkingCopy(
+            self.client.source,
+            directory,
+            ["large/" + folder],
+            physical_key=persistent_identity(directory, create=True),
+        )
+        result = working.inspect(3)
+        self.assertEqual(result["file_count"], 16000)

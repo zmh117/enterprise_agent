@@ -59,13 +59,31 @@ class CodeCheckoutJobs(CodeOperationStore):
 
     def snapshot(self, resource_id: str) -> dict[str, Any]:
         rows = self.db.execute(
-            f"SELECT o.id,o.operation_kind,o.state,o.error_code,o.created_at,o.result_json FROM {self.t('code_svn_operation')} o "
+            f"SELECT o.id,o.operation_kind,o.state,o.error_code,o.created_at,o.result_json,o.checkout_id,o.target_revision,c.relative_dir FROM {self.t('code_svn_operation')} o "
             f"JOIN {self.t('retrieval_revision')} v ON v.id=o.config_revision_id "
+            f"LEFT JOIN {self.t('code_checkout')} c ON c.id=o.checkout_id "
             "WHERE v.resource_id=? AND o.analysis_id IS NULL ORDER BY o.created_at DESC,o.id DESC LIMIT 30",
             (resource_id,),
         )
         for row in rows:
             row["result"] = json_value(row.pop("result_json"))
+            folder = row.pop("relative_dir")
+            target = row.pop("target_revision")
+            if folder:
+                row["result"].setdefault("relative_dir", folder)
+                row["result"].setdefault("revision", target)
+            row["can_revalidate"] = False
+            if row["operation_kind"] == "checkout" and row["state"] == "failed":
+                from app.modules.knowledge.infrastructure.code_checkout_revalidation import (
+                    revalidation_target,
+                )
+
+                try:
+                    self.draft(resource_id)
+                    revalidation_target(self, row["id"], resource_id)
+                    row["can_revalidate"] = True
+                except CodeKnowledgeError:
+                    pass
         checkouts = self.db.execute(
             f"SELECT id,source_id,relative_dir,state,verified_revision,generation,writer_operation_id,selected_paths_json FROM {self.t('code_checkout')} ORDER BY relative_dir LIMIT 1000"
         )
@@ -178,6 +196,24 @@ class CodeCheckoutJobs(CodeOperationStore):
             source_id=browse["source_id"],
         )
 
+    def submit_revalidation(
+        self, *, actor_id: str, resource_id: str, operation_id: str, request_key: str
+    ) -> dict[str, Any]:
+        self.admin.require_admin(actor_id)
+        original = self.get(operation_id)
+        return self._submit(
+            actor_id,
+            resource_id,
+            request_key,
+            "checkout",
+            {
+                **original["request"],
+                "verification_only": True,
+                "revalidate_operation_id": operation_id,
+            },
+            source_id=original["source_id"],
+        )
+
     def submit_browse_children(
         self,
         *,
@@ -259,11 +295,21 @@ class CodeCheckoutJobs(CodeOperationStore):
             checkout = None
             if kind == "checkout":
                 assert source_id is not None
-                checkout = self.reserve_checkout(
-                    source_id=source_id,
-                    relative_dir=request["folder"],
-                    selected_paths=request["paths"],
-                )
+                if request.get("verification_only"):
+                    from app.modules.knowledge.infrastructure.code_checkout_revalidation import (
+                        revalidation_target,
+                    )
+
+                    _, checkout = revalidation_target(
+                        self, request["revalidate_operation_id"], resource, lock=True
+                    )
+                else:
+                    checkout = self.reserve_checkout(
+                        source_id=source_id,
+                        relative_dir=request["folder"],
+                        selected_paths=request["paths"],
+                    )
+            generation = (checkout["generation"] + 1) if checkout else None
             identifier = stable_id("code-management-operation", request_key)
             current = database_now(self.db)
             stamp = timestamp(current)
@@ -281,8 +327,15 @@ class CodeCheckoutJobs(CodeOperationStore):
                     request_hash=request_hash,
                     state="queued",
                     request_json=request,
+                    result_json={
+                        "relative_dir": request["folder"],
+                        "revision": request["revision"],
+                        "verification_only": bool(request.get("verification_only")),
+                    }
+                    if checkout
+                    else {},
                     target_revision=request["revision"],
-                    checkout_generation=1 if checkout else None,
+                    checkout_generation=generation,
                     deadline_at=timestamp(current + timedelta(seconds=1800 if checkout else 120)),
                     created_at=stamp,
                     updated_at=stamp,
@@ -290,8 +343,8 @@ class CodeCheckoutJobs(CodeOperationStore):
             )
             if checkout:
                 self.db.execute(
-                    f"UPDATE {self.t('code_checkout')} SET writer_operation_id=?,generation=1 WHERE id=?",
-                    (identifier, checkout["id"]),
+                    f"UPDATE {self.t('code_checkout')} SET writer_operation_id=?,generation=?,state='preparing',invalid_reason=NULL WHERE id=?",
+                    (identifier, generation, checkout["id"]),
                 )
             self.admin.record(
                 "code_checkout_queued",
@@ -357,6 +410,15 @@ class CodeCheckoutJobs(CodeOperationStore):
                 ),
             )
 
+    def progress_management(self, identifier: str, *, owner: str, claim: int, stage: str) -> None:
+        with self.db.unit_of_work():
+            row = self.check_claim(identifier, owner=owner, claim=claim)
+            result = {**json_value(row["result_json"]), "stage": stage}
+            self.db.execute(
+                f"UPDATE {self.t('code_svn_operation')} SET result_json=? WHERE id=?",
+                (canonical_json(result), identifier),
+            )
+
     def fail_management(
         self,
         identifier: str,
@@ -365,6 +427,7 @@ class CodeCheckoutJobs(CodeOperationStore):
         claim: int,
         error: str,
         diagnostic: dict[str, Any] | None = None,
+        directory_retained: bool = False,
     ) -> None:
         # Called only by this claim after every child process has been waited on.
         observed = self.get(identifier)
@@ -386,7 +449,13 @@ class CodeCheckoutJobs(CodeOperationStore):
                     stamp,
                     stamp,
                     error,
-                    canonical_json({"diagnostic": diagnostic} if diagnostic else {}),
+                    canonical_json(
+                        {
+                            **json_value(row["result_json"]),
+                            "directory_retained": directory_retained,
+                            **({"diagnostic": diagnostic} if diagnostic else {}),
+                        }
+                    ),
                     identifier,
                 ),
             )

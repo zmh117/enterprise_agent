@@ -1,5 +1,6 @@
 [tiers]
 unit = [
+  "test_code_svn_streaming.py",
   "test_knowledge_architecture.py",
   "test_build_identity.py",
   "test_business_mcp_principal_policy.py",

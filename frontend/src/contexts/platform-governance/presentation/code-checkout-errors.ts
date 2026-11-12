@@ -1,4 +1,34 @@
+export const checkoutStages: Record<string, string> = {
+  connection: "连接仓库",
+  browse: "浏览目录",
+  preflight: "检查所选范围与可用空间",
+  download: "下载文件",
+  verify_status: "校验工作副本状态",
+  verify_info: "校验版本与目录完整性",
+  verify_inventory: "比对指定版本的完整文件清单",
+  register: "登记可用目录",
+}
+
 export const codeCheckoutErrors: Record<string, string> = {
+  CODE_CHECKOUT_INVENTORY_LIMIT:
+    "SVN 校验清单超过 10 万条记录，已下载目录保留，请缩小选择范围。",
+  CODE_SVN_METADATA_LIMIT:
+    "SVN 清单超过校验上限（单命令 256 MiB、10 万条记录、单条 256 KiB）。已下载目录保留，请缩小选择范围或联系管理员。",
+  CODE_CHECKOUT_REVALIDATION_UNAVAILABLE:
+    "该任务当前不能重新校验，可能已有后续任务或目录正在使用，请刷新任务状态。",
+  CODE_CHECKOUT_INCOMPLETE:
+    "所选目录未完整下载，或包含稀疏目录；已保留现有内容，本次不会补下载。",
+  CODE_CHECKOUT_DIRTY:
+    "工作副本存在修改、缺失或未完成操作，已保留目录，请由管理员核查。",
+  CODE_CHECKOUT_VERSION_MISMATCH:
+    "已有目录版本或所选路径与原检出任务不一致，不能复用。",
+  CODE_CHECKOUT_MIXED:
+    "已有目录包含多个 SVN 版本，不能作为指定版本的完整代码使用。",
+  CODE_CHECKOUT_DISK_LIMIT:
+    "可用磁盘不足，或所选工程超过容量限制（20 GiB / 10 万条目）。",
+  CODE_CHECKOUT_EXTERNALS_UNSUPPORTED:
+    "所选目录包含 SVN 外部引用，不能确认为完整的受管工程。",
+
   code_svn_request_failed:
     "SVN 命令执行失败，需结合执行步骤和 SVN 错误号确定原因。",
   CODE_CHECKOUT_CONNECTION_UNAVAILABLE:
@@ -28,7 +58,7 @@ export const codeCheckoutErrors: Record<string, string> = {
   CODE_SVN_BLAME_TIMEOUT: "SVN 行历史查询超时，请缩小查询范围。",
   CODE_SVN_CAT_TIMEOUT: "SVN 文件内容读取超时，请检查仓库响应速度。",
   code_svn_response_too_large:
-    "SVN 返回的数据超过单次处理上限，请将仓库地址缩小到需要的子目录后重试。",
+    "SVN 命令输出超过单次处理上限，不代表下载文件体积超限。请查看失败步骤；已下载目录可尝试重新校验。",
   code_source_inventory_limit: "目录条目超过处理上限，请缩小检出范围。",
   code_checkout_directory_limit: "当前目录下的文件夹过多，请缩小仓库地址范围。",
   CODE_HISTORY_RESPONSE_TOO_LARGE: "当前目录预览过大，请缩小仓库地址范围。",

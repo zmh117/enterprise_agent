@@ -23,6 +23,10 @@ from app.modules.knowledge.domain.code_json import sha256
 from app.modules.knowledge.infrastructure.code_source import relative_path
 from app.modules.knowledge.infrastructure.code_executor_lock import inherited_execution_fds
 from app.modules.knowledge.infrastructure.code_operation_heartbeat import watch_svn_process
+from app.modules.knowledge.infrastructure.code_svn_stream import (
+    MAX_METADATA_BYTES,
+    SvnXmlRecords,
+)
 
 MAX_XML_BYTES = 8 * 1024 * 1024
 BULK_METADATA_TIMEOUT = 300
@@ -96,6 +100,7 @@ class SvnCodeSource:
         self.config_directory, self.executable = config_directory, executable
         self.cancelled = cancelled or (lambda: False)
         self._credentials = credentials
+        self.last_operation = "unknown"
 
     def discover(self) -> None:
         entry = xml_document(self._run("info", ["--xml", self.branch_url + "@HEAD"])).find("entry")
@@ -131,11 +136,13 @@ class SvnCodeSource:
         args: list[str],
         *,
         timeout: float,
-        limit: int,
+        limit: int | None,
         cancelled: Callable[[], bool] | None = None,
+        consume_stdout: Callable[[bytes], None] | None = None,
     ) -> bytes:
         if operation not in SVN_OPERATIONS:
             raise CodeKnowledgeError("code_svn_operation_denied")
+        self.last_operation = operation
         if self.cancelled():
             raise CodeKnowledgeError("code_collection_interrupted")
         command = [
@@ -177,6 +184,7 @@ class SvnCodeSource:
                             cancelled=cancelled or self.cancelled,
                             timeout_error=timeout_error,
                             operation=operation,
+                            consume_stdout=consume_stdout,
                         )
                 finally:
                     if process.poll() is None:
@@ -194,6 +202,64 @@ class SvnCodeSource:
             else:
                 error = "CODE_SVN_START_FAILED"
             raise CodeKnowledgeError(error) from None
+
+    def records(
+        self,
+        operation: str,
+        args: list[str],
+        path: tuple[str, ...],
+        consume: Callable[[ET.Element], None],
+    ) -> None:
+        parser = SvnXmlRecords(path, consume)
+        self.execute(
+            operation,
+            args,
+            timeout=BULK_METADATA_TIMEOUT,
+            limit=MAX_METADATA_BYTES,
+            consume_stdout=parser.feed,
+        )
+        try:
+            parser.finish()
+        except CodeKnowledgeError as exc:
+            exc.diagnostic = {
+                "operation": operation,
+                "exit_code": 0,
+                "svn_error_codes": [],
+                "output_stream": "stdout",
+                "observed_bytes": parser.bytes,
+            }
+            raise
+
+    def walk_inventory(
+        self,
+        path: str,
+        revision: int,
+        consume: Callable[[dict[str, Any]], None],
+    ) -> None:
+        seen: set[str] = set()
+
+        def entry(node: ET.Element) -> None:
+            if self.cancelled():
+                raise CodeKnowledgeError("code_collection_interrupted")
+            name = relative_path(node.findtext("name") or "")
+            if name in seen:
+                raise CodeKnowledgeError("code_svn_inventory_duplicate")
+            seen.add(name)
+            kind = node.get("kind")
+            try:
+                size = int(node.findtext("size") or "0")
+            except ValueError:
+                raise CodeKnowledgeError("code_svn_response_invalid") from None
+            if kind not in {"file", "dir"} or size < 0:
+                raise CodeKnowledgeError("code_svn_response_invalid")
+            consume({"path": name, "kind": kind, "size_bytes": size})
+
+        self.records(
+            "list",
+            ["--xml", "--recursive", "-r", str(revision), self._target(revision, path)],
+            ("lists", "list", "entry"),
+            entry,
+        )
 
     def preflight(self, revision: int) -> dict[str, Any]:
         target = self._target(revision)
@@ -329,23 +395,9 @@ class SvnCodeSource:
         approved: dict[str, "SvnCodeSource"] | None = None,
         capture_floating: bool = False,
     ) -> dict[str, Any]:
-        data = self._run(
-            "propget",
-            [
-                "--xml",
-                "--recursive",
-                "-r",
-                str(revision),
-                "svn:externals",
-                self._target(revision, path),
-            ],
-            timeout=BULK_METADATA_TIMEOUT,
-        )
-        document = xml_document(data)
-        if document.tag != "properties":
-            raise CodeKnowledgeError("code_svn_response_invalid")
         declarations: list[dict[str, Any]] = []
-        for target in document.findall("target"):
+
+        def consume(target: ET.Element) -> None:
             for prop in target.findall("property"):
                 if prop.get("name") == "svn:externals" and (prop.text or "").strip():
                     for line in (prop.text or "").splitlines():
@@ -361,6 +413,20 @@ class SvnCodeSource:
                                 capture_floating=capture_floating,
                             )
                         )
+
+        self.records(
+            "propget",
+            [
+                "--xml",
+                "--recursive",
+                "-r",
+                str(revision),
+                "svn:externals",
+                self._target(revision, path),
+            ],
+            ("properties", "target"),
+            consume,
+        )
         return {
             "declarations": declarations,
             "complete": all(item["state"] == "PINNED" for item in declarations),
@@ -466,17 +532,18 @@ def _bounded_output(
     process: subprocess.Popen[bytes],
     *,
     timeout: float,
-    limit: int,
+    limit: int | None,
     cancelled: Callable[[], bool] = lambda: False,
     timeout_error: str = "CODE_SVN_TIMEOUT",
     operation: str = "unknown",
+    consume_stdout: Callable[[bytes], None] | None = None,
 ) -> bytes:
     """Bound stdout; retain only fixed numeric SVN error codes from stderr."""
     assert process.stdout is not None
     deadline = time.monotonic() + timeout
     output = bytearray()
     error_codes: set[bytes] = set()
-    error_tail, error_size = b"", 0
+    error_tail, error_size, output_size = b"", 0, 0
     with selectors.DefaultSelector() as selector:
         selector.register(process.stdout, selectors.EVENT_READ)
         if process.stderr is not None:
@@ -495,13 +562,31 @@ def _bounded_output(
                 if key.fileobj is process.stderr:
                     error_size += len(block)
                     error_codes.update(re.findall(rb"E[0-9]{6}", error_tail + block))
+                    error_codes = set(sorted(error_codes)[:8])
                     error_tail = block[-7:]
-                    if error_size > 65536:
-                        raise CodeKnowledgeError("code_svn_response_too_large")
                 else:
-                    output.extend(block)
-                    if len(output) > limit:
-                        raise CodeKnowledgeError("code_svn_response_too_large")
+                    output_size += len(block)
+                    try:
+                        if limit is not None and output_size > limit:
+                            raise CodeKnowledgeError(
+                                "CODE_SVN_METADATA_LIMIT"
+                                if consume_stdout
+                                else "code_svn_response_too_large"
+                            )
+                        if consume_stdout is not None:
+                            consume_stdout(block)
+                        elif limit is not None:
+                            output.extend(block)
+                    except CodeKnowledgeError as exc:
+                        exc.diagnostic = {
+                            "operation": operation,
+                            "exit_code": None,
+                            "svn_error_codes": sorted(c.decode() for c in error_codes),
+                            "output_stream": "stdout",
+                            "observed_bytes": output_size,
+                            "limit_bytes": limit,
+                        }
+                        raise
     returncode = process.wait(timeout=max(0.001, deadline - time.monotonic()))
     if returncode:
         for codes, error in [
