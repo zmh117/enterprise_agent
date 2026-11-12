@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 import json
 from copy import deepcopy
+from dataclasses import replace
 from backend.tests.support.knowledge_reranker import SyntheticReranker
 
 import httpx
@@ -16,7 +17,7 @@ from app.modules.knowledge.application.directory import KnowledgeDirectory
 from app.modules.knowledge.infrastructure.reader_access import KnowledgePrincipalAccess
 from app.modules.knowledge.infrastructure.readability_client import KnowledgeReadabilityClient
 from app.modules.knowledge.application.readability import BRIDGE_PATH
-from app.modules.knowledge.application.search import KnowledgeSearch
+from app.modules.knowledge.application.search import KnowledgeSearch, SearchRequest
 from app.modules.knowledge.domain.models import KnowledgeAccessMode
 from app.modules.knowledge.application import retrieval_budget
 from app.modules.knowledge.application.retrieval_budget import DEADLINE_HEADER, current_budget
@@ -85,6 +86,83 @@ def search(f, **extra):
             **extra,
         },
     )
+
+
+@pytest.mark.parametrize("mode", [KnowledgeAccessMode.ONLINE, KnowledgeAccessMode.OFFLINE])
+def test_resource_code_search_uses_resource_identity_not_content_code(search_fixture, mode):
+    f = search_fixture
+    f["search"].access_mode = mode
+    directory = KnowledgeDirectory(f["search"].access, f["search"].resources, f["search"].audit)
+    page = directory.list_bases(token=f["knowledge_token"], arguments={})
+    assert page["items"][0]["code"] == "synthetic"
+    result = f["search"].search(
+        token=f["knowledge_token"], arguments={"resource_code": "synthetic", "query": "合成查询"}
+    )
+    assert result["knowledge_base_id"] == f["body"]["knowledge_base_id"]
+    assert result["documents"]
+    assert bool(f["hops"]) is (mode is KnowledgeAccessMode.ONLINE)
+
+
+@pytest.mark.parametrize(
+    "kind", ["unknown", "content_code", "unauthorized", "disabled", "unpublished", "replaced"]
+)
+def test_resource_code_rejects_unavailable_target_before_retrieval(
+    search_fixture, monkeypatch, kind
+):
+    f = search_fixture
+    service, db = f["search"], f["runtime"].database
+    code = "synthetic"
+    expected = "knowledge_resource_code_unavailable"
+    if kind == "unknown":
+        code = "not-a-resource"
+    elif kind == "content_code":
+        code = "synthetic_base"
+    elif kind == "unauthorized":
+        original = service.access.authenticate
+        monkeypatch.setattr(
+            service.access,
+            "authenticate",
+            lambda *a, **k: replace(original(*a, **k), knowledge_base_ids=()),
+        )
+    elif kind in {"disabled", "unpublished"}:
+        field, value = (
+            ("status", "disabled") if kind == "disabled" else ("published_revision_id", None)
+        )
+        db.execute(
+            f'UPDATE "knowledge.retrieval_resource" SET {field}=? WHERE code=?', (value, code)
+        )
+        expected = "knowledge_resource_unavailable"
+    else:
+        original_resolve = service.resources.resolve
+        monkeypatch.setattr(
+            service.resources,
+            "resolve",
+            lambda base: replace(original_resolve(base), resource_id="replacement-resource"),
+        )
+        expected = "knowledge_resource_changed"
+    with pytest.raises(KnowledgeGovernanceError) as exc:
+        service.search(
+            token=f["knowledge_token"], arguments={"resource_code": code, "query": "合成查询"}
+        )
+    assert exc.value.error_code == expected
+    assert not f["vector"].qdrant.search_limits and not f["hops"]
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {},
+        {"resource_code": "synthetic", "knowledge_base_id": "kb"},
+        {"resource_code": ""},
+        {"resource_code": None},
+        {"resource_code": "a b"},
+        {"resource_code": "a" * 129},
+        {"resource_code": "synthetic", "resource_id": "injected"},
+    ],
+)
+def test_resource_selector_rejects_ambiguous_or_invalid_input(selector):
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_input_invalid"):
+        SearchRequest.parse({**selector, "query": "合成查询"})
 
 
 def test_offline_search_returns_snapshot_content_without_provider_or_audit_text(search_fixture):

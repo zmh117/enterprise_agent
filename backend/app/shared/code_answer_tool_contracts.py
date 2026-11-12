@@ -28,7 +28,8 @@ CODE_ANSWER_PRESENTATION_INSTRUCTIONS = (
     "ID 必须来自本次成功读取或保存；平台核验关联后在用户可见回复中移除标记。无有效 ID 时省略，不编造或解释内部 ID 缺失。"
 )
 CODE_USAGE = (
-    "用户必须明确指定环境，例如 环境：prod。先 knowledge_list_bases(source_kind=code, environment=环境编码) 选库；"
+    "代码知识查询必须明确指定环境，例如 环境：prod。用户提供资源编码时直接用 resource_code 检索，"
+    "后续代码工具使用检索返回的 knowledge_base_id；未指定编码时用 knowledge_list_bases(source_kind=code, environment=环境编码) 选库；"
     "同环境有多个知识库时请用户选择。所有检索、源码操作、保存及读取传同一 environment，禁止跨环境复用答案或凭证。"
     "代码问答必须由用户明确提供 SVN 数字版本。先 knowledge_search(version_mode=exact)，"
     "缺适用证据时才用成功的 search_id 查 next_higher_hint；最近更高版本只能当线索，"

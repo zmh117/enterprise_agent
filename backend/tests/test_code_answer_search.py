@@ -240,7 +240,8 @@ def application_search(indexing):
     return service, ctx, receipts
 
 
-def test_application_search_receipt_and_full_answer_keep_environment(indexing):
+@pytest.mark.parametrize("selector", ["id", "code"])
+def test_application_search_receipt_and_full_answer_keep_environment(indexing, selector):
     from app.modules.knowledge.application.code_query import CodeKnowledgeQuery
     from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
     from app.modules.mcp_audit import McpAuditContext, McpAuditCoordinator
@@ -256,6 +257,10 @@ def test_application_search_receipt_and_full_answer_keep_environment(indexing):
         svn_revision=100,
         environment="env-a",
     )
+    if selector == "code":
+        resource = service.resources.store.get("retrieval_resource", "code-resource")
+        del arguments["knowledge_base_id"]
+        arguments["resource_code"] = resource["code"]
     audit = McpAuditCoordinator(indexing[1].db, max_payload_bytes=16384)
     handle = audit.begin(
         McpAuditContext(
@@ -310,6 +315,12 @@ def test_application_search_receipt_and_full_answer_keep_environment(indexing):
                 arguments={**arguments, "environment": environment},
                 search_id="other-search",
             )
+    with pytest.raises(KnowledgeGovernanceError, match="SVN_REVISION_REQUIRED"):
+        service.search(
+            token="synthetic",
+            arguments={key: value for key, value in arguments.items() if key != "svn_revision"},
+            search_id="missing-version",
+        )
 
 
 def test_environment_revocation_during_reranking_cannot_return_evidence(indexing):

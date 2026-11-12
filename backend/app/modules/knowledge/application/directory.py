@@ -74,13 +74,12 @@ class KnowledgeDirectory:
                 if exc.error_code not in UNAVAILABLE_RESOURCE_CODES:
                     raise
                 continue
-            base = self.resources.store.get("knowledge_base", base_id)
             resource = self.resources.store.get("retrieval_resource", pin.resource_id)
             with self.resources.content_for(pin) as content:
                 source = content.records.get("source", pin.source_id)
             item = {
                 "knowledge_base_id": base_id,
-                "code": base["code"],
+                "code": resource["code"],
                 "name": resource["name"],
                 "status": "AVAILABLE",
                 "source_kind": "code" if source["source_system"] == "svn" else "ones",

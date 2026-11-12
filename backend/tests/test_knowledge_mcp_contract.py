@@ -111,6 +111,16 @@ def test_manifest_rejects_knowledge_contract_drift(field, value):
         ("knowledge_list_bases", {"cursor": "x" * 4097}, False),
         ("knowledge_list_bases", {"limit": 100}, False),
         ("knowledge_search", {"knowledge_base_id": "kb-1", "query": "缺陷"}, True),
+        ("knowledge_search", {"resource_code": "mes_story", "query": "缺陷"}, True),
+        ("knowledge_search", {"resource_code": "", "query": "缺陷"}, False),
+        ("knowledge_search", {"resource_code": "story library", "query": "缺陷"}, False),
+        ("knowledge_search", {"resource_code": "x" * 129, "query": "缺陷"}, False),
+        ("knowledge_search", {"query": "缺陷"}, False),
+        (
+            "knowledge_search",
+            {"resource_code": "mes_story", "knowledge_base_id": "kb-1", "query": "缺陷"},
+            False,
+        ),
         ("knowledge_search", {"knowledge_base_id": "kb-1", "query": "x" * 2000, "top_k": 20}, True),
         ("knowledge_search", {"knowledge_base_id": "kb-1", "query": "x" * 2001}, False),
         ("knowledge_search", {"knowledge_base_id": "kb-1", "query": "  "}, False),
@@ -319,7 +329,7 @@ def test_versioned_code_marker_changes_frozen_hash_and_old_publication_is_denied
 
     f = job_fixture
     schema = KNOWLEDGE_TOOL_CONTRACTS["knowledge_search"].input_schema
-    assert schema["$comment"] == "knowledge-search-contract/v7-environment"
+    assert schema["$comment"] == "knowledge-search-contract/v8-resource-code"
     old = {**schema, "$comment": "knowledge-search-contract/v4-access-mode"}
     assert tool_schema_hash(old) != MCP_TOOL_MANIFEST["knowledge_search"].schema_hash
     f["runtime"].database.execute(

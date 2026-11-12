@@ -55,6 +55,7 @@ class KnowledgeGovernanceError(NonRetryableExecutionError):
                 "knowledge_verification_busy": "知识来源核验繁忙，请稍后重试",
                 "knowledge_verification_job_invalid": "请使用本人正在运行且已获 ONES 详情权限的业务应用任务进行核验",
                 "knowledge_resource_unavailable": "知识检索资源未发布或已停用",
+                "knowledge_resource_code_unavailable": "当前任务没有可用的该编码知识库，请核对资源编码及应用、角色授权",
                 "knowledge_resource_conflict": "该知识库已有启用的检索资源或资源编码重复",
                 "knowledge_resource_changed": "知识检索资源已变化，请重新查询",
                 "knowledge_index_unavailable": "知识索引尚未就绪或与当前配置不匹配",

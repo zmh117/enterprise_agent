@@ -7,9 +7,9 @@ description: 按用户明确的环境和 SVN 版本核验业务规则，默认�
 
 本 Skill 用于代码知识库的业务规则与版本核验。纯 ONES 需求、缺陷和工单资料查询沿用原有查询流程，不要求 SVN 号；只有转向代码知识库时才要求用户明确环境和版本。不得因为本 Skill 已加载就把所有问题转为源码分析。
 
-1. 用户本次问题必须明确指定一个环境和数字 SVN 版本，例如 `环境：prod，SVN r100`。缺少环境或版本时先询问；多个环境要求拆分提问或选择一个环境，不从历史会话、应用默认或其他资源推断。环境可用编码或明确且无歧义的名称表达，工具一律传精确环境编码；不要从 HEAD、工作副本当前版本、本地基线、业务单据版本或自己的猜测补版本。比较问题可以明确两个数字版本。先用 `knowledge_list_bases(source_kind="code", environment=环境编码)` 选择当前环境已发布且获准的代码知识库；同环境有多个库时请用户选择，不取第一个。后续所有代码工具都传同一 `environment`，凭证、答案、源码分析和保存不可跨环境复用。来源或业务端有歧义时澄清。set_server 是公共后端，EBR 是工厂前端，JTH 是集团前端；具体目录和权限以当前知识库为准。
+1. 用户本次问题必须明确指定一个环境和数字 SVN 版本，例如 `环境：prod，SVN r100`。缺少环境或版本时先询问；多个环境要求拆分提问或选择一个环境，不从历史会话、应用默认或其他资源推断。环境可用编码或明确且无歧义的名称表达，工具一律传精确环境编码；不要从 HEAD、工作副本当前版本、本地基线、业务单据版本或自己的猜测补版本。比较问题可以明确两个数字版本。用户已提供知识资源编码时直接调用 `knowledge_search(resource_code=资源编码, environment=环境编码, query=问题, svn_revision=用户版本)`，无需索要 UUID 或先查目录；后续代码工具使用成功检索返回的 `knowledge_base_id`。未提供资源编码或明确 ID 时，用 `knowledge_list_bases(source_kind="code", environment=环境编码)` 选择当前环境已发布且获准的代码知识库；同环境有多个库时请用户选择，不取第一个。后续所有代码工具都传同一 `environment`，凭证、答案、源码分析和保存不可跨环境复用。来源或业务端有歧义时澄清。set_server 是公共后端，EBR 是工厂前端，JTH 是集团前端；具体目录和权限以当前知识库为准。
 
-2. 用 `knowledge_search(knowledge_base_id, environment, query, svn_revision, version_mode="exact")` 保留用户原始对象、症状和条件。先读同版本候选和完整条件；需要完整结论时用成功返回的 `search_id`、`document_id`、`revision_id` 调用 `knowledge_get_code_answer`。分数是排序分，不是可信度；检索故障或预算耗尽不等于未命中。空库和有界零命中也不证明整个业务不存在规则。
+2. 用 `knowledge_search(resource_code=资源编码, environment=环境编码, query=问题, svn_revision=用户版本, version_mode="exact")`（也可传已知 `knowledge_base_id`，与 `resource_code` 二选一） 保留用户原始对象、症状和条件。先读同版本候选和完整条件；需要完整结论时用成功返回的 `search_id`、`document_id`、`revision_id` 调用 `knowledge_get_code_answer`。分数是排序分，不是可信度；检索故障或预算耗尽不等于未命中。空库和有界零命中也不证明整个业务不存在规则。
 
 3. 同版本证据不足时，可引用该次成功 `search_id` 调用 `knowledge_search(version_mode="next_higher_hint", exact_search_id=..., reason=...)`，保持同一环境、问题和用户版本。服务端只返回最近一个有权限且索引就绪的更高版本。它始终是线索，详情也保留 `requires_verification=true`；不得把其规则直接当作用户版本的事实。
 

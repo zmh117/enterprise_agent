@@ -4,7 +4,7 @@ from app.modules.knowledge.application.principal import PrincipalToken
 
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import threading
 from typing import Any, cast
@@ -72,15 +72,19 @@ class SearchRequest:
     exact_search_id: str | None = None
     reason: str | None = None
     environment: str | None = None
+    resource_code: str | None = None
+    resource_id: str | None = None
 
     @classmethod
     def parse(cls, value: Any) -> "SearchRequest":
         if (
             not isinstance(value, dict)
-            or not {"knowledge_base_id", "query"} <= set(value)
+            or "query" not in value
+            or len({"knowledge_base_id", "resource_code"} & set(value)) != 1
             or not set(value)
             <= {
                 "knowledge_base_id",
+                "resource_code",
                 "query",
                 "top_k",
                 "svn_revision",
@@ -119,7 +123,7 @@ class SearchRequest:
         elif "exact_search_id" in value or "reason" in value:
             raise KnowledgeGovernanceError("knowledge_input_invalid")
         return cls(
-            checked_identifier(value["knowledge_base_id"]),
+            checked_identifier(value["knowledge_base_id"]) if "knowledge_base_id" in value else "",
             query,
             top_k,
             value.get("svn_revision"),
@@ -127,6 +131,21 @@ class SearchRequest:
             value.get("exact_search_id"),
             value.get("reason"),
             value.get("environment"),
+            checked_identifier(value["resource_code"]) if "resource_code" in value else None,
+        )
+
+    def resolve_code(
+        self, resources: KnowledgeResourceReader, access: KnowledgeJobAccess
+    ) -> "SearchRequest":
+        if self.resource_code is None:
+            return self
+        resource = resources.store.resource_by_code(self.resource_code)
+        if resource is None or resource["knowledge_base_id"] not in access.knowledge_base_ids:
+            raise KnowledgeGovernanceError("knowledge_resource_code_unavailable")
+        if resource["status"] != "enabled" or not resource["published_revision_id"]:
+            raise KnowledgeGovernanceError("knowledge_resource_unavailable")
+        return replace(
+            self, knowledge_base_id=resource["knowledge_base_id"], resource_id=resource["id"]
         )
 
 
@@ -166,6 +185,7 @@ class KnowledgeSearch:
             request = SearchRequest.parse(arguments)
             with stage("access_check"):
                 access = self.access.authenticate(token, "knowledge_search")
+                request = request.resolve_code(self.resources, access)
             if request.knowledge_base_id not in access.knowledge_base_ids:
                 raise KnowledgeGovernanceError("knowledge_job_denied")
             acquired = self._slots.acquire(blocking=False)
@@ -231,6 +251,8 @@ class KnowledgeSearch:
         with ExitStack() as stack:
             with stage("resource"):
                 pin = self.resources.resolve(request.knowledge_base_id)
+                if request.resource_id is not None and request.resource_id != pin.resource_id:
+                    raise KnowledgeGovernanceError("knowledge_resource_changed")
                 content = stack.enter_context(self.resources.content_for(pin))
             kind = content.records.get("source", pin.source_id)["source_system"]
             if kind == "svn":

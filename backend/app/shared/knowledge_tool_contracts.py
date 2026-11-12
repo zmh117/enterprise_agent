@@ -15,8 +15,11 @@ from app.shared.code_answer_tool_contracts import (
 
 
 KNOWLEDGE_USAGE_INSTRUCTIONS = (
-    "知识检索流程：先调用 knowledge_list_bases 发现当前应用获准的知识库，"
-    "按 has_more/next_cursor 在预算内翻页，再选择明确的 knowledge_base_id 调用 knowledge_search；"
+    "知识检索流程：用户明确提供知识资源编码（例如 mes_story）时，直接调用 knowledge_search(resource_code=编码)，"
+    "不要求用户提供 UUID，不必先查目录。resource_code 与 knowledge_base_id 只能传一个，不把编码填进 ID 字段。"
+    "未提供明确编码或 ID 时，调用 knowledge_list_bases 发现当前应用获准的知识库，"
+    "按 has_more/next_cursor 在预算内翻页；目录 code 就是资源页面编码，name 是显示名称。"
+    "选定后用 resource_code 或返回的 knowledge_base_id 调用 knowledge_search；"
     "存在歧义时询问用户，不猜知识库或 Team。"
     "knowledge_search 返回已入库内容快照，access_mode 由部署配置决定，模型不能切换。"
     "ONES 来源 online 为默认模式，要求平台知识库权限和本人 ONES 当前可读性；ONES 失败时报错，不自动降级。"
@@ -213,10 +216,14 @@ KNOWLEDGE_TOOL_CONTRACTS = {
             + KNOWLEDGE_USAGE_INSTRUCTIONS
         ),
         input_schema={
-            "$comment": "knowledge-search-contract/v7-environment",
+            "$comment": "knowledge-search-contract/v8-resource-code",
             **_object(
                 {
                     "knowledge_base_id": _ID,
+                    "resource_code": {
+                        **_ID,
+                        "description": "知识资源页面的编码，例如 mes_story；与 knowledge_base_id 二选一",
+                    },
                     "query": {
                         "type": "string",
                         "minLength": 1,
@@ -230,8 +237,9 @@ KNOWLEDGE_TOOL_CONTRACTS = {
                     "exact_search_id": _ID,
                     "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
                 },
-                ["knowledge_base_id", "query"],
+                ["query"],
             ),
+            "oneOf": [{"required": ["knowledge_base_id"]}, {"required": ["resource_code"]}],
         },
         output_schema=_object(
             {

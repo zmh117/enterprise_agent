@@ -83,6 +83,12 @@ class GovernanceStore:  # noqa: PLR0904
             (base_id, excluding),
         )
 
+    def resource_by_code(self, code: str) -> dict[str, Any] | None:
+        return self.database.execute_one(
+            f"select id,knowledge_base_id,status,published_revision_id from {self.t('retrieval_resource')} where code=?",
+            (code,),
+        )
+
     def published_resources_for_source(self, source_id: str) -> list[dict[str, Any]]:
         return self.database.execute(
             f"select r.* from {self.t('retrieval_resource')} r where r.published_revision_id is not null and ("

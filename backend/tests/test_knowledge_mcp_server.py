@@ -90,6 +90,20 @@ def rpc(f, method="tools/call", params=None, **kwargs):
     )
 
 
+def test_resource_code_can_search_via_mcp_without_listing(mcp_fixture):
+    f = mcp_fixture
+    result = rpc(
+        f,
+        params={
+            "name": "knowledge_search",
+            "arguments": {"resource_code": "synthetic", "query": "合成查询绝不记录"},
+        },
+    ).json()["result"]
+    assert result.get("isError") is not True
+    assert result["structuredContent"]["knowledge_base_id"] == f["body"]["knowledge_base_id"]
+    assert result["structuredContent"]["documents"]
+
+
 @pytest.mark.parametrize(
     "code",
     [

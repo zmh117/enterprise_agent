@@ -902,7 +902,7 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
             "Tool restrictions:\n" + _numbered(context.tool_restrictions),
             (
                 "Code analysis uses the original Job. Require an explicit environment (e.g. 环境：prod) and numeric SVN revision from the user; ask if missing. "
-                "First use knowledge_list_bases(source_kind=code, environment=<code>); select only its matching libraries, ask if ambiguous. "
+                "If the user supplies a knowledge resource code, search with resource_code directly and use the returned knowledge_base_id for subsequent code tools; do not ask for a UUID. Otherwise use knowledge_list_bases(source_kind=code, environment=<code>); select only its matching libraries, ask if ambiguous. "
                 "Pass the same environment to every code search, full-answer read, SVN operation and save. Never reuse another environment's answer or receipt. "
                 "First search the selected knowledge base at the user's explicit "
                 "numeric SVN revision. Use knowledge_svn_update only when applicable evidence is missing. "
