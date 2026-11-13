@@ -12,7 +12,9 @@ from app.python_runtime.file_mcp_bridge import safe_meta
 from app.modules.knowledge.domain.code_answers import code_path
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.python_runtime.code_checkout_reader import CodeCheckoutReader
-from app.python_runtime.code_source_search import SourceSearchBatch, search_options
+from app.python_runtime.code_source_search import SourceSearchBatch
+from app.python_runtime.code_search_options import search_options
+from app.python_runtime.code_answer_finalization import CodeAnswerFinalization
 
 if TYPE_CHECKING:
     from app.python_runtime.job_sandbox import JobSandbox
@@ -36,6 +38,7 @@ class CodeSourceMount:
         self.condition = asyncio.Condition()
         self.closing = False
         self.saved_analysis_id: str | None = None
+        self.answers = CodeAnswerFinalization()
         self._stop = Event()
         self._monitor: Thread | None = None
         self.sandbox: JobSandbox | None = None
@@ -51,6 +54,7 @@ class CodeSourceMount:
                             {"action": "heartbeat", "analysis_id": self.grant["analysis_id"]}
                         )
                     except Exception:
+                        self.answers.unavailable = True
                         self.closing = True
                         return
 
@@ -296,6 +300,7 @@ class CodeSourceMount:
             await self.failed(call_id)
 
     async def before_mcp(self, name: str, arguments: dict[str, Any]) -> None:
+        self.answers.prepare(name, arguments)
         if name != "knowledge_save_code_answer":
             return
         async with self.condition:
@@ -313,10 +318,11 @@ class CodeSourceMount:
                 break
             await asyncio.sleep(0.1)
 
-    async def after_mcp(self, name: str, result: Any) -> Any:
+    async def after_mcp(self, name: str, result: Any, arguments: dict[str, Any]) -> Any:
         if result.is_error or not isinstance(result.structured_content, dict):
             return result
         value = result.structured_content
+        self.answers.observe(name, arguments, value)
         access = value.get("source_access")
         if isinstance(access, dict):
             grant = await asyncio.to_thread(

@@ -45,14 +45,15 @@ def test_search_only_tracked_scoped_files_and_normalizes_chinese(setup):
     assert sandbox.usage() == (0, 0)
 
 
-def test_sensitive_or_binary_are_explicitly_incomplete_without_path_disclosure(setup):
+def test_nontext_is_explicitly_incomplete_without_path_disclosure(setup):
     reader, sandbox, _ = setup
     add_file(reader, "src/credentials.cpp", b"synthetic fixture")
     add_file(reader, "src/image.cpp", b"\x00binary")
     batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "needle"}))
     batch.prepare("src")
     result = str(batch.render({"filenames": [], "content": ""}))
-    assert "skipped_restricted_or_nontext=2" in result and "complete=false" in result
+    assert batch.scanned == 3 and batch.skipped == 1
+    assert "skipped_nontext_or_oversized=1" in result and "complete=false" in result
     assert "credentials" not in result and "image.cpp" not in result
     batch.close()
 
@@ -357,24 +358,43 @@ def test_invalid_regex_is_actionable_and_cleans_temporary_files(setup):
     asyncio.run(run())
 
 
-def test_sensitive_content_never_reaches_batch_search_or_read(setup):
+@pytest.mark.parametrize(
+    ("path", "source"),
+    [
+        (
+            "src/zh-CN.js",
+            "export default { password: '请输入密码', access_token: '访问令牌' };\n"
+            "const splitError = '该批次质量状态不允许拆批！';\n",
+        ),
+        ("src/config.ts", "// ordinary configuration\nconst splitError = '批次不能拆批';\n"),
+        ("src/token.cpp", '// ordinary field\nconst char *splitError = "批次不能拆批";\n'),
+        (
+            "src/Split.cpp",
+            'const char *password = "synthetic-fixture-only";\n'
+            'const char *splitError = "批次不能拆批";\n',
+        ),
+    ],
+)
+def test_authorized_source_names_and_content_reach_batch_search_and_read(setup, path, source):
     reader, sandbox, _ = setup
-    add_file(
-        reader,
-        "src/Split.cpp",
-        b'const char *password = "synthetic-fixture-only";\nERR_SPLIT_QUALITY;\n',
+    add_file(reader, path, source.encode())
+    batch = SourceSearchBatch(
+        sandbox, reader, search_options({"pattern": "拆批", "output_mode": "files_with_matches"})
     )
-    batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "ERR_SPLIT_QUALITY"}))
     try:
         batch.prepare("src")
-        assert batch.skipped == 1 and not batch.paths
-        rendered = str(batch.render({"filenames": [], "content": ""}))
-        assert "complete=false" in rendered
-        assert "fixture-only" not in rendered and "Split.cpp" not in rendered
-        with pytest.raises(CodeKnowledgeError, match="SENSITIVE"):
-            reader.read("src/Split.cpp", 2, 1)
+        original = str(reader.root / path)
+        assert batch.skipped == 0 and list(batch.paths.values()) == [original]
+        staged = sandbox.path / next(iter(batch.paths))
+        assert staged.read_text() == source
+        result = batch.render({"filenames": [str(staged)], "content": ""})["hookSpecificOutput"]
+        assert result["updatedToolOutput"]["filenames"] == [original]
+        assert "complete=true" in result["additionalContext"]
+        assert reader.read(path, 1, 2)["text"] == source
+        assert reader.read(path, 2, 1)["text"] == source.splitlines(keepends=True)[1]
     finally:
         batch.close()
+    assert sandbox.usage() == (0, 0)
 
 
 def test_closed_grant_stops_later_batches_and_cleans_every_file(setup, monkeypatch):

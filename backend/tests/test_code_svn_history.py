@@ -50,8 +50,8 @@ class SvnHistoryTest(unittest.TestCase):
             stderr=subprocess.DEVNULL,
         )
 
-    def commit(self):
-        self.svn("commit", str(self.wc), "-m", "synthetic rule change")
+    def commit(self, message="synthetic rule change"):
+        self.svn("commit", str(self.wc), "-m", message)
         self.svn("update", str(self.wc), "--ignore-externals")
 
     def test_log_versions_pagination_and_revert_diff(self):
@@ -90,6 +90,37 @@ class SvnHistoryTest(unittest.TestCase):
             source, checkout, [""], physical_key=digest([stat.st_dev, stat.st_ino])
         )
         self.assertEqual(working.inspect(4)["operative_revision"], 4)
+
+    def test_language_and_config_content_is_available_in_diff_and_log(self):
+        paths = ["代码 目录/zh-CN.js", "代码 目录/config.ts"]
+        before = "export default { password: '请输入密码', splitError: '不能拆批' };\n"
+        after = "export default { password: '请输入密码', splitError: '质量状态不允许拆批' };\n"
+        for path in paths:
+            (self.wc / path).write_text(before)
+            self.svn("add", str(self.wc / path))
+        self.commit()  # r5
+        for path in paths:
+            (self.wc / path).write_text(after)
+        message = "更新语言资源 password: '请输入密码'"
+        self.commit(message)  # r6
+        history = SvnCodeHistory(self.source, paths=["代码 目录"], lower=1, upper=6)
+        for path in paths:
+            with self.subTest(path=path):
+                result = history.diff(path=path, start=5, end=6, peg=6, mode="text")
+                self.assertIn("-" + before, result["text"])
+                self.assertIn("+" + after, result["text"])
+                self.assertFalse(result["partial"])
+        log = history.log(path="", start=6, end=6, peg=6, include_message=True)
+        self.assertEqual(log["entries"][0]["message"], message)
+        self.assertFalse(log["entries"][0]["message_omitted"])
+
+    def test_oversized_commit_message_is_still_omitted(self):
+        self.file.write_text("return changed;\n")
+        self.commit("synthetic " * 1000)  # r5
+        history = SvnCodeHistory(self.source, paths=["代码 目录"], lower=1, upper=5)
+        log = history.log(path="", start=5, end=5, peg=5, include_message=True)
+        self.assertIsNone(log["entries"][0]["message"])
+        self.assertTrue(log["entries"][0]["message_omitted"])
 
     def test_blame_range_and_bounds(self):
         result = self.history.blame(
@@ -338,6 +369,7 @@ class SvnHistoryTest(unittest.TestCase):
         with self.assertRaises(CodeKnowledgeError):
             reader.read("代码 目录/规则.cpp", 1, 2)
 
+    @unittest.skipUnless(shutil.which("rg"), "runtime ripgrep required")
     def test_runtime_search_prepares_only_versioned_normalized_text_and_cleans_cache(self):
         from app.python_runtime.code_checkout_reader import CodeCheckoutReader
         from app.python_runtime.code_source_search import SourceSearchBatch, search_options
@@ -359,7 +391,9 @@ class SvnHistoryTest(unittest.TestCase):
                 repository_uuid=self.source.expected_uuid,
             ),
         )
-        self.assertEqual(reader.search_candidates("代码 目录", "*.cpp"), ["代码 目录/规则.cpp"])
+        self.assertEqual(
+            list(reader.search_candidates("代码 目录", "*.cpp")), ["代码 目录/规则.cpp"]
+        )
         sandbox = JobSandboxManager(self.root / "jobs").create("synthetic-search")
         batch = SourceSearchBatch(sandbox, reader, search_options({"pattern": "发布失败"}))
         try:

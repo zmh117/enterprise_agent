@@ -19,7 +19,6 @@ from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.code_text import decode_source
 from app.modules.knowledge.domain.normalization import canonical_json, digest
 from app.modules.knowledge.infrastructure.code_svn import SvnCodeSource, xml_document
-from app.modules.knowledge.infrastructure.code_source import SENSITIVE_NAME, SENSITIVE_CONTENT
 
 
 class SvnCodeHistory:
@@ -209,7 +208,7 @@ class SvnCodeHistory:
         except CodeKnowledgeError:
             date = None
         message = item.findtext("msg") if include_message and not omitted else None
-        if message and (len(message.encode()) > 8192 or SENSITIVE_CONTENT.search(message)):
+        if message and len(message.encode()) > 8192:
             message, omitted = None, True
         author = item.findtext("author")
         if author and len(author) > 500:
@@ -241,8 +240,6 @@ class SvnCodeHistory:
         if mode == "text":
             if not path or offset:
                 raise CodeKnowledgeError("CODE_HISTORY_SINGLE_FILE_REQUIRED")
-            if SENSITIVE_NAME.search(path.rsplit("/", 1)[-1]):
-                raise CodeKnowledgeError("CODE_SOURCE_SENSITIVE")
             info = xml_document(
                 self.source._run("info", ["--xml", "-r", str(peg), self.source._target(peg, path)])
             )
@@ -254,9 +251,7 @@ class SvnCodeHistory:
             encodings = {}
             for endpoint in {start, end}:
                 raw = self.source._run("cat", ["-r", str(endpoint), self.source._target(peg, path)])
-                content, encoding = decode_source(raw)
-                if SENSITIVE_CONTENT.search(content):
-                    raise CodeKnowledgeError("CODE_SOURCE_SENSITIVE")
+                _, encoding = decode_source(raw)
                 encodings[endpoint] = encoding
             data = self.source._run("diff", ["--force", *args])
             if len(data) > 256 * 1024:

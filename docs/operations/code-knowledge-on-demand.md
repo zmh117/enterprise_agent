@@ -22,7 +22,9 @@
 
 代码问答可用 Write 在当前执行的 `work/notes/` 保存 Markdown/TXT 分析笔记（版本、证据引用、已查范围、未知项），其他目录及源码继续按原权限限制。笔记仅作临时推理，不是源码证据，不自动入库；Write 仍计轮次，Read/Glob/Grep 保留审计并免计任务轮次。SDK 停止后统一清理，异常残留使用已有恢复扫描。
 
-源码 Grep 在一次模型调用内自动分页枚举 SVN 已跟踪的授权文件，以最多 32 文件/8 MiB 为批次筛选（单个已验证文件沿用原有 15 MiB 上限）。无命中副本即时删除，只保留最多 32 个/32 MiB 的命中文件供原生 Grep 输出。总扫描预算为 256 MiB、100000 个授权目录项、30 秒；预算耗尽、敏感/非文本/超单文件容量跳过、输出截断均显式标记不完整，不能据此断言规则不存在。源码根搜索只覆盖 grant 授权子集。Runtime 镜像安装 ripgrep，由宿主固定参数执行；Agent 不获得 Bash。
+源码 Grep 在一次模型调用内自动分页枚举 SVN 已跟踪的授权文件，以最多 32 文件/8 MiB 为批次筛选（单个已验证文件沿用原有 15 MiB 上限）。无命中副本即时删除，只保留最多 32 个/32 MiB 的命中文件供原生 Grep 输出。总扫描预算为 256 MiB、100000 个授权目录项、30 秒；预算耗尽、非文本/超单文件容量跳过、输出截断均显式标记不完整，不能据此断言规则不存在。源码根搜索只覆盖 grant 授权子集。Runtime 镜像安装 ripgrep，由宿主固定参数执行；Agent 不获得 Bash。
+
+源码 Read/Grep、SVN 单文件 diff 和 log 提交说明不再使用文件名/内容敏感启发式拦截。已授权的语言资源和配置文件按普通源码处理，仍验证路径、固定版本、SVN 跟踪和工作副本完整性；平台连接凭据仍仅由基础设施解析。部署此调整时更新 `python-agent-runtime-a`、`python-agent-runtime-b` 和 `knowledge-sync` 的镜像，并重新发布 `code-business-query` Skill、显式更新应用绑定；无需数据迁移、重新检出或重建向量索引。旧任务中的 `CODE_SOURCE_SENSITIVE` 是历史结果，不随部署改写。
 
 支持 `type=cpp` 等常见类型以及 `*.{cpp,h}` 简单扩展名组合。上下文超过 5、head_limit 超过 200 或设为 0 时收紧并反馈实际值；未知字段、非法模式返回固定字段提示，不回显输入。缓存仍共享 Job 沙盒配额、不可由模型直接访问，调用结束或失败清理；取消时停止准备线程后再清理。命中仍须 Read 原文件取得证据，Read 上限 400 行。
 
@@ -191,6 +193,16 @@ docker compose up -d --no-deps api-server knowledge-sync admin-web
 Runtime 在知识 MCP 会话空闲期间每 30 秒发送受控 ping，复用原 Principal 续期；此操作不读取业务资料、不计模型工具调用，任务结束即停止。源码分析使用原 Job 执行期限，不再继承已完成搜索的单请求截止。身份撤销、租约失效或原任务截止仍拒绝操作。
 
 知识工具失败时间线保留固定错误码和无值字段提示；保存成功才产生正式答案与增量索引任务。问答记录本身不直接索引，partial/conflicted 也不进入确定规则集合。索引各计数全为零时先检查 knowledge_save_code_answer 是否成功及其 support_status，不应直接重建向量集合。旧失败任务不自动补写答案，需用新任务重新核验。
+
+源码问答的保存修复由 Runtime 在当前 invocation 内保留成功检索的规范 query，并在源码准入后绑定 analysis；save 的 question 使用该绑定，服务端继续核对 hash。已取得读取授权但未成功保存的分析，在剩余时间、工具次数与模型轮次允许时，由 Stop hook 追加一次保存纠正；不延长原预算。补救仍失败时保留业务回答，取消任务仍按取消处理。
+
+新回答收尾会在 `knowledge.code_analysis.report_json.knowledge_save` 记录独立结果：`saved`、`saved_partial`、`saved_conflicted`、`failed`、`not_attempted`、`not_ready` 或 `unconfirmed`，以及有界 `attempts`、`attempts_truncated` 和固定安全 `error_code`。`cancelled` 表示分析生命周期收尾，不能据此判断是否调用过保存；页面“已完成/等待/处理中/失败”仍是索引任务计数。`saved_partial/saved_conflicted` 不生成确定答案向量；一次答案也可能分成多个 chunk，问题数与 point 数不保证相等。
+
+`attempt_scope=save_service` 表示 attempts 只计保存服务实际收到且按 analysis_id 关联的调用；本地 SDK 参数拒绝仍在 Runtime 审计查看，不能把它计为已提交。`not_attempted` 表示未提交到保存服务；旧请求缺少分析关联时用 `unconfirmed` 并保留 `unlinked_invocation_attempts`，不通过时间范围猜测。工具事件晚于分析收尾落库也不会漏计已关联的失败。
+
+本次无需数据库迁移或重建 Qdrant。需协调更新 API/agent-worker（标准结果记录代码的部署消费者）、knowledge-mcp（保存调用关联摘要）和两个 Python Runtime；如更新发布绑定的 Skill，应重新发布并使用新 Job。旧失败任务不可直接把聊天文本标记为 supported，应在原环境与指定 SVN 版本重新检索、取得读取占用、核验证据并保存，再核对索引任务及知识检索结果。部署与真实模型验收不能由本地合成测试代替。
+
+本次 Runtime 提示模板为 `agent-system-prompt-v21`。Worker 请求与 Runtime 观察必须一起更新；只重启旧镜像不会带入修复。旧 Job 的冻结请求不改写，使用新 Job 验收，避免提示版本漂移。
 
 
 ### 大工程检出与失败目录复用

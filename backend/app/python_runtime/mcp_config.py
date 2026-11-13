@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import time
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
@@ -208,6 +209,7 @@ def _code_source_hook_options(
     )
     exact = set(context.effective_tool_names) - set(FILE_TOOL_NAMES)
     sandbox_calls: set[str] = set()
+    save_reminder_deadline = time.monotonic() + context.timeout_seconds
 
     async def before(
         event: dict[str, Any], tool_use_id: str | None, _context: Any
@@ -258,12 +260,36 @@ def _code_source_hook_options(
         await mount.failed(call_id)
         return {}
 
+    async def stop(
+        event: dict[str, Any], _tool_use_id: str | None, _context: Any
+    ) -> dict[str, Any]:
+        # Reserve the remaining final-answer turn as well as the save turn. Existing
+        # invocation/tool deadlines still govern every subsequent operation.
+        available = (
+            not event.get("stop_hook_active")
+            and not mount._stop.is_set()
+            and not budget.exhausted
+            and budget.attempted < budget.maximum
+            and time.monotonic() + 5 < save_reminder_deadline
+            and (
+                turn_budget is None
+                or (turn_budget.failure is None and turn_budget.charged + 3 <= turn_budget.maximum)
+            )
+        )
+        answer = event.get("last_assistant_message")
+        return mount.answers.stop(
+            mount.grant["analysis_id"] if mount.grant else None,
+            budget_available=available,
+            answer=answer if isinstance(answer, str) else "",
+        )
+
     return {
         "extra_args": {"no-session-persistence": None},
         "hooks": {
             "PreToolUse": [sdk.hook_matcher(hooks=[before], on_failure="block")],
             "PostToolUse": [sdk.hook_matcher(hooks=[after], on_failure="block")],
             "PostToolUseFailure": [sdk.hook_matcher(hooks=[failed], on_failure="block")],
+            "Stop": [sdk.hook_matcher(hooks=[stop], on_failure="block")],
         },
     }
 

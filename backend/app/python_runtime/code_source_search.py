@@ -26,7 +26,6 @@ MAX_ENUMERATED = 100_000
 MAX_SEARCH_SECONDS = 30
 SKIPPABLE = frozenset(
     {
-        "CODE_SOURCE_SENSITIVE",
         "CODE_SOURCE_BINARY",
         "CODE_SOURCE_ENCODING_UNSUPPORTED",
         "code_source_file_size_or_type",
@@ -265,7 +264,7 @@ class SourceSearchBatch:
                 "additionalContext": (
                     f"Source search navigation only; SVN r{self.reader.grant['revision']}; "
                     f"searched_files={self.scanned}; batches={self.batches}; retained_matches={len(self.paths)}; "
-                    f"skipped_restricted_or_nontext={self.skipped}; stopped_reason={self.stopped_reason or 'none'}; "
+                    f"skipped_nontext_or_oversized={self.skipped}; stopped_reason={self.stopped_reason or 'none'}; "
                     f"last_safe_path={self.last_path}; corrections={self.options['corrections']}; "
                     f"possibly_truncated={str(truncated).lower()}; complete={str(not truncated and not self.skipped).lower()}. "
                     "Paths and line numbers refer to original source. Read original source to obtain evidence IDs. "

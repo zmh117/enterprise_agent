@@ -12,6 +12,7 @@ import pytest
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.python_runtime.sdk_event_normalizer import extract_tool_events
 from app.python_runtime.tool_policy import normalize_tool_events
+from app.python_runtime.code_answer_finalization import CodeAnswerFinalization
 from app.shared.knowledge_tool_errors import error_payload, input_issues, knowledge_failure
 from backend.tests.support.runtime import test_settings as build_settings
 from backend.tests.test_knowledge_runtime_dispatch import Remote, bridge
@@ -51,7 +52,7 @@ def test_sdk_invalid_save_has_field_hint_and_does_not_close_source_reads():
         async def before(name, args):
             calls.append(name)
 
-        async def after(name, result):
+        async def after(name, result, arguments):
             return result
 
         client = bridge(remote, source_guard=SimpleNamespace(before_mcp=before, after_mcp=after))
@@ -88,7 +89,9 @@ def test_save_failure_preserves_known_code_without_private_text(where):
             raise CodeKnowledgeError("CODE_SAVE_GRANT_INVALID")
 
         if where == "source_guard":
-            client.source_guard = SimpleNamespace(before_mcp=before)
+            client.source_guard = SimpleNamespace(
+                before_mcp=before, answers=CodeAnswerFinalization()
+            )
         else:
 
             async def failed(request):

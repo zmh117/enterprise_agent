@@ -19,11 +19,7 @@ from app.modules.knowledge.domain.code_text import decode_source
 from app.modules.knowledge.domain.code_answers import code_path, path_in_scope
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.infrastructure.code_checkout_identity import CheckoutIdentity
-from app.modules.knowledge.infrastructure.code_source import (
-    _read_beneath,
-    SENSITIVE_CONTENT,
-    SENSITIVE_NAME,
-)
+from app.modules.knowledge.infrastructure.code_source import _read_beneath
 
 MAX_FILE = 15 * 1024 * 1024
 
@@ -229,7 +225,8 @@ class CodeCheckoutReader:
         self.tracked(path, directory=(self.root / path).is_dir(), search_parent=True)
         patterns = (patterns,) if isinstance(patterns, str) else patterns
         prefix = path + "/" if path else ""
-        scopes, scope_args = [], []
+        scopes: list[str] = []
+        scope_args: list[str] = []
         for allowed in self.grant["allowed_paths"]:
             subtree = allowed + "/" if allowed else ""
             scopes.append("(local_relpath=? OR (local_relpath>=? AND local_relpath<?))")
@@ -267,8 +264,6 @@ class CodeCheckoutReader:
 
     def verified_text(self, path: str) -> dict[str, Any]:
         row = self.tracked(path)
-        if SENSITIVE_NAME.search(Path(path).name):
-            raise CodeKnowledgeError("CODE_SOURCE_SENSITIVE")
         checksum = row["checksum"]
         if not isinstance(checksum, str) or not re.fullmatch(r"\$sha1\$[0-9a-f]{40}", checksum):
             raise CodeKnowledgeError("CODE_CHECKOUT_METADATA_INVALID")
@@ -314,8 +309,6 @@ class CodeCheckoutReader:
         if equivalent != expected:
             raise CodeKnowledgeError("CODE_CHECKOUT_DIRTY")
         text = text.replace("\r\n", "\n").replace("\r", "\n")
-        if SENSITIVE_CONTENT.search(text):
-            raise CodeKnowledgeError("CODE_SOURCE_SENSITIVE")
         return dict(
             text=text,
             repository_content_hash=sha256(pristine).hexdigest(),

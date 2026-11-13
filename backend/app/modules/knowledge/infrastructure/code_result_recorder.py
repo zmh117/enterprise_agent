@@ -14,6 +14,7 @@ from app.modules.knowledge.infrastructure.code_environment import (
 from app.modules.knowledge.domain.code_user_revision import user_svn_revisions
 from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.knowledge.infrastructure.code_qa_store import CodeQaStore
+from app.modules.knowledge.infrastructure.code_save_outcome import record_save_outcomes
 from app.shared.database import Database
 from app.shared.secret_redaction import redact_sensitive_text
 from app.shared.code_answer_presentation import strip_code_answer_references
@@ -60,6 +61,7 @@ class CodeResultRecorder:
             or capability.get("contract") != "code-source-capability/v3"
         ):
             return
+        record_save_outcomes(self.db, job.id, invocation)
         try:
             environment = declared_environment(self.db, job.input_message or "")
             versions = user_svn_revisions(job.input_message or "")

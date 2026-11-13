@@ -11,6 +11,7 @@ from app.modules.knowledge.application.directory import KnowledgeDirectory
 from app.modules.knowledge.application.search import KnowledgeSearch
 from app.modules.knowledge.application.code_query import CodeKnowledgeQuery
 from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
+from app.modules.knowledge.domain.code_contracts import ID
 from app.modules.mcp_audit import McpAuditCoordinator, McpAuditHandle
 from app.shared.knowledge_tool_contracts import KNOWLEDGE_TOOL_CONTRACTS
 from app.shared.io_deadline import io_cleanup
@@ -97,7 +98,14 @@ class KnowledgeMcpTools:
             raise failure("knowledge_mcp_tool_not_found")
         with stage("access_check"):
             context = self.auth.resolve(token, name, headers)
-        handle = self.audit.begin(context, business_request={"tool": name})
+        request_summary = {"tool": name}
+        if (
+            name == "knowledge_save_code_answer"
+            and isinstance(arguments, dict)
+            and Draft202012Validator(ID).is_valid(arguments.get("analysis_id"))
+        ):
+            request_summary["analysis_id"] = arguments["analysis_id"]
+        handle = self.audit.begin(context, business_request=request_summary)
         started = time.monotonic()
         principal = InflightPrincipal(token, name, self.auth.access, self.principal_client, control)
         try:

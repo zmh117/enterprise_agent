@@ -236,6 +236,8 @@ class KnowledgeMcpBridge:
         if issues:
             return _error("knowledge_input_invalid", name=name, issues=issues)
         entered = time.monotonic()
+        # Host canonicalization must not mutate the SDK/model's input object.
+        arguments = dict(arguments)
 
         async def dispatch() -> types.CallToolResult:
             async with self._lock:
@@ -248,12 +250,14 @@ class KnowledgeMcpBridge:
                     wait_ms=min(3_600_000, int((time.monotonic() - entered) * 1000)),
                 )
                 if "transport_error" in payload:
+                    self._source_failed(payload["transport_error"])
                     return _error(payload["transport_error"])
                 result = types.CallToolResult.model_validate(payload)
                 if result.is_error:
                     safe = error_payload(
                         name, result.structured_content or [c.model_dump() for c in result.content]
                     )
+                    self._source_failed(safe["error_code"])
                     return _error(
                         safe["error_code"],
                         name=name,
@@ -261,7 +265,7 @@ class KnowledgeMcpBridge:
                         meta=safe_meta(result),
                     )
                 if self.source_guard is not None:
-                    result = await self.source_guard.after_mcp(name, result)
+                    result = await self.source_guard.after_mcp(name, result, arguments)
                     if isinstance(result.structured_content, dict):
                         result.content = [
                             types.TextContent(
@@ -279,13 +283,20 @@ class KnowledgeMcpBridge:
         try:
             return await self._bounded(dispatch())
         except CodeKnowledgeError as exc:
+            self._source_failed(exc.code)
             return _error(exc.code)
         except _Stopped as exc:
+            self._source_failed(exc.code)
             return _error(exc.code)
         except (TimeoutError, httpx.TimeoutException):
+            self._source_failed("knowledge_search_budget_exhausted")
             return _error("knowledge_search_budget_exhausted")
         except Exception:
             return _error("knowledge_mcp_unavailable")
+
+    def _source_failed(self, code: str) -> None:
+        if self.source_guard is not None:
+            self.source_guard.answers.failed(code)
 
     @staticmethod
     def _http_error(body: bytearray) -> str:

@@ -2,21 +2,8 @@
 
 import os
 from pathlib import Path, PurePosixPath
-import re
 import stat
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
-
-SENSITIVE_NAME = re.compile(
-    r"(?:^|[._-])(?:env|secret|credentials?|password|token|cookie|config)(?:[._-]|$)", re.I
-)
-# Conservative admission: exclude the whole file, do not redact while retaining a false hash.
-SENSITIVE_CONTENT = re.compile(
-    r"-----BEGIN [^-]*PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{16,}|AKIA[A-Z0-9]{16})\b|"
-    r"\b(?:Bearer|Basic)\s+[A-Za-z0-9_+/=.-]{12,}|"
-    r"(?:password|passwd|secret|api[_-]?key|access[_-]?token|cookie)\s*['\"]?\s*[:=]\s*['\"][^'\"\r\n]{3,}['\"]|"
-    r"[a-z]+://[^\s/:]+:[^\s/@]+@",
-    re.I,
-)
 
 
 def relative_path(value: str) -> str:

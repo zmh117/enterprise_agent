@@ -186,6 +186,11 @@ def mount(tmp_path):
         return {"analysis_id": "analysis", "state": "validating"}
 
     mount = CodeSourceMount(root=root, capability={"capability_hash": "f" * 64}, check=check)
+    mount.answers.analyses["analysis"] = {
+        "question": "Synthetic code question",
+        "environment": "env-a",
+        "knowledge_base_id": "kb",
+    }
     mount.grant = grant
     mount.reader = SimpleNamespace(
         root=root, read=lambda *args: proof(), tracked=lambda *a, **kw: {}
@@ -203,7 +208,14 @@ def test_native_read_replaced_only_after_host_evidence_and_save_waits(mount):
             "toolu_read",
         )
         saving = asyncio.create_task(
-            mount.before_mcp("knowledge_save_code_answer", {"analysis_id": "analysis"})
+            mount.before_mcp(
+                "knowledge_save_code_answer",
+                {
+                    "analysis_id": "analysis",
+                    "environment": "env-a",
+                    "knowledge_base_id": "kb",
+                },
+            )
         )
         await asyncio.sleep(0)
         assert not saving.done() and not any(c["action"] == "quiesce" for c in calls)
@@ -270,6 +282,7 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
     sandbox.source_mount = source
     (sandbox.path / "inputs" / "context.md").write_text("synthetic attachment")
     context = SimpleNamespace(
+        timeout_seconds=300,
         effective_tool_names=("Read", "Glob", "Grep", "Write", "Edit"),
         retrieved_context={"code_source": {}},
         mcp_bindings=(SimpleNamespace(server_code="file-service"),),
@@ -370,7 +383,9 @@ def test_source_hook_keeps_safe_denial_reason_through_tool_audit(
     source, _ = mount
     sandbox = JobSandboxManager(tmp_path / "denial-sandbox").create("denial-job")
     sandbox.source_mount = source
-    context = SimpleNamespace(effective_tool_names=("Read", "Glob", "Grep"), mcp_bindings=())
+    context = SimpleNamespace(
+        timeout_seconds=300, effective_tool_names=("Read", "Glob", "Grep"), mcp_bindings=()
+    )
     sdk = SimpleNamespace(hook_matcher=lambda **kwargs: SimpleNamespace(**kwargs))
     before = _code_source_hook_options(sdk, sandbox, context, ToolCallBudget(10))["hooks"][
         "PreToolUse"
