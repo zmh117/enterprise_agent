@@ -309,12 +309,12 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
             == "allow"
         )
         assert await call("Read", {"file_path": "source/Order.cpp"}, "source-read") == "deny"
-        assert source.tool_denials["source-read"] == "CODE_READ_GRANT_REQUIRED"
+        assert source.tool_denials["source-read"] == ("CODE_READ_GRANT_REQUIRED", "")
         assert (
             await call("Glob", {"path": "source/set_server", "pattern": "*.cpp"}, "source-glob")
             == "deny"
         )
-        assert source.tool_denials["source-glob"] == "CODE_READ_GRANT_REQUIRED"
+        assert source.tool_denials["source-glob"] == ("CODE_READ_GRANT_REQUIRED", "")
         from app.python_runtime.tool_policy import normalize_tool_events
 
         event = normalize_tool_events(
@@ -323,7 +323,7 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
                     "tool_name": "Glob",
                     "tool_call_id": "source-glob",
                     "status": "DENIED",
-                    "error_code": source.tool_denials["source-glob"],
+                    "error_code": source.tool_denials["source-glob"][0],
                 }
             ],
             request={"protocol_version": "1.5", "mcp_servers": []},
@@ -363,17 +363,22 @@ def test_code_capability_preserves_existing_sandbox_files_without_a_source_grant
 
 
 @pytest.mark.parametrize(
-    "code,expected_hint",
+    "code,location,expected_hint",
     [
-        ("CODE_SOURCE_READ_LIMIT", "1–400"),
-        ("CODE_CHECKOUT_SOURCE_MISMATCH", "授权目录或文件"),
-        ("CODE_CHECKOUT_PERMISSION_DENIED", "权限"),
-        ("CODE_SOURCE_SENSITIVE", "敏感内容"),
-        ("synthetic-private-error", "不允许"),
+        ("CODE_SOURCE_READ_LIMIT", "", "1–400"),
+        ("CODE_CHECKOUT_SOURCE_MISMATCH", "", "授权目录或文件"),
+        ("CODE_CHECKOUT_PERMISSION_DENIED", "", "权限"),
+        ("CODE_SOURCE_SENSITIVE", "", "敏感内容"),
+        ("CODE_SOURCE_SEARCH_INVALID", "glob", "一组 2–8"),
+        ("CODE_SOURCE_SEARCH_INVALID", "output_mode", "不支持 count"),
+        ("CODE_SOURCE_SEARCH_INVALID", "multiline", "不支持 multiline=true"),
+        ("CODE_SOURCE_SEARCH_INVALID", "synthetic-private-location", "请按字段提示"),
+        ("CODE_SOURCE_SEARCH_INVALID", {"synthetic-private-location": "value"}, "请按字段提示"),
+        ("synthetic-private-error", "synthetic-private-location", "不允许"),
     ],
 )
 def test_source_hook_keeps_safe_denial_reason_through_tool_audit(
-    mount, tmp_path, code, expected_hint
+    mount, tmp_path, code, location, expected_hint
 ):
     from app.modules.agent.domain.runtime import ToolCallBudget
     from app.python_runtime.job_sandbox import JobSandboxManager
@@ -392,7 +397,7 @@ def test_source_hook_keeps_safe_denial_reason_through_tool_audit(
     ][0].hooks[0]
 
     def reject(*args):
-        raise CodeKnowledgeError(code)
+        raise CodeKnowledgeError(code, location)
 
     source.reader.read = reject
     try:
@@ -409,6 +414,7 @@ def test_source_hook_keeps_safe_denial_reason_through_tool_audit(
         assert "synthetic-private" not in str(result)
         events = [{"tool_name": "Read", "tool_call_id": "denied-read", "status": "FAILED"}]
         source.apply_denials(events)
+        assert "synthetic-private" not in str(events)
         audited = normalize_tool_events(
             events, request={"protocol_version": "1.5", "mcp_servers": []}
         )[0]
@@ -420,3 +426,17 @@ def test_source_hook_keeps_safe_denial_reason_through_tool_audit(
         assert failure["retry_class"] == "NEVER" and expected_hint in failure["safe_message"]
     finally:
         sandbox.cleanup()
+
+
+def test_source_denial_field_survives_an_already_denied_sdk_event(mount):
+    from app.python_runtime.tool_policy import normalize_tool_events
+
+    source, _ = mount
+    source.record_denial("denied-search", "CODE_SOURCE_SEARCH_INVALID", "regex")
+    events = [{"tool_name": "Grep", "tool_call_id": "denied-search", "status": "DENIED"}]
+    source.apply_denials(events)
+    assert not source.tool_denials
+    audited = normalize_tool_events(events, request={"protocol_version": "1.5", "mcp_servers": []})[
+        0
+    ]
+    assert "正则语法" in audited["failure"]["safe_message"]

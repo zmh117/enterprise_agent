@@ -198,6 +198,10 @@ Runtime 在知识 MCP 会话空闲期间每 30 秒发送受控 ping，复用原 
 
 知识工具失败时间线保留固定错误码和无值字段提示；保存成功才产生正式答案与增量索引任务。问答记录本身不直接索引，partial/conflicted 也不进入确定规则集合。索引各计数全为零时先检查 knowledge_save_code_answer 是否成功及其 support_status，不应直接重建向量集合。旧失败任务不自动补写答案，需用新任务重新核验。
 
+`Grep · DENIED / CODE_SOURCE_SEARCH_INVALID` 表示搜索参数未通过校验，不等同于向量写入失败。旧 Runtime 在模型回执中保留具体字段提示，但工具事件归一化时只保留错误码，导致页面只显示通用说明。字段提示修复让新事件保留固定白名单字段对应的说明，例如 `output_mode` 不支持 `count`、`multiline` 不支持 `true`、`glob` 格式或正则语法错误；不记录实际模式、路径或任意异常值。更新两个 Runtime 后以新 Job 验证，旧记录不能据通用错误码还原具体坏参数。这项修复不放宽搜索约束，不更改模型提示版本或答案索引准入。
+
+排查“问完但向量数量不变”时，先定位同 Job 的保存结果：未调用或保存失败不会创建索引任务；成功保存 partial/conflicted 只留分析记录；直接复用已有答案不新增向量；新建 supported 修订才应继续核对对应索引任务及其集合。页面“已完成 1、等待 0、处理中 0、失败 0”只说明当前索引任务计数，无法单独判断这次问答是否保存。分块/Embedding profile 标识也不能证明本次保存成功。
+
 源码问答的保存修复由 Runtime 在当前 invocation 内保留成功检索的规范 query，并在源码准入后绑定 analysis；save 的 question 使用该绑定，服务端继续核对 hash。已取得读取授权但未成功保存的分析，在剩余时间、工具次数与模型轮次允许时，由 Stop hook 追加一次保存纠正；不延长原预算。补救仍失败时保留业务回答，取消任务仍按取消处理。
 
 新回答收尾会在 `knowledge.code_analysis.report_json.knowledge_save` 记录独立结果：`saved`、`saved_partial`、`saved_conflicted`、`failed`、`not_attempted`、`not_ready` 或 `unconfirmed`，以及有界 `attempts`、`attempts_truncated` 和固定安全 `error_code`。`cancelled` 表示分析生命周期收尾，不能据此判断是否调用过保存；页面“已完成/等待/处理中/失败”仍是索引任务计数。`saved_partial/saved_conflicted` 不生成确定答案向量；一次答案也可能分成多个 chunk，问题数与 point 数不保证相等。

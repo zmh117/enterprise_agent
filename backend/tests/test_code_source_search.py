@@ -181,7 +181,7 @@ def test_cancel_preparation_waits_for_thread_before_removing_cache(setup, monkey
 def test_notes_only_write_and_cleanup_do_not_expand_source_or_other_job_access(setup, tmp_path):
     reader, sandbox, mount = setup
     context = SimpleNamespace(
-        effective_tool_names=("Read", "Glob", "Grep", "Write"), mcp_bindings=()
+        timeout_seconds=300, effective_tool_names=("Read", "Glob", "Grep", "Write"), mcp_bindings=()
     )
     hooks = _code_source_hook_options(
         SimpleNamespace(hook_matcher=lambda **k: SimpleNamespace(**k)),
@@ -317,11 +317,16 @@ def test_native_search_settings_are_safely_corrected_without_guessing_query():
 
 
 def test_parameter_refusal_has_field_specific_hint_without_echoing_values(setup):
+    from app.python_runtime.tool_policy import normalize_tool_events
+    from app.shared.tool_response_summary import tool_response_summary
+
     reader, sandbox, mount = setup
     hooks = _code_source_hook_options(
         SimpleNamespace(hook_matcher=lambda **k: SimpleNamespace(**k)),
         sandbox,
-        SimpleNamespace(effective_tool_names=("Read", "Glob", "Grep"), mcp_bindings=()),
+        SimpleNamespace(
+            timeout_seconds=300, effective_tool_names=("Read", "Glob", "Grep"), mcp_bindings=()
+        ),
         ToolCallBudget(20),
     )
     before = hooks["hooks"]["PreToolUse"][0].hooks[0]
@@ -342,6 +347,31 @@ def test_parameter_refusal_has_field_specific_hint_without_echoing_values(setup)
         reason = result["hookSpecificOutput"]["permissionDecisionReason"]
         assert "output_mode" in reason and "count" in reason
         assert "synthetic private" not in reason
+        events = [{"tool_name": "Grep", "tool_call_id": "bad", "status": "FAILED"}]
+        mount.apply_denials(events)
+        audited = normalize_tool_events(
+            events, request={"protocol_version": "1.5", "mcp_servers": []}
+        )[0]
+        summary = tool_response_summary({"failure": audited["failure"]})
+        assert summary["error_code"] == "CODE_SOURCE_SEARCH_INVALID"
+        assert "output_mode" in summary["error"] and "不支持 count" in summary["error"]
+        assert "synthetic private" not in str(audited)
+        assert not mount.pending and not mount.answers.unavailable
+        corrected = await before(
+            {
+                "tool_name": "Grep",
+                "tool_input": {
+                    "path": "source/src",
+                    "pattern": "发布",
+                    "output_mode": "files_with_matches",
+                },
+            },
+            "corrected",
+            None,
+        )
+        assert corrected["hookSpecificOutput"]["permissionDecision"] == "allow"
+        await mount.failed("corrected")
+        assert not mount.pending and not mount.search_lock.locked()
 
     asyncio.run(run())
 

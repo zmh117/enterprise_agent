@@ -177,7 +177,9 @@ def normalize_tool_events(
                 from app.python_runtime.code_tool_errors import MESSAGES, code_tool_failure
 
                 if event.get("error_code") in MESSAGES:
-                    item["failure"] = code_tool_failure(event["error_code"])
+                    item["failure"] = code_tool_failure(
+                        event["error_code"], event.get("error_location", "")
+                    )
         normalized.append(item)
     return tuple(normalized)
 

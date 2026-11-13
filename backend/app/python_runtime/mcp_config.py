@@ -326,7 +326,7 @@ def _source_tool_denial(mount: CodeSourceMount, call_id: str, exc: Exception) ->
         else "CODE_SOURCE_TOOL_DENIED"
     )
     failure = code_tool_failure(code, getattr(exc, "location", ""))
-    mount.record_denial(call_id, failure["code"])
+    mount.record_denial(call_id, failure["code"], getattr(exc, "location", ""))
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

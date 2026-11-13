@@ -58,9 +58,19 @@ SEARCH_HINTS = {
 }
 
 
-def code_tool_failure(code: str, location: str = "") -> dict[str, str]:
+def search_error_location(code: str, location: object) -> str:
+    if (
+        code == "CODE_SOURCE_SEARCH_INVALID"
+        and isinstance(location, str)
+        and location in SEARCH_HINTS
+    ):
+        return location
+    return ""
+
+
+def code_tool_failure(code: str, location: object = "") -> dict[str, str]:
     code = code if code in MESSAGES else "CODE_SOURCE_TOOL_DENIED"
     message = MESSAGES[code]
-    if code == "CODE_SOURCE_SEARCH_INVALID" and location in SEARCH_HINTS:
-        message = SEARCH_HINTS[location]
+    if field := search_error_location(code, location):
+        message = SEARCH_HINTS[field]
     return {"code": code, "retry_class": "NEVER", "safe_message": message}
