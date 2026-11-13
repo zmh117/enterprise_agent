@@ -21,7 +21,7 @@ def test_business_rules_reach_discovery_and_source_analysis(with_skill, source_b
     context = AgentExecutionContext(
         system_role="业务助手",
         safety_rules=[],
-        user_question="环境 prod，SVN r100：为什么不能拆分子批次？",
+        user_question="环境 prod，SVN r100：怎样配置数值控件，让完成件数显示输入值？",
         project_code="synthetic-project",
         allowed_tools=[],
         tool_restrictions=[],
@@ -37,6 +37,15 @@ def test_business_rules_reach_discovery_and_source_analysis(with_skill, source_b
     assert "旧知识答案也须重述为业务解释" in prompt
     assert "不猜状态中文名称" in prompt
     assert "当前授权允许" in prompt
+    assert "前端配置、实际显示文案、配置保存、执行产值与目标页面取值链" in prompt
+    assert "不能仅凭后端字段推断" in prompt
+    assert "作为 critical 未知保留 partial" in prompt
+    assert "只有后端逻辑不能扩写成界面指南" in prompt
+    if with_skill:
+        frozen = snapshot["versioned_skills"]["code-business-query"]["content"]
+        assert frozen in prompt
+        assert "前端配置 → 执行产值 → 目标页面取值" in frozen
+        assert "输入框没有标签时" in frozen
     if source_bound:
         assert CODE_ANSWER_PRESENTATION_INSTRUCTIONS in build_system_prompt(
             replace(context, effective_tool_names=())
@@ -51,13 +60,25 @@ def test_published_tools_carry_the_same_business_presentation_contract(name):
     assert CODE_ANSWER_PRESENTATION_INSTRUCTIONS in MCP_TOOL_MANIFEST[name].description
 
 
-def test_internal_reference_removal_preserves_business_conditions_and_other_markdown():
-    visible = (
-        "环境 prod，SVN r100。\n\n"
-        "- 选择子批次后，命中限制状态时不能进入拆分编辑。\n"
-        "- 该状态的中文名称尚未确认；最终提交的限制也未核验。\n\n"
-        "<!-- ordinary document comment -->"
-    )
+@pytest.mark.parametrize(
+    "visible",
+    [
+        (
+            "环境 prod，SVN r100。\n\n"
+            "- 选择子批次后，命中限制状态时不能进入拆分编辑。\n"
+            "- 该状态的中文名称尚未确认；最终提交的限制也未核验。\n\n"
+            "<!-- ordinary document comment -->"
+        ),
+        (
+            "环境 prod，SVN r100，以下为合成操作示例。\n\n"
+            "1. 在数值控件配置页，变量填写 `@reading@`。\n"
+            "2. 勾选「记录为汇总值」，在其下方输入框填写 **完成件数**。\n"
+            "3. 执行控件并输入 37；打开汇总页，完成件数显示 37。\n\n"
+            "37 是示例输入，不是默认值；配置页上级菜单入口尚未确认。"
+        ),
+    ],
+)
+def test_internal_reference_removal_preserves_business_conditions_and_other_markdown(visible):
     internal = visible + (
         "\n\n<!-- code-answer:document-1@revision-1 -->\n<!-- code-answer:document-2@revision-2 -->"
     )
