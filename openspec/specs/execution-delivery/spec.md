@@ -13,7 +13,7 @@
 #### Scenario: 创建应用 Job
 - **WHEN** 受信入口通过应用、身份和权限校验
 - **THEN** 同一事务保存 Session、唯一有序 user message、引用它的 Job 和唯一 dispatch Outbox
-- **AND** Webhook Job 另保存 webhook event 与 Trigger publication 来源；未命中活动应用的渠道事件不创建 Job
+- **AND** Webhook Job 另保存 webhook event、Trigger publication、Application publication 与执行用户来源；未命中活动应用的渠道事件不创建 Job
 
 #### Scenario: 配置在排队后变化
 - **WHEN** 应用、Agent 或会话策略在 Job 创建后改变
@@ -384,6 +384,25 @@ Runtime SHALL 提供 health、ready、version 和受服务授权保护的模型 
 - **WHEN** 节点正在执行 Job 或其他真实 probe
 - **THEN** 新 probe 返回稳定 busy，真实 SDK 执行总数不超过一个，不在后台无限排队
 
+### Requirement: Prompt版本差异必须在新执行准入前拒绝
+Runtime 版本与就绪元数据 MUST 返回当前代码的 Prompt 模板版本。被动就绪探针 MUST 比较声明与期望版本，缺失、非法或两个接口不一致 SHALL 视为不可接受新执行。池选择 PREPARED 请求的节点时 MUST 使用该请求冻结版本，不得静默改写请求或 digest。Runtime MUST 在占槽、admit、模型或 MCP 工作之前拒绝不匹配的新执行，并以稳定的 `runtime_prompt_version_mismatch` 返回安全的统一部署提示。
+
+#### Scenario: 混合版本节点
+- **WHEN** 节点构建标识相同，但 Prompt 模板版本不同
+- **THEN** 只有与新请求冻结模板版本一致的节点可以接收新执行，不匹配节点在被动就绪结果中可识别
+
+#### Scenario: 旧节点没有模板声明
+- **WHEN** `/version` 或 `/ready` 没有合法模板版本，或两者声明不同
+- **THEN** 被动探针拒绝新执行准入，不调用模型或工具，也不回显非法元数据原文
+
+#### Scenario: 旧Worker直接发来不匹配的新请求
+- **WHEN** 身份认证通过但请求模板版本与 Runtime 当前常量不同，且请求没有已有运行或终态可恢复
+- **THEN** Runtime 在占槽和执行之前返回不可重试的版本不匹配错误，持久请求仍保持原 digest
+
+#### Scenario: 升级后恢复原执行结果
+- **WHEN** 请求已有运行实例或持久终态，当前部署 Prompt 版本与原请求不同
+- **THEN** 恢复不因新模板版本被拒绝，既有节点/构建身份约束和事件校验保持，原事件不被改写且模型不重新运行
+
 ### Requirement: Execution is bounded by turns and wall-clock time
 系统 SHALL 使用 Job 固定的有效执行策略限制真实 Claude Agent 执行的任务计入预算的轮次、单次 attempt 墙钟时间和内部工具调用次数；有效范围为 max_turns 1–100、timeout_seconds 10–3600、max_tool_calls 0–500。所有进入 Worker 的 Job MUST 具有合法的当前 Execution Policy 快照；Worker MUST NOT 对缺失或不支持的策略使用 `AGENT_MAX_TURNS`、`AGENT_TIMEOUT_SECONDS` 或 Agent Publication 进行运行时 fallback。Runtime MUST 将工具调用次数与墙钟耗尽作为当前 attempt 的强制终止边界，而不是仅向模型返回可继续执行的普通拒绝或把本地预算耗尽误分类为瞬时传输故障。
 
@@ -742,7 +761,7 @@ Runtime 协议失败 MUST 经既有错误步骤及执行摘要返回代码固定
 - **AND** 模型不得声称已经调用或验证其连通性
 
 ### Requirement: 模型可见会话与上下文清单必须去除确定性重复
-Runtime SHALL 从 Job 固定配置构造平台安全规则、业务指令、已发布 Skills、当前问题、检索元数据与有界历史。当前输入 MUST 在构造滚动摘要和最近历史窗口前按 `input_message_id` 排除，且只通过 User Prompt 进入一次；不同消息 ID 的同文历史仍保留。摘要与最近消息只渲染一份模型可见正文，retrieved_context 不复制该正文，审计每个来源只存一份 canonical content。Worker 与 Runtime MUST 从共享事实源使用当前 `agent-system-prompt-v11` 和对应 contract hash，历史观测不得回写。
+Runtime SHALL 从 Job 固定配置构造平台安全规则、业务指令、已发布 Skills、当前问题、检索元数据与有界历史。当前输入 MUST 在构造滚动摘要和最近历史窗口前按 `input_message_id` 排除，且只通过 User Prompt 进入一次；不同消息 ID 的同文历史仍保留。摘要与最近消息只渲染一份模型可见正文，retrieved_context 不复制该正文，审计每个来源只存一份 canonical content。Worker 与 Runtime MUST 从共享事实源使用当前 `agent-system-prompt-v22` 和对应 contract hash，历史观测不得回写。
 
 #### Scenario: 输入已存在 Session
 - **WHEN** 当前输入消息已持久化且出现在最近历史候选中
@@ -847,12 +866,23 @@ Runtime 提示词 SHALL 要求从当前用户实际请求和允许的会话上�
 - **WHEN** 记录标题很长或本身含省略号
 - **THEN** Prompt 要求优先用编号列表保留完整原文；不新增基于省略号的正则拒绝或删改，支持分片的渠道继续使用既有长报告投递机制
 
+### Requirement: 钉钉回复使用渠道专属的可读呈现指引
+系统 SHALL 从 Job 冻结回复路由生成非敏感格式标识，仅为钉钉最终聊天回复注入渠道呈现指引：小标题、适量状态 emoji、短列表，以及对多条可比记录使用有界 Markdown 管道表，长原因与证据限制放在表后短段落。单条长记录 SHALL 分行呈现标识/完整标题、状态和相关原因，不强制挤成一行。普通查询先给相关结论；用户明确要求全量明细时 MUST 保留已有完整性规则。该指引 MUST 只作用于钉钉聊天最终回复，不得改写另行生成的 Markdown 文件或其他渠道的格式选择；源记录和用户文字不得改变渠道选择。
+
+#### Scenario: 钉钉长明细
+- **WHEN** 冻结回复路由为钉钉，用户请求完整记录清单
+- **THEN** Prompt 要求保留全部符合范围的标识和完整标题，以小表格、短行和已证实状态呈现，不用省略或泛化状态图标替代内容
+
+#### Scenario: 非钉钉输出
+- **WHEN** 回复路由不是钉钉，即使输入或 Skill 中包含钉钉字样
+- **THEN** 系统不注入钉钉专用呈现指引；文件报告仍按用户要求选择格式
+
 ### Requirement: 明细输出约束必须可识别验证边界
 系统 SHALL 对新的输出约束使用新 Prompt template version，并用合成数据验证无 Skill/跨工具注入及明细文本经过现有分片时无损。测试结果 MUST 区分 Prompt/分片回归与真实 Provider/模型验收，MUST NOT 回写历史 Job 的 Prompt 观测版本。
 
 #### Scenario: 新版本 Prompt
 - **WHEN** 新构建准备新 invocation
-- **THEN** 当前 Prompt template version 为 v7，Worker 请求和 Runtime 观测保持一致；MCP Schema 和 Runtime 协议保持原值
+- **THEN** 当前 Prompt template version 为 `agent-system-prompt-v22`，Worker 请求和 Runtime 观测保持一致；MCP Schema 和 Runtime 协议保持原值
 
 #### Scenario: 长清单投递回归
 - **WHEN** 包含 20 条唯一编号和长标题的合成清单超过单片长度
@@ -1244,7 +1274,7 @@ Agent 运行详情 SHALL 保留现有执行、工具合同、文件和 Delivery 
 - **THEN** 系统不调用外部投递 adapter，但记录 delivery skipped 状态供审计和查询
 
 ### Requirement: Long reports are delivered in chunks
-系统 SHALL 在最终报告超过目标平台单条消息限制时，将报告分片发送并持久化每个分片状态。
+系统 SHALL 在最终报告超过目标平台单条消息限制时，将报告分片发送并持久化每个分片状态。新任务 SHALL 优先在段落、换行处切分，超长单段才有界硬切，保留正文所有字符；单片正文连同 part 前缀 MUST 不超过固定字符上限。首次发送前 MUST 固定算法版本和长度，后续重试不随运行配置或默认算法变化。
 
 #### Scenario: Report exceeds DingTalk chunk limit
 - **WHEN** DingTalk delivery 的报告长度超过配置的单片字符限制
@@ -1253,6 +1283,14 @@ Agent 运行详情 SHALL 保留现有执行、工具合同、文件和 Delivery 
 #### Scenario: Report fits in one chunk
 - **WHEN** 报告长度未超过目标平台单片字符限制
 - **THEN** 系统发送一个分片并将 delivery attempt 标记为成功
+
+#### Scenario: 持久分片计划跨重试保持一致
+- **WHEN** 第一片已成功而后续片暂时失败，重试进程的默认长度不同
+- **THEN** 系统使用原计划重建相同片号与内容 hash，跳过已成功片，不重跑 Agent
+
+#### Scenario: 恢复升级前已部分投递的报告
+- **WHEN** 旧任务没有计划但已有第一片的持久字符数与片数
+- **THEN** 系统恢复原固定字符分片并固定该计划；不足以恢复时失败关闭，不改写成功片
 
 ### Requirement: Delivery failures do not re-execute Agent jobs
 系统 SHALL 将 Delivery 状态机与 Agent Job 分离；Delivery 瞬时失败进入有限 RETRY_WAIT，耗尽后进入 DEAD，均不得重新执行 Agent 或把 SUCCEEDED Job 改为 FAILED。
@@ -1313,32 +1351,70 @@ Agent 运行详情 SHALL 保留现有执行、工具合同、文件和 Delivery 
 - **WHEN** Claude runtime 因 `claude_inconsistent_result` 最终失败
 - **THEN** 用户通知说明模型运行暂时失败并附 Job 追踪标识，不直接输出矛盾的 `error result: success`、CLI stderr 或内部异常堆栈
 
-### Requirement: 受管 Webhook 的结果路由由 Trigger publication 固定
-系统 SHALL 使用 Webhook event 固定的 Trigger publication 构造 reply route，MUST NOT 接受外部 payload 提供任意 Delivery type、Connector、endpoint、token 或目标会话。
+### Requirement: Webhook 结果必须按应用固定投递且复核人员归属
+Webhook Job 的结果路由 SHALL 来自事件命中的应用 Publication，并按命中 Trigger 的入口绑定选择；MUST NOT 使用 Trigger publication 自身的历史投递配置，也 MUST NOT 接受外部 payload 提供任意 Delivery type、Connector、endpoint、token 或目标会话。钉钉私聊目标 SHALL 从内部人员的同企业有效绑定解析并冻结，发送前 MUST 复核启停、绑定归属、机器人可用及执行主体当前应用权限。
 
 #### Scenario: Grafana 告警完成诊断
 - **WHEN** Webhook Agent job 成功并生成最终报告
-- **THEN** ResultDeliveryService 使用 Trigger publication 固定的钉钉 Connector 和安全目标分片投递结果
+- **THEN** ResultDeliveryService 使用应用 Publication 为该入口固定的钉钉 Connector 与安全目标投递结果
 
 #### Scenario: payload 包含钉钉 Webhook URL
 - **WHEN** 外部 payload 包含自定义 Webhook URL 或 delivery target
 - **THEN** 系统不把该值写入 reply route、job 或外部请求
 
+#### Scenario: 人员解绑或停用
+- **WHEN** 结果准备发送时目标人员已停用或原钉钉绑定失效
+- **THEN** 停止该目标投递，不改投新绑定或其他人，保留独立失败状态
+
+#### Scenario: 无人接收
+- **WHEN** 冻结的私聊目标名单为空或当前入口未配置投递
+- **THEN** 使用 none 路由保存结果并记录跳过投递
+
+### Requirement: Webhook 按命中应用入口选择结果投递
+新应用 Publication SHALL 按命中 Trigger 的自然路由身份选择最多一个 Delivery，并在 Job 中冻结该结果路由。其他入口的人员、连接器或回调目标 MUST NOT 被复用。未配置投递或钉钉私聊目标人员为空 SHALL 执行并保存结果且不发送消息。
+
+#### Scenario: 同一应用具有两个 Webhook
+- **WHEN** 两个 Webhook 分别绑定不同收件人或回调，其中一个入口触发任务
+- **THEN** Job 只冻结该入口绑定的目标，不受绑定数组排列影响
+
+#### Scenario: 当前入口只保存结果
+- **WHEN** 命中 Webhook 未配置投递且其他入口具有投递
+- **THEN** reply route 为 none，不借用其他入口的配置
+
+### Requirement: Webhook 多接收人结果独立投递
+系统 SHALL 为冻结接收人中的每个群或用户在结果事务内创建独立 Delivery Outbox（`delivery_outbox_recipients`），并以 Job、结果产物和稳定接收人 key 保证本地幂等。各对象 SHALL 独立 claim、重试、终态与审计；重试不得重复已成功对象，不得重新执行 Agent。发送前 MUST 校验目标仍属于 Job 冻结列表及对应机器人可用性。
+
+#### Scenario: 群成功而用户暂时失败
+- **WHEN** 一个群投递成功、一个用户被限流、其他目标可用
+- **THEN** 其他目标继续投递，仅限流用户进入有限重试；已成功目标保持成功
+
+#### Scenario: 重复入队和重复消费
+- **WHEN** 同一结果重复创建 Outbox 或消费已成功记录
+- **THEN** 不增加同目标重复 Outbox，不重新发送已成功分片
+
+#### Scenario: 钉钉单聊业务失败
+- **WHEN** 单聊响应包含目标 userId 的无效或限流结果
+- **THEN** 判定该对象失败或可重试，不把 HTTP 200 视为投递成功
+
+#### Scenario: 篡改投递绑定
+- **WHEN** Outbox 的接收人 key 不存在于 Job 冻结列表或原路线 hash 不一致
+- **THEN** 拒绝发送并记录安全错误
+
 ### Requirement: 业务应用约束钉钉回复原会话投递
-系统 MUST 在业务应用路由命中后要求存在唯一、启用且与 ingress source connector 一致的 `reply_original` Delivery Binding，并 SHALL 使用事件生成的受信临时 reply route 完成实际投递。
+系统 MUST 在业务应用路由命中后要求命中 Trigger 存在唯一、启用且与 ingress source connector 一致的 `reply_original` Delivery Binding，并 SHALL 使用事件生成的受信临时 reply route 完成实际投递。不同触发器的投递 MUST 独立校验和选择，不得使用其他入口的目标。既有不可变 Publication 保持原已冻结规则；新 Publication MUST 固定每入口关联模式。
 
 #### Scenario: 有效回复原会话Binding
-- **WHEN** 应用包含唯一 `reply_original` Binding，connector 与钉钉 Stream 来源一致，事件包含有效 session webhook
+- **WHEN** 命中 Trigger 包含唯一 `reply_original` Binding，connector 与钉钉 Stream 来源一致，事件包含有效 session webhook
 - **THEN** 系统将受信 reply route 固定到 Job
 - **AND** Delivery Worker 将结果回复到原私聊或群聊
 
 #### Scenario: 缺少回复原会话Binding
-- **WHEN** 钉钉 Trigger 命中应用但没有启用的 `reply_original` Binding
+- **WHEN** 钉钉 Trigger 命中应用但没有为此 Trigger 配置启用的 `reply_original` Binding
 - **THEN** 运行时将 route 标记为 `blocked/missing_delivery_binding`
-- **AND** 不改用全局固定群或其他 Delivery 类型
+- **AND** 不改用其他 Trigger 的 Binding、全局固定群或其他 Delivery 类型
 
 #### Scenario: Binding connector不一致
-- **WHEN** `reply_original` Binding 的 connector ID 与 ingress source connector ID 不同
+- **WHEN** `reply_original` Binding 的 connector ID 与命中 Trigger 的 ingress source connector ID 不同
 - **THEN** 激活预检或运行时校验拒绝该配置
 - **AND** 不把临时 session webhook 发送给不匹配的 Connector
 
@@ -1625,6 +1701,21 @@ Runtime SHALL 对当前 Job 冻结的知识工具执行串行派发，队列等�
 - **WHEN** 问答 Job 启用了代码分析能力
 - **THEN** 禁用 SDK 会话转录和提示历史落盘，实际工具/权限/版本审计仍保留安全元数据；源码与 SVN 原文只在本次受限执行内传递
 
+### Requirement: 源码回答结束前必须有界补足保存机会
+Runtime SHALL 对已取得源码读取授权但未成功保存结果的任务，在原预算允许时最多执行一次结束纠正，要求同一 Agent 调用受控保存工具。不得延长截止、突破工具或模型轮次上限、创建另一任务或将普通回答直接转为确定知识。补保存失败 MUST 保留业务回答和独立失败事实；partial/conflicted 仍不得索引。
+
+#### Scenario: 未调用保存就结束回答
+- **WHEN** 已取得源码 grant 的 Agent 首次准备结束，尚无成功保存且预算允许
+- **THEN** 原会话收到一次保存纠正；再次结束时不无限阻止
+
+#### Scenario: 已保存或无需源码
+- **WHEN** 已保存 supported/partial/conflicted 结果，或本次只读取已有答案
+- **THEN** 正常结束，不增加保存调用或重复向量
+
+#### Scenario: 无法补保存
+- **WHEN** 预算耗尽、身份权限失效，或一次纠正仍未成功
+- **THEN** 保留已形成的业务回答，后台记录实际保存状态，不声称知识已入库
+
 ### Requirement: 知识工具失败必须保留安全分类
 Runtime SHALL 对知识工具本地拒绝及远端失败提取代码所有的安全错误码、固定中文说明和重试分类，并在工具时间线及审计中保留。参数、权限、证据和状态冲突 MUST NOT 被标记为可自动重试的瞬时错误。未知错误安全降级；不得记录原始工具输入输出、源码、任意异常文本或凭据。
 
@@ -1644,6 +1735,6 @@ Runtime SHALL 对知识工具本地拒绝及远端失败提取代码所有的安
 
 实现依据：`backend/app/modules/job/application/create_agent_job_service.py`、`job_retry_service.py`、`debug_job_access_service.py`、`backend/app/modules/job/domain/{agent_job,execution_policy,job_status}.py`；`backend/app/modules/mcp_tool_runtime/job_snapshot.py`、`services/ones_mcp_server/auth/principal.py`、`services/external_action_worker/ones_adapter.py`；`backend/app/modules/agent/application/agent_executor.py`、`backend/app/modules/agent/infrastructure/runtime_protocol.py`、`runtime_http_client.py`；`backend/app/python_runtime/{executor,mcp_config,tool_contract,tool_policy,run_audit,invocations}.py`；`backend/app/shared/agent_run_audit_codec.py`；`contracts/agent-runtime/v1.4/` 与 `v1.5/`；`backend/app/modules/job/infrastructure/repositories.py`、`backend/app/modules/admin/api/controller.py`；`backend/app/modules/delivery/application/`；`backend/app/modules/external_action/`、`services/external_action_worker/runtime.py`、`services/dingtalk_mcp_server/worker.py`。
 
-对应测试包括 `backend/tests/test_agent_retry_and_failure_delivery.py`、`test_agent_job_debug_authorization.py`、`test_mcp_tool_runtime.py`、`test_ones_mcp_runtime.py`、`test_ones_task_update.py`、`test_job_dispatch_fault_integration.py`、`test_python_runtime_run_audit.py`、`test_agent_run_audit_repository.py`、`test_delivery_outbox_chunk_idempotency.py`、`test_delivery_outbox_atomic_terminal.py`、`test_log_evidence_scanner.py` 和 `frontend/src/contexts/operations/presentation/runtime-records.test.tsx`。这些代码与测试定义是当前实现依据；此前文档对账仅做静态核对与规格验证，未执行真实模型、MCP、钉钉、RabbitMQ 或生产数据库验收；Runtime 副本池的新增分层证据独立于这些历史验收边界。Prompt 自检不构成程序级明细完整性保证；外部 mutation 的真实 Provider 幂等、卡片与恢复能力仍须对应环境验收。
+对应测试包括 `backend/tests/test_agent_retry_and_failure_delivery.py`、`test_agent_job_debug_authorization.py`、`test_mcp_tool_runtime.py`、`test_ones_mcp_runtime.py`、`test_ones_task_update.py`、`test_job_dispatch_fault_integration.py`、`test_python_runtime_run_audit.py`、`test_agent_run_audit_repository.py`、`test_delivery_outbox_chunk_idempotency.py`、`test_delivery_outbox_atomic_terminal.py`、`test_webhook_result_recipients.py`、`test_log_evidence_scanner.py` 和 `frontend/src/contexts/operations/presentation/runtime-records.test.tsx`。Webhook 结果路由与逐接收人投递另见 `backend/app/modules/business_application/domain/delivery_routing.py`、`backend/app/modules/delivery/application/result_delivery_service.py`、`backend/app/modules/delivery/domain/recipient_routes.py` 与迁移 `148`/`149`。这些代码与测试定义是当前实现依据；此前文档对账仅做静态核对与规格验证，未执行真实模型、MCP、钉钉、RabbitMQ 或生产数据库验收；Runtime 副本池的新增分层证据独立于这些历史验收边界。Prompt 自检不构成程序级明细完整性保证；外部 mutation 的真实 Provider 幂等、卡片与恢复能力仍须对应环境验收。
 
 实现差异：外部操作 Worker 当前只有单进程串行与单意图数据库互斥，没有代码实现的全局并发槽位/可配置上限；Compose 健康检查只判断 heartbeat 文件存在，不能证明心跳新鲜度或 Provider 可用。以上不计为已实现的全局并发/严格 readiness 能力。

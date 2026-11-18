@@ -77,7 +77,13 @@ Depending on what the user brings, you might:
 
 ## OpenSpec Awareness
 
-You have full context of the OpenSpec system. Use it naturally, don't force it.
+Use OpenSpec naturally,但必须遵守仓库 canonical 读取边界。
+
+### Canonical first
+
+- 普通探索默认只读 `openspec/specs/` 下与当前话题相关的领域主规格，以及必要源码/测试。
+- 领域导航见 `openspec/specs/README.md`；导航本身不是规范。
+- 不要默认扫描 `openspec/changes/` 或 `openspec/changes/archive/`。
 
 ### Check for context
 
@@ -91,6 +97,8 @@ This tells you:
 - Their names, schemas, and status
 - What the user might be working on
 
+**Default:** 只使用列表中的名称与状态做对话上下文。不要因为列表存在就读取 change 产物。
+
 ### When no change exists
 
 Think freely. When insights crystallize, you might offer:
@@ -100,14 +108,14 @@ Think freely. When insights crystallize, you might offer:
 
 ### When a change exists
 
-If the user mentions a change or you detect one is relevant:
+只有在用户明确指定某个 active change，或明确授权读取其产物时，才进入该 change：
 
-1. **Resolve and read existing artifacts for context**
+1. **Resolve and authorize the change path**
    - Run `openspec status --change "<name>" --json`.
-   - Use `changeRoot`, `artifactPaths`, and `actionContext` from the status JSON.
-   - Read existing files from `artifactPaths.<artifact>.existingOutputPaths`.
+   - 使用 `changeRoot`、`artifactPaths`、`actionContext`。
+   - 解析后的路径 MUST 位于该 active change 目录内；禁止读取 archive、其他 change，或把路径解析到仓库外。
 
-2. **Reference them naturally in conversation**
+2. **Reference authorized artifacts naturally**
    - "Your design mentions using Redis, but we just realized SQLite fits better..."
    - "The proposal scopes this to premium users, but we're now thinking everyone..."
 
@@ -115,16 +123,18 @@ If the user mentions a change or you detect one is relevant:
 
     | Insight Type               | Where to Capture               |
     |----------------------------|--------------------------------|
-    | New requirement discovered | `specs/<capability>/spec.md` |
-    | Requirement changed        | `specs/<capability>/spec.md` |
+    | New requirement discovered | 映射后的 canonical 领域 delta，或用户指定 change 内 `specs/<capability>/spec.md` |
+    | Requirement changed        | 同上 |
     | Design decision made       | `design.md`                  |
     | Scope changed              | `proposal.md`                |
     | New work identified        | `tasks.md`                   |
     | Assumption invalidated     | Relevant artifact              |
 
+   捕获前先按 `openspec/specs/README.md` 映射到现有 10 个领域；映射不明时停止并询问，不得按旧 capability 名新建主规格。
+
    Example offers:
    - "That's a design decision. Capture it in design.md?"
-   - "This is a new requirement. Add it to specs?"
+   - "This is a new requirement. Add it to the mapped domain delta?"
    - "This changes scope. Update the proposal?"
 
 4. **The user decides** - Offer and move on. Don't pressure. Don't auto-capture.
@@ -282,6 +292,7 @@ But this summary is optional. Sometimes the thinking IS the value.
 - **Don't rush** - Discovery is thinking time, not task time
 - **Don't force structure** - Let patterns emerge naturally
 - **Don't auto-capture** - Offer to save insights, don't just do it
+- **Don't read unauthorized changes** - 未获明确授权时，只列举 active change；不得读取产物或 archive
 - **Do visualize** - A good diagram is worth many paragraphs
 - **Do explore the codebase** - Ground discussions in reality
 - **Do question assumptions** - Including the user's and your own

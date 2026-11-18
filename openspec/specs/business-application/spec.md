@@ -12,9 +12,9 @@
 
 代码：`backend/app/modules/business_application/domain/policies.py`、`domain/runtime.py`、`application/service.py`、`application/mcp_tool_composition.py`（后三者相对于该模块）、`backend/app/modules/job/domain/execution_policy.py`、`frontend/src/contexts/applications/`。
 
-测试定义：`backend/tests/test_business_application_control_plane.py`、`backend/tests/test_business_application_runtime_routing.py`、`backend/tests/test_job_execution_policy.py`。
+测试定义：`backend/tests/test_business_application_control_plane.py`、`backend/tests/test_business_application_runtime_routing.py`、`backend/tests/test_job_execution_policy.py`、`backend/tests/test_webhook_result_recipients.py`、`backend/tests/test_webhook_ingress_dispatch.py`。Webhook 入口与投递绑定相关实现见 `backend/app/modules/business_application/domain/{policies,delivery_routing,runtime}.py` 与迁移 `157`/`158`。
 
-本规格于 2026-09-16 按当前代码重建。代码与测试定义可定位实现和覆盖范围；本次文档重建不代表执行了真实模型、Provider、数据库升级或部署验收。
+本规格于 2026-09-16 按当前代码重建，并已按 Webhook 应用路由/执行用户/入口投递演进更新相关条款。代码与测试定义可定位实现和覆盖范围；本次文档重建不代表执行了真实模型、Provider、数据库升级或部署验收。
 
 ## Requirements
 
@@ -202,9 +202,9 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **WHEN** 钉钉 Trigger 使用 `CURRENT_SENDER` actor policy 并引用允许入口的 connector
 - **THEN** 系统接受该受控策略并保存非敏感 connector 与路由标识
 
-#### Scenario: 保存Webhook服务身份策略
-- **WHEN** Webhook Trigger 使用 `SERVICE_ACCOUNT` actor policy
-- **THEN** 系统要求引用一个已启用的内部服务主体
+#### Scenario: 保存Webhook绑定用户策略
+- **WHEN** Webhook Trigger 使用 `BOUND_USER` actor policy
+- **THEN** 系统要求引用 Webhook 发布已固定的启用 human 用户，应用不得另行覆盖
 - **AND** 不允许在策略中直接提交外部系统用户名、密码或 Token
 
 #### Scenario: 提交不安全配置
@@ -510,13 +510,6 @@ BusinessAuthorizationService SHALL 从当前有效角色的应用访问、精确
 #### Scenario: 存在显式拒绝
 - **WHEN** 用户命中应用或更高优先级拒绝
 - **THEN** 拒绝优先，不能靠另一允许记录绕过。
-
-### Requirement: 服务账号仅通过业务授权参与非交互式入口
-系统 SHALL 允许服务账号通过业务访问角色获得 Webhook 等非交互式业务应用权限，但 MUST NOT 因该角色获得管理后台登录或功能权限。
-
-#### Scenario: Webhook 服务账号有业务角色
-- **WHEN** Webhook 触发器的启用服务账号获得目标业务应用、能力和数据范围授权
-- **THEN** 系统按该服务账号的角色执行应用授权和工具范围检查
 
 ### Requirement: 应用部署只使用local且与业务数据环境相互独立
 系统 MUST 只允许创建、激活、回退、查询或停用 `local` Business Application Deployment，并 MUST NOT 使用 Channel event 的业务数据 `routing.environment` 选择应用版本。
@@ -907,12 +900,57 @@ Agent/Application Publication SHALL 仅在代码 Manifest 同时声明稳定 Too
 - **THEN** 服务按新活动路由固定应用与 Agent Publication，旧 Job 仍使用自己的冻结事实。
 
 ### Requirement: 运行时接管受支持的钉钉与Webhook入口
-应用运行态 SHALL 支持 `dingtalk_private`、`dingtalk_group` 与 `webhook` 三种已发布 Trigger。钉钉使用 CURRENT_SENDER 与 `bot:` 或 `conversation:` 路由键；Webhook 使用 SERVICE_ACCOUNT 与 `webhook:` 路由键。未知类型、错误前缀、主体策略不匹配或无有效来源依赖 MUST 失败关闭。
+应用运行态 SHALL 支持 `dingtalk_private`、`dingtalk_group` 与 `webhook` 三种已发布 Trigger。钉钉使用 CURRENT_SENDER 与 `bot:` 或 `conversation:` 路由键；Webhook 使用 BOUND_USER 与 `webhook:` 路由键，执行用户取自 Webhook 发布并与应用入口绑定一致。未知类型、错误前缀、主体策略不匹配或无有效来源依赖 MUST 失败关闭。
 
 #### Scenario: 钉钉入口
 - **WHEN** 受信消息匹配启用的私聊或群聊 Trigger
 - **THEN** 服务按当前发送人解析身份和角色，并固定命中的应用发布版本。
 
 #### Scenario: Webhook入口
-- **WHEN** 受治理Webhook绑定启用服务账号与已发布应用
-- **THEN** 服务通过完整认证授权链创建Job，不回退默认Agent或人工主体。
+- **WHEN** 受治理 Webhook 绑定启用执行用户与已发布应用
+- **THEN** 服务通过完整认证授权链创建 Job，不回退默认 Agent 或其他人工主体。
+
+#### Scenario: Webhook重新绑定人员
+- **WHEN** 事件执行用户与应用发布固定的入口用户不一致
+- **THEN** 系统拒绝创建 Job 并提示重新保存、发布和激活应用，不静默切换执行身份。
+
+### Requirement: 应用 Webhook 入口必须来自所选 Agent 的发布配置
+系统 SHALL 仅允许选择所选 Agent Publication 允许且当前启用的 Webhook，自动确定路由与执行用户；MUST NOT 要求用户填写主体 ID 或路由键，服务端必须重验并拒绝伪造入口。
+
+#### Scenario: 切换 Agent
+- **WHEN** 应用切换到未允许原 Webhook 的 Agent 发布版本
+- **THEN** 原绑定明确失效并阻止发布，要求重新选择入口
+
+### Requirement: 每个入口独立配置结果去向
+新业务应用草稿和 Publication SHALL 将每条 Delivery 明确关联到一个 Trigger 的类型、连接器和规范化路由键（`delivery_binding_mode=per_trigger`）。每个 Trigger MUST 至多有一个投递方式；未引用、重复或不存在的入口关联 MUST 返回定位到字段的错误。钉钉入口 MUST 使用与入口连接器一致的回复原会话；Webhook SHALL 支持仅保存结果、钉钉私聊（最多 20 名人员）、钉钉群或高级 HTTP 回调。无投递绑定或私聊名单为空时使用 none 路由。
+
+#### Scenario: 保存多人员投递
+- **WHEN** 用户为 Webhook 选择钉钉私聊并选择最多 20 个不同目标人员
+- **THEN** 管理 API 接受 `target_user_ids` 并保存入口关联，发布前复核企业与身份并冻结 `resolved_recipients`；空人员表示不发送
+
+#### Scenario: 修改或删除入口
+- **WHEN** 用户修改入口身份或删除触发器
+- **THEN** 编辑器同步更新对应投递引用或删除该投递，不改变其他入口的投递
+
+#### Scenario: 消息流向可见
+- **WHEN** 用户查看组成配置
+- **THEN** 每个触发器卡片展示入口、Agent 和自己的结果去向；保存错误展示在固定保存区
+
+#### Scenario: 旧草稿存在未使用投递
+- **WHEN** 原独立投递不能唯一归属于入口
+- **THEN** 编辑器明确展示待处理配置并要求用户移除后保存，不静默丢弃或分配到其他入口
+
+### Requirement: 应用统一配置 Webhook 结果投递
+系统 SHALL 允许应用按命中 Webhook 入口选择钉钉私聊机器人与最多 20 名内部目标人员，或选择钉钉群/受管 HTTP 回调。系统 MUST NOT 再依赖 Trigger 自身投递配置或把 `webhook_result` 作为新配置选项；目标人员必须启用且具有该机器人企业的有效钉钉绑定。外部 payload 不得指定投递 Connector、URL、目标或凭据。
+
+#### Scenario: 多人钉钉私聊
+- **WHEN** 应用为某 Webhook 入口配置启用机器人和多名有效人员并发布
+- **THEN** Publication 固定各目标身份，结果分别发送，失败按目标独立记录
+
+#### Scenario: 没有目标人员
+- **WHEN** 应用私聊投递未选择人员或未配置结果投递
+- **THEN** Agent 正常执行并保存结果，不创建外部消息
+
+#### Scenario: 高级 HTTP 回调
+- **WHEN** 应用选择具备出站能力的受管 HTTP Connector 与安全目标引用
+- **THEN** 系统固定回调路由；不允许外部 payload 或应用表单传入任意 URL/凭据

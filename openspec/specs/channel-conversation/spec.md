@@ -144,8 +144,8 @@ Connector 型 HTTP Delivery SHALL 使用受管 endpoint、平台 Secret 引用�
 - **WHEN** 消息 routing context 指向业务环境而控制面运行当前 local deployment 路由
 - **THEN** 两者分别用于应用解析和受管数据范围校验，payload 不得更改 deployment
 
-#### Scenario: Trigger 固定 Agent 与活动应用不一致
-- **WHEN** Event 固定 Agent Publication 与命中应用不同
+#### Scenario: 受理时固定的应用 Agent 与当前活动应用不一致
+- **WHEN** Event 在受理时固定的 Application/Agent Publication 与分发时命中的活动应用不同
 - **THEN** 阻止 Job 创建并记录配置冲突，不选择其中一个静默继续
 
 #### Scenario: 未匹配或应用阻塞
@@ -356,41 +356,106 @@ Stream 入站 SHALL 同时冻结来源 Connector、会话类型和 robot code，
 - **WHEN** 应用需改用其他企业
 - **THEN** 新建并验证对应企业和 Connector 后配置模板，不修改已验证 Corp ID 复用旧绑定
 
+### Requirement: Webhook 首次创建自动建立独立入口
+管理员在 Web 新建受管 Webhook 时，系统 SHALL 原子创建独立的 `managed_webhook` 入站 Connector 与默认停用的 Trigger 定义，不要求环境预置入口，也不自动创建服务账号。Connector MUST 仅允许 ingress；认证由 Trigger 发布中的受管 Secret 引用承担，不复制真实 Token 到 Connector。创建不得修改既有渠道、凭据、Agent 发布或业务授权。
+
+#### Scenario: 首个 Webhook
+- **WHEN** 没有可复用入口且有权限管理员提交合法编码、名称和类型
+- **THEN** 创建独立入口与停用定义，并打开可继续配置的 Web 界面
+
+#### Scenario: 创建失败或重复编码
+- **WHEN** 创建链任一步骤失败或编码已存在
+- **THEN** 整体回滚并返回安全错误，不遗留无主 Connector 或半成品 Trigger
+
+#### Scenario: 入口被用于结果投递
+- **WHEN** 尝试把 managed_webhook Connector 用于 Delivery
+- **THEN** 按代码类型拒绝，即使配置错误地打开 allow_delivery
+
 ### Requirement: Webhook Trigger 使用真实草稿和不可变发布
-管理端 SHALL 提供 Grafana Alertmanager 和通用 JSON Trigger 的创建、编辑、验证、发布、启停、回滚、public ID/凭据轮换与事件历史。草稿使用 revision，发布固定 adapter、源 Connector、服务账号、Agent Publication、routing、Delivery、幂等和限流配置；保存草稿不改变运行版本。
+管理端 SHALL 提供 Grafana Alertmanager 和通用 JSON Trigger 的创建、编辑、验证、发布、启停、回滚、public ID/凭据轮换与事件历史。草稿使用 revision；发布只固定 adapter、源 Connector、执行用户与认证配置。Agent 与结果投递由业务应用引用并固定；保存草稿不改变运行版本。Webhook 可在尚未绑定应用时独立发布，实际请求仍须命中活动应用后才能执行。
 
 #### Scenario: 两人并发修改 Trigger
 - **WHEN** 后提交者使用过期 expected revision
 - **THEN** 返回版本冲突，不覆盖新草稿或运行 Publication
 
 #### Scenario: 发布依赖缺失
-- **WHEN** Connector、服务账号、固定 Agent、Delivery、Bearer Secret 或 schema 不可用
+- **WHEN** Connector、`execution_user_id` 对应的启用 human 用户、已配置的 Bearer Secret 或 schema 不可用
 - **THEN** 返回中文字段错误，不创建 Publication
+
+#### Scenario: 独立发布入口
+- **WHEN** 管理员配置合法认证与执行用户并完成发布
+- **THEN** Webhook 可以在尚未绑定 Agent 或应用时成为有效入口；未命中活动应用前不得创建 Job
 
 #### Scenario: 无副作用报文预览
 - **WHEN** 管理员提交示例 JSON 测试映射
 - **THEN** 只返回有界脱敏映射预览，不持久化原 body、不创建 Job、不发送 Delivery
 
-### Requirement: 公共 Webhook 只接受有界 JSON 和唯一强 Bearer
-公共入口 SHALL 通过不可预测 public ID 找到启用 Trigger 的有效 Publication，检查来源 Connector 和启用服务账号，并限定 Content-Type、UTF-8 body 大小、JSON 深度与集合数量。认证只支持 `bearer_v1`，每个 binding 使用唯一且至少符合代码强度要求的受管 Token，进行常量时间比较；缺失、弱值、不可解析或错误认证必须失败关闭。
+### Requirement: Webhook 在渠道页面完成配置发布闭环
+Web SHALL 提供受管认证引用、执行用户、固定适配器与限制配置，复用既有草稿 revision、校验、无副作用预览、发布和启停协议。编辑未保存时 MUST 不允许误校验或发布旧草稿。发布重新验证依赖；未发布 MUST 不允许启用。Agent 与结果投递在业务应用侧配置，不要求 Webhook 草稿虚构投递 Connector。
+
+#### Scenario: 保存校验预览和发布
+- **WHEN** 管理员保存合法草稿、完成依赖配置并校验和预览
+- **THEN** 可发布该草稿并单独启用，展示当前发布、公开接收路径与执行用户；预览不创建 Event、Job 或 Delivery
+
+#### Scenario: 无有效凭据或执行用户不可用
+- **WHEN** 草稿引用不可用凭据或未选择启用人员
+- **THEN** Web 展示后端字段错误，不允许发布
+
+#### Scenario: 草稿未保存或未发布
+- **WHEN** 存在未保存编辑或定义尚无发布
+- **THEN** Web 分别禁用旧草稿的后续动作和启用操作，后端同样拒绝未发布启用
+
+#### Scenario: 配置读取与授权边界
+- **WHEN** 查询目录、详情或执行配置动作
+- **THEN** 沿用登录、CSRF 和动作授权；仅返回受管引用与非敏感目录，不返回真实 Token
+
+### Requirement: 公共 Webhook 接受有界 JSON 和可选 Bearer
+公共入口 SHALL 通过不可预测 public ID 找到启用 Trigger 的有效 Publication，检查来源 Connector 和启用的人员执行用户，并限定 Content-Type、UTF-8 body 大小、JSON 深度与集合数量。认证 SHALL 支持显式 `none` 与 `bearer_v1`：仅当 Publication 冻结 `authentication.type=none` 且凭据引用为空时，可不要求 Authorization；填写凭据引用时须使用 `bearer_v1`。Bearer binding SHALL 使用唯一受管 Token，允许 1–4096 字节、不含空白的可打印 ASCII 字符，不要求至少 32 个字符，并进行常量时间精确比较；配置 Bearer 后缺失、格式非法、不可解析或错误认证 MUST 失败关闭，不得自动降级为免鉴权。模式 MUST 随 Publication 冻结，保存草稿不改变当前入口；未知或缺失认证模式不得隐式降级。
 
 #### Scenario: 使用合法标准 Bearer
 - **WHEN** 有效 publication 收到符合大小和结构上限的 JSON 与匹配的 `Authorization: Bearer`
 - **THEN** 继续映射和接收，不把认证成功当作业务授权成功
 
+#### Scenario: 使用短 Bearer Token
+- **WHEN** 管理员绑定非空、格式合法、少于 32 字符的唯一受管 Token
+- **THEN** 校验、发布及渠道就绪检查接受该凭据，公共入口允许携带匹配 Bearer 的请求
+
+#### Scenario: 显式免鉴权
+- **WHEN** 有效 Publication 的认证为 `none` 且凭据引用为空
+- **THEN** 公共入口不要求 Authorization 请求头，仍执行应用路由与执行用户权限检查
+
+#### Scenario: 受保护入口修改草稿
+- **WHEN** 已发布 Bearer 入口的草稿清空凭据，尚未发布
+- **THEN** 当前入口 MUST 继续要求 Bearer，直到新版本发布
+
+#### Scenario: Bearer 凭据或请求无效
+- **WHEN** Bearer 凭据为空、包含空白或不可打印字符、超过 4096 字节、无法解析，或请求头缺失及不匹配
+- **THEN** 对应校验或鉴权失败，且不得转为免鉴权
+
 #### Scenario: 旧 Header 或其他认证模式
-- **WHEN** 请求只提供 `X-Grafana-Token`，或配置 HMAC、timestamp、nonce 认证
+- **WHEN** Bearer 请求只提供 `X-Grafana-Token`，或配置 HMAC、timestamp、nonce 认证
 - **THEN** 拒绝，不进入匿名或旧 Header 翻译兼容路径；事件去重不能表述为独立防重放认证
 
 #### Scenario: 未知或轮换后的 public ID
 - **WHEN** public ID 不存在或已失效
 - **THEN** 返回统一安全未找到结果，不暴露历史配置或 Secret
 
+### Requirement: Webhook 配置页展示匹配配置的 HTTP 示例
+管理端 SHALL 展示使用当前 public ID、POST 和 application/json 的 curl 示例，区分通用 JSON 与 Grafana 标准报文。依据当前编辑配置是否填写凭据展示或省略 Authorization 头。Token MUST 使用占位符，不读取或展示真实值。页面 SHALL 解释事件 ID 的去重用途、替换服务地址、发布启用和应用激活要求，以及 202 只代表受理。
+
+#### Scenario: 免鉴权示例
+- **WHEN** 凭据引用为空
+- **THEN** 展示不含 Authorization 的 curl，URL 包含当前 Webhook public ID
+
+#### Scenario: Bearer 示例
+- **WHEN** 管理员填写凭据引用
+- **THEN** 示例包含 Bearer Token 占位符，并说明调用方填写 Token 原文、变更发布后生效
+
 ### Requirement: Webhook 映射不能覆盖授权和目标事实
-Webhook SHALL 使用冻结 typed adapter、JSON Pointer、声明式条件和有界模板生成 Channel message 与 routing；提取范围必须在配置 allowlist 内，文本始终是不可信外部数据。payload 不得控制服务账号、Agent、Tool、Connector、Secret、Delivery endpoint 或扩大业务范围。
+Webhook SHALL 只使用平台固定的通用 `id`/`message` 解析或 Grafana Alertmanager firing 告警解析；MUST NOT 接受自定义 JSON Pointer、变量、模板、过滤或路由规则。通用 JSON 只读取声明字段，routing 从命中的业务应用派生，文本始终是不可信外部数据。payload 不得控制执行用户、Agent、Tool、Connector、Secret、Delivery endpoint 或扩大业务范围。
 
 #### Scenario: 通用 JSON 必填路径缺失
-- **WHEN** 事件 ID、消息或要求的 routing 路径不存在或类型不匹配
+- **WHEN** 通用 JSON 的 id 或 message 缺失或类型不匹配
 - **THEN** 保存安全映射失败状态，不创建 Job
 
 #### Scenario: payload 声明其他应用或目标
@@ -409,19 +474,30 @@ Webhook SHALL 使用冻结 typed adapter、JSON Pointer、声明式条件和有�
 - **THEN** 不进入 Job 调度，保留有界忽略事实
 
 ### Requirement: Webhook 持久受理与业务授权分阶段完成
-接收服务 SHALL 在认证、结构、映射、过滤和限流通过后，用事务保存 Event 与 Outbox，成功后返回 `202 Accepted`。该响应只证明持久受理。Dispatcher SHALL 使用接收时固定的 Trigger/Agent Publication 与服务账号，并重新检查启停、完整性和 Channel/应用授权后创建 Job；不得把 Inbox 接受等同于业务授权已通过。
+接收服务 SHALL 在认证、结构、映射、过滤和限流通过后，解析唯一活动业务应用，并用事务保存 Event 与 Outbox，成功后返回 `202 Accepted`。该响应只证明持久受理；受理时 MUST 固定 Trigger Publication、Application Publication、Agent Publication 与执行用户。Dispatcher SHALL 使用接收时固定的版本与执行用户，并重新检查启停、完整性、执行用户仍为启用 human，以及 Channel/应用授权后创建 Job；不得把 Inbox 接受等同于业务授权已通过。
 
-#### Scenario: 排队期间发布新 Trigger
-- **WHEN** 已接受 Event 等待分发而管理员发布新版本
-- **THEN** Dispatcher 仍读取 Event 固定的 Trigger/Agent Publication；若与当前活动应用路由冲突则安全失败，不静默替换版本
+#### Scenario: 排队期间发布新 Trigger 或应用
+- **WHEN** 已接受 Event 等待分发而管理员发布新 Trigger 或切换活动应用
+- **THEN** Dispatcher 仍读取 Event 固定的 Trigger/Application/Agent Publication；若与当前活动应用路由冲突则安全失败，不静默替换版本
 
-#### Scenario: 排队期间服务账号停用
-- **WHEN** Dispatcher 处理已接受事件时账号或 Trigger 已停用
+#### Scenario: 排队期间执行用户停用
+- **WHEN** Dispatcher 处理已接受事件时执行用户或 Trigger 已停用
 - **THEN** 记录分发失败，不创建 Job
+
+#### Scenario: 排队期间重新绑定执行用户
+- **WHEN** 原事件已受理后 Webhook 发布绑定另一用户
+- **THEN** 原事件仍使用接收时冻结的用户，并验证与其固定发布一致，不能替换成新用户
 
 #### Scenario: Broker 故障或重复消息
 - **WHEN** Outbox 首次发送失败或 dispatcher 重复收到已有 Job 的 Event
 - **THEN** 通过有界恢复重试发布或返回幂等成功，不创建第二个 Job
+
+### Requirement: Webhook 停用独立于配置健康
+已授权管理员 SHALL 能从渠道卡片或配置页面停用 Webhook，即使入口 Connector 已不可用。操作 MUST 使用 revision 冲突保护；停用 MUST 拒绝新接收和尚未创建 Job 的事件分发；已创建任务及其冻结结果投递继续执行。
+
+#### Scenario: 故障入口停用
+- **WHEN** 原 Connector 已停用或凭据不可解析，管理员提交正确 revision 停用且未更换 Connector
+- **THEN** 定义成功停用，不要求修复入口后再停用
 
 ### Requirement: Webhook 限流去重和历史均有界
 系统 SHALL 按 Trigger 配置执行每分钟速率、在途并发和冷却窗口。冷却启用时当前代码将时间窗编号加入 dedup key，同一窗口内重复事件幂等，跨窗口可产生新的诊断事件。历史仅保存 hash、大小、有界安全摘要、认证/过滤状态、固定版本、correlation、Job 关联与安全错误，不保存完整 raw body。
@@ -446,6 +522,6 @@ Webhook SHALL 使用冻结 typed adapter、JSON Pointer、声明式条件和有�
 - 钉钉规范化、应用路由和 Session：`backend/app/modules/dingding/application/dingtalk_stream_service.py`、`backend/app/modules/channel/application/channel_ingress_service.py`、`backend/app/modules/job/application/create_agent_job_service.py`、`backend/app/modules/agent/application/conversation_context.py`；静态覆盖见 `backend/tests/test_dingtalk_stream_ingress.py`、`test_channel_ingress_and_delivery.py`、`test_dingtalk_identity_isolation_acceptance.py`。
 - 附件和文件交接：`backend/app/modules/job/application/file_context.py`、`backend/app/modules/attachments/dingtalk_downloader.py`、`backend/app/modules/delivery/infrastructure/file_delivery_sender.py`；静态覆盖见 `backend/tests/test_dingtalk_media_downloader.py`、`test_dingtalk_attachment_names.py`、`test_dingtalk_file_delivery_sender.py`。
 - 原会话 Delivery 与卡片：`backend/app/modules/delivery/infrastructure/adapters.py`、`backend/app/shared/dingtalk_card_templates.py`、`backend/migrations/128_expand_dingtalk_confirmation_card_templates.sql`、`frontend/src/contexts/applications/presentation/managed-channels-panel.tsx`；静态覆盖见 `backend/tests/test_dingtalk_delivery.py`、`test_dingtalk_mcp_runtime.py` 与前端 `managed-channels.test.tsx`。
-- Webhook：`backend/app/modules/webhook/application/ingress_service.py`、`authentication.py`、`mapping.py`、`trigger_service.py`、`dispatch_service.py`；静态覆盖见 `backend/tests/test_webhook_api.py`、`test_webhook_mapping_security.py`、`test_webhook_ingress_dispatch.py`、`test_webhook_outbox_recovery.py`。
-- 已明确修正的实现边界：应用 ingress 路由当前固定为 local；v2 群 Session key 包含 external_identity_id；当前摘要器是确定性摘录；Webhook 202 先于 Dispatcher 的业务授权；冷却按时间窗去重；旧 dingtalk_send_robot_message 已退役，当前群消息工具只支持受信来源群。配置 host allowlist 的校验不等于所有空 allowlist 或 Stream 临时回复路径都具有统一默认拒绝策略，当前代码不能据此宣称完整公网出站防护。
+- Webhook：`backend/app/modules/webhook/application/ingress_service.py`、`authentication.py`、`mapping.py`、`trigger_service.py`、`dispatch_service.py`、`domain/models.py`；`backend/app/modules/managed_channel/application/service.py`（首次创建入口）；静态覆盖见 `backend/tests/test_webhook_api.py`、`test_webhook_optional_authentication.py`、`test_webhook_migration_and_service_accounts.py`、`test_webhook_ingress_dispatch.py`、`test_webhook_result_recipients.py`、`test_webhook_mapping_security.py`、`test_webhook_outbox_recovery.py`。迁移证据：`148_add_delivery_result_recipients.sql`、`149_add_webhook_result_application_binding.sql`、`157_simplify_webhook_application_routing.sql`、`158_bind_webhooks_to_execution_users.sql`。
+- 已明确修正的实现边界：应用 ingress 路由当前固定为 local；Webhook 发布不再固定 Agent/投递，改由活动应用承接；执行主体为启用 human 用户；显式 `authentication.type=none` 才可免 Bearer；v2 群 Session key 包含 external_identity_id；当前摘要器是确定性摘录；Webhook 202 先于 Dispatcher 的业务授权；冷却按时间窗去重；旧 dingtalk_send_robot_message 已退役，当前群消息工具只支持受信来源群。配置 host allowlist 的校验不等于所有空 allowlist 或 Stream 临时回复路径都具有统一默认拒绝策略，当前代码不能据此宣称完整公网出站防护。
 - 本次未调用真实钉钉、ONES 或公网 Webhook，未启动部署、运行数据库迁移或重放业务事件；测试文件只作为静态覆盖证据。本地 HTTP/Compose 功能不证明生产 HTTPS 终止或公网安全；真实环境验收与历史未完成任务继续单独保留。

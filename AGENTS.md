@@ -26,7 +26,7 @@
 - `openspec list --json` 可用于发现 active change，但不得因此读取无关 change 内容。
 - ADR、运行手册和 `docs/reference/enterprise-agent-system-design-for-chatgpt.md` 是辅助说明，不是当前规范的替代来源；与 canonical spec 冲突时，应提出明确 change，不得静默选用辅助文档。
 - Canonical spec 表达已接受规范，不自动证明运行能力已经实现。需要判断当前实现状态时，仍须核对代码、migration、测试和必要的运行证据，并区分 `Confirmed-current` 与 `Documented-intent`。
-- 2026-09-16 已按当前代码重建基线并关闭此前全部 active change。关闭和归档不代表未勾选任务已完成；真实环境验收欠账单独记录，历史任务状态不得补勾。
+- 2026-09-16 已按当前代码重建基线并关闭此前全部 active change；2026-11-18 再次按当前代码刷新 10 个领域主规格并关闭其后全部历史 active change。关闭和归档不代表未勾选任务已完成；真实环境验收欠账单独记录，历史任务状态不得补勾。
 - 同步或归档旧 capability delta 时，先按领域导航映射到上述 10 个领域并核对代码；不得按旧目录名重新创建零散主规格。未能确认的旧提案只保留为历史，不自动成为当前能力。
 
 ## 安全边界

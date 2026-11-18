@@ -106,6 +106,8 @@ After completing all artifacts, summarize:
 **Guardrails**
 - Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
 - Always read dependency artifacts before creating a new one
+- 创建前只读取与请求相关的 canonical 领域主规格；不要默认扫描 changes/archive
+- delta 必须相对现有 10 个领域之一；映射不明时询问，不得按旧 capability 名新建主规格
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
 - If a change with that name already exists, ask if user wants to continue it or create a new one
 - Verify each artifact file exists after writing before proceeding to next

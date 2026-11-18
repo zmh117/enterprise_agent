@@ -14,9 +14,9 @@
 - **WHEN** 已启用自然人从有效 Web Session 或已绑定钉钉身份进入
 - **THEN** 系统解析同一内部用户，并按本次入口、角色和应用独立授权
 
-#### Scenario: 服务账号触发 Webhook
+#### Scenario: 绑定用户触发 Webhook
 - **WHEN** 已发布 Trigger 接收合法事件
-- **THEN** Job 和下游审计使用 Trigger 固定的服务账号，保留 Trigger、Publication 和 correlation 关联
+- **THEN** Job 和下游审计使用 Trigger 发布固定的已启用 human 用户，保留 Trigger、Publication 和 correlation 关联
 
 ### Requirement: 用户目录使用真实数据和并发控制
 用户管理 SHALL 提供真实分页列表、查询、详情、创建、编辑和启停，支持用户名、显示名称及外部身份展示名查询。用户名 MUST 唯一，写入 MUST 使用当前 revision、统一管理权限、CSRF 和审计；密码只保存安全哈希，响应不得包含密码、哈希或认证令牌。
@@ -34,7 +34,7 @@
 - **THEN** 系统返回未找到，不创建占位或演示用户
 
 ### Requirement: 服务账号与人类账号分离
-系统 SHALL 区分 `human` 与 `service`。服务账号可持有明确的业务角色，MUST NOT 创建个人密码凭据、交互式 Web Session、个人钉钉或 ONES 身份，亦不得加入包含管理后台能力的角色。新建 Trigger 的专用服务账号不得自动获得业务权限。
+系统 SHALL 区分 `human` 与 `service`。服务账号可持有明确的业务角色，MUST NOT 创建个人密码凭据、交互式 Web Session、个人钉钉或 ONES 身份，亦不得加入包含管理后台能力的角色。Webhook MUST 绑定已启用 human 用户，不再创建或使用专用服务账号作为执行主体。
 
 #### Scenario: 服务账号登录管理端
 - **WHEN** 使用服务账号提交用户名密码
@@ -43,6 +43,17 @@
 #### Scenario: 给服务账号分配管理角色
 - **WHEN** 目标角色包含管理能力
 - **THEN** 系统拒绝成员写入，业务角色分配仍按目标角色委派权限处理
+
+### Requirement: Webhook 执行用户继承现有身份与权限
+Webhook SHALL 在配置页必选一个启用人员；执行使用此人的既有角色、应用/工具/资源/知识库权限与已绑定外部身份，不独立设置角色，不复制个人 Credential，不改变角色成员关系。各工具既有的来源渠道与个人身份要求仍须满足，不自动借用投递 Connector 作为工具来源。投递收件人 MUST 与执行用户独立。任意需要本人确认的写入 MUST 保留原确认规则。
+
+#### Scenario: 配置执行用户
+- **WHEN** 管理员发布选择人员的 Webhook
+- **THEN** 系统固定该人员 ID，并在 Job 与审计中使用同一身份
+
+#### Scenario: 外部身份不可用
+- **WHEN** 所绑定人员没有有效的当前个人外部身份或凭据
+- **THEN** 对应个人工具按原合同拒绝，不借用管理员或其他收件人的身份
 
 ### Requirement: 管理面原子启用认证和授权
 管理 Web、管理 API、统一用户、Web Session 和 RBAC SHALL 作为同一管理面能力启用。`FEATURE_WEB_ADMIN` 关闭时不暴露管理面；开启时不得降级为无身份或无 RBAC。受保护接口 MUST 先确定主体再授权，已有 Channel 和 Runtime 的运行不因管理面关闭而自动停止。
@@ -461,6 +472,7 @@ File Principal SHALL 使用专用签发与验证路径，绑定用户、租户�
 本基线于 2026-09-16 依据当前代码、迁移和测试定义重组；`Confirmed-current` 表示仓库实现事实，不能据此宣称已部署或已通过真实环境验收。
 
 - 用户、Session、认证响应：`backend/app/modules/identity/application/auth_service.py`、`admin_service.py`、`backend/app/modules/identity/api/dependencies.py`、`auth_controller.py`；静态覆盖见 `backend/tests/test_unified_identity_rbac.py`、`test_management_surface_authorization.py` 与 `frontend/src/contexts/auth/presentation/` 测试。
+- Webhook 执行用户绑定：`backend/app/modules/webhook/application/trigger_service.py`、`ingress_service.py`、`dispatch_service.py`；迁移 `158_bind_webhooks_to_execution_users.sql`；静态覆盖见 `backend/tests/test_webhook_migration_and_service_accounts.py`、`test_webhook_ingress_dispatch.py`、`test_webhook_trigger_service.py`。
 - 角色与严格授权：`backend/app/modules/identity/application/authorization.py`、`backend/app/modules/authorization_center/application/service.py`、`backend/app/modules/identity/infrastructure/repository.py`；静态覆盖见 `backend/tests/test_role_authorization_control_center.py`，包括两名已登录验证管理员、并发撤权、委派和无数据权限旁路。
 - 钉钉企业、身份、候选：`backend/app/modules/managed_channel/application/service.py`、`backend/app/modules/identity/application/identity_service.py`、`backend/app/modules/identity_discovery/application/service.py`；静态覆盖见 `backend/tests/test_dingtalk_enterprise_governance.py`、`test_dingtalk_identity_observations.py`、`test_dingtalk_identity_discovery.py`、`test_dingtalk_identity_discovery_api.py`。
 - ONES 本人绑定与 Credential：`backend/app/modules/identity/application/ones_identity_binding.py`、`backend/app/modules/identity/infrastructure/ones_identity_verifier.py`、`ones_identity_challenges.py`、`external_identity_credentials.py`；唯一性依据 `backend/migrations/126_release_unbound_ones_identity.sql` 与 `130_restore_dingtalk_identity_indexes.sql`；静态覆盖见 `backend/tests/test_ones_identity_binding.py`、`test_external_identity_credentials.py`。

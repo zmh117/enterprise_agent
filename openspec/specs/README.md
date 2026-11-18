@@ -1,6 +1,6 @@
 # 当前主规格导航
 
-本目录的以下 **10 份 `spec.md`** 构成唯一 canonical baseline，按 2026-09-16 当前代码重建。本页只负责领域定位；代码实现、测试覆盖与目标环境验收分别判断。
+本目录的以下 **10 份 `spec.md`** 构成唯一 canonical baseline，最近一次按 2026-11-18 当前代码刷新（承接 2026-09-16 领域重建）。本页只负责领域定位；代码实现、测试覆盖与目标环境验收分别判断。
 
 | 领域 | 默认读取范围 |
 | --- | --- |
@@ -32,6 +32,6 @@
 
 ## 历史与验收
 
-此前的29个active change已归档关闭，原任务勾选与文件内容保留。关闭不等于全部实现或验收完成；未完成的22项任务包含真实Provider、新Publication/Job、部署与跨架构验收等欠账。
+2026-09-16 的 29 个、以及 2026-11-18 的 47 个历史 active change 已归档关闭，原任务勾选与文件内容保留。关闭不等于全部实现或验收完成；未完成任务与真实环境验收欠账单独记录，不得补勾。
 
-需要追溯本次重建时，显式读取 [重建记录](../changes/archive/2026-09-16-rebuild-domain-canonical-baseline/README.md)；普通任务不自动读取该记录或其他archive。既有archive保持原路径与原内容，不能覆盖本目录主规格。
+需要追溯重建时，显式读取 [2026-09-16 重建记录](../changes/archive/2026-09-16-rebuild-domain-canonical-baseline/README.md) 或 [2026-11-18 重建记录](../changes/archive/2026-11-18-rebuild-domain-canonical-baseline/README.md)；普通任务不自动读取该记录或其他 archive。既有 archive 保持原路径与原内容，不能覆盖本目录主规格。

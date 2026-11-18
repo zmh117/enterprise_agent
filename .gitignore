@@ -26,7 +26,14 @@ frontend/.vite/
 dingtalk-runtime/node_modules/
 dingtalk-runtime/dist/
 enterprise-agent-master-key.tar
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/openspec-archive-change/
+!.agents/skills/openspec-explore/
+!.agents/skills/openspec-sync-specs/
+!.agents/skills/openspec-propose/
+!.agents/skills/openspec-apply-change/
 skills-lock.json
 ones_mock/ones
 ones知识库/

@@ -54,10 +54,14 @@ Implement tasks from an OpenSpec change.
 
 4. **Read context files**
 
-   Read every file path listed under `contextFiles` from the apply instructions output.
-   The files depend on the schema being used:
+   Before reading, resolve every path under `contextFiles` and verify it belongs to the authorized active change (`changeRoot`) or to a related canonical domain spec under `openspec/specs/<domain>/spec.md`.
+   Reject and stop if any path resolves into `openspec/changes/archive/`、其他 change，或仓库外位置。
+
+   Then read the authorized context files. The files depend on the schema being used:
    - **spec-driven**: proposal, specs, design, tasks
    - Other schemas: follow the contextFiles from CLI output
+
+   Additionally read only the canonical domain specs that the change's delta maps to via `openspec/specs/README.md`. Do not recursively load all main specs.
 
 5. **Show current progress**
 
@@ -143,7 +147,8 @@ What would you like to do?
 
 **Guardrails**
 - Keep going through tasks until done or blocked
-- Always read context files before starting (from the apply instructions output)
+- Always read authorized context files before starting (from the apply instructions output)
+- Never treat CLI contextFiles as a blank check to read archive or unrelated changes
 - If task is ambiguous, pause and ask before implementing
 - If implementation reveals issues, pause and suggest artifact updates
 - Keep code changes minimal and scoped to each task

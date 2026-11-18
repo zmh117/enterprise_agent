@@ -50,11 +50,18 @@ This is an **agent-driven** operation - you will read delta specs and directly e
 
    For each repo-local capability delta spec path returned by the CLI:
 
-   a. **Read the delta spec** to understand the intended changes
+   a. **Map the delta capability to a canonical domain**
+      - 先读 `openspec/specs/README.md` 的领域导航与旧能力归属表
+      - 将旧 capability / 目录名映射到现有 10 个领域之一
+      - 若映射不明、跨多个领域且用户未指定，或会要求新建第 11 个主规格：**停止并询问**，不得按旧目录名创建碎片主规格
 
-   b. **Read the main spec** at `openspec/specs/<capability>/spec.md` (may not exist yet)
+   b. **Read the delta spec** to understand the intended changes
 
-   c. **Apply changes intelligently**:
+   c. **Read the mapped main spec** at `openspec/specs/<canonical-domain>/spec.md`
+      - 目标必须是现有 canonical 领域文件
+      - 不要因为 delta 文件夹名不同就新建 `openspec/specs/<old-capability>/`
+
+   d. **Apply changes intelligently**:
 
       **ADDED Requirements:**
       - If requirement doesn't exist in main spec → add it
@@ -74,10 +81,8 @@ This is an **agent-driven** operation - you will read delta specs and directly e
       **RENAMED Requirements:**
       - Find the FROM requirement, rename to TO
 
-   d. **Create new main spec** if capability doesn't exist yet:
-      - Create `openspec/specs/<capability>/spec.md`
-      - Add Purpose section (can be brief, mark as TBD)
-      - Add Requirements section with the ADDED requirements
+   e. **Never auto-create a new domain main spec** from an old capability name.
+      - 确需新增领域时，先让用户明确修改基线与导航，再继续
 
 5. **Show summary**
 
@@ -132,15 +137,16 @@ Updated main specs:
 - Added requirement: "New Feature"
 - Modified requirement: "Existing Feature" (added 1 scenario)
 
-**<capability-2>**:
-- Created new spec file
+**<canonical-domain-2>**:
 - Added requirement: "Another Feature"
 
 Main specs are now updated. The change remains active - archive when implementation is complete.
 ```
 
 **Guardrails**
-- Read both delta and main specs before making changes
+- Map every delta to an existing canonical domain before editing
+- Stop when mapping is unclear; never create a main spec from an old capability folder name
+- Read both delta and mapped main specs before making changes
 - Preserve existing content not mentioned in delta
 - If something is unclear, ask for clarification
 - Show what you're changing as you go

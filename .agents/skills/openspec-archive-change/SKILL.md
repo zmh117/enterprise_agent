@@ -58,7 +58,9 @@ Archive a completed change in the experimental workflow.
    Use `artifactPaths.specs.existingOutputPaths` from status JSON to check for delta specs. If none exist, proceed without sync prompt.
 
    **If delta specs exist:**
-   - Compare each delta spec with its corresponding main spec at `openspec/specs/<capability>/spec.md`
+   - 先按 `openspec/specs/README.md` 把每个 delta capability 映射到现有 canonical 领域
+   - 映射不明时停止并询问，不得按旧 capability 名假设或新建主规格
+   - Compare each delta spec with its mapped main spec at `openspec/specs/<canonical-domain>/spec.md`
    - Determine what changes would be applied (adds, modifications, removals, renames)
    - Show a combined summary before prompting
 
