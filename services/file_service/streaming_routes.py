@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from starlette.concurrency import run_in_threadpool
+from services.file_service.recordings import RecordingFiles
+
 import base64
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
@@ -51,7 +54,9 @@ class FileStreamingRoutes:
         *,
         streaming: FileStreamingOperations,
         service_principal: FileWorkerPrincipalVerifier,
+        recording_files: RecordingFiles | None = None,
     ) -> None:
+        self._recording_files = recording_files
         self._streaming = streaming
         self._service_principal = service_principal
 
@@ -93,6 +98,8 @@ class FileStreamingRoutes:
             required_scope="internal:file-service:content:cleanup",
         )
         result = await self._streaming.run_maintenance(service_claims=claims)
+        if self._recording_files is not None:
+            await run_in_threadpool(self._recording_files.cleanup)
         return JSONResponse(safe_result(result))
 
     @denial_on_app_error

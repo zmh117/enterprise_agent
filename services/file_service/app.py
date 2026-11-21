@@ -1,4 +1,6 @@
 from __future__ import annotations
+from services.file_service.recordings import RecordingFiles
+
 
 import asyncio
 import json
@@ -245,6 +247,7 @@ def create_app(
     streaming: FileStreamingOperations,
     document_processing: DocumentProcessingOperations | None = None,
     document_processing_expected: bool = False,
+    recording_files: RecordingFiles | None = None,
     database: Any,
     storage: FileServiceReadiness,
     jwks: CachedPrincipalJwks,
@@ -282,7 +285,9 @@ def create_app(
         document_processing=document_processing,
         document_processing_expected=document_processing_expected,
     )
-    files = FileStreamingRoutes(streaming=streaming, service_principal=service_principal)
+    files = FileStreamingRoutes(
+        streaming=streaming, service_principal=service_principal, recording_files=recording_files
+    )
     processing_access = ProcessingAccess(
         service_principal=service_principal,
         document_processing=document_processing,
@@ -298,6 +303,7 @@ def create_app(
 
     app = Starlette(
         routes=[
+            *(recording_files.routes() if recording_files else []),
             Route("/health", health.health, methods=["GET"]),
             Route("/ready", health.readiness, methods=["GET"]),
             Route("/mcp", endpoint=_StreamableHttpApp(manager)),

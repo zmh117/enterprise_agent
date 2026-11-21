@@ -34,6 +34,7 @@ class AuthService:
         password: str,
         user_agent_summary: str = "",
         remote_address_summary: str = "",
+        extension_origin: str = "",
     ) -> tuple[AuthenticatedPrincipal, str, str]:
         user = self.repository.get_user_by_username(username)
         password_hash = (
@@ -66,7 +67,7 @@ class AuthService:
         with self.repository.database.unit_of_work():
             session = self.repository.create_session(
                 user_id=str(user["id"]),
-                token_hash=_sha256(token),
+                token_hash=_session_digest(token, extension_origin),
                 csrf_hash=_sha256(csrf),
                 idle_expires_at=(
                     now + timedelta(seconds=self.settings.session_idle_seconds)
@@ -88,14 +89,14 @@ class AuthService:
         return principal, token, csrf
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def authenticate_session(self, token: str) -> AuthenticatedPrincipal:
+    def authenticate_session(self, token: str, *, extension_origin: str = "") -> AuthenticatedPrincipal:
         if not token:
             raise PermissionDenied(
                 "Authentication required",
                 safe_message="请先登录",
                 error_code="not_authenticated",
             )
-        row = self.repository.get_session_by_token_hash(_sha256(token))
+        row = self.repository.get_session_by_token_hash(_session_digest(token, extension_origin))
         if (
             not row
             or str(row["status"]) != "active"
@@ -127,8 +128,8 @@ class AuthService:
         user = self.repository.get_user(str(row["user_id"]))
         return self._principal(user, session_id=str(row["id"]))
 
-    def verify_csrf(self, token: str, csrf: str) -> bool:
-        row = self.repository.get_session_by_token_hash(_sha256(token))
+    def verify_csrf(self, token: str, csrf: str, *, extension_origin: str = "") -> bool:
+        row = self.repository.get_session_by_token_hash(_session_digest(token, extension_origin))
         return bool(row and secrets.compare_digest(str(row["csrf_hash"]), _sha256(csrf)))
 
     @operation_unit_of_work(lambda service: service.repository.database)
@@ -216,6 +217,12 @@ class AuthService:
             auth_source="local",
             session_id=session_id,
         )
+
+
+def _session_digest(token: str, extension_origin: str) -> str:
+    if extension_origin:
+        return "browser-parent:" + _sha256(extension_origin + "\x00" + token)
+    return _sha256(token)
 
 
 def _sha256(value: str) -> str:

@@ -88,6 +88,23 @@ const dingTalkChannel = {
 }
 
 describe("Managed channels", () => {
+  it("toggles the built-in browser channel using its current revision", async () => {
+    const plugin = { id: "browser-extension", kind: "BROWSER_EXTENSION", name: "浏览器插件", enabled: true, revision: 3 }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/browser-extension/disable")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ expected_revision: 3 })
+        plugin.enabled = false
+        plugin.revision++
+        return response({ channel: plugin })
+      }
+      return response({ items: url.endsWith("/managed-channels") ? [plugin] : [] })
+    })
+    renderWithQuery(<ManagedChannelsPanel />)
+    await screen.findByText("浏览器插件")
+    fireEvent.click(screen.getByRole("button", { name: "停用" }))
+    expect(await screen.findByRole("button", { name: "启用" })).toBeEnabled()
+  })
   it("creates a pending enterprise and selects it instead of accepting a free tenant value", async () => {
     const enterprises: Array<Record<string, unknown>> = []
     let channelBody: Record<string, unknown> | undefined
@@ -406,15 +423,27 @@ describe("Managed channels", () => {
     ).toBeInTheDocument()
   })
 
-  it("filters trigger choices through the eligible channel endpoint", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+  it("selects eligible channels and saves a browser trigger bound to the current application", async () => {
+    const saved = vi.fn()
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
       if (url.includes("/eligible?trigger_type=dingtalk_group")) {
         return response({ items: [dingTalkChannel] })
       }
+      if (url.endsWith("/eligible?trigger_type=browser_extension")) {
+        return response({ items: [{ id: "browser-extension", kind: "BROWSER_EXTENSION", name: "浏览器插件", enabled: true, revision: 1 }] })
+      }
+      if (url.endsWith("/draft") && init?.method === "PUT") {
+        saved(JSON.parse(String(init.body)))
+        return response({detail:"合成请求已收到"}, 409)
+      }
       if (url.endsWith("/catalog")) {
         return response({
-          agents: [],
+          agents: [{
+            id: "pub-browser", code: "agent", revision: 1, project_code: "default", status: "published",
+            config_hash: "a", runtime_kind:"python-v1", component_type:"agent", direction:"",
+            ingress_connector_ids:["browser-extension"], delivery_connector_ids:["browser-extension"],
+          }],
           workflows: [],
           connectors: [],
           capabilities: [],
@@ -438,7 +467,7 @@ describe("Managed channels", () => {
             application_id: "business_app_test",
             revision: 1,
             status: "draft",
-            agent_publication_id: "",
+            agent_publication_id: "pub-browser",
             workflow_publication_id: "",
             session_policy: {},
             execution_policy: {},
@@ -486,5 +515,15 @@ describe("Managed channels", () => {
     expect(
       screen.queryByRole("tab", { name: "渠道与触发器" })
     ).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("触发器 1 类型"), {target:{value:"browser_extension"}})
+    const plugin = await within(selector).findByRole("option", {name:"浏览器插件"})
+    expect(plugin).toHaveValue("browser-extension")
+    fireEvent.change(selector, {target:{value:"browser-extension"}})
+    fireEvent.click(screen.getByRole("button", {name:"保存新草稿"}))
+    const binding = {trigger_type:"browser_extension", connector_id:"browser-extension", routing_key:"application:business_app_test"}
+    await waitFor(() => expect(saved).toHaveBeenCalledWith(expect.objectContaining({
+      triggers: [expect.objectContaining(binding)],
+      deliveries: [expect.objectContaining({delivery_type:"reply_original", config:expect.objectContaining({trigger:binding})})],
+    })))
   })
 })

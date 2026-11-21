@@ -14,6 +14,27 @@ class ManagedChannelRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    def browser_channel(self) -> dict[str, Any]:
+        row = self.database.execute_one(
+            """select id, name, connector_type, enabled, revision, allow_ingress, allow_delivery
+                 from integration_connector
+                where id='browser-extension' and connector_type='browser_extension' and deleted=0"""
+        )
+        if row is None:
+            raise NotFound("Browser connector not found", safe_message="未找到浏览器插件渠道")
+        return {**row, "enabled": bool(row["enabled"]), "kind": "BROWSER_EXTENSION"}
+
+    def set_browser_enabled(self, enabled: bool, expected_revision: int) -> dict[str, Any]:
+        updated = self.database.execute_one(
+            """update integration_connector set enabled=?, revision=revision+1, updated_at=?
+                where id='browser-extension' and connector_type='browser_extension'
+                  and deleted=0 and revision=? returning id""",
+            (int(enabled), now_iso(), expected_revision),
+        )
+        if updated is None:
+            raise _revision_conflict()
+        return self.browser_channel()
+
     def list_dingtalk_connectors(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         enabled = "" if include_disabled else "and c.enabled = 1"
         rows = self.database.execute(

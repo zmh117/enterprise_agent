@@ -1,0 +1,30 @@
+{
+  "upload_attempt_id": "upload-a",
+  "manifest": {
+    "projection_version": "2",
+    "local_recording_id": "local-a",
+    "checkpoint": 7,
+    "coverage": {
+      "requests": {
+        "saved": 2,
+        "shareable": 1,
+        "platform_excluded": 1,
+        "ids_sha256": "a0698d5a1e604e5101b41191657c461c11dd8e49270938e307e29373d54d7a3a"
+      },
+      "actions": {
+        "saved": 1,
+        "shareable": 1,
+        "platform_excluded": 0,
+        "ids_sha256": "536357b527c3dedf7315db26cbbe902f5ab586c7d8f3f739ead1067594636bb7"
+      },
+      "gaps": []
+    },
+    "parts": [
+      {
+        "number": 0,
+        "uncompressed_bytes": 674,
+        "sha256": "95a80af9cee28cfd582924423bea274cfb0733c8b834612e4a80b285f5feadfa"
+      }
+    ]
+  }
+}

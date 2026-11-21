@@ -256,9 +256,9 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 133}
-        assert comments["table_count"] == 173
-        assert comments["column_count"] == 2187
+        ) == {"count": 144}
+        assert comments["table_count"] == 177
+        assert comments["column_count"] == 2270
         assert not [
             name
             for name, comment in {**comments["tables"], **comments["columns"]}.items()
@@ -310,8 +310,8 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
 
         assert result.head == current_schema_head()
         assert result.applied == deployable_schema_versions()
-        assert comments["table_count"] == 173
-        assert comments["column_count"] == 2187
+        assert comments["table_count"] == 177
+        assert comments["column_count"] == 2270
         assert {
             "dingding_conversation_id",
             "dingding_user_id",

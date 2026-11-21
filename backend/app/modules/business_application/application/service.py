@@ -234,13 +234,17 @@ class BusinessApplicationService:
         )
         execution_policy = validate_execution_policy(dict(payload.get("execution_policy") or {}))
         triggers = [
-            validate_trigger(self._prepare_trigger(dict(value)), index)
+            validate_trigger(self._prepare_trigger(dict(value), str(application["id"])), index)
             for index, value in enumerate(payload.get("triggers") or [])
         ]
         deliveries = [
             validate_delivery(dict(value), index)
             for index, value in enumerate(payload.get("deliveries") or [])
         ]
+        for delivery in deliveries:
+            source = delivery["config"]["trigger"]
+            if source["trigger_type"] == "browser_extension":
+                source["routing_key"] = f"application:{application['id']}".lower()
         link_errors = delivery_link_errors(triggers, deliveries)
         if link_errors:
             raise NonRetryableExecutionError(
@@ -634,7 +638,13 @@ class BusinessApplicationService:
             for publication in self.repository.list_publications(str(application["id"]))
         ]
 
-    def _prepare_trigger(self, value: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_trigger(self, value: dict[str, Any], application_id: str = "") -> dict[str, Any]:
+        if value.get("trigger_type") == "browser_extension":
+            return {
+                **value,
+                "routing_key": f"application:{application_id}",
+                "actor_policy": "CURRENT_SENDER",
+            }
         if value.get("trigger_type") != "webhook":
             return value
         return {
@@ -748,6 +758,18 @@ class BusinessApplicationService:
             )
             if reference:
                 components["triggers"].append(reference)
+            if trigger["trigger_type"] == "browser_extension" and (
+                not agent
+                or trigger["connector_id"] not in agent.ingress_connector_ids
+                or trigger["connector_id"] not in agent.delivery_connector_ids
+                or trigger["routing_key"] != f"application:{application['id']}"
+            ):
+                errors.append(
+                    {
+                        "field": f"triggers.{index}",
+                        "message": "插件入口和原会话回复均须绑定到同一 Agent 发布版本",
+                    }
+                )
             if str(trigger["trigger_type"]) == "webhook":
                 try:
                     expected = self._prepare_trigger(trigger)

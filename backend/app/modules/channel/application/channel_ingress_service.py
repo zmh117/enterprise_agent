@@ -263,6 +263,7 @@ class ChannelIngressService:
 
     def _resolve_business_application(self, event: ChannelEvent) -> RuntimeRouteResolution | None:
         if event.source.type not in {
+            "browser_extension",
             "dingding_stream",
             "grafana_alert",
             "managed_webhook",
@@ -508,10 +509,15 @@ class ChannelIngressService:
                 safe_message="业务应用结果投递不可用",
                 error_code=RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
             )
-        if event.delivery.type != "dingtalk_stream_session_webhook":
+        expected_route = (
+            "browser_extension"
+            if trigger_type == "browser_extension"
+            else "dingtalk_stream_session_webhook"
+        )
+        if event.delivery.type != expected_route:
             raise NonRetryableExecutionError(
-                "Business Application requires DingTalk reply-original delivery",
-                safe_message="原钉钉会话无法接收结果",
+                "Business Application reply-original route does not match the source channel",
+                safe_message="原会话无法接收结果",
                 error_code=RuntimeReason.UNSUPPORTED_DELIVERY.value,
             )
         return event.delivery.to_dict()
@@ -565,6 +571,8 @@ class ChannelIngressService:
 
 
 def _trigger_type(event: ChannelEvent) -> str:
+    if event.source.type == "browser_extension":
+        return "browser_extension"
     if event.webhook_trigger_id or event.source.type in {
         "managed_webhook",
         "grafana_alert",
@@ -577,6 +585,8 @@ def _trigger_type(event: ChannelEvent) -> str:
 
 
 def _business_application_routing_key(event: ChannelEvent, trigger_type: str) -> str:
+    if trigger_type == "browser_extension":
+        return "application:" + str(event.source.metadata["application_id"])
     if trigger_type == "dingtalk_private":
         identity = str(event.source.metadata.get("bot_identity") or "").strip().lower()
         return f"bot:{identity}" if identity else ""

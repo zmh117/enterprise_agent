@@ -804,6 +804,7 @@ def _build_container(  # noqa: C901, PLR0915
             ),
             knowledge_bootstrap_file=settings.service_principal.knowledge_bootstrap_token_file,
             code_runtime_bootstrap_file=settings.service_principal.code_runtime_bootstrap_token_file,
+            recording_tool_bootstrap_file=settings.service_principal.recording_tool_bootstrap_token_file,
             audit_service=audit_service,
             environment=settings.environment,
             ttl_seconds=settings.service_principal.ttl_seconds,

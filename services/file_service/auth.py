@@ -10,6 +10,10 @@ import jwt
 
 from app.modules.identity.application.principal_jwt import PrincipalJwks
 from app.modules.identity.application.service_principal import (
+    RECORDING_READ,
+    RECORDING_WRITE,
+    ServicePrincipalGrant,
+    recording_target_digest,
     DELIVERY_WORKER_AUTHORIZED_PARTY,
     DELIVERY_WORKER_SCOPES,
     FILE_PROCESSING_WORKER_AUTHORIZED_PARTY,
@@ -218,6 +222,27 @@ class FileWorkerPrincipalVerifier(FilePrincipalVerifier):
             "exp",
         }
     )
+
+    def verify_recording(
+        self, token: str, grant: ServicePrincipalGrant, target: tuple[str, ...]
+    ) -> None:
+        if grant not in (RECORDING_WRITE, RECORDING_READ):
+            self._deny("recording_scope_invalid")
+        claims = self._verify(
+            token,
+            issuer=FILE_WORKER_ISSUER,
+            audience=FILE_SERVICE_AUDIENCE,
+            authorized_party=grant.subject,
+            allowed_claims=self._service_claims,
+            required_scopes=grant.scopes,
+        )
+        if (
+            claims["sub"] != grant.subject
+            or claims["exp"] <= self._now()
+            or claims["exp"] - claims["iat"] > 60
+            or claims["authorization_hash"] != recording_target_digest(grant, target)
+        ):
+            self._deny("recording_target_invalid")
 
     def verify_service(self, token: str, *, required_scope: str) -> dict[str, Any]:
         if required_scope not in FILE_WORKER_SCOPES:

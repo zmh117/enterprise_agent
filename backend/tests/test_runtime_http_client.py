@@ -772,6 +772,47 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
     assert "url" not in transport.request["mcp_servers"][0]
 
 
+@pytest.mark.parametrize(
+    "opt_in,regular_limit,preview_limit,preview_bytes,accepted",
+    [
+        (True, 4, 2, 8192, True),
+        (False, 4, 2, 8192, False),
+        (True, 3, 2, 8192, False),
+        (True, 4, 1, 8192, False),
+        (True, 4, 2, 1, False),
+    ],
+)
+def test_browser_previews_have_a_separate_bounded_stream_allowance(
+    monkeypatch, opt_in, regular_limit, preview_limit, preview_bytes, accepted
+):
+    from app.modules.agent.infrastructure import runtime_http_client as runtime
+
+    class PreviewTransport(GoldenTransport):
+        def stream(self, **kwargs):
+            events = [json.loads(line) for line in super().stream(**kwargs)]
+            preview = {**events[1], "event_type": "assistant_text", "payload": {"text": "正文"}}
+            events[2:2] = [dict(preview), dict(preview)]
+            events[-1]["payload"]["last_sequence"] = len(events)
+            for sequence, event in enumerate(events, 1):
+                yield json.dumps({**event, "sequence": sequence}).encode()
+
+    monkeypatch.setattr(runtime, "MAX_RUNTIME_EVENTS", regular_limit)
+    monkeypatch.setattr(runtime, "BROWSER_PREVIEW_EVENTS", preview_limit)
+    monkeypatch.setattr(runtime, "BROWSER_PREVIEW_BYTES", preview_bytes)
+    context = {"response_presentation": "browser-markdown"}
+    if opt_in:
+        context["browser_preview_budget"] = "separate-v1"
+    request = _request()
+    request = replace(request, context=replace(request.context, retrieved_context=context))
+    client, _ = _client(PreviewTransport())
+    if accepted:
+        assert client.run(request).final_answer == "final answer"
+    else:
+        with pytest.raises(NonRetryableExecutionError) as rejected:
+            client.run(request)
+        assert rejected.value.error_code == "runtime_protocol_error"
+
+
 def test_worker_reassembles_complete_v15_run_audit_with_metadata_only_chunk_events() -> None:
     run_audit = {
         "system_prompt": "完整系统提示词",

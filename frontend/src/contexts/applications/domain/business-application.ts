@@ -250,7 +250,8 @@ export type SaveDraftInput = {
     max_tool_calls: number
   }
   triggers: Array<{
-    trigger_type: "dingtalk_private" | "dingtalk_group" | "webhook"
+    trigger_type:
+      "dingtalk_private" | "dingtalk_group" | "webhook" | "browser_extension"
     connector_id: string
     routing_key: string
     actor_policy: "CURRENT_SENDER" | "BOUND_USER"
@@ -275,7 +276,11 @@ export type SaveDraftInput = {
       reply_mode: string
       target_user_ids?: string[]
       trigger?: {
-        trigger_type: "dingtalk_private" | "dingtalk_group" | "webhook"
+        trigger_type:
+          | "dingtalk_private"
+          | "dingtalk_group"
+          | "webhook"
+          | "browser_extension"
         connector_id: string
         routing_key: string
       }

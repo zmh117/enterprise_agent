@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center.application import BusinessAuthorizationService
@@ -35,6 +35,10 @@ from app.shared.resource_role import normalize_resource_role, RESOURCE_ROLE_MESS
 from app.shared.tool_response_summary import tool_response_summary
 
 
+if TYPE_CHECKING:
+    from app.modules.channel.browser.tools import RecordingTools
+
+
 class ReadOnlyToolService:
     def __init__(
         self,
@@ -49,6 +53,7 @@ class ReadOnlyToolService:
         mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
         schema_cursor_store: SchemaPaginationCursorStore | None = None,
     ) -> None:
+        self.recording_tools: RecordingTools | None = None
         self.tool_executor = tool_executor
         self.permission_service = permission_service
         self.audit_service = audit_service
@@ -62,6 +67,13 @@ class ReadOnlyToolService:
 
     def is_tool_visible_for_job(self, *, job_id: str, tool_name: str) -> bool:
         job = self.repository.get_job(job_id)
+        if tool_name in {"search_recording", "get_recording_evidence"} and (
+            job.source_channel != "browser_extension"
+            or not self.repository.database.execute_one(
+                "select 1 from browser_job_recording where job_id=?", (job_id,)
+            )
+        ):
+            return False
         exact = self._exact_tool_context(job_id=job_id, tool_name=tool_name)
         if exact is None:
             return False
@@ -108,6 +120,11 @@ class ReadOnlyToolService:
         started = time.monotonic()
         audit_id: str | None = None
         managed_tool_call_id = ""
+        audit_args = (
+            {"field_count": len(arguments)}
+            if tool_name in {"search_recording", "get_recording_evidence"}
+            else arguments
+        )
         authorization_reached = False
         try:
             job = self.repository.get_job(job_id)
@@ -182,14 +199,14 @@ class ReadOnlyToolService:
                 summary=f"Tool {tool_name} allowed",
                 job_id=job_id,
                 actor_id=user_id,
-                payload={"tool": tool_name, "arguments": arguments},
+                payload={"tool": tool_name, "arguments": audit_args},
             )
             if record_tool_call:
                 managed_tool_call_id = self.run_audit_repository.add_tool_call(
                     job_id=job_id,
                     tool_name=tool_name,
                     request_payload=bounded_summary(
-                        arguments,
+                        audit_args,
                         self.limits.max_tool_response_chars,
                     ),
                     response_summary={"status": "STARTED"},
@@ -250,7 +267,7 @@ class ReadOnlyToolService:
                 summary=getattr(exc, "safe_message", str(exc)),
                 job_id=job_id,
                 actor_id=user_id,
-                payload={"tool": tool_name, "arguments": arguments},
+                payload={"tool": tool_name, "arguments": audit_args},
             )
             setattr(exc, "tool_authorization_reached", authorization_reached)
             if managed_tool_call_id:
@@ -275,7 +292,9 @@ class ReadOnlyToolService:
                 self.run_audit_repository.add_tool_call(
                     job_id=job_id,
                     tool_name=tool_name,
-                    request_payload=bounded_summary(arguments, self.limits.max_tool_response_chars),
+                    request_payload=bounded_summary(
+                        audit_args, self.limits.max_tool_response_chars
+                    ),
                     response_summary={"error": getattr(exc, "safe_message", str(exc))},
                     status="FAILED",
                     duration_ms=int((time.monotonic() - started) * 1000),
@@ -329,8 +348,18 @@ class ReadOnlyToolService:
         elif tool_name == "diagnose_loki_label_values":
             assert_loki_label(arguments.get("label", ""))
             assert_loki_diagnostic_bounds(arguments, self.limits)
-        elif tool_name not in {"get_schema_directory", "list_available_tool_resources"}:
+        elif tool_name not in {
+            "get_schema_directory",
+            "list_available_tool_resources",
+            "search_recording",
+            "get_recording_evidence",
+        }:
             raise ToolPolicyError(f"Tool {tool_name} is not registered for read-only MVP")
+
+    def _recording_result(self, name: str, job: str, arguments: dict[str, Any]) -> ToolResult:
+        if self.recording_tools is None:
+            raise ToolPolicyError("Recording tools unavailable", safe_message="录制工具暂不可用")
+        return self.recording_tools.call(name, job, arguments)
 
     def _execute(
         self,
@@ -354,6 +383,8 @@ class ReadOnlyToolService:
             snapshot_hash=str(snapshot_context.get("snapshot_hash") or ""),
             authorization_hash=str(snapshot_context.get("authorization_hash") or ""),
         )
+        if tool_name in {"search_recording", "get_recording_evidence"}:
+            return self._recording_result(tool_name, job_id, arguments)
         if tool_name == "list_available_tool_resources":
             grants = self._resource_access_grants(
                 user_id=user_id,
@@ -529,6 +560,13 @@ class ReadOnlyToolService:
 
 
 def _storage_summary(result: ToolResult, *, tool_name: str = "") -> dict[str, Any]:
+    if tool_name in {"search_recording", "get_recording_evidence"}:
+        return {
+            "returned": len(result.summary.get("hits", []))
+            if tool_name == "search_recording"
+            else 1,
+            "truncated": result.truncated,
+        }
     if tool_name == "query_database":
         return tool_response_summary({**result.summary, "truncated": result.truncated})
     if not result.metadata and not result.truncated:

@@ -205,8 +205,10 @@ services:
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     environment:
+      RECORDING_TOOL_BOOTSTRAP_TOKEN_FILE: /run/secrets/recording_tool_bootstrap_token
       <<: *runtime-env
     secrets:
+      - recording_tool_bootstrap_token
       - app_config_master_key
     expose:
       - "9103"
@@ -585,6 +587,7 @@ services:
     command:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
+      RECORDING_TOOL_BOOTSTRAP_TOKEN_FILE: /run/secrets/recording_tool_bootstrap_token
       <<: *api-env
       CODE_CHECKOUT_ENABLED: ${CODE_CHECKOUT_ENABLED:-false}
       CODE_CHECKOUT_REGISTRY_FILE: /etc/code-svn/checkout.json
@@ -597,6 +600,7 @@ services:
         bind:
           create_host_path: true
     secrets:
+      - recording_tool_bootstrap_token
       - knowledge_bootstrap_token
       - code_runtime_bootstrap_token
       - dingtalk_runtime_auth_token
@@ -1570,6 +1574,8 @@ services:
       start_period: 30s
 
 secrets:
+  recording_tool_bootstrap_token:
+    file: ${RECORDING_TOOL_BOOTSTRAP_TOKEN_HOST_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/recording-tool-bootstrap-token}
   code_runtime_bootstrap_token:
     file: ${CODE_RUNTIME_BOOTSTRAP_TOKEN_HOST_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/code-runtime-bootstrap-token}
   knowledge_bootstrap_token:

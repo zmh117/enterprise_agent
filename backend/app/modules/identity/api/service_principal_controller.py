@@ -57,4 +57,8 @@ def build_service_principal_router() -> APIRouter:
             },
         )
 
+    from app.modules.channel.browser.evidence_bridge import read_recording_evidence
+
+    router.add_api_route("/recording-evidence", read_recording_evidence, methods=["POST"])
+
     return router

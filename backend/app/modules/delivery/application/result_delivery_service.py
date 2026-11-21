@@ -238,6 +238,8 @@ class ResultDeliveryService:
             sort_keys=True,
             separators=(",", ":"),
         )
+        if job.source_channel == "browser_extension" and (job.reply_route or {}).get("type") == "browser_extension":
+            return ""  # The committed assistant message is delivered through the user SSE endpoint.
         event_ids = []
         for key, route in result_routes(job.reply_route or {"type": "none"}):
             event = self.delivery_repository.create_delivery_event(

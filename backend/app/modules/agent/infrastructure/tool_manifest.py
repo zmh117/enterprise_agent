@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.shared.browser_tool_contract import recording_tool_definitions
 from app.shared.resource_role import RESOURCE_ROLE_PATTERN
 from app.shared.loki_contract import loki_label_schema, loki_selector_schema, LOKI_MAX_MINUTES
 from app.shared.query_result_contract import DATABASE_MAX_ROWS, QUERY_RESULT_TOOLS
@@ -235,3 +236,6 @@ for _name in (
     TOOL_DEFINITIONS[_name]["description"] += (
         " 先查看资源目录 effective_limits，不得猜测上限或反复超限试探。"
     )
+
+
+TOOL_DEFINITIONS.update(recording_tool_definitions())

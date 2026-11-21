@@ -30,6 +30,9 @@ dingtalk-runtime/dist/
 !contracts/
 !contracts/agent-runtime/
 !contracts/agent-runtime/**
+!contracts/browser-extension/
+!contracts/browser-extension/v1/
+!contracts/browser-extension/v1/protocol.schema.json
 !.claude/
 !.claude/skills/
 !.claude/skills/**

@@ -51,6 +51,9 @@ class AgentPublicationAdapter:
             ingress_connector_ids=tuple(
                 sorted(self.repository.publication_connectors(publication_id, "ingress"))
             ),
+            delivery_connector_ids=tuple(
+                sorted(self.repository.publication_connectors(publication_id, "delivery"))
+            ),
             runtime_protocol_versions=("1.5",),
             component_type="agent_publication",
         )
@@ -118,8 +121,17 @@ class ChannelConnectorAdapter:
                 "allow_private_chat" if trigger_type == "dingtalk_private" else "allow_group_chat"
             )
             allowed = allowed and bool(connector.metadata.get(capability, True))
+        elif direction == "ingress" and trigger_type == "browser_extension":
+            allowed = (
+                allowed
+                and connector.connector_type == "browser_extension"
+                and connector.allow_delivery
+            )
         elif direction == "ingress" and trigger_type == "webhook":
-            allowed = allowed and connector.connector_type != "dingtalk_enterprise_stream"
+            allowed = allowed and connector.connector_type not in {
+                "dingtalk_enterprise_stream",
+                "browser_extension",
+            }
         if direction == "delivery" and trigger_type == "dingtalk_private":
             self.registry.require_dingtalk_robot_delivery(connector_id)
             allowed = True
@@ -129,7 +141,10 @@ class ChannelConnectorAdapter:
             )
             allowed = allowed and connector.connector_type == expected
         if direction == "ingress" and trigger_type == "reply_original":
-            allowed = allowed and connector.connector_type == "dingtalk_enterprise_stream"
+            allowed = allowed and connector.connector_type in {
+                "dingtalk_enterprise_stream",
+                "browser_extension",
+            }
         row = self.registry.repository.get_connector(connector_id) or {}
         return ComponentReference(
             id=connector.id,

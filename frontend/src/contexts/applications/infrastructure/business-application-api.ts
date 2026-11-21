@@ -34,6 +34,7 @@ const componentReferenceSchema = z.object({
   ),
   runtime_protocol_versions: z.array(z.enum(["1.4", "1.5"])).default([]),
   ingress_connector_ids: z.array(z.string()).default([]),
+  delivery_connector_ids: z.array(z.string()).default([]),
   direction: z.string(),
   component_type: z.string(),
 })

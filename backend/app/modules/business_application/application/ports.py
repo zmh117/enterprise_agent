@@ -15,6 +15,7 @@ class ComponentReference:
     runtime_kind: str | None = None
     runtime_protocol_versions: tuple[str, ...] = ()
     ingress_connector_ids: tuple[str, ...] = ()
+    delivery_connector_ids: tuple[str, ...] = ()
     direction: str = ""
     component_type: str = ""
 

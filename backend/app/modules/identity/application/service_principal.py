@@ -113,6 +113,14 @@ SERVICE_PRINCIPAL_GRANTS[CODE_CONTROL_AUTHORIZED_PARTY] = ServicePrincipalGrant(
 )
 
 
+RECORDING_TOOL_PARTY = "recording-tool-mcp"
+SERVICE_PRINCIPAL_GRANTS[RECORDING_TOOL_PARTY] = ServicePrincipalGrant(
+    RECORDING_TOOL_PARTY,
+    "platform-recording-evidence",
+    frozenset({"internal:recording:evidence:request"}),
+)
+
+
 def _authorization_hash(grant: ServicePrincipalGrant) -> str:
     canonical = json.dumps(
         {
@@ -124,6 +132,25 @@ def _authorization_hash(grant: ServicePrincipalGrant) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+RECORDING_WRITE = ServicePrincipalGrant(
+    "browser-recording-upload",
+    FILE_SERVICE_INTERNAL_AUDIENCE,
+    frozenset({"internal:recording:part:write"}),
+)
+RECORDING_READ = ServicePrincipalGrant(
+    "browser-recording-evidence",
+    FILE_SERVICE_INTERNAL_AUDIENCE,
+    frozenset({"internal:recording:evidence:read"}),
+)
+
+
+def recording_target_digest(grant: ServicePrincipalGrant, target: tuple[str, ...]) -> str:
+    payload = json.dumps(
+        [grant.subject, grant.audience, sorted(grant.scopes), list(target)], separators=(",", ":")
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 class ServicePrincipalTokenIssuer:
@@ -168,6 +195,7 @@ class ServicePrincipalTokenIssuer:
         ttl_seconds: int = MAX_SERVICE_PRINCIPAL_TTL_SECONDS,
         knowledge_bootstrap_file: str = "",
         code_runtime_bootstrap_file: str = "",
+        recording_tool_bootstrap_file: str = "",
     ) -> ServicePrincipalTokenIssuer:
         return cls(
             signing_key=PrincipalSigningKey.from_file(
@@ -175,6 +203,16 @@ class ServicePrincipalTokenIssuer:
                 environment=environment,
             ),
             bootstrap_credentials={
+                **(
+                    {
+                        RECORDING_TOOL_PARTY: _read_bootstrap_credential(
+                            recording_tool_bootstrap_file,
+                            label="Recording tool bootstrap credential",
+                        )
+                    }
+                    if recording_tool_bootstrap_file
+                    else {}
+                ),
                 FILE_WORKER_AUTHORIZED_PARTY: _read_bootstrap_credential(
                     file_worker_bootstrap_file,
                     label="File Worker bootstrap credential",
@@ -239,7 +277,20 @@ class ServicePrincipalTokenIssuer:
         """
         return self._issue(SERVICE_PRINCIPAL_GRANTS[CODE_CONTROL_AUTHORIZED_PARTY])
 
-    def _issue(self, grant: ServicePrincipalGrant) -> IssuedServicePrincipalToken:
+    def recording_write(self, *, scope: str, recording: str, part: int, digest: str) -> str:
+        target = (scope, recording, str(part), digest)
+        return self._issue(RECORDING_WRITE, target=target).access_token
+
+    def recording_read(
+        self, *, scope: str, recording: str, job: str, attempt: int, kind: str, source: str
+    ) -> str:
+        target = (scope, recording, job, str(attempt), kind, source)
+        return self._issue(RECORDING_READ, target=target).access_token
+
+    def _issue(
+        self, grant: ServicePrincipalGrant, *, target: tuple[str, ...] = ()
+    ) -> IssuedServicePrincipalToken:
+        lifetime = min(self.ttl_seconds, 60) if target else self.ttl_seconds
         issued_at = self._now()
         jti = self._jti_factory()
         claims = {
@@ -248,11 +299,13 @@ class ServicePrincipalTokenIssuer:
             "aud": grant.audience,
             "azp": grant.subject,
             "scope": sorted(grant.scopes),
-            "authorization_hash": _authorization_hash(grant),
+            "authorization_hash": recording_target_digest(grant, target)
+            if target
+            else _authorization_hash(grant),
             "jti": jti,
             "iat": issued_at,
             "nbf": issued_at,
-            "exp": issued_at + self.ttl_seconds,
+            "exp": issued_at + lifetime,
         }
         token = self.signing_key.sign(claims)
         self.audit_service.record(
@@ -266,13 +319,13 @@ class ServicePrincipalTokenIssuer:
                 "jti": jti,
                 "kid": self.signing_key.kid,
                 "scopes": sorted(grant.scopes),
-                "ttl_seconds": self.ttl_seconds,
+                "ttl_seconds": lifetime,
             },
         )
         return IssuedServicePrincipalToken(
             access_token=token,
             token_type="Bearer",
-            expires_in=self.ttl_seconds,
+            expires_in=lifetime,
         )
 
 
@@ -373,3 +426,8 @@ class CodeControlServicePrincipalVerifier(_FixedServicePrincipalVerifier):
 
     authorized_party = CODE_CONTROL_AUTHORIZED_PARTY
     error_code = "code_control_identity_invalid"
+
+
+class RecordingToolVerifier(_FixedServicePrincipalVerifier):
+    authorized_party = RECORDING_TOOL_PARTY
+    error_code = "recording_tool_identity_invalid"

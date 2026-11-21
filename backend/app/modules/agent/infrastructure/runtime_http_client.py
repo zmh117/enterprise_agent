@@ -22,7 +22,11 @@ from app.modules.agent.domain.runtime import (
     McpRuntimeBinding,
 )
 from app.modules.agent.infrastructure.runtime_protocol import (
+    BROWSER_PREVIEW_BYTES,
+    BROWSER_PREVIEW_EVENTS,
+    MAX_RUNTIME_EVENTS,
     canonical_request_digest,
+    has_separate_preview_budget,
     validate_execution_request,
     validate_pool_contract,
     validate_runtime_contract,
@@ -64,7 +68,6 @@ from app.shared.sdk_failure_metadata import safe_sdk_failure_metadata
 MAX_EVENT_LINE_BYTES = 65_536
 MAX_STREAM_BYTES = 2_097_152
 MAX_STREAM_BYTES_V15 = 96 * 1024 * 1024
-MAX_EVENTS = 2_048
 IN_PROGRESS_RECOVERY_ATTEMPTS = 12
 IN_PROGRESS_RECOVERY_DELAY_SECONDS = 0.5
 STANDARD_TOOL_MCP_CODE = TOOL_MCP_SERVER_CODE
@@ -940,7 +943,11 @@ class AgentRuntimeHttpClient:
         events: list[dict[str, Any]] = []
         audit_chunks: list[dict[str, Any]] = []
         tool_events: list[dict[str, Any]] = []
-        total_bytes = 0
+        stream_limit = (
+            MAX_STREAM_BYTES_V15 if request["protocol_version"] == "1.5" else MAX_STREAM_BYTES
+        )
+        separate_preview = has_separate_preview_budget(request)
+        regular_bytes = preview_bytes = preview_events = 0
         event_count = 0
         terminal: dict[str, Any] | None = None
         tool_contract_status: str | None = None
@@ -963,17 +970,9 @@ class AgentRuntimeHttpClient:
                 if tool_events:
                     exc.tool_events = tool_events
                 raise
-            total_bytes += len(raw_line)
-            stream_limit = (
-                MAX_STREAM_BYTES_V15 if request["protocol_version"] == "1.5" else MAX_STREAM_BYTES
-            )
-            if len(raw_line) > MAX_EVENT_LINE_BYTES or total_bytes > stream_limit:
+            if len(raw_line) > MAX_EVENT_LINE_BYTES:
                 raise self._protocol_error(
                     "Runtime event stream exceeds its byte boundary", tool_events
-                )
-            if event_count >= MAX_EVENTS:
-                raise self._protocol_error(
-                    "Runtime event stream exceeds its event boundary", tool_events
                 )
             try:
                 event = json.loads(raw_line.decode("utf-8"))
@@ -993,6 +992,22 @@ class AgentRuntimeHttpClient:
             expected_sequence += 1
             event_count += 1
             event_type = str(event["event_type"])
+            if separate_preview and event_type == "assistant_text":
+                preview_events += 1
+                preview_bytes += len(raw_line)
+            else:
+                regular_bytes += len(raw_line)
+            if (
+                event_count - preview_events > MAX_RUNTIME_EVENTS
+                or preview_events > BROWSER_PREVIEW_EVENTS
+            ):
+                raise self._protocol_error(
+                    "Runtime event stream exceeds its event boundary", tool_events
+                )
+            if regular_bytes > stream_limit or preview_bytes > BROWSER_PREVIEW_BYTES:
+                raise self._protocol_error(
+                    "Runtime event stream exceeds its byte boundary", tool_events
+                )
             if event_type == "audit_chunk":
                 audit_chunks.append(dict(event["payload"]))
             else:

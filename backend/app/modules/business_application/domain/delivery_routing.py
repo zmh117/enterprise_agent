@@ -48,12 +48,12 @@ def delivery_link_errors(
         if delivery.get("enabled", True):
             active.add(key)
         kind = delivery.get("delivery_type")
-        if key[0] in {"dingtalk_private", "dingtalk_group"}:
+        if key[0] in {"dingtalk_private", "dingtalk_group", "browser_extension"}:
             if kind != "reply_original" or delivery.get("connector_id") != key[1]:
                 errors.append(
                     {
                         "field": f"deliveries.{index}",
-                        "message": "钉钉入口须通过相同机器人回复原会话",
+                        "message": "此入口须通过相同机器人回复原会话",
                         "reason_code": "delivery_connector_mismatch"
                         if delivery.get("connector_id") != key[1]
                         else "unsupported_delivery",
@@ -74,11 +74,11 @@ def delivery_link_errors(
         for index, trigger in enumerate(triggers):
             if (
                 trigger.get("enabled", True)
-                and trigger.get("trigger_type") in {"dingtalk_private", "dingtalk_group"}
+                and trigger.get("trigger_type") in {"dingtalk_private", "dingtalk_group", "browser_extension"}
                 and trigger_identity(trigger) not in active
             ):
                 errors.append(
-                    {"field": f"triggers.{index}", "message": "钉钉入口缺少回复原会话投递"}
+                    {"field": f"triggers.{index}", "message": "此入口缺少回复原会话投递"}
                 )
     return errors
 

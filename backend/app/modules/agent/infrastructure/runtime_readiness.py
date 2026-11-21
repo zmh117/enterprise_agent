@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from app.modules.agent.infrastructure.runtime_http_client import (
@@ -15,6 +17,7 @@ class AgentRuntimeReadinessGuard:
 
     def __init__(self, runtimes: Mapping[str, RuntimeClientSettings]) -> None:
         self._runtimes = dict(runtimes)
+        self._admission_runtime = ContextVar[str | None]("admission_runtime", default=None)
 
     @classmethod
     def from_settings(cls, settings: Any) -> AgentRuntimeReadinessGuard | None:
@@ -40,7 +43,19 @@ class AgentRuntimeReadinessGuard:
             }
         return probe_runtime_readiness(runtime)
 
+    @contextmanager
+    def admission_check(self, runtime_kind: str) -> Iterator[None]:
+        """Probe before taking database locks, then reuse the result for this submission."""
+        self.require_ready(runtime_kind)
+        previous = self._admission_runtime.set(runtime_kind)
+        try:
+            yield
+        finally:
+            self._admission_runtime.reset(previous)
+
     def require_ready(self, runtime_kind: str) -> None:
+        if self._admission_runtime.get() == runtime_kind:
+            return
         status = self.status(runtime_kind)
         if not bool(status.get("ready")):
             raise NonRetryableExecutionError(

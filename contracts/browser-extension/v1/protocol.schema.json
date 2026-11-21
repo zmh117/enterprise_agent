@@ -1,0 +1,1538 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise-agent.internal/contracts/browser-extension/v1/protocol.schema.json",
+  "title": "Enterprise Agent 浏览器插件协议 v1",
+  "description": "每个 HTTP、NDJSON、工具和 SSE 消息按其表面对应的 $defs 条目独立校验，见 README。",
+  "$defs": {
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "SourceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "Sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "DiagnosticCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "BodyState": {
+      "enum": [
+        "captured",
+        "empty",
+        "not_applicable",
+        "truncated",
+        "excluded_by_policy",
+        "unavailable",
+        "incomplete_target_closed",
+        "incomplete_session_stopped"
+      ]
+    },
+    "Action": {
+      "enum": [
+        "click",
+        "submit",
+        "input",
+        "change",
+        "select",
+        "invalid",
+        "programmatic_change",
+        "dialog_open",
+        "dialog_close",
+        "notice_change",
+        "issue_marker",
+        "other"
+      ]
+    },
+    "Method": {
+      "enum": [
+        "GET",
+        "HEAD",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+        "CONNECT",
+        "TRACE",
+        "OTHER"
+      ]
+    },
+    "PathTemplate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^/[A-Za-z0-9._{}/:-]*$"
+    },
+    "BusinessOutcome": {
+      "enum": [
+        "success",
+        "failure",
+        "unknown"
+      ]
+    },
+    "Counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "saved": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "shareable": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "platform_excluded": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ids_sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      },
+      "required": [
+        "saved",
+        "shareable",
+        "platform_excluded",
+        "ids_sha256"
+      ]
+    },
+    "Gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/DiagnosticCode"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "reason",
+        "count"
+      ]
+    },
+    "Coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": {
+          "$ref": "#/$defs/Counts"
+        },
+        "actions": {
+          "$ref": "#/$defs/Counts"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Gap"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "requests",
+        "actions",
+        "gaps"
+      ]
+    },
+    "Part": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "uncompressed_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      },
+      "required": [
+        "number",
+        "uncompressed_bytes",
+        "sha256"
+      ]
+    },
+    "Manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "projection_version": {
+          "const": "2"
+        },
+        "local_recording_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "checkpoint": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Part"
+          },
+          "maxItems": 4096
+        }
+      },
+      "required": [
+        "projection_version",
+        "local_recording_id",
+        "checkpoint",
+        "coverage",
+        "parts"
+      ]
+    },
+    "InitRecording": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "upload_attempt_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "manifest": {
+          "$ref": "#/$defs/Manifest"
+        }
+      },
+      "required": [
+        "upload_attempt_id",
+        "manifest"
+      ]
+    },
+    "UploadProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recording_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "state": {
+          "const": "uploading"
+        },
+        "missing_parts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "maxItems": 4096,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "recording_id",
+        "state",
+        "missing_parts"
+      ]
+    },
+    "ReadyReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recording_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "state": {
+          "const": "ready"
+        },
+        "missing_parts": {
+          "type": "array",
+          "maxItems": 0,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "recording_id",
+        "state",
+        "missing_parts"
+      ]
+    },
+    "UploadReceipt": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UploadProgress"
+        },
+        {
+          "$ref": "#/$defs/ReadyReceipt"
+        }
+      ]
+    },
+    "PartReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recording_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      },
+      "required": [
+        "recording_id",
+        "number",
+        "sha256"
+      ]
+    },
+    "DetailState": {
+      "enum": [
+        "included",
+        "partial",
+        "not_captured",
+        "truncated",
+        "excluded_by_policy",
+        "empty"
+      ]
+    },
+    "Association": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "basis": {
+          "enum": [
+            "observed",
+            "time_proximity"
+          ]
+        }
+      },
+      "required": [
+        "eventId",
+        "basis"
+      ]
+    },
+    "RequestRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "request"
+        },
+        "requestKey": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "offset_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "method": {
+          "$ref": "#/$defs/Method"
+        },
+        "path_template": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathTemplate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 599
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network_outcome": {
+          "enum": [
+            "finished",
+            "failed",
+            "incomplete"
+          ]
+        },
+        "business_outcome": {
+          "$ref": "#/$defs/BusinessOutcome"
+        },
+        "request_capture": {
+          "$ref": "#/$defs/BodyState"
+        },
+        "response_capture": {
+          "$ref": "#/$defs/BodyState"
+        },
+        "request_fields": {
+          "$ref": "#/$defs/DetailState"
+        },
+        "response_fields": {
+          "$ref": "#/$defs/DetailState"
+        },
+        "associations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Association"
+          },
+          "maxItems": 64
+        },
+        "request_operation": {
+          "$ref": "#/$defs/DiagnosticCode"
+        },
+        "response_code": {
+          "$ref": "#/$defs/DiagnosticCode"
+        },
+        "request_id": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "request_details": {
+          "$ref": "#/$defs/BusinessDetail"
+        },
+        "response_details": {
+          "$ref": "#/$defs/BusinessDetail"
+        }
+      },
+      "required": [
+        "kind",
+        "requestKey",
+        "offset_ms",
+        "method",
+        "path_template",
+        "http_status",
+        "duration_ms",
+        "network_outcome",
+        "business_outcome",
+        "request_capture",
+        "response_capture",
+        "request_fields",
+        "response_fields",
+        "associations"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "request_fields": {
+                "enum": [
+                  "included",
+                  "partial"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "request_details"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "request_details"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "request_operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "request_fields": {
+                "enum": [
+                  "included",
+                  "partial"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "response_fields": {
+                "enum": [
+                  "included",
+                  "partial"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "response_details"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "response_details"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "response_code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "response_fields": {
+                "enum": [
+                  "included",
+                  "partial"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "request_fields": {
+                "const": "included"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "request_details": {
+                "properties": {
+                  "omissions": {
+                    "maxItems": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "request_fields": {
+                "const": "partial"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "request_details": {
+                "properties": {
+                  "omissions": {
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "response_fields": {
+                "const": "included"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "response_details": {
+                "properties": {
+                  "omissions": {
+                    "maxItems": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "response_fields": {
+                "const": "partial"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "response_details": {
+                "properties": {
+                  "omissions": {
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ActionRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "action"
+        },
+        "eventId": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "offset_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "action": {
+          "$ref": "#/$defs/Action"
+        },
+        "control_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagnosticCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "$ref": "#/$defs/BusinessDetail"
+        }
+      },
+      "required": [
+        "kind",
+        "eventId",
+        "offset_ms",
+        "action",
+        "control_code"
+      ]
+    },
+    "EvidenceRow": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RequestRow"
+        },
+        {
+          "$ref": "#/$defs/ActionRow"
+        }
+      ]
+    },
+    "CreateMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "client_message_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "pattern": "\\S"
+        },
+        "conversation_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "recording_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "client_message_id",
+        "question"
+      ]
+    },
+    "MessageReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "session_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "job_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "recording_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "conversation_id",
+        "session_id",
+        "job_id",
+        "recording_id"
+      ]
+    },
+    "ConversationPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "recording_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recording_state": {
+          "enum": [
+            "ready",
+            "unavailable",
+            "none"
+          ]
+        },
+        "jobs": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "job_id": {
+                "$ref": "#/$defs/Identifier"
+              },
+              "status": {
+                "type": "string"
+              },
+              "question": {
+                "type": "string",
+                "maxLength": 4000
+              }
+            },
+            "required": [
+              "job_id",
+              "status",
+              "question"
+            ]
+          }
+        },
+        "next_before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "conversation_id",
+        "recording_id",
+        "recording_state",
+        "jobs",
+        "next_before"
+      ]
+    },
+    "EvidenceId": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recording_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "kind": {
+          "enum": [
+            "action",
+            "request"
+          ]
+        },
+        "source_id": {
+          "$ref": "#/$defs/SourceId"
+        }
+      },
+      "required": [
+        "recording_id",
+        "kind",
+        "source_id"
+      ]
+    },
+    "SearchRecording": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "action",
+            "request"
+          ]
+        },
+        "from_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "to_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "path_template": {
+          "$ref": "#/$defs/PathTemplate"
+        },
+        "method": {
+          "$ref": "#/$defs/Method"
+        },
+        "http_status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "business_outcome": {
+          "$ref": "#/$defs/BusinessOutcome"
+        },
+        "action": {
+          "$ref": "#/$defs/Action"
+        },
+        "related_to": {
+          "$ref": "#/$defs/EvidenceId"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": []
+    },
+    "GetRecordingEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "$ref": "#/$defs/EvidenceId"
+        }
+      },
+      "required": [
+        "evidence_id"
+      ]
+    },
+    "SearchHit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "$ref": "#/$defs/EvidenceId"
+        },
+        "offset_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "method": {
+          "$ref": "#/$defs/Method"
+        },
+        "path_template": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathTemplate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 599
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "business_outcome": {
+          "$ref": "#/$defs/BusinessOutcome"
+        },
+        "action": {
+          "$ref": "#/$defs/Action"
+        },
+        "association_basis": {
+          "enum": [
+            "observed",
+            "time_proximity"
+          ]
+        }
+      },
+      "required": [
+        "evidence_id",
+        "offset_ms"
+      ]
+    },
+    "SearchResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SearchHit"
+          },
+          "maxItems": 100
+        },
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "hits",
+        "coverage",
+        "truncated",
+        "next_cursor"
+      ]
+    },
+    "EvidenceResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "$ref": "#/$defs/EvidenceId"
+        },
+        "row": {
+          "$ref": "#/$defs/EvidenceRow"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "row",
+        "truncated"
+      ]
+    },
+    "RunState": {
+      "enum": [
+        "queued",
+        "analyzing",
+        "retrying"
+      ]
+    },
+    "Failure": {
+      "enum": [
+        "cancelled",
+        "timeout",
+        "failed"
+      ]
+    },
+    "ActiveSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/RunState"
+        },
+        "through_cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "draft": {
+          "type": "string",
+          "maxLength": 524288
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt_id",
+        "state",
+        "through_cursor",
+        "draft"
+      ]
+    },
+    "CompletedSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "const": "completed"
+        },
+        "through_cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "final_answer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 524288
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt_id",
+        "state",
+        "through_cursor",
+        "final_answer"
+      ]
+    },
+    "FailedSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "const": "failed"
+        },
+        "through_cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "reason": {
+          "$ref": "#/$defs/Failure"
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt_id",
+        "state",
+        "through_cursor",
+        "reason"
+      ]
+    },
+    "Snapshot": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ActiveSnapshot"
+        },
+        {
+          "$ref": "#/$defs/CompletedSnapshot"
+        },
+        {
+          "$ref": "#/$defs/FailedSnapshot"
+        }
+      ]
+    },
+    "Status": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "event": {
+          "const": "status"
+        },
+        "status": {
+          "$ref": "#/$defs/RunState"
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt_id",
+        "id",
+        "event",
+        "status"
+      ]
+    },
+    "AnswerDelta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "event": {
+          "const": "answer_delta"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32768
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt_id",
+        "id",
+        "event",
+        "text"
+      ]
+    },
+    "Reset": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "attempt_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "event": {
+          "const": "reset"
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt_id",
+        "id",
+        "event"
+      ]
+    },
+    "Completed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "event": {
+          "const": "completed"
+        },
+        "final_answer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 524288
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt_id",
+        "id",
+        "event",
+        "final_answer"
+      ]
+    },
+    "Failed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "event": {
+          "const": "failed"
+        },
+        "reason": {
+          "$ref": "#/$defs/Failure"
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt_id",
+        "id",
+        "event",
+        "reason"
+      ]
+    },
+    "AnswerEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Status"
+        },
+        {
+          "$ref": "#/$defs/AnswerDelta"
+        },
+        {
+          "$ref": "#/$defs/Reset"
+        },
+        {
+          "$ref": "#/$defs/Completed"
+        },
+        {
+          "$ref": "#/$defs/Failed"
+        }
+      ]
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "credential_expired",
+            "invalid_credentials",
+            "invalid_grant",
+            "rate_limited",
+            "application_unavailable",
+            "result_pending",
+            "login_required",
+            "consent_required",
+            "access_denied",
+            "scope_changed",
+            "parts_missing",
+            "manifest_conflict",
+            "upload_expired",
+            "cursor_invalid",
+            "message_conflict",
+            "invalid_request",
+            "quota_exceeded",
+            "not_found"
+          ]
+        },
+        "missing_parts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "maxItems": 4096,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "if": {
+        "properties": {
+          "code": {
+            "const": "parts_missing"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "missing_parts"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "missing_parts"
+          ]
+        }
+      }
+    },
+    "BusinessObject": {
+      "type": "object",
+      "propertyNames": {
+        "description": "拒绝常见凭据字段名。两端还须检查大小写、别名、字段来源与值的内容。",
+        "not": {
+          "enum": [
+            "authorization",
+            "Authorization",
+            "Proxy-Authorization",
+            "proxy-authorization",
+            "Cookie",
+            "cookie",
+            "Set-Cookie",
+            "set-cookie",
+            "password",
+            "passwd",
+            "pwd",
+            "密码",
+            "令牌",
+            "token",
+            "access_token",
+            "accessToken",
+            "refresh_token",
+            "refreshToken",
+            "id_token",
+            "sessionToken",
+            "apiKey",
+            "api_key",
+            "modelKey",
+            "private_key",
+            "client_secret",
+            "secret"
+          ]
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/BusinessValue"
+      }
+    },
+    "BusinessValue": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BusinessValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/BusinessObject"
+        }
+      ]
+    },
+    "BusinessDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "$ref": "#/$defs/BusinessValue"
+        },
+        "omissions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^(?:/|$)"
+              },
+              "reason": {
+                "enum": [
+                  "protected",
+                  "not_captured",
+                  "truncated",
+                  "unstructured"
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "reason"
+            ]
+          }
+        }
+      },
+      "required": [
+        "value",
+        "omissions"
+      ]
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/InitRecording"
+    },
+    {
+      "$ref": "#/$defs/PartReceipt"
+    },
+    {
+      "$ref": "#/$defs/UploadReceipt"
+    },
+    {
+      "$ref": "#/$defs/EvidenceRow"
+    },
+    {
+      "$ref": "#/$defs/CreateMessage"
+    },
+    {
+      "$ref": "#/$defs/MessageReceipt"
+    },
+    {
+      "$ref": "#/$defs/SearchRecording"
+    },
+    {
+      "$ref": "#/$defs/GetRecordingEvidence"
+    },
+    {
+      "$ref": "#/$defs/SearchResult"
+    },
+    {
+      "$ref": "#/$defs/EvidenceResult"
+    },
+    {
+      "$ref": "#/$defs/Snapshot"
+    },
+    {
+      "$ref": "#/$defs/AnswerEvent"
+    },
+    {
+      "$ref": "#/$defs/Error"
+    }
+  ]
+}

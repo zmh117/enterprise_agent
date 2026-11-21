@@ -18,6 +18,7 @@ from app.modules.job.domain.execution_audit import (
 )
 from app.modules.job.infrastructure.persistence_values import now_iso
 from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
+from app.modules.channel.browser.answers import record_delta
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError
 
@@ -32,7 +33,9 @@ class ExecutionAuditRepository:
     def record_runtime_event(self, job_id: str, event: dict[str, Any]) -> None:
         with self.database.unit_of_work():
             self._runtime_events.record_runtime_event(job_id, event)
-            if event.get("event_type") == "model_call":
+            if event.get("event_type") == "assistant_text":
+                record_delta(self.database, job_id, event)
+            elif event.get("event_type") == "model_call":
                 self._upsert_model_call(job_id, event)
             elif event.get("event_type") == "tool_contract_observed":
                 self._project_tool_contract(job_id, event)

@@ -58,7 +58,7 @@ export type DingTalkEnterprise = z.infer<typeof dingtalkEnterpriseSchema>
 export const managedChannelSchema = z
   .object({
     id: z.string(),
-    kind: z.enum(["WEBHOOK", "DINGTALK_APP_ROBOT"]),
+    kind: z.enum(["WEBHOOK", "DINGTALK_APP_ROBOT", "BROWSER_EXTENSION"]),
     name: z.string(),
     code: z.string().optional(),
     client_id: z.string().optional(),

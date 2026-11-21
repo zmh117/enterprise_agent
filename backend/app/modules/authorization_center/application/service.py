@@ -1296,7 +1296,11 @@ class BusinessAuthorizationService:
                 if tool_identifier in _KNOWLEDGE_TOOLS:
                     if not access["knowledge_base_ids"]:
                         continue
-                elif not scope_matches:
+                # Recording access is scoped to the owner and the application publication.
+                elif (
+                    tool_identifier not in {"search_recording", "get_recording_evidence"}
+                    and not scope_matches
+                ):
                     continue
                 roles_by_tool[tool_identifier].add(str(access["role_code"]))
         return {

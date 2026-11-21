@@ -10,7 +10,12 @@ from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any, Callable, Protocol
 
-from app.modules.agent.infrastructure.runtime_protocol import validate_runtime_contract
+from app.modules.agent.infrastructure.runtime_protocol import (
+    BROWSER_PREVIEW_EVENTS,
+    MAX_RUNTIME_EVENTS,
+    has_separate_preview_budget,
+    validate_runtime_contract,
+)
 from app.shared.build_identity import BuildIdentity, build_identity_from_environment
 from app.shared.database import Database
 
@@ -44,6 +49,7 @@ class PythonRuntimeExecutor(Protocol):
         cancel_event: threading.Event,
         secret_context: InvocationSecretContextPort,
         tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
+        answer_observer: Callable[[str], None] | None = None,
     ) -> PythonExecutionOutcome: ...
 
 
@@ -456,6 +462,46 @@ class PythonInvocationRegistry:
         with self._lock:
             return self._invocations.get(invocation_id)
 
+    def _answer_preview(
+        self, invocation: RuntimeInvocation, observation: Callable[[], dict[str, Any] | None]
+    ) -> dict[str, Callable[[str], None]]:
+        request = invocation.request
+        if (
+            request["protocol_version"] != "1.5"
+            or request["prompt"]["retrieved_context"].get("response_presentation")
+            != "browser-markdown"
+        ):
+            return {}
+        events_left = BROWSER_PREVIEW_EVENTS
+        if not has_separate_preview_budget(request):
+            # Older Workers count previews against the mandatory event limit.
+            from app.shared.agent_run_audit_codec import MAX_AUDIT_CHUNKS
+
+            limits = request["limits"]
+            events_left = min(
+                events_left,
+                MAX_RUNTIME_EVENTS
+                - MAX_AUDIT_CHUNKS
+                - 8
+                - 2 * limits["max_tool_calls"]
+                - 3 * limits["max_turns"],
+            )
+        chars_left = 524288
+
+        def preview(text: str) -> None:
+            nonlocal events_left, chars_left
+            if (
+                events_left > 0
+                and chars_left > 0
+                and (observation() or {}).get("status") == "MATCH"
+            ):
+                text = text[:chars_left]
+                self._persist_and_emit(invocation, "assistant_text", {"text": text})
+                events_left -= 1
+                chars_left -= len(text)
+
+        return {"answer_observer": preview}
+
     def _run(self, invocation: RuntimeInvocation) -> None:
         request = invocation.request
         self._persist_and_emit(
@@ -476,12 +522,14 @@ class PythonInvocationRegistry:
                 observed_tool_contract,
             )
 
+        preview_args = self._answer_preview(invocation, lambda: observed_tool_contract)
         try:
             outcome = self._executor.execute(
                 request,
                 invocation.cancel_event,
                 invocation.secret_context,
                 observe_tool_contract,
+                **preview_args,
             )
         except Exception:
             outcome = PythonExecutionOutcome(
@@ -534,16 +582,21 @@ class PythonInvocationRegistry:
         for tool_event in outcome.tool_events:
             self._persist_and_emit(invocation, "tool_event", dict(tool_event))
         audit_sha256 = ""
-        audit_chunk_count = 0
+        audit_chunks = []
         if request["protocol_version"] == "1.5" and outcome.run_audit:
             audit_sha256, audit_chunks = encode_audit_chunks(outcome.run_audit)
-            if len(invocation.events()) + len(audit_chunks) + 1 > 2048:
-                raise InvocationConflictError(
-                    "Complete Agent run audit exceeds the Runtime event boundary"
-                )
-            for audit_chunk in audit_chunks:
-                self._persist_and_emit(invocation, "audit_chunk", audit_chunk)
-            audit_chunk_count = len(audit_chunks)
+        events = invocation.events()
+        regular_count = (
+            sum(e["event_type"] != "assistant_text" for e in events)
+            if has_separate_preview_budget(request)
+            else len(events)
+        )
+        if regular_count + len(audit_chunks) + 1 > MAX_RUNTIME_EVENTS:
+            raise InvocationConflictError(
+                "Complete Agent run audit exceeds the Runtime event boundary"
+            )
+        for audit_chunk in audit_chunks:
+            self._persist_and_emit(invocation, "audit_chunk", audit_chunk)
         last_sequence = len(invocation.events()) + 1
         terminal = {
             "protocol_version": request["protocol_version"],
@@ -557,7 +610,7 @@ class PythonInvocationRegistry:
         }
         if audit_sha256:
             terminal["audit_sha256"] = audit_sha256
-            terminal["audit_chunk_count"] = audit_chunk_count
+            terminal["audit_chunk_count"] = len(audit_chunks)
         if outcome.status == "SUCCEEDED":
             terminal["final_answer"] = outcome.final_answer
         else:

@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from app.bootstrap import build_worker_container
+from app.modules.channel.browser.answers import purge_answers
 from app.shared.config import load_settings
 from app.shared.logging import configure_logging
 from app.modules.agent.infrastructure.runtime_pool_recovery import reconcile_runtime_nodes
@@ -24,10 +25,14 @@ def main() -> None:
     )
     settings = container.settings
     logger.info("Job dispatch outbox worker starting")
+    next_cleanup = 0.0
     while True:
         try:
             HEARTBEAT_PATH.touch()
             reconcile_runtime_nodes(settings.agent_runtime, container.database)
+            if time.monotonic() >= next_cleanup:
+                purge_answers(container.database)
+                next_cleanup = time.monotonic() + 60
             result = container.job_dispatcher.publish_pending(limit=100)
             if (
                 result.published

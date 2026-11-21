@@ -20,6 +20,18 @@ from app.modules.agent.infrastructure.generated_runtime_contracts_v1_5 import (
 
 CURRENT_RUNTIME_PROTOCOL_VERSION = "1.5"
 SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = ("1.4", CURRENT_RUNTIME_PROTOCOL_VERSION)
+MAX_RUNTIME_EVENTS = 2048
+BROWSER_PREVIEW_EVENTS = 256
+BROWSER_PREVIEW_BYTES = 8 * 1024 * 1024
+
+
+def has_separate_preview_budget(request: dict[str, Any]) -> bool:
+    context = request["prompt"]["retrieved_context"]
+    return (
+        request["protocol_version"] == "1.5"
+        and context.get("response_presentation") == "browser-markdown"
+        and context.get("browser_preview_budget") == "separate-v1"
+    )
 
 
 class RuntimeProtocolError(ValueError):

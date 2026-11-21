@@ -200,6 +200,7 @@ class ComponentReferenceResponse(BaseModel):
     runtime_kind: Literal["python-v1"] | None = None
     runtime_protocol_versions: list[Literal["1.5"]] | None = None
     ingress_connector_ids: list[str] = Field(default_factory=list)
+    delivery_connector_ids: list[str] = Field(default_factory=list)
     direction: str = ""
     component_type: str = ""
 
@@ -263,7 +264,7 @@ class TriggerConfigRequest(StrictRequest):
 
 
 class TriggerRequest(StrictRequest):
-    trigger_type: Literal["dingtalk_private", "dingtalk_group", "webhook"]
+    trigger_type: Literal["dingtalk_private", "dingtalk_group", "webhook", "browser_extension"]
     connector_id: str = Field(min_length=1, max_length=200)
     routing_key: str = Field(min_length=1, max_length=240)
     actor_policy: Literal["CURRENT_SENDER", "BOUND_USER"]
@@ -273,7 +274,7 @@ class TriggerRequest(StrictRequest):
 
 
 class DeliveryTriggerRequest(StrictRequest):
-    trigger_type: Literal["dingtalk_private", "dingtalk_group", "webhook"]
+    trigger_type: Literal["dingtalk_private", "dingtalk_group", "webhook", "browser_extension"]
     connector_id: str = Field(min_length=1, max_length=200)
     routing_key: str = Field(min_length=1, max_length=240)
 

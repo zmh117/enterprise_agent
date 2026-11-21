@@ -162,6 +162,40 @@ class MinioFileObjectStorage:
         )
         return InternalStoredObject(key, size_bytes, content_sha256)
 
+    def put_recording(self, recording_id: str, number: int, digest: str, raw: bytes) -> None:
+        import io
+
+        key = self.recording_key(recording_id, number, digest)
+        assert_external_io_allowed("file_storage.put_recording")
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=key,
+            Body=io.BytesIO(raw),
+            ContentType="application/x-ndjson",
+            ContentLength=len(raw),
+            Metadata={"sha256": digest},
+        )
+
+    @staticmethod
+    def recording_key(recording_id: str, number: int, digest: str) -> str:
+        import re
+
+        if (
+            not re.fullmatch(r"[a-f0-9]{32}", recording_id)
+            or not 0 <= number < 4096
+            or not re.fullmatch(r"[a-f0-9]{64}", digest)
+        ):
+            raise ValueError("invalid recording object reference")
+        return f"browser-recordings/v1/{recording_id}/{number}/{digest}"
+
+    def recording_keys(self, after: str, limit: int) -> tuple[list[str], str]:
+        assert_external_io_allowed("file_storage.recording_keys")
+        reply = self._client.list_objects_v2(
+            Bucket=self._bucket, Prefix="browser-recordings/v1/", StartAfter=after, MaxKeys=limit
+        )
+        keys = [str(row["Key"]) for row in reply.get("Contents", [])]
+        return keys, keys[-1] if keys and reply.get("IsTruncated") else ""
+
     def open_stream(self, *, internal_object_key: str) -> BinaryIO:
         assert_external_io_allowed("file_storage.open_stream")
         return cast(

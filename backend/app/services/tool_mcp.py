@@ -498,6 +498,8 @@ def create_default_app() -> CredentialRejectingMiddleware:
     )
 
     allow_privileged = runtime.settings.environment == "local"
+    from app.modules.channel.browser.tools import RecordingTools
+    runtime.tool_service.recording_tools = RecordingTools(runtime)
     return create_app(
         _service_from_container(runtime),
         oracle_verification=OracleVerificationHandler(

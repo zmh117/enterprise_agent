@@ -80,6 +80,7 @@ class ManagedChannelService:
         result = [
             self._dingtalk_public(item) for item in self.repository.list_dingtalk_connectors()
         ]
+        result.append(self.repository.browser_channel())
         for item in self.webhook_provider.list_channels():
             runtime_status = str(
                 item.get("runtime_status")
@@ -137,6 +138,8 @@ class ManagedChannelService:
         )
 
     def get_channel(self, channel_id: str) -> dict[str, Any]:
+        if channel_id == "browser-extension":
+            return self.repository.browser_channel()
         return self._dingtalk_public(self.repository.get_connector(channel_id))
 
     def list_dingtalk_enterprises(self) -> list[dict[str, Any]]:
@@ -402,6 +405,10 @@ class ManagedChannelService:
         expected_revision: int,
         actor_id: str,
     ) -> dict[str, Any]:
+        if connector_id == "browser-extension":
+            item = self.repository.set_browser_enabled(enabled, expected_revision)
+            self._audit("enabled" if enabled else "disabled", actor_id, item)
+            return item
         current = self.repository.get_connector(connector_id)
         enterprise = self.repository.get_dingtalk_enterprise(
             str(current.get("dingtalk_enterprise_id") or "")
@@ -524,6 +531,9 @@ class ManagedChannelService:
         )
 
     def eligible(self, trigger_type: str) -> list[dict[str, Any]]:
+        if trigger_type == "browser_extension":
+            item = self.repository.browser_channel()
+            return [item] if item["enabled"] and item["allow_ingress"] and item["allow_delivery"] else []
         if trigger_type in {"dingtalk_private", "dingtalk_group"}:
             items = [
                 self._dingtalk_public(item)

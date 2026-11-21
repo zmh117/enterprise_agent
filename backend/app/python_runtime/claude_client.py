@@ -27,6 +27,7 @@ from app.modules.model_connection.domain import (
     ANTHROPIC_COMPATIBLE_PROTOCOL,
     ModelRuntimeBinding,
 )
+from app.python_runtime.browser_answer import BrowserAnswer, observe_partial
 from app.python_runtime.error_mapper import (
     append_cli_stderr,
     bounded_safe_diagnostic,
@@ -164,6 +165,7 @@ class ClaudeSdkClient:
             f"python_runtime_sandbox_{id(self)}",
             default=None,
         )
+        self.answer_observer: Callable[[str], None] | None = None
         self.cancellation_event = cancellation_event
         self.last_runtime_events: list[dict[str, Any]] = []
         self.last_accounting: dict[str, Any] = unavailable_accounting()
@@ -231,7 +233,7 @@ class ClaudeSdkClient:
                 self._sandbox.reset(token)
                 sandbox.cleanup()
 
-    async def _run_in_sandbox_async(  # noqa: PLR0915
+    async def _run_in_sandbox_async(  # noqa: C901, PLR0915
         self,
         request: AgentRunRequest,
         binding: ModelRuntimeBinding,
@@ -273,6 +275,9 @@ class ClaudeSdkClient:
             tool_call_budget=tool_call_budget,
             turn_budget=turn_budget,
         )
+        browser = BrowserAnswer(self.answer_observer) if self.answer_observer else None
+        if browser:
+            options.include_partial_messages = True
         run_audit_recorder = RunAuditRecorder(
             runtime_context,
             system_prompt=build_system_prompt(runtime_context),
@@ -293,6 +298,8 @@ class ClaudeSdkClient:
             nonlocal final_answer
             async with aclosing(sdk.query(prompt=prompt, options=options)) as messages:
                 async for message in messages:
+                    if observe_partial(browser, message):
+                        continue
                     audit.consume(message)
                     run_audit_recorder.observe_message(message)
                     self.last_runtime_events = list(audit.events)
@@ -335,7 +342,7 @@ class ClaudeSdkClient:
                         )
                     assistant_texts.extend(extract_text_blocks(message))
                     result_text = extract_result_text(message)
-                    if result_text:
+                    if result_text and (browser is None or browser.is_main_result(message)):
                         final_answer = result_text
 
         try:
@@ -363,6 +370,7 @@ class ClaudeSdkClient:
                     or isinstance(turn_budget.failure, DiagnosticLoopExhausted)
                 ),
             ):
+                browser = None  # Preserve the sandbox-verified recovery answer.
                 final_answer = recovered
             elif tool_call_budget.exhausted:
                 raise tool_call_budget.exhaustion_error(tool_events=tool_events) from exc
@@ -377,7 +385,9 @@ class ClaudeSdkClient:
                     ) from exc
                 self._raise_mapped_sdk_error(exc, cli_stderr, tool_events, binding)
 
-        if not final_answer:
+        if browser:
+            final_answer = browser.final(final_answer)
+        elif not final_answer:
             final_answer = "\n".join(text for text in assistant_texts if text).strip()
         if not final_answer:
             raise RetryableExecutionError(
@@ -992,9 +1002,10 @@ def build_system_prompt(context: AgentExecutionContext) -> str:
                 else ""
             ),
             (
-                DINGTALK_PRESENTATION_INSTRUCTIONS
-                if context.retrieved_context.get("response_presentation") == "dingtalk-markdown"
-                else ""
+                {
+                    "dingtalk-markdown": DINGTALK_PRESENTATION_INSTRUCTIONS,
+                    "browser-markdown": "Write the user-facing response in Markdown, including any progress text before using tools.",
+                }.get(str(context.retrieved_context.get("response_presentation", "")), "")
             ),
             "Detail response completeness:\n"
             + _numbered(

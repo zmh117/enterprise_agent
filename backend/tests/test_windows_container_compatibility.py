@@ -218,6 +218,7 @@ ENTRYPOINT = ROOT / "backend/docker/normalize_secrets_entrypoint.sh"
 DOCKERFILE = ROOT / "backend/Dockerfile"
 SECRET_FILE_VARIABLES = {
     "CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE",
+    "RECORDING_TOOL_BOOTSTRAP_TOKEN_FILE",
     "APP_CONFIG_MASTER_KEY_FILE",
     "DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE",
     "DINGTALK_RUNTIME_AUTH_TOKEN_FILE",
@@ -531,6 +532,7 @@ def test_docker_acl_only_grants_each_secret_to_its_container_consumers(tmp_path:
     assert grants["principal-jwt-private.pem"] == {0}
     assert grants["knowledge-bootstrap-token"] == {0, 10008}
     assert grants["code-runtime-bootstrap-token"] == {0, 10002}
+    assert grants["recording-tool-bootstrap-token"] == {0, 10001}
     assert grants["docling-api-key"] == {1001, 10006}
     assert grants["runtime-grant-public.pem"] == {10002}
 

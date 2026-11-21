@@ -1,0 +1,386 @@
+[
+  {
+    "contract": "UploadReceipt",
+    "body": {
+      "recording_id": "recording-a",
+      "state": "uploading",
+      "missing_parts": [
+        0
+      ]
+    }
+  },
+  {
+    "contract": "PartReceipt",
+    "body": {
+      "recording_id": "recording-a",
+      "number": 0,
+      "sha256": "95a80af9cee28cfd582924423bea274cfb0733c8b834612e4a80b285f5feadfa"
+    }
+  },
+  {
+    "contract": "UploadReceipt",
+    "body": {
+      "recording_id": "recording-a",
+      "state": "uploading",
+      "missing_parts": []
+    }
+  },
+  {
+    "contract": "UploadReceipt",
+    "body": {
+      "recording_id": "recording-a",
+      "state": "ready",
+      "missing_parts": []
+    }
+  },
+  {
+    "contract": "CreateMessage",
+    "body": {
+      "client_message_id": "m1",
+      "question": "查询演示请求",
+      "recording_id": "recording-a"
+    }
+  },
+  {
+    "contract": "MessageReceipt",
+    "body": {
+      "conversation_id": "conversation-1",
+      "session_id": "session-1",
+      "job_id": "job-1",
+      "recording_id": "recording-a"
+    }
+  },
+  {
+    "contract": "CreateMessage",
+    "body": {
+      "client_message_id": "m1",
+      "question": "查询演示请求",
+      "recording_id": "recording-a"
+    }
+  },
+  {
+    "contract": "MessageReceipt",
+    "body": {
+      "conversation_id": "conversation-1",
+      "session_id": "session-1",
+      "job_id": "job-1",
+      "recording_id": "recording-a"
+    }
+  },
+  {
+    "contract": "SearchRecording",
+    "body": {
+      "kind": "request",
+      "business_outcome": "failure",
+      "limit": 10
+    }
+  },
+  {
+    "contract": "SearchResult",
+    "body": {
+      "hits": [
+        {
+          "evidence_id": {
+            "recording_id": "recording-a",
+            "kind": "request",
+            "source_id": "net:1"
+          },
+          "offset_ms": 20,
+          "http_status": 200,
+          "business_outcome": "failure",
+          "association_basis": "time_proximity"
+        }
+      ],
+      "coverage": {
+        "requests": {
+          "saved": 2,
+          "shareable": 1,
+          "platform_excluded": 1,
+          "ids_sha256": "a0698d5a1e604e5101b41191657c461c11dd8e49270938e307e29373d54d7a3a"
+        },
+        "actions": {
+          "saved": 1,
+          "shareable": 1,
+          "platform_excluded": 0,
+          "ids_sha256": "536357b527c3dedf7315db26cbbe902f5ab586c7d8f3f739ead1067594636bb7"
+        },
+        "gaps": []
+      },
+      "truncated": false,
+      "next_cursor": null
+    }
+  },
+  {
+    "contract": "CreateMessage",
+    "body": {
+      "client_message_id": "m2",
+      "question": "这条请求的业务结果码是什么？",
+      "conversation_id": "conversation-1"
+    }
+  },
+  {
+    "contract": "MessageReceipt",
+    "body": {
+      "conversation_id": "conversation-1",
+      "session_id": "session-1",
+      "job_id": "job-2",
+      "recording_id": "recording-a"
+    }
+  },
+  {
+    "contract": "GetRecordingEvidence",
+    "body": {
+      "evidence_id": {
+        "recording_id": "recording-a",
+        "kind": "request",
+        "source_id": "net:1"
+      }
+    }
+  },
+  {
+    "contract": "EvidenceResult",
+    "body": {
+      "evidence_id": {
+        "recording_id": "recording-a",
+        "kind": "request",
+        "source_id": "net:1"
+      },
+      "row": {
+        "associations": [
+          {
+            "basis": "time_proximity",
+            "eventId": "ui:1"
+          }
+        ],
+        "business_outcome": "failure",
+        "duration_ms": 3,
+        "http_status": 200,
+        "kind": "request",
+        "method": "POST",
+        "network_outcome": "finished",
+        "offset_ms": 20,
+        "path_template": "/demo/save",
+        "requestKey": "net:1",
+        "request_capture": "excluded_by_policy",
+        "request_fields": "excluded_by_policy",
+        "response_capture": "captured",
+        "response_code": "DEMO_REJECTED",
+        "response_fields": "included",
+        "response_details": {
+          "value": {
+            "code": "DEMO_REJECTED",
+            "物料": {
+              "批次": "示例批次",
+              "数量": 2
+            }
+          },
+          "omissions": []
+        }
+      },
+      "truncated": false
+    }
+  },
+  {
+    "contract": "AnswerEvent",
+    "body": {
+      "id": 1,
+      "event": "status",
+      "job_id": "job-2",
+      "attempt_id": "attempt-1",
+      "status": "analyzing"
+    }
+  },
+  {
+    "contract": "AnswerEvent",
+    "body": {
+      "id": 2,
+      "event": "answer_delta",
+      "job_id": "job-2",
+      "attempt_id": "attempt-1",
+      "text": "合成"
+    }
+  },
+  {
+    "contract": "Snapshot",
+    "body": {
+      "job_id": "job-2",
+      "state": "analyzing",
+      "attempt_id": "attempt-1",
+      "through_cursor": 2,
+      "draft": "合成"
+    }
+  },
+  {
+    "contract": "AnswerEvent",
+    "body": {
+      "id": 3,
+      "event": "reset",
+      "job_id": "job-2",
+      "attempt_id": "attempt-2"
+    }
+  },
+  {
+    "contract": "AnswerEvent",
+    "body": {
+      "id": 4,
+      "event": "answer_delta",
+      "job_id": "job-2",
+      "attempt_id": "attempt-2",
+      "text": "演示"
+    }
+  },
+  {
+    "contract": "AnswerEvent",
+    "body": {
+      "id": 5,
+      "event": "completed",
+      "job_id": "job-2",
+      "attempt_id": "attempt-2",
+      "final_answer": "演示结果"
+    }
+  },
+  {
+    "contract": "CreateMessage",
+    "body": {
+      "client_message_id": "m3",
+      "question": "切换到第二段演示录制",
+      "conversation_id": "conversation-1",
+      "recording_id": "recording-b"
+    }
+  },
+  {
+    "contract": "MessageReceipt",
+    "body": {
+      "conversation_id": "conversation-1",
+      "session_id": "session-1",
+      "job_id": "job-3",
+      "recording_id": "recording-b"
+    }
+  },
+  {
+    "contract": "GetRecordingEvidence",
+    "body": {
+      "evidence_id": {
+        "recording_id": "recording-b",
+        "kind": "request",
+        "source_id": "net:2"
+      }
+    }
+  },
+  {
+    "contract": "EvidenceResult",
+    "body": {
+      "evidence_id": {
+        "recording_id": "recording-b",
+        "kind": "request",
+        "source_id": "net:2"
+      },
+      "row": {
+        "associations": [],
+        "business_outcome": "unknown",
+        "duration_ms": null,
+        "http_status": null,
+        "kind": "request",
+        "method": "POST",
+        "network_outcome": "incomplete",
+        "offset_ms": 22,
+        "path_template": null,
+        "requestKey": "net:2",
+        "request_capture": "captured",
+        "request_details": {
+          "omissions": [
+            {
+              "path": "/sessionToken",
+              "reason": "protected"
+            }
+          ],
+          "value": {
+            "新增业务字段": [
+              {
+                "合格": true,
+                "数量": 3.5
+              }
+            ]
+          }
+        },
+        "request_fields": "partial",
+        "response_capture": "incomplete_session_stopped",
+        "response_fields": "not_captured"
+      },
+      "truncated": false
+    }
+  },
+  {
+    "contract": "CreateMessage",
+    "body": {
+      "client_message_id": "m4",
+      "question": "仅文字提问",
+      "conversation_id": "conversation-1",
+      "recording_id": null
+    }
+  },
+  {
+    "contract": "MessageReceipt",
+    "body": {
+      "conversation_id": "conversation-1",
+      "session_id": "session-1",
+      "job_id": "job-4",
+      "recording_id": null
+    }
+  },
+  {
+    "contract": "AnswerEvent",
+    "body": {
+      "id": 1,
+      "event": "failed",
+      "job_id": "job-4",
+      "attempt_id": null,
+      "reason": "timeout"
+    }
+  },
+  {
+    "contract": "Error",
+    "body": {
+      "code": "credential_expired"
+    }
+  },
+  {
+    "contract": "Error",
+    "body": {
+      "code": "login_required"
+    }
+  },
+  {
+    "contract": "Error",
+    "body": {
+      "code": "consent_required"
+    }
+  },
+  {
+    "contract": "Error",
+    "body": {
+      "code": "access_denied"
+    }
+  },
+  {
+    "contract": "Error",
+    "body": {
+      "code": "parts_missing",
+      "missing_parts": [
+        0
+      ]
+    }
+  },
+  {
+    "contract": "Error",
+    "body": {
+      "code": "scope_changed"
+    }
+  },
+  {
+    "contract": "Error",
+    "body": {
+      "code": "upload_expired"
+    }
+  }
+]

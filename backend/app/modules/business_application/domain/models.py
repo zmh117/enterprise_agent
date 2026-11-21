@@ -26,6 +26,7 @@ class TriggerType(StrEnum):
     DINGTALK_PRIVATE = "dingtalk_private"
     DINGTALK_GROUP = "dingtalk_group"
     WEBHOOK = "webhook"
+    BROWSER_EXTENSION = "browser_extension"
 
 
 class DeliveryType(StrEnum):

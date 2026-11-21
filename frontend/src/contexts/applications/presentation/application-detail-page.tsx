@@ -415,6 +415,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
 
       <PolicyEditor form={form} setForm={setForm} catalog={catalog.data} />
       <BindingsEditor
+        applicationId={application.id}
         form={form}
         setForm={setForm}
         catalog={catalog.data}
@@ -913,11 +914,13 @@ function McpToolSelector({
 }
 
 function BindingsEditor({
+  applicationId,
   form,
   setForm,
   catalog,
   onSelectAgent,
 }: {
+  applicationId: string
   form: SaveDraftInput
   setForm: (value: SaveDraftInput) => void
   catalog: Catalog
@@ -999,7 +1002,9 @@ function BindingsEditor({
                             ? "bot:"
                             : type === "dingtalk_group"
                               ? "conversation:"
-                              : "",
+                              : type === "browser_extension"
+                                ? `application:${applicationId}`
+                                : "",
                         actor_policy:
                           type === "webhook" ? "BOUND_USER" : "CURRENT_SENDER",
                         connector_id: "",
@@ -1011,7 +1016,7 @@ function BindingsEditor({
                               ? "private"
                               : type === "dingtalk_group"
                                 ? "group"
-                                : "webhook",
+                                : type === "webhook" ? "webhook" : "",
                           require_mention: type === "dingtalk_group",
                           webhook_definition_id: "",
                         },
@@ -1021,6 +1026,7 @@ function BindingsEditor({
                     <option value="dingtalk_private">钉钉私聊</option>
                     <option value="dingtalk_group">钉钉群聊</option>
                     <option value="webhook">Webhook</option>
+                    <option value="browser_extension">浏览器插件</option>
                   </select>
                 </Field>
                 <Field label="入口渠道" htmlFor={`trigger-connector-${index}`}>
@@ -1035,46 +1041,48 @@ function BindingsEditor({
                     }
                   />
                 </Field>
-                {trigger.trigger_type !== "webhook" && (
-                  <Field
-                    label="路由键（Routing Key）"
-                    htmlFor={`trigger-route-${index}`}
-                  >
-                    <Input
-                      id={`trigger-route-${index}`}
-                      required
-                      maxLength={240}
-                      value={trigger.routing_key}
-                      onChange={(event) =>
-                        changeTrigger(form, setForm, index, {
-                          routing_key: event.target.value,
-                        })
-                      }
-                    />
-                    <p className="text-xs leading-5 text-muted-foreground">
-                      {trigger.trigger_type === "dingtalk_private"
-                        ? "私聊使用 bot:<robot identity>；同一机器人下所有用户共享入口匹配，但权限仍按当前发送人。"
-                        : trigger.trigger_type === "dingtalk_group"
-                          ? "群聊使用 conversation:<open conversation id>；不要填写用户 ID 或消息内容。"
-                          : "Webhook 路由由对应触发器定义控制。"}
-                      {isLegacyRoutingKey(
-                        trigger.trigger_type,
-                        trigger.routing_key
-                      )
-                        ? " 当前是旧路由键，必须改为带命名空间的新值并重新发布。"
-                        : ""}
-                    </p>
-                  </Field>
-                )}
-                {trigger.trigger_type !== "webhook" && (
-                  <Field label="主体策略" htmlFor={`trigger-actor-${index}`}>
-                    <Input
-                      id={`trigger-actor-${index}`}
-                      readOnly
-                      value={trigger.actor_policy}
-                    />
-                  </Field>
-                )}
+                {trigger.trigger_type !== "webhook" &&
+                  trigger.trigger_type !== "browser_extension" && (
+                    <Field
+                      label="路由键（Routing Key）"
+                      htmlFor={`trigger-route-${index}`}
+                    >
+                      <Input
+                        id={`trigger-route-${index}`}
+                        required
+                        maxLength={240}
+                        value={trigger.routing_key}
+                        onChange={(event) =>
+                          changeTrigger(form, setForm, index, {
+                            routing_key: event.target.value,
+                          })
+                        }
+                      />
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        {trigger.trigger_type === "dingtalk_private"
+                          ? "私聊使用 bot:<robot identity>；同一机器人下所有用户共享入口匹配，但权限仍按当前发送人。"
+                          : trigger.trigger_type === "dingtalk_group"
+                            ? "群聊使用 conversation:<open conversation id>；不要填写用户 ID 或消息内容。"
+                            : "Webhook 路由由对应触发器定义控制。"}
+                        {isLegacyRoutingKey(
+                          trigger.trigger_type,
+                          trigger.routing_key
+                        )
+                          ? " 当前是旧路由键，必须改为带命名空间的新值并重新发布。"
+                          : ""}
+                      </p>
+                    </Field>
+                  )}
+                {trigger.trigger_type !== "webhook" &&
+                  trigger.trigger_type !== "browser_extension" && (
+                    <Field label="主体策略" htmlFor={`trigger-actor-${index}`}>
+                      <Input
+                        id={`trigger-actor-${index}`}
+                        readOnly
+                        value={trigger.actor_policy}
+                      />
+                    </Field>
+                  )}
                 {trigger.trigger_type === "webhook" && (
                   <p className="text-xs text-muted-foreground sm:col-span-2">
                     仅显示所选 Agent 发布版本已绑定的启用 Webhook。执行权限来自
@@ -1186,7 +1194,9 @@ function TriggerDeliveryEditor({
       ?.code ?? "所选 Agent"
   const destination =
     trigger.trigger_type !== "webhook"
-      ? "回复原会话"
+      ? trigger.trigger_type === "browser_extension"
+        ? "回复原插件会话"
+        : "回复原会话"
       : !binding
         ? "仅保存结果"
         : binding.delivery_type === "dingtalk_private"
@@ -1226,12 +1236,16 @@ function TriggerDeliveryEditor({
           ? "Webhook"
           : trigger.trigger_type === "dingtalk_private"
             ? "钉钉私聊"
-            : "钉钉群聊"}{" "}
+            : trigger.trigger_type === "browser_extension"
+              ? "浏览器插件"
+              : "钉钉群聊"}{" "}
         → {agentName} → {destination}
       </p>
       {trigger.trigger_type !== "webhook" ? (
         <p className="text-xs text-muted-foreground">
-          处理完成后，通过入口机器人回复发起消息的私聊或群聊。
+          {trigger.trigger_type === "browser_extension"
+            ? "在原插件会话中实时显示回答。"
+            : "处理完成后，通过入口机器人回复发起消息的私聊或群聊。"}
         </p>
       ) : (
         <>
@@ -1479,10 +1493,12 @@ function EligibleChannelSelect({
   const query = useEligibleChannels(trigger.trigger_type)
   const agent = agents.find((item) => item.id === agentPublicationId)
   const allowedWebhookConnectors = agent?.ingress_connector_ids ?? []
-  const items = (query.data ?? []).filter(
-    (item) =>
-      trigger.trigger_type !== "webhook" ||
-      allowedWebhookConnectors.includes(item.id)
+  const items = (query.data ?? []).filter((item) =>
+    trigger.trigger_type === "browser_extension"
+      ? allowedWebhookConnectors.includes(item.id) &&
+        Boolean(agent?.delivery_connector_ids.includes(item.id))
+      : trigger.trigger_type !== "webhook" ||
+        allowedWebhookConnectors.includes(item.id)
   )
   const current = items.find(
     (item) =>
@@ -1568,8 +1584,9 @@ function EligibleChannelSelect({
             key={`${item.kind}-${item.webhook_trigger_id ?? item.id}`}
             value={item.webhook_trigger_id ?? item.id}
           >
-            {item.name} ·{" "}
-            {item.kind === "WEBHOOK" ? "Webhook" : "钉钉应用机器人"}
+            {item.name}
+            {item.kind === "WEBHOOK" && " · Webhook"}
+            {item.kind === "DINGTALK_APP_ROBOT" && " · 钉钉应用机器人"}
           </option>
         ))}
       </select>

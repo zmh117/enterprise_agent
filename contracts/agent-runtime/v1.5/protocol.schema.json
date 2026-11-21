@@ -1204,7 +1204,7 @@
         "last_sequence": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 2048
+          "maximum": 2304
         },
         "status": {
           "enum": [
@@ -1609,7 +1609,7 @@
             "sequence": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2048
+              "maximum": 2304
             },
             "event_type": {
               "const": "execution_started"
@@ -1648,7 +1648,7 @@
             "sequence": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2048
+              "maximum": 2304
             },
             "event_type": {
               "const": "tool_contract_observed"
@@ -1687,7 +1687,7 @@
             "sequence": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2048
+              "maximum": 2304
             },
             "event_type": {
               "const": "runtime_initialized"
@@ -1726,7 +1726,7 @@
             "sequence": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2048
+              "maximum": 2304
             },
             "event_type": {
               "const": "model_call"
@@ -1765,7 +1765,7 @@
             "sequence": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2048
+              "maximum": 2304
             },
             "event_type": {
               "const": "api_retry"
@@ -1804,7 +1804,7 @@
             "sequence": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2048
+              "maximum": 2304
             },
             "event_type": {
               "const": "tool_event"
@@ -1843,7 +1843,7 @@
             "sequence": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2048
+              "maximum": 2304
             },
             "event_type": {
               "const": "assistant_text"
@@ -1892,7 +1892,7 @@
             "sequence": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2048
+              "maximum": 2304
             },
             "event_type": {
               "const": "audit_chunk"
@@ -1931,7 +1931,7 @@
             "sequence": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 2048
+              "maximum": 2304
             },
             "event_type": {
               "const": "terminal"

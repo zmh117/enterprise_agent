@@ -170,6 +170,7 @@ class ServicePrincipalSettings:
     file_processing_worker_bootstrap_token_file: str = ""
     delivery_worker_bootstrap_token_file: str = ""
     knowledge_bootstrap_token_file: str = ""
+    recording_tool_bootstrap_token_file: str = ""
     code_runtime_bootstrap_token_file: str = ""
     identity_base_url: str = "http://api-server:8000"
     identity_allowed_hosts: tuple[str, ...] = ("api-server",)
@@ -464,6 +465,7 @@ def load_settings() -> Settings:
                 "DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE", ""
             ),
             knowledge_bootstrap_token_file=os.getenv("KNOWLEDGE_BOOTSTRAP_TOKEN_FILE", ""),
+            recording_tool_bootstrap_token_file=os.getenv("RECORDING_TOOL_BOOTSTRAP_TOKEN_FILE", ""),
             code_runtime_bootstrap_token_file=os.getenv("CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE", ""),
             identity_base_url=os.getenv(
                 "SERVICE_IDENTITY_INTERNAL_BASE_URL", "http://api-server:8000"

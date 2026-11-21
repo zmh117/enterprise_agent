@@ -8,7 +8,7 @@ from typing import Literal, NotRequired, TypedDict
 from jsonschema import Draft202012Validator
 
 PROTOCOL_VERSION = "1.5"
-CONTRACT_SCHEMA_SHA256 = "daecc30004cab6e28e6c766bbbdb75873cccba57dc91d11ac6dafaaed0430bda"
+CONTRACT_SCHEMA_SHA256 = "e21210b88b32a54ca5a23c0eb118757f8eab05a3bb32edbdb767eade4027c2c5"
 CONTRACT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[5]
     / "contracts"

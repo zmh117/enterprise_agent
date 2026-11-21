@@ -313,6 +313,11 @@ def create_app(  # noqa: PLR0915
         build_runtime_control_router,
     )
 
+    from app.modules.channel.browser.api import router as browser_router
+    from app.modules.channel.browser.auth import router as browser_auth_router
+
+    app.include_router(browser_auth_router)
+    app.include_router(browser_router)
     app.include_router(build_dingding_router())
     app.include_router(build_public_webhook_router())
     app.include_router(build_runtime_control_router())

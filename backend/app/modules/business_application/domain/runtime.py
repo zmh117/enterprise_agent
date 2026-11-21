@@ -202,7 +202,7 @@ class RuntimeReadinessEvaluator:
         supported_routes = [
             route
             for route in affected_routes
-            if route["trigger_type"] in {"dingtalk_private", "dingtalk_group"}
+            if route["trigger_type"] in {"dingtalk_private", "dingtalk_group", "browser_extension"}
         ]
         if not supported_routes:
             return self._not_wired(
@@ -405,6 +405,7 @@ class RuntimeReadinessEvaluator:
                 "dingtalk_private": "bot:",
                 "dingtalk_group": "conversation:",
                 "webhook": "webhook:",
+                "browser_extension": "application:",
             }.get(trigger_type, "")
             if (
                 not expected_prefix
@@ -480,7 +481,7 @@ class RuntimeReadinessEvaluator:
             supported_triggers = [
                 value
                 for value in triggers
-                if str(value.get("trigger_type") or "") in {"dingtalk_private", "dingtalk_group"}
+                if str(value.get("trigger_type") or "") in {"dingtalk_private", "dingtalk_group", "browser_extension"}
             ]
             webhook_triggers = [
                 value for value in triggers if str(value.get("trigger_type") or "") == "webhook"

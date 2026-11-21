@@ -33,6 +33,7 @@ from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.config import load_settings
 from app.shared.exceptions import NonRetryableExecutionError
 from services.file_service.app import create_app
+from services.file_service.recordings import RecordingFiles
 from services.file_service.audit import FileMcpAudit
 from services.file_service.auth import (
     CachedPrincipalJwks,
@@ -212,6 +213,9 @@ def create_default_app() -> Any:
         principal=principal,
         service_principal=service_verifier,
         application=application,
+        recording_files=RecordingFiles(runtime, storage, service_verifier)
+        if isinstance(storage, MinioFileObjectStorage)
+        else None,
         streaming=streaming,
         document_processing=document_processing,
         document_processing_expected=document_processing_expected,

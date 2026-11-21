@@ -94,8 +94,7 @@ export function ManagedChannelsPanel() {
           <div>
             <CardTitle>渠道目录</CardTitle>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              当前只管理钉钉应用机器人和受管 Webhook。启用且入口完整的渠道，
-              才能在应用草稿的触发器绑定中选择。
+              在这里管理浏览器插件、钉钉应用机器人和 Webhook。启用的渠道可用于业务应用。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -137,7 +136,9 @@ export function ManagedChannelsPanel() {
         </Card>
       ) : query.data?.length ? (
         <div className="grid gap-4 xl:grid-cols-2">
-          {query.data.map((channel) => (
+          {query.data.map((channel) => channel.kind === "BROWSER_EXTENSION" ? (
+            <BrowserChannelCard key={channel.id} channel={channel} />
+          ) : (
             <ManagedChannelCard
               key={`${channel.kind}-${channel.webhook_trigger_id ?? channel.id}`}
               channel={channel}
@@ -542,6 +543,28 @@ function LoadingLine({ label }: { label: string }) {
       <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
       {label}
     </p>
+  )
+}
+
+function BrowserChannelCard({ channel }: { channel: ManagedChannel }) {
+  const toggle = useSetManagedChannelEnabled()
+  return (
+    <Card className="shadow-none">
+      <CardHeader>
+        <CardTitle>{channel.name}</CardTitle>
+        <p className="text-sm text-muted-foreground">用户用系统账号登录插件，在获准使用的应用中提问。</p>
+      </CardHeader>
+      <CardContent className="flex items-center gap-3">
+        <Badge variant={channel.enabled ? "default" : "secondary"}>
+          {channel.enabled ? "已启用" : "已停用"}
+        </Badge>
+        <Button type="button" size="sm" variant="outline" disabled={toggle.isPending}
+          onClick={() => toggle.mutate({ channelId: channel.id, revision: channel.revision, enabled: !channel.enabled })}>
+          {channel.enabled ? "停用" : "启用"}
+        </Button>
+        <MutationError error={toggle.error} />
+      </CardContent>
+    </Card>
   )
 }
 

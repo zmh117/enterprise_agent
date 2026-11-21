@@ -4,6 +4,8 @@
   "max_event_line_bytes": 65536,
   "max_stream_bytes": 100663296,
   "max_events": 2048,
+  "max_additional_browser_preview_events": 256,
+  "max_additional_browser_preview_bytes": 8388608,
   "max_prompt_chars": 131072,
   "max_terminal_answer_chars": 524288,
   "max_event_payload_chars": 32768,

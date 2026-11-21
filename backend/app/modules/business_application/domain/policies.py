@@ -413,7 +413,12 @@ def validate_delivery(value: dict[str, Any], index: int) -> dict[str, Any]:
         raise validation_error(f"deliveries.{index}.config.trigger", "请选择有效的入口触发器")
     config["trigger"] = {
         **source,
-        "routing_key": normalize_routing_key(str(source.get("routing_key") or "")),
+        "routing_key": normalize_routing_key(
+            str(
+                source.get("routing_key")
+                or ("application:current" if source["trigger_type"] == "browser_extension" else "")
+            )
+        ),
     }
     if delivery_type == "webhook_callback":
         target = config.get("target_reference", "")

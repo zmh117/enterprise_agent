@@ -20,6 +20,7 @@ WORKDIR /app
 COPY backend/docker/normalize_secrets_entrypoint.sh /usr/local/bin/normalize-secrets-entrypoint
 RUN chmod 0555 /usr/local/bin/normalize-secrets-entrypoint
 COPY pyproject.toml /app/
+COPY contracts/browser-extension/v1/protocol.schema.json /app/contracts/browser-extension/v1/protocol.schema.json
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'setuptools>=69', 'wheel', *deps])"
 ENV PYTHONPATH=/app/backend
@@ -142,7 +143,9 @@ USER 10006:10006
 CMD ["python", "-m", "app.workers.file_processing_worker"]
 
 FROM claude-runtime AS python-agent-runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ripgrep \
+RUN sed -i 's|http://deb.debian.org/|https://deb.debian.org/|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=3 update \
+    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends ripgrep \
     && rm -rf /var/lib/apt/lists/*
 COPY backend/app/__init__.py /app/backend/app/
 COPY backend/app/python_runtime /app/backend/app/python_runtime

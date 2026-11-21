@@ -1652,7 +1652,10 @@ def test_agent_catalog_lists_current_publications_across_projects() -> None:
         actor_id="user_local_admin",
         agent_code="other-project-agent",
         expected_revision=created["draft"]["revision"],
-        config=created["draft"]["config"],
+        config={
+            **created["draft"]["config"],
+            "channels": {"ingress": ["browser-extension"], "delivery": ["browser-extension"]},
+        },
     )
     latest = agents.publish(
         actor_id="user_local_admin",
@@ -1700,9 +1703,14 @@ def test_agent_catalog_lists_current_publications_across_projects() -> None:
             expected_revision=application["revision"],
             payload={**draft_payload(), "agent_publication_id": latest["id"]},
         )
-        pinned_catalog = container.business_application_service.catalog(
-            actor_id="user_local_admin", code=application["code"]
+        pinned_response = client.get(
+            f"/api/admin/business-applications/{application['code']}/catalog"
         )
+        assert pinned_response.status_code == 200
+        pinned_catalog = pinned_response.json()
+        pinned_agent = next(item for item in pinned_catalog["agents"] if item["id"] == latest["id"])
+        assert pinned_agent["ingress_connector_ids"] == ["browser-extension"]
+        assert pinned_agent["delivery_connector_ids"] == ["browser-extension"]
         assert {item["id"] for item in pinned_catalog["agents"]} == {
             "agent_publication_default_v1",
             first["id"],
@@ -1946,7 +1954,7 @@ def test_admin_api_prevents_enumeration_and_denies_unprivileged_writes() -> None
 def test_seed_cli_exists_and_production_migration_does_not_activate() -> None:
     assert Path("backend/app/cli/seed_default_business_application.py").exists()
     db = Database("sqlite:///:memory:")
-    db.run_migrations(default_migrations_dir())
+    Migrator(db, default_migrations_dir(), migrator_build="browser-channel-test").run()
     assert (
         db.execute_one("select count(*) as count from business_application_deployment")["count"]
         == 0
