@@ -12,6 +12,7 @@ export const codeOperationSchema = z.object({
   result: z.object({
     stage: z.string().optional(),
     directory_retained: z.boolean().optional(),
+    directory_already_absent: z.boolean().optional(),
     verification_only: z.boolean().optional(),
     revision: z.number().optional(),
     operative_revision: z.number().optional(),
@@ -67,6 +68,7 @@ const snapshotSchema = z.object({
       writer_operation_id: z.string().nullable(),
       selected_paths: z.array(z.string()),
       readers: z.number(),
+      removal_blocker: z.string().nullable().optional(),
       connection: z
         .object({
           id: z.string(),
@@ -78,6 +80,8 @@ const snapshotSchema = z.object({
     })
   ),
 })
+export type CheckoutInventory = z.infer<typeof snapshotSchema>
+
 export function useCodeCheckouts(resourceId: string, enabled = true) {
   return useQuery({
     queryKey: ["code-checkouts", resourceId],

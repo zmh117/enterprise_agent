@@ -129,6 +129,13 @@ def build_code_operations_router() -> APIRouter:
         )
 
     router.add_api_route(
+        "/resources/{resource_id}/checkouts/{checkout_id}/remove",
+        _remove_checkout,
+        methods=["POST"],
+        status_code=202,
+    )
+
+    router.add_api_route(
         "/resources/{resource_id}/operations/{operation_id}/revalidate",
         _revalidate_checkout,
         methods=["POST"],
@@ -179,5 +186,17 @@ async def _revalidate_checkout(resource_id: str, operation_id: str, request: Req
         actor_id=user,
         resource_id=resource_id,
         operation_id=operation_id,
+        **value,
+    )
+
+
+async def _remove_checkout(resource_id: str, checkout_id: str, request: Request) -> Any:
+    user = actor(request)
+    value = await payload(request, {"generation", "request_key"}, frozenset({"missing_only"}))
+    return await invoke(
+        services(request).code_checkouts().submit_removal,
+        actor_id=user,
+        resource_id=resource_id,
+        checkout_id=checkout_id,
         **value,
     )

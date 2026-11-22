@@ -28,6 +28,22 @@ export function useKnowledgeCommand() {
   return useMutation({
     mutationFn: changeKnowledgeResource,
     retry: false,
-    onSuccess: () => client.invalidateQueries({ queryKey: key }),
+    onSuccess: async (resource, command) => {
+      const refresh = client.invalidateQueries({ queryKey: key })
+      if (
+        command.kind === "status" &&
+        command.input.status === "archived" &&
+        resource &&
+        "kind" in resource &&
+        resource.kind === "code"
+      ) {
+        await Promise.all([
+          refresh,
+          client.invalidateQueries({ queryKey: ["code-checkouts"] }),
+        ])
+      } else {
+        await refresh
+      }
+    },
   })
 }

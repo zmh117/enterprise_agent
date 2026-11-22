@@ -10,12 +10,16 @@ from app.modules.knowledge.application.source_service import KnowledgeAdministra
 from app.modules.knowledge.domain.code_answers import svn_revision
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
 from app.modules.knowledge.domain.identity import stable_id
-from app.modules.knowledge.domain.normalization import canonical_json, digest
+from app.modules.knowledge.domain.normalization import ExportValidationError, canonical_json, digest
 from app.modules.knowledge.infrastructure.code_checkout_client import (
     FOLDER,
     registered_url,
 )
 from app.modules.knowledge.infrastructure.code_checkout_store import checkout_scope, json_value
+from app.modules.knowledge.infrastructure.code_checkout_removal import (
+    checkout_inventory,
+    removable_checkout,
+)
 from app.modules.knowledge.infrastructure.code_operation_store import CodeOperationStore
 from app.modules.knowledge.infrastructure.code_svn_access import (
     CodeSvnAccess,
@@ -51,10 +55,15 @@ class CodeCheckoutJobs(CodeOperationStore):
     def get(self, job_id: str) -> dict[str, Any]:
         row = self.row("code_svn_operation", job_id)
         # This route is only for resource administration, not another user's QA history.
-        if row["analysis_id"] is not None or row["operation_kind"] not in {"browse", "checkout"}:
+        if row["analysis_id"] is not None or row["operation_kind"] not in {
+            "browse",
+            "checkout",
+            "retire",
+        }:
             raise CodeKnowledgeError("CODE_OBJECT_NOT_FOUND")
         row["request"] = json_value(row.pop("request_json"))
         row["result"] = json_value(row.pop("result_json"))
+        row["result"].pop("detached_identity", None)
         return row
 
     def snapshot(self, resource_id: str) -> dict[str, Any]:
@@ -67,11 +76,13 @@ class CodeCheckoutJobs(CodeOperationStore):
         )
         for row in rows:
             row["result"] = json_value(row.pop("result_json"))
+            row["result"].pop("detached_identity", None)
             folder = row.pop("relative_dir")
             target = row.pop("target_revision")
             if folder:
                 row["result"].setdefault("relative_dir", folder)
-                row["result"].setdefault("revision", target)
+                if target is not None:
+                    row["result"].setdefault("revision", target)
             row["can_revalidate"] = False
             if row["operation_kind"] == "checkout" and row["state"] == "failed":
                 from app.modules.knowledge.infrastructure.code_checkout_revalidation import (
@@ -84,16 +95,9 @@ class CodeCheckoutJobs(CodeOperationStore):
                     row["can_revalidate"] = True
                 except CodeKnowledgeError:
                     pass
-        checkouts = self.db.execute(
-            f"SELECT id,source_id,relative_dir,state,verified_revision,generation,writer_operation_id,selected_paths_json FROM {self.t('code_checkout')} ORDER BY relative_dir LIMIT 1000"
-        )
+        checkouts = checkout_inventory(self)
         for checkout in checkouts:
             checkout["selected_paths"] = json_value(checkout.pop("selected_paths_json"))
-            readers = self.db.execute_one(
-                f"SELECT count(*) AS n FROM {self.t('code_analysis')} WHERE checkout_id=? AND read_acquired_at IS NOT NULL AND read_released_at IS NULL",
-                (checkout["id"],),
-            )
-            checkout["readers"] = readers["n"] if readers else 0
             try:
                 checkout["connection"] = CodeSvnAccess(
                     self.db, self.registry_file
@@ -196,6 +200,35 @@ class CodeCheckoutJobs(CodeOperationStore):
             source_id=browse["source_id"],
         )
 
+    def submit_removal(
+        self,
+        *,
+        actor_id: str,
+        resource_id: str,
+        checkout_id: str,
+        generation: int,
+        request_key: str,
+        missing_only: bool = False,
+    ) -> dict[str, Any]:
+        if type(generation) is not int or generation < 0 or type(missing_only) is not bool:
+            raise CodeKnowledgeError("CODE_REQUEST_INVALID")
+        try:
+            return self._submit(
+                actor_id,
+                resource_id,
+                request_key,
+                "retire",
+                {
+                    "checkout_id": checkout_id,
+                    "generation": generation,
+                    **({"missing_only": True} if missing_only else {}),
+                },
+            )
+        except ExportValidationError as exc:
+            if exc.code == "knowledge_source_import_busy":
+                raise CodeKnowledgeError("CODE_OPERATION_BUSY") from None
+            raise
+
     def submit_revalidation(
         self, *, actor_id: str, resource_id: str, operation_id: str, request_key: str
     ) -> dict[str, Any]:
@@ -271,13 +304,26 @@ class CodeCheckoutJobs(CodeOperationStore):
             raise CodeKnowledgeError("CODE_REQUEST_INVALID")
         with source_lock(self.db, "code-management-submit"), self.db.unit_of_work():
             self.admin.require_admin(actor)
-            draft = self.draft(resource, lock=True)
+            if kind == "retire":
+                # Directory maintenance is independent of the resource's retrieval lifecycle.
+                draft = self.db.execute_one(
+                    f"SELECT coalesce(r.draft_revision_id,r.published_revision_id) AS revision_id "
+                    f"FROM {self.t('retrieval_resource')} r JOIN {self.t('knowledge_base')} b "
+                    "ON b.id=r.knowledge_base_id WHERE r.id=? AND b.kind='code'",
+                    (resource,),
+                )
+                if not draft or not draft["revision_id"]:
+                    raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
+            else:
+                draft = self.draft(resource, lock=True)
             if (
                 expected_config_revision_id is not None
                 and draft["revision_id"] != expected_config_revision_id
             ):
                 raise CodeKnowledgeError("CODE_CONFIGURATION_CHANGED")
-            request_hash = digest([actor, resource, draft["revision_id"], kind, request])
+            request_hash = digest(
+                [actor, resource, None if kind == "retire" else draft["revision_id"], kind, request]
+            )
             request_key = stable_id("code-management-request", actor, key)
             prior = self.db.execute_one(
                 f"SELECT id,request_hash FROM {self.t('code_svn_operation')} WHERE request_key=?",
@@ -293,6 +339,7 @@ class CodeCheckoutJobs(CodeOperationStore):
             if count and count["n"] >= 20:
                 raise CodeKnowledgeError("CODE_OPERATION_BUSY")
             checkout = None
+            metadata: dict[str, Any] = {}
             if kind == "checkout":
                 assert source_id is not None
                 if request.get("verification_only"):
@@ -309,6 +356,19 @@ class CodeCheckoutJobs(CodeOperationStore):
                         relative_dir=request["folder"],
                         selected_paths=request["paths"],
                     )
+                metadata = {
+                    "relative_dir": checkout["relative_dir"],
+                    "revision": request["revision"],
+                    "verification_only": bool(request.get("verification_only")),
+                }
+            elif kind == "retire":
+                checkout = removable_checkout(
+                    self, request["checkout_id"], missing_only=request.get("missing_only", False)
+                )
+                if checkout["generation"] != request["generation"]:
+                    raise CodeKnowledgeError("CODE_CHECKOUT_CHANGED")
+                source_id = checkout["source_id"]
+                metadata = {"relative_dir": checkout["relative_dir"]}
             generation = (checkout["generation"] + 1) if checkout else None
             identifier = stable_id("code-management-operation", request_key)
             current = database_now(self.db)
@@ -327,14 +387,8 @@ class CodeCheckoutJobs(CodeOperationStore):
                     request_hash=request_hash,
                     state="queued",
                     request_json=request,
-                    result_json={
-                        "relative_dir": request["folder"],
-                        "revision": request["revision"],
-                        "verification_only": bool(request.get("verification_only")),
-                    }
-                    if checkout
-                    else {},
-                    target_revision=request["revision"],
+                    result_json=metadata,
+                    target_revision=request.get("revision"),
                     checkout_generation=generation,
                     deadline_at=timestamp(current + timedelta(seconds=1800 if checkout else 120)),
                     created_at=stamp,
@@ -343,19 +397,27 @@ class CodeCheckoutJobs(CodeOperationStore):
             )
             if checkout:
                 self.db.execute(
-                    f"UPDATE {self.t('code_checkout')} SET writer_operation_id=?,generation=?,state='preparing',invalid_reason=NULL WHERE id=?",
-                    (identifier, generation, checkout["id"]),
+                    f"UPDATE {self.t('code_checkout')} SET writer_operation_id=?,generation=?,state=?,invalid_reason=? WHERE id=?",
+                    (
+                        identifier,
+                        generation,
+                        checkout["state"] if request.get("missing_only") else "preparing",
+                        checkout["invalid_reason"] if request.get("missing_only") else None,
+                        checkout["id"],
+                    ),
                 )
             self.admin.record(
-                "code_checkout_queued",
+                "code_checkout_removal_queued" if kind == "retire" else "code_checkout_queued",
                 actor_id=actor,
                 identifier=identifier,
-                revision=request["revision"] or 0,
+                revision=request.get("revision") or 0,
             )
             return self.get(identifier)
 
     def require_management(self, operation: dict[str, Any]) -> None:
         self.admin.require_admin(operation["actor_id"])
+        if operation["operation_kind"] == "retire" and operation["analysis_id"] is None:
+            return
         row = self.db.execute_one(
             f"SELECT r.id FROM {self.t('retrieval_resource')} r JOIN {self.t('knowledge_base')} b ON b.id=r.knowledge_base_id WHERE r.draft_revision_id=? AND b.kind='code' AND r.status<>'archived'",
             (operation["config_revision_id"],),
@@ -459,11 +521,20 @@ class CodeCheckoutJobs(CodeOperationStore):
                     identifier,
                 ),
             )
-            if row["checkout_id"]:
-                self.db.execute(
-                    f"UPDATE {self.t('code_checkout')} SET state='invalid',writer_operation_id=NULL,invalid_reason=?,updated_at=? WHERE id=? AND writer_operation_id=?",
-                    (error, stamp, row["checkout_id"], identifier),
-                )
+            self._release_failed_writer(row, error, stamp)
+
+    def _release_failed_writer(self, row: dict[str, Any], error: str, stamp: str) -> None:
+        if not row["checkout_id"]:
+            return
+        # Registration-only checks never modify an existing working copy.
+        preserve = row["operation_kind"] == "retire" and json_value(row["request_json"]).get(
+            "missing_only"
+        )
+        reset = "" if preserve else "state='invalid',invalid_reason=?,"
+        self.db.execute(
+            f"UPDATE {self.t('code_checkout')} SET {reset}writer_operation_id=NULL,updated_at=? WHERE id=? AND writer_operation_id=?",
+            (*(() if preserve else (error,)), stamp, row["checkout_id"], row["id"]),
+        )
 
     def finish_management(
         self,
@@ -502,9 +573,5 @@ class CodeCheckoutJobs(CodeOperationStore):
                 f"UPDATE {self.t('code_svn_operation')} SET state='cancelled',quiesced_at=?,finished_at=?,updated_at=?,error_code='CODE_OPERATION_EXPIRED' WHERE id=?",
                 (stamp, stamp, stamp, identifier),
             )
-            if row["checkout_id"]:
-                self.db.execute(
-                    f"UPDATE {self.t('code_checkout')} SET state='invalid',writer_operation_id=NULL,invalid_reason='CODE_OPERATION_EXPIRED',updated_at=? WHERE id=? AND writer_operation_id=?",
-                    (stamp, row["checkout_id"], identifier),
-                )
+            self._release_failed_writer(row, "CODE_OPERATION_EXPIRED", stamp)
             return True

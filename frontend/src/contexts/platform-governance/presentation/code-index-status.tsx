@@ -33,7 +33,13 @@ const stateLabels: Record<string, string> = {
   cancelled: "已取消",
 }
 
-export function CodeIndexStatus({ resourceId }: { resourceId: string }) {
+export function CodeIndexStatus({
+  resourceId,
+  readOnly = false,
+}: {
+  resourceId: string
+  readOnly?: boolean
+}) {
   const base = `/api/platform/knowledge/code/resources/${encodeURIComponent(resourceId)}`
   const status = useQuery({
     queryKey: ["code-index-status", resourceId],
@@ -63,17 +69,21 @@ export function CodeIndexStatus({ resourceId }: { resourceId: string }) {
       <KnowledgeError error={status.error ?? change.error} />
       {status.data && (
         <>
-          <p>增量索引：{status.data.paused ? "已暂停" : "已开启"}</p>
-          <p className="text-sm text-muted-foreground">
-            暂停期间仍保存回答；恢复后继续处理待索引内容。已就绪内容可继续检索。
-          </p>
-          <Button
-            variant="outline"
-            disabled={change.isPending}
-            onClick={() => change.mutate({ paused: !status.data!.paused })}
-          >
-            {status.data.paused ? "恢复增量索引" : "暂停增量索引"}
-          </Button>
+          {!readOnly && (
+            <>
+              <p>增量索引：{status.data.paused ? "已暂停" : "已开启"}</p>
+              <p className="text-sm text-muted-foreground">
+                暂停期间仍保存回答；恢复后继续处理待索引内容。已就绪内容可继续检索。
+              </p>
+              <Button
+                variant="outline"
+                disabled={change.isPending}
+                onClick={() => change.mutate({ paused: !status.data!.paused })}
+              >
+                {status.data.paused ? "恢复增量索引" : "暂停增量索引"}
+              </Button>
+            </>
+          )}
           {status.data.indexes.map((index) => (
             <div key={index.id} className="grid gap-1 rounded border p-3">
               <p className="text-sm break-all">
@@ -100,7 +110,7 @@ export function CodeIndexStatus({ resourceId }: { resourceId: string }) {
                     {task.completed_chunks}/{task.expected_chunks}
                   </span>
                   {task.error_code && <span>原因：{task.error_code}</span>}
-                  {task.state === "failed" && (
+                  {!readOnly && task.state === "failed" && (
                     <Button
                       variant="outline"
                       size="sm"

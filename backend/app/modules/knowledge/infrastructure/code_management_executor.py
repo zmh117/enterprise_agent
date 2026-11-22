@@ -67,8 +67,19 @@ class CodeManagementExecutor:
 
         try:
             with heartbeat:
-                progress("connection")
                 proof.bind(row)
+                if row["operation_kind"] == "retire":
+                    from app.modules.knowledge.infrastructure.code_checkout_removal import (
+                        remove_checkout,
+                    )
+
+                    progress("remove_checkout")
+                    try:
+                        remove_checkout(self.store, self.checkout_root, row, heartbeat)
+                    except OSError:
+                        raise CodeKnowledgeError("CODE_CHECKOUT_REMOVE_FAILED") from None
+                    return
+                progress("connection")
                 heartbeat.check()
                 request = json_value(row["request_json"])
                 revision = self.store.db.execute_one(

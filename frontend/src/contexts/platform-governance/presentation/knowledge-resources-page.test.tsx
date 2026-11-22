@@ -6,12 +6,13 @@ import {
   waitFor,
   within,
 } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { KnowledgeResourcesPage } from "@/contexts/platform-governance/presentation/knowledge-resources-page"
 import { ToolResourcesPage } from "@/contexts/platform-governance/presentation/tool-resources-page"
 
 const hash = "a".repeat(64)
 const prefix = "/api/platform/knowledge"
+afterEach(() => vi.unstubAllGlobals())
 function resource() {
   return {
     id: "res",
@@ -112,6 +113,17 @@ function setup({
           ],
         })
       if (method === "GET") {
+        if (url === `${prefix}/code/resources/res/index-status`)
+          return reply({ paused: false, indexes: [] })
+        if (url === `${prefix}/code/resources/res/checkouts`)
+          return reply({
+            enabled: true,
+            jobs: [],
+            checkouts: [],
+            registrations: [],
+          })
+        if (url === "/api/platform/environments?include_disabled=false")
+          return reply({ environments: [] })
         if (url === `${prefix}/sources`)
           return reply({
             sources: [
@@ -296,6 +308,10 @@ function setup({
   }
 }
 async function openResource() {
+  const filter = await screen.findByLabelText("知识库状态")
+  if (!screen.queryByRole("button", { name: "查看 合成缺陷库" })) {
+    fireEvent.change(filter, { target: { value: "created" } })
+  }
   fireEvent.click(
     await screen.findByRole("button", { name: "查看 合成缺陷库" })
   )
@@ -325,6 +341,66 @@ describe("知识资源管理", () => {
       storage,
     }
   }
+  it("代码库显示实际检出目录，同时区分尚未发布的改绑", async () => {
+    const f = setup()
+    Object.assign(f.state.resources[0], {
+      kind: "code",
+      published: { ...draft(), checkout_relative_dir: "mes4" },
+      draft: { ...draft(), checkout_relative_dir: "mesx" },
+    })
+    f.render()
+    const row = (await screen.findByText("合成缺陷库")).closest("tr")!
+    expect(
+      screen.getByRole("columnheader", { name: "SVN 检出目录" })
+    ).toBeVisible()
+    expect(within(row).getByText("mes4")).toBeVisible()
+    expect(within(row).getByText("草稿目录：mesx")).toBeVisible()
+  })
+  it("默认只列启用知识库，状态与名称筛选同时生效", async () => {
+    const f = setup()
+    f.state.resources[0].published = draft()
+    f.state.resources.push({
+      ...resource(),
+      id: "stopped",
+      code: "stopped-code",
+      name: "停用示例",
+      status: "disabled",
+      published: draft(),
+    })
+    for (const status of ["enabled", "disabled"]) {
+      f.state.resources.push({
+        ...resource(),
+        id: status,
+        code: status,
+        name: `新库-${status}`,
+        status,
+      })
+    }
+    f.render()
+    const filter = await screen.findByLabelText("知识库状态")
+    expect(filter).toHaveValue("enabled")
+    expect(
+      screen.getByRole("button", { name: "查看 合成缺陷库" })
+    ).toBeVisible()
+    expect(screen.queryByRole("button", { name: "查看 停用示例" })).toBeNull()
+    fireEvent.change(filter, { target: { value: "disabled" } })
+    expect(screen.getByRole("button", { name: "查看 停用示例" })).toBeVisible()
+    expect(screen.queryByRole("button", { name: "查看 合成缺陷库" })).toBeNull()
+    expect(screen.queryByText("新库-disabled")).toBeNull()
+    fireEvent.change(filter, { target: { value: "created" } })
+    expect(screen.getByText("新库-enabled")).toBeVisible()
+    expect(screen.getByText("新库-disabled")).toBeVisible()
+    expect(screen.queryByText("合成缺陷库")).toBeNull()
+    fireEvent.change(screen.getByLabelText("筛选知识资源"), {
+      target: { value: "ones-bugs" },
+    })
+    expect(screen.queryByRole("button", { name: "查看 停用示例" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "查看 合成缺陷库" })).toBeNull()
+    fireEvent.change(filter, { target: { value: "all" } })
+    expect(
+      screen.getByRole("button", { name: "查看 合成缺陷库" })
+    ).toBeVisible()
+  })
   it("存储列只展示连接方式，不把仅存储状态当成连接或发布状态", async () => {
     const f = setup()
     f.state.resources[0].published = draft("index", {
@@ -559,6 +635,9 @@ describe("知识资源管理", () => {
       f.fetchMock.mock.calls.some(([url]) => String(url).startsWith(prefix))
     ).toBe(false)
     fireEvent.click(screen.getByRole("tab", { name: "知识库" }))
+    fireEvent.change(await screen.findByLabelText("知识库状态"), {
+      target: { value: "created" },
+    })
     expect(await screen.findByText("合成缺陷库")).toBeInTheDocument()
     expect(screen.getByText("平台内容库")).toBeInTheDocument()
     expect(screen.getByText("未发布")).toBeInTheDocument()
@@ -814,6 +893,35 @@ describe("知识资源管理", () => {
     ).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "保存新草稿" })).toBeDisabled()
   })
+  it("代码库首次发布归入启用，停用与恢复后可按对应状态找到同一发布版本", async () => {
+    const f = setup()
+    Object.assign(f.state.resources[0], {
+      kind: "code",
+      draft: draft(),
+      verification: { status: "VERIFIED", config_hash: hash },
+    })
+    f.render()
+    await openResource()
+    fireEvent.click(screen.getByRole("button", { name: "发布代码知识库" }))
+    await screen.findByText(/已发布 v1 · 配置修订 2/)
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+    const filter = screen.getByLabelText("知识库状态")
+    expect(filter).toHaveValue("enabled")
+    const details = { name: "查看 合成缺陷库" }
+    fireEvent.click(await screen.findByRole("button", details))
+    fireEvent.click(screen.getByRole("button", { name: "停用资源" }))
+    await screen.findByRole("button", { name: "恢复资源" })
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+    expect(screen.queryByRole("button", details)).toBeNull()
+    fireEvent.change(filter, { target: { value: "disabled" } })
+    fireEvent.click(await screen.findByRole("button", details))
+    fireEvent.click(screen.getByRole("button", { name: "恢复资源" }))
+    await screen.findByText(/已发布 v1 · 配置修订 4/)
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+    expect(screen.queryByRole("button", details)).toBeNull()
+    fireEvent.change(filter, { target: { value: "enabled" } })
+    expect(await screen.findByRole("button", details)).toBeVisible()
+  })
   it("停用需确认；归档资源只读，不可恢复", async () => {
     const f = setup()
     f.render()
@@ -832,6 +940,50 @@ describe("知识资源管理", () => {
     expect(
       screen.queryByRole("button", { name: "恢复资源" })
     ).not.toBeInTheDocument()
+  })
+  it("归档代码库须确认，管理员可在归档区查看历史并单独管理检出目录", async () => {
+    const f = setup()
+    Object.assign(f.state.resources[0], {
+      kind: "code",
+      published: { ...draft(), checkout_relative_dir: "mes-old" },
+      draft: { ...draft(), checkout_relative_dir: "mes-next" },
+    })
+    f.render()
+    await openResource()
+    fireEvent.click(screen.getByRole("button", { name: "归档资源" }))
+    const confirm = await screen.findByRole("alertdialog")
+    expect(confirm).toHaveTextContent("合成缺陷库")
+    expect(confirm).toHaveTextContent("释放 SVN 检出目录绑定")
+    fireEvent.click(within(confirm).getByRole("button", { name: "取消" }))
+    expect(f.calls).toHaveLength(0)
+    fireEvent.click(screen.getByRole("button", { name: "归档资源" }))
+    fireEvent.click(screen.getByRole("button", { name: "确认操作" }))
+    const history = await screen.findByRole("region", {
+      name: "代码知识库归档详情",
+    })
+    expect(f.calls).toEqual([
+      {
+        url: `${prefix}/resources/res/status`,
+        method: "POST",
+        body: { expected_revision: 1, status: "archived" },
+      },
+    ])
+    expect(history).toHaveTextContent("历史检出目录：mes-old")
+    expect(history).toHaveTextContent("历史检出目录：mes-next")
+    await within(history).findByText("管理本地检出目录")
+    expect(
+      screen.queryByRole("button", {
+        name: /恢复资源|归档资源|暂停增量索引|保存源码配置/,
+      })
+    ).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+    expect(screen.queryByRole("button", { name: "查看 合成缺陷库" })).toBeNull()
+    fireEvent.click(
+      await screen.findByRole("button", { name: "已归档资源（1）" })
+    )
+    expect(
+      await screen.findByRole("button", { name: "查看 合成缺陷库" })
+    ).toBeVisible()
   })
   it("只读管理权限可看状态但不显示任何写操作", async () => {
     const f = setup({ manage: false })
@@ -866,6 +1018,7 @@ describe("知识资源管理", () => {
   )
   it("页面删除来源手工表单，不提供摘要、Job 或来源写操作", async () => {
     const f = setup()
+    f.state.resources[0].published = draft()
     f.render()
     await screen.findByText("合成缺陷库")
     expect(screen.queryByText("来源确认与核验")).not.toBeInTheDocument()

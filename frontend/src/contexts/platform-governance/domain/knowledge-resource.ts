@@ -79,6 +79,7 @@ const resourceRevision = z.object({
   binding_id: identifier.nullable(),
   index_id: identifier.nullable(),
   configuration_version: z.number().optional(),
+  checkout_relative_dir: z.string().nullable().optional(),
   code_configuration: z
     .object({
       source_id: identifier.nullable(),
@@ -173,6 +174,12 @@ export function canPublishKnowledge(resource: KnowledgeResource) {
   )
 }
 
+export function knowledgeListStatus(resource: KnowledgeResource) {
+  if (resource.status === "archived" || resource.published)
+    return resource.status
+  return "created"
+}
+
 export function knowledgeStatus(value: string) {
   return (
     (
@@ -186,6 +193,7 @@ export function knowledgeStatus(value: string) {
         CONFIRMED: "来源已确认",
         VERIFIED: "已核验",
         REVOKED: "已撤销",
+        created: "创建",
         enabled: "启用",
         disabled: "停用",
         archived: "已归档",

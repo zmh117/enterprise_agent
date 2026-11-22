@@ -134,6 +134,26 @@ def test_same_version_unchanged_reuses_and_correction_requires_cas(workspace):
     assert document["current_revision_id"] == corrected["revision_id"]
 
 
+def test_archiving_keeps_answer_revision_evidence_and_index_intent(workspace):
+    runtime, store, _, _ = workspace
+    ctx, analysis, result = prepared(workspace)
+    saved = save(store, ctx, analysis, result)
+    tables = ["code_answer", "document_revision", "code_evidence", "code_index_task"]
+    before = {name: store.db.execute(f"SELECT * FROM {store.t(name)}") for name in tables}
+    assert all(len(rows) == 1 for rows in before.values())
+    assert before["document_revision"][0]["id"] == saved["revision_id"]
+
+    resources = runtime.knowledge_services.resources()
+    resource = resources.view("code-resource")
+    resources.set_status(
+        actor_id="user_local_admin",
+        resource_id=resource["id"],
+        expected_revision=resource["revision"],
+        status="archived",
+    )
+    assert {name: store.db.execute(f"SELECT * FROM {store.t(name)}") for name in tables} == before
+
+
 def test_partial_does_not_create_shared_document(workspace):
     _, store, _, _ = workspace
     ctx, analysis, result = prepared(workspace)

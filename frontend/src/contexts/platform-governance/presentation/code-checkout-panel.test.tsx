@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { CodeCheckoutPanel, DirectoryChoices } from "./code-checkout-panel"
+import { CheckoutRemoval } from "./code-checkout-removal"
 import { CodeBrowseDirectory } from "./code-browse-directory"
 
 const url = "https://localhost:18443/repos/mes/trunk"
@@ -575,4 +576,95 @@ describe("SVN 工程检出", () => {
     })
     expect(screen.queryByRole("button", { name: "检出所选内容" })).toBeNull()
   })
+})
+
+it("管理员确认后按目录标识及代数提交删除，绑定或占用的目录显示原因", async () => {
+  const calls = vi.fn(async () => Response.json({ id: "retirement" }))
+  vi.stubGlobal("fetch", calls)
+  const item = {
+    id: "free",
+    source_id: "source",
+    state: "ready",
+    relative_dir: "空闲目录",
+    verified_revision: 2,
+    generation: 3,
+    writer_operation_id: null,
+    selected_paths: [""],
+    readers: 0,
+    connection: null,
+    connection_error: null,
+    removal_blocker: null,
+  }
+  const onQueued = vi.fn()
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <CheckoutRemoval
+        resourceId="library"
+        onQueued={onQueued}
+        inventory={{
+          enabled: true,
+          registrations: [],
+          jobs: [
+            {
+              id: "prior",
+              state: "succeeded",
+              operation_kind: "retire",
+              error_code: null,
+              result: {
+                relative_dir: "旧目录",
+                directory_already_absent: true,
+              },
+            },
+          ],
+          checkouts: [
+            item,
+            {
+              ...item,
+              id: "bound",
+              relative_dir: "已绑定",
+              removal_blocker: "CODE_CHECKOUT_BOUND",
+            },
+            {
+              ...item,
+              id: "busy",
+              relative_dir: "正在读取",
+              removal_blocker: "WORKSPACE_BUSY",
+            },
+          ],
+        }}
+      />
+    </QueryClientProvider>
+  )
+  fireEvent.click(screen.getByText("管理本地检出目录"))
+  expect(screen.getByText(/当前草稿或发布版本仍绑定/)).toBeVisible()
+  expect(screen.getByText(/有任务占用此目录/)).toBeVisible()
+  expect(
+    screen.queryByRole("button", { name: "删除本地目录 已绑定" })
+  ).toBeNull()
+  const select = screen.getByRole("button", { name: "删除本地目录 空闲目录" })
+  fireEvent.click(select)
+  fireEvent.click(screen.getByRole("button", { name: "取消" }))
+  expect(calls).not.toHaveBeenCalled()
+  fireEvent.click(select)
+  fireEvent.click(screen.getByRole("button", { name: "确认删除本地目录" }))
+  await waitFor(() => expect(onQueued).toHaveBeenCalledWith("free"))
+  expect(calls).toHaveBeenCalledWith(
+    "/api/platform/knowledge/code/resources/library/checkouts/free/remove",
+    expect.objectContaining({
+      method: "POST",
+      body: expect.stringContaining('"generation":3'),
+    })
+  )
+  expect(screen.getByText(/旧目录.*本地目录已不存在，已清理登记/)).toBeVisible()
+  fireEvent.click(select)
+  fireEvent.click(screen.getByLabelText("仅清理缺失目录登记"))
+  fireEvent.click(screen.getByRole("button", { name: "确认清理缺失目录登记" }))
+  await waitFor(() => expect(onQueued).toHaveBeenCalledTimes(2))
+  expect(calls).toHaveBeenLastCalledWith(
+    "/api/platform/knowledge/code/resources/library/checkouts/free/remove",
+    expect.objectContaining({
+      method: "POST",
+      body: expect.stringContaining('"missing_only":true'),
+    })
+  )
 })

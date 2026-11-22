@@ -3,6 +3,7 @@ import { useKnowledgeContentCatalog } from "@/contexts/platform-governance/appli
 import {
   canPublishKnowledge,
   knowledgeStatus,
+  knowledgeListStatus,
   type KnowledgeInventory,
   type KnowledgeResource,
 } from "@/contexts/platform-governance/domain/knowledge-resource"
@@ -32,6 +33,7 @@ export function KnowledgeResourceTable(props: TableProps) {
               "知识资源",
               "存储",
               "来源",
+              "SVN 检出目录",
               "索引",
               "同步处理",
               "检索发布",
@@ -100,7 +102,7 @@ function KnowledgeResourceRow({
         <p>{resource.name}</p>
         <p className="text-xs text-muted-foreground">
           {resource.kind === "code" ? "代码知识库" : "ONES 知识库"} ·{" "}
-          {resource.code} · {knowledgeStatus(resource.status)}
+          {resource.code} · {knowledgeStatus(knowledgeListStatus(resource))}
         </p>
       </td>
       <td className="p-3">{external ? "自定义内容连接" : "平台内容库"}</td>
@@ -124,6 +126,11 @@ function KnowledgeResourceRow({
           "正在读取来源…"
         ) : !base ? (
           "未找到知识库"
+        ) : resource.kind === "code" && resource.status === "archived" ? (
+          sourceNames ||
+          (revision?.code_configuration?.source_id
+            ? "历史 SVN 来源"
+            : "未配置 SVN 来源")
         ) : (
           sourceNames ||
           (resource.kind === "code"
@@ -132,6 +139,28 @@ function KnowledgeResourceRow({
               : "待绑定 SVN 来源"
             : "无已收录数据")
         )}
+      </td>
+      <td className="p-3">
+        {resource.kind === "code"
+          ? (revision?.checkout_relative_dir ?? "未绑定")
+          : "—"}
+        {resource.kind === "code" &&
+          resource.status === "archived" &&
+          (revision?.checkout_relative_dir ||
+            resource.draft?.checkout_relative_dir) && (
+            <p className="text-xs text-muted-foreground">
+              历史目录 · 已解除绑定
+            </p>
+          )}
+        {resource.kind === "code" &&
+          resource.published &&
+          resource.draft &&
+          resource.draft.checkout_relative_dir !==
+            revision?.checkout_relative_dir && (
+            <p className="text-xs text-muted-foreground">
+              草稿目录：{resource.draft.checkout_relative_dir ?? "未绑定"}
+            </p>
+          )}
       </td>
       <td className="p-3">
         {revision?.index_id

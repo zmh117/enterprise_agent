@@ -10,6 +10,12 @@ export const checkoutStages: Record<string, string> = {
 }
 
 export const codeCheckoutErrors: Record<string, string> = {
+  CODE_OPERATION_BUSY: "已有其他目录管理请求正在处理，请稍后重试。",
+  CODE_CHECKOUT_DIRECTORY_PRESENT: "检出路径或删除暂存目录仍存在，已保留文件和登记。",
+  CODE_CHECKOUT_BOUND: "知识库的当前草稿或发布版本仍绑定此目录。",
+  WORKSPACE_BUSY: "有任务占用此目录，任务结束后可重试。",
+  CODE_CHECKOUT_CHANGED: "目录状态已变化，请刷新后重试。",
+  CODE_CHECKOUT_REMOVE_FAILED: "本地目录删除未完成，请检查存储卷权限和可用性后重试。",
   CODE_CHECKOUT_INVENTORY_LIMIT:
     "SVN 校验清单超过 10 万条记录，已下载目录保留，请缩小选择范围。",
   CODE_SVN_METADATA_LIMIT:

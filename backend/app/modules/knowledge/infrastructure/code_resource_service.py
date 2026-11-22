@@ -326,9 +326,6 @@ class CodeResourceService(KnowledgeResourceService):
 
     def view(self, resource_id: str) -> dict[str, Any]:
         result = super().view(resource_id)
-        for key in ("draft", "published"):
-            if result[key] and result[key]["configuration_version"] == 5:
-                result[key]["code_configuration"] = self.store.code_configuration(result[key]["id"])
         result["chunk_profile"] = {
             "version": CODE_CHUNK_PROFILE.version,
             "hash": CODE_CHUNK_PROFILE.fingerprint,
@@ -361,14 +358,20 @@ class CodeResourceService(KnowledgeResourceService):
             )
         return {"paused": bool(base["code_indexing_paused"]), "indexes": indexes}
 
+    def _lock_indexing_resource(self, resource_id: str) -> dict[str, Any]:
+        resource = self.store.get("retrieval_resource", resource_id, lock=True)
+        self._code_base(resource)
+        if resource["status"] == "archived":
+            raise KnowledgeGovernanceError("knowledge_resource_unavailable")
+        return resource
+
     def set_indexing(self, *, actor_id: str, resource_id: str, paused: bool) -> dict[str, Any]:
         if type(paused) is not bool:
             raise CodeKnowledgeError("CODE_INDEX_CONFIGURATION_INVALID")
         self.require_admin(actor_id)
         assert isinstance(self.store, GovernanceStore)
         with self.store.unit_of_work():
-            resource = self.store.get("retrieval_resource", resource_id, lock=True)
-            self._code_base(resource)
+            resource = self._lock_indexing_resource(resource_id)
             self.store.database.execute(
                 f"UPDATE {self.store.t('knowledge_base')} SET code_indexing_paused=? WHERE id=?",
                 (int(paused), resource["knowledge_base_id"]),
@@ -388,8 +391,7 @@ class CodeResourceService(KnowledgeResourceService):
 
         tasks = CodeIndexStore(self.store.database)
         with self.store.unit_of_work():
-            resource = self.store.get("retrieval_resource", resource_id, lock=True)
-            self._code_base(resource)
+            resource = self._lock_indexing_resource(resource_id)
             task = tasks.row("code_index_task", task_id)
             tasks._document_lock(task["document_id"])
             task = tasks.row("code_index_task", task_id, lock=True)

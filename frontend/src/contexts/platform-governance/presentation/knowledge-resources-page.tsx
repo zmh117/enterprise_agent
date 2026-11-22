@@ -32,6 +32,7 @@ import {
 import {
   canPublishKnowledge,
   knowledgeStatus,
+  knowledgeListStatus,
   newKnowledgeResourceSchema,
   type KnowledgeResource,
   type KnowledgeInventory,
@@ -64,6 +65,7 @@ export function KnowledgeResourcesPage() {
   } | null>(null)
   const [notice, setNotice] = useState("")
   const [search, setSearch] = useState("")
+  const [statusFilter, setStatusFilter] = useState("enabled")
   const [showArchived, setShowArchived] = useState(false)
   function confirm(command: KnowledgeCommand, message: string) {
     mutation.reset()
@@ -76,11 +78,22 @@ export function KnowledgeResourcesPage() {
     try {
       const result = await mutation.mutateAsync(command)
       if (result && "knowledge_base_id" in result) {
+        if (
+          command.kind === "create" ||
+          command.kind === "create-code" ||
+          (command.kind === "publish" && statusFilter === "created")
+        ) {
+          setStatusFilter(knowledgeListStatus(result))
+        }
         setEditing(result)
         setEditorGeneration((value) => value + 1)
       }
       setConfirmation(null)
-      setNotice("操作完成。配置发布不等于用户已获业务授权。")
+      setNotice(
+        command.kind === "status" && command.input.status === "archived"
+          ? "归档完成，可在「已归档资源」查看。"
+          : "操作完成。配置发布不等于用户已获业务授权。"
+      )
       return true
     } catch (error) {
       if (
@@ -159,7 +172,9 @@ export function KnowledgeResourcesPage() {
       `${r.name} ${r.code}`.toLowerCase().includes(search.toLowerCase())
     ) ?? []
   const currentResources = filteredResources.filter(
-    (r) => r.status !== "archived"
+    (r) =>
+      r.status !== "archived" &&
+      (statusFilter === "all" || knowledgeListStatus(r) === statusFilter)
   )
   const archivedResources = filteredResources.filter(
     (r) => r.status === "archived"
@@ -231,13 +246,28 @@ export function KnowledgeResourcesPage() {
       {inventory.isPending && <p role="status">正在加载知识资源…</p>}
       {data && (
         <>
-          <KnowledgeField label="筛选知识资源">
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="名称或编码"
-            />
-          </KnowledgeField>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
+            <KnowledgeField label="筛选知识资源">
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="名称或编码"
+              />
+            </KnowledgeField>
+            <KnowledgeField label="知识库状态">
+              <select
+                className={knowledgeInputClass}
+                value={statusFilter}
+                data-testid="knowledge-resource-status-filter"
+                onChange={(event) => setStatusFilter(event.target.value)}
+              >
+                <option value="enabled">启用</option>
+                <option value="disabled">停用</option>
+                <option value="created">创建</option>
+                <option value="all">全部</option>
+              </select>
+            </KnowledgeField>
+          </div>
           <section
             className="grid gap-3"
             aria-labelledby="current-knowledge-resources"
@@ -319,6 +349,30 @@ export function KnowledgeResourcesPage() {
                       execute={execute}
                     />
                   )
+                )}
+                {canManage && editing && editing.status !== "archived" && (
+                  <Button
+                    variant="outline"
+                    className="justify-self-start"
+                    disabled={pending}
+                    onClick={() =>
+                      confirm(
+                        {
+                          kind: "status",
+                          id: editing.id,
+                          input: {
+                            expected_revision: editing.revision,
+                            status: "archived",
+                          },
+                        },
+                        editing.kind === "code"
+                          ? `归档「${editing.name}」后将永久退出问答检索。历史配置、答案、向量及本地文件会保留，本库将释放 SVN 检出目录绑定。`
+                          : `归档「${editing.name}」后将永久退出问答检索，已有原始数据和向量会保留。`
+                      )
+                    }
+                  >
+                    归档资源
+                  </Button>
                 )}
               </div>
             </SheetContent>
@@ -556,22 +610,6 @@ function KnowledgeResourceEditor({
             }
           >
             {resource.status === "enabled" ? "停用资源" : "恢复资源"}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={pending}
-            onClick={() =>
-              confirm(
-                {
-                  kind: "status",
-                  id: resource.id,
-                  input: { ...input, status: "archived" },
-                },
-                "归档不可恢复为启用；不删除原始数据或向量。请确认不再使用此资源。"
-              )
-            }
-          >
-            归档资源
           </Button>
         </div>
       )}

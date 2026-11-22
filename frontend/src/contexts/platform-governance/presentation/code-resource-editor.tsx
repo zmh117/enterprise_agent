@@ -8,6 +8,7 @@ import {
   KnowledgeError,
   knowledgeInputClass,
 } from "./knowledge-resource-ui"
+import { CheckoutRemoval } from "./code-checkout-removal"
 import { CodeCheckoutPanel } from "./code-checkout-panel"
 import { codeCheckoutErrors } from "./code-checkout-errors"
 import { CodeIndexStatus } from "./code-index-status"
@@ -105,7 +106,52 @@ export function CodeResourceEditor({
     selectedCheckout?.state === "ready" &&
     !selectedCheckout.writer_operation_id &&
     Boolean(selectedCheckout.connection)
-  const writable = canManage && resource.status !== "archived"
+  if (resource.status === "archived") {
+    return (
+      <section className="grid gap-4 text-sm" aria-label="代码知识库归档详情">
+        <h3 className="font-medium">{resource.name} · 已归档</h3>
+        <p>已退出问答检索，历史配置仅供查看。</p>
+        {(
+          [
+            ["历史发布", resource.published],
+            ["归档时的草稿", resource.draft],
+          ] as const
+        ).map(([label, revision]) => {
+          if (!revision) return null
+          const source = revision.code_configuration
+          const names = source?.environment_ids.map(
+            (id) =>
+              environments.data?.find((item) => item.id === id)?.display_name ||
+              id
+          )
+          return (
+            <section key={label} className="grid gap-1 rounded border p-3">
+              <h4 className="font-medium">
+                {label} v{revision.revision}
+              </h4>
+              <p>历史检出目录：{revision.checkout_relative_dir ?? "未绑定"}</p>
+              <p>关联环境：{names?.join("、") || "未设置"}</p>
+              <p>
+                允许分析的路径：
+                {source?.allowed_paths_json.map((p) => p || "/").join("、") ||
+                  "未设置"}
+              </p>
+              <p>索引：{revision.index_id ?? "未初始化"}</p>
+            </section>
+          )
+        })}
+        {canManage && <CodeIndexStatus resourceId={resource.id} readOnly />}
+        <KnowledgeError error={checkouts.error} />
+        {canManage && checkouts.data?.enabled && (
+          <CheckoutRemoval
+            resourceId={resource.id}
+            inventory={checkouts.data}
+          />
+        )}
+      </section>
+    )
+  }
+  const writable = canManage
   const input = { expected_revision: resource.revision }
   return (
     <div className="grid gap-4" data-testid="code-resource-editor">
@@ -276,6 +322,18 @@ export function CodeResourceEditor({
           )}
         </fieldset>
       </form>
+      {writable && checkouts.data?.enabled && (
+        <CheckoutRemoval
+          resourceId={resource.id}
+          inventory={checkouts.data}
+          onQueued={(id) => {
+            if (id === selected) {
+              setSelected("")
+              setPaths("")
+            }
+          }}
+        />
+      )}
       <section
         className="grid gap-2 rounded border p-4"
         aria-label="代码知识存储与索引"

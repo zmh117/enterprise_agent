@@ -489,3 +489,51 @@ def test_postgres_environment_constraints_reject_empty_or_rebinding(workspace):
         with pytest.raises(psycopg.errors.CheckViolation, match="CODE_ENVIRONMENT_REQUIRED"):
             key = "document_id" if table == "code_answer" else "id"
             store.db.execute(f"INSERT INTO {store.t(table)} ({key}) VALUES ('unscoped')")
+
+
+def test_concurrent_admin_checkout_removal_claim_and_worker_cleanup(
+    workspace, tmp_path, monkeypatch
+):
+    from app.modules.knowledge.infrastructure.code_checkout_jobs import CodeCheckoutJobs
+    from app.modules.knowledge.infrastructure.code_management_executor import CodeManagementExecutor
+    from app.modules.knowledge.infrastructure.code_result_buffer import CodeResultBuffer
+
+    runtime, _, source, bound = workspace
+    monkeypatch.setenv("CODE_CHECKOUT_ENABLED", "true")
+    root = tmp_path / "root"
+    jobs = CodeCheckoutJobs(runtime.database, runtime.knowledge_services.sources())
+    (root / "unused").mkdir()
+    unused = jobs.register_checkout(
+        source_id=source,
+        root_key="code-svn-checkout",
+        root=root,
+        relative_dir="unused",
+        selected_paths=[""],
+    )
+    args = dict(actor_id="user_local_admin", resource_id="code-resource", generation=0)
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_BOUND"):
+        jobs.submit_removal(checkout_id=bound["id"], request_key="bound", **args)
+
+    def submit(key):
+        try:
+            return jobs.submit_removal(checkout_id=unused["id"], request_key=key, **args)["id"]
+        except CodeKnowledgeError as exc:
+            return exc.code
+
+    outcomes = concurrent(submit, ["admin-a", "admin-b"])
+    admitted = [
+        value for value in outcomes if value not in {"WORKSPACE_BUSY", "CODE_OPERATION_BUSY"}
+    ]
+    assert len(admitted) == 1
+    operation = admitted[0]
+    CodeManagementExecutor(
+        jobs,
+        CodeResultBuffer(),
+        owner="worker",
+        auth_root=root,
+        checkout_root=root,
+        stopped=lambda: False,
+    ).execute(operation)
+    assert jobs.get(operation)["state"] == "succeeded"
+    assert not (root / "unused").exists()
+    assert (root / "mes").is_dir()

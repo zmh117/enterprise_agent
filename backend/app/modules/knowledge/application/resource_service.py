@@ -634,8 +634,12 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
         )
         for selected_revision in (draft, published):
             if selected_revision and selected_revision["configuration_version"] == 5:
-                selected_revision["code_configuration"] = self.store.code_configuration(
-                    selected_revision["id"]
+                config = self.store.code_configuration(selected_revision["id"])
+                selected_revision["code_configuration"] = config
+                selected_revision["checkout_relative_dir"] = (
+                    self.store.get("code_checkout", config["checkout_id"])["relative_dir"]
+                    if config.get("checkout_id")
+                    else None
                 )
         return {
             **resource,

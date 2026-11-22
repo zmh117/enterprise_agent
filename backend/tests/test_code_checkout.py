@@ -951,3 +951,259 @@ def test_failure_projection_keeps_safe_output_limits_only():
         observed_bytes=8388610,
         limit_bytes=8388608,
     )
+
+
+def removal_args(management, checkout_id, key="remove"):
+    jobs, resource, *_ = management
+    return dict(
+        actor_id="user_local_admin",
+        resource_id=resource["id"],
+        checkout_id=checkout_id,
+        generation=jobs.row("code_checkout", checkout_id)["generation"],
+        request_key=key,
+    )
+
+
+def test_admin_removes_unbound_checkout_and_reuses_name_without_reusing_identity(management, setup):
+    from app.shared.exceptions import PermissionDenied
+    from backend.tests.test_code_resources import bind
+
+    jobs, resource, executor, _, _, root = management
+    preview = browse(management)
+    operation = submit(management, preview)
+    executor.execute(operation["id"])
+    checkout_id = operation["checkout_id"]
+    args = removal_args(management, checkout_id)
+    with pytest.raises(PermissionDenied):
+        jobs.submit_removal(**{**args, "actor_id": ""})
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_CHANGED"):
+        jobs.submit_removal(**{**args, "generation": args["generation"] + 1})
+    # A published resource with no draft can initiate removal of an idle checkout.
+    args["resource_id"] = "code-resource"
+    retire = jobs.submit_removal(**args)
+    assert jobs.submit_removal(**args)["id"] == retire["id"]
+    with pytest.raises(CodeKnowledgeError, match="WORKSPACE_BUSY"):
+        jobs.submit_removal(**{**args, "request_key": "other-admin-request"})
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_BINDING_INVALID"):
+        bind(setup[4], resource, {"id": checkout_id})
+    protected = root / "mes" / "keep"
+    protected.write_text("keep")
+    (root / "selected" / "link").symlink_to(protected.parent, target_is_directory=True)
+    executor.execute(retire["id"])
+    assert jobs.get(retire["id"])["state"] == "succeeded"
+    assert jobs.submit_removal(**args)["id"] == retire["id"]
+    assert not (root / "selected").exists()
+    assert protected.read_text() == "keep"
+    assert checkout_id not in [item["id"] for item in jobs.snapshot(resource["id"])["checkouts"]]
+    new = jobs.submit_checkout(
+        actor_id=args["actor_id"],
+        resource_id=resource["id"],
+        browse_job_id=preview["id"],
+        paths=["set_server"],
+        folder="selected",
+        request_key="checkout-again",
+    )
+    executor.execute(new["id"])
+    assert new["checkout_id"] != checkout_id
+    assert jobs.get(new["id"])["state"] == "succeeded"
+
+
+def test_current_bindings_and_unreleased_analysis_prevent_deletion(management, setup):
+    from app.modules.knowledge.infrastructure.code_analysis_store import CodeAnalysisStore
+    from backend.tests.support.code_answers import analysis_context, confirm
+
+    runtime, source, checkout, _, _, _ = setup
+    jobs, resource, *_ = management
+    args = removal_args(management, checkout["id"])
+    reader = CodeAnalysisStore(runtime.database, authorize=lambda _: None)
+    context = analysis_context(runtime, source, checkout)
+    confirm(reader, context, reader.begin(context, "reader"))
+    for draft, published in [(None, "code-config"), ("code-config", None), (None, None)]:
+        jobs.db.execute(
+            f"UPDATE {jobs.t('retrieval_resource')} SET published_revision_id=?,draft_revision_id=?,status='disabled' WHERE id='code-resource'",
+            (published, draft),
+        )
+        expected = "CODE_CHECKOUT_BOUND" if draft or published else "WORKSPACE_BUSY"
+        items = jobs.snapshot(resource["id"])["checkouts"]
+        assert (
+            next(item for item in items if item["id"] == checkout["id"])["removal_blocker"]
+            == expected
+        )
+        with pytest.raises(CodeKnowledgeError, match=expected):
+            jobs.submit_removal(**args)
+
+    # Archiving releases the binding, but never releases a Job's outstanding reader.
+    jobs.db.execute(
+        f"UPDATE {jobs.t('retrieval_resource')} SET published_revision_id='code-config',status='archived' WHERE id='code-resource'"
+    )
+    with pytest.raises(CodeKnowledgeError, match="WORKSPACE_BUSY"):
+        jobs.submit_removal(**args)
+
+
+def test_archiving_releases_only_its_binding_and_keeps_history_after_directory_removal(
+    management, setup
+):
+    from backend.tests.test_code_resources import bind
+
+    _, _, checkout, root, service, _ = setup
+    jobs, resource, executor, *_ = management
+    shared = bind(service, resource, checkout)
+    args = removal_args(management, checkout["id"])
+    admin = dict(actor_id="user_local_admin")
+    shared = service.set_status(
+        **admin, resource_id=shared["id"], expected_revision=shared["revision"], status="disabled"
+    )
+    original = service.view("code-resource")
+    service.set_status(
+        **admin,
+        resource_id=original["id"],
+        expected_revision=original["revision"],
+        status="archived",
+    )
+    with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_BOUND"):
+        jobs.submit_removal(**args)
+
+    archived = service.set_status(
+        **admin, resource_id=shared["id"], expected_revision=shared["revision"], status="archived"
+    )
+    assert archived["draft"] == shared["draft"]
+    folder = root / checkout["relative_dir"]
+    assert folder.is_dir()
+    op = jobs.submit_removal(**args)
+    executor.execute(op["id"])
+    assert jobs.get(op["id"])["state"] == "succeeded"
+    assert not folder.exists()
+    assert service.view(original["id"])["published"] == original["published"]
+    assert service.view(shared["id"])["draft"] == shared["draft"]
+
+
+def test_removal_checks_physical_identity_and_supports_partial_cleanup_retry(
+    management, monkeypatch
+):
+    import shutil
+
+    jobs, _, executor, _, _, root = management
+    op = submit(management, browse(management))
+    executor.execute(op["id"])
+    checkout_id = op["checkout_id"]
+
+    def remove(key):
+        op = jobs.submit_removal(**removal_args(management, checkout_id, key))
+        executor.execute(op["id"])
+        return jobs.get(op["id"])
+
+    target = root / "selected"
+    original = root / "original"
+    target.rename(original)
+    target.mkdir()
+    assert remove("wrong-directory")["error_code"] == "CODE_CHECKOUT_IDENTITY_CHANGED"
+    assert target.is_dir() and original.is_dir()
+    target.rmdir()
+    original.rename(target)
+    real = shutil.rmtree
+
+    def partial(directory):
+        real(directory / ".svn")
+        raise OSError("synthetic interrupted cleanup")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(shutil, "rmtree", partial)
+        assert remove("partial-removal")["error_code"] == "CODE_CHECKOUT_REMOVE_FAILED"
+    # A later occupant of the old name is outside the already detached working copy.
+    target.mkdir()
+    (target / "keep").touch()
+    assert remove("resume-removal")["state"] == "succeeded"
+    assert (target / "keep").is_file()
+    assert not list((root / ".executor-locks").glob("retire-*"))
+
+
+@pytest.mark.parametrize(
+    ("missing_only", "unverified"), [(False, False), (True, False), (True, True)]
+)
+def test_missing_checkout_retires_registration_without_removing_files(
+    management, missing_only, unverified, monkeypatch
+):
+    jobs, _, executor, _, _, root = management
+    operation = submit(management, browse(management))
+    executor.execute(operation["id"])
+    checkout_id = operation["checkout_id"]
+    (root / "selected").rename(root / "moved-outside-registration")
+    if unverified:
+        jobs.db.execute(
+            f"UPDATE {jobs.t('code_checkout')} SET state='invalid',physical_key=NULL WHERE id=?",
+            (checkout_id,),
+        )
+        with pytest.raises(CodeKnowledgeError, match="CODE_CHECKOUT_IDENTITY_CHANGED"):
+            jobs.submit_removal(**removal_args(management, checkout_id))
+
+    def forbid(*args):
+        pytest.fail("registration-only completion attempted filesystem cleanup")
+
+    monkeypatch.setattr("shutil.rmtree", forbid)
+    removal = jobs.submit_removal(
+        **removal_args(management, checkout_id), missing_only=missing_only
+    )
+    executor.execute(removal["id"])
+    result = jobs.get(removal["id"])
+    assert result["state"] == "succeeded"
+    assert result["result"] == {"directory_already_absent": True, "relative_dir": "selected"}
+    assert jobs.row("code_checkout", checkout_id)["state"] == "retired"
+    assert (root / "moved-outside-registration" / "README.md").is_file()
+
+
+@pytest.mark.parametrize("entry", ["directory", "dangling_link", "staging", "denied"])
+def test_missing_only_refuses_existing_or_unreadable_entries(management, entry, monkeypatch):
+    from pathlib import Path
+    from app.modules.knowledge.domain.normalization import digest
+
+    jobs, _, executor, _, _, root = management
+    op = submit(management, browse(management))
+    executor.execute(op["id"])
+    checkout_id = op["checkout_id"]
+    path = root / "selected"
+    if entry == "dangling_link":
+        path.rename(root / "original")
+        path.symlink_to(root / "missing")
+    elif entry == "staging":
+        path = path.rename(root / ".executor-locks" / ("retire-" + digest(checkout_id)))
+    elif entry == "denied":
+        saved = Path.lstat
+
+        def unavailable(self):
+            if self == path:
+                raise PermissionError
+            return saved(self)
+
+        monkeypatch.setattr(Path, "lstat", unavailable)
+    removal = jobs.submit_removal(**removal_args(management, checkout_id), missing_only=True)
+    executor.execute(removal["id"])
+    result = jobs.get(removal["id"])
+    assert result["error_code"] == (
+        "CODE_CHECKOUT_REMOVE_FAILED" if entry == "denied" else "CODE_CHECKOUT_DIRECTORY_PRESENT"
+    )
+    assert jobs.row("code_checkout", checkout_id)["state"] == "ready"
+    assert path.is_symlink() if entry == "dangling_link" else (path / "README.md").is_file()
+
+
+def test_registration_only_rechecks_absence_at_completion(management, monkeypatch):
+    from app.modules.knowledge.infrastructure.code_operation_heartbeat import CodeOperationHeartbeat
+
+    jobs, _, executor, _, _, root = management
+    operation = submit(management, browse(management))
+    executor.execute(operation["id"])
+    checkout_id = operation["checkout_id"]
+    path = root / "selected"
+    path.rename(root / "old-working-copy")
+    finish = CodeOperationHeartbeat.finish
+
+    def replace_path(heartbeat):
+        finish(heartbeat)
+        path.mkdir()
+        (path / "keep").touch()
+
+    monkeypatch.setattr(CodeOperationHeartbeat, "finish", replace_path)
+    task = jobs.submit_removal(**removal_args(management, checkout_id), missing_only=True)
+    executor.execute(task["id"])
+    assert jobs.get(task["id"])["error_code"] == "CODE_CHECKOUT_DIRECTORY_PRESENT"
+    assert jobs.row("code_checkout", checkout_id)["root_key"] == "code-svn-checkout"
+    assert (path / "keep").is_file()

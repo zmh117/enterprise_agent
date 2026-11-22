@@ -16,7 +16,6 @@ from app.modules.knowledge.infrastructure.code_checkout_identity import (
     persistent_identity,
 )
 from app.modules.knowledge.domain.normalization import digest
-from app.modules.knowledge.domain.identity import stable_id
 from app.modules.knowledge.infrastructure.code_checkout_store import json_value
 from app.modules.agent.infrastructure.runtime_pool_store import database_now, timestamp
 from app.shared.config import load_settings
@@ -49,8 +48,8 @@ def register_existing(
         entry["repository_uuid"], entry["branch_path"], info["repository_root_url"]
     )
     existing = db.execute_one(
-        f"SELECT * FROM {store.t('code_checkout')} WHERE id=?",
-        (stable_id("checkout", "code-svn-checkout", directory),),
+        f"SELECT * FROM {store.t('code_checkout')} WHERE root_key=? AND relative_dir=?",
+        ("code-svn-checkout", directory),
     )
     checkout = existing or store.register_checkout(
         source_id=source,
@@ -61,7 +60,11 @@ def register_existing(
     )
     with db.unit_of_work():
         current = store.row("code_checkout", checkout["id"], lock=True)
-        if current["source_id"] != source or json_value(current["selected_paths_json"]) != paths:
+        if (
+            current["state"] == "retired"
+            or current["source_id"] != source
+            or json_value(current["selected_paths_json"]) != paths
+        ):
             raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
         if (
             current["writer_operation_id"]

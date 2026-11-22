@@ -119,20 +119,20 @@ class CodeCheckoutStore:
         candidate.relative_to(resolved_root)
         stat = candidate.stat()
         physical = digest([stat.st_dev, stat.st_ino])
-        identity = stable_id("checkout", root_key, relative_dir)
+        identity = str(uuid.uuid4())
         with source_lock(self.db, "code-checkout-registration"), self.db.unit_of_work():
             existing = self.db.execute(
                 f"SELECT id,source_id,root_key,relative_dir,physical_key,selected_paths_json FROM {self.t('code_checkout')}"
             )
             for item in existing:
-                if item["id"] == identity:
+                if item["root_key"] == root_key and item["relative_dir"] == relative_dir:
                     if (
                         item["source_id"] != source_id
                         or item["physical_key"] != physical
                         or json_value(item["selected_paths_json"]) != paths
                     ):
                         raise CodeKnowledgeError("CODE_CHECKOUT_IDENTITY_CHANGED")
-                    return self.row("code_checkout", identity)
+                    return self.row("code_checkout", item["id"])
                 overlap = item["root_key"] == root_key and (
                     relative_dir.startswith(item["relative_dir"] + "/")
                     or item["relative_dir"].startswith(relative_dir + "/")
@@ -164,7 +164,7 @@ class CodeCheckoutStore:
         relative_dir = code_path(relative_dir)
         paths = checkout_scope(selected_paths)
         root_key = "code-svn-checkout"
-        identity = stable_id("checkout", root_key, relative_dir)
+        identity = str(uuid.uuid4())
         with source_lock(self.db, "code-checkout-registration"), self.db.unit_of_work():
             rows = self.db.execute(
                 f"SELECT relative_dir FROM {self.t('code_checkout')} WHERE root_key=?", (root_key,)

@@ -8,6 +8,7 @@ import pytest
 
 from app.modules.knowledge.application.content_access import KnowledgeContent
 from app.modules.knowledge.domain.code_contracts import CodeKnowledgeError
+from app.modules.knowledge.domain.governance import KnowledgeGovernanceError
 from app.modules.knowledge.domain.normalization import digest
 from app.modules.knowledge.domain.models import KnowledgeJobAccess
 from app.modules.knowledge.infrastructure.code_checkout_jobs import CodeCheckoutJobs
@@ -270,6 +271,103 @@ def test_index_controls_do_not_change_published_configuration(setup):
         service.set_indexing(actor_id="user_local_admin", resource_id=created["id"], paused=1)
 
 
+def test_archived_code_library_keeps_its_index_and_refuses_retrieval_and_writes(setup):
+    _, _, checkout, _, service, _ = setup
+    bound = bind(service, create(service), checkout)
+    admin = dict(actor_id="user_local_admin", resource_id=bound["id"])
+    resource = service.initialize_index(**admin, expected_revision=bound["revision"])
+    resource = service.verify_draft(**admin, expected_revision=resource["revision"])
+    resource = service.publish(**admin, expected_revision=resource["revision"])
+    assert (
+        service.resolve(resource["knowledge_base_id"]).index_id == resource["published"]["index_id"]
+    )
+    status = service.indexing_status(**admin)
+    collections = dict(service.qdrant.collections)
+    assert len(collections) == 1
+    archived = service.set_status(
+        **admin, expected_revision=resource["revision"], status="archived"
+    )
+    assert archived["published"] == resource["published"]
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.resolve(archived["knowledge_base_id"])
+    assert service.indexing_status(**admin) == status
+    assert service.qdrant.collections == collections
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.set_indexing(**admin, paused=True)
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.retry_indexing(**admin, task_id="arbitrary")
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.set_status(**admin, expected_revision=archived["revision"], status="enabled")
+
+
+def test_code_library_first_publish_disable_restore_and_archive(setup):
+    _, _, checkout, _, service, _ = setup
+    created = create(service)
+    base_id = created["knowledge_base_id"]
+    admin = dict(actor_id="user_local_admin", resource_id=created["id"])
+    assert created["status"] == "enabled" and created["published"] is None
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.resolve(base_id)
+
+    bound = bind(service, created, checkout)
+    indexed = service.initialize_index(**admin, expected_revision=bound["revision"])
+    verified = service.verify_draft(**admin, expected_revision=indexed["revision"])
+    disabled_draft = service.set_status(
+        **admin, expected_revision=verified["revision"], status="disabled"
+    )
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.publish(**admin, expected_revision=disabled_draft["revision"])
+    restored_draft = service.set_status(
+        **admin, expected_revision=disabled_draft["revision"], status="enabled"
+    )
+    assert restored_draft["published"] is None
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.resolve(base_id)
+    published = service.publish(**admin, expected_revision=restored_draft["revision"])
+    old_pin = service.resolve(base_id)
+    assert old_pin.revision_id == published["published"]["id"]
+
+    disabled = service.set_status(
+        **admin, expected_revision=published["revision"], status="disabled"
+    )
+    new_draft = bind(service, disabled, checkout)
+    assert new_draft["status"] == "disabled" and new_draft["published"] == published["published"]
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.recheck(old_pin)
+    restored = service.set_status(
+        **admin, expected_revision=new_draft["revision"], status="enabled"
+    )
+    assert restored["draft"] == new_draft["draft"]
+    assert service.resolve(base_id).revision_id == old_pin.revision_id
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_changed"):
+        service.recheck(old_pin)
+
+    stopped = service.set_status(**admin, expected_revision=restored["revision"], status="disabled")
+    archived = service.set_status(**admin, expected_revision=stopped["revision"], status="archived")
+    assert archived["status"] == "archived" and archived["published"] == published["published"]
+    assert archived["draft"] == new_draft["draft"]
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.resolve(base_id)
+    for target in ("enabled", "disabled"):
+        with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+            service.set_status(**admin, expected_revision=archived["revision"], status=target)
+
+
+def test_never_published_code_library_can_be_archived_directly(setup):
+    _, _, _, _, service, _ = setup
+    created = create(service)
+    archived = service.set_status(
+        actor_id="user_local_admin",
+        resource_id=created["id"],
+        expected_revision=created["revision"],
+        status="archived",
+    )
+    assert archived["status"] == "archived" and archived["published"] is None
+    assert archived["draft"] == created["draft"]
+    with pytest.raises(KnowledgeGovernanceError, match="knowledge_resource_unavailable"):
+        service.resolve(created["knowledge_base_id"])
+
+
 @pytest.mark.parametrize(
     "field,value", [("collection_name", "ones_collection"), ("state", "RETIRED")]
 )
@@ -300,6 +398,7 @@ def test_empty_library_has_its_own_initialization_and_publication(setup, histori
     assert created["kind"] == "code" and created["published"] is None
     assert created["draft"]["index_id"] is None
     assert created["draft"]["code_configuration"]["source_id"] is None
+    assert created["draft"]["checkout_relative_dir"] is None
     bound = bind(service, created, checkout)
     initialized = service.initialize_index(
         actor_id="user_local_admin", resource_id=bound["id"], expected_revision=bound["revision"]
@@ -320,6 +419,8 @@ def test_empty_library_has_its_own_initialization_and_publication(setup, histori
     pin = service.resolve(created["knowledge_base_id"])
     assert pin.source_id == source and pin.index_id == index_id
     assert published["published"]["configuration_version"] == 5
+    listed = next(r for r in service.list_resources()["resources"] if r["id"] == created["id"])
+    assert listed["published"]["checkout_relative_dir"] == checkout["relative_dir"]
     assert runtime.database.execute_one('SELECT count(*) AS n FROM "knowledge.document"')["n"] == 0
     assert (
         runtime.database.execute_one('SELECT count(*) AS n FROM "knowledge.code_index_task"')["n"]
