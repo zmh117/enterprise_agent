@@ -66,17 +66,20 @@ def build_identity_admin_router() -> APIRouter:  # noqa: C901, PLR0915
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=25, ge=1, le=100),
         include_disabled: bool = True,
+        status: Status | None = None,
     ) -> dict[str, Any]:
         require_action(request, resource_type="user", resource_code="*", action="read")
         c = container(request)
         total = c.identity_repository.count_users(
             include_disabled=include_disabled,
             search=search,
+            status=status or "",
         )
         return {
             "users": c.identity_repository.list_users(
                 include_disabled=include_disabled,
                 search=search,
+                status=status or "",
                 limit=page_size,
                 offset=(page - 1) * page_size,
             ),

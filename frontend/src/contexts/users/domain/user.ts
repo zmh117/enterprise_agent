@@ -73,6 +73,7 @@ export type UserListParams = {
   search: string
   page: number
   pageSize: number
+  status?: string
   includeDisabled: boolean
 }
 

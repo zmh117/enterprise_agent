@@ -61,12 +61,14 @@ class IdentityRepository:  # noqa: PLR0904
         *,
         include_disabled: bool = True,
         search: str = "",
+        status: str = "",
         limit: int | None = None,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         where_sql, params = self._user_search_clause(
             include_disabled=include_disabled,
             search=search,
+            status=status,
         )
         pagination = ""
         if limit is not None:
@@ -84,10 +86,11 @@ class IdentityRepository:  # noqa: PLR0904
             tuple(params),
         )
 
-    def count_users(self, *, include_disabled: bool = True, search: str = "") -> int:
+    def count_users(self, *, include_disabled: bool = True, search: str = "", status: str = "") -> int:
         where_sql, params = self._user_search_clause(
             include_disabled=include_disabled,
             search=search,
+            status=status,
         )
         row = self.database.execute_one(
             f"select count(*) as count from app_user u {where_sql}",
@@ -1420,11 +1423,15 @@ class IdentityRepository:  # noqa: PLR0904
         *,
         include_disabled: bool,
         search: str,
+        status: str = "",
     ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
         if not include_disabled:
             clauses.append("u.status = 'enabled'")
+        if status:
+            clauses.append("u.status = ?")
+            params.append(status)
         term = search.strip().lower()
         if term:
             pattern = f"%{term}%"

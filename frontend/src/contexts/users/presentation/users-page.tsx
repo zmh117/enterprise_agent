@@ -1,16 +1,18 @@
 import { useState, type FormEvent } from "react"
-import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  LoaderCircleIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  UsersIcon,
-} from "lucide-react"
-import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { LoaderCircleIcon, PlusIcon } from "lucide-react"
+import { Link, useNavigate } from "react-router-dom"
 
-import { Badge } from "@/components/ui/badge"
+import {
+  ListEmpty,
+  ListPage,
+  ListPager,
+  ListResults,
+  ListSearch,
+  ListStatus,
+  ListStatusFilter,
+  RefreshList,
+} from "@/shared/presentation/list-page"
+import { useListNavigation } from "@/shared/presentation/list-navigation"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -35,79 +37,51 @@ import {
   useUsers,
 } from "@/contexts/users/application/user-queries"
 import { useDingTalkIdentityCandidate } from "@/contexts/dingtalk-identity-discovery/application/dingtalk-identity-candidate-queries"
-import {
-  Field,
-  RequestError,
-  UserStatusBadge,
-} from "@/contexts/users/presentation/user-ui"
+import { Field, RequestError } from "@/contexts/users/presentation/user-ui"
 import { formatDate } from "@/contexts/users/presentation/format-date"
 
 const PAGE_SIZE = 20
 
 export function UsersPage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const list = useListNavigation()
+  const searchParams = list.params
   const candidateId = searchParams.get("candidate")?.trim() ?? ""
   const candidate = useDingTalkIdentityCandidate(candidateId)
   const candidateSelectable =
     !candidateId || candidate.data?.identity_state === "waiting_bind"
-  const [draftSearch, setDraftSearch] = useState("")
-  const [search, setSearch] = useState("")
-  const [page, setPage] = useState(1)
+  const search = searchParams.get("q") ?? ""
+  const status = candidateId ? "" : (searchParams.get("status") ?? "")
+  const clear = () => list.filter({ q: "", status: "" })
+  const page = list.page
   const [creating, setCreating] = useState(false)
   const query = useUsers({
     search,
+    status,
     page,
     pageSize: PAGE_SIZE,
     includeDisabled: !candidateId,
   })
 
-  const submitSearch = (event: FormEvent) => {
-    event.preventDefault()
-    setPage(1)
-    setSearch(draftSearch.trim())
-  }
-
   return (
-    <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-medium text-indigo-700">
-            <UsersIcon className="size-4" aria-hidden="true" />
-            USERS & EXTERNAL IDENTITIES
-          </div>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-            人员管理
-          </h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            维护内部人员，并在用户详情中绑定钉钉和 ONES
-            身份。身份关联用于确认主体， 不会自动授予角色或业务数据权限。
-          </p>
-        </div>
-        <div className="flex gap-2">
+    <ListPage
+      title="人员管理"
+      actions={
+        <>
+          <RefreshList
+            refresh={() => void query.refetch()}
+            busy={query.isFetching}
+          />
           <Button
-            type="button"
-            variant="outline"
-            onClick={() => void query.refetch()}
-            disabled={query.isFetching}
-          >
-            <RefreshCwIcon
-              className={query.isFetching ? "animate-spin" : ""}
-              aria-hidden="true"
-            />
-            刷新
-          </Button>
-          <Button
-            type="button"
             onClick={() => setCreating(true)}
             disabled={Boolean(candidateId) && !candidateSelectable}
           >
-            <PlusIcon aria-hidden="true" />
+            <PlusIcon />
             新建用户
           </Button>
-        </div>
-      </header>
-
+        </>
+      }
+    >
       {candidateId ? (
         <Card className="border-indigo-200 bg-indigo-50/60 shadow-none">
           <CardContent>
@@ -150,33 +124,25 @@ export function UsersPage() {
         </Card>
       ) : null}
 
-      <Card className="shadow-none">
-        <CardContent>
-          <form
-            onSubmit={submitSearch}
-            className="flex flex-col gap-2 sm:flex-row"
-            role="search"
-          >
-            <div className="relative flex-1">
-              <SearchIcon
-                className="pointer-events-none absolute top-2 left-2.5 size-4 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <Input
-                aria-label="搜索用户"
-                className="pl-8"
-                value={draftSearch}
-                onChange={(event) => setDraftSearch(event.target.value)}
-                placeholder="用户名、显示名称、邮箱或外部身份"
-              />
-            </div>
-            <Button type="submit" variant="outline">
-              搜索
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
+      <div className="flex flex-wrap items-center gap-2">
+        <ListSearch
+          label="搜索用户"
+          placeholder="用户名、显示名称、邮箱或外部身份"
+          value={search}
+          onCommit={(q) => list.filter({ q })}
+        />
+        {!candidateId && (
+          <ListStatusFilter
+            value={status}
+            onChange={(status) => list.filter({ status })}
+          />
+        )}
+        {(search || status) && (
+          <Button size="sm" variant="ghost" onClick={clear}>
+            重置
+          </Button>
+        )}
+      </div>
       {query.isLoading ? (
         <div
           className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground"
@@ -188,47 +154,62 @@ export function UsersPage() {
       ) : null}
       {query.isError ? <RequestError error={query.error} /> : null}
       {query.data ? (
-        <Card className="shadow-none">
-          <CardContent className="px-0">
-            {query.data.users.length ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="pl-4">用户</TableHead>
-                    <TableHead>账号类型</TableHead>
-                    <TableHead>状态</TableHead>
-                    <TableHead>更新时间</TableHead>
+        <ListResults>
+          {query.data.users.length ? (
+            <Table aria-label="人员列表">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-4">用户</TableHead>
+                  <TableHead className="hidden sm:table-cell">
+                    账号类型
+                  </TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead className="hidden md:table-cell">
+                    更新时间
+                  </TableHead>
+                  {candidateId && (
                     <TableHead className="pr-4 text-right">操作</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {query.data.users.map((user) => (
-                    <TableRow key={user.id}>
-                      <TableCell className="pl-4">
-                        <div className="font-medium">{user.display_name}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {user.username}
-                          {user.email ? ` · ${user.email}` : ""}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {user.account_type === "human"
-                            ? "人员账号"
-                            : "服务账号"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <UserStatusBadge status={user.status} />
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {formatDate(user.updated_at)}
-                      </TableCell>
+                  )}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {query.data.users.map((user) => (
+                  <TableRow key={user.id}>
+                    <TableCell className="pl-4">
+                      {candidateId ? (
+                        <span className="font-medium">{user.display_name}</span>
+                      ) : (
+                        <Link
+                          className="font-medium hover:underline"
+                          to={`/users/${encodeURIComponent(user.id)}`}
+                          state={list.detailState}
+                        >
+                          {user.display_name}
+                        </Link>
+                      )}
+                      <div className="mt-1 max-w-48 truncate text-xs text-muted-foreground sm:max-w-sm">
+                        {user.username}
+                        {user.email ? ` · ${user.email}` : ""}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      <span>
+                        {user.account_type === "human"
+                          ? "人员账号"
+                          : "服务账号"}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <ListStatus status={user.status} />
+                    </TableCell>
+                    <TableCell className="hidden text-muted-foreground md:table-cell">
+                      {formatDate(user.updated_at)}
+                    </TableCell>
+                    {candidateId && (
                       <TableCell className="pr-4 text-right">
-                        {candidateId &&
-                        (user.account_type !== "human" ||
-                          user.status !== "enabled" ||
-                          !candidateSelectable) ? (
+                        {user.account_type !== "human" ||
+                        user.status !== "enabled" ||
+                        !candidateSelectable ? (
                           <Button
                             type="button"
                             variant="outline"
@@ -243,60 +224,42 @@ export function UsersPage() {
                               variant: "outline",
                               size: "sm",
                             })}
-                            to={
-                              candidateId
-                                ? `/users/${encodeURIComponent(user.id)}?candidate=${encodeURIComponent(candidateId)}`
-                                : `/users/${encodeURIComponent(user.id)}`
-                            }
+                            state={list.detailState}
+                            to={`/users/${encodeURIComponent(user.id)}?candidate=${encodeURIComponent(candidateId)}`}
                           >
-                            {candidateId ? "选择并绑定" : "查看详情"}
+                            选择并绑定
                           </Link>
                         )}
                       </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <div className="px-4 py-16 text-center text-sm text-muted-foreground">
-                没有找到符合条件的用户。
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {query.data ? (
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">
-            共 {query.data.pagination.total} 个用户
-          </span>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={page <= 1}
-              onClick={() => setPage((value) => Math.max(1, value - 1))}
-            >
-              <ChevronLeftIcon aria-hidden="true" />
-              上一页
-            </Button>
-            <span>
-              {page} / {Math.max(1, query.data.pagination.total_pages)}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={page >= query.data.pagination.total_pages}
-              onClick={() => setPage((value) => value + 1)}
-            >
-              下一页
-              <ChevronRightIcon aria-hidden="true" />
-            </Button>
-          </div>
-        </div>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <ListEmpty
+              title={
+                search || status
+                  ? "没有符合条件的用户"
+                  : candidateId
+                    ? "没有可供选择的用户"
+                    : "还没有内部用户"
+              }
+              clear={search || status ? clear : undefined}
+            />
+          )}
+          <ListPager
+            count={`共 ${query.data.pagination.total} 个用户`}
+            page={page}
+            pages={query.data.pagination.total_pages}
+            previous={() => list.numberedPage(page - 1)}
+            next={
+              page < query.data.pagination.total_pages
+                ? () => list.numberedPage(page + 1)
+                : undefined
+            }
+          />
+        </ListResults>
       ) : null}
 
       {creating ? (
@@ -305,9 +268,10 @@ export function UsersPage() {
           onOpenChange={setCreating}
           candidateId={candidateSelectable ? candidateId : ""}
           candidateDisplayName={candidate.data?.display_name ?? ""}
+          detailState={list.detailState}
         />
       ) : null}
-    </div>
+    </ListPage>
   )
 }
 
@@ -316,11 +280,13 @@ function CreateUserSheet({
   onOpenChange,
   candidateId,
   candidateDisplayName,
+  detailState,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   candidateId: string
   candidateDisplayName: string
+  detailState: ReturnType<typeof useListNavigation>["detailState"]
 }) {
   const navigate = useNavigate()
   const mutation = useCreateUser()
@@ -353,7 +319,8 @@ function CreateUserSheet({
       onSuccess: (user) => {
         if (candidateId) {
           navigate(
-            `/users/${encodeURIComponent(user.id)}?candidate=${encodeURIComponent(candidateId)}`
+            `/users/${encodeURIComponent(user.id)}?candidate=${encodeURIComponent(candidateId)}`,
+            { state: detailState }
           )
         }
         changeOpen(false)

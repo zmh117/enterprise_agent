@@ -24,10 +24,10 @@ export const applicationKeys = {
   catalog: (code: string) => [...applicationKeys.all, "catalog", code] as const,
 }
 
-export function useApplications() {
+export function useApplications(search: string, status: string, offset: string) {
   return useQuery({
-    queryKey: applicationKeys.list(),
-    queryFn: listApplications,
+    queryKey: [...applicationKeys.list(), search, status, offset],
+    queryFn: () => listApplications(search, status, offset),
     retry: false,
   })
 }

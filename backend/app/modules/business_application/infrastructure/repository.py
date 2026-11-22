@@ -91,7 +91,10 @@ class BusinessApplicationRepository:  # noqa: PLR0904
         self,
         *,
         project_codes: set[str] | None = None,
+        application_codes: set[str] | None = None,
         include_archived: bool = False,
+        search: str = "",
+        status: str = "",
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
@@ -99,12 +102,25 @@ class BusinessApplicationRepository:  # noqa: PLR0904
         params: list[Any] = []
         if not include_archived:
             clauses.append("a.status != 'archived'")
+        if status:
+            clauses.append("a.status = ?")
+            params.append(status)
+        if search.strip():
+            term = search.strip().lower().replace("!", "!!").replace("%", "!%").replace("_", "!_")
+            clauses.append("(lower(a.name) like ? escape '!' or lower(a.code) like ? escape '!')")
+            params.extend([f"%{term}%"] * 2)
         if project_codes is not None:
             if not project_codes:
                 return []
             placeholders = ",".join("?" for _ in project_codes)
             clauses.append(f"a.project_code in ({placeholders})")
             params.extend(sorted(project_codes))
+        if application_codes is not None:
+            if not application_codes:
+                return []
+            placeholders = ",".join("?" for _ in application_codes)
+            clauses.append(f"a.code in ({placeholders})")
+            params.extend(sorted(application_codes))
         where = f"where {' and '.join(clauses)}" if clauses else ""
         params.extend([limit, offset])
         rows = self.database.execute(

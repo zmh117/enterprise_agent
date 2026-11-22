@@ -74,10 +74,11 @@ describe("Business Application workbench", () => {
     )
     renderWithQuery(<ApplicationsPage />)
     expect(await screen.findByText("真实诊断应用")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "展开真实诊断应用的信息" }))
     expect(screen.getByText("r3")).toBeInTheDocument()
-    expect(screen.getByText("local")).toBeInTheDocument()
+    expect(screen.getAllByText("local").length).toBeGreaterThan(0)
     expect(screen.getByLabelText("运行状态：部分接管")).toBeInTheDocument()
-    expect(screen.getByText(/1 个应用已接管或部分接管入口/)).toBeInTheDocument()
+    expect(screen.getByRole("link", {name: "真实诊断应用"})).toHaveAttribute("href", "/applications/real-app")
     expect(screen.queryByText("APP-DEMO-PRIVATE")).not.toBeInTheDocument()
   })
 

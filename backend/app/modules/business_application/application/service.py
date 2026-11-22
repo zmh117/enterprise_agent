@@ -119,25 +119,27 @@ class BusinessApplicationService:
         actor_id: str,
         project_code: str = "",
         include_archived: bool = False,
+        search: str = "",
+        status: str = "",
         limit: int = 50,
         offset: int = 0,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], int | None]:
+        codes = self.authorization.resource_codes_for_capability(
+            user_id=actor_id, capability_code="applications.read"
+        )
+        if not codes:
+            return [], None
         values = self.repository.list_applications(
             project_codes={project_code} if project_code else None,
+            application_codes=None if "*" in codes else codes,
             include_archived=include_archived,
-            limit=limit,
+            search=search,
+            status=status,
+            limit=limit + 1,
             offset=offset,
         )
-        return [
-            self._summary(value)
-            for value in values
-            if self.authorization.decide(
-                user_id=actor_id,
-                resource_type="business_application",
-                resource_code=str(value["code"]),
-                action="read",
-            ).allowed
-        ]
+        next_offset = offset + limit if len(values) > limit else None
+        return [self._summary(value) for value in values[:limit]], next_offset
 
     def detail(self, *, actor_id: str, code: str) -> dict[str, Any]:
         application = self.repository.get_by_code(validate_code(code))

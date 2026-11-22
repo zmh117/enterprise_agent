@@ -10,10 +10,15 @@ import {
 } from "@/contexts/operations/infrastructure/runtime-record-api"
 import type { AgentRunAuditField } from "@/contexts/operations/domain/runtime-record"
 
-export function useRuntimeJobs(filters: RuntimeJobFilters = {}) {
+export function useRuntimeJobs(
+  filters: RuntimeJobFilters,
+  cursor: string,
+  enabled: boolean
+) {
   return useQuery({
-    queryKey: ["operations", "jobs", filters],
-    queryFn: () => listRuntimeJobs(filters),
+    queryKey: ["operations", "jobs", filters, cursor],
+    queryFn: () => listRuntimeJobs(filters, cursor),
+    enabled,
   })
 }
 
@@ -56,10 +61,11 @@ export function useConversation(sessionId: string) {
   })
 }
 
-export function useFileOperations() {
+export function useFileOperations(enabled = true) {
   return useQuery({
     queryKey: ["operations", "file-operations"],
     queryFn: getFileOperations,
+    enabled,
     refetchInterval: 30_000,
   })
 }

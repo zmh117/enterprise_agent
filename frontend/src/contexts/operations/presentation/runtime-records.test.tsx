@@ -531,6 +531,7 @@ describe("runtime provenance records", () => {
 
     renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
 
+    fireEvent.click(screen.getByRole("tab", { name: "文件运维" }))
     expect(await screen.findByText(/文档解析\/OCR 就绪/)).toBeInTheDocument()
     expect(screen.getByText("文档处理队列")).toBeInTheDocument()
     expect(
@@ -575,20 +576,22 @@ describe("runtime provenance records", () => {
       })
     )
     renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
+    fireEvent.click(await screen.findByRole("button", { name: "展开 job-1 运行摘要" }))
+    fireEvent.click(screen.getByRole("button", { name: "展开 job-legacy 运行摘要" }))
     expect(
       (await screen.findAllByText(/Administrator（@admin）/)).length
     ).toBeGreaterThan(0)
     expect(
-      screen.getByText("生产诊断助手（diagnostic-app）")
+      screen.getByText(/生产诊断助手（diagnostic-app） ·/)
     ).toBeInTheDocument()
     expect(
-      screen.getByText("历史兼容任务（无业务应用归因）")
+      screen.getByText(/历史兼容任务（无业务应用归因）/)
     ).toBeInTheDocument()
-    expect(screen.getAllByText("legacy_unattributed").length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/legacy_unattributed/).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/总耗时 2.40 秒/).length).toBeGreaterThan(0)
-    expect(screen.getAllByText("claude-safe-model").length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/claude-safe-model/).length).toBeGreaterThan(0)
     expect(screen.getAllByText("MATCH").length).toBeGreaterThan(0)
-    expect(screen.getByText("NOT_OBSERVED（不等于健康）")).toBeInTheDocument()
+    expect(screen.getAllByText("NOT_OBSERVED（不等于健康）").length).toBeGreaterThan(0)
   })
 
   it("filters jobs by local time, username and application name", async () => {
@@ -613,6 +616,7 @@ describe("runtime provenance records", () => {
         new Date(String(initialParams.get("start"))).getTime()
     ).toBe(24 * 60 * 60 * 1000)
 
+    fireEvent.change(screen.getByLabelText("时间范围"), { target: { value: "custom" } })
     fireEvent.change(screen.getByLabelText("开始时间"), {
       target: { value: "2026-08-13T09:00" },
     })
@@ -625,15 +629,13 @@ describe("runtime provenance records", () => {
     fireEvent.change(screen.getByLabelText("应用名"), {
       target: { value: "诊断助手" },
     })
-    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }))
+    fireEvent.click(screen.getByRole("button", { name: "应用时间范围" }))
 
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.filter(([url]) =>
-          String(url).startsWith("/api/admin/jobs?")
-        )
-      ).toHaveLength(2)
-    )
+    await waitFor(() => {
+      const url = new URL(String(fetchMock.mock.calls.at(-1)?.[0]), "http://localhost")
+      expect(url.searchParams.get("username")).toBe("admin")
+      expect(url.searchParams.get("application_name")).toBe("诊断助手")
+    })
     const requestUrl = String(
       fetchMock.mock.calls
         .filter(([url]) => String(url).startsWith("/api/admin/jobs?"))
@@ -678,11 +680,7 @@ describe("runtime provenance records", () => {
 
     renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
 
-    expect(await screen.findByText("时间范围无效")).toBeInTheDocument()
-    expect(screen.getByText("查询时间范围不能超过 31 天")).toBeInTheDocument()
-    expect(
-      screen.getByText("单次最多查询 31 天，开始时间必须早于结束时间。")
-    ).toBeInTheDocument()
+    expect(await screen.findByText("查询时间范围不能超过 31 天")).toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "恢复最近 24 小时" })
     ).toBeInTheDocument()
@@ -1639,7 +1637,8 @@ describe("runtime provenance records", () => {
       })
     )
     renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
-    expect(await screen.findByText("统计不可用")).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole("button", { name: "展开 job-unavailable 运行摘要" }))
+    expect(screen.getByText(/统计不可用/)).toBeInTheDocument()
     expect(screen.getAllByText(/总耗时 未知/).length).toBeGreaterThan(0)
     expect(screen.queryByText("0 Token")).not.toBeInTheDocument()
   })

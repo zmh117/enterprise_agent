@@ -16,8 +16,9 @@ export interface RuntimeJobFilters {
   applicationName?: string
 }
 
-export async function listRuntimeJobs(filters: RuntimeJobFilters = {}) {
+export async function listRuntimeJobs(filters: RuntimeJobFilters = {}, cursor = "") {
   const params = new URLSearchParams({ limit: "50" })
+  if (cursor) params.set("cursor", cursor)
   const values: Array<[keyof RuntimeJobFilters, string]> = [
     ["username", "username"],
     ["applicationName", "application_name"],
@@ -32,7 +33,7 @@ export async function listRuntimeJobs(filters: RuntimeJobFilters = {}) {
   }
   return runtimeJobPageSchema.parse(
     await apiRequest(`/api/admin/jobs?${params.toString()}`)
-  ).items
+  )
 }
 
 function apiTimestamp(value: string): string {

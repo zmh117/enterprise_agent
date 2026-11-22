@@ -15,6 +15,7 @@ import { mcpServerCodeSchema } from "@/shared/domain/mcp-server-code"
 
 const listResponseSchema = runtimeStateSchema.extend({
   items: z.array(applicationSummarySchema),
+  next_offset: z.number().int().nonnegative().nullable().default(null),
 })
 
 const detailResponseSchema = z.object({
@@ -90,10 +91,13 @@ export const catalogSchema = z.object({
     .default({}),
 })
 
-export async function listApplications() {
-  return listResponseSchema.parse(
-    await apiRequest("/api/admin/business-applications")
-  ).items
+export async function listApplications(search: string, status: string, offset: string) {
+  const query = new URLSearchParams({ limit: "20" })
+  if (search) query.set("search", search)
+  if (status) query.set("status", status)
+  if (status === "archived") query.set("include_archived", "true")
+  if (offset) query.set("offset", offset)
+  return listResponseSchema.parse(await apiRequest(`/api/admin/business-applications?${query}`))
 }
 
 export async function getApplication(code: string) {

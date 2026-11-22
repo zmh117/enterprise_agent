@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.modules.audit.application.audit_service import AuditService
-from app.modules.admin.domain import ADMIN_CAPABILITIES
+from app.modules.admin.domain import ADMIN_CAPABILITIES, ADMIN_CAPABILITY_BY_CODE
 from app.modules.identity.domain import AuthorizationDecision
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.job.infrastructure.persistence_values import now_iso
@@ -92,33 +92,55 @@ class AuthorizationEvaluator:
             "no_strict_admin_capability",
         )
 
+    def resource_codes_for_capability(self, *, user_id: str, capability_code: str) -> set[str]:
+        definition = ADMIN_CAPABILITY_BY_CODE[capability_code]
+        decision = self.decide(
+            user_id=user_id,
+            resource_type=definition.resource_type,
+            resource_code=definition.resource_code,
+            action=definition.action,
+        )
+        if decision.allowed:
+            return {definition.resource_code}
+        if definition.resource_code != "*" or decision.reason == "user_disabled":
+            return set()
+        bindings = self._role_admin_bindings(
+            user_id=user_id,
+            capability_codes=(capability_code,),
+            resource_type=definition.resource_type,
+            resource_code=None,
+        )
+        return {str(row["resource_code"]) for row in bindings}
+
     def _role_admin_bindings(
         self,
         *,
         user_id: str,
         capability_codes: tuple[str, ...],
         resource_type: str,
-        resource_code: str,
+        resource_code: str | None,
     ) -> list[dict[str, object]]:
         if not capability_codes:
             return []
         placeholders = ",".join("?" for _ in capability_codes)
+        scope = "and (ac.resource_code = '*' or ac.resource_code = ?)" if resource_code is not None else ""
+        scope_params = (resource_code,) if resource_code is not None else ()
         return self.repository.database.execute(
             f"""
-            select ac.id, ac.capability_code, r.code as role_code
+            select ac.id, ac.capability_code, ac.resource_code, r.code as role_code
               from rbac_role_admin_capability ac
               join rbac_role r on r.id = ac.role_id
               join rbac_user_role ur on ur.role_id = r.id
              where ur.user_id = ?
                and ac.capability_code in ({placeholders})
                and ac.resource_type = ?
-               and (ac.resource_code = '*' or ac.resource_code = ?)
+               {scope}
                and ac.status = 'enabled' and r.status = 'enabled'
                and ur.status = 'enabled'
                and (ur.expires_at is null or ur.expires_at > ?)
              order by r.code, ac.capability_code
             """,
-            (user_id, *capability_codes, resource_type, resource_code, now_iso()),
+            (user_id, *capability_codes, resource_type, *scope_params, now_iso()),
         )
 
     def decide_platform_scope(

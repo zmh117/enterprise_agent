@@ -390,3 +390,21 @@ def test_admin_api_revision_conflicts_and_typed_agent_draft_errors() -> None:
         )
         assert raw_security_field.status_code == 422
         assert "must-not-be-accepted" not in raw_security_field.text
+
+
+def test_user_status_filters_results_and_pagination_together() -> None:
+    settings = unified_settings()
+    container = build_test_container(settings, migrate=True, seed=True)
+    for index, status in enumerate(("disabled", "enabled", "disabled")):
+        container.identity_repository.create_user(
+            username=f"status-sample-{index}", display_name="样板人员", status=status,
+        )
+    with TestClient(create_app(settings, container_factory=lambda _: container)) as client:
+        login(client)
+        params = {"search": "status-sample", "status": "disabled", "page_size": 1, "page": 2}
+        result = client.get("/api/admin/users", params=params).json()
+        assert [user["username"] for user in result["users"]] == ["status-sample-2"]
+        assert result["pagination"]["total"] == result["pagination"]["total_pages"] == 2
+        result = client.get("/api/admin/users", params=params | {"include_disabled": "false"}).json()
+        assert result["users"] == []
+        assert result["pagination"]["total"] == 0

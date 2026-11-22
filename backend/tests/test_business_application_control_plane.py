@@ -1908,6 +1908,35 @@ def test_admin_api_enforces_feature_auth_csrf_unknown_fields_and_conflict() -> N
     assert response.json()["detail"]["code"] == "business_application_control_plane_disabled"
 
 
+def test_application_search_paginates_only_matching_authorized_rows() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    for code in ("sample-red", "sample-blue", "sample-hidden"):
+        service.create(
+            actor_id="user_local_admin", code=code, name=f"质量样板 {code}",
+            description="", project_code="default", owner_user_id="",
+        )
+    identities = container.identity_repository
+    viewer = identities.create_user(username="sample-viewer", display_name="演示用户")
+    role = identities.create_role(code="sample-scope", name="演示范围")
+    identities.assign_role(user_id=viewer["id"], role_id=role["id"], assigned_by="user_local_admin")
+    container.authorization_center_repository.replace_admin_bindings(
+        role["id"], expected_revision=1, bindings=[
+            {"capability_code": "applications.read", "resource_type": "business_application",
+             "resource_code": code} for code in ("sample-red", "sample-blue")
+        ],
+    )
+    filters = dict(actor_id=viewer["id"], search="质量样板", status="enabled", limit=1)
+    first, offset = service.list_applications(**filters)
+    assert offset == 1
+    second, end = service.list_applications(**filters, offset=offset)
+    assert end is None
+    assert {first[0]["code"], second[0]["code"]} == {"sample-red", "sample-blue"}
+    for term in ("sample-hidden", "_", "%"):
+        assert service.list_applications(actor_id=viewer["id"], search=term) == ([], None)
+    assert service.list_applications(actor_id=viewer["id"], status="disabled") == ([], None)
+
+
 def test_admin_api_prevents_enumeration_and_denies_unprivileged_writes() -> None:
     settings = control_plane_settings()
     container = build_test_container(settings, migrate=True, seed=True)

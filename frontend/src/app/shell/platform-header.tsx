@@ -1,9 +1,27 @@
+import { useLocation } from "react-router-dom"
 import { CircleDotIcon, ShieldCheckIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 export function PlatformHeader() {
+  const { pathname } = useLocation()
+  const sections: Record<string, string> = {
+    "/applications": "业务应用",
+    "/users": "用户与外部身份",
+    "/operations/jobs": "运行中心",
+  }
+  if (sections[pathname]) {
+    return (
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-4 text-sm text-muted-foreground lg:px-6">
+        <SidebarTrigger className="-ml-1" aria-label="展开或收起导航" />
+        <Separator orientation="vertical" className="my-auto h-4 self-center" />
+        <span>管理控制面</span>
+        <span aria-hidden="true">/</span>
+        <span className="text-foreground">{sections[pathname]}</span>
+      </header>
+    )
+  }
   return (
     <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/85 lg:px-6">
       <div className="flex w-full min-w-0 items-center gap-3">

@@ -1,3 +1,4 @@
+import { useListReturn } from "@/shared/presentation/list-navigation"
 import { useState, type FormEvent } from "react"
 import {
   ArrowLeftIcon,
@@ -40,6 +41,7 @@ import { formatDate } from "@/contexts/users/presentation/format-date"
 import { ApiError } from "@/shared/api/api-client"
 
 export function UserDetailPage() {
+  const listReturn = useListReturn("/users")
   const { userId = "" } = useParams()
   const [searchParams] = useSearchParams()
   const candidateId = searchParams.get("candidate")?.trim() ?? ""
@@ -62,7 +64,7 @@ export function UserDetailPage() {
           {missing ? "用户不存在" : "无法加载用户"}
         </h1>
         <RequestError error={query.error} />
-        <Link to="/users" className={buttonVariants({ variant: "outline" })}>
+        <Link {...listReturn} className={buttonVariants({ variant: "outline" })}>
           返回用户列表
         </Link>
       </div>
@@ -74,7 +76,7 @@ export function UserDetailPage() {
     <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <div>
         <Link
-          to="/users"
+          {...listReturn}
           className={buttonVariants({ variant: "ghost", size: "sm" })}
         >
           <ArrowLeftIcon aria-hidden="true" />

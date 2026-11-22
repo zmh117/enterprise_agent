@@ -167,6 +167,7 @@ class ApplicationResponse(ApplicationSummaryResponse):
 
 
 class ApplicationListResponse(RuntimeStateResponse):
+    next_offset: int | None = None
     items: list[ApplicationSummaryResponse]
 
 
@@ -353,22 +354,26 @@ def build_business_application_router() -> APIRouter:  # noqa: C901, PLR0915
         request: Request,
         project_code: str = Query(default="", max_length=120),
         include_archived: bool = False,
+        search: str = Query(default="", max_length=200),
+        status: Literal["", "enabled", "disabled", "archived"] = "",
         limit: int = Query(default=50, ge=1, le=100),
-        offset: int = Query(default=0, ge=0, le=10000),
+        offset: int = Query(default=0, ge=0, le=2147483647),
     ) -> dict[str, Any]:
         _require_enabled(request)
         principal = current_principal(request)
         try:
-            values = container(request).business_application_service.list_applications(
+            values, next_offset = container(request).business_application_service.list_applications(
                 actor_id=principal.user_id,
                 project_code=project_code,
                 include_archived=include_archived,
+                search=search,
+                status=status,
                 limit=limit,
                 offset=offset,
             )
         except Exception as exc:
             raise _http_error(exc) from exc
-        return {"items": values, **_aggregate_runtime(values, request)}
+        return {"items": values, "next_offset": next_offset, **_aggregate_runtime(values, request)}
 
     @router.post("", response_model=ApplicationEnvelope)
     def create_application(request: Request, payload: CreateApplicationRequest) -> dict[str, Any]:

@@ -39,6 +39,7 @@ export async function listUsers(params: UserListParams) {
     page_size: String(params.pageSize),
     include_disabled: String(params.includeDisabled),
   })
+  if (params.status) query.set("status", params.status)
   return listResponseSchema.parse(
     await apiRequest(`/api/admin/users?${query.toString()}`),
   )

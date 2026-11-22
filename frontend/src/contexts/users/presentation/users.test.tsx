@@ -269,7 +269,6 @@ describe("User and external identity management", () => {
     fireEvent.change(screen.getByLabelText("搜索用户"), {
       target: { value: "036957" },
     })
-    fireEvent.click(screen.getByRole("button", { name: "搜索" }))
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
     expect(
       new URL(
@@ -294,7 +293,7 @@ describe("User and external identity management", () => {
       })
     })
     renderUsers()
-    await screen.findByText("没有找到符合条件的用户。")
+    await screen.findByText("还没有内部用户")
     fireEvent.click(screen.getByRole("button", { name: "新建用户" }))
     fireEvent.change(screen.getByLabelText("用户名"), {
       target: { value: "new-user" },
