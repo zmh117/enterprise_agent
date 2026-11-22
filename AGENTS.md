@@ -33,3 +33,6 @@
 
 - 不得读取、打印或持久化真实 Secret、Token、密码、模型 Key、Cookie、数据库凭据或原始业务消息。
 - 不得把历史 archive 中的凭据示例、现场记录或旧配置复制到当前代码、提示词、日志或规范。
+
+- Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining.
+  避免不必要的次要标签和描述。让布局自己说话。
