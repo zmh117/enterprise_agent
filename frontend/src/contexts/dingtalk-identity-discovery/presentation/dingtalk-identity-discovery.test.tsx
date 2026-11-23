@@ -106,12 +106,12 @@ describe("未绑定钉钉用户发现", () => {
       "/users/dingtalk-discovery"
     )
 
-    expect(await screen.findByText("张三")).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole("button", { name: "张三" }))
     expect(screen.getAllByText("<img src=x onerror=alert(1)>")).toHaveLength(2)
     expect(view.container.querySelector("img")).toBeNull()
     expect(screen.getByText("staff-001")).toBeInTheDocument()
     expect(screen.getByText("cid-group-1")).toBeInTheDocument()
-    expect(screen.getByText("robot-east")).toBeInTheDocument()
+    expect(screen.getAllByText("robot-east")[0]).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "去绑定" })).toHaveAttribute(
       "href",
       "/users?candidate=candidate-1"
@@ -139,7 +139,7 @@ describe("未绑定钉钉用户发现", () => {
     fireEvent.change(screen.getByLabelText("搜索未绑定钉钉用户"), {
       target: { value: "robot-east" },
     })
-    fireEvent.click(screen.getByRole("button", { name: "搜索" }))
+    fireEvent.submit(screen.getByRole("search"))
 
     await waitFor(() => {
       const lastUrl = new URL(

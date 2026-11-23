@@ -101,7 +101,7 @@ describe("Managed channels", () => {
       return response({ items: url.endsWith("/managed-channels") ? [plugin] : [] })
     })
     renderWithQuery(<ManagedChannelsPanel />)
-    await screen.findByText("浏览器插件")
+    fireEvent.click(await screen.findByRole("button", { name: "浏览器插件" }))
     fireEvent.click(screen.getByRole("button", { name: "停用" }))
     expect(await screen.findByRole("button", { name: "启用" })).toBeEnabled()
   })
@@ -159,6 +159,7 @@ describe("Managed channels", () => {
     })
 
     renderWithQuery(<ManagedChannelsPanel />)
+    fireEvent.click(await screen.findByRole("tab", { name: "钉钉企业" }))
     fireEvent.click(await screen.findByRole("button", { name: "新建钉钉企业" }))
     fireEvent.change(screen.getByLabelText("企业名称"), {
       target: { value: "新建测试企业" },
@@ -166,6 +167,7 @@ describe("Managed channels", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建待验证企业" }))
     expect(await screen.findByText("新建测试企业")).toBeInTheDocument()
 
+    fireEvent.click(screen.getByRole("tab", { name: "渠道目录" }))
     fireEvent.click(screen.getByRole("button", { name: "新建钉钉机器人" }))
     expect(screen.queryByLabelText("企业标识（Corp / Tenant）")).toBeNull()
     fireEvent.change(await screen.findByLabelText("渠道名称"), {
@@ -260,9 +262,16 @@ describe("Managed channels", () => {
     })
 
     renderWithQuery(<ManagedChannelsPanel />)
+    fireEvent.click(
+      await screen.findByRole("button", { name: pendingChannel.name })
+    )
     expect(await screen.findAllByText("待企业验证")).not.toHaveLength(0)
     expect(screen.getAllByText("已连接")).not.toHaveLength(0)
     expect(screen.getByText(/已连接，等待企业验证/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("tab", { name: "钉钉企业" }))
+    fireEvent.click(
+      await screen.findByRole("button", { name: pendingEnterprise.name })
+    )
     fireEvent.click(screen.getByRole("button", { name: "停用企业" }))
     expect(await screen.findByText(/诊断应用/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "停用钉钉企业" }))
@@ -298,7 +307,9 @@ describe("Managed channels", () => {
     })
 
     renderWithQuery(<ManagedChannelsPanel />)
-    await screen.findByText("生产诊断机器人")
+    fireEvent.click(
+      await screen.findByRole("button", { name: dingTalkChannel.name })
+    )
     fireEvent.click(screen.getByRole("button", { name: "删除" }))
 
     expect(
@@ -337,8 +348,10 @@ describe("Managed channels", () => {
     })
 
     renderWithQuery(<ManagedChannelsPanel />)
-    expect(await screen.findByText("生产诊断机器人")).toBeInTheDocument()
-    expect(screen.getAllByText("已就绪")).toHaveLength(2)
+    fireEvent.click(
+      await screen.findByRole("button", { name: dingTalkChannel.name })
+    )
+    expect(screen.getAllByText("已就绪").length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole("button", { name: "编辑" }))
     const secret = await screen.findByLabelText("Client Secret / AppSecret")
@@ -405,7 +418,10 @@ describe("Managed channels", () => {
     })
 
     renderWithQuery(<ManagedChannelsPanel />)
-    expect(await screen.findAllByText("配置异常")).toHaveLength(2)
+    fireEvent.click(
+      await screen.findByRole("button", { name: misconfigured.name })
+    )
+    expect(await screen.findAllByText("配置异常")).not.toHaveLength(0)
     expect(
       screen.getByText("连接器凭据缺失、已停用或无法解析，请重新绑定后测试")
     ).toBeInTheDocument()

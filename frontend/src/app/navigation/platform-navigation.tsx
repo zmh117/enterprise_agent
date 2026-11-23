@@ -73,9 +73,6 @@ export function PlatformNavigation() {
               </span>
               <span className="flex flex-col text-left leading-tight">
                 <span className="font-semibold">Agent 应用平台</span>
-                <span className="text-[11px] text-muted-foreground">
-                  Control Plane
-                </span>
               </span>
             </SidebarMenuButton>
           </SidebarMenuItem>

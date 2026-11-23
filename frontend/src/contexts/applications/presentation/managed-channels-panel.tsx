@@ -1,12 +1,35 @@
+import {
+  ListPage,
+  ListSearch,
+  ListResults,
+  ListStatus,
+  ListEmpty,
+  RefreshList,
+  CatalogPager,
+  ExpandableListRow,
+  ListStatusFilter,
+} from "@/shared/presentation/list-page"
+import {
+  useListNavigation,
+  matchesListSearch,
+  catalogPage,
+} from "@/shared/presentation/list-navigation"
+import {
+  Table,
+  TableHeader,
+  TableHead,
+  TableRow,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { useState, type FormEvent, type ReactNode } from "react"
 import {
   ArchiveIcon,
   BotIcon,
-  Building2Icon,
   LoaderCircleIcon,
   PencilIcon,
   PlusIcon,
-  RefreshCwIcon,
   RotateCwIcon,
   ShieldCheckIcon,
   Trash2Icon,
@@ -77,87 +100,218 @@ export function ManagedChannelsPanel() {
     action: "disable" | "archive" | "restore"
   } | null>(null)
 
+  const list = useListNavigation()
+  const enterpriseView = list.params.get("tab") === "enterprises"
+  const q = list.params.get("q") ?? ""
+  const status = list.params.get("status") ?? ""
+  const clear = () => list.filter({ q: "", status: "" })
+  const channelKinds = {
+    BROWSER_EXTENSION: "浏览器插件",
+    DINGTALK_APP_ROBOT: "钉钉应用机器人",
+    WEBHOOK: "Webhook",
+  }
+  const channels = catalogPage(
+    (query.data ?? []).filter(
+      (c) =>
+        matchesListSearch(
+          q,
+          c.name,
+          c.code,
+          c.client_id,
+          c.enterprise?.name,
+          channelKinds[c.kind]
+        ) &&
+        (!status || (c.enabled ? "enabled" : "disabled") === status)
+    ),
+    list.page
+  )
+  const companies = catalogPage(
+    (enterprises.data ?? []).filter(
+      (e) =>
+        matchesListSearch(q, e.name, e.corp_id) &&
+        (!status || status === e.status)
+    ),
+    list.page
+  )
+  const active = enterpriseView ? enterprises : query
+  const result = enterpriseView ? companies : channels
   return (
-    <div className="space-y-5">
-      <DingTalkEnterpriseSection
-        enterprises={enterprises.data ?? []}
-        loading={enterprises.isLoading}
-        error={enterprises.error}
-        onCreate={() => setEnterpriseEditor("create")}
-        onRename={setEnterpriseEditor}
-        onGovern={(enterprise, action) =>
-          setEnterpriseGovernance({ enterpriseId: enterprise.id, action })
-        }
-      />
-      <Card className="shadow-none">
-        <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle>渠道目录</CardTitle>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              在这里管理浏览器插件、钉钉应用机器人和 Webhook。启用的渠道可用于业务应用。
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void query.refetch()}
-              disabled={query.isFetching}
-            >
-              <RefreshCwIcon
-                className={query.isFetching ? "animate-spin" : ""}
-                aria-hidden="true"
-              />
-              刷新
+    <ListPage
+      title="渠道与触发器"
+      actions={
+        <>
+          <RefreshList
+            refresh={() => void active.refetch()}
+            busy={active.isFetching}
+          />
+          {enterpriseView ? (
+            <Button onClick={() => setEnterpriseEditor("create")}>
+              <PlusIcon />
+              新建钉钉企业
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setWebhookOpen(true)}
-            >
-              <WebhookIcon aria-hidden="true" />
-              新建 Webhook
-            </Button>
-            <Button type="button" onClick={() => setDingTalkEditor("create")}>
-              <PlusIcon aria-hidden="true" />
-              新建钉钉机器人
-            </Button>
-          </div>
-        </CardHeader>
-      </Card>
-
-      <MutationError error={query.error} />
-      {query.isLoading ? (
-        <Card className="shadow-none">
-          <CardContent className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-            <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
-            正在加载渠道……
-          </CardContent>
-        </Card>
-      ) : query.data?.length ? (
-        <div className="grid gap-4 xl:grid-cols-2">
-          {query.data.map((channel) => channel.kind === "BROWSER_EXTENSION" ? (
-            <BrowserChannelCard key={channel.id} channel={channel} />
           ) : (
-            <ManagedChannelCard
-              key={`${channel.kind}-${channel.webhook_trigger_id ?? channel.id}`}
-              channel={channel}
-              onEdit={() =>
-                channel.kind === "WEBHOOK"
-                  ? setWebhookCode(channel.code ?? null)
-                  : setDingTalkEditor(channel)
+            <>
+              <Button variant="outline" onClick={() => setWebhookOpen(true)}>
+                新建 Webhook
+              </Button>
+              <Button onClick={() => setDingTalkEditor("create")}>
+                <PlusIcon />
+                新建钉钉机器人
+              </Button>
+            </>
+          )}
+        </>
+      }
+    >
+      <Tabs
+        value={enterpriseView ? "enterprises" : "channels"}
+        onValueChange={(tab) =>
+          list.filter({
+            tab: tab === "enterprises" ? "enterprises" : "",
+            q: "",
+            status: "",
+          })
+        }
+      >
+        <TabsList variant="line" aria-label="渠道管理">
+          <TabsTrigger value="channels">渠道目录</TabsTrigger>
+          <TabsTrigger value="enterprises">钉钉企业</TabsTrigger>
+        </TabsList>
+        <TabsContent
+          key={enterpriseView ? "enterprises" : "channels"}
+          value={enterpriseView ? "enterprises" : "channels"}
+          className="grid min-w-0 gap-4 pt-3"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <ListSearch
+              label={enterpriseView ? "搜索钉钉企业" : "搜索渠道"}
+              placeholder={
+                enterpriseView
+                  ? "搜索企业名称或 Corp ID"
+                  : "搜索渠道名称、标识或类型"
               }
+              value={q}
+              onCommit={(q) => list.filter({ q })}
             />
-          ))}
-        </div>
-      ) : (
-        <Card className="border-dashed shadow-none">
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            尚未配置渠道。新建钉钉机器人后，Runtime 会自动发现并建立连接。
-          </CardContent>
-        </Card>
-      )}
-
+            {enterpriseView ? (
+              <select
+                aria-label="企业状态"
+                className="h-8 rounded-lg border bg-background px-2 text-sm"
+                value={status}
+                onChange={(e) => list.filter({ status: e.target.value })}
+              >
+                <option value="">全部状态</option>
+                {["PENDING_VERIFICATION", "ACTIVE", "DISABLED", "ARCHIVED"].map(
+                  (v) => (
+                    <option key={v} value={v}>
+                      {enterpriseStatusLabel(v)}
+                    </option>
+                  )
+                )}
+              </select>
+            ) : (
+              <ListStatusFilter
+                value={status}
+                onChange={(status) => list.filter({ status })}
+              />
+            )}
+            {(q || status) && (
+              <Button variant="ghost" onClick={clear}>
+                重置
+              </Button>
+            )}
+          </div>
+          {active.isError ? (
+            <MutationError error={active.error} />
+          ) : active.isLoading ? (
+            <LoadingLine label="正在加载…" />
+          ) : (
+            <ListResults>
+              {!result.total ? (
+                <ListEmpty
+                  title={
+                    q || status
+                      ? "没有符合条件的记录"
+                      : enterpriseView
+                        ? "尚未创建钉钉企业"
+                        : "尚未配置渠道"
+                  }
+                  clear={q || status ? clear : undefined}
+                />
+              ) : enterpriseView ? (
+                <DingTalkEnterpriseSection
+                  enterprises={companies.rows}
+                  onRename={setEnterpriseEditor}
+                  onGovern={(e, action) =>
+                    setEnterpriseGovernance({ enterpriseId: e.id, action })
+                  }
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>渠道名称</TableHead>
+                      <TableHead className="hidden sm:table-cell">
+                        类型
+                      </TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead>运行状态</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {channels.rows.map((c) => (
+                      <ExpandableListRow
+                        key={c.id}
+                        name={c.name}
+                        meta={c.code || c.client_id}
+                        columns={4}
+                        cells={
+                          <>
+                            <TableCell className="hidden sm:table-cell">
+                              {channelKinds[c.kind]}
+                            </TableCell>
+                            <TableCell>
+                              <ListStatus
+                                status={c.enabled ? "enabled" : "disabled"}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              {c.kind === "BROWSER_EXTENSION" ? (
+                                "—"
+                              ) : (
+                                <RuntimeBadge
+                                  status={
+                                    c.runtime?.status ??
+                                    (c.enabled ? "READY" : "STOPPED")
+                                  }
+                                />
+                              )}
+                            </TableCell>
+                          </>
+                        }
+                      >
+                        {c.kind === "BROWSER_EXTENSION" ? (
+                          <BrowserChannelCard channel={c} />
+                        ) : (
+                          <ManagedChannelCard
+                            channel={c}
+                            onEdit={() =>
+                              c.kind === "WEBHOOK"
+                                ? setWebhookCode(c.code ?? null)
+                                : setDingTalkEditor(c)
+                            }
+                          />
+                        )}
+                      </ExpandableListRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              <CatalogPager result={result} onPage={list.numberedPage} />
+            </ListResults>
+          )}
+        </TabsContent>
+      </Tabs>
       <DingTalkEditor
         key={
           dingTalkEditor === "create"
@@ -205,22 +359,16 @@ export function ManagedChannelsPanel() {
         code={webhookCode}
         onClose={() => setWebhookCode(null)}
       />
-    </div>
+    </ListPage>
   )
 }
 
 function DingTalkEnterpriseSection({
   enterprises,
-  loading,
-  error,
-  onCreate,
   onRename,
   onGovern,
 }: {
   enterprises: DingTalkEnterprise[]
-  loading: boolean
-  error: unknown
-  onCreate: () => void
   onRename: (enterprise: DingTalkEnterprise) => void
   onGovern: (
     enterprise: DingTalkEnterprise,
@@ -228,113 +376,74 @@ function DingTalkEnterpriseSection({
   ) => void
 }) {
   return (
-    <Card className="shadow-none">
-      <CardHeader className="gap-4 border-b sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Building2Icon
-              className="size-4 text-indigo-600"
-              aria-hidden="true"
-            />
-            <CardTitle>钉钉企业</CardTitle>
-          </div>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            企业保存钉钉组织边界；Corp ID
-            只能由首条受信测试消息确认，不能手工填写或修改。
-          </p>
-        </div>
-        <Button type="button" variant="outline" onClick={onCreate}>
-          <PlusIcon aria-hidden="true" />
-          新建钉钉企业
-        </Button>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <MutationError error={error} />
-        {loading ? (
-          <LoadingLine label="正在加载钉钉企业……" />
-        ) : enterprises.length ? (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {enterprises.map((enterprise) => (
-              <article key={enterprise.id} className="rounded-xl border p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-medium">{enterprise.name}</p>
-                    <p className="mt-1 font-mono text-xs break-all text-muted-foreground">
-                      {enterprise.corp_id || "Corp ID 等待测试消息确认"}
-                    </p>
-                  </div>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>企业名称</TableHead>
+          <TableHead>状态</TableHead>
+          <TableHead>已启用 / 全部连接</TableHead>
+          <TableHead className="hidden sm:table-cell">验证时间</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {enterprises.map((enterprise) => (
+          <ExpandableListRow
+            key={enterprise.id}
+            name={enterprise.name}
+            meta={enterprise.corp_id || "Corp ID 待验证"}
+            columns={4}
+            cells={
+              <>
+                <TableCell>
                   <Badge variant={enterpriseStatusVariant(enterprise.status)}>
                     {enterpriseStatusLabel(enterprise.status)}
                   </Badge>
-                </div>
-                <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
-                  <Metadata
-                    label="应用连接"
-                    value={`${enterprise.connector_count} 个`}
-                  />
-                  <Metadata
-                    label="已启用连接"
-                    value={`${enterprise.enabled_connector_count} 个`}
-                  />
-                  <Metadata
-                    label="验证时间"
-                    value={formatDate(enterprise.verified_at)}
-                  />
-                  <Metadata
-                    label="Revision"
-                    value={`r${enterprise.revision}`}
-                  />
-                </dl>
-                {enterprise.status === "PENDING_VERIFICATION" ? (
-                  <p className="mt-3 rounded-md bg-amber-50 p-2 text-xs leading-5 text-amber-950">
-                    创建并启用该企业的首个应用连接后，请向机器人发送测试消息完成验证。
-                  </p>
+                </TableCell>
+                <TableCell>
+                  {enterprise.enabled_connector_count} /{" "}
+                  {enterprise.connector_count}
+                </TableCell>
+                <TableCell className="hidden sm:table-cell">
+                  {formatDate(enterprise.verified_at)}
+                </TableCell>
+              </>
+            }
+          >
+            <div className="space-y-2 p-2">
+              <p className="text-xs text-muted-foreground">
+                修订 r{enterprise.revision} · 验证时间{" "}
+                {formatDate(enterprise.verified_at)}
+              </p>
+              {enterprise.status === "PENDING_VERIFICATION" && (
+                <p className="text-sm">
+                  启用首个应用连接后，向机器人发送测试消息以验证企业。
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {enterprise.status !== "ARCHIVED" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onRename(enterprise)}
+                  >
+                    <PencilIcon aria-hidden="true" />
+                    改名
+                  </Button>
                 ) : null}
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {enterprise.status !== "ARCHIVED" ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => onRename(enterprise)}
-                    >
-                      <PencilIcon aria-hidden="true" />
-                      改名
-                    </Button>
-                  ) : null}
-                  {enterprise.status === "ACTIVE" ||
-                  enterprise.status === "PENDING_VERIFICATION" ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => onGovern(enterprise, "disable")}
-                    >
-                      停用企业
-                    </Button>
-                  ) : null}
-                  {enterprise.status === "DISABLED" ? (
-                    <>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => onGovern(enterprise, "restore")}
-                      >
-                        恢复并重新验证
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onGovern(enterprise, "archive")}
-                      >
-                        <ArchiveIcon aria-hidden="true" />
-                        归档
-                      </Button>
-                    </>
-                  ) : null}
-                  {enterprise.status === "ARCHIVED" ? (
+                {enterprise.status === "ACTIVE" ||
+                enterprise.status === "PENDING_VERIFICATION" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onGovern(enterprise, "disable")}
+                  >
+                    停用企业
+                  </Button>
+                ) : null}
+                {enterprise.status === "DISABLED" ? (
+                  <>
                     <Button
                       type="button"
                       size="sm"
@@ -343,18 +452,33 @@ function DingTalkEnterpriseSection({
                     >
                       恢复并重新验证
                     </Button>
-                  ) : null}
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-            尚未创建钉钉企业。请先创建待验证企业，再配置第一个钉钉应用连接。
-          </p>
-        )}
-      </CardContent>
-    </Card>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onGovern(enterprise, "archive")}
+                    >
+                      <ArchiveIcon aria-hidden="true" />
+                      归档
+                    </Button>
+                  </>
+                ) : null}
+                {enterprise.status === "ARCHIVED" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onGovern(enterprise, "restore")}
+                  >
+                    恢复并重新验证
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </ExpandableListRow>
+        ))}
+      </TableBody>
+    </Table>
   )
 }
 

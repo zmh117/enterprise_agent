@@ -1,3 +1,4 @@
+import { ListPage } from "@/shared/presentation/list-page"
 import { useMemo, useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { LoaderCircleIcon, RefreshCwIcon, SaveIcon } from "lucide-react"
@@ -150,16 +151,9 @@ export function RuntimeConfigPage() {
         : ""
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Runtime Config</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          选择已受治理的 tenant，查看并修改 File Service 工作区配额。配置不会进入 Application Publication。
-        </p>
-      </div>
-
+    <ListPage title="运行配置">
       <Card>
-        <CardHeader><CardTitle>Tenant 范围</CardTitle></CardHeader>
+        <CardHeader><CardTitle>文件工作区配额</CardTitle></CardHeader>
         <CardContent>
           <form className="flex max-w-xl items-end gap-3" onSubmit={submitTenant}>
             <Field className="flex-1">
@@ -171,7 +165,7 @@ export function RuntimeConfigPage() {
                 required
                 maxLength={128}
               />
-              <FieldDescription>后端只接受已验证且启用的 tenant 身份。</FieldDescription>
+              <FieldDescription>输入已验证并启用的租户 ID。</FieldDescription>
             </Field>
             <Button type="submit" disabled={!tenantDraft.trim()}>
               <RefreshCwIcon aria-hidden="true" />加载
@@ -234,7 +228,7 @@ export function RuntimeConfigPage() {
           ) : null}
         </>
       ) : null}
-    </div>
+    </ListPage>
   )
 }
 

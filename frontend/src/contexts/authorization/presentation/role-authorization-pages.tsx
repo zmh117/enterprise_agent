@@ -1,4 +1,32 @@
 import {
+  ListEmpty,
+  ListPage,
+  ListPager,
+  ListResults,
+  ListSearch,
+  ListStatus,
+  RefreshList,
+} from "@/shared/presentation/list-page"
+import {
+  LIST_PAGE_SIZE,
+  useListNavigation,
+  useListReturn,
+} from "@/shared/presentation/list-navigation"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import {
   useEffect,
   useMemo,
   useState,
@@ -35,6 +63,7 @@ import {
   useRole,
   useRoleAudit,
   useRoles,
+  useRoleChoices,
   useUpdateRoleAdmin,
   useUpdateRoleBusiness,
   useUpdateRoleMembers,
@@ -74,99 +103,170 @@ const roleTemplates = {
 } as const
 
 export function RoleAuthorizationPage() {
-  const [search, setSearch] = useState("")
-  const [status, setStatus] = useState("")
-  const [origin, setOrigin] = useState("")
+  const list = useListNavigation()
+  const search = list.params.get("q") ?? ""
+  const status = list.params.get("status") ?? ""
+  const origin = list.params.get("origin") ?? ""
+  const clear = () => list.filter({ q: "", status: "", origin: "" })
+  const filtered = !!(search || status || origin)
   const [creating, setCreating] = useState(false)
-  const roles = useRoles({ search, status, origin })
+  const roles = useRoles({
+    search,
+    status,
+    origin,
+    offset: (list.page - 1) * LIST_PAGE_SIZE,
+    limit: LIST_PAGE_SIZE,
+  })
   const capabilities = useAdminCapabilitySummary()
   const canManage = Boolean(
     capabilities.data?.capabilities.includes("authorization.manage")
   )
 
   return (
-    <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <Badge variant="outline">统一授权中心</Badge>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight">
-            角色与授权
-          </h1>
-          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-            一个角色可以同时包含管理后台功能权限和业务应用权限。知识库按应用独立授权，未选择即不授予，不配置显式拒绝。
-          </p>
-        </div>
-        <Button
-          disabled={!canManage}
-          onClick={() => setCreating((value) => !value)}
-        >
-          <PlusIcon aria-hidden="true" />
-          新建角色
-        </Button>
-      </header>
+    <ListPage
+      title="角色与授权"
+      actions={
+        <>
+          <RefreshList
+            refresh={() => void roles.refetch()}
+            busy={roles.isFetching}
+          />
+          <Button disabled={!canManage} onClick={() => setCreating(true)}>
+            <PlusIcon />
+            新建角色
+          </Button>
+        </>
+      }
+    >
       {!canManage ? (
         <ReadOnlyNotice text="当前账号只能查看角色，不能创建或修改角色授权。" />
       ) : null}
 
-      {creating ? (
-        <CreateRoleCard
-          roles={roles.data?.items ?? []}
-          onClose={() => setCreating(false)}
+      {creating ? <CreateRoleCard onClose={() => setCreating(false)} /> : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <ListSearch
+          label="搜索角色"
+          placeholder="搜索角色名称、编码或说明"
+          value={search}
+          onCommit={(q) => list.filter({ q })}
         />
-      ) : null}
-
-      <Card className="shadow-none">
-        <CardContent className="grid gap-3 pt-6 md:grid-cols-[minmax(0,1fr)_180px_180px]">
-          <Input
-            aria-label="搜索角色"
-            placeholder="搜索角色名称、编码或说明"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          <select
-            aria-label="角色状态"
-            className={nativeSelectClass}
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-          >
-            <option value="">全部状态</option>
-            <option value="enabled">已启用</option>
-            <option value="disabled">已停用</option>
-          </select>
-          <select
-            aria-label="角色来源"
-            className={nativeSelectClass}
-            value={origin}
-            onChange={(event) => setOrigin(event.target.value)}
-          >
-            <option value="">全部来源</option>
-            <option value="system">系统角色</option>
-            <option value="custom">自定义角色</option>
-          </select>
-        </CardContent>
-      </Card>
-
-      {roles.isLoading ? <Loading text="正在加载角色…" /> : null}
-      <RequestError error={roles.error} />
-      {roles.data && roles.data.items.length === 0 ? (
-        <EmptyState text="没有符合条件的角色" />
-      ) : null}
-      <div className="grid gap-4 lg:grid-cols-2">
-        {roles.data?.items.map((role) => (
-          <RoleCard key={role.id} role={role} />
-        ))}
+        <select
+          aria-label="角色状态"
+          className={nativeSelectClass}
+          value={status}
+          onChange={(event) => list.filter({ status: event.target.value })}
+        >
+          <option value="">全部状态</option>
+          <option value="enabled">已启用</option>
+          <option value="disabled">已停用</option>
+        </select>
+        <select
+          aria-label="角色来源"
+          className={nativeSelectClass}
+          value={origin}
+          onChange={(event) => list.filter({ origin: event.target.value })}
+        >
+          <option value="">全部来源</option>
+          <option value="system">系统角色</option>
+          <option value="custom">自定义角色</option>
+        </select>
+        {filtered && (
+          <Button variant="ghost" size="sm" onClick={clear}>
+            重置
+          </Button>
+        )}
       </div>
-    </div>
+      {roles.isLoading && <Loading text="正在加载角色…" />}
+      <RequestError error={roles.error} />
+      {roles.data && (
+        <ListResults>
+          {roles.data.items.length ? (
+            <Table aria-label="角色列表">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>角色</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>来源</TableHead>
+                  <TableHead className="hidden sm:table-cell">成员</TableHead>
+                  <TableHead className="hidden md:table-cell">
+                    后台能力
+                  </TableHead>
+                  <TableHead className="hidden md:table-cell">
+                    业务应用
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {roles.data.items.map((role) => (
+                  <TableRow key={role.id}>
+                    <TableCell>
+                      <Link
+                        className="font-medium hover:underline"
+                        to={`/users/roles/${encodeURIComponent(role.id)}`}
+                        state={list.detailState}
+                      >
+                        {role.name}
+                      </Link>
+                      {role.protected && (
+                        <ShieldCheckIcon
+                          className="ml-1 inline size-3"
+                          aria-label="受保护角色"
+                        />
+                      )}
+                      <p className="max-w-40 truncate font-mono text-xs text-muted-foreground">
+                        {role.code}
+                      </p>
+                    </TableCell>
+                    <TableCell>
+                      <ListStatus
+                        status={
+                          role.status === "enabled" ? "enabled" : "disabled"
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      {role.origin === "system" ? "系统角色" : "自定义角色"}
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      {role.member_count}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {role.admin_capability_count}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {role.application_count}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <ListEmpty
+              title={filtered ? "没有符合条件的角色" : "还没有角色"}
+              clear={filtered ? clear : undefined}
+            />
+          )}
+          <ListPager
+            count={`共 ${roles.data.page.total} 个角色`}
+            page={list.page}
+            pages={Math.ceil(roles.data.page.total / LIST_PAGE_SIZE)}
+            previous={() => list.numberedPage(list.page - 1)}
+            next={
+              list.page * LIST_PAGE_SIZE < roles.data.page.total
+                ? () => list.numberedPage(list.page + 1)
+                : undefined
+            }
+          />
+        </ListResults>
+      )}
+    </ListPage>
   )
 }
 
-function CreateRoleCard({
-  roles,
-  onClose,
-}: {
-  roles: Role[]
-  onClose: () => void
-}) {
+function CreateRoleCard({ onClose }: { onClose: () => void }) {
+  const choices = useRoleChoices()
+  const list = useListNavigation()
   const navigate = useNavigate()
   const mutation = useCreateRole()
   const [name, setName] = useState("")
@@ -187,21 +287,30 @@ function CreateRoleCard({
         copy_from_role_id: copyFrom || undefined,
       },
       {
-        onSuccess: (detail) => navigate(`/users/roles/${detail.role.id}`),
+        onSuccess: (detail) =>
+          navigate(`/users/roles/${detail.role.id}`, {
+            state: list.detailState,
+          }),
       }
     )
   }
 
   return (
-    <Card className="border-primary/30 shadow-none">
-      <CardHeader>
-        <CardTitle>新建自定义角色</CardTitle>
-        <CardDescription>
-          可以空白创建、从安全模板起步或复制已有角色。模板只预填用途和说明，不会暗中授予权限；复制不会包含成员。
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form className="space-y-4" onSubmit={submit}>
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
+      <SheetContent
+        className="w-full overflow-y-auto sm:max-w-lg"
+        aria-describedby={undefined}
+      >
+        <SheetHeader>
+          <SheetTitle>新建自定义角色</SheetTitle>
+        </SheetHeader>
+        <form className="space-y-4 px-4 pb-4" onSubmit={submit}>
+          <RequestError error={choices.error} />
           <div className="grid gap-4 md:grid-cols-2">
             <Labeled label="角色名称">
               <Input
@@ -231,7 +340,7 @@ function CreateRoleCard({
                 }}
               >
                 <option value="">不复制已有角色</option>
-                {roles
+                {(choices.data ?? [])
                   .filter((role) => !role.protected)
                   .map((role) => (
                     <option key={role.id} value={role.id}>
@@ -282,62 +391,13 @@ function CreateRoleCard({
             </Button>
           </div>
         </form>
-      </CardContent>
-    </Card>
-  )
-}
-
-function RoleCard({ role }: { role: Role }) {
-  return (
-    <Card className="shadow-none transition-colors hover:border-primary/40">
-      <CardHeader>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <CardTitle>{role.name}</CardTitle>
-              <Badge
-                variant={role.status === "enabled" ? "secondary" : "outline"}
-              >
-                {role.status === "enabled" ? "已启用" : "已停用"}
-              </Badge>
-              <Badge variant="outline">
-                {role.origin === "system" ? "系统角色" : "自定义角色"}
-              </Badge>
-            </div>
-            <CardDescription className="mt-2 font-mono">
-              {role.code}
-            </CardDescription>
-          </div>
-          {role.protected ? (
-            <ShieldCheckIcon
-              className="size-5 text-primary"
-              aria-label="受保护角色"
-            />
-          ) : null}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="min-h-10 text-sm text-muted-foreground">
-          {role.description || "暂无说明"}
-        </p>
-        <div className="grid grid-cols-3 gap-2 text-center text-xs">
-          <SummaryNumber label="成员" value={role.member_count} />
-          <SummaryNumber label="后台能力" value={role.admin_capability_count} />
-          <SummaryNumber label="业务应用" value={role.application_count} />
-        </div>
-        <Button
-          variant="outline"
-          className="w-full"
-          render={<Link to={`/users/roles/${role.id}`} />}
-        >
-          查看并配置
-        </Button>
-      </CardContent>
-    </Card>
+      </SheetContent>
+    </Sheet>
   )
 }
 
 export function RoleDetailPage() {
+  const listReturn = useListReturn("/users/roles")
   const { roleId = "" } = useParams()
   const query = useRole(roleId)
   if (query.isLoading) return <Loading text="正在加载角色配置…" />
@@ -347,7 +407,7 @@ export function RoleDetailPage() {
         <h1 className="text-2xl font-semibold">无法加载角色</h1>
         <RequestError error={query.error} />
         <Link
-          to="/users/roles"
+          {...listReturn}
           className={buttonVariants({ variant: "outline" })}
         >
           返回角色列表
@@ -370,6 +430,7 @@ export function RoleDetailPage() {
 }
 
 function RoleDetailContent({ detail }: { detail: RoleDetail }) {
+  const listReturn = useListReturn("/users/roles")
   const role = detail.role
   const capabilities = useAdminCapabilitySummary()
   const canManage = Boolean(
@@ -382,7 +443,7 @@ function RoleDetailContent({ detail }: { detail: RoleDetail }) {
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <div>
         <Link
-          to="/users/roles"
+          {...listReturn}
           className={buttonVariants({ variant: "ghost", size: "sm" })}
         >
           <ArrowLeftIcon aria-hidden="true" />
@@ -403,7 +464,10 @@ function RoleDetailContent({ detail }: { detail: RoleDetail }) {
       </header>
 
       <Tabs defaultValue="metadata">
-        <TabsList className="max-w-full flex-wrap">
+        <TabsList
+          variant="line"
+          className="h-auto max-w-full justify-start overflow-x-auto"
+        >
           <TabsTrigger value="metadata">基本信息</TabsTrigger>
           <TabsTrigger value="members">成员</TabsTrigger>
           <TabsTrigger value="admin">管理后台能力</TabsTrigger>
@@ -417,9 +481,7 @@ function RoleDetailContent({ detail }: { detail: RoleDetail }) {
           </ReadOnlySection>
         </TabsContent>
         <TabsContent value="members">
-          <ReadOnlySection disabled={!canAssign}>
-            <MembersPanel detail={detail} />
-          </ReadOnlySection>
+          <MembersPanel detail={detail} canAssign={canAssign} />
         </TabsContent>
         <TabsContent value="admin">
           <ReadOnlySection disabled={!canManage}>
@@ -448,10 +510,7 @@ function RoleAuditPanel({ roleId }: { roleId: string }) {
     <Card className="shadow-none">
       <CardHeader>
         <CardTitle>操作记录</CardTitle>
-        <CardDescription>
-          {query.data?.notice ??
-            "角色基本信息、后台能力、业务范围和成员变更均写入平台安全审计。"}
-        </CardDescription>
+        <CardDescription>{query.data?.notice}</CardDescription>
       </CardHeader>
       <CardContent>
         {query.isLoading ? <Loading text="正在加载操作记录…" /> : null}
@@ -599,12 +658,24 @@ function MetadataPanel({ role }: { role: Role }) {
   )
 }
 
-function MembersPanel({ detail }: { detail: RoleDetail }) {
+function MembersPanel({
+  detail,
+  canAssign,
+}: {
+  detail: RoleDetail
+  canAssign: boolean
+}) {
+  const [search, setSearch] = useState("")
+  const [page, setPage] = useState(1)
+  const filter = (q: string) => {
+    setSearch(q)
+    setPage(1)
+  }
   const role = detail.role
   const users = useUsers({
-    search: "",
-    page: 1,
-    pageSize: 100,
+    search,
+    page,
+    pageSize: LIST_PAGE_SIZE,
     includeDisabled: true,
   })
   const mutation = useUpdateRoleMembers(role.id)
@@ -646,66 +717,100 @@ function MembersPanel({ detail }: { detail: RoleDetail }) {
       <CardHeader>
         <CardTitle>角色成员</CardTitle>
         <CardDescription>
-          成员关系可设置失效时间；到期后会立即从新的授权决策中排除。服务账号不能加入含后台能力的角色。
+          成员授权到期即失效。含后台能力的角色仅支持人员账号。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!canAssign && <ReadOnlyNotice text="当前账号只能查看角色成员。" />}
+        <ListSearch
+          label="搜索角色成员候选人"
+          placeholder="搜索姓名、账号或邮箱"
+          value={search}
+          onCommit={filter}
+        />
         {users.isLoading ? <Loading text="正在加载人员…" /> : null}
         <RequestError error={users.error ?? mutation.error} />
-        <div className="divide-y rounded-lg border">
-          {users.data?.users.map((user) => {
-            const selected = selection.get(user.id)
-            return (
-              <div
-                key={user.id}
-                className="grid gap-3 p-3 md:grid-cols-[minmax(0,1fr)_auto_220px] md:items-center"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{user.display_name}</span>
-                    <Badge variant="outline">
-                      {user.account_type === "human" ? "人员" : "服务账号"}
-                    </Badge>
+        <ListResults>
+          <div className="divide-y">
+            {users.data?.users.map((user) => {
+              const selected = selection.get(user.id)
+              return (
+                <div
+                  key={user.id}
+                  className="grid gap-3 p-3 md:grid-cols-[minmax(0,1fr)_auto_220px] md:items-center"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{user.display_name}</span>
+                      <Badge variant="outline">
+                        {user.account_type === "human" ? "人员" : "服务账号"}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      {user.username}
+                    </p>
                   </div>
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">
-                    {user.username}
-                  </p>
-                </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={Boolean(selected?.enabled)}
-                    onCheckedChange={(checked) => {
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      disabled={!canAssign}
+                      checked={Boolean(selected?.enabled)}
+                      onCheckedChange={(checked) => {
+                        const next = new Map(selection)
+                        next.set(user.id, {
+                          enabled: Boolean(checked),
+                          expires_at: selected?.expires_at ?? "",
+                        })
+                        setSelection(next)
+                      }}
+                    />
+                    角色成员
+                  </label>
+                  <Input
+                    type="datetime-local"
+                    aria-label={`${user.display_name}的成员失效时间`}
+                    disabled={!canAssign || !selected?.enabled}
+                    value={toLocalDateTime(selected?.expires_at ?? "")}
+                    onChange={(event) => {
                       const next = new Map(selection)
                       next.set(user.id, {
-                        enabled: Boolean(checked),
-                        expires_at: selected?.expires_at ?? "",
+                        enabled: true,
+                        expires_at: event.target.value
+                          ? new Date(event.target.value).toISOString()
+                          : "",
                       })
                       setSelection(next)
                     }}
                   />
-                  角色成员
-                </label>
-                <Input
-                  type="datetime-local"
-                  aria-label={`${user.display_name}的成员失效时间`}
-                  disabled={!selected?.enabled}
-                  value={toLocalDateTime(selected?.expires_at ?? "")}
-                  onChange={(event) => {
-                    const next = new Map(selection)
-                    next.set(user.id, {
-                      enabled: true,
-                      expires_at: event.target.value
-                        ? new Date(event.target.value).toISOString()
-                        : "",
-                    })
-                    setSelection(next)
-                  }}
+                </div>
+              )
+            })}
+          </div>
+          {users.data && (
+            <>
+              {!users.data.users.length && (
+                <ListEmpty
+                  title="没有符合条件的人员"
+                  clear={search ? () => filter("") : undefined}
                 />
-              </div>
-            )
-          })}
-        </div>
-        <Button disabled={!dirty || mutation.isPending} onClick={save}>
+              )}
+              <ListPager
+                page={page}
+                pages={users.data.pagination.total_pages}
+                count={`共 ${users.data.pagination.total} 人`}
+                previous={() => setPage(page - 1)}
+                next={
+                  page < users.data.pagination.total_pages
+                    ? () => setPage(page + 1)
+                    : undefined
+                }
+              />
+            </>
+          )}
+        </ListResults>
+        <Button
+          disabled={!canAssign || !dirty || mutation.isPending}
+          onClick={save}
+        >
           <UsersIcon aria-hidden="true" />
           原子保存成员变更
         </Button>
@@ -1493,15 +1598,6 @@ function Labeled({
         <span className="block text-xs text-muted-foreground">{hint}</span>
       ) : null}
     </label>
-  )
-}
-
-function SummaryNumber({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md bg-muted/50 p-2">
-      <p className="text-lg font-semibold">{value}</p>
-      <p className="text-muted-foreground">{label}</p>
-    </div>
   )
 }
 

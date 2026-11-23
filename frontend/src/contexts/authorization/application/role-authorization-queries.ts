@@ -12,6 +12,7 @@ import {
   getRole,
   getRoleAudit,
   listRoles,
+  listRoleChoices,
   updateRoleAdminCapabilities,
   updateRoleBusinessAccess,
   updateRoleMembers,
@@ -32,10 +33,20 @@ export function useRoles(params: {
   search: string
   status: string
   origin: string
+  limit?: number
+  offset?: number
 }) {
   return useQuery({
     queryKey: roleKeys.list(params),
     queryFn: () => listRoles(params),
+    retry: false,
+  })
+}
+
+export function useRoleChoices(status = "") {
+  return useQuery({
+    queryKey: roleKeys.list({ choices: true, status }),
+    queryFn: () => listRoleChoices(status),
     retry: false,
   })
 }
@@ -76,7 +87,7 @@ export function useAssignableCatalog() {
 
 function useRoleMutation(
   roleId: string,
-  mutationFn: (input: Record<string, unknown>) => Promise<unknown>,
+  mutationFn: (input: Record<string, unknown>) => Promise<unknown>
 ) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -97,8 +108,7 @@ export function useCreateRole() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: CreateRoleInput) => createRole(input),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: roleKeys.all }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: roleKeys.all }),
   })
 }
 
@@ -108,13 +118,13 @@ export function useUpdateRoleMetadata(roleId: string) {
 
 export function useUpdateRoleAdmin(roleId: string) {
   return useRoleMutation(roleId, (input) =>
-    updateRoleAdminCapabilities(roleId, input),
+    updateRoleAdminCapabilities(roleId, input)
   )
 }
 
 export function useUpdateRoleBusiness(roleId: string) {
   return useRoleMutation(roleId, (input) =>
-    updateRoleBusinessAccess(roleId, input),
+    updateRoleBusinessAccess(roleId, input)
   )
 }
 

@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
   fireEvent,
@@ -302,7 +303,9 @@ function setup({
     render: (tabs = false) =>
       render(
         <QueryClientProvider client={client}>
-          {tabs ? <ToolResourcesPage /> : <KnowledgeResourcesPage />}
+          <MemoryRouter>
+            {tabs ? <ToolResourcesPage /> : <KnowledgeResourcesPage />}
+          </MemoryRouter>
         </QueryClientProvider>
       ),
   }
@@ -439,7 +442,7 @@ describe("知识资源管理", () => {
       body: { storage: externalStorage },
     })
     expect(JSON.stringify(f.state)).toBe(before)
-    fireEvent.click(screen.getByRole("button", { name: "刷新知识资源" }))
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }))
     await waitFor(() => expect(f.calls).toHaveLength(2))
     expect(f.calls.every((c) => c.url.endsWith("/content-catalog"))).toBe(true)
   })

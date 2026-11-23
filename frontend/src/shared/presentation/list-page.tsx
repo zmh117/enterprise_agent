@@ -1,3 +1,4 @@
+import { TableRow, TableCell } from "@/components/ui/table"
 import {
   useEffect,
   useEffectEvent,
@@ -6,6 +7,7 @@ import {
   type ReactNode,
 } from "react"
 import {
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   RefreshCwIcon,
@@ -27,13 +29,15 @@ export function ListPage({
   useEffect(() => {
     const previous = document.title
     document.title = `${title} · Agent 应用平台`
-    return () => { document.title = previous }
+    return () => {
+      document.title = previous
+    }
   }, [title])
   return (
     <div className="mx-auto grid w-full max-w-[1500px] min-w-0 gap-5 px-4 py-6 sm:px-6 lg:gap-6 lg:px-8 lg:py-8">
-      <header className="flex items-center justify-between gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+        <div className="flex flex-wrap items-center gap-2">{actions}</div>
       </header>
       {children}
     </div>
@@ -246,8 +250,80 @@ export function ListPager({
 
 export function ListResults({ children }: { children: ReactNode }) {
   return (
-    <div className="min-w-0 overflow-hidden rounded-xl border bg-card max-sm:[&_td]:px-1.5 max-sm:[&_th]:px-1.5 [&_td]:py-3 [&_td:first-child]:pl-4 [&_th]:text-xs [&_th]:text-muted-foreground [&_th:first-child]:pl-4 [&_thead]:bg-muted/45">
+    <div className="min-w-0 overflow-hidden rounded-xl border bg-card [&_td]:py-3 max-sm:[&_td]:px-1.5 [&_td:first-child]:pl-4 [&_th]:text-xs [&_th]:text-muted-foreground max-sm:[&_th]:px-1.5 [&_th:first-child]:pl-4 [&_thead]:bg-muted/45">
       {children}
     </div>
+  )
+}
+
+export function CatalogPager({
+  result,
+  onPage,
+}: {
+  result: { page: number; pages: number; total: number }
+  onPage: (page: number) => void
+}) {
+  return (
+    <ListPager
+      count={`共 ${result.total} 条`}
+      page={result.page}
+      pages={result.pages}
+      previous={() => onPage(result.page - 1)}
+      next={
+        result.page < result.pages ? () => onPage(result.page + 1) : undefined
+      }
+    />
+  )
+}
+
+export function ExpandableListRow({
+  name,
+  meta,
+  cells,
+  columns,
+  children,
+}: {
+  name: string
+  meta?: string
+  cells: ReactNode
+  columns: number
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <TableRow>
+        <TableCell>
+          <button
+            type="button"
+            aria-expanded={open}
+            className="flex max-w-[min(35vw,15rem)] items-center gap-1.5 text-left font-medium hover:underline"
+            onClick={() => setOpen(!open)}
+          >
+            <ChevronDownIcon
+              aria-hidden="true"
+              className={`size-3.5 shrink-0 text-muted-foreground ${open ? "" : "-rotate-90"}`}
+            />
+            <span className="truncate">{name}</span>
+          </button>
+          {meta && (
+            <span className="block max-w-[min(35vw,15rem)] truncate pl-5 text-xs text-muted-foreground">
+              {meta}
+            </span>
+          )}
+        </TableCell>
+        {cells}
+      </TableRow>
+      {open && (
+        <TableRow className="hover:bg-transparent">
+          <TableCell
+            colSpan={columns}
+            className="bg-muted/20 whitespace-normal"
+          >
+            {children}
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   )
 }

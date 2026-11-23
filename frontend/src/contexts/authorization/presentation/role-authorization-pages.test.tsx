@@ -407,6 +407,74 @@ describe("角色授权中心", () => {
     }
   )
 
+  it("跨页筛选成员后仍保留之前选中的人员", async () => {
+    let submitted: { changes: { user_id: string }[] } | undefined
+    const people = Array.from({ length: 21 }, (_, i) => ({
+      id: `user-${i}`,
+      username: `member-${i}`,
+      display_name: `成员 ${i + 1}`,
+      email: "",
+      status: "enabled",
+      account_type: "human",
+      revision: 1,
+      created_at: "",
+      updated_at: "",
+    }))
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = new URL(String(input), "http://test.local")
+      if (url.pathname.endsWith("/capabilities"))
+        return response({
+          capabilities: ["authorization.read", "authorization.assign"],
+          modules: {},
+        })
+      if (url.pathname.endsWith("/members:batch")) {
+        submitted = JSON.parse(String(init?.body))
+        return response({})
+      }
+      if (url.pathname.endsWith("/users")) {
+        const page = Number(url.searchParams.get("page"))
+        const size = Number(url.searchParams.get("page_size"))
+        const rows = people.filter((p) =>
+          p.username.includes(url.searchParams.get("search") || "")
+        )
+        return response({
+          users: rows.slice((page - 1) * size, page * size),
+          pagination: {
+            page,
+            page_size: size,
+            total: rows.length,
+            total_pages: Math.ceil(rows.length / size),
+          },
+        })
+      }
+      return response(detail())
+    })
+    renderDetail()
+    fireEvent.click(
+      await screen.findByRole("tab", { name: "成员" })
+    )
+    await screen.findByText("member-0")
+    fireEvent.click(screen.getAllByRole("checkbox", { name: "角色成员" })[0])
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }))
+    await screen.findByText("member-20")
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "搜索角色成员候选人" }),
+      { target: { value: "member-20" } }
+    )
+    fireEvent.submit(screen.getByRole("search"))
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled()
+    )
+    fireEvent.click(screen.getByRole("checkbox", { name: "角色成员" }))
+    fireEvent.click(screen.getByRole("button", { name: "原子保存成员变更" }))
+    await waitFor(() =>
+      expect(submitted?.changes.map((item) => item.user_id)).toEqual([
+        "user-0",
+        "user-20",
+      ])
+    )
+  })
+
   it("从安全模板创建角色时只预填用途和说明", async () => {
     let submitted: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {

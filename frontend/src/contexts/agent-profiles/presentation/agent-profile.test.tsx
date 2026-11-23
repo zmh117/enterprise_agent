@@ -235,8 +235,42 @@ describe("Agent Profile management", () => {
     expect(screen.getByText("r3")).toBeInTheDocument()
     expect(screen.getByText("引用版本已删除，请重新配置")).toBeInTheDocument()
     expect(
-      screen.getAllByRole("link", { name: "进入配置" })[0]
+      screen.getByRole("link", { name: "默认诊断 Agent" })
     ).toHaveAttribute("href", "/agent-profiles/default-diagnostic-agent")
+  })
+
+  it("searches beyond the current page and resets pagination when filters change", async () => {
+    const agents = Array.from({ length: 23 }, (_, i) => ({
+      ...createdAgentPayload(`agent-${i}`, "python-v1").definition,
+      name: `巡检助手 ${i + 1}`,
+      current_publication: null,
+      model_connection_status: "missing_revision",
+      active_application_count: 0,
+    }))
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ agents }))
+    renderWithQuery(<AgentProfilesPage />, {
+      initialEntries: ["/agent-profiles?page=2"],
+    })
+    expect(
+      await screen.findByRole("link", { name: "巡检助手 23" })
+    ).toBeVisible()
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索 Agent" }), {
+      target: { value: "agent-3" },
+    })
+    fireEvent.submit(screen.getByRole("search"))
+    expect(
+      await screen.findByRole("link", { name: "巡检助手 4" })
+    ).toBeVisible()
+    expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled()
+    fireEvent.change(screen.getByLabelText("发布状态"), {
+      target: { value: "published" },
+    })
+    expect(await screen.findByText("没有符合条件的 Agent")).toBeVisible()
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }))
+    expect(
+      await screen.findByRole("link", { name: "巡检助手 1" })
+    ).toBeVisible()
+    expect(screen.getByRole("button", { name: "下一页" })).toBeEnabled()
   })
 
   it("renders an actionable empty state and creates a Python Agent", async () => {

@@ -21,23 +21,19 @@ type TableProps = {
 
 export function KnowledgeResourceTable(props: TableProps) {
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full text-left text-sm">
-        <caption className="p-3 text-left text-muted-foreground">
-          入库、索引和发布是不同状态；发布不能替代知识库和来源授权；ONES
-          另需本人工作项权限。
-        </caption>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[40rem] text-left text-sm">
+        <caption className="sr-only">知识资源</caption>
         <thead className="border-b bg-muted/40">
           <tr>
             {[
               "知识资源",
+              "检索发布",
               "存储",
               "来源",
               "SVN 检出目录",
               "索引",
               "同步处理",
-              "检索发布",
-              "操作",
             ].map((x) => (
               <th key={x} className="p-3 font-medium">
                 {x}
@@ -56,9 +52,7 @@ export function KnowledgeResourceTable(props: TableProps) {
         </tbody>
       </table>
       {props.resources.length === 0 && (
-        <p className="p-5 text-sm">
-          没有匹配的知识资源。已有入库数据不会自动发布。
-        </p>
+        <p className="p-5 text-sm">没有匹配的知识资源。</p>
       )}
     </div>
   )
@@ -99,11 +93,30 @@ function KnowledgeResourceRow({
   return (
     <tr className="border-b last:border-0">
       <td className="p-3">
-        <p>{resource.name}</p>
+        <button
+          type="button"
+          className="max-w-52 truncate text-left font-medium hover:underline"
+          disabled={pending}
+          onClick={() => onOpen(resource)}
+          aria-label={`查看 ${resource.name}`}
+        >
+          {resource.name}
+        </button>
         <p className="text-xs text-muted-foreground">
           {resource.kind === "code" ? "代码知识库" : "ONES 知识库"} ·{" "}
           {resource.code} · {knowledgeStatus(knowledgeListStatus(resource))}
         </p>
+      </td>
+      <td className="p-3">
+        {resource.published
+          ? `${resource.status === "archived" ? "历史发布" : "已发布"} v${resource.published.revision}`
+          : "未发布"}
+        {resource.draft && (
+          <p className="text-xs">
+            草稿 v{resource.draft.revision} ·{" "}
+            {canPublishKnowledge(resource) ? "验证通过" : "待验证"}
+          </p>
+        )}
       </td>
       <td className="p-3">{external ? "自定义内容连接" : "平台内容库"}</td>
       <td className="p-3">
@@ -190,27 +203,6 @@ function KnowledgeResourceRow({
         ) : (
           "未关联采集计划"
         )}
-      </td>
-      <td className="p-3">
-        {resource.published
-          ? `${resource.status === "archived" ? "历史发布" : "已发布"} v${resource.published.revision}`
-          : "未发布"}
-        {resource.draft && (
-          <p className="text-xs">
-            草稿 v{resource.draft.revision} ·{" "}
-            {canPublishKnowledge(resource) ? "验证通过" : "待验证"}
-          </p>
-        )}
-      </td>
-      <td className="p-3">
-        <Button
-          variant="outline"
-          disabled={pending}
-          onClick={() => onOpen(resource)}
-          aria-label={`查看 ${resource.name}`}
-        >
-          详情与配置
-        </Button>
       </td>
     </tr>
   )

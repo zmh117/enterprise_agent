@@ -218,7 +218,9 @@ describe("Phase 5 platform governance UI", () => {
       return response({ workshops: [] })
     })
     renderWithQuery(<ToolResourcesPage />)
-    await screen.findByText("Oracle 订单库")
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Oracle 订单库" })
+    )
     fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
     const role = screen.getByLabelText("资源角色")
     expect(role).toHaveValue("云")
@@ -240,7 +242,9 @@ describe("Phase 5 platform governance UI", () => {
       return response({ workshops: [] })
     })
     renderWithQuery(<ToolResourcesPage />)
-    await screen.findByText("Loki 测试环境")
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Loki 测试环境" })
+    )
     fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
     expect(screen.queryByLabelText("资源角色")).not.toBeInTheDocument()
   })
@@ -364,12 +368,13 @@ describe("Phase 5 platform governance UI", () => {
     )
     renderWithQuery(<CredentialCenterPage />)
 
-    expect(
-      await screen.findByText("oracle_reader_password")
-    ).toBeInTheDocument()
+    fireEvent.click(
+      await screen.findByRole("button", { name: "oracle_reader_password" })
+    )
     expect(
       screen.getByText("secret://platform/oracle_reader_password")
     ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "新建凭据" }))
     expect(screen.getByLabelText("Secret 明文")).toHaveAttribute(
       "type",
       "password"
@@ -411,9 +416,9 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<CredentialCenterPage />)
 
-    expect(
-      await screen.findByText("oracle_reader_password")
-    ).toBeInTheDocument()
+    fireEvent.click(
+      await screen.findByRole("button", { name: "oracle_reader_password" })
+    )
     fireEvent.click(screen.getByRole("button", { name: "查看引用" }))
 
     expect(
@@ -461,7 +466,9 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<ToolResourcesPage />)
 
-    expect(await screen.findByText("Oracle 订单库")).toBeInTheDocument()
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Oracle 订单库" })
+    )
     fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
     expect(
       screen.getByRole("heading", { name: "编辑资源 Draft" })
@@ -498,9 +505,7 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<ToolResourcesPage />)
 
-    expect(
-      await screen.findByText("当前筛选下没有工具资源")
-    ).toBeInTheDocument()
+    expect(await screen.findByText("尚无工具资源")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "新建资源" }))
 
     expect(screen.getByLabelText("Database")).toHaveAttribute("type", "text")
@@ -549,9 +554,7 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<ToolResourcesPage />)
 
-    expect(
-      await screen.findByText("当前筛选下没有工具资源")
-    ).toBeInTheDocument()
+    expect(await screen.findByText("尚无工具资源")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "新建资源" }))
 
     const environment = screen.getByLabelText("环境")
@@ -662,9 +665,7 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<ToolResourcesPage />)
 
-    expect(
-      await screen.findByText("当前筛选下没有工具资源")
-    ).toBeInTheDocument()
+    expect(await screen.findByText("尚无工具资源")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "新建资源" }))
 
     fireEvent.click(screen.getByRole("combobox", { name: "Provider" }))
@@ -755,14 +756,16 @@ describe("Phase 5 platform governance UI", () => {
       })
       renderWithQuery(<ToolResourcesPage />)
       if (mode === "new") {
-        await screen.findByText("当前筛选下没有工具资源")
+        await screen.findByText("尚无工具资源")
         fireEvent.click(screen.getByRole("button", { name: "新建资源" }))
         fireEvent.click(screen.getByRole("combobox", { name: "Provider" }))
         const provider = await screen.findByRole("option", { name: "Loki" })
         fireEvent.pointerDown(provider, { pointerType: "mouse", button: 0 })
         fireEvent.click(provider)
       } else {
-        await screen.findByText("Loki 测试环境")
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Loki 测试环境" })
+        )
         fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
       }
       const limit = await screen.findByRole("spinbutton", { name: "最大行数" })
@@ -800,7 +803,9 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<ToolResourcesPage />)
 
-    expect(await screen.findByText("Oracle 订单库")).toBeInTheDocument()
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Oracle 订单库" })
+    )
     fireEvent.click(screen.getByRole("button", { name: "技术测试" }))
 
     expect(
@@ -895,7 +900,9 @@ describe("Phase 5 platform governance UI", () => {
       })
       renderWithQuery(<ToolResourcesPage />)
 
-      expect(await screen.findByText("Loki 测试环境")).toBeInTheDocument()
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Loki 测试环境" })
+      )
       fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
       async function chooseTarget(label: string, value: string) {
         fireEvent.click(
@@ -1001,6 +1008,9 @@ describe("Phase 5 platform governance UI", () => {
     renderWithQuery(<ToolResourcesPage />)
 
     fireEvent.click(
+      await screen.findByRole("button", { name: "Loki 测试环境" })
+    )
+    fireEvent.click(
       await screen.findByRole("button", {
         name: "从 r1 新建草稿",
       })
@@ -1053,6 +1063,9 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<ToolResourcesPage />)
 
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Loki 测试环境" })
+    )
     fireEvent.click(await screen.findByRole("button", { name: "发布" }))
 
     await waitFor(() => expect(published).toBe(true))
@@ -1084,6 +1097,9 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<ToolResourcesPage />)
 
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Loki 测试环境" })
+    )
     fireEvent.click(await screen.findByRole("button", { name: "停用发布版本" }))
     fireEvent.click(screen.getByRole("button", { name: "确认" }))
 
@@ -1146,9 +1162,18 @@ describe("Phase 5 platform governance UI", () => {
       throw new Error(`Unexpected request: ${url}`)
     })
     renderWithQuery(<ToolResourcesPage />)
-    const mysqlTitle = await screen.findByText("填错范围的 MySQL")
-    const mysqlCard = within(mysqlTitle.closest('[data-slot="card"]') as HTMLElement)
-    const lokiCard = within(screen.getByText("Loki 测试环境").closest('[data-slot="card"]') as HTMLElement)
+    const mysqlButton = await screen.findByRole("button", {
+      name: "填错范围的 MySQL",
+    })
+    const lokiButton = screen.getByRole("button", { name: "Loki 测试环境" })
+    fireEvent.click(mysqlButton)
+    fireEvent.click(lokiButton)
+    const mysqlCard = within(
+      mysqlButton.closest("tr")!.nextElementSibling as HTMLElement
+    )
+    const lokiCard = within(
+      lokiButton.closest("tr")!.nextElementSibling as HTMLElement
+    )
     expect(mysqlCard.getByRole("button", { name: "归档资源身份" })).toBeDisabled()
     expect(mysqlCard.getByText(/仍有已发布版本：r1/)).toBeInTheDocument()
     expect(mysqlCard.queryByText(/仍有已发布版本：r2/)).not.toBeInTheDocument()
@@ -1207,18 +1232,16 @@ describe("Phase 5 platform governance UI", () => {
 
     expect(await screen.findByText("归档版本 Loki")).toBeInTheDocument()
     expect(screen.getByText("当前版本 Loki")).toBeInTheDocument()
-    expect(screen.getAllByText("资源身份：启用").length).toBe(2)
-
-    fireEvent.click(screen.getByRole("combobox", { name: "最新发布版本状态" }))
-    const archivedOption = await screen.findByRole("option", {
-      name: "已归档",
-    })
-    fireEvent.pointerDown(archivedOption, { pointerType: "mouse", button: 0 })
-    fireEvent.click(archivedOption)
+    expect(screen.getAllByText("已启用")).toHaveLength(2)
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "最新发布版本状态" }),
+      { target: { value: "ARCHIVED" } }
+    )
     expect(screen.getByText("归档版本 Loki")).toBeInTheDocument()
     await waitFor(() =>
       expect(screen.queryByText("当前版本 Loki")).not.toBeInTheDocument()
     )
+    fireEvent.click(screen.getByRole("button", { name: "归档版本 Loki" }))
     expect(
       screen.getByRole("button", { name: "从 r1 新建草稿" })
     ).toBeInTheDocument()
@@ -1256,6 +1279,9 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<ToolResourcesPage />)
 
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Loki 测试环境" })
+    )
     fireEvent.click(await screen.findByRole("button", { name: "停用资源身份" }))
     fireEvent.click(screen.getByRole("button", { name: "确认" }))
 
@@ -1458,7 +1484,7 @@ describe("Phase 5 platform governance UI", () => {
     )
     renderWithQuery(<DebugJobPage />)
 
-    expect(await screen.findByText("创建 Agent Debug Job")).toBeInTheDocument()
+    expect(await screen.findByText("调试参数")).toBeInTheDocument()
     expect(screen.getByText(/默认不投递/)).toBeInTheDocument()
     expect(
       screen.queryByLabelText(/user_id|Agent ID|Resource Revision/i)

@@ -1,4 +1,17 @@
-import { useState, type FormEvent } from "react"
+import {
+  ListPage,
+  ListSearch,
+  ListResults,
+  ListEmpty,
+  CatalogPager,
+  RefreshList,
+} from "@/shared/presentation/list-page"
+import {
+  useListNavigation,
+  matchesListSearch,
+  catalogPage,
+} from "@/shared/presentation/list-navigation"
+import { useState, type ReactNode, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ApiError } from "@/shared/api/api-client"
@@ -44,7 +57,7 @@ import {
   knowledgeInputClass,
 } from "@/contexts/platform-governance/presentation/knowledge-resource-ui"
 
-export function KnowledgeResourcesPage() {
+export function KnowledgeResourcesPage({ tabs }: { tabs?: ReactNode }) {
   const capabilities = useAdminCapabilitySummary()
   const canRead = Boolean(
     capabilities.data?.capabilities.includes("platform.read")
@@ -64,8 +77,13 @@ export function KnowledgeResourcesPage() {
     message: string
   } | null>(null)
   const [notice, setNotice] = useState("")
-  const [search, setSearch] = useState("")
-  const [statusFilter, setStatusFilter] = useState("enabled")
+  const list = useListNavigation()
+  const search = list.params.get("q") ?? ""
+  const statusFilter = list.params.get("status") || "enabled"
+  const setStatusFilter = (status: string) =>
+    list.filter({ status: status === "enabled" ? "" : status })
+  const filtered = Boolean(search || statusFilter !== "enabled")
+  const clear = () => list.filter({ q: "", status: "", archivePage: "" })
   const [showArchived, setShowArchived] = useState(false)
   function confirm(command: KnowledgeCommand, message: string) {
     mutation.reset()
@@ -92,7 +110,7 @@ export function KnowledgeResourcesPage() {
       setNotice(
         command.kind === "status" && command.input.status === "archived"
           ? "归档完成，可在「已归档资源」查看。"
-          : "操作完成。配置发布不等于用户已获业务授权。"
+          : "操作完成。"
       )
       return true
     } catch (error) {
@@ -147,30 +165,32 @@ export function KnowledgeResourcesPage() {
   }
   if (capabilities.isPending)
     return (
-      <p role="status" className="p-6">
-        正在检查管理权限…
-      </p>
+      <ListPage title="工具资源">
+        {tabs}
+        <p role="status">正在检查管理权限…</p>
+      </ListPage>
     )
   if (capabilities.error)
     return (
-      <section className="p-6">
+      <ListPage title="工具资源">
+        {tabs}
         <KnowledgeError error={capabilities.error} />
         <Button onClick={() => void capabilities.refetch()}>
           重试权限检查
         </Button>
-      </section>
+      </ListPage>
     )
   if (!canRead)
     return (
-      <p role="alert" className="p-6">
-        当前账号没有知识资源查看权限。
-      </p>
+      <ListPage title="工具资源">
+        {tabs}
+        <p role="alert">当前账号没有知识资源查看权限。</p>
+      </ListPage>
     )
   const data = inventory.data
   const filteredResources =
-    data?.resources.filter((r) =>
-      `${r.name} ${r.code}`.toLowerCase().includes(search.toLowerCase())
-    ) ?? []
+    data?.resources.filter((r) => matchesListSearch(search, r.name, r.code)) ??
+    []
   const currentResources = filteredResources.filter(
     (r) =>
       r.status !== "archived" &&
@@ -178,6 +198,12 @@ export function KnowledgeResourcesPage() {
   )
   const archivedResources = filteredResources.filter(
     (r) => r.status === "archived"
+  )
+  const result = catalogPage(currentResources, list.page)
+  const archivePage = Number(list.params.get("archivePage"))
+  const archived = catalogPage(
+    archivedResources,
+    Number.isSafeInteger(archivePage) && archivePage > 0 ? archivePage : 1
   )
   const tableProps = {
     canManage,
@@ -189,27 +215,14 @@ export function KnowledgeResourcesPage() {
     plans: operations.data?.plans,
   }
   return (
-    <div className="mx-auto grid w-full max-w-[1500px] gap-5 px-4 py-5 sm:px-6 lg:px-8">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">工具资源 · 知识库</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            支持 ONES 知识库和按 SVN 版本保存答案的代码知识库。
-            草稿验证后才可发布；角色仍在各业务应用下选择允许使用的知识库。
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            支持 ONES
-            采集计划、增量更新及日期补采。发布控制知识库可用性，自动同步独立设置。
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={inventory.isFetching || pending}
-            onClick={() => void inventory.refresh()}
-          >
-            刷新知识资源
-          </Button>
+    <ListPage
+      title="工具资源"
+      actions={
+        <>
+          <RefreshList
+            refresh={() => void inventory.refresh()}
+            busy={inventory.isFetching || pending}
+          />
           {canManage && (
             <Button
               disabled={!data || inventory.isError || pending}
@@ -221,12 +234,12 @@ export function KnowledgeResourcesPage() {
               新建知识库
             </Button>
           )}
-        </div>
-      </header>
+        </>
+      }
+    >
+      {tabs}
       {!canManage && (
-        <p className="text-sm text-muted-foreground">
-          当前为只读模式；管理按钮不可用，服务端仍独立校验权限。
-        </p>
+        <p className="text-sm text-muted-foreground">当前为只读模式。</p>
       )}
       <KnowledgeError error={inventory.error} />
       {editing === undefined && !confirmation && (
@@ -237,49 +250,56 @@ export function KnowledgeResourcesPage() {
           {notice}
         </p>
       )}
-      <KnowledgeOperationsPanel
-        data={operations.data}
-        error={operations.error}
-        canManage={canManage}
-        onRefresh={() => void operations.refetch()}
-      />
       {inventory.isPending && <p role="status">正在加载知识资源…</p>}
       {data && (
         <>
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
-            <KnowledgeField label="筛选知识资源">
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="名称或编码"
-              />
-            </KnowledgeField>
-            <KnowledgeField label="知识库状态">
-              <select
-                className={knowledgeInputClass}
-                value={statusFilter}
-                data-testid="knowledge-resource-status-filter"
-                onChange={(event) => setStatusFilter(event.target.value)}
-              >
-                <option value="enabled">启用</option>
-                <option value="disabled">停用</option>
-                <option value="created">创建</option>
-                <option value="all">全部</option>
-              </select>
-            </KnowledgeField>
+          <div className="flex flex-wrap items-center gap-2">
+            <ListSearch
+              label="筛选知识资源"
+              placeholder="搜索知识资源名称或编码"
+              value={search}
+              onCommit={(q) => list.filter({ q, archivePage: "" })}
+            />
+            <select
+              aria-label="知识库状态"
+              className="h-8 rounded-lg border bg-background px-2 text-sm"
+              value={statusFilter}
+              data-testid="knowledge-resource-status-filter"
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="enabled">启用</option>
+              <option value="disabled">停用</option>
+              <option value="created">创建</option>
+              <option value="all">全部</option>
+            </select>
+            {filtered && (
+              <Button variant="ghost" onClick={clear}>
+                重置
+              </Button>
+            )}
           </div>
           <section
             className="grid gap-3"
             aria-labelledby="current-knowledge-resources"
           >
-            <h2 id="current-knowledge-resources" className="font-medium">
+            <h2 id="current-knowledge-resources" className="sr-only">
               当前资源
             </h2>
-            <KnowledgeResourceTable
-              {...tableProps}
-              data={data}
-              resources={currentResources}
-            />
+            <ListResults>
+              {result.total ? (
+                <KnowledgeResourceTable
+                  {...tableProps}
+                  data={data}
+                  resources={result.rows}
+                />
+              ) : (
+                <ListEmpty
+                  title="没有匹配的知识资源"
+                  clear={filtered ? clear : undefined}
+                />
+              )}
+              <CatalogPager result={result} onPage={list.numberedPage} />
+            </ListResults>
           </section>
           <section className="grid gap-3" aria-label="已归档知识资源">
             <Button
@@ -296,11 +316,17 @@ export function KnowledgeResourcesPage() {
                 <p className="text-sm text-muted-foreground">
                   已归档资源不参与检索；发布版本仅作为历史记录保留。
                 </p>
-                <KnowledgeResourceTable
-                  {...tableProps}
-                  data={data}
-                  resources={archivedResources}
-                />
+                <ListResults>
+                  <KnowledgeResourceTable
+                    {...tableProps}
+                    data={data}
+                    resources={archived.rows}
+                  />
+                  <CatalogPager
+                    result={archived}
+                    onPage={(page) => list.numberedPage(page, "archivePage")}
+                  />
+                </ListResults>
               </div>
             )}
           </section>
@@ -379,6 +405,19 @@ export function KnowledgeResourcesPage() {
           </Sheet>
         </>
       )}
+      <details className="min-w-0 rounded-xl border bg-card p-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          同步运维
+        </summary>
+        <div className="mt-4 min-w-0">
+          <KnowledgeOperationsPanel
+            data={operations.data}
+            error={operations.error}
+            canManage={canManage}
+            onRefresh={() => void operations.refetch()}
+          />
+        </div>
+      </details>
       <AlertDialog
         open={confirmation !== null}
         onOpenChange={(open) => {
@@ -406,7 +445,7 @@ export function KnowledgeResourcesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </ListPage>
   )
 }
 

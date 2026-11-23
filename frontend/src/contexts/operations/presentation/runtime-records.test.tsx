@@ -774,7 +774,7 @@ describe("runtime provenance records", () => {
     expect(screen.getByText(/不渲染正文/)).toBeInTheDocument()
     expect(screen.getByText("本 Job 输出提交")).toBeInTheDocument()
     expect(screen.getByText(/· 1 个 · COMMITTED/)).toBeInTheDocument()
-    expect(screen.getByText(/不回写输入/)).toBeInTheDocument()
+    expect(screen.getByText(/来源：文件提交记录/)).toBeInTheDocument()
     expect(screen.getByText("上下文与原始运行审计")).toBeInTheDocument()
     expect(screen.getByText("峰值请求上下文")).toBeInTheDocument()
     expect(screen.getByText("144 tokens")).toBeInTheDocument()
@@ -927,6 +927,7 @@ describe("runtime provenance records", () => {
       <RuntimeJobDetailPage />
     )
 
+    fireEvent.click(await screen.findByText("运行诊断与审计"))
     expect(await screen.findByText("工具契约对账")).toBeInTheDocument()
     const toolContractPanel = screen.getByTestId("tool-contract-panel")
     const lastInvocationLabel = screen.getByText("最后观测 Invocation")
@@ -1026,7 +1027,9 @@ describe("runtime provenance records", () => {
 
     expect(await screen.findByText("200 tokens")).toBeInTheDocument()
     expect(screen.getAllByText("完整上下文与 Prompt")).toHaveLength(2)
-    const disclosures = document.querySelectorAll("details")
+    const diagnostics = screen.getByText("运行诊断与审计").closest("details")!
+    expect(diagnostics.open).toBe(false)
+    const disclosures = diagnostics.querySelectorAll("details")
     expect(disclosures).toHaveLength(9)
     expect(Array.from(disclosures).every((item) => !item.open)).toBe(true)
   })

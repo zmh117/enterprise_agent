@@ -1,3 +1,4 @@
+import { useDiscoveryReturn } from "@/shared/presentation/list-navigation"
 import { useState, type FormEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import {
@@ -48,7 +49,7 @@ import {
   useBindDingTalkIdentityCandidate,
   useDingTalkIdentityCandidate,
 } from "@/contexts/dingtalk-identity-discovery/application/dingtalk-identity-candidate-queries"
-import { useRoles } from "@/contexts/authorization/application/role-authorization-queries"
+import { useRoleChoices } from "@/contexts/authorization/application/role-authorization-queries"
 import type { User } from "@/contexts/users/domain/user"
 import { formatDate } from "@/contexts/users/presentation/format-date"
 import {
@@ -79,6 +80,7 @@ function AdminExternalIdentityPanel({
   discoveryCandidateId?: string
 }) {
   const navigate = useNavigate()
+  const origin = useDiscoveryReturn()
   const identities = useExternalIdentities(user.id)
   const candidate = useDingTalkIdentityCandidate(discoveryCandidateId)
   const [candidateDismissed, setCandidateDismissed] = useState(false)
@@ -101,7 +103,7 @@ function AdminExternalIdentityPanel({
             disabled={
               user.account_type !== "human" || user.status !== "enabled"
             }
-            onClick={() => navigate("/users/dingtalk-discovery")}
+            onClick={() => navigate(origin.to, { state: origin.state })}
           >
             <Link2Icon aria-hidden="true" />
             从受信候选绑定钉钉
@@ -626,9 +628,10 @@ function CandidateDingTalkBindingSheet({
   currentDingTalkCorpIds: string[]
 }) {
   const navigate = useNavigate()
+  const origin = useDiscoveryReturn()
   const candidate = useDingTalkIdentityCandidate(candidateId)
   const mutation = useBindDingTalkIdentityCandidate(candidateId, user.id)
-  const roles = useRoles({ search: "", status: "enabled", origin: "" })
+  const roles = useRoleChoices("enabled")
   const [initialRoleIds, setInitialRoleIds] = useState<Set<string>>(new Set())
   const [bindOnly, setBindOnly] = useState(false)
   const [replaceCurrent, setReplaceCurrent] = useState(false)
@@ -659,7 +662,7 @@ function CandidateDingTalkBindingSheet({
               ? "钉钉身份已恢复"
               : "钉钉用户已绑定"
           )
-          navigate("/users/dingtalk-discovery")
+          navigate(origin.to, { state: origin.state })
         },
       }
     )
@@ -709,7 +712,7 @@ function CandidateDingTalkBindingSheet({
             </dl>
             <div className="space-y-3 rounded-lg border p-4">
               <p className="text-sm font-medium">初始角色</p>
-              {roles.data?.items.map((role) => (
+              {roles.data?.map((role) => (
                 <label
                   key={role.id}
                   className="flex items-center gap-2 rounded-md border p-3 text-sm"

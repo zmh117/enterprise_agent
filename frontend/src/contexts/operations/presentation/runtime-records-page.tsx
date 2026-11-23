@@ -24,7 +24,7 @@ import {
   ArrowLeftIcon,
   MessagesSquareIcon,
 } from "lucide-react"
-import { Link, useParams, useSearchParams } from "react-router-dom"
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom"
 import { type ReactNode, useEffect, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
@@ -680,6 +680,7 @@ function JobRow({
 }
 
 export function RuntimeJobDetailPage() {
+  const { state } = useLocation()
   const jobId = useParams().jobId ?? ""
   const query = useRuntimeJob(jobId)
   if (query.isLoading) return <PageSkeleton />
@@ -748,15 +749,7 @@ export function RuntimeJobDetailPage() {
           ]}
         />
       </div>
-      <AgentRunAuditPanel jobId={job.id} audits={query.data.run_audits} />
-      <ToolContractPanel value={query.data.tool_contract} />
-      <FileWorkspacePolicyPanel value={query.data.file_workspace} />
       <ExecutionAccountingPanel summary={query.data.execution_summary} />
-      <ModelCallsPanel
-        key={job.id}
-        jobId={job.id}
-        initialPage={query.data.model_calls}
-      />
       <ExecutionEvidenceTimeline
         job={job}
         dispatch={query.data.dispatch}
@@ -770,6 +763,20 @@ export function RuntimeJobDetailPage() {
         attempts={query.data.deliveries.attempts}
         chunks={query.data.deliveries.chunks}
       />
+      <details className="mt-4 min-w-0 rounded-xl border p-4">
+        <summary className="cursor-pointer font-medium">
+          运行诊断与审计{" "}
+          <ToolContractStatusBadge status={job.tool_contract.status} />
+        </summary>
+        <AgentRunAuditPanel jobId={job.id} audits={query.data.run_audits} />
+        <ToolContractPanel value={query.data.tool_contract} />
+        <FileWorkspacePolicyPanel value={query.data.file_workspace} />
+        <ModelCallsPanel
+          key={job.id}
+          jobId={job.id}
+          initialPage={query.data.model_calls}
+        />
+      </details>
       <Card className="mt-4 shadow-none">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -780,6 +787,7 @@ export function RuntimeJobDetailPage() {
         <CardContent>
           <Link
             className={buttonVariants({ variant: "outline" })}
+            state={state}
             to={`/operations/conversations/${encodeURIComponent(job.session_id)}`}
           >
             查看会话与同会话任务
@@ -802,9 +810,7 @@ function AgentRunAuditPanel({
     <Card className="mt-4 shadow-none">
       <CardHeader>
         <CardTitle>上下文与原始运行审计</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          完整正文在展开后按需、分段加载；折叠状态不会下载或渲染长内容。
-        </p>
+        <p className="text-sm text-muted-foreground">展开后分段加载正文。</p>
       </CardHeader>
       <CardContent className="space-y-4">
         {!audits.length ? (
@@ -1626,8 +1632,7 @@ function FileWorkspacePolicyPanel({ value }: { value: FileWorkspaceEvidence }) {
               ))}
             </dl>
             <p className="mt-2 text-xs text-muted-foreground">
-              来源 File Commit Intent；仅展示格式、数量和状态，不回写输入
-              Manifest。
+              来源：文件提交记录。
             </p>
           </div>
         ) : null}
@@ -1749,8 +1754,7 @@ function ModelCallsPanel({
       <CardHeader>
         <CardTitle>模型请求</CardTitle>
         <p className="text-sm text-muted-foreground">
-          只展示 SDK 安全标识和统计，不展示 Prompt、完整回复或原始 Provider
-          载荷。
+          按模型轮次展示 SDK 标识和用量。
         </p>
       </CardHeader>
       <CardContent>
@@ -2014,8 +2018,7 @@ function DeliveryTimeline({
       <CardHeader>
         <CardTitle>投递时间线</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Agent 执行与结果投递是两个独立状态；只有投递状态为 SUCCEEDED
-          才表示已送达。
+          投递成功表示结果已送达。
         </p>
       </CardHeader>
       <CardContent>
@@ -2213,12 +2216,14 @@ export function ConversationDetailPage() {
 }
 
 function ConversationJobRow({ job }: { job: RuntimeJob }) {
+  const { state } = useLocation()
   const attributed = Boolean(job.business_application_id)
   return (
     <article className="min-w-0 px-5 py-4 text-sm">
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <Link
+            state={state}
             to={`/operations/jobs/${encodeURIComponent(job.id)}`}
             title={job.id}
             className="block truncate font-mono text-xs font-medium hover:underline"

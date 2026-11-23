@@ -123,9 +123,7 @@ describe("Managed channel navigation", () => {
     expect(
       await screen.findByRole("heading", { name: "渠道与触发器" })
     ).toBeInTheDocument()
-    expect(
-      screen.getByText(/此页面不会直接修改任何业务应用/)
-    ).toBeInTheDocument()
+    expect(screen.getByRole("search", { name: "" })).toBeInTheDocument()
     await waitFor(() => expect(urls).toHaveLength(2))
     expect(urls).toContain("/api/admin/managed-channels")
     expect(urls).toContain("/api/admin/managed-channels/dingtalk-enterprises")

@@ -1,4 +1,5 @@
-import { useListReturn } from "@/shared/presentation/list-navigation"
+import { ListResults, ListSearch, ListEmpty, CatalogPager } from "@/shared/presentation/list-page"
+import { catalogPage, matchesListSearch, useListReturn } from "@/shared/presentation/list-navigation"
 import { useState, type FormEvent } from "react"
 import {
   ArrowLeftIcon,
@@ -28,7 +29,7 @@ import {
 import type { User } from "@/contexts/users/domain/user"
 import type { UserDetail } from "@/contexts/users/domain/user"
 import {
-  useRoles,
+  useRoleChoices,
   useUpdateUserRoles,
 } from "@/contexts/authorization/application/role-authorization-queries"
 import {
@@ -118,7 +119,19 @@ export function UserDetailPage() {
 }
 
 function UserRolesCard({ user }: { user: UserDetail }) {
-  const roles = useRoles({ search: "", status: "enabled", origin: "" })
+  const roles = useRoleChoices("enabled")
+  const [search, setSearch] = useState("")
+  const [page, setPage] = useState(1)
+  const filter = (q: string) => {
+    setSearch(q)
+    setPage(1)
+  }
+  const result = catalogPage(
+    (roles.data ?? []).filter((role) =>
+      matchesListSearch(search, role.name, role.code)
+    ),
+    page
+  )
   const mutation = useUpdateUserRoles(user.id)
   const current = new Map(
     user.roles.map((role) => [
@@ -130,7 +143,7 @@ function UserRolesCard({ user }: { user: UserDetail }) {
     ])
   )
   const [selection, setSelection] = useState(current)
-  const changedRoles = (roles.data?.items ?? []).filter(
+  const changedRoles = (roles.data ?? []).filter(
     (role) =>
       JSON.stringify(
         current.get(role.id) ?? { enabled: false, expires_at: "" }
@@ -155,59 +168,81 @@ function UserRolesCard({ user }: { user: UserDetail }) {
     <Card className="shadow-none">
       <CardHeader className="border-b">
         <CardTitle>角色与有效权限</CardTitle>
-        <CardDescription>
-          人员可以绑定多个角色；到期、停用的成员关系不会参与新的授权决策。
-        </CardDescription>
+        <CardDescription>仅启用且未到期的角色生效。</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-3 lg:grid-cols-2">
-          {roles.data?.items.map((role) => {
-            const selected = selection.get(role.id)
-            return (
-              <div key={role.id} className="rounded-lg border p-3">
-                <label className="flex items-start gap-3">
-                  <Checkbox
-                    checked={Boolean(selected?.enabled)}
-                    onCheckedChange={(checked) => {
-                      const next = new Map(selection)
-                      next.set(role.id, {
-                        enabled: Boolean(checked),
-                        expires_at: selected?.expires_at ?? "",
-                      })
-                      setSelection(next)
-                    }}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-2 font-medium">
-                      {role.name}
-                      {role.protected ? <Badge>系统角色</Badge> : null}
-                    </span>
-                    <span className="mt-1 block font-mono text-xs text-muted-foreground">
-                      {role.code}
-                    </span>
-                  </span>
-                </label>
-                <Input
-                  className="mt-3"
-                  type="datetime-local"
-                  aria-label={`${role.name}的角色失效时间`}
-                  disabled={!selected?.enabled}
-                  value={toLocalDateTime(selected?.expires_at ?? "")}
-                  onChange={(event) => {
-                    const next = new Map(selection)
-                    next.set(role.id, {
-                      enabled: true,
-                      expires_at: event.target.value
-                        ? new Date(event.target.value).toISOString()
-                        : "",
-                    })
-                    setSelection(next)
-                  }}
-                />
-              </div>
-            )
-          })}
-        </div>
+        <ListSearch
+          label="搜索可分配角色"
+          placeholder="搜索角色名称或编码"
+          value={search}
+          onCommit={filter}
+        />
+        {roles.isLoading && (
+          <p role="status" className="text-sm text-muted-foreground">
+            正在加载角色…
+          </p>
+        )}
+        {roles.data && (
+          <ListResults>
+            <div className="divide-y">
+              {result.rows.map((role) => {
+                const selected = selection.get(role.id)
+                return (
+                  <div
+                    key={role.id}
+                    className="grid items-center gap-2 px-4 py-3 sm:grid-cols-[1fr_14rem]"
+                  >
+                    <label className="flex items-start gap-3">
+                      <Checkbox
+                        checked={Boolean(selected?.enabled)}
+                        onCheckedChange={(checked) => {
+                          const next = new Map(selection)
+                          next.set(role.id, {
+                            enabled: Boolean(checked),
+                            expires_at: selected?.expires_at ?? "",
+                          })
+                          setSelection(next)
+                        }}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-2 font-medium">
+                          {role.name}
+                          {role.protected ? <Badge>系统角色</Badge> : null}
+                        </span>
+                        <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                          {role.code}
+                        </span>
+                      </span>
+                    </label>
+                    <Input
+                      type="datetime-local"
+                      aria-label={`${role.name}的角色失效时间`}
+                      disabled={!selected?.enabled}
+                      value={toLocalDateTime(selected?.expires_at ?? "")}
+                      onChange={(event) => {
+                        const next = new Map(selection)
+                        next.set(role.id, {
+                          enabled: true,
+                          expires_at: event.target.value
+                            ? new Date(event.target.value).toISOString()
+                            : "",
+                        })
+                        setSelection(next)
+                      }}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+            {!result.total && (
+              <ListEmpty
+                title="没有符合条件的角色"
+                clear={search ? () => filter("") : undefined}
+              />
+            )}
+            <CatalogPager result={result} onPage={setPage} />
+          </ListResults>
+        )}
         <RequestError error={roles.error ?? mutation.error} />
         <Button
           disabled={changedRoles.length === 0 || mutation.isPending}
@@ -284,9 +319,6 @@ function UserProfileCard({ user }: { user: User }) {
     <Card className="shadow-none">
       <CardHeader className="border-b">
         <CardTitle>基本资料</CardTitle>
-        <CardDescription>
-          停用用户会撤销其管理会话，并阻止已绑定钉钉身份创建新任务。
-        </CardDescription>
       </CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={submit}>

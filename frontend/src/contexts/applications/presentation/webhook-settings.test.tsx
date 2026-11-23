@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
@@ -171,7 +172,9 @@ function setup(
         })
       }
     >
-      <ManagedChannelsPanel />
+      <MemoryRouter>
+        <ManagedChannelsPanel />
+      </MemoryRouter>
     </QueryClientProvider>
   )
   return {
@@ -252,6 +255,7 @@ describe("Webhook first-use configuration", () => {
   })
   it("shows a standard Grafana payload for a Grafana webhook", async () => {
     setup(true, false, "grafana")
+    fireEvent.click(await screen.findByRole("button", { name: "合成入口" }))
     fireEvent.click(await screen.findByRole("button", { name: "配置 Webhook" }))
     const example = await screen.findByLabelText("HTTP 调用示例")
     expect(example).toHaveTextContent('"status": "firing"')
@@ -279,11 +283,13 @@ describe("Webhook first-use configuration", () => {
       execution_user_id: "user-1",
     })
     fireEvent.click(screen.getByRole("button", { name: "关闭" }))
+    fireEvent.click(await screen.findByRole("button", { name: "合成入口" }))
     fireEvent.click(await screen.findByRole("button", { name: "配置 Webhook" }))
     expect(await screen.findByLabelText("执行用户")).toHaveValue("user-1")
   })
   it("stops directly from the channel card", async () => {
     const { writes } = setup(true)
+    fireEvent.click(await screen.findByRole("button", { name: "合成入口" }))
     fireEvent.click(await screen.findByRole("button", { name: "停用 Webhook" }))
     await waitFor(() => expect(writes.at(-1)?.body.status).toBe("disabled"))
     await waitFor(() =>
@@ -376,6 +382,7 @@ describe("Webhook first-use configuration", () => {
 
 it("requires saving old Webhook configuration before preview or publication", async () => {
   setup(false, true)
+  fireEvent.click(await screen.findByRole("button", { name: "合成入口" }))
   fireEvent.click(await screen.findByRole("button", { name: "配置 Webhook" }))
   await screen.findByText(/此 Webhook 使用旧配置/)
   expect(screen.getByRole("button", { name: "发布草稿" })).toBeDisabled()

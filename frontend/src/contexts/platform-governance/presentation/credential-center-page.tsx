@@ -1,15 +1,30 @@
-import { useState, type FormEvent } from "react"
 import {
-  KeyRoundIcon,
-  LoaderCircleIcon,
-  RefreshCwIcon,
-  RotateCwIcon,
-  ShieldAlertIcon,
-} from "lucide-react"
+  ListPage,
+  ListSearch,
+  ListEmpty,
+  ListResults,
+  CatalogPager,
+  ExpandableListRow,
+  ListStatus,
+  RefreshList,
+  ListStatusFilter,
+} from "@/shared/presentation/list-page"
+import {
+  useListNavigation,
+  catalogPage,
+  matchesListSearch,
+} from "@/shared/presentation/list-navigation"
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetHeader,
+} from "@/components/ui/sheet"
+import { useState, type FormEvent } from "react"
+import { PlusIcon, LoaderCircleIcon, RotateCwIcon } from "lucide-react"
 
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -19,14 +34,6 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import {
   Field,
   FieldDescription,
@@ -56,6 +63,20 @@ import { ApiError } from "@/shared/api/api-client"
 
 export function CredentialCenterPage() {
   const secrets = usePlatformSecrets()
+  const list = useListNavigation()
+  const q = list.params.get("q") ?? ""
+  const status = list.params.get("status") ?? ""
+  const filtered = Boolean(q || status)
+  const clear = () => list.filter({ q: "", status: "" })
+  const result = catalogPage(
+    (secrets.data ?? []).filter(
+      (item) =>
+        matchesListSearch(q, item.code, item.purpose) &&
+        (!status || (item.configured ? "enabled" : "disabled") === status)
+    ),
+    list.page
+  )
+  const [creating, setCreating] = useState(false)
   const create = useCreatePlatformSecret()
   const rotate = useRotatePlatformSecret()
   const disable = useDisablePlatformSecret()
@@ -75,7 +96,10 @@ export function CredentialCenterPage() {
   function submitCreate(event: FormEvent) {
     event.preventDefault()
     create.mutate(createForm, {
-      onSuccess: () => setCreateForm({ code: "", purpose: "", value: "" }),
+      onSuccess: () => {
+        setCreateForm({ code: "", purpose: "", value: "" })
+        setCreating(false)
+      },
     })
   }
 
@@ -93,175 +117,195 @@ export function CredentialCenterPage() {
   }
 
   return (
-    <PageFrame>
-      <header>
-        <div className="flex items-center gap-2 text-xs font-medium text-primary">
-          <KeyRoundIcon className="size-4" aria-hidden="true" />
-          PLATFORM GOVERNANCE
-        </div>
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">凭据中心</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              管理平台 Secret 的引用和版本。页面只接收一次明文用于加密保存，
-              之后仅展示 secret://platform/... 引用，不提供明文、密文或 Master
-              Key 的查看与下载。
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            onClick={() => void secrets.refetch()}
-            disabled={secrets.isFetching}
-          >
-            <RefreshCwIcon
-              className={secrets.isFetching ? "animate-spin" : ""}
-              aria-hidden="true"
-            />
-            刷新
-          </Button>
-        </div>
-      </header>
-
-      <Card className="border-dashed shadow-none">
-        <CardContent className="flex gap-3 py-4 text-sm">
-          <ShieldAlertIcon
-            className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-            aria-hidden="true"
+    <ListPage
+      title="凭据中心"
+      actions={
+        <>
+          <RefreshList
+            refresh={() => void secrets.refetch()}
+            busy={secrets.isFetching}
           />
-          <p className="leading-6 text-muted-foreground">
-            固定 Master Key 由部署侧只读文件提供，不属于 Web 配置。Vault、KMS
-            仍是未实现的预留 Provider，当前不能创建或发布。
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card className="shadow-none">
-        <CardHeader>
-          <CardTitle>新建平台 Secret</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={submitCreate}>
-            <FieldGroup className="grid gap-4 md:grid-cols-3">
-              <Field>
-                <FieldLabel htmlFor="secret-code">凭据编码</FieldLabel>
-                <Input
-                  id="secret-code"
-                  required
-                  pattern="[a-z][a-z0-9_-]+"
-                  maxLength={120}
-                  autoComplete="off"
-                  value={createForm.code}
-                  onChange={(event) =>
-                    setCreateForm({ ...createForm, code: event.target.value })
-                  }
-                  placeholder="oracle_reader_password"
-                />
-                <FieldDescription>
-                  保存后形成 secret://platform/&lt;code&gt;。
-                </FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="secret-purpose">用途</FieldLabel>
-                <Input
-                  id="secret-purpose"
-                  maxLength={200}
-                  value={createForm.purpose}
-                  onChange={(event) =>
-                    setCreateForm({
-                      ...createForm,
-                      purpose: event.target.value,
-                    })
-                  }
-                  placeholder="Oracle 只读账号密码"
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="secret-value">Secret 明文</FieldLabel>
-                <Input
-                  id="secret-value"
-                  required
-                  type="password"
-                  autoComplete="new-password"
-                  value={createForm.value}
-                  onChange={(event) =>
-                    setCreateForm({ ...createForm, value: event.target.value })
-                  }
-                />
-                <FieldDescription>
-                  仅本次提交，不会在响应中返回。
-                </FieldDescription>
-              </Field>
-            </FieldGroup>
-            <MutationError error={create.error} />
-            <Button className="mt-4" type="submit" disabled={create.isPending}>
-              {create.isPending ? (
-                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
-              ) : null}
-              加密保存
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      {rotateCode ? (
-        <Card className="shadow-none">
-          <CardHeader>
-            <CardTitle>轮换 {rotateCode}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form
-              onSubmit={submitRotation}
-              className="flex flex-col gap-3 sm:flex-row"
-            >
-              <Input
-                aria-label="新 Secret 明文"
-                type="password"
-                required
-                autoComplete="new-password"
-                value={rotateValue}
-                onChange={(event) => setRotateValue(event.target.value)}
-              />
-              <Button type="submit" disabled={rotate.isPending}>
-                {rotate.isPending ? (
+          <Button onClick={() => setCreating(true)}>
+            <PlusIcon />
+            新建凭据
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <ListSearch
+          label="搜索凭据"
+          placeholder="搜索凭据编码或用途"
+          value={q}
+          onCommit={(q) => list.filter({ q })}
+        />
+        <ListStatusFilter
+          value={status}
+          onChange={(status) => list.filter({ status })}
+        />
+        {filtered && (
+          <Button variant="ghost" onClick={clear}>
+            重置
+          </Button>
+        )}
+      </div>
+      <Sheet
+        open={creating}
+        onOpenChange={(open) => {
+          if (create.isPending) return
+          setCreating(open)
+          if (!open) {
+            setCreateForm({ code: "", purpose: "", value: "" })
+            create.reset()
+          }
+        }}
+      >
+        <SheetContent aria-describedby={undefined} className="overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>新建凭据</SheetTitle>
+          </SheetHeader>
+          <div className="px-4 pb-4">
+            <form onSubmit={submitCreate}>
+              <FieldGroup className="grid gap-4">
+                <Field>
+                  <FieldLabel htmlFor="secret-code">凭据编码</FieldLabel>
+                  <Input
+                    id="secret-code"
+                    required
+                    pattern="[a-z][a-z0-9_-]+"
+                    maxLength={120}
+                    autoComplete="off"
+                    value={createForm.code}
+                    onChange={(event) =>
+                      setCreateForm({ ...createForm, code: event.target.value })
+                    }
+                    placeholder="oracle_reader_password"
+                  />
+                  <FieldDescription>
+                    保存后形成 secret://platform/&lt;code&gt;。
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="secret-purpose">用途</FieldLabel>
+                  <Input
+                    id="secret-purpose"
+                    maxLength={200}
+                    value={createForm.purpose}
+                    onChange={(event) =>
+                      setCreateForm({
+                        ...createForm,
+                        purpose: event.target.value,
+                      })
+                    }
+                    placeholder="Oracle 只读账号密码"
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="secret-value">Secret 明文</FieldLabel>
+                  <Input
+                    id="secret-value"
+                    required
+                    type="password"
+                    autoComplete="new-password"
+                    value={createForm.value}
+                    onChange={(event) =>
+                      setCreateForm({
+                        ...createForm,
+                        value: event.target.value,
+                      })
+                    }
+                  />
+                  <FieldDescription>
+                    仅本次提交，不会在响应中返回。
+                  </FieldDescription>
+                </Field>
+              </FieldGroup>
+              <MutationError error={create.error} />
+              <Button
+                className="mt-4"
+                type="submit"
+                disabled={create.isPending}
+              >
+                {create.isPending ? (
                   <LoaderCircleIcon
                     className="animate-spin"
                     aria-hidden="true"
                   />
                 ) : null}
-                确认轮换
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setRotateCode("")
-                  setRotateValue("")
-                }}
-              >
-                取消
+                加密保存
               </Button>
             </form>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet
+        open={Boolean(rotateCode)}
+        onOpenChange={(open) => {
+          if (!open && !rotate.isPending) {
+            setRotateCode("")
+            setRotateValue("")
+            rotate.reset()
+          }
+        }}
+      >
+        <SheetContent aria-describedby={undefined} className="overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>轮换 {rotateCode}</SheetTitle>
+          </SheetHeader>
+          <form onSubmit={submitRotation} className="grid gap-3 px-4">
+            <Field>
+              <FieldLabel htmlFor="rotate-value">新 Secret 明文</FieldLabel>
+              <Input
+                id="rotate-value"
+                type="password"
+                required
+                autoComplete="new-password"
+                value={rotateValue}
+                onChange={(e) => setRotateValue(e.target.value)}
+              />
+            </Field>
             <MutationError error={rotate.error} />
-          </CardContent>
-        </Card>
-      ) : null}
+            <Button type="submit" disabled={rotate.isPending}>
+              确认轮换
+            </Button>
+          </form>
+        </SheetContent>
+      </Sheet>
+      <ListResults>
+        <CredentialTable
+          loading={secrets.isLoading}
+          error={secrets.error}
+          secrets={result.rows}
+          clear={filtered ? clear : undefined}
+          usageCode={usageCode}
+          onUsage={setUsageCode}
+          onRotate={(code) => {
+            rotate.reset()
+            setRotateValue("")
+            setRotateCode(code)
+          }}
+          onDisable={(target) => {
+            disable.reset()
+            setDisableTarget(target)
+          }}
+        />
 
-      <CredentialTable
-        loading={secrets.isLoading}
-        error={secrets.error}
-        secrets={secrets.data ?? []}
-        usageCode={usageCode}
-        onUsage={setUsageCode}
-        onRotate={setRotateCode}
-        onDisable={setDisableTarget}
-      />
-
-      {usageCode ? (
-        <Card className="shadow-none">
-          <CardHeader>
-            <CardTitle>引用关系 · {usageCode}</CardTitle>
-          </CardHeader>
-          <CardContent>
+        {secrets.data && (
+          <CatalogPager result={result} onPage={list.numberedPage} />
+        )}
+      </ListResults>
+      <Sheet
+        open={Boolean(usageCode)}
+        onOpenChange={(open) => {
+          if (!open) setUsageCode("")
+        }}
+      >
+        <SheetContent aria-describedby={undefined} className="overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>引用关系 · {usageCode}</SheetTitle>
+          </SheetHeader>
+          <div className="px-4 pb-4">
             {usage.isLoading ? (
               <Skeleton className="h-20 w-full" />
             ) : usage.isError ? (
@@ -303,14 +347,14 @@ export function CredentialCenterPage() {
                 )}
               </div>
             )}
-          </CardContent>
-        </Card>
-      ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <AlertDialog
         open={Boolean(disableTarget)}
         onOpenChange={(open) => {
-          if (!open) setDisableTarget(null)
+          if (!open && !disable.isPending) setDisableTarget(null)
         }}
       >
         <AlertDialogContent>
@@ -322,8 +366,9 @@ export function CredentialCenterPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
+            <MutationError error={disable.error} />
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
+            <Button
               variant="destructive"
               disabled={disable.isPending}
               onClick={() => {
@@ -334,11 +379,11 @@ export function CredentialCenterPage() {
               }}
             >
               停用
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </PageFrame>
+    </ListPage>
   )
 }
 
@@ -358,6 +403,7 @@ function dependencyTypeLabel(type: string) {
 }
 
 function CredentialTable({
+  clear,
   loading,
   error,
   secrets,
@@ -366,6 +412,7 @@ function CredentialTable({
   onRotate,
   onDisable,
 }: {
+  clear?: () => void
   loading: boolean
   error: Error | null
   secrets: PlatformSecret[]
@@ -376,86 +423,75 @@ function CredentialTable({
 }) {
   if (loading) return <Skeleton className="h-48 w-full" />
   if (error) return <MutationError error={error} />
-  if (!secrets.length) {
+  if (!secrets.length)
     return (
-      <Empty className="border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <KeyRoundIcon aria-hidden="true" />
-          </EmptyMedia>
-          <EmptyTitle>还没有平台 Secret</EmptyTitle>
-          <EmptyDescription>
-            先创建凭据，再在 DB、Redis 或 Loki 表单中选择其引用。
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <ListEmpty
+        title={clear ? "没有符合条件的凭据" : "还没有平台 Secret"}
+        clear={clear}
+      />
     )
-  }
   return (
-    <Card className="shadow-none">
-      <CardContent className="px-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>凭据</TableHead>
-              <TableHead>用途</TableHead>
-              <TableHead>版本</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead className="text-right">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {secrets.map((secret) => (
-              <TableRow key={secret.id}>
-                <TableCell>
-                  <p className="font-medium">{secret.code}</p>
-                  <p className="font-mono text-xs text-muted-foreground">
-                    {secret.secret_ref}
-                  </p>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>凭据</TableHead>
+          <TableHead className="hidden sm:table-cell">用途</TableHead>
+          <TableHead>版本</TableHead>
+          <TableHead>状态</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {secrets.map((secret) => (
+          <ExpandableListRow
+            key={secret.id}
+            name={secret.code}
+            columns={4}
+            cells={
+              <>
+                <TableCell className="hidden sm:table-cell">
+                  {secret.purpose || "—"}
                 </TableCell>
-                <TableCell>{secret.purpose || "未填写"}</TableCell>
                 <TableCell>v{secret.active_version}</TableCell>
                 <TableCell>
-                  <Badge variant={secret.configured ? "secondary" : "outline"}>
-                    {secret.configured ? "可用" : "已停用"}
-                  </Badge>
+                  <ListStatus
+                    status={secret.configured ? "enabled" : "disabled"}
+                  />
                 </TableCell>
-                <TableCell>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      size="sm"
-                      variant={
-                        usageCode === secret.code ? "secondary" : "outline"
-                      }
-                      onClick={() => onUsage(secret.code)}
-                    >
-                      查看引用
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!secret.configured}
-                      onClick={() => onRotate(secret.code)}
-                    >
-                      <RotateCwIcon aria-hidden="true" />
-                      轮换
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      disabled={!secret.configured}
-                      onClick={() => onDisable(secret)}
-                    >
-                      停用
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+              </>
+            }
+          >
+            <p className="font-mono text-xs break-all">{secret.secret_ref}</p>
+            <p className="mt-1 text-sm sm:hidden">{secret.purpose}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant={usageCode === secret.code ? "secondary" : "outline"}
+                onClick={() => onUsage(secret.code)}
+              >
+                查看引用
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!secret.configured}
+                onClick={() => onRotate(secret.code)}
+              >
+                <RotateCwIcon aria-hidden="true" />
+                轮换
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={!secret.configured}
+                onClick={() => onDisable(secret)}
+              >
+                停用
+              </Button>
+            </div>
+          </ExpandableListRow>
+        ))}
+      </TableBody>
+    </Table>
   )
 }
 
@@ -465,13 +501,5 @@ function MutationError({ error }: { error: unknown }) {
     <FieldError className="mt-3">
       {error instanceof ApiError ? error.message : "操作失败，请刷新后重试。"}
     </FieldError>
-  )
-}
-
-function PageFrame({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      {children}
-    </div>
   )
 }

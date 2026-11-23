@@ -1,12 +1,32 @@
-import { useMemo, useState, type FormEvent } from "react"
 import {
-  BlocksIcon,
+  ListPage,
+  ListResults,
+  ListSearch,
+  ListStatus,
+  ListEmpty,
+  CatalogPager,
+  ExpandableListRow,
+  RefreshList,
+} from "@/shared/presentation/list-page"
+import {
+  useListNavigation,
+  matchesListSearch,
+  catalogPage,
+} from "@/shared/presentation/list-navigation"
+import {
+  Table,
+  TableRow,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table"
+import { useState, type ReactNode, type FormEvent } from "react"
+import {
   DatabaseIcon,
   LoaderCircleIcon,
   PlusIcon,
-  RefreshCwIcon,
   SearchIcon,
-  ServerCogIcon,
   Trash2Icon,
 } from "lucide-react"
 
@@ -31,13 +51,6 @@ import {
   ComboboxItem,
   ComboboxList,
 } from "@/components/ui/combobox"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import {
   Field,
   FieldDescription,
@@ -188,26 +201,42 @@ function formForResource(resource: GovernedResource | null) {
 }
 
 export function ToolResourcesPage() {
-  const [tab, setTab] = useState("connections")
+  const list = useListNavigation()
+  const tab =
+    list.params.get("tab") === "knowledge" ? "knowledge" : "connections"
+  const tabs = (
+    <TabsList variant="line" aria-label="工具资源类型">
+      <TabsTrigger value="connections">数据库 / Redis / Loki</TabsTrigger>
+      <TabsTrigger value="knowledge">知识库</TabsTrigger>
+    </TabsList>
+  )
   return (
-    <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
-      <div className="mx-auto w-full max-w-[1500px] px-4 pt-5 sm:px-6 lg:px-8">
-        <TabsList aria-label="工具资源类型">
-          <TabsTrigger value="connections">数据库 / Redis / Loki</TabsTrigger>
-          <TabsTrigger value="knowledge">知识库</TabsTrigger>
-        </TabsList>
-      </div>
+    <Tabs
+      value={tab}
+      onValueChange={(v) =>
+        list.filter({
+          tab: v === "knowledge" ? "knowledge" : "",
+          q: "",
+          status: "",
+          kind: "",
+          scope: "",
+          identity: "",
+          revision: "",
+          archivePage: "",
+        })
+      }
+    >
       <TabsContent value="connections">
-        {tab === "connections" && <ConnectionResourcesPage />}
+        {tab === "connections" && <ConnectionResourcesPage tabs={tabs} />}
       </TabsContent>
       <TabsContent value="knowledge">
-        {tab === "knowledge" && <KnowledgeResourcesPage />}
+        {tab === "knowledge" && <KnowledgeResourcesPage tabs={tabs} />}
       </TabsContent>
     </Tabs>
   )
 }
 
-function ConnectionResourcesPage() {
+function ConnectionResourcesPage({ tabs }: { tabs: ReactNode }) {
   const resources = useGovernedResources()
   const create = useCreateGovernedResource()
   const save = useSaveGovernedResourceDraft()
@@ -217,12 +246,18 @@ function ConnectionResourcesPage() {
   const removeDraft = useDeleteGovernedResourceDraft()
   const setRevisionStatus = useSetResourceRevisionStatus()
   const setIdentityStatus = useSetResourceIdentityStatus()
-  const [filters, setFilters] = useState({
-    kind: "all",
-    scope: "all",
-    identity: "all",
-    revision: "all",
-  })
+  const list = useListNavigation()
+  const q = list.params.get("q") ?? ""
+  const filters = {
+    kind: list.params.get("kind") || "all",
+    scope: list.params.get("scope") || "all",
+    identity: list.params.get("identity") || "all",
+    revision: list.params.get("revision") || "all",
+  }
+  const hasFilters =
+    Boolean(q) || Object.values(filters).some((v) => v !== "all")
+  const clear = () =>
+    list.filter({ q: "", kind: "", scope: "", identity: "", revision: "" })
   const [editing, setEditing] = useState<GovernedResource | null | undefined>(
     undefined
   )
@@ -237,19 +272,17 @@ function ConnectionResourcesPage() {
       : confirm?.type.endsWith("-identity")
         ? setIdentityStatus.error
         : setRevisionStatus.error
-  const filtered = useMemo(
-    () =>
-      (resources.data ?? []).filter(
-        (resource) =>
-          (filters.kind === "all" || resource.resource_kind === filters.kind) &&
-          (filters.scope === "all" || resource.scope_type === filters.scope) &&
-          (filters.identity === "all" ||
-            resource.status === filters.identity) &&
-          (filters.revision === "all" ||
-            (resource.published_revision?.status ?? "NONE") ===
-              filters.revision)
-      ),
-    [filters, resources.data]
+  const result = catalogPage(
+    (resources.data ?? []).filter(
+      (resource) =>
+        matchesListSearch(q, resource.name, resource.code) &&
+        (filters.kind === "all" || resource.resource_kind === filters.kind) &&
+        (filters.scope === "all" || resource.scope_type === filters.scope) &&
+        (filters.identity === "all" || resource.status === filters.identity) &&
+        (filters.revision === "all" ||
+          (resource.published_revision?.status ?? "NONE") === filters.revision)
+    ),
+    list.page
   )
 
   function confirmAction() {
@@ -293,101 +326,131 @@ function ConnectionResourcesPage() {
   }
 
   return (
-    <PageFrame>
-      <header>
-        <div className="flex items-center gap-2 text-xs font-medium text-primary">
-          <ServerCogIcon className="size-4" aria-hidden="true" />
-          PLATFORM GOVERNANCE
-        </div>
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">工具资源</h1>
-            <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
-              管理 DB、Redis 与 Loki 的稳定资源身份。连接内容按 Draft → VERIFIED
-              → PUBLISHED 发布；发布版本不可原地修改，MCP Tool 调用时只解析
-              当前已发布版本。
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => void resources.refetch()}
-              disabled={resources.isFetching}
-            >
-              <RefreshCwIcon
-                className={resources.isFetching ? "animate-spin" : ""}
-                aria-hidden="true"
-              />
-              刷新
-            </Button>
-            <Button onClick={() => setEditing(null)}>
-              <PlusIcon aria-hidden="true" />
-              新建资源
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <ResourceFilters value={filters} onChange={setFilters} />
-
+    <ListPage
+      title="工具资源"
+      actions={
+        <>
+          <RefreshList
+            refresh={() => void resources.refetch()}
+            busy={resources.isFetching}
+          />
+          <Button onClick={() => setEditing(null)}>
+            <PlusIcon />
+            新建资源
+          </Button>
+        </>
+      }
+    >
+      {tabs}
+      <div className="flex flex-wrap items-center gap-2">
+        <ListSearch
+          label="搜索工具资源"
+          placeholder="搜索资源名称或编码"
+          value={q}
+          onCommit={(q) => list.filter({ q })}
+        />
+        <ResourceFilters
+          value={filters}
+          onChange={(key, value) =>
+            list.filter({ [key]: value === "all" ? "" : value })
+          }
+        />
+        {hasFilters && (
+          <Button variant="ghost" onClick={clear}>
+            重置
+          </Button>
+        )}
+      </div>
       {resources.isLoading ? (
-        <div className="grid gap-4 xl:grid-cols-2">
-          <Skeleton className="h-64" />
-          <Skeleton className="h-64" />
-        </div>
+        <Skeleton className="h-48" />
       ) : resources.isError ? (
         <MutationError error={resources.error} />
-      ) : !filtered.length ? (
-        <Empty className="border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <BlocksIcon aria-hidden="true" />
-            </EmptyMedia>
-            <EmptyTitle>当前筛选下没有工具资源</EmptyTitle>
-            <EmptyDescription>
-              reset 后从空配置开始，请先在凭据中心创建 Secret，再新建资源
-              Draft。
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-2">
-          {filtered.map((resource) => (
-            <ResourceCard
-              key={resource.id}
-              resource={resource}
-              verification={
-                verify.variables === resource.code
-                  ? verify.data
-                  : resource.draft_verification
-              }
-              pending={
-                verify.isPending ||
-                publish.isPending ||
-                createDraft.isPending ||
-                removeDraft.isPending ||
-                setRevisionStatus.isPending ||
-                setIdentityStatus.isPending
-              }
-              onEdit={() => setEditing(resource)}
-              onVerify={() => verify.mutate(resource.code)}
-              onPublish={() => publish.mutate(resource.code)}
-              onCreateDraft={() => {
-                if (!resource.published_revision) return
-                createDraft.mutate({
-                  code: resource.code,
-                  revisionId: resource.published_revision.id,
-                })
-              }}
-              onConfirm={(type, revision) => {
-                removeDraft.reset()
-                setRevisionStatus.reset()
-                setIdentityStatus.reset()
-                setConfirm({ type, resource, revision })
-              }}
+        <ListResults>
+          {!result.total ? (
+            <ListEmpty
+              title={hasFilters ? "当前筛选下没有工具资源" : "尚无工具资源"}
+              clear={hasFilters ? clear : undefined}
             />
-          ))}
-        </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>资源名称</TableHead>
+                  <TableHead>资源类型</TableHead>
+                  <TableHead className="hidden md:table-cell">作用域</TableHead>
+                  <TableHead>资源状态</TableHead>
+                  <TableHead className="hidden sm:table-cell">
+                    最新发布版本
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {result.rows.map((resource) => (
+                  <ExpandableListRow
+                    key={resource.id}
+                    columns={5}
+                    name={resource.name || resource.code}
+                    meta={resource.code}
+                    cells={
+                      <>
+                        <TableCell>
+                          {kindLabel(resource.resource_kind)}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          {scopeLabel(resource)}
+                        </TableCell>
+                        <TableCell>
+                          <ListStatus status={resource.status} />
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          {resource.published_revision
+                            ? `r${resource.published_revision.revision} · ${resourceRevisionLabel(resource.published_revision.status)}`
+                            : "尚未发布"}
+                        </TableCell>
+                      </>
+                    }
+                  >
+                    <ResourceCard
+                      key={resource.id}
+                      resource={resource}
+                      verification={
+                        verify.variables === resource.code
+                          ? verify.data
+                          : resource.draft_verification
+                      }
+                      pending={
+                        verify.isPending ||
+                        publish.isPending ||
+                        createDraft.isPending ||
+                        removeDraft.isPending ||
+                        setRevisionStatus.isPending ||
+                        setIdentityStatus.isPending
+                      }
+                      onEdit={() => setEditing(resource)}
+                      onVerify={() => verify.mutate(resource.code)}
+                      onPublish={() => publish.mutate(resource.code)}
+                      onCreateDraft={() => {
+                        if (!resource.published_revision) return
+                        createDraft.mutate({
+                          code: resource.code,
+                          revisionId: resource.published_revision.id,
+                        })
+                      }}
+                      onConfirm={(type, revision) => {
+                        removeDraft.reset()
+                        setRevisionStatus.reset()
+                        setIdentityStatus.reset()
+                        setConfirm({ type, resource, revision })
+                      }}
+                    />
+                  </ExpandableListRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+          <CatalogPager result={result} onPage={list.numberedPage} />
+        </ListResults>
       )}
 
       <MutationError
@@ -398,11 +461,17 @@ function ConnectionResourcesPage() {
         <ResourceFormSheet
           open
           resource={editing}
-          roleOptions={[...new Set((resources.data ?? []).flatMap((item) => [
-            item.draft?.placement,
-            item.published_revision?.placement,
-            ...item.revisions.map((revision) => revision.placement),
-          ]).filter((role): role is string => Boolean(role)))].sort()}
+          roleOptions={[
+            ...new Set(
+              (resources.data ?? [])
+                .flatMap((item) => [
+                  item.draft?.placement,
+                  item.published_revision?.placement,
+                  ...item.revisions.map((revision) => revision.placement),
+                ])
+                .filter((role): role is string => Boolean(role))
+            ),
+          ].sort()}
           pending={create.isPending || save.isPending}
           error={create.error ?? save.error}
           onOpenChange={(open) => {
@@ -446,7 +515,7 @@ function ConnectionResourcesPage() {
             <AlertDialogTitle>{confirmTitle(confirm?.type)}</AlertDialogTitle>
             <AlertDialogDescription>
               {confirm ? (
-                <span className="mb-2 block break-words font-medium text-foreground">
+                <span className="mb-2 block font-medium break-words text-foreground">
                   当前资源：{confirm.resource.name}（{confirm.resource.code}）
                   {confirm.revision ? ` · r${confirm.revision.revision}` : ""}
                 </span>
@@ -472,7 +541,7 @@ function ConnectionResourcesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </PageFrame>
+    </ListPage>
   )
 }
 
@@ -486,12 +555,7 @@ function ResourceFilters({
     identity: string
     revision: string
   }
-  onChange: (value: {
-    kind: string
-    scope: string
-    identity: string
-    revision: string
-  }) => void
+  onChange: (key: string, value: string) => void
 }) {
   const definitions = [
     {
@@ -538,32 +602,23 @@ function ResourceFilters({
     },
   ] as const
   return (
-    <Card className="shadow-none">
-      <CardContent className="grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-4">
-        {definitions.map((definition) => (
-          <Field key={definition.key}>
-            <FieldLabel>{definition.label}</FieldLabel>
-            <Select
-              value={value[definition.key]}
-              onValueChange={(next) =>
-                onChange({ ...value, [definition.key]: next ?? "all" })
-              }
-            >
-              <SelectTrigger className="w-full" aria-label={definition.label}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {definition.items.map(([key, label]) => (
-                  <SelectItem key={key} value={key}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        ))}
-      </CardContent>
-    </Card>
+    <>
+      {definitions.map((d) => (
+        <select
+          key={d.key}
+          aria-label={d.label}
+          className="h-8 rounded-lg border bg-background px-2 text-sm"
+          value={value[d.key]}
+          onChange={(e) => onChange(d.key, e.target.value)}
+        >
+          {d.items.map(([key, label]) => (
+            <option key={key} value={key}>
+              {key === "all" ? d.label : label}
+            </option>
+          ))}
+        </select>
+      ))}
+    </>
   )
 }
 
@@ -2089,13 +2144,5 @@ function MutationError({ error }: { error: unknown }) {
     <FieldError>
       {error instanceof ApiError ? error.message : "操作失败，请刷新后重试。"}
     </FieldError>
-  )
-}
-
-function PageFrame({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      {children}
-    </div>
   )
 }

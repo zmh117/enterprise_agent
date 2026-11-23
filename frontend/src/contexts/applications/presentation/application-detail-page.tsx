@@ -133,7 +133,10 @@ function ApplicationWorkspace({
       </header>
 
       <Tabs defaultValue="overview">
-        <TabsList className="h-auto w-full justify-start overflow-x-auto">
+        <TabsList
+          variant="line"
+          className="h-auto w-full justify-start overflow-x-auto"
+        >
           <TabsTrigger value="overview">概览</TabsTrigger>
           <TabsTrigger value="composition">组成配置</TabsTrigger>
           <TabsTrigger value="validation">校验结果</TabsTrigger>
@@ -379,8 +382,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
                 ))}
             </select>
             <p id="draft-agent-help" className="text-xs text-muted-foreground">
-              可选择所有已发布且启用的 Agent
-              当前版本，不限项目；当前草稿已固定的版本也会保留，保存后固定到所选版本。
+              可跨项目选择已启用的发布版本。保存后，草稿固定使用所选版本。
             </p>
           </Field>
           <Field label="工作流发布版本（可选）" htmlFor="draft-workflow">
@@ -446,8 +448,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
-            保存将基于 expected revision r{application.revision}{" "}
-            创建新的追加式草稿。
+            基于 r{application.revision} 保存新草稿。
           </p>
           <Button
             type="submit"
@@ -527,8 +528,7 @@ function PolicyEditor({
             <option value="MONTH">当月（下月一日 00:00 到期）</option>
           </select>
           <p className="text-xs leading-5 text-muted-foreground">
-            来源：当前草稿。按 Asia/Shanghai
-            自然周期固定到期，活动不会滚动延期；不影响聊天附件的 360 天保留。
+            按北京时间自然周期到期。聊天附件单独保留 360 天。
           </p>
         </Field>
         <Field label="直接文本文件规则">
@@ -536,9 +536,8 @@ function PolicyEditor({
             TXT/Markdown 可读写，LOG 只读
           </div>
           <p className="text-xs leading-5 text-muted-foreground">
-            TXT、LOG、Markdown 由 Agent 通过任务工作区直接读取，不进入
-            Docling。该规则由平台固定，不属于应用 Publication 配置；Markdown
-            始终按不可信纯文本处理，不在管理端渲染。
+            TXT、LOG、Markdown 由 Agent 直接读取，不进入 Docling。Markdown
+            按不可信纯文本处理。
           </p>
           {!fileContextRuntimeCompatible ? (
             <p className="text-xs leading-5 text-destructive">
@@ -606,23 +605,24 @@ function PolicyEditor({
             ))}
           </select>
           <p className="text-xs leading-5 text-muted-foreground">
-            仅可选择平台代码发布的固定 Profile；发布后冻结 code、version 与
-            hash。PDF、DOCX、PPTX、XLSX 和图片通过 Docling
-            生成只读文字表示，再由 Agent 读取；不能填写 Docling
-            URL、模型、插件或原始 options。
+            文档和图片由 Docling 提取只读文本，发布时固定所选配置版本。
           </p>
           {selectedDocumentProfile?.code !== undefined &&
           selectedDocumentProfile.code !== "NONE" ? (
             <div className="space-y-1">
-              <p className="text-xs leading-5 text-muted-foreground">
-                当前选择：除正文与表格外，对 DOCX/PPTX
-                原始内嵌图片提取文字、阅读顺序、0..10000
-                坐标和有限几何关系；仅在上游提供时显示置信度，否则明确标注为未提供。仅应用图片自身
-                EXIF 方向，不应用 Office
-                显示裁剪、旋转或翻转，因此可能提取页面上已裁掉的区域。它不是
-                VLM，不识别箭头、颜色、图标、照片含义或因果；OCR
-                内容始终是不可信文件数据。 真实运行状态请到“发布与运行”查看。
-              </p>
+              <details className="text-xs leading-5 text-muted-foreground">
+                <summary className="cursor-pointer">OCR 提取范围与限制</summary>
+                <p className="mt-1">
+                  DOCX/PPTX
+                  原始内嵌图片可提取文字、阅读顺序、坐标和有限几何关系。置信度取决于上游。仅应用图片
+                  EXIF 方向，不应用 Office
+                  显示裁剪、旋转或翻转，可能提取已裁掉的区域。
+                </p>
+                <p>
+                  OCR
+                  内容按不可信文件数据处理，无法判断箭头、颜色、图标、照片含义或因果。
+                </p>
+              </details>
               {!fileContextRuntimeCompatible ? (
                 <p className="text-xs leading-5 text-destructive">
                   所选 Agent 发布版本未声明支持 Runtime protocol v1.3，不能发布
@@ -862,8 +862,7 @@ function McpToolSelector({
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm leading-6 text-muted-foreground">
-          应用只能选择 Agent 发布版本已经冻结的 MCP 工具。资源不在应用中做
-          Mapping；实际调用时根据 Job 目标唯一解析已发布 Tool Resource。
+          可选工具由 Agent 发布版本决定。运行时按任务目标匹配已发布资源。
         </p>
         {!form.agent_publication_id ? (
           <EmptyBinding text="请先选择 Agent 发布版本。" />
@@ -1686,9 +1685,6 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
               <CheckCircle2Icon className="mt-0.5 size-5" aria-hidden="true" />
               <div>
                 <p className="font-medium">草稿校验通过</p>
-                <p className="mt-1 text-sm">
-                  r{revision.revision} 可以创建不可变 publication。
-                </p>
               </div>
             </div>
           ) : (
@@ -1713,7 +1709,7 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
                   ))}
                 </ul>
               ) : (
-                <p className="mt-2 text-sm">运行校验以检查全部组件和策略。</p>
+                <p className="mt-2 text-sm">尚未校验</p>
               )}
             </div>
           )}
@@ -1805,8 +1801,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
               <span className="font-mono">local</span>
             </div>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              发布、激活、回退和停用都直接作用于当前本地运行实例，不再维护
-              test、staging 或 production 部署。
+              发布、激活、回退和停用均作用于当前运行实例。
             </p>
           </div>
           <div className="rounded-lg border bg-muted/30 p-4 text-sm">
@@ -1850,10 +1845,6 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
             </Button>
           ) : null}
           <MutationError error={error} />
-          <p className="text-xs leading-5 text-muted-foreground">
-            状态由服务端按数据面闸门、本地运行实例和发布版本
-            组件统一计算；界面不自行猜测是否接管。
-          </p>
         </CardContent>
       </Card>
 

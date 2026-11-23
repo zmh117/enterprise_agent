@@ -1,3 +1,4 @@
+import { useDiscoveryReturn } from "@/shared/presentation/list-navigation"
 import { useState, type FormEvent } from "react"
 import { LoaderCircleIcon, PlusIcon } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
@@ -44,6 +45,7 @@ const PAGE_SIZE = 20
 
 export function UsersPage() {
   const navigate = useNavigate()
+  const origin = useDiscoveryReturn()
   const list = useListNavigation()
   const searchParams = list.params
   const candidateId = searchParams.get("candidate")?.trim() ?? ""
@@ -114,7 +116,7 @@ export function UsersPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => navigate("/users/dingtalk-discovery")}
+                  onClick={() => navigate(origin.to, { state: origin.state })}
                 >
                   取消绑定
                 </Button>

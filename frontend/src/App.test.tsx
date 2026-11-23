@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -68,9 +68,14 @@ describe("Agent 应用平台 MVP 首页", () => {
     expect(screen.getAllByText("Agent 应用平台").length).toBeGreaterThan(0)
     expect((await screen.findAllByText("业务应用")).length).toBeGreaterThan(0)
     expect(screen.getAllByText("用户与外部身份").length).toBeGreaterThan(0)
-    expect(await screen.findByText("统一身份边界")).toBeInTheDocument()
-    expect(screen.getByText("钉钉身份")).toBeInTheDocument()
-    expect(screen.getByText("ONES 身份")).toBeInTheDocument()
+    const shortcuts = within(
+      await screen.findByRole("region", { name: "常用入口" })
+    )
+    expect(
+      await shortcuts.findByRole("link", { name: "应用列表" })
+    ).toHaveAttribute("href", "/applications")
+    expect(shortcuts.queryByRole("link", { name: "工具资源" })).toBeNull()
+    expect(await screen.findByText("0 人")).toBeInTheDocument()
   })
 
   it("不保留旧模板业务文案", () => {
@@ -155,6 +160,8 @@ describe("Agent 应用平台 MVP 首页", () => {
     ]) {
       expect(page).not.toContain(forbiddenEntry)
     }
-    expect(await screen.findByText("统一身份边界")).toBeInTheDocument()
+    expect(
+      await screen.findByRole("heading", { name: "工作台" })
+    ).toBeInTheDocument()
   })
 })

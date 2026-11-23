@@ -1,3 +1,31 @@
+import {
+  CatalogPager,
+  ListEmpty,
+  ListPage,
+  ListResults,
+  ListSearch,
+  RefreshList,
+} from "@/shared/presentation/list-page"
+import {
+  catalogPage,
+  matchesListSearch,
+  useListNavigation,
+  useListReturn,
+} from "@/shared/presentation/list-navigation"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { useEffect, useState, type FormEvent } from "react"
 import {
   BotIcon,
@@ -46,116 +74,141 @@ import { ApiError } from "@/shared/api/api-client"
 export function AgentProfilesPage() {
   const profiles = useAgentProfiles()
   const [showCreate, setShowCreate] = useState(false)
-  if (profiles.isLoading) {
-    return (
-      <main className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-6 sm:px-6 lg:px-8">
-        <Skeleton className="h-9 w-56" />
-        <Skeleton className="h-48 w-full" />
-      </main>
-    )
-  }
-  if (profiles.isError || !profiles.data) {
-    return (
-      <main className="mx-auto w-full max-w-[1100px] px-4 py-8">
-        <MutationMessage error={profiles.error} />
-      </main>
-    )
-  }
-  const canCreate = profiles.data.permissions.can_create
-  const agents = profiles.data.agents
+  const list = useListNavigation()
+  const q = list.params.get("q") ?? ""
+  const release = list.params.get("release") ?? ""
+  const clear = () => list.filter({ q: "", release: "" })
+  const canCreate = profiles.data?.permissions.can_create
+  const result = catalogPage(
+    (profiles.data?.agents ?? []).filter(
+      (agent) =>
+        matchesListSearch(q, agent.name, agent.code) &&
+        (!release ||
+          Boolean(agent.current_publication) === (release === "published"))
+    ),
+    list.page
+  )
   return (
-    <main className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-6 sm:px-6 lg:px-8">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Agent 配置</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            新建 Agent 固定使用 Python Runtime。
-          </p>
-        </div>
-        {canCreate ? (
-          <Button onClick={() => setShowCreate((current) => !current)}>
-            <PlusIcon aria-hidden="true" />
-            新建 Agent
+    <ListPage
+      title="Agent 配置"
+      actions={
+        <>
+          <RefreshList
+            refresh={() => void profiles.refetch()}
+            busy={profiles.isFetching}
+          />
+          {canCreate && (
+            <Button onClick={() => setShowCreate(true)}>
+              <PlusIcon />
+              新建 Agent
+            </Button>
+          )}
+        </>
+      }
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <ListSearch
+          label="搜索 Agent"
+          placeholder="搜索 Agent 名称或编码"
+          value={q}
+          onCommit={(q) => list.filter({ q })}
+        />
+        <select
+          aria-label="发布状态"
+          className="h-8 rounded-lg border bg-background px-2 text-sm"
+          value={release}
+          onChange={(e) => list.filter({ release: e.target.value })}
+        >
+          <option value="">全部发布状态</option>
+          <option value="published">已发布</option>
+          <option value="draft">未发布</option>
+        </select>
+        {(q || release) && (
+          <Button variant="ghost" size="sm" onClick={clear}>
+            重置
           </Button>
-        ) : null}
-      </header>
-
-      {showCreate && canCreate ? (
-        <CreateAgentPanel onCancel={() => setShowCreate(false)} />
-      ) : null}
-
-      {agents.length === 0 ? (
-        <Card className="border-dashed shadow-none">
-          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <BotIcon
-              className="size-9 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <div>
-              <p className="font-semibold">还没有 Agent</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {canCreate
-                  ? "新建一个使用 Python Runtime 的 Agent。"
-                  : "当前没有可查看的 Agent，请联系平台管理员。"}
-              </p>
-            </div>
-            {canCreate && !showCreate ? (
-              <Button variant="outline" onClick={() => setShowCreate(true)}>
-                <PlusIcon aria-hidden="true" />
-                新建 Agent
-              </Button>
-            ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        {agents.map((profile) => (
-          <Card key={profile.id} className="shadow-none">
-            <CardContent className="space-y-4 py-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-semibold">{profile.name}</p>
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">
-                    {profile.code}
-                  </p>
-                </div>
-                <Badge variant="secondary">
-                  {runtimeKindLabel(profile.runtime_kind)}
-                </Badge>
-              </div>
-              <div className="space-y-2 text-sm">
-                <StatusLine
-                  label="发布版本"
-                  value={
-                    profile.current_publication
-                      ? `r${profile.current_publication.revision}`
-                      : "未发布"
-                  }
-                />
-                <StatusLine
-                  label="模型连接"
-                  value={modelConnectionStatusLabel(
-                    profile.model_connection_status
-                  )}
-                />
-                <StatusLine
-                  label="活动应用"
-                  value={String(profile.active_application_count)}
-                />
-              </div>
-              <Button render={<Link to={`/agent-profiles/${profile.code}`} />}>
-                进入配置
-              </Button>
-            </CardContent>
-          </Card>
-        ))}
+        )}
       </div>
-    </main>
+      {profiles.isLoading && (
+        <Skeleton aria-label="正在加载 Agent" className="h-48" />
+      )}
+      {profiles.isError && <MutationMessage error={profiles.error} />}
+      {profiles.data && (
+        <ListResults>
+          {result.rows.length ? (
+            <Table aria-label="Agent 列表">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Agent</TableHead>
+                  <TableHead>发布版本</TableHead>
+                  <TableHead>模型连接</TableHead>
+                  <TableHead className="hidden md:table-cell">
+                    活动应用
+                  </TableHead>
+                  <TableHead className="hidden lg:table-cell">
+                    Runtime
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {result.rows.map((agent) => (
+                  <TableRow key={agent.id}>
+                    <TableCell>
+                      <Link
+                        className="block max-w-32 truncate font-medium hover:underline sm:max-w-72"
+                        to={`/agent-profiles/${encodeURIComponent(agent.code)}`}
+                        state={list.detailState}
+                      >
+                        {agent.name}
+                      </Link>
+                      <p className="max-w-32 truncate font-mono text-xs text-muted-foreground sm:max-w-72">
+                        {agent.code}
+                      </p>
+                    </TableCell>
+                    <TableCell>
+                      {agent.current_publication
+                        ? `r${agent.current_publication.revision}`
+                        : "未发布"}
+                    </TableCell>
+                    <TableCell className="whitespace-normal">
+                      {modelConnectionStatusLabel(
+                        agent.model_connection_status
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {agent.active_application_count}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell">
+                      {runtimeKindLabel(agent.runtime_kind)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <ListEmpty
+              title={
+                q || release
+                  ? "没有符合条件的 Agent"
+                  : canCreate
+                    ? "还没有 Agent"
+                    : "当前没有可查看的 Agent，请联系平台管理员。"
+              }
+              clear={q || release ? clear : undefined}
+            />
+          )}
+          <CatalogPager result={result} onPage={list.numberedPage} />
+        </ListResults>
+      )}
+      {canCreate && showCreate && (
+        <CreateAgentPanel onCancel={() => setShowCreate(false)} />
+      )}
+    </ListPage>
   )
 }
 
 function CreateAgentPanel({ onCancel }: { onCancel: () => void }) {
+  const list = useListNavigation()
   const navigate = useNavigate()
   const create = useCreateAgentProfile()
   const [form, setForm] = useState<{
@@ -175,19 +228,30 @@ function CreateAgentPanel({ onCancel }: { onCancel: () => void }) {
     try {
       const created = await create.mutateAsync(form)
       toast.success(`Agent ${created.definition.name} 已创建`)
-      navigate(`/agent-profiles/${encodeURIComponent(created.definition.code)}`)
+      navigate(
+        `/agent-profiles/${encodeURIComponent(created.definition.code)}`,
+        { state: list.detailState }
+      )
     } catch {
       // Structured error is rendered below while preserving the form state.
     }
   }
 
   return (
-    <Card className="shadow-none">
-      <CardHeader>
-        <CardTitle>新建 Agent</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={submit} className="space-y-5">
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onCancel()
+      }}
+    >
+      <SheetContent
+        aria-describedby={undefined}
+        className="w-full overflow-y-auto sm:max-w-lg"
+      >
+        <SheetHeader>
+          <SheetTitle>新建 Agent</SheetTitle>
+        </SheetHeader>
+        <form onSubmit={submit} className="space-y-5 px-4 pb-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Agent 编码" htmlFor="create-agent-code">
               <Input
@@ -270,8 +334,8 @@ function CreateAgentPanel({ onCancel }: { onCancel: () => void }) {
             </Button>
           </div>
         </form>
-      </CardContent>
-    </Card>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -328,12 +392,19 @@ function Workspace({
   agent: NonNullable<ReturnType<typeof useAgentProfile>["data"]>
   connection: NonNullable<ReturnType<typeof useModelConnection>["data"]>
 }) {
+  const listReturn = useListReturn("/agent-profiles")
   const currentModel =
     connection.current_revision?.config.model ??
     agent.draft?.config.model_policy.model ??
     ""
   return (
     <main className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+      <Link
+        {...listReturn}
+        className="w-fit text-sm text-muted-foreground hover:underline"
+      >
+        ← 返回 Agent 列表
+      </Link>
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -369,16 +440,11 @@ function Workspace({
         </div>
       </header>
 
-      <Card className="border-amber-300/70 bg-amber-50/40 shadow-none dark:bg-amber-950/10">
-        <CardContent className="py-4 text-sm text-muted-foreground">
-          发布 Agent 配置只会生成新的 Agent
-          发布版本，不会自动切换任何业务应用。已激活应用仍使用它自己固定的 Agent
-          发布版本，需进入应用详情手动更新并重新发布。
-        </CardContent>
-      </Card>
-
       <Tabs defaultValue="profile">
-        <TabsList className="h-auto w-full justify-start overflow-x-auto">
+        <TabsList
+          variant="line"
+          className="h-auto w-full justify-start overflow-x-auto"
+        >
           <TabsTrigger value="profile">Agent 配置</TabsTrigger>
           <TabsTrigger value="connection">模型连接</TabsTrigger>
           <TabsTrigger value="publications">发布历史</TabsTrigger>
@@ -678,9 +744,8 @@ function ConnectionForm({
             <div>
               <h3 className="font-medium">1. 地址与 Credential</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                支持 DeepSeek 官方 HTTPS Anthropic
-                地址，以及部署白名单中的内部网关 HTTP/HTTPS 地址。API Key
-                只保存在当前页面内存，保存后立即清空。
+                支持 DeepSeek 官方 Anthropic 地址和白名单网关。保存后清空 API
+                Key。
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
@@ -950,23 +1015,19 @@ function ConnectionForm({
             ) : null}
           </CardContent>
         </Card>
-        <Card className="shadow-none">
-          <CardHeader>
-            <CardTitle>安全边界</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>
-              官方 DeepSeek 仅允许 HTTPS、443 端口，且路径以 /anthropic 结尾。
-            </p>
-            <p>
-              部署白名单中的内部网关允许 HTTP/HTTPS 与自定义路径，例如
-              http://aikeyhub.gateway.mdzy/api。
-            </p>
-            <p>拒绝 URL 凭据、查询参数、片段、重定向和环回地址。</p>
-            <p>发现与测试不保存 Key；最终配置才写入加密 Secret。</p>
-            <p>保存连接不会自动发布 Agent 或切换业务应用。</p>
-          </CardContent>
-        </Card>
+        <details className="rounded-xl border bg-card p-4">
+          <summary className="cursor-pointer text-sm font-medium">
+            模型连接规则
+          </summary>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+            <li>
+              DeepSeek 官方地址须使用 HTTPS、443 端口和 /anthropic
+              路径。白名单网关可使用 HTTP 或 HTTPS 及自定义路径。
+            </li>
+            <li>地址不能包含凭据、查询参数或片段。禁止重定向和环回地址。</li>
+            <li>保存时加密凭据。切换业务应用使用的模型需另行发布。</li>
+          </ul>
+        </details>
       </div>
     </form>
   )
@@ -1341,17 +1402,14 @@ function ProfileForm({
             )}
           </CardContent>
         </Card>
-        <Card className="shadow-none">
-          <CardHeader>
-            <CardTitle>发布规则</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>草稿校验通过后才能发布。</p>
-            <p>新发布版本会固定模型连接版本与配置哈希。</p>
-            <p>API Key 轮换会更新活动凭据，不会复制到发布版本。</p>
-            <p>业务应用不会自动切换到新的 Agent 发布版本。</p>
-          </CardContent>
-        </Card>
+        <details className="rounded-xl border bg-card p-4">
+          <summary className="cursor-pointer text-sm font-medium">发布规则</summary>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+            <li>校验通过后，发布会固定模型连接版本和配置哈希。</li>
+            <li>轮换 API Key 后使用活动凭据。</li>
+            <li>业务应用需选择新 Agent 版本并重新发布。</li>
+          </ul>
+        </details>
       </div>
     </div>
   )

@@ -36,17 +36,30 @@ export async function listRoles(params: {
   search: string
   status: string
   origin: string
+  limit?: number
+  offset?: number
 }) {
   const query = new URLSearchParams({
     search: params.search,
     status: params.status,
     origin: params.origin,
-    limit: "100",
-    offset: "0",
+    limit: String(params.limit ?? 100),
+    offset: String(params.offset ?? 0),
   })
   return roleListSchema.parse(
-    await apiRequest(`/api/admin/authorization/roles?${query.toString()}`),
+    await apiRequest(`/api/admin/authorization/roles?${query.toString()}`)
   )
+}
+
+export async function listRoleChoices(status = "") {
+  const items = []
+  let offset = 0
+  while (true) {
+    const page = await listRoles({ search: "", status, origin: "", offset })
+    items.push(...page.items)
+    offset += page.items.length
+    if (!page.items.length || offset >= page.page.total) return items
+  }
 }
 
 export async function getRole(roleId: string) {

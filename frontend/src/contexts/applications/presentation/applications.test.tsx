@@ -604,7 +604,7 @@ describe("Business Application workbench", () => {
     ).toBeInTheDocument()
     expect(within(agentSelector).getAllByRole("option")).toHaveLength(3)
     expect(agentSelector).toHaveAccessibleDescription(
-      "可选择所有已发布且启用的 Agent 当前版本，不限项目；当前草稿已固定的版本也会保留，保存后固定到所选版本。"
+      "可跨项目选择已启用的发布版本。保存后，草稿固定使用所选版本。"
     )
     expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
     const continuousConversation = screen.getByLabelText("连续会话")
