@@ -317,9 +317,9 @@ class _PostgresConnectionPool:
         with _bounded_lock(self._open_lock):
             if self._opened:
                 return
-            self._pool.open(
-                wait=current_io_deadline() is None, timeout=io_wait_timeout(self._timeout_seconds)
-            )
+            # wait=True permanently closes the pool if PostgreSQL is still starting.
+            # Checkout enforces the caller's timeout while the pool keeps reconnecting.
+            self._pool.open(wait=False)
             self._opened = True
 
     @contextmanager

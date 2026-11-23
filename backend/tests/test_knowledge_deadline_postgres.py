@@ -5,7 +5,9 @@ import threading
 import time
 
 import pytest
+from psycopg import OperationalError
 from psycopg.errors import QueryCanceled
+from psycopg_pool import PoolTimeout
 
 from app.shared.database import Database
 from app.shared.io_deadline import IODeadlineExceeded, io_deadline
@@ -23,6 +25,33 @@ def disposable_db():
     try:
         db.execute("select 1")
         yield db
+    finally:
+        db.close()
+
+
+def test_cold_pool_recovers_after_database_becomes_available(disposable_db, monkeypatch):
+    available = threading.Event()
+    connect = DeadlineConnection.connect
+
+    def connect_when_ready(*args, **kwargs):
+        if not available.is_set():
+            raise OperationalError("synthetic database startup")
+        return connect(*args, **kwargs)
+
+    monkeypatch.setattr(DeadlineConnection, "connect", staticmethod(connect_when_ready))
+    db = Database(disposable_db.dsn, pool_max_size=1, pool_timeout_seconds=0.3)
+    try:
+        with pytest.raises(PoolTimeout):
+            db.execute_one("select 1 as ready")
+        available.set()
+        until = time.monotonic() + 8
+        while True:
+            try:
+                assert db.execute_one("select 1 as ready") == {"ready": 1}
+                break
+            except PoolTimeout:
+                if time.monotonic() >= until:
+                    raise
     finally:
         db.close()
 
