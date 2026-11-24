@@ -107,13 +107,17 @@ router = APIRouter(
 
 
 @router.get("/applications")
-def applications(req: Request) -> list[dict[str, str]]:
+def applications(req: Request) -> list[dict[str, Any]]:
     c = container(req)
     user, origin = authenticated_user_and_origin(req)
     rows = c.database.execute(
         "select distinct application_id from business_application_active_route where trigger_type=? and connector_id=?",
         (CHANNEL, CONNECTOR),
     )
+    environments = {
+        row["id"]: {"code": row["code"], "name": row["display_name"] or row["code"]}
+        for row in c.platform_config_service.list_environments(include_disabled=False)
+    }
     out = []
     for row in rows:
         app = row["application_id"]
@@ -124,7 +128,21 @@ def applications(req: Request) -> list[dict[str, str]]:
             )
         except (AppError, HTTPException):
             continue
-        out.append({"id": app, "name": a["name"], "scope_ref": a["scope_ref"]})
+        granted_ids = {
+            scope["environment_id"]
+            for access in c.authorization_center_repository.business_access_for_user(
+                user_id=user, application_id=app
+            )
+            for scope in access["scopes"]
+        }
+        out.append(
+            {
+                "id": app,
+                "name": a["name"],
+                "scope_ref": a["scope_ref"],
+                "environments": [env for key, env in environments.items() if key in granted_ids],
+            }
+        )
     return out
 
 

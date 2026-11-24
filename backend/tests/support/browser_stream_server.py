@@ -30,8 +30,16 @@ def start_server(resources: ExitStack, recording_mode: bool):
     api, app_id, password = prepare(tools=tools, secure_cookies=True)
     c = api.state.container
     member = make_member(c, password)
+    environment = c.platform_config_service.repository.upsert_environment(
+        code="capture-fixture", display_name="采集联调"
+    )
     grant_test_application_access(
-        c, application_id=app_id, role_code="operators", user_id=member["id"], capabilities=tools
+        c,
+        application_id=app_id,
+        role_code="operators",
+        user_id=member["id"],
+        capabilities=tools,
+        scopes=({"environment_id": environment["id"]},),
     )
     if os.environ.get("EA_TEST_SIGNIN_RECOVERY") == "1":
         second = c.identity_repository.create_user(

@@ -33,6 +33,28 @@ def platform(request):
             c.database.close()
 
 
+def test_browser_application_environments_follow_current_grants(platform):
+    api, client, app, _, headers = platform
+    c = api.state.container
+    config = c.platform_config_service.repository
+    visible = config.upsert_environment(code="capture-test", display_name="联调环境")
+    config.upsert_environment(code="capture-private")
+    grant_test_application_access(
+        c,
+        application_id=app,
+        role_code="capture-sites",
+        scopes=({"environment_id": visible["id"]},),
+    )
+
+    def choices():
+        apps = client.get(PREFIX + "/applications", headers=headers).json()
+        return next(item["environments"] for item in apps if item["id"] == app)
+
+    assert choices() == [{"code": "capture-test", "name": "联调环境"}]
+    config.upsert_environment(code="capture-test", status="disabled")
+    assert choices() == []
+
+
 def test_concurrent_init_resume_scope_and_expiry(platform):
     api, client, app, password, headers = platform
     c = api.state.container

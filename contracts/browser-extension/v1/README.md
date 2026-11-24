@@ -24,6 +24,7 @@
 
 | 操作 | 输入 | 成功结果 |
 | --- | --- | --- |
+| GET /applications | 当前插件登录账号 | 可访问应用的 id、name、scope_ref 和 environments。每个环境仅含 code 和 name，按该账号在应用内的有效授权和环境启用状态筛选。 |
 | POST /applications/{id}/recordings | InitRecording | UploadReceipt |
 | PUT /recordings/{id}/parts/{n} | 每行一个 EvidenceRow，可用 Content-Encoding: gzip | PartReceipt |
 | POST /recordings/{id}/complete | 空请求体 | ReadyReceipt |
