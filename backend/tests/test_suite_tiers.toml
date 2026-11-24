@@ -117,6 +117,7 @@ contract = [
   "test_agent_runtime_protocol_contract.py",
   "test_browser_extension_contract.py",
   "test_browser_recordings.py",
+  "test_browser_extension_auth_ui.py",
   "test_browser_extension_stream.py",
   "test_agent_test_data.py",
   "test_agent_test_data_compose.py",

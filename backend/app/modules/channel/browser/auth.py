@@ -11,10 +11,11 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from app.modules.channel.browser.auth_page import auth_page
 from app.modules.channel.browser.http import BrowserRoute, deny
 from app.modules.identity.api.auth_controller import LoginRateLimiter
 from app.modules.identity.api.dependencies import container
@@ -147,15 +148,19 @@ def script() -> Response:
     )
 
 
-def page(fields: str, auto: bool = False) -> HTMLResponse:
-    return HTMLResponse(
-        '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Enterprise Agent 插件授权</title>'
-        '<h1>连接 Enterprise Agent</h1><form method="post">'
-        + fields
-        + "</form>"
-        + ('<script src="' + AUTH_PATH + '/continue.js"></script>' if auto else "")
-        + "</html>",
-        headers=headers,
+def login_form(username: str = "", *, invalid: bool = False) -> Response:
+    account_focus = "" if invalid else " autofocus"
+    password_focus = " autofocus" if invalid else ""
+    message = '<p role="alert">账号或密码有误，请重新输入。</p>' if invalid else ""
+    return auth_page(
+        "登录浏览器采集助手",
+        '<label>平台账号<input name="username" autocomplete="username" required'
+        f' value="{escape(username, quote=True)}"{account_focus}></label>'
+        '<label>密码<input type="password" name="password" autocomplete="current-password"'
+        f" required{password_focus}></label>{message}"
+        '<button type="submit" name="action" value="login">登录</button>',
+        headers,
+        status=401 if invalid else 200,
     )
 
 
@@ -174,6 +179,8 @@ def login_page(req: Request, form: dict[str, list[str]], origin: str) -> Respons
             )
         except PermissionDenied:
             _limiter.record_failure(key)
+            if "text/html" in req.headers.get("accept", ""):
+                return login_form(username, invalid=True)
             raise deny("invalid_credentials") from None
         _limiter.clear(key)
         response = RedirectResponse(req.url.path + "?" + req.url.query, 303, headers=headers)
@@ -194,11 +201,7 @@ def login_page(req: Request, form: dict[str, list[str]], origin: str) -> Respons
                 max_age=cfg.session_absolute_seconds,
             )
         return response
-    return page(
-        '<label>平台账号 <input name="username" autocomplete="username" required></label> '
-        '<label>密码 <input type="password" name="password" autocomplete="current-password" required></label>'
-        '<button name="action" value="login">登录</button>'
-    )
+    return login_form()
 
 
 async def authorization_form(req: Request, origin: str) -> dict[str, list[str]]:
@@ -273,11 +276,17 @@ def authorize_form(req: Request, origin: str, form: dict[str, list[str]]) -> Res
     if silent and not granted(c.database, *grant_args):
         return redirect(error="consent_required")
     if req.method == "GET":
-        return page(
-            "<p>使用 " + escape(parent.display_name) + " 的平台权限提问并查看本人的回答。</p>"
+        return auth_page(
+            "授权浏览器采集助手",
+            '<div class="account"><span>当前账号</span><strong>'
+            + escape(parent.display_name)
+            + "</strong></div>"
+            "<p>允许助手访问你获授权的业务应用，发送消息、查看回答，并共享你选择的采集记录。</p>"
             '<input type="hidden" name="csrf" value="' + escape(csrf, quote=True) + '">'
-            '<button name="action" value="allow">同意连接</button>',
-            silent,
+            '<div class="actions"><button class="secondary" name="action" value="deny">取消</button>'
+            '<button name="action" value="allow">同意连接</button></div>',
+            headers,
+            auto_script=AUTH_PATH + "/continue.js" if silent else "",
         )
     if (
         not csrf
@@ -285,6 +294,8 @@ def authorize_form(req: Request, origin: str, form: dict[str, list[str]]) -> Res
         or not c.auth_service.verify_csrf(token, csrf, extension_origin=origin if scoped else "")
     ):
         raise deny("access_denied", 403)
+    if not silent and form.get("action") == ["deny"]:
+        return redirect(error="access_denied")
     with c.database.unit_of_work():
         session_row(c.database, parent.session_id)
         if not connector_enabled(c.database):
