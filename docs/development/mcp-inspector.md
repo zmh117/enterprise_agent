@@ -74,6 +74,6 @@ Inspector 不是完整 Schema 校验器。本期实际证明了上表指定的�
 - 新用例未执行：检查分层登记和必需场景名称，不要删掉门禁检查或加 skip 掩盖。
 - 全套旧回归出现不相关失败：单独记录文件、预期与实际值；不要以 Inspector 通过替代旧门禁。
 
-本期不验证发布镜像、生产网络、真实数据库、ONES、钉钉、File MCP、真实模型工具选择或完整 Agent 链路。具体本地结果和 Linux CI 未完成项见 [本次验收记录](../../openspec/changes/add-mcp-inspector-smoke-tests/evidence.md)。
+本期不验证发布镜像、生产网络、真实数据库、ONES、钉钉、File MCP、真实模型工具选择或完整 Agent 链路。Linux CI 实际运行与失败阻断等未完成项见 [真实环境验收欠账](../acceptance-backlog.md)；历史 change 证据追溯使用 Git 历史。
 
 官方来源：[Inspector 项目](https://github.com/modelcontextprotocol/inspector)、[固定 2.7.0 版本](https://github.com/modelcontextprotocol/inspector/tree/2.7.0)。

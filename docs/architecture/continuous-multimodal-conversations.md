@@ -12,8 +12,8 @@ Docling Representation、Sandbox 与交付细节以
   对象位置或模型凭据。
 - File Service 是原件、不可变版本和派生 Representation 的唯一对象存储入口；应用、
   Worker、Runtime 与 MCP JSON 不直接访问 MinIO。
-- 文档解析由受治理的 `file-processing-worker -> docling-serve` 链完成，不在 Channel
-  Ingress 或 Agent Worker 内同步解析。
+- 文档解析由受治理的 `file-processing-worker` / `file-processing-worker-2` →
+  `docling-serve` 链完成，不在 Channel Ingress 或 Agent Worker 内同步解析。
 
 ## Session 归属
 
@@ -72,7 +72,7 @@ Profile 为 `NONE` 时明确未启用。原始文档和图片不会进入 Agent 
 ```bash
 docker compose up -d --build \
   minio minio-init file-service file-worker \
-  docling-serve file-processing-worker dingtalk-runtime
+  docling-serve file-processing-worker file-processing-worker-2 dingtalk-runtime
 ```
 
 实际启动还依赖 migrator、PostgreSQL、RabbitMQ、API、受控 Secret/JWKS 和对应健康门禁；

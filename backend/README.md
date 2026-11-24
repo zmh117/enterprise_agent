@@ -23,7 +23,7 @@ Ingress -> API/Dispatcher -> RabbitMQ -> Worker
 - `file_workspace`、`document_processing`：文件事实、准入、Docling处理与生命周期。
 - `knowledge`：统一来源与版本、知识库收录、受限 ONES 离线导入、分块/Embedding/Qdrant 索引、按文档增量同步、日期补采、文档重排及在线目录/检索授权。平台治理与可配置内容存储分别管理；线上 MCP 是可选扩展，不自动发布资源或授予读取权限。
 
-当前协议为 Runtime 1.5（代码支持 1.4），Agent Runtime 仅为 `python-v1`。截至 2026-11-04，迁移目录为 `100..152`；实际目标 head 以部署镜像的 migration catalog 为准。规范入口为[领域导航](../openspec/specs/README.md)，代码存在不等于目标环境验收通过。
+当前协议为 Runtime 1.5（代码支持 1.4），Agent Runtime 仅为 `python-v1`。活动迁移目录以当前 `backend/migrations` 为准，当前 head 为 `165`（catalog `100..165`）。实际目标 head 以部署镜像的 migration catalog 为准。规范入口为[领域导航](../openspec/specs/README.md)，代码存在不等于目标环境验收通过。
 
 API Capability、Handler、API Connection、Resource Mapping、Tool Release 生命周期和 Internal API Platform 不属于当前后端。
 
@@ -77,17 +77,17 @@ PYTHONPATH=backend .venv/bin/python -m app.services.tool_mcp
 docker compose up --build
 ```
 
+空库初始化、已有数据库升级与 Compose 启动顺序见[数据库迁移手册](../docs/operations/schema-baseline-bootstrap.md)。
+
 ## 数据库迁移
 
 - `migrator` 是唯一 schema writer。
 - 活动 schema 从 baseline `100` 开始；后续 migration 单调递增，禁止重用旧版本号。
-- 空库执行 `100` 后继续当前 forward catalog；精确 legacy `042` 必须先用仅含 `100` 的独立 artifact 完成 adoption，当前含 `101+` 的 checkout 不能直接完成 adoption；部分 legacy head 失败关闭。
+- 尚未接轨的旧 `042` 库需先用仅含 `100` 的专用迁移包完成[基线接轨与核验](../docs/operations/schema-baseline-bootstrap.md#已有-042-数据库)，再切换到目标版本。
 - Compose 先执行 Docling Profile preflight，再迁移、受控文件存储初始化、初始管理员和 Agent bootstrap，最后应用 Runtime grants。
 - API、Worker、Runtime 相关服务在迁移成功后启动并只读校验 schema head/checksum。
 - 破坏性迁移先检查活动旧引用；已有库升级前必须完成可恢复备份。
 - ONES 身份、Team、验证事实与用途绑定的加密 Credential 按当前生命周期治理，不得把旧 API Platform Credential 当作当前个人身份凭据。
-
-操作手册见 [空库 Baseline 与管理员](../docs/operations/schema-baseline-bootstrap.md) 和 [Legacy 042 Adoption](../docs/operations/schema-baseline-upgrade.md)。
 
 ## ONES 身份
 
@@ -123,6 +123,6 @@ Python Runtime 工具链验收必须通过目标 MCP 产生 Tool Call、Runtime 
 
 ## 知识运维入口
 
-主程序侧 `knowledge-ops-controller` 处理固定知识项目的构建、启停和服务状态；独立知识项目侧 `knowledge-sync` 调度持久计划，再启动 `sync_ones_knowledge --mode once` 执行采集及派生。Web 的 `/api/platform/knowledge/operations` 与根目录 `knowledge.sh` 共用队列、互斥和事件，API 不执行 Shell 或持有 Docker socket。
+主程序侧 `knowledge-ops-controller` 处理固定知识项目的构建、启停和服务状态；`knowledge-sync` 属于根 Compose，调度持久计划并启动 `sync_ones_knowledge --mode once` 执行采集及派生。Web 的 `/api/platform/knowledge/operations` 与根目录 `knowledge.sh` 共用队列、互斥和事件，API 不执行 Shell 或持有 Docker socket。
 
-相关迁移为 150（复用索引）、151（文档增量断点）、152（运维队列与调度），实际部署必须匹配当前 migration catalog。CLI 与服务启动不擅自迁移数据库。安装、采集字段和恢复流程见[知识库运维手册](../knowledge/OPERATIONS.md)；检索预算的实现/主规格差异见[知识治理说明](../docs/runbooks/knowledge-governance.md#实现与主规格差异)。
+相关迁移包含知识运维队列、四小时间隔与代码知识能力等；实际部署必须匹配当前 migration catalog（现 head `165`）。CLI 与服务启动不擅自迁移数据库。安装、采集字段和恢复流程见[知识库运维手册](../knowledge/OPERATIONS.md)；检索预算的实现/主规格差异见[知识治理说明](../docs/runbooks/knowledge-governance.md#实现与主规格差异)。

@@ -1,6 +1,6 @@
 # Runtime 多副本池
 
-本期部署边界是同一主机 Docker Compose。默认两个固定 Runtime 节点、两个 `agent-worker` 副本；每个 Runtime 进程的 Job 和模型 probe 共用一个执行槽。同一完整 Session 内串行，不同 Session 可并行。分层验收状态及单模型有界测量见 [当前验收记录](../../openspec/changes/archive/2026-10-25-add-runtime-replica-pool/evidence/acceptance.md)。
+本期部署边界是同一主机 Docker Compose。默认两个固定 Runtime 节点、两个 `agent-worker` 副本；每个 Runtime 进程的 Job 和模型 probe 共用一个执行槽。同一完整 Session 内串行，不同 Session 可并行。分层验收与真实模型有界测量证据追溯 Git 历史中的当时 change evidence；现行未勾选项见 [验收欠账](../acceptance-backlog.md)。
 
 ## 配置和归属
 
@@ -28,7 +28,13 @@ Worker 控制租约允许接管；已经 RUNNING 的 Invocation 执行归属不�
 
 1. 暂停渠道、Webhook、调试等新任务入口，等待现有执行结束。记录受影响 Compose 项目及服务清单，保留数据库备份。
 2. 排空 Job/重试队列，停止旧 `agent-worker`、调度器及旧 Runtime 容器；确认没有对应旧进程或外置消费者。明确处理旧非终态任务，不能直接放入新池重跑。
-3. 用新镜像执行只读门禁（支持 schema 146 或当前 head）：
+3. 在旧系统仍可核查时确认非终态 Job 已处理，Job、重试和旧重试队列的消息与消费者均为零。读取数据库的 `schema_migration` 账本，在整个切换期间保持旧写入进程停止。下表中的门禁命令使用**目标版本**的 agent-worker 镜像，执行前先构建或取得该镜像。
+
+   | 维护窗口开始时的账本 | 执行顺序 |
+   | --- | --- |
+   | `146` | 先运行下面的门禁。通过后运行目标 migrator，成功后在目标 head 再运行一次门禁。 |
+   | 已是目标 head（当前 `165`） | 直接运行门禁，核对目标版本的 Runtime grants。 |
+   | 其他受支持的旧 head，如 `164` | 完成前两步排空，按[数据库迁移手册](schema-baseline-bootstrap.md)升级。涉及旧预提取数据时先完成[迁移 160 前的退役](code-knowledge-on-demand.md#升级到当前-head)。迁移成功后在目标 head 运行门禁。 |
 
    ```sh
    docker compose run --rm --no-deps agent-worker python -m app.cli.runtime_pool_preflight
@@ -36,21 +42,18 @@ Worker 控制租约允许接管；已经 RUNNING 的 Invocation 执行归属不�
 
    退出码 0 只证明数据库无非终态 Job、执行/重试队列无待处理消息和消费者。退出码 1 表示事实不可读取，2 表示仍有阻塞；均不可继续切换。容器和旧进程已经停止仍需操作人员核实。死信只做人工追溯，不在本次切换自动重放。
 
-4. 执行现有 migrator 到 147，并运行既有 `app.cli.apply_agent_runtime_grants` 流程更新角色。Runtime 只能读取所需绑定并写执行元数据/事件/终态；没有 Job、Session、Delivery、RBAC 写权限，也不能写请求快照。
-5. 同批更新 API、Worker、Runtime 和相关读取组件。启动两个固定节点、两个 Worker 与调度器；核对 `/version` 的 node、instance、pool_enabled、build identity，以及 `/ready` 和池状态。旧服务名 `python-agent-runtime` 不再是 Compose 运行服务名，镜像 build target 保持不变。
-6. 用合成任务验证不同会话并行、同会话顺序和取消，再开放入口。真实 Provider 验收前不要把确定性测试通过当作模型运行验收。
+4. 确认目标 head 的门禁通过，且部署的 `app.cli.apply_agent_runtime_grants` 已成功应用。主 Compose 的 migrator 包含这一步。随后同批更新 API、Worker、Runtime 和相关读取组件，启动两个固定节点、两个 Worker 与调度器。核对 `/version` 的 node、instance、pool_enabled、build identity，以及 `/ready` 和池状态。
+5. 用合成任务验证不同会话并行、同会话顺序和取消，再开放入口。真实 Provider 验收前不要把确定性测试通过当作模型运行验收。
 
 ## 排空与替换节点
 
-### SDK 0.2.178 与代码知识提取
+### SDK 与代码知识（预提取已退役）
 
-Runtime 的 SDK 固定在 `pyproject.toml` 的 `python-runtime` 依赖组，当前为 `claude-agent-sdk==0.2.178`，随包 CLI 为 2.1.318。升级必须重建 Runtime 镜像；仅重启旧容器不会改变依赖。源码提取保持五个文件工具、宿主注入冻结 Skill、无 MCP/Bash；`PreToolUse` 配置 `on_failure="block"`，授权内部意外异常返回固定拒绝，不输出异常正文。
+整版代码预提取链路已退役；现行按需代码知识库见 [按需代码知识库运维](code-knowledge-on-demand.md)。Runtime 的 SDK 固定在 `pyproject.toml` 的 `python-runtime` 依赖组；升级必须重建 Runtime 镜像，仅重启旧容器不会改变依赖。源码访问保持受治理文件工具、宿主注入冻结 Skill、无 MCP/Bash；`PreToolUse` 配置 `on_failure="block"`，授权内部意外异常返回固定拒绝，不输出异常正文。
 
-提取审计的 `init_snapshot` 只记录 SDK 实际报告的工具/原生 Skill/MCP 名称与状态，并附实际 SDK/CLI 版本。字段缺失为 `null`，非法或超限项导致 `metadata_complete=false`；没有收到 init 时保持空快照。它不等于平台注入 Skill 清单，也不包含整个 SDK 消息。普通任务的完整审计沿用原行为。
+不调用模型的镜像初始化检查：将 `backend/tests/support/claude_sdk_init_smoke.py` 经 stdin 传入目标 Runtime 镜像的 `python -`，设置 `--network none --read-only --tmpfs /tmp:rw,size=256m,mode=1777`，不挂载凭据或源码。该检查只建立控制握手，不发送 query/prompt；通过只能证明 SDK/CLI 接受 hook 注册，不能替代真实工具循环或业务问答验收。
 
-不调用模型的镜像初始化检查：将 `backend/tests/support/claude_sdk_init_smoke.py` 经 stdin 传入目标 Runtime 镜像的 `python -`，设置 `--network none --read-only --tmpfs /tmp:rw,size=256m,mode=1777`，不挂载凭据或源码。该检查只建立控制握手，不发送 query/prompt；通过只能证明 SDK/CLI 接受 hook 注册，不能替代真实工具循环或业务提取验收。
-
-替换两个节点前，核实代码来源 `enabled=0`、`demand_enabled=0`、无活动提取 Job，分别排空并核实停止证据。替换后检查两节点 `/version`、`/ready`、相同镜像与代码摘要、SDK/CLI 版本及 `code_identity_catalog.CATALOG_HASH`；目录版本/摘要应与当前控制面一致。本次 SDK 修复保持池协议不变，不应为版本验证开启来源计划、重跑旧构建或改写冻结 Publication。
+替换两个节点前，核实无活动代码分析 Job 与 SVN 写操作，分别排空并核实停止证据。替换后检查两节点 `/version`、`/ready`、相同镜像与构建身份、SDK/CLI 版本；目录版本/摘要应与当前控制面一致。不应为版本验证开启已退役的预提取计划、重跑旧构建或改写冻结 Publication。
 
 先写节点自己的排空标记：
 
@@ -120,4 +123,4 @@ WHERE id = '<job_id>';
 4. 在临时目录创建 `stop-sampler` 文件并等待采样结束；执行 [收集器](../../backend/tests/support/runtime_pool/collect_real.py) `<临时目录>`。报告须保留失败尝试、源码/镜像身份、采样规模和未观测边界，不输出 Prompt、响应正文或凭据。
 5. 保存安全报告后执行 `run.py cleanup --root <临时目录>`，移除该测试项目、临时数据库及生成的测试密钥。若源 PostgreSQL 原来停止且由本次启动，恢复其原状态；不得删除原数据卷或原 Master Key 文件。
 
-当前实测见 [真实验收报告](../../openspec/changes/archive/2026-10-25-add-runtime-replica-pool/evidence/real-acceptance.md)。它覆盖现有一个受管模型与凭据版本，未验证真实多凭据切换、长任务/多轮工具负载或生产站点容量；默认两个 Runtime 的配置不因小样本吞吐自动改变。
+真实验收报告追溯 Git 历史中的当时 evidence。它覆盖现有一个受管模型与凭据版本，未验证真实多凭据切换、长任务/多轮工具负载或生产站点容量；默认两个 Runtime 的配置不因小样本吞吐自动改变。未完成项见 [验收欠账](../acceptance-backlog.md)。

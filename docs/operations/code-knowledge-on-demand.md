@@ -1,6 +1,9 @@
 # 按需代码知识库运维
 
-实现变更：`replace-code-preextraction-with-on-demand-knowledge`。2026-11-09 已在本机 Mac 完成旧候选退役、数据库迁移 160、容器切换、真实 SVN 检出和代码索引发布。assist03 已启用新工具，业务 E2E 的 4 名成员已获授权，原 ONES 权限保留。已验证两个 Runtime 同目录 r2 并发读取、真实业务答案入 PG/Embedding/Qdrant，以及同版本命中只新增问答记录、不读源码或重复编码。Windows/Linux 宿主、真实 MES 跨版本变化与 ONES 并发重排负载仍待验收；详见变更的 implementation-evidence.md。
+整版代码预提取已退役；现行能力是按需检出、授权读取与答案入库。部署前将 schema 升级到
+当前 head（现为 `165`），并协调更新 API、调度 Worker、两个 Runtime、knowledge-sync、
+knowledge-mcp 与前端。Windows/Linux 宿主、真实跨版本变化与并发重排等仍待验收，见
+[验收欠账](../acceptance-backlog.md)。
 
 ## 使用流程
 
@@ -18,7 +21,7 @@
 
 业务答案正文与详细证据分开保存。模型只对实际采用且本次成功读取/保存的答案，在回复末尾逐条附 `<!-- code-answer:<document_id>@<revision_id> -->` 内部标记；结果收尾核验同任务、环境、来源与版本后写入私有问答的结构化引用，在会话、报告、Job 结果和投递前移除标记。标记本身不授权、不证明答案有效，无 ID 时不得编造；已有源码证据记录保留路径、行号和校验信息，不为追溯额外保存源码全文。
 
-本回答约束现使用 Prompt v22（包含前端操作链、保存收尾、自动分批搜索与业务追踪）。更新 API、Agent Worker、Job Dispatcher、Channel Dispatcher、Webhook Worker、knowledge-mcp 与两个 Runtime，使 Prompt 版本及工具说明一致；`code-business-query` 内容冻结在 Agent Publication 中，需保存新草稿并发布 Agent，再由业务应用更新绑定并重新发布，以新 Job 验证。修改 Skill 文件不会覆盖既有发布或历史任务。此次调整不需要数据库迁移或重建知识索引。前端操作链调整的本地验证及未完成的真实验收见 [验证记录](../../openspec/changes/ground-code-answers-in-ui-workflows/evidence.md)。
+本回答约束现使用 Prompt v22（包含前端操作链、保存收尾、自动分批搜索与业务追踪）。更新 API、Agent Worker、Job Dispatcher、Channel Dispatcher、Webhook Worker、knowledge-mcp 与两个 Runtime，使 Prompt 版本及工具说明一致；`code-business-query` 内容冻结在 Agent Publication 中，需保存新草稿并发布 Agent，再由业务应用更新绑定并重新发布，以新 Job 验证。修改 Skill 文件不会覆盖既有发布或历史任务。此次调整不需要数据库迁移或重建知识索引。Prompt 版本不一致见 [runtime-prompt-version-drift](../runbooks/runtime-prompt-version-drift.md)；未完成真实验收见 [验收欠账](../acceptance-backlog.md)。
 
 同版本纠错先读取完整原答案，再用它的 `question_text` 重新 exact 检索，并以这次检索申请源码授权。保存时沿用原问题和身份条件，带实际读取的 `expected_current_revision_id`；新的用户纠错说明不能直接替代原问题身份。已准入的分析不能中途换题，冲突时不要移除 CAS 字段后另建文档冒充纠错。真正不同的业务条件应作为独立问题记录，并明确原答案是否仍适用。
 
@@ -64,31 +67,20 @@ Windows PowerShell 同样使用上述 `-f` 参数；凭据宿主路径根据该�
 
 缺少代码分析运行配置的 Job 应直接返回 `code_runtime_unavailable` 与明确中文提示，不自动重试；恢复部署后通过新的 Job 验证，不改写历史失败记录。
 
-## 从 schema 159 切换
+## 升级到当前 head
 
-此步骤会删除清单内旧代码候选。普通 API/Worker 启动只校验 schema，不执行该清理。
+1. 在维护窗口备份数据库，暂停新代码问答、预提取任务和 SVN 写操作，排空在途 Job。停止旧 API、Worker、两个 Runtime 及 knowledge-sync，确认旧容器、外置写入进程及其分析和 SVN 子进程均已退出。读取 `schema_migration` 的实际 head。
+2. **账本为 `159` 时，先在维护进程中运行 `python -m app.cli.code_knowledge_inventory`。** 核对盘点中的旧来源、文档、索引、检出及待保留的其他来源。若有待退役数据，确认备份可恢复且清理范围已获批准，再使用本次盘点返回的 `digest` 执行以下命令。`--old-containers-stopped` 表示操作者已核实停机。若清单已变化、仍有活动写入或发现旧向量索引，按错误码处理后重新盘点。
 
-1. 提前构建新镜像，完成本变更测试。保存安全盘点（`python -m app.cli.code_knowledge_inventory`），核对来源、KB、文档/修订、旧构建、checkout、发布引用和非代码文档计数。盘点只包含元数据。
-2. 在维护窗口停用旧代码入口并排空旧任务，停止旧 API、调度 Worker、两个 Runtime 和 knowledge-sync，确认容器及 SVN 子进程已经退出。不要仅凭 Job 状态或租约过期判定停止。其他 ONES 数据保留，停止共享服务期间其检索/同步会暂停。
-3. 在使用新代码、既有部署连接环境的临时维护进程再次运行盘点。以**本次实际输出**的摘要执行：
-
-   ```sh
-   python -m app.cli.retire_code_preextraction --inventory-digest <本次盘点摘要> --old-containers-stopped
+   ```bash
+   python -m app.cli.retire_code_preextraction --inventory-digest "${INVENTORY_DIGEST:?请先填入本次盘点的摘要}" --old-containers-stopped
    ```
 
-   `--old-containers-stopped` 是运维人员已完成第 2 步的声明，工具不会自动停止 Docker。数据库端仍检查 schema、摘要、未确认停止的 invocation、运行中的旧 SVN 操作和混合来源引用。当前批准清单没有代码向量索引；若发现旧索引，工具拒绝并要求先核实精确集合清理计划，绝不按名称删集合。旧 checkout 操作摘要留在盘点中；源码目录和 Job/audit 表不删除。
-4. 使用现有 Migrator 升级到 160。若失败，保持新旧写者停用，检查固定错误码；不要绕过清理门禁或使用 DROP CASCADE。此迁移无旧候选兼容读取路径。
-5. 仅在 knowledge-sync 的既有配置、认证和 checkout 挂载环境下登记旧工作副本。例如：
+3. 清点及必要的退役完成后，运行目标版本的 `migrator`。迁移 `160` 会检查旧候选、绑定和活动检出是否清空，然后才能继续升到目标 head（当前 `165`）。已执行 `160` 的库直接走后续迁移，空库按[自举手册](schema-baseline-bootstrap.md)建库。如果更早的旧库包含预提取数据，先用相应版本的 migrator 升至 `159`，完成第 2 步后再跨越 `160`。
+4. 迁移成功后，协调更新 API、agent-worker、job/channel/webhook 调度 Worker、两个 Runtime、knowledge-sync、knowledge-mcp 和 admin-web。按 `database_policy.py` 核验 knowledge_mcp_reader 的列权限，重新验证并发布需要新工具合同的 Agent 和应用。
+5. 用新 Job 验证指定环境与 SVN 版本的问答、答案保存和索引。若要登记既有工作副本，使用 `app.cli.register_code_checkout`，`--select` 必须与目录完整内容一致。
 
-   ```sh
-   python -m app.cli.register_code_checkout --registration mes-local --directory mes-r2 --select set_server --select set_web/EBR --select set_web/JTH
-   ```
-
-   `--select` 必须与该工作副本完整内容一致；整仓使用省略 `--select`。命令执行只读 info/status 核实，拒绝混合版本、修改、冲突、符号链接、来源或路径不符；不 checkout/update/revert，不复制源码。
-6. 应用新 API、knowledge-sync、两个 Runtime、knowledge-mcp 和前端版本。读库服务账号的最小列权限随 `database_policy.py` 更新；用既有凭据文件运行原有授权准备流程，勿打印密码。重新验证和发布 Agent/Application 的新工具集合，旧冻结 Job 不自动获取新能力。
-7. 在页面建立/绑定代码 KB，初始化独立集合，验证并发布。验证一个指定版本的未命中问答、证据、PG 私有记录、共享答案与索引，再验证同版本命中不占用源码目录。确认 ONES 同步/检索仍正常。
-
-退役先移除旧内容，再执行 DDL；这不是跨 PostgreSQL/Qdrant/文件系统的原子事务。任何失败都保持代码资源未发布，依据盘点恢复操作步骤，不恢复旧候选为有效答案。
+Prompt 不一致见 [runtime-prompt-version-drift](../runbooks/runtime-prompt-version-drift.md)；未完成验收见 [验收欠账](../acceptance-backlog.md)。
 
 ## 并发与恢复
 
@@ -158,7 +150,7 @@ docker compose build api-server knowledge-sync admin-web
 docker compose up -d --no-deps api-server knowledge-sync admin-web
 ```
 
-刷新浏览器并重新点击「浏览目录」，验证根目录、两层子目录、文件选择和固定 SVN 修订。三个服务需一起更新，否则前端子目录请求可能找不到新接口，或仍从旧执行器拿到递归清单。以上命令适用于 Windows CMD/PowerShell 与 macOS/Linux Shell；本次已通过本机合成仓库的真实 SVN CLI 验证，真实 Windows 仓库尚待现场验收。验证范围见 [按层浏览修复记录](../../openspec/changes/fix-large-svn-directory-browse/evidence.md)。
+刷新浏览器并重新点击「浏览目录」，验证根目录、两层子目录、文件选择和固定 SVN 修订。三个服务需一起更新，否则前端子目录请求可能找不到新接口，或仍从旧执行器拿到递归清单。以上命令适用于 Windows CMD/PowerShell 与 macOS/Linux Shell；真实 Windows 仓库仍待现场验收，见 [验收欠账](../acceptance-backlog.md)。
 
 ### 检出执行失败分类
 
@@ -181,16 +173,13 @@ docker compose up -d --no-deps api-server knowledge-sync admin-web
 
 `A` 全选与 `B/d`、`B/e` 单独选择可以同时使用，无需选中 `B`；系统会创建必要父目录。2026-11-11 已在隔离合成 SVN 仓库分别验证 d/e 为文件与目录，确认 A 全部存在、B 只包含 d/e，未选择的 f 不检出。这不证明 Windows 现场连接、性能或磁盘状态正常。
 
-若前一节的按层浏览已部署，本次预检范围、预算与错误分类修复只需构建并更新 `knowledge-sync` 与 `admin-web`，无需迁移或 Runtime 发布；等待现有 SVN 写操作结束后更新。现场仍须以新操作结果验证是否恢复，不采集原始标准错误或凭据。本机验证及部署步骤见 [检出预检修复记录](../../openspec/changes/fix-svn-checkout-preflight-timeout/evidence.md)。
+若前一节的按层浏览已部署，本次预检范围、预算与错误分类修复只需构建并更新 `knowledge-sync` 与 `admin-web`，无需迁移或 Runtime 发布；等待现有 SVN 写操作结束后更新。现场仍须以新操作结果验证是否恢复，不采集原始标准错误或凭据。
 
+已有本地 SVN 升级 CA 信任时，无需重新生成证书或导入仓库：把状态目录下对应连接的公开 `server.crt` 复制到 `client/trusted-ca/`（例如 `local-svn.crt`），再更新 knowledge-sync 镜像。页面填写容器可访问的内部 HTTPS 地址并选择匹配的认证方式。地址不会自动替换，证书链、主机名和有效期仍由 SVN 校验。
 
-已有本地 SVN 升级 CA 信任时，无需重新生成证书或导入仓库：只把 `.local/code-svn/state/client/mes-local/server.crt` 复制到 `.local/code-svn/state/client/trusted-ca/local-svn.crt`，再更新 knowledge-sync 镜像。页面填写 `https://code-svn:8443/repos/mes/trunk` 并选择“无需认证”。地址不会自动替换，证书链、主机名和有效期仍由 SVN 校验。
+## 环境隔离
 
-## 环境隔离升级（迁移 162）
-
-环境标识进入代码分析、共享答案身份和私有问答记录。同库、同来源、同 SVN 版本与同问题在两个环境分别保存，PG 先按环境筛选，全文读取及较高版本线索也必须匹配；向量候选再次通过 PG 核对，不需要每环境创建数据库、集合或代码检出。旧无环境记录保留为空但禁止复用，不能回填默认环境；新记录数据库约束拒绝空环境和改变环境身份。
-
-先执行迁移 162，再协调更新 API、knowledge-mcp、knowledge-sync 和 Runtime。按更新后的 `database_policy.py` 重新授予读取列权限（新增 `knowledge.code_answer.environment_id`），重新发布 Agent/Application 的新工具合同及 `code-business-query` Skill，并发起新 Job。旧快照不兼容新工具，不通过编辑历史 Job 绕过。此次代码变更的本地验证记录见 [环境隔离验证记录](../../openspec/changes/isolate-code-knowledge-by-environment/evidence.md)；不代表目标环境已部署或完成真实模型/SVN 问答验收。
+环境标识进入代码分析、共享答案身份和私有问答记录。同库、同来源、同 SVN 版本与同问题在两个环境分别保存，PG 先按环境筛选，全文读取及较高版本线索也必须匹配；向量候选再次通过 PG 核对，不需要每环境创建数据库、集合或代码检出。旧无环境记录保留为空但禁止复用，不能回填默认环境；新记录数据库约束拒绝空环境和改变环境身份。当前 head 已包含该能力；升级见上文“升级到当前 head”，未完成真实验收见 [验收欠账](../acceptance-backlog.md)。
 
 ### 长时间分析与保存排查
 
@@ -210,7 +199,7 @@ Runtime 在知识 MCP 会话空闲期间每 30 秒发送受控 ping，复用原 
 
 本次无需数据库迁移或重建 Qdrant。需协调更新 API/agent-worker（标准结果记录代码的部署消费者）、knowledge-mcp（保存调用关联摘要）和两个 Python Runtime；如更新发布绑定的 Skill，应重新发布并使用新 Job。旧失败任务不可直接把聊天文本标记为 supported，应在原环境与指定 SVN 版本重新检索、取得读取占用、核验证据并保存，再核对索引任务及知识检索结果。部署与真实模型验收不能由本地合成测试代替。
 
-保存收尾修复从 `agent-system-prompt-v21` 引入，当前模板为 `agent-system-prompt-v22`。Worker 请求与 Runtime 观察必须一起更新；只重启旧镜像不会带入修复。旧 Job 的冻结请求不改写，使用新 Job 验收，避免提示版本漂移。
+当前模板为 `agent-system-prompt-v22`。Worker 请求与 Runtime 观察必须一起更新；只重启旧镜像不会带入修复。旧 Job 的冻结请求不改写，使用新 Job 验收；版本不一致见 [runtime-prompt-version-drift](../runbooks/runtime-prompt-version-drift.md)。
 
 
 ### 大工程检出与失败目录复用

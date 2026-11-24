@@ -17,11 +17,11 @@ DingTalk SDK callback
   -> Business Application route
 ```
 
-## 首次迁移现有机器人
+## 首次启动
 
-首次部署时，API 启动的本地 seed 会把现有单机器人启动配置登记为
-`dingtalk_enterprise_stream` Connector，并把 Client Secret 写入
-Platform Secret。确认管理页能看到该 Connector 后，再启动新的 Runtime。
+`SEED_LOCAL_CONFIG` 默认 `false`，不会自动把历史单机器人环境变量迁移为受管
+Connector。生产与常规部署应在管理端手工创建企业与机器人连接；仅在明确需要本地样例
+时才把该开关设为 `true`。
 
 ```bash
 docker compose up -d --build api-server rabbitmq postgres
@@ -32,9 +32,9 @@ docker compose up -d --build dingtalk-runtime channel-dispatch-worker
 `dingtalk-runtime` 这条 Stream 接入路径；不要从历史镜像另行启动旧 Worker，否则同一
 钉钉应用可能产生重复连接和重复事件。
 
-## 后续新增机器人
+## 新增机器人
 
-后续在“业务应用 → 渠道与触发器”先选择或创建“钉钉企业”，再新增钉钉应用机器人：
+在“业务应用 → 渠道与触发器”先选择或创建“钉钉企业”，再新增钉钉应用机器人：
 
 ```text
 创建待验证企业

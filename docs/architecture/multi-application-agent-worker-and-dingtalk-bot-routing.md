@@ -22,11 +22,11 @@ RabbitMQ 消息只传 `event_id`、`job_id`、`correlation_id`。Worker 从 Post
 
 ## Worker 并发
 
-当前 Compose 默认只有一个 `agent-worker`，RabbitMQ consumer 使用
-`prefetch_count=1`。一次模型执行会占用该 Worker，其他应用的 Job 留在队列等待；
+当前 Compose 默认 `agent-worker` replicas=2，每个副本 RabbitMQ consumer 使用
+`prefetch_count=1`。一次模型执行会占用该副本的一个执行槽，其他应用的 Job 留在队列等待；
 增加业务应用不会自动增加执行并发，也不会为每个应用创建容器。
 
-多个 Worker 副本可以作为竞争消费者，但这只是部署扩容，不改变 Application 或 Agent
+额外 Worker 副本可作为竞争消费者继续扩容，但这只是部署扩容，不改变 Application 或 Agent
 Publication。验收仍须检查原子 claim、模型 Provider 限流、数据库连接、队列积压、
 MCP 上游负载和投递结果，不能只看副本数。
 

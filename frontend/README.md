@@ -27,7 +27,7 @@ npm run test
 npm run build
 ```
 
-`npm run preview` 仅用于检查构建产物，正式部署使用 `frontend/Dockerfile` 和 Nginx。已安装知识运维的环境，重建/更新 `admin-web` 应沿用原项目名、安装时的 Compose 扩展和环境文件；前端改动不需要重建知识向量索引。
+`npm run preview` 仅用于检查构建产物。正式部署使用 `frontend/Dockerfile` 与根 `docker-compose.yml` 中的 `admin-web` 服务；宿主端口由 `ADMIN_WEB_PORT` 控制，默认 `8080`。前端改动不需要重建知识向量索引。
 
 ## 目录边界
 

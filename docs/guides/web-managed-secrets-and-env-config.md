@@ -8,7 +8,7 @@
 
 ## 最小 bootstrap env
 
-这些配置继续由 Docker Compose、K8s Secret 或部署平台提供：
+这些配置继续由仓库现有 Docker Compose 与文件型 Secret / 部署环境变量提供：
 
 ```bash
 DATABASE_DSN=postgresql://...
@@ -74,15 +74,7 @@ GET  /api/platform/runtime-config/env-migration
 }
 ```
 
-保存敏感运行参数：
-
-```json
-{
-  "key": "ANTHROPIC_API_KEY",
-  "secret_ref": "secret://platform/deepseek_api_key",
-  "service_name": "agent-worker"
-}
-```
+模型 Key 等敏感绑定通过凭据中心保存 `secret://platform/<code>`，再由 [Agent 模型连接](agent-profile-model-connections.md) 引用；不要把全局 `ANTHROPIC_API_KEY` 当作新的 Runtime Config 键写入。
 
 ## 生效语义
 

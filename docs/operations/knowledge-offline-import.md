@@ -31,7 +31,7 @@
 2026-09-14，本机 `enterprise_agent` 数据库已迁移至 131 并完成正式导入：
 5,000 个缺陷、5,000 个内容版本、5,000 条知识库收录，2,407 条关联观察。
 其中 52 条目标已解析，2,355 条仅保留外部引用。相同输入重放不增加记录，API 正常就绪。
-详细统计和部署证据见 `openspec/changes/import-ones-knowledge-text-foundation/evidence.md`。
+详细统计和部署证据追溯使用 Git 历史中的对应 change evidence；不得把该次本机导入当作当前环境已验收。
 
 ## 当前离线来源
 

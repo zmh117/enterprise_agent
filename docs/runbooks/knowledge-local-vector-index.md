@@ -2,7 +2,7 @@
 
 本页描述显式构建和维护索引的 `index_knowledge` CLI。当前固定 BGE-M3 dense 1024 维、Qdrant 和 Linux ARM64/AMD64 各自的依赖锁；跨架构需在目标环境重建并验证。原始离线导入/分块入口不自动调用模型，建立索引也不授予 Agent/MCP/RBAC 读取权限。
 
-日常采集使用[文档级增量同步](knowledge-ones-hourly-sync.md)，沿用每库固定 collection；重启或增加文档不需要执行本页全量构建。keep_ids 的 dense/BM25 混合索引与在线文档重排分别见[三库快照维护](knowledge-keep-ids-replacement.md)和[重排评测](knowledge-retrieval-evaluation.md)。
+日常采集使用[文档级增量同步](knowledge-ones-hourly-sync.md)，沿用每库固定 collection；重启或增加文档不需要执行本页全量构建。在线文档重排与效果评测见[重排评测](knowledge-retrieval-evaluation.md)。旧 keep_ids 三库快照维护入口已从现行文档移除，追溯使用 Git 历史。
 
 ## 数据和安全边界
 

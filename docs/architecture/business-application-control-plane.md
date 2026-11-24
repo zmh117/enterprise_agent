@@ -125,6 +125,6 @@ environment。停用同样只使用 `environments/local/deactivate` 和当前 ex
 - 无具体应用读取权时按不存在处理，避免枚举。
 - MCP Tool 必须属于 Agent Publication Envelope，并以相同 schema hash 冻结。
 - Snapshot、Resolver、审计和前端不返回 Connector Secret、Token、密码或敏感 URL。
-- 钉钉入口使用当前发送人；Webhook 使用已启用且受授权的内部服务账号。
+- 钉钉入口使用当前发送人；Webhook 使用发布已固定、且与应用入口一致的启用 human 用户（BOUND_USER）；应用不能另写执行用户。
 - `runtime_wired=true` 只说明路由装配成立，不等于真实 Provider、MCP、文件处理或投递
   E2E 已完成。验收必须沿 Ingress/Outbox/Queue/Job/Runtime/MCP/Delivery 核对同一条证据链。

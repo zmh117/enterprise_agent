@@ -5,11 +5,11 @@
 ## 事实层级
 
 1. **当前实现**：代码、活动迁移目录和自动化测试反映当前可运行事实。
-2. **Canonical 规范**：[10个领域主规格](../openspec/specs/README.md)是当前已接受基线，已于2026-09-16按代码重建。此前29个active change已归档，未完成验收保持原状态；后续change仍只表达相对canonical的增量。
+2. **Canonical 规范**：[10 个领域主规格](../openspec/specs/README.md) 是当前已接受基线。后续 change 只表达相对 canonical 的增量。
 3. **当前架构文档**：`architecture/` 解释已采用的系统边界。
 4. **操作和指南**：`operations/`、`runbooks/` 与 `guides/` 给出可执行流程，执行前仍应核对当前分支和环境。
-5. **日期化验证**：`verification/` 是某次验收快照，不自动代表现在仍通过。
-6. **历史记录**：明确标记为“已完成迁移/退役记录”的 operation 与 `archive/` 仅用于审计，不得按当前操作手册执行。
+5. **验收欠账**：[真实环境验收欠账](acceptance-backlog.md) 记录尚缺目标环境或真实 Provider 证据的项；关闭 change 或文档更新不得补勾。
+6. **历史记录**：明确标记为“已完成迁移/退役记录”的 operation，以及 Git 历史中的旧文档，仅用于审计，不得按当前操作手册执行。
 
 ## 当前架构
 
@@ -36,9 +36,13 @@
 
 ## 运维
 
-- [空库 Baseline 100、当前迁移目录与初始管理员](operations/schema-baseline-bootstrap.md)
-- [Legacy 042 → Baseline 100 → 当前迁移目录](operations/schema-baseline-upgrade.md)
-- [Compose PostgreSQL 18 / RabbitMQ 4 升级与恢复](operations/compose-postgres18-rabbitmq4-upgrade.md)
+- [数据库迁移、旧库基线接轨与空库初始化](operations/schema-baseline-bootstrap.md)
+- [Docker 部署与验收](operations/docker-deployment.md)
+  - [PostgreSQL 16 与 RabbitMQ 3 升级](operations/docker-deployment.md#postgresql-16-与-rabbitmq-3-升级)
+- [Runtime 多副本池](operations/runtime-replica-pool.md)
+- [本机 SVN 检出](operations/local-svn-checkout.md)
+- [按需代码知识库](operations/code-knowledge-on-demand.md)
+- [真实环境验收欠账](acceptance-backlog.md)
 - [Agent 重试与失败投递](operations/agent-retry-failure-delivery.md)
 - [钉钉报告排版与分片恢复](runbooks/dingtalk-report-presentation.md)
 - [Worker / Runtime 提示词版本不一致](runbooks/runtime-prompt-version-drift.md)
@@ -52,27 +56,22 @@
 | --- | --- |
 | 了解当前部署方式与服务用途 | [知识库部署说明](../knowledge/README.md) |
 | 安装网页运维、构建/启停、配置计划、看进度 | [知识库运维手册](../knowledge/OPERATIONS.md) |
-| 准备 ONES 团队/项目/类型与采集凭据 | [受管采集配置](runbooks/knowledge-ones-full-collector.md) |
-| 首次全量、小时增量、日期补采和恢复 | [同步与恢复](runbooks/knowledge-ones-hourly-sync.md) |
+| 采集准备、首次全量、四小时增量、日期补采和恢复 | [同步与恢复](runbooks/knowledge-ones-hourly-sync.md) |
 | 发布知识资源、角色应用授权与检索排障 | [知识治理](runbooks/knowledge-governance.md) |
 | 显式重建索引、跨架构和 Qdrant 维护 | [本地向量索引](runbooks/knowledge-local-vector-index.md) |
 | 重排模型升级与人工效果评测 | [检索评测](runbooks/knowledge-retrieval-evaluation.md) |
 | 维护历史离线数据和分块 | [离线导入](operations/knowledge-offline-import.md)、[文本分块](operations/knowledge-text-chunking.md) |
-| 明确替换开发环境三库快照 | [keep_ids 测试替换](runbooks/knowledge-keep-ids-replacement.md) |
 
 日常运维优先使用 Web / `knowledge.sh`。旧 Compose 扩展和离线维护 CLI 仍有明确适用范围，不能与新调度器重复运行。检索预算的实现/主规格差异集中记录在[知识治理说明](runbooks/knowledge-governance.md#实现与主规格差异)；此次文档更新不改变 canonical 规范或历史验收结论。
 
 ## 验证与参考
 
 - [MCP Inspector 开发测试](development/mcp-inspector.md)
-- [Task File Workspace Sandbox 容量基线](verification/task-file-workspace-sandbox-capacity.md)
-
-- [ChatGPT 系统设计上下文：架构、表设计与数据流](reference/enterprise-agent-system-design-for-chatgpt.md)
 - [ADR 状态索引](reference/decisions/README.md)
+- [Docker 兼容修改的本地验证记录](operations/docker-compatibility-validation.md)（历史证据，不代替现行整套验收）
 
 ## 历史归档
 
-- [已退役 API Platform 决策](archive/legacy-api-platform/README.md)
-- [旧实施基线](archive/implementation-baselines/README.md)
+工作区不再保留 `docs/archive/` 现行副本。追溯已退役决策、旧实施基线及其他历史文档时，使用 Git 历史（含曾归档的 change / evidence），不得把历史路径当作当前操作入口。
 
 本地执行 `make docs-link-check` 检查仓库内 Markdown 文件链接；链接失败时不得通过移动文件来“隐藏”历史引用，应修正目标或明确标记为外部/历史文本。

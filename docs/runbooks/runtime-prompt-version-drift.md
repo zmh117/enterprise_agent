@@ -1,8 +1,12 @@
 # Worker / Runtime 提示词版本不一致
 
-适用错误：请求期望 `agent-system-prompt-v8`，而 Runtime 观测为 v10，或其他版本组合。
-这证明该次执行的请求和 Runtime 模板不同；仅凭错误不能判断一定是旧 Worker，因为
-`agent_runtime_request_snapshot` 可能保存了升级前的冻结请求。
+适用错误：请求期望的 Prompt 模板版本与 Runtime 观测不一致，例如期望
+`agent-system-prompt-v22`，而某个副本仍为旧版本。这证明该次执行的请求和 Runtime
+模板不同；仅凭错误不能判断一定是旧 Worker，因为 `agent_runtime_request_snapshot`
+可能保存了升级前的冻结请求。
+
+当前代码常量见 `backend/app/shared/tool_contract.py` 的 `PROMPT_TEMPLATE_VERSION`，
+现为 `agent-system-prompt-v22`。
 
 ## 先区分三种版本
 
@@ -10,14 +14,13 @@
 2. 每个运行容器里的常量：实际部署的镜像版本。`restart` 不会用新代码替换旧镜像。
 3. Job 的冻结请求版本：恢复时保持原值，不随当前代码更新。
 
-2026-11-05 本机只读核对为两个 Worker、两个 Runtime 均为 v10，而 checkout 为 v11。
-这是当时的本机快照，不证明生产版本，也不是建议继续固定使用 v10。
-
 在生产实际 Compose 项目目录执行以下只读核对；如生产使用额外 Compose 参数，应沿用原参数。
 命令遍历所有运行副本，不只核对 `agent-worker-1`。只输出容器名、镜像 ID、模板版本和构建标识：
 
 ```bash
-for container in $(docker compose ps -q api-server agent-worker python-agent-runtime-a python-agent-runtime-b); do
+for container in $(docker compose ps -q api-server agent-worker \
+  job-dispatch-worker channel-dispatch-worker webhook-worker \
+  python-agent-runtime-a python-agent-runtime-b); do
   docker inspect --format '{{.Name}} image={{.Image}}' "$container"
   docker exec "$container" python -c 'from app.shared.tool_contract import PROMPT_TEMPLATE_VERSION; from app.shared.build_identity import build_identity_from_environment; identity = build_identity_from_environment("inspection"); print(PROMPT_TEMPLATE_VERSION, identity.source_revision, identity.build_id)'
 done
@@ -41,7 +44,8 @@ WHERE i.job_id = '<JOB_ID>';
 ## 生产恢复
 
 - 某个 Worker/Runtime 仍旧：按生产发布流程从同一提交构建并重建所有相关副本。至少核对
-  API、全部 Agent Worker、两个 Runtime，以及执行链要求同一构建身份的 File MCP 等组件。
+  API、全部 Agent Worker、`job-dispatch-worker`、`channel-dispatch-worker`、
+  `webhook-worker`、两个 Runtime，以及执行链要求同一构建身份的 File MCP 等组件。
   仅 `restart` 或只构建 Runtime 不足以保证一致。
 - `BUILD_SOURCE_REVISION`、`BUILD_ID` 必须代表本次真实发布，不能所有版本都填写 `local-dev`。
   它们是构建参数；应进入同一批镜像，不通过修改运行环境伪装成一致。
@@ -53,7 +57,7 @@ WHERE i.job_id = '<JOB_ID>';
 
 ## 新防线的行为
 
-`prevent-runtime-prompt-version-drift` 增加两层前置检查，保留既有工具契约严格校验：
+前置检查保留既有工具契约严格校验：
 
 - `/version`、`/ready` 返回当前 `prompt_template_version`。平台被动探针返回安全的实际/期望版本及
   `prompt_status`；缺少声明、声明不合法、两接口不一致或版本不符，均不可接新执行。
@@ -70,4 +74,4 @@ WHERE i.job_id = '<JOB_ID>';
 
 本地合成测试覆盖版本一致/缺失/非法/错配、按冻结版本选节点、占槽前拒绝、请求不变、
 升级后的运行与终态恢复、安全错误投影。未发送真实钉钉消息、未重启本机服务，生产连接和
-发布尚未验收。变更规格见[前置版本校验](../../openspec/changes/prevent-runtime-prompt-version-drift/specs/execution-delivery/spec.md)。
+发布尚未验收；见 [验收欠账](../acceptance-backlog.md)。

@@ -43,8 +43,7 @@ docker compose -f docker-compose.yml up -d --build
 | 操作 | 文档 |
 | --- | --- |
 | 安装、启停、计划字段、进度与错误排查 | [网页运维](OPERATIONS.md) |
-| 首次采集配置、ONES 凭据与范围 | [全量采集](../docs/runbooks/knowledge-ones-full-collector.md) |
-| 增量转换、日期补采、恢复与内容冲突 | [同步与恢复](../docs/runbooks/knowledge-ones-hourly-sync.md) |
+| 采集凭据与范围、首次全量、四小时刷新、补采与恢复 | [采集与同步](../docs/runbooks/knowledge-ones-hourly-sync.md) |
 | 资源验证发布、双重授权、工具合同 | [知识治理](../docs/runbooks/knowledge-governance.md) |
 | 显式建立索引、跨架构与 Qdrant 维护 | [本地向量索引](../docs/runbooks/knowledge-local-vector-index.md) |
 | 重排模型、效果评测与升级 | [检索评测](../docs/runbooks/knowledge-retrieval-evaluation.md) |
@@ -86,7 +85,7 @@ Knowledge MCP 的 `DATABASE_DSN` **复用部署环境中的平台连接**，不�
 
 ## 文档重排与 v4 内容合同
 
-在线检索现在需要独立重排服务及 `knowledge-reranker-models` 模型卷。主 Compose 自动等待 `knowledge-reranker-prepare`；网页 `up` 任务同样调用模型准备，不能只准备 Embedding 模型；该操作不会自动发布工具合同或改动索引。按用户的效果优先要求保留 BGE-v2-m3 和长文本，资源配置为 6 核 / 6 推理线程 / 3 GiB，检索总预算仍为 360 秒，实际质量和时延需在目标环境验证。
+在线检索现在需要独立重排服务及 `knowledge-reranker-models` 模型卷。主 Compose 自动等待 `knowledge-reranker-prepare`；网页 `up` 任务同样调用模型准备，不能只准备 Embedding 模型；该操作不会自动发布工具合同或改动索引。按用户的效果优先要求锁定 `BAAI/bge-reranker-v2-m3` 和长文本，资源配置为 6 核 / 6 推理线程 / 3 GiB，检索总预算仍为 360 秒，实际质量和时延需在目标环境验证。
 
 准备命令、同候选对照评测、v4 schema hash 协调发布、新 Publication/Job 和回退步骤见[检索评测与运行说明](../docs/runbooks/knowledge-retrieval-evaluation.md)。`retrieval_score` 仅为召回排序分，Agent 应按最终 `rank` 核实详情，禁止自行用数值阈值丢弃尾部。
 

@@ -111,6 +111,31 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
 
 ## 已有环境升级
 
+先查看运行中的数据库和消息队列版本。使用 PostgreSQL 16 或 RabbitMQ 3 的环境，先完成下面的主版本切换，再升级应用。已经使用 PostgreSQL 18 和 RabbitMQ 4 的环境，从 [应用服务升级](#应用服务升级) 开始。
+
+### PostgreSQL 16 与 RabbitMQ 3 升级
+
+1. 在原 Compose 项目中运行 `scripts/compose_infra_upgrade.sh preflight`，记录项目名、实际镜像及 digest、旧卷名、挂载点和可用空间。保留旧 Compose 配置和部署密钥。核对新服务将使用独立的 `postgres18-data`、`rabbitmq4-data` 卷，PostgreSQL 18 卷挂到 `/var/lib/postgresql`。如果目标卷已有数据，先确认归属和用途再继续。
+2. 暂停渠道、Webhook、调试入口和定时生产者，让旧消费者处理完在途 Job 和投递。停止写入进程，保留旧 PostgreSQL 和 RabbitMQ 在线。运行 `scripts/compose_infra_upgrade.sh ensure-rabbitmq-empty` 检查 Agent 主队列、重试队列和死信队列。另用 `docker compose exec -T rabbitmq rabbitmqctl -q list_queues name messages_ready messages_unacknowledged` 核对该部署其余业务队列。只在待取和未确认数都为零后切换，遗留死信须先处理。
+3. 在受限目录制作逻辑备份。先执行 `umask 077`，再执行 `scripts/compose_infra_upgrade.sh backup-postgres`，将输出的备份路径赋给当前终端的 `BACKUP_DIR`。核对备份摘要和恢复所需空间。记录业务对象归属、服务角色及授权，确认仍可使用原部署的凭据材料。保留旧数据库卷和 broker 卷。若只升级 RabbitMQ 且数据库已是 18，数据库保持原卷，跳过数据库恢复。
+4. 停止待升级的旧服务，保留其卷。使用目标版本的 Compose 配置和原项目名，仅启动待升级的基础设施，例如两者同时升级时执行 `docker compose up -d --no-deps postgres rabbitmq`。核对实际镜像、挂载和运行版本。应用入口继续关闭，等数据库恢复和核验完成后再启动 migrator 与应用。
+
+#### 恢复并核验逻辑备份
+
+以下命令读取目标 PostgreSQL 18 容器配置的用户名和库名。先核实挂载为新卷，目标业务库为空，`BACKUP_DIR` 指向本次备份。按部署记录准备所需角色，再还原数据。
+
+```bash
+docker compose exec -T postgres sh -c 'exec pg_restore --exit-on-error --single-transaction --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "${BACKUP_DIR:?}/enterprise_agent.dump"
+```
+
+备份省略角色密码，恢复命令也会跳过对象归属和授权。按升级前记录恢复对象归属、服务角色和最小授权，核对服务账户可按原权限访问。脚本中的旧 `restore-postgres18` 子命令会重建目标数据库并调用已移除的 API 迁移入口，当前部署使用上面的原生恢复命令。
+
+等 PostgreSQL 18 和 RabbitMQ 4 均已就绪，在应用迁移和业务写入前执行 `scripts/compose_infra_upgrade.sh verify "$BACKUP_DIR"`。它检查基础设施版本、公开 schema 的表数量、选定业务表的行数和配置修订。若现场还有其他关键数据，按升级前记录一并比对。
+
+核验通过后，按[数据库迁移手册](schema-baseline-bootstrap.md)选择与账本版本对应的流程，运行目标 migrator，启动应用，再用一条受控 Job 验证入队、消费、工具执行和投递。若核验失败，保持入口关闭并保留新卷与备份。在新环境尚未接收业务写入时，可停新服务，用记录的旧镜像、旧配置和旧卷恢复原项目，核对关键数据与队列后再开放入口。若新环境已经接收业务写入，先核对并处理两边的数据差异，再决定回退。
+
+### 应用服务升级
+
 保留原 `.env`、Master Key、数据库、模型、向量、进度卷和项目名。先核对备份和当前任务，
 安排维护窗口，再按当前版本构建/重建相关服务。使用原密钥目录运行 bootstrap 并带
 `--docker-acl` 补齐所需角色身份材料及读取权限；已有管理员沿用原初始化行为。
@@ -235,8 +260,9 @@ Rocky Linux 开启 SELinux 时另外核验目录和 socket 标签；不自动关
 | 重建与持久化 | 重建服务后数据库、知识和断点保留；不使用 `down -v` |
 
 本地合成合同测试、ARM 主机的 amd64 模拟容器均不能替代 Windows WSL2 或真实 x86 VM
-整套验收。目标环境未运行这些步骤时，应标为未验收。本次实际检查范围见
-[本地验证记录](docker-compatibility-validation.md)。
+整套验收。目标环境未运行这些步骤时，应标为未验收。现行验收以本页部署检查与
+[真实环境验收欠账](../acceptance-backlog.md) 为准；
+[本地兼容验证记录](docker-compatibility-validation.md) 仅为历史本地证据，不代替现行整套验收。
 
 ## 常见预检错误
 

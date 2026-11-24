@@ -42,7 +42,7 @@ Python Agent Runtime
 
 ```bash
 docker compose config --quiet
-docker compose up -d --build migrator tool-mcp python-agent-runtime agent-worker
+docker compose up -d --build migrator tool-mcp python-agent-runtime-a python-agent-runtime-b agent-worker
 docker compose ps
 ```
 

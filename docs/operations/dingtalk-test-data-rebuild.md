@@ -135,12 +135,7 @@ docker compose run --rm --no-deps api-server \
 ## 5. 失败恢复与重新接入
 
 事务内失败不会留下部分清理。若执行成功后需要恢复旧身份或 Secret，代码回滚无效，
-必须先停止平台服务，再从操作前快照恢复：
-
-```bash
-scripts/compose_infra_upgrade.sh restore-postgres18 /absolute/path/to/dingtalk-rebuild-backup
-scripts/compose_infra_upgrade.sh verify /absolute/path/to/dingtalk-rebuild-backup
-```
+必须先停止业务写入，保留当前数据库卷，准备独立的空 PostgreSQL 18 数据库。将 `BACKUP_DIR` 指向本次重建前的备份，按部署手册[恢复并核验逻辑备份](docker-deployment.md#恢复并核验逻辑备份)，核对受保护的用户、角色、Secret 修订与历史引用后再恢复服务。
 
 不恢复时，重新构建并启动服务：
 

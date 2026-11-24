@@ -36,7 +36,7 @@ ONES 本人身份绑定属于统一身份体系，独立于旧 API Platform。�
 
 ## 快速开始
 
-已有数据库升级前先阅读 [Schema Baseline 升级手册](docs/operations/schema-baseline-upgrade.md)。`migrator` 是唯一 schema 写入入口；失败时必须修复迁移，不要绕过 `service_completed_successfully`。
+新安装从[空库初始化](docs/operations/schema-baseline-bootstrap.md#自动启动顺序)开始。已有部署先核对[数据库账本](docs/operations/schema-baseline-bootstrap.md)，仍运行 PostgreSQL 16 或 RabbitMQ 3 的环境先按[基础设施主版本升级](docs/operations/docker-deployment.md#postgresql-16-与-rabbitmq-3-升级)迁移数据和排空队列。应用 schema 由 `migrator` 统一迁移。
 
 ```bash
 test -e .env || cp .env.example .env
@@ -68,13 +68,15 @@ docker compose logs migrator tool-mcp ones-mcp file-service file-worker agent-wo
 Compose 的核心执行服务为：
 
 - `api-server`、`admin-web`
-- `postgres`、`rabbitmq`
-- `agent-worker`（默认两个副本）
-- `python-agent-runtime-a`、`python-agent-runtime-b`（固定节点，每个节点一个执行槽）
-- `tool-mcp`、`ones-mcp`、`dingtalk-mcp`、`external-action-worker`（无可部署ONES Mock）
-- `file-service` 和替代旧附件消费者的 `file-worker`；无独立 `file-mcp`
-- `file-processing-worker`、`file-processing-worker-2` 和内部 `docling-serve`
-- 钉钉、Webhook 和独立投递 Worker
+- `postgres`、`rabbitmq`、`minio`
+- `dingtalk-runtime`
+- `job-dispatch-worker`、`channel-dispatch-worker`、`webhook-worker`、`delivery-dispatch-worker`
+- `agent-worker`（默认 replicas=2）
+- `python-agent-runtime-a`、`python-agent-runtime-b`（固定节点，各一个执行槽）
+- `tool-mcp`、`ones-mcp`、`dingtalk-mcp`、`external-action-worker`
+- `file-service`、`file-worker`；无独立 `file-mcp`
+- `file-processing-worker`、`file-processing-worker-2`、内部 `docling-serve`
+- 知识侧：`knowledge-sync`、`knowledge-mcp`、模型/Qdrant/运维控制器等（同属根 Compose）
 
 ## 配置与 Secret
 
@@ -123,7 +125,8 @@ docker compose config --quiet
 - [标准 MCP 工具服务](docs/architecture/tool-mcp.md)
 - [统一身份 ONES MCP](docs/architecture/identity-aware-ones-mcp.md)
 - [受治理任务文件工作区](docs/architecture/task-file-workspaces.md)
-- [数据库备份与恢复](docs/operations/compose-postgres18-rabbitmq4-upgrade.md)
+- [部署与验收](docs/operations/docker-deployment.md)
+- [真实环境验收欠账](docs/acceptance-backlog.md)
 
 ## 知识库部署与运维
 
@@ -141,10 +144,8 @@ docker compose config --quiet
 ./knowledge.sh stop
 ```
 
-构建、启停、同步和补采返回持久任务 ID，进度可在“工具资源 → 知识库”查看。构建成功后需执行 `up` 应用版本；`stop` 保留数据、模型、采集断点和主程序侧执行器。同步命令要求计划已配置并启用；首次启用立即调度全量，之后每小时扫描最近七个北京时间创建日，更早日期使用显式补采。
+构建、启停、同步和补采返回持久任务 ID，进度可在“工具资源 → 知识库”查看。构建成功后需执行 `up` 应用版本；`stop` 保留数据、模型、采集断点和主程序侧执行器。同步命令要求计划已配置并启用；首次启用立即调度全量，之后每四小时扫描最近七个北京时间创建日，更早日期使用显式补采。
 
 日常同步仅处理新增或变化文档，重启复用已完成步骤，不全库重新分块、编码或发布。旧索引接入增量模式仍需按[同步手册](docs/runbooks/knowledge-ones-hourly-sync.md)执行一次性转换；模型、分块或运行架构变化另行维护。
-
-平台与知识服务统一使用根 `docker-compose.yml`，默认包括知识模型、Qdrant、MCP、同步和运维执行器。首次部署和旧项目迁移见[知识库运维手册](knowledge/OPERATIONS.md)。
 
 知识内容检索 v4 改变了工具 Schema；升级镜像后还需按正式流程更新 Agent、应用发布并激活，以免新消息被 `mcp_tool_schema_drift` 拒绝。知识内容同步无需这项重发布。当前权限、快照与预算规则见[知识治理手册](docs/runbooks/knowledge-governance.md#实现与主规格差异)。

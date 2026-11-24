@@ -50,10 +50,10 @@ MySQL、SQL Server 和 Oracle 的 `query_database` 在取值层自动检测原�
 
 ## 部署步骤
 
-1. 先等待旧任务结束，执行迁移 `136_expand_sandbox_v2_capacity.sql`，同版本构建/升级 tool-mcp、python-agent-runtime、API/Agent Worker、file-service 和 admin-web，勿让旧 Runtime 承接新增文件结果合同。迁移只放宽快照配额 CHECK 并更新新行默认值，不改历史快照数值或 hash。
+1. 先等待旧任务结束，按当前活动迁移目录升级到目标 head，同版本构建/升级 tool-mcp、`python-agent-runtime-a`/`python-agent-runtime-b`、API/Agent Worker、file-service 和 admin-web，勿让旧 Runtime 承接新增文件结果合同。迁移 `136_expand_sandbox_v2_capacity.sql` 只放宽快照配额 CHECK 并更新新行默认值，不改历史快照数值或 hash；不得停在中间版本。
 2. 同步现有 `.env`：`AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES=536870912`、`AGENT_RUNTIME_SANDBOX_MAX_FILES=128`、`AGENT_RUNTIME_SANDBOX_MAX_WORK_OUTPUT_FILES=80`；tmpfs 至少按示例配置 `AGENT_RUNTIME_TMPFS_SIZE=1g`，并发需求另行规划。重建容器后核对 `/ready`。本次配额扩容本身不升级 sandbox-v2/Runtime/工具 schema；前面的工具结果合同变化仍需在 Web 重新发布受影响 Agent，再更新应用固定版本并发布，旧 Job Snapshot 不自动改写。
 3. 需要 30 天范围时设置 `MAX_LOKI_MINUTES=43200`，按运行配置提示重启/重建相关服务以加载配置；对应 Loki 资源亦须配置 43200 并验证发布。行数需要 10000 时同步发布资源 `max_lines=10000`。
 4. 新 Job 先查资源目录，再执行合法查询；确认返回临时路径而非正文，Read/Grep 能定位末尾数据，文件不可写且终态后消失。
 5. 分别验收 Redis 续页、数据库 100/10000 边界、Loki 60/43200 有效限制、10000 行触限及字节超限；Windows 环境另验 Sandbox 临时目录清理。
 
-本地合成与 Mock 通过不等同真实 Provider 或 Windows 已验收。真实部署验收在 OpenSpec 中保持单独未完成项。
+本地合成与 Mock 通过不等同真实 Provider 或 Windows 已验收。真实部署验收见 [真实环境验收欠账](../acceptance-backlog.md)。

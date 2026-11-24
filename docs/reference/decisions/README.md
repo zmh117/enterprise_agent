@@ -15,13 +15,12 @@ Service、Docling 和文本格式规则以 canonical specs、代码和自动化�
 
 ADR-0001—0024、0028—0030、0033—0038、0040—0041、0043—0048 所描述的 API
 Capability、Handler、API Connection、Resource Mapping、个人 API Token 或旧工具发布
-平台已经退役，并移动到
-[旧 API Platform 历史区](../../archive/legacy-api-platform/README.md)。
+平台已经退役。现行工作区不再保留 `docs/archive/legacy-api-platform/` 副本；追溯使用 Git 历史，不得把退役 ADR 当作现行设计。
 
 当前工具链为：
 
 ```text
-Worker -> Python Runtime -> tool-mcp -> Published Resource Revision
-                         -> ones-mcp -> current user encrypted credential
-                         -> File MCP -> File Service
+Worker -> Python Runtime a/b -> tool-mcp -> Published Resource Revision
+                            -> ones-mcp -> current user encrypted credential
+                            -> File MCP -> File Service
 ```

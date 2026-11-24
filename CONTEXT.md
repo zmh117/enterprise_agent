@@ -1,6 +1,6 @@
 # Enterprise Agent 当前上下文
 
-本文件只描述当前领域语言和系统边界。历史 API Platform 术语与决策位于 `docs/archive/legacy-api-platform/`，不得覆盖当前代码、主 OpenSpec 或活动变更。
+本文件只描述当前领域语言和系统边界。历史 API Platform 术语与决策已从现行 `docs/` 移除，追溯使用 Git 历史；不得覆盖当前代码、主 OpenSpec 或活动变更。
 
 ## 核心领域语言
 
