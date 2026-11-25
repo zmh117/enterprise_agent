@@ -77,7 +77,7 @@ npm run check
 
 ## OpenSpec 协作
 
-项目已安装并精确锁定 OpenSpec 2.0.0（开发依赖，需要 Node.js 22.12.0+）。`npm ci` 会一并安装。使用项目命令入口，避免调用机器上的全局旧版本：
+平台与插件共用[仓库根目录锁定的 OpenSpec](../package.json)。先在仓库根目录运行 `nvm use` 和 `npm ci`，然后在插件目录运行以下命令：
 
 ```sh
 npm run openspec -- --version
@@ -87,7 +87,7 @@ npm run openspec -- validate --all --strict
 
 中文与项目约定见 [OpenSpec 配置](openspec/config.yaml) 和 [AGENTS.md](AGENTS.md)。提案、规格、设计、任务与沟通使用简体中文；模板结构标题及规范语法标记保留英文，符合 [OpenSpec 多语言规则](https://github.com/Fission-AI/OpenSpec/blob/main/docs/multi-language.md)。
 
-已生成 6 个官方 Codex 工作流，位于 `.agents/skills/`。在 Codex 中选择对应技能，或按名称调用，例如：
+Codex 的 `$openspec` 入口和各工作流均位于[共享技能目录](../.agents/skills/)。也可以直接指定工作流：
 
 ```text
 $openspec-propose 补齐 BFCache 恢复场景的验收
@@ -95,7 +95,7 @@ $openspec-apply-change <变更名称>
 $openspec-archive-change <变更名称>
 ```
 
-另外提供 `openspec-explore`、`openspec-update-change` 和 `openspec-sync-specs`。如果当前会话未显示新增技能，重新打开项目会话后使用。初始化只建立配置与工作流，尚未创建业务变更或主规格；现有开发规格与验收记录仍是项目依据。
+另外提供 `openspec-explore`、`openspec-update-change` 和 `openspec-sync-specs`。如果当前会话未显示新增技能，重新打开项目会话后使用。
 
 本次安装保留了用户目录内旧版 OpenSpec 命令。将来运行官方 `init` / `update` 前应检查其全局旧命令清理行为，避免影响其他项目。
 

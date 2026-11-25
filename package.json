@@ -1,0 +1,13 @@
+{
+  "name": "enterprise-agent-tooling",
+  "private": true,
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "openspec": "node ./node_modules/@fission-ai/openspec/bin/openspec.js"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "2.2.0"
+  }
+}

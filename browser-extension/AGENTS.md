@@ -8,8 +8,8 @@
 
 # OpenSpec
 
-- 本项目在开发依赖中锁定 OpenSpec 2.0.0；执行 `npm run openspec -- <命令及参数>`，避免误用全局旧版本。工作流中示例的 `openspec ...` 也应使用此项目命令入口。
-- 项目上下文与中文规则见 `openspec/config.yaml`，官方工作流位于 `.agents/skills/openspec-*/SKILL.md`。
+- OpenSpec 由仓库根目录的 npm 锁文件统一管理。在根目录运行 `npm ci` 安装后，从 `browser-extension/` 执行 `npm run openspec -- <命令及参数>` 操作插件规范。
+- 插件上下文与中文规则见 `openspec/config.yaml`。OpenSpec、Chrome 扩展和 Web 开发技能共用[仓库根目录的技能目录](../.agents/skills/)。
 - 开发依据为 `MES_Browser_Evidence_Collector_Development_Spec.md`；能力现状与尚未完成的验证以相关代码和 `docs/acceptance.md` 为准。
 - 中文正文保留 OpenSpec 解析需要的结构标题与 `Requirement`、`Scenario`、`SHALL`、`MUST`、`GIVEN`、`WHEN`、`THEN`、`AND` 等标记。命令、路径、代码标识符不翻译。
 - 初始化不会把原开发规格自动转换成已验收的 OpenSpec 主规格；按实际变更维护 `openspec/changes/` 和 `openspec/specs/`。

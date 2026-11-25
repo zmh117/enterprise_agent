@@ -63,6 +63,18 @@ jobs:
           RUN_REDIS_PAGINATION_INTEGRATION: '1'
         run: .venv/bin/pytest -q backend/tests/test_redis_scan_pagination_integration.py
 
+  openspec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: make openspec-validate
+
   browser-extension:
     runs-on: ubuntu-latest
     defaults:

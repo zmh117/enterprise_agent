@@ -1117,7 +1117,15 @@ File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、
 - **AND** 不创建无人消费队列、重复文件版本、processing run或representation
 
 ### Requirement: Compose完整配置Service Principal签发与刷新链路
-默认Compose MUST 只维护一套平台Principal签名私钥和公开JWKS：现有平台API身份模块与Agent Worker只在需要签发对应Token时挂载同一私钥，File Service、ONES MCP及后续MCP只挂载同一公开`PRINCIPAL_JWKS`；不得声明或挂载第二套Service Principal私钥/JWKS。平台API还 MUST 挂载角色隔离的File Worker、File Processing Worker、Delivery Worker和Knowledge MCP bootstrap credential，并让每个Worker及Knowledge MCP只挂载自己的bootstrap credential。部署 MUST 使用按需签发和到期前刷新，不得要求宿主机预先提供短时Service JWT文件。密钥初始化 MUST 幂等生成统一Principal密钥/JWKS与全部bootstrap材料、拒绝不完整统一密钥组并默认保持私钥和bootstrap文件owner-only；Docker 文件型 Secret 可按本规格的固定消费者 UID 规则显式添加只读 ACL，容器内规范化副本仍须 owner-only。Docling API Key MUST 与平台Principal体系分离，只挂载到`file-processing-worker`和`docling-serve`。
+
+默认Compose MUST 只维护一套平台Principal签名私钥和公开JWKS：现有平台API身份模块与Agent Worker只在需要签发对应Token时挂载同一私钥，File Service、ONES MCP及后续MCP只挂载同一公开`PRINCIPAL_JWKS`；不得声明或挂载第二套Service Principal私钥/JWKS。平台API还 MUST 挂载角色隔离的File Worker、File Processing Worker、Delivery Worker和Knowledge MCP bootstrap credential，并让每个Worker及Knowledge MCP只挂载自己的bootstrap credential。部署 MUST 使用按需签发和到期前刷新，不得要求宿主机预先提供短时Service JWT文件。
+
+#### Scenario: 初始化签名材料并隔离 Docling 密钥
+
+- **WHEN** 部署初始化凭据并配置它们的消费者
+- **THEN** 密钥初始化 MUST 幂等生成统一Principal密钥/JWKS与全部bootstrap材料、拒绝不完整统一密钥组并默认保持私钥和bootstrap文件owner-only；Docker 文件型 Secret 可按本规格的固定消费者 UID 规则显式添加只读 ACL，容器内规范化副本仍须 owner-only。
+- **AND** Docling API Key MUST 与平台Principal体系分离，只挂载到`file-processing-worker`和`docling-serve`。
+
 #### Scenario: 新环境首次启动
 - **WHEN** 运维运行受控密钥初始化后启动默认Compose
 - **THEN** 统一Principal密钥/JWKS及File Worker、File Processing Worker、Delivery Worker、Knowledge MCP bootstrap bind source均存在且容器可创建
@@ -1165,7 +1173,13 @@ Python Runtime临时文件系统配置 MUST对每个Job实施64个常规文件�
 - **AND** migration完成前不删除对象
 
 ### Requirement: 文件工作区验收覆盖真实端到端链路
-Compose验收 MUST 使用合成TXT、LOG、Markdown、born-digital PDF、扫描PDF、DOCX、PPTX、XLSX、带文字图片和无文字图片及假凭据，证明钉钉或受控Channel入口、File Worker、File Service、PostgreSQL、MinIO、File Domain Outbox、processing RabbitMQ拓扑、File Processing Worker、Docling、Agent Worker、Python Runtime 当前 Runtime 协议（见 execution-delivery）、Job Sandbox、File MCP live对账、Runtime effective registry、Prompt contract、原件Delivery和文本结果形成新鲜链路。验收还 MUST 覆盖无附件文字Job、Principal/API Key拒绝、越权文件、MIME伪装、加密/损坏/超大小/超页数、PARTIAL、NO_TEXT、Markdown超限、Docling重启、结果取得后Worker崩溃、幂等重试、40个输入工作集边界、沙盒/representation staging清理、交付重试、工具契约失败关闭和Secret不泄漏；不得以容器healthy替代业务证据。
+
+Compose验收 MUST 使用合成TXT、LOG、Markdown、born-digital PDF、扫描PDF、DOCX、PPTX、XLSX、带文字图片和无文字图片及假凭据，证明钉钉或受控Channel入口、File Worker、File Service、PostgreSQL、MinIO、File Domain Outbox、processing RabbitMQ拓扑、File Processing Worker、Docling、Agent Worker、Python Runtime 当前 Runtime 协议（见 execution-delivery）、Job Sandbox、File MCP live对账、Runtime effective registry、Prompt contract、原件Delivery和文本结果形成新鲜链路。
+
+#### Scenario: 工作区端到端验收的异常与恢复
+
+- **WHEN** 执行文件工作区的 Compose 验收
+- **THEN** 验收还 MUST 覆盖无附件文字Job、Principal/API Key拒绝、越权文件、MIME伪装、加密/损坏/超大小/超页数、PARTIAL、NO_TEXT、Markdown超限、Docling重启、结果取得后Worker崩溃、幂等重试、40个输入工作集边界、沙盒/representation staging清理、交付重试、工具契约失败关闭和Secret不泄漏；不得以容器healthy替代业务证据。
 
 #### Scenario: PDF总结并交付原件
 - **WHEN** 合成用户上传合法PDF并要求总结后转发原件
@@ -1626,9 +1640,13 @@ Compose SHALL 部署固定dingtalk-mcp和external-action-worker，隔离Agent模
 - **THEN** 接口/权限边界拒绝，不把Stream内部通道变成凭据读取Tool。
 
 ### Requirement: 部署必须注入可比较的组件构建身份
-平台 SHALL 为Control Plane、Agent Worker、Python Runtime和File Service注入有界安全构建身份，至少包含固定组件名、源码`source_revision`、发布`build_id`和标准OS/architecture `platform`；部署系统能够准确取得实际镜像摘要时还 SHALL提供`image_digest`。`source_revision`与`build_id` MUST由构建流水线和发布清单产生且不可由Agent、Application、外部请求、模型输出或Job payload覆盖。服务不得挂载Docker socket、查询容器daemon或把可变tag伪装成digest来补全身份。
 
-必需身份缺失或格式无效时，相关服务readiness MUST失败。Control Plane SHALL在Job创建事实中关联自身身份，Worker SHALL在当前 Runtime 协议（见 execution-delivery） invocation事实中关联自身身份，Runtime SHALL在安全事件中声明自身身份，File Service SHALL在已认证MCP初始化元数据中声明自身身份；运行记录只展示这些安全字段，不展示registry凭据、环境变量或原始容器配置。
+平台 SHALL 为Control Plane、Agent Worker、Python Runtime和File Service注入有界安全构建身份，至少包含固定组件名、源码`source_revision`、发布`build_id`和标准OS/architecture `platform`；部署系统能够准确取得实际镜像摘要时还 SHALL提供`image_digest`。`source_revision`与`build_id` MUST由构建流水线和发布清单产生且不可由Agent、Application、外部请求、模型输出或Job payload覆盖。服务不得挂载Docker socket、查询容器daemon或把可变tag伪装成digest来补全身份。必需身份缺失或格式无效时，相关服务readiness MUST失败。
+
+#### Scenario: 在 Job 和调用事实中关联构建身份
+
+- **WHEN** 各组件记录或展示运行事实
+- **THEN** Control Plane SHALL在Job创建事实中关联自身身份，Worker SHALL在当前 Runtime 协议（见 execution-delivery） invocation事实中关联自身身份，Runtime SHALL在安全事件中声明自身身份，File Service SHALL在已认证MCP初始化元数据中声明自身身份；运行记录只展示这些安全字段，不展示registry凭据、环境变量或原始容器配置。
 
 #### Scenario: 同一发布的组件身份一致
 - **WHEN** 部署预检比较API、Agent Worker、Python Runtime和File Service
@@ -2337,11 +2355,23 @@ Inspector 套件 SHALL 包含非法参数、快照外工具、缺少执行上下
 - **THEN** 只操作固定知识服务且不递归启动或重建平台依赖，平台依赖不就绪时预检失败
 
 ### Requirement: WSL2 和 Linux 部署必须核验控制器路径与首次初始化
+
 部署 SHALL 支持 Windows 10/11 Docker Desktop 的 WSL2 Linux 容器操作方式及 Linux x86-64 虚拟机。知识控制器 MUST 使用固定容器路径只读挂载主部署目录与所需文件型 Secret，通过自身容器的项目标签、服务标签和只读挂载元数据确定 daemon 源路径；不得把宿主 Windows 盘符或 WSL 客户端别名直接作为嵌套 Compose 的挂载源。除下述受控源码目录初始化外，缺失宿主路径 MUST NOT 隐式创建为目录。控制器状态查询失败或路径不符时健康检查 MUST 失败，不能只凭进程心跳标为就绪。
 
-部署 SHALL 提供不输出凭据或解析配置的兼容预检、显式全新安装卷初始化和启动后验收入口。卷初始化 MUST 先检查全部目标；已有项目容器、平台数据卷或未经该初始化入口标记的既有知识卷存在时拒绝，不删除或覆盖数据。普通启动和预检不得自动补建缺失知识外部卷。密钥初始化 SHALL 幂等补齐 Master Key 及现有角色身份材料。
+#### Scenario: 首次安装及知识外部卷初始化
 
-Docker 文件型 Secret 初始化 MAY 显式对宿主源文件添加实际消费者固定 UID 的只读 POSIX ACL，目录 MUST 保持 owner-only，不得开放其他用户读取或放宽容器用户。继承 `python-deps` 的服务入口 SHALL 在应用启动前复制到运行用户所有、权限 `0400` 的私有 tmpfs 文件；普通非容器源文件继续保持 owner-only。不支持 ACL 或另有 UID 映射的环境 MUST 明确拒绝或另行验收，不把当前固定 UID 合同直接套用。
+- **WHEN** 操作人员执行部署预检、初始化或启动
+- **THEN** 部署 SHALL 提供不输出凭据或解析配置的兼容预检、显式全新安装卷初始化和启动后验收入口。
+- **AND** 卷初始化 MUST 先检查全部目标；已有项目容器、平台数据卷或未经该初始化入口标记的既有知识卷存在时拒绝，不删除或覆盖数据。
+- **AND** 普通启动和预检不得自动补建缺失知识外部卷。
+
+#### Scenario: 文件型 Secret 的初始化与运行时权限
+
+- **WHEN** 部署准备并挂载文件型 Secret
+- **THEN** 密钥初始化 SHALL 幂等补齐 Master Key 及现有角色身份材料。
+- **AND** Docker 文件型 Secret 初始化 MAY 显式对宿主源文件添加实际消费者固定 UID 的只读 POSIX ACL，目录 MUST 保持 owner-only，不得开放其他用户读取或放宽容器用户。
+- **AND** 继承 `python-deps` 的服务入口 SHALL 在应用启动前复制到运行用户所有、权限 `0400` 的私有 tmpfs 文件；普通非容器源文件继续保持 owner-only。
+- **AND** 不支持 ACL 或另有 UID 映射的环境 MUST 明确拒绝或另行验收，不把当前固定 UID 合同直接套用。
 
 #### Scenario: Docker Desktop 使用不同的客户端与 daemon 路径
 - **WHEN** 源码和 Secret 的 daemon 挂载源与控制器内可见路径不同
@@ -2518,7 +2548,14 @@ PG SHALL 为知识事实源，受控保存工具先停止本 Job 的新读取并
 - **THEN** 不启动业务预提取；已有缓存保留原版本，任何独立源码更新仍遵守读写互斥
 
 ### Requirement: SVN 必须支持三平台统一挂载与执行
-部署 SHALL 支持 Windows Docker Desktop/WSL2、macOS Docker Desktop、Linux Docker Engine 的 Linux 容器；SVN CLI 仅由执行器调用，不依赖宿主原生 SVN。同一个 Docker local 命名卷 SHALL 可写挂给 knowledge-sync、只读挂给 Runtime A/B，固定容器路径为 /var/lib/code-svn/checkout；CODE_SVN_CHECKOUT_VOLUME 可指定该卷实际名称，禁止 local driver_opts 将共享目录或网络盘包装成工作副本卷。控制器 SHALL 以 daemon Mounts.Name 和卷元数据核实并复用同一卷，不将卷 Mountpoint 转成 bind。SVN 状态/CA 等宿主路径仍经 Compose 长格式 bind 映射并核实 daemon Mounts.Source；不硬编码盘符、用户名、网络或路径别名，仅声明的源码与状态目录允许通过受控初始化自动创建；Secret 和其他宿主路径不得隐式误建。新流程不再依赖额外源码根挂载，凭据隔离沿用既有合同。
+
+部署 SHALL 支持 Windows Docker Desktop/WSL2、macOS Docker Desktop、Linux Docker Engine 的 Linux 容器；SVN CLI 仅由执行器调用，不依赖宿主原生 SVN。同一个 Docker local 命名卷 SHALL 可写挂给 knowledge-sync、只读挂给 Runtime A/B，固定容器路径为 /var/lib/code-svn/checkout；CODE_SVN_CHECKOUT_VOLUME 可指定该卷实际名称，禁止 local driver_opts 将共享目录或网络盘包装成工作副本卷。控制器 SHALL 以 daemon Mounts.Name 和卷元数据核实并复用同一卷，不将卷 Mountpoint 转成 bind。
+
+#### Scenario: 核验 SVN 状态和证书的挂载来源
+
+- **WHEN** 部署配置 SVN 工作副本之外的宿主路径
+- **THEN** SVN 状态/CA 等宿主路径仍经 Compose 长格式 bind 映射并核实 daemon Mounts.Source；不硬编码盘符、用户名、网络或路径别名，仅声明的源码与状态目录允许通过受控初始化自动创建；Secret 和其他宿主路径不得隐式误建。
+- **AND** 新流程不再依赖额外源码根挂载，凭据隔离沿用既有合同。
 
 #### Scenario: 更新后读取同一目录
 - **WHEN** knowledge-sync 在无读者时完成一次合法 update

@@ -66,9 +66,15 @@ File MCP Tool输入 MUST 使用封闭Schema，只允许必要的文件选择、�
 - **THEN** File Service 不覆盖 V4且返回版本冲突
 
 ### Requirement: 文件格式和配额必须有界
+
 直接文本 SHALL 固定为代码发布的 `text-v2`：TXT、Markdown 可读写，LOG 只读；应用、Job 或 Runtime 不得切换该规则。文本与 Agent 可读 Markdown 单文件最大 15 MiB，必须有效 UTF-8、无 NUL；上传可识别 UTF-8 BOM，Agent 输出必须无 BOM。只有应用发布启用 `docling-layout-ocr-v2` 才接收 PDF、DOCX、XLSX、PPTX、PNG、JPEG、WebP 原件，源文件最大 25 MiB，PDF 最多 300 页。MIME、扩展名与结构 MUST 一致；DOC/XLS/PPT、宏、`.markdown` 和未知格式不得宽松降级或猜测转码。
 
-工作区逻辑文件数使用租户当前有效配置，默认 200 个 ACTIVE 文件、硬上限 1000；计费容量默认 2 GiB、硬上限 10 GiB。File Service MUST 将实际用量与有效预留一并校验，新导入、提交与派生内容超限时不得发布可见版本、表示或错误当前指针。配额不来自 Application Publication，工作区保留周期与配额是不同事实。
+#### Scenario: 按租户用量和预留校验工作区配额
+
+- **WHEN** 文件服务接纳新的工作区内容
+- **THEN** 工作区逻辑文件数使用租户当前有效配置，默认 200 个 ACTIVE 文件、硬上限 1000；计费容量默认 2 GiB、硬上限 10 GiB。
+- **AND** File Service MUST 将实际用量与有效预留一并校验，新导入、提交与派生内容超限时不得发布可见版本、表示或错误当前指针。
+- **AND** 配额不来自 Application Publication，工作区保留周期与配额是不同事实。
 
 #### Scenario: 不支持编码
 - **WHEN** TXT、LOG、Markdown 为 GBK、UTF-16 或无效 UTF-8
@@ -248,9 +254,15 @@ File MCP Tool输入 MUST 使用封闭Schema，只允许必要的文件选择、�
 **清单、目录与精确读取**
 
 ### Requirement: Job 创建时冻结精确文件清单
-非空文字经准入后，File Service MUST 冻结 schema v5 Job File Manifest 与 hash，包含 Job/workspace、`workspace_catalog_revision_id` 以及本轮确定性绑定的精确 File/Version 工作集；不得复制全部工作区目录。需转换文档的可物化项 MUST 同时冻结 Markdown Representation ID、kind、format、size、SHA-256、创建时间与安全物化名。只自动物化本轮已绑定且能力就绪的直接文本或表示；时段发现保持元数据。其余版本通过冻结目录分页后精确选择。源/表示身份固定，授权在操作时重新校验。
 
-Manifest MUST 区分 source_received_at、version_created_at、representation_created_at 与 observed_at。source_received_at 来自原 message_attachment 创建时间并沿版本/表示保持不变，Agent 生成文件为 null。非空机器时间使用 UTC RFC 3339 并进入 canonical hash；不能生成、读取、投影或恢复 Manifest v1–v4。无文件 Job MUST 使用合法空文件上下文。
+非空文字经准入后，File Service MUST 冻结 schema v5 Job File Manifest 与 hash，包含 Job/workspace、`workspace_catalog_revision_id` 以及本轮确定性绑定的精确 File/Version 工作集；不得复制全部工作区目录。需转换文档的可物化项 MUST 同时冻结 Markdown Representation ID、kind、format、size、SHA-256、创建时间与安全物化名。只自动物化本轮已绑定且能力就绪的直接文本或表示；时段发现保持元数据。其余版本通过冻结目录分页后精确选择。源/表示身份固定，授权在操作时重新校验。无文件 Job MUST 使用合法空文件上下文。
+
+#### Scenario: 冻结 Manifest 时间来源和版本
+
+- **WHEN** 系统生成或读取 Job 的文件清单
+- **THEN** Manifest MUST 区分 source_received_at、version_created_at、representation_created_at 与 observed_at。
+- **AND** source_received_at 来自原 message_attachment 创建时间并沿版本/表示保持不变，Agent 生成文件为 null。
+- **AND** 非空机器时间使用 UTC RFC 3339 并进入 canonical hash；不能生成、读取、投影或恢复 Manifest v1–v4。
 
 #### Scenario: 新版本或新表示产生
 - **WHEN** Job 冻结 source V3、representation R1 后出现 V4 或 R2
@@ -286,9 +298,21 @@ Job File Manifest、File MCP 响应和 Runtime 文件上下文中的 `source_rec
 - **AND** 响应序列化不得在 hash 校验后改变时间 canonical 表达
 
 ### Requirement: 工作区文件目录支持有界一致分页发现
+
 File Service SHALL提供只读工作区目录发现能力，使用当前RUNNING Job的Principal、Publication、workspace和Manifest冻结的`workspace_catalog_revision_id`解析授权范围，并以游标分页返回默认20、最多50项安全元数据。查询 MUST只接受代码注册的名称、格式、来源接收时间和可读状态过滤，结果 MUST包含精确`file_id + version_id`、安全显示名、格式、大小、机器时间、可读状态、`observed_at`和冻结目录revision；MUST NOT包含正文、对象位置、Bucket、凭据或跨工作区数据。模型输入 MUST NOT声明workspace、tenant或revision身份。
 
-工作区目录 MUST具有不可变revision身份和时间化成员事实。ACTIVE成员、逻辑名或选中版本发生变化时 MUST在同一事务创建下一revision并保留仍被Job引用的旧revision查询能力；不得为每个Job复制整个目录。分页cursor MUST绑定workspace、过滤摘要、`workspace_catalog_revision_id`和最后排序键。同一Job在当前目录变化后 MUST仍按冻结revision无重复无漏项地继续分页；新成员或新版本只可由后续Job的新revision发现。现有`task_workspace_list_files` MUST继续只列当前Job初始Manifest/工作集语义，新目录发现 MUST使用独立Tool identifier和schema hash；当该Tool返回空`items`时，响应 MUST包含`job_initial_manifest_empty`机器原因、`job_initial_manifest`结果范围以及必须继续调用`task_workspace_search_files`的有界参数提示，且不得因此读取目录、增加Manifest条目或扩大授权。
+#### Scenario: 冻结目录在分页期间发生变化
+
+- **WHEN** 系统维护工作区目录修订并分页返回结果
+- **THEN** 工作区目录 MUST具有不可变revision身份和时间化成员事实。
+- **AND** ACTIVE成员、逻辑名或选中版本发生变化时 MUST在同一事务创建下一revision并保留仍被Job引用的旧revision查询能力；不得为每个Job复制整个目录。
+- **AND** 分页cursor MUST绑定workspace、过滤摘要、`workspace_catalog_revision_id`和最后排序键。
+- **AND** 同一Job在当前目录变化后 MUST仍按冻结revision无重复无漏项地继续分页；新成员或新版本只可由后续Job的新revision发现。
+
+#### Scenario: 初始清单为空时继续发现
+
+- **WHEN** Agent 使用初始清单和目录发现工具
+- **THEN** 现有`task_workspace_list_files` MUST继续只列当前Job初始Manifest/工作集语义，新目录发现 MUST使用独立Tool identifier和schema hash；当该Tool返回空`items`时，响应 MUST包含`job_initial_manifest_empty`机器原因、`job_initial_manifest`结果范围以及必须继续调用`task_workspace_search_files`的有界参数提示，且不得因此读取目录、增加Manifest条目或扩大授权。
 
 #### Scenario: 分页发现1000个ACTIVE文件
 - **WHEN** 授权Job以limit 50遍历一个含1000个ACTIVE文件的工作区且目录revision保持不变
@@ -310,9 +334,14 @@ File Service SHALL提供只读工作区目录发现能力，使用当前RUNNING 
 - **AND** File Service不得静默替换为V4
 
 ### Requirement: 每个Job输入物化工作集最多40项且选择事实只追加
+
 每个Job自动物化与运行中按需物化的输入按`file_id + version_id`去重后 MUST不超过40项。运行中追加选择 MUST保存不可变Job工作集事实，包含Job/Snapshot、workspace、`workspace_catalog_revision_id`、精确File/Version、适用时的精确Representation身份与hash、选择来源、序号和时间；重复选择或物化同一版本 MUST幂等返回同一事实与既有Sandbox输入，不得重复计数、改写初始Manifest、Manifest hash或Runtime request digest。
 
-只有Job冻结兼容工作区发现Tool时，`file_prepare_materialization`才 MAY把Manifest外但属于冻结目录revision的精确版本原子加入输入工作集。加入前 MUST实时复核Job状态、当前主体、tenant、Session、Publication、Tool schema hash、workspace/revision归属、精确Version内容可用性、Representation血缘、40项上限以及Runtime Sandbox预留结果；追加选择只授予本次受治理读取所需动作，不得自动授予EDIT、COMMIT或DELIVER。
+#### Scenario: 选择初始 Manifest 之外的精确版本
+
+- **WHEN** 运行中请求追加输入工作集
+- **THEN** 只有Job冻结兼容工作区发现Tool时，`file_prepare_materialization`才 MAY把Manifest外但属于冻结目录revision的精确版本原子加入输入工作集。
+- **AND** 加入前 MUST实时复核Job状态、当前主体、tenant、Session、Publication、Tool schema hash、workspace/revision归属、精确Version内容可用性、Representation血缘、40项上限以及Runtime Sandbox预留结果；追加选择只授予本次受治理读取所需动作，不得自动授予EDIT、COMMIT或DELIVER。
 
 #### Scenario: Agent选择目录搜索结果
 - **WHEN** 兼容Job从目录结果取得当前精确File/Version并请求准备物化，当前工作集只有7项
@@ -354,11 +383,22 @@ File Service MUST 将 PDF、DOCX、PPTX、XLSX、PNG、JPEG、WebP 保存为原�
 - **THEN** File Service 在返回字节前拒绝，同源或同 run 不扩大动作
 
 ### Requirement: 本 Job 可只读召回未挂接当前工作区的保留版本
+
 当本轮确定性绑定命中「不在当前 `ACTIVE` 工作区 `task_workspace_file` 上、但仍在聊天附件保留期内」的精确版本时，File Service MUST 允许将该版本冻结进 **当前 Agent Job File Manifest**。该召回初始仅冻结 METADATA，不自动物化；后续精确选择仍可受控读取。该召回 MUST NOT 把已 `EXPIRED` / `CLEANED` 的工作区改回 `ACTIVE`，MUST NOT 把历史文件重新 `link` 为当前工作区活动文件，也 MUST NOT 把 360 天附件库暴露为模型可浏览的目录。
 
-历史召回项的允许动作 MUST 排除 `EDIT` 和 `COMMIT`。用户若要求在召回内容基础上保存或修改，后续提交 MUST 写入当前 `ACTIVE` 工作区的新文件或新版本，MUST NOT 把新字节写回已清理工作区中的原 File ID。物化时 MUST 重新检查当前用户、租户、Business Application 访问以及私聊所有者或同群会话边界。正文已按保留策略清理、File/Version ID 仍在的条目 MAY 作为元数据进入清单；读取正文 MUST 失败关闭为内容不可用，MUST NOT 从旧钉盘引用自动重新导入。
+#### Scenario: 读取或保存召回文件
 
-若时段召回命中且当前 Session 没有 `ACTIVE` 工作区，系统 MUST 创建本周期的空活动工作区，仅作为该 Job 的 File MCP 容器，仍 MUST NOT 把历史文件 `link` 进去。若时段召回未命中，系统 MUST NOT 仅为空窗说明创建工作区。
+- **WHEN** Job 使用本轮召回的历史版本
+- **THEN** 历史召回项的允许动作 MUST 排除 `EDIT` 和 `COMMIT`。
+- **AND** 用户若要求在召回内容基础上保存或修改，后续提交 MUST 写入当前 `ACTIVE` 工作区的新文件或新版本，MUST NOT 把新字节写回已清理工作区中的原 File ID。
+- **AND** 物化时 MUST 重新检查当前用户、租户、Business Application 访问以及私聊所有者或同群会话边界。
+- **AND** 正文已按保留策略清理、File/Version ID 仍在的条目 MAY 作为元数据进入清单；读取正文 MUST 失败关闭为内容不可用，MUST NOT 从旧钉盘引用自动重新导入。
+
+#### Scenario: 时段召回时没有活动工作区
+
+- **WHEN** 系统根据召回结果确定是否需要活动工作区
+- **THEN** 若时段召回命中且当前 Session 没有 `ACTIVE` 工作区，系统 MUST 创建本周期的空活动工作区，仅作为该 Job 的 File MCP 容器，仍 MUST NOT 把历史文件 `link` 进去。
+- **AND** 若时段召回未命中，系统 MUST NOT 仅为空窗说明创建工作区。
 
 #### Scenario: 工作区已到期仍可把保留附件写入本 Job 清单
 - **WHEN** 上一自然周的任务工作区已清理，`task_workspace_file` 为 `REMOVED`，用户本周询问「上周的文件」，且附件仍在 360 天保留期内
@@ -399,7 +439,15 @@ File Service MUST 将 PDF、DOCX、PPTX、XLSX、PNG、JPEG、WebP 保存为原�
 - **THEN** 历史候选查询不返回其绑定版本
 
 ### Requirement: File MCP对未就绪或失败表示失败关闭
-File Service 的 `file_prepare_materialization` MUST 在读取对象或返回传输控制信息之前确认目标精确版本具有可物化的 Agent 可读内容。当所需 Markdown 表示仍为处理中时，工具 MUST 返回稳定错误码 `file_readable_content_not_ready`；当处理已失败、无文字或内容不可用时，MUST 返回 `file_processing_failed` 或与现有安全拒绝一致的稳定码。错误结果 MUST 只包含错误码、安全文件名和有界状态短语，MUST NOT 包含正文片段、对象键、Docling task ID、重试次数、内部队列名或原始异常。`file_get_metadata` 和 `task_workspace_list_files` MAY 返回有界可读性状态（如 `PENDING`、`AVAILABLE`、`FAILED`），以便 Agent 发现文件存在，但 MUST NOT 把处理中文档描述为可读取正文。`file_deliver_version` 在原件已保存且具备 `DELIVER` 时 MUST NOT 因 Markdown 未就绪而拒绝。系统提示 MUST 规定：收到上述未就绪或失败码时不得推测文件内容、不得根据文件名编造正文，并告知用户可读内容尚未生成或生成失败。
+
+File Service 的 `file_prepare_materialization` MUST 在读取对象或返回传输控制信息之前确认目标精确版本具有可物化的 Agent 可读内容。当所需 Markdown 表示仍为处理中时，工具 MUST 返回稳定错误码 `file_readable_content_not_ready`；当处理已失败、无文字或内容不可用时，MUST 返回 `file_processing_failed` 或与现有安全拒绝一致的稳定码。错误结果 MUST 只包含错误码、安全文件名和有界状态短语，MUST NOT 包含正文片段、对象键、Docling task ID、重试次数、内部队列名或原始异常。
+
+#### Scenario: 表示未就绪时的发现、交付与提示
+
+- **WHEN** Agent 发现文件、交付原件或解释不可读状态
+- **THEN** `file_get_metadata` 和 `task_workspace_list_files` MAY 返回有界可读性状态（如 `PENDING`、`AVAILABLE`、`FAILED`），以便 Agent 发现文件存在，但 MUST NOT 把处理中文档描述为可读取正文。
+- **AND** `file_deliver_version` 在原件已保存且具备 `DELIVER` 时 MUST NOT 因 Markdown 未就绪而拒绝。
+- **AND** 系统提示 MUST 规定：收到上述未就绪或失败码时不得推测文件内容、不得根据文件名编造正文，并告知用户可读内容尚未生成或生成失败。
 
 #### Scenario: 按需物化处理中的文档
 - **WHEN** RUNNING Job 对可读性仍为 `PENDING` 的文档版本调用 `file_prepare_materialization`
@@ -422,11 +470,16 @@ File Service 的 `file_prepare_materialization` MUST 在读取对象或返回传
 - **AND** 不因 Markdown 表示仍为 `PENDING` 而拒绝
 
 ### Requirement: File MCP 对内容已清理的历史召回项失败关闭
-`task_workspace_list_files` MUST 只列出当前 Agent Job File Manifest 快照中的条目，其中可以包含本轮时段召回、未挂接当前活动工作区的保留版本。列表和 `file_get_metadata` MUST 返回有界元数据（安全文件名、File/Version ID、`source_received_at`、版本状态），MUST NOT 返回对象键、凭据或正文。系统 MUST NOT 把 File MCP 列表扩大为当前工作区全部历史文件或 Session 内 360 天附件库；调试用全量目录不在本能力范围。
 
-当目标精确版本或文件状态为 `CONTENT_UNAVAILABLE` 时，`file_prepare_materialization` MUST 在读取对象或返回传输控制信息之前拒绝，稳定错误码 MUST 为既有 `file_content_unavailable`（或与其安全语义一致、文案为「文件内容已不可用，请重新发送文件」的稳定码）。该拒绝 MUST NOT 使用 `file_manifest_item_denied` 冒充「不在清单中」。错误结果 MUST 只包含错误码、安全文件名和有界状态短语。系统提示 MUST 规定：收到该错误码时不得推测或编造正文，不得把「内容已清理」说成「用户没发过这份文件」。
+`task_workspace_list_files` MUST 只列出当前 Agent Job File Manifest 快照中的条目，其中可以包含本轮时段召回、未挂接当前活动工作区的保留版本。列表和 `file_get_metadata` MUST 返回有界元数据（安全文件名、File/Version ID、`source_received_at`、版本状态），MUST NOT 返回对象键、凭据或正文。系统 MUST NOT 把 File MCP 列表扩大为当前工作区全部历史文件或 Session 内 360 天附件库；调试用全量目录不在本能力范围。对仅因时段召回进入清单的条目，`file_create_commit_intent` MUST 拒绝；`file_deliver_version` 在原件仍可用且清单授予 `DELIVER` 时 MUST 仍可排队交付。
 
-对仅因时段召回进入清单的条目，`file_create_commit_intent` MUST 拒绝；`file_deliver_version` 在原件仍可用且清单授予 `DELIVER` 时 MUST 仍可排队交付。
+#### Scenario: 召回内容已清理时拒绝读取
+
+- **WHEN** Agent 请求物化已清理的精确版本
+- **THEN** 当目标精确版本或文件状态为 `CONTENT_UNAVAILABLE` 时，`file_prepare_materialization` MUST 在读取对象或返回传输控制信息之前拒绝，稳定错误码 MUST 为既有 `file_content_unavailable`（或与其安全语义一致、文案为「文件内容已不可用，请重新发送文件」的稳定码）。
+- **AND** 该拒绝 MUST NOT 使用 `file_manifest_item_denied` 冒充「不在清单中」。
+- **AND** 错误结果 MUST 只包含错误码、安全文件名和有界状态短语。
+- **AND** 系统提示 MUST 规定：收到该错误码时不得推测或编造正文，不得把「内容已清理」说成「用户没发过这份文件」。
 
 #### Scenario: 列表可见已清理正文的历史项
 - **WHEN** 本 Job 快照包含一份 `CONTENT_UNAVAILABLE` 的时段召回版本
@@ -451,11 +504,28 @@ File Service 的 `file_prepare_materialization` MUST 在读取对象或返回传
 **沙盒、流式传输与提交**
 
 ### Requirement: 每个 Agent Job 使用隔离临时沙盒
-Runtime MUST为每个Agent Job创建独立Job Sandbox，并只把当前Job已授权工作集、ONES与资源查询结果和代码派生证据按各自规则写入该目录。Sandbox MUST固定总文件上限128和总容量512MiB，并分别限制`inputs`最多40个文件、`work/outputs`合计最多80个文件、`tmp`及内部安全余量最多8个文件；目录、marker和不可见控制元数据不得被模型用来规避普通文件计数。PDF、Office、图片原始二进制、Docling JSON和OCR Layout JSON MUST NOT进入Agent Sandbox。
 
-模型提交的路径 MUST 为安全相对路径；若 bundled CLI 在权限回调前解析为绝对路径，Runtime 仅可将词法上精确属于本次随机 Sandbox 根、规范化和符号链接检查均通过的路径还原为相对路径。沙盒外绝对路径、相邻前缀和模型可见绝对路径能力仍须拒绝。
+Runtime MUST为每个Agent Job创建独立Job Sandbox，并只把当前Job已授权工作集、ONES与资源查询结果和代码派生证据按各自规则写入该目录。Sandbox MUST固定总文件上限128和总容量512MiB，并分别限制`inputs`最多40个文件、`work/outputs`合计最多80个文件、`tmp`及内部安全余量最多8个文件；目录、marker和不可见控制元数据不得被模型用来规避普通文件计数。PDF、Office、图片原始二进制、Docling JSON和OCR Layout JSON MUST NOT进入Agent Sandbox。Job成功、失败、取消或超时后 MUST清理沙盒，Runtime异常退出后 MUST由恢复扫描清理无RUNNING Job归属的残留目录。
 
-自动物化、File MCP按需物化、Runtime Write/Edit、日志证据扫描生成的临时`work/`证据包和内部临时文件 MUST共享同一Sandbox预算与原子预留器。Runtime在写入第一个自动物化字节前 MUST对整批输入重新预留实际文件数与Manifest冻结大小；按需物化、写入和日志证据扫描 MUST在创建目标文件前预留对应分区名额和剩余容量。失败或完整性校验不通过 MUST删除不完整文件并释放预留。重复物化同一`file_id + version_id` MUST复用已有输入和handle，不重复占用文件数或字节。Claude Code Agent只可在该沙盒内使用`Read`、`Grep`、`Glob`、`Write`和`Edit`，以及在当前Job冻结只读物化能力时使用Runtime派生的`scan_log_evidence`；写/编辑动作仍受代码固定`text-v2`格式矩阵限制。Bash、Web、NotebookEdit、沙盒外路径、符号链接逃逸和其它开放执行能力 MUST保持不可用。Job成功、失败、取消或超时后 MUST清理沙盒，Runtime异常退出后 MUST由恢复扫描清理无RUNNING Job归属的残留目录。
+#### Scenario: 还原 SDK 路径并检查沙盒边界
+
+- **WHEN** Runtime 接受模型路径或 SDK 权限回调
+- **THEN** 模型提交的路径 MUST 为安全相对路径；若 bundled CLI 在权限回调前解析为绝对路径，Runtime 仅可将词法上精确属于本次随机 Sandbox 根、规范化和符号链接检查均通过的路径还原为相对路径。
+- **AND** 沙盒外绝对路径、相邻前缀和模型可见绝对路径能力仍须拒绝。
+
+#### Scenario: 沙盒文件的预留、回收与复用
+
+- **WHEN** Runtime 准备创建或再次物化沙盒文件
+- **THEN** 自动物化、File MCP按需物化、Runtime Write/Edit、日志证据扫描生成的临时`work/`证据包和内部临时文件 MUST共享同一Sandbox预算与原子预留器。
+- **AND** Runtime在写入第一个自动物化字节前 MUST对整批输入重新预留实际文件数与Manifest冻结大小；按需物化、写入和日志证据扫描 MUST在创建目标文件前预留对应分区名额和剩余容量。
+- **AND** 失败或完整性校验不通过 MUST删除不完整文件并释放预留。
+- **AND** 重复物化同一`file_id + version_id` MUST复用已有输入和handle，不重复占用文件数或字节。
+
+#### Scenario: 限制沙盒内的工具和动作
+
+- **WHEN** Claude Code Agent 访问 Job 沙盒
+- **THEN** Claude Code Agent只可在该沙盒内使用`Read`、`Grep`、`Glob`、`Write`和`Edit`，以及在当前Job冻结只读物化能力时使用Runtime派生的`scan_log_evidence`；写/编辑动作仍受代码固定`text-v2`格式矩阵限制。
+- **AND** Bash、Web、NotebookEdit、沙盒外路径、符号链接逃逸和其它开放执行能力 MUST保持不可用。
 
 #### Scenario: Agent读取PDF派生Markdown
 - **WHEN** Job获得受控PDF source Version及其Markdown representation
@@ -516,13 +586,29 @@ Runtime MUST为每个Agent Job创建独立Job Sandbox，并只把当前Job已授
 - **AND** 历史快照的数值、版本及 hash 保持不变；升级前排空旧 Job，启动 env 必须匹配当前代码配额
 
 ### Requirement: Runtime 通过受控文件桥完成物化和提交
+
 Runtime MUST通过File Service受控流式接口下载Job初始Manifest或追加工作集中的精确文本File Version或精确Markdown Representation，并上传Agent显式选中的受支持沙盒文本文件。PDF、Office、图片原始二进制和Docling JSON不得进入Agent Sandbox。File MCP只创建物化或提交意图并返回不透明标识，流式传输不得把完整文件字节直接嵌入初始模型上下文、MCP传输控制JSON或普通Tool审计；Agent通过授权Read/Grep实际读取并进入SDK消息的片段由 execution-delivery 的完整审计专用链处理。Runtime不得获得MinIO凭据、Bucket、对象键或可供模型使用的上传URL。
 
-Python Runtime MUST使用代码注册的进程内File MCP bridge代理Job冻结的部署固定File Service工具，并在远端ToolResult交回模型前处理隐藏传输控制信息。bridge MUST使用当前Job File Principal JWT和固定内部流式路径；文档传输控制信息还 MUST绑定精确representation ID、source Version、size和SHA-256。bridge不得接受模型提供的URL、Header、Token、绝对路径、对象位置或冻结目录revision外的representation；SDK消息返回后再处理的旁路不满足本要求。
+#### Scenario: 文件桥代理工具并验证隐藏传输信息
 
-Agent Worker MUST验证Manifest v5 hash后，将schema v5文件上下文原样传给当前受支持 Runtime 协议，MUST NOT投影、生成或读取Manifest v1-v4。对所有`auto_materialize=true`项，Control Plane MUST在创建Job和outbox前按不同File/Version数量及待进入Sandbox的实际字节执行完整预检；Runtime MUST在首次模型请求前先为全部不同File/Version取得File Service基于冻结事实签发的隐藏传输控制及精确预期大小，在任何下载发生前整批预留，再主动物化全部精确文本版本或Markdown表示。任何prepare、整批预留或下载失败均使Job失败关闭且不得形成部分可见输入。其余文件只能由Agent先查询Manifest冻结的目录revision，再以精确File/Version请求并追加工作集；File Service从同一冻结事实解析可用文本版本或Markdown representation。
+- **WHEN** Python Runtime 通过 File MCP 处理传输
+- **THEN** Python Runtime MUST使用代码注册的进程内File MCP bridge代理Job冻结的部署固定File Service工具，并在远端ToolResult交回模型前处理隐藏传输控制信息。
+- **AND** bridge MUST使用当前Job File Principal JWT和固定内部流式路径；文档传输控制信息还 MUST绑定精确representation ID、source Version、size和SHA-256。
+- **AND** bridge不得接受模型提供的URL、Header、Token、绝对路径、对象位置或冻结目录revision外的representation；SDK消息返回后再处理的旁路不满足本要求。
 
-自动物化、File MCP按需物化、Write/Edit和内部临时文件 MUST全部通过同一个Job Sandbox预算与预留服务。自动物化bridge MUST先准备完整批次、再原子预留完整批次，只有整批预留成功后才可开始首个下载；File MCP bridge MUST在创建目标文件或下载首字节前预留`inputs`槽位与容量，并在失败、取消或完整性不匹配时清理部分文件并释放预留；不得因File Service已授权transfer而绕过40项输入、128文件分区或512MiB总容量。
+#### Scenario: 首次模型请求前整批准备输入
+
+- **WHEN** Worker 和 Runtime 接收 Job 文件上下文
+- **THEN** Agent Worker MUST验证Manifest v5 hash后，将schema v5文件上下文原样传给当前受支持 Runtime 协议，MUST NOT投影、生成或读取Manifest v1-v4。
+- **AND** 对所有`auto_materialize=true`项，Control Plane MUST在创建Job和outbox前按不同File/Version数量及待进入Sandbox的实际字节执行完整预检；Runtime MUST在首次模型请求前先为全部不同File/Version取得File Service基于冻结事实签发的隐藏传输控制及精确预期大小，在任何下载发生前整批预留，再主动物化全部精确文本版本或Markdown表示。
+- **AND** 任何prepare、整批预留或下载失败均使Job失败关闭且不得形成部分可见输入。
+
+#### Scenario: 自动与按需物化共用预留服务
+
+- **WHEN** Runtime 分配输入槽位和沙盒容量
+- **THEN** 其余文件只能由Agent先查询Manifest冻结的目录revision，再以精确File/Version请求并追加工作集；File Service从同一冻结事实解析可用文本版本或Markdown representation。
+- **AND** 自动物化、File MCP按需物化、Write/Edit和内部临时文件 MUST全部通过同一个Job Sandbox预算与预留服务。
+- **AND** 自动物化bridge MUST先准备完整批次、再原子预留完整批次，只有整批预留成功后才可开始首个下载；File MCP bridge MUST在创建目标文件或下载首字节前预留`inputs`槽位与容量，并在失败、取消或完整性不匹配时清理部分文件并释放预留；不得因File Service已授权transfer而绕过40项输入、128文件分区或512MiB总容量。
 
 #### Scenario: 当前消息文档在模型执行前已进入沙盒
 - **WHEN** Job File Manifest包含一个合法`auto_materialize=true`的当前消息文档和Markdown representation
@@ -718,9 +804,15 @@ Runtime SHALL 对已冻结授权的 query_database、query_redis_get、query_red
 **日志证据与生命周期**
 
 ### Requirement: Runtime 对已物化 LOG 提供单次有界证据扫描
-Runtime SHALL提供代码发布且schema固定的`scan_log_evidence`本地工具，在一次调用中逐文件顺序扫描当前Job已经物化的1至40个唯一`inputs/*.log`。当前 scanner 版本为 log-evidence-v2。工具 MUST只接受安全POSIX相对路径；字面词原始数组最多32项、每项128字符、合计4096 UTF-8字节；上下文行数0–20（默认3），证据数1–500（默认200）。MUST拒绝File/Version ID、对象键、URL、输出路径、解析Profile、时间格式、字段映射、正则、代码、Shell或其它可执行表达式。每个输入 MUST重新验证为当前Sandbox已提交的普通只读LOG且不是符号链接；工具不得读取沙盒外路径、调用网络、连接MinIO或扩大当前Job文件权限。
 
-扫描器 MUST以有界内存遍历每个输入的全部字节，计算逐文件和总体的实际大小、已扫描字节、逻辑行数和内容SHA-256。候选证据 SHALL仅来自代码固定且版本化的通用故障/级别标志、调用方提供的字面关键词以及保守多行上下文；任何时间、级别、用户、操作或业务语义无法可靠确定时 MUST标记为未知或省略，不得猜测日志格式。扫描器 MUST把精确扫描事实与启发式证据选择分开报告。
+Runtime SHALL提供代码发布且schema固定的`scan_log_evidence`本地工具，在一次调用中逐文件顺序扫描当前Job已经物化的1至40个唯一`inputs/*.log`。当前 scanner 版本为 log-evidence-v2。扫描器 MUST以有界内存遍历每个输入的全部字节，计算逐文件和总体的实际大小、已扫描字节、逻辑行数和内容SHA-256。候选证据 SHALL仅来自代码固定且版本化的通用故障/级别标志、调用方提供的字面关键词以及保守多行上下文；任何时间、级别、用户、操作或业务语义无法可靠确定时 MUST标记为未知或省略，不得猜测日志格式。扫描器 MUST把精确扫描事实与启发式证据选择分开报告。
+
+#### Scenario: 扫描参数与输入文件的校验
+
+- **WHEN** Runtime 接收一次日志扫描调用
+- **THEN** 工具 MUST只接受安全POSIX相对路径；字面词原始数组最多32项、每项128字符、合计4096 UTF-8字节；上下文行数0–20（默认3），证据数1–500（默认200）。
+- **AND** MUST拒绝File/Version ID、对象键、URL、输出路径、解析Profile、时间格式、字段映射、正则、代码、Shell或其它可执行表达式。
+- **AND** 每个输入 MUST重新验证为当前Sandbox已提交的普通只读LOG且不是符号链接；工具不得读取沙盒外路径、调用网络、连接MinIO或扩大当前Job文件权限。
 
 #### Scenario: 扫描多个异构LOG
 - **WHEN** 当前Job已经物化20个格式不同且合计不超过Sandbox剩余预算的有效UTF-8 LOG，并在一次调用中选择这些路径
@@ -762,9 +854,14 @@ Runtime SHALL提供代码发布且schema固定的`scan_log_evidence`本地工具
 - **THEN** 工具的安全错误提示仅包含固定规则及示例，不回显这些内容
 
 ### Requirement: 日志证据包有界、可定位且不会伪装完整语义审查
+
 成功扫描 SHALL在当前Job的`work/`分区生成一个确定命名的UTF-8 Markdown证据包，文件名由scanner版本、已物化输入身份/内容hash和规范化参数的摘要产生，文件最大4MiB。证据包 MUST记录scanner版本、输入身份安全摘要、逐文件和总体覆盖、候选/保留/省略计数、限制标志；每条保留证据 MUST包含输入相对路径、起止行、起止字节、精确片段hash、命中类型和当前Job授权下的原文片段。原文 MUST使用确定性转义或无法被原文闭合的代码块封装并标为不可信数据，日志中的指令、Tool名、Markdown或HTML不得改变Runtime安全规则或触发Tool调用。证据包不得改变原LOG、成为其新File Version或自动进入File Commit/Delivery。
 
-达到条目或4MiB证据上限时，扫描器 MUST继续扫描所有选中输入到EOF，并设置`evidence_limit_reached=true`与省略候选计数；不得把有界选择描述为全部日志已经被语义理解。Tool JSON响应 MUST只返回证据包相对路径、大小、SHA-256、覆盖计数、候选/保留/省略计数和限制标志，不得包含证据正文。
+#### Scenario: 证据达到上限时的覆盖和响应
+
+- **WHEN** 扫描器完成输入遍历并返回结果
+- **THEN** 达到条目或4MiB证据上限时，扫描器 MUST继续扫描所有选中输入到EOF，并设置`evidence_limit_reached=true`与省略候选计数；不得把有界选择描述为全部日志已经被语义理解。
+- **AND** Tool JSON响应 MUST只返回证据包相对路径、大小、SHA-256、覆盖计数、候选/保留/省略计数和限制标志，不得包含证据正文。
 
 #### Scenario: 证据候选超过包上限
 - **WHEN** 全量扫描发现的候选证据无法全部放入条目或4MiB上限

@@ -184,7 +184,15 @@
 - **AND** 管理员必须从相应步骤重新检测
 
 ### Requirement: 系统必须从固定契约的DeepSeek服务发现模型
-系统 SHALL 只接受满足部署 allowlist 的 DeepSeek 官方 HTTPS Anthropic Base URL 或内部 Anthropic-compatible 网关。官方地址 MUST 通过移除末尾 `/anthropic`、追加 `/models` 确定性派生模型发现 URL；内部网关 Base path MUST 精确为 `/api`，模型发现 URL MUST 固定为 `/api/v1/models`，且原始 Base URL MUST 原样交给 Claude Agent SDK，使消息请求固定落在 `/api/v1/messages`。系统 MUST 拒绝 userinfo、query、fragment、未批准 host、非法或不兼容 path 和 redirect；唯一例外是 Base URL 无凭据 `HEAD` 预检返回 `301` 或 `308`，且 `Location` 解析后与原地址保持相同 scheme、host 和有效 port，不含 userinfo、query 或 fragment，唯一路径差异为增加末尾 `/`。系统对该例外 MUST 只判定为可接受规范化，不得跟随跳转、改写已保存 Base URL 或把 Credential 发送到 `Location`。`302`、`307`、跨 scheme/host/port、其它 path 变化及缺失或歧义 `Location` 仍 MUST 拒绝。官方目标还 MUST 拒绝非 443 端口以及解析到回环、链路本地、私网或保留 IP 的地址，内部网关只允许部署白名单中的 HTTP 或 HTTPS 主机。
+
+系统 SHALL 只接受满足部署 allowlist 的 DeepSeek 官方 HTTPS Anthropic Base URL 或内部 Anthropic-compatible 网关。官方地址 MUST 通过移除末尾 `/anthropic`、追加 `/models` 确定性派生模型发现 URL；内部网关 Base path MUST 精确为 `/api`，模型发现 URL MUST 固定为 `/api/v1/models`，且原始 Base URL MUST 原样交给 Claude Agent SDK，使消息请求固定落在 `/api/v1/messages`。官方目标还 MUST 拒绝非 443 端口以及解析到回环、链路本地、私网或保留 IP 的地址，内部网关只允许部署白名单中的 HTTP 或 HTTPS 主机。
+
+#### Scenario: 模型发现地址的重定向校验
+
+- **WHEN** 系统校验配置的 Base URL 及其预检响应
+- **THEN** 系统 MUST 拒绝 userinfo、query、fragment、未批准 host、非法或不兼容 path 和 redirect；唯一例外是 Base URL 无凭据 `HEAD` 预检返回 `301` 或 `308`，且 `Location` 解析后与原地址保持相同 scheme、host 和有效 port，不含 userinfo、query 或 fragment，唯一路径差异为增加末尾 `/`。
+- **AND** 系统对该例外 MUST 只判定为可接受规范化，不得跟随跳转、改写已保存 Base URL 或把 Credential 发送到 `Location`。
+- **AND** `302`、`307`、跨 scheme/host/port、其它 path 变化及缺失或歧义 `Location` 仍 MUST 拒绝。
 
 #### Scenario: 从官方Anthropic URL发现模型
 - **WHEN** 管理员提交 `https://api.deepseek.com/anthropic` 和有效 Credential

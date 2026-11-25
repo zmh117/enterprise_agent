@@ -109,10 +109,12 @@ scripts/agent_test_data.sh reset --yes
 
 常用质量检查：
 
+`make openspec-validate` 会校验平台和浏览器插件各自的规范。首次使用项目工具时，在仓库根目录执行 `nvm use` 和 `npm ci`。也可以使用已有的 Node.js 22.20 或更高版本。
+
 ```bash
 make check
-cd frontend && npm run build
-openspec validate --all --strict
+npm --prefix frontend run build
+make openspec-validate
 docker compose config --quiet
 ```
 

@@ -7,7 +7,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "openspec": "openspec",
+    "openspec": "node ../node_modules/@fission-ai/openspec/bin/openspec.js",
     "build": "node scripts/build.mjs",
     "build:replay": "node scripts/build-replay.mjs",
     "test:replay": "npm run build:replay && node tests/replay-browser.mjs",
@@ -46,7 +46,6 @@
     "streamdown": "2.8.0"
   },
   "devDependencies": {
-    "@fission-ai/openspec": "2.0.0",
     "@types/chrome": "0.3.7",
     "@types/node": "26.6.6",
     "@types/react": "19.3.0",

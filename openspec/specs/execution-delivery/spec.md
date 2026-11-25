@@ -24,7 +24,14 @@
 - **THEN** 查询明确返回历史归属或消息不可用状态，不根据当前 Deployment、身份映射或配置回填
 
 ### Requirement: Job 状态转换由 Worker 控制
-系统 MUST 使用 `WAITING_INPUT`、`PENDING`、`RUNNING`、`RETRY_WAIT`、`SUCCEEDED`、`FAILED` 和 `TIMEOUT` 状态。Worker MUST 通过数据库原子领取、有效控制租约及递增领取版本取得 Job 推进权，并在首次模型调用或新 attempt 前复核当前用户、业务应用权限、Publication/hash、Runtime 与执行策略。只有控制租约到期或原 owner 显式交接，其他 Worker 才能接管 RUNNING Job；Broker redelivery 标记 MUST NOT 单独授予接管权。业务状态、重试、结果、助手消息和 Delivery Outbox 的写入 MUST 校验当前控制 owner/version；成功结果和终态时间 MUST 持久化，终态不得重新 claim。文件准入的 WAITING_INPUT 仅用于来源下载/导入，详见 task-file-workspace。仅在当前 Invocation 尚未准入且可靠延期已提交时，系统 SHALL 允许 RUNNING 返回 PENDING，不改变原 attempt。
+
+系统 MUST 使用 `WAITING_INPUT`、`PENDING`、`RUNNING`、`RETRY_WAIT`、`SUCCEEDED`、`FAILED` 和 `TIMEOUT` 状态。Worker MUST 通过数据库原子领取、有效控制租约及递增领取版本取得 Job 推进权，并在首次模型调用或新 attempt 前复核当前用户、业务应用权限、Publication/hash、Runtime 与执行策略。只有控制租约到期或原 owner 显式交接，其他 Worker 才能接管 RUNNING Job；Broker redelivery 标记 MUST NOT 单独授予接管权。业务状态、重试、结果、助手消息和 Delivery Outbox 的写入 MUST 校验当前控制 owner/version；成功结果和终态时间 MUST 持久化，终态不得重新 claim。
+
+#### Scenario: 文件准入和调用延期的状态边界
+
+- **WHEN** Worker 处理来源导入或 Runtime 准入延期
+- **THEN** 文件准入的 WAITING_INPUT 仅用于来源下载/导入，详见 task-file-workspace。
+- **AND** 仅在当前 Invocation 尚未准入且可靠延期已提交时，系统 SHALL 允许 RUNNING 返回 PENDING，不改变原 attempt。
 
 #### Scenario: 排队期间权限被撤销
 - **WHEN** Worker claim 前发现用户停用、成员到期或应用授权已撤销
@@ -581,7 +588,15 @@ Agent Job consumer SHALL 保持每 Worker 一个在途 Job 和 prefetch=1，同�
 **工具能力与模型上下文**
 
 ### Requirement: Runtime 工具能力必须来自冻结集合与精确派生
-Runtime MUST 只注册 Job 冻结 MCP 工具和代码允许的派生工具；只读资源走固定 `tool-mcp`，业务操作走对应固定业务 MCP，文件工具走 `file-service` bridge。业务 mutation 只准备受治理 Action Intent，须通过本规范逐次确认链才能产生 Provider 副作用。文件 Job 可使用受限 Read/Glob/Grep/Write/Edit；只冻结 ONES 集合查询而无文件写能力的 Job 仅派生 Read/Glob/Grep 读取结果文件。发布明确授权代码分析的问答 Job SHALL 在原 Job 内使用固定 Knowledge MCP 的 SVN/答案工具，并预先派生受限 Read/Glob/Grep 以及仅写当前执行 work/notes 下 Markdown/TXT 的 Write；源码读取必须在成功更新/检查后取得绑定当前 invocation 的共享读取 grant，不能仅凭挂载存在访问。grant 只收窄已冻结来源/路径/历史上限，不增加工具、仓库或动态挂载。代码只读挂载直接指向受管检出根，不经 File Service，不派生源码 Write/Edit 或 Shell；已有文件 Job 的权限保持独立。文件和 MCP 分别经过精确 hook/服务端授权，检查失败阻断。`select_sandbox_output` 依赖冻结提交能力，`scan_log_evidence` 依赖冻结物化能力与 Sandbox。Bash、Shell、NotebookEdit、WebFetch、WebSearch、任意部署、数据库写入和沙盒外操作 MUST 被拒绝。
+
+Runtime MUST 只注册 Job 冻结 MCP 工具和代码允许的派生工具；只读资源走固定 `tool-mcp`，业务操作走对应固定业务 MCP，文件工具走 `file-service` bridge。业务 mutation 只准备受治理 Action Intent，须通过本规范逐次确认链才能产生 Provider 副作用。文件 Job 可使用受限 Read/Glob/Grep/Write/Edit；只冻结 ONES 集合查询而无文件写能力的 Job 仅派生 Read/Glob/Grep 读取结果文件。文件和 MCP 分别经过精确 hook/服务端授权，检查失败阻断。`select_sandbox_output` 依赖冻结提交能力，`scan_log_evidence` 依赖冻结物化能力与 Sandbox。Bash、Shell、NotebookEdit、WebFetch、WebSearch、任意部署、数据库写入和沙盒外操作 MUST 被拒绝。
+
+#### Scenario: 在原 Job 内读取获准的源码
+
+- **WHEN** 已发布的问答 Agent 获准分析代码
+- **THEN** 发布明确授权代码分析的问答 Job SHALL 在原 Job 内使用固定 Knowledge MCP 的 SVN/答案工具，并预先派生受限 Read/Glob/Grep 以及仅写当前执行 work/notes 下 Markdown/TXT 的 Write；源码读取必须在成功更新/检查后取得绑定当前 invocation 的共享读取 grant，不能仅凭挂载存在访问。
+- **AND** grant 只收窄已冻结来源/路径/历史上限，不增加工具、仓库或动态挂载。
+- **AND** 代码只读挂载直接指向受管检出根，不经 File Service，不派生源码 Write/Edit 或 Shell；已有文件 Job 的权限保持独立。
 
 #### Scenario: 只读查询结果文件
 - **WHEN** Job 只有 ONES 集合查询工具
@@ -634,9 +649,14 @@ Runtime MUST 只注册 Job 冻结 MCP 工具和代码允许的派生工具；只
 - **THEN** Runtime拒绝调用且不向任何Tool backend发出请求
 
 ### Requirement: 每次Runtime调用必须形成不可变工具契约观测
+
 系统 SHALL 对每个 Runtime protocol 1.4 或 1.5 invocation 在首次模型请求前形成并保存一个与 `job_id`、`invocation_id`、`request_digest` 和既有 Job MCP Tool Snapshot hash 绑定的 `tool_contract_observed` 安全事件。该事件 MUST 分别记录 Job frozen、File MCP live、Runtime effective 和 Prompt declaration 四层事实及其 hash、来源和确定性对账状态；Runtime effective 还 MUST 记录传给 SDK 的精确可调用名称。事件不得保存完整 Tool Schema、Tool 描述、完整 Prompt、业务正文、URL、Header、Token、凭据或原始 MCP/SDK payload。
 
-相同 invocation 与 request digest 的重放 MUST 复用同一 observation hash；相同 invocation 携带不同 digest 或不同观测内容 MUST 失败关闭。Worker SHALL 以既有 Runtime event 唯一约束幂等保存该事实，不得用后续 invocation 覆盖或改写既有观测。
+#### Scenario: 工具契约观测的幂等写入
+
+- **WHEN** Worker 保存或重放 invocation 的观测
+- **THEN** 相同 invocation 与 request digest 的重放 MUST 复用同一 observation hash；相同 invocation 携带不同 digest 或不同观测内容 MUST 失败关闭。
+- **AND** Worker SHALL 以既有 Runtime event 唯一约束幂等保存该事实，不得用后续 invocation 覆盖或改写既有观测。
 
 #### Scenario: 模型调用前完成四层观测
 - **WHEN** Runtime准备执行一个包含File Service冻结工具的protocol 1.4 或 1.5 invocation
@@ -679,11 +699,22 @@ File MCP live中额外但未冻结的工具 MUST 标记为`EXTRA_REMOTE_IGNORED`
 - **AND** 不把缺失观测显示为`MATCH`
 
 ### Requirement: Runtime有效工具和Prompt声明必须来自同一注册表
+
 Python Runtime SHALL 在File MCP校验和代码内工具注册完成后构造唯一Runtime effective registry，并由该registry同时生成SDK Tool Schema、审批边界和Prompt中的当前可调用工具声明。每项 MUST 标记为`frozen_mcp`、`runtime_derived`或`sdk_builtin`，并包含逻辑Tool名、SDK精确可调用名、输入Schema hash和授权结果。
 
-`select_sandbox_output` MUST仅在Job冻结`file_create_commit_intent`且文件格式策略允许时注册为`runtime_derived`；它不需要出现在Job MCP Snapshot或File MCP `tools/list`中。未获冻结或策略授权的工具进入Runtime effective时 MUST标记`UNAUTHORIZED_EFFECTIVE`并失败关闭；Prompt当前可调用声明包含Runtime effective中不存在的工具时 MUST标记`PROMPT_OVERCLAIM`并在模型调用前失败关闭。静态Prompt不得人工维护第二份当前可调用工具名单。
+#### Scenario: 派生工具注册和提示词对账
 
-File MCP输入Schema MUST使用当前固定Claude Agent SDK及其bundled CLI能够完整注册的受支持子集。无法由该子集表达的跨字段业务不变量 MUST由File Service在创建Intent或其它副作用前重新校验，不得为了兼容CLI而取消业务约束。发布合同测试 MUST启动真实bundled CLI，使用生产File Tool名称、描述和输入Schema，并证明`file_create_commit_intent`同时出现在CLI初始化工具清单和实际ToolUse路由中；仅直接调用进程内MCP Session不构成该事实的验收证据。
+- **WHEN** Runtime 在模型调用前核对有效工具和提示词声明
+- **THEN** `select_sandbox_output` MUST仅在Job冻结`file_create_commit_intent`且文件格式策略允许时注册为`runtime_derived`；它不需要出现在Job MCP Snapshot或File MCP `tools/list`中。
+- **AND** 未获冻结或策略授权的工具进入Runtime effective时 MUST标记`UNAUTHORIZED_EFFECTIVE`并失败关闭；Prompt当前可调用声明包含Runtime effective中不存在的工具时 MUST标记`PROMPT_OVERCLAIM`并在模型调用前失败关闭。
+- **AND** 静态Prompt不得人工维护第二份当前可调用工具名单。
+
+#### Scenario: File MCP 输入契约的发布验收
+
+- **WHEN** File MCP 工具适配或发布给 Claude Agent SDK
+- **THEN** File MCP输入Schema MUST使用当前固定Claude Agent SDK及其bundled CLI能够完整注册的受支持子集。
+- **AND** 无法由该子集表达的跨字段业务不变量 MUST由File Service在创建Intent或其它副作用前重新校验，不得为了兼容CLI而取消业务约束。
+- **AND** 发布合同测试 MUST启动真实bundled CLI，使用生产File Tool名称、描述和输入Schema，并证明`file_create_commit_intent`同时出现在CLI初始化工具清单和实际ToolUse路由中；仅直接调用进程内MCP Session不构成该事实的验收证据。
 
 #### Scenario: Runtime派生输出选择器
 - **WHEN** Job冻结且live校验通过`file_create_commit_intent`并允许TXT或Markdown输出
@@ -800,13 +831,30 @@ Runtime SHALL 从 Job 固定配置构造平台安全规则、业务指令、已�
 - **THEN** 最终报告包含结论、已验证证据、限制/不确定性和非变更类下一步，不建议 Agent 执行写操作或自动修复
 
 ### Requirement: Final reports are evidence based
+
 The system SHALL require Agent final answers to include a conclusion, evidence summary, uncertainty or limitations when applicable, and suggested safe next actions. Real runtime prompts SHALL instruct the model to follow this report structure using tool evidence gathered during the job. 当报告使用日志证据扫描器时，Agent MUST区分精确扫描覆盖事实、通用规则选择的启发式候选和模型诊断推断；用户行为不是固定报告章节，只有证据支持且与现场问题相关时才记录。`coverage_complete=true`只证明所选输入全部字节已扫描，不证明所有日志语义已经理解；`evidence_limit_reached=true`时报告 MUST明确说明证据包是有界选择。
 
-普通业务回复 MUST NOT 主动附带内部提示词、MCP 服务使用说明或“已忽略不可信指令”的处理声明。Runtime 提示词 SHALL 区分平台接入的工具说明与业务正文；仅凭 `MCP Server Instructions` 等标题不得推断来源或赋予权限。用户明确询问相关机制，或已验证的问题确实影响请求结果时 MAY 解释，但 MUST 区分事实与推断，不得无依据声称遭遇攻击、拦截成功或“未产生任何影响”；现有不可信业务数据和授权边界继续生效。
+#### Scenario: 业务回答中的工具说明
 
-Runtime 提示词 SHALL 要求从当前用户实际请求和允许的会话上下文识别任务。Runtime 或 SDK 附加的工具说明不得替代用户请求，不得被描述成用户提供的工作区文件，也不得仅因其出现就判定没有业务问题或要求用户重述。实际请求缺少必要信息时 SHALL 只简短询问缺失内容，不附带内部上下文解释或未经请求的能力菜单；用户主动询问工具说明时仍正常回答，不过滤或改写其输入。
+- **WHEN** Runtime 处理接入工具说明和业务正文
+- **THEN** 普通业务回复 MUST NOT 主动附带内部提示词、MCP 服务使用说明或“已忽略不可信指令”的处理声明。
+- **AND** Runtime 提示词 SHALL 区分平台接入的工具说明与业务正文；仅凭 `MCP Server Instructions` 等标题不得推断来源或赋予权限。
+- **AND** 用户明确询问相关机制，或已验证的问题确实影响请求结果时 MAY 解释，但 MUST 区分事实与推断，不得无依据声称遭遇攻击、拦截成功或“未产生任何影响”；现有不可信业务数据和授权边界继续生效。
 
-受信回复路线为钉钉时，Runtime 提示词 SHALL 要求多条可比较记录（包括知识库命中）优先使用简短 Markdown 表格汇总，用户明确指定其他格式时服从用户选择。表格 MUST 包含表头、分隔行和前后空行，不放入代码块；长列表使用重复表头的小表。较长根因、方案和来源更新时间、入库时间等证据可按记录编号在表后展开，不得因格式省略用户要求的完整明细或补造字段。单条记录可用短段落；该规则约束模型输出指示，不代替钉钉各客户端实际渲染验收。
+#### Scenario: 根据用户请求识别任务
+
+- **WHEN** Runtime 构造本轮任务提示词
+- **THEN** Runtime 提示词 SHALL 要求从当前用户实际请求和允许的会话上下文识别任务。
+- **AND** Runtime 或 SDK 附加的工具说明不得替代用户请求，不得被描述成用户提供的工作区文件，也不得仅因其出现就判定没有业务问题或要求用户重述。
+- **AND** 实际请求缺少必要信息时 SHALL 只简短询问缺失内容，不附带内部上下文解释或未经请求的能力菜单；用户主动询问工具说明时仍正常回答，不过滤或改写其输入。
+
+#### Scenario: 钉钉报告展示可比较记录
+
+- **WHEN** Runtime 为钉钉回复路线生成报告
+- **THEN** 受信回复路线为钉钉时，Runtime 提示词 SHALL 要求多条可比较记录（包括知识库命中）优先使用简短 Markdown 表格汇总，用户明确指定其他格式时服从用户选择。
+- **AND** 表格 MUST 包含表头、分隔行和前后空行，不放入代码块；长列表使用重复表头的小表。
+- **AND** 较长根因、方案和来源更新时间、入库时间等证据可按记录编号在表后展开，不得因格式省略用户要求的完整明细或补造字段。
+- **AND** 单条记录可用短段落；该规则约束模型输出指示，不代替钉钉各客户端实际渲染验收。
 
 #### Scenario: 钉钉知识检索命中多条记录
 - **WHEN** 钉钉会话中知识检索命中多条可比较记录，用户未指定其他格式
@@ -1461,11 +1509,21 @@ Webhook Job 的结果路由 SHALL 来自事件命中的应用 Publication，并�
 - **THEN** 系统必须拒绝并记录审计
 
 ### Requirement: 钉钉文件结果按精确版本创建独立交付
+
 钉钉用户明确要求修改或生成TXT/Markdown时，成功提交的精确File Version SHALL默认创建回当前reply route的文件交付意图，用户明确要求只保存到工作区时除外。用户明确要求发送当前Manifest中获授权的既有TXT/LOG/Markdown时，系统 MAY创建该精确版本的交付意图但 MUST NOT修改内容或创建新版本。文件交付 MUST创建新的钉盘文件并记录新外部引用、精确Version ID和输入来源血缘，不得覆盖输入原件、交付冲突候选或跨会话发送。
 
-当原reply route为钉钉Stream `sessionWebhook`时，普通文字回复 SHALL继续使用该Webhook；精确文件版本交付 MUST使用入站冻结的会话类型和来源Stream Connector应用凭据调用钉钉机器人OpenAPI，私聊目标为冻结的实际发送人，群聊目标为冻结的`openConversationId`。该专用途径 MUST只处理与原Job、原会话、原Connector绑定的`FILE_VERSION` Delivery，不得授予Stream Connector通用结果投递能力。
+#### Scenario: Stream 会话的文字与文件交付
 
-`file_deliver_version` SHALL接受当前Manifest中具有`DELIVER`动作的精确版本，或当前RUNNING Job自身`COMMITTED`提交意图产生的精确TXT/Markdown版本。对后者，File Service MUST复核Commit、Job、Workspace、Version、format、文件归属和内容可用性；不得要求把新输出补写进不可变输入Manifest，也不得仅凭模型提供的File/Version ID授权。
+- **WHEN** 原回复路线为钉钉 Stream 会话
+- **THEN** 当原reply route为钉钉Stream `sessionWebhook`时，普通文字回复 SHALL继续使用该Webhook；精确文件版本交付 MUST使用入站冻结的会话类型和来源Stream Connector应用凭据调用钉钉机器人OpenAPI，私聊目标为冻结的实际发送人，群聊目标为冻结的`openConversationId`。
+- **AND** 该专用途径 MUST只处理与原Job、原会话、原Connector绑定的`FILE_VERSION` Delivery，不得授予Stream Connector通用结果投递能力。
+
+#### Scenario: 校验交付工具的版本来源
+
+- **WHEN** Agent 调用 file_deliver_version
+- **THEN** `file_deliver_version` SHALL接受当前Manifest中具有`DELIVER`动作的精确版本，或当前RUNNING Job自身`COMMITTED`提交意图产生的精确TXT/Markdown版本。
+- **AND** 对后者，File Service MUST复核Commit、Job、Workspace、Version、format、文件归属和内容可用性；不得要求把新输出补写进不可变输入Manifest，也不得仅凭模型提供的File/Version ID授权。
+
 #### Scenario: 群聊生成TXT结果
 - **WHEN** 群聊Job按用户请求成功提交一个新TXT版本
 - **THEN** 系统为当前群reply route创建该精确版本的新钉盘文件交付

@@ -8,6 +8,7 @@
 
 ## Canonical Specs
 
+- 在仓库根目录运行 `npm ci` 安装项目锁定的 OpenSpec。技能统一位于根目录 `.agents/skills/`。技能示例中的 `openspec ...` 通过 `npm run openspec -- ...` 执行，当前目录决定操作的是平台还是 `browser-extension/` 的规范。修改平台契约时从仓库根目录执行。
 - 当前已接受规范的唯一 canonical baseline 是以下 10 个文件：
   - `openspec/specs/identity-access/spec.md`
   - `openspec/specs/agent-model/spec.md`
@@ -28,6 +29,7 @@
 - Canonical spec 表达已接受规范，不自动证明运行能力已经实现。需要判断当前实现状态时，仍须核对代码、migration、测试和必要的运行证据，并区分 `Confirmed-current` 与 `Documented-intent`。
 - 真实环境验收欠账集中记录在 `docs/acceptance-backlog.md`。关闭或归档 change 不代表未勾选任务已完成；取得真实证据前不得补勾或移出欠账。
 - 同步或归档 delta 时，先按领域导航映射到上述 10 个领域并核对代码；不得按旧目录名重新创建零散主规格。未能确认的旧提案不自动成为当前能力。
+- 打开 CLI 返回的上下文文件前，先解析路径，只读取已授权变更或相关领域主规格内的文件。当 delta 的领域归属不明确或需要新增领域时，先向用户确认。旧 capability 与目标领域的目录名不同时，先按映射手工同步；归档已同步的 delta 使用 `archive --skip-specs`。
 
 ## 安全边界
 

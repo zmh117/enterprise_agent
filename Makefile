@@ -48,7 +48,8 @@ unittest:
 	PYTHONPATH=backend .venv/bin/python -m unittest discover -s backend/tests -t .
 
 openspec-validate:
-	openspec validate --all --strict
+	npm run openspec -- validate --all --strict
+	npm --prefix browser-extension run openspec -- validate --all --strict
 
 schema-baseline-check:
 	.venv/bin/pytest -q backend/tests/test_schema_migration_runtime.py backend/tests/test_initial_admin_bootstrap.py

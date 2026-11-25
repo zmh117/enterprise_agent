@@ -59,9 +59,17 @@
 ## MODIFIED Requirements
 
 ### Requirement: File Principal 与内部 Service Principal 保持独立边界
+
 File Principal SHALL 使用专用签发与验证路径，绑定用户、租户、RUNNING Job、Session、两个 Publication、授权快照和精确 File Tool scope，并复核任务工作区。既有内部文件调用 SHALL 使用固定角色 `file-worker`、`file-processing-worker`、`delivery-worker` 的 Service Principal；它们共享平台签名信任根和公开 JWKS，但使用独立 issuer、`aud=file-service-internal`、相同 sub/azp 角色和完整固定 scope，TTL 均不超过 300 秒。
 
-浏览器录制仅增加两项资源级委派。平台 SHALL 在用户确认的上传范围内签发单片写授权，绑定录制、片号、摘要与当前应用范围。工具查询单条明细时 SHALL 绑定 RUNNING Job、本轮录制和精确证据 ID，签发前及读取时复核冻结工具与当前权限。两者复用平台签名与 File Service 的公开 JWKS，按调用角色和 scope 独立验证，最长有效期 60 秒。插件、模型和 Runtime 均不得获得内部授权。
+#### Scenario: 浏览器录制的上传与查询委派
+
+- **WHEN** 平台为浏览器录制签发资源级授权
+- **THEN** 浏览器录制仅增加两项资源级委派。
+- **AND** 平台 SHALL 在用户确认的上传范围内签发单片写授权，绑定录制、片号、摘要与当前应用范围。
+- **AND** 工具查询单条明细时 SHALL 绑定 RUNNING Job、本轮录制和精确证据 ID，签发前及读取时复核冻结工具与当前权限。
+- **AND** 两者复用平台签名与 File Service 的公开 JWKS，按调用角色和 scope 独立验证，最长有效期 60 秒。
+- **AND** 插件、模型和 Runtime 均不得获得内部授权。
 
 #### Scenario: Worker 获取内部身份
 - **WHEN** Worker 用自己独立 bootstrap credential 调用内部身份接口

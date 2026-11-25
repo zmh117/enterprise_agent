@@ -8,7 +8,13 @@
 **固定 Profile 与处理身份**
 
 ### Requirement: 布局OCR只通过代码发布Profile启用
-系统 MUST 只允许代码发布且可审计的`docling-layout-ocr-v2`启用布局OCR。当前仅允许 NONE（关闭）或该 Profile；输出固定为 MARKDOWN、DOCLING_JSON、OCR_LAYOUT_JSON。该Profile MUST 关闭 HTTP URL Source、Callback、VLM、远程图片描述、自定义运行选项与外部插件，并 MUST 完整固定PDF、DOCX、PPTX、XLSX、PNG、JPEG和WebP的正文、表格、图片OCR、布局输出、处理器/模型revision、模型摘要算法、固定OCI index以及每个受支持平台的子manifest与模型artifact digest、坐标Schema、关系算法、资源上限和安全关闭项；完整平台映射 MUST 进入canonical payload，使同一发布在所有受支持平台生成相同Profile hash。运行时 MUST 只按规范化后的本机平台选择映射中的精确条目并校验实际artifact；用户消息、Agent、管理端和环境变量不得提交或覆盖原始Docling、OCR、模型、摘要或运行时options。
+
+系统 MUST 只允许代码发布且可审计的`docling-layout-ocr-v2`启用布局OCR。当前仅允许 NONE（关闭）或该 Profile；输出固定为 MARKDOWN、DOCLING_JSON、OCR_LAYOUT_JSON。该Profile MUST 关闭 HTTP URL Source、Callback、VLM、远程图片描述、自定义运行选项与外部插件，并 MUST 完整固定PDF、DOCX、PPTX、XLSX、PNG、JPEG和WebP的正文、表格、图片OCR、布局输出、处理器/模型revision、模型摘要算法、固定OCI index以及每个受支持平台的子manifest与模型artifact digest、坐标Schema、关系算法、资源上限和安全关闭项；完整平台映射 MUST 进入canonical payload，使同一发布在所有受支持平台生成相同Profile hash。
+
+#### Scenario: 按本机平台校验 OCR Profile
+
+- **WHEN** 运行时选择并装载已发布的 Profile
+- **THEN** 运行时 MUST 只按规范化后的本机平台选择映射中的精确条目并校验实际artifact；用户消息、Agent、管理端和环境变量不得提交或覆盖原始Docling、OCR、模型、摘要或运行时options。
 
 #### Scenario: 新Publication选择布局OCR
 - **WHEN** Business Application Publication冻结`docling-layout-ocr-v2`
@@ -237,7 +243,20 @@ File Service MUST 为每个run和representation kind创建绑定身份的不透�
 - **AND** 布局JSON、Markdown、管理端与Runtime能力说明必须明确未应用Office显示变换且结果可能包含页面上已裁掉区域
 
 ### Requirement: OCR布局使用版本化不可变Schema
-系统 MUST 为`docling-layout-ocr-v2`发布符合`enterprise-agent.office-image-ocr-layout/v2`的不可变`OCR_LAYOUT_JSON` Representation。v2 Schema MUST 绑定精确source File/Version、processing run、Profile hash、layout/Assembler version，并为所有图片occurrence保存图片摘要、父锚点、状态以及有界OCR block；每个block MUST 保存稳定局部ID、Unicode文字、`confidence_bp`、`reading_order`、规范化bbox和可选polygon。`confidence_bp` MUST 为上游明确提供并规范化后的`0..10000`整数，或在上游未提供逐block置信度时为JSON `null`；系统不得复制聚合置信度或生成默认值。若固定Docling的一个非空text item包含多个provenance，系统 MUST 只在每个provenance均提供合法且无重叠的`charspan`和bbox、全部非空白文字恰好被覆盖时，按text item顺序及`charspan`顺序确定性展开为多个block；字符上限 MUST 按原text item完整文字累计一次，block上限 MUST 应用于展开后的最终block集合。图片结果适配算法版本 MUST 纳入代码发布的Profile canonical payload与Profile hash；适配语义变化 MUST 产生新Profile hash，且不得由部署环境覆盖该版本或hash。若Profile包含word级结果，word MUST 受独立数量/字符上限约束并保持block归属。完整OCR文字和坐标 MUST 保存在File Service管理的私有对象中，PostgreSQL不得逐block/word保存正文。
+
+系统 MUST 为`docling-layout-ocr-v2`发布符合`enterprise-agent.office-image-ocr-layout/v2`的不可变`OCR_LAYOUT_JSON` Representation。v2 Schema MUST 绑定精确source File/Version、processing run、Profile hash、layout/Assembler version，并为所有图片occurrence保存图片摘要、父锚点、状态以及有界OCR block；每个block MUST 保存稳定局部ID、Unicode文字、`confidence_bp`、`reading_order`、规范化bbox和可选polygon。完整OCR文字和坐标 MUST 保存在File Service管理的私有对象中，PostgreSQL不得逐block/word保存正文。
+
+#### Scenario: 逐块置信度和多来源文字的展开
+
+- **WHEN** 适配器把上游 OCR 结果转换为 block
+- **THEN** `confidence_bp` MUST 为上游明确提供并规范化后的`0..10000`整数，或在上游未提供逐block置信度时为JSON `null`；系统不得复制聚合置信度或生成默认值。
+- **AND** 若固定Docling的一个非空text item包含多个provenance，系统 MUST 只在每个provenance均提供合法且无重叠的`charspan`和bbox、全部非空白文字恰好被覆盖时，按text item顺序及`charspan`顺序确定性展开为多个block；字符上限 MUST 按原text item完整文字累计一次，block上限 MUST 应用于展开后的最终block集合。
+
+#### Scenario: 适配算法版本和词级上限
+
+- **WHEN** 发布或执行图片结果适配算法
+- **THEN** 图片结果适配算法版本 MUST 纳入代码发布的Profile canonical payload与Profile hash；适配语义变化 MUST 产生新Profile hash，且不得由部署环境覆盖该版本或hash。
+- **AND** 若Profile包含word级结果，word MUST 受独立数量/字符上限约束并保持block归属。
 
 #### Scenario: 上游未提供逐block置信度
 - **WHEN** 固定Docling成功返回合规文字、provenance和bbox但没有逐block`confidence`
