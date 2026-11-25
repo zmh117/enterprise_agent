@@ -1,0 +1,37 @@
+<section id="agent-panel">
+  <div class="agent-toolbar">
+    <label class="agent-app-choice">业务应用<select id="agent-app"></select></label>
+    <span id="agent-status" role="status"></span>
+    <button id="agent-open-history" class="chat-text-button" type="button" hidden>对话历史</button>
+    <details id="agent-connection" open>
+      <summary>连接设置</summary>
+      <div class="connection-sheet">
+        <label>系统网址<input id="agent-origin" aria-describedby="agent-http-note" type="url" placeholder="http://agent.intra:8080"></label>
+        <p id="agent-http-note" class="muted" hidden>HTTP 会以明文传输登录信息、问题和共享录制，请仅在可信内网使用。</p>
+        <div class="button-row"><button id="agent-login" type="button">用系统账号登录</button><button id="agent-open-console" type="button" hidden>打开插件控制台</button></div>
+      </div>
+    </details>
+  </div>
+  <div id="agent-thread" class="conversation-thread">
+    <button type="button" id="agent-history" hidden>加载更早的问答</button>
+    <div id="agent-answers" aria-label="Agent 回答"></div>
+    <div class="chat-compose-area">
+      <button class="chat-scroll-end" id="agent-scroll-end" type="button" aria-label="回到最新消息" title="回到最新消息" hidden>↓</button>
+      <h2 class="chat-welcome">有什么可以帮你？</h2>
+      <div id="agent-record-drawer" hidden>
+        <fieldset id="agent-recording" hidden><legend>录制证据</legend>
+          <label>本地录制<select id="agent-record-choice"></select></label>
+          <div class="button-row"><button type="button" id="agent-record-preview">预览共享内容</button><button type="button" id="agent-record-share" hidden>确认共享录制</button><button type="button" id="agent-record-clear" hidden>解除录制</button></div>
+          <pre id="agent-record-sample" hidden></pre><span id="agent-record-status" role="status"></span>
+        </fieldset>
+      </div>
+      <div class="chat-composer">
+        <textarea id="agent-question" aria-label="消息" placeholder="给 Agent 发消息" rows="1" maxlength="4000"></textarea>
+        <div class="composer-actions">
+          <button id="agent-evidence-toggle" type="button" aria-expanded="false" aria-controls="agent-record-drawer" title="选择本地录制"><span aria-hidden="true">＋</span><span id="agent-evidence-label">录制</span></button>
+          <button id="agent-send" type="button" aria-label="发送" title="发送消息（Enter）" disabled><span aria-hidden="true">↑</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,20 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { unzipSync, strFromU8 } from 'fflate';
+import { resolve } from 'node:path';
+const output=resolve(process.env.MES_TEST_OUTPUT??'output/playwright/p1-capacity-final-v3');
+const samples=(await readFile(resolve(output,'samples.ndjson'),'utf8')).trim().split('\n').map(s=>JSON.parse(s));
+const percentile=(values:number[],p:number)=>{const v=[...values].sort((a,b)=>a-b);return v[Math.min(v.length-1,Math.floor(v.length*p))]??null;};
+const report:any[]=[];
+for(const count of [1,10,30]) {
+ const zipFiles=unzipSync(new Uint8Array(await readFile(resolve(output,`tabs-${count}.zip`))),{filter:e=>e.name.startsWith('network/index-')});
+ const requests=Object.values(zipFiles).flatMap(bytes=>strFromU8(bytes).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)));
+ const histogram=(values:string[])=>values.reduce<Record<string,number>>((out,key)=>{out[key]=(out[key]??0)+1;return out;},{});
+ const result=JSON.parse(await readFile(resolve(output,`tabs-${count}.json`),'utf8'));const rows=samples.filter(s=>s.count===count);const last=rows.at(-1);const latency=rows.flatMap(s=>s.latencies);const queues=rows.flatMap(s=>s.resources.bodyQueues);
+ report.push({tabs:count,requestedSeconds:result.requestedSeconds,wallSecondsIncludingStopAndExport:result.actualSeconds,iterations:result.iterations,earlyStop:result.earlyStop,acceptedMiB:result.recording.bytesAccepted/1048576,persistedAccountingMiB:result.recording.bytesPersisted/1048576,events:result.recording.eventsPersisted,requests:result.networkRecords,networkCoverage:{outcomes:histogram(requests.map(n=>n.networkOutcome)),responseBodies:histogram(requests.map(n=>n.response.bodyCaptureStatus)),unmappedDocuments:requests.filter(n=>n.documentId==null).length},requestsPerSecond:result.networkRecords/result.requestedSeconds,acceptedKiBPerSecond:result.recording.bytesAccepted/1024/result.requestedSeconds,
+ pageActionAndFetchMs:{p50:percentile(latency,.5),p95:percentile(latency,.95),max:Math.max(...latency)},pageTimers:{maxDelayMs:Math.max(...rows.flatMap(s=>s.pageMetrics.map((p:any)=>p.maxDelayMs))),meanDelayMs:last.pageMetrics.reduce((n:number,p:any)=>n+p.totalDelayMs,0)/last.pageMetrics.reduce((n:number,p:any)=>n+p.ticks,0),longTasks:last.pageMetrics.reduce((n:number,p:any)=>n+p.longTasks,0),longTaskMs:last.pageMetrics.reduce((n:number,p:any)=>n+p.longTaskMs,0)},
+ chromeProcessTree:{cpuPercentP95:percentile(rows.map(s=>s.process.cpuPercentSum),.95),cpuPercentMax:Math.max(...rows.map(s=>s.process.cpuPercentSum)),rssMiBInitial:rows[0].process.rssKiBSum/1024,rssMiBFinal:last.process.rssKiBSum/1024,rssMiBMax:Math.max(...rows.map(s=>s.process.rssKiBSum/1024))},
+ pageReportedHeapBytesMax:Math.max(...rows.flatMap(s=>s.pageMetrics.map((p:any)=>p.memory?.used??0))),
+ bodyQueuePerTab:{runningMax:Math.max(...queues.map((q:any)=>q.peakRunning)),waitingMax:Math.max(...queues.map((q:any)=>q.peakWaiting)),reservedBytesMax:Math.max(...queues.map((q:any)=>q.peakReservedBytes))},journal:{queuedBytesMax:Math.max(...rows.map(s=>s.resources.journal.queuedBytes)),inFlightBytesMax:Math.max(...rows.map(s=>s.resources.journal.inFlightBytes)),combinedPeakBytes:Math.max(...rows.map(s=>s.resources.journal.peakBytes))},zipMiB:result.zipBytes/1048576,exportIncludingValidationAndFileWriteMs:result.exportMs,gaps:result.recording.gaps.map((g:any)=>({code:g.code,detail:g.detail})),validation:result.validation});
+}
+await writeFile(resolve(output,'report.json'),JSON.stringify({generatedAt:new Date().toISOString(),notes:['Chrome CPU 为本任务进程树 ps %cpu 求和，单核满载为 100%；RSS 可能重复计共享页。','页面 performance.memory 为浏览器报告的近似值，不相加作物理内存。','页面长任务与计时延迟包含正常后台节流及自动化自身影响，没有同规模无扩展对照，不能解释为扩展净开销。','Journal 数字为接受记账预算，正文队列为最大正文预留预算，均非 JS 堆实测。','绑定 environment.json 中构建，后续失败路径修正与严格校验另有功能验证，不冒充同一二进制的重复容量测试。'],stages:report},null,2));
+console.log(JSON.stringify(report.map(s=>({tabs:s.tabs,seconds:s.wallSecondsIncludingStopAndExport,acceptedMiB:s.acceptedMiB,latencyP95:s.pageActionAndFetchMs.p95,rssMiBMax:s.chromeProcessTree.rssMiBMax,requests:s.requests,zipMiB:s.zipMiB,valid:s.validation.valid})),null,2));

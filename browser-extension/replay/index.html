@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{{POLICY}}">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>浏览器操作回放</title>
+<style>{{PLAYER_CSS}}
+*{box-sizing:border-box} body{margin:0;background:#f3f5f7;color:#1d2830;font:16px/1.5 system-ui,"Microsoft YaHei",sans-serif}
+main{max-width:1440px;margin:auto;padding:20px clamp(12px,3vw,40px)}h1{font-size:24px;margin:0 0 14px}
+.files{display:flex;gap:10px;align-items:center;flex-wrap:wrap} label.file{position:relative;border:1px solid #28605c;border-radius:6px;padding:7px 16px;color:#164f49;cursor:pointer;font-weight:600}
+.file:first-child{background:#195950;color:white} .file input{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer} .file:focus-within{outline:3px solid #46a4cf}
+#streams{margin:14px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap} #streams[hidden]{display:none}
+#layout-note{margin:12px 0;padding:10px 14px;border-left:3px solid #bc6534;background:white;font-size:14px}
+#layout-note label{position:relative;display:inline-block;color:#16554b;text-decoration:underline;cursor:pointer}
+#layout-note input{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}#layout-note label:focus-within{outline:2px solid #195950}
+select{font:inherit;max-width:100%;padding:3px 7px} #status{margin:12px 0;color:#334b58}
+#player{overflow:auto} .rr-player{margin:0 auto} [role=status]{overflow-wrap:anywhere}
+
+.workspace{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-items:start}
+.workspace:has(#network:not([hidden])){grid-template-columns:minmax(0,1.65fr) minmax(300px,1fr)}
+#network{min-width:0;overflow:auto;max-height:calc(100vh - 160px);border:1px solid #cbd6d8;border-radius:8px;background:white}
+#network header{position:sticky;top:0;z-index:1;background:white;padding:10px 14px;border-bottom:1px solid #d9e1e2}
+.panel-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+#network header label{display:block;margin:8px 0 3px;font-size:14px}
+#path-filter{width:100%;border:1px solid #85999b;border-radius:5px;padding:6px 8px;font:inherit}
+h2{margin:0;font-size:18px}#count,#network-empty{color:#485d65;font-size:14px}#network-empty{padding:0 14px}
+.request-entry{position:relative;border-bottom:1px solid #e3e9e9}.request-entry:has(details[open]){background:#f4f9f8}
+.seek-request{display:flex;align-items:baseline;gap:7px;width:calc(100% - 4.2rem);min-height:42px;padding:10px;background:transparent;border:0;color:inherit;text-align:left;font:inherit;font-size:14px;cursor:pointer}
+.seek-request:hover{background:#edf6f4}.seek-request:hover .endpoint{text-decoration:underline}
+#requests summary{position:absolute;top:0;right:0;padding:10px 8px;cursor:pointer;font-size:14px}
+#requests :is(summary,button):focus-visible{outline:2px solid #195950;outline-offset:-2px}
+.offset,.code,.method{font:600 12px/1.6 ui-monospace,monospace;white-space:nowrap}
+.method{color:#155950}.endpoint{overflow-wrap:anywhere}.code{color:#354f5d}.request-info{padding:0 14px 12px}
+.request-info h3{font-size:14px;margin:12px 0 4px}.request-info pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f6f7;color:#26373e;padding:7px 9px;margin:0;font:13px/1.5 ui-monospace,monospace;max-height:22rem;overflow:auto}
+@media(max-width:880px){.workspace:has(#network:not([hidden])){grid-template-columns:minmax(0,1fr)}#network{max-height:65vh}}
+</style>
+<main>
+<h1>浏览器操作回放</h1>
+<div class="files">
+ <label class="file">打开录制 ZIP<input id="zip" type="file" accept=".zip" aria-label="打开录制 ZIP"></label>
+ <label class="file">选择已解压的录制文件夹<input id="folder" type="file" webkitdirectory multiple aria-label="选择已解压的录制文件夹"></label>
+</div>
+<p role="status" id="status">选择插件导出的 mes-evidence 录制包。文件只在本机读取。</p>
+<div id="streams" hidden><label for="stream">录制页面</label><select id="stream"></select></div>
+<div id="layout-note" hidden><span id="layout-message"></span> <label>补入同版本样式目录<input id="styles-folder" type="file" webkitdirectory multiple aria-label="补入同版本样式目录"></label>
+ <span id="style-result" role="status"></span> <span id="click-target"></span></div>
+<div class="workspace">
+ <div id="player"></div>
+ <section id="network" aria-labelledby="network-title" hidden>
+  <header>
+   <div class="panel-heading"><h2 id="network-title">接口请求</h2><span id="count"></span></div>
+   <label for="path-filter">筛选接口路径</label>
+   <input id="path-filter" type="search" placeholder="搜索整段录制，如 /orders" autocomplete="off" spellcheck="false">
+  </header>
+  <p id="network-empty"></p><div id="requests"></div>
+ </section>
+</div>
+</main>
+{{SCRIPTS}}
+<template id="third-party-licenses"><pre>{{LICENSES}}</pre></template>
+</html>

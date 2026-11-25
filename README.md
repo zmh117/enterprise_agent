@@ -5,7 +5,7 @@
 当前规范从 [10个领域主规格导航](openspec/specs/README.md) 进入；旧change和archive仅作显式历史追溯。规范与代码实现、真实环境验收分别判断。
 
 ```text
-钉钉 / Webhook / Debug API
+钉钉 / Webhook / 浏览器采集助手 / Debug API
   -> FastAPI Control Plane
   -> PostgreSQL + RabbitMQ
   -> file-worker -> file-service -> MinIO
@@ -118,6 +118,7 @@ docker compose config --quiet
 
 ## 相关文档
 
+- [浏览器采集助手的开发、构建与联调](browser-extension/README.md) · [插件与平台的共享契约](contracts/browser-extension/v1/README.md)
 - [文档总索引](docs/README.md)
 - [统一身份、RBAC 与 Agent 管理端](docs/architecture/unified-identity-rbac-admin.md)
 - [连续对话与多模态附件](docs/architecture/continuous-multimodal-conversations.md)

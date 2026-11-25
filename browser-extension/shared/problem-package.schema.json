@@ -1,0 +1,1842 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:browser-capture:manifest:4.0.0",
+  "title": "浏览器采集包",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "recording",
+    "capabilities",
+    "gaps",
+    "files",
+    "integrity"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "enum": [
+        "3.0.0",
+        "4.0.0"
+      ]
+    },
+    "recording": {
+      "$ref": "#/$defs/recording"
+    },
+    "capabilities": {
+      "type": "object"
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/gap"
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "required": [
+        "status",
+        "meaning"
+      ],
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "meaning": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "context": {
+      "type": "object",
+      "required": [
+        "chromeFrameId",
+        "documentId"
+      ],
+      "properties": {
+        "chromeFrameId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "documentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verifiedBy": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "contextOrNull": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/context"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "gap": {
+      "type": "object",
+      "required": [
+        "id",
+        "code",
+        "observedAt",
+        "detail"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "code": {
+          "type": "string"
+        },
+        "observedAt": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "tabInstanceId": {
+          "type": "string"
+        },
+        "channel": {
+          "enum": [
+            "page",
+            "semantic",
+            "network",
+            "runtime",
+            "screenshot"
+          ]
+        }
+      }
+    },
+    "body": {
+      "type": "object",
+      "required": [
+        "bodyCaptureStatus",
+        "bodyRef",
+        "bodyCaptureReason",
+        "redactionStatus"
+      ],
+      "properties": {
+        "bodyCaptureStatus": {
+          "enum": [
+            "captured",
+            "empty",
+            "not_applicable",
+            "truncated",
+            "excluded_by_policy",
+            "unavailable",
+            "incomplete_target_closed",
+            "incomplete_session_stopped"
+          ]
+        },
+        "bodyRef": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bodyCaptureReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "redactionStatus": {
+          "enum": [
+            "none",
+            "applied",
+            "fully_masked",
+            "failed_excluded"
+          ]
+        },
+        "originalBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "savedBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "policyVersion",
+        "pageOrigins",
+        "apiRules",
+        "requestTypes",
+        "allowedInputNames",
+        "allowedQueryKeys",
+        "sensitiveSelectors",
+        "maskAllText",
+        "screenshots",
+        "captureStreaming",
+        "businessRules",
+        "budgets",
+        "logTimeMarginSeconds",
+        "correlationSources",
+        "sourceMappings"
+      ],
+      "properties": {
+        "policyVersion": {
+          "type": "string"
+        },
+        "pageOrigins": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "apiRules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "origin",
+              "pathPrefix"
+            ],
+            "properties": {
+              "origin": {
+                "type": "string"
+              },
+              "pathPrefix": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "requestTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedInputNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedQueryKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sensitiveSelectors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "maskAllText": {
+          "type": "boolean"
+        },
+        "screenshots": {
+          "const": "disabled"
+        },
+        "captureStreaming": {
+          "type": "boolean"
+        },
+        "businessRules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "origin",
+              "pathPrefix",
+              "codePath",
+              "successValues"
+            ],
+            "properties": {
+              "origin": {
+                "type": "string"
+              },
+              "pathPrefix": {
+                "type": "string"
+              },
+              "codePath": {
+                "type": "string"
+              },
+              "successValues": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "string",
+                    "number"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "budgets": {
+          "type": "object",
+          "required": [
+            "softTabs",
+            "hardTabs",
+            "reminderMinutes",
+            "ipcBytes",
+            "baselineBytes",
+            "bodyBytes",
+            "softBytes",
+            "hardBytes",
+            "queueBytes",
+            "bodyConcurrency"
+          ],
+          "properties": {
+            "softTabs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "hardTabs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "reminderMinutes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "ipcBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "baselineBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "bodyBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "softBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "hardBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "queueBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "bodyConcurrency": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "logTimeMarginSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "correlationSources": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": [
+              "field",
+              "source",
+              "key",
+              "component"
+            ],
+            "properties": {
+              "field": {
+                "enum": [
+                  "frontendBuildId",
+                  "backendBuildId",
+                  "serviceInstance",
+                  "requestId",
+                  "traceId",
+                  "spanId"
+                ]
+              },
+              "source": {
+                "enum": [
+                  "response_header",
+                  "response_json",
+                  "page_meta"
+                ]
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "component": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "origin": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^https?://[^/?#]+$"
+              },
+              "pathPrefix": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 499,
+                "pattern": "^/"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "source": {
+                      "const": "response_header"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "key": {
+                      "pattern": "^[a-zA-Z0-9-]{1,80}$"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "source": {
+                      "const": "response_json"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "key": {
+                      "pattern": "^(\\/([^~]|~[01])*)+$"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "source": {
+                      "const": "page_meta"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "key": {
+                      "pattern": "^meta\\[name=(?:\"[a-zA-Z0-9_.-]+\"|'[a-zA-Z0-9_.-]+')\\]$"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "sourceMappings": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "environmentId",
+              "component",
+              "buildId",
+              "codeSnapshot"
+            ],
+            "properties": {
+              "environmentId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "component": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "buildId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "codeSnapshot": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            }
+          }
+        }
+      }
+    },
+    "recording": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "recordingId",
+        "browserRunId",
+        "state",
+        "scopeVersion",
+        "environmentId",
+        "browserVersion",
+        "extensionVersion",
+        "rrwebVersion",
+        "startedAt",
+        "policy",
+        "gaps",
+        "rootTabInstanceIds",
+        "commands",
+        "bytesAccepted",
+        "bytesPersisted",
+        "eventsPersisted",
+        "checkpoint",
+        "saveState",
+        "versions",
+        "capabilities"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "3.0.0"
+        },
+        "recordingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "browserRunId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "state": {
+          "enum": [
+            "STARTING",
+            "RECORDING",
+            "STOPPING",
+            "FINALIZING",
+            "READY",
+            "INTERRUPTED",
+            "FAILED"
+          ]
+        },
+        "scopeVersion": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "environmentId": {
+          "type": "string"
+        },
+        "browserVersion": {
+          "type": "string"
+        },
+        "extensionVersion": {
+          "type": "string"
+        },
+        "rrwebVersion": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "stoppedAt": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gap"
+          }
+        },
+        "rootTabInstanceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "bytesAccepted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytesPersisted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eventsPersisted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checkpoint": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "saveState": {
+          "enum": [
+            "saved",
+            "pending",
+            "error"
+          ]
+        },
+        "saveError": {
+          "type": "string"
+        },
+        "versions": {
+          "type": "object",
+          "required": [
+            "frontendBuildId",
+            "backendBuildId",
+            "serviceInstance",
+            "codeSnapshotMatch",
+            "sources"
+          ],
+          "properties": {
+            "frontendBuildId": {
+              "type": "string"
+            },
+            "backendBuildId": {
+              "type": "string"
+            },
+            "serviceInstance": {
+              "type": "string"
+            },
+            "codeSnapshotMatch": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "capabilities": {
+          "type": "object"
+        },
+        "stopReason": {
+          "type": "string"
+        },
+        "stopProgress": {
+          "type": "object",
+          "required": [
+            "startedAt",
+            "cutoff",
+            "marker",
+            "cleanup",
+            "drain",
+            "terminal",
+            "deadlineExceeded"
+          ],
+          "properties": {
+            "startedAt": {
+              "type": "string"
+            },
+            "cutoff": {
+              "const": "complete"
+            },
+            "marker": {
+              "enum": [
+                "pending",
+                "complete",
+                "error"
+              ]
+            },
+            "cleanup": {
+              "enum": [
+                "pending",
+                "complete",
+                "error"
+              ]
+            },
+            "drain": {
+              "enum": [
+                "pending",
+                "complete",
+                "error"
+              ]
+            },
+            "terminal": {
+              "enum": [
+                "pending",
+                "complete",
+                "error"
+              ]
+            },
+            "deadlineExceeded": {
+              "type": "boolean"
+            }
+          }
+        },
+        "rootEnvironments": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "required": [
+        "state",
+        "generation"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "PENDING",
+            "ACTIVE",
+            "BLOCKED",
+            "LOST",
+            "STOPPED"
+          ]
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "readyAt": {
+          "type": "string"
+        },
+        "stoppedAt": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "recorderStreamId",
+        "nodeId"
+      ],
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "recorderStreamId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "nodeId": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "required": [
+        "documentId",
+        "chromeFrameId",
+        "parentFrameId",
+        "url",
+        "observedAt",
+        "status",
+        "subjectMapping"
+      ],
+      "properties": {
+        "documentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "chromeFrameId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parentFrameId": {
+          "type": "integer"
+        },
+        "url": {
+          "type": "string"
+        },
+        "observedAt": {
+          "type": "string"
+        },
+        "recorderStreamId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "recorderStartedAt": {
+          "type": "string"
+        },
+        "firstBaselineAt": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "subjectMapping": {
+          "type": "string"
+        },
+        "endedAt": {
+          "type": "string"
+        },
+        "baselineRef": {
+          "$ref": "#/$defs/baseline"
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": [
+        "recordingId",
+        "browserRunId",
+        "tabInstanceId",
+        "browserTabId",
+        "windowId",
+        "title",
+        "url",
+        "parentTabInstanceId",
+        "rootTabInstanceIds",
+        "membershipReason",
+        "lineageEvidence",
+        "scopeGrantedAt",
+        "scopeGrantedSeq",
+        "grantCommandId",
+        "lineageConfirmedAt",
+        "lifecycle",
+        "captureState",
+        "captureGeneration",
+        "accepting",
+        "channels",
+        "quality",
+        "possibleInitialGap",
+        "finalFlushConfirmed",
+        "lateResults",
+        "documents"
+      ],
+      "properties": {
+        "recordingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "browserRunId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "tabInstanceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "browserTabId": {
+          "type": "integer"
+        },
+        "windowId": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "parentTabInstanceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rootTabInstanceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "replacesTabInstanceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "membershipReason": {
+          "enum": [
+            "root",
+            "manual_add",
+            "derived",
+            "replacement"
+          ]
+        },
+        "lineageEvidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "source",
+              "sourceBrowserTabId",
+              "targetBrowserTabId",
+              "observedAt",
+              "observedSeq"
+            ],
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "sourceBrowserTabId": {
+                "type": "integer"
+              },
+              "targetBrowserTabId": {
+                "type": "integer"
+              },
+              "observedAt": {
+                "type": "string"
+              },
+              "observedSeq": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "scopeGrantedAt": {
+          "type": "string"
+        },
+        "scopeGrantedSeq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grantCommandId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "lineageConfirmedAt": {
+          "type": "string"
+        },
+        "lifecycle": {
+          "enum": [
+            "OPEN",
+            "CLOSED",
+            "REPLACED"
+          ]
+        },
+        "captureState": {
+          "enum": [
+            "PENDING",
+            "ATTACHING",
+            "ACTIVE",
+            "DEGRADED",
+            "BLOCKED",
+            "STOPPED"
+          ]
+        },
+        "captureGeneration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "accepting": {
+          "type": "boolean"
+        },
+        "channels": {
+          "type": "object",
+          "required": [
+            "page",
+            "semantic",
+            "network",
+            "runtime",
+            "screenshot"
+          ],
+          "properties": {
+            "page": {
+              "$ref": "#/$defs/channel"
+            },
+            "semantic": {
+              "$ref": "#/$defs/channel"
+            },
+            "network": {
+              "$ref": "#/$defs/channel"
+            },
+            "runtime": {
+              "$ref": "#/$defs/channel"
+            },
+            "screenshot": {
+              "$ref": "#/$defs/channel"
+            }
+          }
+        },
+        "quality": {
+          "enum": [
+            "complete_within_declared_scope",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "possibleInitialGap": {
+          "type": "boolean"
+        },
+        "finalFlushConfirmed": {
+          "type": "boolean"
+        },
+        "lateResults": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "documents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/document"
+          }
+        }
+      }
+    },
+    "elementRef": {
+      "type": "object",
+      "required": [
+        "recorderStreamId",
+        "nodeId"
+      ],
+      "properties": {
+        "recorderStreamId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "nodeId": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "semanticTarget": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [],
+          "properties": {
+            "elementRef": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/elementRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "target": {
+          "$ref": "#/$defs/semanticTarget"
+        },
+        "nodeContexts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "nodeId",
+              "recorderStreamId",
+              "context"
+            ],
+            "properties": {
+              "nodeId": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "recorderStreamId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "documentRoot": {
+                "type": "boolean"
+              },
+              "context": {
+                "$ref": "#/$defs/context"
+              }
+            }
+          }
+        },
+        "before": {
+          "type": "object"
+        },
+        "after": {
+          "type": "object"
+        },
+        "context": {
+          "type": "object"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "omissions": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "required": [
+              "scope",
+              "count",
+              "exact",
+              "reason"
+            ],
+            "properties": {
+              "scope": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "exact": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "observation": {
+          "type": "object",
+          "required": [
+            "sourceTime",
+            "sourceClock"
+          ],
+          "properties": {
+            "sourceTime": {
+              "type": "number"
+            },
+            "sourceClock": {
+              "const": "document_performance_ms"
+            }
+          }
+        },
+        "documentContext": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/context"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "recordingId",
+        "browserRunId",
+        "streamId",
+        "tabInstanceId",
+        "browserTabId",
+        "windowId",
+        "emitterContext",
+        "subjectContext",
+        "source",
+        "sourceSeq",
+        "kind",
+        "sourceTime",
+        "sourceClock",
+        "observedAt",
+        "normalizedAt",
+        "captureGeneration",
+        "channel",
+        "channelGeneration",
+        "payload",
+        "quality"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "3.0.0"
+        },
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "recordingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "browserRunId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "streamId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "tabInstanceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "browserTabId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "windowId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "emitterContext": {
+          "$ref": "#/$defs/contextOrNull"
+        },
+        "subjectContext": {
+          "$ref": "#/$defs/contextOrNull"
+        },
+        "source": {
+          "type": "string"
+        },
+        "recorderStreamId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceSeq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "type": "string"
+        },
+        "sourceTime": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sourceClock": {
+          "type": "string"
+        },
+        "observedAt": {
+          "type": "string"
+        },
+        "normalizedAt": {
+          "type": "null"
+        },
+        "captureGeneration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "channel": {
+          "enum": [
+            "control",
+            "page",
+            "semantic",
+            "network",
+            "runtime",
+            "screenshot"
+          ]
+        },
+        "channelGeneration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload": {
+          "$ref": "#/$defs/payload"
+        },
+        "quality": {
+          "type": "object",
+          "required": [
+            "redacted",
+            "truncated",
+            "limitations"
+          ],
+          "properties": {
+            "redacted": {
+              "type": "boolean"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ui.action"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "required": [
+                  "action",
+                  "evidenceRefs"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "rrweb.event"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "required": [
+                  "rrwebEvent"
+                ],
+                "properties": {
+                  "rrwebEvent": {
+                    "type": "object",
+                    "required": [
+                      "type",
+                      "timestamp"
+                    ],
+                    "properties": {
+                      "type": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 6
+                      },
+                      "timestamp": {
+                        "type": "number"
+                      },
+                      "data": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "ui.state_snapshot",
+                  "ui.action"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "properties": {
+                  "before": {
+                    "$ref": "#/$defs/semanticBefore"
+                  },
+                  "after": {
+                    "properties": {
+                      "metadataFacts": {
+                        "type": "array",
+                        "maxItems": 32,
+                        "items": {
+                          "$ref": "#/$defs/correlationFact"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "network": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "requestKey",
+        "recordingId",
+        "browserRunId",
+        "tabInstanceId",
+        "debuggerSessionKey",
+        "cdpRequestId",
+        "redirectOrdinal",
+        "chromeFrameId",
+        "request",
+        "response",
+        "networkOutcome",
+        "businessOutcome",
+        "serverCorrelation",
+        "startedAt",
+        "sourceClock",
+        "evidenceRefs",
+        "actionCandidates",
+        "extraInfoStatus"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "3.0.0"
+        },
+        "requestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "recordingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "browserRunId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "tabInstanceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "debuggerSessionKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "cdpRequestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "redirectOrdinal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cdpFrameId": {
+          "type": "string"
+        },
+        "loaderId": {
+          "type": "string"
+        },
+        "chromeFrameId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "documentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frameMappingReason": {
+          "type": "string"
+        },
+        "request": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/body"
+            },
+            {
+              "type": "object",
+              "required": [
+                "method",
+                "url",
+                "headers",
+                "type"
+              ],
+              "properties": {
+                "method": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "headers": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "type": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "response": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/body"
+            },
+            {
+              "type": "object",
+              "required": [
+                "httpStatus",
+                "headers"
+              ],
+              "properties": {
+                "httpStatus": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "const": "unknown"
+                    }
+                  ]
+                },
+                "headers": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "networkOutcome": {
+          "enum": [
+            "finished",
+            "failed",
+            "incomplete"
+          ]
+        },
+        "businessOutcome": {
+          "enum": [
+            "success",
+            "failure",
+            "unknown"
+          ]
+        },
+        "serverCorrelation": {
+          "type": "object",
+          "required": [
+            "requestId",
+            "requestIdSource",
+            "traceId",
+            "traceIdSource"
+          ],
+          "properties": {
+            "requestId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "requestIdSource": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "traceId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "traceIdSource": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "spanId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "sourceClock": {
+          "type": "string"
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "actionCandidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "actionId",
+              "basis",
+              "confirmed"
+            ],
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "basis": {
+                "type": "string"
+              },
+              "confirmed": {
+                "const": false
+              }
+            }
+          }
+        },
+        "extraInfoStatus": {
+          "type": "string"
+        },
+        "correlationFacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/correlationFact"
+          }
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": [
+        "path",
+        "mime",
+        "bytes",
+        "sha256",
+        "streamId",
+        "firstSeq",
+        "lastSeq",
+        "events"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_./-]+$"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "streamId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "firstSeq": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "lastSeq": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "events": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "pagePacket": {
+      "type": "object",
+      "required": [
+        "seq",
+        "kind",
+        "sourceTime",
+        "payload"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "enum": [
+            "rrweb.event",
+            "ui.observation",
+            "capture.page_diagnostic"
+          ]
+        },
+        "sourceTime": {
+          "type": "number"
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    "correlationFact": {
+      "type": "object",
+      "required": [
+        "field",
+        "source",
+        "value",
+        "component",
+        "observedAt"
+      ],
+      "properties": {
+        "field": {
+          "enum": [
+            "frontendBuildId",
+            "backendBuildId",
+            "serviceInstance",
+            "requestId",
+            "traceId",
+            "spanId"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "component": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "observedAt": {
+          "type": "string"
+        }
+      }
+    },
+    "semanticBefore": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "snapshotRef",
+            "observedAt",
+            "sourceTime"
+          ],
+          "properties": {
+            "status": {
+              "const": "observed"
+            },
+            "snapshotRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "observedAt": {
+              "type": "string"
+            },
+            "sourceTime": {
+              "type": "number"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

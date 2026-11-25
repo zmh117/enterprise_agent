@@ -63,6 +63,21 @@ jobs:
           RUN_REDIS_PAGINATION_INTEGRATION: '1'
         run: .venv/bin/pytest -q backend/tests/test_redis_scan_pagination_integration.py
 
+  browser-extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: browser-extension/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+
   dingtalk-runtime:
     runs-on: ubuntu-latest
     defaults:

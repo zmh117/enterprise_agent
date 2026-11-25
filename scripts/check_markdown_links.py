@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+import os
 from pathlib import Path
 import re
 from urllib.parse import unquote, urlsplit
@@ -20,12 +22,20 @@ def _target(raw: str) -> str:
     return value.split(maxsplit=1)[0] if value else ""
 
 
+def _documents(root: Path) -> Iterator[Path]:
+    for directory, folders, files in os.walk(root):
+        path = Path(directory)
+        excluded = EXCLUDED_DIRECTORIES
+        if path == root / "browser-extension":
+            excluded = excluded.union({"output", "release", "本地测试"})
+        folders[:] = sorted(set(folders) - excluded)
+        yield from (path / name for name in sorted(files) if name.endswith(".md"))
+
+
 def check(root: Path) -> list[str]:
     root = root.resolve()
     errors: list[str] = []
-    for document in sorted(root.rglob("*.md")):
-        if any(part in EXCLUDED_DIRECTORIES for part in document.relative_to(root).parts):
-            continue
+    for document in _documents(root):
         fenced = False
         fence_marker = ""
         for line_number, line in enumerate(

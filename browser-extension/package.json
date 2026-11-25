@@ -1,0 +1,62 @@
+{
+  "name": "browser-capture-assistant",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "openspec": "openspec",
+    "build": "node scripts/build.mjs",
+    "build:replay": "node scripts/build-replay.mjs",
+    "test:replay": "npm run build:replay && node tests/replay-browser.mjs",
+    "test:replay-layout": "npm run build && npm run build:replay && node --import tsx tests/replay-layout-browser.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build",
+    "test:agent": "node tests/agent-stream-browser.mjs",
+    "fixtures": "node fixtures/server.mjs",
+    "test:browser": "tsx tests/browser.ts",
+    "test:p0": "tsx tests/p0-browser.ts",
+    "schema:generate": "node scripts/generate-schema.mjs",
+    "pretest": "npm run schema:generate",
+    "validate:package": "tsx scripts/validate-package.ts",
+    "analyze:fixture": "tsx scripts/analyze-fixture.ts",
+    "test:p1": "tsx tests/p1-browser.ts",
+    "test:capacity": "tsx tests/capacity-browser.ts",
+    "test:export-capacity": "tsx tests/export-capacity.ts",
+    "report:capacity": "tsx scripts/report-capacity.ts",
+    "test:phase7": "tsx tests/phase7-browser.ts",
+    "test:platform": "tsx tests/platform-browser.ts",
+    "test:native": "tsx tests/native-browser.ts",
+    "test:opening": "tsx tests/opening-browser.ts",
+    "test:permissions": "tsx tests/permissions-browser.ts",
+    "test:network": "tsx tests/network-browser.ts"
+  },
+  "dependencies": {
+    "@assistant-ui/react": "0.15.37",
+    "@assistant-ui/react-streamdown": "0.3.23",
+    "@rrweb/record": "2.2.2",
+    "eventsource-parser": "4.1.3",
+    "fflate": "0.8.3",
+    "markdown-it": "15.0.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "streamdown": "2.8.0"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "2.0.0",
+    "@types/chrome": "0.3.7",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "ajv": "8.20.0",
+    "esbuild": "0.28.2",
+    "fake-indexeddb": "6.2.8",
+    "playwright": "1.65.1",
+    "rrweb-player": "2.2.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

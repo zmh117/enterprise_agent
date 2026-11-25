@@ -1,0 +1,24 @@
+@import url('./chat.css');
+
+:root{font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif;color:#232328;background:#fff;color-scheme:light}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;font:inherit}html,body,main,#agent-panel{height:100%}
+#agent-panel{display:flex;flex-direction:column;padding:12px;gap:6px;overflow:auto}
+button,input,select,textarea{font:inherit;color:inherit}
+button,select,input,textarea{border:1px solid #d4d4d8;border-radius:7px;background:white}
+button,summary,select{cursor:pointer}button{padding:5px 9px}button:disabled{opacity:.55;cursor:default}
+:focus-visible{outline:2px solid #6550db;outline-offset:1px}
+#agent-panel { padding: 0 12px 4px; gap: 0; }
+#agent-thread { flex: 1; }
+.agent-toolbar { gap: 2px 7px; }
+.agent-app-choice { font-size: 11px; }
+#agent-status { font-size: 11px; }
+.agent-toolbar #agent-app { max-width: 135px; }
+#agent-answers { padding-inline: 3px; }
+#agent-answers .chat-reply { font-size: 14px; }
+.chat-compose-area { padding-inline: 0; }
+.answer p{margin:5px 0}.answer ol,.answer ul{padding-left:22px}
+.answer pre,#agent-record-sample{max-width:100%;overflow:auto;background:#f6f6f8;padding:8px;border-radius:6px}
+.answer table{display:block;overflow:auto;border-collapse:collapse}.answer td,.answer th{border:1px solid #dddde2;padding:4px 8px}.answer a{color:#4f39d6}
+.answer [style*="--streamdown-caret"]>:last-child:not([data-sd-caret-hidden])::after{content:var(--streamdown-caret);color:#4f39d6;animation:blink 1s step-end infinite}@keyframes blink{50%{opacity:0}}@media(prefers-reduced-motion:reduce){*{animation:none!important}}
+#agent-record-sample { white-space: pre-wrap; overflow-wrap: anywhere; }
+#agent-history { font-size: 12px; }

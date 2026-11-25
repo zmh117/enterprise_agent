@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>浏览器采集助手</title><link rel="stylesheet" href="control.css">
+</head>
+<body>
+  <header><strong>浏览器采集助手</strong><span id="runtime" class="muted"></span></header>
+  <main>
+    <nav aria-label="控制台"><a href="#capture">数据采集</a><a href="#records">本地记录</a><a href="#sites">站点设置</a><a href="#assistant">Agent 对话</a><a href="#conversations">对话历史</a></nav>
+    <div id="notice" role="status" hidden></div>
+    <section id="capture" class="view">
+      <div class="page-title"><h1>数据采集</h1><span id="status-pill" class="pill">未开始</span></div>
+      <div id="prepare" class="panel">
+        <div class="section-title"><h2>采集标签</h2><button id="refresh">刷新标签</button></div>
+        <div class="toolbar"><label class="search">搜索标签<input type="search" id="tab-search" placeholder="标签名称或网址"></label></div>
+        <div class="selection-heading"><label class="check"><input id="select-all" type="checkbox">全选当前结果</label><span id="selection-count" class="muted" aria-live="polite"></span></div>
+        <div id="directory"></div>
+        <div class="environment-line"><span>采集环境</span><output id="environment">未关联</output><a href="#sites">管理站点关联</a></div>
+        <details id="policy-details"><summary>采集范围与权限</summary>
+          <p>仅采集所选标签及其后续新开的子标签。跨域页面与 API 需加入策略。</p>
+          <div class="button-row"><button id="reset-policy">按所选站点重置</button><button id="fixture-policy">使用本地示例</button></div>
+          <label>策略 JSON<textarea id="policy" spellcheck="false" rows="12"></textarea></label>
+        </details>
+        <div class="panel-footer"><span class="muted" id="policy-summary">本地保存，仅隐藏登录密码，其他文本保留原值。</span><button id="start" class="primary" disabled>开始采集</button></div>
+      </div>
+      <div id="session" class="panel" hidden>
+        <div class="section-title"><div><h2>采集记录</h2><span id="recording-id" class="mono muted"></span></div><button id="stop" class="danger">结束采集</button></div>
+        <div class="metrics"><div>时长<strong id="duration"></strong></div><div>活动 / 已纳入标签<strong id="target-count"></strong></div><div>已保存<strong id="saved-size"></strong></div><div>保存状态<strong id="save-state"></strong></div></div>
+        <p id="session-message" class="muted"></p><div id="targets"></div>
+        <div id="live-actions" class="live-actions"><label>标记目标<select id="mark-target"></select></label><label class="grow">标记说明（可选）<input id="mark-note" maxlength="2000" placeholder="例如：提交订单"></label><button id="mark">添加时间标记</button><button id="show-add">添加标签</button></div>
+        <div id="add-root" hidden><label>选择标签<select id="add-target"></select></label><button id="add">添加所选标签</button></div>
+        <details><summary>采集缺口 <span id="gap-count" class="muted"></span></summary><ul id="gaps"></ul></details>
+        <div class="panel-footer"><span id="delivery-status" role="status"></span><div class="button-row"><button id="retry-save" hidden>重试保存</button><button id="new" hidden>新建采集</button><button id="preview" disabled>预览数据</button><button id="export" class="primary" disabled>导出 ZIP</button></div></div>
+      </div>
+      <section id="preview-panel" class="panel" hidden><div class="section-title"><h2>数据预览</h2><button id="close-preview">收起</button></div><div class="preview-grid"><pre id="summary-preview"></pre><div><label>请求详情<select id="request-select"></select></label><pre id="request-preview"></pre></div></div></section>
+    </section>
+    <section id="records" class="view" hidden><h1>本地记录</h1>
+      <div class="panel"><label class="search">搜索记录<input id="history-search" type="search" placeholder="环境、时间或记录编号"></label><div id="history"></div></div>
+      <p class="muted">卸载扩展会清除本地记录。</p>
+    </section>
+    <section id="sites" class="view" hidden><h1>站点设置</h1><div class="panel">
+      <div class="section-title"><h2>悬浮助手</h2><button id="float-refresh">刷新站点</button></div>
+      <fieldset id="float-sites"><legend>显示助手的站点</legend><div id="float-site-list"></div></fieldset>
+      <p id="env-source" class="muted"></p><a href="#assistant">系统连接</a>
+      <div class="panel-footer"><span id="float-site-status" role="status"></span><button id="float-save" class="primary" disabled>保存站点</button></div>
+    </div></section>
+    <section id="assistant" class="view" hidden><h1>Agent 对话</h1><!-- agent-panel --></section>
+    <section id="conversations" class="view" hidden>
+      <h1>对话历史</h1>
+      <div class="history-workspace">
+        <aside class="conversation-sidebar" aria-label="我的会话">
+          <div class="new-conversation"><select id="conversation-app" aria-label="业务应用"></select><button id="conversation-new" type="button">新建会话</button></div>
+          <div id="conversation-list"></div><button id="conversation-more" type="button" hidden>更多会话</button>
+          <p id="conversation-status" role="status"></p>
+        </aside>
+        <div class="conversation-reader"><h2 id="conversation-heading">新会话</h2>
+          <div class="reader-body"><div id="conversation-rail" aria-label="问答定位" role="navigation"></div><div id="conversation-main"></div></div>
+          <div id="conversation-feedback" role="status"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="control.js"></script>
+</body></html>
