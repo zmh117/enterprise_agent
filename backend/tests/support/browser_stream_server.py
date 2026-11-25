@@ -15,6 +15,7 @@ import uvicorn
 
 from backend.tests.helpers import grant_test_application_access
 from backend.tests.test_browser_extension_stream import (
+    create_browser_application,
     emit_delta,
     make_member,
     prepare,
@@ -41,6 +42,27 @@ def start_server(resources: ExitStack, recording_mode: bool):
         capabilities=tools,
         scopes=({"environment_id": environment["id"]},),
     )
+    if os.environ.get("EA_TEST_HISTORY") == "1":
+        publication = c.database.execute_one(
+            """select v.agent_publication_id from business_application_active_route r
+               join business_application_publication p on p.id=r.publication_id
+               join business_application_revision v on v.id=p.revision_id where r.application_id=?""",
+            (app_id,),
+        )
+        other = create_browser_application(
+            c,
+            "browser-history-second",
+            publication["agent_publication_id"],
+            name="合成巡检",
+            tools=tools,
+        )
+        grant_test_application_access(
+            c,
+            application_id=other,
+            role_code="inspection",
+            user_id=member["id"],
+            capabilities=tools,
+        )
     if os.environ.get("EA_TEST_SIGNIN_RECOVERY") == "1":
         second = c.identity_repository.create_user(
             username="demo-second", display_name="第二位合成操作员"
@@ -81,6 +103,44 @@ def start_server(resources: ExitStack, recording_mode: bool):
         flush=True,
     )
     return c, sock, srv, thread, files
+
+
+def history_activity(c, command):
+    from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
+
+    active = c.database.execute_one(
+        """select j.id,j.session_id from browser_message_receipt r join agent_job j on j.id=r.job_id
+           order by j.created_at desc,j.id desc limit 1"""
+    )
+    job = active["id"]
+    if command == "history-tool":
+        c.database.execute(
+            """update agent_job set status='RUNNING',locked_by='synthetic-worker',worker_claim_version=1,
+            worker_lease_until='2099-01-01T00:00:00+00:00' where id=?""",
+            (job,),
+        )
+        start_events(c, job)
+        emit_delta(c, job, 3, "正在核对合成记录。")
+        emit_delta(c, job, 4, "正在核对合成记录。", phase="process")
+        RunAuditRepository(c.database).add_tool_call(
+            job_id=job,
+            tool_name="lookup_record",
+            request_payload={},
+            response_summary={"returned": 2},
+            status="SUCCEEDED",
+            duration_ms=25,
+            risk_level="low",
+        )
+    else:
+        with c.database.unit_of_work():
+            c.session_repository.add_message(
+                session_id=active["session_id"],
+                job_id=job,
+                role="assistant",
+                content="两条记录已核对。",
+            )
+            c.database.execute("update agent_job set status='SUCCEEDED' where id=?", (job,))
+    return {"conversation": active["session_id"], "job": job}
 
 
 def run_fixture(resources: ExitStack) -> None:
@@ -133,6 +193,9 @@ def run_fixture(resources: ExitStack) -> None:
                     json.dumps(controlled_followup(c, int(command.strip()[-1]), evidence)),
                     flush=True,
                 )
+                continue
+            if command.strip() in {"history-tool", "history-final"}:
+                print(json.dumps(history_activity(c, command.strip())), flush=True)
                 continue
             assert command.strip() in {"advance", "attempt-fails"}
             jobs = c.database.execute(

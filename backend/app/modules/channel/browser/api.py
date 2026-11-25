@@ -64,37 +64,41 @@ def message_receipt(
     )
 
 
+def visible_job(req: Request, c: Container, job_id: str) -> dict[str, Any]:
+    user, origin = authenticated_user_and_origin(req)
+    suffix = " for share of j" if c.database.engine == "postgres" else ""
+    job = c.database.execute_one(
+        """select j.id,j.session_id,j.status,j.cancel_requested_at,j.retry_count,j.created_at,j.finished_at,
+        j.business_application_id,j.reply_route_json from agent_job j join agent_session s on s.id=j.session_id
+        join browser_message_receipt r on r.job_id=j.id and r.origin=? and r.user_id=? and r.application_id=j.business_application_id
+        where j.id=? and j.internal_user_id=? and s.requester_id=? and s.source_channel=? and j.source_channel=?
+        and j.source_connector_id=? and s.source_connector_id=? and s.business_application_id=j.business_application_id"""
+        + suffix,
+        (
+            origin,
+            user,
+            job_id,
+            user,
+            user,
+            CHANNEL,
+            CHANNEL,
+            CONNECTOR,
+            CONNECTOR,
+        ),
+    )
+    if not job:
+        raise deny("access_denied", 404)
+    route = json.loads(job["reply_route_json"])
+    if route.get("type") != CHANNEL or route.get("connector_id") != CONNECTOR:
+        raise deny("access_denied", 404)
+    active_app(c, origin, user, job["business_application_id"])
+    return job
+
+
 def read(req: Request, job_id: str, cursor: int | None) -> Any:
     c = container(req)
     with c.database.unit_of_work():
-        user, origin = authenticated_user_and_origin(req)
-        suffix = " for share of j" if c.database.engine == "postgres" else ""
-        job = c.database.execute_one(
-            """select j.id,j.session_id,j.status,j.cancel_requested_at,j.retry_count,
-            j.business_application_id,j.reply_route_json from agent_job j join agent_session s on s.id=j.session_id
-            join browser_message_receipt r on r.job_id=j.id and r.origin=? and r.user_id=? and r.application_id=j.business_application_id
-            where j.id=? and j.internal_user_id=? and s.requester_id=? and s.source_channel=? and j.source_channel=?
-            and j.source_connector_id=? and s.source_connector_id=? and s.business_application_id=j.business_application_id"""
-            + suffix,
-            (
-                origin,
-                user,
-                job_id,
-                user,
-                user,
-                CHANNEL,
-                CHANNEL,
-                CONNECTOR,
-                CONNECTOR,
-            ),
-        )
-        if not job:
-            raise deny("access_denied", 404)
-        route = json.loads(job["reply_route_json"])
-        if route.get("type") != CHANNEL or route.get("connector_id") != CONNECTOR:
-            raise deny("access_denied", 404)
-        active_app(c, origin, user, job["business_application_id"])
-        return read_answer(c.database, job, cursor)
+        return read_answer(c.database, visible_job(req, c, job_id), cursor)
 
 
 def private_response(response: Response) -> None:
@@ -319,6 +323,101 @@ def accept_question(
         return receipt({"job_id": job.id, "session_id": job.session_id, "recording_id": selected})
 
 
+@router.get("/conversations")
+def conversation_list(
+    req: Request,
+    before: str | None = Query(default=None, max_length=256),
+    limit: int = Query(default=30, ge=1, le=100),
+    application_id: str | None = Query(default=None, min_length=1, max_length=128),
+) -> dict[str, Any]:
+    c = container(req)
+    with c.database.unit_of_work():
+        user, origin = authenticated_user_and_origin(req)
+        if application_id is not None:
+            active_app(c, origin, user, application_id)
+            allowed = [application_id]
+        else:
+            apps = c.database.execute(
+                "select distinct application_id from browser_message_receipt where origin=? and user_id=?",
+                (origin, user),
+            )
+            allowed = []
+            for row in apps:
+                try:
+                    active_app(c, origin, user, row["application_id"])
+                except HTTPException as exc:
+                    if exc.status_code == 404:
+                        continue
+                    raise
+                allowed.append(row["application_id"])
+        if not allowed:
+            return {"items": [], "next_before": None}
+        places = ",".join("?" for _ in allowed)
+        args: list[Any] = [origin, user, CHANNEL, CONNECTOR, CHANNEL, CONNECTOR, *allowed]
+        boundary = ""
+        if before:
+            stamp, sep, sid = before.partition("|")
+            if not sep or not stamp or not sid:
+                raise deny("cursor_invalid", 409)
+            boundary = " and (activity_at, conversation_id) < (?, ?)"
+            args.extend([stamp, sid])
+        rows = c.database.execute(
+            f"""with turns as (
+                select s.id as conversation_id,s.business_application_id as application_id,
+                       coalesce(s.last_message_at,s.created_at) as activity_at,
+                       substr(m.content,1,96) as title,
+                       row_number() over(partition by s.id order by m.sequence_no) as position
+                  from browser_message_receipt r join agent_job j on j.id=r.job_id
+                  join agent_session s on s.id=j.session_id
+                  join agent_message m on m.id=j.input_message_id and m.session_id=s.id
+                 where r.origin=? and r.user_id=? and s.requester_id=r.user_id and j.internal_user_id=r.user_id
+                   and s.source_channel=? and s.source_connector_id=? and j.source_channel=? and j.source_connector_id=?
+                   and s.business_application_id=r.application_id and j.business_application_id=r.application_id
+                   and r.application_id in ({places})
+              ) select conversation_id,application_id,activity_at,title from turns where position=1"""
+            + boundary
+            + " order by activity_at desc, conversation_id desc limit ?",
+            (*args, limit + 1),
+        )
+        page = rows[:limit]
+        return {
+            "items": page,
+            "next_before": (
+                f"{page[-1]['activity_at']}|{page[-1]['conversation_id']}"
+                if len(rows) > limit
+                else None
+            ),
+        }
+
+
+@router.get("/jobs/{job_id}/activity")
+def job_activity(req: Request, job_id: str) -> dict[str, Any]:
+    from app.shared.tool_response_summary import (
+        MAX_TOOL_SUMMARY_SOURCE_CHARS,
+        tool_response_summary,
+    )
+
+    c = container(req)
+    with c.database.unit_of_work():
+        job = visible_job(req, c, job_id)
+        process = c.database.execute(
+            """select body from browser_answer_delta where job_id=? and attempt=? and phase='process'
+               order by sequence""",
+            (job_id, job["retry_count"]),
+        )
+        tools = c.database.execute(
+            """select id,tool_name,status,duration_ms,created_at,
+                 case when length(response_summary)<=? then response_summary end as summary
+               from agent_tool_call where job_id=? order by created_at,id""",
+            (MAX_TOOL_SUMMARY_SOURCE_CHARS, job_id),
+        )
+        for tool in tools:
+            summary = tool_response_summary(tool["summary"])
+            # Plugin users receive safe result facts, never free-form legacy errors.
+            tool["summary"] = {k: v for k, v in summary.items() if k != "error"}
+        return {"process": "".join(row["body"] for row in process), "tools": tools}
+
+
 @router.get("/conversations/{conversation}")
 def conversation_page(
     req: Request,
@@ -363,7 +462,10 @@ def conversation_page(
             select += " and m.sequence_no<?"
             args += (boundary["sequence_no"],)
         jobs = c.database.execute(
-            "select j.id as job_id,j.status,m.content as question"
+            """select j.id as job_id,j.status,m.content as question,m.created_at as asked_at,
+                      coalesce((select substr(a.content,1,150) from agent_message a
+                          where a.job_id=j.id and a.session_id=j.session_id and a.role='assistant'
+                          order by a.sequence_no desc limit 1),'') as answer_preview"""
             + select
             + " order by m.sequence_no desc limit ?",
             (*args, limit + 1),

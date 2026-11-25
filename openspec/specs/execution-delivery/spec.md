@@ -1731,6 +1731,16 @@ Runtime SHALL 对知识工具本地拒绝及远端失败提取代码所有的安
 - **WHEN** 工具输出未知错误码或任意错误描述
 - **THEN** 不持久化这些内容，只返回固定通用安全分类
 
+### Requirement: 插件答复区分执行过程与最终答案
+
+启用结构化答复的浏览器任务 SHALL 根据主会话的公开助手消息边界区分过程说明和最终答复。工具时间线 SHALL 按执行记录提供工具名称、状态、耗时及有界的结果元数据。插件 SHALL 将系统运行状态和默认折叠的执行过程与答案分别展示。历史回放直接呈现已保存的内容，复制最终答案时只包含答复正文。
+
+#### Scenario: 带工具调用的回复
+
+- **WHEN** Agent 先说明要查询，再调用工具并生成结论
+- **THEN** 过程说明和工具调用可分别展开，实时收到的工具摘要可渐进显示
+- **AND** 重开会话后可直接阅读结论，已保存的旧版合并答复按原文显示
+
 ## 实现依据与验证边界
 
 实现依据：`backend/app/modules/job/application/create_agent_job_service.py`、`job_retry_service.py`、`debug_job_access_service.py`、`backend/app/modules/job/domain/{agent_job,execution_policy,job_status}.py`；`backend/app/modules/mcp_tool_runtime/job_snapshot.py`、`services/ones_mcp_server/auth/principal.py`、`services/external_action_worker/ones_adapter.py`；`backend/app/modules/agent/application/agent_executor.py`、`backend/app/modules/agent/infrastructure/runtime_protocol.py`、`runtime_http_client.py`；`backend/app/python_runtime/{executor,mcp_config,tool_contract,tool_policy,run_audit,invocations}.py`；`backend/app/shared/agent_run_audit_codec.py`；`contracts/agent-runtime/v1.4/` 与 `v1.5/`；`backend/app/modules/job/infrastructure/repositories.py`、`backend/app/modules/admin/api/controller.py`；`backend/app/modules/delivery/application/`；`backend/app/modules/external_action/`、`services/external_action_worker/runtime.py`、`services/dingtalk_mcp_server/worker.py`。

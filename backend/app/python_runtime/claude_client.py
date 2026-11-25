@@ -166,6 +166,7 @@ class ClaudeSdkClient:
             default=None,
         )
         self.answer_observer: Callable[[str], None] | None = None
+        self.process_observer: Callable[[str], None] | None = None
         self.cancellation_event = cancellation_event
         self.last_runtime_events: list[dict[str, Any]] = []
         self.last_accounting: dict[str, Any] = unavailable_accounting()
@@ -275,7 +276,7 @@ class ClaudeSdkClient:
             tool_call_budget=tool_call_budget,
             turn_budget=turn_budget,
         )
-        browser = BrowserAnswer(self.answer_observer) if self.answer_observer else None
+        browser = BrowserAnswer(self.answer_observer, self.process_observer) if self.answer_observer else None
         if browser:
             options.include_partial_messages = True
         run_audit_recorder = RunAuditRecorder(

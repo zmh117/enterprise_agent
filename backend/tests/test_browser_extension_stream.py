@@ -77,12 +77,12 @@ def prepare(*, mixed=False, tools=(), secure_cookies=False):
     return api, app_id, password
 
 
-def create_browser_application(c, code, publication_id, *, mixed=False, tools=()):
+def create_browser_application(c, code, publication_id, *, name="合成诊断", mixed=False, tools=()):
     service = c.business_application_service
     app = service.create(
         actor_id="user_local_admin",
         code=code,
-        name="合成诊断",
+        name=name,
         description="",
         project_code="default",
         owner_user_id="user_local_admin",
@@ -550,7 +550,7 @@ def start_events(c, job, attempt=0):
     sink.record_runtime_event(job, {**event, **header, "sequence": 2})
 
 
-def emit_delta(c, job, sequence, text):
+def emit_delta(c, job, sequence, text, *, phase=None):
     row = c.database.execute_one(
         "select locked_by,worker_claim_version,retry_count from agent_job where id=?", (job,)
     )
@@ -565,7 +565,7 @@ def emit_delta(c, job, sequence, text):
                 "request_digest": "a" * 64,
                 "sequence": sequence,
                 "event_type": "assistant_text",
-                "payload": {"text": text},
+                "payload": {"text": text, **({"phase": phase} if phase else {})},
             },
         )
 
@@ -599,6 +599,11 @@ def assert_other_reader_excluded(c, api, app, password, path):
         other_headers = authorize(second_client, c, password, other["id"])
         assert second_client.get(path, headers=other_headers).status_code == 404
         assert second_client.get(path + "/events", headers=other_headers).status_code == 404
+        assert second_client.get(path + "/activity", headers=other_headers).status_code == 404
+        assert (
+            second_client.get(PREFIX + "/conversations", headers=other_headers).json()["items"]
+            == []
+        )
 
 
 async def assert_grant_revoked_midstream(api, c, headers, job):
@@ -696,11 +701,17 @@ def test_granted_question_snapshot_resume_and_revoke():
         )
         assert client.get(path, headers=headers).json()["state"] == "analyzing"
         with c.database.unit_of_work():
-            c.session_repository.add_message(
+            answer_id = c.session_repository.add_message(
                 session_id=result["session_id"], job_id=job, role="assistant", content=final
             )
             c.database.execute(
-                "update agent_job set status='SUCCEEDED',result=? where id=?", (final, job)
+                """update agent_job set status='SUCCEEDED',result=?,created_at='2026-11-25T02:30:00Z',
+                   finished_at='2026-11-25T02:31:05.125Z' where id=?""",
+                (final, job),
+            )
+            answered_at = "2026-11-25T02:31:05.100Z"
+            c.database.execute(
+                "update agent_message set created_at=? where id=?", (answered_at, answer_id)
             )
         stream = client.get(
             path + "/events", headers={**headers, "Last-Event-ID": str(snap["through_cursor"])}
@@ -712,7 +723,19 @@ def test_granted_question_snapshot_resume_and_revoke():
             == events[-1]["final_answer"]
             == final
         )
-        assert client.get(path, headers=headers).json()["final_answer"] == final
+        completed = client.get(path, headers=headers).json()
+        for response in (completed, events[-1]):
+            assert response["final_answer"] == final
+            assert response["answered_at"] == answered_at
+            assert response["duration_ms"] == 65_125
+        page = client.get(
+            PREFIX + "/conversations/" + result["conversation_id"], headers=headers
+        ).json()
+        asked_at = c.database.execute_one(
+            "select m.created_at from agent_job j join agent_message m on m.id=j.input_message_id where j.id=?",
+            (job,),
+        )["created_at"]
+        assert page["jobs"][0]["asked_at"] == asked_at
         c.database.execute(
             "update agent_job set finished_at='2000-01-01T00:00:00+00:00' where id=?", (job,)
         )
@@ -783,9 +806,12 @@ def test_main_markdown_around_tools():
 
 
 @pytest.mark.parametrize(
-    "high_limits,separate_budget", [(False, False), (True, False), (True, True)]
+    "high_limits,separate_budget,structured",
+    [(False, False, False), (True, False, False), (True, True, False), (True, True, True)],
 )
-def test_runtime_emits_only_after_contract_and_replays_once(tmp_path, high_limits, separate_budget):
+def test_runtime_emits_only_after_contract_and_replays_once(
+    tmp_path, high_limits, separate_budget, structured
+):
     from app.modules.agent.infrastructure.runtime_protocol import canonical_request_digest
     from backend.tests.test_python_agent_runtime import (
         FakePythonExecutor,
@@ -805,10 +831,14 @@ def test_runtime_emits_only_after_contract_and_replays_once(tmp_path, high_limit
             secret_context,
             tool_contract_observer=None,
             answer_observer=None,
+            process_observer=None,
         ):
+            assert bool(process_observer) == structured
             assert answer_observer
             answer_observer("排除未校验的预览")
             outcome = super().execute(request, cancel_event, secret_context, tool_contract_observer)
+            if process_observer:
+                process_observer("查询公开记录。")
             answer_observer("**合")
             answer_observer("成**")
             return replace(outcome, final_answer="**合成**")
@@ -817,6 +847,8 @@ def test_runtime_emits_only_after_contract_and_replays_once(tmp_path, high_limit
     deps, private = _dependencies(tmp_path, executor)
     req = _current_request()
     req["prompt"]["retrieved_context"]["response_presentation"] = "browser-markdown"
+    if structured:
+        req["prompt"]["retrieved_context"]["browser_answer_parts"] = "turns-v1"
     if separate_budget:
         req["prompt"]["retrieved_context"]["browser_preview_budget"] = "separate-v1"
     if high_limits:
@@ -834,7 +866,112 @@ def test_runtime_emits_only_after_contract_and_replays_once(tmp_path, high_limit
 
     events = read()
     assert read() == events and len(executor.requests) == 1
-    assert [e["payload"]["text"] for e in events if e["event_type"] == "assistant_text"] == (
+    previews = [e["payload"] for e in events if e["event_type"] == "assistant_text"]
+    assert [p["text"] for p in previews if p.get("phase") == "process"] == (
+        ["查询公开记录。"] if structured else []
+    )
+    assert [p["text"] for p in previews if "phase" not in p] == (
         ["**合", "成**"] if separate_budget or not high_limits else []
     )
     assert events[-1]["payload"]["final_answer"] == "**合成**"
+
+
+def test_history_and_public_activity_are_scoped_and_keep_turn_boundaries():
+    from app.modules.job.infrastructure.run_audit_repository import RunAuditRepository
+    from backend.tests.test_browser_extension_contract import validator
+
+    api, app, password = prepare()
+    c = api.state.container
+    try:
+        with TestClient(api, base_url=ORIGIN, follow_redirects=False) as client:
+            headers = authorize(client, c, password)
+            scope = client.get(PREFIX + "/applications", headers=headers).json()[0]["scope_ref"]
+
+            def ask(key, question, **extra):
+                response = client.post(
+                    PREFIX + f"/applications/{app}/messages",
+                    headers={**headers, "X-Application-Scope": scope},
+                    json={"client_message_id": key, "question": question, **extra},
+                )
+                assert response.status_code == 202
+                return response.json()
+
+            first = ask("first", "第一个会话")
+            second = ask("second", "另一个会话")
+            follow = ask("follow", "继续第一个问题", conversation_id=first["conversation_id"])
+            assert (
+                first["conversation_id"] == follow["conversation_id"] != second["conversation_id"]
+            )
+            listing = client.get(
+                PREFIX + "/conversations", params={"limit": 1}, headers=headers
+            ).json()
+            validator("ConversationList").validate(listing)
+            more = client.get(
+                PREFIX + "/conversations",
+                params={"before": listing["next_before"]},
+                headers=headers,
+            ).json()
+            assert {r["title"] for r in listing["items"] + more["items"]} == {
+                "第一个会话",
+                "另一个会话",
+            }
+            job = first["job_id"]
+            path = PREFIX + "/jobs/" + job
+            db = c.database
+            db.execute(
+                """update agent_job set status='RUNNING',locked_by='synthetic-worker',worker_claim_version=1,
+                          worker_lease_until='2099-01-01T00:00:00+00:00' where id=?""",
+                (job,),
+            )
+            start_events(c, job)
+            emit_delta(c, job, 3, "先检查")
+            emit_delta(c, job, 4, "先检查", phase="process")
+            emit_delta(c, job, 5, "结论")
+            RunAuditRepository(db).add_tool_call(
+                job_id=job,
+                tool_name="lookup",
+                status="SUCCEEDED",
+                duration_ms=13,
+                risk_level="low",
+                request_payload={"input": "PRIVATE"},
+                response_summary={"returned": 3, "rows": ["PRIVATE"], "error": "PRIVATE"},
+            )
+            assert client.get(path, headers=headers).json()["draft"] == "结论"
+            items = read_answer(db, {"id": job, "retry_count": 0, "status": "RUNNING"}, 4)
+            assert items[0]["replace"] and items[0]["text"] == ""
+            validator("AnswerEvent").validate(items[0])
+            activity = client.get(path + "/activity", headers=headers).json()
+            validator("JobActivity").validate(activity)
+            assert activity["process"] == "先检查"
+            assert activity["tools"][0]["summary"] == {"returned": 3}
+            assert "PRIVATE" not in str(activity)
+            db.execute(
+                "update agent_job set status='SUCCEEDED',finished_at='2000-01-01' where id=?",
+                (job,),
+            )
+            purge_answers(db)
+            assert client.get(path + "/activity", headers=headers).json() == activity
+            assert_other_reader_excluded(c, api, app, password, path)
+    finally:
+        c.database.close()
+
+
+def test_structured_browser_answer_separates_public_process_from_final():
+    chunks, process = [], []
+    answer = BrowserAnswer(chunks.append, process.append)
+    answer.observe({"type": "system", "subtype": "init", "data": {"session_id": "main"}})
+    for mid, blocks in [
+        ("one", [{"type": "text", "text": "先查一下。"}, {"type": "tool_use"}]),
+        ("two", [{"type": "text", "text": "结论。"}]),
+    ]:
+        item = {
+            "type": "assistant",
+            "session_id": "main",
+            "message_id": mid,
+            "uuid": mid,
+            "content": blocks,
+        }
+        answer.observe(item)
+        answer.observe(item)
+    assert answer.final("结论。") == "结论。"
+    assert process == ["先查一下。"]

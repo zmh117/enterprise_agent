@@ -473,6 +473,7 @@ def _response_presentation(job: AgentJob) -> dict[str, str]:
         return {
             "response_presentation": "browser-markdown",
             "browser_preview_budget": "separate-v1",
+            "browser_answer_parts": "turns-v1",
         }
     if route.get("type") in {
         "dingtalk_conversation",

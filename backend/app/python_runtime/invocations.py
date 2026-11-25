@@ -50,6 +50,7 @@ class PythonRuntimeExecutor(Protocol):
         secret_context: InvocationSecretContextPort,
         tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
         answer_observer: Callable[[str], None] | None = None,
+        process_observer: Callable[[str], None] | None = None,
     ) -> PythonExecutionOutcome: ...
 
 
@@ -488,7 +489,7 @@ class PythonInvocationRegistry:
             )
         chars_left = 524288
 
-        def preview(text: str) -> None:
+        def preview(text: str, *, process: bool = False) -> None:
             nonlocal events_left, chars_left
             if (
                 events_left > 0
@@ -496,11 +497,23 @@ class PythonInvocationRegistry:
                 and (observation() or {}).get("status") == "MATCH"
             ):
                 text = text[:chars_left]
-                self._persist_and_emit(invocation, "assistant_text", {"text": text})
+                self._persist_and_emit(
+                    invocation,
+                    "assistant_text",
+                    {"text": text, **({"phase": "process"} if process else {})},
+                )
                 events_left -= 1
                 chars_left -= len(text)
 
-        return {"answer_observer": preview}
+        observers: dict[str, Callable[[str], None]] = {"answer_observer": preview}
+        if request["prompt"]["retrieved_context"].get("browser_answer_parts") == "turns-v1":
+
+            def process(text: str) -> None:
+                for pos in range(0, len(text), 4096):
+                    preview(text[pos : pos + 4096], process=True)
+
+            observers["process_observer"] = process
+        return observers
 
     def _run(self, invocation: RuntimeInvocation) -> None:
         request = invocation.request
@@ -582,7 +595,7 @@ class PythonInvocationRegistry:
         for tool_event in outcome.tool_events:
             self._persist_and_emit(invocation, "tool_event", dict(tool_event))
         audit_sha256 = ""
-        audit_chunks = []
+        audit_chunks: list[dict[str, Any]] = []
         if request["protocol_version"] == "1.5" and outcome.run_audit:
             audit_sha256, audit_chunks = encode_audit_chunks(outcome.run_audit)
         events = invocation.events()

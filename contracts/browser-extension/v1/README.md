@@ -30,15 +30,19 @@
 | POST /recordings/{id}/complete | 空请求体 | ReadyReceipt |
 | POST /applications/{id}/messages | CreateMessage，UTF-8 信封上限 64 KiB | 202 MessageReceipt |
 | GET /applications/{id}/messages/{client_message_id} | 原应用与原消息标识 | MessageReceipt |
+| GET /conversations | 可选 application_id、before、limit | ConversationList，按最近活动分页返回当前账号在此来源仍可访问的插件会话。指定业务应用时只返回该应用的会话 |
+| GET /jobs/{id}/activity | 本人获授权的插件 Job | JobActivity，当前尝试的公开过程说明及该 Job 的工具调用、状态和安全摘要 |
 | GET /conversations/{id} | 可选 before（上一页返回的 Job ID）、limit（1 至 20） | ConversationPage，按会话顺序返回问题和 Job 引用。每个回答从对应 Job 的快照或流读取 |
 | GET /jobs/{id} | 原 Job 标识 | Snapshot |
 | GET /jobs/{id}/events | 可选 Last-Event-ID | text/event-stream，每帧 data 为一个 AnswerEvent |
 | search_recording | SearchRecording，时间窗端点均包含，from_ms 不超过 to_ms | SearchResult |
 | get_recording_evidence | GetRecordingEvidence | EvidenceResult |
 
+会话页的 `asked_at` 和成功答复的 `answered_at` 分别取自提问和最终回答的消息时间。完成快照与完成事件提供相同的 `duration_ms`，从任务创建计至完成，包含排队和重试。缺少任务完成时间的旧记录以最终回答时间为准，无法取得有效时长时省略该字段。
+
 SSE 的 id 为十进制文本，event 为事件名；两者分别与 data.id 的十进制表示和 data.event 一致。草稿及游标同时更新。快照的 through_cursor 覆盖该快照的全部状态，重连只追加此游标以后的事件。未收终态即断流时可读取快照。证据 ID 中的录制标识只用于与本轮 Job 的绑定核对。搜索结果按相对时间、种类和源 ID 排序，分页从最后一行之后继续。按关联证据查不到操作时，可按失败请求的 `offset_ms` 设置 `from_ms`、`to_ms` 检索附近操作，并在回答中说明时间邻近。
 
-`answer_delta.text` 是 Markdown 原文片段，可在行内标记、表格或代码围栏中间断开。客户端保留对应 Job 和 attempt 的原文草稿，依游标追加后统一渲染。工具前后主对话助手的正文按顺序组成同一答复。`Snapshot.draft` 用于恢复原文，`completed.final_answer` 是持久全文，整体替换草稿。
+`answer_delta.text` 是 Markdown 原文片段，可在行内标记、表格或代码围栏中间断开。客户端保留对应 Job 和 attempt 的原文草稿，依游标追加后统一渲染。新 Worker 在冻结的请求中声明 `browser_answer_parts=turns-v1`。支持该能力的 Runtime 按主会话的 SDK 消息边界提交公开过程说明，由结果消息或最后的答复提供最终正文。过程标记投影为 `replace=true` 的空增量以清除先前草稿。过程正文可从 activity 读取，最终答案独立保存。旧版已保存的合并回答仍按原文展示。`Snapshot.draft` 用于恢复原文，`completed.final_answer` 是持久全文，整体替换草稿。
 
 Job 开始运行后会先发出 `analyzing` 状态，即使模型尚未生成公开正文。迁移 165 扩大模型调用记录的序号范围。新版 Worker 对插件原会话在冻结的 Runtime 1.5 请求中声明 `browser_preview_budget=separate-v1`。这类请求的正文预览有独立的 256 个事件、8 MiB 传输额度和 524288 字符上限。执行、审计和终态仍共用原来的 2048 个事件和 96 MiB 额度。旧请求沿用原预算。预览达到上限时，客户端继续等待权威终态。
 

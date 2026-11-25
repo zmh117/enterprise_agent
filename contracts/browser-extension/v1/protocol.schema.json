@@ -776,6 +776,13 @@
               "question": {
                 "type": "string",
                 "maxLength": 4000
+              },
+              "answer_preview": {
+                "type": "string",
+                "maxLength": 150
+              },
+              "asked_at": {
+                "type": "string"
               }
             },
             "required": [
@@ -1085,6 +1092,13 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 524288
+        },
+        "answered_at": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
@@ -1202,8 +1216,10 @@
         },
         "text": {
           "type": "string",
-          "minLength": 1,
           "maxLength": 32768
+        },
+        "replace": {
+          "const": true
         }
       },
       "required": [
@@ -1212,6 +1228,29 @@
         "id",
         "event",
         "text"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "replace"
+            ]
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "const": ""
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "text": {
+                "minLength": 1
+              }
+            }
+          }
+        }
       ]
     },
     "Reset": {
@@ -1269,6 +1308,13 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 524288
+        },
+        "answered_at": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
@@ -1491,6 +1537,98 @@
       "required": [
         "value",
         "omissions"
+      ]
+    },
+    "ConversationList": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "conversation_id": {
+                "$ref": "#/$defs/Identifier"
+              },
+              "application_id": {
+                "$ref": "#/$defs/Identifier"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 96
+              },
+              "activity_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "conversation_id",
+              "application_id",
+              "title",
+              "activity_at"
+            ]
+          }
+        },
+        "next_before": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "next_before"
+      ]
+    },
+    "JobActivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "process": {
+          "type": "string"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/Identifier"
+              },
+              "tool_name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "duration_ms": {
+                "type": "integer"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "id",
+              "tool_name",
+              "status",
+              "duration_ms",
+              "created_at",
+              "summary"
+            ]
+          }
+        }
+      },
+      "required": [
+        "process",
+        "tools"
       ]
     }
   },

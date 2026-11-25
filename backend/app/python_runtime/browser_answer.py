@@ -6,7 +6,13 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from app.python_runtime.sdk_event_normalizer import extract_text_blocks, sdk_message_type, sdk_value
+from app.python_runtime.sdk_event_normalizer import (
+    content_blocks,
+    extract_text_blocks,
+    sdk_block_type,
+    sdk_message_type,
+    sdk_value,
+)
 
 
 def observe_partial(browser: BrowserAnswer | None, message: Any) -> bool:
@@ -17,8 +23,14 @@ def observe_partial(browser: BrowserAnswer | None, message: Any) -> bool:
 
 
 class BrowserAnswer:
-    def __init__(self, emit: Callable[[str], None]) -> None:
+    def __init__(
+        self, emit: Callable[[str], None], process: Callable[[str], None] | None = None
+    ) -> None:
         self.emit = emit
+        self.emit_process = process
+        self.reported: set[str] = set()
+        self.tool_turns: set[str] = set()
+        self.has_process = False
         self.session = ""
         self.current = ""
         self.blocks: set[int] = set()
@@ -54,10 +66,17 @@ class BrowserAnswer:
                 self.seen.add(uid)
                 self._register(mid)
                 self.complete.setdefault(mid, []).extend(extract_text_blocks(message))
+                if any(
+                    sdk_block_type(block) in {"tool_use", "server_tool_use"}
+                    for block in content_blocks(message)
+                ):
+                    self.tool_turns.add(mid)
             return
         if kind not in {"streamevent", "stream_event"}:
             return
-        event = sdk_value(message, "event") or {}
+        self._observe_stream(sdk_value(message, "event") or {})
+
+    def _observe_stream(self, event: dict[str, Any]) -> None:
         tag = event.get("type")
         index = event.get("index")
         if tag == "message_start":
@@ -68,6 +87,8 @@ class BrowserAnswer:
                 self._register(self.current)
         elif tag == "content_block_start" and self.current:
             block = event.get("content_block") or {}
+            if block.get("type") in {"tool_use", "server_tool_use"}:
+                self.tool_turns.add(self.current)
             if isinstance(index, int) and block.get("type") == "text":
                 self.blocks.add(index)
                 self._append(block.get("text"))
@@ -80,19 +101,33 @@ class BrowserAnswer:
             self.flush()
         elif tag == "message_stop":
             self.flush()
+            if self.current in self.tool_turns and self.partial.get(self.current):
+                self._report_process(self.current)
             self.current = ""
             self.blocks.clear()
 
     def _register(self, mid: str) -> None:
         if mid not in self.partial:
+            if self.order:
+                self._report_process(self.order[-1])
             self.order.append(mid)
             self.partial[mid] = []
+
+    def _report_process(self, mid: str) -> None:
+        if not self.emit_process or mid in self.reported:
+            return
+        self.flush()
+        text = "".join(self.complete.get(mid) or self.partial[mid])
+        if text:
+            self.emit_process(("\n\n" if self.has_process else "") + text)
+            self.has_process = True
+        self.reported.add(mid)
 
     def _append(self, text: Any) -> None:
         if not isinstance(text, str) or not text:
             return
         self.partial[self.current].append(text)
-        if self.last_visible and self.last_visible != self.current:
+        if not self.emit_process and self.last_visible and self.last_visible != self.current:
             self.pending += "\n\n"
         self.last_visible = self.current
         self.pending += text
@@ -108,5 +143,11 @@ class BrowserAnswer:
 
     def final(self, fallback: str) -> str:
         self.flush()
+        if self.emit_process:
+            last = self.order[-1] if self.order else ""
+            if last in self.tool_turns:
+                self._report_process(last)
+                return fallback
+            return fallback or ("".join(self.complete.get(last) or self.partial.get(last, [])))
         turns = ["".join(self.complete.get(mid) or self.partial[mid]) for mid in self.order]
         return "\n\n".join(turn for turn in turns if turn) or fallback

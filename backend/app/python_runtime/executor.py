@@ -172,6 +172,7 @@ class PythonRuntimeExecutor:
         secret_context: InvocationSecretContextPort | None = None,
         tool_contract_observer: Callable[[dict[str, Any]], None] | None = None,
         answer_observer: Callable[[str], None] | None = None,
+        process_observer: Callable[[str], None] | None = None,
     ) -> PythonExecutionOutcome:
         provenance = self._provenance(request)
         if cancel_event.is_set():
@@ -224,6 +225,7 @@ class PythonRuntimeExecutor:
                 tool_contract_observer=tool_contract_observer,
             )
             client.answer_observer = answer_observer
+            client.process_observer = process_observer
             if file_principal_token_provider is not None:
                 file_principal_token_provider.start()
             if self._fake_provider_mode:

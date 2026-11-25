@@ -1859,6 +1859,9 @@
                 "text"
               ],
               "properties": {
+                "phase": {
+                  "const": "process"
+                },
                 "text": {
                   "type": "string",
                   "maxLength": 32768

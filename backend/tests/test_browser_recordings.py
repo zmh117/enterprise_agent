@@ -737,8 +737,24 @@ def test_receipts_conversation_and_recordings_follow_current_application(platfor
         headers=other_headers,
     )
     assert reply.status_code == 404
+
+    def history_for(application_id):
+        return client.get(
+            PREFIX + "/conversations", headers=headers, params={"application_id": application_id}
+        )
+
+    assert history_for(other).json() == {"items": [], "next_before": None}
     second = client.post(second_path + "/messages", json=plain, headers=other_headers)
     assert second.status_code == 202 and second.json()["job_id"] != job
+    for application_id, expected in (
+        (app, conversation),
+        (other, second.json()["conversation_id"]),
+    ):
+        page = history_for(application_id)
+        assert page.status_code == 200
+        assert [
+            (row["application_id"], row["conversation_id"]) for row in page.json()["items"]
+        ] == [(application_id, expected)]
     assert (
         client.get(
             f"{PREFIX}/conversations/{conversation}",
@@ -748,6 +764,7 @@ def test_receipts_conversation_and_recordings_follow_current_application(platfor
         == 409
     )
     c.database.execute("update business_application set status='disabled' where id=?", (app,))
+    assert history_for(app).status_code == 404
     assert [r["id"] for r in client.get(PREFIX + "/applications", headers=headers).json()] == [
         other
     ]
