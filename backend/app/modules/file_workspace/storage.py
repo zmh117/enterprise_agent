@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import secrets
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, BinaryIO, Protocol, cast
 from urllib.parse import urlsplit
 
@@ -36,6 +38,7 @@ class FileObjectStorageSettings:
     secret_key_ref: str
     region: str = "us-east-1"
     secure: bool = False
+    identity_digest_path: str | None = None
 
     def __post_init__(self) -> None:
         parsed = urlsplit(self.endpoint_url)
@@ -92,6 +95,12 @@ class MinioFileObjectStorage:
         self.settings = settings
         access_key = resolve_secret(settings.access_key_ref)
         secret_key = resolve_secret(settings.secret_key_ref)
+        if settings.identity_digest_path and urlsplit(settings.endpoint_url).hostname == "minio":
+            expected = Path(settings.identity_digest_path).read_text(encoding="ascii").strip()
+            if not secrets.compare_digest(
+                hashlib.sha256(access_key.encode()).hexdigest(), expected
+            ):
+                raise ValueError("File storage identity requires explicit rotation")
         if not access_key or not secret_key:
             raise NonRetryableExecutionError(
                 "File object storage credential is unavailable",

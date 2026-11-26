@@ -4,7 +4,7 @@
 
 插件的 `float-sites.ts` 按 origin 检查站点访问许可，`agent-panel.ts` 把同一账号多个应用的环境选项合并，采集会话在 `rootEnvironments` 按 origin 保存环境。事件、网络记录已有 `recordingId`、`tabInstanceId`、文档或请求标识，可以分别定位同域多页。平台浏览器渠道向 Job 传入的 `RoutingContext` 目前只有项目，省略 `recording_id` 时还可能继承会话原有录制。现有浏览器工具读取已就绪的录制包。
 
-平台授权目录已有环境、基地、车间的上下级关系，Loki Resource 已有环境或基地级固定 selector。本设计只扩展浏览器渠道和证据工具的契约。
+平台授权目录已有环境、基地、车间的上下级关系，Loki Resource 已有环境或基地级固定 selector。部署同时调整平台运维和文件存储的权限边界。
 
 ## Goals / Non-Goals
 
@@ -63,3 +63,7 @@
 ## Migration Plan
 
 先部署向后兼容的目录、范围登记、读写协议和受控 Alloy/Loki/MinIO 配置，再发布支持三级绑定的插件。旧配置可预填已知环境，用户补全后才启用该 URL 的车间信息流；历史记录不会按新规则回填。按单一授权车间试用，再验证多车间和双账号。回退时先停用新增录制写入和新入口，保留本地待传队列、已接收数据及旧录制读取能力。试用和回退都保留积压或缺口状态。
+
+### 主 Compose 与共享 MinIO
+
+主 Compose 的 `browser-evidence` profile 启动 Alloy、Loki 和一次性证据桶初始化。Loki 使用本机 `grafana/loki:latest`，部署记录本地镜像 ID。文件与证据使用同一 MinIO 的不同私有桶和不同受限访问密钥。证据桶独立设置容量和七天保留期。旧环境先轮换文件服务的受治理凭据，再启用采集。已有独立试用卷保留原位，切换不回填旧数据。

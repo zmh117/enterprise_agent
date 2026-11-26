@@ -27,12 +27,14 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
 根据主 Compose 的各服务限额预留容量，首次模型下载和构建可能持续较久；检查下载来源可达，
 不要把模型下载中误判为初始化卡死。操作系统和架构检查通过不代表容量压测通过。
 
+文件服务和浏览器证据可共用系统 MinIO。升级存量文件服务前先准备独立文件桶身份，按部署手册轮换旧 root 引用，再更新服务。浏览器证据按需启用。参见[共享 MinIO 的配置、升级与回退](../../services/browser_evidence/README.md)。
+
 ## 全新安装
 
 以下命令均在仓库根目录执行。只适用于没有既有业务数据的新安装。
 
 1. 初始化文件材料。脚本生成 Runtime/Principal 密钥、角色 bootstrap token、Docling Key、
-   Master Key，重复执行保留原值，拒绝空文件、符号链接和不完整密钥对。
+   Master Key 和文件桶专用密钥，重复执行保留原值，拒绝空文件、符号链接和不完整密钥对。
 
    ```sh
    sh scripts/bootstrap_agent_runtime_secrets.sh "$HOME/.config/enterprise-agent" --docker-acl

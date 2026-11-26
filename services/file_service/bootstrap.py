@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 import hashlib
 import hmac
+import os
 from typing import Any, Never
 
 from app.bootstrap import build_worker_container
@@ -152,6 +153,7 @@ def create_default_app() -> Any:
                 secret_key_ref=settings.file_service.secret_key_ref,
                 region=settings.file_service.region,
                 secure=settings.file_service.secure,
+                identity_digest_path=os.getenv("FILE_STORAGE_IDENTITY_DIGEST_PATH"),
             ),
             runtime.platform_config_service.resolve_secret,
         )

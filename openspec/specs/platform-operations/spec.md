@@ -1078,8 +1078,8 @@ Compose 和受支持的部署脚本 MUST 按“schema migration、初始管理�
 - **THEN** 服务包含`file-service`、`file-worker`、`file-processing-worker`和`docling-serve`
 - **AND** 不包含独立`file-mcp`、长期`attachment-worker`、Docling RQ/Redis或Ray服务
 
-### Requirement: MinIO凭据只注入File Service
-Compose、Secret usage 和运行配置 MUST 只向 `file-service` 提供 MinIO endpoint 与 `secret://platform/` 凭据引用所需能力。`agent-worker`、Python Runtime、`file-worker`、Delivery Dispatcher 和前端 MUST NOT 挂载或解析 MinIO Access Key、Secret Key 或 Session Token。File Service 健康、错误和配置快照只能显示 configured 状态与脱敏 endpoint 摘要。本地 Compose 首次启动 MAY 让一次性 Migrator 通过角色隔离的 Docker Secret 把 MinIO 凭据写入平台 `encrypted_db` Secret，但该进程 MUST 不获得 MinIO endpoint、Bucket 或对象访问路径，已有 Secret 不同则失败并要求显式轮换；生产部署 MUST 可关闭此本地 bootstrap。
+### Requirement: 任务文件与浏览器证据的 MinIO 凭据隔离
+Compose 和运行配置 MUST 只向 `file-service` 提供任务文件桶 endpoint 与受治理凭据引用。平台 MAY 复用 MinIO，由 Loki 使用独立身份访问私有证据桶。两个运行身份不得跨桶访问，证据桶独立配置容量和保留期。管理凭据只供 MinIO 与一次性存储初始化使用。Agent、Runtime、File Worker、Delivery Dispatcher、API、Alloy 和前端 MUST NOT 获取对象存储凭据。File Service 健康、错误和配置快照只显示 configured 状态与脱敏 endpoint 摘要。
 
 #### Scenario: File Worker环境被检查
 - **WHEN** 运维查看 `file-worker` 有效配置和容器挂载
@@ -1091,8 +1091,12 @@ Compose、Secret usage 和运行配置 MUST 只向 `file-service` 提供 MinIO e
 
 #### Scenario: 本地首次启动初始化受治理Secret
 - **WHEN** 本地 Compose 显式启用文件存储 Secret bootstrap 且目标平台 Secret 尚不存在
-- **THEN** 一次性 Migrator 从只读 Docker Secret 创建加密版本后销毁自身运行态
+- **THEN** 一次性 Migrator 从只读 Docker Secret 为文件桶身份创建 encrypted_db 加密版本后销毁自身运行态。它不获得 MinIO endpoint、桶或对象访问路径；生产部署可以关闭本地 bootstrap
 - **AND** 不向长期运行服务暴露 bootstrap 值，重复启动保留相同值，值不同则失败而不自动轮换
+
+#### Scenario: 文件与证据共享对象存储
+- **WHEN** 启用浏览器证据服务
+- **THEN** 文件服务与 Loki 均可读写自己的桶，交叉读取、写入与删除被拒绝，API 和 Alloy 只通过双向 TLS 访问证据读写服务
 
 ### Requirement: File Service与File Worker具有真实就绪和积压观测
 File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、Principal JWKS、Manifest v5、representation staging和内部流式接口依赖；File Worker readiness MUST 验证附件RabbitMQ队列契约、File Service内部API和清理调度；File Processing Worker readiness MUST 验证独立processing队列、File Service、角色Principal和Docling `/ready`；Docling readiness MUST 验证模型与内部编排器可处理请求。平台运维视图 SHALL 展示附件、processing run、representation staging、重试/dead-letter、提交暂存、工作区过期、保留清理和File Domain Outbox的安全积压计数与最近结果，不得仅以容器running或`/health`声明可用。

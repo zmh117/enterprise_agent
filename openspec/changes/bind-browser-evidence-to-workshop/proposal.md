@@ -22,6 +22,7 @@
 
 - `channel-conversation` — 插件 URL 绑定、操作来源和提问范围、录制期间的证据写入与可见状态。
 - `builtin-tool-resource` — Agent 读取本人、指定车间和时间范围内的浏览器证据，定位详情并关联已有日志资源。
+- `platform-operations`、`task-file-workspace` — 主 Compose 共享 MinIO，隔离任务文件和浏览器证据的身份、容量和生命周期。
 
 ## Impact
 

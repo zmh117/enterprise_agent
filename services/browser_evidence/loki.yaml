@@ -17,7 +17,7 @@ common:
       store: inmemory
   storage:
     s3:
-      endpoint: evidence-minio:9000
+      endpoint: minio:9000
       region: us-east-1
       bucketnames: browser-evidence
       insecure: true

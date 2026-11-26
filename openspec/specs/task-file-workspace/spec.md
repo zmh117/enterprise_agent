@@ -8,7 +8,7 @@
 **文件事实与权限**
 
 ### Requirement: File Service 是唯一文件事实入口
-系统 MUST 由 `file-service` 统一管理任务工作区、文件、文件版本、配额、生命周期、审计和对象位置，并 SHALL 同时暴露受治理 File MCP 接口与受控内部 API。只有 File Service 基础设施层可以解析 MinIO Secret Reference 并操作 MinIO；Agent、Runtime、`file-worker`、MCP 参数或响应、Job、日志和审计 MUST NOT 接收 MinIO Access Key、Secret Key、Session Token、Bucket 或对象键。
+系统 MUST 由 `file-service` 统一管理任务工作区、文件、文件版本、配额、生命周期、审计和对象位置，并 SHALL 同时暴露受治理 File MCP 接口与受控内部 API。只有 File Service 基础设施层可以解析任务文件的 MinIO Secret Reference 并操作任务文件桶；Agent、Runtime、`file-worker`、MCP 参数或响应、Job、日志和审计 MUST NOT 接收 MinIO Access Key、Secret Key、Session Token、Bucket 或对象键。
 
 #### Scenario: Agent 通过 File MCP 操作文件
 - **WHEN** RUNNING Job 调用已冻结且授权的文件工具
@@ -19,6 +19,10 @@
 - **WHEN** `file-worker` 请求导入附件或清理到期内容
 - **THEN** 它必须调用 File Service 内部 API
 - **AND** 部署不得向 `file-worker` 注入 MinIO 凭据
+
+#### Scenario: 浏览器证据保留期清理
+- **WHEN** Loki 在共享 MinIO 上清理到期证据
+- **THEN** 其身份只能删除专用证据桶的对象，无法读取或删除任务文件
 
 ### Requirement: File MCP 授权必须绑定当前 Job 与工作区
 File Service MUST 使用 identity-access 规定的短时 File Principal/JWKS 与独立内部 Service Principal 策略。每次用户文件调用 MUST 复核 RUNNING Job、内部用户、tenant、Session、Agent/Application Publication、授权 hash、精确 Tool/schema/scope，以及私聊 owner 或同群边界；冻结 Manifest、追加工作集或短期传输意图均不得替代实时授权。内部导入、清理、处理和 Delivery 使用各自角色固定 scope，用户 Principal 与 Service Principal 不得互换。

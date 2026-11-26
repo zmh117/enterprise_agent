@@ -38,12 +38,14 @@ code_runtime_bootstrap_token="$target_dir/code-runtime-bootstrap-token"
 recording_tool_bootstrap_token="$target_dir/recording-tool-bootstrap-token"
 docling_api_key="$target_dir/docling-api-key"
 master_key="$target_dir/app-config-master-key"
+file_access="$target_dir/file-storage-access-id"
+file_secret="$target_dir/file-storage-secret-key"
 
 # Validate metadata before generating anything; never rotate or print existing material.
 for existing_file in "$private_key" "$public_key" "$probe_token" \
   "$principal_private_key" "$principal_jwks" "$file_worker_bootstrap_token" \
   "$file_processing_worker_bootstrap_token" "$delivery_worker_bootstrap_token" \
-  "$knowledge_bootstrap_token" "$code_runtime_bootstrap_token" "$recording_tool_bootstrap_token" "$docling_api_key" "$master_key"; do
+  "$knowledge_bootstrap_token" "$code_runtime_bootstrap_token" "$recording_tool_bootstrap_token" "$docling_api_key" "$master_key" "$file_access" "$file_secret"; do
   if [ -L "$existing_file" ] || { [ -e "$existing_file" ] && { [ ! -f "$existing_file" ] || [ ! -s "$existing_file" ]; }; }; then
     echo "existing secret must be a nonempty regular file; initialization refused" >&2
     exit 1
@@ -66,6 +68,17 @@ else
   openssl genpkey -algorithm ED25519 -out "$private_key"
   openssl pkey -in "$private_key" -pubout -out "$public_key"
 fi
+
+if [ -e "$file_access" ] || [ -e "$file_secret" ]; then
+  if [ ! -s "$file_access" ] || [ ! -s "$file_secret" ]; then
+    echo "incomplete file storage key pair" >&2
+    exit 1
+  fi
+else
+  openssl rand -hex 10 > "$file_access"
+  openssl rand -hex 20 > "$file_secret"
+fi
+chmod 0400 "$file_access" "$file_secret"
 
 if [ ! -e "$probe_token" ]; then
   openssl rand -base64 48 | tr -d '\n' > "$probe_token"

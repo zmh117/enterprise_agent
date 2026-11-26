@@ -129,7 +129,6 @@ services:
       retries: 20
 
   minio:
-    # profiles: ["attachments"]
     image: ${MINIO_IMAGE:-minio/minio:latest}
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -157,6 +156,7 @@ services:
       - "${MINIO_CONSOLE_PORT:-19001}:9001"
     volumes:
       - minio-data:/data
+    networks: [default, evidence-objects]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
       interval: 5s
@@ -164,34 +164,75 @@ services:
       retries: 30
 
   minio-init:
-    # profiles: ["attachments"]
     image: ${MINIO_MC_IMAGE:-minio/mc:latest}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >-
-        case "$${APP_ENV:-local}" in
-          local|test|testing|development) ;;
-          *)
-            if [ -z "$${MINIO_ROOT_USER:-}" ] || [ -z "$${MINIO_ROOT_PASSWORD:-}" ] ||
-               [ "$${MINIO_ROOT_USER}" = "enterprise_agent" ] ||
-               [ "$${MINIO_ROOT_PASSWORD}" = "enterprise_agent_change_me" ] ||
-               [ "$${MINIO_ROOT_PASSWORD}" = "replace-with-a-strong-object-storage-secret" ]; then
-              echo "unsafe MinIO credentials for non-local APP_ENV" >&2;
-              exit 1;
-            fi
-            ;;
-        esac;
-        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
-        mc mb --ignore-existing "local/$${FILE_STORAGE_BUCKET}" &&
-        mc anonymous set none "local/$${FILE_STORAGE_BUCKET}"
-    environment:
+    entrypoint: ["/bin/sh", "/init/bucket.sh"]
+    command: [files]
+    environment: &minio-init-env
       APP_ENV: ${APP_ENV:-local}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-enterprise_agent}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-enterprise_agent_change_me}
       FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
+    secrets:
+      - file_storage_bootstrap_access_key
+      - file_storage_bootstrap_secret_key
+    volumes:
+      - ./scripts/init_minio_bucket.sh:/init/bucket.sh:ro
+      - file-storage-identity:/run/file-storage-identity
+    tmpfs: [/tmp]
     depends_on:
       minio:
         condition: service_healthy
+
+  evidence-bucket-init:
+    profiles: [browser-evidence]
+    image: ${MINIO_MC_IMAGE:-minio/mc:latest}
+    entrypoint: ["/bin/sh", "/init/bucket.sh"]
+    command: [evidence]
+    env_file:
+      - ${BROWSER_EVIDENCE_STORAGE_ENV_FILE:-./services/browser_evidence/storage.env.template}
+    environment:
+      <<: *minio-init-env
+      FILE_STORAGE_ENDPOINT_URL: ${FILE_STORAGE_ENDPOINT_URL:-http://minio:9000}
+      EVIDENCE_QUOTA: ${BROWSER_EVIDENCE_QUOTA:-20GiB}
+    secrets:
+      - file_storage_bootstrap_access_key
+    volumes:
+      - ./scripts/init_minio_bucket.sh:/init/bucket.sh:ro
+    tmpfs: [/tmp]
+    networks: [evidence-objects]
+    depends_on:
+      file-service: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+
+  evidence-loki:
+    profiles: [browser-evidence]
+    image: grafana/loki:latest
+    pull_policy: never
+    restart: unless-stopped
+    command: [-config.file=/etc/loki/evidence.yaml]
+    depends_on:
+      evidence-bucket-init: {condition: service_completed_successfully}
+    env_file:
+      - ${BROWSER_EVIDENCE_STORAGE_ENV_FILE:-./services/browser_evidence/storage.env.template}
+    environment:
+      AWS_EC2_METADATA_DISABLED: "true"
+    volumes:
+      - ${BROWSER_EVIDENCE_LOKI_TLS_DIR:-./.local/browser-evidence/loki}:/run/evidence-tls:ro
+      - ./services/browser_evidence/loki.yaml:/etc/loki/evidence.yaml:ro
+      - evidence-index:/loki
+    networks: [evidence-ingress, evidence-objects]
+
+  evidence-alloy:
+    profiles: [browser-evidence]
+    image: grafana/alloy@sha256:41c41849989b7e054ccbadc17938ee1e5592fe26bfbc56ef3ffc109c0b0b2739
+    restart: unless-stopped
+    command: [run, --storage.path=/var/lib/alloy/data, /etc/alloy/evidence.alloy]
+    depends_on: [evidence-loki]
+    volumes:
+      - ${BROWSER_EVIDENCE_ALLOY_TLS_DIR:-./.local/browser-evidence/alloy}:/run/evidence-tls:ro
+      - ./services/browser_evidence/evidence.alloy:/etc/alloy/evidence.alloy:ro
+      - evidence-alloy-data:/var/lib/alloy/data
+    networks: [evidence-ingress]
 
   tool-mcp:
     build:
@@ -407,12 +448,15 @@ services:
       FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
       FILE_STORAGE_ACCESS_KEY_REF: ${FILE_STORAGE_ACCESS_KEY_REF:-secret://platform/minio-file-access-key}
       FILE_STORAGE_SECRET_KEY_REF: ${FILE_STORAGE_SECRET_KEY_REF:-secret://platform/minio-file-secret-key}
+      FILE_STORAGE_IDENTITY_DIGEST_PATH: /run/file-storage-identity/access.sha256
       FILE_STORAGE_REGION: ${FILE_STORAGE_REGION:-us-east-1}
       FILE_STORAGE_SECURE: ${FILE_STORAGE_SECURE:-false}
       FILE_JWKS_REFRESH_SECONDS: ${FILE_JWKS_REFRESH_SECONDS:-60}
       FILE_MCP_MAX_REQUEST_BYTES: ${FILE_MCP_MAX_REQUEST_BYTES:-32768}
       DOCUMENT_PROCESSOR_VERSION: v1.30.0+wps-null-zero-drawing.v1
       DOCUMENT_PROCESSOR_BUILD_DIGEST: sha256:ea15a6fc35b991249180d9265e1a3406448855fe8134c61fc7d26dd046b93429
+    volumes:
+      - file-storage-identity:/run/file-storage-identity:ro
     secrets:
       - app_config_master_key
       - principal_jwks
@@ -588,11 +632,15 @@ services:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       RECORDING_TOOL_BOOTSTRAP_TOKEN_FILE: /run/secrets/recording_tool_bootstrap_token
+      BROWSER_EVIDENCE_WRITE_URL: ${BROWSER_EVIDENCE_WRITE_URL-}
+      BROWSER_EVIDENCE_READ_URL: ${BROWSER_EVIDENCE_READ_URL-}
+      BROWSER_EVIDENCE_API_TLS_DIR: /run/evidence-api-tls
       <<: *api-env
       CODE_CHECKOUT_ENABLED: ${CODE_CHECKOUT_ENABLED:-false}
       CODE_CHECKOUT_REGISTRY_FILE: /etc/code-svn/checkout.json
       CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE: /run/secrets/code_runtime_bootstrap_token
     volumes:
+      - ${BROWSER_EVIDENCE_API_TLS_DIR:-./.local/browser-evidence/api}:/run/evidence-api-tls:ro
       - type: bind
         source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration
         target: /etc/code-svn
@@ -638,6 +686,7 @@ services:
       retries: 12
       start_period: 15s
     networks:
+      - evidence-ingress
       - knowledge-managed
       - default
       - agent-runtime-control
@@ -1601,13 +1650,16 @@ secrets:
   docling_api_key:
     file: ${DOCLING_SERVE_API_KEY_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/docling-api-key}
   file_storage_bootstrap_access_key:
-    environment: MINIO_ROOT_USER
+    file: ${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/file-storage-access-id
   file_storage_bootstrap_secret_key:
-    environment: MINIO_ROOT_PASSWORD
+    file: ${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/file-storage-secret-key
   model_probe_auth_token:
     file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${PLATFORM_SECRETS_DIR:-${HOME:-${USERPROFILE:?Set PLATFORM_SECRETS_DIR or HOME or USERPROFILE}}/.config/enterprise-agent}/model-probe-auth-token}
 
 volumes:
+  file-storage-identity:
+  evidence-index:
+  evidence-alloy-data:
   code-svn-checkout:
     name: ${CODE_SVN_CHECKOUT_VOLUME:-${COMPOSE_PROJECT_NAME:-enterprise_agent}_code-svn-checkout}
     driver: local
@@ -1632,6 +1684,8 @@ volumes:
     name: enterprise_agent_minio_data
 
 networks:
+  evidence-ingress: {internal: true}
+  evidence-objects: {internal: true}
   knowledge-managed:
     internal: true
     name: ${KNOWLEDGE_CONTENT_NETWORK:-${COMPOSE_PROJECT_NAME}_knowledge_managed}

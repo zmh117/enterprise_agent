@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import re
+
 import yaml
 
 
@@ -55,8 +57,8 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
     compose_text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
     retired_prefix = "S" + "3_"
-    assert retired_prefix not in compose_text
-    assert retired_prefix not in env_example
+    assert not re.search(rf"(?<![A-Z0-9_]){retired_prefix}", compose_text)
+    assert not re.search(rf"(?<![A-Z0-9_]){retired_prefix}", env_example)
 
     for name in ("minio", "minio-init"):
         service = services[name]
@@ -66,9 +68,32 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
             "${MINIO_ROOT_PASSWORD:-enterprise_agent_change_me}"
         )
         command = " ".join(service["command"])
+        if name == "minio-init":
+            command = (ROOT / "scripts/init_minio_bucket.sh").read_text()
         assert "unsafe MinIO credentials for non-local APP_ENV" in command
         assert "exit 1" in command
 
+    for secret in ("file_storage_bootstrap_access_key", "file_storage_bootstrap_secret_key"):
+        assert "file" in compose["secrets"][secret]
+    assert services["evidence-loki"]["image"] == "grafana/loki:latest"
+    assert services["evidence-loki"]["pull_policy"] == "never"
+    assert (
+        services["evidence-bucket-init"]["depends_on"]["file-service"]["condition"]
+        == "service_healthy"
+    )
+    for name in ("evidence-alloy", "evidence-loki", "evidence-bucket-init"):
+        assert services[name]["profiles"] == ["browser-evidence"]
+        assert not services[name].get("ports")
+    for name, service in services.items():
+        if name not in {"minio", "minio-init", "evidence-bucket-init"}:
+            assert "MINIO_ROOT_PASSWORD" not in service.get("environment", {})
+        if name not in {"evidence-loki", "evidence-bucket-init"}:
+            assert "AWS_SECRET_ACCESS_KEY" not in service.get("environment", {})
+            assert "BROWSER_EVIDENCE_STORAGE_ENV_FILE" not in str(service.get("env_file", []))
+        else:
+            assert service["env_file"] == [
+                "${BROWSER_EVIDENCE_STORAGE_ENV_FILE:-./services/browser_evidence/storage.env.template}"
+            ]
     migrator = services["migrator"]
     assert {
         "app_config_master_key",
@@ -91,7 +116,8 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
 
     for name in (
         "agent-worker",
-        "python-agent-runtime",
+        "python-agent-runtime-a",
+        "python-agent-runtime-b",
         "file-worker",
         "delivery-dispatch-worker",
         "admin-web",
@@ -170,7 +196,8 @@ def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardene
 
 def test_runtime_tmpfs_and_per_job_limits_are_explicitly_configured() -> None:
     services = _compose()["services"]
-    service = services["python-agent-runtime"]
+    service = services["python-agent-runtime-a"]
+    assert service["tmpfs"] == services["python-agent-runtime-b"]["tmpfs"]
     assert "${AGENT_RUNTIME_TMPFS_SIZE:-1g}" in service["tmpfs"][0]
     environment = service["environment"]
     assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES"] == (

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import io
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -205,6 +207,24 @@ class _FakeS3:
     def head_bucket(self, **kwargs: Any) -> None:
         assert kwargs["Bucket"] == "private-files"
         self.ready = True
+
+
+def test_shared_minio_requires_the_provisioned_file_identity(tmp_path: Path) -> None:
+    digest = tmp_path / "access.sha256"
+    digest.write_text(hashlib.sha256(b"scoped-test").hexdigest())
+    settings = FileObjectStorageSettings(
+        endpoint_url="http://minio:9000",
+        bucket="private-files",
+        access_key_ref="secret://platform/minio-access",
+        secret_key_ref="secret://platform/minio-secret",
+        identity_digest_path=str(digest),
+    )
+    client = _FakeS3()
+    with pytest.raises(ValueError, match="explicit rotation"):
+        MinioFileObjectStorage(settings, lambda _: "legacy-test", client=client)
+    assert not client.ready
+    MinioFileObjectStorage(settings, lambda _: "scoped-test", client=client).assert_ready()
+    assert client.ready
 
 
 def test_minio_adapter_only_resolves_platform_refs_and_generates_opaque_keys() -> None:
