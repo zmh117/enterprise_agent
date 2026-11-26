@@ -111,7 +111,7 @@ def test_fixed_keys_cannot_be_resubmitted_even_with_same_value(fixed_key: str, v
     assert "已由 Loki 资源固定" in error.value.safe_message
 
 
-def _executor(fixed: dict[str, str] | None = None):
+def _executor(fixed: dict[str, str] | None = None, trace_fixture: str = ""):
     resource = SimpleNamespace(
         loki_selector_conditions=tuple((FIXED if fixed is None else fixed).items()),
         binding=SimpleNamespace(
@@ -146,7 +146,18 @@ def _executor(fixed: dict[str, str] | None = None):
                 ],
             }
         else:
-            body = {"status": "success", "data": {"resultType": "streams", "result": []}}
+            streams = []
+            if (
+                trace_fixture
+                and trace_fixture in parse_qs(urlparse(request.full_url).query)["query"][0]
+            ):
+                streams.append(
+                    {
+                        "stream": FIXED,
+                        "values": [["1000000", f"trace={trace_fixture} BATCH_REQUIRED"]],
+                    }
+                )
+            body = {"status": "success", "data": {"resultType": "streams", "result": streams}}
         return BytesIO(json.dumps(body).encode())
 
     client = HttpLokiClient(
@@ -156,6 +167,23 @@ def _executor(fixed: dict[str, str] | None = None):
     executor._resolve = Mock(return_value=resource)
     executor._loki = Mock(return_value=client)
     return executor, requests
+
+
+def test_shared_mes_endpoint_correlates_only_by_observed_trace():
+    from app.modules.channel.browser.live_query import projected_prefix
+
+    c_trace, a_trace = "c" * 32, "a" * 32
+    executor, requests = _executor(trace_fixture=c_trace)
+    for trace, expected in ((c_trace, 1), (a_trace, 0)):
+        observation = projected_prefix(
+            json.dumps({"kind": "response", "trace_id": trace, "status": 422}).encode()
+        )
+        result = _invoke(executor, "query_loki", selector={}, query=observation["trace_id"])
+        assert result.summary["line_count"] == expected
+        if expected:
+            assert "BATCH_REQUIRED" in result.summary["highlights"][0]
+        expr = parse_qs(urlparse(requests[-1].full_url).query)["query"][0]
+        assert 'workshop="GL001"' in expr and f'|= "{trace}"' in expr
 
 
 def _invoke(executor, tool: str, **overrides):

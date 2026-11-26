@@ -35,6 +35,41 @@ class RecordingTools:
 
     def call(self, name: str, job: str, args: dict[str, Any]) -> ToolResult:
         try:
+            if self.c.database.execute_one(
+                "select 1 from browser_live_job_page where job_id=?", (job,)
+            ):
+                from app.modules.channel.browser.live_query import authorized_job
+
+                scope = authorized_job(self.c, job, name)
+                if not self.identity or not (
+                    set(args) == {"live"} or (not args and name == "search_recording")
+                ):
+                    raise ValueError
+                inputs = args.get("live", {})
+                if not contract(
+                    "LiveSearch" if name == "search_recording" else "LiveDetail"
+                ).is_valid(inputs):
+                    raise ValueError
+                cfg = self.c.settings.service_principal
+                result = internal_request(
+                    cfg.identity_base_url,
+                    cfg.identity_allowed_hosts,
+                    "/api/internal/service-principal/recording-evidence",
+                    self.identity.access_token(),
+                    body=json.dumps(
+                        {
+                            "job": job,
+                            "attempt": scope["retry_count"],
+                            "live_tool": name,
+                            "arguments": inputs,
+                        }
+                    ).encode(),
+                    media="application/json",
+                    timeout=self.c.settings.file_service.internal_timeout_seconds,
+                )
+                if authorized_job(self.c, job, name) != scope or "coverage" not in result:
+                    raise ValueError
+                return ToolResult(result, {}, truncated=bool(result["truncated"]))
             rec, attempt = job_recording(self.c, job, name)
             if name == "search_recording" and contract("SearchRecording").is_valid(args):
                 result = self.search(job, rec, args)

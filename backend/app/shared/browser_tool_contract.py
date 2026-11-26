@@ -20,13 +20,22 @@ def recording_tool_definitions() -> dict[str, dict[str, Any]]:
             return [resolve(child) for child in value]
         return value
 
+    def with_live(legacy: str, live: str) -> dict[str, Any]:
+        existing = resolve(definitions[legacy])
+        schema = {
+            **existing,
+            "properties": {**existing["properties"], "live": resolve(definitions[live])},
+        }
+        schema.pop("required", None)
+        return schema
+
     return {
         "search_recording": {
-            "description": "在本轮绑定的录制中按时间、操作和接口筛选证据，返回来源标识及采集缺口。",
-            "schema": resolve(definitions["SearchRecording"]),
+            "description": "按本轮绑定检索浏览器证据。持续录制使用 live 对象，默认查询发送页，可按接口路径、状态和请求键筛选。封存录制使用顶层筛选字段。",
+            "schema": with_live("SearchRecording", "LiveSearch"),
         },
         "get_recording_evidence": {
-            "description": "读取当前录制中指定证据的请求、响应或操作明细和省略说明。",
-            "schema": resolve(definitions["GetRecordingEvidence"]),
+            "description": "用持续证据的 live.reference 分页读取操作、rrweb 或接口详情，或用封存录制的 evidence_id 读取原有明细。",
+            "schema": with_live("GetRecordingEvidence", "LiveDetail"),
         },
     }

@@ -16,6 +16,7 @@
         <div class="toolbar"><label class="search">搜索标签<input type="search" id="tab-search" placeholder="标签名称或网址"></label></div>
         <div class="selection-heading"><label class="check"><input id="select-all" type="checkbox">全选当前结果</label><span id="selection-count" class="muted" aria-live="polite"></span></div>
         <div id="directory"></div>
+        <label for="record-mode">录制模式</label><select id="record-mode"><option value="offline">离线录制</option><option value="continuous">持续采集</option></select>
         <div class="environment-line"><span>采集环境</span><output id="environment">未关联</output><a href="#sites">管理站点关联</a></div>
         <details id="policy-details"><summary>采集范围与权限</summary>
           <p>仅采集所选标签及其后续新开的子标签。跨域页面与 API 需加入策略。</p>
@@ -24,6 +25,7 @@
         </details>
         <div class="panel-footer"><span class="muted" id="policy-summary">本地保存，仅隐藏登录密码，其他文本保留原值。</span><button id="start" class="primary" disabled>开始采集</button></div>
       </div>
+      <div class="panel" id="live-session" hidden><div class="section-title"><h2>持续采集</h2><button id="live-stop">结束持续采集</button></div><div id="live-tabs" aria-live="polite"></div><output id="live-progress"></output><label for="live-add-target">添加标签</label><select id="live-add-target"></select><button id="live-refresh">刷新标签</button><button id="live-add">加入持续采集</button></div>
       <div id="session" class="panel" hidden>
         <div class="section-title"><div><h2>采集记录</h2><span id="recording-id" class="mono muted"></span></div><button id="stop" class="danger">结束采集</button></div>
         <div class="metrics"><div>时长<strong id="duration"></strong></div><div>活动 / 已纳入标签<strong id="target-count"></strong></div><div>已保存<strong id="saved-size"></strong></div><div>保存状态<strong id="save-state"></strong></div></div>
@@ -44,7 +46,16 @@
       <fieldset id="float-sites"><legend>显示助手的站点</legend><div id="float-site-list"></div></fieldset>
       <p id="env-source" class="muted"></p><a href="#assistant">系统连接</a>
       <div class="panel-footer"><span id="float-site-status" role="status"></span><button id="float-save" class="primary" disabled>保存站点</button></div>
-    </div></section>
+    </div><div class="panel"><fieldset id="workshop-editor"><legend>页面车间</legend>
+      <label for="workshop-page">已打开的页面</label><select id="workshop-page"></select>
+      <label for="workshop-keys">用于区分车间的 URL 参数名（可选）</label><input id="workshop-keys" type="text" autocomplete="off" placeholder="例如 shop">
+      <output id="workshop-url"></output>
+      <label for="workshop-environment">环境</label><select id="workshop-environment"></select>
+      <label for="workshop-base">基地</label><select id="workshop-base"></select>
+      <label for="workshop-choice">车间</label><select id="workshop-choice"></select>
+      <div class="panel-footer"><span id="workshop-status" role="status"></span><div class="button-row">
+        <button id="workshop-revoke" disabled>撤销绑定</button><button id="workshop-save" class="primary" disabled>允许页面并绑定车间</button>
+      </div></div></fieldset></div></section>
     <section id="assistant" class="view" hidden><h1>Agent 对话</h1><!-- agent-panel --></section>
     <section id="conversations" class="view" hidden>
       <h1>对话历史</h1>

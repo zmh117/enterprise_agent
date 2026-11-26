@@ -1,5 +1,6 @@
 import { commonEnvironment, recordingLabel } from '../../shared/recording-environment';
 import type { SessionManager } from '../background/session/manager';
+import { workshopSettings } from './workshop-settings';
 import { floatSettings } from './float-settings';
 import { setupAgentPanel } from './agent-panel';
 import { DEFAULT_POLICY, parsePolicy } from '../../shared/policy';
@@ -38,6 +39,7 @@ function defaultPolicy() {
   return { ...structuredClone(DEFAULT_POLICY), pageOrigins: origins, apiRules: origins.map(origin => ({ origin, pathPrefix: '/' })) };
 }
 const siteSettings = floatSettings(selectionChanged);
+const workshop = workshopSettings();
 
 function selectionChanged() {
   if (!directory) return;
@@ -114,6 +116,7 @@ async function refreshDirectory() {
   for (const id of selected) if (!existing.has(id)) selected.delete(id);
   $('runtime').textContent = 'v' + d.extensionVersion;
   renderDirectory();
+  workshop.pages(tabs);
   await siteSettings.refresh(tabs.map(t => t.origin).filter((s): s is string => !!s));
 }
 function drawStatus(s: any) {
@@ -164,7 +167,25 @@ function drawStatus(s: any) {
   const gaps = $('gaps'); gaps.replaceChildren(...current.gaps.map(g => element('li', `${g.code}：${g.detail}`)));
   if (current.saveState === 'error') notice(`本地保存失败：${s.saveError ?? current.saveError ?? '未知错误'}。已停止新采集，请重试保存。`);
 }
-async function refreshStatus() { if (!viewed) drawStatus(await rpc('session.status')); }
+async function refreshStatus() {
+  if (viewed) return;
+  const result = await rpc('session.status');
+  drawStatus(result);
+  const live = result.continuous;
+  $('live-session').hidden = !live;
+  if (live) {
+    $('session').hidden = true; $('prepare').hidden = true;
+    $('live-progress').textContent='待传 '+live.pending+' · 已转发待核对 '+live.acknowledged+' · 已核对 '+live.verified;
+    const states:Record<string,string> = {paused:'页面采集已暂停，请刷新或重新打开', unbound:'当前 URL 未绑定车间', baseline:'等待新文档基线', ready:'正在采集'};
+    const select = $<HTMLSelectElement>('live-add-target'), selected = select.value;
+    const candidates = (directory?.windows ?? []).flatMap(w=>w.tabs).filter(t=>t.eligible && !live.tabs.some((x:{tabId:number})=>x.tabId===t.id));
+    select.replaceChildren(...candidates.map(t=>new Option(t.title || t.origin || '标签',String(t.id))));
+    if (candidates.some(t=>String(t.id)===selected)) select.value = selected;
+    $<HTMLButtonElement>('live-add').disabled = !candidates.length;
+    $('live-tabs').replaceChildren(...live.tabs.map((t:{tabId:number; state:string; error?:string; networkGap?:string;network?:{mapped:boolean}}) =>
+      element('p', '标签 '+t.tabId+' · '+(t.error || states[t.state] || '等待页面')+(t.networkGap?' · '+t.networkGap:t.state==='ready' && !t.network?.mapped?' · 网络通道待就绪':''))));
+  }
+}
 async function loadBundle(id: string) { const result = await rpc('export.create', { recordingId: id }); const data = await db.bundle(id); return result.savedPrefix ? savedPrefix(data, result.cutoffAt ?? new Date().toISOString(), result.reason ?? '保存失败') : data; }
 async function preview(id: string) {
   bundle = await loadBundle(id);
@@ -245,7 +266,10 @@ function renderHistory() {
   }
 }
 on('refresh', refreshDirectory);
-on('float-refresh', async () => { await Promise.all([refreshDirectory(), refreshEnvironments()]); });
+on('float-refresh', async () => {
+  const editor=$<HTMLFieldSetElement>('workshop-editor'); editor.disabled=true;
+  try {await Promise.all([refreshDirectory(), refreshEnvironments()]);} finally {editor.disabled=false;}
+});
 $('select-all').addEventListener('change', () =>
   selectTabs(visibleWindows().flatMap(w => w.tabs), $<HTMLInputElement>('select-all').checked));
 $('tab-search').addEventListener('input', renderDirectory);
@@ -262,6 +286,14 @@ function showView() {
 window.addEventListener('hashchange', showView);
 showView();
 $('policy').addEventListener('input', () => $('policy-details').setAttribute('data-edited', 'true'));
+$('record-mode').addEventListener('change', () => {
+  $('policy-summary').textContent = val('record-mode') === 'continuous'
+    ? '按当前账号和车间采集。保留接口业务字段原值，过滤凭据，页面只记录结构和操作。'
+    : '本地保存，仅隐藏登录密码，其他文本保留原值。';
+});
+on('live-refresh', async () => {await refreshDirectory(); await refreshStatus();});
+on('live-add', async () => {await rpc('live.add',{tabId:Number(val('live-add-target'))}); await refreshStatus();});
+on('live-stop', async () => {await rpc('live.stop'); drafting = true; await refreshStatus();});
 on('reset-policy', () => { $('policy-details').removeAttribute('data-edited'); selectionChanged(); });
 on('fixture-policy', () => {
   const p = defaultPolicy(); p.pageOrigins = ['http://127.0.0.1:4317', 'http://localhost:4318']; p.apiRules = p.pageOrigins.map(origin => ({ origin, pathPrefix: '/' })); p.captureStreaming = true;
@@ -272,12 +304,18 @@ on('fixture-policy', () => {
 $('start').addEventListener('click', () => {
   if (busy) return;
   let policy: ReturnType<typeof parsePolicy>;
-  try { if (!selected.size) throw new Error('至少选择一个根标签'); policy = parsePolicy(JSON.parse(val('policy'))); validateSensitiveSelectors(policy, document); }
+  try { if (!selected.size) throw new Error('至少选择一个根标签'); policy = parsePolicy(JSON.parse(val('policy')), val('record-mode') === 'continuous' ? 'continuous' : 'offline'); validateSensitiveSelectors(policy, document); }
   catch (e) { notice(String(e)); return; }
   const grant = chrome.permissions.request({ origins: [...new Set([...policy.pageOrigins, ...policy.apiRules.map(r => r.origin)])].map(o => `${o}/*`) });
   busy = true;
   void grant.then(async () => {
     viewed = null; drafting = false;
+    if (val('record-mode') === 'continuous') {
+      const destination = workshop.destination();
+      if (!destination) throw new Error('请先连接平台并选择有车间授权的应用');
+      await rpc('live.start',{destination, ids:[...selected], policy});
+      await refreshStatus(); notice(''); return;
+    }
     drawStatus(await rpc('session.start', { recordingId: uuid(), commandId: uuid(), browserRunId: directory!.browserRunId, rootBrowserTabIds: [...selected], policy, environments: siteSettings.activeBindings() }));
     await history(); notice('');
   }).catch(e => notice(String(e))).finally(() => { busy = false; });
@@ -299,4 +337,4 @@ $('request-select').addEventListener('change', () => {
 void Promise.all([refreshDirectory(), refreshStatus(), history()]).catch(e => notice(String(e)));
 setInterval(() => { if (!busy) void refreshStatus().catch(e => notice(String(e))); }, 1500);
 
-const refreshEnvironments = setupAgentPanel(undefined, undefined, siteSettings.setCatalog);
+const refreshEnvironments = setupAgentPanel(undefined, undefined, siteSettings.setCatalog, workshop.client);

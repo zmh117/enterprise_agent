@@ -13,10 +13,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
+from app.modules.channel.browser import live_capture, live_loki, workshop_bindings
 from app.modules.channel.browser.answers import CHANNEL, CONNECTOR, STRIDE, read_answer
 from app.modules.channel.browser.auth import PREFIX, authenticated_user_and_origin
 from app.modules.channel.browser.http import BrowserRoute, deny
-from app.modules.channel.browser.scope import active_app, fingerprint
+from app.modules.channel.browser.scope import active_app, authorized_workshops, fingerprint
 from app.modules.channel.browser.recordings import (
     MAX_MANIFEST_BYTES,
     MAX_PART_BYTES,
@@ -41,6 +42,7 @@ class Question(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     conversation_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9._:-]{1,128}$")
     recording_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9._:-]{1,128}$")
+    page: live_capture.QuestionPage | None = None
 
 
 def receipt(row: dict[str, Any]) -> dict[str, Any]:
@@ -132,19 +134,17 @@ def applications(req: Request) -> list[dict[str, Any]]:
             )
         except (AppError, HTTPException):
             continue
-        granted_ids = {
-            scope["environment_id"]
-            for access in c.authorization_center_repository.business_access_for_user(
-                user_id=user, application_id=app
-            )
-            for scope in access["scopes"]
-        }
+        accesses = c.authorization_center_repository.business_access_for_user(
+            user_id=user, application_id=app
+        )
+        granted_ids = {scope["environment_id"] for access in accesses for scope in access["scopes"]}
         out.append(
             {
                 "id": app,
                 "name": a["name"],
                 "scope_ref": a["scope_ref"],
                 "environments": [env for key, env in environments.items() if key in granted_ids],
+                "workshop_scopes": authorized_workshops(c, app, accesses),
             }
         )
     return out
@@ -161,6 +161,100 @@ def recording_owner(
     if req.headers.get("x-application-scope") != active["scope_ref"]:
         raise deny("scope_changed", 409)
     return user, origin, active
+
+
+@router.get("/applications/{app}/workshop-bindings")
+def list_bindings(req: Request, app: str) -> list[dict[str, Any]]:
+    c = container(req)
+    with c.database.unit_of_work():
+        user, origin, _ = recording_owner(req, app)
+        choices = {w["workshop_id"] for w in workshop_bindings.workshop_choices(c, user, app)}
+        return [
+            workshop_bindings.public_binding(row)
+            for row in workshop_bindings.current_bindings(c, origin, user, app)
+            if row["workshop_id"] in choices
+        ]
+
+
+@router.put("/applications/{app}/workshop-bindings")
+def put_binding(req: Request, app: str, body: workshop_bindings.SaveBinding) -> dict[str, Any]:
+    c = container(req)
+    with c.database.unit_of_work():
+        user, origin, _ = recording_owner(req, app, locked=True)
+        return workshop_bindings.save_binding(c, origin, user, app, body)
+
+
+@router.delete("/applications/{app}/workshop-bindings/{binding_id}", status_code=204)
+def delete_binding(
+    req: Request, app: str, binding_id: str, expected_revision: int = Query(ge=1)
+) -> Response:
+    c = container(req)
+    with c.database.unit_of_work():
+        user, origin, _ = recording_owner(req, app, locked=True)
+        workshop_bindings.revoke_binding(c, origin, user, app, binding_id, expected_revision)
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/applications/{app}/live-recordings")
+def register_live_pages(req: Request, app: str, body: live_capture.RegisterPages) -> dict[str, Any]:
+    c = container(req)
+    with c.database.unit_of_work():
+        user, origin, active = recording_owner(req, app, locked=True)
+        return live_capture.register(c, user, origin, app, active["scope_ref"], body)
+
+
+@router.post("/applications/{app}/live-evidence")
+async def ingest_live_evidence(req: Request, app: str) -> dict[str, Any]:
+    await run_in_threadpool(recording_owner, req, app)
+    if (
+        req.headers.get("content-type", "").partition(";")[0] != "application/json"
+        or req.headers.get("content-encoding", "identity") != "identity"
+    ):
+        raise deny("invalid_request", 415)
+    live_loki.endpoint(True)
+    data = bytearray()
+    async for chunk in req.stream():
+        if len(data) + len(chunk) > live_loki.BATCH_BYTES:
+            raise deny("quota_exceeded", 413)
+        data.extend(chunk)
+
+    def write() -> dict[str, Any]:
+        from pydantic import ValidationError
+
+        try:
+            value = live_loki.Batch.model_validate_json(data)
+        except ValidationError:
+            raise deny("invalid_request", 422) from None
+        c = container(req)
+        with c.database.unit_of_work():
+            user, origin, active = recording_owner(req, app, locked=True)
+            scope = live_loki.public_scope(
+                c, origin, user, app, active["scope_ref"], value.recording_id, value.source
+            )
+            outbound = live_loki.prepare_parts(c, scope, value.parts)
+        live_loki.forward(outbound)
+        return {"accepted": len(value.parts), "delivery": "forwarded"}
+
+    return await run_in_threadpool(write)
+
+
+@router.post("/applications/{app}/live-evidence/verify")
+def verify_live_evidence(req: Request, app: str, body: live_loki.Verify) -> dict[str, Any]:
+    c = container(req)
+    with c.database.unit_of_work():
+        user, origin, active = recording_owner(req, app)
+        scope = live_loki.public_scope(
+            c, origin, user, app, active["scope_ref"], body.recording_id, body.source
+        )
+        rows = live_loki.verification_rows(c, body)
+    cursor = body.first
+    digests = []
+    for row in rows:
+        if row["part_number"] != cursor or live_loki.read_part(scope, row) is None:
+            return {"visible": False, "next": cursor, "digests": digests}
+        digests.append(row["part_digest"])
+        cursor += 1
+    return {"visible": bool(rows), "next": cursor, "digests": digests}
 
 
 @router.post("/applications/{app}/recordings")
@@ -247,6 +341,14 @@ def accept_question(
             return previous
         if req.headers.get("x-application-scope") != active["scope_ref"]:
             raise deny("scope_changed", 409)
+        page = body.page
+        if page and body.recording_id:
+            raise deny("invalid_request", 422)
+        scope = (
+            live_capture.question_scope(c, origin, user, app, active["scope_ref"], page)
+            if page
+            else None
+        )
         identity = fingerprint([origin, user, app, key])
         conversation = identity
         if body.conversation_id:
@@ -258,6 +360,10 @@ def accept_question(
             )
             if not row:
                 raise deny("not_found", 404)
+            if live_capture.conversation_workshop(c, body.conversation_id) != (
+                scope["workshop_id"] if scope else None
+            ):
+                raise deny("conversation_scope_changed", 409)
             conversation = row["external_conversation_id"]
         event = ChannelEvent(
             source=ChannelSource(
@@ -269,7 +375,12 @@ def accept_question(
                 {"application_id": app, "tenant_code": origin},
             ),
             delivery=ReplyRoute(type=CHANNEL, connector_id=CONNECTOR),
-            routing=RoutingContext(project_code=active["project_code"]),
+            routing=RoutingContext(
+                project_code=active["project_code"],
+                environment=scope["environment_code"] if scope else "",
+                base=scope["base_code"] if scope else "",
+                workshop=scope["workshop_code"] if scope else "",
+            ),
             message=body.question,
             idempotency_key="browser:" + identity,
         )
@@ -286,8 +397,23 @@ def accept_question(
         )
         from app.modules.channel.browser.content import recording, require_tool
 
+        if page:
+            c.database.execute(
+                """insert into browser_live_job_page(job_id,binding_id,revision,recording_id,tab_id,
+                   document_id,asked_ms,timezone) values(?,?,?,?,?,?,?,?)""",
+                (
+                    job.id,
+                    page.binding_id,
+                    page.revision,
+                    page.recording_id,
+                    page.tab_id,
+                    page.document_id,
+                    page.asked_ms,
+                    page.timezone,
+                ),
+            )
         selected = body.recording_id
-        if "recording_id" not in body.model_fields_set:
+        if not page and "recording_id" not in body.model_fields_set:
             saved = c.database.execute_one(
                 "select recording_id from browser_session_recording where session_id=?",
                 (job.session_id,),

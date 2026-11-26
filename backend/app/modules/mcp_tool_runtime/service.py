@@ -70,7 +70,9 @@ class ReadOnlyToolService:
         if tool_name in {"search_recording", "get_recording_evidence"} and (
             job.source_channel != "browser_extension"
             or not self.repository.database.execute_one(
-                "select 1 from browser_job_recording where job_id=?", (job_id,)
+                """select 1 from browser_job_recording where job_id=?
+                   union all select 1 from browser_live_job_page where job_id=?""",
+                (job_id, job_id),
             )
         ):
             return False

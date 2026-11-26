@@ -55,6 +55,60 @@ def test_browser_application_environments_follow_current_grants(platform):
     assert choices() == []
 
 
+@pytest.mark.parametrize(
+    "platform", [("search_recording", "get_recording_evidence")], indirect=True
+)
+def test_workshop_catalog_keeps_role_application_and_topology_together(platform):
+    api, client, app, _, headers = platform
+    c = api.state.container
+    tools = ("search_recording", "get_recording_evidence")
+    config = c.platform_config_service.repository
+    publication = c.database.execute_one(
+        """select rev.agent_publication_id from business_application_active_route r
+        join business_application_publication p on p.id=r.publication_id
+        join business_application_revision rev on rev.id=p.revision_id where r.application_id=?""",
+        (app,),
+    )
+    second = create_browser_application(
+        c, "other-workshop-app", publication["agent_publication_id"], tools=tools
+    )
+    env = config.upsert_environment(code="plant-test")
+    base = config.upsert_base(environment_code=env["code"], code="base-1", engine="mysql")
+    parent = {"environment_id": env["id"], "base_id": base["id"]}
+
+    def shop(code, status="enabled"):
+        return config.upsert_workshop(
+            environment_code=env["code"], base_code=base["code"], code=code, status=status
+        )
+
+    mixing, packing, private = shop("mixing"), shop("packing"), shop("private")
+
+    def grant(application, role, target, capabilities):
+        grant_test_application_access(
+            c,
+            application_id=application,
+            role_code=role,
+            capabilities=capabilities,
+            scopes=({**parent, "workshop_id": target["id"]},),
+        )
+
+    grant(app, "mix-grant", mixing, tools)
+    grant(second, "pack-grant", packing, tools)
+    grant(app, "scope-without-search", private, (tools[1],))
+    grant(app, "search-without-detail", private, (tools[0],))
+
+    def choices():
+        response = client.get(PREFIX + "/applications", headers=headers)
+        assert response.status_code == 200
+        apps = response.json()
+        recordings.contract("BrowserApplications").validate(apps)
+        return {a["id"]: [r["workshop_id"] for r in a["workshop_scopes"]] for a in apps}
+
+    assert choices() == {app: [mixing["id"]], second: [packing["id"]]}
+    shop("mixing", "disabled")
+    assert choices() == {app: [], second: [packing["id"]]}
+
+
 def test_concurrent_init_resume_scope_and_expiry(platform):
     api, client, app, password, headers = platform
     c = api.state.container
@@ -781,3 +835,172 @@ def test_receipts_conversation_and_recordings_follow_current_application(platfor
         client.get(second_path + "/messages/first", headers=other_headers).json() == second.json()
     )
     fs.close()
+
+
+@pytest.mark.parametrize(
+    "platform", [("search_recording", "get_recording_evidence")], indirect=True
+)
+def test_workshop_binding_versions_overlap_and_revocation(platform, monkeypatch):
+    api, client, app, _, headers = platform
+    c = api.state.container
+    config = c.platform_config_service.repository
+    env = config.upsert_environment(code="scope-test")
+    base = config.upsert_base(environment_code=env["code"], code="base-1", engine="mysql")
+
+    def create_shop(code):
+        return config.upsert_workshop(
+            environment_code=env["code"], base_code=base["code"], code=code
+        )["id"]
+
+    first, second = create_shop("first"), create_shop("second")
+    parent = {"environment_id": env["id"], "base_id": base["id"]}
+    grant_test_application_access(
+        c,
+        application_id=app,
+        role_code="scope-binding-owner",
+        capabilities=("search_recording", "get_recording_evidence"),
+        scopes=(parent,),
+    )
+    path = f"{PREFIX}/applications/{app}/workshop-bindings"
+    rule = {
+        "origin": "https://example.invalid",
+        "path": "/mes",
+        "hash_path": "/production",
+        "query": {"shop": "mix"},
+    }
+    body = {"rule": rule, "expected_revision": 0, **parent, "workshop_id": first}
+
+    def put(**values):
+        return client.put(path, headers=headers, json={**body, **values})
+
+    saved = put().json()
+    assert saved["revision"] == 1
+    assert put(workshop_id=second).status_code == 409
+    assert put(rule={**rule, "query": {}}).status_code == 409
+    assert put(rule={**rule, "query": {"shop": "package"}}, workshop_id=second).status_code == 200
+    assert put(rule={**rule, "path": "/warehouse"}, workshop_id=second).status_code == 200
+    assert put(base_id="wrong").status_code == 403
+    assert put(rule={**rule, "query": {"access_token": "synthetic"}}).status_code == 422
+    from uuid import uuid4
+
+    live_path = f"{PREFIX}/applications/{app}/live-recordings"
+    page = {
+        "tab_id": uuid4().hex,
+        "document_id": uuid4().hex,
+        "binding_id": saved["id"],
+        "revision": 1,
+    }
+    record = {"recording_id": uuid4().hex, "pages": [page]}
+    assert client.post(live_path, headers=headers, json=record).status_code == 200
+    assert client.post(live_path, headers=headers, json=record).status_code == 200
+    assert (
+        client.post(live_path, headers=headers, json={**record, "user_id": "other"}).status_code
+        == 422
+    )
+    from backend.tests.support.browser_live_evidence import check_transport
+
+    check_transport(client, c, headers, live_path, page, record["recording_id"], monkeypatch)
+    verify_questions_across_rebinding(
+        c, client, headers, app, env, page, record, put, second, saved
+    )
+    assert client.get(path, headers=headers).status_code == 200
+    assert client.post(live_path, headers=headers, json=record).status_code == 403
+    revised = {**page, "revision": 2}
+    assert (
+        client.post(live_path, headers=headers, json={**record, "pages": [revised]}).status_code
+        == 409
+    )
+    fresh = {**revised, "document_id": uuid4().hex}
+    assert (
+        client.post(live_path, headers=headers, json={**record, "pages": [fresh]}).status_code
+        == 200
+    )
+    link = path + "/" + saved["id"]
+    assert client.delete(link, headers=headers, params={"expected_revision": 1}).status_code == 409
+    assert client.delete(link, headers=headers, params={"expected_revision": 2}).status_code == 204
+    assert put().status_code == 409
+    assert put(expected_revision=3).json()["revision"] == 4
+    history = c.database.execute(
+        "select revision,workshop_id,enabled from browser_workshop_binding where id=? order by revision",
+        (saved["id"],),
+    )
+    assert [(r["workshop_id"], r["enabled"]) for r in history] == [
+        (first, 1),
+        (second, 1),
+        (second, 0),
+        (first, 1),
+    ]
+
+
+def verify_questions_across_rebinding(
+    c, client, headers, app, env, page, record, put, second, saved
+):
+    import time
+    from uuid import uuid4
+
+    messages = f"{PREFIX}/applications/{app}/messages"
+    target = {
+        **page,
+        "recording_id": record["recording_id"],
+        "asked_ms": int(time.time() * 1000),
+        "timezone": "Asia/Shanghai",
+    }
+    payload = {"question": "合成车间问题", "client_message_id": uuid4().hex, "page": target}
+    submitted = client.post(messages, headers=headers, json=payload)
+    assert submitted.status_code == 202, submitted.text
+    job = submitted.json()
+    assert client.post(messages, headers=headers, json=payload).json()["job_id"] == job["job_id"]
+    assert (
+        client.post(
+            messages,
+            headers=headers,
+            json={**payload, "page": {**target, "asked_ms": target["asked_ms"] + 1}},
+        ).status_code
+        == 409
+    )
+    routing = c.agent_repository.get_job(job["job_id"]).routing_context
+    assert (
+        routing["environment"] == env["code"]
+        and routing["workshop"] == "first"
+        and routing["base"] == "base-1"
+    )
+    unrecorded = {**target, "tab_id": None, "recording_id": None, "document_id": uuid4().hex}
+    follow = {
+        **payload,
+        "client_message_id": uuid4().hex,
+        "conversation_id": job["conversation_id"],
+        "page": unrecorded,
+    }
+    follow_job = client.post(messages, headers=headers, json=follow).json()["job_id"]
+    assert (
+        c.database.execute_one(
+            "select recording_id from browser_live_job_page where job_id=?", (follow_job,)
+        )["recording_id"]
+        is None
+    )
+    assert (
+        client.get(f"{PREFIX}/conversations/{job['conversation_id']}", headers=headers).status_code
+        == 200
+    )
+    updated = put(workshop_id=second, expected_revision=1).json()
+    assert (updated["id"], updated["revision"]) == (saved["id"], 2)
+    crossing = {**follow, "client_message_id": uuid4().hex, "page": {**unrecorded, "revision": 2}}
+    assert (
+        client.post(messages, headers=headers, json=crossing).json()["code"]
+        == "conversation_scope_changed"
+    )
+    crossing.pop("conversation_id")
+    assert (
+        client.post(messages, headers=headers, json=crossing).json()["conversation_id"]
+        != job["conversation_id"]
+    )
+    assert client.post(messages, headers=headers, json=payload).json()["job_id"] == job["job_id"]
+
+
+@pytest.mark.parametrize(
+    "platform", [("search_recording", "get_recording_evidence")], indirect=True
+)
+def test_live_tools_isolate_workshop_owner_and_reassemble_large_events(platform, monkeypatch):
+    from backend.tests.support.browser_live_evidence import verify_live_queries
+
+    verify_live_queries(*platform, monkeypatch)

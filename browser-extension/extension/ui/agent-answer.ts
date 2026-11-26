@@ -18,14 +18,8 @@ markdown.renderer.rules.link_open = (
   return renderer.renderToken(tokens, index, options);
 };
 
-export class PlatformError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-  ) {
-    super(code);
-  }
-}
+import { PlatformError } from '../platform';
+export { PlatformError } from '../platform';
 
 export type PlatformFetch = (
   path: string,

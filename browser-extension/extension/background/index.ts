@@ -1,3 +1,6 @@
+import {LiveCapture} from './live-capture';
+import {parsePolicy, revokedHostMatches} from '../../shared/policy';
+import { bindingForPage } from '../../shared/workshop';
 import { floatAccess, listenForFloatSites, updateFloatSites } from './float-sites';
 import { rememberPlatform } from '../../shared/platform-traffic';
 import { SessionManager } from './session/manager';
@@ -5,7 +8,22 @@ import { cleanText } from '../../shared/redaction';
 import { active, now, terminal } from '../../shared/contracts';
 
 const manager = new SessionManager();
+const live = new LiveCapture();
 listenForFloatSites();
+chrome.alarms.onAlarm.addListener(alarm=>{if (alarm.name==='mes-live-delivery') void live.ready.then(()=>live.deliver()).catch(()=>{});});
+const ensureDeliveryAlarm=async()=>{if (!await chrome.alarms.get('mes-live-delivery')) await chrome.alarms.create('mes-live-delivery',{periodInMinutes:0.5});};
+chrome.runtime.onStartup.addListener(()=>void ensureDeliveryAlarm());
+chrome.runtime.onInstalled.addListener(()=>void ensureDeliveryAlarm());
+const liveGuard = (fn:()=>Promise<unknown>) => {void live.ready.then(fn).catch(()=>{});};
+chrome.tabs.onRemoved.addListener(id=>liveGuard(()=>live.closed(id)));
+function liveNavigation(d:{tabId:number;frameId:number;documentId:string;url:string}, sameDocument:boolean) {
+  if (d.frameId === 0) liveGuard(()=>live.navigation(d.tabId,d.documentId,d.url,sameDocument));
+}
+chrome.webNavigation.onCommitted.addListener(d=>liveNavigation(d,false));
+chrome.webNavigation.onHistoryStateUpdated.addListener(d=>liveNavigation(d,true));
+chrome.webNavigation.onReferenceFragmentUpdated.addListener(d=>liveNavigation(d,true));
+chrome.storage.onChanged.addListener((changes,area)=>{if (area==='local') liveGuard(()=>live.settingsChanged(changes));});
+chrome.permissions.onRemoved.addListener(p=>liveGuard(()=>live.revoked(url=>(p.origins ?? []).some(pattern=>revokedHostMatches(pattern,url)))));
 chrome.tabs.onRemoved.addListener(id => void chrome.storage.session.remove('float-ticket:' + id));
 const guard = (fn: () => void | Promise<unknown>) => { void manager.ready.then(fn).catch(e => console.error('Browser collector:', cleanText(String(e)))); };
 
@@ -28,6 +46,8 @@ chrome.webNavigation.onErrorOccurred.addListener(d => guard(() => {
   const t = manager.targets.get(d.tabId);
   if (t && active(manager.recording?.state)) manager.diagnostic('navigation_error', cleanText(d.error), t, 'page');
 }));
+chrome.debugger.onEvent.addListener((source,method,params)=>{void live.ready.then(()=>live.debugEvent(source,method,params ?? {}));});
+chrome.debugger.onDetach.addListener((source,reason)=>{if (source.tabId!==undefined) void live.ready.then(()=>live.detached(source.tabId!,reason));});
 chrome.debugger.onEvent.addListener((source, method, params) => guard(() => manager.debugger?.event(source, method, params ?? {})));
 chrome.debugger.onDetach.addListener((source, reason) => guard(() => manager.debugger?.detached(source, reason)));
 chrome.permissions.onAdded.addListener(() => guard(() => manager.refreshPermissions()));
@@ -48,12 +68,27 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
   if (!m || typeof m !== 'object' || typeof m.type !== 'string' || sender.id !== chrome.runtime.id) return;
   const run = async () => {
     await manager.ready;
+    await live.ready;
+    if (['live.pause','live.event','live.gap'].includes(m.type)) return live.message(sender,m);
     if (m.type === 'page.handshake') return { ok: true, ticket: await manager.handshake(sender) };
     if (m.type === 'page.bound') { manager.bound(m.ticketId, sender); return { ok: true }; }
     if (m.type === 'page.ended') { manager.ended(m.ticketId, sender); return { ok: true }; }
     if (m.type === 'capture.batch') return manager.capture(m, sender);
     if (m.type === 'page.transport_error') { manager.transportError(m.ticketId, sender, String(m.code).slice(0, 100)); return { ok: true }; }
     if (m.type === 'float.prepare') return {ticket: await floatAccess(sender)};
+    if (m.type === 'float.workshop') {
+      const asked=Date.now(), tabId=sender.tab?.id;
+      if (typeof m.ticket !== 'string' || !tabId || !Array.isArray(m.bindings) || !m.destination) return {ok:false};
+      const top=await chrome.webNavigation.getFrame({tabId, frameId:0});
+      if (!top || !await floatAccess(sender,m.ticket)) return {ok:false};
+      const grant=(await chrome.storage.session.get('float-ticket:'+tabId))['float-ticket:'+tabId] as {top?:string}|undefined;
+      if (grant?.top!==top.documentId) return {ok:false};
+      const latest = await chrome.webNavigation.getFrame({tabId, frameId:0});
+      if (latest?.documentId !== top.documentId || latest.url !== top.url) return {ok:false};
+      const binding=bindingForPage(top.url,m.bindings);
+      return {ok:true,captureState:live.tabState(tabId),binding,
+        page:binding?live.questionPage(tabId,top.documentId,binding,m.destination,asked):null};
+    }
     if (m.type === 'float.verify') return {ok: typeof m.ticket === 'string' && await floatAccess(sender, m.ticket)};
     if (m.type === 'agent.exclude_origin' && typeof m.ticket === 'string') {
       const saved = await chrome.storage.local.get('agentOrigin');
@@ -76,8 +111,20 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
     validateCommand(m);
     switch (m.type) {
       case 'scope.list': return { ok: true, ...await manager.directory() };
-      case 'session.start': return { ok: true, ...await manager.start(m) };
-      case 'session.status': return { ok: true, ...manager.status() };
+      case 'live.start':
+        return navigator.locks.request('mes-capture-start', async () => {
+          if (manager.recording && !terminal(manager.recording.state)) throw new Error('请先结束离线录制');
+          const policy = parsePolicy(m.policy,'continuous');
+          return {ok:true, continuous:await live.start(m.ids,m.destination,policy)};
+        });
+      case 'live.add': await live.add(m.tabId); return {ok:true};
+      case 'live.stop': return navigator.locks.request('mes-capture-start',async()=>{await live.stop(); return {ok:true};});
+      case 'session.start':
+        return navigator.locks.request('mes-capture-start', async () => {
+          if (live.active) throw new Error('请先结束持续采集');
+          return {ok:true,...await manager.start(m)};
+        });
+      case 'session.status': return { ok: true, ...manager.status(), continuous:await live.status() };
       case 'session.add_root': return { ok: true, ...await manager.addRoot(m) };
       case 'session.mark': return { ok: true, ...await manager.mark(m) };
       case 'session.stop':

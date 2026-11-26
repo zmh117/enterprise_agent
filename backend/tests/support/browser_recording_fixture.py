@@ -101,9 +101,8 @@ def isolated_storage(stack: ExitStack):
     )
 
 
-def enable_recordings(stack: ExitStack, api, api_port: int):
+def enable_recording_identity(stack: ExitStack, api, api_port: int):
     c = api.state.container
-    storage = isolated_storage(stack)
     roles = {
         role: secrets.token_urlsafe(40)
         for role in (*REQUIRED_SERVICE_PRINCIPAL_ROLES, RECORDING_TOOL_PARTY)
@@ -112,6 +111,27 @@ def enable_recordings(stack: ExitStack, api, api_port: int):
         signing_key=_signing_key(), bootstrap_credentials=roles, audit_service=c.audit_service
     )
     c.service_principal_token_issuer = issuer
+    secret = Path(stack.enter_context(TemporaryDirectory())) / "synthetic-service-identity"
+    secret.touch(mode=0o600, exist_ok=False)
+    secret.write_text(roles[RECORDING_TOOL_PARTY])
+    c.settings = replace(
+        c.settings,
+        service_principal=replace(
+            c.settings.service_principal,
+            identity_base_url=f"http://127.0.0.1:{api_port}",
+            identity_allowed_hosts=("127.0.0.1",),
+            recording_tool_bootstrap_token_file=str(secret),
+        ),
+    )
+    api.include_router(build_service_principal_router())
+    c.tool_service.recording_tools = RecordingTools(c)
+
+
+def enable_recordings(stack: ExitStack, api, api_port: int):
+    c = api.state.container
+    storage = isolated_storage(stack)
+    enable_recording_identity(stack, api, api_port)
+    issuer = c.service_principal_token_issuer
     verifier = FileWorkerPrincipalVerifier(
         PrincipalJwks.from_dict(issuer.signing_key.public_jwks())
     )
@@ -133,9 +153,6 @@ def enable_recordings(stack: ExitStack, api, api_port: int):
         time.sleep(0.02)
     if not fs.started:
         raise RuntimeError("Synthetic File Service failed to start")
-    secret = Path(stack.enter_context(TemporaryDirectory())) / "synthetic-service-identity"
-    secret.touch(mode=0o600, exist_ok=False)
-    secret.write_text(roles[RECORDING_TOOL_PARTY])
     c.settings = replace(
         c.settings,
         file_service=replace(
@@ -143,15 +160,7 @@ def enable_recordings(stack: ExitStack, api, api_port: int):
             internal_base_url=f"http://127.0.0.1:{sock.getsockname()[1]}",
             internal_allowed_hosts=("127.0.0.1",),
         ),
-        service_principal=replace(
-            c.settings.service_principal,
-            identity_base_url=f"http://127.0.0.1:{api_port}",
-            identity_allowed_hosts=("127.0.0.1",),
-            recording_tool_bootstrap_token_file=str(secret),
-        ),
     )
-    api.include_router(build_service_principal_router())
-    c.tool_service.recording_tools = RecordingTools(c)
     return files
 
 

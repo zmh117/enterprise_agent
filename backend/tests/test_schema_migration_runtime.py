@@ -114,6 +114,10 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("164", "164_browser_recordings.sql"),
         ("165", "165_browser_preview_sequence.sql"),
         ("166", "166_browser_conversation_activity.sql"),
+        ("167", "167_browser_workshop_binding.sql"),
+        ("168", "168_browser_live_capture.sql"),
+        ("169", "169_browser_live_evidence_part.sql"),
+        ("170", "170_browser_live_job_page.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -184,6 +188,10 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "164",
         "165",
         "166",
+        "167",
+        "168",
+        "169",
+        "170",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -1453,9 +1461,9 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert owned_columns - column_comments.keys() == set()
     assert all(re.search(r"[\u3400-\u9fff]", table_comments[table]) for table in owned_tables)
     assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
-    assert len({table for table in owned_tables if not table.startswith("knowledge.")}) == 144
+    assert len({table for table in owned_tables if not table.startswith("knowledge.")}) == 149
     assert (
-        len({column for column in owned_columns if not column[0].startswith("knowledge.")}) == 1840
+        len({column for column in owned_columns if not column[0].startswith("knowledge.")}) == 1884
     )
     assert len({table for table in owned_tables if table.startswith("knowledge.")}) == 33
     database.close()

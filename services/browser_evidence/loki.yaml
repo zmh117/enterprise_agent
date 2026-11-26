@@ -1,0 +1,45 @@
+auth_enabled: true
+server:
+  http_listen_port: 3100
+  grpc_listen_address: 127.0.0.1
+  http_tls_config:
+    cert_file: /run/evidence-tls/server.crt
+    key_file: /run/evidence-tls/server.key
+    client_ca_file: /run/evidence-tls/ca.crt
+    client_auth_type: RequireAndVerifyClientCert
+  log_level: warn
+common:
+  path_prefix: /loki
+  instance_addr: 127.0.0.1
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    s3:
+      endpoint: evidence-minio:9000
+      region: us-east-1
+      bucketnames: browser-evidence
+      insecure: true
+      s3forcepathstyle: true
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: s3
+      schema: v13
+      index:
+        prefix: browser_index_
+        period: 24h
+ingester:
+  chunk_encoding: snappy
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: s3
+limits_config:
+  retention_period: 168h
+  max_line_size: 65536
+  max_line_size_truncate: false
+analytics:
+  reporting_enabled: false

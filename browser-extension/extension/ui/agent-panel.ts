@@ -1,4 +1,6 @@
-import { openAuthPopup } from './auth-popup';
+import { workshopLabel, type WorkshopScope, type WorkshopClient, type WorkshopBinding } from '../../shared/workshop';
+import { Platform } from '../platform';
+export { Platform } from '../platform';
 import { recordingLabel, type EnvironmentCatalog, type EnvironmentOption } from '../../shared/recording-environment';
 import { EvidenceDB } from '../storage/database';
 import { terminal } from '../../shared/contracts';
@@ -22,176 +24,9 @@ import {
   type Receipt,
 } from './agent-chat';
 
-type Credential = {
-  access_token: string;
-  user_id: string;
-  tenant_id: string;
-  expires: number;
-  renewAt: number;
-};
-type App = { id: string; name: string; scope_ref: string; environments?: EnvironmentOption[] };
-const prefix = '/api/browser-extension';
-const encode = (bytes: Uint8Array) =>
-  btoa(String.fromCharCode(...bytes))
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-const random = () => encode(crypto.getRandomValues(new Uint8Array(32)));
+type App = { id: string; name: string; scope_ref: string; environments?: EnvironmentOption[]; workshop_scopes?: WorkshopScope[] };
 const el = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
-
-async function checked(res: Response): Promise<Response> {
-  if (res.ok) return res;
-  const payload = await res.json().catch(() => ({}));
-  throw new PlatformError(
-    res.status,
-    payload.code ?? payload.detail?.code ?? payload.detail ?? 'platform_error',
-  );
-}
-
-export class Platform {
-  private credential?: Credential;
-  private renewing?: Promise<Credential>;
-  private identity?: string;
-  readonly controller = new AbortController();
-  constructor(readonly origin: string) {}
-  get signal() {
-    return this.controller.signal;
-  }
-  async login(interactive: boolean): Promise<Credential> {
-    if (this.renewing) return this.renewing;
-    this.renewing = this.exchange(interactive);
-    try {
-      return await this.renewing;
-    } finally {
-      this.renewing = undefined;
-    }
-  }
-  private async exchange(interactive: boolean): Promise<Credential> {
-    const verifier = random(),
-      state = random();
-    const challenge = encode(
-      new Uint8Array(
-        await crypto.subtle.digest(
-          'SHA-256',
-          new TextEncoder().encode(verifier),
-        ),
-      ),
-    );
-    const callback = chrome.identity.getRedirectURL();
-    const url = new URL(prefix + '/auth/authorize', this.origin);
-    url.search = new URLSearchParams({
-      client_id: chrome.runtime.id,
-      redirect_uri: callback,
-      state,
-      code_challenge_method: 'S256',
-      code_challenge: challenge,
-      ...(interactive ? {} : { prompt: 'none' }),
-    }).toString();
-    const result = interactive
-      ? await openAuthPopup(url.href)
-      : await chrome.identity.launchWebAuthFlow({
-          url: url.href,
-          interactive: false,
-          abortOnLoadForNonInteractive: false,
-          timeoutMsForNonInteractive: 15000,
-        });
-    this.signal.throwIfAborted();
-    if (!result) throw new Error('未完成登录');
-    const dest = new URL(result);
-    if (
-      dest.origin + dest.pathname !== callback ||
-      dest.searchParams.get('state') !== state
-    )
-      throw new Error('登录回调校验失败');
-    const error = dest.searchParams.get('error');
-    if (error)
-      throw new PlatformError(error === 'access_denied' ? 403 : 401, error);
-    const code = dest.searchParams.get('code');
-    if (!code) throw new Error('未取得授权');
-    const res = await checked(
-      await fetch(this.origin + prefix + '/auth/token', {
-        method: 'POST',
-        credentials: 'omit',
-        cache: 'no-store',
-        redirect: 'error',
-        signal: this.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_id: chrome.runtime.id,
-          redirect_uri: callback,
-          code,
-          code_verifier: verifier,
-        }),
-      }),
-    );
-    const token = await res.json();
-    this.signal.throwIfAborted();
-    if (
-      !token.user_id ||
-      !token.tenant_id ||
-      typeof token.access_token !== 'string' ||
-      !Number.isSafeInteger(token.expires_in) ||
-      token.expires_in <= 0 ||
-      token.expires_in > 900
-    )
-      throw new Error('平台授权响应无效');
-    const identity = JSON.stringify([token.tenant_id, token.user_id]);
-    if (this.identity && this.identity !== identity) {
-      this.controller.abort();
-      throw new PlatformError(403, 'account_changed');
-    }
-    this.identity = identity;
-    const now = Date.now();
-    const expires = now + token.expires_in * 1000;
-    // A short-lived renewal can be capped by the parent session deadline.
-    // Relative lifetimes are rounded to seconds, so tolerate one second of skew.
-    const previous = this.credential;
-    const capped = previous && expires <= previous.expires + 1000;
-    return (this.credential = {
-      access_token: token.access_token,
-      tenant_id: token.tenant_id,
-      user_id: token.user_id,
-      expires,
-      renewAt: capped ? expires : expires - 5000,
-    });
-  }
-  async request(path: string, options: RequestInit): Promise<Response> {
-    const signal = options.signal
-      ? AbortSignal.any([this.signal, options.signal])
-      : this.signal;
-    let token = this.credential;
-    signal.throwIfAborted();
-    if (!token || token.renewAt <= Date.now()) token = await this.login(false);
-    const send = (value: Credential) => {
-      const headers = new Headers(options.headers);
-      headers.set('Authorization', 'Bearer ' + value.access_token);
-      return fetch(this.origin + prefix + path, {
-        ...options,
-        headers,
-        signal,
-        credentials: 'omit',
-        cache: 'no-store',
-        redirect: 'error',
-      }).then(checked);
-    };
-    try {
-      return await send(token);
-    } catch (e) {
-      if (!(
-        e instanceof PlatformError &&
-        e.status === 401 &&
-        e.code === 'credential_expired'
-      ))
-        throw e;
-      if (this.credential === token) this.credential = undefined;
-      const renewed = this.credential ?? (await this.login(false));
-      if (/^\/recordings\/[^/]+\/(?:parts\/\d+|complete)$/.test(path))
-        throw new PlatformError(409, 'resume_upload');
-      return send(renewed);
-    }
-  }
-}
 
 export function explain(e: unknown) {
   const messages: Record<string, string> = {
@@ -205,6 +40,7 @@ export function explain(e: unknown) {
     scope_changed: '应用配置已更新，请重新连接并选择应用',
     account_changed: '账号已切换，请重新连接',
     message_conflict: '同一问题的提交内容已改变',
+    conversation_scope_changed:'该会话属于其他车间，请在当前页新建对话',
     application_unavailable: '应用暂时不可用，请稍后重试。如果持续出现，请管理员检查应用配置和 Agent Runtime 的就绪状态。',
   };
   return e instanceof PlatformError
@@ -220,7 +56,7 @@ export interface AgentTimeline {
   questions(rows: {job_id: string; question: string; asked_at?: string}[], prepend: boolean): void;
 }
 
-export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, onEnvironments?: (catalog: EnvironmentCatalog | null) => void) {
+export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, onEnvironments?: (catalog: EnvironmentCatalog | null) => void, onWorkshop?: (client: WorkshopClient | null) => void) {
   const input = el<HTMLInputElement>('agent-origin'),
     applications = el<HTMLSelectElement>('agent-app');
   const question = el<HTMLTextAreaElement>('agent-question'),
@@ -383,6 +219,10 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     showBinding();
   };
   clear.onclick = () => {
+    if (frameTicket && binding) {
+      void selectApp().catch(e => { status.textContent = explain(e); });
+      return;
+    }
     binding = null;
     showBinding();
   };
@@ -488,6 +328,12 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
           [key]: { attempt, manifest: m, recording_id: rid },
         });
         signal.throwIfAborted();
+        if (frameTicket) {
+          const draft = question.value;
+          await selectApp(undefined, rid);
+          if (!question.value) question.value = draft;
+          return;
+        }
         binding = rid;
         share.hidden = true;
         showBinding();
@@ -517,6 +363,8 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     app = undefined;
     pending = undefined;
     catalog = [];
+    onWorkshop?.(null);
+    el('agent-workshop').hidden = true;
     onEnvironments?.(null);
     originalQuestion = undefined;
     history = { conversation: '', jobs: [], awaiting: [] };
@@ -707,8 +555,9 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     }
   }
 
-  async function selectApp(chosen?: Chat) {
+  async function selectApp(chosen?: Chat, explicitRecording?: string) {
     resetRecording();
+    binding = explicitRecording;
     selection?.abort();
     selection = new AbortController();
     const signal = selection.signal;
@@ -727,7 +576,10 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     historyPage?.current(app?.id ?? '', '');
     if (!p || !app) return;
     const current = app;
-    const key = JSON.stringify(['agent-chat', p.origin, account, current.id]);
+    const currentWorkshop=await showWorkshop(p,current,signal);
+    signal.throwIfAborted();
+    publishEnvironments(p, catalog);
+    const key=chatKey(p,current,currentWorkshop,explicitRecording);
     storageKey = key;
     await chrome.storage.local.set({
       [JSON.stringify(['agent-app', p.origin, account])]: current.id,
@@ -758,6 +610,74 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
         status.textContent = explain(e);
     });
   input.oninput = reset;
+  function workshopClient(p: Platform, selected: App, signal: AbortSignal): WorkshopClient {
+    const path = '/applications/' + encodeURIComponent(selected.id) + '/workshop-bindings';
+    const headers = {'X-Application-Scope': selected.scope_ref, 'Content-Type': 'application/json'};
+    return {
+      destination:{origin:p.origin, account, app:selected.id, scopeRef:selected.scope_ref},
+      key: JSON.stringify(['workshop-bindings', p.origin, account, selected.id]),
+      name: selected.name, choices: selected.workshop_scopes ?? [],
+      list: async () => (await p.request(path, {headers, signal})).json(),
+      save: async (rule, scope, revision) => (await p.request(path, {method:'PUT', headers, signal,
+        body:JSON.stringify({rule, environment_id:scope.environment_id, base_id:scope.base_id,
+          workshop_id:scope.workshop_id, expected_revision:revision})})).json(),
+      revoke: async b => { await p.request(path + '/' + encodeURIComponent(b.id) + '?expected_revision=' + b.revision,
+        {method:'DELETE', headers, signal}); },
+    };
+  }
+  function chatKey(p:Platform,current:App,bound?:WorkshopBinding,explicitRecording?:string) {
+    const parts=['agent-chat',p.origin,account,current.id];
+    if (frameTicket) parts.push(bound?.workshop_id ?? 'unbound-page');
+    if (explicitRecording) parts.push('recording',explicitRecording);
+    return JSON.stringify(parts);
+  }
+  let availableBindings: WorkshopBinding[] | undefined;
+  let displayedBinding: WorkshopBinding | undefined;
+  let workshopRequest = 0;
+  async function showWorkshop(p: Platform, current: App, signal: AbortSignal) {
+    const request = ++workshopRequest;
+    const label = el('agent-workshop');
+    const client = current.workshop_scopes ? workshopClient(p, current, signal) : null;
+    await onWorkshop?.(client);
+    if (!frameTicket) return;
+    availableBindings = undefined;
+    displayedBinding = undefined;
+    if (!client) {
+      availableBindings = [];
+      return;
+    }
+    label.hidden = false;
+    label.textContent = '正在核对页面车间';
+    try {
+      const bindings = await client.list();
+      const result = await chrome.runtime.sendMessage({type:'float.workshop', ticket:frameTicket, bindings,destination:client.destination});
+      signal.throwIfAborted();
+      if (request !== workshopRequest) throw new DOMException('车间已重新核对', 'AbortError');
+      if (!result?.ok) throw new Error('发送页已变化');
+      availableBindings=bindings;
+      displayedBinding=result.binding;
+      const scope = client.choices.find(s => s.workshop_id === result?.binding?.workshop_id);
+      label.textContent = (scope ? workshopLabel(scope) : '该页面尚未绑定车间') +
+        (result?.captureState === 'paused' ? ' · 页面采集已暂停，请刷新或重新打开' : '');
+      return result.binding as WorkshopBinding|undefined;
+    } catch (error) {
+      if (signal.aborted || request !== workshopRequest) throw error;
+      label.textContent='页面车间暂不可用';
+      throw new Error('未能核对发送页的车间，请重新连接后再发送');
+    }
+  }
+  if (frameTicket) {
+    const update = () => {
+      const p=platform,current=app,signal=selection?.signal;
+      if (p && current && signal && !signal.aborted) void showWorkshop(p,current,signal).then(bound=>{
+        if (!signal.aborted && storageKey!==chatKey(p,current,bound,binding || undefined)) return selectApp();
+      }).catch(()=>{});
+    };
+    chrome.runtime.onMessage.addListener(message => { if (message.type === 'float.pageChanged') update(); });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && Object.keys(changes).some(key => key.startsWith('["workshop-bindings",'))) update();
+    });
+  }
   function publishEnvironments(p: Platform, apps: App[]) {
     const options = new Map(apps.flatMap(a => (a.environments ?? []).map(e => [e.code, e] as const)));
     onEnvironments?.({
@@ -804,6 +724,8 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
             send.disabled = true;
             question.value = '';
             historyPage?.connect(undefined, []);
+            onWorkshop?.(null);
+            el('agent-workshop').hidden = true;
             onEnvironments?.(null);
             status.textContent = '账号已变更，请重新登录';
           }
@@ -817,9 +739,8 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       catalog = apps;
       connection.open = false;
       historyPage?.connect(p, apps);
-      await chrome.storage.local.set({ agentOrigin: url.origin });
+      await chrome.storage.local.set({ agentOrigin: url.origin, agentActiveAccount: account });
       p.signal.throwIfAborted();
-      publishEnvironments(p, apps);
       applications.replaceChildren(
         ...catalog.map((a) => new Option(a.name, a.id)),
       );
@@ -867,7 +788,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     const key = storageKey;
     const path =
       '/applications/' + encodeURIComponent(current.id) + '/messages';
-    const ref = pending ?? {
+    const ref:MessageRef = pending ?? {
       key: crypto.randomUUID(),
       conversation: history.conversation,
       scope: current.scope_ref,
@@ -875,10 +796,20 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     };
     let submitting = false;
     try {
+      if (frameTicket && !pending && binding==null) {
+        if (!availableBindings) throw new Error('请等待当前页面的车间核对完成');
+        const resolved=await chrome.runtime.sendMessage({type:'float.workshop',ticket:frameTicket,
+          destination:workshopClient(p,current,signal).destination,bindings:availableBindings});
+        if (!resolved?.ok || resolved.binding?.id !== displayedBinding?.id ||
+            resolved.binding?.revision !== displayedBinding?.revision || chatKey(p,current,resolved.binding)!==key)
+          throw new Error('发送页已变化，请核对当前车间后再发送');
+        if (resolved.page) ref.page=resolved.page;
+        ref.recording=null;
+      }
       if (pending) {
         const receipt = await lookup(p, path, ref, signal);
         if (receipt) {
-          if (binding === ref.recording) binding = undefined;
+          if (!frameTicket && binding === ref.recording) binding = undefined;
           show(await finishMessage(key, ref, receipt), p, signal);
           if (value === originalQuestion) question.value = '';
           originalQuestion = undefined;
@@ -916,6 +847,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
         body: JSON.stringify({
           question: value,
           client_message_id: ref.key,
+          ...(ref.page ? {page:ref.page}:{}),
           ...(ref.conversation ? { conversation_id: ref.conversation } : {}),
           ...(ref.recording !== undefined
             ? { recording_id: ref.recording }
@@ -925,7 +857,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       submitting = false;
       const receipt: Receipt = await result.json();
       signal.throwIfAborted();
-      if (binding === ref.recording) binding = undefined;
+      if (!frameTicket && binding === ref.recording) binding = undefined;
       show(await finishMessage(key, ref, receipt), p, signal);
       pending = history.awaiting[0];
       originalQuestion = undefined;
@@ -941,7 +873,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
         e instanceof PlatformError &&
         ([403, 404, 410, 422].includes(e.status) ||
           admissionRejected ||
-          ['scope_changed', 'message_conflict'].includes(e.code))
+          ['scope_changed', 'message_conflict', 'conversation_scope_changed'].includes(e.code))
       ) {
         if (e.status === 410)
           unavailableRecording = ref.recording ?? history.recording ?? null;
@@ -970,7 +902,11 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     try {
       const apps: App[] = await (await p.request('/applications', {})).json();
       p.signal.throwIfAborted();
-      publishEnvironments(p, apps);
+      const selected = apps.find(candidate => candidate.id === app?.id);
+      if (selected && selection) {
+        publishEnvironments(p, apps);
+        await showWorkshop(p, selected, selection.signal);
+      }
     } catch (error) {
       if (p === platform) onEnvironments(null);
       throw error;

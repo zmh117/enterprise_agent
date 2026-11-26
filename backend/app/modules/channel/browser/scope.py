@@ -45,3 +45,43 @@ def active_app(c: Any, origin: str, user: str, app: str) -> dict[str, Any]:
             ]
         ),
     }
+
+
+RECORDING_TOOLS = frozenset({"search_recording", "get_recording_evidence"})
+
+
+def authorized_workshops(c: Any, app: str, accesses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return enabled workshop paths covered by one role's recording grant."""
+    grants = {
+        (scope["environment_id"], scope["base_id"], scope["workshop_id"])
+        for access in accesses
+        if RECORDING_TOOLS.issubset(access["tool_identifiers"])
+        for scope in access["scopes"]
+    }
+    if not grants or not all(
+        c.authorization_center_repository.application_tool_is_effective(app, tool)
+        for tool in RECORDING_TOOLS
+    ):
+        return []
+    rows = c.database.execute(
+        """select e.id as environment_id, e.code as environment_code,
+                  coalesce(nullif(e.display_name,''), e.code) as environment_name,
+                  b.id as base_id, b.code as base_code,
+                  coalesce(nullif(b.display_name,''), b.code) as base_name,
+                  w.id as workshop_id, w.code as workshop_code,
+                  coalesce(nullif(w.display_name,''), w.code) as workshop_name
+             from platform_environment e join platform_base b on b.environment_id=e.id
+             join platform_workshop w on w.base_id=b.id
+            where e.status='enabled' and b.status='enabled' and w.status='enabled'
+            order by e.code,b.code,w.code"""
+    )
+    result = []
+    for row in rows:
+        env, base, shop = row["environment_id"], row["base_id"], row["workshop_id"]
+        if (
+            (env, None, None) in grants
+            or (env, base, None) in grants
+            or (env, base, shop) in grants
+        ):
+            result.append(row)
+    return result

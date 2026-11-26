@@ -1,8 +1,10 @@
+import type {QuestionPage} from '../../shared/live-page';
 export type MessageRef = {
   key: string;
   conversation: string;
   scope: string;
   recording?: string | null;
+  page?:QuestionPage;
 };
 
 export type Chat = {

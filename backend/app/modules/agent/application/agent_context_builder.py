@@ -226,6 +226,36 @@ class AgentContextBuilder:
         if "search_recording" not in allowed_tools or job.source_channel != "browser_extension":
             return []
         db = self.tool_registry.tool_service.repository.database
+        live = db.execute_one(
+            "select recording_id from browser_live_job_page where job_id=?", (job.id,)
+        )
+        if live:
+            instructions = [
+                (
+                    "本轮绑定发送页的持续录制。"
+                    if live["recording_id"]
+                    else "提问时本页没有参与录制。"
+                )
+                + '用 search_recording({"live":{}}) 查发送前半小时本页的观察。'
+                "问题明确提及同场其他页时使用 scope=recording，询问本车间当天历史时使用 scope=today。"
+                "用 request_key 或 baseline_id 过滤关联事件，按 observed_ms 和 source_seq 整理时间线。"
+                '对 hits 中的 reference 调 get_recording_evidence({"live":{"reference":"…"}})，'
+                "按 next_cursor 续读。引用稳定 event_id，交代覆盖状态。"
+                "仅同路径或时间相近不足以归因。日志无命中时，说明已查的环境和时间窗。"
+                "运行版本未知时请用户确认部署环境和数值 SVN revision，再通过授权代码库核对。"
+            ]
+            if "query_loki" in allowed_tools:
+                instructions.append(
+                    "若响应含 request_id 或 trace_id，用此值作为 query_loki 的 query，selector 传 {}。"
+                    "使用本轮环境、基地和覆盖操作的分钟数，固定标签由已发布日志资源注入。"
+                    "回答分别引用浏览器事件与命中的日志时间、关联标识。"
+                )
+            if "knowledge_search" in allowed_tools:
+                instructions.append(
+                    "用户确认运行版本后，在该环境获授权的代码知识库内使用 knowledge_search 核对同一 SVN revision。"
+                    "引用已核实的运行版本，区分页面响应、后端日志与代码推断。"
+                )
+            return instructions
         row = db.execute_one(
             """select r.id,r.coverage_json from browser_job_recording b
             join browser_recording r on r.id=b.recording_id where b.job_id=?""",

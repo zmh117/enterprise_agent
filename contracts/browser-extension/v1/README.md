@@ -24,7 +24,13 @@
 
 | 操作 | 输入 | 成功结果 |
 | --- | --- | --- |
-| GET /applications | 当前插件登录账号 | 可访问应用的 id、name、scope_ref 和 environments。每个环境仅含 code 和 name，按该账号在应用内的有效授权和环境启用状态筛选。 |
+| GET /applications | 当前插件登录账号 | BrowserApplications。保留原 environments；workshop_scopes 返回本应用已授权的环境、基地、车间组合及各级 ID、编码、名称。仅展示三个节点均启用、且单条角色应用授权同时覆盖范围和录制工具的组合。 |
+| GET /applications/{id}/workshop-bindings | 当前应用范围 | 本人仍可访问的规则、三级范围 ID、绑定 ID、版本及启停状态 |
+| PUT /applications/{id}/workshop-bindings | rule（origin、path、hash_path、query）、三级范围 ID、expected_revision | 新建传版本 0，修改或重新启用传当前版本；过期版本或重叠规则返回 409 |
+| DELETE /applications/{id}/workshop-bindings/{binding_id} | expected_revision | 204，保留历史版本 |
+| POST /applications/{id}/live-recordings | RegisterLivePages | 登记本场录制以及各个标签、文档和绑定版本，可幂等重试 |
+| POST /applications/{id}/live-evidence | LiveBatch，单批最多 512 KiB | accepted 与 delivery=forwarded |
+| POST /applications/{id}/live-evidence/verify | 录制 ID、来源、事件 ID、对象摘要与起始片号 first | 从 Loki 读回的逐片摘要 digests、下一片号 next 和可见状态 visible |
 | POST /applications/{id}/recordings | InitRecording | UploadReceipt |
 | PUT /recordings/{id}/parts/{n} | 每行一个 EvidenceRow，可用 Content-Encoding: gzip | PartReceipt |
 | POST /recordings/{id}/complete | 空请求体 | ReadyReceipt |
@@ -58,3 +64,49 @@ Job 开始运行后会先发出 `analyzing` 状态，即使模型尚未生成公
 - 消息中省略 recording_id 表示沿用原会话，null 表示解除，给出 ID 表示切换。重试保留原信封，缺省与 null 不可互换。上传未提交、已就绪、已过期的状态以服务端回执为准。
 
 `golden/` 包含两个封存版本的初始化请求和原样 NDJSON 字节，以及按顺序标明契约名的续传、消息重放、只读查询、快照、重试和终态样例。平台和插件可以对同一份文件比较字节和语义。
+
+### 持续采集登记
+
+插件以当前账号凭据和应用的 `X-Application-Scope` 调用 `POST /applications/{app}/live-recordings`。正文包含 `recording_id` 和 `pages`。每个文档提交 `tab_id`、`document_id`、`binding_id`、`revision`。登记结果返回录制 ID 和文档数。同一录制、标签实例和文档重试可以重复登记，变更该文档的绑定会返回 409。新增或撤销授权后平台重新核对目录和规则版本。
+
+持续模式单份接口正文默认 1 MiB，最高 32 MiB。建议为 32 MiB 正文配置 96 MiB 本地队列，并从单并发开始观察内存。响应体按解码后的字节数核算。结构复杂度、非 JSON 类型、浏览器缓存淘汰、队列满与超出字节预算分别留下状态。已配置的 MES API 保留业务 JSON 字段的原值；认证请求、凭据、Cookie 和未解析的原始消息不纳入持续采集。
+
+### 持续录制中的提问与检索
+
+持续模式的两个工具沿用原 identifier，输入契约新增 `live`。部署 API、tool-mcp 和 Runtime 后，按正常流程重新发布使用这两个工具的 Agent 和业务应用，使新 Job 冻结新契约。封存录制的既有请求格式继续有效。新旧契约哈希不同，在途 Job 按平台原有的工具快照规则处理。
+
+浮窗 POST 消息时携带 `page`，包含绑定 ID、版本、顶层文档、提问毫秒数和用户时区。参与录制的页还带录制 ID 与标签实例，未录制时两项都传 null。重试复用同一消息键与整份输入。服务端推导账号、应用及车间路由。手工选择已封存录制时使用 `recording_id`。
+
+| 调用 | 用途 |
+|---|---|
+| `search_recording({"live":{}})` | 本人本场当前标签，提问前 30 分钟。相同 URL 的两个标签独立。 |
+| `search_recording({"live":{"scope":"recording","api_path":"/api/save"}})` | 本人同场同车间，在同一窗口查保存接口。 |
+| `search_recording({"live":{"scope":"today","http_status":422}})` | 本人、本应用、同车间，用户当地零时至提问时的多场录制。 |
+| `search_recording({"live":{"request_key":"<命中的请求键>"}})` | 在当前范围查该请求、响应及正文。查其他页或历史时沿用原 scope。 |
+| `get_recording_evidence({"live":{"reference":"<命中的引用>"}})` | 按本轮 Job 授权读取操作、基线或正文，后续请求继续带同一 reference 与返回的 cursor。 |
+
+返回的 `event_id` 是逻辑事件身份，`observed_ms` 为页面观察时间，`source_seq` 为录制内序号。分页按接收顺序处理。时间线按观察时间及序号展示。即使当前已读完，也保留 `next_cursor`，同一筛选可以补读稍后传入的事件。调用者按事件 ID 去重。已登记但暂不可读的详情可通过 `pending_refs` 单独重试。跨筛选或跨 Job 的游标与引用会被拒绝。
+
+| coverage | 回答应说明的范围 |
+|---|---|
+| `open` | 已送达窗口内的观察，插件可能还有未投递的材料。 |
+| `page_not_recorded` | 提问时本页没有参与录制。 |
+| `visible` | 此次返回的分片已在 Loki 读回，长度与摘要可核对。 |
+| `partial` | 单次预算已用完，使用返回的游标读取后续分片。 |
+| `missing_part`、`expired`、`unavailable` | 分别表示缺片、超出试用保留期和存储暂不可查询。缺少材料时只引用已核对的部分。 |
+
+详情中的小对象直接以 JSON 返回。较大对象返回所取页的 UTF-8 摘录、按片序排列的 Base64、分片 SHA-256、对象总字节数及 SHA-256。取齐后按序连接字节，核对总长和总摘要。最大单正文为 32 MiB，每次工具回复限 256 KiB。授权失效时结束该次读取。
+
+工单号或精密数量超出 JavaScript 可准确表示的范围时，持续采集按原 JSON 数字字面值写入分片。此类小对象通过 `value_json` 提供已过滤的精确 JSON 文本。
+
+#### 从保存失败查到服务端
+
+下面是合成答复样例。浏览器事件 ID 和日志中的关联标识分别保留。
+
+| 观察 | 可给用户的答复 |
+|---|---|
+| C 的响应事件 E1 为 422，返回 BATCH_REQUIRED。已发布业务日志资源在相同 trace_id 下记录了批号校验失败。 | “C 页保存返回 422，响应要求补批号（E1）。配液基地服务的同一追踪记录也显示批号校验失败。” |
+| A、C 调用同一接口。C 响应为 422，按其 request_id 在获授权资源的查询窗口内没有命中。 | “C 页的保存被接口拒绝（E1）。这个窗口没有查到对应后端日志，A 页的同名请求无法证明 C 的失败原因。” |
+| 已查到浏览器和日志，现场尚未提供运行版本。 | “浏览器和日志都指向批号校验。还缺现场的 SVN 修订号，因此暂时无法确认具体代码分支。” |
+
+例如响应提供追踪标识时，授权 Job 可调用 `query_loki({"environment":"qa","base":"plant","selector":{},"query":"<实际追踪标识>","minutes":15,"limit":20})`。环境与基地使用该 Job 对应的目录编码，时间窗须覆盖操作。业务资源自行注入固定选择条件。已知运行环境和数值 SVN 修订后，使用现有授权代码知识库核对该版本。

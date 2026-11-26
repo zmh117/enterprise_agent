@@ -6,6 +6,7 @@ import {
   cp,
   mkdtemp,
   readFile,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -224,11 +225,14 @@ async function checkReply(surface, control) {
   const question = thread.locator('.chat-question').first();
   const answer = thread.locator('.chat-reply').first();
   const copy = answer.getByRole('button', {name: '复制回复'});
-  const userBox = await question.boundingBox();
-  const answerBox = await answer.boundingBox();
-  const buttonBox = await copy.boundingBox();
+  // The streaming view can autoscroll between Playwright round trips.
+  const [userBox, answerBox, buttonBox] = await thread.evaluate(el => {
+    const reply = el.querySelector('.chat-reply');
+    return [el.querySelector('.chat-question'), reply, reply?.querySelector('button[aria-label="复制回复"],button[title="复制回复"]')]
+      .map(node => node?.getBoundingClientRect().toJSON());
+  });
   assert.ok(userBox && answerBox && buttonBox);
-  assert.ok(userBox.x > answerBox.x && userBox.y + userBox.height <= answerBox.y);
+  assert.ok(userBox.x > answerBox.x && userBox.y + userBox.height <= answerBox.y, JSON.stringify({userBox, answerBox}));
   assert.ok(buttonBox.x < answerBox.x + 10 && buttonBox.y > answerBox.y);
   assert.equal(await question.getByRole('button').count(), 0);
 
@@ -273,7 +277,7 @@ async function runBrowserTest() {
   // Pre-grant just this loopback host in the test copy to avoid an OS permission dialog.
   manifest.host_permissions = [...new Set([scheme + '://' + hostname + '/*', ...(floating ? ['http://' + mesHost + '/*', 'http://127.0.0.1/*', 'http://localhost/*'] : [])])];
   await writeFile(file, JSON.stringify(manifest));
-  context = await chromium.launchPersistentContext(join(root, 'profile'), {
+  const launch = () => chromium.launchPersistentContext(join(root, 'profile'), {
     channel: 'chromium',
     viewport: null,
     headless: true,
@@ -291,6 +295,7 @@ async function runBrowserTest() {
       '--enable-unsafe-extension-debugging',
     ],
   });
+  context = await launch();
   let id;
   const ownWorker = (w) => w.url().endsWith('/background.js');
   const worker =
@@ -436,7 +441,38 @@ async function runBrowserTest() {
     await control.screenshot({path:join(process.env.EA_CHAT_PREVIEW_DIR, 'agent-chatgpt-empty.png')});
   }
   if (floating) {
-    return checkFloat({context, control, id, fixture, next, requests, mesHost, checkReply});
+    await checkFloat({context, control, id, fixture, next, requests, mesHost, checkReply, signIn});
+    if (process.env.EA_TEST_PREVIOUS_DIST) {
+      const {checkRollback} = await import('./workshop-rollback.mjs');
+      await checkRollback({
+        control, id,
+        async restart(previous) {
+          if (previous) {
+            await rename(unpacked, join(root,'workshop-current'));
+            await cp(process.env.EA_TEST_PREVIOUS_DIST, unpacked, {recursive:true});
+            const oldManifest=JSON.parse(await readFile(file,'utf8'));
+            oldManifest.host_permissions=manifest.host_permissions;
+            await writeFile(file,JSON.stringify(oldManifest));
+          } else {
+            await rename(unpacked, join(root,'workshop-previous'));
+            await rename(join(root,'workshop-current'), unpacked);
+          }
+          const session=await context.browser().newBrowserCDPSession();
+          try {
+            assert.equal((await session.send('Extensions.loadUnpacked',{path:unpacked})).id,id);
+          } finally {await session.detach();}
+          const page=await context.newPage();
+          await page.goto('chrome-extension://' + id + '/control.html');
+          await page.waitForFunction(async()=>{
+            try {return (await chrome.runtime.sendMessage({type:'history.list'})).ok;}
+            catch {return false;}
+          },null,{timeout:12000});
+          await page.locator('nav a[href="#records"]').click();
+          return page;
+        }
+      });
+    }
+    return;
   }
   if (withRecording) {
     const sourceBytes = await seedLargeRecording(control, origin);

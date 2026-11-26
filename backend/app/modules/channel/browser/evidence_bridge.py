@@ -37,6 +37,24 @@ async def read_recording_evidence(request: Request) -> JSONResponse:
     def read() -> dict[str, Any]:
         try:
             value = json.loads(raw)
+            if isinstance(value, dict) and set(value) == {
+                "job",
+                "attempt",
+                "live_tool",
+                "arguments",
+            }:
+                from app.modules.channel.browser import live_query
+
+                if (
+                    not isinstance(value["job"], str)
+                    or len(value["job"]) > 128
+                    or type(value["attempt"]) is not int
+                    or not isinstance(value["arguments"], dict)
+                ):
+                    raise ValueError
+                return live_query.run(
+                    c, value["job"], value["attempt"], value["live_tool"], value["arguments"]
+                )
             if (
                 not isinstance(value, dict)
                 or set(value) != {"job", "attempt", "evidence_id"}

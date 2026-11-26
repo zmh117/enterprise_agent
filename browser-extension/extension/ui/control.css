@@ -124,3 +124,6 @@ legend { color: var(--muted); padding: 0 4px; }
   #conversation-main .conversation-thread { height: clamp(260px, 56dvh, 640px); }
   .conversation-reader { padding-inline: 0; }
 }
+
+#sites fieldset:has(#workshop-page) { display: grid; gap: .45rem; }
+#workshop-url { overflow-wrap: anywhere; }

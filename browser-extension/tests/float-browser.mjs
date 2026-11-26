@@ -2,10 +2,24 @@ import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
 
-export async function checkFloat({context, control, id, fixture, next, requests, mesHost, checkReply}) {
-  const server = createServer((_req,res) => {
+export async function checkFloat({context, control, id, fixture, next, requests, mesHost, checkReply, signIn}) {
+  let requestStarted, releaseRequest;
+  const started = new Promise(resolve=>{requestStarted=resolve;});
+  const released = new Promise(resolve=>{releaseRequest=resolve;});
+  const server = createServer(async (req,res) => {
+    if (req.url === '/api/save') {
+      res.writeHead(422, {'Content-Type':'application/json','X-Request-ID':'beef0123456789abcdef0123456789ab'});
+      res.end('{"workOrder":"WO-C","orderId":9876543210123456789,"code":"BATCH_REQUIRED"}');
+      return;
+    }
+    if (req.url==='/api/shared') {
+      requestStarted(); await released;
+      res.writeHead(200,{'Content-Type':'application/json','X-Request-ID':'abcdef0123456789abcdef0123456789'});
+      res.end(JSON.stringify({workOrder:'WO-SYNTHETIC',batch:'B-SYNTHETIC',rows:[{qty:3}],cookie:'synthetic-private-header-value'}));
+      return;
+    }
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-    res.end('<!doctype html><title>MES 合成测试</title><main><h1>工单查询</h1></main>');
+    res.end('<!doctype html><title>MES 合成测试</title><main><h1>工单查询</h1><button onclick="fetch(\'/api/save\',{method:\'POST\'})">保存</button></main>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -49,6 +63,88 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     await control.locator('.history-row').first().waitFor();
     await control.locator('nav a[href="#sites"]').click();
 
+    // Two workshop URLs share their Chrome origin permission.
+    await mes.goto(origin + '/mes#/orders?shop=mix&transient=ignored');
+    const packing = await context.newPage();
+    await packing.goto(origin + '/pack');
+    await control.getByRole('button', {name:'刷新站点'}).click();
+    async function bind(pageUrl, name, keys = '') {
+      await control.locator('#workshop-page').selectOption({label:pageUrl});
+      await control.locator('#workshop-keys').fill(keys);
+      await control.locator('#workshop-environment').selectOption({label:'采集联调'});
+      await control.locator('#workshop-base').selectOption({label:'一号基地'});
+      await control.locator('#workshop-choice').selectOption({label:name});
+      await control.locator('#workshop-save').click();
+      await control.locator('#workshop-revoke:enabled').waitFor();
+    }
+    await control.locator('#workshop-page').selectOption({label: origin + '/mes#/orders'});
+    assert.equal(await control.locator('#workshop-choice').inputValue(), '', '旧环境不能推断车间');
+    await control.locator('#workshop-environment').selectOption({label:'采集联调'});
+    await control.locator('#workshop-base').selectOption({label:'一号基地'});
+    await control.locator('#workshop-choice').selectOption({label:'配液车间'});
+    await control.evaluate(() => {
+      const request = chrome.permissions.request;
+      chrome.permissions.request = async () => { chrome.permissions.request = request; return false; };
+    });
+    await control.locator('#workshop-save').click();
+    await control.locator('#workshop-status').filter({hasText:'未获得页面访问权限'}).waitFor();
+    await bind(origin + '/mes#/orders', '配液车间', 'shop');
+    assert.equal(await control.locator('#workshop-url').textContent(), origin + '/mes#/orders?shop=mix');
+    await bind(origin + '/pack', '包装车间');
+    // The continuous run owns three distinct tabs, including two on the same bound URL.
+    const twin = await context.newPage();
+    await twin.goto(mes.url());
+    await control.locator('nav a[href="#capture"]').click();
+    await control.locator('#new').click();
+    await control.locator('#tab-search').fill(origin);
+    await control.locator('#select-all').check();
+    await control.locator('#record-mode').selectOption('continuous');
+    await control.locator('#start').click();
+    await control.waitForFunction(()=>document.querySelector('#live-tabs')?.textContent.match(/正在采集/g)?.length === 3).catch(async error => {
+      throw new Error('三页基线状态 '+(await control.locator('#live-tabs').innerText())+' '+(await control.locator('#notice').textContent()),{cause:error});
+    });
+    async function networkStatus() {
+      return control.evaluate(async()=>(await chrome.runtime.sendMessage({type:'session.status'})).continuous?.tabs.map(t=>({network:t.network,gap:t.networkGap})));
+    }
+    const deadline=Date.now()+10000;
+    while (!(await networkStatus())?.every(t=>t.network?.mapped)) {
+      if (Date.now()>deadline) throw new Error('Network mapping '+JSON.stringify(await networkStatus()));
+      await new Promise(r=>setTimeout(r,100));
+    }
+    const delayed = mes.evaluate(()=>fetch('/api/shared',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({workOrder:'WO-SYNTHETIC'})}).then(r=>r.json()).then(()=>true));
+    await started;
+    await mes.evaluate(()=>history.pushState({},'', '/pack'));
+    releaseRequest(); await delayed;
+    await control.waitForFunction(()=>document.querySelector('#live-tabs')?.textContent.includes('页面采集已暂停'));
+    await mes.evaluate(()=>history.pushState({},'', '/mes#/orders?shop=mix'));
+    assert.equal(await control.locator('#live-tabs p').filter({hasText:'正在采集'}).count(),2);
+    await control.waitForFunction(async () => {
+      const db=await new Promise(resolve=>{const r=indexedDB.open('mes-workshop-live-v1');r.onsuccess=()=>resolve(r.result);});
+      const rows=await new Promise(resolve=>{const r=db.transaction('liveEvidence').objectStore('liveEvidence').getAll();r.onsuccess=()=>resolve(r.result);});
+      db.close(); return rows.some(r=>r.event.kind==='body' && r.event.side==='response');
+    },null,{timeout:10000});
+    await twin.locator('h1').click();
+    await mes.reload();
+    await control.waitForFunction(()=>document.querySelector('#live-tabs')?.textContent.match(/正在采集/g)?.length === 3);
+    const evidence = await control.evaluate(async () => {
+      const db = await new Promise((resolve,reject)=>{const r=indexedDB.open('mes-workshop-live-v1'); r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+      const rows = await new Promise((resolve,reject)=>{const r=db.transaction('liveEvidence').objectStore('liveEvidence').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+      db.close();
+      return {tabs:new Set(rows.map(r=>r.source.tab_id)).size, documents:new Set(rows.map(r=>r.source.document_id)).size,
+        network:(()=>{
+          const req=rows.find(r=>r.event.kind==='request' && r.event.api_path==='/api/shared');
+          const related=rows.filter(r=>req && r.event.request_key===req.event.request_key);
+          const body=related.find(r=>r.event.kind==='body' && r.event.side==='response')?.event;
+          return {found:!!req, sameSource:!!req && related.every(r=>JSON.stringify(r.source)===JSON.stringify(req.source)),
+            body:body?.status, workOrder:body?.value?.workOrder==='WO-SYNTHETIC', detail:body?.value?.rows?.[0]?.qty===3,
+            protected:!!body?.value && !('cookie' in body.value), requestBodies:rows.filter(r=>r.event.kind==='body').map(r=>[r.event.side,r.event.status]).sort()};
+        })(),hasAction:rows.some(r=>r.event.kind==='action'), masked:rows.every(r=>!JSON.stringify(r).includes('工单查询'))};
+    });
+    assert.deepEqual(evidence,{tabs:3,documents:4,network:{found:true,sameSource:true,body:'captured',workOrder:true,detail:true,protected:true,requestBodies:[['request','captured'],['response','captured']]},hasAction:true,masked:true});
+    await Promise.all([mes.waitForResponse(r => r.url().endsWith('/api/save')),mes.getByRole('button',{name:'保存'}).click()]);
+    await twin.close();
+    await control.locator('nav a[href="#sites"]').click();
+    await packing.close();
     const fake = await mes.evaluateHandle(id => {
       const iframe = document.createElement('iframe');
       iframe.src = 'chrome-extension://' + id + '/floating.html#unregistered';
@@ -82,6 +178,7 @@ export async function checkFloat({context, control, id, fixture, next, requests,
       return frame;
     }
     const frame = await open();
+    await frame.locator('#agent-workshop').filter({hasText:'采集联调 › 一号基地 › 配液车间'}).waitFor();
     const draft = frame.locator('#agent-question');
     await frame.waitForFunction(() => !document.querySelector('#agent-send')?.disabled, null, {timeout:12000})
       .catch(async () => { throw new Error('助手登录状态 ' + await frame.locator('#agent-status').textContent()); });
@@ -99,6 +196,16 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     await draft.fill(question); await draft.press('Enter');
     await frame.getByText('排队中', {exact:true}).waitFor();
     await frame.locator('.question').getByText(question).waitFor();
+    fixture.stdin.write('sending-page\n');
+    const sentPage = await next();
+    assert.equal(sentPage.registered, true, '浮窗问题应在停止录制之前绑定发送页');
+    if (process.env.BROWSER_EVIDENCE_SYNTHETIC_ROUNDTRIP === '1') {
+      fixture.stdin.write('live-tool\n');
+      assert.deepEqual(await next(), {observedSave:true, body:true, sameTab:true, status:422});
+    }
+    await control.locator('nav a[href="#capture"]').click();
+    await control.locator('#live-stop').click();
+    await control.locator('nav a[href="#sites"]').click();
     fixture.stdin.write('advance\n'); await next();
     await frame.locator('.answer').getByText(/我查一下/).first().waitFor();
     await draft.fill('未发送的追问');
@@ -132,6 +239,16 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     assert.ok(!await firstSite.isChecked() && await secondSite.isChecked());
     await secondSite.uncheck(); await save.click(); await otherHost.waitFor({state:'detached'});
     await mes.reload(); assert.equal(await host.count(), 0);
-    console.log(JSON.stringify({floatingHost:mesHost, launcherDrag:true, windowDrag:true, multiSite:true, collapsedStream:true, draftRetained:true, reloaded:true, disabled:true, submittedJobs:posts.length}));
+    fixture.stdin.write('end-session\n'); assert.equal((await next()).ended, true);
+    await control.locator('nav a[href="#assistant"]').click();
+    await control.locator('#agent-connection').evaluate(el => el.open = true);
+    await control.locator('#agent-login').click();
+    await signIn('demo-second');
+    await control.waitForFunction(() => !document.querySelector('#agent-send').disabled);
+    await control.locator('nav a[href="#sites"]').click();
+    await control.locator('#workshop-page').selectOption({label:origin + '/mes#/orders'});
+    assert.equal(await control.locator('#workshop-environment option').count(), 1, '换账号后不得继承其他用户的环境车间');
+    assert.ok(await control.locator('#workshop-revoke').isDisabled());
+    console.log(JSON.stringify({workshopScope:true, accountSwitch:true, floatingHost:mesHost, launcherDrag:true, windowDrag:true, multiSite:true, collapsedStream:true, draftRetained:true, reloaded:true, disabled:true, submittedJobs:posts.length}));
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }

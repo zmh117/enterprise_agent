@@ -43,6 +43,11 @@ export function listenForFloatSites() {
   chrome.webNavigation.onDOMContentLoaded.addListener(e => {
     if (e.frameId === 0) void attach(e.tabId, e.url, e.documentId);
   });
+  function routeChanged(event: {tabId: number; frameId: number}) {
+    if (event.frameId === 0) void chrome.tabs.sendMessage(event.tabId, {type:'float.pageChanged'}).catch(() => {});
+  }
+  chrome.webNavigation.onHistoryStateUpdated.addListener(routeChanged);
+  chrome.webNavigation.onReferenceFragmentUpdated.addListener(routeChanged);
   chrome.runtime.onStartup.addListener(() => void refreshTabs());
   chrome.runtime.onInstalled.addListener(() => void refreshTabs());
   chrome.permissions.onRemoved.addListener(() => void refreshTabs());

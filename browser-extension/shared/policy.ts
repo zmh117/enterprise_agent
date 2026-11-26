@@ -37,13 +37,13 @@ export function supportedUrl(url: string): boolean {
   return !!origin && !['https://chromewebstore.google.com', 'https://chrome.google.com'].includes(origin);
 }
 export function pageAllowed(policy: Policy, url: string) { const o = originOf(url); return !!o && !platformTraffic(url) && policy.pageOrigins.includes(o) && supportedUrl(url); }
-export function apiAllowed(policy: Policy, url: string, type: string) {
+export function apiAllowed(policy: Pick<Policy,'apiRules'|'requestTypes'>, url: string, type: string) {
   try {
     const u = new URL(url.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:'));
     return !platformTraffic(url) && policy.requestTypes.includes(type) && policy.apiRules.some(r => u.origin === r.origin && u.pathname.startsWith(r.pathPrefix));
   } catch { return false; }
 }
-export function parsePolicy(input: unknown): Policy {
+export function parsePolicy(input: unknown, mode: 'offline'|'continuous' = 'offline'): Policy {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('采集策略必须为对象');
   const p = structuredClone(input) as Policy;
   const strings = (v: unknown, n: number): v is string[] => Array.isArray(v) && v.length <= n && v.every(x => typeof x === 'string' && x.length <= 500);
@@ -55,9 +55,10 @@ export function parsePolicy(input: unknown): Policy {
   if (!Array.isArray(p.correlationSources) || p.correlationSources.length > 32 || !p.correlationSources.every(r => r && ['frontendBuildId','backendBuildId','serviceInstance','requestId','traceId','spanId'].includes(r.field) && ['response_header','response_json','page_meta'].includes(r.source) && typeof r.key === 'string' && r.key.length <= 200 && (r.source === 'response_header' ? /^[a-zA-Z0-9-]{1,80}$/.test(r.key) : r.source === 'response_json' ? /^(\/([^~]|~[01])*)+$/.test(r.key) : /^meta\[name=(?:"[a-zA-Z0-9_.-]+"|'[a-zA-Z0-9_.-]+')\]$/.test(r.key)) && typeof r.component === 'string' && r.component.length > 0 && r.component.length <= 80 && (r.origin === undefined || (typeof r.origin === 'string' && originOf(r.origin) === r.origin)) && (r.pathPrefix === undefined || (typeof r.pathPrefix === 'string' && r.pathPrefix.startsWith('/') && r.pathPrefix.length < 500)))) throw new Error('无效版本/日志来源配置');
   if (!Array.isArray(p.sourceMappings) || p.sourceMappings.length > 100 || !p.sourceMappings.every(m => m && ['environmentId','component','buildId','codeSnapshot'].every(k => typeof (m as any)[k] === 'string' && (m as any)[k].length > 0 && (m as any)[k].length <= 500))) throw new Error('无效显式源码映射');
 
-  const bounds: Record<keyof Policy['budgets'], [number, number]> = { softTabs: [1, 100], hardTabs: [1, 100], reminderMinutes: [1, 240], ipcBytes: [4096, 128 * 1024], baselineBytes: [1024, 16 * MiB], bodyBytes: [1024, 4 * MiB], softBytes: [MiB, 400 * MiB], hardBytes: [MiB, 500 * MiB], queueBytes: [MiB, 32 * MiB], bodyConcurrency: [1, 4] };
+  const bounds: Record<keyof Policy['budgets'], [number, number]> = { softTabs: [1, 100], hardTabs: [1, 100], reminderMinutes: [1, 240], ipcBytes: [4096, 128 * 1024], baselineBytes: [1024, 16 * MiB], bodyBytes: [1024, (mode === 'continuous' ? 32 : 4) * MiB], softBytes: [MiB, 400 * MiB], hardBytes: [MiB, 500 * MiB], queueBytes: [MiB, (mode === 'continuous' ? 128 : 32) * MiB], bodyConcurrency: [1, 4] };
   if (!p.budgets) throw new Error('缺少容量预算');
   for (const [k, [min, max]] of Object.entries(bounds)) { const v = p.budgets[k as keyof Policy['budgets']]; if (!Number.isInteger(v) || v < min || v > max) throw new Error(`预算 ${k} 应在 ${min}–${max} 内`); }
+  if (mode === 'continuous' && p.budgets.queueBytes < p.budgets.bodyBytes) throw new Error('持续采集队列至少要能容纳一份正文');
   if (p.budgets.softBytes > p.budgets.hardBytes || p.budgets.softTabs > p.budgets.hardTabs) throw new Error('软阈值不能高于硬限制');
   if (!Number.isFinite(p.logTimeMarginSeconds) || p.logTimeMarginSeconds < 0 || p.logTimeMarginSeconds > 3600) throw new Error('日志时间余量应在 0–3600 秒内');
   p.policyVersion = '3.0.0';

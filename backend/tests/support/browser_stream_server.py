@@ -27,13 +27,32 @@ def start_server(resources: ExitStack, recording_mode: bool):
     os.environ.update(
         BUILD_SOURCE_REVISION="test-revision", BUILD_ID="test-build", BUILD_PLATFORM="linux/amd64"
     )
-    tools = ("search_recording", "get_recording_evidence") if recording_mode else ()
+    tools = (
+        ("search_recording", "get_recording_evidence")
+        if recording_mode or os.environ.get("EA_TEST_FLOAT") == "1"
+        else ()
+    )
     api, app_id, password = prepare(tools=tools, secure_cookies=True)
     c = api.state.container
     member = make_member(c, password)
     environment = c.platform_config_service.repository.upsert_environment(
         code="capture-fixture", display_name="采集联调"
     )
+    if os.environ.get("EA_TEST_FLOAT") == "1":
+        topology = c.platform_config_service.repository
+        topology.upsert_base(
+            environment_code=environment["code"],
+            code="site-1",
+            display_name="一号基地",
+            engine="mysql",
+        )
+        for code, name in (("mixing", "配液车间"), ("packing", "包装车间")):
+            topology.upsert_workshop(
+                environment_code=environment["code"],
+                base_code="site-1",
+                code=code,
+                display_name=name,
+            )
     grant_test_application_access(
         c,
         application_id=app_id,
@@ -63,7 +82,7 @@ def start_server(resources: ExitStack, recording_mode: bool):
             user_id=member["id"],
             capabilities=tools,
         )
-    if os.environ.get("EA_TEST_SIGNIN_RECOVERY") == "1":
+    if os.environ.get("EA_TEST_SIGNIN_RECOVERY") == "1" or os.environ.get("EA_TEST_FLOAT") == "1":
         second = c.identity_repository.create_user(
             username="demo-second", display_name="第二位合成操作员"
         )
@@ -84,6 +103,10 @@ def start_server(resources: ExitStack, recording_mode: bool):
         from backend.tests.support.browser_recording_fixture import enable_recordings
 
         files = enable_recordings(resources, api, sock.getsockname()[1])
+    elif os.environ.get("BROWSER_EVIDENCE_SYNTHETIC_ROUNDTRIP") == "1":
+        from backend.tests.support.browser_recording_fixture import enable_recording_identity
+
+        enable_recording_identity(resources, api, sock.getsockname()[1])
     srv = uvicorn.Server(uvicorn.Config(api, log_level="error", access_log=False))
     thread = threading.Thread(target=srv.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
@@ -143,6 +166,61 @@ def history_activity(c, command):
     return {"conversation": active["session_id"], "job": job}
 
 
+def fixture_command(c, command, files, recording_mode, evidence):
+    if command.strip() == "expire-recording" and files is not None:
+        keys, _ = files.store.recording_keys("", 100)
+        assert len(keys) == 2
+        c.database.execute("update browser_recording set expires_at=0")
+        files.cleanup()
+        keys, _ = files.store.recording_keys("", 100)
+        indexed = c.database.execute_one("select count(*) as n from browser_recording_evidence")[
+            "n"
+        ]
+        print(json.dumps({"indexed": indexed, "stored_parts": len(keys)}), flush=True)
+        return True
+    if command.strip() == "captured-save" and files is not None:
+        from backend.tests.support.browser_recording_fixture import controlled_capture
+
+        print(json.dumps(controlled_capture(c)), flush=True)
+        return True
+    if command.strip() == "end-session":
+        c.database.execute("update user_session set idle_expires_at='2000-01-01T00:00:00+00:00'")
+        print(json.dumps({"ended": True}), flush=True)
+        return True
+    if command.strip() == "expire":
+        c.database.execute(
+            "update browser_extension_credential set expires_at=0 where kind='access'"
+        )
+        print(json.dumps({"expired": True}), flush=True)
+        return True
+    if recording_mode and command.strip() in {"follow-2", "follow-3"}:
+        from backend.tests.support.browser_recording_fixture import controlled_followup
+
+        print(
+            json.dumps(controlled_followup(c, int(command.strip()[-1]), evidence)),
+            flush=True,
+        )
+        return True
+    if command.strip() in {"history-tool", "history-final"}:
+        print(json.dumps(history_activity(c, command.strip())), flush=True)
+        return True
+    if command.strip() == "sending-page":
+        registered = c.database.execute_one(
+            """select p.tab_id from browser_live_job_page j join browser_live_page p
+               on p.recording_id=j.recording_id and p.tab_id=j.tab_id
+               and p.document_id=j.document_id and p.binding_id=j.binding_id
+               and p.revision=j.revision"""
+        )
+        print(json.dumps({"registered": bool(registered)}), flush=True)
+        return True
+    if command.strip() == "live-tool":
+        from backend.tests.support.browser_live_evidence import check_floating_read
+
+        print(json.dumps(check_floating_read(c)), flush=True)
+        return True
+    return False
+
+
 def run_fixture(resources: ExitStack) -> None:
     recording_mode = os.environ.get("EA_TEST_RECORDING") == "1"
     c, sock, srv, thread, files = start_server(resources, recording_mode)
@@ -158,44 +236,7 @@ def run_fixture(resources: ExitStack) -> None:
         for command in sys.stdin:
             if command.strip() == "stop":
                 break
-            if command.strip() == "expire-recording" and files is not None:
-                keys, _ = files.store.recording_keys("", 100)
-                assert len(keys) == 2
-                c.database.execute("update browser_recording set expires_at=0")
-                files.cleanup()
-                keys, _ = files.store.recording_keys("", 100)
-                indexed = c.database.execute_one(
-                    "select count(*) as n from browser_recording_evidence"
-                )["n"]
-                print(json.dumps({"indexed": indexed, "stored_parts": len(keys)}), flush=True)
-                continue
-            if command.strip() == "captured-save" and files is not None:
-                from backend.tests.support.browser_recording_fixture import controlled_capture
-
-                print(json.dumps(controlled_capture(c)), flush=True)
-                continue
-            if command.strip() == "end-session":
-                c.database.execute(
-                    "update user_session set idle_expires_at='2000-01-01T00:00:00+00:00'"
-                )
-                print(json.dumps({"ended": True}), flush=True)
-                continue
-            if command.strip() == "expire":
-                c.database.execute(
-                    "update browser_extension_credential set expires_at=0 where kind='access'"
-                )
-                print(json.dumps({"expired": True}), flush=True)
-                continue
-            if recording_mode and command.strip() in {"follow-2", "follow-3"}:
-                from backend.tests.support.browser_recording_fixture import controlled_followup
-
-                print(
-                    json.dumps(controlled_followup(c, int(command.strip()[-1]), evidence)),
-                    flush=True,
-                )
-                continue
-            if command.strip() in {"history-tool", "history-final"}:
-                print(json.dumps(history_activity(c, command.strip())), flush=True)
+            if fixture_command(c, command, files, recording_mode, evidence):
                 continue
             assert command.strip() in {"advance", "attempt-fails"}
             jobs = c.database.execute(

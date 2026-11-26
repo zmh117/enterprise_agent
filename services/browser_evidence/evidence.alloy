@@ -1,0 +1,40 @@
+loki.source.api "browser" {
+  http {
+    listen_address = "0.0.0.0"
+    listen_port = 3500
+    tls {
+      cert_file = "/run/evidence-tls/server.crt"
+      key_file = "/run/evidence-tls/server.key"
+      client_ca_file = "/run/evidence-tls/ca.crt"
+      client_auth_type = "RequireAndVerifyClientCert"
+    }
+  }
+  grpc {
+    listen_address = "127.0.0.1"
+  }
+  use_incoming_timestamp = true
+  max_send_message_size = "1MiB"
+  forward_to = [loki.process.browser.receiver]
+}
+
+loki.process "browser" {
+  stage.tenant {
+    label = "evidence_tenant"
+  }
+  stage.label_drop {
+    values = ["evidence_tenant"]
+  }
+  forward_to = [loki.write.browser.receiver]
+}
+
+loki.write "browser" {
+  endpoint {
+    url = "https://evidence-loki:3100/loki/api/v1/push"
+    batch_wait = "250ms"
+    tls_config {
+      ca_file = "/run/evidence-tls/ca.crt"
+      cert_file = "/run/evidence-tls/client.crt"
+      key_file = "/run/evidence-tls/client.key"
+    }
+  }
+}
