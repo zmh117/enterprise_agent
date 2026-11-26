@@ -85,7 +85,7 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
       if (grant?.top!==top.documentId) return {ok:false};
       const latest = await chrome.webNavigation.getFrame({tabId, frameId:0});
       if (latest?.documentId !== top.documentId || latest.url !== top.url) return {ok:false};
-      const binding=bindingForPage(top.url,m.bindings);
+      const binding=bindingForPage(top.url,m.bindings,m.destination.origin);
       return {ok:true,captureState:live.tabState(tabId),binding,
         page:binding?live.questionPage(tabId,top.documentId,binding,m.destination,asked):null};
     }

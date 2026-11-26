@@ -25,7 +25,7 @@
 | 操作 | 输入 | 成功结果 |
 | --- | --- | --- |
 | GET /applications | 当前插件登录账号 | BrowserApplications。保留原 environments；workshop_scopes 返回本应用已授权的环境、基地、车间组合及各级 ID、编码、名称。仅展示三个节点均启用、且单条角色应用授权同时覆盖范围和录制工具的组合。 |
-| GET /applications/{id}/workshop-bindings | 当前应用范围 | 本人仍可访问的规则、三级范围 ID、绑定 ID、版本及启停状态 |
+| GET /applications/{id}/workshop-bindings | 当前应用范围 | 本人仍可访问的规则、三级范围 ID、绑定 ID、版本及启停状态。每个来源第一条返回的绑定携带 `reserved_paths`，列出本人已配置但已失权的路径边界，仅包含 path 和 hash_path。空数组表示边界已核对。 |
 | PUT /applications/{id}/workshop-bindings | rule（origin、path、hash_path、query）、三级范围 ID、expected_revision | 新建传版本 0，修改或重新启用传当前版本；过期版本或重叠规则返回 409 |
 | DELETE /applications/{id}/workshop-bindings/{binding_id} | expected_revision | 204，保留历史版本 |
 | POST /applications/{id}/live-recordings | RegisterLivePages | 登记本场录制以及各个标签、文档和绑定版本，可幂等重试 |
@@ -66,6 +66,10 @@ Job 开始运行后会先发出 `analyzing` 状态，即使模型尚未生成公
 `golden/` 包含两个封存版本的初始化请求和原样 NDJSON 字节，以及按顺序标明契约名的续传、消息重放、只读查询、快照、重试和终态样例。平台和插件可以对同一份文件比较字节和语义。
 
 ### 持续采集登记
+
+在同一来源内按路径段匹配当前路径及其子页面，先取最具体的路径，再取最具体的 hash 路由。显式定位键必须唯一并符合所选规则。同级路径可分别绑定车间，站点根目录 `/` 可显式绑定为默认车间。更具体路径遇到失权、撤销或定位键不匹配时停止匹配。旧 API 未声明路径边界时，插件保留精确匹配。
+
+同一文档在同车间内导航时沿用已有登记。单页应用切换到另一车间或超出绑定范围时暂停，刷新或重新打开后重新判定车间。
 
 插件以当前账号凭据和应用的 `X-Application-Scope` 调用 `POST /applications/{app}/live-recordings`。正文包含 `recording_id` 和 `pages`。每个文档提交 `tab_id`、`document_id`、`binding_id`、`revision`。登记结果返回录制 ID 和文档数。同一录制、标签实例和文档重试可以重复登记，变更该文档的绑定会返回 409。新增或撤销授权后平台重新核对目录和规则版本。
 

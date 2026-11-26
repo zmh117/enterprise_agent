@@ -932,6 +932,30 @@ def test_workshop_binding_versions_overlap_and_revocation(platform, monkeypatch)
     ]
 
 
+def test_workshop_inheritance_reserves_inaccessible_routes_only_on_visible_origins():
+    from app.modules.channel.browser.workshop_bindings import routing_bindings
+
+    def row(site, path, shop):
+        return {
+            "id": shop + path,
+            "revision": 1,
+            "enabled": 1,
+            "environment_id": "e",
+            "base_id": "b",
+            "workshop_id": shop,
+            "rule_json": json.dumps({"origin": site, "path": path, "hash_path": "", "query": {}}),
+        }
+
+    site = "https://mes.invalid"
+    visible, child = row(site, "/", "A"), row(site, "/users", "A")
+    hidden, other = row(site, "/agent-profiles", "B"), row("https://other.invalid", "/", "B")
+    bindings = routing_bindings([hidden, visible, other, child], {"A"})
+    assert [b["id"] for b in bindings] == [visible["id"], child["id"]]
+    assert bindings[0]["reserved_paths"] == [{"path": "/agent-profiles", "hash_path": ""}]
+    assert "reserved_paths" not in bindings[1]
+    assert routing_bindings([hidden, other], {"A"}) == []
+
+
 def verify_questions_across_rebinding(
     c, client, headers, app, env, page, record, put, second, saved
 ):

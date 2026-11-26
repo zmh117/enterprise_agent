@@ -2,6 +2,7 @@ import { commonEnvironment, recordingLabel } from '../../shared/recording-enviro
 import type { SessionManager } from '../background/session/manager';
 import { workshopSettings } from './workshop-settings';
 import { floatSettings } from './float-settings';
+import { hostPattern } from '../background/float-sites';
 import { setupAgentPanel } from './agent-panel';
 import { DEFAULT_POLICY, parsePolicy } from '../../shared/policy';
 import { active, terminal, uuid, type BundleData, type Recording, type Target } from '../../shared/contracts';
@@ -27,9 +28,10 @@ let drafting = false;
 const selected = new Set<number>();
 async function rpc(type: string, data: object = {}) { const r = await chrome.runtime.sendMessage({ type, ...data }); if (!r?.ok) throw new Error(r?.error ?? '扩展后台无响应'); return r; }
 function notice(message: string) { $('notice').textContent = message; $('notice').hidden = !message; }
+function updateStartButton() { $<HTMLButtonElement>('start').disabled = busy || !selected.size; }
 function element(tag: string, text = '', className = '') { const e = document.createElement(tag); e.textContent = text; e.className = className; return e; }
 function on(id: string, action: () => unknown | Promise<unknown>) {
-  $(id).addEventListener('click', () => { if (busy) return; busy = true; notice(''); void Promise.resolve().then(action).catch(e => notice(String(e))).finally(() => { busy = false; }); });
+  $(id).addEventListener('click', () => { if (busy) return; busy = true; updateStartButton(); notice(''); void Promise.resolve().then(action).catch(e => notice(String(e))).finally(() => { busy = false; updateStartButton(); }); });
 }
 const size = (n: number) => n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`;
 const labels: Record<string, string> = { STARTING: '准备中', RECORDING: '采集中', STOPPING: '已停止 · 清理中', FINALIZING: '正在保存', READY: '已停止 · 可导出', INTERRUPTED: '异常中断 · 可导出', FAILED: '启动失败 · 可导出', PENDING: '准备中', ACTIVE: '采集中', BLOCKED: '未覆盖', LOST: '已中断', STOPPED: '已停止' };
@@ -44,7 +46,7 @@ const workshop = workshopSettings();
 function selectionChanged() {
   if (!directory) return;
   $('selection-count').textContent = `${selected.size} 个已选`;
-  $<HTMLButtonElement>('start').disabled = !selected.size;
+  updateStartButton();
   const policy = defaultPolicy();
   const bindings = siteSettings.activeBindings();
   const sites = Object.fromEntries(policy.pageOrigins.map(site => [site, bindings[site] ?? '']));
@@ -125,7 +127,11 @@ function drawStatus(s: any) {
     $('preview-panel').hidden = true; $('delivery-status').textContent = ''; $('add-root').hidden = true;
   }
   current = s.recording; targets = s.targets ?? [];
-  if (!current || drafting) { $('prepare').hidden = false; $('session').hidden = true; return; }
+  if (!current || drafting) {
+    $('prepare').hidden = false; $('session').hidden = true;
+    $('status-pill').textContent = '未开始'; $('status-pill').className = 'pill';
+    return;
+  }
   $('prepare').hidden = true; $('session').hidden = false;
   const live = active(current.state); const done = terminal(current.state);
   const count = targets.filter(t => t.accepting && t.lifecycle === 'OPEN').length;
@@ -175,6 +181,7 @@ async function refreshStatus() {
   $('live-session').hidden = !live;
   if (live) {
     $('session').hidden = true; $('prepare').hidden = true;
+    $('status-pill').textContent = '持续采集已启动'; $('status-pill').className = 'pill live';
     $('live-progress').textContent='待传 '+live.pending+' · 已转发待核对 '+live.acknowledged+' · 已核对 '+live.verified;
     const states:Record<string,string> = {paused:'页面采集已暂停，请刷新或重新打开', unbound:'当前 URL 未绑定车间', baseline:'等待新文档基线', ready:'正在采集'};
     const select = $<HTMLSelectElement>('live-add-target'), selected = select.value;
@@ -274,9 +281,14 @@ $('select-all').addEventListener('change', () =>
   selectTabs(visibleWindows().flatMap(w => w.tabs), $<HTMLInputElement>('select-all').checked));
 $('tab-search').addEventListener('input', renderDirectory);
 $('history-search').addEventListener('input', renderHistory);
+const applicationField = $('agent-app-field');
+const agentToolbar = applicationField.parentElement!;
 function showView() {
   const id = location.hash.slice(1);
   const view = ['records','sites','assistant','conversations'].includes(id) ? id : 'capture';
+  // Both views edit the same application selection and use its existing change handler.
+  const applicationParent = view === 'sites' ? $('workshop-app-slot') : agentToolbar;
+  if (applicationField.parentElement !== applicationParent) applicationParent.prepend(applicationField);
   for (const panel of document.querySelectorAll<HTMLElement>('.view')) panel.hidden = panel.id !== view;
   for (const link of document.querySelectorAll<HTMLAnchorElement>('nav a')) {
     if (link.hash === '#' + view) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current');
@@ -287,9 +299,16 @@ window.addEventListener('hashchange', showView);
 showView();
 $('policy').addEventListener('input', () => $('policy-details').setAttribute('data-edited', 'true'));
 $('record-mode').addEventListener('change', () => {
-  $('policy-summary').textContent = val('record-mode') === 'continuous'
+  const continuous = val('record-mode') === 'continuous';
+  $('start-feedback').textContent = '';
+  $('offline-environment').hidden = continuous;
+  $('start-settings').hidden = !continuous;
+  $('policy-summary').textContent = continuous
     ? '按当前账号和车间采集。保留接口业务字段原值，过滤凭据，页面只记录结构和操作。'
     : '本地保存，仅隐藏登录密码，其他文本保留原值。';
+});
+$('start-settings').addEventListener('click', () => {
+  if (selected.size === 1) workshop.selectTab([...selected][0]!);
 });
 on('live-refresh', async () => {await refreshDirectory(); await refreshStatus();});
 on('live-add', async () => {await rpc('live.add',{tabId:Number(val('live-add-target'))}); await refreshStatus();});
@@ -301,24 +320,40 @@ on('fixture-policy', () => {
   $<HTMLTextAreaElement>('policy').value = JSON.stringify(p, null, 2); $('policy-details').setAttribute('data-edited', 'true');
 });
 // permissions.request must be invoked directly in the click's user-gesture task.
-$('start').addEventListener('click', () => {
+$('start').addEventListener('click', async () => {
   if (busy) return;
-  let policy: ReturnType<typeof parsePolicy>;
-  try { if (!selected.size) throw new Error('至少选择一个根标签'); policy = parsePolicy(JSON.parse(val('policy')), val('record-mode') === 'continuous' ? 'continuous' : 'offline'); validateSensitiveSelectors(policy, document); }
-  catch (e) { notice(String(e)); return; }
-  const grant = chrome.permissions.request({ origins: [...new Set([...policy.pageOrigins, ...policy.apiRules.map(r => r.origin)])].map(o => `${o}/*`) });
+  const feedback = $('start-feedback');
+  const mode = val('record-mode') === 'continuous' ? 'continuous' : 'offline';
+  const ids = [...selected];
   busy = true;
-  void grant.then(async () => {
-    viewed = null; drafting = false;
-    if (val('record-mode') === 'continuous') {
-      const destination = workshop.destination();
-      if (!destination) throw new Error('请先连接平台并选择有车间授权的应用');
-      await rpc('live.start',{destination, ids:[...selected], policy});
-      await refreshStatus(); notice(''); return;
+  updateStartButton();
+  try {
+    const policy = parsePolicy(JSON.parse(val('policy')), mode);
+    validateSensitiveSelectors(policy, document);
+    const destination = mode === 'continuous' ? workshop.destination() : undefined;
+    const patterns = [...policy.pageOrigins, ...policy.apiRules.map(r => r.origin)].map(hostPattern);
+    feedback.textContent = '正在确认 Chrome 站点权限…';
+    const granted = await chrome.permissions.request({ origins: [...new Set(patterns)] });
+    if (destination) {
+      feedback.textContent = granted ? '正在核对页面车间并启动持续采集…' : '正在核对已获授权的标签页…';
+      await rpc('live.start', {destination, ids, policy});
+      viewed = null; drafting = false;
+      await refreshStatus();
+    } else {
+      feedback.textContent = '正在启动离线录制…';
+      const session = await rpc('session.start', {recordingId: uuid(), commandId: uuid(), browserRunId: directory!.browserRunId, rootBrowserTabIds: ids, policy, environments: siteSettings.activeBindings()});
+      viewed = null; drafting = false;
+      drawStatus(session);
+      await history();
     }
-    drawStatus(await rpc('session.start', { recordingId: uuid(), commandId: uuid(), browserRunId: directory!.browserRunId, rootBrowserTabIds: [...selected], policy, environments: siteSettings.activeBindings() }));
-    await history(); notice('');
-  }).catch(e => notice(String(e))).finally(() => { busy = false; });
+    feedback.textContent = '';
+    notice('');
+  } catch (e) {
+    feedback.textContent = e instanceof Error ? e.message.replace(/^Error: /, '') : '启动失败，请重试';
+  } finally {
+    busy = false;
+    updateStartButton();
+  }
 });
 on('stop', async () => { drawStatus(await rpc('session.stop', { recordingId: current!.recordingId, commandId: uuid() })); await history(); });
 on('mark', async () => { await rpc('session.mark', { recordingId: current!.recordingId, commandId: uuid(), browserTabId: Number(val('mark-target')), note: val('mark-note') }); $<HTMLInputElement>('mark-note').value = ''; notice('时间标记已保存。'); });

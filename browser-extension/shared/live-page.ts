@@ -1,9 +1,7 @@
 import {
   bindingForPage,
   type WorkshopBinding,
-  type PageRule,
-  ruleForPage,
-  sameRule,
+  sameWorkshop,
 } from './workshop';
 
 export interface PageSource {
@@ -27,12 +25,12 @@ export interface LiveDocument {
   state: 'unbound' | 'baseline' | 'ready' | 'paused';
 }
 
-export function matchesPage(url: string, rule: PageRule) {
-  try {
-    return sameRule(rule, ruleForPage(url, Object.keys(rule.query)));
-  } catch {
-    return false;
-  }
+export function keepsDocumentBinding(original: WorkshopBinding, next: WorkshopBinding | undefined, rules: WorkshopBinding[]) {
+  return !!next && sameWorkshop(original, next) &&
+    rules.some(b => b.enabled && b.id === original.id && b.revision === original.revision);
+}
+export function matchesPage(url: string, original: WorkshopBinding, rules: WorkshopBinding[], platformOrigin: string) {
+  return keepsDocumentBinding(original, bindingForPage(url, rules, platformOrigin), rules);
 }
 
 // A scope change in a living document permanently fences this recorder, including back navigation.
@@ -41,12 +39,13 @@ export function observePage(
   documentId: string,
   url: string,
   rules: WorkshopBinding[],
+  platformOrigin?: string,
 ): LiveDocument {
-  const binding = bindingForPage(url, rules);
+  const binding = bindingForPage(url, rules, platformOrigin);
   if (!previous || previous.documentId !== documentId)
     return { documentId, binding, state: binding ? 'baseline' : 'unbound' };
   if (previous.state === 'paused') return previous;
-  if (previous.binding?.id !== binding?.id || previous.binding?.revision !== binding?.revision)
+  if (previous.binding ? !keepsDocumentBinding(previous.binding, binding, rules) : binding)
     return { ...previous, state: 'paused' };
   return previous;
 }

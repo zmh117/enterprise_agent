@@ -7,10 +7,10 @@ import {
   structuralMutation,
   type PageEvidence,
 } from '../../shared/live-page';
-import type { PageRule } from '../../shared/workshop';
+import type { WorkshopBinding } from '../../shared/workshop';
 
-type Ticket = { id: string; rule: PageRule };
-type Recorder = { id?: string; paused: boolean; stop: () => void };
+type Ticket = { id: string; binding: WorkshopBinding; rules: WorkshopBinding[]; platformOrigin: string };
+type Recorder = { id?: string; paused: boolean; stop: () => void; updateRules?: (rules: WorkshopBinding[]) => boolean };
 const isolated = globalThis as typeof globalThis & {
   __mesContinuous?: Recorder;
   __mesLiveTicket?: string;
@@ -21,13 +21,17 @@ if (!isolated.__mesContinuous && window.top === window) {
   isolated.__mesContinuous = state;
   chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (sender.id !== chrome.runtime.id) return;
+    if (message.type === 'live.rules') {
+      reply({ok: message.ticket === state.id && !!state.updateRules?.(message.rules)});
+      return;
+    }
     if (message.type === 'live.end') {
       if (message.ticket === state.id) state.stop();
       return;
     }
     if (message.type !== 'live.begin') return;
     const ticket: Ticket = message.ticket;
-    if (state.paused || !ticket || !matchesPage(location.href, ticket.rule)) {
+    if (state.paused || !ticket || !matchesPage(location.href, ticket.binding, ticket.rules, ticket.platformOrigin)) {
       reply({ ok: false });
       return;
     }
@@ -52,11 +56,23 @@ function begin(state: Recorder, ticket: Ticket) {
     abort.abort();
     stopRrweb?.();
     state.id = undefined;
+    state.updateRules = undefined;
     isolated.__mesLiveTicket = undefined;
+  };
+  let checkedUrl: string | undefined;
+  state.updateRules = rules => {
+    ticket.rules = rules;
+    checkedUrl = undefined;
+    return check();
   };
   function check() {
     if (abort.signal.aborted) return false;
-    if (matchesPage(location.href, ticket.rule)) return true;
+    const url = location.href;
+    if (url === checkedUrl) return true;
+    if (matchesPage(url, ticket.binding, ticket.rules, ticket.platformOrigin)) {
+      checkedUrl = url;
+      return true;
+    }
     state.paused = true;
     state.stop();
     void chrome.runtime.sendMessage({ type: 'live.pause', ticket: ticket.id }).catch(() => {});

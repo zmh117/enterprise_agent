@@ -3,6 +3,7 @@ import {
   projectPageEvent,
   sourceOf,
   matchesPage,
+  keepsDocumentBinding,
   type QuestionPage,
   type LiveDocument,
 } from '../../shared/live-page';
@@ -53,6 +54,7 @@ export class LiveCapture {
   private writing: Promise<void> = Promise.resolve();
   private pendingBytes = 0;
   private saving: Promise<void> = Promise.resolve();
+  private rulesGeneration = 0;
   readonly ready: Promise<void>;
   constructor() {
     this.ready = chrome.storage.session.get(stateKey).then(async (value) => {
@@ -104,7 +106,7 @@ export class LiveCapture {
           t.ticket !== ticket ||
           t.doc?.state !== 'ready' ||
           !t.doc.binding ||
-          !matchesPage(url, t.doc.binding.rule)
+          !matchesPage(url, t.doc.binding, run.rules, run.destination.origin)
         )
           return;
         return sourceOf(t.id, t.doc);
@@ -204,20 +206,24 @@ export class LiveCapture {
     const rules: WorkshopBinding[] = await this.request(d, '/workshop-bindings');
     const allowedSites = await sites();
     const tabs: LiveTab[] = [];
+    let hasPolicyPage = false;
+    let hasPageAccess = false;
     for (const browserId of new Set(ids)) {
       const tab = await chrome.tabs.get(browserId);
       const top = await chrome.webNavigation.getFrame({ tabId: browserId, frameId: 0 });
       if (!top || !tab.url || tab.incognito || platformTraffic(top.url))
         throw new Error('请选择已授权的普通 MES 页面');
-      const allowed =
-        policy.pageOrigins.includes(new URL(top.url).origin) &&
-        allowedSites.includes(new URL(top.url).origin) &&
-        (await chrome.permissions.contains({ origins: [hostPattern(top.url)] }));
+      const origin = new URL(top.url).origin;
+      const inPolicy = policy.pageOrigins.includes(origin);
+      const permitted = inPolicy && await chrome.permissions.contains({ origins: [hostPattern(origin)] });
+      hasPolicyPage ||= inPolicy;
+      hasPageAccess ||= permitted;
+      const allowed = permitted && allowedSites.includes(origin);
       tabs.push({
         id: crypto.randomUUID(),
         browserId,
         paused: [],
-        doc: observePage(undefined, top.documentId, top.url, allowed ? rules : []),
+        doc: observePage(undefined, top.documentId, top.url, allowed ? rules : [], d.origin),
       });
     }
     const apiRules = await Promise.all(
@@ -244,7 +250,11 @@ export class LiveCapture {
       maxTabs: policy.budgets.hardTabs,
     };
     const pages = tabs.flatMap((t) => sourceOf(t.id, t.doc) ?? []);
-    if (!pages.length) throw new Error('所选标签均未绑定当前应用的车间');
+    if (!pages.length) {
+      if (!hasPolicyPage) throw new Error('采集范围未包含所选页面。请在「采集范围与权限」按所选站点重置。');
+      if (!hasPageAccess) throw new Error('Chrome 未授予所选 MES 页面的访问权限。请允许站点访问后重试。');
+      throw new Error('所选页面没有可采集的车间。请在「站点设置 → 页面车间」选择环境、基地和车间，点击「允许页面并绑定车间」。');
+    }
     // Install the navigation fence before the first round trip for this run.
     this.run = run;
     this.setupNetwork(run);
@@ -298,7 +308,7 @@ export class LiveCapture {
     const top = await chrome.webNavigation.getFrame({ tabId: browserId, frameId: 0 });
     if (!top || tab.incognito || platformTraffic(top.url) || !/^https?:/.test(top.url))
       throw new Error('请选择普通 MES 页面');
-    const rules: WorkshopBinding[] = await this.request(run.destination, '/workshop-bindings');
+    await this.refreshRules(run);
     const permitted =
       run.origins.includes(new URL(top.url).origin) &&
       (await sites()).includes(new URL(top.url).origin) &&
@@ -308,10 +318,9 @@ export class LiveCapture {
       browserId,
       id: crypto.randomUUID(),
       paused: [],
-      doc: observePage(undefined, top.documentId, top.url, permitted ? rules : []),
+      doc: observePage(undefined, top.documentId, top.url, permitted ? run.rules : [], run.destination.origin),
     };
     run.tabs.push(t);
-    run.rules = rules;
     await this.save();
     await this.activate(t);
   }
@@ -330,15 +339,14 @@ export class LiveCapture {
       tab &&
       doc?.state === 'ready' &&
       doc.documentId === documentId &&
-      doc.binding?.id === binding.id &&
-      doc.binding.revision === binding.revision &&
+      doc.binding && keepsDocumentBinding(doc.binding, binding, run.rules) &&
       run.destination.origin === d.origin &&
       run.destination.account === d.account &&
       run.destination.app === d.app &&
       run.destination.scopeRef === d.scopeRef;
     return {
-      binding_id: binding.id,
-      revision: binding.revision,
+      binding_id: registered ? doc.binding!.id : binding.id,
+      revision: registered ? doc.binding!.revision : binding.revision,
       document_id: documentId,
       recording_id: registered ? run.id : null,
       tab_id: registered ? tab.id : null,
@@ -383,6 +391,7 @@ export class LiveCapture {
       documentId,
       url,
       origin && run.origins.includes(origin) ? run.rules : [],
+      run.destination.origin,
     );
     if (next === t.doc) return;
     void this.endTicket(t);
@@ -408,7 +417,7 @@ export class LiveCapture {
       if (
         !top ||
         top.documentId !== doc.documentId ||
-        !matchesPage(top.url, doc.binding.rule) ||
+        !matchesPage(top.url, doc.binding, run.rules, run.destination.origin) ||
         !(await sites()).includes(doc.binding.rule.origin) ||
         !(await chrome.permissions.contains({ origins: [hostPattern(top.url)] }))
       )
@@ -426,7 +435,8 @@ export class LiveCapture {
       if (!current()) return;
       const reply = await chrome.tabs.sendMessage(
         t.browserId,
-        { type: 'live.begin', ticket: { id: ticket, rule: doc.binding.rule } },
+        { type: 'live.begin', ticket: { id: ticket, binding: doc.binding, platformOrigin: run.destination.origin,
+          rules: run.rules.filter(b => b.rule.origin === doc.binding!.rule.origin) } },
         { documentId: doc.documentId },
       );
       if (!reply?.ok) throw new Error('recorder_unavailable');
@@ -445,6 +455,25 @@ export class LiveCapture {
     t.error = reason;
     if (!t.paused.includes(t.doc.documentId)) t.paused.push(t.doc.documentId);
   }
+  private async refreshRules(run: Run) {
+    const turn = ++this.rulesGeneration;
+    const rules: WorkshopBinding[] = await this.request(run.destination, '/workshop-bindings');
+    if (this.run !== run || turn !== this.rulesGeneration) return;
+    run.rules = rules;
+    await Promise.all(run.tabs.map(async t => {
+      const binding = t.doc?.binding, ticket = t.ticket;
+      if (!binding || !ticket) return;
+      if (!rules.some(r => r.enabled && r.id === binding.id && r.revision === binding.revision)) {
+        this.fence(t);
+        return;
+      }
+      // A newly configured child route can change ownership while the parent grant stays valid.
+      await chrome.tabs.sendMessage(t.browserId, {type: 'live.rules', ticket,
+        rules: rules.filter(r => r.rule.origin === binding.rule.origin)},
+        {documentId: t.doc!.documentId}).catch(() => {});
+    }));
+    await this.save();
+  }
   async changedRules(rules: WorkshopBinding[]) {
     const run = this.run;
     if (!run) return;
@@ -454,12 +483,15 @@ export class LiveCapture {
       if (old && !rules.some((r) => r.enabled && r.id === old.id && r.revision === old.revision))
         this.fence(t);
     }
+    const previous = run.rules;
+    run.rules = [
+      ...previous.map(r => rules.some(n => n.enabled && n.id === r.id && n.revision === r.revision)
+        ? r : {...r, enabled: false}),
+      ...rules.filter(n => !previous.some(r => r.id === n.id && r.revision === n.revision))
+        .map(n => ({...n, enabled: false, reserved_paths: undefined})),
+    ];
     await this.save();
-    const authorized: WorkshopBinding[] = await this.request(run.destination, '/workshop-bindings');
-    if (this.run === run) {
-      run.rules = authorized;
-      await this.save();
-    }
+    await this.refreshRules(run);
   }
   async settingsChanged(changes: Record<string, chrome.storage.StorageChange>) {
     const r = this.run;
@@ -532,7 +564,7 @@ export class LiveCapture {
     const top = await chrome.webNavigation.getFrame({ tabId: t.browserId, frameId: 0 });
     if (run !== this.run || !top || t.ticket !== m.ticket || top.documentId !== doc.documentId)
       return { ok: false };
-    if (!matchesPage(top.url, doc.binding.rule)) {
+    if (!matchesPage(top.url, doc.binding, run.rules, run.destination.origin)) {
       this.fence(t);
       await this.save();
       return { ok: false };

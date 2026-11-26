@@ -52,6 +52,47 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     await control.locator('#tab-search').fill(origin);
     await control.locator('#select-all').check();
     assert.equal(await control.locator('#environment').textContent(), 'capture-fixture');
+    // Starting before binding must leave the selected tab available to configure and retry.
+    await control.locator('#record-mode').selectOption('continuous');
+    const start = control.locator('#start');
+    const feedback = control.locator('#prepare .panel-footer #start-feedback');
+    if (process.env.EA_TEST_HISTORY === '1') {
+      await control.locator('nav a[href="#sites"]').click();
+      const editor = control.locator('#workshop-editor');
+      const application = editor.getByRole('combobox', {name:'业务应用', exact:true});
+      assert.equal(await application.locator('option:checked').textContent(), '合成诊断');
+      await application.selectOption({label:'合成巡检'});
+      await editor.getByRole('status').filter({hasText:'在「合成巡检」没有可采集的车间'}).waitFor();
+      assert.equal(await editor.locator('#workshop-environment option').count(), 1);
+      assert.ok(await editor.locator('#workshop-save').isDisabled());
+      await control.locator('nav a[href="#capture"]').click();
+      await start.click();
+      await feedback.filter({hasText:'没有可采集的车间'}).waitFor();
+      await control.locator('nav a[href="#assistant"]').click();
+      assert.equal(await control.locator('#assistant #agent-app option:checked').textContent(), '合成巡检');
+      await control.locator('#agent-app').selectOption({label:'合成诊断'});
+      await control.locator('nav a[href="#sites"]').click();
+      assert.equal(await application.locator('option:checked').textContent(), '合成诊断');
+      await control.waitForFunction(() => document.querySelector('#workshop-environment').options.length > 1);
+      await control.locator('nav a[href="#capture"]').click();
+    }
+    await control.evaluate(() => {
+      const request = chrome.permissions.request;
+      chrome.permissions.request = () => new Promise(resolve => {
+        window.releaseStartPermission = () => { chrome.permissions.request = request; resolve(true); };
+      });
+    });
+    await start.click();
+    await feedback.filter({hasText:'正在确认 Chrome 站点权限'}).waitFor();
+    assert.ok(await start.isDisabled());
+    await control.evaluate(() => window.releaseStartPermission());
+    await feedback.filter({hasText:'允许页面并绑定车间'}).waitFor();
+    assert.ok(await start.isEnabled());
+    assert.ok(await control.locator('#live-session').isHidden());
+    await control.locator('#start-settings').click();
+    assert.equal(await control.locator('#workshop-page option:checked').textContent(), origin + '/');
+    await control.locator('nav a[href="#capture"]').click();
+    await control.locator('#record-mode').selectOption('offline');
     await control.locator('#start').click();
     await control.locator('#stop').waitFor();
     await control.locator('#stop').click();
@@ -61,16 +102,25 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     await control.locator('nav a[href="#records"]').click();
     await control.locator('#history-search').fill('capture-fixture');
     await control.locator('.history-row').first().waitFor();
-    await control.locator('nav a[href="#sites"]').click();
+    await control.locator('nav a[href="#capture"]').click();
+    await control.locator('#new').click();
+    await control.locator('#record-mode').selectOption('continuous');
+    await start.click();
+    await feedback.filter({hasText:'允许页面并绑定车间'}).waitFor();
+    // Force the same status refresh that runs on the polling timer after a failed attempt.
+    await control.evaluate(() => document.querySelector('#live-refresh').click());
+    await control.locator('#start:enabled').waitFor();
+    await control.locator('#start-settings').click();
 
     // Two workshop URLs share their Chrome origin permission.
     await mes.goto(origin + '/mes#/orders?shop=mix&transient=ignored');
     const packing = await context.newPage();
-    await packing.goto(origin + '/pack');
+    await packing.goto(origin + '/users');
     await control.getByRole('button', {name:'刷新站点'}).click();
     async function bind(pageUrl, name, keys = '') {
       await control.locator('#workshop-page').selectOption({label:pageUrl});
-      await control.locator('#workshop-keys').fill(keys);
+      if (await control.locator('#workshop-keys').isEnabled())
+        await control.locator('#workshop-keys').fill(keys);
       await control.locator('#workshop-environment').selectOption({label:'采集联调'});
       await control.locator('#workshop-base').selectOption({label:'一号基地'});
       await control.locator('#workshop-choice').selectOption({label:name});
@@ -90,19 +140,24 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     await control.locator('#workshop-status').filter({hasText:'未获得页面访问权限'}).waitFor();
     await bind(origin + '/mes#/orders', '配液车间', 'shop');
     assert.equal(await control.locator('#workshop-url').textContent(), origin + '/mes#/orders?shop=mix');
-    await bind(origin + '/pack', '包装车间');
+    await bind(origin + '/users', '包装车间');
+    await control.locator('#workshop-range').selectOption('site');
+    await bind(origin + '/users', '包装车间');
+    assert.equal(await control.locator('#workshop-url').textContent(), origin + '/');
+    await control.locator('#workshop-range').selectOption('path');
     // The continuous run owns three distinct tabs, including two on the same bound URL.
     const twin = await context.newPage();
     await twin.goto(mes.url());
     await control.locator('nav a[href="#capture"]').click();
-    await control.locator('#new').click();
+    await control.locator('#refresh').click();
     await control.locator('#tab-search').fill(origin);
     await control.locator('#select-all').check();
     await control.locator('#record-mode').selectOption('continuous');
     await control.locator('#start').click();
     await control.waitForFunction(()=>document.querySelector('#live-tabs')?.textContent.match(/正在采集/g)?.length === 3).catch(async error => {
-      throw new Error('三页基线状态 '+(await control.locator('#live-tabs').innerText())+' '+(await control.locator('#notice').textContent()),{cause:error});
+      throw new Error('三页基线状态 '+(await control.locator('#live-tabs').innerText())+' '+(await feedback.textContent()),{cause:error});
     });
+    assert.equal(await control.locator('#status-pill').textContent(), '持续采集已启动');
     async function networkStatus() {
       return control.evaluate(async()=>(await chrome.runtime.sendMessage({type:'session.status'})).continuous?.tabs.map(t=>({network:t.network,gap:t.networkGap})));
     }
@@ -111,9 +166,14 @@ export async function checkFloat({context, control, id, fixture, next, requests,
       if (Date.now()>deadline) throw new Error('Network mapping '+JSON.stringify(await networkStatus()));
       await new Promise(r=>setTimeout(r,100));
     }
+    await packing.evaluate(() => history.pushState({}, '', '/users/roles'));
+    await packing.locator('h1').click();
+    await packing.evaluate(() => fetch('/api/child-route').then(r => r.text()));
+    await packing.evaluate(() => history.pushState({}, '', '/reports'));
+    await packing.evaluate(() => fetch('/api/root-route').then(r => r.text()));
     const delayed = mes.evaluate(()=>fetch('/api/shared',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({workOrder:'WO-SYNTHETIC'})}).then(r=>r.json()).then(()=>true));
     await started;
-    await mes.evaluate(()=>history.pushState({},'', '/pack'));
+    await mes.evaluate(()=>history.pushState({},'', '/users/roles'));
     releaseRequest(); await delayed;
     await control.waitForFunction(()=>document.querySelector('#live-tabs')?.textContent.includes('页面采集已暂停'));
     await mes.evaluate(()=>history.pushState({},'', '/mes#/orders?shop=mix'));
@@ -137,11 +197,23 @@ export async function checkFloat({context, control, id, fixture, next, requests,
           const body=related.find(r=>r.event.kind==='body' && r.event.side==='response')?.event;
           return {found:!!req, sameSource:!!req && related.every(r=>JSON.stringify(r.source)===JSON.stringify(req.source)),
             body:body?.status, workOrder:body?.value?.workOrder==='WO-SYNTHETIC', detail:body?.value?.rows?.[0]?.qty===3,
-            protected:!!body?.value && !('cookie' in body.value), requestBodies:rows.filter(r=>r.event.kind==='body').map(r=>[r.event.side,r.event.status]).sort()};
+            protected:!!body?.value && !('cookie' in body.value), requestBodies:related.filter(r=>r.event.kind==='body').map(r=>[r.event.side,r.event.status]).sort()};
+        })(), inherited: (() => {
+          const child = rows.find(r => r.event.api_path === '/api/child-route');
+          const root = rows.find(r => r.event.api_path === '/api/root-route');
+          return !!child && !!root && JSON.stringify(root.source) === JSON.stringify(child.source) &&
+            rows.some(r => r.event.kind === 'action' && JSON.stringify(r.source) === JSON.stringify(child.source));
         })(),hasAction:rows.some(r=>r.event.kind==='action'), masked:rows.every(r=>!JSON.stringify(r).includes('工单查询'))};
     });
-    assert.deepEqual(evidence,{tabs:3,documents:4,network:{found:true,sameSource:true,body:'captured',workOrder:true,detail:true,protected:true,requestBodies:[['request','captured'],['response','captured']]},hasAction:true,masked:true});
+    assert.deepEqual(evidence,{tabs:3,documents:4,network:{found:true,sameSource:true,body:'captured',workOrder:true,detail:true,protected:true,requestBodies:[['request','captured'],['response','captured']]},inherited:true,hasAction:true,masked:true});
     await Promise.all([mes.waitForResponse(r => r.url().endsWith('/api/save')),mes.getByRole('button',{name:'保存'}).click()]);
+    await packing.evaluate(() => history.pushState({}, '', '/users/roles'));
+    await control.locator('nav a[href="#sites"]').click();
+    await control.getByRole('button', {name:'刷新站点'}).click();
+    await bind(origin + '/users/roles', '配液车间');
+    await control.locator('nav a[href="#capture"]').click();
+    await control.waitForFunction(() => document.querySelector('#live-tabs').textContent.includes('页面采集已暂停'));
+    assert.equal(await control.locator('#live-tabs p').filter({hasText:'正在采集'}).count(), 2);
     await twin.close();
     await control.locator('nav a[href="#sites"]').click();
     await packing.close();

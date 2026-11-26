@@ -87,6 +87,26 @@ def public_binding(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def routing_bindings(rows: list[dict[str, Any]], choices: set[str]) -> list[dict[str, Any]]:
+    visible = [public_binding(row) for row in rows if row["workshop_id"] in choices]
+    # Keep a more specific, inaccessible route from falling through to an authorized parent.
+    # Only report path boundaries on origins this account can already bind, once per origin.
+    first_by_origin = {}
+    for binding in visible:
+        first_by_origin.setdefault(binding["rule"]["origin"], binding)
+    reserved: dict[str, set[tuple[str, str]]] = {origin: set() for origin in first_by_origin}
+    for row in rows:
+        if row["workshop_id"] not in choices:
+            rule = json.loads(row["rule_json"])
+            if rule["origin"] in reserved:
+                reserved[rule["origin"]].add((rule["path"], rule["hash_path"]))
+    for origin, binding in first_by_origin.items():
+        binding["reserved_paths"] = [
+            {"path": path, "hash_path": fragment} for path, fragment in sorted(reserved[origin])
+        ]
+    return visible
+
+
 def overlaps(a: dict[str, Any], b: dict[str, Any]) -> bool:
     if any(a[key] != b[key] for key in ("origin", "path", "hash_path")):
         return False

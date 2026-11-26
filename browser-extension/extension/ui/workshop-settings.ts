@@ -11,7 +11,7 @@ import { platformTraffic } from '../../shared/platform-traffic';
 
 export function workshopSettings() {
   const select = (id: string) => document.querySelector<HTMLSelectElement>('#' + id)!;
-  const page = select('workshop-page'),
+  const range = select('workshop-range'), page = select('workshop-page'),
     env = select('workshop-environment'),
     base = select('workshop-base'),
     shop = select('workshop-choice');
@@ -20,6 +20,8 @@ export function workshopSettings() {
     preview = document.getElementById('workshop-url')!;
   const save = document.querySelector<HTMLButtonElement>('#workshop-save')!;
   const revoke = document.querySelector<HTMLButtonElement>('#workshop-revoke')!;
+  const connectFirst = '请在「Agent 对话」连接平台并选择业务应用。';
+  const noWorkshops = (name: string) => `当前账号在「${name}」没有可采集的车间。请在「页面车间」切换业务应用，或联系管理员。`;
   let client: WorkshopClient | null = null,
     bindings: WorkshopBinding[] = [];
   let pages: { id: number; url: string }[] = [],
@@ -30,6 +32,7 @@ export function workshopSettings() {
   function rule() {
     const url = address();
     if (!url) throw new Error('请先选择页面');
+    if (range.value === 'site') return ruleForPage(new URL(url).origin);
     return ruleForPage(
       url,
       keys.value
@@ -92,11 +95,17 @@ export function workshopSettings() {
   }
   function selectPage() {
     const url = address();
-    const match = url && bindingForPage(url, bindings);
+    const site = range.value === 'site';
+    const match = url && bindingForPage(site ? new URL(url).origin : url, bindings, client?.destination.origin);
+    keys.disabled = site;
     keys.value = match ? Object.keys(match.rule.query).join(', ') : '';
+    const inherited = document.getElementById('workshop-inherited')!;
+    inherited.hidden = !(match && !sameRule(rule(), match.rule));
+    inherited.textContent = !inherited.hidden && match ? '当前页面继承 ' + describeRule(match.rule) : '';
     render(match || undefined);
   }
   page.onchange = selectPage;
+  range.onchange = selectPage;
   env.onchange = () => {
     loadBase();
     refreshButtons();
@@ -112,7 +121,7 @@ export function workshopSettings() {
     if (!current || busy) return;
     const turn = generation;
     try {
-      const r = rule(),
+      const r = rule(), selectedPage = ruleForPage(address()!, Object.keys(r.query)),
         id = Number(page.value);
       const target = choices().find((s) => s.workshop_id === shop.value);
       busy = true;
@@ -121,7 +130,7 @@ export function workshopSettings() {
         throw new Error('未获得页面访问权限');
       if (turn !== generation) return;
       const tab = await chrome.tabs.get(id);
-      if (!tab.url || !sameRule(r, ruleForPage(tab.url, Object.keys(r.query))))
+      if (!tab.url || !sameRule(selectedPage, ruleForPage(tab.url, Object.keys(r.query))))
         throw new Error('页面已变化，请刷新后重试');
       const old = bindings.find((b) => sameRule(b.rule, r));
       if (remove && old) await current.revoke(old);
@@ -155,7 +164,17 @@ export function workshopSettings() {
   save.onclick = () => void persist(false);
   revoke.onclick = () => void persist(true);
   return {
-    destination: () => client?.destination,
+    destination() {
+      if (!client) throw new Error(status.textContent || connectFirst);
+      if (!client.choices.length) throw new Error(noWorkshops(client.name));
+      return client.destination;
+    },
+    selectTab(id: number) {
+      if (pages.some(p => p.id === id)) {
+        page.value = String(id);
+        selectPage();
+      }
+    },
     pages(next: { id?: number; url: string }[]) {
       const selected = page.value;
       pages = next.flatMap((t) => {
@@ -181,7 +200,7 @@ export function workshopSettings() {
       bindings = [];
       busy = false;
       selectPage();
-      status.textContent = next ? next.name : '连接系统并选择业务应用后可绑定车间';
+      status.textContent = next ? '正在读取页面车间绑定，请稍后重试。' : connectFirst;
       if (!next) return;
       try {
         const updated = await next.list();
@@ -189,8 +208,9 @@ export function workshopSettings() {
         client = next;
         bindings = updated;
         selectPage();
+        status.textContent = next.choices.length ? '' : noWorkshops(next.name);
       } catch {
-        if (turn === generation) status.textContent = '车间绑定暂不可用，请刷新';
+        if (turn === generation) status.textContent = '车间绑定暂不可用，请在「站点设置」点击「刷新站点」。';
       }
     },
   };

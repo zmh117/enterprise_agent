@@ -59,7 +59,7 @@ try {
   const id = await ui.evaluate(async () => (await chrome.tabs.query({})).find(t => t.url?.includes('?id=P0'))!.id!);
   await ui.click('#refresh'); await ui.locator(`input[data-tab-id="${id}"]`).check(); await ui.locator('#policy-details summary').click();
   await ui.fill('#policy', JSON.stringify({ ...policy, sensitiveSelectors: ['['] })); await ui.click('#start');
-  await until(() => ui.locator('#notice').textContent(), x => !!x?.includes('敏感选择器'), 'invalid selector notice');
+  await until(() => ui.locator('#start-feedback').textContent(), x => !!x?.includes('敏感选择器'), 'invalid selector notice');
   check('1.2 无效选择器在控制页拒绝，未创建会话', !(await status()).recording);
   await ui.fill('#policy', JSON.stringify(policy)); await ui.click('#start');
   let s = await until(status, s => s.targets?.[0]?.captureState === 'ACTIVE', 'all four channels ready');

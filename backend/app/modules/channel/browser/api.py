@@ -169,11 +169,9 @@ def list_bindings(req: Request, app: str) -> list[dict[str, Any]]:
     with c.database.unit_of_work():
         user, origin, _ = recording_owner(req, app)
         choices = {w["workshop_id"] for w in workshop_bindings.workshop_choices(c, user, app)}
-        return [
-            workshop_bindings.public_binding(row)
-            for row in workshop_bindings.current_bindings(c, origin, user, app)
-            if row["workshop_id"] in choices
-        ]
+        return workshop_bindings.routing_bindings(
+            workshop_bindings.current_bindings(c, origin, user, app), choices
+        )
 
 
 @router.put("/applications/{app}/workshop-bindings")
