@@ -9,7 +9,7 @@ import {
 } from '../../shared/live-page';
 import { bytes } from '../../shared/contracts';
 import { platformTraffic } from '../../shared/platform-traffic';
-import type { WorkshopBinding } from '../../shared/workshop';
+import { bindingForPage, type WorkshopBinding } from '../../shared/workshop';
 import type { Policy } from '../../shared/contracts';
 import { Platform } from '../platform';
 import { LiveDelivery } from './live-delivery';
@@ -25,6 +25,7 @@ import { hostPattern, sites } from './float-sites';
 interface LiveTab {
   id: string;
   browserId: number;
+  startedAt?: number;
   doc?: LiveDocument;
   ticket?: string;
   baselineId?: string;
@@ -43,6 +44,14 @@ interface Run {
   networkPolicy: NetworkPolicy;
 }
 const stateKey = 'liveWorkshopCapture';
+type ExpectedPage = {documentId: string; binding: WorkshopBinding};
+function checkExpectedPage(expected: ExpectedPage | undefined, top: chrome.webNavigation.GetFrameResultDetails, rules: WorkshopBinding[], origin: string) {
+  if (!expected) return;
+  const matched = bindingForPage(top.url, rules, origin);
+  if (top.documentId !== expected.documentId || !matched || matched.id !== expected.binding.id ||
+      matched.revision !== expected.binding.revision)
+    throw new Error('页面绑定已变化，请重新打开本页菜单');
+}
 export class LiveCapture {
   private run?: Run;
   private platform?: Platform;
@@ -55,6 +64,7 @@ export class LiveCapture {
   private pendingBytes = 0;
   private saving: Promise<void> = Promise.resolve();
   private rulesGeneration = 0;
+  private publishedTabs = new Map<number,string>();
   readonly ready: Promise<void>;
   constructor() {
     this.ready = chrome.storage.session.get(stateKey).then(async (value) => {
@@ -93,7 +103,16 @@ export class LiveCapture {
       snapshot
         ? chrome.storage.session.set({ [stateKey]: snapshot })
         : chrome.storage.session.remove(stateKey);
-    return (this.saving = this.saving.then(write, write));
+    const persist = async () => {
+      await write();
+      const current = new Map((snapshot?.tabs ?? []).map(t => [t.browserId, JSON.stringify([t.id,t.doc?.state,t.error,t.networkGap])]));
+      for (const id of new Set([...this.publishedTabs.keys(), ...current.keys()])) {
+        if (current.get(id) !== this.publishedTabs.get(id))
+          void chrome.tabs.sendMessage(id,{type:'float.captureChanged'},{frameId:0}).catch(() => {});
+      }
+      this.publishedTabs = current;
+    };
+    return (this.saving = this.saving.then(persist, persist));
   }
   private setupNetwork(run: Run) {
     this.network = new LiveNetwork(
@@ -154,7 +173,7 @@ export class LiveCapture {
     }
     return this.network?.stop(id, true);
   }
-  private async client(d: LiveDestination) {
+  private async client(d: Pick<LiveDestination, 'origin' | 'account'>) {
     const saved = await chrome.storage.local.get(['agentOrigin', 'agentActiveAccount']);
     if (
       saved.agentOrigin !== d.origin ||
@@ -187,7 +206,7 @@ export class LiveCapture {
       })
     ).json();
   }
-  async start(ids: number[], d: LiveDestination, policy: Policy) {
+  async start(ids: number[], d: LiveDestination, policy: Policy, expected?: ExpectedPage) {
     const maxBytes = policy.budgets.hardBytes;
     if (this.run) throw new Error('已有持续采集');
     if (
@@ -202,7 +221,6 @@ export class LiveCapture {
       maxBytes > 500 * 1024 * 1024
     )
       throw new Error('持续采集设置无效');
-    this.platform = undefined;
     const rules: WorkshopBinding[] = await this.request(d, '/workshop-bindings');
     const allowedSites = await sites();
     const tabs: LiveTab[] = [];
@@ -213,6 +231,7 @@ export class LiveCapture {
       const top = await chrome.webNavigation.getFrame({ tabId: browserId, frameId: 0 });
       if (!top || !tab.url || tab.incognito || platformTraffic(top.url))
         throw new Error('请选择已授权的普通 MES 页面');
+      checkExpectedPage(expected, top, rules, d.origin);
       const origin = new URL(top.url).origin;
       const inPolicy = policy.pageOrigins.includes(origin);
       const permitted = inPolicy && await chrome.permissions.contains({ origins: [hostPattern(origin)] });
@@ -222,6 +241,7 @@ export class LiveCapture {
       tabs.push({
         id: crypto.randomUUID(),
         browserId,
+        startedAt: Date.now(),
         paused: [],
         doc: observePage(undefined, top.documentId, top.url, allowed ? rules : [], d.origin),
       });
@@ -255,6 +275,11 @@ export class LiveCapture {
       if (!hasPageAccess) throw new Error('Chrome 未授予所选 MES 页面的访问权限。请允许站点访问后重试。');
       throw new Error('所选页面没有可采集的车间。请在「站点设置 → 页面车间」选择环境、基地和车间，点击「允许页面并绑定车间」。');
     }
+    if (expected) {
+      const latest = await chrome.webNavigation.getFrame({tabId:tabs[0]!.browserId, frameId:0});
+      if (!latest) throw new Error('页面已关闭');
+      checkExpectedPage(expected, latest, rules, d.origin);
+    }
     // Install the navigation fence before the first round trip for this run.
     this.run = run;
     this.setupNetwork(run);
@@ -283,32 +308,32 @@ export class LiveCapture {
       ),
     );
     const confirmed = (verified ?? 0) + ((await stats)?.released ?? 0);
-    return (
-      this.run === run && {
-        pending,
-        acknowledged,
-        verified: confirmed,
-        id: this.run.id,
-        tabs: this.run.tabs.map((t) => ({
-          tabId: t.browserId,
-          state: t.doc?.state,
-          error: t.error,
-          networkGap: t.networkGap,
-          network: this.network?.status(t.browserId),
-        })),
-      }
-    );
+    if (this.run !== run) return;
+    return {
+      pending,
+      acknowledged,
+      verified: confirmed,
+      id: run.id,
+      tabs: run.tabs.map((t) => ({
+        tabId: t.browserId,
+        state: t.doc?.state,
+        error: t.error,
+        networkGap: t.networkGap,
+        network: this.network?.status(t.browserId),
+      })),
+    };
   }
-  async add(browserId: number) {
+  async add(browserId: number, expected?: ExpectedPage) {
     const run = this.run;
     if (!run || !Number.isSafeInteger(browserId) || run.tabs.length >= run.maxTabs)
       throw new Error('无法加入标签');
     if (run.tabs.some((t) => t.browserId === browserId)) return;
+    await this.refreshRules(run);
     const tab = await chrome.tabs.get(browserId);
     const top = await chrome.webNavigation.getFrame({ tabId: browserId, frameId: 0 });
     if (!top || tab.incognito || platformTraffic(top.url) || !/^https?:/.test(top.url))
       throw new Error('请选择普通 MES 页面');
-    await this.refreshRules(run);
+    checkExpectedPage(expected, top, run.rules, run.destination.origin);
     const permitted =
       run.origins.includes(new URL(top.url).origin) &&
       (await sites()).includes(new URL(top.url).origin) &&
@@ -317,9 +342,11 @@ export class LiveCapture {
     const t: LiveTab = {
       browserId,
       id: crypto.randomUUID(),
+      startedAt: Date.now(),
       paused: [],
       doc: observePage(undefined, top.documentId, top.url, permitted ? run.rules : [], run.destination.origin),
     };
+    if (!t.doc?.binding) throw new Error('该标签页未匹配当前业务应用的地址规则或缺少站点权限。');
     run.tabs.push(t);
     await this.save();
     await this.activate(t);
@@ -356,6 +383,38 @@ export class LiveCapture {
   }
   tabState(id: number) {
     return this.run?.tabs.find((t) => t.browserId === id)?.doc?.state;
+  }
+  pageStatus(id: number) {
+    const tab = this.run?.tabs.find(t => t.browserId === id);
+    return tab ? {id:tab.id, state:tab.doc?.state ?? 'unbound', startedAt:tab.startedAt,
+      detail:tab.error || tab.networkGap} : null;
+  }
+  async startPage(id: number, expected: ExpectedPage, destination: Pick<LiveDestination,'account'|'origin'|'app'>, policy: Policy) {
+    const run = this.run;
+    if (run) {
+      const d = run.destination;
+      if (d.origin !== destination.origin || d.account !== destination.account || d.app !== destination.app)
+        throw new Error('进行中的持续采集属于其他业务应用或账号，本页尚未加入');
+      if (!this.pageStatus(id)) await this.add(id, expected);
+    } else {
+      const client = await this.client(destination);
+      const apps: {id:string; scope_ref:string}[] = await (await client.request('/applications', {})).json();
+      const app = apps.find(a => a.id === destination.app);
+      if (!app?.scope_ref) throw new Error('当前账号无法采集此业务应用');
+      await this.start([id], {...destination, scopeRef:app.scope_ref}, policy, expected);
+    }
+  }
+  async stopPage(id: number, membership: string) {
+    const run = this.run, tab = run?.tabs.find(t => t.browserId === id);
+    if (!run || !tab) return;
+    if (tab.id !== membership) throw new Error('本页采集已变化，请重新打开菜单');
+    if (run.tabs.length === 1) return this.stop();
+    // Revoke the document ticket before the first await. Network.stop emits
+    // interrupted request endings while the original source still belongs to the run.
+    const end = this.endTicket(tab);
+    const network = this.network?.stop(id);
+    run.tabs = run.tabs.filter(t => t !== tab);
+    await Promise.all([end, network, this.save(), this.writing]);
   }
   async stop() {
     const run = this.run;
@@ -532,10 +591,8 @@ export class LiveCapture {
     await this.save();
   }
   async closed(tabId: number) {
-    if (!this.run?.tabs.some((t) => t.browserId === tabId)) return;
-    await this.network?.stop(tabId);
-    this.run.tabs = this.run.tabs.filter((t) => t.browserId !== tabId);
-    await this.save();
+    const tab = this.pageStatus(tabId);
+    if (tab) await this.stopPage(tabId, tab.id);
   }
   async message(
     sender: chrome.runtime.MessageSender,

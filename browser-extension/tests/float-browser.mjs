@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
+import {checkPageLauncher} from './float-launcher.mjs';
 
 export async function checkFloat({context, control, id, fixture, next, requests, mesHost, checkReply, signIn}) {
   let requestStarted, releaseRequest;
@@ -254,11 +255,13 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     const draft = frame.locator('#agent-question');
     await frame.waitForFunction(() => !document.querySelector('#agent-send')?.disabled, null, {timeout:12000})
       .catch(async () => { throw new Error('助手登录状态 ' + await frame.locator('#agent-status').textContent()); });
-    const before = await host.boundingBox();
-    await mes.mouse.move(before.x + 80, before.y + 20);
-    await mes.mouse.down(); await mes.mouse.move(before.x - 75, before.y - 25, {steps:8}); await mes.mouse.up();
-    const after = await host.boundingBox();
-    assert.ok(Math.abs(after.x - before.x + 155) < 2 && Math.abs(after.y - before.y + 45) < 2, '窗口随拖动移动');
+    const panel = await frame.frameElement();
+    const before = await panel.boundingBox();
+    assert.equal(Math.round(before.width),518,'阅读浮窗宽度');
+    await mes.mouse.move(before.x + 80, before.y - 22);
+    await mes.mouse.down(); await mes.mouse.move(before.x - 75, before.y + 8, {steps:8}); await mes.mouse.up();
+    const after = await panel.boundingBox();
+    assert.ok(Math.abs(after.x - before.x + 155) < 2 && Math.abs(after.y - before.y - 30) < 2, '窗口随拖动移动');
     const question = '检查合成保存操作';
     const rejected = '检查应用暂时不可用时能否重试';
     await draft.fill(rejected); await draft.press('Enter');
@@ -281,8 +284,8 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     fixture.stdin.write('advance\n'); await next();
     await frame.locator('.answer').getByText(/我查一下/).first().waitFor();
     await draft.fill('未发送的追问');
-    await mes.mouse.click(after.x + after.width - 25, after.y + 22);
-    assert.ok((await host.boundingBox()).width < 60);
+    await mes.mouse.click(after.x + after.width - 25, after.y - 22);
+    assert.equal(await panel.boundingBox(),null);
     for (let i = 0; i < 3; i++) {fixture.stdin.write('advance\n'); assert.equal((await next()).jobs, 1);}
     await frame.waitForFunction(() => document.querySelector('.answer small')?.textContent === '已完成', null, {polling:100, timeout:12000});
     await host.click();
@@ -291,14 +294,24 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     assert.equal(await frame.locator('.answer table tbody tr').count(), 1);
     await frame.locator('.answer pre code').waitFor();
     await checkReply(frame, control);
+    for (const type of ['float.captureStart','float.captureStop']) {
+      const reply=await frame.evaluate(type=>chrome.runtime.sendMessage({type,ticket:location.hash.slice(1)}),type);
+      assert.equal(reply?.ok,false,'嵌入的对话页不能发起采集命令');
+    }
     assert.equal(await mes.locator('body').getByText(question).count(), 0);
     await mes.reload(); await host.waitFor();
     const recovered = await open();
     await recovered.locator('.answer strong').filter({hasText:'缺少批号'}).waitFor();
     assert.equal(await recovered.locator('.question').count(), 1);
+    const sibling=await context.newPage();
+    try {
+      await sibling.goto(mes.url());
+      await sibling.locator('[data-mes-agent-host]').waitFor();
+      await checkPageLauncher(context,control,mes,sibling);
+    } finally {await sibling.close();}
     if (process.env.EA_CHAT_PREVIEW_DIR) {
       await recovered.locator('#agent-answers').evaluate(el => { el.scrollTop = 0; });
-      await host.screenshot({path:join(process.env.EA_CHAT_PREVIEW_DIR, 'agent-chatgpt-floating.png')});
+      await (await recovered.frameElement()).screenshot({path:join(process.env.EA_CHAT_PREVIEW_DIR, 'agent-chatgpt-floating.png')});
     }
     const posts = requests.filter(([method,path]) => method === 'POST' && path.endsWith('/messages'));
     assert.equal(posts.length, 1);

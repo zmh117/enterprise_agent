@@ -84,6 +84,17 @@ export async function updateFloatSites(add: string[], remove: string[], binding?
 
 // Only the isolated top-frame script can obtain a ticket. Bind it to the
 // top document and then to the actual extension frame, including across worker restarts.
+export async function floatHostPage(sender: chrome.runtime.MessageSender, ticket: unknown) {
+  const tabId = sender.tab?.id;
+  if (tabId === undefined || sender.tab?.incognito || sender.frameId !== 0 ||
+      !sender.documentId || typeof ticket !== 'string') return;
+  const key = 'float-ticket:' + tabId;
+  const grant = (await chrome.storage.session.get(key))[key] as {nonce:string; top:string} | undefined;
+  if (grant?.nonce !== ticket || grant.top !== sender.documentId) return;
+  const top = await chrome.webNavigation.getFrame({tabId, frameId:0});
+  if (top?.documentId === sender.documentId && await permitted(top.url)) return top;
+}
+
 export async function floatAccess(sender: chrome.runtime.MessageSender, ticket?: string) {
   const tabId = sender.tab?.id;
   if (!tabId || sender.tab?.incognito || !sender.documentId) return false;

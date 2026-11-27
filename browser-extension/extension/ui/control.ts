@@ -4,7 +4,7 @@ import { workshopSettings } from './workshop-settings';
 import { floatSettings } from './float-settings';
 import { hostPattern } from '../background/float-sites';
 import { setupAgentPanel } from './agent-panel';
-import { DEFAULT_POLICY, parsePolicy } from '../../shared/policy';
+import { policyForOrigins, parsePolicy } from '../../shared/policy';
 import { active, terminal, uuid, type BundleData, type Recording, type Target } from '../../shared/contracts';
 import { EvidenceDB } from '../storage/database';
 import { createPackage, summarize, savedPrefix } from '../export/package';
@@ -38,7 +38,7 @@ const labels: Record<string, string> = { STARTING: '准备中', RECORDING: '采�
 function defaultPolicy() {
   const origins = [...new Set((directory?.windows ?? []).flatMap(w => w.tabs)
     .filter(t => t.id !== undefined && selected.has(t.id) && t.origin).map(t => t.origin!))];
-  return { ...structuredClone(DEFAULT_POLICY), pageOrigins: origins, apiRules: origins.map(origin => ({ origin, pathPrefix: '/' })) };
+  return policyForOrigins(origins);
 }
 const siteSettings = floatSettings(selectionChanged);
 const workshop = workshopSettings();

@@ -20,6 +20,9 @@ export const DEFAULT_POLICY: Policy = {
 export function originOf(url: string): string | null {
   try { const u = new URL(url); return ['http:', 'https:'].includes(u.protocol) ? u.origin : null; } catch { return null; }
 }
+export function policyForOrigins(origins: string[]): Policy {
+  return {...structuredClone(DEFAULT_POLICY), pageOrigins:origins, apiRules:origins.map(origin => ({origin, pathPrefix:'/'}))};
+}
 // Only selects which existing captures to invalidate; never grants access.
 // Chrome host patterns ignore paths and match all ports unless one is specified.
 export function revokedHostMatches(pattern: string, url: string): boolean {

@@ -205,6 +205,8 @@ export function workshopSettings() {
       try {
         const updated = await next.list();
         if (turn !== generation) return;
+        await chrome.storage.local.set({[next.key]: updated});
+        if (turn !== generation) return;
         client = next;
         bindings = updated;
         selectPage();
