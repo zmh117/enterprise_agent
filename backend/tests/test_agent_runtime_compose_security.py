@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shlex
 import tomllib
 
 import yaml
@@ -236,10 +237,20 @@ def test_ci_builds_python_single_runtime_deployment_images() -> None:
     assert ".[dev,python-runtime]" in workflow
     assert "needs.python-runtime-contract.result == 'success'" in workflow
     assert "runtime-images:" in workflow
-    assert (
-        "docker compose build api-server file-service agent-worker python-agent-runtime dingtalk-runtime"
-        in workflow
+    steps = yaml.safe_load(workflow)["jobs"]["runtime-images"]["steps"]
+    build_step = next(
+        step for step in steps if step.get("run", "").startswith("docker compose build ")
     )
+    services = yaml.safe_load((ROOT / "docker-compose.yml").read_text())["services"]
+    selected = shlex.split(build_step["run"])[3:]
+    targets = {services[name]["build"].get("target", name) for name in selected}
+    assert {
+        "api-server",
+        "file-service",
+        "agent-worker",
+        "python-agent-runtime",
+        "dingtalk-runtime",
+    } <= targets
 
 
 def test_dependabot_tracks_only_claude_agent_sdk_daily() -> None:

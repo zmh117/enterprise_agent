@@ -6,6 +6,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from textwrap import dedent
 import pytest
 from app.shared.exceptions import AppError, NonRetryableExecutionError
 from backend.tests.test_agent_profile_model_connections import (
@@ -152,25 +153,29 @@ def test_worker_rechecks_current_grants_before_model_or_summary(job_fixture, mon
         builder.build(job)
 
 
-@pytest.mark.parametrize("component", ["runtime", "worker"])
+def app_copy_instructions(dockerfile, stage):
+    stages = {}
+    copies = []
+    for line in dockerfile.splitlines():
+        if line.startswith("FROM "):
+            parent, _, name = line.removeprefix("FROM ").partition(" AS ")
+            copies = stages.get(parent, []).copy()
+            if name:
+                stages[name] = copies
+        elif line.startswith("COPY "):
+            _, *sources, target = shlex.split(line)
+            if target.startswith("/app/"):
+                copies.append((sources, target))
+    return stages[stage]
+
+
+@pytest.mark.parametrize("stage", ["python-agent-runtime", "agent-worker"])
 def test_image_copy_whitelist_can_import_boundary_without_expanding_runtime_business_modules(
-    tmp_path, component
+    tmp_path, stage
 ):
     root = Path(__file__).resolve().parents[2]
-    begin, end = {
-        "runtime": ("FROM claude-runtime AS python-agent-runtime", "FROM api-server AS tool-mcp"),
-        "worker": (
-            "FROM python-deps AS agent-worker",
-            "FROM agent-worker AS file-processing-worker",
-        ),
-    }[component]
-    section = (root / "backend/Dockerfile").read_text().split(begin, 1)[1].split(end, 1)[0]
-    for line in section.splitlines():
-        if not line.startswith("COPY "):
-            continue
-        _, *sources, target = shlex.split(line)
+    for sources, target in app_copy_instructions((root / "backend/Dockerfile").read_text(), stage):
         destination = tmp_path / target.removeprefix("/app/")
-        destination.mkdir(parents=True, exist_ok=True)
         for pattern in sources:
             matches = list(root.glob(pattern))
             assert matches, pattern
@@ -183,15 +188,23 @@ def test_image_copy_whitelist_can_import_boundary_without_expanding_runtime_busi
                         ignore=shutil.ignore_patterns("__pycache__"),
                     )
                 else:
-                    shutil.copy2(source, destination / source.name)
-    command = (
-        "import app.python_runtime.service; "
-        "import sys; assert not any(name.startswith(('app.modules.authorization_center', "
-        "'app.modules.identity', 'app.modules.job')) for name in sys.modules); "
-        "assert not any(name.startswith('app.modules.knowledge.infrastructure.') and name != 'app.modules.knowledge.infrastructure.code_source' for name in sys.modules)"
-    )
-    if component == "worker":
-        command = "import app.bootstrap; import app.workers.agent_job_worker"
+                    file = destination / source.name if target.endswith("/") else destination
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, file)
+    command = "import app.bootstrap; import app.workers.agent_job_worker"
+    if stage == "python-agent-runtime":
+        command = dedent("""
+            import sys
+            import app.python_runtime.service
+
+            forbidden = ("app.modules.authorization_center", "app.modules.identity", "app.modules.job")
+            unexpected = {name for name in sys.modules if name.startswith(forbidden)}
+            assert not unexpected, unexpected
+
+            prefix = "app.modules.knowledge.infrastructure."
+            loaded = {name.removeprefix(prefix) for name in sys.modules if name.startswith(prefix)}
+            assert loaded <= {"code_source", "code_checkout_identity"}, loaded
+        """)
     completed = subprocess.run(
         [sys.executable, "-c", command],
         cwd=tmp_path,

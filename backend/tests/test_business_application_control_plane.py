@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from app.bootstrap import build_test_container
 from app.main import create_app
-from app.modules.business_application.api.controller import ExecutionPolicyRequest
+from app.modules.business_application.api.controller import ExecutionPolicyRequest, SaveDraftRequest
 from app.modules.business_application.domain.policies import (
     canonical_json,
     normalize_routing_key,
@@ -39,6 +39,22 @@ from backend.tests.test_unified_identity_rbac import (
     login,
     unified_settings,
 )
+
+
+def test_draft_triggers_enforce_the_documented_list_limit() -> None:
+    trigger = {
+        "trigger_type": "webhook",
+        "connector_id": "test-connector",
+        "routing_key": "test-route",
+        "actor_policy": "CURRENT_SENDER",
+    }
+    maximum = 20
+    assert SaveDraftRequest.model_json_schema()["properties"]["triggers"]["maxItems"] == maximum
+    draft = SaveDraftRequest(expected_revision=1, triggers=[trigger] * maximum)
+    assert len(draft.triggers) == maximum
+    with pytest.raises(ValidationError) as error:
+        SaveDraftRequest(expected_revision=1, triggers=[trigger] * (maximum + 1))
+    assert [(e["loc"], e["type"]) for e in error.value.errors()] == [(("triggers",), "too_long")]
 
 
 def control_plane_settings() -> object:

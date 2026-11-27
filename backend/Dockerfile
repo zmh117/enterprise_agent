@@ -20,23 +20,39 @@ WORKDIR /app
 COPY backend/docker/normalize_secrets_entrypoint.sh /usr/local/bin/normalize-secrets-entrypoint
 RUN chmod 0555 /usr/local/bin/normalize-secrets-entrypoint
 COPY pyproject.toml /app/
-COPY contracts/browser-extension/v1/protocol.schema.json /app/contracts/browser-extension/v1/protocol.schema.json
+RUN python - <<'PY'
+import tomllib
+from pathlib import Path
+
+config = tomllib.loads(Path("pyproject.toml").read_text())
+project = config["project"]
+groups = {
+    "base": project["dependencies"],
+    "build": config["build-system"]["requires"],
+    **project["optional-dependencies"],
+}
+directory = Path("/tmp/platform-requirements")
+directory.mkdir()
+for name, requirements in groups.items():
+    (directory / f"{name}.txt").write_text("\n".join(requirements) + "\n")
+PY
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'setuptools>=69', 'wheel', *deps])"
+    pip install -r /tmp/platform-requirements/build.txt -r /tmp/platform-requirements/base.txt
+COPY contracts/browser-extension/v1/protocol.schema.json /app/contracts/browser-extension/v1/protocol.schema.json
 ENV PYTHONPATH=/app/backend
 ENTRYPOINT ["/usr/local/bin/normalize-secrets-entrypoint"]
 
 FROM python-deps AS claude-runtime
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['python-runtime']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])"
+    pip install -r /tmp/platform-requirements/base.txt -r /tmp/platform-requirements/python-runtime.txt
 
 FROM python-deps AS database-deps
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c "import subprocess, sys, tomllib; optional = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['database']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *optional])"
+    pip install -r /tmp/platform-requirements/base.txt -r /tmp/platform-requirements/database.txt
 
 FROM python-deps AS agent-test-data-seeder
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install "pymysql>=1.1" "pymssql>=2.3" "redis>=5.0"
+    pip install -r /tmp/platform-requirements/base.txt "pymysql>=1.1" "pymssql>=2.3" "redis>=5.0"
 COPY backend/app/__init__.py /app/backend/app/
 COPY backend/app/agent_test_data /app/backend/app/agent_test_data
 RUN python -c "import app.agent_test_data.seeder"
@@ -71,6 +87,8 @@ COPY contracts/agent-runtime/v1.5 /app/contracts/agent-runtime/v1.5
 COPY .claude/skills /app/.claude/skills
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
+RUN --network=none pip check \
+    && FEATURE_WEB_ADMIN=true python -c "from app.main import create_app; assert '/api/admin/business-applications/{code}/draft' in create_app().openapi()['paths']"
 CMD ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM python-deps AS dingtalk-stream-ingress
@@ -188,7 +206,9 @@ COPY backend/vendor/oracle/ /tmp/oracle-vendor/
 COPY backend/docker/setup_oracle_client.sh /tmp/setup_oracle_client.sh
 COPY backend/docker/verify_oracle_client.py /tmp/verify_oracle_client.py
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['tool-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    pip install -r /tmp/platform-requirements/base.txt -r /tmp/platform-requirements/database.txt \
+        -r /tmp/platform-requirements/tool-mcp.txt \
+    && pip check \
     && sed -i 's/\r$//' /tmp/setup_oracle_client.sh /tmp/verify_oracle_client.py \
     && ORACLE_VENDOR_DIR=/tmp/oracle-vendor bash /tmp/setup_oracle_client.sh \
     && rm -f /tmp/setup_oracle_client.sh /tmp/verify_oracle_client.py \
@@ -209,7 +229,8 @@ COPY services/__init__.py /app/services/
 COPY services/knowledge_mcp_server /app/services/knowledge_mcp_server
 ENV PYTHONPATH=/app/backend:/app PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['knowledge-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    pip install -r /tmp/platform-requirements/base.txt -r /tmp/platform-requirements/knowledge-mcp.txt \
+    && pip check \
     && groupadd --system --gid 10008 knowledge-mcp \
     && useradd --system --uid 10008 --gid 10008 --no-create-home knowledge-mcp \
     && python -c "import services.knowledge_mcp_server.bootstrap; import services.knowledge_mcp_server.app"
@@ -222,7 +243,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends subversion \
     && rm -rf /var/lib/apt/lists/*
 COPY services /app/services
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['ones-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    pip install -r /tmp/platform-requirements/base.txt -r /tmp/platform-requirements/database.txt \
+        -r /tmp/platform-requirements/ones-mcp.txt \
+    && pip check \
     && groupadd --system --gid 10003 ones-mcp \
     && useradd --system --uid 10003 --gid 10003 --no-create-home ones-mcp \
     && python -c "import services.ones_mcp_server.app"
@@ -233,7 +256,9 @@ FROM api-server AS dingtalk-mcp
 USER root
 COPY services /app/services
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['dingtalk-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    pip install -r /tmp/platform-requirements/base.txt -r /tmp/platform-requirements/database.txt \
+        -r /tmp/platform-requirements/dingtalk-mcp.txt \
+    && pip check \
     && groupadd --system --gid 10007 dingtalk-mcp \
     && useradd --system --uid 10007 --gid 10007 --no-create-home dingtalk-mcp \
     && python -c "import services.dingtalk_mcp_server.app; import services.dingtalk_mcp_server.worker; from services.ones_mcp_server.task_update_catalog import TaskUpdateFieldCatalog; from services.ones_mcp_server.bug_create_catalog import BugCreateFieldCatalog; TaskUpdateFieldCatalog.load(); BugCreateFieldCatalog.load()"
@@ -244,7 +269,9 @@ FROM api-server AS file-service
 USER root
 COPY services /app/services
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['file-service']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    pip install -r /tmp/platform-requirements/base.txt -r /tmp/platform-requirements/database.txt \
+        -r /tmp/platform-requirements/file-service.txt \
+    && pip check \
     && groupadd --system --gid 10005 file-service \
     && useradd --system --uid 10005 --gid 10005 --no-create-home file-service \
     && python -c "import services.file_service.app"
