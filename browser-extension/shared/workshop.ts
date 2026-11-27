@@ -4,12 +4,12 @@ export interface WorkshopScope {
   environment_id: string;
   environment_code: string;
   environment_name: string;
-  base_id: string;
-  base_code: string;
-  base_name: string;
-  workshop_id: string;
-  workshop_code: string;
-  workshop_name: string;
+  base_id: string | null;
+  base_code: string | null;
+  base_name: string | null;
+  workshop_id: string | null;
+  workshop_code: string | null;
+  workshop_name: string | null;
 }
 export interface PageRule {
   origin: string;
@@ -21,11 +21,12 @@ export interface WorkshopBinding {
   id: string;
   revision: number;
   enabled: boolean;
+  floating?: boolean;
   rule: PageRule;
   reserved_paths?: Pick<PageRule, 'path' | 'hash_path'>[];
   environment_id: string;
-  base_id: string;
-  workshop_id: string;
+  base_id: string | null;
+  workshop_id: string | null;
 }
 export interface WorkshopClient {
   destination: { origin: string; account: string; app: string; scopeRef: string };
@@ -33,7 +34,7 @@ export interface WorkshopClient {
   name: string;
   choices: WorkshopScope[];
   list(): Promise<WorkshopBinding[]>;
-  save(rule: PageRule, scope: WorkshopScope, revision: number): Promise<WorkshopBinding>;
+  save(rule: PageRule, scope: WorkshopScope, revision: number, floating: boolean, previousId?: string): Promise<WorkshopBinding>;
   revoke(binding: WorkshopBinding): Promise<void>;
 }
 export function ruleForPage(address: string, keys: string[] = []): PageRule {
@@ -81,7 +82,7 @@ function routePath(path: string) {
 function covers(parent: string, path: string) {
   return path === parent || path.startsWith(parent + '/');
 }
-export function bindingForPage(url: string, bindings: WorkshopBinding[], platformOrigin?: string) {
+export function bindingForPage<T extends WorkshopBinding>(url: string, bindings: T[], platformOrigin?: string) {
   if (platformTraffic(url, platformOrigin)) return;
   let page: PageRule;
   try { page = ruleForPage(url); } catch { return; }
@@ -92,8 +93,8 @@ export function bindingForPage(url: string, bindings: WorkshopBinding[], platfor
     p.split('/').some(segment => /^(?:\.|%2e){1,2}$/i.test(segment)))) return;
   const path = routePath(page.path), hash = routePath(page.hash_path);
   let bestPath = -1, bestHash = -1;
-  let candidates: WorkshopBinding[] = [];
-  function consider(route: Pick<PageRule, 'path' | 'hash_path'>, binding?: WorkshopBinding) {
+  let candidates: T[] = [];
+  function consider(route: Pick<PageRule, 'path' | 'hash_path'>, binding?: T) {
     const prefix = routePath(route.path), fragment = routePath(route.hash_path);
     if (!inherit && (route.path !== page.path || route.hash_path !== page.hash_path)) return;
     if (!covers(prefix, path) || (route.hash_path && (!page.hash_path || !covers(fragment, hash)))) return;
@@ -130,5 +131,5 @@ export function describeRule(r: PageRule) {
   return r.origin + r.path + (r.hash_path ? '#' + r.hash_path : '') + (query ? '?' + query : '');
 }
 export function workshopLabel(scope: WorkshopScope) {
-  return [scope.environment_name, scope.base_name, scope.workshop_name].join(' › ');
+  return [scope.environment_name, scope.base_name, scope.workshop_name].filter(Boolean).join(' › ');
 }

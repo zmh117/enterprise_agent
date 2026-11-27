@@ -17,7 +17,7 @@ from app.modules.channel.browser import live_capture, live_loki, workshop_bindin
 from app.modules.channel.browser.answers import CHANNEL, CONNECTOR, STRIDE, read_answer
 from app.modules.channel.browser.auth import PREFIX, authenticated_user_and_origin
 from app.modules.channel.browser.http import BrowserRoute, deny
-from app.modules.channel.browser.scope import active_app, authorized_workshops, fingerprint
+from app.modules.channel.browser.scope import active_app, authorized_scopes, fingerprint, scope_key
 from app.modules.channel.browser.recordings import (
     MAX_MANIFEST_BYTES,
     MAX_PART_BYTES,
@@ -138,13 +138,15 @@ def applications(req: Request) -> list[dict[str, Any]]:
             user_id=user, application_id=app
         )
         granted_ids = {scope["environment_id"] for access in accesses for scope in access["scopes"]}
+        scopes = authorized_scopes(c, app, accesses)
         out.append(
             {
                 "id": app,
                 "name": a["name"],
                 "scope_ref": a["scope_ref"],
                 "environments": [env for key, env in environments.items() if key in granted_ids],
-                "workshop_scopes": authorized_workshops(c, app, accesses),
+                "workshop_scopes": [s for s in scopes if s["workshop_id"]],
+                "binding_scopes": scopes,
             }
         )
     return out
@@ -168,9 +170,9 @@ def list_bindings(req: Request, app: str) -> list[dict[str, Any]]:
     c = container(req)
     with c.database.unit_of_work():
         user, origin, _ = recording_owner(req, app)
-        choices = {w["workshop_id"] for w in workshop_bindings.workshop_choices(c, user, app)}
+        choices = {scope_key(w) for w in workshop_bindings.workshop_choices(c, user, app)}
         return workshop_bindings.routing_bindings(
-            workshop_bindings.current_bindings(c, origin, user, app), choices
+            workshop_bindings.current_bindings(c, origin, user), choices, app
         )
 
 
@@ -358,8 +360,8 @@ def accept_question(
             )
             if not row:
                 raise deny("not_found", 404)
-            if live_capture.conversation_workshop(c, body.conversation_id) != (
-                scope["workshop_id"] if scope else None
+            if live_capture.conversation_scope(c, body.conversation_id) != (
+                scope_key(scope) if scope else None
             ):
                 raise deny("conversation_scope_changed", 409)
             conversation = row["external_conversation_id"]
@@ -376,8 +378,8 @@ def accept_question(
             routing=RoutingContext(
                 project_code=active["project_code"],
                 environment=scope["environment_code"] if scope else "",
-                base=scope["base_code"] if scope else "",
-                workshop=scope["workshop_code"] if scope else "",
+                base=(scope["base_code"] or "") if scope else "",
+                workshop=(scope["workshop_code"] or "") if scope else "",
             ),
             message=body.question,
             idempotency_key="browser:" + identity,

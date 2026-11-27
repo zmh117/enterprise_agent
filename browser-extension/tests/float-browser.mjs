@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
+import {on} from 'node:events';
 import {createServer} from 'node:http';
 import {checkPageLauncher} from './float-launcher.mjs';
+
+async function stopCollectorWorker(context, control, id) {
+  const session = await context.newCDPSession(control);
+  const updates = on(session, 'ServiceWorker.workerVersionUpdated', {signal:AbortSignal.timeout(6000)});
+  try {
+    await session.send('ServiceWorker.enable');
+    for await (const [event] of updates) {
+      const worker = event.versions.find(v => v.scriptURL === 'chrome-extension://' + id + '/background.js' && v.runningStatus === 'running');
+      if (worker) {
+        await session.send('ServiceWorker.stopWorker', {versionId:worker.versionId});
+        break;
+      }
+    }
+  } finally {
+    await updates.return();
+    await session.detach();
+  }
+}
 
 export async function checkFloat({context, control, id, fixture, next, requests, mesHost, checkReply, signIn}) {
   let requestStarted, releaseRequest;
@@ -34,118 +53,77 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     const otherHost = other.locator('[data-mes-agent-host]');
     assert.equal(await host.count(), 0);
     await control.locator('nav a[href="#sites"]').click();
-    const firstSite = control.getByRole('checkbox', {name:origin, exact:true});
-    const secondSite = control.getByRole('checkbox', {name:secondOrigin, exact:true});
-    const save = control.getByRole('button', {name:'保存站点'});
-    await control.getByRole('button', {name:'刷新站点'}).click();
-    await firstSite.check(); await secondSite.check();
-    const environment = control.getByRole('combobox', {name: origin + ' 的关联环境', exact: true});
-    await environment.selectOption('capture-fixture');
-    assert.equal(await otherHost.count(), 0);
+    const save = control.locator('#workshop-save');
+    const address = control.locator('#site-address');
+    const status = control.locator('#workshop-status');
+    const rules = control.locator('#site-rules');
+    const start = control.locator('#start');
+    const feedback = control.locator('#start-feedback');
+    const configure = async (url, shopName, key) => {
+      await control.locator('#site-new').click();
+      await address.fill(url);
+      await control.locator('#site-app').selectOption({label:'合成诊断'});
+      await control.locator('#workshop-environment').selectOption({label:'采集联调'});
+      if (shopName) await control.locator('#workshop-base').selectOption({label:'一号基地'});
+      if (shopName && shopName !== '基地') await control.locator('#workshop-choice').selectOption({label:shopName});
+      if (key) await control.getByRole('checkbox',{name:'匹配参数 ' + key}).check();
+    };
+    const persist = async () => {
+      await save.click();
+      await status.filter({hasText:'规则已保存到平台'}).waitFor();
+    };
+    async function bind(url,name,key) { await configure(url,name,key); await persist(); }
+    await control.getByRole('button',{name:'刷新',exact:true}).click();
+    await control.locator('nav a[href="#capture"]').click();
+    await control.locator('#tab-search').fill(origin);
+    await control.locator('#select-all').check();
+    await control.locator('#record-mode').selectOption('continuous');
+    await start.click();
+    await feedback.filter({hasText:'尚未绑定'}).waitFor();
+    assert.ok(await start.isEnabled());
+    await control.locator('#start-settings').click();
+    assert.equal(await address.inputValue(),origin + '/');
+    await control.locator('#site-app').selectOption({label:'合成诊断'});
+    await control.locator('#workshop-environment').selectOption({label:'采集联调'});
+    assert.equal(await control.locator('#workshop-base').inputValue(),'');
+    await control.evaluate(() => {
+      const original = chrome.permissions.request;
+      chrome.permissions.request = async () => { chrome.permissions.request = original; return false; };
+    });
     await save.click();
-    await Promise.all([host.waitFor(), otherHost.waitFor()]);
+    await status.filter({hasText:'未获得站点访问权限'}).waitFor();
+    await persist();
+    await host.waitFor();
+    await bind(secondOrigin + '/', '基地');
+    await otherHost.waitFor();
     await control.reload();
-    await firstSite.waitFor();
-    assert.ok(await firstSite.isChecked() && await secondSite.isChecked());
-    await control.waitForFunction(site => document.querySelector('select[aria-label="' + site +
-      ' 的关联环境"]')?.value === 'capture-fixture', origin);
+    await rules.getByRole('button').filter({hasText:'一号基地'}).waitFor();
+    assert.equal(await rules.getByRole('button').count(),2);
     await control.locator('nav a[href="#capture"]').click();
     await control.locator('#tab-search').fill(origin);
     await control.locator('#select-all').check();
     assert.equal(await control.locator('#environment').textContent(), 'capture-fixture');
-    // Starting before binding must leave the selected tab available to configure and retry.
-    await control.locator('#record-mode').selectOption('continuous');
-    const start = control.locator('#start');
-    const feedback = control.locator('#prepare .panel-footer #start-feedback');
-    if (process.env.EA_TEST_HISTORY === '1') {
-      await control.locator('nav a[href="#sites"]').click();
-      const editor = control.locator('#workshop-editor');
-      const application = editor.getByRole('combobox', {name:'业务应用', exact:true});
-      assert.equal(await application.locator('option:checked').textContent(), '合成诊断');
-      await application.selectOption({label:'合成巡检'});
-      await editor.getByRole('status').filter({hasText:'在「合成巡检」没有可采集的车间'}).waitFor();
-      assert.equal(await editor.locator('#workshop-environment option').count(), 1);
-      assert.ok(await editor.locator('#workshop-save').isDisabled());
-      await control.locator('nav a[href="#capture"]').click();
-      await start.click();
-      await feedback.filter({hasText:'没有可采集的车间'}).waitFor();
-      await control.locator('nav a[href="#assistant"]').click();
-      assert.equal(await control.locator('#assistant #agent-app option:checked').textContent(), '合成巡检');
-      await control.locator('#agent-app').selectOption({label:'合成诊断'});
-      await control.locator('nav a[href="#sites"]').click();
-      assert.equal(await application.locator('option:checked').textContent(), '合成诊断');
-      await control.waitForFunction(() => document.querySelector('#workshop-environment').options.length > 1);
-      await control.locator('nav a[href="#capture"]').click();
-    }
-    await control.evaluate(() => {
-      const request = chrome.permissions.request;
-      chrome.permissions.request = () => new Promise(resolve => {
-        window.releaseStartPermission = () => { chrome.permissions.request = request; resolve(true); };
-      });
-    });
-    await start.click();
-    await feedback.filter({hasText:'正在确认 Chrome 站点权限'}).waitFor();
-    assert.ok(await start.isDisabled());
-    await control.evaluate(() => window.releaseStartPermission());
-    await feedback.filter({hasText:'允许页面并绑定车间'}).waitFor();
-    assert.ok(await start.isEnabled());
-    assert.ok(await control.locator('#live-session').isHidden());
-    await control.locator('#start-settings').click();
-    assert.equal(await control.locator('#workshop-page option:checked').textContent(), origin + '/');
-    await control.locator('nav a[href="#capture"]').click();
     await control.locator('#record-mode').selectOption('offline');
-    await control.locator('#start').click();
-    await control.locator('#stop').waitFor();
+    await start.click();
     await control.locator('#stop').click();
-    await control.locator('#preview:enabled').waitFor();
-    await control.locator('#preview').click();
-    await control.locator('#summary-preview').filter({hasText: 'capture-fixture'}).waitFor();
+    await control.locator('#preview:enabled').click();
+    await control.locator('#summary-preview').filter({hasText:'capture-fixture'}).waitFor();
     await control.locator('nav a[href="#records"]').click();
     await control.locator('#history-search').fill('capture-fixture');
     await control.locator('.history-row').first().waitFor();
     await control.locator('nav a[href="#capture"]').click();
     await control.locator('#new').click();
-    await control.locator('#record-mode').selectOption('continuous');
-    await start.click();
-    await feedback.filter({hasText:'允许页面并绑定车间'}).waitFor();
-    // Force the same status refresh that runs on the polling timer after a failed attempt.
-    await control.evaluate(() => document.querySelector('#live-refresh').click());
-    await control.locator('#start:enabled').waitFor();
-    await control.locator('#start-settings').click();
-
-    // Two workshop URLs share their Chrome origin permission.
+    await control.locator('nav a[href="#sites"]').click();
     await mes.goto(origin + '/mes#/orders?shop=mix&transient=ignored');
-    const packing = await context.newPage();
-    await packing.goto(origin + '/users');
-    await control.getByRole('button', {name:'刷新站点'}).click();
-    async function bind(pageUrl, name, keys = '') {
-      await control.locator('#workshop-page').selectOption({label:pageUrl});
-      if (await control.locator('#workshop-keys').isEnabled())
-        await control.locator('#workshop-keys').fill(keys);
-      await control.locator('#workshop-environment').selectOption({label:'采集联调'});
-      await control.locator('#workshop-base').selectOption({label:'一号基地'});
-      await control.locator('#workshop-choice').selectOption({label:name});
-      await control.locator('#workshop-save').click();
-      await control.locator('#workshop-revoke:enabled').waitFor();
-    }
-    await control.locator('#workshop-page').selectOption({label: origin + '/mes#/orders'});
-    assert.equal(await control.locator('#workshop-choice').inputValue(), '', '旧环境不能推断车间');
-    await control.locator('#workshop-environment').selectOption({label:'采集联调'});
+    const packing = await context.newPage(); await packing.goto(origin + '/users');
+    await bind(mes.url(), '配液车间','shop');
+    const mesRuleId = await rules.locator('[aria-current=true]').getAttribute('data-binding-id');
+    await bind(origin + '/users','包装车间');
+    const siteGroup = site => rules.locator('.site-group').filter({has:control.getByText(site,{exact:true})});
+    await siteGroup(origin).getByRole('button').filter({hasNotText:'/users'}).filter({hasNotText:'/mes'}).click();
     await control.locator('#workshop-base').selectOption({label:'一号基地'});
-    await control.locator('#workshop-choice').selectOption({label:'配液车间'});
-    await control.evaluate(() => {
-      const request = chrome.permissions.request;
-      chrome.permissions.request = async () => { chrome.permissions.request = request; return false; };
-    });
-    await control.locator('#workshop-save').click();
-    await control.locator('#workshop-status').filter({hasText:'未获得页面访问权限'}).waitFor();
-    await bind(origin + '/mes#/orders', '配液车间', 'shop');
-    assert.equal(await control.locator('#workshop-url').textContent(), origin + '/mes#/orders?shop=mix');
-    await bind(origin + '/users', '包装车间');
-    await control.locator('#workshop-range').selectOption('site');
-    await bind(origin + '/users', '包装车间');
-    assert.equal(await control.locator('#workshop-url').textContent(), origin + '/');
-    await control.locator('#workshop-range').selectOption('path');
+    await control.locator('#workshop-choice').selectOption({label:'包装车间'});
+    await persist();
     // The continuous run owns three distinct tabs, including two on the same bound URL.
     const twin = await context.newPage();
     await twin.goto(mes.url());
@@ -210,7 +188,7 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     await Promise.all([mes.waitForResponse(r => r.url().endsWith('/api/save')),mes.getByRole('button',{name:'保存'}).click()]);
     await packing.evaluate(() => history.pushState({}, '', '/users/roles'));
     await control.locator('nav a[href="#sites"]').click();
-    await control.getByRole('button', {name:'刷新站点'}).click();
+    await control.locator('#float-refresh').click();
     await bind(origin + '/users/roles', '配液车间');
     await control.locator('nav a[href="#capture"]').click();
     await control.waitForFunction(() => document.querySelector('#live-tabs').textContent.includes('页面采集已暂停'));
@@ -294,10 +272,49 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     assert.equal(await frame.locator('.answer table tbody tr').count(), 1);
     await frame.locator('.answer pre code').waitFor();
     await checkReply(frame, control);
+    await stopCollectorWorker(context, control, id);
+    // The test profile pre-grants host permissions. Exercise the API surface of the
+    // field installation, where the embedded extension page only has messaging.
+    await frame.evaluate(() => {
+      Object.defineProperty(chrome, 'tabs', {configurable:true, value:undefined});
+      Object.defineProperty(chrome.runtime, 'openOptionsPage', {configurable:true, value:undefined});
+      window.addEventListener('error', event => { window.__floatError = event.message; });
+    });
+    assert.equal(await frame.evaluate(() => typeof chrome.tabs), 'undefined');
+    const historyUrl = 'chrome-extension://' + id + '/control.html#conversations';
+    const [historyPage] = await Promise.all([
+      context.waitForEvent('page', {timeout:5000}),
+      frame.locator('#agent-open-history').click(),
+    ]).catch(async error => { throw new Error(await frame.evaluate(() => window.__floatError) || error.message); });
+    await historyPage.waitForURL(historyUrl);
+    await historyPage.close();
+    await mes.bringToFront();
+    await frame.locator('#agent-connection summary').click();
+    await frame.locator('#agent-open-console').click();
+    const consoleFocused = await control.evaluate(async () => {
+      const url = chrome.runtime.getURL('control.html');
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const [tab] = await chrome.tabs.query({active:true, currentWindow:true});
+        if (tab?.url?.split('#')[0] === url) return true;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return false;
+    });
+    assert.ok(consoleFocused, '控制台应在当前窗口获得焦点');
+    await mes.bringToFront();
+    assert.equal(await frame.evaluate(() => window.__floatError), undefined);
+    assert.equal(await draft.inputValue(), '未发送的追问');
     for (const type of ['float.captureStart','float.captureStop']) {
       const reply=await frame.evaluate(type=>chrome.runtime.sendMessage({type,ticket:location.hash.slice(1)}),type);
       assert.equal(reply?.ok,false,'嵌入的对话页不能发起采集命令');
     }
+    for (const fields of [{ticket:'unregistered',view:'history'}, {ticket:undefined,view:'https://example.test'}]) {
+      const result = await frame.evaluate(fields => chrome.runtime.sendMessage({
+        type:'float.openControl', ...fields, ticket:fields.ticket ?? location.hash.slice(1),
+      }), fields);
+      assert.equal(result?.ok, false);
+    }
+    await control.locator('nav a[href="#sites"]').click();
     assert.equal(await mes.locator('body').getByText(question).count(), 0);
     await mes.reload(); await host.waitFor();
     const recovered = await open();
@@ -317,12 +334,16 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     assert.equal(posts.length, 1);
     assert.ok(!requests.some(([method,path]) => method === 'GET' && path.includes('/messages/')),
       '平台明确拒绝的问题不应进入丢失回执恢复');
-    await firstSite.uncheck(); await save.click();
+    await rules.locator('[data-binding-id="' + mesRuleId + '"]').click();
+    await control.locator('#site-floating').uncheck(); await persist();
     await host.waitFor({state:'detached'});
     await other.reload(); await otherHost.waitFor();
-    await control.reload(); await firstSite.waitFor();
-    assert.ok(!await firstSite.isChecked() && await secondSite.isChecked());
-    await secondSite.uncheck(); await save.click(); await otherHost.waitFor({state:'detached'});
+    await control.reload();
+    await rules.locator('[data-binding-id="' + mesRuleId + '"]').click();
+    assert.ok(!await control.locator('#site-floating').isChecked());
+    await siteGroup(secondOrigin).getByRole('button').click();
+    await control.locator('#site-floating').uncheck(); await persist();
+    await otherHost.waitFor({state:'detached'});
     await mes.reload(); assert.equal(await host.count(), 0);
     fixture.stdin.write('end-session\n'); assert.equal((await next()).ended, true);
     await control.locator('nav a[href="#assistant"]').click();
@@ -331,9 +352,9 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     await signIn('demo-second');
     await control.waitForFunction(() => !document.querySelector('#agent-send').disabled);
     await control.locator('nav a[href="#sites"]').click();
-    await control.locator('#workshop-page').selectOption({label:origin + '/mes#/orders'});
+    await rules.getByText('暂无地址规则').waitFor();
     assert.equal(await control.locator('#workshop-environment option').count(), 1, '换账号后不得继承其他用户的环境车间');
-    assert.ok(await control.locator('#workshop-revoke').isDisabled());
-    console.log(JSON.stringify({workshopScope:true, accountSwitch:true, floatingHost:mesHost, launcherDrag:true, windowDrag:true, multiSite:true, collapsedStream:true, draftRetained:true, reloaded:true, disabled:true, submittedJobs:posts.length}));
+    assert.ok(await control.locator('#workshop-revoke').isHidden());
+    console.log(JSON.stringify({workerRestart:true, floatingNavigation:true, workshopScope:true, accountSwitch:true, floatingHost:mesHost, launcherDrag:true, windowDrag:true, multiSite:true, collapsedStream:true, draftRetained:true, reloaded:true, disabled:true, submittedJobs:posts.length}));
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }

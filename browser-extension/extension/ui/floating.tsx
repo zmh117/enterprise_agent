@@ -16,12 +16,23 @@ async function start() {
   showStatus();
   const origin = byId('agent-origin') as HTMLInputElement;
   origin.readOnly = true;
-  const history = byId('agent-open-history');
-  history.hidden = false;
-  history.onclick = () => void chrome.tabs.create({url: chrome.runtime.getURL('control.html#conversations')});
-  const configure = byId('agent-open-console');
-  configure.hidden = false;
-  configure.onclick = () => void chrome.runtime.openOptionsPage();
+  function connectButton(id: string, view: 'history' | 'console') {
+    const button = byId(id) as HTMLButtonElement;
+    button.hidden = false;
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const result = await chrome.runtime.sendMessage({type:'float.openControl', ticket, view});
+        if (!result?.ok) throw new Error();
+      } catch {
+        byId('agent-status').textContent = '无法打开插件页面，请刷新当前 MES 页面后重试。';
+      } finally {
+        button.disabled = false;
+      }
+    };
+  }
+  connectButton('agent-open-history', 'history');
+  connectButton('agent-open-console', 'console');
   const saved = await chrome.storage.local.get('agentOrigin');
   if (!saved.agentOrigin) byId('agent-status').textContent = '请先在插件控制台连接 Enterprise Agent。';
   byId('floating-view').hidden = false;

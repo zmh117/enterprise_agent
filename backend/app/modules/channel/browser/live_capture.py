@@ -4,6 +4,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.channel.browser.http import deny
+from app.modules.channel.browser.scope import ScopeKey, scope_key
 from app.modules.channel.browser.workshop_bindings import workshop_choices
 
 CaptureId = Annotated[str, Field(pattern=r"^[0-9A-Fa-f-]{32,36}$")]
@@ -25,7 +26,7 @@ class RegisterPages(BaseModel):
 
 def register(c: Any, user: str, origin: str, app: str, scope_ref: str, body: RegisterPages):
     db = c.database
-    allowed = {s["workshop_id"] for s in workshop_choices(c, user, app)}
+    allowed = {scope_key(s) for s in workshop_choices(c, user, app)}
     if not allowed:
         raise deny("access_denied", 403)
     db.execute(
@@ -41,11 +42,11 @@ def register(c: Any, user: str, origin: str, app: str, scope_ref: str, body: Reg
         raise deny("access_denied", 403)
     for page in body.pages:
         binding = db.execute_one(
-            """select workshop_id from browser_workshop_binding where id=? and revision=?
+            """select environment_id,base_id,workshop_id from browser_workshop_binding where id=? and revision=?
                and user_id=? and origin=? and application_id=? and is_head=1 and enabled=1""",
             (page.binding_id, page.revision, user, origin, app),
         )
-        if not binding or binding["workshop_id"] not in allowed:
+        if not binding or scope_key(binding) not in allowed:
             raise deny("access_denied", 403)
         key = (body.recording_id, page.tab_id, page.document_id)
         db.execute(
@@ -91,7 +92,7 @@ def question_scope(c: Any, origin: str, user: str, app: str, scope_ref: str, pag
         (
             s
             for s in workshop_choices(c, user, app)
-            if binding and s["workshop_id"] == binding["workshop_id"]
+            if binding and scope_key(s) == scope_key(binding)
         ),
         None,
     )
@@ -117,11 +118,11 @@ def question_scope(c: Any, origin: str, user: str, app: str, scope_ref: str, pag
     return scope
 
 
-def conversation_workshop(c: Any, session: str) -> str | None:
+def conversation_scope(c: Any, session: str) -> ScopeKey | None:
     row = c.database.execute_one(
-        """select w.workshop_id from browser_live_job_page p join agent_job j on j.id=p.job_id
+        """select w.environment_id,w.base_id,w.workshop_id from browser_live_job_page p join agent_job j on j.id=p.job_id
            join browser_workshop_binding w on w.id=p.binding_id and w.revision=p.revision
            where j.session_id=? limit 1""",
         (session,),
     )
-    return row["workshop_id"] if row else None
+    return scope_key(row) if row else None

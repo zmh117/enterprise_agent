@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.channel.browser.http import deny
 from app.modules.channel.browser.live_capture import CaptureId, LivePage
-from app.modules.channel.browser.scope import fingerprint
+from app.modules.channel.browser.scope import fingerprint, scope_key
 from app.modules.channel.browser.workshop_bindings import workshop_choices
 
 PART_BYTES = 32 * 1024
@@ -85,6 +85,7 @@ def public_scope(
         from browser_live_recording r join browser_live_page p on p.recording_id=r.id
         join browser_workshop_binding w on w.id=p.binding_id and w.revision=p.revision
         join browser_workshop_binding head on head.id=w.id and head.is_head=1 and head.enabled=1
+           and head.application_id=w.application_id
         where r.id=? and r.origin=? and r.user_id=? and r.application_id=? and r.scope_ref=?
         and p.tab_id=? and p.document_id=? and p.binding_id=? and p.revision=?""",
         (
@@ -99,18 +100,15 @@ def public_scope(
             source.revision,
         ),
     )
-    if not row or not any(
-        all(row[k] == w[k] for k in ("environment_id", "base_id", "workshop_id"))
-        for w in workshop_choices(c, user, app)
-    ):
+    if not row or not any(scope_key(row) == scope_key(w) for w in workshop_choices(c, user, app)):
         raise deny("access_denied", 403)
     return {
         "tenant": fingerprint([origin]),
         "owner": fingerprint([origin, user]),
         "application": app,
         "environment": row["environment_id"],
-        "base": row["base_id"],
-        "workshop": row["workshop_id"],
+        "base": row["base_id"] or "",
+        "workshop": row["workshop_id"] or "",
         "site": fingerprint(json.loads(row["rule_json"])["origin"]),
         "recording_id": recording_id,
         "tab_id": source.tab_id,

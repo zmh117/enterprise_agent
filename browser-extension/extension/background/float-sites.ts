@@ -1,26 +1,17 @@
+import {localPageRule} from '../site-rules';
 import { originOf, supportedUrl } from '../../shared/policy';
 import { platformTraffic } from '../../shared/platform-traffic';
+import { observeWorkerTask } from './worker-task';
 
-export const sitesKey = 'agentFloatSites';
-export const bindingsKey = (scope: string) => 'agentSiteEnvironments:' + scope;
-type BindingUpdate = { scope: string; values: Record<string, string> };
-export function storedBindings(value: unknown): Record<string, string> {
-  if (!value || typeof value !== 'object') return {};
-  return Object.fromEntries(Object.entries(value).filter(([, code]) => typeof code === 'string'));
-}
 export function hostPattern(origin: string) {
   const url = new URL(origin);
   return url.protocol + '//' + url.hostname + '/*';
 }
 
-export async function sites(): Promise<string[]> {
-  const value = (await chrome.storage.local.get(sitesKey))[sitesKey];
-  return Array.isArray(value) ? value.filter((s): s is string => typeof s === 'string') : [];
-}
 async function permitted(url: string) {
   const origin = originOf(url);
   return !!origin && supportedUrl(url) && !platformTraffic(url) &&
-    (await sites()).includes(origin) &&
+    (await localPageRule(url))?.floating === true &&
     await chrome.permissions.contains({origins: [hostPattern(origin)]});
 }
 async function attach(tabId: number, url: string, documentId?: string) {
@@ -41,45 +32,26 @@ async function refreshTabs() {
 }
 export function listenForFloatSites() {
   chrome.webNavigation.onDOMContentLoaded.addListener(e => {
-    if (e.frameId === 0) void attach(e.tabId, e.url, e.documentId);
+    if (e.frameId === 0) void observeWorkerTask('加载浮窗', attach(e.tabId, e.url, e.documentId));
   });
-  function routeChanged(event: {tabId: number; frameId: number}) {
-    if (event.frameId === 0) void chrome.tabs.sendMessage(event.tabId, {type:'float.pageChanged'}).catch(() => {});
+  async function routeChanged(event: {tabId: number; frameId: number; url: string; documentId: string}) {
+    if (event.frameId !== 0) return;
+    if (await permitted(event.url)) {
+      await attach(event.tabId, event.url, event.documentId);
+      await chrome.tabs.sendMessage(event.tabId, {type:'float.pageChanged'}).catch(() => {});
+    } else await chrome.tabs.sendMessage(event.tabId,{type:'float.remove'}, {frameId:0}).catch(() => {});
   }
-  chrome.webNavigation.onHistoryStateUpdated.addListener(routeChanged);
-  chrome.webNavigation.onReferenceFragmentUpdated.addListener(routeChanged);
-  chrome.runtime.onStartup.addListener(() => void refreshTabs());
-  chrome.runtime.onInstalled.addListener(() => void refreshTabs());
-  chrome.permissions.onRemoved.addListener(() => void refreshTabs());
-}
-
-export async function updateFloatSites(add: string[], remove: string[], binding?: BindingUpdate) {
-  if (!Array.isArray(add) || !Array.isArray(remove) ||
-      [...add, ...remove].some(origin => typeof origin !== 'string' || !supportedUrl(origin) || originOf(origin) !== origin))
-    throw new Error('请选择有效的站点');
-  await navigator.locks.request(sitesKey, async () => {
-    const origins = [...new Set(add.map(hostPattern))];
-    if (origins.length && !await chrome.permissions.contains({origins}))
-      throw new Error('未获得所选站点的访问权限，设置未保存');
-    const updated = new Set(await sites());
-    for (const origin of remove) updated.delete(origin);
-    for (const origin of add) updated.add(origin);
-    const changes: Record<string, unknown> = {[sitesKey]: [...updated]};
-    if (binding) {
-      if (!binding.scope || typeof binding.scope !== 'string' || !binding.values || typeof binding.values !== 'object')
-        throw new Error('环境关联无效');
-      const key = bindingsKey(binding.scope);
-      const values = storedBindings((await chrome.storage.local.get(key))[key]);
-      for (const site of remove) delete values[site];
-      for (const [site, code] of Object.entries(binding.values)) {
-        if (!updated.has(site) || typeof code !== 'string') throw new Error('站点或环境已变更，请刷新');
-        if (code) values[site] = code; else delete values[site];
-      }
-      changes[key] = values;
-    }
-    await chrome.storage.local.set(changes);
+  const refresh = () => { void observeWorkerTask('刷新站点浮窗', refreshTabs()); };
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && (changes.agentOrigin || changes.agentActiveAccount ||
+      Object.keys(changes).some(key => key.startsWith('["site-rules",')))) refresh();
   });
-  await refreshTabs();
+  const refreshRoute = (event: Parameters<typeof routeChanged>[0]) => { void observeWorkerTask('更新页面浮窗', routeChanged(event)); };
+  chrome.webNavigation.onHistoryStateUpdated.addListener(refreshRoute);
+  chrome.webNavigation.onReferenceFragmentUpdated.addListener(refreshRoute);
+  chrome.runtime.onStartup.addListener(refresh);
+  chrome.runtime.onInstalled.addListener(refresh);
+  chrome.permissions.onRemoved.addListener(refresh);
 }
 
 // Only the isolated top-frame script can obtain a ticket. Bind it to the

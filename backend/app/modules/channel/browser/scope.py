@@ -50,10 +50,17 @@ def active_app(c: Any, origin: str, user: str, app: str) -> dict[str, Any]:
 RECORDING_TOOLS = frozenset({"search_recording", "get_recording_evidence"})
 
 
-def authorized_workshops(c: Any, app: str, accesses: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return enabled workshop paths covered by one role's recording grant."""
+ScopeKey = tuple[str, str | None, str | None]
+
+
+def scope_key(row: dict[str, Any]) -> ScopeKey:
+    return row["environment_id"], row["base_id"], row["workshop_id"]
+
+
+def authorized_scopes(c: Any, app: str, accesses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A grant covers itself and its enabled descendants. Never infer a parent grant."""
     grants = {
-        (scope["environment_id"], scope["base_id"], scope["workshop_id"])
+        scope_key(scope)
         for access in accesses
         if RECORDING_TOOLS.issubset(access["tool_identifiers"])
         for scope in access["scopes"]
@@ -70,18 +77,35 @@ def authorized_workshops(c: Any, app: str, accesses: list[dict[str, Any]]) -> li
                   coalesce(nullif(b.display_name,''), b.code) as base_name,
                   w.id as workshop_id, w.code as workshop_code,
                   coalesce(nullif(w.display_name,''), w.code) as workshop_name
-             from platform_environment e join platform_base b on b.environment_id=e.id
-             join platform_workshop w on w.base_id=b.id
-            where e.status='enabled' and b.status='enabled' and w.status='enabled'
-            order by e.code,b.code,w.code"""
+             from platform_environment e
+             left join platform_base b on b.environment_id=e.id and b.status='enabled'
+             left join platform_workshop w on w.base_id=b.id and w.status='enabled'
+             where e.status='enabled' order by e.code,b.code,w.code"""
     )
-    result = []
+    result = {}
     for row in rows:
-        env, base, shop = row["environment_id"], row["base_id"], row["workshop_id"]
-        if (
-            (env, None, None) in grants
-            or (env, base, None) in grants
-            or (env, base, shop) in grants
-        ):
-            result.append(row)
-    return result
+        env, base, shop = scope_key(row)
+        env_key = (env, None, None)
+        base_key = (env, base, None)
+        if env_key in grants:
+            result[env_key] = {
+                **row,
+                **dict.fromkeys(
+                    (
+                        "base_id",
+                        "base_code",
+                        "base_name",
+                        "workshop_id",
+                        "workshop_code",
+                        "workshop_name",
+                    )
+                ),
+            }
+        if base and (env_key in grants or base_key in grants):
+            result[base_key] = {
+                **row,
+                **dict.fromkeys(("workshop_id", "workshop_code", "workshop_name")),
+            }
+        if shop and (env_key in grants or base_key in grants or scope_key(row) in grants):
+            result[scope_key(row)] = row
+    return list(result.values())

@@ -17,7 +17,7 @@ from app.modules.channel.browser.content import require_tool
 from app.modules.channel.browser.http import deny
 from app.modules.channel.browser.live_capture import LivePage
 from app.modules.channel.browser.recordings import contract
-from app.modules.channel.browser.scope import active_app
+from app.modules.channel.browser.scope import active_app, scope_key
 from app.modules.channel.browser.workshop_bindings import workshop_choices
 
 PAGE_WINDOW_MS = 30 * 60 * 1000
@@ -52,6 +52,7 @@ def authorized_job(c: Any, job: str, tool: str) -> dict:
            j.retry_count,j.business_application_publication_id
            from browser_live_job_page p join browser_workshop_binding w on w.id=p.binding_id and w.revision=p.revision
            join browser_workshop_binding head on head.id=w.id and head.is_head=1 and head.enabled=1
+           and head.application_id=w.application_id
            join browser_message_receipt m on m.job_id=p.job_id
            join agent_job j on j.id=m.job_id join agent_session s on s.id=j.session_id
            where p.job_id=? and j.status='RUNNING' and j.cancel_requested_at is null
@@ -72,7 +73,7 @@ def authorized_job(c: Any, job: str, tool: str) -> dict:
     )["allowed"]:
         raise deny("access_denied", 403)
     if active["publication_id"] != row["business_application_publication_id"] or not any(
-        all(s[k] == row[k] for k in ("environment_id", "base_id", "workshop_id"))
+        scope_key(s) == scope_key(row)
         for s in workshop_choices(c, row["user_id"], row["application_id"])
     ):
         raise deny("access_denied", 403)
@@ -92,7 +93,7 @@ def signing_key(c, job, purpose, context):
                 job["job_id"],
                 job["retry_count"],
                 job["scope_ref"],
-                job["workshop_id"],
+                scope_key(job),
                 context,
             ],
             sort_keys=True,
@@ -130,8 +131,8 @@ def candidates(c, job, scope, *, position=(0, "", ""), kind=None, identity=None,
         "r.application_id=?",
         "r.scope_ref=?",
         "w.environment_id=?",
-        "w.base_id=?",
-        "w.workshop_id=?",
+        "w.base_id IS NOT DISTINCT FROM ?",
+        "w.workshop_id IS NOT DISTINCT FROM ?",
         "e.part_number=0",
         "e.observed_ms between ? and ?",
     ]
@@ -168,6 +169,7 @@ def candidates(c, job, scope, *, position=(0, "", ""), kind=None, identity=None,
            join browser_live_page p on p.recording_id=r.id and p.tab_id=e.tab_id and p.document_id=e.document_id
            join browser_workshop_binding w on w.id=p.binding_id and w.revision=p.revision
            join browser_workshop_binding head on head.id=w.id and head.is_head=1 and head.enabled=1
+           and head.application_id=w.application_id
            where """
         + " and ".join(conditions)
         + " order by e.received_ns,e.recording_id,e.event_id limit ?",

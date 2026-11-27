@@ -13,6 +13,7 @@ import { bindingForPage, type WorkshopBinding } from '../../shared/workshop';
 import type { Policy } from '../../shared/contracts';
 import { Platform } from '../platform';
 import { LiveDelivery } from './live-delivery';
+import { observeWorkerTask } from './worker-task';
 import { LiveDB, result } from '../storage/live-evidence';
 import { LiveNetwork, type NetworkPolicy } from './live-network';
 import {
@@ -20,7 +21,7 @@ import {
   saveLiveEvidence,
   type LiveDestination,
 } from '../storage/live-evidence';
-import { hostPattern, sites } from './float-sites';
+import { hostPattern } from './float-sites';
 
 interface LiveTab {
   id: string;
@@ -49,7 +50,7 @@ function checkExpectedPage(expected: ExpectedPage | undefined, top: chrome.webNa
   if (!expected) return;
   const matched = bindingForPage(top.url, rules, origin);
   if (top.documentId !== expected.documentId || !matched || matched.id !== expected.binding.id ||
-      matched.revision !== expected.binding.revision)
+      matched.revision !== expected.binding.revision || matched.floating !== true)
     throw new Error('页面绑定已变化，请重新打开本页菜单');
 }
 export class LiveCapture {
@@ -136,7 +137,7 @@ export class LiveCapture {
         const size = bytes(event);
         if (this.pendingBytes + size > run.networkPolicy.budgets.queueBytes) {
           this.fence(t, '本地写入队列已满，存在采集缺口');
-          void this.save();
+          void observeWorkerTask('保存采集暂停状态', this.save());
           return;
         }
         this.pendingBytes += size;
@@ -146,7 +147,7 @@ export class LiveCapture {
           )
           .catch(() => {
             this.fence(t, '网络证据保存失败，存在采集缺口');
-            void this.save();
+            void observeWorkerTask('保存采集暂停状态', this.save());
           })
           .finally(() => {
             this.pendingBytes -= size;
@@ -157,7 +158,7 @@ export class LiveCapture {
         const t = run.tabs.find((t) => t.browserId === id);
         if (t) {
           t.networkGap = reason;
-          void this.save();
+          void observeWorkerTask('保存网络采集缺口', this.save());
         }
       },
     );
@@ -169,7 +170,7 @@ export class LiveCapture {
     const t = this.run?.tabs.find((t) => t.browserId === id);
     if (t && !t.networkGap) {
       t.networkGap = reason === 'canceled_by_user' ? '浏览器取消了调试连接' : '浏览器目标已断开';
-      void this.save();
+      void observeWorkerTask('保存调试连接状态', this.save());
     }
     return this.network?.stop(id, true);
   }
@@ -222,7 +223,6 @@ export class LiveCapture {
     )
       throw new Error('持续采集设置无效');
     const rules: WorkshopBinding[] = await this.request(d, '/workshop-bindings');
-    const allowedSites = await sites();
     const tabs: LiveTab[] = [];
     let hasPolicyPage = false;
     let hasPageAccess = false;
@@ -237,13 +237,12 @@ export class LiveCapture {
       const permitted = inPolicy && await chrome.permissions.contains({ origins: [hostPattern(origin)] });
       hasPolicyPage ||= inPolicy;
       hasPageAccess ||= permitted;
-      const allowed = permitted && allowedSites.includes(origin);
       tabs.push({
         id: crypto.randomUUID(),
         browserId,
         startedAt: Date.now(),
         paused: [],
-        doc: observePage(undefined, top.documentId, top.url, allowed ? rules : [], d.origin),
+        doc: observePage(undefined, top.documentId, top.url, permitted ? rules : [], d.origin),
       });
     }
     const apiRules = await Promise.all(
@@ -273,7 +272,7 @@ export class LiveCapture {
     if (!pages.length) {
       if (!hasPolicyPage) throw new Error('采集范围未包含所选页面。请在「采集范围与权限」按所选站点重置。');
       if (!hasPageAccess) throw new Error('Chrome 未授予所选 MES 页面的访问权限。请允许站点访问后重试。');
-      throw new Error('所选页面没有可采集的车间。请在「站点设置 → 页面车间」选择环境、基地和车间，点击「允许页面并绑定车间」。');
+      throw new Error('所选页面没有可采集的范围。请在「站点设置」保存地址规则。');
     }
     if (expected) {
       const latest = await chrome.webNavigation.getFrame({tabId:tabs[0]!.browserId, frameId:0});
@@ -336,7 +335,6 @@ export class LiveCapture {
     checkExpectedPage(expected, top, run.rules, run.destination.origin);
     const permitted =
       run.origins.includes(new URL(top.url).origin) &&
-      (await sites()).includes(new URL(top.url).origin) &&
       (await chrome.permissions.contains({ origins: [hostPattern(top.url)] }));
     if (run !== this.run || run.tabs.some((t) => t.browserId === browserId)) return;
     const t: LiveTab = {
@@ -477,7 +475,6 @@ export class LiveCapture {
         !top ||
         top.documentId !== doc.documentId ||
         !matchesPage(top.url, doc.binding, run.rules, run.destination.origin) ||
-        !(await sites()).includes(doc.binding.rule.origin) ||
         !(await chrome.permissions.contains({ origins: [hostPattern(top.url)] }))
       )
         throw new Error('scope_changed');
@@ -565,12 +562,7 @@ export class LiveCapture {
     }
     const key = JSON.stringify(['workshop-bindings', d.origin, d.account, d.app]);
     if (changes[key]) await this.changedRules((changes[key].newValue as WorkshopBinding[]) ?? []);
-    if (changes.agentFloatSites) {
-      const allowed = await sites();
-      for (const t of r.tabs)
-        if (t.doc?.binding && !allowed.includes(t.doc.binding.rule.origin)) this.fence(t);
-      await this.save();
-    }
+
   }
   async revoked(matches: (url: string) => boolean) {
     if (!this.run) return;

@@ -94,6 +94,12 @@
           "items": {
             "$ref": "#/$defs/WorkshopScope"
           }
+        },
+        "binding_scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BindingScope"
+          }
         }
       },
       "required": [
@@ -2042,6 +2048,112 @@
         "live"
       ],
       "additionalProperties": false
+    },
+    "BindingScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "environment_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "environment_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "environment_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "base_code": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "base_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workshop_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workshop_code": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workshop_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "environment_id",
+        "environment_code",
+        "environment_name",
+        "base_id",
+        "base_code",
+        "base_name",
+        "workshop_id",
+        "workshop_code",
+        "workshop_name"
+      ],
+      "if": {
+        "properties": {
+          "base_id": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "workshop_id": {
+            "type": "null"
+          }
+        }
+      }
     }
   },
   "anyOf": [

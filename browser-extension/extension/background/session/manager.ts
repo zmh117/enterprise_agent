@@ -4,6 +4,7 @@ import { active, CHANNELS, now, SCHEMA_VERSION, terminal, uuid, bytes, type Blob
 import { parsePolicy, originOf, pageAllowed, supportedUrl, revokedHostMatches } from '../../../shared/policy';
 import { cleanText, cleanUrl, cleanValue, cleanRrweb } from '../../../shared/redaction';
 import { EvidenceDB, Journal } from '../../storage/database';
+import { observeWorkerTask } from '../worker-task';
 import { CaptureGate, newTarget } from './gate';
 import { LineageTracker } from '../lineage/lineage';
 import { FragmentAssembler } from './fragments';
@@ -746,8 +747,10 @@ export class SessionManager implements DebugHost {
   private async badge() {
     const recording = this.recording && active(this.recording.state);
     const count = recording ? [...this.targets.values()].filter(t => t.accepting && t.lifecycle === 'OPEN').length : 0;
-    await chrome.action.setBadgeText({ text: recording ? String(count) : '' });
-    await chrome.action.setBadgeBackgroundColor({ color: recording ? '#c33e33' : '#526273' });
+    await observeWorkerTask('更新采集图标', Promise.all([
+      chrome.action.setBadgeText({ text: recording ? String(count) : '' }),
+      chrome.action.setBadgeBackgroundColor({ color: recording ? '#c33e33' : '#526273' }),
+    ]));
   }
   async retrySave() { await this.stopping?.catch(() => {}); await this.journal.retry(); this.lastCaptureError = ''; this.stopping = undefined; if (!terminal(this.recording.state)) await this.stop(this.recording.stopReason ?? 'storage_failure', this.stopFinalState); }
 }

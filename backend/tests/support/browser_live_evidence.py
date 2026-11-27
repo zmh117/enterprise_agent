@@ -167,14 +167,14 @@ def query_transport(monkeypatch):
 
 
 def query_clients(c, client, paths, env, base, shops, instant):
-    def page(who, shop, rid, path):
+    def page(who, shop, rid, path, *, environment_only=False):
         prefix, h = paths[who]
         rule = {"origin": "https://mes.invalid", "path": path}
         body = {
             "rule": rule,
             "environment_id": env["id"],
-            "base_id": base["id"],
-            "workshop_id": shops[shop]["id"],
+            "base_id": None if environment_only else base["id"],
+            "workshop_id": shops[shop]["id"] if shop is not None else None,
             "expected_revision": 0,
         }
         saved = client.put(prefix + "/workshop-bindings", headers=h, json=body)
@@ -283,9 +283,34 @@ def verify_diagnostic_context(c, job, tools):
     bound = c.agent_repository.get_job(job)
     prompts = builder._recording_context(bound, [*tools, "query_loki", "knowledge_search"])
     assert any("request_id 或 trace_id" in p and "已发布日志资源" in p for p in prompts)
+    assert any("未选择的层级只匹配空值" in p for p in prompts)
     assert any("运行版本未知" in p and "SVN revision" in p for p in prompts)
     assert any("日志无命中" in p and "时间相近不足以归因" in p for p in prompts)
     assert all("query_loki" not in p for p in builder._recording_context(bound, list(tools)))
+
+
+def verify_partial_scopes(c, env, base, rid, action, page, event, question):
+    from app.modules.channel.browser import live_query
+
+    # All three levels share an owner, application, environment and recording.
+    env_page = page(0, None, rid, "/environment", environment_only=True)
+    base_page = page(0, None, rid, "/base")
+    env_event, _ = event(env_page, action)
+    base_event, _ = event(base_page, action)
+    for target, expected, base_code in [
+        (env_page, env_event, ""),
+        (base_page, base_event, base["code"]),
+    ]:
+        scoped_job = question(target)
+        route = c.agent_repository.get_job(scoped_job).routing_context
+        assert (route["environment"], route["base"], route["workshop"]) == (
+            env["code"],
+            base_code,
+            "",
+        )
+        for mode in ("page", "recording", "today"):
+            result = live_query.run(c, scoped_job, 0, "search_recording", {"scope": mode})
+            assert [hit["event_id"] for hit in result["hits"]] == [expected]
 
 
 def verify_live_queries(api, client, app, password, headers, monkeypatch):
@@ -306,9 +331,10 @@ def verify_live_queries(api, client, app, password, headers, monkeypatch):
     B = page(0, 1, rid, "/b")
     earlier = page(0, 0, uuid4().hex, "/earlier")
     other = page(2, 0, uuid4().hex, "/c")
-    separate_app = page(1, 0, uuid4().hex, "/c")
+    separate_app = page(1, 0, uuid4().hex, "/other-app")
     action = {"kind": "action", "action": "click", "element": "button", "node_id": 17}
     ids = [event(t, action)[0] for t in (C, A, B, earlier, other, separate_app)]
+    verify_partial_scopes(c, env, base, rid, action, page, event, question)
     event(C, action, instant + 10000)
     job = question(C)
     other_job = question(other)

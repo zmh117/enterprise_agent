@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionManager } from '../extension/background/session/manager';
+import { observeWorkerTask } from '../extension/background/worker-task';
 import { DEFAULT_POLICY, parsePolicy, revokedHostMatches } from '../shared/policy';
 import { captureHealth } from '../shared/capture-health';
 import { createPackage, validatePackage } from '../extension/export/package';
@@ -27,6 +28,28 @@ async function setup(options: { denied?: number[]; missing?: number[]; networkFa
   const settled = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
   return { manager, command, settled, async close() { if (manager.recording) { await manager.stop(); await manager.journal.flush(); await manager.db.deleteRecording(manager.recording.recordingId); } (globalThis as any).chrome = previous; } };
 }
+
+test('后台停止时的图标更新不阻断恢复，存储恢复错误仍传给调用方', async () => {
+  const h = await setup();
+  try {
+    chrome.action.setBadgeText = async () => { throw new Error('No SW'); };
+    const recovering = new SessionManager();
+    await recovering.ready;
+    assert.equal(recovering.status().recording, null);
+    chrome.storage.local.get = async () => { throw new Error('storage failed'); };
+    const failed = new SessionManager().ready;
+    const diagnostics = [];
+    const log = console.error;
+    try {
+      console.error = (...args) => { diagnostics.push(args); };
+      await observeWorkerTask('恢复离线录制', failed);
+      assert.equal(diagnostics.length, 1);
+      await assert.rejects(failed, /storage failed/);
+      await observeWorkerTask('恢复离线录制', Promise.reject(new Error('No SW')));
+      assert.equal(diagnostics.length, 1);
+    } finally { console.error = log; }
+  } finally { await h.close(); }
+});
 
 test('部分根权限失败保留有效根，全根失效保存 FAILED 诊断，格式错误不创建会话', async () => {
   const h = await setup({ denied: [2], missing: [3] });

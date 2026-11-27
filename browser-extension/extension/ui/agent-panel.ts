@@ -1,7 +1,8 @@
+import {fetchSiteCatalog, type SiteCatalog} from '../site-rules';
 import { workshopLabel, type WorkshopScope, type WorkshopClient, type WorkshopBinding } from '../../shared/workshop';
 import { Platform } from '../platform';
 export { Platform } from '../platform';
-import { recordingLabel, type EnvironmentCatalog, type EnvironmentOption } from '../../shared/recording-environment';
+import { recordingLabel, type EnvironmentOption } from '../../shared/recording-environment';
 import { EvidenceDB } from '../storage/database';
 import { terminal } from '../../shared/contracts';
 import {
@@ -24,7 +25,7 @@ import {
   type Receipt,
 } from './agent-chat';
 
-type App = { id: string; name: string; scope_ref: string; environments?: EnvironmentOption[]; workshop_scopes?: WorkshopScope[] };
+type App = { id: string; name: string; scope_ref: string; environments?: EnvironmentOption[]; workshop_scopes?: WorkshopScope[]; binding_scopes?: WorkshopScope[] };
 const el = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 
@@ -32,7 +33,8 @@ export function explain(e: unknown) {
   const messages: Record<string, string> = {
     login_required: '请重新登录以继续',
     consent_required: '请登录并确认插件授权',
-    access_denied: '已无权读取此任务或应用',
+    access_denied: '当前账号没有对应的应用或数据范围权限',
+    binding_conflict: '该地址已有匹配规则，或规则已在其他页面修改。请刷新后编辑已有规则。',
     not_found: '资源已不可用，请重新选择录制或解除绑定',
     upload_expired: '暂存已到期，请重新确认共享',
     manifest_conflict: '分片或源记录与已确认清单不匹配',
@@ -40,7 +42,7 @@ export function explain(e: unknown) {
     scope_changed: '应用配置已更新，请重新连接并选择应用',
     account_changed: '账号已切换，请重新连接',
     message_conflict: '同一问题的提交内容已改变',
-    conversation_scope_changed:'该会话属于其他车间，请在当前页新建对话',
+    conversation_scope_changed:'该会话属于其他绑定范围，请在当前页新建对话',
     application_unavailable: '应用暂时不可用，请稍后重试。如果持续出现，请管理员检查应用配置和 Agent Runtime 的就绪状态。',
   };
   return e instanceof PlatformError
@@ -56,7 +58,7 @@ export interface AgentTimeline {
   questions(rows: {job_id: string; question: string; asked_at?: string}[], prepend: boolean): void;
 }
 
-export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, onEnvironments?: (catalog: EnvironmentCatalog | null) => void, onWorkshop?: (client: WorkshopClient | null) => void) {
+export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, onSites?: (clients: WorkshopClient[], catalog?: SiteCatalog) => void) {
   const input = el<HTMLInputElement>('agent-origin'),
     applications = el<HTMLSelectElement>('agent-app');
   const question = el<HTMLTextAreaElement>('agent-question'),
@@ -363,9 +365,8 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     app = undefined;
     pending = undefined;
     catalog = [];
-    onWorkshop?.(null);
+    onSites?.([]);
     el('agent-workshop').hidden = true;
-    onEnvironments?.(null);
     originalQuestion = undefined;
     history = { conversation: '', jobs: [], awaiting: [] };
     applications.replaceChildren();
@@ -578,7 +579,6 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     const current = app;
     const currentWorkshop=await showWorkshop(p,current,signal);
     signal.throwIfAborted();
-    publishEnvironments(p, catalog);
     const key=chatKey(p,current,currentWorkshop,explicitRecording);
     storageKey = key;
     await chrome.storage.local.set({
@@ -613,21 +613,24 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
   function workshopClient(p: Platform, selected: App, signal: AbortSignal): WorkshopClient {
     const path = '/applications/' + encodeURIComponent(selected.id) + '/workshop-bindings';
     const headers = {'X-Application-Scope': selected.scope_ref, 'Content-Type': 'application/json'};
+    async function write(url: string, init: RequestInit) {
+      try { return await p.request(url,{...init,headers,signal}); }
+      catch (e) { throw new Error(explain(e)); }
+    }
     return {
       destination:{origin:p.origin, account, app:selected.id, scopeRef:selected.scope_ref},
       key: JSON.stringify(['workshop-bindings', p.origin, account, selected.id]),
-      name: selected.name, choices: selected.workshop_scopes ?? [],
+      name: selected.name, choices: selected.binding_scopes ?? selected.workshop_scopes ?? [],
       list: async () => (await p.request(path, {headers, signal})).json(),
-      save: async (rule, scope, revision) => (await p.request(path, {method:'PUT', headers, signal,
+      save: async (rule, scope, revision, floating, previous_id) => (await write(path, {method:'PUT',
         body:JSON.stringify({rule, environment_id:scope.environment_id, base_id:scope.base_id,
-          workshop_id:scope.workshop_id, expected_revision:revision})})).json(),
-      revoke: async b => { await p.request(path + '/' + encodeURIComponent(b.id) + '?expected_revision=' + b.revision,
-        {method:'DELETE', headers, signal}); },
+          workshop_id:scope.workshop_id, floating, previous_id, expected_revision:revision})})).json(),
+      revoke: async b => { await write(path + '/' + encodeURIComponent(b.id) + '?expected_revision=' + b.revision, {method:'DELETE'}); },
     };
   }
   function chatKey(p:Platform,current:App,bound?:WorkshopBinding,explicitRecording?:string) {
     const parts=['agent-chat',p.origin,account,current.id];
-    if (frameTicket) parts.push(bound?.workshop_id ?? 'unbound-page');
+    if (frameTicket) parts.push(bound?.workshop_id ?? JSON.stringify(bound ? [bound.environment_id,bound.base_id] : []));
     if (explicitRecording) parts.push('recording',explicitRecording);
     return JSON.stringify(parts);
   }
@@ -637,8 +640,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
   async function showWorkshop(p: Platform, current: App, signal: AbortSignal) {
     const request = ++workshopRequest;
     const label = el('agent-workshop');
-    const client = current.workshop_scopes ? workshopClient(p, current, signal) : null;
-    await onWorkshop?.(client);
+    const client = (current.binding_scopes || current.workshop_scopes) ? workshopClient(p, current, signal) : null;
     if (!frameTicket) return;
     availableBindings = undefined;
     displayedBinding = undefined;
@@ -647,7 +649,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       return;
     }
     label.hidden = false;
-    label.textContent = '正在核对页面车间';
+    label.textContent = '正在核对页面绑定范围';
     try {
       const bindings = await client.list();
       const result = await chrome.runtime.sendMessage({type:'float.workshop', ticket:frameTicket, bindings,destination:client.destination});
@@ -656,34 +658,44 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       if (!result?.ok) throw new Error('发送页已变化');
       availableBindings=bindings;
       displayedBinding=result.binding;
-      const scope = client.choices.find(s => s.workshop_id === result?.binding?.workshop_id);
-      label.textContent = (scope ? workshopLabel(scope) : '该页面尚未绑定车间') +
+      const scope = client.choices.find(s => s.environment_id === result.binding?.environment_id && s.base_id === result.binding?.base_id && s.workshop_id === result.binding?.workshop_id);
+      label.textContent = (scope ? workshopLabel(scope) : '该页面尚未绑定范围') +
         (result?.captureState === 'paused' ? ' · 页面采集已暂停，请刷新或重新打开' : '');
       return result.binding as WorkshopBinding|undefined;
     } catch (error) {
       if (signal.aborted || request !== workshopRequest) throw error;
-      label.textContent='页面车间暂不可用';
-      throw new Error('未能核对发送页的车间，请重新连接后再发送');
+      label.textContent='页面绑定范围暂不可用';
+      throw new Error('未能核对发送页的绑定范围，请重新连接后再发送');
     }
   }
   if (frameTicket) {
-    const update = () => {
-      const p=platform,current=app,signal=selection?.signal;
-      if (p && current && signal && !signal.aborted) void showWorkshop(p,current,signal).then(bound=>{
-        if (!signal.aborted && storageKey!==chatKey(p,current,bound,binding || undefined)) return selectApp();
-      }).catch(()=>{});
+    const update = async () => {
+      const p = platform, current = app, signal = selection?.signal;
+      if (!p || !current || !signal || signal.aborted) return;
+      try {
+        const next = await frameApplication();
+        if (signal.aborted) return;
+        if (next !== current.id) { applications.value = next; await selectApp(); return; }
+        const bound = await showWorkshop(p,current,signal);
+        if (!signal.aborted && storageKey !== chatKey(p,current,bound,binding || undefined)) await selectApp();
+      } catch { /* The sending path rechecks the document, binding and revision. */ }
     };
     chrome.runtime.onMessage.addListener(message => { if (message.type === 'float.pageChanged') update(); });
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && Object.keys(changes).some(key => key.startsWith('["workshop-bindings",'))) update();
+      if (area === 'local' && Object.keys(changes).some(key => key.startsWith('["site-rules",'))) update();
     });
   }
-  function publishEnvironments(p: Platform, apps: App[]) {
-    const options = new Map(apps.flatMap(a => (a.environments ?? []).map(e => [e.code, e] as const)));
-    onEnvironments?.({
-      scope: JSON.stringify([p.origin, account]),
-      options: [...options.values()].sort((a, b) => a.code.localeCompare(b.code)),
-    });
+  let catalogRead = 0;
+  async function publishRules(p: Platform, apps: App[]) {
+    const read = ++catalogRead;
+    const clients = apps.filter(a => a.binding_scopes || a.workshop_scopes).map(a => workshopClient(p,a,p.signal));
+    const fresh = await fetchSiteCatalog(p.origin,account,clients,p.signal);
+    if (read === catalogRead && p === platform) onSites?.(clients,fresh);
+  }
+  async function frameApplication() {
+    const result = await chrome.runtime.sendMessage({type:'float.destination',ticket:frameTicket});
+    if (!result?.app || !catalog.some(a => a.id === result.app)) throw new Error('当前页面的应用绑定已变化，请刷新页面');
+    return result.app as string;
   }
   async function connect(interactive: boolean) {
     reset();
@@ -724,9 +736,8 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
             send.disabled = true;
             question.value = '';
             historyPage?.connect(undefined, []);
-            onWorkshop?.(null);
+            onSites?.([]);
             el('agent-workshop').hidden = true;
-            onEnvironments?.(null);
             status.textContent = '账号已变更，请重新登录';
           }
         },
@@ -755,6 +766,8 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       p.signal.throwIfAborted();
       if (typeof choice === 'string' && catalog.some((a) => a.id === choice))
         applications.value = choice;
+      await publishRules(p,apps);
+      if (frameTicket) { applications.value = await frameApplication(); applications.disabled = true; }
       await selectApp();
     } catch (e) {
       if (generation === started) {
@@ -797,12 +810,12 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     let submitting = false;
     try {
       if (frameTicket && !pending && binding==null) {
-        if (!availableBindings) throw new Error('请等待当前页面的车间核对完成');
+        if (!availableBindings) throw new Error('请等待当前页面的绑定范围核对完成');
         const resolved=await chrome.runtime.sendMessage({type:'float.workshop',ticket:frameTicket,
           destination:workshopClient(p,current,signal).destination,bindings:availableBindings});
         if (!resolved?.ok || resolved.binding?.id !== displayedBinding?.id ||
             resolved.binding?.revision !== displayedBinding?.revision || chatKey(p,current,resolved.binding)!==key)
-          throw new Error('发送页已变化，请核对当前车间后再发送');
+          throw new Error('发送页已变化，请核对当前绑定范围后再发送');
         if (resolved.page) ref.page=resolved.page;
         ref.recording=null;
       }
@@ -898,18 +911,9 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
   );
   return async function refreshEnvironments() {
     const p = platform;
-    if (!p || !account || !onEnvironments) return;
-    try {
-      const apps: App[] = await (await p.request('/applications', {})).json();
-      p.signal.throwIfAborted();
-      const selected = apps.find(candidate => candidate.id === app?.id);
-      if (selected && selection) {
-        publishEnvironments(p, apps);
-        await showWorkshop(p, selected, selection.signal);
-      }
-    } catch (error) {
-      if (p === platform) onEnvironments(null);
-      throw error;
-    }
+    if (!p || !account || !onSites) return;
+    const apps: App[] = await (await p.request('/applications', {})).json();
+    p.signal.throwIfAborted();
+    await publishRules(p, apps);
   };
 }

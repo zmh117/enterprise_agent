@@ -1,7 +1,6 @@
 import { commonEnvironment, recordingLabel } from '../../shared/recording-environment';
 import type { SessionManager } from '../background/session/manager';
 import { workshopSettings } from './workshop-settings';
-import { floatSettings } from './float-settings';
 import { hostPattern } from '../background/float-sites';
 import { setupAgentPanel } from './agent-panel';
 import { policyForOrigins, parsePolicy } from '../../shared/policy';
@@ -40,15 +39,14 @@ function defaultPolicy() {
     .filter(t => t.id !== undefined && selected.has(t.id) && t.origin).map(t => t.origin!))];
   return policyForOrigins(origins);
 }
-const siteSettings = floatSettings(selectionChanged);
-const workshop = workshopSettings();
+const workshop = workshopSettings(selectionChanged, () => refreshEnvironments());
 
 function selectionChanged() {
   if (!directory) return;
   $('selection-count').textContent = `${selected.size} 个已选`;
   updateStartButton();
   const policy = defaultPolicy();
-  const bindings = siteSettings.activeBindings();
+  const bindings = workshop.activeBindings(selected);
   const sites = Object.fromEntries(policy.pageOrigins.map(site => [site, bindings[site] ?? '']));
   const codes = [...new Set(Object.values(sites).filter(Boolean))];
   if (Object.values(sites).includes('')) codes.push('未关联');
@@ -119,7 +117,7 @@ async function refreshDirectory() {
   $('runtime').textContent = 'v' + d.extensionVersion;
   renderDirectory();
   workshop.pages(tabs);
-  await siteSettings.refresh(tabs.map(t => t.origin).filter((s): s is string => !!s));
+  selectionChanged();
 }
 function drawStatus(s: any) {
   if (viewed && s.recording?.recordingId !== viewed) return;
@@ -183,7 +181,7 @@ async function refreshStatus() {
     $('session').hidden = true; $('prepare').hidden = true;
     $('status-pill').textContent = '持续采集已启动'; $('status-pill').className = 'pill live';
     $('live-progress').textContent='待传 '+live.pending+' · 已转发待核对 '+live.acknowledged+' · 已核对 '+live.verified;
-    const states:Record<string,string> = {paused:'页面采集已暂停，请刷新或重新打开', unbound:'当前 URL 未绑定车间', baseline:'等待新文档基线', ready:'正在采集'};
+    const states:Record<string,string> = {paused:'页面采集已暂停，请刷新或重新打开', unbound:'当前 URL 未绑定范围', baseline:'等待新文档基线', ready:'正在采集'};
     const select = $<HTMLSelectElement>('live-add-target'), selected = select.value;
     const candidates = (directory?.windows ?? []).flatMap(w=>w.tabs).filter(t=>t.eligible && !live.tabs.some((x:{tabId:number})=>x.tabId===t.id));
     select.replaceChildren(...candidates.map(t=>new Option(t.title || t.origin || '标签',String(t.id))));
@@ -274,21 +272,15 @@ function renderHistory() {
 }
 on('refresh', refreshDirectory);
 on('float-refresh', async () => {
-  const editor=$<HTMLFieldSetElement>('workshop-editor'); editor.disabled=true;
-  try {await Promise.all([refreshDirectory(), refreshEnvironments()]);} finally {editor.disabled=false;}
+  await Promise.all([refreshDirectory(), refreshEnvironments()]);
 });
 $('select-all').addEventListener('change', () =>
   selectTabs(visibleWindows().flatMap(w => w.tabs), $<HTMLInputElement>('select-all').checked));
 $('tab-search').addEventListener('input', renderDirectory);
 $('history-search').addEventListener('input', renderHistory);
-const applicationField = $('agent-app-field');
-const agentToolbar = applicationField.parentElement!;
 function showView() {
   const id = location.hash.slice(1);
   const view = ['records','sites','assistant','conversations'].includes(id) ? id : 'capture';
-  // Both views edit the same application selection and use its existing change handler.
-  const applicationParent = view === 'sites' ? $('workshop-app-slot') : agentToolbar;
-  if (applicationField.parentElement !== applicationParent) applicationParent.prepend(applicationField);
   for (const panel of document.querySelectorAll<HTMLElement>('.view')) panel.hidden = panel.id !== view;
   for (const link of document.querySelectorAll<HTMLAnchorElement>('nav a')) {
     if (link.hash === '#' + view) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current');
@@ -304,7 +296,7 @@ $('record-mode').addEventListener('change', () => {
   $('offline-environment').hidden = continuous;
   $('start-settings').hidden = !continuous;
   $('policy-summary').textContent = continuous
-    ? '按当前账号和车间采集。保留接口业务字段原值，过滤凭据，页面只记录结构和操作。'
+    ? '按当前账号和站点绑定范围采集。保留接口业务字段原值，过滤凭据，页面只记录结构和操作。'
     : '本地保存，仅隐藏登录密码，其他文本保留原值。';
 });
 $('start-settings').addEventListener('click', () => {
@@ -330,18 +322,18 @@ $('start').addEventListener('click', async () => {
   try {
     const policy = parsePolicy(JSON.parse(val('policy')), mode);
     validateSensitiveSelectors(policy, document);
-    const destination = mode === 'continuous' ? workshop.destination() : undefined;
+    const destination = mode === 'continuous' ? workshop.destination(ids) : undefined;
     const patterns = [...policy.pageOrigins, ...policy.apiRules.map(r => r.origin)].map(hostPattern);
     feedback.textContent = '正在确认 Chrome 站点权限…';
     const granted = await chrome.permissions.request({ origins: [...new Set(patterns)] });
     if (destination) {
-      feedback.textContent = granted ? '正在核对页面车间并启动持续采集…' : '正在核对已获授权的标签页…';
+      feedback.textContent = granted ? '正在核对页面绑定范围并启动持续采集…' : '正在核对已获授权的标签页…';
       await rpc('live.start', {destination, ids, policy});
       viewed = null; drafting = false;
       await refreshStatus();
     } else {
       feedback.textContent = '正在启动离线录制…';
-      const session = await rpc('session.start', {recordingId: uuid(), commandId: uuid(), browserRunId: directory!.browserRunId, rootBrowserTabIds: ids, policy, environments: siteSettings.activeBindings()});
+      const session = await rpc('session.start', {recordingId: uuid(), commandId: uuid(), browserRunId: directory!.browserRunId, rootBrowserTabIds: ids, policy, environments: workshop.activeBindings(selected)});
       viewed = null; drafting = false;
       drawStatus(session);
       await history();
@@ -358,7 +350,7 @@ $('start').addEventListener('click', async () => {
 on('stop', async () => { drawStatus(await rpc('session.stop', { recordingId: current!.recordingId, commandId: uuid() })); await history(); });
 on('mark', async () => { await rpc('session.mark', { recordingId: current!.recordingId, commandId: uuid(), browserTabId: Number(val('mark-target')), note: val('mark-note') }); $<HTMLInputElement>('mark-note').value = ''; notice('时间标记已保存。'); });
 on('show-add', async () => { const d = await rpc('scope.list'); const sel = $<HTMLSelectElement>('add-target'); sel.replaceChildren(); for (const w of d.windows) for (const t of w.tabs) if (t.eligible && !targets.some(x => x.browserTabId === t.id && x.accepting)) sel.add(new Option(`${t.title} · ${t.origin}`, String(t.id))); $('add-root').hidden = false; });
-on('add', async () => { drawStatus(await rpc('session.add_root', { recordingId: current!.recordingId, commandId: uuid(), scopeVersion: current!.scopeVersion, browserTabId: Number(val('add-target')), environments: siteSettings.activeBindings() })); $('add-root').hidden = true; });
+on('add', async () => { drawStatus(await rpc('session.add_root', { recordingId: current!.recordingId, commandId: uuid(), scopeVersion: current!.scopeVersion, browserTabId: Number(val('add-target')), environments: workshop.activeBindings([Number(val('add-target'))]) })); $('add-root').hidden = true; });
 on('retry-save', async () => { await rpc('storage.retry'); await refreshStatus(); });
 on('preview', () => preview(current!.recordingId));
 on('export', () => exportZip(current!.recordingId));
@@ -372,4 +364,4 @@ $('request-select').addEventListener('change', () => {
 void Promise.all([refreshDirectory(), refreshStatus(), history()]).catch(e => notice(String(e)));
 setInterval(() => { if (!busy) void refreshStatus().catch(e => notice(String(e))); }, 1500);
 
-const refreshEnvironments = setupAgentPanel(undefined, undefined, siteSettings.setCatalog, workshop.client);
+const refreshEnvironments = setupAgentPanel(undefined, undefined, workshop.setCatalog);

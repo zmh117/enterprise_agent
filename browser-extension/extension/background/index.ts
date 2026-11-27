@@ -1,21 +1,24 @@
-import {localPageContext} from '../site-rules';
+import {localPageContext,localPageRule} from '../site-rules';
 import {LiveCapture} from './live-capture';
 import {parsePolicy, policyForOrigins, revokedHostMatches} from '../../shared/policy';
 import { bindingForPage } from '../../shared/workshop';
-import { floatAccess, floatHostPage, listenForFloatSites, updateFloatSites } from './float-sites';
+import { floatAccess, floatHostPage, listenForFloatSites } from './float-sites';
 import { rememberPlatform } from '../../shared/platform-traffic';
 import { SessionManager } from './session/manager';
+import { observeWorkerTask } from './worker-task';
 import { cleanText } from '../../shared/redaction';
 import { active, now, terminal } from '../../shared/contracts';
 
 const manager = new SessionManager();
 const live = new LiveCapture();
+void observeWorkerTask('恢复离线录制', manager.ready);
+void observeWorkerTask('恢复持续采集', live.ready);
 listenForFloatSites();
-chrome.alarms.onAlarm.addListener(alarm=>{if (alarm.name==='mes-live-delivery') void live.ready.then(()=>live.deliver()).catch(()=>{});});
+chrome.alarms.onAlarm.addListener(alarm=>{if (alarm.name==='mes-live-delivery') liveGuard(()=>live.deliver());});
 const ensureDeliveryAlarm=async()=>{if (!await chrome.alarms.get('mes-live-delivery')) await chrome.alarms.create('mes-live-delivery',{periodInMinutes:0.5});};
-chrome.runtime.onStartup.addListener(()=>void ensureDeliveryAlarm());
-chrome.runtime.onInstalled.addListener(()=>void ensureDeliveryAlarm());
-const liveGuard = (fn:()=>Promise<unknown>) => {void live.ready.then(fn).catch(()=>{});};
+// Alarms can be cleared or their creation interrupted. Reconcile once per worker start.
+void observeWorkerTask('设置持续采集定时任务', ensureDeliveryAlarm());
+const liveGuard = (fn:()=>void | Promise<unknown>) => {void observeWorkerTask('处理持续采集事件', live.ready.then(fn));};
 const captureLock = <T>(task: () => Promise<T>) => navigator.locks.request('mes-capture-start',task);
 chrome.tabs.onRemoved.addListener(id=>liveGuard(()=>captureLock(()=>live.closed(id))));
 function liveNavigation(d:{tabId:number;frameId:number;documentId:string;url:string}, sameDocument:boolean) {
@@ -24,11 +27,11 @@ function liveNavigation(d:{tabId:number;frameId:number;documentId:string;url:str
 chrome.webNavigation.onCommitted.addListener(d=>liveNavigation(d,false));
 chrome.webNavigation.onHistoryStateUpdated.addListener(d=>liveNavigation(d,true));
 chrome.webNavigation.onReferenceFragmentUpdated.addListener(d=>liveNavigation(d,true));
-chrome.storage.onChanged.addListener((changes,area)=>{if (area==='local' && (changes.agentOrigin || changes.agentActiveAccount || changes.agentFloatSites ||
+chrome.storage.onChanged.addListener((changes,area)=>{if (area==='local' && (changes.agentOrigin || changes.agentActiveAccount ||
   Object.keys(changes).some(key=>key.startsWith('["workshop-bindings",')))) liveGuard(()=>captureLock(()=>live.settingsChanged(changes)));});
 chrome.permissions.onRemoved.addListener(p=>liveGuard(()=>captureLock(()=>live.revoked(url=>(p.origins ?? []).some(pattern=>revokedHostMatches(pattern,url))))));
-chrome.tabs.onRemoved.addListener(id => void chrome.storage.session.remove('float-ticket:' + id));
-const guard = (fn: () => void | Promise<unknown>) => { void manager.ready.then(fn).catch(e => console.error('Browser collector:', cleanText(String(e)))); };
+chrome.tabs.onRemoved.addListener(id => void observeWorkerTask('清理浮窗授权', chrome.storage.session.remove('float-ticket:' + id)));
+const guard = (fn: () => void | Promise<unknown>) => { void observeWorkerTask('处理录制事件', manager.ready.then(fn)); };
 
 // Synchronous top-level registration: no attach is possible before these listeners exist.
 chrome.tabs.onCreated.addListener(tab => { const seq = manager.tick(); const at = now(); guard(() => manager.created(tab, seq, at)); });
@@ -49,13 +52,13 @@ chrome.webNavigation.onErrorOccurred.addListener(d => guard(() => {
   const t = manager.targets.get(d.tabId);
   if (t && active(manager.recording?.state)) manager.diagnostic('navigation_error', cleanText(d.error), t, 'page');
 }));
-chrome.debugger.onEvent.addListener((source,method,params)=>{void live.ready.then(()=>live.debugEvent(source,method,params ?? {}));});
-chrome.debugger.onDetach.addListener((source,reason)=>{if (source.tabId!==undefined) void live.ready.then(()=>live.detached(source.tabId!,reason));});
+chrome.debugger.onEvent.addListener((source,method,params)=>liveGuard(()=>live.debugEvent(source,method,params ?? {})));
+chrome.debugger.onDetach.addListener((source,reason)=>{if (source.tabId!==undefined) liveGuard(()=>live.detached(source.tabId!,reason));});
 chrome.debugger.onEvent.addListener((source, method, params) => guard(() => manager.debugger?.event(source, method, params ?? {})));
 chrome.debugger.onDetach.addListener((source, reason) => guard(() => manager.debugger?.detached(source, reason)));
 chrome.permissions.onAdded.addListener(() => guard(() => manager.refreshPermissions()));
 chrome.permissions.onRemoved.addListener(removed => guard(() => manager.permissionsRemoved(removed)));
-chrome.action.onClicked.addListener(() => { void chrome.tabs.create({ url: chrome.runtime.getURL('control.html') }); });
+chrome.action.onClicked.addListener(() => { void observeWorkerTask('打开控制台', chrome.tabs.create({ url: chrome.runtime.getURL('control.html') })); });
 
 function controlSender(sender: chrome.runtime.MessageSender) {
   return sender.id === chrome.runtime.id && sender.url?.split('?')[0]?.split('#')[0] === chrome.runtime.getURL('control.html');
@@ -87,7 +90,7 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
         if (m.type === 'float.captureStart') {
           if (manager.recording && !terminal(manager.recording.state)) throw new Error('请先结束离线录制');
           const context = await localPageContext(top.url);
-          if (!context) throw new Error('请先在站点设置绑定本页');
+          if (!context?.binding.floating) throw new Error('请先在站点设置绑定本页');
           await live.startPage(id,{documentId:top.documentId,binding:context.binding},context.destination,
             policyForOrigins([new URL(top.url).origin]));
         } else if (m.type === 'float.captureStop') {
@@ -97,6 +100,20 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
         return {ok:true, capture:live.pageStatus(id)};
       };
       return m.type === 'float.captureStatus' ? command() : captureLock(command);
+    }
+    if (m.type === 'float.openControl') {
+      if ((m.view !== 'history' && m.view !== 'console') ||
+          typeof m.ticket !== 'string' || !await floatAccess(sender, m.ticket)) return {ok:false};
+      if (m.view === 'history') {
+        await chrome.tabs.create({url: chrome.runtime.getURL('control.html#conversations'), windowId: sender.tab?.windowId});
+      } else {
+        await chrome.runtime.openOptionsPage();
+      }
+      return {ok:true};
+    }
+    if (m.type === 'float.destination' && typeof m.ticket === 'string' && sender.tab?.id && await floatAccess(sender,m.ticket)) {
+      const top = await chrome.webNavigation.getFrame({tabId:sender.tab.id,frameId:0});
+      return {app:top && (await localPageRule(top.url))?.app};
     }
     if (m.type === 'float.workshop') {
       const asked=Date.now(), tabId=sender.tab?.id;
@@ -108,6 +125,9 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
       const latest = await chrome.webNavigation.getFrame({tabId, frameId:0});
       if (latest?.documentId !== top.documentId || latest.url !== top.url) return {ok:false};
       const binding=bindingForPage(top.url,m.bindings,m.destination.origin);
+      const actual = await localPageRule(top.url);
+      if (!binding || !actual || actual.app !== m.destination.app || actual.id !== binding.id ||
+          actual.revision !== binding.revision || actual.floating === false) return {ok:false};
       return {ok:true,captureState:live.tabState(tabId),binding,
         page:binding?live.questionPage(tabId,top.documentId,binding,m.destination,asked):null};
     }
@@ -125,10 +145,6 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
         if (!origins.includes(m.origin)) await chrome.storage.local.set({agentPlatformOrigins: [...origins, m.origin]});
       });
       return { ok: true };
-    }
-    if (m.type === 'float.sites.update') {
-      await updateFloatSites(m.add, m.remove, m.binding);
-      return {ok: true};
     }
     validateCommand(m);
     switch (m.type) {

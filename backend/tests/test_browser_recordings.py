@@ -873,8 +873,12 @@ def test_workshop_binding_versions_overlap_and_revocation(platform, monkeypatch)
     def put(**values):
         return client.put(path, headers=headers, json={**body, **values})
 
+    assert put(workshop_id=None, base_id=None).status_code == 403
     saved = put().json()
     assert saved["revision"] == 1
+    hidden = put(expected_revision=1, floating=False).json()
+    assert hidden["revision"] == 1 and hidden["floating"] is False
+    assert put(expected_revision=1, floating=True).json()["revision"] == 1
     assert put(workshop_id=second).status_code == 409
     assert put(rule={**rule, "query": {}}).status_code == 409
     assert put(rule={**rule, "query": {"shop": "package"}}, workshop_id=second).status_code == 200
@@ -938,6 +942,7 @@ def test_workshop_inheritance_reserves_inaccessible_routes_only_on_visible_origi
     def row(site, path, shop):
         return {
             "id": shop + path,
+            "application_id": "app",
             "revision": 1,
             "enabled": 1,
             "environment_id": "e",
@@ -949,11 +954,11 @@ def test_workshop_inheritance_reserves_inaccessible_routes_only_on_visible_origi
     site = "https://mes.invalid"
     visible, child = row(site, "/", "A"), row(site, "/users", "A")
     hidden, other = row(site, "/agent-profiles", "B"), row("https://other.invalid", "/", "B")
-    bindings = routing_bindings([hidden, visible, other, child], {"A"})
+    bindings = routing_bindings([hidden, visible, other, child], {("e", "b", "A")}, "app")
     assert [b["id"] for b in bindings] == [visible["id"], child["id"]]
     assert bindings[0]["reserved_paths"] == [{"path": "/agent-profiles", "hash_path": ""}]
     assert "reserved_paths" not in bindings[1]
-    assert routing_bindings([hidden, other], {"A"}) == []
+    assert routing_bindings([hidden, other], {("e", "b", "A")}, "app") == []
 
 
 def verify_questions_across_rebinding(
