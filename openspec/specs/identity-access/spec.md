@@ -456,6 +456,17 @@ File Principal SHALL 使用专用签发与验证路径，绑定用户、租户�
 - **WHEN** 授权管理员查看决策 trace
 - **THEN** 获得内部用户、角色来源、资源动作、目标范围和安全拒绝原因，不获得可恢复凭据或原始敏感数据
 
+### Requirement: 人员与角色目录支持归档
+系统 SHALL 允许管理员归档停用的人员和自定义角色，使用当前修订校验并保留身份、授权关系与审计历史。默认列表和分页计数 MUST 排除归档记录。管理员显式筛选「已归档」后可只读查看。
+
+#### Scenario: 归档受保护或在用的身份
+- **WHEN** 人员仍是启用 Webhook 的执行人或启用应用的负责人，或角色仍有启用人员的有效成员关系
+- **THEN** 系统拒绝归档。系统角色、受保护角色和服务账号也不能通过这两个目录归档。
+
+#### Scenario: 再次编辑已归档记录
+- **WHEN** 管理员尝试恢复已归档人员或角色，或修改其身份、授权或成员关系
+- **THEN** 系统拒绝写入并保留原记录
+
 ### Requirement: SVN 内部结果读取必须使用控制面专属服务身份
 内部 SVN 结果端点 SHALL 只接受平台签发的短期 Service Principal，固定 sub/azp 为 code-knowledge-control-plane、aud 为 code-svn-result、scope 为 internal:code-svn:result:read，沿用平台公开 JWKS 和不超过 300 秒 TTL。API 使用自身已持有的签名器生成固定角色 Token，不增加可指定角色的签发接口；Runtime、knowledge-mcp、knowledge-sync 不得获得签名私钥或该角色 bootstrap 凭据。服务身份不替代当前 Job、来源、发布、占用和执行代次核验，也不赋予 SVN 仓库写权限。
 

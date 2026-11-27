@@ -18,8 +18,12 @@ import {
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import { apiRequest } from "@/shared/api/api-client"
 
-export async function listAgentProfiles() {
-  return agentListResponseSchema.parse(await apiRequest("/api/admin/agents"))
+export async function listAgentProfiles(archived = false) {
+  return agentListResponseSchema.parse(
+    await apiRequest(
+      archived ? "/api/admin/agents?archived=true" : "/api/admin/agents"
+    )
+  )
 }
 
 export async function createAgentProfile(input: AgentCreateInput) {

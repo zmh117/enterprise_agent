@@ -18,9 +18,11 @@ import {
 import { parseProviderContractCatalog } from "@/contexts/platform-governance/domain/provider-contract"
 import { apiRequest } from "@/shared/api/api-client"
 
-export async function listPlatformSecrets() {
+export async function listPlatformSecrets(archived = false) {
   return secretListResponseSchema.parse(
-    await apiRequest("/api/platform/secrets")
+    await apiRequest(
+      archived ? "/api/platform/secrets?archived=true" : "/api/platform/secrets"
+    )
   ).secrets
 }
 
@@ -61,9 +63,13 @@ export async function getPlatformSecretUsage(code: string) {
   ).usage
 }
 
-export async function listGovernedResources() {
+export async function listGovernedResources(archived = false) {
   return resourceListResponseSchema.parse(
-    await apiRequest("/api/platform/resources")
+    await apiRequest(
+      archived
+        ? "/api/platform/resources?lifecycle_status=archived"
+        : "/api/platform/resources"
+    )
   ).resources
 }
 

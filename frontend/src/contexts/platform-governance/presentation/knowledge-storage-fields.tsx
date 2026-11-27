@@ -20,7 +20,7 @@ export function KnowledgeStorageFields({
   const { storage, setStorage, probe } = control
   const secrets = useQuery({
     queryKey: ["platform-governance", "secrets"],
-    queryFn: listPlatformSecrets,
+    queryFn: () => listPlatformSecrets(),
     enabled: !disabled && storage !== null,
     retry: false,
   })

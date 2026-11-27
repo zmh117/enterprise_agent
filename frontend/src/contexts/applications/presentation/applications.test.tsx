@@ -34,6 +34,35 @@ function response(body: unknown, status = 200) {
 }
 
 describe("Business Application workbench", () => {
+  it("preserves create input until the user confirms discard", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({ items: [] })
+    )
+    renderWithQuery(<ApplicationsPage />)
+    const open = screen.getByRole("button", { name: "新建应用" })
+    fireEvent.click(open)
+    const dialog = await screen.findByRole("dialog", { name: "新建业务应用" })
+    const name = within(dialog).getByLabelText("应用名称")
+    fireEvent.change(name, { target: { value: "待创建的应用" } })
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }))
+
+    const confirmation = await screen.findByRole("alertdialog")
+    const keep = within(confirmation).getByRole("button", { name: "继续填写" })
+    await waitFor(() => expect(keep).toHaveFocus())
+    fireEvent.click(keep)
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull())
+    expect(name).toHaveValue("待创建的应用")
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }))
+    fireEvent.click(await screen.findByRole("button", { name: "放弃填写" }))
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    fireEvent.click(open)
+    expect(await screen.findByLabelText("应用名称")).toHaveValue("")
+    fireEvent.click(screen.getByRole("button", { name: "取消" }))
+    expect(screen.queryByRole("alertdialog")).toBeNull()
+    expect(screen.queryByRole("dialog")).toBeNull()
+  })
+
   it("renders real list data and never falls back to application fixtures", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       response({
@@ -481,6 +510,7 @@ describe("Business Application workbench", () => {
                 "task_workspace_list_files",
                 "file_get_metadata",
                 "file_prepare_materialization",
+                "file_deliver_version",
               ].map((tool_identifier) => ({
                 server_code: "file-service",
                 tool_identifier,
@@ -644,20 +674,29 @@ describe("Business Application workbench", () => {
     expect(
       screen.getByText("为当前钉钉用户准备一个本人待办。")
     ).toBeInTheDocument()
-    expect(screen.getByText(/dingtalk-mcp · 写入/)).toBeInTheDocument()
+    const dingtalkGroup = screen.getByRole("group", { name: "dingtalk-mcp" })
+    expect(within(dingtalkGroup).getByText("写入")).toBeInTheDocument()
     expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(mcpTool)
     expect(mcpTool).toBeChecked()
     const dingtalkTool = screen.getByLabelText(
       "选择 MCP Tool dingtalk_create_todo"
     )
-    fireEvent.click(dingtalkTool)
+    fireEvent.click(within(dingtalkGroup).getByRole("button", { name: "全选 dingtalk-mcp" }))
     expect(dingtalkTool).toBeChecked()
     const requiredFileTool = screen.getByLabelText(
       "选择 MCP Tool file_prepare_materialization"
     )
     expect(requiredFileTool).toBeChecked()
-    expect(requiredFileTool).toHaveAttribute("aria-disabled", "true")
+    expect(requiredFileTool).toBeDisabled()
+    const fileGroup = screen.getByRole("group", { name: "file-service" })
+    expect(within(fileGroup).getByText("已选 4/5")).toBeInTheDocument()
+    fireEvent.click(within(fileGroup).getByRole("button", { name: "全选 file-service" }))
+    expect(within(fileGroup).getByText("已选 5/5")).toBeInTheDocument()
+    fireEvent.click(within(fileGroup).getByRole("button", { name: "取消全选 file-service" }))
+    expect(within(fileGroup).getByText("已选 4/5")).toBeInTheDocument()
+    expect(requiredFileTool).toBeChecked()
+    expect(dingtalkTool).toBeChecked()
     fireEvent.change(agentSelector, {
       target: { value: "agent_publication_default_v2" },
     })

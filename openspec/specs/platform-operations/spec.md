@@ -568,8 +568,11 @@ Registry MUST 分别持久化 Resource Identity、Resource Draft、Verification 
 #### Scenario: 安全归档 Resource Identity
 - **WHEN** disabled Identity 没有活动 Draft 且没有 PUBLISHED Revision
 - **THEN** 管理员可以用当前 Identity revision 把它归档为不可恢复终态并记录审计
+#### Scenario: 从未发布的资源直接归档
+- **WHEN** 管理员确认归档从未发布且没有活动应用引用的 Identity，并提交当前修订号
+- **THEN** 系统保留草稿供只读查看，归档资源仅在显式选择已归档状态后列出
 #### Scenario: Identity 仍有治理依赖
-- **WHEN** 管理员尝试归档仍有活动 Draft 或 PUBLISHED Revision 的 Identity
+- **WHEN** 管理员尝试归档有活动应用引用的 Identity，或有发布历史且仍有活动 Draft 或 PUBLISHED Revision 的 Identity
 - **THEN** 系统失败关闭并返回不含 Secret 的依赖摘要，不改变 Identity 或任何 Revision
 #### Scenario: Identity 并发状态已变化
 - **WHEN** 生命周期请求携带的 expected Identity revision 已过期
@@ -2631,7 +2634,7 @@ PG SHALL 为知识事实源，受控保存工具先停止本 Job 的新读取并
 - **THEN** 可保存草稿、显式初始化空增量 collection 并验证发布，零答案不是失败，不触发预提取或自动授权
 
 #### Scenario: 管理员归档代码知识库
-- **WHEN** 管理员在代码知识库详情确认归档，并提交当前配置修订
+- **WHEN** 代码知识库已停用或从未发布，无正在进行的代码分析或 SVN 操作，管理员在详情中确认归档并提交当前配置修订
 - **THEN** 资源进入不可恢复的归档状态，退出当前列表与问答检索。归档区可只读查看历史配置，已有答案、证据和向量保留，平台记录归档审计
 - **AND** 草稿和发布版本中的历史目录引用保留，归档同时释放本库的有效目录绑定。只有管理员另行确认，且其他知识库绑定与任务占用均已释放，才可删除本地工作副本
 
@@ -2758,6 +2761,13 @@ knowledge-sync SHALL 在现有容器内提供仅项目内部网络可用的结�
 #### Scenario: 下载中断
 - **WHEN** 下载超时、取消、租约失效或 SVN 失败
 - **THEN** 结束并等待子进程，保留已下载目录，显示失败阶段，不自动重试下载或允许 Runtime 读取
+
+### Requirement: 凭据中心支持只读归档
+系统 SHALL 允许具备凭据管理权限的管理员确认归档已经停用且无活动配置引用的凭据。服务端 MUST 校验当前修订并保留版本元数据与审计记录。默认管理列表 MUST 排除归档项。
+
+#### Scenario: 只读查看凭据历史
+- **WHEN** 管理员显式筛选已归档凭据
+- **THEN** 页面展示凭据标识和引用信息，已归档凭据不能轮换、重新绑定或用于解析
 
 ### Requirement: 失败检出必须支持显式重新校验后复用
 管理员 SHALL 能在原代码知识资源对最近一次已停止的失败检出发起重新校验。系统 MUST 固定原 checkout、来源、版本、选择范围与连接指纹，验证当前权限和资源归属，取得既有独占占用并执行本地身份检查。此操作 MUST NOT 执行 checkout/update/cleanup/revert 或覆盖文件。仅在完整性校验通过后原子标记 ready；任何失败继续保留目录并拒绝使用。已有身份不能被替换，历史未登记物理身份仅可经此显式操作在原受管路径核验后登记。

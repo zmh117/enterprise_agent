@@ -608,3 +608,30 @@ def test_verified_corp_id_conflict_is_rejected_for_second_enterprise() -> None:
         container.managed_channel_service.get_dingtalk_enterprise(second_enterprise["id"])["status"]
         == "PENDING_VERIFICATION"
     )
+
+
+def test_only_disabled_robot_can_be_archived_and_its_history_remains_available() -> None:
+    container = _container()
+    try:
+        _, channel = _pending_connection(
+            container, name="归档测试", client_id="ding-archive-fixture"
+        )
+        service = container.managed_channel_service
+        with pytest.raises(NonRetryableExecutionError):
+            service.archive(
+                channel["id"], expected_revision=channel["revision"], actor_id="enterprise-admin"
+            )
+        stopped = service.set_enabled(
+            channel["id"],
+            enabled=False,
+            expected_revision=channel["revision"],
+            actor_id="enterprise-admin",
+        )
+        service.archive(
+            channel["id"], expected_revision=stopped["revision"], actor_id="enterprise-admin"
+        )
+        assert channel["id"] not in {item["id"] for item in service.list_channels()}
+        (history,) = service.list_channels(archived=True)
+        assert history["id"] == channel["id"] and history["archived"] and not history["enabled"]
+    finally:
+        container.database.close()

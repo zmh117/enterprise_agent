@@ -39,7 +39,7 @@ class PlatformSecretUsageService:
     def _resource_dependencies(self, secret_ref: str) -> list[dict[str, Any]]:
         drafts = self.repository.database.execute(
             """
-            select d.id, r.code, r.resource_kind, d.status, d.secret_refs_json,
+            select d.id, r.code, r.resource_kind, d.status, r.status as owner_status, d.secret_refs_json,
                    d.draft_revision as revision
               from platform_resource_draft d
               join platform_resource r on r.id = d.resource_id
@@ -47,7 +47,7 @@ class PlatformSecretUsageService:
         )
         revisions = self.repository.database.execute(
             """
-            select v.id, r.code, r.resource_kind, v.status, v.secret_refs_json,
+            select v.id, r.code, r.resource_kind, v.status, r.status as owner_status, v.secret_refs_json,
                    v.revision
               from platform_resource_revision v
               join platform_resource r on r.id = v.resource_id
@@ -221,14 +221,14 @@ class PlatformSecretUsageService:
     def _webhook_dependencies(self, secret_ref: str) -> list[dict[str, Any]]:
         revisions = self.repository.database.execute(
             """
-            select r.id, d.code, r.revision, r.status, r.config_json
+            select r.id, d.code, r.revision, r.status, d.archived as owner_archived, r.config_json
             from webhook_trigger_revision r
             join webhook_trigger_definition d on d.id = r.trigger_id
             """
         )
         publications = self.repository.database.execute(
             """
-            select p.id, d.code, p.revision, p.status, p.snapshot_json
+            select p.id, d.code, p.revision, p.status, d.archived as owner_archived, p.snapshot_json
             from webhook_trigger_publication p
             join webhook_trigger_definition d on d.id = p.trigger_id
             """
@@ -305,13 +305,16 @@ def _dependency(
         "id": str(row["id"]),
         "code": code,
         "status": status,
-        "active": status
+        "active": row.get("owner_status", "enabled") == "enabled"
+        and not row.get("owner_archived")
+        and status.lower()
         in {
             "active",
             "enabled",
             "ready",
             "published",
             "validated",
+            "verified",
             "draft",
         },
         "field_paths": sorted(set(field_paths)),

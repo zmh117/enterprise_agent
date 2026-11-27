@@ -6,7 +6,7 @@ from typing import Any, Protocol
 class ManagedWebhookProviderPort(Protocol):
     """Provider boundary for the existing Managed Webhook bounded context."""
 
-    def list_channels(self) -> list[dict[str, Any]]: ...
+    def list_channels(self, *, archived: bool = False) -> list[dict[str, Any]]: ...
 
     def create_channel(
         self,

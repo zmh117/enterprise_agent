@@ -190,11 +190,16 @@ def build_platform_config_router() -> APIRouter:  # noqa: C901, PLR0915
     @router.get("/secrets")
     def list_platform_secrets(
         request: Request,
+        archived: bool = False,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
         _require_management_read(request, resource_type="secret")
         service = _container(request).platform_config_service
-        return {"secrets": service.list_platform_secrets(include_disabled=include_disabled)}
+        return {
+            "secrets": service.list_platform_secrets(
+                include_disabled=include_disabled, archived=archived
+            )
+        }
 
     @router.post("/secrets")
     async def create_platform_secret(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
@@ -261,6 +266,21 @@ def build_platform_config_router() -> APIRouter:  # noqa: C901, PLR0915
             entity = _container(request).platform_config_service.rotate_platform_secret(
                 code,
                 payload,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"secret": entity}
+
+    @router.post("/secrets/{code}/archive")
+    def archive_platform_secret(
+        request: Request, code: str, expected_revision: int = Query(ge=1)
+    ) -> dict[str, Any]:
+        try:
+            entity = _container(request).platform_config_service.archive_platform_secret(
+                code,
+                expected_revision=expected_revision,
                 actor_id=_actor(request),
                 correlation_id=_correlation_id(request),
             )
@@ -437,7 +457,9 @@ def build_platform_config_router() -> APIRouter:  # noqa: C901, PLR0915
             request,
             resource_type="platform_config",
         )
-        resources = _container(request).platform_config_service.governed_resources.list_resources()
+        resources = _container(request).platform_config_service.governed_resources.list_resources(
+            archived=lifecycle_status.lower() == "archived"
+        )
         filters = {
             "resource_kind": resource_kind.lower(),
             "scope_type": scope_type.lower(),

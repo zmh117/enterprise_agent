@@ -233,9 +233,9 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **AND** 已有环境 deployment 必须由显式停用操作处理，不进行隐式数据删除
 
 #### Scenario: 归档业务应用
-- **WHEN** 用户归档一个不存在活动 deployment 的业务应用
+- **WHEN** 用户确认归档已停用或从未发布、且不存在活动 deployment 的业务应用
 - **THEN** 系统将应用标记为 archived 并从默认可编辑列表中隐藏
-- **AND** 历史查询仍可读取其 publication 和 audit
+- **AND** 显式筛选已归档后可只读查看配置、publication 和 audit，保留已有草稿
 
 ### Requirement: 业务应用执行策略必须固定到Agent Job
 系统 MUST 在业务应用路由命中且创建 Agent Job 前，从命中的 Business Application Publication 读取 `max_turns`、`timeout_seconds` 和 `max_tool_calls`，计算有效执行策略并把请求值、有效值、策略版本及来源 Publication 一并持久化到 Job。迁移后的每个新 Agent Job MUST 具有合法 v1 Execution Policy 快照；Worker MUST 只使用 Job 固定的策略，MUST NOT 在消费、重试或执行时重新解析当前活动 Deployment。

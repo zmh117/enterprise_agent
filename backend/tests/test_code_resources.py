@@ -284,6 +284,9 @@ def test_archived_code_library_keeps_its_index_and_refuses_retrieval_and_writes(
     status = service.indexing_status(**admin)
     collections = dict(service.qdrant.collections)
     assert len(collections) == 1
+    resource = service.set_status(
+        **admin, expected_revision=resource["revision"], status="disabled"
+    )
     archived = service.set_status(
         **admin, expected_revision=resource["revision"], status="archived"
     )

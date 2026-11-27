@@ -237,7 +237,8 @@ class AgentContextBuilder:
                     else "提问时本页没有参与录制。"
                 )
                 + '用 search_recording({"live":{}}) 查发送前半小时本页的观察。'
-                "问题明确提及同场其他页时使用 scope=recording，询问本车间当天历史时使用 scope=today。"
+                "问题明确提及同场其他页时使用 scope=recording，询问当前绑定范围的当天历史时使用 scope=today。"
+                "跨页及历史查询只匹配同一账号、应用、环境及完全相同的基地和车间选择，未选择的层级只匹配空值。"
                 "用 request_key 或 baseline_id 过滤关联事件，按 observed_ms 和 source_seq 整理时间线。"
                 '对 hits 中的 reference 调 get_recording_evidence({"live":{"reference":"…"}})，'
                 "按 next_cursor 续读。引用稳定 event_id，交代覆盖状态。"
@@ -247,7 +248,7 @@ class AgentContextBuilder:
             if "query_loki" in allowed_tools:
                 instructions.append(
                     "若响应含 request_id 或 trace_id，用此值作为 query_loki 的 query，selector 传 {}。"
-                    "使用本轮环境、基地和覆盖操作的分钟数，固定标签由已发布日志资源注入。"
+                    "使用本轮已绑定的环境、基地和覆盖操作的分钟数。资源需要基地而本轮未选时先确认基地，固定标签由已发布日志资源注入。"
                     "回答分别引用浏览器事件与命中的日志时间、关联标识。"
                 )
             if "knowledge_search" in allowed_tools:

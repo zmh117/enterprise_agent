@@ -948,10 +948,14 @@ describe("知识资源管理", () => {
     const f = setup()
     Object.assign(f.state.resources[0], {
       kind: "code",
+      status: "disabled",
       published: { ...draft(), checkout_relative_dir: "mes-old" },
       draft: { ...draft(), checkout_relative_dir: "mes-next" },
     })
     f.render()
+    fireEvent.change(await screen.findByLabelText("知识库状态"), {
+      target: { value: "disabled" },
+    })
     await openResource()
     fireEvent.click(screen.getByRole("button", { name: "归档资源" }))
     const confirm = await screen.findByRole("alertdialog")

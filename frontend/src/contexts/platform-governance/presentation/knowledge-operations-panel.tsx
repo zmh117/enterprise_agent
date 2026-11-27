@@ -428,21 +428,13 @@ export function KnowledgeOperationsPanel({
           <p className="p-4 text-sm text-muted-foreground">暂无运维任务。</p>
         )}
       </div>
-      <Sheet open={creating} onOpenChange={setCreating}>
-        <SheetContent className="overflow-y-auto sm:max-w-2xl">
-          <SheetHeader>
-            <SheetTitle>配置采集计划</SheetTitle>
-            <SheetDescription>
-              配置来源与三个知识库的映射。保存不会自动发布或授权。
-            </SheetDescription>
-          </SheetHeader>
-          <KnowledgePlanForm
-            key={editingPlan ?? "new"}
-            bindingId={editingPlan}
-            onClose={() => setCreating(false)}
-          />
-        </SheetContent>
-      </Sheet>
+      {creating && (
+        <KnowledgePlanForm
+          key={editingPlan ?? "new"}
+          bindingId={editingPlan}
+          onClose={() => setCreating(false)}
+        />
+      )}
       <Sheet
         open={backfill !== null}
         onOpenChange={(open) => {

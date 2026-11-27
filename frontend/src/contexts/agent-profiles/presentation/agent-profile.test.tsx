@@ -1194,6 +1194,7 @@ describe("Agent Profile management", () => {
 
     expect(await screen.findByText("默认诊断 Agent")).toBeInTheDocument()
     expect(screen.getByRole("textbox", { name: "业务角色" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "全选 dingtalk-mcp" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "发布 Agent" })).toBeDisabled()
     fireEvent.click(screen.getByRole("tab", { name: "模型连接" }))
@@ -1252,13 +1253,14 @@ describe("Agent Profile management", () => {
     expect(
       screen.getByText("为当前钉钉用户准备一个本人待办。")
     ).toBeInTheDocument()
-    expect(screen.getByText(/dingtalk-mcp · 写入/)).toBeInTheDocument()
+    const dingtalk = within(screen.getByRole("group", { name: "dingtalk-mcp" }))
+    expect(dingtalk.getByText("写入")).toBeInTheDocument()
     expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole("checkbox", { name: "ones_work_item_search" })
     )
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "dingtalk_create_todo" })
+      dingtalk.getByRole("button", { name: "全选 dingtalk-mcp" })
     )
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
 

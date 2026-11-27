@@ -28,6 +28,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet"
+import { FormDialog } from "@/shared/presentation/form-dialog"
 import {
   AlertDialog,
   AlertDialogContent,
@@ -330,17 +331,33 @@ export function KnowledgeResourcesPage({ tabs }: { tabs?: ReactNode }) {
               </div>
             )}
           </section>
+          {editing === null && canManage && (
+            <FormDialog
+              title="新建知识库"
+              description="根据知识库类型配置来源和索引，验证后发布。"
+              wide
+              pending={pending}
+              onClose={() => setEditing(undefined)}
+            >
+              <div className="grid gap-4">
+                <KnowledgeError error={mutation.error} />
+                <CreateKnowledgeResource
+                  data={data}
+                  pending={pending}
+                  execute={execute}
+                />
+              </div>
+            </FormDialog>
+          )}
           <Sheet
-            open={editing !== undefined}
+            open={Boolean(editing)}
             onOpenChange={(open) => {
               if (!open && !pending) setEditing(undefined)
             }}
           >
             <SheetContent className="overflow-y-auto sm:max-w-xl">
               <SheetHeader>
-                <SheetTitle>
-                  {editing ? "知识资源详情与草稿" : "新建知识库"}
-                </SheetTitle>
+                <SheetTitle>知识资源详情与草稿</SheetTitle>
                 <SheetDescription>
                   根据知识库类型配置来源和索引，验证后发布。
                 </SheetDescription>
@@ -356,50 +373,47 @@ export function KnowledgeResourcesPage({ tabs }: { tabs?: ReactNode }) {
                     execute={execute}
                     reload={reloadEditor}
                   />
-                ) : editing ? (
-                  <KnowledgeResourceEditor
-                    key={`${editing.id}:${editorGeneration}`}
-                    resource={editing}
-                    data={data}
-                    canManage={canManage}
-                    pending={pending}
-                    execute={execute}
-                    confirm={confirm}
-                    reload={reloadEditor}
-                  />
                 ) : (
-                  canManage && (
-                    <CreateKnowledgeResource
+                  editing && (
+                    <KnowledgeResourceEditor
+                      key={`${editing.id}:${editorGeneration}`}
+                      resource={editing}
                       data={data}
+                      canManage={canManage}
                       pending={pending}
                       execute={execute}
+                      confirm={confirm}
+                      reload={reloadEditor}
                     />
                   )
                 )}
-                {canManage && editing && editing.status !== "archived" && (
-                  <Button
-                    variant="outline"
-                    className="justify-self-start"
-                    disabled={pending}
-                    onClick={() =>
-                      confirm(
-                        {
-                          kind: "status",
-                          id: editing.id,
-                          input: {
-                            expected_revision: editing.revision,
-                            status: "archived",
+                {canManage &&
+                  editing &&
+                  editing.status !== "archived" &&
+                  (editing.status === "disabled" || !editing.published) && (
+                    <Button
+                      variant="outline"
+                      className="justify-self-start"
+                      disabled={pending}
+                      onClick={() =>
+                        confirm(
+                          {
+                            kind: "status",
+                            id: editing.id,
+                            input: {
+                              expected_revision: editing.revision,
+                              status: "archived",
+                            },
                           },
-                        },
-                        editing.kind === "code"
-                          ? `归档「${editing.name}」后将永久退出问答检索。历史配置、答案、向量及本地文件会保留，本库将释放 SVN 检出目录绑定。`
-                          : `归档「${editing.name}」后将永久退出问答检索，已有原始数据和向量会保留。`
-                      )
-                    }
-                  >
-                    归档资源
-                  </Button>
-                )}
+                          editing.kind === "code"
+                            ? `归档「${editing.name}」后将永久退出问答检索。历史配置、答案、向量及本地文件会保留，本库将释放 SVN 检出目录绑定。`
+                            : `归档「${editing.name}」后将永久退出问答检索，已有原始数据和向量会保留。`
+                        )
+                      }
+                    >
+                      归档资源
+                    </Button>
+                  )}
               </div>
             </SheetContent>
           </Sheet>

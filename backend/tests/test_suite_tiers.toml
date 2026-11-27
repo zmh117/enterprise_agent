@@ -273,6 +273,7 @@ acceptance = [
   "test_dingtalk_stream_ingress.py",
   "test_end_to_end.py",
   "test_managed_multi_dingtalk_runtime.py",
+  "test_management_archive.py",
   "test_mcp_meta_fidelity.py",
   "test_python_file_mcp_runtime_bridge.py",
   "test_task_file_workspace_group_acceptance.py",

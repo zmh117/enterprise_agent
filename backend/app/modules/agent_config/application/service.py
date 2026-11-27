@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any
 
+from app.shared.archive import require_archive_eligible, require_not_archived
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.audit.application.audit_service import AuditService
@@ -94,7 +95,7 @@ class AgentConfigService:
             "draft": latest,
             "current_publication": current,
             "catalog": self.catalog(),
-            "management_mode": "editable",
+            "management_mode": "editable" if definition["status"] == "enabled" else "read_only",
             "model_connections": (
                 self.model_connection_service.list_connections()
                 if self.model_connection_service is not None
@@ -102,9 +103,48 @@ class AgentConfigService:
             ),
         }
 
-    def list_agents(self) -> list[dict[str, Any]]:
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def set_status(
+        self, *, agent_code: str, status: str, expected_revision: int, actor_id: str
+    ) -> None:
+        self.authorization.require(
+            user_id=actor_id, resource_type="agent", resource_code=agent_code, action="edit"
+        )
+        definition = self.repository.get_definition(agent_code, for_update=True)
+        current = definition["status"]
+        require_not_archived(current)
+        facts = self.repository.lifecycle_facts(definition["id"])
+        protected = _protected_agent(definition)
+        if status == "archived":
+            require_archive_eligible(
+                current,
+                published=bool(facts["published"]),
+                protected=protected,
+                in_use=bool(facts["active_applications"]),
+            )
+        elif protected or (current, status) not in {
+            ("enabled", "disabled"),
+            ("disabled", "enabled"),
+        }:
+            raise NonRetryableExecutionError(
+                "Invalid Agent status transition", safe_message="此 Agent 不能执行该状态变更"
+            )
+        elif status == "disabled" and facts["active_applications"]:
+            raise NonRetryableExecutionError(
+                "Agent is in use", safe_message="请先停用引用此 Agent 的应用部署"
+            )
+        self.repository.set_definition_status(definition["id"], status, expected_revision)
+        self.audit_service.record(
+            "agent.status_changed",
+            actor_id=actor_id,
+            status="SUCCEEDED",
+            summary="Agent status changed",
+            payload={"agent_code": agent_code, "before_status": current, "after_status": status},
+        )
+
+    def list_agents(self, *, archived: bool = False) -> list[dict[str, Any]]:
         values: list[dict[str, Any]] = []
-        for definition in self.repository.list_definitions():
+        for definition in self.repository.list_definitions(archived=archived):
             publication = None
             if definition.get("current_publication_id"):
                 publication = self.repository.get_publication(
@@ -126,17 +166,16 @@ class AgentConfigService:
                     )
                 except NotFound:
                     model_status = "missing_revision"
-            usage = (
-                self.model_connection_service.repository.active_application_usage(
-                    str(publication["id"])
-                )
-                if publication and self.model_connection_service is not None
-                else []
+            facts = self.repository.lifecycle_facts(definition["id"])
+            can_change = (
+                not _protected_agent(definition)
+                and not facts["active_applications"]
+                and definition["status"] != "archived"
             )
             values.append(
                 {
                     **definition,
-                    "management_mode": "editable",
+                    "management_mode": "editable" if definition["status"] == "enabled" else "read_only",
                     "current_publication": (
                         {
                             "id": publication["id"],
@@ -147,7 +186,10 @@ class AgentConfigService:
                         else None
                     ),
                     "model_connection_status": model_status,
-                    "active_application_count": len(usage),
+                    "active_application_count": facts["active_applications"],
+                    "can_change_status": can_change,
+                    "can_archive": can_change
+                    and (definition["status"] == "disabled" or not facts["published"]),
                 }
             )
         return values
@@ -305,7 +347,7 @@ class AgentConfigService:
             resource_code=agent_code,
             action="edit",
         )
-        definition = self.repository.get_definition(agent_code)
+        definition = self.repository.get_definition(agent_code, for_update=True)
         _require_writable_definition(definition)
         raw_errors = self._validate_shape(config)
         if raw_errors:
@@ -347,7 +389,7 @@ class AgentConfigService:
             resource_code=agent_code,
             action="edit",
         )
-        definition = self.repository.get_definition(agent_code)
+        definition = self.repository.get_definition(agent_code, for_update=True)
         _require_writable_definition(definition)
         revision = self.repository.get_revision(revision_id)
         if str(revision["agent_id"]) != str(definition["id"]):
@@ -387,7 +429,7 @@ class AgentConfigService:
             resource_code=agent_code,
             action="publish",
         )
-        definition = self.repository.get_definition(agent_code)
+        definition = self.repository.get_definition(agent_code, for_update=True)
         _require_writable_definition(definition)
         revision = self.repository.get_revision(revision_id)
         if str(revision["agent_id"]) != str(definition["id"]):
@@ -547,7 +589,7 @@ class AgentConfigService:
             resource_code=agent_code,
             action="publish",
         )
-        definition = self.repository.get_definition(agent_code)
+        definition = self.repository.get_definition(agent_code, for_update=True)
         _require_writable_definition(definition)
         publication = self.repository.set_current_publication(
             agent_id=str(definition["id"]), publication_id=publication_id
@@ -993,7 +1035,17 @@ def _require_writable_runtime_kind(runtime_kind: str) -> None:
     )
 
 
+def _protected_agent(definition: dict[str, Any]) -> bool:
+    return (
+        definition["code"] == DEFAULT_AGENT_CODE
+        or definition["classification"] == "internal_diagnostic"
+    )
+
+
 def _require_writable_definition(definition: dict[str, Any]) -> None:
+    require_not_archived(definition["status"])
+    if definition["status"] == "disabled":
+        raise NonRetryableExecutionError("Agent is disabled", safe_message="请先启用 Agent")
     _require_writable_runtime_kind(str(definition.get("runtime_kind") or ""))
 
 

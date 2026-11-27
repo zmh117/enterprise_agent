@@ -19,14 +19,23 @@ const testResultSchema = z.object({ result: managedChannelTestResultSchema })
 const enterprisesSchema = z.object({ items: z.array(dingtalkEnterpriseSchema) })
 const enterpriseSchema = z.object({ enterprise: dingtalkEnterpriseSchema })
 
-export async function listManagedChannels() {
-  return itemsSchema.parse(await apiRequest("/api/admin/managed-channels"))
-    .items
+export async function listManagedChannels(archived = false) {
+  return itemsSchema.parse(
+    await apiRequest(
+      archived
+        ? "/api/admin/managed-channels?archived=true"
+        : "/api/admin/managed-channels"
+    )
+  ).items
 }
 
-export async function listDingTalkEnterprises() {
+export async function listDingTalkEnterprises(archived = false) {
   return enterprisesSchema.parse(
-    await apiRequest("/api/admin/managed-channels/dingtalk-enterprises")
+    await apiRequest(
+      archived
+        ? "/api/admin/managed-channels/dingtalk-enterprises?archived=true"
+        : "/api/admin/managed-channels/dingtalk-enterprises"
+    )
   ).items
 }
 

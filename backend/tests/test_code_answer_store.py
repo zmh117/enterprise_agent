@@ -145,6 +145,12 @@ def test_archiving_keeps_answer_revision_evidence_and_index_intent(workspace):
 
     resources = runtime.knowledge_services.resources()
     resource = resources.view("code-resource")
+    resource = resources.set_status(
+        actor_id="user_local_admin",
+        resource_id=resource["id"],
+        expected_revision=resource["revision"],
+        status="disabled",
+    )
     resources.set_status(
         actor_id="user_local_admin",
         resource_id=resource["id"],

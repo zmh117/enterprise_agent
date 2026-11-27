@@ -104,16 +104,21 @@ export function UserDetailPage() {
         </p>
       </header>
 
-      <UserProfileCard key={query.data.revision} user={query.data} />
-      <UserRolesCard
-        key={`roles-${query.data.roles.map((role) => `${role.id}:${role.membership_revision}`).join(",")}`}
-        user={query.data}
-      />
-      <ExternalIdentityPanel
-        mode="admin"
-        user={query.data}
-        discoveryCandidateId={candidateId}
-      />
+      <fieldset
+        className="contents"
+        disabled={query.data.status === "archived"}
+      >
+        <UserProfileCard key={query.data.revision} user={query.data} />
+        <UserRolesCard
+          key={`roles-${query.data.roles.map((role) => `${role.id}:${role.membership_revision}`).join(",")}`}
+          user={query.data}
+        />
+        <ExternalIdentityPanel
+          mode="admin"
+          user={query.data}
+          discoveryCandidateId={candidateId}
+        />
+      </fieldset>
     </div>
   )
 }

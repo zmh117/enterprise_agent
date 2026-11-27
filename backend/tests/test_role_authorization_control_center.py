@@ -365,6 +365,7 @@ def test_assignable_catalog_describes_tools_from_legacy_agent_publications() -> 
     )
     assert catalog_application["mcp_tools"] == [
         {
+            "server_code": MCP_TOOL_MANIFEST["query_database"].server_code,
             "tool_identifier": "query_database",
             "description": MCP_TOOL_MANIFEST["query_database"].description,
             "version_constraint": "",

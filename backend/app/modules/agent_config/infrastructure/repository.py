@@ -13,18 +13,47 @@ class AgentConfigRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def list_definitions(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        where = "" if include_disabled else "where status = 'enabled'"
+    def list_definitions(
+        self, *, include_disabled: bool = True, archived: bool = False
+    ) -> list[dict[str, Any]]:
+        where = "where status <> 'archived'" if include_disabled else "where status = 'enabled'"
+        if archived:
+            where = "where status = 'archived'"
         return self.database.execute(f"select * from agent_definition {where} order by code")
 
-    def find_definition(self, code: str) -> dict[str, Any] | None:
+    def lifecycle_facts(self, agent_id: str) -> dict[str, Any]:
         return self.database.execute_one(
-            "select * from agent_definition where code = ?",
+            """select exists(select 1 from agent_publication where agent_id=?) as published,
+                      (select count(distinct d.application_id) from business_application_deployment d
+                       join business_application_publication p on p.id=d.publication_id
+                       join business_application_revision r on r.id=p.revision_id
+                       join agent_publication ap on ap.id=r.agent_publication_id
+                       where d.active=1 and ap.agent_id=?) as active_applications""",
+            (agent_id, agent_id),
+        )
+
+    def set_definition_status(self, agent_id: str, status: str, expected_revision: int) -> None:
+        changed = self.database.execute_one(
+            """update agent_definition set status=?, revision=revision+1, updated_at=?
+               where id=? and revision=? and status<>'archived' returning id""",
+            (status, now_iso(), agent_id, expected_revision),
+        )
+        if not changed:
+            raise NonRetryableExecutionError(
+                "Agent revision conflict",
+                safe_message="Agent 已变更，请刷新后重试",
+                error_code="revision_conflict",
+            )
+
+    def find_definition(self, code: str, *, for_update: bool = False) -> dict[str, Any] | None:
+        lock = " for update" if for_update and self.database.engine == "postgres" else ""
+        return self.database.execute_one(
+            "select * from agent_definition where code = ?" + lock,
             (code,),
         )
 
-    def get_definition(self, code: str) -> dict[str, Any]:
-        row = self.find_definition(code)
+    def get_definition(self, code: str, *, for_update: bool = False) -> dict[str, Any]:
+        row = self.find_definition(code, for_update=for_update)
         if not row:
             raise NotFound("Agent not found", safe_message="未找到 Agent")
         return row

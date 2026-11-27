@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from app.shared.archive import require_archive_eligible, require_not_archived
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
@@ -32,6 +33,18 @@ class BusinessApplicationRepository:  # noqa: PLR0904
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    def _check_owner(self, owner_user_id: str) -> None:
+        if not owner_user_id:
+            return
+        lock = " for share" if self.database.engine == "postgres" else ""
+        row = self.database.execute_one(
+            "select status from app_user where id=?" + lock, (owner_user_id,)
+        )
+        if row and row["status"] == "archived":
+            raise NonRetryableExecutionError(
+                "Archived owner", safe_message="已归档人员不能设为负责人"
+            )
+
     def create(
         self,
         *,
@@ -47,6 +60,7 @@ class BusinessApplicationRepository:  # noqa: PLR0904
         revision_id = new_id("business_app_revision")
         try:
             with self.database.unit_of_work():
+                self._check_owner(owner_user_id)
                 self.database.execute(
                     """
                     insert into business_application
@@ -100,7 +114,7 @@ class BusinessApplicationRepository:  # noqa: PLR0904
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
-        if not include_archived:
+        if not include_archived and status != "archived":
             clauses.append("a.status != 'archived'")
         if status:
             clauses.append("a.status = ?")
@@ -152,9 +166,10 @@ class BusinessApplicationRepository:  # noqa: PLR0904
         )
         return [self._application(row, include_draft=False) for row in rows]
 
-    def get_by_code(self, code: str) -> dict[str, Any]:
+    def get_by_code(self, code: str, *, for_update: bool = False) -> dict[str, Any]:
+        lock = " for update" if for_update and self.database.engine == "postgres" else ""
         row = self.database.execute_one(
-            "select * from business_application where code = ?", (code,)
+            "select * from business_application where code = ?" + lock, (code,)
         )
         if row is None:
             raise NotFound(
@@ -187,19 +202,32 @@ class BusinessApplicationRepository:  # noqa: PLR0904
     ) -> dict[str, Any]:
         application = self.get_by_code(code)
         self._expect_revision(application, expected_revision)
+        require_not_archived(application["status"])
+        if status == "archived":
+            require_archive_eligible(
+                application["status"],
+                published=bool(
+                    self.database.execute_one(
+                        "select id from business_application_publication where application_id=? limit 1",
+                        (application["id"],),
+                    )
+                ),
+            )
         if status == "archived" and self.has_active_deployment(str(application["id"])):
             raise NonRetryableExecutionError(
                 "Cannot archive an active Business Application",
                 safe_message="归档前请先停用所有环境",
                 error_code="application_active",
             )
+        if owner_user_id != application["owner_user_id"] or status == "enabled":
+            self._check_owner(owner_user_id)
         next_revision = expected_revision + 1
-        self.database.execute(
+        changed = self.database.execute_one(
             """
             update business_application
                set name = ?, description = ?, project_code = ?,
                    owner_user_id = ?, status = ?, revision = ?, updated_at = ?
-             where id = ? and revision = ?
+             where id = ? and revision = ? returning id
             """,
             (
                 name,
@@ -214,7 +242,7 @@ class BusinessApplicationRepository:  # noqa: PLR0904
             ),
         )
         refreshed = self.get_by_code(code)
-        if int(refreshed["revision"]) != next_revision:
+        if not changed:
             raise self.revision_conflict(int(refreshed["revision"]))
         return refreshed
 
@@ -651,6 +679,43 @@ class BusinessApplicationRepository:  # noqa: PLR0904
             """,
             (environment, trigger_type, connector_id, normalized_routing_key),
         )
+
+    def require_deployable_dependencies(self, revision_id: str) -> None:
+        # Hold these shared locks through deployment activation so archiving and activating
+        # an older immutable publication cannot leave an active deployment on archived data.
+        lock = " for share" if self.database.engine == "postgres" else ""
+        agent = self.database.execute_one(
+            """select a.status from agent_definition a
+               join agent_publication p on p.agent_id=a.id
+               join business_application_revision r on r.agent_publication_id=p.id
+               where r.id=?"""
+            + lock,
+            (revision_id,),
+        )
+        if agent and agent["status"] != "enabled":
+            raise NonRetryableExecutionError(
+                "Application Agent is unavailable", safe_message="请先启用该发布版本绑定的 Agent"
+            )
+        connectors = self.database.execute(
+            """select archived from integration_connector where id in (
+                   select connector_id from business_application_revision_trigger where revision_id=? and enabled=1
+                   union select connector_id from business_application_revision_delivery where revision_id=? and enabled=1)
+               order by id"""
+            + lock,
+            (revision_id, revision_id),
+        )
+        triggers = self.database.execute(
+            """select w.archived from webhook_trigger_definition w where exists (
+                  select 1 from business_application_revision_trigger t where t.revision_id=? and t.enabled=1
+                    and t.connector_id=w.connector_id and t.normalized_routing_key=('webhook:' || w.id))
+               order by w.id"""
+            + lock,
+            (revision_id,),
+        )
+        if any(item["archived"] for item in connectors + triggers):
+            raise NonRetryableExecutionError(
+                "Application channel archived", safe_message="该发布版本引用了已归档渠道或触发器"
+            )
 
     def has_active_deployment(self, application_id: str) -> bool:
         return (

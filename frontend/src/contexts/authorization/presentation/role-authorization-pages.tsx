@@ -1,3 +1,6 @@
+import { ArchiveAction } from "@/shared/presentation/archive-action"
+import { updateRoleMetadata } from "@/contexts/authorization/infrastructure/role-authorization-api"
+import { McpToolGroups } from "@/shared/presentation/mcp-tool-groups"
 import {
   ListEmpty,
   ListPage,
@@ -20,12 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+import { FormDialog, FormDialogCancel } from "@/shared/presentation/form-dialog"
 import {
   useEffect,
   useMemo,
@@ -160,6 +158,7 @@ export function RoleAuthorizationPage() {
           <option value="">全部状态</option>
           <option value="enabled">已启用</option>
           <option value="disabled">已停用</option>
+          <option value="archived">已归档</option>
         </select>
         <select
           aria-label="角色来源"
@@ -195,6 +194,9 @@ export function RoleAuthorizationPage() {
                   <TableHead className="hidden md:table-cell">
                     业务应用
                   </TableHead>
+                  {canManage && (
+                    <TableHead className="text-right">操作</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -219,11 +221,7 @@ export function RoleAuthorizationPage() {
                       </p>
                     </TableCell>
                     <TableCell>
-                      <ListStatus
-                        status={
-                          role.status === "enabled" ? "enabled" : "disabled"
-                        }
-                      />
+                      <ListStatus status={role.status} />
                     </TableCell>
                     <TableCell>
                       {role.origin === "system" ? "系统角色" : "自定义角色"}
@@ -237,6 +235,29 @@ export function RoleAuthorizationPage() {
                     <TableCell className="hidden md:table-cell">
                       {role.application_count}
                     </TableCell>
+                    {canManage && (
+                      <TableCell className="text-right">
+                        {role.origin === "custom" &&
+                          !role.protected &&
+                          role.status === "disabled" && (
+                            <ArchiveAction
+                              name={role.name}
+                              queryKey={["role-authorization"]}
+                              archive={() =>
+                                updateRoleMetadata(role.id, {
+                                  expected_revision: role.metadata_revision,
+                                  name: role.name,
+                                  description: role.description,
+                                  purpose_tags: role.purpose_tags,
+                                  status: "archived",
+                                  confirmed: true,
+                                  reason: "归档角色",
+                                })
+                              }
+                            />
+                          )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -296,103 +317,92 @@ function CreateRoleCard({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose()
-      }}
+    <FormDialog
+      title="新建自定义角色"
+      onClose={onClose}
+      pending={mutation.isPending}
     >
-      <SheetContent
-        className="w-full overflow-y-auto sm:max-w-lg"
-        aria-describedby={undefined}
-      >
-        <SheetHeader>
-          <SheetTitle>新建自定义角色</SheetTitle>
-        </SheetHeader>
-        <form className="space-y-4 px-4 pb-4" onSubmit={submit}>
-          <RequestError error={choices.error} />
-          <div className="grid gap-4 md:grid-cols-2">
-            <Labeled label="角色名称">
-              <Input
-                required
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </Labeled>
-            <Labeled
-              label="角色编码"
-              hint="创建后不可修改，例如 readonly-operator"
+      <form className="space-y-4" onSubmit={submit}>
+        <RequestError error={choices.error} />
+        <div className="grid gap-4 md:grid-cols-2">
+          <Labeled label="角色名称">
+            <Input
+              required
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </Labeled>
+          <Labeled
+            label="角色编码"
+            hint="创建后不可修改，例如 readonly-operator"
+          >
+            <Input
+              required
+              pattern="[a-z][a-z0-9-]{1,63}"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+            />
+          </Labeled>
+          <Labeled label="复制来源">
+            <select
+              className={`${nativeSelectClass} w-full`}
+              value={copyFrom}
+              onChange={(event) => {
+                setCopyFrom(event.target.value)
+                if (event.target.value) setTemplate("blank")
+              }}
             >
-              <Input
-                required
-                pattern="[a-z][a-z0-9-]{1,63}"
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-              />
-            </Labeled>
-            <Labeled label="复制来源">
-              <select
-                className={`${nativeSelectClass} w-full`}
-                value={copyFrom}
-                onChange={(event) => {
-                  setCopyFrom(event.target.value)
-                  if (event.target.value) setTemplate("blank")
-                }}
-              >
-                <option value="">不复制已有角色</option>
-                {(choices.data ?? [])
-                  .filter((role) => !role.protected)
-                  .map((role) => (
-                    <option key={role.id} value={role.id}>
-                      {role.name}（不复制成员）
-                    </option>
-                  ))}
-              </select>
-            </Labeled>
-            <Labeled label="起始模板" hint="复制已有角色时模板自动切换为空白">
-              <select
-                className={`${nativeSelectClass} w-full`}
-                value={template}
-                disabled={Boolean(copyFrom)}
-                onChange={(event) => {
-                  const value = event.target.value as keyof typeof roleTemplates
-                  setTemplate(value)
-                  if (!description.trim()) {
-                    setDescription(roleTemplates[value].description)
-                  }
-                }}
-              >
-                {Object.entries(roleTemplates).map(([value, item]) => (
-                  <option key={value} value={value}>
-                    {item.label}
+              <option value="">不复制已有角色</option>
+              {(choices.data ?? [])
+                .filter((role) => !role.protected)
+                .map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role.name}（不复制成员）
                   </option>
                 ))}
-              </select>
-            </Labeled>
-            <Labeled label="角色说明">
-              <Input
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-              />
-            </Labeled>
-          </div>
-          <RequestError error={mutation.error} />
-          <div className="flex gap-2">
-            <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? (
-                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
-              ) : (
-                <PlusIcon aria-hidden="true" />
-              )}
-              创建角色
-            </Button>
-            <Button type="button" variant="outline" onClick={onClose}>
-              取消
-            </Button>
-          </div>
-        </form>
-      </SheetContent>
-    </Sheet>
+            </select>
+          </Labeled>
+          <Labeled label="起始模板" hint="复制已有角色时模板自动切换为空白">
+            <select
+              className={`${nativeSelectClass} w-full`}
+              value={template}
+              disabled={Boolean(copyFrom)}
+              onChange={(event) => {
+                const value = event.target.value as keyof typeof roleTemplates
+                setTemplate(value)
+                if (!description.trim()) {
+                  setDescription(roleTemplates[value].description)
+                }
+              }}
+            >
+              {Object.entries(roleTemplates).map(([value, item]) => (
+                <option key={value} value={value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </Labeled>
+          <Labeled label="角色说明">
+            <Input
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </Labeled>
+        </div>
+        <RequestError error={mutation.error} />
+        <div className="flex gap-2">
+          <Button type="submit" disabled={mutation.isPending}>
+            {mutation.isPending ? (
+              <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+            ) : (
+              <PlusIcon aria-hidden="true" />
+            )}
+            创建角色
+          </Button>
+          <FormDialogCancel disabled={mutation.isPending} />
+        </div>
+      </form>
+    </FormDialog>
   )
 }
 
@@ -433,12 +443,12 @@ function RoleDetailContent({ detail }: { detail: RoleDetail }) {
   const listReturn = useListReturn("/users/roles")
   const role = detail.role
   const capabilities = useAdminCapabilitySummary()
-  const canManage = Boolean(
-    capabilities.data?.capabilities.includes("authorization.manage")
-  )
-  const canAssign = Boolean(
-    capabilities.data?.capabilities.includes("authorization.assign")
-  )
+  const canManage =
+    role.status !== "archived" &&
+    Boolean(capabilities.data?.capabilities.includes("authorization.manage"))
+  const canAssign =
+    role.status !== "archived" &&
+    Boolean(capabilities.data?.capabilities.includes("authorization.assign"))
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <div>
@@ -454,7 +464,11 @@ function RoleDetailContent({ detail }: { detail: RoleDetail }) {
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">{role.name}</h1>
           <Badge variant={role.status === "enabled" ? "secondary" : "outline"}>
-            {role.status === "enabled" ? "已启用" : "已停用"}
+            {
+              { enabled: "已启用", disabled: "已停用", archived: "已归档" }[
+                role.status
+              ]
+            }
           </Badge>
           {role.protected ? <Badge>受保护系统角色</Badge> : null}
         </div>
@@ -1121,7 +1135,7 @@ function BusinessApplicationCard({
         <CardContent className="space-y-5">
           <div>
             <h3 className="text-sm font-medium">MCP Tool 使用权限</h3>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
+            <div className="mt-3 space-y-3">
               {removedToolIdentifiers.map((identifier) => (
                 <label
                   key={identifier}
@@ -1150,41 +1164,18 @@ function BusinessApplicationCard({
                   </span>
                 </label>
               ))}
-              {application.mcp_tools.map((tool) => (
-                <label
-                  key={tool.tool_identifier}
-                  className="flex items-start gap-3 rounded-md border p-3 text-sm"
-                >
-                  <Checkbox
-                    className="mt-0.5"
-                    aria-label={`${tool.display_name_zh} ${tool.tool_identifier}`}
-                    checked={selected.toolIdentifiers.has(tool.tool_identifier)}
-                    onCheckedChange={(checked) => {
-                      const identifiers = new Set(selected.toolIdentifiers)
-                      if (checked) identifiers.add(tool.tool_identifier)
-                      else identifiers.delete(tool.tool_identifier)
-                      update({ ...selected, toolIdentifiers: identifiers })
-                    }}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block">
-                      <span>{tool.display_name_zh}</span>{" "}
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {tool.tool_identifier}
-                      </span>
-                    </span>
-                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                      {tool.description.trim() || "暂无工具说明。"}
-                    </span>
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      {tool.effect === "mutation" ? "写入" : "只读"}
-                      {tool.confirmation_policy === "external_action_card_v1"
-                        ? " · 每次需原用户确认卡片"
-                        : ""}
-                    </span>
-                  </span>
-                </label>
-              ))}
+              <McpToolGroups
+                tools={application.mcp_tools.map((tool) => ({
+                  ...tool,
+                  identifier: tool.tool_identifier,
+                  ariaLabel: `${tool.display_name_zh} ${tool.tool_identifier}`,
+                  read_only: tool.effect !== "mutation",
+                }))}
+                selected={selected.toolIdentifiers}
+                onChange={(ids) =>
+                  update({ ...selected, toolIdentifiers: new Set(ids) })
+                }
+              />
               {application.mcp_tools.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   此应用未装配 MCP Tool，仅可授予应用调用权限。

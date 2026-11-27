@@ -1,11 +1,13 @@
 import { z } from "zod"
 
+import { mcpServerCodeSchema } from "@/shared/domain/mcp-server-code"
+
 export const roleSchema = z.object({
   id: z.string(),
   code: z.string(),
   name: z.string(),
   description: z.string(),
-  status: z.enum(["enabled", "disabled"]),
+  status: z.enum(["enabled", "disabled", "archived"]),
   origin: z.enum(["system", "custom"]),
   protected: z.boolean(),
   purpose_tags: z.array(z.string()),
@@ -144,6 +146,7 @@ export const catalogApplicationSchema = z.object({
     .default([]),
   mcp_tools: z.array(
     z.object({
+      server_code: mcpServerCodeSchema.optional(),
       tool_identifier: z.string(),
       display_name_zh: z.string().default("MCP Tool"),
       description: z.string().default(""),

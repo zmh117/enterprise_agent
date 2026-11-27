@@ -11,6 +11,7 @@ from app.modules.platform_config.application.runtime_config import (
     validate_runtime_config_definition_payload,
     validate_runtime_config_value_bounds,
 )
+from app.modules.platform_config.application.validation import PlatformConfigValidationError
 from app.modules.permission.application.permission_service import PermissionService
 from app.modules.platform_config.application.governed_resources import (
     DelegatedResourceVerifier,
@@ -340,10 +341,14 @@ class PlatformConfigService:  # noqa: PLR0904
         self._audit("secret_reference", entity, "upsert", actor_id, before, correlation_id)
         return entity
 
-    def list_platform_secrets(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
+    def list_platform_secrets(
+        self, *, include_disabled: bool = True, archived: bool = False
+    ) -> list[dict[str, Any]]:
         return [
             self._public_secret(item)
-            for item in self.repository.list_platform_secrets(include_disabled=include_disabled)
+            for item in self.repository.list_platform_secrets(
+                include_disabled=include_disabled, archived=archived
+            )
         ]
 
     def get_platform_secret(self, code: str) -> dict[str, Any]:
@@ -442,6 +447,23 @@ class PlatformConfigService:  # noqa: PLR0904
         secret = self._secret_provider().disable_secret(code=code, actor_id=actor_id)
         public = self._public_secret(secret)
         self._audit("platform_secret", public, "disable", actor_id, before, correlation_id)
+        return public
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def archive_platform_secret(
+        self, code: str, *, expected_revision: int, actor_id: str, correlation_id: str = ""
+    ) -> dict[str, Any]:
+        self.require_secret_action(actor_id)
+        usage = self.get_platform_secret_usage(code)
+        if usage["active_usage_count"]:
+            raise PlatformConfigValidationError(
+                "Secret in use", safe_message="凭据仍被活动配置引用"
+            )
+        updated = self.repository.set_platform_secret_status(
+            code, "archived", expected_revision=expected_revision
+        )
+        public = self._public_secret(updated)
+        self._audit("platform_secret", public, "archive", actor_id, usage["secret"], correlation_id)
         return public
 
     def list_provider_contracts(self) -> list[dict[str, Any]]:

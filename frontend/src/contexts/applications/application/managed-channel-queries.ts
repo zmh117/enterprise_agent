@@ -37,10 +37,10 @@ export const managedChannelKeys = {
     [...managedChannelKeys.enterprises(), enterpriseId] as const,
 }
 
-export function useDingTalkEnterprises() {
+export function useDingTalkEnterprises(archived = false) {
   return useQuery({
-    queryKey: managedChannelKeys.enterprises(),
-    queryFn: listDingTalkEnterprises,
+    queryKey: [...managedChannelKeys.enterprises(), archived],
+    queryFn: () => listDingTalkEnterprises(archived),
     retry: false,
   })
 }
@@ -86,10 +86,10 @@ export function useGovernDingTalkEnterprise() {
   )
 }
 
-export function useManagedChannels(enabled = true) {
+export function useManagedChannels(enabled = true, archived = false) {
   return useQuery({
-    queryKey: managedChannelKeys.list(),
-    queryFn: listManagedChannels,
+    queryKey: [...managedChannelKeys.list(), archived],
+    queryFn: () => listManagedChannels(archived),
     enabled,
     retry: false,
     refetchInterval: enabled ? 3000 : false,

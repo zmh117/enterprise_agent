@@ -1,3 +1,4 @@
+import { McpToolGroups } from "@/shared/presentation/mcp-tool-groups"
 import { useListReturn } from "@/shared/presentation/list-navigation"
 import { useState, type FormEvent } from "react"
 import {
@@ -143,16 +144,36 @@ function ApplicationWorkspace({
           <TabsTrigger value="publications">发布与运行</TabsTrigger>
         </TabsList>
         <TabsContent value="overview">
-          <OverviewTab application={application} />
+          <fieldset
+            disabled={application.status === "archived"}
+            className="min-w-0"
+          >
+            <OverviewTab application={application} />
+          </fieldset>
         </TabsContent>
         <TabsContent value="composition">
-          <CompositionTab application={application} />
+          <fieldset
+            disabled={application.status === "archived"}
+            className="min-w-0"
+          >
+            <CompositionTab application={application} />
+          </fieldset>
         </TabsContent>
         <TabsContent value="validation">
-          <ValidationTab application={application} />
+          <fieldset
+            disabled={application.status === "archived"}
+            className="min-w-0"
+          >
+            <ValidationTab application={application} />
+          </fieldset>
         </TabsContent>
         <TabsContent value="publications">
-          <PublicationTab application={application} />
+          <fieldset
+            disabled={application.status === "archived"}
+            className="min-w-0"
+          >
+            <PublicationTab application={application} />
+          </fieldset>
         </TabsContent>
       </Tabs>
     </div>
@@ -233,7 +254,9 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
                 >
                   <option value="enabled">已启用</option>
                   <option value="disabled">已停用</option>
-                  <option value="archived">已归档</option>
+                  {application.status === "archived" && (
+                    <option value="archived">已归档</option>
+                  )}
                 </select>
               </Field>
             </div>
@@ -845,69 +868,31 @@ function McpToolSelector({
     catalog?.mcp_tools_by_agent_publication[form.agent_publication_id] ?? []
   const requiredFileTools = requiredFileMcpToolIds(form.task_file_features)
 
-  function toggle(identifier: string) {
-    if (requiredFileTools.has(identifier)) return
-    setForm({
-      ...form,
-      mcp_tools: form.mcp_tools.includes(identifier)
-        ? form.mcp_tools.filter((item) => item !== identifier)
-        : [...form.mcp_tools, identifier],
-    })
-  }
-
   return (
     <Card className="shadow-none">
       <CardHeader>
-        <CardTitle>MCP Tool 显式子集</CardTitle>
+        <CardTitle>可用 MCP 工具</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm leading-6 text-muted-foreground">
-          可选工具由 Agent 发布版本决定。运行时按任务目标匹配已发布资源。
+          可选工具来自当前 Agent 发布版本。
         </p>
         {!form.agent_publication_id ? (
           <EmptyBinding text="请先选择 Agent 发布版本。" />
         ) : !envelope.length ? (
           <EmptyBinding text="所选 Agent 发布版本没有 MCP Tool。" />
         ) : (
-          <div className="grid gap-2 md:grid-cols-2">
-            {envelope.map((tool) => (
-              <label
-                key={tool.tool_identifier}
-                className="flex items-start gap-3 rounded-md border p-3 text-sm"
-              >
-                <Checkbox
-                  aria-label={`选择 MCP Tool ${tool.tool_identifier}`}
-                  checked={form.mcp_tools.includes(tool.tool_identifier)}
-                  disabled={requiredFileTools.has(tool.tool_identifier)}
-                  onCheckedChange={() => toggle(tool.tool_identifier)}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="font-mono font-medium break-all">
-                    {tool.tool_identifier}
-                  </span>
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    {tool.server_code} ·{" "}
-                    {tool.effect === "mutation" ? "写入" : "只读"}
-                    {tool.confirmation_policy === "external_action_card_v1"
-                      ? " · 每次需原用户确认卡片"
-                      : ""}
-                    {" · "}
-                    {tool.resource_kind
-                      ? `调用时解析 ${tool.resource_kind} Resource`
-                      : "不需要外部 Resource"}
-                  </span>
-                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                    {tool.description.trim() || "暂无工具说明。"}
-                  </span>
-                  {requiredFileTools.has(tool.tool_identifier) ? (
-                    <span className="mt-1 block text-xs text-primary">
-                      当前任务文件功能必选
-                    </span>
-                  ) : null}
-                </span>
-              </label>
-            ))}
-          </div>
+          <McpToolGroups
+            tools={envelope.map((tool) => ({
+              ...tool,
+              identifier: tool.tool_identifier,
+              ariaLabel: `选择 MCP Tool ${tool.tool_identifier}`,
+              read_only: tool.effect !== "mutation",
+              required: requiredFileTools.has(tool.tool_identifier),
+            }))}
+            selected={form.mcp_tools}
+            onChange={(mcp_tools) => setForm({ ...form, mcp_tools })}
+          />
         )}
       </CardContent>
     </Card>

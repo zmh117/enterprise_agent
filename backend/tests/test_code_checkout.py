@@ -1054,6 +1054,12 @@ def test_archiving_releases_only_its_binding_and_keeps_history_after_directory_r
         **admin, resource_id=shared["id"], expected_revision=shared["revision"], status="disabled"
     )
     original = service.view("code-resource")
+    original = service.set_status(
+        actor_id="user_local_admin",
+        resource_id=original["id"],
+        expected_revision=original["revision"],
+        status="disabled",
+    )
     service.set_status(
         **admin,
         resource_id=original["id"],

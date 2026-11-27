@@ -188,7 +188,7 @@ class BusinessApplicationService:
         normalized_code = validate_code(code)
         self._require(actor_id, normalized_code, "edit")
         self._validate_metadata(name, description, owner_user_id)
-        current = self.repository.get_by_code(normalized_code)
+        current = self.repository.get_by_code(normalized_code, for_update=True)
         normalized_status = validate_status(status)
         application = self.repository.update_metadata(
             code=normalized_code,
@@ -214,7 +214,7 @@ class BusinessApplicationService:
     ) -> dict[str, Any]:
         normalized_code = validate_code(code)
         self._require(actor_id, normalized_code, "edit")
-        application = self.repository.get_by_code(normalized_code)
+        application = self.repository.get_by_code(normalized_code, for_update=True)
         if str(application["status"]) == "archived":
             raise NonRetryableExecutionError(
                 "Archived Business Application cannot be edited",
@@ -339,7 +339,9 @@ class BusinessApplicationService:
     ) -> dict[str, Any]:
         normalized_code = validate_code(code)
         self._require(actor_id, normalized_code, "edit")
-        application = self.repository.get_by_code(normalized_code)
+        application = self.repository.get_by_code(normalized_code, for_update=True)
+        if application["status"] == "archived":
+            raise NonRetryableExecutionError("Archived application", safe_message="已归档记录只读")
         revision = (
             self.repository.get_revision(revision_id) if revision_id else application.get("draft")
         )
@@ -392,7 +394,7 @@ class BusinessApplicationService:
     ) -> dict[str, Any]:
         normalized_code = validate_code(code)
         self._require(actor_id, normalized_code, "publish")
-        application = self.repository.get_by_code(normalized_code)
+        application = self.repository.get_by_code(normalized_code, for_update=True)
         if str(application["status"]) != "enabled":
             raise NonRetryableExecutionError(
                 "Disabled or archived Business Application cannot be published",
@@ -532,7 +534,7 @@ class BusinessApplicationService:
         normalized_code = validate_code(code)
         normalized_environment = validate_environment(environment)
         self._require(actor_id, normalized_code, "activate")
-        application = self.repository.get_by_code(normalized_code)
+        application = self.repository.get_by_code(normalized_code, for_update=True)
         if str(application["status"]) != "enabled":
             raise NonRetryableExecutionError(
                 "Business Application is not enabled",
@@ -546,6 +548,7 @@ class BusinessApplicationService:
                 safe_message="未找到业务应用发布版本",
             )
         self._require_python_application_publication(publication)
+        self.repository.require_deployable_dependencies(str(publication["revision_id"]))
         activation_errors = self.runtime_evaluator.activation_errors(dict(publication["snapshot"]))
         if (
             self.runtime_evaluator.data_plane_enabled
@@ -612,7 +615,11 @@ class BusinessApplicationService:
         normalized_code = validate_code(code)
         normalized_environment = validate_environment(environment)
         self._require(actor_id, normalized_code, "activate")
-        application = self.repository.get_by_code(normalized_code)
+        application = self.repository.get_by_code(normalized_code, for_update=True)
+        if application["status"] == "archived":
+            raise NonRetryableExecutionError(
+                "Archived application is read-only", safe_message="已归档应用只读"
+            )
         old = self.repository.get_deployment(str(application["id"]), normalized_environment)
         deployment = self.repository.deactivate(
             application_id=str(application["id"]),

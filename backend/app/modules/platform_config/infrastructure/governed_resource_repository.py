@@ -85,7 +85,7 @@ class GovernedResourceRepository:  # noqa: PLR0904
         )
         return self._resource(row) if row else None
 
-    def list_resources(self) -> list[dict[str, Any]]:
+    def list_resources(self, *, archived: bool = False) -> list[dict[str, Any]]:
         rows = self.database.execute(
             """
             select r.*, e.code as environment_code, b.code as base_code,
@@ -94,8 +94,10 @@ class GovernedResourceRepository:  # noqa: PLR0904
             left join platform_environment e on e.id = r.environment_id
             left join platform_base b on b.id = r.base_id
             left join platform_workshop w on w.id = r.workshop_id
+            where (r.status = 'archived') = ?
             order by r.code
-            """
+            """,
+            (archived,),
         )
         return [self._resource(row) for row in rows]
 

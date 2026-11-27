@@ -552,6 +552,17 @@ Agent 草稿 SHALL 只接受代码定义的 business role/instructions、模型�
 - **WHEN** 用户只有一个 Agent 的编辑权限并尝试创建另一 Agent
 - **THEN** 服务拒绝且不创建 Definition 或 Draft。
 
+### Requirement: 业务 Agent 支持归档
+系统 SHALL 允许有编辑权限的管理员停用没有活动应用部署引用的业务 Agent。已停用或从未发布的业务 Agent 可以经确认后归档，归档保留草稿和发布历史。默认列表 MUST 隐藏已归档定义，显式筛选后可只读查看。
+
+#### Scenario: 已发布 Agent 还有新草稿
+- **WHEN** 管理员尝试直接归档已发布且启用的 Agent
+- **THEN** 系统拒绝归档，要求先停用。内部诊断 Agent 与默认 Agent 受保护。
+
+#### Scenario: 归档未发布 Agent
+- **WHEN** 管理员使用当前修订号确认归档没有发布历史的业务 Agent
+- **THEN** 归档后禁止恢复、验证、发布或修改草稿，并保留草稿内容
+
 ### Requirement: Agent管理界面只管理Python Runtime
 当前 Agent 创建、草稿、发布、回滚与执行 SHALL 只支持 `python-v1`，管理界面 MUST NOT 提供 Runtime 选择项。合法 Python 历史协议或工具策略版本可由管理读取标记为只读。当前 Publication 完整性校验 MUST 拒绝不受支持或与 Definition 不一致的 runtime kind，且不得通过改写标签进入当前执行链。
 

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -134,6 +134,7 @@ describe("角色授权中心", () => {
         knowledge_bases: bases,
         mcp_tools: [
           {
+            server_code: "knowledge-mcp",
             tool_identifier: "knowledge_search",
             display_name_zh: "知识检索",
             description: "合成工具",
@@ -207,6 +208,11 @@ describe("角色授权中心", () => {
       expect(
         screen.getByRole("checkbox", { name: /^app2 知识库 ONES 缺陷 kb-ones/ })
       ).not.toHaveAttribute("data-checked")
+      const [firstService, secondService] = screen.getAllByRole("group", { name: "knowledge-mcp" })
+      fireEvent.click(within(firstService).getByRole("button", { name: "取消全选 knowledge-mcp" }))
+      expect(within(firstService).getByRole("checkbox")).not.toBeChecked()
+      expect(within(secondService).getByRole("checkbox")).toBeChecked()
+      fireEvent.click(within(firstService).getByRole("button", { name: "全选 knowledge-mcp" }))
       fireEvent.click(
         screen.getByRole("checkbox", { name: /^app1 知识库 运维知识 kb-ops/ })
       )
@@ -704,12 +710,14 @@ describe("角色授权中心", () => {
               status: "enabled",
               mcp_tools: [
                 {
+                  server_code: "tool-mcp",
                   tool_identifier: "query_database",
                   display_name_zh: "只读查询数据库",
                   description: "对唯一解析的数据资源执行策略允许的只读 SQL。",
                   version_constraint: "",
                 },
                 {
+                  server_code: "dingtalk-mcp",
                   tool_identifier: "dingtalk_create_todo",
                   display_name_zh: "创建钉钉待办",
                   description: "为当前钉钉用户准备一个本人待办。",
@@ -718,6 +726,7 @@ describe("角色授权中心", () => {
                   confirmation_policy: "external_action_card_v1",
                 },
                 {
+                  server_code: "file-service",
                   tool_identifier: "task_workspace_get",
                   display_name_zh: "查看任务工作区",
                   description:
@@ -771,9 +780,7 @@ describe("角色授权中心", () => {
     expect(screen.getByText(/写入/)).toBeInTheDocument()
     expect(screen.getByText(/需原用户确认卡片/)).toBeInTheDocument()
     fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: /^创建钉钉待办 dingtalk_create_todo/,
-      })
+      screen.getByRole("button", { name: "全选 dingtalk-mcp" })
     )
     fireEvent.click(
       await screen.findByRole("checkbox", { name: "选择 test 环境" })
@@ -854,6 +861,7 @@ describe("角色授权中心", () => {
               status: "enabled",
               mcp_tools: [
                 {
+                  server_code: "tool-mcp",
                   tool_identifier: "query_database",
                   display_name_zh: "只读查询数据库",
                   description: "对唯一解析的数据资源执行策略允许的只读 SQL。",

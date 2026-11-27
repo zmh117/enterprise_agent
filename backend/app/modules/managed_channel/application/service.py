@@ -76,12 +76,14 @@ class ManagedChannelService:
         self.audit_service = audit_service
         self.stale_seconds = max(stale_seconds, 10)
 
-    def list_channels(self) -> list[dict[str, Any]]:
+    def list_channels(self, *, archived: bool = False) -> list[dict[str, Any]]:
         result = [
-            self._dingtalk_public(item) for item in self.repository.list_dingtalk_connectors()
+            self._dingtalk_public(item)
+            for item in self.repository.list_dingtalk_connectors(archived=archived)
         ]
-        result.append(self.repository.browser_channel())
-        for item in self.webhook_provider.list_channels():
+        if not archived:
+            result.append(self.repository.browser_channel())
+        for item in self.webhook_provider.list_channels(archived=archived):
             runtime_status = str(
                 item.get("runtime_status")
                 or ("READY" if str(item["status"]) == "enabled" else "STOPPED")
@@ -90,6 +92,8 @@ class ManagedChannelService:
                 {
                     "id": str(item["connector_id"]),
                     "kind": "WEBHOOK",
+                    "archived": archived,
+                    "published": bool(item.get("current_publication_id")),
                     "name": str(item["name"]),
                     "code": str(item["code"]),
                     "webhook_trigger_id": str(item["id"]),
@@ -142,9 +146,11 @@ class ManagedChannelService:
             return self.repository.browser_channel()
         return self._dingtalk_public(self.repository.get_connector(channel_id))
 
-    def list_dingtalk_enterprises(self) -> list[dict[str, Any]]:
+    def list_dingtalk_enterprises(self, *, archived: bool = False) -> list[dict[str, Any]]:
         return [
-            self._enterprise_public(item) for item in self.repository.list_dingtalk_enterprises()
+            self._enterprise_public(item)
+            for item in self.repository.list_dingtalk_enterprises()
+            if (item["status"] == "ARCHIVED") == archived
         ]
 
     def get_dingtalk_enterprise(self, enterprise_id: str) -> dict[str, Any]:
@@ -530,6 +536,21 @@ class ManagedChannelService:
             payload={"connector_id": connector_id},
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def archive(
+        self, connector_id: str, *, expected_revision: int, actor_id: str, webhook_code: str = ""
+    ) -> None:
+        self.repository.archive(
+            connector_id, expected_revision=expected_revision, webhook_code=webhook_code
+        )
+        self.audit_service.record(
+            "managed_channel.archived",
+            actor_id=actor_id,
+            status="SUCCEEDED",
+            summary="Managed channel archived",
+            payload={"connector_id": connector_id, "webhook_code": webhook_code},
+        )
+
     def eligible(self, trigger_type: str) -> list[dict[str, Any]]:
         if trigger_type == "browser_extension":
             item = self.repository.browser_channel()
@@ -611,6 +632,7 @@ class ManagedChannelService:
                 "verified_at": item.get("dingtalk_enterprise_verified_at"),
             },
             "enabled": bool(item["enabled"]),
+            "archived": bool(item.get("archived")),
             "revision": int(item.get("revision") or 1),
             "secret_configured": bool(item.get("secret_ref")),
             "work_notification_agent_id_configured": self._positive_int(

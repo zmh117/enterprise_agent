@@ -4,6 +4,7 @@ import hmac
 from typing import Any
 
 
+from app.shared.archive import require_not_archived
 from app.modules.agent_config.application.service import AgentConfigService
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
@@ -265,7 +266,8 @@ class WebhookTriggerService:
         config: dict[str, Any],
     ) -> dict[str, Any]:
         self._require(actor_id, "edit", code)
-        definition = self.repository.get_definition(code)
+        definition = self.repository.get_definition(code, for_update=True)
+        require_not_archived(definition["status"])
         normalized = self._normalize(config)
         revision = self.repository.save_draft(
             trigger_id=str(definition["id"]),
@@ -286,7 +288,8 @@ class WebhookTriggerService:
     @operation_unit_of_work(lambda service: service.repository.database)
     def validate_revision(self, *, actor_id: str, code: str, revision_id: str) -> dict[str, Any]:
         self._require(actor_id, "edit", code)
-        definition = self.repository.get_definition(code)
+        definition = self.repository.get_definition(code, for_update=True)
+        require_not_archived(definition["status"])
         revision = self.repository.get_revision(revision_id)
         self._assert_revision_owner(definition, revision)
         errors, summary = self.validator.validate(definition=definition, config=revision["config"])
@@ -309,7 +312,8 @@ class WebhookTriggerService:
         sample_payload: dict[str, Any],
     ) -> dict[str, Any]:
         self._require(actor_id, "edit", code)
-        definition = self.repository.get_definition(code)
+        definition = self.repository.get_definition(code, for_update=True)
+        require_not_archived(definition["status"])
         revision = self.repository.get_revision(revision_id)
         self._assert_revision_owner(definition, revision)
         errors, summary = self.validator.validate(definition=definition, config=revision["config"])
@@ -330,6 +334,7 @@ class WebhookTriggerService:
     def publish(self, *, actor_id: str, code: str, revision_id: str) -> dict[str, Any]:
         self._require(actor_id, "publish", code)
         definition = self.repository.get_definition(code, for_update=True)
+        require_not_archived(definition["status"])
         revision = self.repository.get_revision(revision_id)
         self._assert_revision_owner(definition, revision)
         existing = self.repository.publication_for_revision(
@@ -390,7 +395,8 @@ class WebhookTriggerService:
         status: str,
     ) -> dict[str, Any]:
         self._require(actor_id, "edit", code)
-        before = self.repository.get_definition(code)
+        before = self.repository.get_definition(code, for_update=True)
+        require_not_archived(before["status"])
         if status == "enabled" and not before.get("current_publication_id"):
             raise NonRetryableExecutionError(
                 "Webhook must be published before enabling",
@@ -438,7 +444,8 @@ class WebhookTriggerService:
         expected_revision: int,
     ) -> dict[str, Any]:
         self._require(actor_id, "publish", code)
-        before = self.repository.get_definition(code)
+        before = self.repository.get_definition(code, for_update=True)
+        require_not_archived(before["status"])
         selected = self.repository.get_publication(publication_id)
         config = {k: v for k, v in selected["snapshot"].items() if k != "source_connector_id"}
         self._normalize(config)
@@ -475,7 +482,8 @@ class WebhookTriggerService:
                 safe_message="请确认轮换公开 ID",
                 error_code="confirmation_required",
             )
-        before = self.repository.get_definition(code)
+        before = self.repository.get_definition(code, for_update=True)
+        require_not_archived(before["status"])
         updated = self.repository.rotate_public_id(code=code, expected_revision=expected_revision)
         self._audit(
             "webhook.trigger.public_id_rotated",

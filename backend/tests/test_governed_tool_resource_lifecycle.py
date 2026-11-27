@@ -736,22 +736,6 @@ def test_resource_identity_lifecycle_is_concurrent_and_dependency_guarded() -> N
             expected_revision=3,
             actor_id="local-user",
         )
-        with pytest.raises(
-            NonRetryableExecutionError,
-            match="Resource Identity still has an active Draft",
-        ):
-            service.set_resource_status(
-                "governed_mysql",
-                "archived",
-                expected_revision=int(disabled_again["revision"]),
-                actor_id="local-user",
-            )
-
-        service.delete_draft(
-            "governed_mysql",
-            expected_revision=int(created["draft"]["draft_revision"]),
-            actor_id="local-user",
-        )
         archived_identity = service.set_resource_status(
             "governed_mysql",
             "archived",
@@ -760,6 +744,15 @@ def test_resource_identity_lifecycle_is_concurrent_and_dependency_guarded() -> N
         )
         assert archived_identity["status"] == "archived"
         assert archived_identity["revision"] == 5
+        assert not service.list_resources()
+        (retained,) = service.list_resources(archived=True)
+        assert retained["draft"]["id"] == created["draft"]["id"]
+        with pytest.raises(NonRetryableExecutionError, match="read-only"):
+            service.delete_draft(
+                "governed_mysql",
+                expected_revision=created["draft"]["draft_revision"],
+                actor_id="local-user",
+            )
 
         with pytest.raises(
             NonRetryableExecutionError,
@@ -921,5 +914,32 @@ def test_resource_identity_archive_requires_no_published_revision() -> None:
             actor_id="local-user",
         )
         assert archived_identity["status"] == "archived"
+    finally:
+        runtime.database.close()
+
+
+def test_unpublished_archive_releases_active_credential_reference_and_keeps_draft():
+    runtime, resources, created = _create_resource()
+    try:
+        secrets = runtime.platform_config_service
+        code = "governed_mysql_password"
+        actor = "local-user"
+        stopped = secrets.disable_platform_secret(code, actor_id=actor)
+        with pytest.raises(NonRetryableExecutionError, match="Secret in use"):
+            secrets.archive_platform_secret(
+                code, expected_revision=stopped["revision"], actor_id=actor
+            )
+        resources.set_resource_status(
+            "governed_mysql", "archived", expected_revision=1, actor_id=actor
+        )
+        assert resources.list_resources(archived=True)[0]["draft"]["id"] == created["draft"]["id"]
+        usage = secrets.get_platform_secret_usage(code)
+        assert usage["usage_count"] > 0 and usage["active_usage_count"] == 0
+        assert (
+            secrets.archive_platform_secret(
+                code, expected_revision=stopped["revision"], actor_id=actor
+            )["status"]
+            == "archived"
+        )
     finally:
         runtime.database.close()

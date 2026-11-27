@@ -27,8 +27,11 @@ const secretKey = ["platform-governance", "secrets"] as const
 const resourceKey = ["platform-governance", "resources"] as const
 const environmentKey = ["platform-governance", "environments"] as const
 
-export function usePlatformSecrets() {
-  return useQuery({ queryKey: secretKey, queryFn: listPlatformSecrets })
+export function usePlatformSecrets(archived = false) {
+  return useQuery({
+    queryKey: [...secretKey, archived],
+    queryFn: () => listPlatformSecrets(archived),
+  })
 }
 
 export function useCreatePlatformSecret() {
@@ -68,8 +71,11 @@ export function usePlatformSecretUsage(code: string) {
   })
 }
 
-export function useGovernedResources() {
-  return useQuery({ queryKey: resourceKey, queryFn: listGovernedResources })
+export function useGovernedResources(archived = false) {
+  return useQuery({
+    queryKey: [...resourceKey, archived],
+    queryFn: () => listGovernedResources(archived),
+  })
 }
 
 export function useResourceFormOptions() {

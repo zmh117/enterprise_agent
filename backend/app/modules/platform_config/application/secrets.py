@@ -6,6 +6,7 @@ from typing import Protocol
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from app.shared.archive import require_not_archived
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 from app.shared.secret_crypto import (
     decode_base64url,
@@ -163,6 +164,7 @@ class EncryptedDbSecretProvider:
         secret = self.repository.get_platform_secret_by_code(code)
         if not secret:
             raise NotFound(f"Platform secret not found: {code}")
+        require_not_archived(secret["status"])
         next_version = int(secret.get("active_version") or 0) + 1
         encrypted = self._encrypt(
             value,

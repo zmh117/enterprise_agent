@@ -1,4 +1,9 @@
 import {
+  ArchiveAction,
+  ConfirmListAction,
+} from "@/shared/presentation/archive-action"
+import { McpToolGroups } from "@/shared/presentation/mcp-tool-groups"
+import {
   CatalogPager,
   ListEmpty,
   ListPage,
@@ -20,12 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+import { FormDialog, FormDialogCancel } from "@/shared/presentation/form-dialog"
 import { useEffect, useState, type FormEvent } from "react"
 import {
   BotIcon,
@@ -69,14 +69,24 @@ import type {
   CredentialSource,
   ModelConnectionConfig,
 } from "@/contexts/agent-profiles/domain/agent-profile"
-import { ApiError } from "@/shared/api/api-client"
+import { ApiError, apiRequest } from "@/shared/api/api-client"
+
+function updateAgentStatus(
+  agent: { code: string; revision: number },
+  status: "enabled" | "disabled" | "archived"
+) {
+  return apiRequest(
+    `/api/admin/agents/${encodeURIComponent(agent.code)}/lifecycle/${status}?expected_revision=${agent.revision}`,
+    { method: "POST" }
+  )
+}
 
 export function AgentProfilesPage() {
-  const profiles = useAgentProfiles()
   const [showCreate, setShowCreate] = useState(false)
   const list = useListNavigation()
   const q = list.params.get("q") ?? ""
   const release = list.params.get("release") ?? ""
+  const profiles = useAgentProfiles(release === "archived")
   const clear = () => list.filter({ q: "", release: "" })
   const canCreate = profiles.data?.permissions.can_create
   const result = catalogPage(
@@ -84,7 +94,9 @@ export function AgentProfilesPage() {
       (agent) =>
         matchesListSearch(q, agent.name, agent.code) &&
         (!release ||
-          Boolean(agent.current_publication) === (release === "published"))
+          (release === "archived" || release === "disabled"
+            ? agent.status === release
+            : Boolean(agent.current_publication) === (release === "published")))
     ),
     list.page
   )
@@ -122,6 +134,8 @@ export function AgentProfilesPage() {
           <option value="">全部发布状态</option>
           <option value="published">已发布</option>
           <option value="draft">未发布</option>
+          <option value="disabled">已停用</option>
+          <option value="archived">已归档</option>
         </select>
         {(q || release) && (
           <Button variant="ghost" size="sm" onClick={clear}>
@@ -148,6 +162,7 @@ export function AgentProfilesPage() {
                   <TableHead className="hidden lg:table-cell">
                     Runtime
                   </TableHead>
+                  <TableHead>操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -166,9 +181,13 @@ export function AgentProfilesPage() {
                       </p>
                     </TableCell>
                     <TableCell>
-                      {agent.current_publication
-                        ? `r${agent.current_publication.revision}`
-                        : "未发布"}
+                      {agent.status === "archived"
+                        ? "已归档"
+                        : agent.status === "disabled"
+                          ? "已停用"
+                          : agent.current_publication
+                            ? `r${agent.current_publication.revision}`
+                            : "未发布"}
                     </TableCell>
                     <TableCell className="whitespace-normal">
                       {modelConnectionStatusLabel(
@@ -180,6 +199,39 @@ export function AgentProfilesPage() {
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {runtimeKindLabel(agent.runtime_kind)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        {agent.can_change_status && (
+                          <ConfirmListAction
+                            label={
+                              agent.status === "disabled" ? "启用" : "停用"
+                            }
+                            name={agent.name}
+                            description={
+                              agent.status === "disabled"
+                                ? "启用后可继续配置和发布。"
+                                : "停用后暂停配置和发布。"
+                            }
+                            queryKey={["agent-profiles"]}
+                            action={() =>
+                              updateAgentStatus(
+                                agent,
+                                agent.status === "disabled"
+                                  ? "enabled"
+                                  : "disabled"
+                              )
+                            }
+                          />
+                        )}
+                        {agent.can_archive && (
+                          <ArchiveAction
+                            name={agent.name}
+                            queryKey={["agent-profiles"]}
+                            archive={() => updateAgentStatus(agent, "archived")}
+                          />
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -238,104 +290,88 @@ function CreateAgentPanel({ onCancel }: { onCancel: () => void }) {
   }
 
   return (
-    <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open) onCancel()
-      }}
+    <FormDialog
+      title="新建 Agent"
+      onClose={onCancel}
+      pending={create.isPending}
     >
-      <SheetContent
-        aria-describedby={undefined}
-        className="w-full overflow-y-auto sm:max-w-lg"
-      >
-        <SheetHeader>
-          <SheetTitle>新建 Agent</SheetTitle>
-        </SheetHeader>
-        <form onSubmit={submit} className="space-y-5 px-4 pb-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Agent 编码" htmlFor="create-agent-code">
-              <Input
-                id="create-agent-code"
-                required
-                maxLength={120}
-                pattern="[a-z][a-z0-9]*(?:-[a-z0-9]+)*"
-                placeholder="例如：operations-agent"
-                value={form.code}
-                onChange={(event) =>
-                  setForm({ ...form, code: event.target.value })
-                }
-              />
-            </Field>
-            <Field label="名称" htmlFor="create-agent-name">
-              <Input
-                id="create-agent-name"
-                required
-                maxLength={120}
-                placeholder="例如：运维诊断 Agent"
-                value={form.name}
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
-              />
-            </Field>
-            <Field label="项目编码" htmlFor="create-agent-project">
-              <Input
-                id="create-agent-project"
-                required
-                maxLength={120}
-                value={form.project_code}
-                onChange={(event) =>
-                  setForm({ ...form, project_code: event.target.value })
-                }
-              />
-            </Field>
-            <Field label="Runtime" htmlFor="create-agent-runtime">
-              <Input
-                id="create-agent-runtime"
-                value="Python Runtime"
-                readOnly
-                aria-readonly="true"
-              />
-            </Field>
-          </div>
-          <Field label="说明" htmlFor="create-agent-description">
-            <Textarea
-              id="create-agent-description"
-              maxLength={500}
-              rows={3}
-              placeholder="说明这个 Agent 的用途"
-              value={form.description}
+      <form onSubmit={submit} className="space-y-5">
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Agent 编码" htmlFor="create-agent-code">
+            <Input
+              id="create-agent-code"
+              required
+              maxLength={120}
+              pattern="[a-z][a-z0-9]*(?:-[a-z0-9]+)*"
+              placeholder="例如：operations-agent"
+              value={form.code}
               onChange={(event) =>
-                setForm({ ...form, description: event.target.value })
+                setForm({ ...form, code: event.target.value })
               }
             />
           </Field>
-          <div className="rounded-lg border border-amber-300/70 bg-amber-50/40 p-3 text-sm text-muted-foreground dark:bg-amber-950/10">
-            Agent 编码与 Runtime
-            创建后不可修改。新建只生成初始草稿，不会自动发布或切换业务应用。
-          </div>
-          <MutationMessage error={create.error} />
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={create.isPending}
-              onClick={onCancel}
-            >
-              取消
-            </Button>
-            <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? (
-                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
-              ) : (
-                <PlusIcon aria-hidden="true" />
-              )}
-              创建 Agent
-            </Button>
-          </div>
-        </form>
-      </SheetContent>
-    </Sheet>
+          <Field label="名称" htmlFor="create-agent-name">
+            <Input
+              id="create-agent-name"
+              required
+              maxLength={120}
+              placeholder="例如：运维诊断 Agent"
+              value={form.name}
+              onChange={(event) =>
+                setForm({ ...form, name: event.target.value })
+              }
+            />
+          </Field>
+          <Field label="项目编码" htmlFor="create-agent-project">
+            <Input
+              id="create-agent-project"
+              required
+              maxLength={120}
+              value={form.project_code}
+              onChange={(event) =>
+                setForm({ ...form, project_code: event.target.value })
+              }
+            />
+          </Field>
+          <Field label="Runtime" htmlFor="create-agent-runtime">
+            <Input
+              id="create-agent-runtime"
+              value="Python Runtime"
+              readOnly
+              aria-readonly="true"
+            />
+          </Field>
+        </div>
+        <Field label="说明" htmlFor="create-agent-description">
+          <Textarea
+            id="create-agent-description"
+            maxLength={500}
+            rows={3}
+            placeholder="说明这个 Agent 的用途"
+            value={form.description}
+            onChange={(event) =>
+              setForm({ ...form, description: event.target.value })
+            }
+          />
+        </Field>
+        <div className="rounded-lg border border-amber-300/70 bg-amber-50/40 p-3 text-sm text-muted-foreground dark:bg-amber-950/10">
+          Agent 编码与 Runtime
+          创建后不可修改。新建只生成初始草稿，不会自动发布或切换业务应用。
+        </div>
+        <MutationMessage error={create.error} />
+        <div className="flex flex-wrap justify-end gap-2">
+          <FormDialogCancel disabled={create.isPending} />
+          <Button type="submit" disabled={create.isPending}>
+            {create.isPending ? (
+              <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+            ) : (
+              <PlusIcon aria-hidden="true" />
+            )}
+            创建 Agent
+          </Button>
+        </div>
+      </form>
+    </FormDialog>
   )
 }
 
@@ -1099,12 +1135,12 @@ function ProfileForm({
   const writable =
     agent.management_mode === "editable" && agent.permissions.can_edit_profile
 
-  function toggleList(field: "mcp_tool_ids" | "skills", value: string) {
+  function toggleSkill(value: string) {
     setForm((current) => ({
       ...current,
-      [field]: current[field].includes(value)
-        ? current[field].filter((item) => item !== value)
-        : [...current[field], value],
+      skills: current.skills.includes(value)
+        ? current.skills.filter((item) => item !== value)
+        : [...current.skills, value],
     }))
   }
 
@@ -1244,13 +1280,15 @@ function ProfileForm({
               title="MCP 工具"
               items={agent.catalog.mcp_tools}
               selected={form.mcp_tool_ids}
-              onToggle={(value) => toggleList("mcp_tool_ids", value)}
+              onChange={(mcp_tool_ids) =>
+                setForm((current) => ({ ...current, mcp_tool_ids }))
+              }
             />
             <Checklist
               title="技能"
               items={agent.catalog.skills}
               selected={form.skills}
-              onToggle={(value) => toggleList("skills", value)}
+              onToggle={toggleSkill}
             />
             <div className="grid gap-4 lg:grid-cols-2">
               <ConnectorChecklist
@@ -1597,12 +1635,12 @@ function McpToolChecklist({
   title,
   items,
   selected,
-  onToggle,
+  onChange,
 }: {
   title: string
   items: AgentDetail["catalog"]["mcp_tools"]
   selected: string[]
-  onToggle: (value: string) => void
+  onChange: (identifiers: string[]) => void
 }) {
   const availableIds = new Set(items.map((item) => item.identifier))
   const unavailableSelected = selected.filter((id) => !availableIds.has(id))
@@ -1611,38 +1649,8 @@ function McpToolChecklist({
     <fieldset className="rounded-lg border p-4">
       <legend className="px-1 text-sm font-medium">{title}</legend>
       {items.length || unavailableSelected.length ? (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {items.map((item) => (
-            <label
-              key={item.identifier}
-              className="flex min-w-0 items-start gap-3 rounded-md border p-3 text-sm"
-            >
-              <input
-                className="mt-0.5"
-                type="checkbox"
-                aria-label={item.identifier}
-                checked={selected.includes(item.identifier)}
-                onChange={() => onToggle(item.identifier)}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block font-mono text-xs font-medium break-all">
-                  {item.identifier}
-                </span>
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  {item.server_code} · {item.read_only ? "只读" : "写入"}
-                  {item.confirmation_policy === "external_action_card_v1"
-                    ? " · 每次需原用户确认卡片"
-                    : ""}
-                  {item.resource_kind
-                    ? ` · 解析 ${item.resource_kind} Resource`
-                    : " · 不需要外部 Resource"}
-                </span>
-                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                  {item.description.trim() || "暂无工具说明。"}
-                </span>
-              </span>
-            </label>
-          ))}
+        <div className="space-y-3">
+          <McpToolGroups tools={items} selected={selected} onChange={onChange} />
           {unavailableSelected.map((identifier) => (
             <label
               key={identifier}
@@ -1653,7 +1661,9 @@ function McpToolChecklist({
                 type="checkbox"
                 aria-label={identifier}
                 checked
-                onChange={() => onToggle(identifier)}
+                onChange={() =>
+                  onChange(selected.filter((id) => id !== identifier))
+                }
               />
               <span className="min-w-0 flex-1">
                 <span className="block font-mono text-xs font-medium break-all">

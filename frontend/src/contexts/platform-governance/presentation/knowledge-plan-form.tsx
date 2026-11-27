@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react"
+import { FormDialog, FormDialogCancel } from "@/shared/presentation/form-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { KnowledgeError, KnowledgeField } from "./knowledge-resource-ui"
@@ -97,56 +98,67 @@ export function KnowledgePlanForm({
       /* 表单保留，错误由统一组件展示。 */
     }
   }
-  if (bindingId && !stored)
-    return (
-      <div className="p-5">
-        <KnowledgeError error={configuration.error} />
-        <p>正在读取采集配置…</p>
-      </div>
-    )
   return (
-    <form
-      onSubmit={(e) => void submit(e)}
-      className="grid gap-4 p-5"
-      data-testid="knowledge-plan-form"
+    <FormDialog
+      title={bindingId ? "配置采集计划" : "新建采集计划"}
+      description="配置来源与三个知识库的映射。保存不会自动发布或授权。"
+      asSheet={Boolean(bindingId)}
+      wide
+      pending={command.isPending}
+      onClose={onClose}
     >
-      <p className="text-sm text-muted-foreground">
-        一条 ONES
-        采集计划按类型更新三个知识库。保存后默认关闭，开启自动同步后开始首次采集。首次配置需要
-        ONES 管理员提供范围和类型 ID。
-        已有运行记录的来源范围保持固定；变更范围需要新建计划。
-      </p>
-      <KnowledgeError error={command.error} />
-      <div className="grid gap-3 sm:grid-cols-2">
-        {fields.map(([key, label]) => (
-          <KnowledgeField key={key} label={label}>
-            <Input
-              required
-              aria-label={label}
-              value={values[key] ?? ""}
-              type={key === "first_date" ? "date" : "text"}
-              placeholder={
-                key === "credential_ref"
-                  ? "secret://platform/凭据编码"
-                  : undefined
-              }
-              onChange={(e) => setValues({ ...values, [key]: e.target.value })}
-              readOnly={Boolean(
-                bindingId && ["code", "source_code"].includes(key)
-              )}
-              disabled={command.isPending}
-            />
-          </KnowledgeField>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <Button type="submit" disabled={command.isPending}>
-          保存采集计划
-        </Button>
-        <Button type="button" variant="outline" onClick={onClose}>
-          关闭
-        </Button>
-      </div>
-    </form>
+      {bindingId && !stored ? (
+        <div>
+          <KnowledgeError error={configuration.error} />
+          <p>正在读取采集配置…</p>
+        </div>
+      ) : (
+        <form
+          onSubmit={(e) => void submit(e)}
+          className="grid gap-4"
+          data-testid="knowledge-plan-form"
+        >
+          <p className="text-sm text-muted-foreground">
+            一条 ONES
+            采集计划按类型更新三个知识库。保存后默认关闭，开启自动同步后开始首次采集。首次配置需要
+            ONES 管理员提供范围和类型 ID。
+            已有运行记录的来源范围保持固定；变更范围需要新建计划。
+          </p>
+          <KnowledgeError error={command.error} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            {fields.map(([key, label]) => (
+              <KnowledgeField key={key} label={label}>
+                <Input
+                  required
+                  aria-label={label}
+                  value={values[key] ?? ""}
+                  type={key === "first_date" ? "date" : "text"}
+                  placeholder={
+                    key === "credential_ref"
+                      ? "secret://platform/凭据编码"
+                      : undefined
+                  }
+                  onChange={(e) =>
+                    setValues({ ...values, [key]: e.target.value })
+                  }
+                  readOnly={Boolean(
+                    bindingId && ["code", "source_code"].includes(key)
+                  )}
+                  disabled={command.isPending}
+                />
+              </KnowledgeField>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={command.isPending}>
+              保存采集计划
+            </Button>
+            <FormDialogCancel disabled={command.isPending}>
+              关闭
+            </FormDialogCancel>
+          </div>
+        </form>
+      )}
+    </FormDialog>
   )
 }

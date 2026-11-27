@@ -290,6 +290,20 @@ def test_pinned_calls_reject_revocation_or_version_change_without_fallback(resou
     db, _, service, resource, binding, _ = resources
     current = publish(resources)
     pinned = service.resolve(resource["knowledge_base_id"])
+    if change == "archived":
+        with pytest.raises(KnowledgeGovernanceError):
+            service.set_status(
+                actor_id=ACTOR,
+                resource_id=resource["id"],
+                expected_revision=current["revision"],
+                status="archived",
+            )
+        current = service.set_status(
+            actor_id=ACTOR,
+            resource_id=resource["id"],
+            expected_revision=current["revision"],
+            status="disabled",
+        )
     if change in {"disabled", "archived"}:
         service.set_status(
             actor_id=ACTOR,

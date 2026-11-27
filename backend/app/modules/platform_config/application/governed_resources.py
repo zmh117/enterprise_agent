@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from app.shared.archive import require_archive_eligible, require_not_archived
 from app.modules.permission.application.permission_service import (
     PermissionService,
 )
@@ -130,9 +131,9 @@ class GovernedResourceService:
                 error_code="resource_reset_maintenance",
             )
 
-    def list_resources(self) -> list[dict[str, Any]]:
+    def list_resources(self, *, archived: bool = False) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
-        for resource in self.repository.list_resources():
+        for resource in self.repository.list_resources(archived=archived):
             draft = self.repository.find_draft(str(resource["id"]))
             draft_verification = (
                 self.repository.matching_verification(
@@ -480,6 +481,7 @@ class GovernedResourceService:
     ) -> None:
         self.require_admin(actor_id)
         resource = self._resource(code)
+        require_not_archived(resource["status"])
         before = self.repository.get_draft(str(resource["id"]))
         self.repository.delete_draft(
             resource_id=str(resource["id"]),
@@ -693,6 +695,7 @@ class GovernedResourceService:
                 error_code="resource_revision_immutable",
             )
         resource = self._resource(code)
+        require_not_archived(resource["status"])
         before = self.repository.get_revision(revision_id)
         if before["resource_id"] != resource["id"]:
             raise NotFound(f"Resource Revision not found for Resource: {revision_id}")
@@ -745,7 +748,7 @@ class GovernedResourceService:
                 error_code="resource_identity_revision_conflict",
             )
         transitions = {
-            "enabled": {"disabled"},
+            "enabled": {"disabled", "archived"},
             "disabled": {"enabled", "archived"},
             "archived": set(),
         }
@@ -757,7 +760,9 @@ class GovernedResourceService:
                 error_code="resource_identity_transition_invalid",
             )
         if normalized == "archived":
-            if self.repository.find_draft(str(resource["id"])):
+            revisions = self.repository.list_revisions(str(resource["id"]))
+            require_archive_eligible(current_status, published=bool(revisions))
+            if revisions and self.repository.find_draft(str(resource["id"])):
                 raise NonRetryableExecutionError(
                     "Resource Identity still has an active Draft",
                     safe_message="资源身份仍有活动草稿，请先删除草稿",
@@ -765,7 +770,7 @@ class GovernedResourceService:
                 )
             published_revisions = [
                 revision
-                for revision in self.repository.list_revisions(str(resource["id"]))
+                for revision in revisions
                 if str(revision["status"]) == "PUBLISHED"
             ]
             if published_revisions:

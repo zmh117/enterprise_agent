@@ -1144,7 +1144,14 @@ describe("Phase 5 platform governance UI", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
       if (init?.method === "POST") writes.push(url)
-      if (url === "/api/platform/resources") return response({ resources: [mysql, loki] })
+      if (url === "/api/platform/resources")
+        return response({
+          resources: [mysql, loki].filter((r) => r.status !== "archived"),
+        })
+      if (url === "/api/platform/resources?lifecycle_status=archived")
+        return response({
+          resources: [mysql].filter((r) => r.status === "archived"),
+        })
       if (url.endsWith("/mysql_wrong_scope/revisions/mysql-r1/disable")) {
         older.status = "DISABLED"
         return response({ revision: older })
@@ -1192,7 +1199,7 @@ describe("Phase 5 platform governance UI", () => {
     fireEvent.click(mysqlCard.getByRole("button", { name: "归档资源身份" }))
     expect(within(screen.getByRole("alertdialog")).getByText(/原编码不可复用/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "确认" }))
-    await waitFor(() => expect(mysqlCard.getByText("资源身份：归档")).toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole("button", {name: "填错范围的 MySQL"})).toBeNull())
 
     expect(writes).toEqual([
       "/api/platform/resources/mysql_wrong_scope/revisions/mysql-r1/disable",
@@ -1201,6 +1208,13 @@ describe("Phase 5 platform governance UI", () => {
     ])
     expect(lokiCard.getByText("资源身份：启用")).toBeInTheDocument()
     expect(lokiCard.getByText("r1 · PUBLISHED")).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("资源身份状态"), {
+      target: { value: "archived" },
+    })
+    expect(
+      await screen.findByRole("button", { name: "填错范围的 MySQL" })
+    ).toBeVisible()
+    expect(screen.queryByRole("button", { name: "Loki 测试环境" })).toBeNull()
   })
 
   it("separates Resource Identity and latest Revision lifecycle filters", async () => {

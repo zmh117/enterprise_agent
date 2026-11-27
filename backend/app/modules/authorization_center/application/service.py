@@ -212,7 +212,7 @@ class AuthorizationCenterService:
         reason: str,
     ) -> dict[str, Any]:
         self._require_catalog(actor_id, "authorization.manage", resource_code=role_id)
-        if status not in {"enabled", "disabled"}:
+        if status not in {"enabled", "disabled", "archived"}:
             self._field_error("status", "角色状态无效")
         before = self.repository.get_role(role_id)
         if status == "disabled" and before["status"] == "enabled" and not confirmed:

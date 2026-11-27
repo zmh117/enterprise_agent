@@ -35,7 +35,9 @@ class ManagedChannelRepository:  # noqa: PLR0904
             raise _revision_conflict()
         return self.browser_channel()
 
-    def list_dingtalk_connectors(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
+    def list_dingtalk_connectors(
+        self, *, include_disabled: bool = True, archived: bool = False
+    ) -> list[dict[str, Any]]:
         enabled = "" if include_disabled else "and c.enabled = 1"
         rows = self.database.execute(
             f"""
@@ -52,9 +54,10 @@ class ManagedChannelRepository:  # noqa: PLR0904
               left join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
               left join channel_connector_runtime r on r.connector_id = c.id
              where c.connector_type = 'dingtalk_enterprise_stream'
-               and c.deleted = 0 {enabled}
+               and c.deleted = 0 and c.archived = ? {enabled}
              order by c.name, c.id
-            """
+            """,
+            (int(archived),),
         )
         return [self._connector(row) for row in rows]
 
@@ -121,7 +124,7 @@ class ManagedChannelRepository:  # noqa: PLR0904
               left join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
               left join channel_connector_runtime r on r.connector_id = c.id
              where c.id = ? and c.connector_type = 'dingtalk_enterprise_stream'
-               and c.deleted = 0
+               and c.deleted = 0 and c.archived = 0
             """,
             (connector_id,),
         )
@@ -195,7 +198,7 @@ class ManagedChannelRepository:  # noqa: PLR0904
                set name = ?, metadata = ?, dingtalk_enterprise_id = ?,
                    secret_ref = ?, enabled = ?,
                    revision = revision + 1, updated_at = ?
-             where id = ? and revision = ? and deleted = 0
+             where id = ? and revision = ? and deleted = 0 and archived = 0
              returning id
             """,
             (
@@ -423,6 +426,57 @@ class ManagedChannelRepository:  # noqa: PLR0904
             for row in rows
         ]
 
+    def archive(self, connector_id: str, *, expected_revision: int, webhook_code: str) -> None:
+        if webhook_code:
+            changed = self.database.execute_one(
+                """update webhook_trigger_definition set archived=1, status='disabled', revision=revision+1, updated_at=?
+                   where connector_id=? and code=? and revision=? and archived=0
+                     and (status='disabled' or not exists (select 1 from webhook_trigger_publication p
+                          where p.trigger_id=webhook_trigger_definition.id)) returning id""",
+                (now_iso(), connector_id, webhook_code, expected_revision),
+            )
+        else:
+            changed = self.database.execute_one(
+                """update integration_connector set archived=1, revision=revision+1, updated_at=?
+                   where id=? and revision=? and connector_type='dingtalk_enterprise_stream'
+                     and enabled=0 and deleted=0 and archived=0 returning id""",
+                (now_iso(), connector_id, expected_revision),
+            )
+        if not changed:
+            raise NonRetryableExecutionError(
+                "Channel cannot be archived",
+                safe_message="请确认渠道已停用或尚未发布，并刷新后重试",
+            )
+        if self._has_active_binding(connector_id, webhook_code=webhook_code):
+            raise NonRetryableExecutionError(
+                "Channel in use", safe_message="渠道仍被活动应用引用", error_code="channel_in_use"
+            )
+
+    def _has_active_binding(self, connector_id: str, *, webhook_code: str = "") -> bool:
+        if webhook_code:
+            return bool(
+                self.database.execute_one(
+                    """select 1 from business_application_deployment d
+                   join business_application_publication p on p.id=d.publication_id
+                   join business_application_revision_trigger t on t.revision_id=p.revision_id
+                   join webhook_trigger_definition w on w.connector_id=t.connector_id
+                   where d.active=1 and t.enabled=1 and w.connector_id=? and w.code=?
+                     and t.normalized_routing_key=('webhook:' || w.id) limit 1""",
+                    (connector_id, webhook_code),
+                )
+            )
+        return bool(
+            self.database.execute_one(
+                """select 1 from business_application_deployment d
+               join business_application_publication p on p.id=d.publication_id
+               where d.active=1 and (exists (select 1 from business_application_revision_trigger t
+                   where t.revision_id=p.revision_id and t.connector_id=? and t.enabled=1)
+               or exists (select 1 from business_application_revision_delivery b
+                   where b.revision_id=p.revision_id and b.connector_id=? and b.enabled=1)) limit 1""",
+                (connector_id, connector_id),
+            )
+        )
+
     def soft_delete(self, connector_id: str, *, expected_revision: int) -> None:
         current = self.get_connector(connector_id)
         if int(current["revision"]) != expected_revision:
@@ -431,7 +485,7 @@ class ManagedChannelRepository:  # noqa: PLR0904
             """
             update integration_connector
                set enabled = 0, deleted = 1, revision = revision + 1, updated_at = ?
-             where id = ? and revision = ? and deleted = 0 returning id
+             where id = ? and revision = ? and deleted = 0 and archived = 0 returning id
             """,
             (now_iso(), connector_id, expected_revision),
         )

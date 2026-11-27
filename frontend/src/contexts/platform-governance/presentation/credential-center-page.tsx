@@ -1,3 +1,4 @@
+import { ArchiveAction } from "@/shared/presentation/archive-action"
 import {
   ListPage,
   ListSearch,
@@ -20,6 +21,7 @@ import {
   SheetTitle,
   SheetHeader,
 } from "@/components/ui/sheet"
+import { FormDialog } from "@/shared/presentation/form-dialog"
 import { useState, type FormEvent } from "react"
 import { PlusIcon, LoaderCircleIcon, RotateCwIcon } from "lucide-react"
 
@@ -59,20 +61,20 @@ import {
   useRotatePlatformSecret,
 } from "@/contexts/platform-governance/application/platform-governance-queries"
 import type { PlatformSecret } from "@/contexts/platform-governance/domain/platform-governance"
-import { ApiError } from "@/shared/api/api-client"
+import { ApiError, apiRequest } from "@/shared/api/api-client"
 
 export function CredentialCenterPage() {
-  const secrets = usePlatformSecrets()
   const list = useListNavigation()
   const q = list.params.get("q") ?? ""
   const status = list.params.get("status") ?? ""
+  const secrets = usePlatformSecrets(status === "archived")
   const filtered = Boolean(q || status)
   const clear = () => list.filter({ q: "", status: "" })
   const result = catalogPage(
     (secrets.data ?? []).filter(
       (item) =>
         matchesListSearch(q, item.code, item.purpose) &&
-        (!status || (item.configured ? "enabled" : "disabled") === status)
+        (!status || item.status === status)
     ),
     list.page
   )
@@ -140,6 +142,7 @@ export function CredentialCenterPage() {
           onCommit={(q) => list.filter({ q })}
         />
         <ListStatusFilter
+          archived
           value={status}
           onChange={(status) => list.filter({ status })}
         />
@@ -149,95 +152,81 @@ export function CredentialCenterPage() {
           </Button>
         )}
       </div>
-      <Sheet
-        open={creating}
-        onOpenChange={(open) => {
-          if (create.isPending) return
-          setCreating(open)
-          if (!open) {
+      {creating && (
+        <FormDialog
+          title="新建凭据"
+          pending={create.isPending}
+          onClose={() => {
+            setCreating(false)
             setCreateForm({ code: "", purpose: "", value: "" })
             create.reset()
-          }
-        }}
-      >
-        <SheetContent aria-describedby={undefined} className="overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>新建凭据</SheetTitle>
-          </SheetHeader>
-          <div className="px-4 pb-4">
-            <form onSubmit={submitCreate}>
-              <FieldGroup className="grid gap-4">
-                <Field>
-                  <FieldLabel htmlFor="secret-code">凭据编码</FieldLabel>
-                  <Input
-                    id="secret-code"
-                    required
-                    pattern="[a-z][a-z0-9_-]+"
-                    maxLength={120}
-                    autoComplete="off"
-                    value={createForm.code}
-                    onChange={(event) =>
-                      setCreateForm({ ...createForm, code: event.target.value })
-                    }
-                    placeholder="oracle_reader_password"
-                  />
-                  <FieldDescription>
-                    保存后形成 secret://platform/&lt;code&gt;。
-                  </FieldDescription>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="secret-purpose">用途</FieldLabel>
-                  <Input
-                    id="secret-purpose"
-                    maxLength={200}
-                    value={createForm.purpose}
-                    onChange={(event) =>
-                      setCreateForm({
-                        ...createForm,
-                        purpose: event.target.value,
-                      })
-                    }
-                    placeholder="Oracle 只读账号密码"
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="secret-value">Secret 明文</FieldLabel>
-                  <Input
-                    id="secret-value"
-                    required
-                    type="password"
-                    autoComplete="new-password"
-                    value={createForm.value}
-                    onChange={(event) =>
-                      setCreateForm({
-                        ...createForm,
-                        value: event.target.value,
-                      })
-                    }
-                  />
-                  <FieldDescription>
-                    仅本次提交，不会在响应中返回。
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
-              <MutationError error={create.error} />
-              <Button
-                className="mt-4"
-                type="submit"
-                disabled={create.isPending}
-              >
-                {create.isPending ? (
-                  <LoaderCircleIcon
-                    className="animate-spin"
-                    aria-hidden="true"
-                  />
-                ) : null}
-                加密保存
-              </Button>
-            </form>
-          </div>
-        </SheetContent>
-      </Sheet>
+          }}
+        >
+          <form onSubmit={submitCreate}>
+            <FieldGroup className="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="secret-code">凭据编码</FieldLabel>
+                <Input
+                  id="secret-code"
+                  required
+                  pattern="[a-z][a-z0-9_-]+"
+                  maxLength={120}
+                  autoComplete="off"
+                  value={createForm.code}
+                  onChange={(event) =>
+                    setCreateForm({ ...createForm, code: event.target.value })
+                  }
+                  placeholder="oracle_reader_password"
+                />
+                <FieldDescription>
+                  保存后形成 secret://platform/&lt;code&gt;。
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="secret-purpose">用途</FieldLabel>
+                <Input
+                  id="secret-purpose"
+                  maxLength={200}
+                  value={createForm.purpose}
+                  onChange={(event) =>
+                    setCreateForm({
+                      ...createForm,
+                      purpose: event.target.value,
+                    })
+                  }
+                  placeholder="Oracle 只读账号密码"
+                />
+              </Field>
+              <Field className="sm:col-span-2">
+                <FieldLabel htmlFor="secret-value">Secret 明文</FieldLabel>
+                <Input
+                  id="secret-value"
+                  required
+                  type="password"
+                  autoComplete="new-password"
+                  value={createForm.value}
+                  onChange={(event) =>
+                    setCreateForm({
+                      ...createForm,
+                      value: event.target.value,
+                    })
+                  }
+                />
+                <FieldDescription>
+                  仅本次提交，不会在响应中返回。
+                </FieldDescription>
+              </Field>
+            </FieldGroup>
+            <MutationError error={create.error} />
+            <Button className="mt-4" type="submit" disabled={create.isPending}>
+              {create.isPending ? (
+                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+              ) : null}
+              加密保存
+            </Button>
+          </form>
+        </FormDialog>
+      )}
 
       <Sheet
         open={Boolean(rotateCode)}
@@ -454,7 +443,13 @@ function CredentialTable({
                 <TableCell>v{secret.active_version}</TableCell>
                 <TableCell>
                   <ListStatus
-                    status={secret.configured ? "enabled" : "disabled"}
+                    status={
+                      secret.status === "archived"
+                        ? "archived"
+                        : secret.configured
+                          ? "enabled"
+                          : "disabled"
+                    }
                   />
                 </TableCell>
               </>
@@ -487,6 +482,18 @@ function CredentialTable({
               >
                 停用
               </Button>
+              {secret.status === "disabled" && (
+                <ArchiveAction
+                  name={secret.code}
+                  queryKey={["platform-governance", "secrets"]}
+                  archive={() =>
+                    apiRequest(
+                      `/api/platform/secrets/${encodeURIComponent(secret.code)}/archive?expected_revision=${secret.revision}`,
+                      { method: "POST" }
+                    )
+                  }
+                />
+              )}
             </div>
           </ExpandableListRow>
         ))}

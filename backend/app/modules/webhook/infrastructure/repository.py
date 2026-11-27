@@ -13,8 +13,12 @@ class WebhookTriggerRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def list_definitions(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        where = "" if include_disabled else "where d.status = 'enabled'"
+    def list_definitions(
+        self, *, include_disabled: bool = True, archived: bool = False
+    ) -> list[dict[str, Any]]:
+        where = "where d.archived = 1" if archived else "where d.archived = 0"
+        if not include_disabled:
+            where += " and d.status = 'enabled'"
         rows = self.database.execute(
             f"""
             select d.*, u.username as execution_username,
@@ -413,6 +417,8 @@ class WebhookTriggerRepository:
 
     def _definition(self, row: dict[str, Any]) -> dict[str, Any]:
         result = {**row, "revision": int(row["revision"])}
+        if row.get("archived"):
+            result["status"] = "archived"
         for field in ("event_count", "rejected_event_count", "failed_event_count"):
             if field in result:
                 result[field] = int(result[field] or 0)

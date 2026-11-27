@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-export const userStatusSchema = z.enum(["enabled", "disabled"])
+export const userStatusSchema = z.enum(["enabled", "disabled", "archived"])
 export const accountTypeSchema = z.enum(["human", "service"])
 
 export const userSchema = z.object({

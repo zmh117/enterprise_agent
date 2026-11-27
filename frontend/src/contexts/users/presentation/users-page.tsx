@@ -1,3 +1,5 @@
+import { ArchiveAction } from "@/shared/presentation/archive-action"
+import { updateUser } from "@/contexts/users/infrastructure/user-api"
 import { useDiscoveryReturn } from "@/shared/presentation/list-navigation"
 import { useState, type FormEvent } from "react"
 import { LoaderCircleIcon, PlusIcon } from "lucide-react"
@@ -17,14 +19,7 @@ import { useListNavigation } from "@/shared/presentation/list-navigation"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+import { FormDialog, FormDialogCancel } from "@/shared/presentation/form-dialog"
 import {
   Table,
   TableBody,
@@ -135,6 +130,7 @@ export function UsersPage() {
         />
         {!candidateId && (
           <ListStatusFilter
+            archived
             value={status}
             onChange={(status) => list.filter({ status })}
           />
@@ -169,9 +165,7 @@ export function UsersPage() {
                   <TableHead className="hidden md:table-cell">
                     更新时间
                   </TableHead>
-                  {candidateId && (
-                    <TableHead className="pr-4 text-right">操作</TableHead>
-                  )}
+                  <TableHead className="pr-4 text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -207,9 +201,25 @@ export function UsersPage() {
                     <TableCell className="hidden text-muted-foreground md:table-cell">
                       {formatDate(user.updated_at)}
                     </TableCell>
-                    {candidateId && (
-                      <TableCell className="pr-4 text-right">
-                        {user.account_type !== "human" ||
+                    <TableCell className="pr-4 text-right">
+                      {!candidateId &&
+                        user.status === "disabled" &&
+                        user.account_type === "human" && (
+                          <ArchiveAction
+                            name={user.display_name}
+                            queryKey={["users"]}
+                            archive={() =>
+                              updateUser(user.id, {
+                                expected_revision: user.revision,
+                                display_name: user.display_name,
+                                email: user.email,
+                                status: "archived",
+                              })
+                            }
+                          />
+                        )}
+                      {candidateId &&
+                        (user.account_type !== "human" ||
                         user.status !== "enabled" ||
                         !candidateSelectable ? (
                           <Button
@@ -231,9 +241,8 @@ export function UsersPage() {
                           >
                             选择并绑定
                           </Link>
-                        )}
-                      </TableCell>
-                    )}
+                        ))}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -265,9 +274,8 @@ export function UsersPage() {
       ) : null}
 
       {creating ? (
-        <CreateUserSheet
-          open
-          onOpenChange={setCreating}
+        <CreateUserDialog
+          onClose={() => setCreating(false)}
           candidateId={candidateSelectable ? candidateId : ""}
           candidateDisplayName={candidate.data?.display_name ?? ""}
           detailState={list.detailState}
@@ -277,15 +285,13 @@ export function UsersPage() {
   )
 }
 
-function CreateUserSheet({
-  open,
-  onOpenChange,
+function CreateUserDialog({
+  onClose,
   candidateId,
   candidateDisplayName,
   detailState,
 }: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  onClose: () => void
   candidateId: string
   candidateDisplayName: string
   detailState: ReturnType<typeof useListNavigation>["detailState"]
@@ -299,22 +305,6 @@ function CreateUserSheet({
     password: "",
   })
 
-  const reset = () =>
-    setForm({
-      username: "",
-      display_name: candidateDisplayName,
-      email: "",
-      password: "",
-    })
-
-  const changeOpen = (nextOpen: boolean) => {
-    if (!nextOpen) {
-      reset()
-      mutation.reset()
-    }
-    onOpenChange(nextOpen)
-  }
-
   const submit = (event: FormEvent) => {
     event.preventDefault()
     mutation.mutate(form, {
@@ -325,93 +315,89 @@ function CreateUserSheet({
             { state: detailState }
           )
         }
-        changeOpen(false)
+        onClose()
       },
       onSettled: () => setForm((value) => ({ ...value, password: "" })),
     })
   }
 
   return (
-    <Sheet open={open} onOpenChange={changeOpen}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-        <SheetHeader>
-          <SheetTitle>新建内部用户</SheetTitle>
-          <SheetDescription>
-            {candidateId
-              ? "创建人员后继续进入详情，确认并绑定当前钉钉身份。"
-              : "创建人员账号后，再进入详情绑定钉钉或 ONES 身份。"}
-          </SheetDescription>
-        </SheetHeader>
-        <form className="space-y-4 px-4" onSubmit={submit}>
-          <Field label="用户名" htmlFor="new-user-username">
-            <Input
-              id="new-user-username"
-              required
-              maxLength={120}
-              autoComplete="off"
-              value={form.username}
-              onChange={(event) =>
-                setForm({ ...form, username: event.target.value })
-              }
-            />
-          </Field>
-          <Field label="显示名称" htmlFor="new-user-display-name">
-            <Input
-              id="new-user-display-name"
-              required
-              maxLength={200}
-              value={form.display_name}
-              onChange={(event) =>
-                setForm({ ...form, display_name: event.target.value })
-              }
-            />
-          </Field>
-          <Field label="邮箱（可选）" htmlFor="new-user-email">
-            <Input
-              id="new-user-email"
-              type="email"
-              maxLength={320}
-              value={form.email}
-              onChange={(event) =>
-                setForm({ ...form, email: event.target.value })
-              }
-            />
-          </Field>
-          <Field
-            label="初始密码（可选）"
-            htmlFor="new-user-password"
-            hint="设置时至少 12 位；提交后不会再次显示。"
-          >
-            <Input
-              id="new-user-password"
-              type="password"
-              minLength={12}
-              maxLength={512}
-              autoComplete="new-password"
-              value={form.password}
-              onChange={(event) =>
-                setForm({ ...form, password: event.target.value })
-              }
-            />
-          </Field>
-          <RequestError error={mutation.error} />
-          <SheetFooter className="px-0">
-            <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? (
-                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
-              ) : null}
-              创建用户
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => changeOpen(false)}
-            >
-              取消
-            </Button>
-          </SheetFooter>
-        </form>
-      </SheetContent>
-    </Sheet>
+    <FormDialog
+      title="新建内部用户"
+      description={
+        candidateId
+          ? "创建人员后继续进入详情，确认并绑定当前钉钉身份。"
+          : "创建人员账号后，再进入详情绑定钉钉或 ONES 身份。"
+      }
+      pending={mutation.isPending}
+      onClose={onClose}
+    >
+      <form
+        className="grid gap-4 sm:grid-cols-2 sm:[&>[role=alert]]:col-span-2"
+        onSubmit={submit}
+      >
+        <Field label="用户名" htmlFor="new-user-username">
+          <Input
+            id="new-user-username"
+            required
+            maxLength={120}
+            autoComplete="off"
+            value={form.username}
+            onChange={(event) =>
+              setForm({ ...form, username: event.target.value })
+            }
+          />
+        </Field>
+        <Field label="显示名称" htmlFor="new-user-display-name">
+          <Input
+            id="new-user-display-name"
+            required
+            maxLength={200}
+            value={form.display_name}
+            onChange={(event) =>
+              setForm({ ...form, display_name: event.target.value })
+            }
+          />
+        </Field>
+        <Field label="邮箱（可选）" htmlFor="new-user-email">
+          <Input
+            id="new-user-email"
+            type="email"
+            maxLength={320}
+            value={form.email}
+            onChange={(event) =>
+              setForm({ ...form, email: event.target.value })
+            }
+          />
+        </Field>
+        <Field
+          label="初始密码（可选）"
+          htmlFor="new-user-password"
+          hint="设置时至少 12 位；提交后不会再次显示。"
+        >
+          <Input
+            id="new-user-password"
+            type="password"
+            minLength={12}
+            maxLength={512}
+            autoComplete="new-password"
+            value={form.password}
+            onChange={(event) =>
+              setForm({ ...form, password: event.target.value })
+            }
+          />
+        </Field>
+        <RequestError error={mutation.error} />
+        <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
+          <Button type="submit" disabled={mutation.isPending}>
+            {mutation.isPending ? (
+              <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+            ) : null}
+            创建用户
+          </Button>
+          <FormDialogCancel disabled={mutation.isPending} />
+        </div>
+      </form>
+    </FormDialog>
   )
 }

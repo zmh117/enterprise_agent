@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.shared.archive import require_archive_eligible, require_not_archived
 from app.modules.job.infrastructure.persistence_values import new_id, now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.knowledge.infrastructure.storage import table as knowledge_table
@@ -58,6 +59,8 @@ _BUSINESS_CAPABILITY_NAMES_ZH = {
     "dingtalk_get_work_notification_result": "查看工作通知结果",
     "get_schema_directory": "查看数据库结构目录",
     "list_available_tool_resources": "查看可用工具资源",
+    "search_recording": "检索浏览器采集记录",
+    "get_recording_evidence": "查看浏览器采集证据",
     "diagnose_loki_labels": "诊断日志标签",
     "diagnose_loki_label_values": "诊断日志标签值",
     "diagnose_loki_probe": "探测日志数据",
@@ -116,6 +119,8 @@ class AuthorizationCenterRepository:  # noqa: PLR0904
                 "(lower(r.code) like ? or lower(r.name) like ? or lower(r.description) like ?)"
             )
             params.extend((pattern, pattern, pattern))
+        if status != "archived":
+            clauses.append("r.status <> 'archived'")
         if status:
             clauses.append("r.status = ?")
             params.append(status)
@@ -216,6 +221,19 @@ class AuthorizationCenterRepository:  # noqa: PLR0904
         status: str,
     ) -> dict[str, Any]:
         current = self.get_role(role_id)
+        require_not_archived(current["status"])
+        if status == "archived":
+            active_members = self.database.execute_one(
+                """select 1 from rbac_user_role ur join app_user u on u.id=ur.user_id
+                   where ur.role_id=? and ur.status='enabled' and u.status='enabled'
+                     and (ur.expires_at is null or ur.expires_at>?) limit 1""",
+                (role_id, now_iso()),
+            )
+            require_archive_eligible(
+                current["status"],
+                protected=bool(current["protected"]) or current["origin"] == "system",
+                in_use=bool(active_members),
+            )
         if current["protected"] and status != current["status"]:
             raise NonRetryableExecutionError(
                 "Protected role cannot be disabled",
@@ -269,7 +287,7 @@ class AuthorizationCenterRepository:  # noqa: PLR0904
                 """
                 update rbac_role
                    set admin_revision = admin_revision + 1, updated_at = ?
-                 where id = ? and admin_revision = ? and protected = 0
+                 where id = ? and admin_revision = ? and status <> 'archived' and protected = 0
                 returning id
                 """,
                 (timestamp, role_id, expected_revision),
@@ -365,7 +383,7 @@ class AuthorizationCenterRepository:  # noqa: PLR0904
                 """
                 update rbac_role
                    set business_revision = business_revision + 1, updated_at = ?
-                 where id = ? and business_revision = ? and protected = 0
+                 where id = ? and business_revision = ? and status <> 'archived' and protected = 0
                 returning id
                 """,
                 (timestamp, role_id, expected_revision),
@@ -601,7 +619,7 @@ class AuthorizationCenterRepository:  # noqa: PLR0904
             application["mcp_tools"] = (
                 self.database.execute(
                     """
-                    select exact.tool_identifier,
+                    select exact.server_code, exact.tool_identifier,
                            published.model_description as description,
                            '' as version_constraint
                       from business_application_revision_mcp_tool exact
@@ -867,7 +885,7 @@ class AuthorizationCenterRepository:  # noqa: PLR0904
             """
             update rbac_role
                set membership_revision = membership_revision + 1, updated_at = ?
-             where id = ? and membership_revision = ?
+             where id = ? and membership_revision = ? and status <> 'archived'
             returning membership_revision
             """,
             (now_iso(), role_id, expected_revision),

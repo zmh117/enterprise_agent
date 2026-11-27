@@ -66,14 +66,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+import { FormDialog, FormDialogCancel } from "@/shared/presentation/form-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -237,7 +230,6 @@ export function ToolResourcesPage() {
 }
 
 function ConnectionResourcesPage({ tabs }: { tabs: ReactNode }) {
-  const resources = useGovernedResources()
   const create = useCreateGovernedResource()
   const save = useSaveGovernedResourceDraft()
   const verify = useVerifyGovernedResource()
@@ -254,6 +246,7 @@ function ConnectionResourcesPage({ tabs }: { tabs: ReactNode }) {
     identity: list.params.get("identity") || "all",
     revision: list.params.get("revision") || "all",
   }
+  const resources = useGovernedResources(filters.identity === "archived")
   const hasFilters =
     Boolean(q) || Object.values(filters).some((v) => v !== "all")
   const clear = () =>
@@ -278,7 +271,9 @@ function ConnectionResourcesPage({ tabs }: { tabs: ReactNode }) {
         matchesListSearch(q, resource.name, resource.code) &&
         (filters.kind === "all" || resource.resource_kind === filters.kind) &&
         (filters.scope === "all" || resource.scope_type === filters.scope) &&
-        (filters.identity === "all" || resource.status === filters.identity) &&
+        (filters.identity === "all"
+          ? resource.status !== "archived"
+          : resource.status === filters.identity) &&
         (filters.revision === "all" ||
           (resource.published_revision?.status ?? "NONE") === filters.revision)
     ),
@@ -334,7 +329,12 @@ function ConnectionResourcesPage({ tabs }: { tabs: ReactNode }) {
             refresh={() => void resources.refetch()}
             busy={resources.isFetching}
           />
-          <Button onClick={() => setEditing(null)}>
+          <Button
+            onClick={() => {
+              create.reset()
+              setEditing(null)
+            }}
+          >
             <PlusIcon />
             新建资源
           </Button>
@@ -458,8 +458,7 @@ function ConnectionResourcesPage({ tabs }: { tabs: ReactNode }) {
       />
 
       {editing !== undefined ? (
-        <ResourceFormSheet
-          open
+        <ResourceFormDialog
           resource={editing}
           roleOptions={[
             ...new Set(
@@ -473,7 +472,7 @@ function ConnectionResourcesPage({ tabs }: { tabs: ReactNode }) {
             ),
           ].sort()}
           pending={create.isPending || save.isPending}
-          error={create.error ?? save.error}
+          error={editing ? save.error : create.error}
           onOpenChange={(open) => {
             if (!open) setEditing(undefined)
           }}
@@ -586,7 +585,7 @@ function ResourceFilters({
         ["all", "全部"],
         ["enabled", "启用"],
         ["disabled", "停用"],
-        ["archived", "归档"],
+        ["archived", "已归档"],
       ],
     },
     {
@@ -647,11 +646,14 @@ function ResourceCard({
   const identityEnabled = resource.status === "enabled"
   const revisions = resource.revisions.length
     ? resource.revisions
-    : published ? [published] : []
-  const blockingRevisions = revisions.filter((revision) => revision.status === "PUBLISHED")
+    : published
+      ? [published]
+      : []
+  const blockingRevisions = revisions.filter(
+    (revision) => revision.status === "PUBLISHED"
+  )
   const identityArchiveBlocked =
-    Boolean(draft) ||
-    blockingRevisions.length > 0
+    (Boolean(draft) && revisions.length > 0) || blockingRevisions.length > 0
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -714,11 +716,16 @@ function ResourceCard({
         {resource.status === "disabled" && identityArchiveBlocked ? (
           <div className="rounded-lg border p-3 text-sm" role="status">
             <p className="font-medium">当前资源的归档阻塞项</p>
-            {draft ? <p>仍有活动草稿，请先删除草稿。</p> : null}
+            {draft && revisions.length > 0 ? (
+              <p>仍有活动草稿，请先删除草稿。</p>
+            ) : null}
             {blockingRevisions.length ? (
               <p className="break-words">
-                仍有已发布版本：{blockingRevisions.map((revision) => `r${revision.revision}`).join("、")}。
-                请展开下方“发布版本历史”逐个停用。
+                仍有已发布版本：
+                {blockingRevisions
+                  .map((revision) => `r${revision.revision}`)
+                  .join("、")}
+                。 请展开下方“发布版本历史”逐个停用。
               </p>
             ) : null}
             <p>仅处理当前资源，无需停用同环境的其他资源。</p>
@@ -742,7 +749,8 @@ function ResourceCard({
                       发布时间：{revision.published_at}
                     </time>
                   </div>
-                  {revision.status !== "ARCHIVED" ? (
+                  {resource.status !== "archived" &&
+                  revision.status !== "ARCHIVED" ? (
                     <Button
                       size="sm"
                       variant="outline"
@@ -776,7 +784,7 @@ function ResourceCard({
           </p>
         ) : null}
         <div className="flex flex-wrap gap-2">
-          {draft ? (
+          {draft && resource.status !== "archived" ? (
             <>
               <Button
                 size="sm"
@@ -821,7 +829,8 @@ function ResourceCard({
               从 r{published.revision} 新建草稿
             </Button>
           ) : null}
-          {published?.status === "PUBLISHED" ? (
+          {resource.status !== "archived" &&
+          published?.status === "PUBLISHED" ? (
             <Button
               size="sm"
               variant="destructive"
@@ -830,7 +839,8 @@ function ResourceCard({
             >
               停用发布版本
             </Button>
-          ) : published?.status === "DISABLED" ? (
+          ) : resource.status !== "archived" &&
+            published?.status === "DISABLED" ? (
             <Button
               size="sm"
               variant="destructive"
@@ -859,29 +869,31 @@ function ResourceCard({
               >
                 恢复资源身份
               </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => onConfirm("archive-identity")}
-                disabled={pending || identityArchiveBlocked}
-                title={
-                  identityArchiveBlocked
-                    ? "请先处理上方列出的当前资源归档阻塞项"
-                    : undefined
-                }
-              >
-                归档资源身份
-              </Button>
             </>
           ) : null}
+          {(resource.status === "disabled" ||
+            (identityEnabled && revisions.length === 0)) && (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => onConfirm("archive-identity")}
+              disabled={pending || identityArchiveBlocked}
+              title={
+                identityArchiveBlocked
+                  ? "请先处理上方列出的当前资源归档阻塞项"
+                  : undefined
+              }
+            >
+              归档资源身份
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
   )
 }
 
-function ResourceFormSheet({
-  open,
+function ResourceFormDialog({
   resource,
   roleOptions,
   pending,
@@ -889,7 +901,6 @@ function ResourceFormSheet({
   onOpenChange,
   onSubmit,
 }: {
-  open: boolean
   resource: GovernedResource | null
   roleOptions: string[]
   pending: boolean
@@ -898,9 +909,8 @@ function ResourceFormSheet({
   onSubmit: (input: ResourceFormInput) => void
 }) {
   const options = useResourceFormOptions()
-  const [form, setForm] = useState<ResourceFormInput>(() =>
-    formForResource(resource)
-  )
+  const [initialForm] = useState(() => formForResource(resource))
+  const [form, setForm] = useState<ResourceFormInput>(initialForm)
   const [oracleAddressType, setOracleAddressType] = useState<
     "service_name" | "sid"
   >(() => {
@@ -1045,298 +1055,291 @@ function ResourceFormSheet({
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="overflow-y-auto sm:max-w-2xl">
-        <SheetHeader>
-          <SheetTitle>
-            {resource ? "编辑资源 Draft" : "新建工具资源"}
-          </SheetTitle>
-          <SheetDescription>
-            连接密码只能从凭据中心选择；保存资源时不会提交 Secret 明文。
-          </SheetDescription>
-        </SheetHeader>
-        <form id="resource-form" onSubmit={submit} className="space-y-5 px-4">
-          <FieldGroup className="grid gap-4 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor="resource-code">资源编码</FieldLabel>
-              <Input
-                id="resource-code"
-                required
-                disabled={Boolean(resource)}
-                pattern="[a-z][a-z0-9_-]+"
-                value={form.code}
-                onChange={(event) =>
-                  setForm({ ...form, code: event.target.value })
-                }
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="resource-name">资源名称</FieldLabel>
-              <Input
-                id="resource-name"
-                required
-                disabled={Boolean(resource)}
-                value={form.name}
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="resource-provider">Provider</FieldLabel>
-              <Select
-                value={form.provider_type}
-                onValueChange={(value) => setProvider(value as Provider)}
+    <FormDialog
+      title={resource ? "编辑资源 Draft" : "新建工具资源"}
+      description="连接密码只能从凭据中心选择；保存资源时不会提交 Secret 明文。"
+      asSheet={Boolean(resource)}
+      wide
+      pending={pending}
+      dirty={form !== initialForm}
+      onClose={() => onOpenChange(false)}
+    >
+      <form id="resource-form" onSubmit={submit} className="space-y-5">
+        <FieldGroup className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="resource-code">资源编码</FieldLabel>
+            <Input
+              id="resource-code"
+              required
+              disabled={Boolean(resource)}
+              pattern="[a-z][a-z0-9_-]+"
+              value={form.code}
+              onChange={(event) =>
+                setForm({ ...form, code: event.target.value })
+              }
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="resource-name">资源名称</FieldLabel>
+            <Input
+              id="resource-name"
+              required
+              disabled={Boolean(resource)}
+              value={form.name}
+              onChange={(event) =>
+                setForm({ ...form, name: event.target.value })
+              }
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="resource-provider">Provider</FieldLabel>
+            <Select
+              value={form.provider_type}
+              onValueChange={(value) => setProvider(value as Provider)}
+            >
+              <SelectTrigger
+                id="resource-provider"
+                aria-label="Provider"
+                className="w-full"
               >
-                <SelectTrigger
-                  id="resource-provider"
-                  aria-label="Provider"
-                  className="w-full"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {providerOptions.map(
-                    ({ provider, available, reason }) => (
-                      <SelectItem
-                        key={provider}
-                        value={provider}
-                        disabled={!available}
-                        title={!available ? reason : undefined}
-                      >
-                        {providerLabels[provider]}
-                        {!available ? "（当前不可用）" : ""}
-                      </SelectItem>
-                    )
-                  )}
-                </SelectContent>
-              </Select>
-            </Field>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {providerOptions.map(({ provider, available, reason }) => (
+                  <SelectItem
+                    key={provider}
+                    value={provider}
+                    disabled={!available}
+                    title={!available ? reason : undefined}
+                  >
+                    {providerLabels[provider]}
+                    {!available ? "（当前不可用）" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="resource-scope-type">作用域层级</FieldLabel>
+            <Select
+              value={form.scope_type}
+              disabled={Boolean(resource)}
+              onValueChange={(value) =>
+                setForm({
+                  ...form,
+                  scope_type: value as ResourceFormInput["scope_type"],
+                  environment_code:
+                    value === "global" ? "" : form.environment_code,
+                  base_code:
+                    value === "environment" || value === "global"
+                      ? ""
+                      : form.base_code,
+                  workshop_code: value === "workshop" ? form.workshop_code : "",
+                })
+              }
+            >
+              <SelectTrigger
+                id="resource-scope-type"
+                aria-label="作用域层级"
+                className="w-full"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {form.provider_type === "loki" ? (
+                  <>
+                    <SelectItem value="global">全局</SelectItem>
+                    <SelectItem value="environment">环境</SelectItem>
+                  </>
+                ) : (
+                  <>
+                    <SelectItem value="environment">环境</SelectItem>
+                    <SelectItem value="base">基地</SelectItem>
+                    <SelectItem value="workshop">车间</SelectItem>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+            {resource ? (
+              <FieldDescription>
+                作用域属于固定资源身份，不能通过编辑草稿修改。填错时请停用并归档当前资源，
+                再用新编码和正确作用域新建；无需停用同环境其他资源。
+              </FieldDescription>
+            ) : null}
+          </Field>
+          {form.scope_type !== "global" ? (
+            <TopologyCombobox
+              label="环境"
+              value={form.environment_code}
+              disabled={Boolean(resource)}
+              options={options.environments.data ?? []}
+              allowCustomValue={!resource}
+              customValueExists={environmentExists}
+              onChange={(environmentCode) =>
+                setForm({
+                  ...form,
+                  environment_code: environmentCode,
+                  base_code: "",
+                  workshop_code: "",
+                })
+              }
+            />
+          ) : null}
+          {form.scope_type === "base" || form.scope_type === "workshop" ? (
+            <TopologyCombobox
+              label="基地"
+              value={form.base_code}
+              disabled={Boolean(resource)}
+              options={bases}
+              allowCustomValue={!resource}
+              customValueExists={baseExists}
+              onChange={(baseCode) =>
+                setForm({
+                  ...form,
+                  base_code: baseCode,
+                  workshop_code: "",
+                })
+              }
+            />
+          ) : null}
+          {form.scope_type === "workshop" ? (
+            <TopologyCombobox
+              label="车间"
+              value={form.workshop_code}
+              disabled={Boolean(resource)}
+              options={workshops}
+              allowCustomValue={!resource}
+              customValueExists={workshopExists}
+              onChange={(workshopCode) =>
+                setForm({ ...form, workshop_code: workshopCode })
+              }
+            />
+          ) : null}
+          {form.resource_kind !== "loki" ? (
             <Field>
-              <FieldLabel htmlFor="resource-scope-type">作用域层级</FieldLabel>
+              <FieldLabel htmlFor="resource-role">资源角色</FieldLabel>
+              <Input
+                id="resource-role"
+                list="resource-role-options"
+                value={form.placement ?? ""}
+                maxLength={64}
+                pattern={"[A-Za-z0-9\\u3400-\\u9fff_.:\\-]{0,64}"}
+                placeholder="可留空，输入新角色或选择历史值"
+                onChange={(event) =>
+                  setForm({ ...form, placement: event.target.value })
+                }
+              />
+              <datalist id="resource-role-options">
+                {roleOptions.map((role) => (
+                  <option key={role} value={role} />
+                ))}
+              </datalist>
+              <FieldDescription>
+                用于区分同一环境、基地、车间的多个实例，例如“云”“边”；不是用户权限角色。
+                支持中文、字母、数字及 _ . : -，最多 64 字符。
+                新值保存后可复用，清空表示未指定；修改后须重新验证并发布才生效。
+              </FieldDescription>
+            </Field>
+          ) : null}
+          {createsBase && form.resource_kind === "redis" ? (
+            <Field>
+              <FieldLabel htmlFor="new-base-engine">
+                新基地默认数据库引擎
+              </FieldLabel>
               <Select
-                value={form.scope_type}
-                disabled={Boolean(resource)}
+                value={form.base_engine_if_missing ?? "mysql"}
                 onValueChange={(value) =>
                   setForm({
                     ...form,
-                    scope_type: value as ResourceFormInput["scope_type"],
-                    environment_code:
-                      value === "global" ? "" : form.environment_code,
-                    base_code:
-                      value === "environment" || value === "global"
-                        ? ""
-                        : form.base_code,
-                    workshop_code:
-                      value === "workshop" ? form.workshop_code : "",
+                    base_engine_if_missing: value as NonNullable<
+                      ResourceFormInput["base_engine_if_missing"]
+                    >,
                   })
                 }
               >
                 <SelectTrigger
-                  id="resource-scope-type"
-                  aria-label="作用域层级"
+                  id="new-base-engine"
+                  aria-label="新基地默认数据库引擎"
                   className="w-full"
                 >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {form.provider_type === "loki" ? (
-                    <>
-                      <SelectItem value="global">全局</SelectItem>
-                      <SelectItem value="environment">环境</SelectItem>
-                    </>
-                  ) : (
-                    <>
-                      <SelectItem value="environment">环境</SelectItem>
-                      <SelectItem value="base">基地</SelectItem>
-                      <SelectItem value="workshop">车间</SelectItem>
-                    </>
-                  )}
+                  <SelectItem value="mysql">MySQL</SelectItem>
+                  <SelectItem value="sqlserver">SQL Server</SelectItem>
+                  <SelectItem value="oracle">Oracle</SelectItem>
+                  <SelectItem value="postgresql">PostgreSQL</SelectItem>
                 </SelectContent>
               </Select>
-              {resource ? (
-                <FieldDescription>
-                  作用域属于固定资源身份，不能通过编辑草稿修改。填错时请停用并归档当前资源，
-                  再用新编码和正确作用域新建；无需停用同环境其他资源。
-                </FieldDescription>
-              ) : null}
+              <FieldDescription>
+                基地拓扑要求默认数据库引擎；该字段不改变当前 Redis 连接。
+              </FieldDescription>
             </Field>
-            {form.scope_type !== "global" ? (
-              <TopologyCombobox
-                label="环境"
-                value={form.environment_code}
-                disabled={Boolean(resource)}
-                options={options.environments.data ?? []}
-                allowCustomValue={!resource}
-                customValueExists={environmentExists}
-                onChange={(environmentCode) =>
-                  setForm({
-                    ...form,
-                    environment_code: environmentCode,
-                    base_code: "",
-                    workshop_code: "",
-                  })
-                }
-              />
-            ) : null}
-            {form.scope_type === "base" || form.scope_type === "workshop" ? (
-              <TopologyCombobox
-                label="基地"
-                value={form.base_code}
-                disabled={Boolean(resource)}
-                options={bases}
-                allowCustomValue={!resource}
-                customValueExists={baseExists}
-                onChange={(baseCode) =>
-                  setForm({
-                    ...form,
-                    base_code: baseCode,
-                    workshop_code: "",
-                  })
-                }
-              />
-            ) : null}
-            {form.scope_type === "workshop" ? (
-              <TopologyCombobox
-                label="车间"
-                value={form.workshop_code}
-                disabled={Boolean(resource)}
-                options={workshops}
-                allowCustomValue={!resource}
-                customValueExists={workshopExists}
-                onChange={(workshopCode) =>
-                  setForm({ ...form, workshop_code: workshopCode })
-                }
-              />
-            ) : null}
-            {form.resource_kind !== "loki" ? (
-              <Field>
-                <FieldLabel htmlFor="resource-role">资源角色</FieldLabel>
-                <Input
-                  id="resource-role"
-                  list="resource-role-options"
-                  value={form.placement ?? ""}
-                  maxLength={64}
-                  pattern={"[A-Za-z0-9\\u3400-\\u9fff_.:\\-]{0,64}"}
-                  placeholder="可留空，输入新角色或选择历史值"
-                  onChange={(event) => setForm({ ...form, placement: event.target.value })}
-                />
-                <datalist id="resource-role-options">
-                  {roleOptions.map((role) => <option key={role} value={role} />)}
-                </datalist>
-                <FieldDescription>
-                  用于区分同一环境、基地、车间的多个实例，例如“云”“边”；不是用户权限角色。
-                  支持中文、字母、数字及 _ . : -，最多 64 字符。
-                  新值保存后可复用，清空表示未指定；修改后须重新验证并发布才生效。
-                </FieldDescription>
-              </Field>
-            ) : null}
-            {createsBase && form.resource_kind === "redis" ? (
-              <Field>
-                <FieldLabel htmlFor="new-base-engine">
-                  新基地默认数据库引擎
-                </FieldLabel>
-                <Select
-                  value={form.base_engine_if_missing ?? "mysql"}
-                  onValueChange={(value) =>
-                    setForm({
-                      ...form,
-                      base_engine_if_missing: value as NonNullable<
-                        ResourceFormInput["base_engine_if_missing"]
-                      >,
-                    })
-                  }
-                >
-                  <SelectTrigger
-                    id="new-base-engine"
-                    aria-label="新基地默认数据库引擎"
-                    className="w-full"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="mysql">MySQL</SelectItem>
-                    <SelectItem value="sqlserver">SQL Server</SelectItem>
-                    <SelectItem value="oracle">Oracle</SelectItem>
-                    <SelectItem value="postgresql">PostgreSQL</SelectItem>
-                  </SelectContent>
-                </Select>
-                <FieldDescription>
-                  基地拓扑要求默认数据库引擎；该字段不改变当前 Redis 连接。
-                </FieldDescription>
-              </Field>
-            ) : null}
-          </FieldGroup>
+          ) : null}
+        </FieldGroup>
 
-          <section className="space-y-4 rounded-lg border p-4">
-            <div>
-              <h3 className="text-sm font-semibold">连接配置</h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                字段边界来自当前 Provider Contract；Secret 只保存受管引用。
-              </p>
-            </div>
-            <ProviderFields
-              provider={form.provider_type}
-              contract={(options.providerContracts.data ?? []).find(
-                (contract) => contract.provider_type === form.provider_type
-              )}
-              config={form.config}
-              secrets={secrets.map((secret) => ({
-                code: secret.code,
-                ref: secret.secret_ref,
-              }))}
-              secretRefs={form.secret_refs}
-              oracleAddressType={oracleAddressType}
-              onOracleAddressType={(value) => {
-                setOracleAddressType(value)
-                const next = { ...form.config }
-                if (value === "sid") {
-                  delete next.service_name
-                  next.sid = ""
-                } else {
-                  delete next.sid
-                  next.service_name = ""
-                }
-                setForm({ ...form, config: next })
-              }}
-              onConfig={setConfig}
-              onSecret={setSecret}
-            />
-          </section>
-          <ScopeBindingsEditor
-            resourceCode={resource?.code ?? ""}
-            resourceKind={form.resource_kind}
-            scopeType={form.scope_type}
-            environmentCode={form.environment_code}
-            baseCode={form.base_code}
-            workshopCode={form.workshop_code}
-            environments={options.environments.data ?? []}
-            bases={options.bases.data ?? []}
-            workshops={options.workshops.data ?? []}
-            bindings={form.scope_bindings}
-            onChange={(scopeBindings) =>
-              setForm({ ...form, scope_bindings: scopeBindings })
-            }
+        <section className="space-y-4 rounded-lg border p-4">
+          <div>
+            <h3 className="text-sm font-semibold">连接配置</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              字段边界来自当前 Provider Contract；Secret 只保存受管引用。
+            </p>
+          </div>
+          <ProviderFields
+            provider={form.provider_type}
+            contract={(options.providerContracts.data ?? []).find(
+              (contract) => contract.provider_type === form.provider_type
+            )}
+            config={form.config}
+            secrets={secrets.map((secret) => ({
+              code: secret.code,
+              ref: secret.secret_ref,
+            }))}
+            secretRefs={form.secret_refs}
+            oracleAddressType={oracleAddressType}
+            onOracleAddressType={(value) => {
+              setOracleAddressType(value)
+              const next = { ...form.config }
+              if (value === "sid") {
+                delete next.service_name
+                next.sid = ""
+              } else {
+                delete next.sid
+                next.service_name = ""
+              }
+              setForm({ ...form, config: next })
+            }}
+            onConfig={setConfig}
+            onSecret={setSecret}
           />
-          <MutationError error={error} />
-        </form>
-        <SheetFooter>
-          <Button form="resource-form" type="submit" disabled={pending}>
-            {pending ? (
-              <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
-            ) : null}
-            保存 Draft
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-          >
-            取消
-          </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        </section>
+        <ScopeBindingsEditor
+          resourceCode={resource?.code ?? ""}
+          resourceKind={form.resource_kind}
+          scopeType={form.scope_type}
+          environmentCode={form.environment_code}
+          baseCode={form.base_code}
+          workshopCode={form.workshop_code}
+          environments={options.environments.data ?? []}
+          bases={options.bases.data ?? []}
+          workshops={options.workshops.data ?? []}
+          bindings={form.scope_bindings}
+          onChange={(scopeBindings) =>
+            setForm({ ...form, scope_bindings: scopeBindings })
+          }
+        />
+        <MutationError error={error} />
+      </form>
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <Button form="resource-form" type="submit" disabled={pending}>
+          {pending ? (
+            <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+          ) : null}
+          保存 Draft
+        </Button>
+        <FormDialogCancel disabled={pending} />
+      </div>
+    </FormDialog>
   )
 }
 
@@ -2135,7 +2138,7 @@ function confirmDescription(type: ConfirmAction["type"] | undefined) {
   if (type === "restore-identity") {
     return "恢复后可以继续管理新的资源草稿；历史发布版本状态不会改变。"
   }
-  return "仅归档当前资源身份，不影响同环境其他资源。系统要求身份已停用、无活动草稿、其全部版本均已停用或归档，且无活动应用引用。归档不可恢复，历史与审计保留，原编码不可复用；作用域填错时，请用新编码和正确作用域新建资源。"
+  return "归档后仅可查看，草稿和历史版本会保留，原编码不可复用。"
 }
 
 function MutationError({ error }: { error: unknown }) {

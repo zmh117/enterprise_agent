@@ -1,3 +1,5 @@
+import { ArchiveAction } from "@/shared/presentation/archive-action"
+import { apiRequest } from "@/shared/api/api-client"
 import {
   ListPage,
   ListSearch,
@@ -59,6 +61,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { FormDialog, FormDialogCancel } from "@/shared/presentation/form-dialog"
 import {
   useCreateDingTalkEnterprise,
   useCreateDingTalkChannel,
@@ -85,8 +88,6 @@ import { MutationError } from "@/contexts/applications/presentation/applications
 import { cn } from "@/lib/utils"
 import { WebhookSettings } from "@/contexts/applications/presentation/webhook-settings"
 export function ManagedChannelsPanel() {
-  const query = useManagedChannels()
-  const enterprises = useDingTalkEnterprises()
   const [webhookCode, setWebhookCode] = useState<string | null>(null)
   const [dingTalkEditor, setDingTalkEditor] = useState<
     ManagedChannel | "create" | null
@@ -104,6 +105,8 @@ export function ManagedChannelsPanel() {
   const enterpriseView = list.params.get("tab") === "enterprises"
   const q = list.params.get("q") ?? ""
   const status = list.params.get("status") ?? ""
+  const query = useManagedChannels(!enterpriseView, status === "archived")
+  const enterprises = useDingTalkEnterprises(status === "ARCHIVED")
   const clear = () => list.filter({ q: "", status: "" })
   const channelKinds = {
     BROWSER_EXTENSION: "浏览器插件",
@@ -121,7 +124,9 @@ export function ManagedChannelsPanel() {
           c.enterprise?.name,
           channelKinds[c.kind]
         ) &&
-        (!status || (c.enabled ? "enabled" : "disabled") === status)
+        (!status ||
+          (c.archived ? "archived" : c.enabled ? "enabled" : "disabled") ===
+            status)
     ),
     list.page
   )
@@ -129,7 +134,7 @@ export function ManagedChannelsPanel() {
     (enterprises.data ?? []).filter(
       (e) =>
         matchesListSearch(q, e.name, e.corp_id) &&
-        (!status || status === e.status)
+        (status ? status === e.status : e.status !== "ARCHIVED")
     ),
     list.page
   )
@@ -211,6 +216,7 @@ export function ManagedChannelsPanel() {
               </select>
             ) : (
               <ListStatusFilter
+                archived
                 value={status}
                 onChange={(status) => list.filter({ status })}
               />
@@ -272,7 +278,13 @@ export function ManagedChannelsPanel() {
                             </TableCell>
                             <TableCell>
                               <ListStatus
-                                status={c.enabled ? "enabled" : "disabled"}
+                                status={
+                                  c.archived
+                                    ? "archived"
+                                    : c.enabled
+                                      ? "enabled"
+                                      : "disabled"
+                                }
                               />
                             </TableCell>
                             <TableCell>
@@ -350,11 +362,12 @@ export function ManagedChannelsPanel() {
           if (!open) setEnterpriseGovernance(null)
         }}
       />
-      <WebhookEditor
-        open={webhookOpen}
-        onOpenChange={setWebhookOpen}
-        onCreated={setWebhookCode}
-      />
+      {webhookOpen && (
+        <WebhookEditor
+          onOpenChange={setWebhookOpen}
+          onCreated={setWebhookCode}
+        />
+      )}
       <WebhookSettings
         code={webhookCode}
         onClose={() => setWebhookCode(null)}
@@ -511,19 +524,16 @@ function DingTalkEnterpriseEditor({
     }
   }
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg">
-        <form className="flex min-h-full flex-col" onSubmit={submit}>
-          <SheetHeader>
-            <SheetTitle>
-              {enterprise ? "修改钉钉企业名称" : "新建钉钉企业"}
-            </SheetTitle>
-            <SheetDescription>
-              这里只设置平台内名称。Corp ID
-              将由应用连接收到的首条受信测试消息确认。
-            </SheetDescription>
-          </SheetHeader>
-          <div className="space-y-3 px-4">
+    open && (
+      <FormDialog
+        asSheet={Boolean(enterprise)}
+        title={enterprise ? "修改钉钉企业名称" : "新建钉钉企业"}
+        description="这里只设置平台内名称。Corp ID 将由应用连接收到的首条受信测试消息确认。"
+        onClose={() => onOpenChange(false)}
+        pending={create.isPending || rename.isPending}
+      >
+        <form className="grid gap-5" onSubmit={submit}>
+          <div className="space-y-3">
             <EditorField label="企业名称" htmlFor="dingtalk-enterprise-name">
               <Input
                 id="dingtalk-enterprise-name"
@@ -535,24 +545,18 @@ function DingTalkEnterpriseEditor({
             </EditorField>
             <MutationError error={create.error ?? rename.error} />
           </div>
-          <SheetFooter>
+          <div className="flex flex-wrap justify-end gap-2">
             <Button
               type="submit"
               disabled={!name.trim() || create.isPending || rename.isPending}
             >
               {enterprise ? "保存名称" : "创建待验证企业"}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              取消
-            </Button>
-          </SheetFooter>
+            <FormDialogCancel disabled={create.isPending || rename.isPending} />
+          </div>
         </form>
-      </SheetContent>
-    </Sheet>
+      </FormDialog>
+    )
   )
 }
 
@@ -682,8 +686,19 @@ function BrowserChannelCard({ channel }: { channel: ManagedChannel }) {
         <Badge variant={channel.enabled ? "default" : "secondary"}>
           {channel.enabled ? "已启用" : "已停用"}
         </Badge>
-        <Button type="button" size="sm" variant="outline" disabled={toggle.isPending}
-          onClick={() => toggle.mutate({ channelId: channel.id, revision: channel.revision, enabled: !channel.enabled })}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={toggle.isPending}
+          onClick={() =>
+            toggle.mutate({
+              channelId: channel.id,
+              revision: channel.revision,
+              enabled: !channel.enabled,
+            })
+          }
+        >
           {channel.enabled ? "停用" : "启用"}
         </Button>
         <MutationError error={toggle.error} />
@@ -741,7 +756,7 @@ function ManagedChannelCard({
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             <Badge variant={channel.enabled ? "default" : "secondary"}>
-              {channel.enabled ? "已启用" : "已停用"}
+              {channel.archived ? "已归档" : channel.enabled ? "已启用" : "已停用"}
             </Badge>
             <RuntimeBadge status={status} />
           </div>
@@ -790,7 +805,7 @@ function ManagedChannelCard({
             Corp ID；验证消息不会创建 Agent 任务。
           </p>
         ) : null}
-        {dingTalk ? (
+        {!channel.archived && dingTalk ? (
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
@@ -813,7 +828,7 @@ function ManagedChannelCard({
             ) : null}
           </div>
         ) : null}
-        {dingTalk ? (
+        {channel.archived ? null : dingTalk ? (
           <>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -939,6 +954,22 @@ function ManagedChannelCard({
             ) : null}
           </div>
         )}
+        {!channel.archived &&
+          (!channel.enabled || (!dingTalk && channel.published === false)) && (
+            <ArchiveAction
+              name={channel.name}
+              queryKey={["managed-channels"]}
+              archive={() =>
+                apiRequest(
+                  `/api/admin/managed-channels/${encodeURIComponent(channel.id)}/archive${channel.kind === "WEBHOOK" ? "?webhook_code=" + encodeURIComponent(channel.code ?? "") : ""}`,
+                  {
+                    method: "POST",
+                    body: { expected_revision: channel.revision },
+                  }
+                )
+              }
+            />
+          )}
       </CardContent>
     </Card>
   )
@@ -959,27 +990,22 @@ function DingTalkEditor({
   const editorKey = channel ? `${channel.id}-${channel.revision}` : "create"
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
+    open && (
+      <DingTalkEditorForm
         key={editorKey}
-        className="w-full overflow-y-auto sm:max-w-xl"
-      >
-        <DingTalkEditorForm
-          channel={channel}
-          initialForm={form}
-          setInitialForm={setForm}
-          pending={create.isPending || update.isPending}
-          error={create.error ?? update.error}
-          onCancel={() => onOpenChange(false)}
-          onSubmit={(value) => {
-            const action = channel
-              ? update.mutateAsync(value)
-              : create.mutateAsync(value)
-            void action.then(() => onOpenChange(false))
-          }}
-        />
-      </SheetContent>
-    </Sheet>
+        channel={channel}
+        initialForm={form}
+        setInitialForm={setForm}
+        pending={create.isPending || update.isPending}
+        error={create.error ?? update.error}
+        onCancel={() => onOpenChange(false)}
+        onSubmit={(value) => {
+          const options = { onSuccess: () => onOpenChange(false) }
+          if (channel) update.mutate(value, options)
+          else create.mutate(value, options)
+        }}
+      />
+    )
   )
 }
 
@@ -1018,258 +1044,274 @@ function DingTalkEditorForm({
   }
 
   return (
-    <form onSubmit={submit} className="flex min-h-full flex-col">
-      <SheetHeader>
-        <SheetTitle>{channel ? "编辑钉钉机器人" : "新建钉钉机器人"}</SheetTitle>
-        <SheetDescription>
+    <FormDialog
+      title={channel ? "编辑钉钉机器人" : "新建钉钉机器人"}
+      description={
+        <>
           Client Secret 保存后不再显示；编辑时留空表示保持原凭据。
           {channel?.runtime?.status === "MISCONFIGURED"
             ? " 当前凭据不可用，请填写新 Secret 保存，再执行配置测试。"
             : ""}
-        </SheetDescription>
-      </SheetHeader>
-      <div className="space-y-4 px-4">
-        <EditorField label="渠道名称" htmlFor="dingtalk-name">
-          <Input
-            id="dingtalk-name"
-            required
-            minLength={2}
-            maxLength={120}
-            value={form.name}
-            onChange={(event) =>
-              setInitialForm({ ...initialForm, name: event.target.value })
-            }
-          />
-        </EditorField>
-        <EditorField label="Client ID / AppKey" htmlFor="dingtalk-client-id">
-          <Input
-            id="dingtalk-client-id"
-            required
-            maxLength={128}
-            value={form.client_id}
-            onChange={(event) =>
-              setInitialForm({ ...initialForm, client_id: event.target.value })
-            }
-          />
-        </EditorField>
-        <EditorField label="钉钉企业" htmlFor="dingtalk-enterprise">
-          <select
-            id="dingtalk-enterprise"
-            required
-            className={selectClass}
-            value={form.dingtalk_enterprise_id}
-            onChange={(event) =>
-              setInitialForm({
-                ...initialForm,
-                dingtalk_enterprise_id: event.target.value,
-              })
-            }
-          >
-            <option value="">请选择钉钉企业</option>
-            {enterprises.data
-              ?.filter(
-                (enterprise) =>
-                  enterprise.status === "PENDING_VERIFICATION" ||
-                  enterprise.status === "ACTIVE" ||
-                  enterprise.id === channel?.enterprise?.id
-              )
-              .map((enterprise) => (
-                <option key={enterprise.id} value={enterprise.id}>
-                  {enterprise.name} · {enterpriseStatusLabel(enterprise.status)}
-                </option>
-              ))}
-          </select>
-        </EditorField>
-        {!channel ? (
-          <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
-            <Label htmlFor="new-dingtalk-enterprise">
-              没有可选企业？先创建待验证企业
-            </Label>
-            <div className="flex gap-2">
-              <Input
-                id="new-dingtalk-enterprise"
-                value={newEnterpriseName}
-                maxLength={120}
-                onChange={(event) => setNewEnterpriseName(event.target.value)}
-                placeholder="例如：研发中心钉钉企业"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                disabled={
-                  !newEnterpriseName.trim() || createEnterprise.isPending
-                }
-                onClick={() => {
-                  void createEnterprise
-                    .mutateAsync(newEnterpriseName.trim())
-                    .then((enterprise) => {
-                      setInitialForm({
-                        ...initialForm,
-                        dingtalk_enterprise_id: enterprise.id,
-                      })
-                      setNewEnterpriseName("")
-                    })
-                    .catch(() => undefined)
-                }}
-              >
-                创建企业
-              </Button>
-            </div>
-            <MutationError
-              error={enterprises.error ?? createEnterprise.error}
+        </>
+      }
+      asSheet={Boolean(channel)}
+      wide
+      pending={pending || createEnterprise.isPending}
+      onClose={onCancel}
+    >
+      <form onSubmit={submit} className="grid gap-5">
+        <div
+          className={cn(
+            "grid items-start gap-4",
+            !channel && "sm:grid-cols-2 sm:[&>[role=alert]]:col-span-2"
+          )}
+        >
+          <EditorField label="渠道名称" htmlFor="dingtalk-name">
+            <Input
+              id="dingtalk-name"
+              required
+              minLength={2}
+              maxLength={120}
+              value={form.name}
+              onChange={(event) =>
+                setInitialForm({ ...initialForm, name: event.target.value })
+              }
             />
-          </div>
-        ) : null}
-        <EditorField
-          label="Client Secret / AppSecret"
-          htmlFor="dingtalk-secret"
-        >
-          <Input
-            id="dingtalk-secret"
-            type="password"
-            required={!channel}
-            maxLength={512}
-            autoComplete="new-password"
-            value={form.client_secret}
-            placeholder={channel ? "留空表示不修改" : "请输入 Secret"}
-            onChange={(event) =>
-              setInitialForm({
-                ...initialForm,
-                client_secret: event.target.value,
-              })
-            }
-          />
-        </EditorField>
-        <EditorField
-          label="企业机器人 Code"
-          htmlFor="dingtalk-enterprise-robot-code"
-        >
-          <Input
-            id="dingtalk-enterprise-robot-code"
-            maxLength={128}
-            value={form.enterprise_robot_code}
-            placeholder="启用机器人个人/群消息 Tool 时必填"
-            onChange={(event) =>
-              setInitialForm({
-                ...initialForm,
-                enterprise_robot_code: event.target.value,
-              })
-            }
-          />
-          <p className="text-xs leading-5 text-muted-foreground">
-            对应钉钉官方 MCP 的
-            ROBOT_CODE，用于企业机器人个人/群消息；不是工作通知 Agent ID，也不是
-            Secret。
-          </p>
-        </EditorField>
-        <EditorField
-          label="工作通知 Agent ID"
-          htmlFor="dingtalk-work-notification-agent-id"
-        >
-          <Input
-            id="dingtalk-work-notification-agent-id"
-            type="number"
-            min={1}
-            step={1}
-            value={form.work_notification_agent_id ?? ""}
-            placeholder={
-              channel?.work_notification_agent_id_configured
-                ? `已配置 ${channel.work_notification_agent_id_hint}，留空表示不修改`
-                : "可选；启用工作通知 Tool 时必填"
-            }
-            onChange={(event) =>
-              setInitialForm({
-                ...initialForm,
-                work_notification_agent_id: event.target.value
-                  ? Number(event.target.value)
-                  : null,
-              })
-            }
-          />
-          <p className="text-xs leading-5 text-muted-foreground">
-            仅用于当前用户本人的工作通知；保存后只显示尾号，不作为 Secret 存储。
-          </p>
-        </EditorField>
-        <EditorField
-          label="外部操作确认卡片模板 ID"
-          htmlFor="dingtalk-external-action-confirmation-card-template-id"
-        >
-          <Input
-            id="dingtalk-external-action-confirmation-card-template-id"
-            maxLength={256}
-            value={form.external_action_confirmation_card_template_id}
-            placeholder="例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.schema"
-            onChange={(event) =>
-              setInitialForm({
-                ...initialForm,
-                external_action_confirmation_card_template_id:
-                  event.target.value,
-              })
-            }
-          />
-          <p className="text-xs leading-5 text-muted-foreground">
-            用于待办、日程、AI 表格等外部写入的逐次确认。模板必须发布在当前
-            Client ID
-            对应的钉钉应用中，并兼容平台固定的确认卡字段与回调合同；修改后仅影响新发起的操作。
-          </p>
-        </EditorField>
-        <BooleanField
-          id="dingtalk-private"
-          label="允许私聊"
-          checked={form.allow_private_chat}
-          onChange={(checked) =>
-            setInitialForm({ ...initialForm, allow_private_chat: checked })
-          }
-        />
-        <BooleanField
-          id="dingtalk-group"
-          label="允许群聊"
-          checked={form.allow_group_chat}
-          onChange={(checked) =>
-            setInitialForm({ ...initialForm, allow_group_chat: checked })
-          }
-        />
-        <BooleanField
-          id="dingtalk-require-at"
-          label="群聊必须 @机器人"
-          checked={form.require_group_at}
-          onChange={(checked) =>
-            setInitialForm({ ...initialForm, require_group_at: checked })
-          }
-        />
-        {!channel ? (
-          <BooleanField
-            id="dingtalk-enabled"
-            label="保存后立即启用"
-            checked={form.enabled}
-            onChange={(checked) =>
-              setInitialForm({ ...initialForm, enabled: checked })
-            }
-          />
-        ) : null}
-        <MutationError error={error} />
-      </div>
-      <SheetFooter>
-        <Button type="submit" disabled={pending}>
-          {pending ? (
-            <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+          </EditorField>
+          <EditorField label="Client ID / AppKey" htmlFor="dingtalk-client-id">
+            <Input
+              id="dingtalk-client-id"
+              required
+              maxLength={128}
+              value={form.client_id}
+              onChange={(event) =>
+                setInitialForm({
+                  ...initialForm,
+                  client_id: event.target.value,
+                })
+              }
+            />
+          </EditorField>
+          <EditorField label="钉钉企业" htmlFor="dingtalk-enterprise">
+            <select
+              id="dingtalk-enterprise"
+              required
+              className={selectClass}
+              value={form.dingtalk_enterprise_id}
+              onChange={(event) =>
+                setInitialForm({
+                  ...initialForm,
+                  dingtalk_enterprise_id: event.target.value,
+                })
+              }
+            >
+              <option value="">请选择钉钉企业</option>
+              {enterprises.data
+                ?.filter(
+                  (enterprise) =>
+                    enterprise.status === "PENDING_VERIFICATION" ||
+                    enterprise.status === "ACTIVE" ||
+                    enterprise.id === channel?.enterprise?.id
+                )
+                .map((enterprise) => (
+                  <option key={enterprise.id} value={enterprise.id}>
+                    {enterprise.name} ·{" "}
+                    {enterpriseStatusLabel(enterprise.status)}
+                  </option>
+                ))}
+            </select>
+          </EditorField>
+          {!channel ? (
+            <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+              <Label htmlFor="new-dingtalk-enterprise">
+                没有可选企业？先创建待验证企业
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="new-dingtalk-enterprise"
+                  value={newEnterpriseName}
+                  maxLength={120}
+                  onChange={(event) => setNewEnterpriseName(event.target.value)}
+                  placeholder="例如：研发中心钉钉企业"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    !newEnterpriseName.trim() || createEnterprise.isPending
+                  }
+                  onClick={() => {
+                    void createEnterprise
+                      .mutateAsync(newEnterpriseName.trim())
+                      .then((enterprise) => {
+                        setInitialForm({
+                          ...initialForm,
+                          dingtalk_enterprise_id: enterprise.id,
+                        })
+                        setNewEnterpriseName("")
+                      })
+                      .catch(() => undefined)
+                  }}
+                >
+                  创建企业
+                </Button>
+              </div>
+              <MutationError
+                error={enterprises.error ?? createEnterprise.error}
+              />
+            </div>
           ) : null}
-          {channel ? "保存修改" : "创建渠道"}
-        </Button>
-        <Button type="button" variant="outline" onClick={onCancel}>
-          取消
-        </Button>
-      </SheetFooter>
-    </form>
+          <EditorField
+            label="Client Secret / AppSecret"
+            htmlFor="dingtalk-secret"
+          >
+            <Input
+              id="dingtalk-secret"
+              type="password"
+              required={!channel}
+              maxLength={512}
+              autoComplete="new-password"
+              value={form.client_secret}
+              placeholder={channel ? "留空表示不修改" : "请输入 Secret"}
+              onChange={(event) =>
+                setInitialForm({
+                  ...initialForm,
+                  client_secret: event.target.value,
+                })
+              }
+            />
+          </EditorField>
+          <EditorField
+            label="企业机器人 Code"
+            htmlFor="dingtalk-enterprise-robot-code"
+          >
+            <Input
+              id="dingtalk-enterprise-robot-code"
+              maxLength={128}
+              value={form.enterprise_robot_code}
+              placeholder="启用机器人个人/群消息 Tool 时必填"
+              onChange={(event) =>
+                setInitialForm({
+                  ...initialForm,
+                  enterprise_robot_code: event.target.value,
+                })
+              }
+            />
+            <p className="text-xs leading-5 text-muted-foreground">
+              对应钉钉官方 MCP 的
+              ROBOT_CODE，用于企业机器人个人/群消息；不是工作通知 Agent
+              ID，也不是 Secret。
+            </p>
+          </EditorField>
+          <EditorField
+            label="工作通知 Agent ID"
+            htmlFor="dingtalk-work-notification-agent-id"
+          >
+            <Input
+              id="dingtalk-work-notification-agent-id"
+              type="number"
+              min={1}
+              step={1}
+              value={form.work_notification_agent_id ?? ""}
+              placeholder={
+                channel?.work_notification_agent_id_configured
+                  ? `已配置 ${channel.work_notification_agent_id_hint}，留空表示不修改`
+                  : "可选；启用工作通知 Tool 时必填"
+              }
+              onChange={(event) =>
+                setInitialForm({
+                  ...initialForm,
+                  work_notification_agent_id: event.target.value
+                    ? Number(event.target.value)
+                    : null,
+                })
+              }
+            />
+            <p className="text-xs leading-5 text-muted-foreground">
+              仅用于当前用户本人的工作通知；保存后只显示尾号，不作为 Secret
+              存储。
+            </p>
+          </EditorField>
+          <EditorField
+            label="外部操作确认卡片模板 ID"
+            htmlFor="dingtalk-external-action-confirmation-card-template-id"
+          >
+            <Input
+              id="dingtalk-external-action-confirmation-card-template-id"
+              maxLength={256}
+              value={form.external_action_confirmation_card_template_id}
+              placeholder="例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.schema"
+              onChange={(event) =>
+                setInitialForm({
+                  ...initialForm,
+                  external_action_confirmation_card_template_id:
+                    event.target.value,
+                })
+              }
+            />
+            <p className="text-xs leading-5 text-muted-foreground">
+              用于待办、日程、AI 表格等外部写入的逐次确认。模板必须发布在当前
+              Client ID
+              对应的钉钉应用中，并兼容平台固定的确认卡字段与回调合同；修改后仅影响新发起的操作。
+            </p>
+          </EditorField>
+          <BooleanField
+            id="dingtalk-private"
+            label="允许私聊"
+            checked={form.allow_private_chat}
+            onChange={(checked) =>
+              setInitialForm({ ...initialForm, allow_private_chat: checked })
+            }
+          />
+          <BooleanField
+            id="dingtalk-group"
+            label="允许群聊"
+            checked={form.allow_group_chat}
+            onChange={(checked) =>
+              setInitialForm({ ...initialForm, allow_group_chat: checked })
+            }
+          />
+          <BooleanField
+            id="dingtalk-require-at"
+            label="群聊必须 @机器人"
+            checked={form.require_group_at}
+            onChange={(checked) =>
+              setInitialForm({ ...initialForm, require_group_at: checked })
+            }
+          />
+          {!channel ? (
+            <BooleanField
+              id="dingtalk-enabled"
+              label="保存后立即启用"
+              checked={form.enabled}
+              onChange={(checked) =>
+                setInitialForm({ ...initialForm, enabled: checked })
+              }
+            />
+          ) : null}
+          <MutationError error={error} />
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            type="submit"
+            disabled={pending || createEnterprise.isPending}
+          >
+            {pending ? (
+              <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+            ) : null}
+            {channel ? "保存修改" : "创建渠道"}
+          </Button>
+          <FormDialogCancel disabled={pending || createEnterprise.isPending} />
+        </div>
+      </form>
+    </FormDialog>
   )
 }
 
 function WebhookEditor({
-  open,
   onOpenChange,
   onCreated,
 }: {
-  open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: (code: string) => void
 }) {
@@ -1285,78 +1327,68 @@ function WebhookEditor({
       onSuccess: () => {
         onOpenChange(false)
         onCreated(form.code)
-        setForm({ code: "", name: "", trigger_type: "generic" })
       },
     })
   }
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
-        <form onSubmit={submit} className="flex min-h-full flex-col">
-          <SheetHeader>
-            <SheetTitle>新建受管 Webhook</SheetTitle>
-            <SheetDescription>
-              系统自动创建独立接收入口。创建后配置认证和消息映射，校验并发布后再启用。
-            </SheetDescription>
-          </SheetHeader>
-          <div className="space-y-4 px-4">
-            <EditorField label="Webhook 编码" htmlFor="webhook-code">
-              <Input
-                id="webhook-code"
-                required
-                pattern={"[a-z][a-z0-9\\-]{2,63}"}
-                value={form.code}
-                onChange={(event) =>
-                  setForm({ ...form, code: event.target.value })
-                }
-                placeholder="ones-event"
-              />
-            </EditorField>
-            <EditorField label="Webhook 名称" htmlFor="webhook-name">
-              <Input
-                id="webhook-name"
-                required
-                maxLength={200}
-                value={form.name}
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
-              />
-            </EditorField>
-            <EditorField label="Webhook 类型" htmlFor="webhook-type">
-              <select
-                id="webhook-type"
-                className={selectClass}
-                value={form.trigger_type}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    trigger_type: event.target
-                      .value as WebhookChannelInput["trigger_type"],
-                  })
-                }
-              >
-                <option value="generic">通用 JSON</option>
-                <option value="grafana">Grafana 告警</option>
-              </select>
-            </EditorField>
-            <MutationError error={create.error} />
-          </div>
-          <SheetFooter>
-            <Button type="submit" disabled={create.isPending}>
-              创建并配置 Webhook
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
+    <FormDialog
+      title="新建受管 Webhook"
+      description="系统自动创建独立接收入口。创建后配置认证和消息映射，校验并发布后再启用。"
+      pending={create.isPending}
+      onClose={() => onOpenChange(false)}
+    >
+      <form onSubmit={submit} className="grid gap-5">
+        <div className="space-y-4">
+          <EditorField label="Webhook 编码" htmlFor="webhook-code">
+            <Input
+              id="webhook-code"
+              required
+              pattern={"[a-z][a-z0-9\\-]{2,63}"}
+              value={form.code}
+              onChange={(event) =>
+                setForm({ ...form, code: event.target.value })
+              }
+              placeholder="ones-event"
+            />
+          </EditorField>
+          <EditorField label="Webhook 名称" htmlFor="webhook-name">
+            <Input
+              id="webhook-name"
+              required
+              maxLength={200}
+              value={form.name}
+              onChange={(event) =>
+                setForm({ ...form, name: event.target.value })
+              }
+            />
+          </EditorField>
+          <EditorField label="Webhook 类型" htmlFor="webhook-type">
+            <select
+              id="webhook-type"
+              className={selectClass}
+              value={form.trigger_type}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  trigger_type: event.target
+                    .value as WebhookChannelInput["trigger_type"],
+                })
+              }
             >
-              取消
-            </Button>
-          </SheetFooter>
-        </form>
-      </SheetContent>
-    </Sheet>
+              <option value="generic">通用 JSON</option>
+              <option value="grafana">Grafana 告警</option>
+            </select>
+          </EditorField>
+          <MutationError error={create.error} />
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="submit" disabled={create.isPending}>
+            创建并配置 Webhook
+          </Button>
+          <FormDialogCancel disabled={create.isPending} />
+        </div>
+      </form>
+    </FormDialog>
   )
 }
 

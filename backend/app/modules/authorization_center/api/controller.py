@@ -35,7 +35,7 @@ class RoleMetadataRequest(StrictRequest):
     name: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=1000)
     purpose_tags: list[str] = Field(default_factory=list, max_length=10)
-    status: Literal["enabled", "disabled"]
+    status: Literal["enabled", "disabled", "archived"]
     confirmed: bool = False
     reason: str = Field(default="", max_length=500)
 
@@ -137,7 +137,7 @@ def build_authorization_center_router() -> APIRouter:  # noqa: C901, PLR0915
     def roles(
         request: Request,
         search: str = Query(default="", max_length=200),
-        status: str = Query(default="", pattern=r"^(|enabled|disabled)$"),
+        status: str = Query(default="", pattern=r"^(|enabled|disabled|archived)$"),
         origin: str = Query(default="", pattern=r"^(|system|custom)$"),
         limit: int = Query(default=50, ge=1, le=100),
         offset: int = Query(default=0, ge=0),

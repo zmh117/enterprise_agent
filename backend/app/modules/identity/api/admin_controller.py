@@ -29,7 +29,7 @@ class UpdateUserRequest(BaseModel):
     expected_revision: int = Field(ge=1)
     display_name: str = Field(min_length=1, max_length=200)
     email: str = Field(default="", max_length=320)
-    status: Status
+    status: Literal["enabled", "disabled", "archived"]
 
 
 class CreateRoleRequest(BaseModel):
@@ -66,7 +66,7 @@ def build_identity_admin_router() -> APIRouter:  # noqa: C901, PLR0915
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=25, ge=1, le=100),
         include_disabled: bool = True,
-        status: Status | None = None,
+        status: Literal["enabled", "disabled", "archived"] | None = None,
     ) -> dict[str, Any]:
         require_action(request, resource_type="user", resource_code="*", action="read")
         c = container(request)

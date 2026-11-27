@@ -87,7 +87,7 @@ def build_agent_config_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/admin/agents", tags=["agent-configuration"])
 
     @router.get("")
-    def list_agents(request: Request) -> dict[str, Any]:
+    def list_agents(request: Request, archived: bool = False) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="agent",
@@ -104,8 +104,21 @@ def build_agent_config_router() -> APIRouter:  # noqa: C901, PLR0915
             )
             .allowed
         )
+        agents = container(request).agent_config_service.list_agents(archived=archived)
+        for agent in agents:
+            if (
+                not container(request)
+                .authorization_evaluator.decide(
+                    user_id=principal.user_id,
+                    resource_type="agent",
+                    resource_code=agent["code"],
+                    action="edit",
+                )
+                .allowed
+            ):
+                agent.update(can_archive=False, can_change_status=False)
         return {
-            "agents": container(request).agent_config_service.list_agents(),
+            "agents": agents,
             "permissions": {"can_create": can_create},
         }
 
@@ -166,9 +179,32 @@ def build_agent_config_router() -> APIRouter:  # noqa: C901, PLR0915
             agent["permissions"]["can_test_connection"] = agent["permissions"][
                 "can_manage_credential"
             ]
+            if agent["definition"]["status"] != "enabled":
+                agent["permissions"] = dict.fromkeys(agent["permissions"], False)
             return {"agent": agent}
         except Exception as exc:
             raise handle_exception(exc) from exc
+
+    @router.post("/{agent_code}/lifecycle/{status}")
+    def set_agent_status(
+        request: Request,
+        agent_code: str,
+        status: Literal["enabled", "disabled", "archived"],
+        expected_revision: int,
+    ) -> dict[str, str]:
+        principal = require_action(
+            request, resource_type="agent", resource_code=agent_code, action="edit", csrf=True
+        )
+        try:
+            container(request).agent_config_service.set_status(
+                agent_code=agent_code,
+                status=status,
+                expected_revision=expected_revision,
+                actor_id=principal.user_id,
+            )
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+        return {"status": status}
 
     @router.put("/{agent_code}/draft")
     def save_draft(request: Request, agent_code: str, payload: AgentDraftRequest) -> dict[str, Any]:

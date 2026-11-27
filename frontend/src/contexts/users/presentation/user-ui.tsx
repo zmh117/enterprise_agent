@@ -18,7 +18,7 @@ import { ApiError } from "@/shared/api/api-client"
 export function UserStatusBadge({ status }: { status: UserStatus }) {
   return (
     <Badge variant={status === "enabled" ? "secondary" : "outline"}>
-      {status === "enabled" ? "已启用" : "已停用"}
+      {{ enabled: "已启用", disabled: "已停用", archived: "已归档" }[status]}
     </Badge>
   )
 }

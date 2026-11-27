@@ -154,10 +154,12 @@ def build_managed_channel_router() -> APIRouter:  # noqa: C901, PLR0915
     router = APIRouter(prefix="/api/admin/managed-channels", tags=["managed-channels"])
 
     @router.get("")
-    def list_channels(request: Request) -> dict[str, Any]:
+    def list_channels(request: Request, archived: bool = False) -> dict[str, Any]:
         require_action(request, resource_type="channel_connector", resource_code="*", action="read")
         try:
-            return {"items": container(request).managed_channel_service.list_channels()}
+            return {
+                "items": container(request).managed_channel_service.list_channels(archived=archived)
+            }
         except Exception as exc:
             raise handle_exception(exc) from exc
 
@@ -181,7 +183,7 @@ def build_managed_channel_router() -> APIRouter:  # noqa: C901, PLR0915
         "/dingtalk-enterprises",
         response_model=DingTalkEnterpriseListResponse,
     )
-    def list_dingtalk_enterprises(request: Request) -> dict[str, Any]:
+    def list_dingtalk_enterprises(request: Request, archived: bool = False) -> dict[str, Any]:
         require_action(
             request,
             resource_type="channel_connector",
@@ -189,7 +191,11 @@ def build_managed_channel_router() -> APIRouter:  # noqa: C901, PLR0915
             action="read",
         )
         try:
-            return {"items": container(request).managed_channel_service.list_dingtalk_enterprises()}
+            return {
+                "items": container(request).managed_channel_service.list_dingtalk_enterprises(
+                    archived=archived
+                )
+            }
         except Exception as exc:
             raise handle_exception(exc) from exc
 
@@ -410,6 +416,28 @@ def build_managed_channel_router() -> APIRouter:  # noqa: C901, PLR0915
             return {"channel": item}
         except Exception as exc:
             raise handle_exception(exc) from exc
+
+    @router.post("/{connector_id}/archive")
+    def archive(
+        request: Request, connector_id: str, payload: RevisionRequest, webhook_code: str = ""
+    ) -> dict[str, str]:
+        principal = require_action(
+            request,
+            resource_type="channel_connector",
+            resource_code="*",
+            action="manage",
+            csrf=True,
+        )
+        try:
+            container(request).managed_channel_service.archive(
+                connector_id,
+                expected_revision=payload.expected_revision,
+                actor_id=principal.user_id,
+                webhook_code=webhook_code,
+            )
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+        return {"status": "archived"}
 
     @router.post("/{connector_id}/restart")
     def restart(request: Request, connector_id: str, payload: RevisionRequest) -> dict[str, Any]:

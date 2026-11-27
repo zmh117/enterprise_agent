@@ -24,8 +24,11 @@ class ManagedWebhookProviderAdapter:
         self.connector_registry = connector_registry
         self.authenticator = WebhookAuthenticator(connector_registry=connector_registry)
 
-    def list_channels(self) -> list[dict[str, Any]]:
-        return [self._with_runtime_status(item) for item in self.repository.list_definitions()]
+    def list_channels(self, *, archived: bool = False) -> list[dict[str, Any]]:
+        return [
+            self._with_runtime_status(item)
+            for item in self.repository.list_definitions(archived=archived)
+        ]
 
     def create_channel(
         self,

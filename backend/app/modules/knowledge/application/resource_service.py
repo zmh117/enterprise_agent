@@ -608,6 +608,12 @@ class KnowledgeResourceService(KnowledgeResourceReader, KnowledgeAdministration)
             raise KnowledgeGovernanceError("knowledge_input_invalid")
         with self.store.unit_of_work():
             resource = self._write_resource(resource_id, expected_revision)
+            if status == "archived":
+                if resource["status"] == "enabled" and resource["published_revision_id"]:
+                    raise KnowledgeGovernanceError("knowledge_resource_conflict")
+                base = self.store.get("knowledge_base", resource["knowledge_base_id"])
+                if base.get("kind") == "code":
+                    self.store.assert_code_idle(resource["knowledge_base_id"])
             if status == "enabled":
                 self.store.get("knowledge_base", resource["knowledge_base_id"], lock=True)
                 self._unique_enabled(resource["knowledge_base_id"], excluding=resource_id)

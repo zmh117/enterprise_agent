@@ -5,6 +5,7 @@ import sqlite3
 from typing import Any
 from datetime import UTC, datetime, timedelta
 
+from app.shared.archive import require_archive_eligible, require_not_archived
 from app.modules.identity.domain import ExternalIdentityProvider
 from app.modules.job.infrastructure.persistence_values import new_id, now_iso
 from app.shared.database import Database
@@ -98,13 +99,14 @@ class IdentityRepository:  # noqa: PLR0904
         )
         return int(row["count"]) if row else 0
 
-    def get_user(self, user_id: str) -> dict[str, Any]:
+    def get_user(self, user_id: str, *, for_update: bool = False) -> dict[str, Any]:
+        lock = " for update" if for_update and self.database.engine == "postgres" else ""
         row = self.database.execute_one(
             """
             select id, username, display_name, email, status, account_type,
                    revision, created_at, updated_at
             from app_user where id = ?
-            """,
+            """ + lock,
             (user_id,),
         )
         if not row:
@@ -130,6 +132,18 @@ class IdentityRepository:  # noqa: PLR0904
         email: str,
         status: str,
     ) -> dict[str, Any]:
+        current = self.get_user(user_id, for_update=True)
+        require_not_archived(current["status"])
+        if status == "archived":
+            in_use = self.database.execute_one(
+                """select 1 from webhook_trigger_definition where execution_user_id=? and status='enabled'
+                   union all select 1 from business_application where owner_user_id=? and status='enabled'
+                   limit 1""",
+                (user_id, user_id),
+            )
+            require_archive_eligible(
+                current["status"], protected=current["account_type"] != "human", in_use=bool(in_use)
+            )
         rows = self.database.execute(
             """
             update app_user
@@ -151,7 +165,8 @@ class IdentityRepository:  # noqa: PLR0904
         return self.get_user(user_id)
 
     def delete_user(self, user_id: str, *, expected_revision: int) -> dict[str, Any]:
-        current = self.get_user(user_id)
+        current = self.get_user(user_id, for_update=True)
+        require_not_archived(current["status"])
         if int(current["revision"]) != expected_revision:
             raise NonRetryableExecutionError(
                 "User revision conflict",
@@ -180,6 +195,7 @@ class IdentityRepository:  # noqa: PLR0904
 
     def set_password_hash(self, user_id: str, password_hash: str) -> None:
         user = self.get_user(user_id)
+        require_not_archived(user["status"])
         if str(user["account_type"]) != "human":
             raise NonRetryableExecutionError(
                 "Service accounts cannot have password credentials",
@@ -227,6 +243,7 @@ class IdentityRepository:  # noqa: PLR0904
             metadata or {},
         )
         user = self.get_user(user_id)
+        require_not_archived(user["status"])
         if str(user["account_type"]) != "human":
             raise NonRetryableExecutionError(
                 "Service accounts cannot bind external identities",
@@ -426,6 +443,7 @@ class IdentityRepository:  # noqa: PLR0904
         replace_current: bool,
         restore_historical: bool = False,
     ) -> dict[str, Any]:
+        require_not_archived(self.get_user(user_id)["status"])
         existing = self.find_dingtalk_identity(
             dingtalk_enterprise_id=dingtalk_enterprise_id,
             external_subject_id=external_subject_id,
@@ -829,6 +847,7 @@ class IdentityRepository:  # noqa: PLR0904
                 error_code="identity_status_invalid",
             )
         current = self.get_external_identity(identity_id)
+        require_not_archived(self.get_user(current["user_id"])["status"])
         if (
             current["provider"] == "dingtalk"
             and current["status"] == "unbound"
@@ -862,6 +881,8 @@ class IdentityRepository:  # noqa: PLR0904
         *,
         expected_revision: int,
     ) -> dict[str, Any]:
+        current = self.get_external_identity(identity_id)
+        require_not_archived(self.get_user(current["user_id"])["status"])
         rows = self.database.execute(
             """
             update user_external_identity
@@ -919,7 +940,7 @@ class IdentityRepository:  # noqa: PLR0904
         return self.get_role(role_id)
 
     def list_roles(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        where = "" if include_disabled else "where status = 'enabled'"
+        where = "where status <> 'archived'" if include_disabled else "where status = 'enabled'"
         return self.database.execute(f"select * from rbac_role {where} order by code")
 
     def get_role(self, role_id: str) -> dict[str, Any]:
@@ -941,6 +962,7 @@ class IdentityRepository:  # noqa: PLR0904
         status: str,
     ) -> dict[str, Any]:
         current = self.get_role(role_id)
+        require_not_archived(current["status"])
         if bool(current.get("protected")) and status != str(current["status"]):
             raise NonRetryableExecutionError(
                 "Protected role status cannot be changed",
@@ -975,8 +997,8 @@ class IdentityRepository:  # noqa: PLR0904
         assigned_by: str = "",
         assignment_source: str = "manual",
     ) -> dict[str, Any]:
-        self.get_user(user_id)
-        self.get_role(role_id)
+        require_not_archived(self.get_user(user_id)["status"])
+        require_not_archived(self.get_role(role_id)["status"])
         existing = self.database.execute_one(
             "select * from rbac_user_role where user_id = ? and role_id = ?",
             (user_id, role_id),
@@ -1041,6 +1063,8 @@ class IdentityRepository:  # noqa: PLR0904
         )
 
     def remove_role(self, *, user_id: str, role_id: str, expected_revision: int) -> dict[str, Any]:
+        require_not_archived(self.get_user(user_id)["status"])
+        require_not_archived(self.get_role(role_id)["status"])
         rows = self.database.execute(
             """
             update rbac_user_role
@@ -1427,6 +1451,8 @@ class IdentityRepository:  # noqa: PLR0904
     ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
+        if status != "archived":
+            clauses.append("u.status <> 'archived'")
         if not include_disabled:
             clauses.append("u.status = 'enabled'")
         if status:

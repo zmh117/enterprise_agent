@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from app.shared.archive import require_archive_eligible, require_not_archived
 from app.shared.database import Database
-from app.shared.exceptions import NotFound
+from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 from ..application.validation import validate_topology_code
 
@@ -641,6 +642,7 @@ class PlatformConfigRepository:  # noqa: PLR0904
         existing = self.get_platform_secret_by_code(code)
         timestamp = now_iso()
         if existing:
+            require_not_archived(existing["status"])
             self.database.execute(
                 """
                 update platform_secret
@@ -687,8 +689,13 @@ class PlatformConfigRepository:  # noqa: PLR0904
         )
         return self.get_platform_secret(entity_id)
 
-    def list_platform_secrets(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        where = "" if include_disabled else "where s.status = 'enabled'"
+    def list_platform_secrets(
+        self, *, include_disabled: bool = True, archived: bool = False
+    ) -> list[dict[str, Any]]:
+        where = "where s.status <> 'archived'" if include_disabled else "where s.status = 'enabled'"
+        if archived:
+            where = "where s.status = 'archived'"
+
         rows = self.database.execute(
             f"""
             select s.*,
@@ -843,29 +850,41 @@ class PlatformConfigRepository:  # noqa: PLR0904
             """,
             (secret_id, active_version),
         )
-        self.database.execute(
+        changed = self.database.execute_one(
             """
             update platform_secret
             set active_version = ?, masked_summary = ?, status = 'enabled',
                 revision = revision + 1, updated_at = ?
-            where id = ?
+            where id = ? and status <> 'archived' returning id
             """,
             (active_version, masked_summary, now_iso(), secret_id),
         )
+        if not changed:
+            require_not_archived("archived")
         return self.get_platform_secret(secret_id)
 
-    def set_platform_secret_status(self, code: str, status: str) -> dict[str, Any]:
+    def set_platform_secret_status(self, code: str, status: str, *, expected_revision: int | None = None) -> dict[str, Any]:
         existing = self.get_platform_secret_by_code(code)
         if not existing:
             raise NotFound(f"Platform secret not found: {code}")
-        self.database.execute(
-            """
-            update platform_secret
-            set status = ?, revision = revision + 1, updated_at = ?
-            where id = ?
-            """,
-            (status, now_iso(), existing["id"]),
+        require_not_archived(existing["status"])
+        if status == "archived":
+            require_archive_eligible(existing["status"])
+        changed = self.database.execute_one(
+            """update platform_secret set status=?, revision=revision+1, updated_at=?
+               where id=? and revision=? and status <> 'archived' returning id""",
+            (
+                status,
+                now_iso(),
+                existing["id"],
+                expected_revision if expected_revision is not None else existing["revision"],
+            ),
         )
+        if not changed:
+            raise NonRetryableExecutionError(
+                "Secret revision conflict", safe_message="凭据已变更，请刷新后重试"
+            )
+
         if status == "disabled":
             self.database.execute(
                 """

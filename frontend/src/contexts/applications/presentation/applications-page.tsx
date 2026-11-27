@@ -1,15 +1,12 @@
+import { ArchiveAction } from "@/shared/presentation/archive-action"
+import { updateApplication } from "@/contexts/applications/infrastructure/business-application-api"
 import { Fragment, useState, type FormEvent } from "react"
 import { ChevronDownIcon, LoaderCircleIcon, PlusIcon } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+import { FormDialog, FormDialogCancel } from "@/shared/presentation/form-dialog"
 import {
   Table,
   TableBody,
@@ -41,6 +38,14 @@ import { ApplicationState } from "@/contexts/applications/presentation/applicati
 import { RuntimeStatusBadge } from "@/contexts/applications/presentation/runtime-readiness"
 import { ApiError } from "@/shared/api/api-client"
 
+const emptyApplication = {
+  code: "",
+  name: "",
+  description: "",
+  project_code: "default",
+  owner_user_id: "",
+}
+
 export function ApplicationsPage() {
   const list = useListNavigation()
   const search = list.params.get("q") ?? ""
@@ -50,13 +55,7 @@ export function ApplicationsPage() {
   const create = useCreateApplication()
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({
-    code: "",
-    name: "",
-    description: "",
-    project_code: "default",
-    owner_user_id: "",
-  })
+  const [form, setForm] = useState(emptyApplication)
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -103,15 +102,17 @@ export function ApplicationsPage() {
           </Button>
         )}
       </div>
-      <Sheet open={showCreate} onOpenChange={setShowCreate}>
-        <SheetContent
-          className="w-full overflow-y-auto sm:max-w-lg"
-          aria-describedby={undefined}
+      {showCreate && (
+        <FormDialog
+          title="新建业务应用"
+          pending={create.isPending}
+          onClose={() => {
+            setShowCreate(false)
+            setForm(emptyApplication)
+            create.reset()
+          }}
         >
-          <SheetHeader>
-            <SheetTitle>新建业务应用</SheetTitle>
-          </SheetHeader>
-          <form onSubmit={submit} className="space-y-4 px-4 pb-5">
+          <form onSubmit={submit} className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="应用编码" htmlFor="application-code">
                 <Input
@@ -182,17 +183,11 @@ export function ApplicationsPage() {
                 ) : null}
                 创建应用
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setShowCreate(false)}
-              >
-                取消
-              </Button>
+              <FormDialogCancel disabled={create.isPending} />
             </div>
           </form>
-        </SheetContent>
-      </Sheet>
+        </FormDialog>
+      )}
       {query.isLoading && (
         <Skeleton className="h-48" aria-label="正在加载业务应用" />
       )}
@@ -358,6 +353,25 @@ function ApplicationRow({
                 }
               />
             </dl>
+            {app.status !== "archived" &&
+              !app.active_environments.length &&
+              (app.status === "disabled" ||
+                !app.latest_publication_revision) && (
+                <ArchiveAction
+                  name={app.name}
+                  queryKey={["business-applications"]}
+                  archive={() =>
+                    updateApplication(app.code, {
+                      name: app.name,
+                      description: app.description,
+                      project_code: app.project_code,
+                      owner_user_id: app.owner_user_id,
+                      expected_revision: app.revision,
+                      status: "archived",
+                    })
+                  }
+                />
+              )}
           </TableCell>
         </TableRow>
       )}

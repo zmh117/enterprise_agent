@@ -25,13 +25,13 @@ import {
 export const DEFAULT_AGENT_CODE = "default-diagnostic-agent"
 export const DEFAULT_CONNECTION_CODE = "default-deepseek-anthropic"
 
-const agentKey = (agentCode: string) => ["agent-profile", agentCode] as const
+const agentKey = (agentCode: string) => ["agent-profiles", agentCode] as const
 const connectionKey = ["model-connection", DEFAULT_CONNECTION_CODE] as const
 
-export function useAgentProfiles() {
+export function useAgentProfiles(archived = false) {
   return useQuery({
-    queryKey: ["agent-profiles"],
-    queryFn: listAgentProfiles,
+    queryKey: ["agent-profiles", archived],
+    queryFn: () => listAgentProfiles(archived),
   })
 }
 

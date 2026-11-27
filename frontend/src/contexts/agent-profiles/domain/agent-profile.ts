@@ -176,7 +176,7 @@ export const agentDetailSchema = z.object({
   definition: agentDefinitionSchema,
   draft: agentRevisionSchema.nullable(),
   current_publication: agentPublicationSchema.nullable(),
-  management_mode: z.literal("editable").default("editable"),
+  management_mode: z.enum(["editable", "read_only"]).default("editable"),
   permissions: z
     .object({
       can_edit_profile: z.boolean(),
@@ -222,6 +222,8 @@ export const agentDetailSchema = z.object({
 })
 
 export const agentSummarySchema = z.object({
+  can_change_status: z.boolean().default(false),
+  can_archive: z.boolean().default(false),
   id: z.string(),
   code: z.string(),
   name: z.string(),
@@ -230,7 +232,7 @@ export const agentSummarySchema = z.object({
   status: z.string(),
   revision: z.number(),
   runtime_kind: z.literal("python-v1").default("python-v1"),
-  management_mode: z.literal("editable").default("editable"),
+  management_mode: z.enum(["editable", "read_only"]).default("editable"),
   current_publication: z
     .object({
       id: z.string(),
