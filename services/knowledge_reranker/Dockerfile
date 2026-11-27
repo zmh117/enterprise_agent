@@ -4,14 +4,19 @@ WORKDIR /app
 ENV PYTHONPATH=/app/backend:/app PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     HF_HUB_DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 TOKENIZERS_PARALLELISM=false \
     TORCH_FORCE_WEIGHTS_ONLY_LOAD=1
+COPY backend/docker/knowledge-model-build-pip.lock /tmp/knowledge-model-build-pip.lock
+RUN --mount=type=cache,id=knowledge-model-pip-${TARGETARCH},target=/root/.cache/pip,sharing=locked \
+    python -m pip install --disable-pip-version-check --timeout 120 --retries 5 \
+        --only-binary=:all: --require-hashes --no-deps -r /tmp/knowledge-model-build-pip.lock
 COPY backend/app/modules/knowledge/embedding_runtime.lock backend/app/modules/knowledge/embedding_runtime_amd64.lock /tmp/
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=knowledge-model-pip-${TARGETARCH},target=/root/.cache/pip,sharing=locked \
     case "$TARGETARCH" in \
       arm64) lock=/tmp/embedding_runtime.lock ;; \
       amd64) lock=/tmp/embedding_runtime_amd64.lock ;; \
-      *) echo "Unsupported reranker architecture: $TARGETARCH" >&2; exit 1 ;; \
+      *) echo "Unsupported knowledge runtime architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
-    && pip install --require-hashes --no-deps -r "$lock" \
+    && python -m pip install --disable-pip-version-check --timeout 120 --retries 5 --resume-retries 5 \
+        --require-hashes --no-deps -r "$lock" \
     && python -c "import platform, torch; assert platform.machine() in {'aarch64', 'x86_64'}; assert torch.version.cuda is None"
 COPY backend/app/__init__.py /app/backend/app/
 COPY backend/app/shared/__init__.py backend/app/shared/knowledge_limits.py /app/backend/app/shared/
