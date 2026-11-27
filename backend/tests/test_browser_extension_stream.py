@@ -359,6 +359,7 @@ def test_competing_exchange_parent_deadline_and_revocation():
             assert sorted(r.status_code for r in replies) == [200, 401]
             access = next(r.json() for r in replies if r.status_code == 200)
             assert 0 < access["expires_in"] <= 50 and access["user_id"] == principal.user_id
+            assert access["username"] == principal.username
             cred = {"Authorization": "Bearer " + access["access_token"]}
             assert client.get(PREFIX + "/applications", headers=cred).status_code == 200
             c.auth_service.logout(principal)

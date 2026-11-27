@@ -832,7 +832,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
         }
         platform = p;
         account = nextAccount;
-        accountLabel.textContent = '当前账号　' + (identity.username || identity.user_id);
+        accountLabel.textContent = '当前账号　' + (identity.username?.trim() || '用户名暂不可用');
         accountLabel.hidden = switchAccount.hidden = false;
         login.textContent = '重新连接';
         await chrome.storage.local.set({agentOrigin: url.origin, agentActiveAccount: account});

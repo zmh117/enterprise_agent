@@ -484,6 +484,20 @@ async function runBrowserTest() {
     await control.waitForFunction(() => document.querySelector('#agent-account')?.textContent.includes('demo-second') &&
       !document.querySelector('#agent-send').disabled);
     await checkWebsiteAccount();
+    // Older API servers return only the internal user ID. Keep the session usable.
+    await control.route('**/api/browser-extension/auth/token', async route => {
+      const response = await route.fetch();
+      const identity = await response.json();
+      delete identity.username;
+      await route.fulfill({response, json:identity});
+    });
+    await control.reload();
+    await control.waitForFunction(() => document.querySelector('#agent-account')?.textContent === '当前账号　用户名暂不可用' &&
+      !document.querySelector('#agent-send').disabled);
+    await control.unroute('**/api/browser-extension/auth/token');
+    await control.reload();
+    await control.waitForFunction(() => document.querySelector('#agent-account')?.textContent === '当前账号　demo-second' &&
+      !document.querySelector('#agent-send').disabled);
     console.log('已验证错误密码、取消后原账号可用、并发授权、双页面切换及重开续期');
     return;
   }
