@@ -24,6 +24,7 @@ import {
   captureSave,
 } from './agent-recording-browser.mjs';
 import { checkFloat } from './float-browser.mjs';
+import { checkStopReply } from './stop-reply.mjs';
 import { chromium } from 'playwright';
 
 const agentRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -860,6 +861,7 @@ async function runBrowserTest() {
     }
   } else {
     const redirected = new URL(origin);
+    await checkStopReply(control, control, requests);
     redirected.hostname = hostname === 'localhost' ? '127.0.0.1' : 'localhost';
     redirected.pathname = '/synthetic-redirect-target';
     let sent = false,

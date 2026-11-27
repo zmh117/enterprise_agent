@@ -10,7 +10,7 @@ from app.shared.database import Database
 
 
 def cancel_agent_job(database: Database, job_id: str, user_id: str) -> str:
-    """Caller must authorize jobs.manage and the target business scope first."""
+    """Caller must authorize management access or a scoped browser message owner first."""
     control = JobExecutionControl(database)
     pool = RuntimePoolStore(database)
     with database.unit_of_work():

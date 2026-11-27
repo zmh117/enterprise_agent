@@ -40,6 +40,7 @@
 | GET /jobs/{id}/activity | 本人获授权的插件 Job | JobActivity，当前尝试的公开过程说明及该 Job 的工具调用、状态和安全摘要 |
 | GET /conversations/{id} | 可选 before（上一页返回的 Job ID）、limit（1 至 20） | ConversationPage，按会话顺序返回问题和 Job 引用。每个回答从对应 Job 的快照或流读取 |
 | GET /jobs/{id} | 原 Job 标识 | Snapshot |
+| POST /jobs/{id}/cancel | 同一平台来源、本人发出的插件消息，业务应用授权仍有效 | CancelReplyResult。排队任务可立即取消，已开始执行时等待原任务的流或快照确认终态 |
 | GET /jobs/{id}/events | 可选 Last-Event-ID | text/event-stream，每帧 data 为一个 AnswerEvent |
 | search_recording | SearchRecording，时间窗端点均包含，from_ms 不超过 to_ms | SearchResult |
 | get_recording_evidence | GetRecordingEvidence | EvidenceResult |

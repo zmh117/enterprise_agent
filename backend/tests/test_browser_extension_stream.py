@@ -7,6 +7,8 @@ import json
 import re
 import secrets
 from dataclasses import replace
+from datetime import timedelta
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -15,8 +17,15 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app.bootstrap import build_test_container
+from app.modules.agent.infrastructure.runtime_pool_store import (
+    RuntimePoolStore,
+    database_now,
+    timestamp,
+)
+from app.modules.agent.infrastructure.runtime_protocol import canonical_request_digest
 from app.modules.channel.browser.api import events as answer_events, router as browser_router
 from app.modules.channel.browser.auth import CLIENT_ID, PREFIX, router as browser_auth_router
+from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.infrastructure.execution_audit_repository import ExecutionAuditRepository
 from app.modules.job.infrastructure.execution_control import JobExecutionControl, WorkerLeaseLost
 from app.modules.channel.browser.answers import purge_answers, read_answer
@@ -463,6 +472,138 @@ def test_member_uses_system_identity_and_only_active_granted_applications(origin
             )
             assert client.get(apps, headers=headers).json() == []
             assert client.post(path, json=question, headers=submit_headers).status_code == 404
+    finally:
+        c.database.close()
+
+
+def test_only_the_plugin_message_owner_can_stop_a_reply():
+    api, app, password = prepare()
+    c = api.state.container
+    member = make_member(c, password)
+    grant_test_application_access(
+        c, application_id=app, role_code="operators", user_id=member["id"]
+    )
+    try:
+        with TestClient(api, base_url=ORIGIN, follow_redirects=False) as client:
+            owner = authorize(client, c, password, member["id"])
+            scope = client.get(PREFIX + "/applications", headers=owner).json()[0]["scope_ref"]
+            accepted = client.post(
+                f"{PREFIX}/applications/{app}/messages",
+                headers={**owner, "X-Application-Scope": scope},
+                json={"client_message_id": "own-stop", "question": "合成取消测试"},
+            )
+            assert accepted.status_code == 202
+            job = accepted.json()["job_id"]
+            path = f"{PREFIX}/jobs/{job}"
+            stop = path + "/cancel"
+            assert client.post(stop).status_code == 401
+            client.cookies.clear()
+            other = authorize(client, c, password)
+            assert client.post(stop, headers=other).status_code == 404
+            assert (
+                client.post(stop, headers={**owner, "Host": "agent.intra:9999"}).status_code == 401
+            )
+            assert client.get(path, headers=owner).json()["state"] == "queued"
+            assert client.post(stop, headers=owner).json() == {"job_id": job, "status": "cancelled"}
+            assert client.get(path, headers=owner).json()["reason"] == "cancelled"
+            assert client.post(stop, headers=owner).json()["status"] == "already_terminal"
+            row = c.database.execute_one(
+                "select cancel_requested_by,last_error_code from agent_job where id=?", (job,)
+            )
+            assert row == {
+                "cancel_requested_by": member["id"],
+                "last_error_code": "runtime_cancelled",
+            }
+            c.business_application_service.deactivate(
+                actor_id="user_local_admin",
+                code="browser-demo",
+                environment="local",
+                expected_revision=1,
+            )
+            assert client.post(stop, headers=owner).status_code == 404
+    finally:
+        c.database.close()
+
+
+def test_plugin_cannot_cancel_its_users_own_debug_job():
+    api, app, password = prepare()
+    c = api.state.container
+    member = make_member(c, password)
+    grant_test_application_access(
+        c, application_id=app, role_code="operators", user_id=member["id"]
+    )
+    try:
+        publication = c.database.execute_one(
+            """select p.id,p.config_hash from business_application_publication p
+               join business_application_deployment d on d.publication_id=p.id
+               where d.application_id=? and d.active=1""",
+            (app,),
+        )
+        job = c.create_agent_job_service.execute(
+            CreateAgentJobCommand(
+                idempotency_key="own-non-plugin-stop",
+                requester_id=member["id"],
+                user_message="合成调试任务",
+                source_channel="debug_api",
+                source_connector_id="connector-debug-api",
+                business_application_id=app,
+                business_application_publication_id=publication["id"],
+                business_application_config_hash=publication["config_hash"],
+            )
+        )
+        assert job.internal_user_id == member["id"] and job.business_application_id == app
+        with TestClient(api, base_url=ORIGIN, follow_redirects=False) as client:
+            owner = authorize(client, c, password, member["id"])
+            assert client.post(f"{PREFIX}/jobs/{job.id}/cancel", headers=owner).status_code == 404
+        stored = c.agent_repository.get_job(job.id)
+        assert stored.status == job.status and stored.cancel_requested_at is None
+    finally:
+        c.database.close()
+
+
+@pytest.mark.parametrize(
+    ("worker_code", "expected_reason"),
+    [("runtime_cancelled", "cancelled"), ("runtime_invocation_outcome_unknown", "failed")],
+)
+def test_stopping_a_running_plugin_reply_waits_for_the_worker_outcome(worker_code, expected_reason):
+    api, app, password = prepare()
+    c = api.state.container
+    try:
+        with TestClient(api, base_url=ORIGIN, follow_redirects=False) as client:
+            owner = authorize(client, c, password)
+            scope = client.get(PREFIX + "/applications", headers=owner).json()[0]["scope_ref"]
+            response = client.post(
+                f"{PREFIX}/applications/{app}/messages",
+                headers={**owner, "X-Application-Scope": scope},
+                json={"client_message_id": "running-stop", "question": "合成运行中取消测试"},
+            )
+            assert response.status_code == 202
+            job = response.json()["job_id"]
+            path = f"{PREFIX}/jobs/{job}"
+            pool = RuntimePoolStore(c.database)
+            request = json.loads(
+                Path("contracts/agent-runtime/v1.5/golden/execution-request.json").read_text()
+            )
+            invocation = f"{job}.attempt-0"
+            request.update(job_id=job, invocation_id=invocation, mcp_servers=[])
+            digest = canonical_request_digest(request)
+            request["request_digest"] = digest
+            deadline = timestamp(database_now(c.database) + timedelta(minutes=1))
+            pool.prepare(request, attempt=0, admission_deadline_at=deadline)
+            assert pool.admit(invocation, digest, "test-node", "test-instance")
+            c.database.execute("update agent_job set status='RUNNING' where id=?", (job,))
+
+            assert (
+                client.post(path + "/cancel", headers=owner).json()["status"] == "cancel_requested"
+            )
+            assert client.get(path, headers=owner).json()["state"] == "analyzing"
+            assert pool.require(invocation, digest)["cancel_requested_at"] is not None
+            # Project the worker's final outcome, even if an unrelated failure won the race.
+            c.database.execute(
+                "update agent_job set status='FAILED', last_error_code=? where id=?",
+                (worker_code, job),
+            )
+            assert client.get(path, headers=owner).json()["reason"] == expected_reason
     finally:
         c.database.close()
 

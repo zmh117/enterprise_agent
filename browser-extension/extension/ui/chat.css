@@ -260,7 +260,8 @@
   font: 24px/1 system-ui, sans-serif;
 }
 .composer-actions #agent-send:hover:not(:disabled) { background: #393939; }
-.chat-composer:has(textarea:placeholder-shown) #agent-send, .composer-actions #agent-send:disabled {
+.composer-actions #agent-send[data-action="stop"] { font-size: 17px; }
+.chat-composer:has(textarea:placeholder-shown) #agent-send:not([data-action="stop"]), .composer-actions #agent-send:disabled {
   background: #dedede;
   color: #666;
   opacity: 1;

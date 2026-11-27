@@ -256,7 +256,7 @@ Runtime MUST 以 invocation_id + request_digest 标识一次逻辑执行，并 S
 - **THEN** 接管 Worker 使用持久化冻结请求或最小恢复合同读取原流，不重新构建上下文或增加 attempt
 
 ### Requirement: Runtime取消与超时必须产生确定终态
-系统 SHALL 先持久化 Job/Invocation 的取消意图，再通知原 Runtime；Worker 内存和一次 HTTP 通知不得作为唯一取消事实。Runtime MUST 将取消、墙钟超时、最大轮次和最大 Tool Call 映射为稳定错误码和 retry class，并最终只产生一个终态。取消入口 MUST 复用 jobs.manage、当前目标 Job 业务范围校验及适用的 CSRF，记录安全 actor/reason；不得接受调用者覆盖 owner、digest 或任意节点 URL。用户取消 SHALL 使用 FAILED + runtime_cancelled，执行超时使用 TIMEOUT + runtime_timeout，不增加业务重试。
+系统 SHALL 先持久化 Job/Invocation 的取消意图，再通知原 Runtime；Worker 内存和一次 HTTP 通知不得作为唯一取消事实。Runtime MUST 将取消、墙钟超时、最大轮次和最大 Tool Call 映射为稳定错误码和 retry class，并最终只产生一个终态。管理端取消入口 MUST 校验 jobs.manage、目标 Job 的业务范围及适用的 CSRF。浏览器插件本人取消入口 MUST 只允许调用者取消本人从浏览器插件发出的任务，包括没有 `jobs.manage` 的普通用户，并校验插件凭据、平台来源、插件渠道、消息回执、会话与 Job 的发起人以及当前应用授权。两类入口 SHALL 复用同一任务取消流程并记录操作人和原因，目标执行实例由平台确定，调用方不得指定 owner、digest 或节点 URL。用户取消 SHALL 使用 FAILED + runtime_cancelled，执行超时使用 TIMEOUT + runtime_timeout，不增加业务重试。
 
 #### Scenario: Worker取消运行中attempt
 - **WHEN** Job 被显式取消或 attempt 超过固定墙钟时间
@@ -281,8 +281,21 @@ Runtime MUST 以 invocation_id + request_digest 标识一次逻辑执行，并 S
 - **THEN** 系统交接或恢复观察权，不因传输/消费者退出自动取消原模型执行
 
 #### Scenario: 无权取消与重复取消
-- **WHEN** 调用者无管理或目标业务权限，或同一受权取消请求重复提交
+- **WHEN** 管理端调用者缺少管理权限、任一入口的调用者缺少目标业务权限，或同一受权取消请求重复提交
 - **THEN** 无权请求被拒绝且不泄露目标；重复请求返回相同取消事实且不创建重复失败通知
+
+#### Scenario: 普通用户停止本人插件任务
+- **GIVEN** 用户有当前业务应用的使用授权，且没有 `jobs.manage`
+- **WHEN** 用户从原平台通过插件请求停止自己发出的、具有匹配消息回执的任务
+- **THEN** 平台以当前用户为操作人受理取消，已准入任务返回 `cancel_requested`，最终由任务快照或流确认结果
+
+#### Scenario: 插件不能取消其他用户的任务
+- **WHEN** 插件用户持有同一业务应用中另一位用户的 Job 标识并请求取消
+- **THEN** 本人取消接口返回 404，目标任务的状态和取消意图保持原值
+
+#### Scenario: 插件不能取消本人从其他渠道发起的任务
+- **WHEN** 用户通过插件请求停止自己在调试入口或其他渠道发起的任务
+- **THEN** 本人取消接口返回 404，目标任务的状态和取消意图保持原值
 
 ### Requirement: Runtime Grant必须绑定单次执行
 Worker SHALL 为每个 attempt 签发短期 Runtime Grant，至少绑定 issuer、audience、authorized party、Job、invocation、Publication/hash、request digest、JTI 和 expiry。Runtime MUST 验证全部 claims 和重放状态，不得仅依赖私有网络位置。最小恢复/取消请求 SHALL 从受保护的持久化绑定校验身份，不要求重建原模型请求；恢复时可按当前平台访问授权重新签发短期 Grant，但不得改变原 digest、业务主体或执行截止时间。

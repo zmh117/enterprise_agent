@@ -820,6 +820,15 @@
         "question"
       ]
     },
+    "CancelReplyResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": { "$ref": "#/$defs/Identifier" },
+        "status": { "enum": ["cancel_requested", "cancelled", "already_terminal", "outcome_unknown"] }
+      },
+      "required": ["job_id", "status"]
+    },
     "MessageReceipt": {
       "type": "object",
       "additionalProperties": false,

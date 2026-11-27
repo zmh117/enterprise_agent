@@ -31,6 +31,7 @@ from app.modules.channel.domain.channel_event import (
     RoutingContext,
 )
 from app.modules.identity.api.dependencies import container
+from app.modules.job.application.cancel_agent_job import cancel_agent_job
 from app.modules.job.domain.agent_job import AgentJob
 from app.shared.exceptions import AppError
 from app.bootstrap import Container
@@ -66,11 +67,13 @@ def message_receipt(
     )
 
 
-def visible_job(req: Request, c: Container, job_id: str) -> dict[str, Any]:
+def visible_job(
+    req: Request, c: Container, job_id: str, *, for_share: bool = True
+) -> dict[str, Any]:
     user, origin = authenticated_user_and_origin(req)
-    suffix = " for share of j" if c.database.engine == "postgres" else ""
+    suffix = " for share of j" if for_share and c.database.engine == "postgres" else ""
     job = c.database.execute_one(
-        """select j.id,j.session_id,j.status,j.cancel_requested_at,j.retry_count,j.created_at,j.finished_at,
+        """select j.id,j.internal_user_id,j.session_id,j.status,j.cancel_requested_at,j.last_error_code,j.retry_count,j.created_at,j.finished_at,
         j.business_application_id,j.reply_route_json from agent_job j join agent_session s on s.id=j.session_id
         join browser_message_receipt r on r.job_id=j.id and r.origin=? and r.user_id=? and r.application_id=j.business_application_id
         where j.id=? and j.internal_user_id=? and s.requester_id=? and s.source_channel=? and j.source_channel=?
@@ -628,6 +631,24 @@ def conversation_page(
 @router.get("/jobs/{job_id}")
 def snapshot(req: Request, job_id: str) -> dict[str, Any]:
     return cast(dict[str, Any], read(req, job_id, None))
+
+
+@router.post("/jobs/{job_id}/cancel")
+def stop_own_reply(req: Request, job_id: str) -> dict[str, str]:
+    c = container(req)
+    with c.database.unit_of_work():
+        # Cancellation acquires the session lock before the Job lock.
+        owner = visible_job(req, c, job_id, for_share=False)["internal_user_id"]
+        status = cancel_agent_job(c.database, job_id, owner)
+        c.audit_service.record(
+            "job.cancel.requested",
+            status="SUCCEEDED",
+            summary="Browser user requested cancellation of own reply",
+            job_id=job_id,
+            actor_id=owner,
+            payload={"status": status, "source_channel": CHANNEL},
+        )
+        return {"job_id": job_id, "status": status}
 
 
 @router.get("/jobs/{job_id}/events")

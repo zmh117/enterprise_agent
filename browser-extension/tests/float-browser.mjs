@@ -3,6 +3,7 @@ import {join} from 'node:path';
 import {on} from 'node:events';
 import {createServer} from 'node:http';
 import {checkPageLauncher} from './float-launcher.mjs';
+import {checkStopReply} from './stop-reply.mjs';
 
 async function stopCollectorWorker(context, control, id) {
   const session = await context.newCDPSession(control);
@@ -334,6 +335,7 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     assert.equal(posts.length, 1);
     assert.ok(!requests.some(([method,path]) => method === 'GET' && path.includes('/messages/')),
       '平台明确拒绝的问题不应进入丢失回执恢复');
+    await checkStopReply(recovered, mes, requests);
     await rules.locator('[data-binding-id="' + mesRuleId + '"]').click();
     await control.locator('#site-floating').uncheck(); await persist();
     await host.waitFor({state:'detached'});

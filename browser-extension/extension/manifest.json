@@ -3,7 +3,7 @@
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr352Ic+lzb1mw/ZA6vRoYCAxrwNaI+YmYgJrX8oF7Vwn3kuPFUYJMNr3Y1UnzPDZHAEELIWCZ/tus1PGzP4uRfgDHHB8RuI7pTyPWjqnOCSOvloTbLX+YBSh/Hox2vyn3j8GQodxKUZ7J7imLoEh+AoHfcGnvCKu5js9U6rMsCMOI7dLTY2nBf9bs2H4EG1KJpXa/iNpQavs1aIxJK2FfwzBM4hspryE5mhr9+UYnlqMK6iTVGOzWTTq3OMFTpd6wFbvBOU+B9YRNQHHpORcg3keFegs1BjeN8hDEcVJtoU8xhe9Iohan8U6UfmH+G1tJjtJOcxb/vLX/dWl1hcdCQIDAQAB",
   "name": "浏览器采集助手",
   "description": "采集所选标签及其后续子标签的操作和请求，在本地查看、标记和导出记录。",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "minimum_chrome_version": "125",
   "incognito": "not_allowed",
   "permissions": ["identity", "alarms", "tabs", "webNavigation", "scripting", "debugger", "storage", "downloads"],

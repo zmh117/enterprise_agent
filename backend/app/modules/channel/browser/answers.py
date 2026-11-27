@@ -104,7 +104,7 @@ def read_answer(
             "timeout"
             if status == "TIMEOUT"
             else "cancelled"
-            if job["cancel_requested_at"]
+            if job.get("last_error_code") == "runtime_cancelled"
             else "failed"
         )
         terminal = {"event": "failed", "reason": reason}

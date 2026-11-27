@@ -54,7 +54,7 @@ export function explain(e: unknown) {
 
 export interface AgentTimeline {
   clear(): void;
-  follow(job: string, platform: Platform, signal: AbortSignal): void;
+  follow(job: string, platform: Platform, signal: AbortSignal, onState: (job: string, done: boolean) => void): void;
   questions(rows: {job_id: string; question: string; asked_at?: string}[], prepend: boolean): void;
 }
 
@@ -75,6 +75,60 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     account = '',
     history: Chat = { conversation: '', jobs: [], awaiting: [] };
   let pending: MessageRef | undefined, originalQuestion: string | undefined;
+  type Turn = { job?: string; stopping: boolean };
+  let turn: Turn | undefined, latestJob: string | undefined;
+  let composerReady = false, posting = false;
+  function renderComposer() {
+    const label = turn ? (turn.stopping ? '正在停止' : '停止回答') : '发送';
+    send.dataset.action = turn ? 'stop' : 'send';
+    send.firstElementChild!.textContent = turn ? '■' : '↑';
+    send.setAttribute('aria-label', label);
+    send.title = turn ? label : '发送消息（Enter）';
+    send.disabled = turn ? turn.stopping : !composerReady || posting;
+  }
+  function resetComposer() {
+    turn = undefined;
+    latestJob = undefined;
+    composerReady = false;
+    posting = false;
+    renderComposer();
+  }
+  function replyState(job: string, done: boolean) {
+    if (job !== latestJob || (turn && turn.job !== job)) return;
+    if (done) {
+      latestJob = undefined;
+      turn = undefined;
+      if (status.textContent === '已请求停止，正在等待任务结束。') status.textContent = '已连接';
+    } else {
+      if (turn) return;
+      turn = {job, stopping: false};
+    }
+    renderComposer();
+  }
+  async function stopReply(target: Turn, p: Platform, signal: AbortSignal) {
+    if (!target.job) return; // The submit handler forwards this intent as soon as it has the receipt.
+    try {
+      const result = await (await p.request('/jobs/' + encodeURIComponent(target.job) + '/cancel', {
+        method:'POST', signal,
+      })).json();
+      if (turn !== target || signal.aborted) return;
+      if (result.job_id !== target.job) throw new Error('停止回执与当前问题不匹配。');
+      if (!['cancel_requested', 'cancelled', 'already_terminal'].includes(result.status))
+        throw new Error('尚未确认任务已停止，请重新核对。');
+      if (result.status === 'cancelled') {
+        replyState(target.job, true);
+        status.textContent = '已连接';
+      } else {
+        // The stream or snapshot supplies the terminal outcome if completion won the race.
+        status.textContent = '已请求停止，正在等待任务结束。';
+      }
+    } catch (error) {
+      if (turn !== target || signal.aborted) return;
+      target.stopping = false;
+      status.textContent = explain(error);
+      renderComposer();
+    }
+  }
   let streams = new AbortController();
   const recordingBox = el<HTMLFieldSetElement>('agent-recording'),
     choices = el<HTMLSelectElement>('agent-record-choice');
@@ -94,7 +148,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
   question.onkeydown = event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault();
-      send.click();
+      if (!turn) send.click();
     }
   };
   connection.addEventListener('keydown', event => {
@@ -371,7 +425,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     history = { conversation: '', jobs: [], awaiting: [] };
     applications.replaceChildren();
     if (timeline) timeline.clear(); else output.replaceChildren();
-    send.disabled = true;
+    resetComposer();
     question.value = '';
     status.textContent = '';
   }
@@ -412,6 +466,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       const updates = followActivity(job, p.request.bind(p), signal, (data, live) => activity.update(data, live));
       try {
         const source = await displayAnswer(job, p.request.bind(p), body, state, signal, (done, timing) => {
+          replyState(job, done);
           updates.observe(done);
           if (timing?.time) {
             reply.dataset.messageTime = timing.time;
@@ -451,10 +506,11 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       if (timeline) timeline.clear(); else output.replaceChildren();
       history.jobs = [];
     }
+    latestJob = turn?.job ?? chat.jobs.at(-1);
     for (const job of chat.jobs) {
       if (history.jobs.includes(job)) continue;
       const streamSignal = AbortSignal.any([signal, streams.signal]);
-      if (timeline) timeline.follow(job, p, streamSignal);
+      if (timeline) timeline.follow(job, p, streamSignal, replyState);
       else follow(job, p, streamSignal);
     }
     history = chat;
@@ -479,8 +535,9 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       page.conversation_id !== conversation
     )
       return;
+    if (!cursor && !posting && !turn) latestJob = page.jobs.at(-1)?.job_id;
     if (timeline) {
-      for (const row of page.jobs) timeline.follow(row.job_id, p, AbortSignal.any([signal, streams.signal]));
+      for (const row of page.jobs) timeline.follow(row.job_id, p, AbortSignal.any([signal, streams.signal]), replyState);
       timeline.questions(page.jobs, Boolean(cursor));
     } else {
       const fragment = document.createDocumentFragment();
@@ -570,7 +627,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     if (timeline) timeline.clear(); else output.replaceChildren();
     before = null;
     older.hidden = true;
-    send.disabled = true;
+    resetComposer();
     question.value = '';
     const p = platform;
     app = catalog.find((a) => a.id === applications.value);
@@ -602,7 +659,9 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     if (pending)
       status.textContent =
         '上一条问题的回执尚未确认。请重新输入原问题，点击发送时会先核对回执。';
-    send.disabled = false;
+    signal.throwIfAborted();
+    composerReady = true;
+    renderComposer();
   }
   applications.onchange = () =>
     void selectApp().catch((e) => {
@@ -733,7 +792,7 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
             selection?.abort();
             if (timeline) timeline.clear(); else output.replaceChildren();
             applications.replaceChildren();
-            send.disabled = true;
+            resetComposer();
             question.value = '';
             historyPage?.connect(undefined, []);
             onSites?.([]);
@@ -796,8 +855,18 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       current = app,
       signal = selection?.signal,
       value = question.value;
-    if (!p || !current || !signal || !value.trim() || send.disabled) return;
-    send.disabled = true;
+    if (!p || !current || !signal || send.disabled) return;
+    if (turn) {
+      turn.stopping = true;
+      renderComposer();
+      await stopReply(turn, p, signal);
+      return;
+    }
+    if (!value.trim()) return;
+    const submitted: Turn = {stopping:false};
+    turn = submitted;
+    posting = true;
+    renderComposer();
     const key = storageKey;
     const path =
       '/applications/' + encodeURIComponent(current.id) + '/messages';
@@ -808,6 +877,13 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       ...(binding !== undefined ? { recording: binding } : {}),
     };
     let submitting = false;
+    const accepted = async (receipt: Receipt) => {
+      signal.throwIfAborted();
+      submitted.job = receipt.job_id;
+      latestJob = receipt.job_id;
+      if (submitted.stopping) void stopReply(submitted, p, signal);
+      show(await finishMessage(key, ref, receipt), p, signal);
+    };
     try {
       if (frameTicket && !pending && binding==null) {
         if (!availableBindings) throw new Error('请等待当前页面的绑定范围核对完成');
@@ -823,8 +899,8 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
         const receipt = await lookup(p, path, ref, signal);
         if (receipt) {
           if (!frameTicket && binding === ref.recording) binding = undefined;
-          show(await finishMessage(key, ref, receipt), p, signal);
-          if (value === originalQuestion) question.value = '';
+          await accepted(receipt);
+          if (question.value === value && value === originalQuestion) question.value = '';
           originalQuestion = undefined;
           pending = history.awaiting[0];
           status.textContent = '已恢复上一条问题的回答。';
@@ -867,15 +943,15 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
             : {}),
         }),
       });
-      submitting = false;
       const receipt: Receipt = await result.json();
+      submitting = false;
       signal.throwIfAborted();
       if (!frameTicket && binding === ref.recording) binding = undefined;
-      show(await finishMessage(key, ref, receipt), p, signal);
+      await accepted(receipt);
       pending = history.awaiting[0];
       originalQuestion = undefined;
       if (question.value === value) question.value = '';
-      status.textContent = '已连接';
+      if (!submitted.stopping) status.textContent = '已连接';
       void historyPage?.refresh();
       await loadPage(p, signal);
     } catch (e) {
@@ -894,11 +970,33 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
         pending = history.awaiting[0];
         originalQuestion = undefined;
       }
+      if (submitting && submitted.stopping && pending === ref) {
+        // The POST may have succeeded. Recover its idempotent receipt without resending it.
+        try {
+          const receipt = await lookup(p, path, ref, signal);
+          if (receipt) {
+            await accepted(receipt);
+            originalQuestion = undefined;
+            pending = history.awaiting[0];
+            if (question.value === value) question.value = '';
+            await loadPage(p, signal);
+            return;
+          }
+        } catch {
+          if (signal.aborted) return;
+        }
+        status.textContent = '未能确认这条问题是否已停止。请重新连接，恢复回执后核对任务状态。';
+        return;
+      }
       status.textContent = admissionRejected
         ? '应用暂时无法接收问题。本次未创建任务，问题已保留，可稍后重发。如果持续出现，请管理员检查应用配置和 Agent Runtime 的就绪状态。'
         : explain(e);
     } finally {
-      if (!signal.aborted) send.disabled = false;
+      if (!signal.aborted) {
+        if (!submitted.job && turn === submitted) turn = undefined;
+        posting = false;
+        renderComposer();
+      }
     }
   };
   window.addEventListener(

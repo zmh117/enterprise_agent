@@ -59,7 +59,7 @@ const convertMessage = (message: ThreadMessageLike) => message;
 async function onNew(message: AppendMessage) {
   const question = document.querySelector<HTMLTextAreaElement>('#agent-question')!;
   const send = document.querySelector<HTMLButtonElement>('#agent-send')!;
-  if (send.disabled) return;
+  if (send.disabled || send.dataset.action === 'stop') return;
   question.value = message.content.filter(part => part.type === 'text').map(part => part.text).join('\n');
   send.click();
 }
@@ -111,7 +111,7 @@ export function createTimeline(element: HTMLElement): AgentTimeline {
       order = prepend ? [...new Set([...ids, ...order])] : [...order.filter(id => !ids.includes(id)), ...ids];
       render();
     },
-    follow(job, platform, signal) {
+    follow(job, platform, signal, onState) {
       if (rows.has(job)) return;
       const row: Row = {job, answer:'', state:'正在连接', done:false};
       rows.set(job, row); order.push(job);
@@ -122,6 +122,7 @@ export function createTimeline(element: HTMLElement): AgentTimeline {
         });
         try {
           await watchAnswer(job, platform.request.bind(platform), signal, (answer, state, done, timing) => {
+            onState(job, done);
             updates.observe(done);
             Object.assign(row, {answer, state, done, timing}); render();
           });
