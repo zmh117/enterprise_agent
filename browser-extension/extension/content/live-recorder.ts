@@ -53,6 +53,7 @@ function begin(state: Recorder, ticket: Ticket) {
   state.id = ticket.id;
   isolated.__mesLiveTicket = ticket.id;
   state.stop = () => {
+    if (abort.signal.aborted) return;
     abort.abort();
     stopRrweb?.();
     state.id = undefined;
@@ -65,6 +66,16 @@ function begin(state: Recorder, ticket: Ticket) {
     checkedUrl = undefined;
     return check();
   };
+  async function stopAndNotify(type: 'live.gap' | 'live.pause') {
+    if (abort.signal.aborted) return;
+    state.stop();
+    try {
+      // Reload can invalidate this document's runtime before sendMessage returns a Promise.
+      if (chrome.runtime?.id) await chrome.runtime.sendMessage({ type, ticket: ticket.id });
+    } catch {
+      // The recorder is already stopped; only its original runtime can accept this ticket.
+    }
+  }
   function check() {
     if (abort.signal.aborted) return false;
     const url = location.href;
@@ -74,14 +85,11 @@ function begin(state: Recorder, ticket: Ticket) {
       return true;
     }
     state.paused = true;
-    state.stop();
-    void chrome.runtime.sendMessage({ type: 'live.pause', ticket: ticket.id }).catch(() => {});
+    void stopAndNotify('live.pause');
     return false;
   }
   function gap() {
-    if (abort.signal.aborted) return;
-    state.stop();
-    void chrome.runtime.sendMessage({ type: 'live.gap', ticket: ticket.id }).catch(() => {});
+    return stopAndNotify('live.gap');
   }
   function offer(event: PageEvidence) {
     if (!check()) return;
