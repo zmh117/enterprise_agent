@@ -9,7 +9,8 @@
       <div class="connection-sheet">
         <label>系统网址<input id="agent-origin" aria-describedby="agent-http-note" type="url" placeholder="http://agent.intra:8080"></label>
         <p id="agent-http-note" class="muted" hidden>HTTP 会以明文传输登录信息、问题和共享录制，请仅在可信内网使用。</p>
-        <div class="button-row"><button id="agent-login" type="button">用系统账号登录</button><button id="agent-open-console" type="button" hidden>打开插件控制台</button></div>
+        <span id="agent-account" hidden></span>
+        <div class="button-row"><button id="agent-login" type="button">用系统账号登录</button><button id="agent-switch" type="button" hidden>切换账号</button><button id="agent-open-console" type="button" hidden>打开插件控制台</button></div>
       </div>
     </details>
   </div>

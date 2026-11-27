@@ -11,6 +11,15 @@ const rejected = (status: number, code: string) =>
   Response.json({ code }, { status });
 
 function fixture(t: TestContext) {
+  // Node 22 has no LockManager. Cross-page exclusion is exercised in the Chrome suite.
+  const previousLocks = Object.getOwnPropertyDescriptor(navigator, 'locks');
+  Object.defineProperty(navigator, 'locks', {configurable: true, value: {
+    request: (_name: string, {signal}: {signal: AbortSignal}, run: () => unknown) => {
+      signal.throwIfAborted();
+      return run();
+    },
+  }});
+  t.after(() => previousLocks ? Object.defineProperty(navigator, 'locks', previousLocks) : Reflect.deleteProperty(navigator, 'locks'));
   let now = 1_000_000;
   let owner = 'alice',
     lifetime = 30,
@@ -42,7 +51,8 @@ function fixture(t: TestContext) {
           opens++;
           const flow = new URL(url);
           assert.equal(flow.origin, origin);
-          assert.equal(flow.searchParams.has('prompt'), !interactive);
+          if (interactive) assert.ok([null, 'select_account'].includes(flow.searchParams.get('prompt')));
+          else assert.equal(flow.searchParams.get('prompt'), 'none');
           const dest = new URL(returned || callback);
           dest.searchParams.set('state', wrongState ? 'wrong-state' : flow.searchParams.get('state')!);
           dest.searchParams.set(
@@ -115,6 +125,12 @@ function fixture(t: TestContext) {
     },
   };
 }
+
+test('旧平台复用原账号时拒绝将普通授权回执当作换号成功', async t => {
+  const f = fixture(t);
+  await assert.rejects(f.client.login('select_account'), /当前平台版本不支持切换插件账号/);
+  assert.equal(f.tokens, 0);
+});
 
 test('活动期间合并换证，父会话临期时保持同一凭据到实际过期', async (t) => {
   const f = fixture(t);

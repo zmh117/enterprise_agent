@@ -347,12 +347,28 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     await control.locator('#site-floating').uncheck(); await persist();
     await otherHost.waitFor({state:'detached'});
     await mes.reload(); assert.equal(await host.count(), 0);
-    fixture.stdin.write('end-session\n'); assert.equal((await next()).ended, true);
-    await control.locator('nav a[href="#assistant"]').click();
-    await control.locator('#agent-connection').evaluate(el => el.open = true);
-    await control.locator('#agent-login').click();
-    await signIn('demo-second');
-    await control.waitForFunction(() => !document.querySelector('#agent-send').disabled);
+    await rules.locator('[data-binding-id="' + mesRuleId + '"]').click();
+    await control.locator('#site-floating').check(); await persist();
+    await host.waitFor();
+    await control.locator('nav a[href="#capture"]').click();
+    await control.locator('#refresh').click();
+    await control.locator('#tab-search').fill(origin);
+    await control.locator('#select-all').check();
+    await control.locator('#record-mode').selectOption('continuous');
+    await start.click();
+    await control.waitForFunction(() => document.querySelector('#live-tabs').textContent.includes('正在采集'));
+    const switchingFrame = await open();
+    await switchingFrame.waitForFunction(() => !document.querySelector('#agent-send').disabled);
+    await switchingFrame.evaluate(() => {
+      Object.defineProperty(chrome, 'tabs', {configurable:true, value:undefined});
+    });
+    await switchingFrame.locator('#agent-connection summary').click();
+    await switchingFrame.locator('#agent-switch').click();
+    await signIn('demo-second', true);
+    await control.waitForFunction(() => document.querySelector('#agent-account')?.textContent.includes('demo-second')
+      && !document.querySelector('#agent-send').disabled);
+    await host.waitFor({state:'detached'});
+    await control.waitForFunction(async () => !(await chrome.runtime.sendMessage({type:'session.status'})).continuous);
     await control.locator('nav a[href="#sites"]').click();
     await rules.getByText('暂无地址规则').waitFor();
     assert.equal(await control.locator('#workshop-environment option').count(), 1, '换账号后不得继承其他用户的环境车间');

@@ -1,5 +1,9 @@
 // Chrome creates the identity popup after the authorization page starts loading.
 export async function openAuthPopup(url: string): Promise<string | undefined> {
+  // Embedded extension pages can authorize without access to tab/window management.
+  if (!chrome.tabs?.onCreated || !chrome.tabs?.onUpdated || !chrome.windows?.update) {
+    return chrome.identity.launchWebAuthFlow({url, interactive: true});
+  }
   let listening = true;
   function stop() {
     listening = false;

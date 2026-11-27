@@ -10,7 +10,7 @@ from html import escape
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -69,7 +69,7 @@ def platform_origin(req: Request) -> str:
 def session_row(db: Any, sid: str) -> dict[str, Any]:
     row = db.execute_one(
         """select s.id,s.user_id,s.status,s.idle_expires_at,s.absolute_expires_at,
-        u.status as user_status,u.account_type from user_session s join app_user u on u.id=s.user_id
+        u.status as user_status,u.account_type,u.username from user_session s join app_user u on u.id=s.user_id
         where s.id=?""",
         (sid,),
     )
@@ -148,31 +148,64 @@ def script() -> Response:
     )
 
 
-def login_form(username: str = "", *, invalid: bool = False) -> Response:
+def login_form(username: str = "", *, invalid: bool = False, choosing: bool = False) -> Response:
     account_focus = "" if invalid else " autofocus"
     password_focus = " autofocus" if invalid else ""
     message = '<p role="alert">账号或密码有误，请重新输入。</p>' if invalid else ""
+    actions = (
+        "<p>允许插件以此账号访问已授权的业务应用、发送消息和共享所选录制。</p>"
+        '<div class="actions"><button name="action" value="login">登录并同意连接</button>'
+        '<button class="secondary" name="action" value="deny" formnovalidate>取消</button></div>'
+        if choosing
+        else '<button type="submit" name="action" value="login">登录</button>'
+    )
     return auth_page(
-        "登录浏览器采集助手",
-        '<label>平台账号<input name="username" autocomplete="username" required'
+        "切换插件账号" if choosing else "登录浏览器采集助手",
+        '<label>平台账号<input name="username" autocomplete="username" spellcheck="false"'
+        ' autocapitalize="none" autocorrect="off" required'
         f' value="{escape(username, quote=True)}"{account_focus}></label>'
         '<label>密码<input type="password" name="password" autocomplete="current-password"'
-        f" required{password_focus}></label>{message}"
-        '<button type="submit" name="action" value="login">登录</button>',
+        f" required{password_focus}></label>{message}" + actions,
         headers,
-        status=401 if invalid else 200,
+        # An HTTP error navigation closes Chrome's interactive account chooser.
+        status=401 if invalid and not choosing else 200,
     )
 
 
-def login_page(req: Request, form: dict[str, list[str]], origin: str) -> Response:
+def parent_cookies(req: Request, origin: str, *, choosing: bool = False) -> tuple[str, str, bool]:
+    # Cookie domains omit the port. Keep each configured platform origin independent.
+    prefix = (
+        ("__Secure-" if origin.startswith("https:") else "")
+        + "browser_selected_"
+        + digest(origin)[:16]
+    )
+    if choosing or prefix in req.cookies:
+        return prefix, prefix + "_csrf", True
+    if origin.startswith("http://"):
+        return "browser_parent", "browser_csrf", True
+    identity = container(req).settings.identity
+    return identity.session_cookie_name, identity.csrf_cookie_name, False
+
+
+def callback(state: str, **params: str) -> RedirectResponse:
+    return RedirectResponse(
+        CALLBACK + "?" + urlencode({"state": state, **params}), 303, headers=headers
+    )
+
+
+def login_page(
+    req: Request, form: dict[str, list[str]], origin: str, *, choosing: bool = False
+) -> Response:
     c = container(req)
+    if choosing and req.method == "POST" and form.get("action") == ["deny"]:
+        return callback(req.query_params["state"], error="user_cancelled")
     if req.method == "POST" and form.get("action") == ["login"]:
         username = form.get("username", [""])[0][:120]
         key = f"{username.lower()}:{req.client.host if req.client else ''}"
         _limiter.require(key)
-        scoped = origin.startswith("http://")
+        session_cookie, csrf_cookie, scoped = parent_cookies(req, origin, choosing=choosing)
         try:
-            _, tok, csrf_value = c.auth_service.login(
+            principal, tok, csrf_value = c.auth_service.login(
                 username=username,
                 password=form.get("password", [""])[0],
                 extension_origin=origin if scoped else "",
@@ -180,17 +213,22 @@ def login_page(req: Request, form: dict[str, list[str]], origin: str) -> Respons
         except PermissionDenied:
             _limiter.record_failure(key)
             if "text/html" in req.headers.get("accept", ""):
-                return login_form(username, invalid=True)
+                return login_form(username, invalid=True, choosing=choosing)
             raise deny("invalid_credentials") from None
         _limiter.clear(key)
-        response = RedirectResponse(req.url.path + "?" + req.url.query, 303, headers=headers)
+        if choosing:
+            code = issue_code(
+                c.database,
+                principal.session_id,
+                origin,
+                req.query_params["code_challenge"],
+                allow=True,
+            )
+            response = callback(req.query_params["state"], code=code, account_selected="1")
+        else:
+            response = RedirectResponse(req.url.path + "?" + req.url.query, 303, headers=headers)
         cfg = c.settings.identity
-        names = (
-            ("browser_parent", "browser_csrf")
-            if scoped
-            else (cfg.session_cookie_name, cfg.csrf_cookie_name)
-        )
-        for name, value in zip(names, (tok, csrf_value), strict=True):
+        for name, value in ((session_cookie, tok), (csrf_cookie, csrf_value)):
             response.set_cookie(
                 name,
                 value,
@@ -201,7 +239,7 @@ def login_page(req: Request, form: dict[str, list[str]], origin: str) -> Respons
                 max_age=cfg.session_absolute_seconds,
             )
         return response
-    return login_form()
+    return login_form(choosing=choosing)
 
 
 async def authorization_form(req: Request, origin: str) -> dict[str, list[str]]:
@@ -245,23 +283,15 @@ def authorize_form(req: Request, origin: str, form: dict[str, list[str]]) -> Res
         raise deny("invalid_request", 400)
 
     def redirect(**params: str) -> RedirectResponse:
-        return RedirectResponse(
-            CALLBACK + "?" + urlencode({"state": state, **params}),
-            status_code=303,
-            headers=headers,
-        )
+        return callback(state, **params)
 
     silent = q.get("prompt") == "none"
     c = container(req)
     if not connector_enabled(c.database):
         return redirect(error="access_denied")
-    identity = c.settings.identity
-    scoped = origin.startswith("http://")
-    session_cookie, csrf_cookie = (
-        ("browser_parent", "browser_csrf")
-        if scoped
-        else (identity.session_cookie_name, identity.csrf_cookie_name)
-    )
+    if q.get("prompt") == "select_account":
+        return login_page(req, form, origin, choosing=True)
+    session_cookie, csrf_cookie, scoped = parent_cookies(req, origin)
     token, csrf = req.cookies.get(session_cookie, ""), req.cookies.get(csrf_cookie, "")
     try:
         parent = c.auth_service.authenticate_session(
@@ -296,25 +326,40 @@ def authorize_form(req: Request, origin: str, form: dict[str, list[str]]) -> Res
         raise deny("access_denied", 403)
     if not silent and form.get("action") == ["deny"]:
         return redirect(error="access_denied")
-    with c.database.unit_of_work():
-        session_row(c.database, parent.session_id)
-        if not connector_enabled(c.database):
-            return redirect(error="access_denied")
-        if not silent and form.get("action") == ["allow"]:
-            c.database.execute(
+    try:
+        code = issue_code(
+            c.database,
+            parent.session_id,
+            origin,
+            challenge,
+            allow=not silent and form.get("action") == ["allow"],
+        )
+    except HTTPException as exc:
+        return redirect(error=exc.detail["code"])
+    return redirect(code=code)
+
+
+def issue_code(db: Database, sid: str, origin: str, challenge: str, *, allow: bool) -> str:
+    grant_args = (sid, CLIENT_ID, origin)
+    with db.unit_of_work():
+        session_row(db, sid)
+        if not connector_enabled(db):
+            raise deny("access_denied", 403)
+        if allow:
+            db.execute(
                 """insert into browser_extension_grant(session_id,client_id,origin) values(?,?,?)
                 on conflict(session_id,client_id,origin) do nothing""",
                 grant_args,
             )
-        if not granted(c.database, *grant_args):
-            return redirect(error="consent_required")
+        if not granted(db, *grant_args):
+            raise deny("consent_required")
         code = secrets.token_urlsafe(32)
-        c.database.execute(
+        db.execute(
             """insert into browser_extension_credential(digest,kind,session_id,client_id,origin,challenge,expires_at)
             values(?,'code',?,?,?,?,?)""",
             (digest(code), *grant_args, challenge, int(time.time()) + 60),
         )
-    return redirect(code=code)
+    return code
 
 
 @router.post("/token")
@@ -359,4 +404,5 @@ def exchange(req: Request, body: Exchange, response: Response) -> dict[str, Any]
         "expires_in": exp - now,
         "tenant_id": origin,
         "user_id": parent["user_id"],
+        "username": parent["username"],
     }

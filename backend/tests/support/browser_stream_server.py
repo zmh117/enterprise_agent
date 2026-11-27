@@ -33,6 +33,10 @@ def start_server(resources: ExitStack, recording_mode: bool):
         else ()
     )
     api, app_id, password = prepare(tools=tools, secure_cookies=True)
+    if os.environ.get("EA_TEST_AUTH") == "1":
+        from app.modules.identity.api import build_auth_router
+
+        api.include_router(build_auth_router())
     c = api.state.container
     member = make_member(c, password)
     environment = c.platform_config_service.repository.upsert_environment(
@@ -82,7 +86,10 @@ def start_server(resources: ExitStack, recording_mode: bool):
             user_id=member["id"],
             capabilities=tools,
         )
-    if os.environ.get("EA_TEST_SIGNIN_RECOVERY") == "1" or os.environ.get("EA_TEST_FLOAT") == "1":
+    if any(
+        os.environ.get(key) == "1"
+        for key in ("EA_TEST_SIGNIN_RECOVERY", "EA_TEST_FLOAT", "EA_TEST_AUTH")
+    ):
         second = c.identity_repository.create_user(
             username="demo-second", display_name="第二位合成操作员"
         )

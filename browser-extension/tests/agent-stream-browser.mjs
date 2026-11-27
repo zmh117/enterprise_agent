@@ -394,7 +394,7 @@ async function runBrowserTest() {
   await control.locator('#agent-origin').fill(origin + '/console/applications');
   assert.equal(await control.locator('#agent-http-note').isVisible(), !tls);
   await control.locator('#agent-login').click();
-  async function signIn(username) {
+  async function signIn(username, switching = false) {
     let authorization;
     for (let i = 0; i < 100 && !authorization; i++) {
       authorization = context
@@ -407,11 +407,11 @@ async function runBrowserTest() {
       if (!authorization) await delay(100);
     }
     assert.ok(authorization, 'Chrome 原生授权窗口未打开');
-    await authorization.waitForFunction(() => outerWidth <= 480 && outerHeight <= 520);
+    if (!switching) await authorization.waitForFunction(() => outerWidth <= 480 && outerHeight <= 520);
     await authorization.locator('[name=username]').fill(username);
     await authorization.locator('[name=password]').fill(config.password);
     await authorization.locator('[value=login]').click();
-    await authorization.locator('[value=allow]').click();
+    if (!switching) await authorization.locator('[value=allow]').click();
   }
   await signIn(config.username);
   const historyMode = process.env.EA_TEST_HISTORY === '1';
@@ -435,6 +435,58 @@ async function runBrowserTest() {
   }
   assert.equal(await control.locator('#agent-origin').inputValue(), origin);
   assert.equal(await control.locator('#agent-app option').count(), historyMode ? 2 : 1);
+
+  if (process.env.EA_TEST_AUTH === '1') {
+    const website = tls ? await context.newPage() : undefined;
+    async function checkWebsiteAccount() {
+      if (!website) return;
+      const me = await website.goto(origin + '/api/auth/me');
+      assert.equal(me.status(), 200);
+      assert.equal((await me.json()).user.username, config.username);
+    }
+    await checkWebsiteAccount();
+    // Leave the real consent window open while a second extension page reconnects.
+    await control.locator('#agent-connection summary').click();
+    const popupOpened = context.waitForEvent('page');
+    await control.getByRole('button', {name:'切换账号'}).click();
+    const consent = await popupOpened;
+    await consent.locator('[value=deny]').waitFor();
+    await consent.locator('[name=username]').fill('demo-second');
+    await consent.locator('[name=password]').fill('synthetic-wrong-password');
+    await consent.getByRole('button', {name:'登录并同意连接'}).click();
+    await consent.getByRole('alert').waitFor();
+    const other = await context.newPage();
+    await other.goto(control.url());
+    await other.waitForFunction(async () => (await navigator.locks.query()).pending
+      .some(lock => lock.name === 'agent-web-auth-flow'));
+    await consent.locator('[value=deny]').click();
+    await control.locator('#agent-status').filter({hasText:'已取消切换账号'}).waitFor();
+    assert.ok(await control.locator('#agent-account').textContent().then(text => text.includes(config.username)));
+    await other.locator('#agent-status').filter({hasText:'已连接'}).waitFor();
+    const closing = context.waitForEvent('page');
+    await control.getByRole('button', {name:'切换账号'}).click();
+    const dismissed = await closing;
+    await dismissed.locator('[name=username]').waitFor();
+    await dismissed.close();
+    await control.locator('#agent-status').filter({hasText:'已取消切换账号'}).waitFor();
+    assert.ok(await control.locator('#agent-send').isEnabled());
+    const reopened = context.waitForEvent('page');
+    await control.getByRole('button', {name:'切换账号'}).click();
+    const choose = await reopened;
+    await choose.locator('[name=username]').fill('demo-second');
+    await choose.locator('[name=password]').fill(config.password);
+    await choose.getByRole('button', {name:'登录并同意连接'}).click();
+    for (const page of [control, other]) {
+      await page.waitForFunction(() => document.querySelector('#agent-account')?.textContent.includes('demo-second') &&
+        !document.querySelector('#agent-send').disabled);
+    }
+    await control.reload();
+    await control.waitForFunction(() => document.querySelector('#agent-account')?.textContent.includes('demo-second') &&
+      !document.querySelector('#agent-send').disabled);
+    await checkWebsiteAccount();
+    console.log('已验证错误密码、取消后原账号可用、并发授权、双页面切换及重开续期');
+    return;
+  }
 
   if (process.env.EA_CHAT_PREVIEW_DIR && !floating) {
     await control.locator('.chat-welcome').waitFor();

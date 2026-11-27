@@ -11,6 +11,7 @@ import { openAuthPopup } from './ui/auth-popup';
 type Credential = {
   access_token: string;
   user_id: string;
+  username?: string;
   tenant_id: string;
   expires: number;
   renewAt: number;
@@ -40,16 +41,22 @@ export class Platform {
   get signal() {
     return this.controller.signal;
   }
-  async login(interactive: boolean): Promise<Credential> {
+  async login(interactive: boolean | 'select_account', connected?: (identity: Credential) => Promise<void>): Promise<Credential> {
     if (this.renewing) return this.renewing;
-    this.renewing = this.exchange(interactive);
+    // Publish the selected account before another panel or the worker can renew.
+    this.renewing = navigator.locks.request('agent-web-auth-flow', {signal: this.signal}, async () => {
+      this.signal.throwIfAborted();
+      const identity = await this.exchange(interactive);
+      await connected?.(identity);
+      return identity;
+    });
     try {
       return await this.renewing;
     } finally {
       this.renewing = undefined;
     }
   }
-  private async exchange(interactive: boolean): Promise<Credential> {
+  private async exchange(interactive: boolean | 'select_account'): Promise<Credential> {
     const verifier = random(),
       state = random();
     const challenge = encode(
@@ -63,16 +70,15 @@ export class Platform {
       state,
       code_challenge_method: 'S256',
       code_challenge: challenge,
-      ...(interactive ? {} : { prompt: 'none' }),
+      ...(interactive === 'select_account' ? {prompt: 'select_account'} : interactive ? {} : {prompt: 'none'}),
     }).toString();
-    const result = interactive
-      ? await openAuthPopup(url.href)
+    const result = interactive ? await openAuthPopup(url.href)
       : await chrome.identity.launchWebAuthFlow({
-          url: url.href,
-          interactive: false,
-          abortOnLoadForNonInteractive: false,
-          timeoutMsForNonInteractive: 15000,
-        });
+        url: url.href,
+        interactive: false,
+        abortOnLoadForNonInteractive: false,
+        timeoutMsForNonInteractive: 15000,
+      });
     this.signal.throwIfAborted();
     if (!result) throw new Error('未完成登录');
     const dest = new URL(result);
@@ -80,6 +86,8 @@ export class Platform {
       throw new Error('登录回调校验失败');
     const error = dest.searchParams.get('error');
     if (error) throw new PlatformError(error === 'access_denied' ? 403 : 401, error);
+    if (interactive === 'select_account' && dest.searchParams.get('account_selected') !== '1')
+      throw new Error('当前平台版本不支持切换插件账号，请管理员更新 API 服务。');
     const code = dest.searchParams.get('code');
     if (!code) throw new Error('未取得授权');
     const res = await checked(
@@ -125,6 +133,7 @@ export class Platform {
       access_token: token.access_token,
       tenant_id: token.tenant_id,
       user_id: token.user_id,
+      username: typeof token.username === 'string' ? token.username : undefined,
       expires,
       renewAt: capped ? expires : expires - 5000,
     });

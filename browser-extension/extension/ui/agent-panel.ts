@@ -30,9 +30,12 @@ const el = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 
 export function explain(e: unknown) {
+  if (e instanceof Error && /only one web auth flow/i.test(e.message))
+    return '已有登录窗口打开。请在该窗口完成授权，或关闭窗口后重试。';
   const messages: Record<string, string> = {
     login_required: '请重新登录以继续',
     consent_required: '请登录并确认插件授权',
+    user_cancelled: '已取消切换账号',
     access_denied: '当前账号没有对应的应用或数据范围权限',
     binding_conflict: '该地址已有匹配规则，或规则已在其他页面修改。请刷新后编辑已有规则。',
     not_found: '资源已不可用，请重新选择录制或解除绑定',
@@ -67,6 +70,8 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     output = el('agent-answers'),
     older = el<HTMLButtonElement>('agent-history'),
     login = el<HTMLButtonElement>('agent-login');
+  const switchAccount = el<HTMLButtonElement>('agent-switch'), accountLabel = el('agent-account');
+  let connecting: Platform | undefined;
   let platform: Platform | undefined,
     selection: AbortController | undefined,
     app: App | undefined;
@@ -408,9 +413,14 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
   function reset() {
     el('agent-http-note').hidden = !/^http:\/\//i.test(input.value.trim());
     login.disabled = false;
+    login.textContent = '用系统账号登录';
+    switchAccount.hidden = true;
+    accountLabel.hidden = true;
     resetRecording();
     historyPage?.connect(undefined, []);
     generation++;
+    connecting?.controller.abort();
+    connecting = undefined;
     streams.abort();
     platform?.controller.abort();
     selection?.abort();
@@ -756,10 +766,10 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
     if (!result?.app || !catalog.some(a => a.id === result.app)) throw new Error('当前页面的应用绑定已变化，请刷新页面');
     return result.app as string;
   }
-  async function connect(interactive: boolean) {
-    reset();
-    const started = generation;
-    login.disabled = true;
+  async function connect(interactive: boolean, switching = false) {
+    if (!switching) reset();
+    let started = generation;
+    login.disabled = switchAccount.disabled = true;
     try {
       const url = new URL(input.value.trim());
       if (
@@ -783,11 +793,12 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       if (!excluded?.ok) throw new Error('无法排除平台登录流量');
       if (generation !== started) return;
       const p = new Platform(url.origin);
-      platform = p;
+      connecting = p;
+      if (interactive) status.textContent = '请在登录窗口完成授权，或关闭该窗口取消登录。';
       p.signal.addEventListener(
         'abort',
         () => {
-          if (generation === started) {
+          if (generation === started && platform === p) {
             resetRecording();
             selection?.abort();
             if (timeline) timeline.clear(); else output.replaceChildren();
@@ -802,14 +813,35 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
         },
         { once: true },
       );
-      const identity = await p.login(interactive);
+      await p.login(switching ? 'select_account' : interactive, async identity => {
+        p.signal.throwIfAborted();
+        const nextAccount = JSON.stringify([identity.tenant_id, identity.user_id]);
+        if (!interactive) {
+          const saved = await chrome.storage.local.get(['agentOrigin', 'agentActiveAccount']);
+          p.signal.throwIfAborted();
+          if (saved.agentOrigin === p.origin && saved.agentActiveAccount && saved.agentActiveAccount !== nextAccount) {
+            switchAccount.hidden = false;
+            throw new PlatformError(403, 'account_changed');
+          }
+        }
+        connecting = undefined;
+        if (switching) {
+          reset();
+          started = generation;
+          login.disabled = switchAccount.disabled = true;
+        }
+        platform = p;
+        account = nextAccount;
+        accountLabel.textContent = '当前账号　' + (identity.username || identity.user_id);
+        accountLabel.hidden = switchAccount.hidden = false;
+        login.textContent = '重新连接';
+        await chrome.storage.local.set({agentOrigin: url.origin, agentActiveAccount: account});
+      });
       const apps: App[] = await (await p.request('/applications', {})).json();
       p.signal.throwIfAborted();
-      account = JSON.stringify([identity.tenant_id, identity.user_id]);
       catalog = apps;
       connection.open = false;
       historyPage?.connect(p, apps);
-      await chrome.storage.local.set({ agentOrigin: url.origin, agentActiveAccount: account });
       p.signal.throwIfAborted();
       applications.replaceChildren(
         ...catalog.map((a) => new Option(a.name, a.id)),
@@ -830,17 +862,28 @@ export function setupAgentPanel(timeline?: AgentTimeline, frameTicket?: string, 
       await selectApp();
     } catch (e) {
       if (generation === started) {
+        connecting?.controller.abort();
+        connecting = undefined;
         connection.open = true;
-        status.textContent = explain(e);
+        status.textContent = switching && e instanceof Error && /closed|cancell?ed|user did not approve access/i.test(e.message)
+          ? '已取消切换账号' : explain(e);
       }
     } finally {
-      if (generation === started) login.disabled = false;
+      if (generation === started) login.disabled = switchAccount.disabled = false;
     }
   }
   login.onclick = () => void connect(true);
-  if (frameTicket) chrome.storage.onChanged.addListener((changes, area) => {
+  switchAccount.onclick = () => void connect(true, true);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const changedAccount = changes.agentActiveAccount;
+    if (changedAccount && account && changedAccount.newValue !== account) {
+      if (changes.agentOrigin) input.value = typeof changes.agentOrigin.newValue === 'string' ? changes.agentOrigin.newValue : '';
+      if (input.value) void connect(false); else reset();
+      return;
+    }
     const changed = changes.agentOrigin;
-    if (area !== 'local' || !changed || changed.newValue === input.value) return;
+    if (!frameTicket || !changed || changed.newValue === input.value) return;
     input.value = typeof changed.newValue === 'string' ? changed.newValue : '';
     if (input.value) void connect(false); else reset();
   });
