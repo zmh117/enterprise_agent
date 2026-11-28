@@ -27,7 +27,8 @@ button,summary,select{cursor:pointer}button{padding:5px 9px}button:disabled{opac
 .chat-compose-area { padding-inline: 0; }
 .answer p{margin:5px 0}.answer ol,.answer ul{padding-left:22px}
 .answer pre,#agent-record-sample{max-width:100%;overflow:auto;background:#f6f6f8;padding:8px;border-radius:6px}
-.answer table{display:block;overflow:auto;border-collapse:collapse}.answer td,.answer th{border:1px solid #dddde2;padding:4px 8px}.answer a{color:#4f39d6}
+.answer [data-streamdown="table-wrapper"]{max-inline-size:100%;overflow-x:auto}
+.answer table{border-collapse:collapse}.answer td,.answer th{border:1px solid #dddde2;padding:4px 8px}.answer a{color:#4f39d6}
 .answer [style*="--streamdown-caret"]>:last-child:not([data-sd-caret-hidden])::after{content:var(--streamdown-caret);color:#4f39d6;animation:blink 1s step-end infinite}@keyframes blink{50%{opacity:0}}@media(prefers-reduced-motion:reduce){*{animation:none!important}}
 #agent-record-sample { white-space: pre-wrap; overflow-wrap: anywhere; }
 #agent-history { font-size: 12px; }

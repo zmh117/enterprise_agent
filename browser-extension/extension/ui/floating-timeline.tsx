@@ -12,6 +12,7 @@ import { messageTime, PlatformError, watchAnswer, type ReplyTiming } from './age
 function Markdown() {
   const running = useAuiState(s => s.message.status?.type === 'running');
   return <StreamdownTextPrimitive smooth={running} caret="block" controls={false} skipHtml
+    tableMaxHeight={0}
     remarkRehypeOptions={{allowDangerousHtml:false}}
     allowedElements={['p','h1','h2','h3','h4','h5','h6','em','strong','del','a','img','br','hr','blockquote','ul','ol','li','table','thead','tbody','tr','th','td','pre','code']}
     plugins={{code:false}} components={{

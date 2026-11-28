@@ -22,6 +22,21 @@ from app.modules.channel.browser.workshop_bindings import workshop_choices
 
 PAGE_WINDOW_MS = 30 * 60 * 1000
 RETENTION_NS = 7 * 86400 * 10**9
+PAGE_FIELDS = frozenset(
+    {
+        "page_format",
+        "page_title",
+        "page_coverage",
+        "target_text",
+        "field_label",
+        "row_text",
+        "row_position",
+        "field_name",
+        "value",
+        "before_value",
+        "selection",
+    }
+)
 SUMMARY_FIELDS = frozenset(
     (
         "action",
@@ -217,11 +232,18 @@ def projected_prefix(data):
             break
         if (
             isinstance(key, str)
-            and key in SUMMARY_FIELDS
+            and (key in SUMMARY_FIELDS or key in PAGE_FIELDS)
             and isinstance(val, (str, int))
             and len(str(val)) <= 768
         ):
             fields[key] = val
+    if fields.get("page_format") != "visible_page_v1":
+        return {k: v for k, v in fields.items() if k not in PAGE_FIELDS}
+    # Keep timeline pages bounded. The detail tool retains the captured value.
+    for key in PAGE_FIELDS.intersection(fields):
+        value = fields[key]
+        if isinstance(value, str) and len(value) > 96:
+            fields[key] = value[:95] + "…"
     return fields
 
 
@@ -263,6 +285,12 @@ def search(c, job, args):
         status, data = read_status(scope, row)
         identity = [row["recording_id"], row["event_id"]]
         fields = projected_prefix(data) if data else {}
+        if (
+            status == "visible"
+            and row["kind"] in ("action", "baseline", "mutation")
+            and "page_format" not in fields
+        ):
+            fields["page_coverage"] = "structure_only"
         field_filters = (
             "request_key",
             "baseline_id",

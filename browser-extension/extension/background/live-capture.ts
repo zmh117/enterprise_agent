@@ -35,6 +35,7 @@ interface LiveTab {
   paused: string[];
 }
 interface Run {
+  pagePolicy?: Pick<Policy, 'maskAllText' | 'allowedInputNames' | 'sensitiveSelectors'>;
   id: string;
   destination: LiveDestination;
   rules: WorkshopBinding[];
@@ -259,6 +260,7 @@ export class LiveCapture {
       budgets: policy.budgets,
     };
     const run: Run = {
+      pagePolicy: {maskAllText: policy.maskAllText, allowedInputNames: policy.allowedInputNames, sensitiveSelectors: policy.sensitiveSelectors},
       networkPolicy,
       id: crypto.randomUUID(),
       destination: d,
@@ -491,7 +493,7 @@ export class LiveCapture {
       if (!current()) return;
       const reply = await chrome.tabs.sendMessage(
         t.browserId,
-        { type: 'live.begin', ticket: { id: ticket, binding: doc.binding, platformOrigin: run.destination.origin,
+        { type: 'live.begin', ticket: { id: ticket, binding: doc.binding, pagePolicy: run.pagePolicy, platformOrigin: run.destination.origin,
           rules: run.rules.filter(b => b.rule.origin === doc.binding!.rule.origin) } },
         { documentId: doc.documentId },
       );
@@ -588,7 +590,7 @@ export class LiveCapture {
   }
   async message(
     sender: chrome.runtime.MessageSender,
-    m: { type: string; ticket: string; baselineId?: string; event?: unknown },
+    m: { type: string; ticket: string; baselineId?: string; observedMs?: number; event?: unknown },
   ) {
     const run = this.run,
       t = run?.tabs.find((x) => x.browserId === sender.tab?.id);
@@ -618,7 +620,7 @@ export class LiveCapture {
       await this.save();
       return { ok: false };
     }
-    const event = projectPageEvent(m.event);
+    const event = projectPageEvent(m.event, run.pagePolicy);
     if (
       !m.baselineId ||
       !(
@@ -636,6 +638,7 @@ export class LiveCapture {
         source,
         { baseline_id: m.baselineId, ...event },
         run.maxBytes,
+        Number.isSafeInteger(m.observedMs) && m.observedMs! > 0 ? m.observedMs : undefined,
       );
     } catch {
       if (t.ticket === m.ticket) {

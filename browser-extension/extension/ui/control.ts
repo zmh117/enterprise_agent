@@ -296,7 +296,7 @@ $('record-mode').addEventListener('change', () => {
   $('offline-environment').hidden = continuous;
   $('start-settings').hidden = !continuous;
   $('policy-summary').textContent = continuous
-    ? '按当前账号和站点绑定范围采集。保留接口业务字段原值，过滤凭据，页面只记录结构和操作。'
+    ? '在已绑定页面采集可见业务文字、操作和策略允许的输入值，脱敏后上传平台。'
     : '本地保存，仅隐藏登录密码，其他文本保留原值。';
 });
 $('start-settings').addEventListener('click', () => {

@@ -40,7 +40,16 @@ export async function checkFloat({context, control, id, fixture, next, requests,
       return;
     }
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-    res.end('<!doctype html><title>MES 合成测试</title><main><h1>工单查询</h1><button onclick="fetch(\'/api/save\',{method:\'POST\'})">保存</button></main>');
+    res.end(`<!doctype html><title>MES 合成测试</title><main><h1>工单查询</h1>
+      <p>本班次待检验</p><p hidden>synthetic-hidden-marker</p>
+      <div data-raw-message>synthetic-message-marker</div><input type="password" value="synthetic-password-marker">
+      <button role="menuitem" onclick="orders.hidden=false;document.title='合成工单列表'"><span>计划工单</span></button>
+      <table id="orders" hidden><thead><tr><th>工单号</th><th>操作</th></tr></thead><tbody>
+      <tr><td>WO-A</td><td><button>编辑</button></td></tr>
+      <tr><td>WO-C</td><td><button onclick="editor.hidden=false"><span>编辑</span></button></td></tr>
+      </tbody></table><section id="editor" hidden><label for="qty">计划数量</label><input id="qty" name="quantity" value="8"></section>
+      <button onclick="fetch('/api/save',{method:'POST'}).then(()=>result.firstChild.data='保存被退回')">保存</button>
+      <p id="result">待提交</p></main>`);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -169,6 +178,13 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     const evidence = await control.evaluate(async () => {
       const db = await new Promise((resolve,reject)=>{const r=indexedDB.open('mes-workshop-live-v1'); r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
       const rows = await new Promise((resolve,reject)=>{const r=db.transaction('liveEvidence').objectStore('liveEvidence').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+      const parts = await new Promise((resolve,reject)=>{const r=db.transaction('liveParts').objectStore('liveParts').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+      const decoder = new TextDecoder();
+      const protectedMarkers = ['synthetic-password-marker','synthetic-hidden-marker','synthetic-message-marker'];
+      for (const part of parts) {
+        const text = decoder.decode(part.data);
+        if (protectedMarkers.some(marker => text.includes(marker))) throw Error('Unprotected content in local upload queue');
+      }
       db.close();
       return {tabs:new Set(rows.map(r=>r.source.tab_id)).size, documents:new Set(rows.map(r=>r.source.document_id)).size,
         network:(()=>{
@@ -183,9 +199,13 @@ export async function checkFloat({context, control, id, fixture, next, requests,
           const root = rows.find(r => r.event.api_path === '/api/root-route');
           return !!child && !!root && JSON.stringify(root.source) === JSON.stringify(child.source) &&
             rows.some(r => r.event.kind === 'action' && JSON.stringify(r.source) === JSON.stringify(child.source));
-        })(),hasAction:rows.some(r=>r.event.kind==='action'), masked:rows.every(r=>!JSON.stringify(r).includes('工单查询'))};
+        })(),hasAction:rows.some(r=>r.event.kind==='action'), readable:rows.some(r=>r.event.page_title==='MES 合成测试')};
     });
-    assert.deepEqual(evidence,{tabs:3,documents:4,network:{found:true,sameSource:true,body:'captured',workOrder:true,detail:true,protected:true,requestBodies:[['request','captured'],['response','captured']]},inherited:true,hasAction:true,masked:true});
+    assert.deepEqual(evidence,{tabs:3,documents:4,network:{found:true,sameSource:true,body:'captured',workOrder:true,detail:true,protected:true,requestBodies:[['request','captured'],['response','captured']]},inherited:true,hasAction:true,readable:true});
+    await mes.getByRole('menuitem',{name:'计划工单'}).locator('span').click();
+    await mes.getByRole('row').filter({hasText:'WO-C'}).getByText('编辑').click();
+    await mes.getByLabel('计划数量').fill('12');
+    await mes.getByLabel('计划数量').press('Tab');
     await Promise.all([mes.waitForResponse(r => r.url().endsWith('/api/save')),mes.getByRole('button',{name:'保存'}).click()]);
     await packing.evaluate(() => history.pushState({}, '', '/users/roles'));
     await control.locator('nav a[href="#sites"]').click();
@@ -255,7 +275,12 @@ export async function checkFloat({context, control, id, fixture, next, requests,
     assert.equal(sentPage.registered, true, '浮窗问题应在停止录制之前绑定发送页');
     if (process.env.BROWSER_EVIDENCE_SYNTHETIC_ROUNDTRIP === '1') {
       fixture.stdin.write('live-tool\n');
-      assert.deepEqual(await next(), {observedSave:true, body:true, sameTab:true, status:422});
+      const evidence = await next();
+      assert.deepEqual(evidence, {
+        observedSave:true, operationContext:true, pageState:true, body:true, sameTab:true, status:422,
+        observed:{menu:'计划工单',page:'合成工单列表',row:'WO-C 编辑',row_position:'2',field:'计划数量',before:'8',after:'12',result:'保存被退回'},
+      });
+      console.log('Agent 工具读回的合成录制', JSON.stringify(evidence.observed));
     }
     await control.locator('nav a[href="#capture"]').click();
     await control.locator('#live-stop').click();

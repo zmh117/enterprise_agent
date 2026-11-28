@@ -1,6 +1,6 @@
 {
   "name": "browser-capture-assistant",
-  "version": "0.2.11",
+  "version": "0.2.13",
   "private": true,
   "type": "module",
   "engines": {
@@ -16,6 +16,7 @@
     "test": "tsx --test tests/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",
     "test:agent": "node tests/agent-stream-browser.mjs",
+    "test:floating-layout": "node tests/floating-reply-layout.mjs",
     "test:live-reload": "npm run build && node tests/live-recorder-reload.mjs",
     "fixtures": "node fixtures/server.mjs",
     "test:browser": "tsx tests/browser.ts",

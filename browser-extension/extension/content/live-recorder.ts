@@ -1,3 +1,5 @@
+import {recordVisiblePage} from './live-page-view';
+import type {PagePolicy} from '../../shared/live-page-context';
 import { record } from '@rrweb/record';
 import {
   actions,
@@ -9,7 +11,7 @@ import {
 } from '../../shared/live-page';
 import type { WorkshopBinding } from '../../shared/workshop';
 
-type Ticket = { id: string; binding: WorkshopBinding; rules: WorkshopBinding[]; platformOrigin: string };
+type Ticket = { pagePolicy?: PagePolicy; id: string; binding: WorkshopBinding; rules: WorkshopBinding[]; platformOrigin: string };
 type Recorder = { id?: string; paused: boolean; stop: () => void; updateRules?: (rules: WorkshopBinding[]) => boolean };
 const isolated = globalThis as typeof globalThis & {
   __mesContinuous?: Recorder;
@@ -96,6 +98,7 @@ function begin(state: Recorder, ticket: Ticket) {
     if (event.kind === 'baseline') baselineId = ticket.id + ':' + ++baselineNumber;
     if (!baselineId) return;
     const reference = baselineId;
+    const observedMs = Date.now();
     const size = new TextEncoder().encode(JSON.stringify(event)).byteLength;
     if (pending + size > 8 * 1024 * 1024) {
       gap();
@@ -109,6 +112,7 @@ function begin(state: Recorder, ticket: Ticket) {
           type: 'live.event',
           ticket: ticket.id,
           baselineId: reference,
+          observedMs,
           event,
         });
         if (!result?.ok) gap();
@@ -123,6 +127,10 @@ function begin(state: Recorder, ticket: Ticket) {
     window.addEventListener(name, check, { signal: abort.signal });
   window.addEventListener('pagehide', () => state.stop(), { once: true, signal: abort.signal });
   try {
+    if (ticket.pagePolicy) {
+      recordVisiblePage(ticket.pagePolicy, check, offer, () => { void gap(); }, abort.signal);
+      return;
+    }
     stopRrweb = record({
       emit(event) {
         if (!check()) return;

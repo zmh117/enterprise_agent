@@ -1,3 +1,4 @@
+import { contextFormat, projectVisibleEvent, type VisiblePageEvent, type PagePolicy } from './live-page-context';
 import {
   bindingForPage,
   type WorkshopBinding,
@@ -118,6 +119,7 @@ export function structuralBaseline(raw: unknown) {
 
 export const actions = ['click', 'change', 'submit'] as const;
 export type PageEvidence =
+  | VisiblePageEvent
   | { kind: 'baseline'; node: StructureNode }
   | { kind: 'mutation'; adds: NodeAddition[]; removes: NodeRemoval[] }
   | { kind: 'action'; action: (typeof actions)[number]; element: string; node_id: number };
@@ -157,7 +159,11 @@ export function structuralMutation(data: unknown): Extract<PageEvidence, { kind:
   };
 }
 
-export function projectPageEvent(input: unknown): PageEvidence {
+export function projectPageEvent(input: unknown, policy?: PagePolicy): PageEvidence {
+  if ((input as {page_format?: unknown} | null)?.page_format === contextFormat) {
+    if (!policy) throw new Error('missing_page_policy');
+    return projectVisibleEvent(input as VisiblePageEvent, policy);
+  }
   const item = input as Partial<{
     kind: string;
     node: unknown;

@@ -421,9 +421,73 @@ def check_floating_read(c):
             if response and body:
                 detail = tool("get_recording_evidence", {"reference": body["reference"]})
                 if "value_json" in detail:
-                    actions = tool("search_recording", {"action": "click"})["hits"]
+                    actions = tool("search_recording", {"kind": "action", "limit": 32})["hits"]
+                    ordered = sorted(actions, key=lambda a: a["source_seq"])
+                    names = [a.get("target_text") for a in ordered]
+                    menu = next((a for a in ordered if a.get("target_text") == "计划工单"), None)
+                    edit = next(
+                        (
+                            a
+                            for a in ordered
+                            if a.get("target_text") == "编辑" and "WO-C" in a.get("row_text", "")
+                        ),
+                        None,
+                    )
+                    change = next(
+                        (
+                            a
+                            for a in ordered
+                            if a.get("action") == "change" and a.get("field_label") == "计划数量"
+                        ),
+                        None,
+                    )
+                    if not menu or not edit or not change or "保存" not in names:
+                        time.sleep(0.2)
+                        continue
+                    changed = tool("get_recording_evidence", {"reference": change["reference"]})[
+                        "value"
+                    ]
+                    operations = (
+                        menu["source_seq"] < edit["source_seq"] < change["source_seq"]
+                        and edit["page_title"] == "合成工单列表"
+                        and "WO-A" not in edit["row_text"]
+                        and changed["before_value"] == "8"
+                        and changed["value"] == "12"
+                    )
+                    page_text = []
+                    for kind in ("baseline", "mutation"):
+                        for hit in tool("search_recording", {"kind": kind, "limit": 32})["hits"]:
+                            value = tool(
+                                "get_recording_evidence", {"reference": hit["reference"]}
+                            ).get("value", {})
+                            page_text.extend(
+                                n["text"] for n in value.get("nodes", []) if "text" in n
+                            )
+                    if "保存被退回" not in page_text:
+                        time.sleep(0.2)
+                        continue
                     return {
-                        "observedSave": any(a.get("element") == "button" for a in actions),
+                        "observedSave": any(
+                            a.get("target_text") == "保存"
+                            and a["source_seq"] > change["source_seq"]
+                            for a in actions
+                        ),
+                        "operationContext": operations,
+                        "observed": {
+                            "menu": menu["target_text"],
+                            "page": edit["page_title"],
+                            "row": edit["row_text"],
+                            "row_position": edit["row_position"],
+                            "field": changed["field_label"],
+                            "before": changed["before_value"],
+                            "after": changed["value"],
+                            "result": next(text for text in page_text if text == "保存被退回"),
+                        },
+                        "pageState": "本班次待检验" in page_text
+                        and "WO-A" in page_text
+                        and not any(
+                            "synthetic-" in text and "marker" in text for text in page_text
+                        ),
                         "sameTab": all(r["tab_id"] == job["tab_id"] for r in actions + related),
                         "body": json.loads(detail["value_json"])["value"]
                         == {
