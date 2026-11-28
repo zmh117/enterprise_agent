@@ -3,8 +3,7 @@
 import json
 import os
 import secrets
-import ssl
-import shutil
+from configparser import ConfigParser
 import subprocess
 import sys
 import tempfile
@@ -17,91 +16,6 @@ import yaml
 from botocore.exceptions import ClientError
 
 repo = Path(__file__).resolve().parents[2]
-
-
-def configure_tls(base, env):
-    def openssl(*args):
-        subprocess.run(
-            ["openssl", *map(str, args)],
-            cwd=base,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
-
-    openssl(
-        "req",
-        "-x509",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-days",
-        "1",
-        "-keyout",
-        "ca.key",
-        "-out",
-        "ca.crt",
-        "-subj",
-        "/CN=synthetic-trial",
-    )
-
-    def pair(subdir, kind, name):
-        d = base / subdir
-        d.mkdir(exist_ok=True)
-        tag = subdir + kind
-        ext = base / (tag + ".ext")
-        ext.write_text(
-            "extendedKeyUsage="
-            + ("serverAuth" if kind == "server" else "clientAuth")
-            + "\nsubjectAltName=DNS:"
-            + name
-            + ",IP:127.0.0.1\n"
-        )
-        openssl(
-            "req",
-            "-new",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-keyout",
-            d / (kind + ".key"),
-            "-out",
-            tag + ".csr",
-            "-subj",
-            "/CN=" + name,
-        )
-        openssl(
-            "x509",
-            "-req",
-            "-days",
-            "1",
-            "-in",
-            tag + ".csr",
-            "-CA",
-            "ca.crt",
-            "-CAkey",
-            "ca.key",
-            "-CAcreateserial",
-            "-out",
-            d / (kind + ".crt"),
-            "-extfile",
-            ext,
-        )
-        shutil.copyfile(base / "ca.crt", d / "ca.crt")
-        (d / (kind + ".key")).chmod(0o444)
-
-    pair("loki", "server", "evidence-loki")
-    pair("alloy", "server", "evidence-alloy")
-    pair("alloy", "client", "synthetic-writer")
-    pair("api", "client", "synthetic-api")
-    env.update(
-        BROWSER_EVIDENCE_LOKI_TLS_DIR=str(base / "loki"),
-        BROWSER_EVIDENCE_ALLOY_TLS_DIR=str(base / "alloy"),
-        BROWSER_EVIDENCE_API_TLS_DIR=str(base / "api"),
-    )
-    trusted = ssl.create_default_context(cafile=base / "ca.crt")
-    trusted.load_cert_chain(base / "api/client.crt", base / "api/client.key")
-    return trusted
 
 
 def check_bucket_quotas(compose):
@@ -152,11 +66,54 @@ def check_bucket_isolation(endpoint, file_key, evidence_key):
     return buckets["browser-evidence"]
 
 
-def check_storage_and_identity(storage, ports, base, trusted):
+def check_evidence_identities(compose, endpoint, file_key):
+    # The credentials below belong exclusively to this randomly named QA project.
+    stored = compose(
+        "run",
+        "--rm",
+        "--no-deps",
+        "-T",
+        "--entrypoint",
+        "cat",
+        "evidence-bucket-init",
+        "/run/evidence-identity/credentials",
+    )
+    _, profile, values = stored.stdout.partition("[default]\n")
+    assert profile, "Missing synthetic evidence identity"
+    identity = ConfigParser()
+    identity.read_string(profile + values)
+    generated = (
+        identity["default"]["aws_access_key_id"],
+        identity["default"]["aws_secret_access_key"],
+    )
+    storage = check_bucket_isolation(endpoint, file_key, generated)
+
+    supplied = {
+        "BROWSER_EVIDENCE_S3_ACCESS_ID": "trial-" + secrets.token_hex(6),
+        "BROWSER_EVIDENCE_S3_ACCESS_SECRET": secrets.token_hex(20),
+    }
+    compose("run", "--rm", "--no-deps", "evidence-bucket-init", overrides=supplied)
+    check_bucket_isolation(
+        endpoint,
+        file_key,
+        (supplied["BROWSER_EVIDENCE_S3_ACCESS_ID"], supplied["BROWSER_EVIDENCE_S3_ACCESS_SECRET"]),
+    )
+    incomplete = compose(
+        "run",
+        "--rm",
+        "--no-deps",
+        "evidence-bucket-init",
+        check=False,
+        overrides={**supplied, "BROWSER_EVIDENCE_S3_ACCESS_SECRET": ""},
+    )
+    assert incomplete.returncode != 0, "Incomplete explicit credentials must fail initialization"
+    return storage
+
+
+def check_stored_chunks(storage, ports):
     with urllib.request.urlopen(
         urllib.request.Request(ports["evidence-loki"] + "/flush", method="POST"),
         timeout=10,
-        context=trusted,
     ) as res:
         assert res.status in (200, 204)
     until = time.monotonic() + 25
@@ -167,25 +124,13 @@ def check_storage_and_identity(storage, ports, base, trusted):
             break
         assert time.monotonic() < until, "no MinIO objects after flush"
         time.sleep(0.4)
-    # A client on the reachable QA loopback routes has the public CA and tenant header, but no client certificate.
-    ordinary = ssl.create_default_context(cafile=base / "ca.crt")
-    for service, url in ports.items():
-        request = urllib.request.Request(url + "/ready", headers={"X-Scope-OrgID": "synthetic"})
-        try:
-            response = urllib.request.urlopen(request, context=ordinary, timeout=4)
-        except (OSError, ssl.SSLError):
-            continue
-        else:
-            response.close()
-            raise AssertionError("uncredentialed client reached " + service)
-    print("Loki and Alloy rejected a reachable client without its certificate", flush=True)
 
 
-def await_ready(url, trusted):
+def await_ready(url):
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url + "/ready", timeout=2, context=trusted) as resp:
+            with urllib.request.urlopen(url + "/ready", timeout=2) as resp:
                 if resp.status == 200:
                     return
         except OSError:
@@ -195,15 +140,17 @@ def await_ready(url, trusted):
 
 def main():
     project = "mes-workshop-qa-" + secrets.token_hex(6)
-    env = dict(
-        os.environ,
-        BROWSER_EVIDENCE_S3_ACCESS_ID="trial-" + secrets.token_hex(6),
-        BROWSER_EVIDENCE_S3_ACCESS_SECRET=secrets.token_urlsafe(30),
-    )
+    env = {
+        **os.environ,
+        "BROWSER_EVIDENCE_STORAGE_ENV_FILE": str(
+            repo / "services/browser_evidence/storage.env.template"
+        ),
+        "BROWSER_EVIDENCE_S3_ACCESS_ID": "",
+        "BROWSER_EVIDENCE_S3_ACCESS_SECRET": "",
+    }
     with tempfile.TemporaryDirectory(prefix="mes-workshop-stack-") as folder:
         base = Path(folder)
 
-        trusted = configure_tls(base, env)
         # Use the system service definitions but only project-owned volumes, networks and ports.
         # The separate File Service readiness gate is covered by the Compose and credential tests.
         root = yaml.safe_load((repo / "docker-compose.yml").read_text())
@@ -237,6 +184,7 @@ def main():
                 for n in (
                     "minio-data",
                     "file-storage-identity",
+                    "evidence-storage-identity",
                     "evidence-index",
                     "evidence-alloy-data",
                 )
@@ -252,18 +200,16 @@ def main():
             "/dev/null",
             "--project-directory",
             str(repo),
-            "--profile",
-            "browser-evidence",
             "-p",
             project,
             "-f",
             str(fixture),
         ]
 
-        def compose(*args, check=True):
+        def compose(*args, check=True, overrides=None):
             return subprocess.run(
                 [*cli, *args],
-                env=env,
+                env={**env, **(overrides or {})},
                 cwd=repo,
                 check=check,
                 stdout=subprocess.PIPE,
@@ -272,7 +218,7 @@ def main():
             )
 
         try:
-            up = compose("up", "-d", "--pull", "never", check=False)
+            up = compose("up", "-d", check=False)
             if up.returncode:
                 notes = compose(
                     "logs", "--no-log-prefix", "minio-init", "evidence-bucket-init", check=False
@@ -288,17 +234,15 @@ def main():
             def address(name, port):
                 return compose("port", name, str(port)).stdout.strip()
 
-            storage = check_bucket_isolation(
-                "http://" + address("minio", 9000),
-                file_key,
-                (env["BROWSER_EVIDENCE_S3_ACCESS_ID"], env["BROWSER_EVIDENCE_S3_ACCESS_SECRET"]),
+            storage = check_evidence_identities(
+                compose, "http://" + address("minio", 9000), file_key
             )
             ports = {
-                "evidence-loki": "https://" + address("evidence-loki", 3100),
-                "evidence-alloy": "https://" + address("evidence-alloy", 3500),
+                "evidence-loki": "http://" + address("evidence-loki", 3100),
+                "evidence-alloy": "http://" + address("evidence-alloy", 3500),
             }
             for url in ports.values():
-                await_ready(url, trusted)
+                await_ready(url)
             env.update(
                 BROWSER_EVIDENCE_SYNTHETIC_ROUNDTRIP="1",
                 BROWSER_EVIDENCE_WRITE_URL=ports["evidence-alloy"],
@@ -319,7 +263,7 @@ def main():
             )
             if p.returncode:
                 sys.exit(p.returncode)
-            check_storage_and_identity(storage, ports, base, trusted)
+            check_stored_chunks(storage, ports)
             browser_env = {**env, "EA_TEST_FLOAT": "1", "PLAYWRIGHT_SKIP_BROWSER_GC": "1"}
             subprocess.run(
                 ["npm", "run", "test:agent"],

@@ -1082,7 +1082,7 @@ Compose 和受支持的部署脚本 MUST 按“schema migration、初始管理�
 - **AND** 不包含独立`file-mcp`、长期`attachment-worker`、Docling RQ/Redis或Ray服务
 
 ### Requirement: 任务文件与浏览器证据的 MinIO 凭据隔离
-Compose 和运行配置 MUST 只向 `file-service` 提供任务文件桶 endpoint 与受治理凭据引用。平台 MAY 复用 MinIO，由 Loki 使用独立身份访问私有证据桶。两个运行身份不得跨桶访问，证据桶独立配置容量和保留期。管理凭据只供 MinIO 与一次性存储初始化使用。Agent、Runtime、File Worker、Delivery Dispatcher、API、Alloy 和前端 MUST NOT 获取对象存储凭据。File Service 健康、错误和配置快照只显示 configured 状态与脱敏 endpoint 摘要。
+Compose 和运行配置 MUST 只向 `file-service` 提供任务文件桶 endpoint 与受治理凭据引用。主 Compose SHALL 默认启动证据桶初始化、Loki 和 Alloy，复用 MinIO，由 Loki 使用独立身份访问私有证据桶。两个运行身份不得跨桶访问，证据桶独立配置容量和保留期。管理凭据只供 MinIO 与一次性存储初始化使用。Agent、Runtime、File Worker、Delivery Dispatcher、API、Alloy 和前端 MUST NOT 获取对象存储凭据。File Service 健康、错误和配置快照只显示 configured 状态与脱敏 endpoint 摘要。
 
 #### Scenario: File Worker环境被检查
 - **WHEN** 运维查看 `file-worker` 有效配置和容器挂载
@@ -1098,8 +1098,12 @@ Compose 和运行配置 MUST 只向 `file-service` 提供任务文件桶 endpoin
 - **AND** 不向长期运行服务暴露 bootstrap 值，重复启动保留相同值，值不同则失败而不自动轮换
 
 #### Scenario: 文件与证据共享对象存储
-- **WHEN** 启用浏览器证据服务
-- **THEN** 文件服务与 Loki 均可读写自己的桶，交叉读取、写入与删除被拒绝，API 和 Alloy 只通过双向 TLS 访问证据读写服务
+- **WHEN** 执行普通 `docker compose up -d`
+- **THEN** 文件服务与 Loki 均可读写自己的桶，交叉读取、写入与删除被拒绝，API 在内部网络用 HTTP 写入 Alloy、读回 Loki，Alloy 通过 HTTP 转发到 Loki，两个服务均不发布宿主端口
+
+#### Scenario: 未设置证据专用身份时首次启动
+- **WHEN** 已完成平台基础配置，部署没有额外提供证据存储身份或证书
+- **THEN** 证据初始化为私有桶创建专用随机身份，Loki 可用该身份写入，后续启动复用该身份和原有数据
 
 ### Requirement: File Service与File Worker具有真实就绪和积压观测
 File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、Principal JWKS、Manifest v5、representation staging和内部流式接口依赖；File Worker readiness MUST 验证附件RabbitMQ队列契约、File Service内部API和清理调度；File Processing Worker readiness MUST 验证独立processing队列、File Service、角色Principal和Docling `/ready`；Docling readiness MUST 验证模型与内部编排器可处理请求。平台运维视图 SHALL 展示附件、processing run、representation staging、重试/dead-letter、提交暂存、工作区过期、保留清理和File Domain Outbox的安全积压计数与最近结果，不得仅以容器running或`/health`声明可用。

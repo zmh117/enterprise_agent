@@ -22,6 +22,35 @@ file_id=$(cat /run/secrets/file_storage_bootstrap_access_key)
 case "$FILE_STORAGE_BUCKET" in
   ''|browser-evidence|*[!a-z0-9.-]*) exit 1 ;;
 esac
+
+load_evidence_identity() {
+  if [ -n "${AWS_ACCESS_KEY_ID:-}" ] || [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+    access=${AWS_ACCESS_KEY_ID:?}
+    secret=${AWS_SECRET_ACCESS_KEY:?}
+    return
+  fi
+  credentials=/run/evidence-identity/credentials
+  if [ ! -f "$credentials" ]; then
+    access=$(od -An -N10 -tx1 /dev/urandom | tr -d '[:space:]')
+    secret=$(od -An -N20 -tx1 /dev/urandom | tr -d '[:space:]')
+    [ "${#access}" -eq 20 ] && [ "${#secret}" -eq 40 ] || exit 1
+    candidate=$(mktemp /run/evidence-identity/.credentials.XXXXXX)
+    printf '[default]\naws_access_key_id=%s\naws_secret_access_key=%s\n' "$access" "$secret" > "$candidate"
+    chmod 0400 "$candidate"
+    chown 10001 "$candidate"
+    # Concurrent initializers use the first complete file published for the Loki user.
+    ln "$candidate" "$credentials" || [ -f "$credentials" ] || exit 1
+    rm -f "$candidate"
+  fi
+  {
+    IFS= read -r profile
+    IFS='=' read -r access_field access
+    IFS='=' read -r secret_field secret
+  } < "$credentials"
+  [ "$profile" = '[default]' ] && [ "$access_field" = aws_access_key_id ] &&
+    [ "$secret_field" = aws_secret_access_key ] || exit 1
+}
+
 case "$1" in
   files)
     bucket=$FILE_STORAGE_BUCKET
@@ -31,8 +60,8 @@ case "$1" in
   evidence)
     [ "${FILE_STORAGE_ENDPOINT_URL:?}" = "http://minio:9000" ] || exit 1
     bucket=browser-evidence
-    access=${AWS_ACCESS_KEY_ID:?}
-    secret=${AWS_SECRET_ACCESS_KEY:?}
+    stage=准备证据桶身份
+    load_evidence_identity
     [ "$access" != "$file_id" ] && [ "$file_id" != "$MINIO_ROOT_USER" ] || exit 1
     ;;
   *) exit 1 ;;

@@ -184,7 +184,6 @@ services:
         condition: service_healthy
 
   evidence-bucket-init:
-    profiles: [browser-evidence]
     image: ${MINIO_MC_IMAGE:-minio/mc:latest}
     entrypoint: ["/bin/sh", "/init/bucket.sh"]
     command: [evidence]
@@ -198,6 +197,7 @@ services:
       - file_storage_bootstrap_access_key
     volumes:
       - ./scripts/init_minio_bucket.sh:/init/bucket.sh:ro
+      - evidence-storage-identity:/run/evidence-identity
     tmpfs: [/tmp]
     networks: [evidence-objects]
     depends_on:
@@ -205,9 +205,7 @@ services:
       minio-init: {condition: service_completed_successfully}
 
   evidence-loki:
-    profiles: [browser-evidence]
-    image: grafana/loki:latest
-    pull_policy: never
+    image: grafana/loki@sha256:70b9f699fc9bb868b62f1cfd4f787dfa50242f1fd92e6089787d5d7daea75fe8
     restart: unless-stopped
     command: [-config.file=/etc/loki/evidence.yaml]
     depends_on:
@@ -216,20 +214,19 @@ services:
       - ${BROWSER_EVIDENCE_STORAGE_ENV_FILE:-./services/browser_evidence/storage.env.template}
     environment:
       AWS_EC2_METADATA_DISABLED: "true"
+      AWS_SHARED_CREDENTIALS_FILE: /run/evidence-identity/credentials
     volumes:
-      - ${BROWSER_EVIDENCE_LOKI_TLS_DIR:-./.local/browser-evidence/loki}:/run/evidence-tls:ro
+      - evidence-storage-identity:/run/evidence-identity:ro
       - ./services/browser_evidence/loki.yaml:/etc/loki/evidence.yaml:ro
       - evidence-index:/loki
     networks: [evidence-ingress, evidence-objects]
 
   evidence-alloy:
-    profiles: [browser-evidence]
     image: grafana/alloy@sha256:41c41849989b7e054ccbadc17938ee1e5592fe26bfbc56ef3ffc109c0b0b2739
     restart: unless-stopped
     command: [run, --storage.path=/var/lib/alloy/data, /etc/alloy/evidence.alloy]
     depends_on: [evidence-loki]
     volumes:
-      - ${BROWSER_EVIDENCE_ALLOY_TLS_DIR:-./.local/browser-evidence/alloy}:/run/evidence-tls:ro
       - ./services/browser_evidence/evidence.alloy:/etc/alloy/evidence.alloy:ro
       - evidence-alloy-data:/var/lib/alloy/data
     networks: [evidence-ingress]
@@ -632,15 +629,13 @@ services:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       RECORDING_TOOL_BOOTSTRAP_TOKEN_FILE: /run/secrets/recording_tool_bootstrap_token
-      BROWSER_EVIDENCE_WRITE_URL: ${BROWSER_EVIDENCE_WRITE_URL-}
-      BROWSER_EVIDENCE_READ_URL: ${BROWSER_EVIDENCE_READ_URL-}
-      BROWSER_EVIDENCE_API_TLS_DIR: /run/evidence-api-tls
+      BROWSER_EVIDENCE_WRITE_URL: http://evidence-alloy:3500
+      BROWSER_EVIDENCE_READ_URL: http://evidence-loki:3100
       <<: *api-env
       CODE_CHECKOUT_ENABLED: ${CODE_CHECKOUT_ENABLED:-false}
       CODE_CHECKOUT_REGISTRY_FILE: /etc/code-svn/checkout.json
       CODE_RUNTIME_BOOTSTRAP_TOKEN_FILE: /run/secrets/code_runtime_bootstrap_token
     volumes:
-      - ${BROWSER_EVIDENCE_API_TLS_DIR:-./.local/browser-evidence/api}:/run/evidence-api-tls:ro
       - type: bind
         source: ${CODE_SVN_LOCAL_STATE_ROOT:-${KNOWLEDGE_DEPLOY_ROOT:-.}/.local/code-svn/state}/configuration
         target: /etc/code-svn
@@ -1658,6 +1653,7 @@ secrets:
 
 volumes:
   file-storage-identity:
+  evidence-storage-identity:
   evidence-index:
   evidence-alloy-data:
   code-svn-checkout:

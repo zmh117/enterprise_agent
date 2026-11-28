@@ -75,22 +75,16 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
 
     for secret in ("file_storage_bootstrap_access_key", "file_storage_bootstrap_secret_key"):
         assert "file" in compose["secrets"][secret]
-    assert services["evidence-loki"]["image"] == "grafana/loki:latest"
-    assert services["evidence-loki"]["pull_policy"] == "never"
-    assert (
-        services["evidence-bucket-init"]["depends_on"]["file-service"]["condition"]
-        == "service_healthy"
-    )
-    for name in ("evidence-alloy", "evidence-loki", "evidence-bucket-init"):
-        assert services[name]["profiles"] == ["browser-evidence"]
-        assert not services[name].get("ports")
     for name, service in services.items():
         if name not in {"minio", "minio-init", "evidence-bucket-init"}:
             assert "MINIO_ROOT_PASSWORD" not in service.get("environment", {})
         if name not in {"evidence-loki", "evidence-bucket-init"}:
             assert "AWS_SECRET_ACCESS_KEY" not in service.get("environment", {})
             assert "BROWSER_EVIDENCE_STORAGE_ENV_FILE" not in str(service.get("env_file", []))
+            assert "evidence-storage-identity" not in str(service.get("volumes", []))
         else:
+            mount = "evidence-storage-identity:/run/evidence-identity"
+            assert (mount + ":ro" if name == "evidence-loki" else mount) in service["volumes"]
             assert service["env_file"] == [
                 "${BROWSER_EVIDENCE_STORAGE_ENV_FILE:-./services/browser_evidence/storage.env.template}"
             ]
@@ -132,6 +126,35 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
     minio_init = services["minio-init"]
     assert "agent-attachments" not in str(minio_init)
     assert "FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET" not in minio_init["environment"]
+
+
+def test_default_browser_evidence_uses_private_http_services() -> None:
+    compose = _compose()
+    services = compose["services"]
+    assert services["evidence-loki"]["image"].startswith("grafana/loki@sha256:")
+    assert services["evidence-loki"].get("pull_policy") != "never"
+    assert services["api-server"]["environment"]["BROWSER_EVIDENCE_WRITE_URL"] == (
+        "http://evidence-alloy:3500"
+    )
+    assert services["api-server"]["environment"]["BROWSER_EVIDENCE_READ_URL"] == (
+        "http://evidence-loki:3100"
+    )
+    assert compose["networks"]["evidence-ingress"]["internal"] is True
+    assert compose["networks"]["evidence-objects"]["internal"] is True
+    assert set(services["evidence-loki"]["networks"]) == {"evidence-ingress", "evidence-objects"}
+    assert services["evidence-alloy"]["networks"] == ["evidence-ingress"]
+    assert {
+        name
+        for name, service in services.items()
+        if "evidence-ingress" in service.get("networks", [])
+    } == {"api-server", "evidence-alloy", "evidence-loki"}
+    assert (
+        services["evidence-bucket-init"]["depends_on"]["file-service"]["condition"]
+        == "service_healthy"
+    )
+    for name in ("evidence-alloy", "evidence-loki", "evidence-bucket-init"):
+        assert not services[name].get("profiles")
+        assert not services[name].get("ports")
 
 
 def test_only_file_workspace_infrastructure_defines_the_minio_client() -> None:

@@ -27,7 +27,7 @@ Embedding、在线 Embedding、Docling 和数据库还会占用资源，6 CPU/3 
 根据主 Compose 的各服务限额预留容量，首次模型下载和构建可能持续较久；检查下载来源可达，
 不要把模型下载中误判为初始化卡死。操作系统和架构检查通过不代表容量压测通过。
 
-文件服务和浏览器证据可共用系统 MinIO。升级存量文件服务前先准备独立文件桶身份，按部署手册轮换旧 root 引用，再更新服务。浏览器证据按需启用。参见[共享 MinIO 的配置、升级与回退](../../services/browser_evidence/README.md)。
+浏览器证据随主 Compose 启动，API 通过容器内网 HTTP 写入 Alloy、从 Loki 读回。文件服务和 Loki 分别使用系统 MinIO 中的私有桶。升级存量文件服务前先准备独立文件桶身份，按部署手册轮换旧 root 引用，再更新服务。[浏览器证据部署说明](../../services/browser_evidence/README.md)
 
 ## 全新安装
 

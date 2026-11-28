@@ -4,7 +4,6 @@ import base64
 import hashlib
 import json
 import os
-import ssl
 import time
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -49,7 +48,7 @@ def endpoint(write: bool) -> str:
     try:
         parsed = urlsplit(url)
         if (
-            parsed.scheme != "https"
+            parsed.scheme != "http"
             or parsed.hostname not in {expected, "127.0.0.1", "localhost", "::1"}
             or parsed.username
             or parsed.password
@@ -64,17 +63,7 @@ def endpoint(write: bool) -> str:
 
 
 def client() -> httpx.Client:
-    certs = os.getenv("BROWSER_EVIDENCE_API_TLS_DIR")
-    if not certs:
-        raise deny("live_evidence_unavailable", 503)
-    try:
-        context = ssl.create_default_context(cafile=os.path.join(certs, "ca.crt"))
-        context.load_cert_chain(
-            os.path.join(certs, "client.crt"), os.path.join(certs, "client.key")
-        )
-    except (OSError, ssl.SSLError):
-        raise deny("live_evidence_unavailable", 503) from None
-    return httpx.Client(timeout=5, trust_env=False, verify=context)
+    return httpx.Client(timeout=5, trust_env=False)
 
 
 def public_scope(

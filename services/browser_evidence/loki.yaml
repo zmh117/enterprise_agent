@@ -2,11 +2,6 @@ auth_enabled: true
 server:
   http_listen_port: 3100
   grpc_listen_address: 127.0.0.1
-  http_tls_config:
-    cert_file: /run/evidence-tls/server.crt
-    key_file: /run/evidence-tls/server.key
-    client_ca_file: /run/evidence-tls/ca.crt
-    client_auth_type: RequireAndVerifyClientCert
   log_level: warn
 common:
   path_prefix: /loki

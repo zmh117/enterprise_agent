@@ -32,7 +32,7 @@ def check_transport(client, c, headers, live_path, page, recording_id, monkeypat
 
     real = os.environ.get("BROWSER_EVIDENCE_SYNTHETIC_ROUNDTRIP") == "1"
     if not real:
-        monkeypatch.setenv("BROWSER_EVIDENCE_WRITE_URL", "https://evidence-alloy:3500")
+        monkeypatch.setenv("BROWSER_EVIDENCE_WRITE_URL", "http://evidence-alloy:3500")
     writes = []
     actual = live_loki.forward
 
@@ -144,7 +144,7 @@ def query_transport(monkeypatch):
     lines = {}
     real = os.environ.get("BROWSER_EVIDENCE_SYNTHETIC_ROUNDTRIP") == "1"
     if not real:
-        monkeypatch.setenv("BROWSER_EVIDENCE_WRITE_URL", "https://evidence-alloy:3500")
+        monkeypatch.setenv("BROWSER_EVIDENCE_WRITE_URL", "http://evidence-alloy:3500")
 
         def send(payload):
             for stream in payload["streams"]:
